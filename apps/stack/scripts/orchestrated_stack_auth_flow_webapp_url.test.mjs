@@ -38,7 +38,7 @@ test('startDaemonPostAuth passes webapp URL to daemon env (never internal API UR
     await mkdir(stackDir, { recursive: true });
     await writeFile(
       envPath,
-      ['HAPPIER_STACK_STACK=main', 'HAPPIER_WEBAPP_URL=http://localhost:3010', ''].join('\n'),
+      ['HAPPIER_STACK_STACK=main', 'HAPPIER_STACK_SERVER_PORT=4102', 'HAPPIER_WEBAPP_URL=http://localhost:3010', ''].join('\n'),
       'utf-8'
     );
     await writeFile(
@@ -59,6 +59,9 @@ export async function startLocalDaemonWithAuth(input) {
   if (marker) writeFileSync(marker, JSON.stringify(input), 'utf-8');
 }
 export function checkDaemonState() {
+  return { status: 'running', pid: 12345 };
+}
+export async function checkDaemonStatePingAware() {
   return { status: 'running', pid: 12345 };
 }
 `),
@@ -120,6 +123,72 @@ await startDaemonPostAuth({
   }
 });
 
+test('startDaemonPostAuth delegates to a trusted live lifecycle owner without creating a daemon', async () => {
+  const scriptsDir = dirname(fileURLToPath(import.meta.url));
+  const rootDir = dirname(scriptsDir);
+  const tmp = await mkdtemp(join(tmpdir(), 'hstack-auth-flow-live-owner-'));
+  try {
+    const stackName = 'main';
+    const storageDir = join(tmp, 'storage');
+    const stackDir = join(storageDir, stackName);
+    const envPath = join(stackDir, 'env');
+    const markerPath = join(tmp, 'daemon-created.marker');
+    const runtimeStatePath = join(stackDir, 'stack.runtime.json');
+    await mkdir(stackDir, { recursive: true });
+    await writeFile(envPath, 'HAPPIER_STACK_STACK=main\n', 'utf-8');
+
+    const loaderPath = join(tmp, 'loader.mjs');
+    const registerPath = join(tmp, 'register-loader.mjs');
+    const runnerPath = join(tmp, 'runner.mjs');
+    const stubBySpecifier = {
+      '../../daemon.mjs': toDataUrl(`
+import { writeFileSync } from 'node:fs';
+export async function startLocalDaemonWithAuth() { writeFileSync(${JSON.stringify(markerPath)}, 'created'); }
+export async function checkDaemonStatePingAware() { return { status: 'stopped' }; }
+`),
+    };
+    await writeFile(loaderPath, `
+const stubBySpecifier = ${JSON.stringify(stubBySpecifier)};
+export async function resolve(specifier, context, defaultResolve) {
+  const stub = stubBySpecifier[specifier];
+  if (stub) return { url: stub, shortCircuit: true };
+  return defaultResolve(specifier, context, defaultResolve);
+}
+`, 'utf-8');
+    await writeFile(registerPath, `import { register } from 'node:module'; register(${JSON.stringify(pathToFileURL(loaderPath).href)}, import.meta.url);\n`, 'utf-8');
+    await writeFile(runnerPath, `
+import { writeFile } from 'node:fs/promises';
+import { startDaemonPostAuth } from ${JSON.stringify(pathToFileURL(join(scriptsDir, 'utils', 'auth', 'orchestrated_stack_auth_flow.mjs')).href)};
+await writeFile(${JSON.stringify(runtimeStatePath)}, JSON.stringify({
+  version: 1,
+  stackName: 'main',
+  script: 'dev.mjs',
+  ownerPid: process.pid,
+  ports: { server: 4102 },
+}), 'utf-8');
+const result = await startDaemonPostAuth({ rootDir: ${JSON.stringify(rootDir)}, stackName: 'main', env: process.env });
+process.stdout.write(JSON.stringify(result));
+`, 'utf-8');
+
+    const res = await runNode(['--import', registerPath, runnerPath], {
+      cwd: rootDir,
+      env: {
+        ...process.env,
+        HAPPIER_STACK_STORAGE_DIR: storageDir,
+        HAPPIER_STACK_STACK: stackName,
+        HAPPIER_STACK_ENV_FILE: envPath,
+        HAPPIER_STACK_CLI_HOME_DIR: join(stackDir, 'cli'),
+        HAPPIER_STACK_SERVER_PORT: '4102',
+      },
+    });
+    assert.equal(res.code, 0, res.stderr);
+    assert.equal(JSON.parse(res.stdout).status, 'delegated_to_lifecycle_owner');
+    await assert.rejects(() => readFile(markerPath, 'utf-8'), /ENOENT/);
+  } finally {
+    await rm(tmp, { recursive: true, force: true });
+  }
+});
+
 test('startDaemonPostAuth uses the active runtime snapshot cli when runtime mode selects a snapshot', async () => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));
   const rootDir = dirname(scriptsDir);
@@ -135,7 +204,7 @@ test('startDaemonPostAuth uses the active runtime snapshot cli when runtime mode
     await mkdir(stackDir, { recursive: true });
     await writeFile(
       envPath,
-      ['HAPPIER_STACK_STACK=dev-built', 'HAPPIER_STACK_RUNTIME_MODE=prefer', ''].join('\n'),
+      ['HAPPIER_STACK_STACK=dev-built', 'HAPPIER_STACK_RUNTIME_MODE=prefer', 'HAPPIER_STACK_SERVER_PORT=4102', ''].join('\n'),
       'utf-8'
     );
     await writeFile(
@@ -175,6 +244,9 @@ export async function startLocalDaemonWithAuth(input) {
   if (marker) writeFileSync(marker, JSON.stringify(input), 'utf-8');
 }
 export function checkDaemonState() {
+  return { status: 'running', pid: 12345 };
+}
+export async function checkDaemonStatePingAware() {
   return { status: 'running', pid: 12345 };
 }
 `),
@@ -228,6 +300,13 @@ await startDaemonPostAuth({
     const markerRaw = await readFile(markerPath, 'utf-8');
     const marker = JSON.parse(markerRaw);
     assert.equal(marker.cliBin, join(snapshotDir, 'cli', 'happier'));
+    assert.equal(marker.cliEntrypoint, join(snapshotDir, 'cli', 'happier'));
+    assert.equal(marker.cliNodeEntrypoint, join(snapshotDir, 'cli', 'package-dist', 'index.mjs'));
+    assert.equal(marker.cliCommand, join(snapshotDir, 'cli', 'happier'));
+    assert.deepEqual(marker.cliCommandArgs, []);
+    assert.equal(marker.runtimeBacked, true);
+    assert.match(marker.admittedDistClosureFingerprint, /^[a-f0-9]{16}$/);
+    assert.equal(marker.runtimeStatePath, join(stackDir, 'stack.runtime.json'));
   } finally {
     await rm(tmp, { recursive: true, force: true });
   }

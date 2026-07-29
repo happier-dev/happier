@@ -9,16 +9,34 @@ import { tmpdir } from 'node:os';
 
 const execFileAsync = promisify(execFile);
 
+function cleanTauriDevTestEnv(overrides = {}) {
+  const env = { ...process.env };
+  for (const key of Object.keys(env)) {
+    if (key.startsWith('HAPPIER_STACK_')) {
+      delete env[key];
+    }
+  }
+  delete env.HAPPIER_HOME_DIR;
+  delete env.HAPPIER_SERVER_URL;
+  delete env.HAPPIER_WEBAPP_URL;
+  delete env.HAPPIER_ACTIVE_SERVER_ID;
+  return {
+    ...env,
+    HAPPIER_STACK_HOME_DIR: join(tmpdir(), `happier-tauri-dev-home-${process.pid}`),
+    HAPPIER_STACK_DISABLE_STACK_ENV_AUTOLOAD: '1',
+    ...overrides,
+  };
+}
+
 test('tauri_dev --json prints the resolved launch plan without running build hooks', async () => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));
   const scriptPath = join(scriptsDir, 'tauri_dev.mjs');
 
   const { stdout, stderr } = await execFileAsync(process.execPath, [scriptPath, '--json'], {
     cwd: dirname(scriptsDir),
-    env: {
-      ...process.env,
+    env: cleanTauriDevTestEnv({
       HAPPIER_STACK_TAURI_WAIT_FOR_EXPO: '0',
-    },
+    }),
     encoding: 'utf8',
   });
 
@@ -46,11 +64,10 @@ test('tauri_dev --json can disable the cache-busting params when explicitly requ
 
   const { stdout, stderr } = await execFileAsync(process.execPath, [scriptPath, '--json'], {
     cwd: dirname(scriptsDir),
-    env: {
-      ...process.env,
+    env: cleanTauriDevTestEnv({
       HAPPIER_STACK_TAURI_WAIT_FOR_EXPO: '0',
       HAPPIER_STACK_TAURI_DEV_URL_CACHE_BUST: '0',
-    },
+    }),
     encoding: 'utf8',
   });
 
@@ -88,13 +105,12 @@ test('tauri_dev prefers the explicit stack expo dev port over stale runtime stat
 
   const { stdout, stderr } = await execFileAsync(process.execPath, [scriptPath, '--json'], {
     cwd: repoRoot,
-    env: {
-      ...process.env,
+    env: cleanTauriDevTestEnv({
       HAPPIER_STACK_TAURI_WAIT_FOR_EXPO: '0',
       HAPPIER_STACK_STORAGE_DIR: storageRoot,
       HAPPIER_STACK_STACK: stackName,
       HAPPIER_STACK_EXPO_DEV_PORT: '12345',
-    },
+    }),
     encoding: 'utf8',
   });
 
@@ -134,13 +150,12 @@ test('tauri_dev prefers the pinned expo dev port from the stack env file over st
 
   const { stdout, stderr } = await execFileAsync(process.execPath, [scriptPath, '--json'], {
     cwd: repoRoot,
-    env: {
-      ...process.env,
+    env: cleanTauriDevTestEnv({
       HAPPIER_STACK_TAURI_WAIT_FOR_EXPO: '0',
       HAPPIER_STACK_EXPO_DEV_PORT: '0',
       HAPPIER_STACK_STORAGE_DIR: storageRoot,
       HAPPIER_STACK_STACK: stackName,
-    },
+    }),
     encoding: 'utf8',
   });
 
@@ -182,14 +197,13 @@ test('tauri_dev reads the pinned expo dev port from HAPPIER_STACK_ENV_FILE when 
 
   const { stdout, stderr } = await execFileAsync(process.execPath, [scriptPath, '--json'], {
     cwd: repoRoot,
-    env: {
-      ...process.env,
+    env: cleanTauriDevTestEnv({
       HAPPIER_STACK_TAURI_WAIT_FOR_EXPO: '0',
       HAPPIER_STACK_EXPO_DEV_PORT: '0',
       HAPPIER_STACK_STORAGE_DIR: storageRoot,
       HAPPIER_STACK_STACK: stackName,
       HAPPIER_STACK_ENV_FILE: explicitEnvFile,
-    },
+    }),
     encoding: 'utf8',
   });
 
@@ -212,11 +226,10 @@ test('tauri_dev fails fast with a clear error when repo dir does not contain src
   try {
     await execFileAsync(process.execPath, [scriptPath], {
       cwd: dirname(scriptsDir),
-      env: {
-        ...process.env,
+      env: cleanTauriDevTestEnv({
         HAPPIER_STACK_TAURI_WAIT_FOR_EXPO: '0',
         HAPPIER_STACK_REPO_DIR: fakeRepo,
-      },
+      }),
       encoding: 'utf8',
     });
     assert.fail('expected tauri_dev to fail');
@@ -238,13 +251,12 @@ test('tauri_dev falls back to HAPPIER_STACK_CLI_ROOT_DIR when HAPPIER_STACK_REPO
 
   const { stdout, stderr } = await execFileAsync(process.execPath, [scriptPath, '--json'], {
     cwd: repoRoot,
-    env: {
-      ...process.env,
+    env: cleanTauriDevTestEnv({
       HAPPIER_STACK_TAURI_WAIT_FOR_EXPO: '0',
       HAPPIER_STACK_REPO_DIR: fakeRepo,
       HAPPIER_STACK_CLI_ROOT_DIR: repoRoot,
       HAPPIER_STACK_CLI_ROOT_DISABLE: '1',
-    },
+    }),
     encoding: 'utf8',
   });
 
@@ -268,12 +280,11 @@ test('tauri_dev --json falls back to the CLI root repo when the stack repo dir i
 
   const { stdout, stderr } = await execFileAsync(process.execPath, [scriptPath, '--json'], {
     cwd: repoRoot,
-    env: {
-      ...process.env,
+    env: cleanTauriDevTestEnv({
       HAPPIER_STACK_TAURI_WAIT_FOR_EXPO: '0',
       HAPPIER_STACK_REPO_DIR: fakeRepo,
       HAPPIER_STACK_CLI_ROOT_DIR: repoRoot,
-    },
+    }),
     encoding: 'utf8',
   });
 

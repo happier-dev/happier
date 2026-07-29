@@ -83,21 +83,24 @@ export async function startDevProxyMaintenanceUpstream({
   host = '127.0.0.1',
   port = 0,
   retryAfterMs = 1000,
+  retryable = true,
   message = 'Server reload in progress',
 } = {}) {
   let currentRetryAfterMs = retryAfterMs;
+  let currentRetryable = retryable !== false;
   let currentMessage = message;
 
   const server = http.createServer((_req, res) => {
     const body = `${currentMessage}\n`;
-    res.writeHead(503, {
+    const headers = {
       'Content-Type': 'text/plain; charset=utf-8',
       'Content-Length': Buffer.byteLength(body),
-      'Retry-After': normalizeRetryAfterSeconds(currentRetryAfterMs),
-      'X-Happier-Retry-Reason': 'server_restarting',
+      'X-Happier-Retry-Reason': currentRetryable ? 'server_restarting' : 'server_unavailable',
       'Cache-Control': 'no-store',
       Connection: 'close',
-    });
+    };
+    if (currentRetryable) headers['Retry-After'] = normalizeRetryAfterSeconds(currentRetryAfterMs);
+    res.writeHead(503, headers);
     res.end(body);
   });
 
@@ -115,8 +118,13 @@ export async function startDevProxyMaintenanceUpstream({
     server,
     address,
     port: resolvedPort,
-    update({ retryAfterMs: nextRetryAfterMs = currentRetryAfterMs, message: nextMessage = currentMessage } = {}) {
+    update({
+      retryAfterMs: nextRetryAfterMs = currentRetryAfterMs,
+      retryable: nextRetryable = currentRetryable,
+      message: nextMessage = currentMessage,
+    } = {}) {
       currentRetryAfterMs = nextRetryAfterMs;
+      currentRetryable = nextRetryable !== false;
       currentMessage = nextMessage;
     },
     async stop() {
@@ -151,22 +159,26 @@ export async function startDevProxy({
     get targetPort() {
       return forwarder.server.getUpstream?.().targetPort ?? null;
     },
+    getUpstream() {
+      return forwarder.server.getUpstream();
+    },
     flipUpstream({ targetHost: nextTargetHost = targetHost, targetPort: nextTargetPort } = {}) {
       return forwarder.server.setUpstream({
         targetHost: nextTargetHost,
         targetPort: Number(nextTargetPort),
       });
     },
-    async enterMaintenance({ retryAfterMs = 2000, message = 'Server reload in progress' } = {}) {
+    async enterMaintenance({ retryAfterMs = 2000, retryable = true, message = 'Server reload in progress' } = {}) {
       if (!maintenance) {
         maintenance = await startDevProxyMaintenanceUpstream({
           host: '127.0.0.1',
           port: 0,
           retryAfterMs,
+          retryable,
           message,
         });
       } else {
-        maintenance.update({ retryAfterMs, message });
+        maintenance.update({ retryAfterMs, retryable, message });
       }
       forwarder.server.setUpstream({ targetHost: maintenance.address, targetPort: maintenance.port });
       return { targetHost: maintenance.address, targetPort: maintenance.port, port: maintenance.port };

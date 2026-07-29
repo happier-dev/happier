@@ -9,9 +9,8 @@ import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { commandHelpArgs, renderhstackRootHelp, resolvehstackCommand } from '../scripts/utils/cli/cli_registry.mjs';
 import { expandHome, getCanonicalHomeEnvPathFromEnv } from '../scripts/utils/paths/canonical_home.mjs';
-import { resolveStackEnvPath } from '../scripts/utils/paths/paths.mjs';
+import { resolveExplicitStackEnvFilePath, resolveStackEnvPath } from '../scripts/utils/paths/paths.mjs';
 import { SANDBOX_PRESERVE_KEYS, scrubHappierStackEnv } from '../scripts/utils/env/scrub_env.mjs';
-import { maybeAutoUpdateNotice as maybeAutoUpdateNoticeShared } from '../scripts/utils/update/auto_update_notice.mjs';
 import { refreshLocalBundledWorkspacePackages } from './localBundledWorkspacePreflight.mjs';
 
 function getCliRootDir() {
@@ -56,9 +55,17 @@ function resolveCliRootDir() {
   return v ? expandHome(v) : '';
 }
 
-function maybeReexecToCliRoot(cliRootDir) {
+function shouldKeepCurrentCliRootForInvocation(argv) {
+  const args = Array.isArray(argv) ? argv : [];
+  const cmd = args.find((a) => !String(a).startsWith('--')) ?? '';
+  if (cmd !== 'init') return false;
+  return args.some((a) => a === '--cli-root-dir' || String(a).startsWith('--cli-root-dir='));
+}
+
+function maybeReexecToCliRoot(cliRootDir, argv = []) {
   if ((process.env.HAPPIER_STACK_CLI_REEXEC ?? process.env.HAPPIER_STACK_DEV_REEXEC ?? '') === '1') return;
   if ((process.env.HAPPIER_STACK_CLI_ROOT_DISABLE ?? process.env.HAPPIER_STACK_DEV_CLI_DISABLE ?? '') === '1') return;
+  if (shouldKeepCurrentCliRootForInvocation(argv)) return;
 
   const cliRoot = resolveCliRootDir();
   if (!cliRoot) return;
@@ -67,8 +74,8 @@ function maybeReexecToCliRoot(cliRootDir) {
   const cliBin = join(cliRoot, 'bin', 'hstack.mjs');
   if (!existsSync(cliBin)) return;
 
-  const argv = process.argv.slice(2);
-  const res = spawnSync(process.execPath, [cliBin, ...argv], {
+  const passthroughArgv = process.argv.slice(2);
+  const res = spawnSync(process.execPath, [cliBin, ...passthroughArgv], {
     stdio: 'inherit',
     cwd: cliRoot,
     env: {
@@ -251,7 +258,8 @@ function applySandboxDirIfRequested(argv) {
   return { argv: nextArgv, enabled: true };
 }
 
-function maybeAutoUpdateNotice(cliRootDir, cmd) {
+async function maybeAutoUpdateNotice(cliRootDir, cmd) {
+  const { maybeAutoUpdateNotice: maybeAutoUpdateNoticeShared } = await import('../scripts/utils/update/auto_update_notice.mjs');
   maybeAutoUpdateNoticeShared({
     cliRootDir,
     cmd,
@@ -284,9 +292,32 @@ function hasJsonFlag(args) {
   return argv.some((a) => a === '--json' || String(a).startsWith('--json='));
 }
 
+function isHelpInvocation(args) {
+  const argv = Array.isArray(args) ? args : [];
+  const sepIndex = argv.indexOf('--');
+  const helpScopeArgv = sepIndex === -1 ? argv : argv.slice(0, sepIndex);
+  if (helpScopeArgv.length === 0) return true;
+  if (helpScopeArgv.includes('--help') || helpScopeArgv.includes('-h')) return true;
+  const command = helpScopeArgv.find((arg) => !String(arg).startsWith('-')) ?? '';
+  return command === 'help';
+}
+
 function shouldSkipBundledWorkspacePreflight(argv) {
   const args = Array.isArray(argv) ? argv : [];
-  const command = args.find((arg) => !String(arg).startsWith('-')) ?? '';
+  const sepIndex = args.indexOf('--');
+  const preSeparatorArgs = sepIndex === -1 ? args : args.slice(0, sepIndex);
+  const command = preSeparatorArgs.find((arg) => !String(arg).startsWith('-')) ?? '';
+
+  // `hstack happier` is a passthrough into the Happier CLI. Even help output loads
+  // the CLI entrypoint, which imports bundled workspace packages in source/dev
+  // checkouts, so the bundled workspace preflight remains mandatory.
+  if (command === 'happier') return false;
+
+  const resolvedCommand = command ? resolvehstackCommand(command) : null;
+  if (resolvedCommand?.scriptRelPath === 'scripts/setup.mjs' && hasJsonFlag(args)) {
+    return true;
+  }
+
   if (command !== 'stack') return false;
 
   const commandIndex = args.indexOf(command);
@@ -296,6 +327,28 @@ function shouldSkipBundledWorkspacePreflight(argv) {
 
   const hasBackground = rest.some((arg) => arg === '--background');
   return hasBackground && hasJsonFlag(rest);
+}
+
+function isInstalledServiceStartInvocation(argv) {
+  return Array.isArray(argv) && argv.length === 2 && argv[0] === 'start' && argv[1] === '--restart';
+}
+
+function handleMissingExplicitStackEnvBeforePreflight(argv) {
+  const envPath = resolveExplicitStackEnvFilePath(process.env);
+  if (!envPath || existsSync(envPath)) return false;
+  if (isHelpInvocation(argv)) return false;
+
+  console.error(`[hstack] configured stack env file is missing: ${envPath}`);
+  const serviceMode = (process.env.HAPPIER_STACK_SERVICE_MODE ?? '').trim() === '1';
+  if (serviceMode && isInstalledServiceStartInvocation(argv)) {
+    console.error('[hstack] service start skipped; reinstall or remove the archived stack service before starting it again.');
+    return true;
+  }
+
+  throw new Error(
+    `Configured HAPPIER_STACK_ENV_FILE does not exist: ${envPath}\n` +
+      'Fix the path, unset HAPPIER_STACK_ENV_FILE, or recreate the stack.',
+  );
 }
 
 function maybeWarnDeprecatedSetup(cmd, rest) {
@@ -321,10 +374,9 @@ async function main() {
     process.env.HAPPIER_STACK_INVOKED_CWD = process.cwd();
   }
 
-  maybeReexecToCliRoot(cliRootDir);
-  if (!shouldSkipBundledWorkspacePreflight(argv)) {
-    await refreshLocalBundledWorkspacePackages(cliRootDir);
-  }
+  if (handleMissingExplicitStackEnvBeforePreflight(argv)) return;
+
+  maybeReexecToCliRoot(cliRootDir, argv);
 
   // If the user passed only flags (common via `npx --yes -p @happier-dev/stack hstack --help`),
   // treat it as root help rather than `help --help` (which would look like
@@ -333,14 +385,19 @@ async function main() {
   const cmdIndex = argv.indexOf(cmd);
   const rest = cmdIndex >= 0 ? argv.slice(cmdIndex + 1) : [];
 
-  maybeAutoUpdateNotice(cliRootDir, cmd);
+  if ((cmd === 'help' || cmd === '--help' || cmd === '-h') && (!rest[0] || rest[0].startsWith('-'))) {
+    console.log(usage());
+    return;
+  }
+
+  const skipBundledWorkspacePreflight = shouldSkipBundledWorkspacePreflight(argv);
+  if (!skipBundledWorkspacePreflight) {
+    await refreshLocalBundledWorkspacePackages(cliRootDir);
+    await maybeAutoUpdateNotice(cliRootDir, cmd);
+  }
 
   if (cmd === 'help' || cmd === '--help' || cmd === '-h') {
     const target = rest[0];
-    if (!target || target.startsWith('-')) {
-      console.log(usage());
-      return;
-    }
     const targetCmd = resolvehstackCommand(target);
     if (!targetCmd || targetCmd.kind !== 'node') {
       console.error(`[hstack] unknown command: ${target}`);

@@ -100,6 +100,7 @@ test('ensureDevExpoServer in stack mode starts managed Expo instead of adopting 
         HAPPIER_STACK_EXPO_DEV_PORT: '',
         HAPPIER_STACK_EXPO_DEV_PORT_STRATEGY: 'ephemeral',
         HAPPIER_STACK_EXPO_RESTART_MAX_ATTEMPTS: '0',
+        HAPPIER_STACK_SKIP_REFRESH_DEPS: '1',
       },
       apiServerUrl: 'http://127.0.0.1:3009',
       restart: false,
@@ -128,4 +129,42 @@ test('ensureDevExpoServer in stack mode starts managed Expo instead of adopting 
     await close(metro).catch(() => {});
     await rm(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   }
+});
+
+test('ensureDevExpoServer rejects an initial spawn without a finite pid before publishing runtime state', async (t) => {
+  const tmp = await mkdtemp(join(tmpdir(), 'hstack-expo-invalid-initial-pid-'));
+  t.after(() => rm(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
+  const uiDir = join(tmp, 'ui');
+  const runtimeStatePath = join(tmp, 'stack.runtime.json');
+  await mkdir(join(uiDir, 'node_modules'), { recursive: true });
+  await writeFile(join(uiDir, 'package.json'), JSON.stringify({ name: 'fake-ui', private: true }) + '\n', 'utf-8');
+
+  await assert.rejects(
+    () => ensureDevExpoServer({
+      startUi: true,
+      startMobile: false,
+      uiDir,
+      expoProjectDir: uiDir,
+      autostart: { baseDir: tmp },
+      baseEnv: {
+        ...process.env,
+        HAPPIER_STACK_EXPO_RESTART_MAX_ATTEMPTS: '0',
+        HAPPIER_STACK_SKIP_REFRESH_DEPS: '1',
+        HAPPIER_STACK_EXPO_DEV_PORT: '',
+        HAPPIER_STACK_EXPO_DEV_PORT_STRATEGY: 'ephemeral',
+      },
+      apiServerUrl: 'http://127.0.0.1:3009',
+      restart: false,
+      stackMode: true,
+      runtimeStatePath,
+      stackName: 'invalid-initial-pid',
+      envPath: join(tmp, 'stack.env'),
+      children: [],
+      quiet: true,
+    }),
+    /ENOENT|failed to spawn/i,
+  );
+
+  const runtime = await readStackRuntimeStateFile(runtimeStatePath);
+  assert.equal(runtime?.processes?.expoPid ?? null, null);
 });

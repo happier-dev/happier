@@ -47,5 +47,6 @@ export async function ensureStackDaemonPreflight({
     env: daemonContext.envForIdentity,
     stackName,
     cliIdentity,
+    ...daemonContext.runtimeProvenance,
   });
 }

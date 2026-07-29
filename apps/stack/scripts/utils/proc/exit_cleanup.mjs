@@ -15,7 +15,7 @@ export function installExitCleanup({ label = 'local', children } = {}) {
     const tracked = normalizeChildren(childrenRef);
     for (const child of tracked) {
       try {
-        killProcessTree(child, 'SIGTERM');
+        void killProcessTree(child, 'SIGTERM');
       } catch {
         // Best-effort cleanup; keep going.
       }
@@ -24,7 +24,7 @@ export function installExitCleanup({ label = 'local', children } = {}) {
     // For graceful shutdown (with time for handlers to run), callers should invoke cleanup manually.
     for (const child of tracked) {
       try {
-        killProcessTree(child, 'SIGKILL');
+        void killProcessTree(child, 'SIGKILL');
       } catch {
         // Best-effort cleanup; keep going.
       }

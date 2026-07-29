@@ -50,7 +50,7 @@ function sha256Hex(bytes) {
   return createHash('sha256').update(bytes).digest('hex');
 }
 
-test('installCompanionCliFromBundle promotes the publicdev CLI payload with shared installer logic', async (t) => {
+test('installCompanionCliFromBundle promotes the publicdev CLI payload without a system PATH', async (t) => {
   if (process.platform === 'win32') {
     t.skip('tar-based bundle test does not run on windows');
     return;
@@ -96,15 +96,24 @@ test('installCompanionCliFromBundle promotes the publicdev CLI payload with shar
   };
 
   const homeDir = join(tmp, 'home');
-  const result = await installCompanionCliFromBundle({
-    bundle,
-    channel: 'publicdev',
-    processEnv: {
-      ...process.env,
-      HAPPIER_HOME_DIR: homeDir,
-    },
-    pubkeyFile,
-  });
+  const originalPath = process.env.PATH;
+  let result;
+  try {
+    process.env.PATH = '';
+    result = await installCompanionCliFromBundle({
+      bundle,
+      channel: 'publicdev',
+      processEnv: {
+        ...process.env,
+        HAPPIER_HOME_DIR: homeDir,
+        PATH: '',
+      },
+      pubkeyFile,
+    });
+  } finally {
+    if (originalPath === undefined) delete process.env.PATH;
+    else process.env.PATH = originalPath;
+  }
 
   assert.equal(result.installed, true);
   assert.equal(result.version, '1.2.3-dev.1');

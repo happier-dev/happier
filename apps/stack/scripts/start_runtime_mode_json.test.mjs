@@ -28,7 +28,10 @@ test('hstack start --json --runtime reports runtime-backed launch paths', async 
   assert.equal(parsed.mode, 'start');
   assert.equal(parsed.launchMode, 'runtime');
   assert.equal(parsed.runtimeSnapshotId, 'snap-1');
-  assert.equal(parsed.cliDir, join(fixture.stackDir, 'runtime', 'current', 'cli'));
-  assert.equal(parsed.serverDir, join(fixture.stackDir, 'runtime', 'current', 'server'));
-  assert.equal(parsed.uiBuildDir, join(fixture.stackDir, 'runtime', 'current', 'ui'));
+  assert.equal(parsed.cliDir, join(fixture.snapshotDir, 'cli'));
+  assert.equal(parsed.serverDir, join(fixture.snapshotDir, 'server'));
+  assert.equal(parsed.uiBuildDir, join(fixture.snapshotDir, 'ui'));
+  assert.notEqual(parsed.cliDir, join(fixture.stackDir, 'runtime', 'current', 'cli'));
+  assert.notEqual(parsed.serverDir, join(fixture.stackDir, 'runtime', 'current', 'server'));
+  assert.notEqual(parsed.uiBuildDir, join(fixture.stackDir, 'runtime', 'current', 'ui'));
 });

@@ -46,6 +46,27 @@ test('hstack stack new server flavor defaults and explicit full flavor pin coher
         assert.ok(!contents.includes('HAPPIER_SERVER_LIGHT_DATA_DIR='), contents);
       },
     },
+    {
+      name: 'external postgres full server flavor',
+      stackName: 'exp-flavors-full-external-postgres',
+      args: [
+        '--server=happier-server',
+        '--db-provider=postgres',
+        '--database-url=postgresql://operator:secret@db.example/happier?sslmode=require',
+        '--no-copy-auth',
+        '--json',
+      ],
+      assertEnv(contents) {
+        assert.ok(contents.includes('HAPPIER_STACK_SERVER_COMPONENT=happier-server\n'), contents);
+        assert.ok(contents.includes('HAPPIER_DB_PROVIDER=postgres\n'), contents);
+        assert.ok(contents.includes('DATABASE_URL=postgresql://operator:secret@db.example/happier?sslmode=require\n'), contents);
+        assert.ok(contents.includes('HAPPIER_STACK_MANAGED_INFRA=1\n'), contents);
+        assert.ok(!contents.includes('HAPPIER_STACK_PG_USER='), contents);
+        assert.ok(!contents.includes('HAPPIER_STACK_PG_PASSWORD='), contents);
+        assert.ok(!contents.includes('HAPPIER_STACK_PG_DATABASE='), contents);
+        assert.ok(!contents.includes('HAPPIER_STACK_PG_PORT='), contents);
+      },
+    },
   ];
 
   for (const testCase of cases) {

@@ -8,8 +8,8 @@ import {
   installVersionedPayload,
   resolveFirstPartyComponentPublicReleaseVariant,
 } from '@happier-dev/cli-common/firstPartyRuntime';
+import { extractArchivePayloadToDirectory } from '@happier-dev/release-runtime/archiveExtraction';
 import { resolveReleaseAssetBundle } from '@happier-dev/release-runtime/assets';
-import { planArchiveExtraction } from '@happier-dev/release-runtime/extractPlan';
 import { fetchGitHubReleaseByTag } from '@happier-dev/release-runtime/github';
 import { DEFAULT_MINISIGN_PUBLIC_KEY } from '@happier-dev/release-runtime/minisign';
 import { downloadVerifiedReleaseAssetBundle } from '@happier-dev/release-runtime/verifiedDownload';
@@ -44,15 +44,6 @@ function resolveMinisignPublicKeyText(env = process.env) {
   return inline || DEFAULT_MINISIGN_PUBLIC_KEY;
 }
 
-function runCheckedCommand(command, args, context) {
-  const result = spawnSync(command, args, { stdio: 'ignore', encoding: 'utf-8' });
-  if ((result.status ?? 1) !== 0) {
-    throw new Error(
-      `[self-host] ${context} failed (${command} ${args.join(' ')}): ${String(result.stderr ?? result.stdout ?? '').trim()}`,
-    );
-  }
-}
-
 export async function installCompanionCliFromBundle({
   bundle,
   channel = 'stable',
@@ -80,16 +71,11 @@ export async function installCompanionCliFromBundle({
     });
     const extractDir = join(tempDir, 'extract');
     await mkdir(extractDir, { recursive: true });
-    const plan = planArchiveExtraction({
+    await extractArchivePayloadToDirectory({
       archiveName: downloaded.archiveName,
       archivePath: downloaded.archivePath,
-      destDir: extractDir,
-      os: normalizeOs(process.platform),
+      extractDir,
     });
-    if (!commandExists(plan.requiredCommand)) {
-      throw new Error(`[self-host] ${plan.requiredCommand} is required to extract companion CLI artifacts`);
-    }
-    runCheckedCommand(plan.command.cmd, plan.command.args, 'extracting companion CLI release bundle');
 
     const extractedBinaryPath = await findExtractedExecutableByName(extractDir, binaryName);
     if (!extractedBinaryPath) {

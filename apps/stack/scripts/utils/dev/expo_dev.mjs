@@ -8,11 +8,15 @@ import {
   wantsExpoClearCache,
   writePidState,
 } from '../expo/expo.mjs';
-import { pickExpoDevMetroPort } from '../expo/metro_ports.mjs';
+import { selectExpoDevMetroPort } from '../expo/metro_ports.mjs';
 import { ensureEnvFileUpdated } from '../env/env_file.mjs';
-import { isPidAlive, readStackRuntimeStateFile, recordStackRuntimeUpdate } from '../stack/runtime_state.mjs';
-import { getProcessGroupId, getPsEnvLine, killProcessGroupOwnedByStack, listPidsWithEnvNeedle } from '../proc/ownership.mjs';
-import { terminateProcessGroup } from '../proc/terminate.mjs';
+import {
+  getStackRuntimeProcessInstanceFingerprint,
+  isPidAlive,
+  readStackRuntimeStateFile,
+  recordStackRuntimeUpdate,
+} from '../stack/runtime_state.mjs';
+import { killProcessGroupOwnedByStack, listPidsWithEnvNeedle } from '../proc/ownership.mjs';
 import { expoSpawn } from '../expo/command.mjs';
 import { run } from '../proc/proc.mjs';
 import { resolveMobileExpoConfig } from '../mobile/config.mjs';
@@ -131,6 +135,8 @@ export function buildExpoDevEnv({
     env.EXPO_PUBLIC_HAPPY_SERVER_CONTEXT = 'stack';
   }
   env.EXPO_PUBLIC_DEBUG = env.EXPO_PUBLIC_DEBUG ?? '1';
+  env.EXPO_PUBLIC_HAPPIER_FEATURE_APP_UI_ONBOARDING_TOUR__ENABLED =
+    env.EXPO_PUBLIC_HAPPIER_FEATURE_APP_UI_ONBOARDING_TOUR__ENABLED ?? '1';
   env.EXPO_UNSTABLE_WEB_MODAL = '1';
 
   // Optional: allow per-stack storage isolation inside a single dev-client build by
@@ -347,13 +353,31 @@ export async function ensureDevExpoServer({
   }
 
   const reservedMetroPorts = new Set();
+  const readRecordedExpoProcessInstanceFingerprint = async (pid) => {
+    const normalizedPid = Number(pid);
+    if (!Number.isFinite(normalizedPid) || normalizedPid <= 1) return null;
+    if (Number(running.state?.pid) === normalizedPid) {
+      const expoStateFingerprint = String(running.state?.processInstanceFingerprint ?? '').trim();
+      if (expoStateFingerprint) return expoStateFingerprint;
+    }
+    if (!runtimeStatePath) return null;
+    const runtimeState = await readStackRuntimeStateFile(runtimeStatePath).catch(() => null);
+    return getStackRuntimeProcessInstanceFingerprint(runtimeState, 'expoPid', normalizedPid);
+  };
 
   if (shouldReplaceRunningExpo && running.state?.pid) {
     const prevPid = Number(running.state.pid);
     const prevPort = Number(running.state?.port);
     const prevPidAlive = Number.isFinite(prevPid) && prevPid > 1 && isPidAlive(prevPid);
     if (prevPidAlive) {
-      const res = await killProcessGroupOwnedByStack(prevPid, { stackName, envPath, cliHomeDir, label: 'expo', json: true });
+      const res = await killProcessGroupOwnedByStack(prevPid, {
+        stackName,
+        envPath,
+        cliHomeDir,
+        label: 'expo',
+        json: true,
+        processInstanceFingerprint: await readRecordedExpoProcessInstanceFingerprint(prevPid),
+      });
       if (!res.killed) {
         const portInUse =
           Number.isFinite(prevPort) && prevPort > 0 ? !(await isTcpPortFree(prevPort, { host: '127.0.0.1' })) : false;
@@ -373,47 +397,32 @@ export async function ensureDevExpoServer({
   const forcedPortNum = Number(forcedPortRaw);
   const hasForcedPort = forcedPortRaw && Number.isFinite(forcedPortNum) && forcedPortNum > 0;
 
-  if (stablePortMode && hasForcedPort) {
-    if (reservedMetroPorts.has(forcedPortNum)) {
-      throw new Error(
-        `[expo] stable expo port ${forcedPortNum} is reserved due to an existing process; refusing to bump the expo port.`
-      );
-    }
-    let free = await isTcpPortFree(forcedPortNum, { host: '127.0.0.1' });
-    if (!free) {
+  const metroSelection = await selectExpoDevMetroPort({
+    env: baseEnv,
+    stackMode,
+    stackName,
+    reservedPorts: reservedMetroPorts,
+    onStableOccupied: async ({ observation }) => {
       const needle = `__UNSAFE_EXPO_HOME_DIRECTORY=${paths.expoHomeDir}`;
       const candidates = await listPidsWithEnvNeedle(needle);
-      const selfPgid = await getProcessGroupId(process.pid);
+      const listenerPids = new Set((observation.pids ?? []).map(Number));
       for (const pid of candidates) {
+        if (!listenerPids.has(Number(pid))) continue;
         // eslint-disable-next-line no-await-in-loop
-        const line = await getPsEnvLine(pid);
-        if (!line) continue;
-        if (stackName && !line.includes(`HAPPIER_STACK_STACK=${stackName}`)) continue;
-        // eslint-disable-next-line no-await-in-loop
-        const pgid = await getProcessGroupId(pid);
-        if (!pgid) continue;
-        if (selfPgid && pgid === selfPgid) continue;
-        // eslint-disable-next-line no-await-in-loop
-        await terminateProcessGroup(pgid, { graceMs: 800, signal: 'SIGTERM' }).catch(() => {});
+        await killProcessGroupOwnedByStack(pid, {
+          stackName,
+          envPath,
+          cliHomeDir,
+          label: 'expo stable-port listener',
+          json: true,
+          signal: 'SIGTERM',
+          graceMs: 800,
+          processInstanceFingerprint: await readRecordedExpoProcessInstanceFingerprint(pid),
+        });
       }
-      free = await isTcpPortFree(forcedPortNum, { host: '127.0.0.1' });
-    }
-    if (!free) {
-      throw new Error(
-        `[expo] stable expo port ${forcedPortNum} is already in use; refusing to bump the expo port. ` +
-          `Stop the process using it or run with --restart after ensuring the previous stack process is stopped.`
-      );
-    }
-  }
-
-  const metroPort = stablePortMode && hasForcedPort
-    ? forcedPortNum
-    : await pickExpoDevMetroPort({
-        env: baseEnv,
-        stackMode,
-        stackName,
-        reservedPorts: reservedMetroPorts,
-      });
+    },
+  });
+  const metroPort = metroSelection.port;
 
   if (stackMode && envPath && hasForcedPort && forcedPortNum !== metroPort) {
     if (!quiet) {
@@ -536,6 +545,50 @@ export async function ensureDevExpoServer({
     }).catch(() => {});
   };
 
+  const requireSpawnedProcess = async (proc) => {
+    const pid = Number(proc?.pid);
+    if (Number.isFinite(pid) && pid > 1) {
+      return proc;
+    }
+    const completion = await proc?.completion;
+    throw completion?.error ?? new Error('Expo process failed to spawn without reporting an error.');
+  };
+
+  function runScheduledRestart({ restartAttempt, forceClearCache }) {
+    if (isShuttingDown?.() === true) {
+      return;
+    }
+    void spawnTrackedExpo({ restartAttempt, forceClearCache }).catch((error) => {
+      scheduleRetryAfterSpawnFailure({
+        failedAttempt: restartAttempt,
+        forceClearCache,
+        error,
+      });
+    });
+  }
+
+  function scheduleRetryAfterSpawnFailure({ failedAttempt, forceClearCache, error }) {
+    if (isShuttingDown?.() === true) {
+      return;
+    }
+    if (failedAttempt >= restartPolicy.maxAttempts) {
+      writeSupervisorLine(
+        `Expo restart failed (${error instanceof Error ? error.message : String(error)}); restart suppressed after ${restartPolicy.maxAttempts} attempts.`
+      );
+      return;
+    }
+
+    const nextAttempt = failedAttempt + 1;
+    const delayMs = computeExpoRestartDelayMs({ attempt: nextAttempt, policy: restartPolicy });
+    writeSupervisorLine(
+      `Expo restart failed (${error instanceof Error ? error.message : String(error)}); retrying in ${Math.ceil(delayMs / 1000)}s (attempt ${nextAttempt}/${restartPolicy.maxAttempts}).`
+    );
+    const timer = setTimeout(() => {
+      runScheduledRestart({ restartAttempt: nextAttempt, forceClearCache });
+    }, delayMs);
+    timer.unref?.();
+  }
+
   const spawnTrackedExpo = async ({ restartAttempt = 0, forceClearCache = false } = {}) => {
     const outputTracker = createExpoCrashOutputTracker();
     const proc = await expoSpawn({
@@ -553,10 +606,13 @@ export async function ensureDevExpoServer({
       },
       quiet,
     });
+    await requireSpawnedProcess(proc);
+    const runStartedAtMs = Date.now();
     children.push(proc);
     await writeExpoState(proc);
 
     proc.once('exit', (code, signal) => {
+      const runEndedAtMs = Date.now();
       void (async () => {
         await clearRuntimeIfCurrent(proc.pid);
         if (isShuttingDown?.() === true) {
@@ -565,7 +621,13 @@ export async function ensureDevExpoServer({
         if (!restartPolicy.enabled || restartPolicy.maxAttempts <= 0) {
           return;
         }
-        const nextAttempt = restartAttempt + 1;
+        // A replacement that survives the same bounded stability window used by the session-runner
+        // supervisor starts a fresh crash cycle. Rapid crash loops still consume one shared budget.
+        const attemptBeforeExit =
+          runEndedAtMs - runStartedAtMs >= restartPolicy.stabilityWindowMs
+            ? 0
+            : restartAttempt;
+        const nextAttempt = attemptBeforeExit + 1;
         if (nextAttempt > restartPolicy.maxAttempts) {
           writeSupervisorLine(
             `Expo exited unexpectedly (${describeExpoTermination({ code, signal, outputTracker })}); restart suppressed after ${restartPolicy.maxAttempts} attempts.`
@@ -579,8 +641,9 @@ export async function ensureDevExpoServer({
           `Expo exited unexpectedly (${describeExpoTermination({ code, signal, outputTracker })}); restarting in ${Math.ceil(delayMs / 1000)}s (attempt ${nextAttempt}/${restartPolicy.maxAttempts})${forceClearCacheOnRestart && !baseClearCache ? ' with cleared Metro cache' : ''}.`
         );
         const timer = setTimeout(() => {
-          void spawnTrackedExpo({ restartAttempt: nextAttempt, forceClearCache: forceClearCacheOnRestart }).catch((error) => {
-            writeSupervisorLine(`Expo restart failed: ${error instanceof Error ? error.message : String(error)}`);
+          runScheduledRestart({
+            restartAttempt: nextAttempt,
+            forceClearCache: forceClearCacheOnRestart,
           });
         }, delayMs);
         timer.unref?.();

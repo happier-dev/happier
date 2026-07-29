@@ -27,6 +27,7 @@ import { resolveMobileQrPayload } from './utils/mobile/dev_client_links.mjs';
 import { renderQrAscii } from './utils/ui/qr.mjs';
 import { inferPrStackBaseName } from './utils/stack/pr_stack_name.mjs';
 import { bold, cyan, dim, green } from './utils/ui/ansi.mjs';
+import { resolveVerifiedStackServerEndpoint, resolveVerifiedStackUiEndpoint } from './utils/stack/verified_endpoints.mjs';
 
 function pickReviewerMobileSchemeEnv(env) {
   // For review-pr flows, the mobile "dev-client" deep link must target a dev-client app install,
@@ -73,7 +74,6 @@ async function printReviewerStackSummary({ rootDir, stackName, env, wantsMobile 
 
     const serverPort = Number(st?.ports?.server);
     const backendPort = Number(st?.ports?.backend);
-    const uiPort = Number(st?.expo?.webPort ?? st?.expo?.port);
     const mobilePort = Number(st?.expo?.mobilePort ?? st?.expo?.port);
     const runnerLog = String(st?.logs?.runner ?? '').trim();
     const runnerPid = Number(st?.ownerPid);
@@ -81,8 +81,20 @@ async function printReviewerStackSummary({ rootDir, stackName, env, wantsMobile 
     const expoPid = Number(st?.processes?.expoPid);
 
     const internalServerUrl = Number.isFinite(serverPort) && serverPort > 0 ? `http://127.0.0.1:${serverPort}` : '';
-    const uiUrlRaw = Number.isFinite(uiPort) && uiPort > 0 ? `http://localhost:${uiPort}` : '';
-    const uiUrl = uiUrlRaw ? await preferStackLocalhostUrl(uiUrlRaw, { stackName, env }) : '';
+    const runtimeBackedStart = Boolean(String(st?.runtimeSnapshotId ?? '').trim());
+    const serverEndpoint = await resolveVerifiedStackServerEndpoint({ port: serverPort });
+    const verifiedUiEndpoint = await resolveVerifiedStackUiEndpoint({
+      stackName,
+      baseDir,
+      runtimeState: st,
+      expectedProjectDir: getComponentDir(rootDir, 'happier-ui', env),
+      serverPort,
+      serverRunning: serverEndpoint.running,
+      serveUiWanted: true,
+      runtimeBackedStart,
+    });
+    const uiPort = Number(verifiedUiEndpoint.port);
+    const uiUrl = verifiedUiEndpoint.url ? await preferStackLocalhostUrl(verifiedUiEndpoint.url, { stackName, env }) : '';
 
     // eslint-disable-next-line no-console
     console.log('');

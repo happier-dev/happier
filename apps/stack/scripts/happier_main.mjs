@@ -1,8 +1,7 @@
 import './utils/env/env.mjs';
 import { spawnSync } from 'node:child_process';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
-import { createRequire } from 'node:module';
-import { dirname, join } from 'node:path';
+import { existsSync, realpathSync, readFileSync, writeFileSync } from 'node:fs';
+import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { parseArgs } from './utils/cli/args.mjs';
 import { printResult, wantsHelp, wantsJson } from './utils/cli/cli.mjs';
 import { getComponentDir, getRootDir, getStackName, resolveExplicitStackEnvFilePath } from './utils/paths/paths.mjs';
@@ -10,13 +9,21 @@ import { resolveCliHomeDir } from './utils/stack/dirs.mjs';
 import { getPublicServerUrlEnvOverride, resolveServerPortFromEnv } from './utils/server/urls.mjs';
 import { resolveLocalServerPortForStack } from './utils/server/resolve_stack_server_port.mjs';
 import { resolveStackEnvPath } from './utils/paths/paths.mjs';
-import { applyStackActiveServerScopeEnv, buildStackStableScopeId } from './utils/auth/stable_scope_id.mjs';
+import {
+  applyStackActiveServerScopeEnv,
+  applyStackDaemonLifecycleScopeEnv,
+  buildStackStableScopeId,
+} from './utils/auth/stable_scope_id.mjs';
 import { resolvePreferredStackServerIdFromCliSettings } from './utils/auth/credentials_paths.mjs';
-import { readCliDistIntegrity, resolveCliDistEntrypointFromBin } from './utils/cli/cliDistIntegrity.mjs';
+import { resolveCliDistEntrypointFromBin } from './utils/cli/cliDistIntegrity.mjs';
 import { resolveStackRuntimeLaunchContext } from './runtime/launch/resolveStackRuntimeLaunchContext.mjs';
-import { resolveCliRuntimeLaunchSpec } from './runtime/launch/resolveCliRuntimeLaunchSpec.mjs';
+import {
+  applyCliRuntimeLaunchProvenanceEnv,
+  resolveCliRuntimeLaunchSpec,
+} from './runtime/launch/resolveCliRuntimeLaunchSpec.mjs';
+import { resolveCliEntrypoint } from './runtime/launch/resolveCliEntrypoint.mjs';
 import { ensureStackDaemonPreflight, requiresStackDaemonPreflight } from './stack/stack_happier_daemon_preflight.mjs';
-import { resolveJavaScriptRuntimeCommand } from '@happier-dev/cli-common/providers/managedJavaScriptRuntime';
+import { resolveJavaScriptRuntimeCommand } from '@happier-dev/cli-common/agents/managedJavaScriptRuntime';
 import { createServerUrlComparableKey } from '@happier-dev/protocol';
 
 function isNodeRuntimeEntrypoint(entrypoint) {
@@ -186,6 +193,46 @@ function isIdentityScopedCliHomeDir(value) {
   return /(^|[\\/])cli-identities([\\/]|$)/.test(String(value ?? '').trim());
 }
 
+function resolvePhysicalPathAllowMissing(value) {
+  const raw = String(value ?? '').trim();
+  if (!raw) return '';
+  const resolved = resolve(raw);
+  const missingParts = [];
+  let current = resolved;
+
+  while (!existsSync(current)) {
+    const parent = dirname(current);
+    if (parent === current) return resolved;
+    missingParts.unshift(basename(current));
+    current = parent;
+  }
+
+  try {
+    const physicalExisting = realpathSync(current);
+    return missingParts.length > 0 ? resolve(physicalExisting, ...missingParts) : physicalExisting;
+  } catch {
+    return resolved;
+  }
+}
+
+function isPathInside(baseDir, candidate) {
+  const base = String(baseDir ?? '').trim();
+  const value = String(candidate ?? '').trim();
+  if (!base || !value) return false;
+  try {
+    const rel = relative(resolvePhysicalPathAllowMissing(base), resolvePhysicalPathAllowMissing(value));
+    return rel === '' || (!!rel && !rel.startsWith('..') && !isAbsolute(rel));
+  } catch {
+    return false;
+  }
+}
+
+function resolveStackCliHomeOverrideForBase(value, stackBaseDir) {
+  const raw = String(value ?? '').trim();
+  if (!raw) return '';
+  return isPathInside(stackBaseDir, raw) ? raw : '';
+}
+
 function bestEffortSeedStackServerProfileInCliSettings({ cliHomeDir, stackName, cliIdentity, internalServerUrl, publicServerUrl }) {
   const home = String(cliHomeDir ?? '').trim();
   if (!home) return;
@@ -256,34 +303,6 @@ function bestEffortSeedStackServerProfileInCliSettings({ cliHomeDir, stackName, 
   }
 }
 
-function resolveCliEntrypoint(cliDir) {
-  const packagedEntrypoint = resolveCliDistEntrypointFromBin(join(cliDir, 'bin', 'happier.mjs'));
-  const packagedIntegrity = readCliDistIntegrity(packagedEntrypoint);
-  if (packagedIntegrity.ok) {
-    return { kind: 'dist', nodeArgs: [packagedEntrypoint], distEntrypoint: packagedEntrypoint };
-  }
-
-  const srcEntrypoint = join(cliDir, 'src', 'index.ts');
-  if (!existsSync(srcEntrypoint)) {
-    return null;
-  }
-
-  try {
-    const require = createRequire(import.meta.url);
-    const tsxPkgJsonPath = require.resolve('tsx/package.json');
-    const tsxLoaderPath = join(dirname(tsxPkgJsonPath), 'dist', 'esm', 'index.mjs');
-    if (!existsSync(tsxLoaderPath)) return null;
-    return {
-      kind: 'tsx',
-      nodeArgs: ['--import', tsxLoaderPath, srcEntrypoint],
-      distEntrypoint: packagedEntrypoint,
-      tsconfigPath: join(cliDir, 'tsconfig.json'),
-    };
-  } catch {
-    return null;
-  }
-}
-
 async function main() {
   const argv = process.argv.slice(2);
   const { flags } = parseArgs(argv);
@@ -297,7 +316,8 @@ async function main() {
   const rootDir = getRootDir(import.meta.url);
 
   const stackName = (process.env.HAPPIER_STACK_STACK ?? '').toString().trim() || getStackName();
-  const runtimeStatePath = join(resolveStackEnvPath(stackName, process.env).baseDir, 'stack.runtime.json');
+  const stackEnvPathInfo = resolveStackEnvPath(stackName, process.env);
+  const runtimeStatePath = join(stackEnvPathInfo.baseDir, 'stack.runtime.json');
   const serverPort = await resolveLocalServerPortForStack({
     env: process.env,
     stackMode: true,
@@ -326,7 +346,10 @@ async function main() {
           args: cliLaunchSpec.args,
           distEntrypoint: cliLaunchSpec.entrypoint,
       }
-    : resolveCliEntrypoint(cliDir);
+    : resolveCliEntrypoint({
+        cliDir,
+        preferSource: runtimeLaunchContext.runtimeMode.mode === 'source',
+      });
   if (wantsHelp(argv, { flags }) && !resolvedCli) {
     printHstackHappierHelp({ json });
     return;
@@ -349,15 +372,22 @@ async function main() {
   // CLI home dir is explicitly overridden by the stack). This keeps plain `hstack happier` able to
   // reuse the user's CLI settings even when stack helper env vars are present in test/dev harnesses.
   const stackEnvFilePath = resolveExplicitStackEnvFilePath(env);
+  const stackCliHomeOverride = resolveStackCliHomeOverrideForBase(
+    env.HAPPIER_STACK_CLI_HOME_DIR,
+    stackEnvPathInfo.baseDir,
+  );
   const isStackScopedInvocation =
-    Boolean(String(env.HAPPIER_STACK_CLI_HOME_DIR ?? '').trim()) ||
+    Boolean(stackCliHomeOverride) ||
     Boolean(stackEnvFilePath && existsSync(stackEnvFilePath));
   const explicitHomeDir = String(env.HAPPIER_HOME_DIR ?? '').trim();
-  const stackScopedCliHomeDir =
-    (isIdentityScopedCliHomeDir(explicitHomeDir)
+  const explicitStackIdentityHomeDir =
+    isIdentityScopedCliHomeDir(explicitHomeDir) && isPathInside(stackEnvPathInfo.baseDir, explicitHomeDir)
       ? explicitHomeDir
-      : (String(env.HAPPIER_STACK_CLI_HOME_DIR ?? '').trim() ||
-        join(resolveStackEnvPath(stackName, process.env).baseDir, 'cli')));
+      : '';
+  const stackScopedCliHomeDir =
+    (explicitStackIdentityHomeDir
+      ? explicitStackIdentityHomeDir
+      : (stackCliHomeOverride || join(stackEnvPathInfo.baseDir, 'cli')));
   const cliHomeDir = isStackScopedInvocation
     ? resolveCliHomeDir(
         {
@@ -401,17 +431,28 @@ async function main() {
     }
     env.HAPPIER_WEBAPP_URL = settingsDefaults.webappUrl;
     delete env.HAPPIER_ACTIVE_SERVER_ID;
+    delete env.HAPPIER_DAEMON_LIFECYCLE_SCOPE_ID;
   }
-  // Only set default env vars when no explicit server selection flags are present
+  // Only set default env vars when no explicit server selection flags are present.
+  // Stack-scoped invocations must overwrite stale globals loaded by the wrapper bootstrap;
+  // otherwise commands can silently target another stack's daemon/server.
   if (!prefixServerSelection.hasExplicitSelection && !settingsDefaults) {
-    env.HAPPIER_SERVER_URL = env.HAPPIER_SERVER_URL || internalServerUrl;
-    env.HAPPIER_WEBAPP_URL = env.HAPPIER_WEBAPP_URL || publicServerUrl;
+    if (isStackScopedInvocation) {
+      delete env.HAPPIER_PUBLIC_SERVER_URL;
+      delete env.HAPPIER_LOCAL_SERVER_URL;
+      env.HAPPIER_SERVER_URL = internalServerUrl;
+      env.HAPPIER_WEBAPP_URL = publicServerUrl;
+    } else {
+      env.HAPPIER_SERVER_URL = env.HAPPIER_SERVER_URL || internalServerUrl;
+      env.HAPPIER_WEBAPP_URL = env.HAPPIER_WEBAPP_URL || publicServerUrl;
+    }
   }
   if (resolvedCli.kind === 'tsx') {
     // TSX resolves path aliases (`@/...`) using the tsconfig it finds. When the CLI runs from arbitrary
     // working directories (common in stack + daemon flows), it can pick up the wrong tsconfig unless
-    // we provide an explicit path.
-    env.TSX_TSCONFIG_PATH = env.TSX_TSCONFIG_PATH || resolvedCli.tsconfigPath;
+    // we provide the selected checkout's explicit path. Do not preserve an ambient value here: nested
+    // stack/agent invocations often inherit TSX_TSCONFIG_PATH from another checkout.
+    env.TSX_TSCONFIG_PATH = resolvedCli.tsconfigPath;
   }
   if (cliLaunchSpec?.nodeEntrypoint) {
     const runtimeCommand = resolveJavaScriptRuntimeCommand({
@@ -435,9 +476,14 @@ async function main() {
     } else {
       delete env.HAPPIER_ACTIVE_SERVER_ID;
     }
+    delete env.HAPPIER_DAEMON_LIFECYCLE_SCOPE_ID;
   } else if (!settingsDefaults) {
-    env = applyStackActiveServerScopeEnv({
-      env,
+    env = applyStackDaemonLifecycleScopeEnv({
+      env: applyStackActiveServerScopeEnv({
+        env,
+        stackName,
+        cliIdentity: (env.HAPPIER_STACK_CLI_IDENTITY ?? '').toString().trim() || 'default',
+      }),
       stackName,
       cliIdentity: (env.HAPPIER_STACK_CLI_IDENTITY ?? '').toString().trim() || 'default',
     });
@@ -451,6 +497,7 @@ async function main() {
     }
   }
 
+  env = applyCliRuntimeLaunchProvenanceEnv({ env, cliLaunchSpec });
   const forwardedArgv = stripHstackHappierWrapperFlags(argv);
   if (isStackScopedInvocation && requiresStackDaemonPreflight(forwardedArgv)) {
     const cliIdentity = (env.HAPPIER_STACK_CLI_IDENTITY ?? '').toString().trim() || 'default';

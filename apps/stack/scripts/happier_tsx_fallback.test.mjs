@@ -58,6 +58,7 @@ test('hstack happier falls back to tsx when dist entrypoint exists but is incomp
       "console.log('FAKE DIST CLI RUN');",
       '',
     ].join('\n'),
+    distBuildManifest: false,
   });
 
   const env = {

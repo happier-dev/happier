@@ -155,6 +155,45 @@ test('resolveStackCredentialPaths prefers the matching cli settings server id ov
   assert.ok(out.paths.includes(join(dir, 'servers', 'stack_dev__id_default', 'access.key')));
 });
 
+test('findExistingStackCredentialPath accepts the stable scope alias when settings select another matching profile', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'happy-stacks-cred-paths-stable-alias-'));
+  const serverUrl = 'http://127.0.0.1:52753';
+  const settingsServerId = 'android-keyboard-qa';
+  const stableServerId = 'stack_repo-remote-dev__id_default';
+  await writeFile(
+    join(dir, 'settings.json'),
+    JSON.stringify({
+      schemaVersion: 6,
+      activeServerId: settingsServerId,
+      servers: {
+        [settingsServerId]: {
+          id: settingsServerId,
+          name: settingsServerId,
+          serverUrl,
+          localServerUrl: serverUrl,
+          webappUrl: 'http://localhost:52753',
+          createdAt: 1,
+          updatedAt: 1,
+          lastUsedAt: 1,
+        },
+      },
+    }),
+    'utf-8',
+  );
+  const env = { HAPPIER_ACTIVE_SERVER_ID: stableServerId };
+  const out = resolveStackCredentialPaths({ cliHomeDir: dir, serverUrl, env });
+  const stableCredentialPath = join(dir, 'servers', stableServerId, 'access.key');
+  await mkdir(join(dir, 'servers', stableServerId), { recursive: true });
+  await writeFile(stableCredentialPath, 'stable-stack-credential\n', 'utf-8');
+
+  assert.equal(out.serverScopedPath, join(dir, 'servers', settingsServerId, 'access.key'));
+  assert.ok(out.aliasServerScopedPaths.includes(stableCredentialPath));
+  assert.equal(
+    findExistingStackCredentialPath({ cliHomeDir: dir, serverUrl, env }),
+    stableCredentialPath,
+  );
+});
+
 test('resolveStackCredentialPaths prefers explicit active server id when its saved profile matches', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'happy-stacks-cred-paths-explicit-settings-'));
   const serverUrl = 'http://127.0.0.1:3009';
@@ -201,7 +240,7 @@ test('resolveStackCredentialPaths prefers explicit active server id when its sav
   assert.equal(out.serverScopedPath, join(dir, 'servers', 'stack_dev__id_default', 'access.key'));
 });
 
-test('resolveStackDaemonStatePaths prefers the matching cli settings server id over a leaked stable scope alias', async () => {
+test('resolveStackDaemonStatePaths ignores matching cli settings profiles and keeps the stable lifecycle scope canonical', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'happy-stacks-daemon-paths-settings-'));
   const serverUrl = 'http://127.0.0.1:3012';
   const canonicalServerId = 'stack-dev-profile';
@@ -235,9 +274,49 @@ test('resolveStackDaemonStatePaths prefers the matching cli settings server id o
     env: { HAPPIER_ACTIVE_SERVER_ID: 'stack_dev__id_default' },
   });
 
-  assert.equal(out.activeServerId, canonicalServerId);
-  assert.equal(out.serverScopedStatePath, join(dir, 'servers', canonicalServerId, 'daemon.state.json'));
-  assert.ok(out.pairs.some((pair) => pair.statePath === join(dir, 'servers', 'stack_dev__id_default', 'daemon.state.json')));
+  assert.equal(out.activeServerId, 'stack_dev__id_default');
+  assert.equal(out.serverScopedStatePath, join(dir, 'servers', 'stack_dev__id_default', 'daemon.state.json'));
+  assert.equal(out.pairs.some((pair) => pair.statePath === join(dir, 'servers', canonicalServerId, 'daemon.state.json')), false);
+});
+
+test('resolveStackDaemonStatePaths uses the lifecycle scope without changing credential profile selection', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'happy-stacks-daemon-lifecycle-scope-'));
+  const serverUrl = 'http://127.0.0.1:3012';
+  const settingsServerId = 'android-keyboard-qa';
+  const lifecycleScopeId = 'stack_repo-current__id_default';
+  await writeFile(join(dir, 'settings.json'), JSON.stringify({
+    schemaVersion: 6,
+    activeServerId: settingsServerId,
+    servers: {
+      [settingsServerId]: {
+        id: settingsServerId,
+        name: settingsServerId,
+        serverUrl,
+        webappUrl: 'http://localhost:3012',
+        createdAt: 1,
+        updatedAt: 1,
+        lastUsedAt: 1,
+      },
+    },
+  }), 'utf-8');
+  const env = {
+    HAPPIER_ACTIVE_SERVER_ID: settingsServerId,
+    HAPPIER_DAEMON_LIFECYCLE_SCOPE_ID: lifecycleScopeId,
+  };
+
+  const credentialPaths = resolveStackCredentialPaths({ cliHomeDir: dir, serverUrl, env });
+  const daemonPaths = resolveStackDaemonStatePaths({ cliHomeDir: dir, serverUrl, env });
+
+  assert.equal(credentialPaths.activeServerId, settingsServerId);
+  assert.equal(credentialPaths.serverScopedPath, join(dir, 'servers', settingsServerId, 'access.key'));
+  assert.ok(
+    credentialPaths.aliasServerScopedPaths.includes(
+      join(dir, 'servers', lifecycleScopeId, 'access.key'),
+    ),
+  );
+  assert.equal(daemonPaths.activeServerId, lifecycleScopeId);
+  assert.equal(daemonPaths.serverScopedStatePath, join(dir, 'servers', lifecycleScopeId, 'daemon.state.json'));
+  assert.equal(daemonPaths.serverScopedLockPath, join(dir, 'servers', lifecycleScopeId, 'daemon.state.json.lock'));
 });
 
 test('findExistingStackCredentialPath falls back to url-hash path when stable scope path is empty', async () => {

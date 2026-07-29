@@ -82,3 +82,36 @@ test('hstack stack pr rejects names that normalize to an existing stack', async 
     await rm(tmp, { recursive: true, force: true });
   }
 });
+
+test('hstack stack pr preserves an explicitly empty DB provider for fail-closed creation', async () => {
+  const scriptsDir = dirname(fileURLToPath(import.meta.url));
+  const rootDir = dirname(scriptsDir);
+  const tmp = await mkdtemp(join(tmpdir(), 'happier-stack-pr-empty-provider-'));
+
+  try {
+    const env = {
+      ...process.env,
+      HAPPIER_STACK_HOME_DIR: join(tmp, 'home'),
+      HAPPIER_STACK_WORKSPACE_DIR: join(tmp, 'workspace'),
+      HAPPIER_STACK_STORAGE_DIR: join(tmp, 'storage'),
+      HAPPIER_STACK_SANDBOX_DIR: join(tmp, 'sandbox'),
+    };
+    const res = await runNode([
+      join(rootDir, 'scripts', 'stack.mjs'),
+      'pr',
+      'empty-provider',
+      '--repo=not-a-pr',
+      '--db-provider=',
+      '--no-seed-auth',
+      '--json',
+    ], { cwd: rootDir, env });
+    assert.notEqual(res.code, 0, `expected non-zero exit\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
+    assert.match(
+      `${res.stderr}\n${res.stdout}`,
+      /invalid --db-provider/i,
+      `expected canonical provider rejection before PR worktree side effects\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`,
+    );
+  } finally {
+    await rm(tmp, { recursive: true, force: true });
+  }
+});

@@ -5,10 +5,15 @@ import { applyTuiStackAuthScopeEnv } from './stack_scope_env.mjs';
 
 test('applyTuiStackAuthScopeEnv overrides HAPPIER_ACTIVE_SERVER_ID per stack', () => {
   const env = applyTuiStackAuthScopeEnv({
-    env: { HAPPIER_ACTIVE_SERVER_ID: 'main', HAPPIER_STACK_CLI_IDENTITY: 'default' },
+    env: {
+      HAPPIER_ACTIVE_SERVER_ID: 'main',
+      HAPPIER_DAEMON_LIFECYCLE_SCOPE_ID: 'stack_other__id_default',
+      HAPPIER_STACK_CLI_IDENTITY: 'default',
+    },
     stackName: 'repo-dev-a1cc5e0671',
   });
   assert.equal(env.HAPPIER_ACTIVE_SERVER_ID, 'stack_repo-dev-a1cc5e0671__id_default');
+  assert.equal(env.HAPPIER_DAEMON_LIFECYCLE_SCOPE_ID, 'stack_repo-dev-a1cc5e0671__id_default');
 });
 
 test('applyTuiStackAuthScopeEnv deletes HAPPIER_ACTIVE_SERVER_ID when stable scope is disabled', () => {
@@ -17,5 +22,5 @@ test('applyTuiStackAuthScopeEnv deletes HAPPIER_ACTIVE_SERVER_ID when stable sco
     stackName: 'repo-dev-a1cc5e0671',
   });
   assert.equal(env.HAPPIER_ACTIVE_SERVER_ID, undefined);
+  assert.equal(env.HAPPIER_DAEMON_LIFECYCLE_SCOPE_ID, undefined);
 });
-

@@ -293,21 +293,21 @@ test('monorepo port guide can wait for conflict resolution and finish the port',
 
   // Feed the wizard answers step-by-step (readline can be picky under non-tty runners).
   await guide.waitForText('Target monorepo path:', 15_000);
-  sendLine(inputLines[0]);
+  await sendLine(inputLines[0]);
   await guide.waitForText('New branch name:', 15_000);
-  sendLine(inputLines[1]);
+  await sendLine(inputLines[1]);
   await guide.waitForText('Use 3-way merge', 15_000);
-  sendLine(inputLines[2]);
+  await sendLine(inputLines[2]);
   await guide.waitForText('old happy (UI)', 15_000);
-  sendLine(inputLines[3]);
+  await sendLine(inputLines[3]);
   await guide.waitForText('old happy-cli', 15_000);
-  sendLine(inputLines[4]);
+  await sendLine(inputLines[4]);
   await guide.waitForText('old happy-server', 15_000);
-  sendLine(inputLines[5]);
+  await sendLine(inputLines[5]);
 
   // Preflight now runs before starting the port. Accept the default (guided) mode.
   await guide.waitForText('Preflight detected conflicts', 10_000);
-  sendLine('');
+  await sendLine('');
 
   // Wait for the guide to detect a conflict and start waiting for user action.
   await Promise.race([guide.waitForText('guide: conflict detected', 10_000), guide.waitForText('guide: waiting for conflict resolution', 10_000)]);
@@ -321,7 +321,7 @@ test('monorepo port guide can wait for conflict resolution and finish the port',
   await run('git', ['add', 'apps/cli/hello.txt'], { cwd: target, env: gitEnv() });
 
   // Tell the guide to continue.
-  sendLine('');
+  await sendLine('');
 
   const guideResult = await guide.waitForExit(20_000);
   assert.ok(
@@ -393,22 +393,22 @@ test('monorepo port guide quit leaves a plan; port continue resumes and complete
   const sendLine = (line) => guide.sendLine(line);
 
   // Feed the wizard answers step-by-step.
-  await guide.waitForText('Target monorepo path:', 5_000);
-  sendLine(target);
-  await guide.waitForText('New branch name:', 5_000);
-  sendLine('port/test-guide-quit');
-  await guide.waitForText('Use 3-way merge', 5_000);
-  sendLine('1');
-  await guide.waitForText('old happy (UI)', 5_000);
-  sendLine('');
-  await guide.waitForText('old happy-cli', 5_000);
-  sendLine(sourceCli);
-  await guide.waitForText('old happy-server', 5_000);
-  sendLine('');
+  await guide.waitForText('Target monorepo path:', 15_000);
+  await sendLine(target);
+  await guide.waitForText('New branch name:', 15_000);
+  await sendLine('port/test-guide-quit');
+  await guide.waitForText('Use 3-way merge', 15_000);
+  await sendLine('1');
+  await guide.waitForText('old happy (UI)', 15_000);
+  await sendLine('');
+  await guide.waitForText('old happy-cli', 15_000);
+  await sendLine(sourceCli);
+  await guide.waitForText('old happy-server', 15_000);
+  await sendLine('');
 
   // Preflight now runs before starting the port. Accept the default (guided) mode.
   await guide.waitForText('Preflight detected conflicts', 10_000);
-  sendLine('');
+  await sendLine('');
 
   // Wait for conflict prompt, then quit.
   await Promise.race([guide.waitForText('guide: waiting for conflict resolution', 10_000), guide.waitForText('guide: conflict detected', 10_000)]);
@@ -420,7 +420,7 @@ test('monorepo port guide quit leaves a plan; port continue resumes and complete
     const output = guide.getOutput();
     throw new Error(`failed to locate quit option index\nstdout:\n${output.stdout}\nstderr:\n${output.stderr}`);
   }
-  sendLine(quitMatch[1]);
+  await sendLine(quitMatch[1]);
   const quitResult = await guide.waitForExit(10_000);
   assert.notEqual(
     quitResult.code,

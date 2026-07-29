@@ -103,6 +103,58 @@ test('parseSelfHostInvocation supports direct command invocation', () => {
   assert.deepEqual(parsed.rest, ['--json']);
 });
 
+test('self-host install-time SQLite migration delegates to the installed canonical server-light binary', async () => {
+  assert.equal(typeof selfHostRuntimeModule.applySelfHostSqliteMigrationsAtInstallTime, 'function');
+  const calls = [];
+  const env = {
+    HAPPIER_SQLITE_AUTO_MIGRATE: '0',
+    HAPPIER_SQLITE_MIGRATIONS_DIR: '/var/lib/happier/migrations/sqlite',
+    DATABASE_URL: 'file:/var/lib/happier/happier-server-light.sqlite',
+  };
+  const config = {
+    installRoot: '/opt/happier',
+    serverBinaryPath: '/opt/happier/bin/happier-server',
+  };
+
+  await selfHostRuntimeModule.applySelfHostSqliteMigrationsAtInstallTime({
+    config,
+    env,
+    runCommandImpl: (cmd, args, options) => {
+      calls.push({ cmd, args, options });
+      return { status: 0 };
+    },
+  });
+
+  assert.deepEqual(calls, [
+    {
+      cmd: config.serverBinaryPath,
+      args: ['--migrate-only'],
+      options: {
+        cwd: config.installRoot,
+        env,
+        stdio: 'pipe',
+      },
+    },
+  ]);
+});
+
+test('self-host install-time SQLite migration preserves canonical binary failure', async () => {
+  const failure = new Error('canonical migration exit 23');
+  await assert.rejects(
+    selfHostRuntimeModule.applySelfHostSqliteMigrationsAtInstallTime({
+      config: {
+        installRoot: '/opt/happier',
+        serverBinaryPath: '/opt/happier/bin/happier-server',
+      },
+      env: { HAPPIER_SQLITE_AUTO_MIGRATE: '0' },
+      runCommandImpl: () => {
+        throw failure;
+      },
+    }),
+    (error) => error === failure,
+  );
+});
+
 test('pickReleaseAsset returns matching archive and checksum assets', () => {
   const assets = [
     { name: 'happier-server-v1.2.3-linux-x64.tar.gz', browser_download_url: 'https://example.test/server.tar.gz' },
@@ -1523,7 +1575,7 @@ test('renderSelfHostStatusText shows disabled auto-update config even if job sta
   assert.match(text, /health:\s*failed/);
 });
 
-test('buildSelfHostDoctorChecks does not require external minisign and includes ui-web checks when installed', () => {
+test('buildSelfHostDoctorChecks does not require external archive or minisign tools', () => {
   const checks = buildSelfHostDoctorChecks(
     {
       platform: 'linux',
@@ -1534,12 +1586,12 @@ test('buildSelfHostDoctorChecks does not require external minisign and includes 
     },
     {
       state: { uiWeb: { installed: true } },
-      commandExists: (name) => new Set(['tar', 'systemctl']).has(name),
+      commandExists: (name) => name === 'systemctl',
       pathExists: (p) => p.endsWith('happier-server') || p.endsWith('server.env') || p.endsWith('index.html'),
     },
   );
 
-  assert.ok(checks.find((c) => c.name === 'tar')?.ok);
+  assert.equal(checks.some((c) => c.name === 'tar'), false);
   assert.ok(checks.find((c) => c.name === 'systemctl')?.ok);
   assert.equal(checks.some((c) => c.name === 'minisign'), false);
   assert.ok(checks.find((c) => c.name === 'ui-web')?.ok);

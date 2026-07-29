@@ -1,17 +1,13 @@
-import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { chmod, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { chmod, lstat, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { dirname, extname, join, resolve } from 'node:path';
 
 import { coerceHappyMonorepoRootFromPath } from '../paths/paths.mjs';
+import { collectWorkspacePackageJsonPaths } from './workspace_package_manifests.mjs';
 
 const STACK_TOOLING_FALLBACK_PACKAGE_NAMES = ['typescript', 'tsx', 'prisma'];
 const NODE_BACKED_BIN_FILE_EXTENSIONS = /\.(?:[cm]?[jt]sx?)$/i;
-
-function sha256Hex(value) {
-  return createHash('sha256').update(String(value ?? ''), 'utf-8').digest('hex');
-}
 
 function unique(values) {
   return [...new Set((values ?? []).map((value) => String(value ?? '').trim()).filter(Boolean))];
@@ -70,8 +66,10 @@ async function readPackageDependencyNames(dir) {
   }
 }
 
-async function resolveWorkspaceToolCommandSpecs(dir) {
-  const resolutionRoots = unique([dir, coerceHappyMonorepoRootFromPath(dir)]);
+async function resolveWorkspaceToolCommandSpecs(dir, { outputBinDir = null } = {}) {
+  const monorepoRoot = coerceHappyMonorepoRootFromPath(dir);
+  const isolatedOutputBinDir = outputBinDir ? resolve(outputBinDir) : null;
+  const resolutionRoots = unique([dir, monorepoRoot]);
   const candidatePackageNames = unique(
     [
       ...(await Promise.all(resolutionRoots.map((resolutionRoot) => readPackageDependencyNames(resolutionRoot)))).flat(),
@@ -94,7 +92,7 @@ async function resolveWorkspaceToolCommandSpecs(dir) {
       const packageJson = req(packageJsonPath);
       const binRecord = resolvePackageBinRecord(packageJson);
       const packageNodeModulesDir = dirname(packageDir);
-      const binDir = join(packageNodeModulesDir, '.bin');
+      const binDir = isolatedOutputBinDir ?? join(packageNodeModulesDir, '.bin');
       for (const [commandName, relativeTarget] of Object.entries(binRecord)) {
         const targetPath = resolve(packageDir, relativeTarget);
         if (!existsSync(targetPath)) continue;
@@ -103,6 +101,35 @@ async function resolveWorkspaceToolCommandSpecs(dir) {
         seenEntries.add(entryKey);
         specs.push({
           binDir,
+          commandName,
+          targetPath,
+        });
+      }
+    }
+  }
+
+  if (monorepoRoot) {
+    const workspaceBinDir = isolatedOutputBinDir ?? join(monorepoRoot, 'node_modules', '.bin');
+    const candidatePackageNameSet = new Set(candidatePackageNames);
+    for (const packageJsonPath of await collectWorkspacePackageJsonPaths(monorepoRoot)) {
+      let packageJson = null;
+      try {
+        packageJson = JSON.parse(await readFile(packageJsonPath, 'utf-8'));
+      } catch {
+        continue;
+      }
+      const packageName = typeof packageJson?.name === 'string' ? packageJson.name.trim() : '';
+      if (!candidatePackageNameSet.has(packageName)) continue;
+
+      const packageDir = dirname(packageJsonPath);
+      for (const [commandName, relativeTarget] of Object.entries(resolvePackageBinRecord(packageJson))) {
+        const targetPath = resolve(packageDir, relativeTarget);
+        if (!existsSync(targetPath)) continue;
+        const entryKey = `${workspaceBinDir}:${commandName}`;
+        if (seenEntries.has(entryKey)) continue;
+        seenEntries.add(entryKey);
+        specs.push({
+          binDir: workspaceBinDir,
           commandName,
           targetPath,
         });
@@ -158,6 +185,10 @@ function createTempSiblingPath(targetPath) {
 }
 
 async function writeExecutableFileAtomically(targetPath, contents) {
+  const existing = await readRegularTextFile(targetPath);
+  if (existing?.contents === contents && (existing.mode & 0o111) !== 0) {
+    return;
+  }
   const tempPath = createTempSiblingPath(targetPath);
   try {
     await writeFile(tempPath, contents, { encoding: 'utf-8', mode: 0o755 });
@@ -170,6 +201,10 @@ async function writeExecutableFileAtomically(targetPath, contents) {
 }
 
 async function writeTextFileAtomically(targetPath, contents) {
+  const existing = await readRegularTextFile(targetPath);
+  if (existing?.contents === contents) {
+    return;
+  }
   const tempPath = createTempSiblingPath(targetPath);
   try {
     await writeFile(tempPath, contents, 'utf-8');
@@ -177,6 +212,21 @@ async function writeTextFileAtomically(targetPath, contents) {
   } catch (error) {
     await rm(tempPath, { force: true });
     throw error;
+  }
+}
+
+async function readRegularTextFile(path) {
+  try {
+    const fileStat = await lstat(path);
+    if (!fileStat.isFile()) {
+      return null;
+    }
+    return {
+      contents: await readFile(path, 'utf-8'),
+      mode: fileStat.mode,
+    };
+  } catch {
+    return null;
   }
 }
 
@@ -198,18 +248,12 @@ async function resolveCommandTargetLaunchMode(targetPath) {
   return 'direct';
 }
 
-async function ensureWorkspaceToolBins(dir) {
-  const commandSpecs = await resolveWorkspaceToolCommandSpecs(dir);
+async function ensureWorkspaceToolBins(dir, options = {}) {
+  const commandSpecs = await resolveWorkspaceToolCommandSpecs(dir, options);
   if (commandSpecs.length === 0) {
     return [];
   }
 
-  const shimFingerprint = sha256Hex(
-    commandSpecs
-      .map((spec) => `${spec.binDir}:${spec.commandName}:${spec.targetPath}`)
-      .sort()
-      .join('\n'),
-  );
   for (const spec of commandSpecs) {
     await writeCommandShim({
       binDir: spec.binDir,
@@ -217,11 +261,16 @@ async function ensureWorkspaceToolBins(dir) {
       targetPath: spec.targetPath,
     });
   }
-  void shimFingerprint;
   return unique(commandSpecs.map((spec) => spec.binDir));
 }
 
-export async function resolveWorkspaceToolBinDirs(dir) {
-  const createdBinDirs = await ensureWorkspaceToolBins(dir);
-  return unique([...createdBinDirs, ...resolveNodeModulesBinDirs(dir)]).filter((candidate) => existsSync(candidate));
+export async function resolveWorkspaceToolBinDirs(dir, { outputBinDir = null } = {}) {
+  const isolatedOutputBinDir = outputBinDir ? resolve(outputBinDir) : null;
+  const createdBinDirs = await ensureWorkspaceToolBins(dir, {
+    outputBinDir: isolatedOutputBinDir,
+  });
+  const candidateDirs = isolatedOutputBinDir
+    ? [isolatedOutputBinDir]
+    : [...createdBinDirs, ...resolveNodeModulesBinDirs(dir)];
+  return unique(candidateDirs).filter((candidate) => existsSync(candidate));
 }

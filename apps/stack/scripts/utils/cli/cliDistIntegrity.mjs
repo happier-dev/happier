@@ -1,10 +1,12 @@
 import { spawn } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { pathToFileURL } from 'node:url';
+
+import cliDistBuildManifest from './cliDistBuildManifestLoader.mjs';
 
 export const CLI_DIST_INTEGRITY_PROBE_ENV = 'HAPPIER_CLI_DIST_INTEGRITY_PROBE';
-export const CLI_DIST_BUILD_MANIFEST = '.build-manifest.json';
+export const CLI_DIST_BUILD_MANIFEST = cliDistBuildManifest.CLI_DIST_BUILD_MANIFEST;
+export const DEFAULT_CLI_DIST_RUNTIME_IMPORT_TIMEOUT_MS = 120_000;
 
 export function isCliScriptEntrypoint(pathLike) {
   const value = String(pathLike ?? '').trim().toLowerCase();
@@ -41,7 +43,7 @@ export function resolveCliDistEntrypointFromBin(cliBin) {
 }
 
 export function readCliDistIntegrity(entrypoint) {
-  return readCliDistBuildManifest(entrypoint);
+  return cliDistBuildManifest.readCliDistBuildManifest(entrypoint);
 }
 
 export function readCliDistBuildManifest(entrypoint) {
@@ -50,8 +52,31 @@ export function readCliDistBuildManifest(entrypoint) {
       ok: false,
       reason: 'missing_entrypoint',
       fingerprint: null,
+      maxMtimeMs: null,
       fileCount: 0,
       manifestPath: null,
+    };
+  }
+  try {
+    const entrypointStat = statSync(entrypoint);
+    if (!entrypointStat.isFile() || entrypointStat.size === 0) {
+      return {
+        ok: false,
+        reason: 'empty_entrypoint',
+        fingerprint: null,
+        maxMtimeMs: null,
+        fileCount: 0,
+        manifestPath: join(dirname(String(entrypoint)), CLI_DIST_BUILD_MANIFEST),
+      };
+    }
+  } catch {
+    return {
+      ok: false,
+      reason: 'unreadable_entrypoint',
+      fingerprint: null,
+      maxMtimeMs: null,
+      fileCount: 0,
+      manifestPath: join(dirname(String(entrypoint)), CLI_DIST_BUILD_MANIFEST),
     };
   }
   const manifestPath = join(dirname(String(entrypoint)), CLI_DIST_BUILD_MANIFEST);
@@ -60,18 +85,20 @@ export function readCliDistBuildManifest(entrypoint) {
       ok: false,
       reason: 'missing_build_manifest',
       fingerprint: null,
+      maxMtimeMs: null,
       fileCount: 0,
       manifestPath,
     };
   }
   try {
     const manifest = JSON.parse(readFileSync(manifestPath, 'utf-8'));
-    const fingerprint = String(manifest?.fingerprint ?? '').trim();
-    if (!/^[a-f0-9]{16}$/i.test(fingerprint)) {
+    const fingerprint = String(manifest?.fingerprint ?? '').trim().toLowerCase();
+    if (!/^[a-f0-9]{16}$/.test(fingerprint)) {
       return {
         ok: false,
         reason: 'invalid_build_manifest_fingerprint',
         fingerprint: null,
+        maxMtimeMs: null,
         fileCount: 0,
         manifestPath,
       };
@@ -80,7 +107,8 @@ export function readCliDistBuildManifest(entrypoint) {
     return {
       ok: true,
       reason: 'manifest',
-      fingerprint: fingerprint.toLowerCase(),
+      fingerprint,
+      maxMtimeMs: null,
       fileCount: Number.isFinite(fileCount) && fileCount >= 0 ? Math.trunc(fileCount) : 0,
       manifestPath,
       manifest,
@@ -90,13 +118,15 @@ export function readCliDistBuildManifest(entrypoint) {
       ok: false,
       reason: 'invalid_build_manifest',
       fingerprint: null,
+      maxMtimeMs: null,
       fileCount: 0,
       manifestPath,
     };
   }
 }
 
-export const readCliDistClosureFingerprint = readCliDistBuildManifest;
+export const readCliDistClosureFingerprint = cliDistBuildManifest.readCliDistClosureFingerprint;
+export const writeCliDistBuildManifest = cliDistBuildManifest.writeCliDistBuildManifest;
 
 export async function probeCliDistRuntimeImport(entrypoint, options = {}) {
   const entry = String(entrypoint ?? '').trim();
@@ -104,17 +134,22 @@ export async function probeCliDistRuntimeImport(entrypoint, options = {}) {
     throw new Error('[cli-dist] runtime import probe missing entrypoint');
   }
   const nodeExecutable = options.nodeExecutable ?? process.execPath;
-  const timeoutMsRaw = Number(options.timeoutMs ?? 30_000);
-  const timeoutMs = Number.isFinite(timeoutMsRaw) && timeoutMsRaw > 0 ? Math.trunc(timeoutMsRaw) : 30_000;
+  const timeoutMsRaw = Number(options.timeoutMs ?? DEFAULT_CLI_DIST_RUNTIME_IMPORT_TIMEOUT_MS);
+  const timeoutMs = Number.isFinite(timeoutMsRaw) && timeoutMsRaw > 0
+    ? Math.trunc(timeoutMsRaw)
+    : DEFAULT_CLI_DIST_RUNTIME_IMPORT_TIMEOUT_MS;
   const env = {
     ...process.env,
     ...(options.env ?? {}),
-    [CLI_DIST_INTEGRITY_PROBE_ENV]: '1',
+    // Run the real daemon command loader rather than suppressing CLI dispatch.
+    // This reaches command-owned lazy imports while --help keeps the probe side-effect free.
+    [CLI_DIST_INTEGRITY_PROBE_ENV]: 'daemon-command',
+    HAPPIER_CLI_RUNTIME_DISABLE: '1',
+    HAPPIER_CLI_UPDATE_CHECK: '0',
   };
-  const source = `await import(${JSON.stringify(pathToFileURL(entry).href)});`;
 
   await new Promise((resolve, reject) => {
-    const child = spawn(nodeExecutable, ['--input-type=module', '--eval', source], {
+    const child = spawn(nodeExecutable, [entry, 'daemon', '--help'], {
       cwd: options.cwd,
       env,
       stdio: ['ignore', 'ignore', 'pipe'],

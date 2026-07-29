@@ -6,13 +6,14 @@ import { parseServerComponentFromEnv } from '../stack/stack_environment.mjs';
 import { getRepoDir } from '../utils/paths/paths.mjs';
 import { runCapture } from '../utils/proc/proc.mjs';
 import { createRuntimeFingerprint } from '../runtime/shared/runtime_fingerprint.mjs';
+import { applyEffectiveDbProviderEnv } from '../utils/server/effective_db_provider.mjs';
 
 function resolveDbProvider(env, serverComponent) {
-  const raw = (env.HAPPIER_DB_PROVIDER ?? env.HAPPY_DB_PROVIDER ?? '').toString().trim().toLowerCase();
-  if (serverComponent === 'happier-server') {
-    return raw === 'mysql' ? 'mysql' : 'postgres';
-  }
-  return raw === 'pglite' ? 'pglite' : 'sqlite';
+  return applyEffectiveDbProviderEnv({
+    serverComponentName: serverComponent,
+    env,
+    targetEnv: { ...env },
+  });
 }
 
 async function readGitHead(repoDir) {

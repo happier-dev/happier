@@ -187,6 +187,7 @@ test('ensureDevExpoServer does not reserve prior metro port when restart cannot 
       baseEnv: {
         ...process.env,
         HAPPIER_STACK_EXPO_RESTART_MAX_ATTEMPTS: '0',
+        HAPPIER_STACK_SKIP_REFRESH_DEPS: '1',
         HAPPIER_STACK_EXPO_DEV_PORT: String(priorPort),
         HAPPIER_STACK_EXPO_DEV_PORT_STRATEGY: 'ephemeral',
       },
@@ -263,6 +264,7 @@ test('ensureDevExpoServer restarts when running Expo state targets a different A
       baseEnv: {
         ...process.env,
         HAPPIER_STACK_EXPO_RESTART_MAX_ATTEMPTS: '0',
+        HAPPIER_STACK_SKIP_REFRESH_DEPS: '1',
         HAPPIER_STACK_EXPO_DEV_PORT: String(priorPort),
         HAPPIER_STACK_EXPO_DEV_PORT_STRATEGY: 'ephemeral',
       },
@@ -350,6 +352,7 @@ test('ensureDevExpoServer restarts mobile dev-client when running Expo state tar
       baseEnv: {
         ...process.env,
         HAPPIER_STACK_EXPO_RESTART_MAX_ATTEMPTS: '0',
+        HAPPIER_STACK_SKIP_REFRESH_DEPS: '1',
         HAPPIER_STACK_EXPO_DEV_PORT: String(priorPort),
         HAPPIER_STACK_EXPO_DEV_PORT_STRATEGY: 'ephemeral',
         HAPPIER_STACK_MOBILE_SCHEME: 'happier-dev',
@@ -373,6 +376,99 @@ test('ensureDevExpoServer restarts mobile dev-client when running Expo state tar
     assert.equal(nextState.apiServerUrl, 'http://192.168.1.20:3014');
     assert.equal(nextState.devClientEnabled, true);
     assert.equal(await waitForPidExitForTest(previousExpoPid), true, 'expected automatic API mismatch replacement to stop prior stack-owned Expo process');
+  } finally {
+    for (const child of children) {
+      killProcessTreeByPid(child?.pid);
+    }
+    killProcessTreeByPid(previousExpoPid);
+    await rm(tmp, { recursive: true, force: true });
+  }
+});
+
+test('initial Expo replacement preserves producer identity and refuses a same-pid successor', async () => {
+  const tmp = await mkdtemp(join(tmpdir(), 'hstack-expo-replacement-successor-'));
+  const children = [];
+  let previousExpoPid = null;
+  try {
+    const uiDir = join(tmp, 'ui');
+    await mkdir(join(uiDir, 'node_modules', '.bin'), { recursive: true });
+    await mkdir(join(uiDir, 'node_modules'), { recursive: true });
+    await writeFile(join(uiDir, 'package.json'), JSON.stringify({ name: 'fake-ui', private: true }) + '\n', 'utf-8');
+    const expoBin = join(uiDir, 'node_modules', '.bin', 'expo');
+    await writeFile(expoBin, ['#!/usr/bin/env node', "setInterval(() => {}, 1000);"].join('\n') + '\n', 'utf-8');
+    await chmod(expoBin, 0o755);
+
+    const projectDir = uiDir;
+    const paths = getExpoStatePaths({
+      baseDir: tmp,
+      kind: 'expo-dev',
+      projectDir,
+      stateFileName: 'expo.state.json',
+    });
+    const priorPort = await listenEphemeralPort();
+    const stackName = 'qa-expo-replacement-successor';
+    const envPath = join(tmp, 'stack.env');
+    const previousExpo = await spawnOwnedMetroLikeExpoProcess({
+      port: priorPort,
+      projectDir,
+      expoHomeDir: paths.expoHomeDir,
+      stackName,
+      envPath,
+    });
+    previousExpoPid = previousExpo.pid;
+    await writePidState(paths.statePath, {
+      pid: previousExpoPid,
+      port: priorPort,
+      uiDir,
+      projectDir,
+      startedAt: new Date().toISOString(),
+      webEnabled: true,
+      devClientEnabled: false,
+      host: 'lan',
+      apiServerUrl: 'http://127.0.0.1:3012',
+    });
+    const recordedState = JSON.parse(await readFile(paths.statePath, 'utf-8'));
+    await writeFile(
+      paths.statePath,
+      JSON.stringify({
+        ...recordedState,
+        processInstanceFingerprint: 'darwin-ps:recorded-predecessor',
+      }) + '\n',
+      'utf-8',
+    );
+
+    const result = await ensureDevExpoServer({
+      startUi: true,
+      startMobile: false,
+      uiDir,
+      autostart: { baseDir: tmp },
+      baseEnv: {
+        ...process.env,
+        HAPPIER_STACK_EXPO_RESTART_MAX_ATTEMPTS: '0',
+        HAPPIER_STACK_SKIP_REFRESH_DEPS: '1',
+        HAPPIER_STACK_EXPO_DEV_PORT: String(priorPort),
+        HAPPIER_STACK_EXPO_DEV_PORT_STRATEGY: 'ephemeral',
+        HAPPIER_STACK_STACK: stackName,
+        HAPPIER_STACK_ENV_FILE: envPath,
+      },
+      apiServerUrl: 'http://127.0.0.1:3014',
+      restart: false,
+      stackMode: true,
+      runtimeStatePath: null,
+      stackName,
+      envPath,
+      children,
+      quiet: true,
+    });
+
+    assert.equal(result.ok, true);
+    assert.equal(result.skipped, false);
+    assert.notEqual(result.port, priorPort);
+    assert.equal(
+      isPidAliveForTest(previousExpoPid),
+      true,
+      'the current same-pid occupant must not inherit predecessor cleanup authority',
+    );
   } finally {
     for (const child of children) {
       killProcessTreeByPid(child?.pid);
@@ -434,6 +530,7 @@ test('ensureDevExpoServer in stack mode does not adopt port-only fallback as alr
       baseEnv: {
         ...process.env,
         HAPPIER_STACK_EXPO_RESTART_MAX_ATTEMPTS: '0',
+        HAPPIER_STACK_SKIP_REFRESH_DEPS: '1',
         HAPPIER_STACK_EXPO_DEV_PORT: String(priorPort),
         HAPPIER_STACK_EXPO_DEV_PORT_STRATEGY: 'ephemeral',
       },
@@ -494,6 +591,7 @@ test('ensureDevExpoServer fails closed in stable port mode when forced expo port
           baseEnv: {
             ...process.env,
             HAPPIER_STACK_EXPO_RESTART_MAX_ATTEMPTS: '0',
+            HAPPIER_STACK_SKIP_REFRESH_DEPS: '1',
             HAPPIER_STACK_EXPO_DEV_PORT: String(occupiedPort),
             HAPPIER_STACK_EXPO_DEV_PORT_STRATEGY: 'stable',
             HAPPIER_STACK_EXPO_DEV_PORT_BASE: '51000',
@@ -548,6 +646,7 @@ test('ensureDevExpoServer in stable port mode stops stack-owned leftover Expo pr
 
     const stackName = 'qa-owned-expo-leftover';
     const cliHomeDir = join(tmp, 'cli');
+    const envPath = join(tmp, 'stack.env');
     await mkdir(cliHomeDir, { recursive: true });
 
     // Spawn a process that (1) holds the port and (2) carries the same Expo isolation env marker,
@@ -572,12 +671,13 @@ test('ensureDevExpoServer in stable port mode stops stack-owned leftover Expo pr
           __UNSAFE_EXPO_HOME_DIRECTORY: paths.expoHomeDir,
           HAPPIER_STACK_STACK: stackName,
           HAPPIER_STACK_CLI_HOME_DIR: cliHomeDir,
+          HAPPIER_STACK_ENV_FILE: envPath,
+          HAPPIER_STACK_PROCESS_KIND: 'expo',
         },
       }
     );
     holderPid = holder.pid;
 
-    const envPath = join(tmp, 'stack.env');
     await writeFile(envPath, `HAPPIER_STACK_EXPO_DEV_PORT=${occupiedPort}\n`, 'utf-8');
 
     const result = await ensureDevExpoServer({
@@ -588,6 +688,7 @@ test('ensureDevExpoServer in stable port mode stops stack-owned leftover Expo pr
       baseEnv: {
         ...process.env,
         HAPPIER_STACK_EXPO_RESTART_MAX_ATTEMPTS: '0',
+        HAPPIER_STACK_SKIP_REFRESH_DEPS: '1',
         HAPPIER_STACK_EXPO_DEV_PORT: String(occupiedPort),
         HAPPIER_STACK_EXPO_DEV_PORT_STRATEGY: 'stable',
         HAPPIER_STACK_CLI_HOME_DIR: cliHomeDir,
@@ -604,6 +705,103 @@ test('ensureDevExpoServer in stable port mode stops stack-owned leftover Expo pr
 
     assert.equal(result.ok, true);
     assert.equal(result.port, occupiedPort);
+  } finally {
+    for (const child of children) {
+      killProcessTreeByPid(child?.pid);
+    }
+    killProcessTreeByPid(holderPid);
+    await rm(tmp, { recursive: true, force: true });
+  }
+});
+
+test('stable-port Expo cleanup refuses a same-pid successor recorded with predecessor identity', async () => {
+  const tmp = await mkdtemp(join(tmpdir(), 'hstack-expo-stable-successor-'));
+  const children = [];
+  let holderPid = null;
+  try {
+    const uiDir = join(tmp, 'ui');
+    await mkdir(join(uiDir, 'node_modules', '.bin'), { recursive: true });
+    await mkdir(join(uiDir, 'node_modules'), { recursive: true });
+    await writeFile(join(uiDir, 'package.json'), JSON.stringify({ name: 'fake-ui', private: true }) + '\n', 'utf-8');
+    const expoBin = join(uiDir, 'node_modules', '.bin', 'expo');
+    await writeFile(expoBin, ['#!/usr/bin/env node', "setInterval(() => {}, 1000);"].join('\n') + '\n', 'utf-8');
+    await chmod(expoBin, 0o755);
+
+    const occupiedPort = await listenEphemeralPort();
+    const projectDir = uiDir;
+    const paths = getExpoStatePaths({
+      baseDir: tmp,
+      kind: 'expo-dev',
+      projectDir,
+      stateFileName: 'expo.state.json',
+    });
+    const stackName = 'qa-expo-stable-successor';
+    const cliHomeDir = join(tmp, 'cli');
+    const envPath = join(tmp, 'stack.env');
+    await mkdir(cliHomeDir, { recursive: true });
+    const holder = await spawnOwnedMetroLikeExpoProcess({
+      port: occupiedPort,
+      projectDir,
+      expoHomeDir: paths.expoHomeDir,
+      stackName,
+      envPath,
+      cliHomeDir,
+    });
+    holderPid = holder.pid;
+    await writePidState(paths.statePath, {
+      pid: holderPid,
+      port: occupiedPort,
+      uiDir,
+      projectDir: join(tmp, 'different-project'),
+      startedAt: new Date().toISOString(),
+      webEnabled: true,
+      devClientEnabled: false,
+      host: 'lan',
+      apiServerUrl: 'http://127.0.0.1:1',
+    });
+    const recordedState = JSON.parse(await readFile(paths.statePath, 'utf-8'));
+    await writeFile(
+      paths.statePath,
+      JSON.stringify({
+        ...recordedState,
+        processInstanceFingerprint: 'darwin-ps:recorded-predecessor',
+      }) + '\n',
+      'utf-8',
+    );
+    await writeFile(envPath, `HAPPIER_STACK_EXPO_DEV_PORT=${occupiedPort}\n`, 'utf-8');
+
+    await assert.rejects(
+      () => ensureDevExpoServer({
+        startUi: true,
+        startMobile: false,
+        uiDir,
+        autostart: { baseDir: tmp },
+        baseEnv: {
+          ...process.env,
+          HAPPIER_STACK_EXPO_RESTART_MAX_ATTEMPTS: '0',
+          HAPPIER_STACK_EXPO_DEV_PORT: String(occupiedPort),
+          HAPPIER_STACK_EXPO_DEV_PORT_STRATEGY: 'stable',
+          HAPPIER_STACK_CLI_HOME_DIR: cliHomeDir,
+          HAPPIER_STACK_STACK: stackName,
+          HAPPIER_STACK_ENV_FILE: envPath,
+          HAPPIER_STACK_SKIP_REFRESH_DEPS: '1',
+        },
+        apiServerUrl: 'http://127.0.0.1:1',
+        restart: false,
+        stackMode: true,
+        runtimeStatePath: null,
+        stackName,
+        envPath,
+        children,
+        quiet: true,
+      }),
+      /expo port/i,
+    );
+    assert.equal(
+      isPidAliveForTest(holderPid),
+      true,
+      'stable-port cleanup must not kill a same-pid successor',
+    );
   } finally {
     for (const child of children) {
       killProcessTreeByPid(child?.pid);

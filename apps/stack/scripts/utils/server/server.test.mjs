@@ -4,8 +4,10 @@ import { createServer } from 'node:http';
 import { EventEmitter } from 'node:events';
 
 import {
+  createServerReadinessDeadline,
   fetchHappierHealth,
   isHappierServerRunning,
+  resolveServerMigrationTimeoutMs,
   resolveServerReadyTimeoutMs,
   waitForHappierHealthOk,
   waitForServerReady,
@@ -170,6 +172,96 @@ test('waitForServerReady fails early when the child process exits before health 
   );
 });
 
+test('migration start switches readiness waiting to the bounded migration deadline', async () => {
+  let readyAt = 0;
+  const fixture = await listenServer((_req, res) => {
+    if (!readyAt) readyAt = Date.now() + 120;
+    if (Date.now() >= readyAt) {
+      res.statusCode = 200;
+      res.setHeader('content-type', 'application/json');
+      res.end(JSON.stringify({ status: 'ok', service: 'happier-server' }));
+      return;
+    }
+    res.statusCode = 503;
+    res.end('migrating');
+  });
+  const startupDeadline = createServerReadinessDeadline({
+    readinessTimeoutMs: 50,
+    migrationTimeoutMs: 2_000,
+  });
+  startupDeadline.observeLine({
+    stream: 'stdout',
+    line: '{"happierStackTransition":"migration_started"}',
+  });
+
+  try {
+    await waitForServerReady(fixture.url, {
+      timeoutMs: 50,
+      intervalMs: 20,
+      startupDeadline,
+    });
+  } finally {
+    await fixture.close();
+  }
+});
+
+test('migration completion starts a fresh ordinary readiness deadline', async () => {
+  const fixture = await listenServer((_req, res) => {
+    res.statusCode = 503;
+    res.end('starting');
+  });
+  const startupDeadline = createServerReadinessDeadline({ readinessTimeoutMs: 50, migrationTimeoutMs: 2_000 });
+  startupDeadline.observeLine({ line: '{"happierStackTransition":"migration_started"}' });
+  setTimeout(() => {
+    startupDeadline.observeLine({ line: '{"happierStackTransition":"migration_completed"}' });
+  }, 30);
+  const startedAt = Date.now();
+
+  try {
+    await assert.rejects(
+      waitForServerReady(fixture.url, { timeoutMs: 50, intervalMs: 10, startupDeadline }),
+      /Timed out waiting for server/,
+    );
+    assert.ok(Date.now() - startedAt < 1_000, 'completion must restore the short readiness deadline');
+  } finally {
+    await fixture.close();
+  }
+});
+
+test('migration deadline stays bounded and child early exit still wins', async () => {
+  const fixture = await listenServer((_req, res) => {
+    res.statusCode = 503;
+    res.end('migrating');
+  });
+  const boundedDeadline = createServerReadinessDeadline({ readinessTimeoutMs: 30, migrationTimeoutMs: 70 });
+  boundedDeadline.observeLine({ line: '{"happierStackTransition":"migration_started"}' });
+  try {
+    await assert.rejects(
+      waitForServerReady(fixture.url, { timeoutMs: 30, intervalMs: 10, startupDeadline: boundedDeadline }),
+      /migration.*timed out|timed out.*migration/i,
+    );
+    const child = new EventEmitter();
+    child.exitCode = null;
+    const exitDeadline = createServerReadinessDeadline({ readinessTimeoutMs: 30, migrationTimeoutMs: 500 });
+    exitDeadline.observeLine({ line: '{"happierStackTransition":"migration_started"}' });
+    setTimeout(() => {
+      child.exitCode = 2;
+      child.emit('exit', 2, null);
+    }, 20);
+    await assert.rejects(
+      waitForServerReady(fixture.url, {
+        timeoutMs: 30,
+        intervalMs: 10,
+        childProcess: child,
+        startupDeadline: exitDeadline,
+      }),
+      /exited before becoming ready/,
+    );
+  } finally {
+    await fixture.close();
+  }
+});
+
 test('resolveServerReadyTimeoutMs prefers an explicit override and otherwise gives light server more time', () => {
   assert.equal(resolveServerReadyTimeoutMs({ serverComponentName: 'happier-server-light', env: {} }), 120_000);
   assert.equal(resolveServerReadyTimeoutMs({ serverComponentName: 'happier-server', env: {} }), 60_000);
@@ -179,5 +271,14 @@ test('resolveServerReadyTimeoutMs prefers an explicit override and otherwise giv
       env: { HAPPIER_STACK_SERVER_READY_TIMEOUT_MS: '90000' },
     }),
     90_000,
+  );
+  assert.equal(resolveServerMigrationTimeoutMs({ env: {} }), 30 * 60_000);
+  assert.equal(
+    resolveServerMigrationTimeoutMs({ env: { HAPPIER_STACK_SERVER_MIGRATION_TIMEOUT_MS: '240000' } }),
+    240_000,
+  );
+  assert.equal(
+    resolveServerMigrationTimeoutMs({ env: { HAPPIER_STACK_SERVER_MIGRATION_TIMEOUT_MS: '86400001' } }),
+    30 * 60_000,
   );
 });

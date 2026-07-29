@@ -30,7 +30,7 @@ import {
   resolveAutostartWorkingDirectory,
 } from './utils/service/stack_autostart_resolution.mjs';
 import { buildServiceAuthGuidance } from './utils/service/auth_guidance.mjs';
-import { recordStackRuntimeStopRequest } from './utils/stack/runtime_state.mjs';
+import { stopStackServiceWithEnv } from './utils/stack/stop.mjs';
 
 /**
  * Manage the autostart service installed by `hstack bootstrap -- --autostart`.
@@ -203,6 +203,7 @@ export async function installService({ mode = 'user', systemUser = null, quiet =
       programArgs,
       workingDirectory,
       env,
+      restartPolicy: 'on-failure',
       runAsUser: mode === 'system' && systemUser ? systemUser : '',
       stdoutPath,
       stderrPath,
@@ -294,10 +295,6 @@ async function systemdStop({ persistent }) {
   }
 }
 
-async function systemdRestart() {
-  await run('systemctl', ['--user', 'restart', systemdUnitName()]);
-}
-
 async function systemdLogs({ lines = 120 } = {}) {
   await run('journalctl', ['--user', '-u', systemdUnitName(), '-n', String(lines), '--no-pager']);
 }
@@ -313,19 +310,6 @@ async function launchctlTry(args) {
   } catch {
     return false;
   }
-}
-
-async function restartLaunchAgentBestEffort() {
-  const { plistPath, label } = getDefaultAutostartPaths();
-  if (!existsSync(plistPath)) {
-    throw new Error(`[local] LaunchAgent plist not found at ${plistPath}. Run: hstack service repair --yes (or hstack service:install).`);
-  }
-  const uid = getUid();
-  if (uid == null) {
-    return false;
-  }
-  // Prefer kickstart -k to avoid overlapping stop/start windows (which can stop a freshly started daemon).
-  return await launchctlTry(['kickstart', '-k', `gui/${uid}/${label}`]);
 }
 
 async function startLaunchAgent({ persistent }) {
@@ -537,25 +521,12 @@ async function postStartDiagnostics() {
   }
 }
 
-async function stopLaunchAgent({ persistent, requestedBy = 'service stop', reason = '' }) {
+async function stopLaunchAgent({ persistent }) {
   const { plistPath } = getDefaultAutostartPaths();
   if (!existsSync(plistPath)) {
     // Service isn't installed for this stack (common for ad-hoc stacks). Treat as a no-op.
     return;
   }
-
-  const envFile = resolveAutostartEnvFilePath({
-    mode: 'user',
-    explicitEnvFilePath: process.env.HAPPIER_STACK_ENV_FILE?.trim() ? process.env.HAPPIER_STACK_ENV_FILE.trim() : '',
-    defaultMainEnvFilePath: resolveStackEnvPath('main').envPath,
-    systemUserHomeDir: null,
-  });
-  const runtimeStatePath = join(dirname(envFile), 'stack.runtime.json');
-  await recordStackRuntimeStopRequest(runtimeStatePath, {
-    signal: 'SIGTERM',
-    requestedBy,
-    reason,
-  }).catch(() => {});
 
   const { label } = getDefaultAutostartPaths();
 
@@ -656,6 +627,51 @@ async function tailLogs() {
   const { stdoutPath, stderrPath } = getDefaultAutostartPaths();
   const child = spawn('tail', ['-f', stderrPath, stdoutPath], { stdio: 'inherit' });
   await new Promise((resolve) => child.on('exit', resolve));
+}
+
+export async function stopServiceWithCanonicalCleanup({
+  rootDir,
+  mode = 'user',
+  json = false,
+  persistent,
+  requestedBy,
+  reason,
+  disable = false,
+  platform = process.platform,
+  env = process.env,
+  stopStackServiceWithEnvImpl = stopStackServiceWithEnv,
+  runImpl = run,
+  stopLaunchAgentImpl = stopLaunchAgent,
+  systemdStopImpl = systemdStop,
+} = {}) {
+  const defaults = getDefaultAutostartPaths(env);
+  await stopStackServiceWithEnvImpl({
+    rootDir,
+    stackName: defaults.stackName,
+    baseDir: defaults.baseDir,
+    env,
+    json,
+    noDocker: false,
+    autoSweep: true,
+    preserveDaemon: false,
+    stopAttribution: { requestedBy, reason },
+  }, async () => {
+    if (platform === 'win32') {
+      await runImpl('schtasks', ['/End', '/TN', `Happier\\${defaults.label}`]).catch(() => {});
+      if (disable) await runImpl('schtasks', ['/Change', '/TN', `Happier\\${defaults.label}`, '/Disable']).catch(() => {});
+      return;
+    }
+    if (platform === 'darwin') {
+      await stopLaunchAgentImpl({ persistent });
+      return;
+    }
+    if (mode === 'system') {
+      const { unitName } = getSystemdUnitInfo({ env, mode });
+      await runImpl('systemctl', [disable ? 'disable' : 'stop', ...(disable ? ['--now'] : []), unitName]);
+    } else {
+      await systemdStopImpl({ persistent });
+    }
+  });
 }
 
 async function main() {
@@ -841,45 +857,27 @@ async function main() {
       if (json) printResult({ json, data: { ok: true, action: 'start' } });
       return;
     case 'stop':
-      if (process.platform === 'win32') {
-        const { label } = getDefaultAutostartPaths();
-        await run('schtasks', ['/End', '/TN', `Happier\\${label}`]).catch(() => {});
-        if (json) printResult({ json, data: { ok: true, action: 'stop' } });
-        return;
-      }
-      if (process.platform === 'darwin') {
-        await stopLaunchAgent({ persistent: false, requestedBy: 'service stop', reason: 'explicit service stop' });
-      } else {
-        if (mode === 'system') {
-          const { unitName } = getSystemdUnitInfo({ mode });
-          await run('systemctl', ['stop', unitName]);
-        } else {
-          await systemdStop({ persistent: false });
-        }
-      }
+      await stopServiceWithCanonicalCleanup({ rootDir, mode, json, persistent: false, requestedBy: 'service stop', reason: 'explicit service stop' });
       if (json) printResult({ json, data: { ok: true, action: 'stop' } });
       return;
     case 'restart':
+      await stopServiceWithCanonicalCleanup({ rootDir, mode, json, persistent: false, requestedBy: 'service restart', reason: 'explicit service restart' });
       if (process.platform === 'win32') {
         const { label } = getDefaultAutostartPaths();
-        await run('schtasks', ['/End', '/TN', `Happier\\${label}`]).catch(() => {});
         await run('schtasks', ['/Run', '/TN', `Happier\\${label}`]).catch(() => {});
         await postStartDiagnostics();
         if (json) printResult({ json, data: { ok: true, action: 'restart' } });
         return;
       }
       if (process.platform === 'darwin') {
-        if (!(await restartLaunchAgentBestEffort())) {
-          await stopLaunchAgent({ persistent: false, requestedBy: 'service restart', reason: 'explicit service restart' });
-          await waitForLaunchAgentStopped();
-          await startLaunchAgent({ persistent: false });
-        }
+        await waitForLaunchAgentStopped();
+        await startLaunchAgent({ persistent: false });
       } else {
         if (mode === 'system') {
           const { unitName } = getSystemdUnitInfo({ mode });
-          await run('systemctl', ['restart', unitName]);
+          await run('systemctl', ['start', unitName]);
         } else {
-          await systemdRestart();
+          await systemdStart({ persistent: false });
         }
       }
       await postStartDiagnostics();
@@ -920,23 +918,7 @@ async function main() {
       if (json) printResult({ json, data: { ok: true, action: 'enable' } });
       return;
     case 'disable':
-      if (process.platform === 'win32') {
-        const { label } = getDefaultAutostartPaths();
-        await run('schtasks', ['/End', '/TN', `Happier\\${label}`]).catch(() => {});
-        await run('schtasks', ['/Change', '/TN', `Happier\\${label}`, '/Disable']).catch(() => {});
-        if (json) printResult({ json, data: { ok: true, action: 'disable' } });
-        return;
-      }
-      if (process.platform === 'darwin') {
-        await stopLaunchAgent({ persistent: true, requestedBy: 'service disable', reason: 'explicit service disable' });
-      } else {
-        if (mode === 'system') {
-          const { unitName } = getSystemdUnitInfo({ mode });
-          await run('systemctl', ['disable', '--now', unitName]);
-        } else {
-          await systemdStop({ persistent: true });
-        }
-      }
+      await stopServiceWithCanonicalCleanup({ rootDir, mode, json, persistent: true, requestedBy: 'service disable', reason: 'explicit service disable', disable: true });
       if (json) printResult({ json, data: { ok: true, action: 'disable' } });
       return;
     case 'logs':

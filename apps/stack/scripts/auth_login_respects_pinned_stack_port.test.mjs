@@ -7,6 +7,8 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import net from 'node:net';
 
+import { spawnDetachedInlineNodeTestProcess } from './testkit/core/spawn_test_process.mjs';
+
 function runNode(args, { cwd, env } = {}) {
   return new Promise((resolve, reject) => {
     const proc = spawn(process.execPath, args, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -96,7 +98,7 @@ test('hstack stack auth <stack> login --print prefers pinned env port over stale
   }
 });
 
-test('hstack stack auth <stack> login --print uses last runtime port when stack env is ephemeral', async () => {
+test('hstack stack auth <stack> login --print uses last runtime port when stack env is ephemeral', async (t) => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));
   const rootDir = dirname(scriptsDir);
 
@@ -124,9 +126,25 @@ test('hstack stack auth <stack> login --print uses last runtime port when stack 
       'utf-8'
     );
 
+    const runtimeOwner = spawnDetachedInlineNodeTestProcess('setInterval(() => {}, 1000)', {
+      env: {
+        ...process.env,
+        HAPPIER_STACK_STACK: stackName,
+        HAPPIER_STACK_ENV_FILE: envPath,
+        HAPPIER_STACK_PROCESS_KIND: 'infra',
+      },
+    });
+    t.after(() => {
+      try {
+        runtimeOwner.kill('SIGKILL');
+      } catch {
+        // The child may already have exited.
+      }
+    });
+
     await writeFile(
       join(stackDir, 'stack.runtime.json'),
-      JSON.stringify({ version: 1, ownerPid: 0, ports: { server: 4999 } }, null, 2) + '\n',
+      JSON.stringify({ version: 1, ownerPid: runtimeOwner.pid, ports: { server: 4999 } }, null, 2) + '\n',
       'utf-8'
     );
 

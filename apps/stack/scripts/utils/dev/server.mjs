@@ -1,28 +1,46 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 
-import { ensureDepsInstalled, pmSpawnScript } from '../proc/pm.mjs';
-import { markSpawnedProcessPlannedExit, run } from '../proc/proc.mjs';
+import { ensureDepsInstalled, pmExecBin, pmSpawnScript } from '../proc/pm.mjs';
+import { killProcessTree, markSpawnedProcessPlannedExit } from '../proc/proc.mjs';
 import { applyHappyServerMigrations, ensureHappyServerManagedInfra } from '../server/infra/happy_server_infra.mjs';
 import { applyServerLightEnvDefaults } from '../server/apply_server_light_env_defaults.mjs';
+import { applyEffectiveDbProviderEnv, resolveEffectiveDbProvider } from '../server/effective_db_provider.mjs';
 import { resolveServerDevScript } from '../server/flavor_scripts.mjs';
-import { resolveServerReadyTimeoutMs, waitForServerReady } from '../server/server.mjs';
-import { isTcpPortFree, listListenPids, pickNextFreeTcpPort, waitForTcpPortFree } from '../net/ports.mjs';
+import { resolveServerShutdownGraceMs } from '../server/shutdown_grace.mjs';
 import {
-  createStackDevProxyRuntimePatch,
-  createStackServerRuntimeProcessPatch,
+  createListenerOwnershipObservationScope,
+  resolveSpawnedProcessGroupListenPid,
+  resolveStackOwnedListenPid,
+} from '../server/listener_ownership.mjs';
+import {
+  createServerReadinessDeadline,
+  resolveServerMigrationTimeoutMs,
+  resolveServerReadyTimeoutMs,
+  waitForServerReady,
+} from '../server/server.mjs';
+import {
+  listListenPids,
+  listListenPidsWithStatus,
+  observeTcpPortAvailability,
+  pickNextFreeTcpPort,
+  waitForTcpPortFree,
+} from '../net/ports.mjs';
+import {
   isPidAlive,
   readStackRuntimeStateFile,
-  recordStackRuntimeUpdate,
+  recordStackRuntimeServerActivation,
+  recordStackRuntimeServerLifecycle,
 } from '../stack/runtime_state.mjs';
 import { getProcessGroupId, isPidOwnedByStack, killProcessGroupOwnedByStack } from '../proc/ownership.mjs';
 import { waitForPgliteDirLockRelease } from '../pglite_lock.mjs';
-import { watchDebounced } from '../proc/watch.mjs';
 import { pickMetroPort, resolveStablePortStart } from '../expo/metro_ports.mjs';
 import { buildServerRuntimeEnv } from '../server/server_env.mjs';
 import { ensureSourceServerWorkspacePackagesBuilt } from '../server/source_server_workspace_deps.mjs';
-import { resolveDevReloadPollIntervalMs } from './reloadPollInterval.mjs';
-import { readDevReloadWatchChangeSignature as readDevServerWatchChangeSignature } from './watchSignature.mjs';
+import {
+  readDevReloadWatchChangeSignature as readDevServerWatchChangeSignature,
+  readDevReloadWatchChangeSignatureAsync as readDevServerWatchChangeSignatureAsync,
+} from './watchSignature.mjs';
 
 function readPackageScripts(dir) {
   try {
@@ -44,6 +62,7 @@ const DEFAULT_SERVER_RESTART_FAILURE_POLICY = {
   backoffMs: 30_000,
   recentLineLimit: 8,
 };
+const POST_STOP_RELEASE_RETRY_MS = 250;
 
 function normalizeServerRestartFailurePolicy(policy = {}) {
   const readPositive = (name) => {
@@ -128,7 +147,16 @@ function createServerRestartFailureTracker({ policy, nowImpl }) {
   };
 }
 
-function classifyServerRestartFailure({ error, stage, child, oldServerStopped, recentLines }) {
+function classifyServerRestartFailure({
+  error,
+  stage,
+  child,
+  oldServerStopped,
+  recentLines,
+  transportCommitted = false,
+  serviceRestored = false,
+  directReplacementActive = false,
+}) {
   const message = error instanceof Error ? error.message : String(error);
   const exitCode = child?.exitCode;
   const signalCode = child?.signalCode;
@@ -145,6 +173,9 @@ function classifyServerRestartFailure({ error, stage, child, oldServerStopped, r
     kind,
     message,
     oldServerStopped: Boolean(oldServerStopped),
+    transportCommitted: Boolean(transportCommitted),
+    serviceRestored: Boolean(serviceRestored),
+    directReplacementActive: Boolean(directReplacementActive),
     exitCode,
     signalCode,
     recentLines: Array.isArray(recentLines) ? recentLines : [],
@@ -162,26 +193,17 @@ function annotateServerRestartError(error, failure) {
   return annotated;
 }
 
-function mergeRuntimePatches(...patches) {
-  const out = {};
-  for (const patch of patches) {
-    if (!patch || typeof patch !== 'object') continue;
-    for (const [key, value] of Object.entries(patch)) {
-      if (
-        value &&
-        typeof value === 'object' &&
-        !Array.isArray(value) &&
-        out[key] &&
-        typeof out[key] === 'object' &&
-        !Array.isArray(out[key])
-      ) {
-        out[key] = { ...out[key], ...value };
-      } else {
-        out[key] = value;
-      }
-    }
+function requestTransientListenerDiscoveryRetry(error) {
+  const observation = error?.observation;
+  if (
+    error?.code !== 'ELISTENERDISCOVERYINCONCLUSIVE'
+    || observation?.supported !== true
+    || (observation.status !== 'timeout' && observation.status !== 'error')
+  ) return error;
+  if (error.reloadRetryAfterMs == null) {
+    error.reloadRetryAfterMs = POST_STOP_RELEASE_RETRY_MS;
   }
-  return out;
+  return error;
 }
 
 function hasChildExited(child) {
@@ -191,27 +213,48 @@ function hasChildExited(child) {
   );
 }
 
-function getDbProviderFromServerEnv(serverEnv = {}) {
-  const raw = String(serverEnv.HAPPIER_DB_PROVIDER ?? serverEnv.HAPPY_DB_PROVIDER ?? '').trim().toLowerCase();
-  return raw === 'pglite' ? 'pglite' : 'sqlite';
+function getDbProviderFromServerEnv(serverEnv = {}, serverComponentName = 'happier-server-light') {
+  const effective = resolveEffectiveDbProvider({ serverComponentName, env: serverEnv });
+  return effective.ok ? effective.provider : '';
 }
 
-export function selectDevServerRestartMode({
-  dbProvider,
-  migrationsChanged,
-  sqliteRuntimeMigrationsNoop = false,
-  overlapSafeStartup = false,
-} = {}) {
-  const provider = String(dbProvider ?? '').trim().toLowerCase();
-  if (
-    provider === 'sqlite' &&
-    migrationsChanged === false &&
-    sqliteRuntimeMigrationsNoop === true &&
-    overlapSafeStartup === true
-  ) {
-    return 'blueGreen';
-  }
-  return 'exclusiveDb';
+export function createDevServerReloadPlan({ changedDescriptors, descriptorEvidenceConclusive, generation } = {}) {
+  const hasGenerationEvidence = Number.isInteger(generation) && generation >= 0;
+  // The reload coordinator can carry daemon/build descriptors alongside a shared server change.
+  // Prisma inputs have one canonical descriptor; every other known descriptor leaves them unchanged.
+  const isKnownReloadDescriptor = (descriptor) => (
+    descriptor === 'server:app'
+    || descriptor === 'server:prisma'
+    || ['shared:', 'daemon:', 'build:'].some((prefix) => (
+      descriptor.startsWith(prefix) && descriptor.length > prefix.length
+    ))
+  );
+  const hasDescriptorEvidence = Array.isArray(changedDescriptors)
+    && changedDescriptors.length > 0
+    && descriptorEvidenceConclusive !== false
+    && changedDescriptors.every((descriptor) => (
+      typeof descriptor === 'string' && isKnownReloadDescriptor(descriptor)
+    ));
+  const prismaChanged = hasDescriptorEvidence && changedDescriptors.includes('server:prisma');
+  const migrationInputsUnchanged = hasGenerationEvidence
+    && hasDescriptorEvidence
+    && !prismaChanged;
+  return {
+    mode: 'exclusiveDb',
+    migrationMode: migrationInputsUnchanged ? 'skip' : 'apply',
+    generation: hasGenerationEvidence ? generation : 0,
+    reason: prismaChanged
+      ? 'prisma_changed'
+      : migrationInputsUnchanged
+        ? 'app_only_descriptor_unchanged'
+        : 'migration_evidence_inconclusive',
+  };
+}
+
+function serverReloadMigrationEnv(reloadPlan) {
+  return {
+    HAPPIER_STACK_MIGRATE_MODE: reloadPlan.migrationMode === 'skip' ? 'skip' : 'always',
+  };
 }
 
 function getPgliteDbDirFromServerEnv(serverEnv = {}) {
@@ -231,17 +274,46 @@ async function waitForProviderDbReleaseIfNeeded(
   }
 }
 
+function assertTcpPortReleased(availability, { port, pid, scope }) {
+  if (availability?.status === 'free') return;
+  const inconclusive = availability?.status === 'inconclusive';
+  const reason = availability?.reason ?? 'unknown';
+  const error = new Error(
+    `[local] watch restart refused: ${scope} ${port} release is ` +
+      `${inconclusive ? 'inconclusive' : 'still occupied'} after stopping pid=${pid} (${reason}).`,
+  );
+  error.code = inconclusive
+    ? 'ESERVERBACKENDPORTRELEASEINCONCLUSIVE'
+    : 'ESERVERBACKENDPORTOCCUPIED';
+  if (inconclusive) error.reloadRetryAfterMs = POST_STOP_RELEASE_RETRY_MS;
+  throw error;
+}
+
+function requestSafePostStopRetry(error) {
+  if (error?.code === 'ELISTENERDISCOVERYINCONCLUSIVE') {
+    return requestTransientListenerDiscoveryRetry(error);
+  }
+  if (
+    error?.reloadRetryAfterMs != null
+    || error?.code === 'ESERVERPROVISIONALCLEANUPINCOMPLETE'
+    || error?.code === 'ESERVERBACKENDPORTOCCUPIED'
+  ) return error;
+  error.code = error?.code ?? 'ESERVERPOSTSTOPRECOVERYFAILED';
+  error.reloadRetryAfterMs = POST_STOP_RELEASE_RETRY_MS;
+  return error;
+}
+
 export function createDevServerReloadDescriptors({ serverDir, existsSyncImpl = existsSync } = {}) {
   const repoRoot = resolve(serverDir, '..', '..');
   const sharedPackages = ['agents', 'cli-common', 'protocol'];
-  const serverPaths = [
+  const serverAppPaths = [
     join(serverDir, 'sources'),
     join(serverDir, 'scripts'),
-    join(serverDir, 'prisma'),
     join(serverDir, 'package.json'),
     join(serverDir, 'tsconfig.json'),
     join(serverDir, 'tsconfig.build.json'),
   ];
+  const serverPrismaPaths = [join(serverDir, 'prisma')];
   const makeDescriptor = (id, target, paths) => {
     const existingPaths = paths.filter((p) => existsSyncImpl(p));
     return {
@@ -249,11 +321,13 @@ export function createDevServerReloadDescriptors({ serverDir, existsSyncImpl = e
       target,
       paths: existingPaths,
       readSignature: () => readDevServerWatchChangeSignature(existingPaths),
+      readSignatureAsync: () => readDevServerWatchChangeSignatureAsync(existingPaths),
     };
   };
 
   return [
-    makeDescriptor('server:app', 'server', serverPaths),
+    makeDescriptor('server:app', 'server', serverAppPaths),
+    makeDescriptor('server:prisma', 'server', serverPrismaPaths),
     ...sharedPackages.map((pkg) => makeDescriptor(
       `shared:${pkg}`,
       'shared',
@@ -266,61 +340,31 @@ export function createDevServerReloadDescriptors({ serverDir, existsSyncImpl = e
   ].filter((descriptor) => descriptor.paths.length > 0);
 }
 
-function resolveDevServerWatchPaths({ serverDir, existsSyncImpl = existsSync }) {
-  return createDevServerReloadDescriptors({ serverDir, existsSyncImpl }).flatMap((descriptor) => descriptor.paths);
-}
-
 export async function resolveStackOwnedServerListenPid(
   { serverPort, stackName, envPath },
-  { listListenPidsImpl = listListenPids, isPidOwnedByStackImpl = isPidOwnedByStack } = {},
+  {
+    listListenPidsImpl = listListenPids,
+    listListenPidsWithStatusImpl = listListenPidsWithStatus,
+    isPidOwnedByStackImpl = isPidOwnedByStack,
+    getProcessGroupIdImpl = getProcessGroupId,
+    observationScope,
+  } = {},
 ) {
-  const listenPids = await listListenPidsImpl(serverPort, { timeoutMs: 1000 }).catch(() => []);
-  for (const pid of listenPids) {
-    // eslint-disable-next-line no-await-in-loop
-    if (await isPidOwnedByStackImpl(pid, { stackName, envPath }).catch(() => false)) {
-      return pid;
-    }
-  }
-  return null;
+  return await resolveStackOwnedListenPid(
+    { port: serverPort, stackName, envPath },
+    { listListenPidsImpl, listListenPidsWithStatusImpl, isPidOwnedByStackImpl, getProcessGroupIdImpl, observationScope },
+  );
 }
 
 async function assertServerPortOwnedBySpawnedProcessGroup({
   serverPort,
   spawnedPid,
-  listListenPidsImpl = listListenPids,
-  getProcessGroupIdImpl = getProcessGroupId,
+  listenerObservationScope,
+  ...options
 }) {
-  const rootPgid = await getProcessGroupIdImpl(spawnedPid).catch(() => null);
-  if (!rootPgid) {
-    throw new Error(
-      `[local] server readiness ownership could not be proven on port ${serverPort}: ` +
-        `process group unavailable for pid=${spawnedPid}`
-    );
-  }
-
-  const listenPids = await listListenPidsImpl(serverPort, { timeoutMs: 1000 }).catch(() => null);
-  if (!Array.isArray(listenPids)) {
-    throw new Error(
-      `[local] server readiness ownership could not be proven on port ${serverPort}: listener discovery unavailable`
-    );
-  }
-  if (!listenPids.length) {
-    throw new Error(
-      `[local] server readiness ownership could not be proven on port ${serverPort}: no listener PID was discovered`
-    );
-  }
-
-  for (const listenPid of listenPids) {
-    // eslint-disable-next-line no-await-in-loop
-    const listenPgid = await getProcessGroupIdImpl(listenPid).catch(() => null);
-    if (listenPgid && listenPgid === rootPgid) {
-      return Number(listenPid);
-    }
-  }
-
-  throw new Error(
-    `[local] server readiness was answered by another process on port ${serverPort}; ` +
-      `spawned pid=${spawnedPid}, listeners=${listenPids.join(', ')}`
+  return await resolveSpawnedProcessGroupListenPid(
+    { port: serverPort, spawnedPid },
+    { ...options, observationScope: listenerObservationScope },
   );
 }
 
@@ -328,44 +372,76 @@ async function isServerPortOwnedByProcessGroup({
   serverPort,
   rootPid,
   listListenPidsImpl = listListenPids,
+  listListenPidsWithStatusImpl = listListenPidsWithStatus,
   getProcessGroupIdImpl = getProcessGroupId,
+  listenerObservationScope,
 }) {
   try {
     await assertServerPortOwnedBySpawnedProcessGroup({
       serverPort,
       spawnedPid: rootPid,
       listListenPidsImpl,
+      listListenPidsWithStatusImpl,
       getProcessGroupIdImpl,
+      listenerObservationScope,
     });
     return true;
-  } catch {
+  } catch (error) {
+    if (error?.code === 'ELISTENERDISCOVERYINCONCLUSIVE') throw error;
     return false;
   }
 }
 
-async function cleanupProvisionalServerChild({
+export async function cleanupProvisionalServerChild({
   child,
   children,
   stackName,
   envPath,
+  env = process.env,
   killProcessGroupOwnedByStackImpl = killProcessGroupOwnedByStack,
+  killSpawnedChildImpl = killProcessTree,
 }) {
-  if (!child) return;
+  if (!child) return true;
 
   const pid = Number(child.pid);
+  let terminationConfirmed = hasChildExited(child);
   if (Number.isFinite(pid) && pid > 1) {
-    await killProcessGroupOwnedByStackImpl(pid, { stackName, envPath, label: 'server', json: false }).catch(() => null);
+    const result = await killProcessGroupOwnedByStackImpl(
+      pid,
+      {
+        stackName,
+        envPath,
+        label: 'server',
+        json: false,
+        graceMs: resolveServerShutdownGraceMs(env),
+      },
+    ).catch(() => null);
+    terminationConfirmed = terminationConfirmed || Boolean(
+      result?.killed && result?.reason !== 'killed_pid_only',
+    );
   }
-  try {
-    child.kill?.('SIGTERM');
-  } catch {
-    // Preserve the original readiness/ownership error.
+  if (!terminationConfirmed) {
+    const fallback = await killSpawnedChildImpl(child, 'SIGTERM', {
+      graceMs: resolveServerShutdownGraceMs(env),
+    }).catch(() => null);
+    terminationConfirmed = fallback?.ok === true;
   }
 
-  const index = children.indexOf(child);
-  if (index >= 0) {
-    children.splice(index, 1);
+  if (terminationConfirmed) {
+    const index = children.indexOf(child);
+    if (index >= 0) children.splice(index, 1);
   }
+  return terminationConfirmed;
+}
+
+function createServerProvisioningCleanupIncompleteError(error, child) {
+  const cleanupError = new Error(
+    `[local] server provisioning failed and termination of provisional pid=${child?.pid ?? 'unknown'} remains unconfirmed.`,
+    { cause: error },
+  );
+  cleanupError.code = 'ESERVERPROVISIONINGCLEANUPINCOMPLETE';
+  cleanupError.provisionalPid = Number(child?.pid) || null;
+  return cleanupError;
 }
 
 async function killServerProcessGroupForPlannedReload({
@@ -373,12 +449,21 @@ async function killServerProcessGroupForPlannedReload({
   pid,
   stackName,
   envPath,
+  serverEnv,
   killProcessGroupOwnedByStackImpl,
+  onTerminationRequested,
 }) {
   const clearPlannedExit = markSpawnedProcessPlannedExit(child, 'dev-reload');
   let result = null;
   try {
-    result = await killProcessGroupOwnedByStackImpl(pid, { stackName, envPath, label: 'server', json: false });
+    onTerminationRequested?.();
+    result = await killProcessGroupOwnedByStackImpl(pid, {
+      stackName,
+      envPath,
+      label: 'server',
+      json: false,
+      graceMs: resolveServerShutdownGraceMs(serverEnv),
+    });
   } catch (error) {
     clearPlannedExit();
     throw error;
@@ -397,9 +482,12 @@ export async function resolveStackOwnedServerRuntimePid(
     isPidOwnedByStackImpl = isPidOwnedByStack,
     resolveStackOwnedServerListenPidImpl = resolveStackOwnedServerListenPid,
     listListenPidsImpl = listListenPids,
+    listListenPidsWithStatusImpl = listListenPidsWithStatus,
     getProcessGroupIdImpl = getProcessGroupId,
+    observationScope,
   } = {},
 ) {
+  const ownershipScope = observationScope ?? createListenerOwnershipObservationScope({ listListenPidsImpl, listListenPidsWithStatusImpl });
   const state = runtimeStatePath ? await readStackRuntimeStateFileImpl(runtimeStatePath) : null;
   const candidatePid = Number(runtimeServerPid ?? state?.processes?.serverPid);
   if (Number.isFinite(candidatePid) && candidatePid > 1 && isPidAliveImpl(candidatePid)) {
@@ -410,86 +498,156 @@ export async function resolveStackOwnedServerRuntimePid(
         serverPort,
         rootPid: candidatePid,
         listListenPidsImpl,
+        listListenPidsWithStatusImpl,
         getProcessGroupIdImpl,
+        listenerObservationScope: ownershipScope,
       }))
     ) {
       return candidatePid;
     }
   }
 
-  const listenPid = await resolveStackOwnedServerListenPidImpl({ serverPort, stackName, envPath });
+  const listenPid = await resolveStackOwnedServerListenPidImpl(
+    { serverPort, stackName, envPath },
+    { listListenPidsImpl, listListenPidsWithStatusImpl, isPidOwnedByStackImpl, getProcessGroupIdImpl, observationScope: ownershipScope },
+  );
   return Number.isFinite(Number(listenPid)) && Number(listenPid) > 1 ? Number(listenPid) : null;
 }
 
 export async function stopStackOwnedServerForRestart(
-  { pid, serverPort, runtimeStatePath, stackName, envPath, label = 'server' },
+  { pid, serverPort, runtimeStatePath, stackName, envPath, label = 'server', serverEnv = {} },
   {
     readStackRuntimeStateFileImpl = readStackRuntimeStateFile,
     killProcessGroupOwnedByStackImpl = killProcessGroupOwnedByStack,
-    isTcpPortFreeImpl = isTcpPortFree,
+    isPidAliveImpl = isPidAlive,
+    isPidOwnedByStackImpl = isPidOwnedByStack,
     resolveStackOwnedServerListenPidImpl = resolveStackOwnedServerListenPid,
     waitForTcpPortFreeImpl = waitForTcpPortFree,
+    listListenPidsImpl = listListenPids,
+    listListenPidsWithStatusImpl = listListenPidsWithStatus,
+    getProcessGroupIdImpl = getProcessGroupId,
+    observeTcpPortAvailabilityImpl = observeTcpPortAvailability,
+    listenerObservationScope,
   } = {},
 ) {
+  const observationScope = listenerObservationScope ?? createListenerOwnershipObservationScope({
+    listListenPidsImpl,
+    listListenPidsWithStatusImpl,
+  });
   const state = runtimeStatePath ? await readStackRuntimeStateFileImpl(runtimeStatePath) : null;
   const recordedPid = Number(pid ?? state?.processes?.serverPid);
-  let stopped = false;
+  let stopPid = null;
+  let recordedPidAliveAndOwned = false;
 
-  if (Number.isFinite(recordedPid) && recordedPid > 1) {
-    const res = await killProcessGroupOwnedByStackImpl(recordedPid, { stackName, envPath, label, json: true });
-    stopped = Boolean(res?.killed);
+  if (Number.isFinite(recordedPid) && recordedPid > 1 && isPidAliveImpl(recordedPid)) {
+    recordedPidAliveAndOwned = await isPidOwnedByStackImpl(recordedPid, { stackName, envPath }).catch(() => false);
+    if (recordedPidAliveAndOwned && await isServerPortOwnedByProcessGroup({
+      serverPort,
+      rootPid: recordedPid,
+      listListenPidsImpl,
+      listListenPidsWithStatusImpl,
+      getProcessGroupIdImpl,
+      listenerObservationScope: observationScope,
+    })) stopPid = recordedPid;
   }
 
-  if (!stopped) {
-    const free = await isTcpPortFreeImpl(serverPort, { host: '127.0.0.1' });
-    if (!free) {
-      const listenPid = await resolveStackOwnedServerListenPidImpl({ serverPort, stackName, envPath });
+  if (!stopPid) {
+    const availability = await observeTcpPortAvailabilityImpl(serverPort, {
+      host: '127.0.0.1',
+      timeoutMs: 1_000,
+    });
+    if (availability?.status === 'inconclusive') {
+      assertTcpPortReleased(availability, { port: serverPort, pid: recordedPid, scope: 'server port' });
+    }
+    if (availability?.status !== 'free') {
+      const listenPid = await resolveStackOwnedServerListenPidImpl(
+        { serverPort, stackName, envPath },
+        { listListenPidsImpl, listListenPidsWithStatusImpl, isPidOwnedByStackImpl, getProcessGroupIdImpl, observationScope },
+      );
       if (!(Number.isFinite(Number(listenPid)) && Number(listenPid) > 1)) {
         throw new Error(
           `[local] restart refused: server port ${serverPort} is occupied and the PID is not provably stack-owned.\n` +
             `[local] Fix: run 'hstack stack stop ${stackName}' then re-run, or re-run without --restart.`
         );
       }
-      const res = await killProcessGroupOwnedByStackImpl(Number(listenPid), { stackName, envPath, label, json: true });
-      if (!res?.killed) {
-        throw new Error(
-          `[local] restart refused: server port ${serverPort} is occupied by a process that could not be stopped safely.\n` +
-            `[local] Fix: run 'hstack stack stop ${stackName}' then re-run, or re-run without --restart.`
-        );
-      }
-      stopped = true;
+      stopPid = Number(listenPid);
+    } else if (recordedPidAliveAndOwned) {
+      throw new Error(
+        `[local] restart refused: recorded server pid ${recordedPid} is still alive, but server port ${serverPort} has no listener proof for it.\n` +
+          `[local] Fix: run 'hstack stack stop ${stackName}' then re-run, or re-run without --restart.`
+      );
+    }
+  }
+
+  if (stopPid) {
+    const res = await killProcessGroupOwnedByStackImpl(stopPid, {
+      stackName,
+      envPath,
+      label,
+      json: true,
+      graceMs: resolveServerShutdownGraceMs(serverEnv),
+    });
+    if (!res?.killed) {
+      throw new Error(
+        `[local] restart refused: server port ${serverPort} is occupied by a process that could not be stopped safely.\n` +
+          `[local] Fix: run 'hstack stack stop ${stackName}' then re-run, or re-run without --restart.`
+      );
     }
   }
 
   const released = await waitForTcpPortFreeImpl(serverPort, { host: '127.0.0.1', timeoutMs: 5_000, intervalMs: 100 });
-  if (!released) {
-    throw new Error(`[local] restart refused: server port ${serverPort} did not release after stopping the previous server.`);
-  }
+  assertTcpPortReleased(released, { port: serverPort, pid: recordedPid, scope: 'server port' });
 
-  return { stopped, pid: recordedPid };
+  return { stopped: Boolean(stopPid), pid: recordedPid };
 }
 
 export async function preflightDevServerRestart(
-  { serverDir, serverEnv = {}, consoleImpl = console },
-  { runImpl = run } = {},
+  { serverDir, serverEnv = {}, reloadMigrationMode = null, consoleImpl = console },
+  { pmExecBinImpl = pmExecBin } = {},
 ) {
+  const parentPreflightAlreadyDone = String(
+    serverEnv.HAPPIER_STACK_SERVER_RESTART_PREFLIGHT_ALREADY_DONE ?? '',
+  ).trim() === '1';
+  delete serverEnv.HAPPIER_STACK_SERVER_RESTART_PREFLIGHT_ALREADY_DONE;
   const enabled = String(serverEnv.HAPPIER_STACK_SERVER_RESTART_PREFLIGHT ?? '').trim() !== '0';
   if (!enabled) return { ran: false, reason: 'disabled' };
-  if (String(serverEnv.HAPPIER_STACK_SERVER_RESTART_PREFLIGHT_ALREADY_DONE ?? '').trim() === '1') {
+  if (parentPreflightAlreadyDone) {
     return { ran: false, reason: 'already-done' };
   }
-  if (!hasPackageScript(serverDir, 'build')) return { ran: false, reason: 'missing-build-script' };
+  const runtimeTypecheckScript = hasPackageScript(serverDir, 'typecheck:runtime')
+    ? 'typecheck:runtime'
+    : hasPackageScript(serverDir, 'build')
+      ? 'build'
+      : null;
+  if (!runtimeTypecheckScript) return { ran: false, reason: 'missing-build-script' };
 
   consoleImpl.log('[local] watch: server changed → preflight build...');
-  await runImpl('yarn', ['-s', 'build'], {
-    cwd: serverDir,
+  if (reloadMigrationMode === 'apply' && hasPackageScript(serverDir, 'generate:providers')) {
+    await pmExecBinImpl({
+      dir: serverDir,
+      bin: 'generate:providers',
+      args: [],
+      env: {
+        ...serverEnv,
+        HAPPIER_STACK_SKIP_REFRESH_DEPS: serverEnv.HAPPIER_STACK_SKIP_REFRESH_DEPS ?? '1',
+      },
+      quiet: false,
+    });
+  }
+  await pmExecBinImpl({
+    dir: serverDir,
+    bin: runtimeTypecheckScript,
+    args: [],
     env: {
       ...serverEnv,
       HAPPIER_STACK_SKIP_REFRESH_DEPS: serverEnv.HAPPIER_STACK_SKIP_REFRESH_DEPS ?? '1',
     },
-    stdio: 'inherit',
+    quiet: false,
   });
-  return { ran: true, reason: 'build-ok' };
+  return {
+    ran: true,
+    reason: runtimeTypecheckScript === 'typecheck:runtime' ? 'runtime-typecheck-ok' : 'build-ok',
+  };
 }
 
 export function resolveStackUiDevPortStart({ env = process.env, stackName }) {
@@ -538,8 +696,12 @@ export async function startDevServer({
   pmSpawnScriptImpl = pmSpawnScript,
   waitForServerReadyImpl = waitForServerReady,
   assertServerPortOwnedBySpawnedProcessGroupImpl = assertServerPortOwnedBySpawnedProcessGroup,
-  recordStackRuntimeUpdateImpl = recordStackRuntimeUpdate,
+  recordStackRuntimeServerActivationImpl = recordStackRuntimeServerActivation,
   waitForPgliteDirLockReleaseImpl = waitForPgliteDirLockRelease,
+  ensureHappyServerManagedInfraImpl = ensureHappyServerManagedInfra,
+  applyHappyServerMigrationsImpl = applyHappyServerMigrations,
+  killProcessGroupOwnedByStackImpl = killProcessGroupOwnedByStack,
+  killSpawnedChildImpl = killProcessTree,
 } = {}) {
   const bindPort = Number(serverBindPort || serverPort);
   const backendInternalServerUrl = `http://127.0.0.1:${bindPort}`;
@@ -548,33 +710,42 @@ export async function startDevServer({
     serverPort: bindPort,
     publicServerUrl,
   });
+  delete baseEnv.HAPPIER_STACK_SERVER_RESTART_PREFLIGHT_ALREADY_DONE;
+  const dbProvider = applyEffectiveDbProviderEnv({ serverComponentName, env: baseEnv, targetEnv: serverEnv });
+  const explicitDatabaseUrl = serverEnv.DATABASE_URL;
+  if (dbProvider === 'mysql' && !String(explicitDatabaseUrl ?? '').trim()) {
+    throw new Error('[local] mysql requires an explicit DATABASE_URL before managed infra startup');
+  }
 
   if (serverComponentName === 'happier-server-light') {
     applyServerLightEnvDefaults({ baseEnv, serverEnv, baseDir: autostart.baseDir });
   }
 
+  // Dependency preparation owns the tools used by infrastructure and migrations.
+  // Keep it after provider/topology admission so invalid configurations remain side-effect free.
+  await ensureDepsInstalledImpl(serverDir, serverComponentName, { quiet, env: serverEnv });
+
   if (serverComponentName === 'happier-server') {
     const managed = (baseEnv.HAPPIER_STACK_MANAGED_INFRA ?? '1') !== '0';
     if (managed) {
-      const infra = await ensureHappyServerManagedInfra({
+      const infra = await ensureHappyServerManagedInfraImpl({
         stackName: autostart.stackName,
         baseDir: autostart.baseDir,
         serverPort,
         publicServerUrl,
         envPath,
-        env: baseEnv,
+        env: serverEnv,
+        dbProvider,
       });
       Object.assign(serverEnv, infra.env);
+      if (dbProvider === 'mysql') serverEnv.DATABASE_URL = explicitDatabaseUrl;
     }
 
     const autoMigrate = (baseEnv.HAPPIER_STACK_PRISMA_MIGRATE ?? '1') !== '0';
     if (autoMigrate) {
-      await applyHappyServerMigrations({ serverDir, env: serverEnv });
+      await applyHappyServerMigrationsImpl({ serverDir, env: serverEnv, dbProvider });
     }
   }
-
-  // Ensure server deps exist before any Prisma/docker work.
-  await ensureDepsInstalledImpl(serverDir, serverComponentName, { quiet, env: serverEnv });
 
   const prismaPush = (baseEnv.HAPPIER_STACK_PRISMA_PUSH ?? '1').toString().trim() !== '0';
   const serverScript = resolveServerDevScript({ serverComponentName, serverDir, prismaPush });
@@ -590,14 +761,20 @@ export async function startDevServer({
 
   // Restart behavior (stack-safe): only kill when we can prove ownership via runtime state
   // or a stale listener that is still bound to this stack.
+  if (restart && stackMode && runtimeStatePath) {
+    const preflightResult = await preflightDevServerRestartImpl({ serverDir, serverComponentName, serverEnv, consoleImpl: console });
+    if (preflightResult?.ran !== true) {
+      await ensureWorkspacePackagesBuiltBeforeSpawn();
+    }
+  }
+
   if (restart && stackMode && runtimeStatePath && serverAlreadyRunning) {
-    await ensureWorkspacePackagesBuiltBeforeSpawn();
-    await preflightDevServerRestartImpl({ serverDir, serverComponentName, serverEnv, consoleImpl: console });
     await stopStackOwnedServerForRestartImpl({
       serverPort,
       runtimeStatePath,
       stackName: autostart.stackName,
       envPath,
+      serverEnv,
     });
     await waitForProviderDbReleaseIfNeeded(serverEnv, { waitForPgliteDirLockReleaseImpl });
   }
@@ -606,28 +783,42 @@ export async function startDevServer({
     return { serverEnv, serverScript, serverProc: null };
   }
 
-  if (!(restart && stackMode && runtimeStatePath && serverAlreadyRunning)) {
+  if (!(restart && stackMode && runtimeStatePath)) {
     await ensureWorkspacePackagesBuiltBeforeSpawn();
   }
 
+  const readinessTimeoutMs = resolveServerReadyTimeoutMs({ serverComponentName, env: serverEnv });
+  const startupDeadline = createServerReadinessDeadline({
+    readinessTimeoutMs,
+    migrationTimeoutMs: resolveServerMigrationTimeoutMs({ env: serverEnv }),
+  });
+  const existingOnLine = spawnOptions?.onLine;
   const server = await pmSpawnScriptImpl({
     label: 'server',
     dir: serverDir,
     script: serverScript,
     env: serverEnv,
-    options: spawnOptions,
+    options: {
+      ...spawnOptions,
+      onLine(lineEvent) {
+        startupDeadline.observeLine(lineEvent);
+        existingOnLine?.(lineEvent);
+      },
+    },
     quiet,
   });
   children.push(server);
   let listenerPid = null;
   try {
+    startupDeadline.startReadiness();
     await waitForServerReadyImpl(backendInternalServerUrl, {
-      timeoutMs: resolveServerReadyTimeoutMs({ serverComponentName, env: serverEnv }),
+      timeoutMs: readinessTimeoutMs,
       childProcess: server,
+      startupDeadline,
     });
     if (backendInternalServerUrl !== internalServerUrl) {
       await waitForServerReadyImpl(internalServerUrl, {
-        timeoutMs: resolveServerReadyTimeoutMs({ serverComponentName, env: serverEnv }),
+        timeoutMs: readinessTimeoutMs,
         childProcess: server,
       });
     }
@@ -636,36 +827,38 @@ export async function startDevServer({
       throw new Error(`[local] server process exited after readiness check (pid=${server.pid}, code=${server.exitCode})`);
     }
   } catch (error) {
-    await cleanupProvisionalServerChild({
+    const cleanupConfirmed = await cleanupProvisionalServerChild({
       child: server,
       children,
       stackName: autostart.stackName,
       envPath,
+      killProcessGroupOwnedByStackImpl,
+      killSpawnedChildImpl,
     });
+    if (!cleanupConfirmed) {
+      throw createServerProvisioningCleanupIncompleteError(error, server);
+    }
     throw error;
   }
   if (stackMode && runtimeStatePath) {
-    const runtimePatch = serverProxyRuntime?.enabled
-      ? mergeRuntimePatches(
-          createStackServerRuntimeProcessPatch({ listenerPid, wrapperPid: server.pid }),
-          createStackDevProxyRuntimePatch({
-            stablePort: serverPort,
-            backendPort: bindPort,
-            proxyPid: serverProxyRuntime.proxyPid,
-            backendPid: listenerPid,
-            drainingPid: null,
-            mode: serverProxyRuntime.mode ?? 'proxy',
-            restartMode: serverProxyRuntime.restartMode ?? 'exclusiveDb',
-            fallbackReason: serverProxyRuntime.fallbackReason,
-          }),
-        )
-      : createStackServerRuntimeProcessPatch({
-          listenerPid,
-          wrapperPid: server.pid,
-          serverPort,
-          clearProxyState: true,
-        });
-    await recordStackRuntimeUpdateImpl(runtimeStatePath, runtimePatch).catch(() => {});
+    const activationMode = serverProxyRuntime?.mode === 'proxy'
+      ? 'proxy'
+      : serverProxyRuntime?.mode === 'directFallback'
+        ? 'directFallback'
+        : 'direct';
+    await recordStackRuntimeServerActivationImpl(runtimeStatePath, {
+      listenerPid,
+      wrapperPid: server.pid,
+      stablePort: serverPort,
+      backendPort: activationMode === 'proxy' ? bindPort : null,
+      proxyPid: activationMode === 'proxy' ? serverProxyRuntime?.proxyPid : null,
+      drainingPid: null,
+      mode: activationMode,
+      restartMode: serverProxyRuntime?.restartMode ?? null,
+      reloadGeneration: serverProxyRuntime?.reloadGeneration ?? null,
+      fallbackReason: serverProxyRuntime?.fallbackReason ?? null,
+      clearProxyState: activationMode === 'direct',
+    });
   }
   return { serverEnv, serverScript, serverProc: server };
 }
@@ -708,60 +901,230 @@ export function createDevServerReloadExecutor({
   serverProcRef,
   isShuttingDown,
   proxyController = null,
-  serverRestartModeContext = {},
 }, {
-  ensureSourceServerWorkspacePackagesBuiltImpl = ensureSourceServerWorkspacePackagesBuilt,
   preflightDevServerRestartImpl = preflightDevServerRestart,
   killProcessGroupOwnedByStackImpl = killProcessGroupOwnedByStack,
-  isTcpPortFreeImpl = isTcpPortFree,
+  killSpawnedChildImpl = killProcessTree,
   waitForTcpPortFreeImpl = waitForTcpPortFree,
   waitForPgliteDirLockReleaseImpl = waitForPgliteDirLockRelease,
   pickNextFreeTcpPortImpl = pickNextFreeTcpPort,
   pmSpawnScriptImpl = pmSpawnScript,
   waitForServerReadyImpl = waitForServerReady,
   listListenPidsImpl = listListenPids,
+  listListenPidsWithStatusImpl = listListenPidsWithStatus,
   getProcessGroupIdImpl = getProcessGroupId,
   isPidAliveImpl = isPidAlive,
-  recordStackRuntimeUpdateImpl = recordStackRuntimeUpdate,
+  recordStackRuntimeServerActivationImpl = recordStackRuntimeServerActivation,
+  recordStackRuntimeServerLifecycleImpl = recordStackRuntimeServerLifecycle,
   nowImpl = Date.now,
+  monotonicNowImpl = () => performance.now(),
   restartFailurePolicy,
   logger = console,
   sleepImpl = sleepMs,
 } = {}) {
   let activeBackendPort = Number(serverBindPort || serverPort);
+  let unresolvedProvisional = null;
   const restartFailureTracker = createServerRestartFailureTracker({ policy: restartFailurePolicy, nowImpl });
+  let unexpectedExitHandler = null;
+  let observedActiveChild = null;
+  let observedActiveExitListener = null;
+  const disarmActiveChildExit = (child = observedActiveChild) => {
+    if (!child || child !== observedActiveChild) return;
+    if (observedActiveExitListener) {
+      child.off?.('exit', observedActiveExitListener);
+      child.removeListener?.('exit', observedActiveExitListener);
+    }
+    observedActiveChild = null;
+    observedActiveExitListener = null;
+  };
+  const reportUnexpectedActiveExit = (child, code, signal) => {
+    const handler = unexpectedExitHandler;
+    if (typeof handler !== 'function' || isShuttingDown?.()) return;
+    Promise.resolve(handler({
+      child,
+      pid: Number(child?.pid) || null,
+      code: code ?? child?.exitCode ?? null,
+      signal: signal ?? child?.signalCode ?? null,
+    })).catch((error) => {
+      logger.error?.(`[local] watch: active server exit recovery request failed: ${error instanceof Error ? error.message : String(error)}`);
+    });
+  };
+  const observeActiveChildExit = (child) => {
+    disarmActiveChildExit();
+    if (!child || typeof unexpectedExitHandler !== 'function') return;
+    observedActiveChild = child;
+    observedActiveExitListener = (code, signal) => {
+      if (observedActiveChild !== child) return;
+      observedActiveChild = null;
+      observedActiveExitListener = null;
+      reportUnexpectedActiveExit(child, code, signal);
+    };
+    if (hasChildExited(child)) {
+      queueMicrotask(() => observedActiveExitListener?.(child.exitCode, child.signalCode));
+      return;
+    }
+    child.once?.('exit', observedActiveExitListener);
+  };
+  const createReloadPlanForContext = (context = {}) => context.reloadPlans?.server ?? createDevServerReloadPlan({
+    dbProvider: getDbProviderFromServerEnv(serverEnv, serverComponentName),
+    changedDescriptors: context.changedDescriptors,
+    descriptorEvidenceConclusive: context.descriptorEvidenceConclusive,
+    generation: context.generation,
+  });
+  const publishLifecycle = async (transition) => {
+    if (!(stackMode && runtimeStatePath)) return null;
+    return await recordStackRuntimeServerLifecycleImpl(runtimeStatePath, transition);
+  };
+  const activeBackendIsProvablyUnavailable = async () => {
+    const activeChild = serverProcRef?.current;
+    const activePid = Number(activeChild?.pid);
+    if (!Number.isInteger(activePid) || activePid <= 1) return false;
+    if (!hasChildExited(activeChild) && isPidAliveImpl(activePid)) return false;
+    try {
+      const observation = await listListenPidsWithStatusImpl(
+        proxyController ? activeBackendPort : serverPort,
+        { timeoutMs: 1_000 },
+      );
+      return observation?.status === 'ok' && observation.pids.length === 0;
+    } catch {
+      return false;
+    }
+  };
+  const publishFailureDisposition = async ({ error, plan, retryScheduled, retryAfterMs }) => {
+    const failure = error?.serverRestartFailure;
+    const annotatedUnavailable = failure?.oldServerStopped === true
+      && failure?.serviceRestored !== true
+      && failure?.transportCommitted !== true
+      && failure?.activationCommitUnknown !== true
+      && failure?.kind !== 'cleanup_incomplete'
+      && error?.code !== 'ESERVERPROVISIONALCLEANUPINCOMPLETE';
+    const observedUnavailable = failure?.serviceRestored !== true
+      && failure?.transportCommitted !== true
+      && failure?.activationCommitUnknown !== true
+      && failure?.kind !== 'cleanup_incomplete'
+      && error?.code !== 'ESERVERPROVISIONALCLEANUPINCOMPLETE'
+      && await activeBackendIsProvablyUnavailable();
+    const unavailable = annotatedUnavailable || observedUnavailable;
+    const transition = {
+      phase: retryScheduled ? 'retry-scheduled' : unavailable ? 'unavailable' : 'blocked',
+      plan,
+      ...(retryScheduled ? { retryAfterMs } : {
+        disposition: { code: String(failure?.stage ?? failure?.kind ?? error?.code ?? 'restart_failed') },
+      }),
+    };
+    let projectionError = null;
+    try {
+      await publishLifecycle(transition);
+    } catch (caught) {
+      projectionError = caught;
+    }
+
+    const activationAmbiguous = failure?.activationCommitUnknown === true
+      && failure?.activationTargetObserved === 'other';
+    if (proxyController && (unavailable || activationAmbiguous)) {
+      try {
+        await proxyController.enterMaintenance?.(retryScheduled ? {
+          retryAfterMs,
+          retryable: true,
+          message: 'Server reload recovery pending',
+        } : {
+          retryAfterMs: 0,
+          retryable: false,
+          message: activationAmbiguous
+            ? 'Server activation outcome is unresolved; operator attention is required.'
+            : 'Server unavailable; edit or restart the stack.',
+        });
+      } catch (caught) {
+        if (!projectionError) projectionError = caught;
+        else projectionError.message += `; proxy maintenance projection failed: ${caught instanceof Error ? caught.message : String(caught)}`;
+      }
+    }
+    if (projectionError) throw projectionError;
+    return transition;
+  };
+  const emitTransitionEvent = (event, details = {}) => {
+    try {
+      const nowMs = Number(nowImpl?.());
+      const monotonicMs = Number(monotonicNowImpl?.());
+      const timestamp = new Date(Number.isFinite(nowMs) ? nowMs : Date.now()).toISOString();
+      const payload = Object.fromEntries(Object.entries({
+        event,
+        timestamp,
+        monotonicMs: Number.isFinite(monotonicMs) ? monotonicMs : null,
+        ...details,
+      }).filter(([, value]) => value !== null && value !== undefined));
+      logger.log(JSON.stringify(payload));
+    } catch {
+      // Observability must not become lifecycle authority.
+    }
+  };
 
   const cleanupSpawnedChild = async (child) => {
-    await cleanupProvisionalServerChild({
+    return await cleanupProvisionalServerChild({
       child,
       children,
       stackName,
       envPath,
       killProcessGroupOwnedByStackImpl,
+      killSpawnedChildImpl,
     });
   };
 
-  const spawnServerBackend = async ({ port, recentLineBuffer }) => {
-    const nextEnv = { ...serverEnv, PORT: String(port) };
+  const retainUnresolvedChild = (child, details = {}) => {
+    unresolvedProvisional = { child, ...details };
+  };
+
+  const spawnServerBackend = async ({ port, recentLineBuffer, envOverrides = {}, reloadPlan, purpose = 'replacement' }) => {
+    const nextEnv = { ...serverEnv, ...envOverrides, PORT: String(port) };
     let next = null;
+    const transition = {
+      generation: reloadPlan?.generation,
+      mode: reloadPlan?.mode,
+      migrationMode: reloadPlan?.migrationMode,
+      targetPort: port,
+      purpose,
+    };
+    let migrationStarted = false;
+    let migrationCompleted = false;
+    const startupDeadline = createServerReadinessDeadline({
+      readinessTimeoutMs: resolveServerReadyTimeoutMs({ serverComponentName, env: nextEnv }),
+      migrationTimeoutMs: resolveServerMigrationTimeoutMs({ env: nextEnv }),
+    });
+    if (reloadPlan?.migrationMode === 'skip') emitTransitionEvent('migration_skipped', transition);
+    const onLine = (lineEvent) => {
+      recentLineBuffer.onLine(lineEvent);
+      const signal = startupDeadline.observeLine(lineEvent);
+      if (reloadPlan?.migrationMode === 'skip') return;
+      if (signal === 'migration_started' && !migrationStarted) {
+        migrationStarted = true;
+        emitTransitionEvent('migration_started', transition);
+      } else if (signal === 'migration_completed' && migrationStarted && !migrationCompleted) {
+        migrationCompleted = true;
+        emitTransitionEvent('migration_completed', { ...transition, disposition: 'succeeded' });
+      }
+    };
     try {
       next = await pmSpawnScriptImpl({
         label: 'server',
         dir: serverDir,
         script: serverScript,
         env: nextEnv,
-        options: { onLine: recentLineBuffer.onLine },
+        options: { onLine },
       });
       children.push(next);
+      emitTransitionEvent('replacement_spawned', { ...transition, pid: next.pid });
       const readyUrl = localServerUrlForPort(port);
+      startupDeadline.startReadiness();
       await waitForServerReadyImpl(readyUrl, {
         timeoutMs: resolveServerReadyTimeoutMs({ serverComponentName, env: nextEnv }),
         childProcess: next,
+        startupDeadline,
       });
       const listenerPid = await assertServerPortOwnedBySpawnedProcessGroup({
         serverPort: port,
         spawnedPid: next.pid,
         listListenPidsImpl,
+        listListenPidsWithStatusImpl,
         getProcessGroupIdImpl,
       });
       if (hasChildExited(next)) {
@@ -770,30 +1133,82 @@ export function createDevServerReloadExecutor({
             `(pid=${next.pid}, code=${next.exitCode ?? 'null'}, signal=${next.signalCode ?? 'null'})`
         );
       }
+      emitTransitionEvent('replacement_ready', { ...transition, pid: next.pid, listenerPid });
       return { child: next, listenerPid };
     } catch (error) {
-      await cleanupSpawnedChild(next);
+      if (migrationStarted && !migrationCompleted) {
+        emitTransitionEvent('migration_completed', { ...transition, pid: next?.pid, disposition: 'failed' });
+      }
+      if (next) emitTransitionEvent('replacement_readiness_failed', { ...transition, pid: next.pid });
+      const cleanupConfirmed = await cleanupSpawnedChild(next);
+      if (next && !cleanupConfirmed) {
+        const cleanupError = new Error(
+          `[local] provisional server termination was not confirmed after startup failure ` +
+            `(pid=${next.pid ?? 'unknown'}, port=${port}): ${error instanceof Error ? error.message : String(error)}`,
+          { cause: error },
+        );
+        cleanupError.code = 'ESERVERPROVISIONALCLEANUPINCOMPLETE';
+        cleanupError.provisionalChild = next;
+        throw cleanupError;
+      }
       throw error;
     }
   };
 
-  const recordProxyBackend = async ({ backendPort, listenerPid, wrapperPid, restartMode, drainingPid = null }) => {
+  const observePortAndDatabaseRelease = async ({ port, pid, scope, reloadPlan }) => {
+    const transition = {
+      generation: reloadPlan?.generation,
+      mode: reloadPlan?.mode,
+      currentPort: port,
+      purpose: 'replacement',
+    };
+    let portDisposition = 'inconclusive';
+    let databaseDisposition = getDbProviderFromServerEnv(serverEnv, serverComponentName) === 'pglite'
+      ? 'pending'
+      : 'not_applicable';
+    try {
+      const availability = await waitForTcpPortFreeImpl(port, { host: '127.0.0.1', timeoutMs: 5_000, intervalMs: 100 });
+      portDisposition = availability?.status === 'free' ? 'free' : String(availability?.status ?? 'inconclusive');
+      assertTcpPortReleased(availability, { port, pid, scope });
+      await waitForProviderDbReleaseIfNeeded(serverEnv, { waitForPgliteDirLockReleaseImpl });
+      if (databaseDisposition === 'pending') databaseDisposition = 'released';
+      emitTransitionEvent('port_database_release_result', {
+        ...transition,
+        disposition: 'released',
+        portDisposition,
+        databaseDisposition,
+      });
+    } catch (error) {
+      if (error?.code === 'ESERVERBACKENDPORTOCCUPIED') portDisposition = 'occupied';
+      if (error?.code === 'ESERVERBACKENDPORTRELEASEINCONCLUSIVE') portDisposition = 'inconclusive';
+      if (portDisposition === 'free' && databaseDisposition === 'pending') databaseDisposition = 'blocked';
+      emitTransitionEvent('port_database_release_result', {
+        ...transition,
+        disposition: portDisposition === 'occupied'
+          ? 'occupied'
+          : portDisposition === 'inconclusive'
+            ? 'inconclusive'
+            : 'blocked',
+        portDisposition,
+        databaseDisposition,
+      });
+      throw error;
+    }
+  };
+
+  const recordProxyBackend = async ({ backendPort, listenerPid, wrapperPid, reloadPlan, drainingPid = null }) => {
     if (!(stackMode && runtimeStatePath)) return;
-    await recordStackRuntimeUpdateImpl(
-      runtimeStatePath,
-      mergeRuntimePatches(
-        createStackServerRuntimeProcessPatch({ listenerPid, wrapperPid }),
-        createStackDevProxyRuntimePatch({
-          stablePort: serverPort,
-          backendPort,
-          proxyPid: proxyController?.pid,
-          backendPid: listenerPid,
-          drainingPid,
-          mode: 'proxy',
-          restartMode,
-        }),
-      ),
-    ).catch(() => {});
+    await recordStackRuntimeServerActivationImpl(runtimeStatePath, {
+      listenerPid,
+      wrapperPid,
+      stablePort: serverPort,
+      backendPort,
+      proxyPid: proxyController?.pid,
+      drainingPid,
+      mode: 'proxy',
+      restartMode: reloadPlan.mode,
+      reloadGeneration: reloadPlan.generation,
+    });
   };
 
   const backendDrainTarget = (port) => ({
@@ -832,58 +1247,139 @@ export function createDevServerReloadExecutor({
     targetPort,
     drainTargets,
     graceMs = resolveDevProxyDrainMs(serverEnv),
+    transition = {},
   }) => {
-    proxyController.flipUpstream?.({ targetPort });
+    emitTransitionEvent('backend_activation_requested', { targetPort, ...transition });
+    await proxyController.flipUpstream?.({ targetPort });
+    emitTransitionEvent('backend_activation_acknowledged', { targetPort, ...transition });
+    emitTransitionEvent('maintenance_exited', { targetPort, ...transition });
     await drainProxyTargets(drainTargets, { graceMs });
   };
 
-  const restartWithExclusiveDbProxy = async () => {
+  const restartWithExclusiveDbProxy = async (reloadPlan, context = {}) => {
     const currentServerProc = serverProcRef?.current;
     const pid = Number(currentServerProc?.pid);
     if (!Number.isFinite(pid) || pid <= 1) return false;
 
-    const restartMode = 'exclusiveDb';
     const recentLineBuffer = createRecentLineBuffer(restartFailureTracker.policy.recentLineLimit);
     const oldBackendPort = activeBackendPort;
     const oldBackendTarget = backendDrainTarget(oldBackendPort);
     let oldServerStopped = false;
     let replacement = null;
+    let replacementTransportCommitted = false;
     let maintenanceTarget = null;
     let attemptedReplacementTarget = null;
 
-    const ownsCurrentListener = await isServerPortOwnedByProcessGroup({
-      serverPort: oldBackendPort,
-      rootPid: pid,
-      listListenPidsImpl,
-      getProcessGroupIdImpl,
-    });
-    if (!ownsCurrentListener) {
-      const free = await isTcpPortFreeImpl(oldBackendPort, { host: '127.0.0.1' });
+    const currentPidWasAlive = !hasChildExited(currentServerProc) && isPidAliveImpl(pid);
+    const precheckObservationScope = currentPidWasAlive
+      ? createListenerOwnershipObservationScope({
+          listListenPidsImpl,
+          listListenPidsWithStatusImpl,
+        })
+      : null;
+    const ownsCurrentListener = currentPidWasAlive
+      ? await isServerPortOwnedByProcessGroup({
+          serverPort: oldBackendPort,
+          rootPid: pid,
+          listListenPidsImpl,
+          listListenPidsWithStatusImpl,
+          getProcessGroupIdImpl,
+          listenerObservationScope: precheckObservationScope,
+        })
+      : false;
+    if (typeof context.revalidateGeneration === 'function' && !await context.revalidateGeneration()) return false;
+    if (!ownsCurrentListener && currentPidWasAlive) {
+      const availability = await waitForTcpPortFreeImpl(oldBackendPort, {
+        host: '127.0.0.1',
+        timeoutMs: 5_000,
+        intervalMs: 100,
+      });
       const currentPidStillAlive = !hasChildExited(currentServerProc) && isPidAliveImpl(pid);
-      if (currentPidStillAlive || !free) {
+      if (!currentPidStillAlive && availability?.status !== 'free') {
+        assertTcpPortReleased(availability, {
+          port: oldBackendPort,
+          pid,
+          scope: 'server backend port',
+        });
+      }
+      if (currentPidStillAlive || availability?.status !== 'free') {
         throw new Error(
           `[local] watch restart refused: server backend port ${oldBackendPort} is not provably stack-owned.\n` +
             `[local] Fix: run 'hstack stack stop ${stackName}' then re-run.`
         );
       }
+      oldServerStopped = true;
+    } else if (!ownsCurrentListener) {
+      oldServerStopped = true;
     }
 
     maintenanceTarget = normalizeDrainTarget(await proxyController.enterMaintenance?.({
       retryAfterMs: Math.max(1, resolveDevProxyDrainMs(serverEnv)),
       message: 'Server reload in progress',
     }));
+    emitTransitionEvent('maintenance_entered', {
+      generation: reloadPlan.generation,
+      pid,
+      currentPort: oldBackendPort,
+      mode: reloadPlan.mode,
+      purpose: 'replacement',
+    });
+    try {
+      await publishLifecycle({ phase: 'maintenance', plan: reloadPlan });
+    } catch (error) {
+      await flipProxyUpstreamAndDrainTargets({
+        targetPort: oldBackendPort,
+        drainTargets: [maintenanceTarget],
+        transition: {
+          generation: reloadPlan.generation,
+          pid,
+          mode: reloadPlan.mode,
+          purpose: 'maintenance_restore',
+        },
+      });
+      throw error;
+    }
+    if (typeof context.revalidateGeneration === 'function' && !await context.revalidateGeneration()) {
+      await flipProxyUpstreamAndDrainTargets({
+        targetPort: oldBackendPort,
+        drainTargets: [maintenanceTarget],
+        transition: {
+          generation: reloadPlan.generation,
+          pid,
+          mode: reloadPlan.mode,
+          purpose: 'maintenance_restore',
+        },
+      });
+      return false;
+    }
     if (ownsCurrentListener) {
+      disarmActiveChildExit(currentServerProc);
       const killResult = await killServerProcessGroupForPlannedReload({
         child: currentServerProc,
         pid,
         stackName,
         envPath,
+        serverEnv,
         killProcessGroupOwnedByStackImpl,
+        onTerminationRequested: () => emitTransitionEvent('old_server_shutdown_requested', {
+          generation: reloadPlan.generation,
+          pid,
+          currentPort: oldBackendPort,
+          mode: reloadPlan.mode,
+          purpose: 'replacement',
+        }),
       });
       if (!killResult?.killed) {
+        observeActiveChildExit(currentServerProc);
         await flipProxyUpstreamAndDrainTargets({
           targetPort: oldBackendPort,
           drainTargets: [maintenanceTarget],
+          transition: {
+            generation: reloadPlan.generation,
+            pid,
+            mode: reloadPlan.mode,
+            purpose: 'maintenance_restore',
+          },
         });
         throw new Error(
           `[local] watch restart refused: server pid ${pid} owns backend port ${oldBackendPort} but could not be stopped safely.\n` +
@@ -892,46 +1388,193 @@ export function createDevServerReloadExecutor({
       }
       oldServerStopped = true;
       removeChildFromChildren(children, currentServerProc);
+      emitTransitionEvent('old_server_exited', {
+        generation: reloadPlan.generation,
+        pid,
+        currentPort: oldBackendPort,
+        mode: reloadPlan.mode,
+        purpose: 'replacement',
+        disposition: 'exited',
+      });
+    } else {
+      emitTransitionEvent('old_server_exited', {
+        generation: reloadPlan.generation,
+        pid,
+        currentPort: oldBackendPort,
+        mode: reloadPlan.mode,
+        purpose: 'replacement',
+        disposition: 'already_exited',
+      });
     }
 
     try {
-      const released = await waitForTcpPortFreeImpl(oldBackendPort, { host: '127.0.0.1', timeoutMs: 5_000, intervalMs: 100 });
-      if (!released) {
-        throw new Error(`[local] watch restart refused: server backend port ${oldBackendPort} did not release after stopping pid=${pid}.`);
-      }
-      await waitForProviderDbReleaseIfNeeded(serverEnv, { waitForPgliteDirLockReleaseImpl });
+      await observePortAndDatabaseRelease({
+        port: oldBackendPort,
+        pid,
+        scope: 'server backend port',
+        reloadPlan,
+      });
       const nextBackendPort = await pickNextFreeTcpPortImpl(oldBackendPort + 1, {
         host: '127.0.0.1',
         reservedPorts: new Set([Number(serverPort), oldBackendPort]),
       });
       attemptedReplacementTarget = backendDrainTarget(nextBackendPort);
-      replacement = await spawnServerBackend({ port: nextBackendPort, recentLineBuffer });
-      serverProcRef.current = replacement.child;
-      activeBackendPort = nextBackendPort;
-      await flipProxyUpstreamAndDrainTargets({
+      replacement = await spawnServerBackend({
+        port: nextBackendPort,
+        recentLineBuffer,
+        envOverrides: serverReloadMigrationEnv(reloadPlan),
+        reloadPlan,
+        purpose: 'replacement',
+      });
+      emitTransitionEvent('backend_activation_requested', {
+        generation: reloadPlan.generation,
+        pid: replacement.child.pid,
+        currentPort: oldBackendPort,
         targetPort: nextBackendPort,
-        drainTargets: [maintenanceTarget, oldBackendTarget],
+        mode: reloadPlan.mode,
+        purpose: 'replacement',
+      });
+      await proxyController.flipUpstream?.({ targetPort: nextBackendPort });
+      emitTransitionEvent('backend_activation_acknowledged', {
+        generation: reloadPlan.generation,
+        pid: replacement.child.pid,
+        currentPort: oldBackendPort,
+        targetPort: nextBackendPort,
+        mode: reloadPlan.mode,
+        purpose: 'replacement',
+      });
+      emitTransitionEvent('maintenance_exited', {
+        generation: reloadPlan.generation,
+        pid: replacement.child.pid,
+        targetPort: nextBackendPort,
+        mode: reloadPlan.mode,
+        purpose: 'replacement',
+      });
+      replacementTransportCommitted = true;
+      serverProcRef.current = replacement.child;
+      observeActiveChildExit(replacement.child);
+      activeBackendPort = nextBackendPort;
+      await drainProxyTargets([maintenanceTarget, oldBackendTarget], {
+        graceMs: resolveDevProxyDrainMs(serverEnv),
       });
       await recordProxyBackend({
         backendPort: nextBackendPort,
         listenerPid: replacement.listenerPid,
         wrapperPid: replacement.child.pid,
-        restartMode,
+        reloadPlan,
+      }).catch((error) => {
+        throw annotateServerRestartError(
+          error,
+          classifyServerRestartFailure({
+            error,
+            stage: 'post_commit',
+            child: replacement.child,
+            oldServerStopped,
+            transportCommitted: true,
+            serviceRestored: true,
+            recentLines: recentLineBuffer.snapshot(),
+          }),
+        );
       });
       logger.log(`[local] watch: server restarted behind proxy (pid=${replacement.child.pid}, backendPort=${nextBackendPort})`);
       return true;
     } catch (error) {
-      if (oldServerStopped) {
-        await flipProxyUpstreamAndDrainTargets({
-          targetPort: oldBackendPort,
-          drainTargets: [maintenanceTarget, attemptedReplacementTarget],
-        }).catch((rollbackError) => {
+      if (error?.serverRestartFailure?.serviceRestored === true) throw error;
+      let observedUpstream = null;
+      if (replacement && !replacementTransportCommitted) {
+        try {
+          observedUpstream = await proxyController?.getUpstream?.();
+          if (Number(observedUpstream?.targetPort) === Number(attemptedReplacementTarget?.targetPort)) {
+            replacementTransportCommitted = true;
+          }
+        } catch {
+          observedUpstream = null;
+        }
+      }
+      if (replacement && !replacementTransportCommitted && observedUpstream) {
+        const observedTarget = normalizeDrainTarget(observedUpstream);
+        const isKnownNonCandidateTarget = [maintenanceTarget, oldBackendTarget]
+          .filter(Boolean)
+          .some((target) => (
+            Number(target.targetPort) === Number(observedTarget?.targetPort)
+            && String(target.targetHost ?? '127.0.0.1') === String(observedTarget?.targetHost ?? '127.0.0.1')
+          ));
+        if (isKnownNonCandidateTarget) {
+          const provisionalChild = replacement.child;
+          if (!await cleanupSpawnedChild(provisionalChild)) {
+            retainUnresolvedChild(provisionalChild, {
+              oldServerStopped: true,
+              activationCommitUnknown: false,
+              cleanupIncomplete: true,
+            });
+            const cleanupError = new Error(
+              `[local] provisional server termination was not confirmed after authoritative non-candidate activation ` +
+                `(pid=${provisionalChild?.pid ?? 'unknown'}).`,
+              { cause: error },
+            );
+            cleanupError.code = 'ESERVERPROVISIONALCLEANUPINCOMPLETE';
+            throw cleanupError;
+          }
+          replacement = null;
+        }
+      }
+      if (replacement && replacementTransportCommitted) {
+        serverProcRef.current = replacement.child;
+        observeActiveChildExit(replacement.child);
+        activeBackendPort = Number(attemptedReplacementTarget?.targetPort);
+        try {
+          await recordProxyBackend({
+            backendPort: activeBackendPort,
+            listenerPid: replacement.listenerPid,
+            wrapperPid: replacement.child.pid,
+            reloadPlan,
+          });
+        } catch (projectionError) {
+          error.message += `; failed to record transport-committed replacement: ` +
+            `${projectionError instanceof Error ? projectionError.message : String(projectionError)}`;
+        }
+        throw annotateServerRestartError(
+          error,
+          classifyServerRestartFailure({
+            error,
+            stage: 'post_commit',
+            child: replacement.child,
+            oldServerStopped,
+            transportCommitted: true,
+            serviceRestored: true,
+            recentLines: recentLineBuffer.snapshot(),
+          }),
+        );
+      }
+      if (replacement) {
+        retainUnresolvedChild(replacement.child, { oldServerStopped: true, activationCommitUnknown: true });
+        const annotated = annotateServerRestartError(error, classifyServerRestartFailure({
+          error,
+          stage: 'activation_commit_unknown',
+          child: replacement.child,
+          oldServerStopped: true,
+          recentLines: recentLineBuffer.snapshot(),
+        }));
+        annotated.serverRestartFailure.activationCommitUnknown = true;
+        annotated.serverRestartFailure.activationTargetObserved = observedUpstream ? 'other' : 'inconclusive';
+        delete annotated.reloadRetryAfterMs;
+        throw annotated;
+      }
+      if (
+        oldServerStopped &&
+        error?.code !== 'ESERVERBACKENDPORTRELEASEINCONCLUSIVE' &&
+        error?.code !== 'ESERVERBACKENDPORTOCCUPIED'
+      ) {
+        await drainProxyTargets([attemptedReplacementTarget], {
+          graceMs: resolveDevProxyDrainMs(serverEnv),
+        }).catch((drainError) => {
           logger.error(
-            `[local] watch: proxy rollback drain failed after restart error: ` +
-              `${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}`
+            `[local] watch: failed to drain the attempted replacement while maintenance remains active: ` +
+              `${drainError instanceof Error ? drainError.message : String(drainError)}`
           );
         });
       }
+      if (oldServerStopped) requestSafePostStopRetry(error);
       throw annotateServerRestartError(
         error,
         classifyServerRestartFailure({
@@ -945,28 +1588,50 @@ export function createDevServerReloadExecutor({
     }
   };
 
-  const restartDirect = async () => {
+  const restartDirect = async (reloadPlan, context = {}) => {
     const currentServerProc = serverProcRef?.current;
     const pid = Number(currentServerProc?.pid);
     if (!Number.isFinite(pid) || pid <= 1) return false;
 
     let oldServerStopped = false;
     const recentLineBuffer = createRecentLineBuffer(restartFailureTracker.policy.recentLineLimit);
-    const ownsCurrentListener = await isServerPortOwnedByProcessGroup({
-      serverPort,
-      rootPid: pid,
-      listListenPidsImpl,
-      getProcessGroupIdImpl,
-    });
+    const currentPidWasAlive = !hasChildExited(currentServerProc) && isPidAliveImpl(pid);
+    const precheckObservationScope = currentPidWasAlive
+      ? createListenerOwnershipObservationScope({
+          listListenPidsImpl,
+          listListenPidsWithStatusImpl,
+        })
+      : null;
+    const ownsCurrentListener = currentPidWasAlive
+      ? await isServerPortOwnedByProcessGroup({
+          serverPort,
+          rootPid: pid,
+          listListenPidsImpl,
+          listListenPidsWithStatusImpl,
+          getProcessGroupIdImpl,
+          listenerObservationScope: precheckObservationScope,
+        })
+      : false;
+    if (typeof context.revalidateGeneration === 'function' && !await context.revalidateGeneration()) return false;
     if (ownsCurrentListener) {
+      disarmActiveChildExit(currentServerProc);
       const killResult = await killServerProcessGroupForPlannedReload({
         child: currentServerProc,
         pid,
         stackName,
         envPath,
+        serverEnv,
         killProcessGroupOwnedByStackImpl,
+        onTerminationRequested: () => emitTransitionEvent('old_server_shutdown_requested', {
+          generation: reloadPlan.generation,
+          pid,
+          currentPort: serverPort,
+          mode: reloadPlan.mode,
+          purpose: 'replacement',
+        }),
       });
       if (!killResult?.killed) {
+        observeActiveChildExit(currentServerProc);
         throw new Error(
           `[local] watch restart refused: server pid ${pid} owns port ${serverPort} but could not be stopped safely.\n` +
             `[local] Fix: run 'hstack stack stop ${stackName}' then re-run.`
@@ -974,43 +1639,108 @@ export function createDevServerReloadExecutor({
       }
       oldServerStopped = true;
       removeChildFromChildren(children, currentServerProc);
-    } else {
-      const free = await isTcpPortFreeImpl(serverPort, { host: '127.0.0.1' });
+      emitTransitionEvent('old_server_exited', {
+        generation: reloadPlan.generation,
+        pid,
+        currentPort: serverPort,
+        mode: reloadPlan.mode,
+        purpose: 'replacement',
+        disposition: 'exited',
+      });
+    } else if (currentPidWasAlive) {
+      const availability = await waitForTcpPortFreeImpl(serverPort, {
+        host: '127.0.0.1',
+        timeoutMs: 5_000,
+        intervalMs: 100,
+      });
       const currentPidStillAlive = !hasChildExited(currentServerProc) && isPidAliveImpl(pid);
-      if (currentPidStillAlive || !free) {
+      if (!currentPidStillAlive && availability?.status !== 'free') {
+        assertTcpPortReleased(availability, {
+          port: serverPort,
+          pid,
+          scope: 'server port',
+        });
+      }
+      if (currentPidStillAlive || availability?.status !== 'free') {
         throw new Error(
           `[local] watch restart refused: server port ${serverPort} is occupied and the running PID does not own it.\n` +
             `[local] Fix: run 'hstack stack stop ${stackName}' then re-run.`
         );
       }
+      oldServerStopped = true;
+      emitTransitionEvent('old_server_exited', {
+        generation: reloadPlan.generation,
+        pid,
+        currentPort: serverPort,
+        mode: reloadPlan.mode,
+        purpose: 'replacement',
+        disposition: 'already_exited',
+      });
+    } else {
+      oldServerStopped = true;
+      emitTransitionEvent('old_server_exited', {
+        generation: reloadPlan.generation,
+        pid,
+        currentPort: serverPort,
+        mode: reloadPlan.mode,
+        purpose: 'replacement',
+        disposition: 'already_exited',
+      });
     }
-    const released = await waitForTcpPortFreeImpl(serverPort, { host: '127.0.0.1', timeoutMs: 5_000, intervalMs: 100 });
-    if (!released) {
-      const error = new Error(`[local] watch restart refused: server port ${serverPort} did not release after stopping pid=${pid}.`);
+    try {
+      await observePortAndDatabaseRelease({
+        port: serverPort,
+        pid,
+        scope: 'server port',
+        reloadPlan,
+      });
+    } catch (error) {
+      if (oldServerStopped) requestSafePostStopRetry(error);
       throw annotateServerRestartError(
         error,
         classifyServerRestartFailure({ error, stage: 'post-stop', child: null, oldServerStopped, recentLines: recentLineBuffer.snapshot() }),
       );
     }
-    await waitForProviderDbReleaseIfNeeded(serverEnv, { waitForPgliteDirLockReleaseImpl });
     let next = null;
     try {
-      next = await spawnServerBackend({ port: serverPort, recentLineBuffer });
+      next = await spawnServerBackend({
+        port: serverPort,
+        recentLineBuffer,
+        envOverrides: serverReloadMigrationEnv(reloadPlan),
+        reloadPlan,
+        purpose: 'replacement',
+      });
       serverProcRef.current = next.child;
+      observeActiveChildExit(next.child);
       if (stackMode && runtimeStatePath) {
-        await recordStackRuntimeUpdateImpl(
-          runtimeStatePath,
-          createStackServerRuntimeProcessPatch({
-            listenerPid: next.listenerPid,
-            wrapperPid: next.child.pid,
-            serverPort,
-            clearProxyState: true,
-          }),
-        ).catch(() => {});
+        await recordStackRuntimeServerActivationImpl(runtimeStatePath, {
+          listenerPid: next.listenerPid,
+          wrapperPid: next.child.pid,
+          stablePort: serverPort,
+          mode: 'direct',
+          restartMode: reloadPlan.mode,
+          reloadGeneration: reloadPlan.generation,
+          clearProxyState: true,
+        }).catch((error) => {
+          throw annotateServerRestartError(
+            error,
+            classifyServerRestartFailure({
+              error,
+              stage: 'post_commit',
+              child: next.child,
+              oldServerStopped,
+              serviceRestored: true,
+              directReplacementActive: true,
+              recentLines: recentLineBuffer.snapshot(),
+            }),
+          );
+        });
       }
       logger.log(`[local] watch: server restarted (pid=${next.child.pid}, port=${serverPort})`);
       return true;
     } catch (error) {
+      if (error?.serverRestartFailure?.serviceRestored === true) throw error;
+      if (oldServerStopped) requestSafePostStopRetry(error);
       throw annotateServerRestartError(
         error,
         classifyServerRestartFailure({ error, stage: 'readiness', child: next?.child ?? null, oldServerStopped, recentLines: recentLineBuffer.snapshot() }),
@@ -1018,126 +1748,109 @@ export function createDevServerReloadExecutor({
     }
   };
 
-  const restartOnce = async () => {
-    if (proxyController) {
-      const mode = selectDevServerRestartMode({
-        dbProvider: getDbProviderFromServerEnv(serverEnv),
-        ...serverRestartModeContext,
-      });
-      if (mode === 'blueGreen') {
-        const currentServerProc = serverProcRef?.current;
-        const pid = Number(currentServerProc?.pid);
-        if (!Number.isFinite(pid) || pid <= 1) return false;
-
-        const recentLineBuffer = createRecentLineBuffer(restartFailureTracker.policy.recentLineLimit);
-        const oldBackendPort = activeBackendPort;
-        const oldBackendTarget = backendDrainTarget(oldBackendPort);
-        let oldListenerPid = await assertServerPortOwnedBySpawnedProcessGroup({
-          serverPort: oldBackendPort,
-          spawnedPid: pid,
-          listListenPidsImpl,
-          getProcessGroupIdImpl,
-        }).catch(() => null);
-
-        if (!(Number.isFinite(Number(oldListenerPid)) && Number(oldListenerPid) > 1)) {
-          const free = await isTcpPortFreeImpl(oldBackendPort, { host: '127.0.0.1' });
-          const currentPidStillAlive = !hasChildExited(currentServerProc) && isPidAliveImpl(pid);
-          if (currentPidStillAlive || !free) {
-            throw new Error(
-              `[local] watch restart refused: server backend port ${oldBackendPort} is not provably stack-owned.\n` +
-                `[local] Fix: run 'hstack stack stop ${stackName}' then re-run.`
-            );
-          }
-          oldListenerPid = null;
-        }
-
-        const nextBackendPort = await pickNextFreeTcpPortImpl(oldBackendPort + 1, {
-          host: '127.0.0.1',
-          reservedPorts: new Set([Number(serverPort), oldBackendPort]),
-        });
-        const replacement = await spawnServerBackend({ port: nextBackendPort, recentLineBuffer });
-        serverProcRef.current = replacement.child;
-        activeBackendPort = nextBackendPort;
-        proxyController.flipUpstream?.({ targetPort: nextBackendPort });
-        await recordProxyBackend({
-          backendPort: nextBackendPort,
-          listenerPid: replacement.listenerPid,
-          wrapperPid: replacement.child.pid,
-          restartMode: 'blueGreen',
-          drainingPid: oldListenerPid,
-        });
-        await drainProxyTargets([oldBackendTarget], { graceMs: resolveDevProxyDrainMs(serverEnv) });
-
-        if (oldListenerPid) {
-          const killResult = await killServerProcessGroupForPlannedReload({
-            child: currentServerProc,
-            pid,
-            stackName,
-            envPath,
-            killProcessGroupOwnedByStackImpl,
-          })
-            .catch(() => ({ killed: false }));
-          if (killResult?.killed) {
-            removeChildFromChildren(children, currentServerProc);
-            await recordProxyBackend({
-              backendPort: nextBackendPort,
-              listenerPid: replacement.listenerPid,
-              wrapperPid: replacement.child.pid,
-              restartMode: 'blueGreen',
-              drainingPid: null,
-            });
-          } else {
-            logger.error?.(
-              `[local] watch: old server backend pid ${pid} did not stop after blue-green flip; ` +
-                'leaving serverDrainingPid in runtime state for stack stop cleanup.'
-            );
-          }
-        } else {
-          removeChildFromChildren(children, currentServerProc);
-          await recordProxyBackend({
-            backendPort: nextBackendPort,
-            listenerPid: replacement.listenerPid,
-            wrapperPid: replacement.child.pid,
-            restartMode: 'blueGreen',
-            drainingPid: null,
-          });
-        }
-
-        return true;
+  const restartOnce = async (reloadPlan, context = {}) => {
+    if (unresolvedProvisional?.child) {
+      if (hasChildExited(unresolvedProvisional.child)) {
+        removeChildFromChildren(children, unresolvedProvisional.child);
+        unresolvedProvisional = null;
+      } else {
+        const error = new Error(
+          `[local] watch restart refused: provisional server activation remains unresolved ` +
+            `(pid=${unresolvedProvisional.child.pid ?? 'unknown'}); no competing server will be started.`,
+        );
+        error.code = 'ESERVERPROVISIONALCLEANUPINCOMPLETE';
+        error.provisionalChild = unresolvedProvisional.child;
+        const annotated = annotateServerRestartError(error, classifyServerRestartFailure({
+          error,
+          stage: 'cleanup_incomplete',
+          child: unresolvedProvisional.child,
+          oldServerStopped: unresolvedProvisional.oldServerStopped,
+          recentLines: [],
+        }));
+        annotated.serverRestartFailure.activationCommitUnknown = true;
+        throw annotated;
       }
-      return await restartWithExclusiveDbProxy();
     }
-    return await restartDirect();
+    if (proxyController) return await restartWithExclusiveDbProxy(reloadPlan, context);
+    return await restartDirect(reloadPlan, context);
   };
 
   return {
     target: 'server',
-    async build() {
-      if (!enabled || isShuttingDown?.()) return { skipped: true };
-      await ensureSourceServerWorkspacePackagesBuiltImpl({
-        runtimeBackedStart: false,
-        serverDir,
-        env: serverEnv,
-      });
-      await preflightDevServerRestartImpl({ serverDir, serverComponentName, serverEnv, consoleImpl: logger, logger });
-      return { ok: true };
+    setUnexpectedExitHandler(handler) {
+      disarmActiveChildExit();
+      unexpectedExitHandler = typeof handler === 'function' ? handler : null;
+      if (unexpectedExitHandler) observeActiveChildExit(serverProcRef?.current);
     },
-    async restart() {
+    createPlan(context = {}) {
+      return createReloadPlanForContext(context);
+    },
+    emitTransitionEvent(event, details) {
+      emitTransitionEvent(event, details);
+    },
+    async publishLifecycle(transition) {
+      return await publishLifecycle(transition);
+    },
+    async publishFailureDisposition(disposition) {
+      return await publishFailureDisposition(disposition);
+    },
+    getBackoffRemainingMs() {
+      return restartFailureTracker.getBackoffRemainingMs();
+    },
+    async build(context = {}) {
+      if (!enabled || isShuttingDown?.()) return { skipped: true };
+      const reloadPlan = createReloadPlanForContext(context);
+      const transition = {
+        generation: reloadPlan.generation,
+        mode: reloadPlan.mode,
+        migrationMode: reloadPlan.migrationMode,
+        purpose: 'replacement',
+      };
+      emitTransitionEvent('preflight_started', transition);
+      try {
+        await preflightDevServerRestartImpl({
+          serverDir,
+          serverComponentName,
+          serverEnv,
+          reloadMigrationMode: reloadPlan.migrationMode,
+          consoleImpl: logger,
+          logger,
+        });
+        emitTransitionEvent('preflight_completed', { ...transition, disposition: 'succeeded' });
+        return { ok: true };
+      } catch (error) {
+        emitTransitionEvent('preflight_completed', { ...transition, disposition: 'failed' });
+        throw error;
+      }
+    },
+    async restart(context = {}) {
       if (!enabled || isShuttingDown?.()) return { skipped: true };
       const backoffRemainingMs = restartFailureTracker.getBackoffRemainingMs();
       if (backoffRemainingMs > 0) {
         logger.error(
           `[local] watch: server restart suppressed; backing off for ${backoffRemainingMs}ms after repeated startup failures.`
         );
-        return { skipped: true, reason: 'backoff' };
+        return {
+          skipped: true,
+          reason: 'backoff',
+          retryAfterMs: Math.ceil(backoffRemainingMs) + 1,
+        };
       }
+      const reloadPlan = createReloadPlanForContext(context);
       try {
-        const restarted = await restartOnce();
+        await publishLifecycle({ phase: 'replacing', plan: reloadPlan });
+        const restarted = await restartOnce(reloadPlan, context);
         if (restarted) restartFailureTracker.reset();
         return { restarted };
       } catch (error) {
+        requestTransientListenerDiscoveryRetry(error);
         const failure = error?.serverRestartFailure;
-        if (failure?.oldServerStopped) {
+        if (failure?.serviceRestored === true) {
+          logger.error(
+            `[local] watch: server replacement remains active, but restart completion could not be published ` +
+              `(will retry on next change).`
+          );
+        } else if (failure?.oldServerStopped) {
           logger.error(
             `[local] watch: server restart failed after stopping the previous process; ` +
               `no server is running on port ${serverPort} (will retry on next change).`
@@ -1158,216 +1871,4 @@ export function createDevServerReloadExecutor({
       }
     },
   };
-}
-
-export function watchDevServerAndRestart({
-  enabled,
-  stackMode,
-  serverComponentName,
-  serverDir,
-  serverPort,
-  internalServerUrl,
-  serverScript,
-  serverEnv,
-  runtimeStatePath,
-  stackName,
-  envPath,
-  children,
-  serverProcRef,
-  isShuttingDown,
-}, {
-  watchDebouncedImpl = watchDebounced,
-  pmSpawnScriptImpl = pmSpawnScript,
-  killProcessGroupOwnedByStackImpl = killProcessGroupOwnedByStack,
-  isTcpPortFreeImpl = isTcpPortFree,
-  waitForTcpPortFreeImpl = waitForTcpPortFree,
-  stopStackOwnedServerForRestartImpl = stopStackOwnedServerForRestart,
-  recordStackRuntimeUpdateImpl = recordStackRuntimeUpdate,
-  waitForServerReadyImpl = waitForServerReady,
-  listListenPidsImpl = listListenPids,
-  getProcessGroupIdImpl = getProcessGroupId,
-  preflightDevServerRestartImpl = preflightDevServerRestart,
-  ensureSourceServerWorkspacePackagesBuiltImpl = ensureSourceServerWorkspacePackagesBuilt,
-  waitForPgliteDirLockReleaseImpl = waitForPgliteDirLockRelease,
-  readWatchChangeSignatureImpl = readDevServerWatchChangeSignature,
-  existsSyncImpl = existsSync,
-  nowImpl = Date.now,
-  restartFailurePolicy,
-  consoleImpl = console,
-} = {}) {
-  if (!enabled) return null;
-
-  // Both server flavors are spawned through plain tsx dev scripts; stack watch owns source-change restarts.
-  if (serverComponentName !== 'happier-server' && serverComponentName !== 'happier-server-light') return null;
-
-  let inFlight = false;
-  let pending = false;
-  const watchPaths = resolveDevServerWatchPaths({ serverDir, existsSyncImpl });
-  let lastWatchSignature = readWatchChangeSignatureImpl(watchPaths);
-  const restartFailureTracker = createServerRestartFailureTracker({
-    policy: restartFailurePolicy,
-    nowImpl,
-  });
-
-  const hasRealWatchedChange = () => {
-    const nextWatchSignature = readWatchChangeSignatureImpl(watchPaths);
-    if (lastWatchSignature && nextWatchSignature && nextWatchSignature === lastWatchSignature) {
-      return false;
-    }
-    if (nextWatchSignature) {
-      lastWatchSignature = nextWatchSignature;
-    }
-    return true;
-  };
-
-  return watchDebouncedImpl({
-    paths: (watchPaths.length ? watchPaths : [serverDir]).map((p) => resolve(p)),
-    debounceMs: 600,
-    readSignature: () => readWatchChangeSignatureImpl(watchPaths),
-    pollIntervalMs: resolveDevReloadPollIntervalMs(serverEnv),
-    onChange: async () => {
-      if (isShuttingDown?.()) return;
-      if (!hasRealWatchedChange()) return;
-      const backoffRemainingMs = restartFailureTracker.getBackoffRemainingMs();
-      if (backoffRemainingMs > 0) {
-        consoleImpl.error(
-          `[local] watch: server restart suppressed; backing off for ${backoffRemainingMs}ms after repeated startup failures.`
-        );
-        return;
-      }
-      if (inFlight) {
-        pending = true;
-        return;
-      }
-
-      inFlight = true;
-      try {
-        do {
-          pending = false;
-          if (isShuttingDown?.()) return;
-          const pid = Number(serverProcRef?.current?.pid);
-          const hasCurrentPid = Number.isFinite(pid) && pid > 1;
-
-          let previousServerStopped = false;
-          const recentLineBuffer = createRecentLineBuffer(restartFailureTracker.policy.recentLineLimit);
-          try {
-            await ensureSourceServerWorkspacePackagesBuiltImpl({
-              runtimeBackedStart: false,
-              serverDir,
-              env: serverEnv,
-            });
-            await preflightDevServerRestartImpl({ serverDir, serverComponentName, serverEnv, consoleImpl });
-
-            consoleImpl.log('[local] watch: server preflight passed → restarting...');
-            const clearPlannedExit = hasCurrentPid
-              ? markSpawnedProcessPlannedExit(serverProcRef.current, 'dev-reload')
-              : () => {};
-            let stopResult = null;
-            try {
-              stopResult = await stopStackOwnedServerForRestartImpl(
-                { pid: hasCurrentPid ? pid : undefined, serverPort, stackName, envPath, label: 'server' },
-                {
-                  killProcessGroupOwnedByStackImpl,
-                  isTcpPortFreeImpl,
-                  waitForTcpPortFreeImpl,
-                },
-              );
-            } catch (error) {
-              clearPlannedExit();
-              throw error;
-            }
-            if (!stopResult?.stopped) {
-              clearPlannedExit();
-            }
-            previousServerStopped = Boolean(stopResult?.stopped || hasCurrentPid);
-            serverProcRef.current = null;
-            await waitForProviderDbReleaseIfNeeded(serverEnv, { waitForPgliteDirLockReleaseImpl });
-
-            let next = null;
-            let listenerPid = null;
-            let restartStage = 'spawn';
-            try {
-              next = await pmSpawnScriptImpl({
-                label: 'server',
-                dir: serverDir,
-                script: serverScript,
-                env: serverEnv,
-                options: { onLine: recentLineBuffer.onLine },
-              });
-              children.push(next);
-              restartStage = 'readiness';
-              await waitForServerReadyImpl(internalServerUrl, {
-                timeoutMs: resolveServerReadyTimeoutMs({ serverComponentName, env: serverEnv }),
-                childProcess: next,
-              });
-              restartStage = 'ownership';
-              listenerPid = await assertServerPortOwnedBySpawnedProcessGroup({
-                serverPort,
-                spawnedPid: next.pid,
-                listListenPidsImpl,
-                getProcessGroupIdImpl,
-              });
-              if (hasChildExited(next)) {
-                throw new Error(
-                  `[local] server process exited after readiness check ` +
-                    `(pid=${next.pid}, code=${next.exitCode ?? 'null'}, signal=${next.signalCode ?? 'null'})`
-                );
-              }
-            } catch (error) {
-              await cleanupProvisionalServerChild({
-                child: next,
-                children,
-                stackName,
-                envPath,
-                killProcessGroupOwnedByStackImpl,
-              });
-              throw annotateServerRestartError(
-                error,
-                classifyServerRestartFailure({
-                  error,
-                  stage: restartStage,
-                  child: next,
-                  oldServerStopped: previousServerStopped,
-                  recentLines: recentLineBuffer.snapshot(),
-                }),
-              );
-            }
-            serverProcRef.current = next;
-            if (stackMode && runtimeStatePath) {
-              await recordStackRuntimeUpdateImpl(
-                runtimeStatePath,
-                createStackServerRuntimeProcessPatch({ listenerPid, wrapperPid: next.pid }),
-              ).catch(() => {});
-            }
-            consoleImpl.log(`[local] watch: server restarted (pid=${next.pid}, port=${serverPort})`);
-            restartFailureTracker.reset();
-          } catch (e) {
-            const msg = e instanceof Error ? e.stack || e.message : String(e);
-            const failure = e?.serverRestartFailure;
-            if (previousServerStopped) {
-              consoleImpl.error(
-                `[local] watch: server restart failed after stopping the previous process; ` +
-                  `no server is running on port ${serverPort} (will retry on next change).`
-              );
-            } else {
-              consoleImpl.error('[local] watch: server restart failed; keeping existing process as-is (will retry on next change).');
-            }
-            consoleImpl.error(msg);
-            const recentOutput = formatRecentServerOutput(failure?.recentLines);
-            if (recentOutput) consoleImpl.error(recentOutput);
-            const backoff = restartFailureTracker.record(failure);
-            if (backoff.thresholdReached) {
-              consoleImpl.error(
-                `[local] watch: server failed to start ${backoff.count} times within ` +
-                  `${restartFailureTracker.policy.windowMs}ms; backing off for ${backoff.backoffMs}ms.`
-              );
-              pending = false;
-            }
-          }
-        } while (pending);
-      } finally {
-        inFlight = false;
-      }
-    },
-  });
 }

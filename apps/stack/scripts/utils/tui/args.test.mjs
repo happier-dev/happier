@@ -87,4 +87,6 @@ test('isTuiRestartableForwardedArgs only allows restart for start-like commands'
   assert.equal(isTuiRestartableForwardedArgs(['stack', 'daemon', 'x', 'start']), false);
   assert.equal(isTuiRestartableForwardedArgs(['stack', 'summary', 'x']), false);
   assert.equal(isTuiRestartableForwardedArgs(['stop']), false);
+  assert.equal(isTuiRestartableForwardedArgs(['dev', '--json']), false);
+  assert.equal(isTuiRestartableForwardedArgs(['start', '--help']), false);
 });

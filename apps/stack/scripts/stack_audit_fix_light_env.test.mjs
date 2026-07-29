@@ -71,6 +71,19 @@ test('hstack stack audit --fix-paths prunes legacy DATABASE_URL for default sqli
   assert.ok(!raw.includes('\nDATABASE_URL='), `expected legacy DATABASE_URL to be pruned for light stacks\n${raw}`);
 });
 
+test('hstack stack audit reconstructs an empty env with the effective light provider default', async (t) => {
+  const fixture = await createLightAuditFixture(t, {
+    stackName: 'exp-empty-provider',
+    envLines: [],
+  });
+
+  const res = await runAuditFixPaths({ env: fixture.env });
+  assert.equal(res.code, 0, `expected audit result, got ${res.code}\n${res.stderr}`);
+  const raw = await readFile(fixture.envPath, 'utf-8');
+  assert.match(raw, /^HAPPIER_STACK_SERVER_COMPONENT=happier-server-light$/m);
+  assert.match(raw, /^HAPPIER_DB_PROVIDER=sqlite$/m);
+});
+
 test('hstack stack audit --fix-paths normalizes mixed legacy light paths and removes DATABASE_URL', async (t) => {
   const stackName = 'exp-mixed';
   const fixture = await createLightAuditFixture(t, {
@@ -121,6 +134,28 @@ test('hstack stack audit --fix-paths preserves explicit pglite light db dir', as
   const raw = await readFile(fixture.envPath, 'utf-8');
   assert.ok(raw.includes('HAPPIER_DB_PROVIDER=pglite'), `expected explicit pglite provider to remain\n${raw}`);
   assert.ok(raw.includes(`HAPPIER_SERVER_LIGHT_DB_DIR=${expectedDbDir}`), `expected pglite db dir\n${raw}`);
+});
+
+test('hstack stack audit reports and preserves an explicit unsupported light provider', async (t) => {
+  const fixture = await createLightAuditFixture(t, {
+    stackName: 'exp-invalid-provider',
+    envLines: [
+      'HAPPIER_STACK_STACK=exp-invalid-provider',
+      'HAPPIER_STACK_SERVER_COMPONENT=happier-server-light',
+      'HAPPIER_DB_PROVIDER=postgres',
+      `HAPPIER_STACK_REPO_DIR=${join(fixturePathPlaceholder(), 'repo')}`,
+    ],
+  });
+
+  const res = await runAuditFixPaths({ env: fixture.env });
+  assert.equal(res.code, 0, `expected audit result, got ${res.code}\n${res.stderr}`);
+  const output = JSON.parse(res.stdout);
+  const stack = output.stacks.find((entry) => entry.stackName === 'exp-invalid-provider');
+  assert.ok(stack?.issues.some((issue) => issue.code === 'unsupported_db_provider'));
+
+  const raw = await readFile(fixture.envPath, 'utf-8');
+  assert.match(raw, /^HAPPIER_DB_PROVIDER=postgres$/m);
+  assert.doesNotMatch(raw, /^HAPPIER_DB_PROVIDER=sqlite$/m);
 });
 
 test('hstack stack audit --fix-paths is idempotent for migrated light env files', async (t) => {

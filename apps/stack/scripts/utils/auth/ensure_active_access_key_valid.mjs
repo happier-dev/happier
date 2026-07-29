@@ -74,14 +74,10 @@ export async function ensureActiveAccessKeyValid({ cliHomeDir, serverUrl, env = 
     return { kind: 'ok', activePath };
   }
 
-  const candidates = [resolved.urlHashServerScopedPath, resolved.legacyPath]
+  const candidates = [...resolved.aliasServerScopedPaths, resolved.legacyPath]
     .map((p) => String(p ?? '').trim())
     .filter(Boolean)
     .filter((p) => p !== activePath);
-  const hostPortPath = String(resolved.hostPortServerScopedPath ?? '').trim();
-  if (hostPortPath && hostPortPath !== activePath && !candidates.includes(hostPortPath)) {
-    candidates.unshift(hostPortPath);
-  }
 
   const validCandidates = [];
   for (const candidatePath of candidates) {

@@ -1,88 +1,76 @@
 #!/usr/bin/env bash
-# Edison Hook: prevent-destructive-git
+# Hook: prevent-destructive-git
 # Type: PreToolUse
-# Description: Block destructive git commands unless explicitly approved
-# Blocking: YES - CAN BLOCK
+# Description: Block destructive git commands unless explicitly approved.
+# Blocking: YES
 
-# Source shared guard and check execution scope
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-if [[ -f "$SCRIPT_DIR/_edison_guard.sh" ]]; then
-    # shellcheck source=_edison_guard.sh
-    source "$SCRIPT_DIR/_edison_guard.sh"
-    edison_hook_guard "prevent-destructive-git" "session"
+set -u
+
+if [[ -t 0 ]]; then
+  INPUT='{}'
+else
+  INPUT=$(cat 2>/dev/null || echo '{}')
 fi
 
-SESSION_FILE=".project/.session-id"
+json_field() {
+  local expression="$1"
+  node -e '
+const fs = require("node:fs");
+const expression = process.argv[1];
+let payload = {};
+try { payload = JSON.parse(fs.readFileSync(0, "utf8") || "{}"); } catch {}
+const value = expression.split(".").reduce((current, key) => current && current[key], payload);
+if (typeof value === "string") process.stdout.write(value);
+' "$expression" <<<"$INPUT" 2>/dev/null || true
+}
 
-# Parse input JSON (with timeout to prevent hanging)
-INPUT=$(timeout 1 cat 2>/dev/null || echo '{}')
-TOOL_NAME=$(echo "$INPUT" | jq -r '.tool' 2>/dev/null || echo "")
-
+TOOL_NAME=$(json_field 'tool')
 if [[ "$TOOL_NAME" != "Bash" ]]; then
   exit 0
 fi
 
-COMMAND=$(echo "$INPUT" | jq -r '.args.command // ""' 2>/dev/null || echo "")
+COMMAND=$(json_field 'args.command')
 if [[ -z "$COMMAND" ]]; then
   exit 0
 fi
 
-
-if [[ -n "$EDISON_ALLOW_DESTRUCTIVE_GIT" && "$EDISON_ALLOW_DESTRUCTIVE_GIT" != "0" ]]; then
+if [[ -n "${ALLOW_DESTRUCTIVE_GIT:-}" && "${ALLOW_DESTRUCTIVE_GIT:-}" != "0" ]]; then
   exit 0
 fi
 
 MATCHED=""
-if [[ -z "$MATCHED" && "$COMMAND" == *"git reset"* ]]; then
-  MATCHED="git reset"
-fi
-if [[ -z "$MATCHED" && "$COMMAND" == *"git restore"* ]]; then
-  MATCHED="git restore"
-fi
-if [[ -z "$MATCHED" && "$COMMAND" == *"git clean"* ]]; then
-  MATCHED="git clean"
-fi
-if [[ -z "$MATCHED" && "$COMMAND" == *"git checkout --"* ]]; then
-  MATCHED="git checkout --"
-fi
-if [[ -z "$MATCHED" && "$COMMAND" == *"git switch"* ]]; then
-  MATCHED="git switch"
-fi
+case "$COMMAND" in
+  *"git reset"*) MATCHED="git reset" ;;
+  *"git restore"*) MATCHED="git restore" ;;
+  *"git clean"*) MATCHED="git clean" ;;
+  *"git checkout"*) MATCHED="git checkout" ;;
+  *"git switch"*) MATCHED="git switch" ;;
+  *) MATCHED="" ;;
+esac
 
 if [[ -z "$MATCHED" ]]; then
   exit 0
 fi
 
-SESSION_ID=""
-if [[ -f "$SESSION_FILE" ]]; then
-  SESSION_ID=$(cat "$SESSION_FILE" 2>/dev/null | head -1 || echo "")
-fi
+cat <<EOF
 
-echo ""
-echo "❌ BLOCKED: destructive git command detected"
-echo ""
-echo "Command:"
-echo "  $COMMAND"
-echo ""
-echo "Matched:"
-echo "  $MATCHED"
-echo ""
-echo "Edison policy: do NOT discard/revert 'unrelated' changes unless the user explicitly asked."
-echo "If you believe this is required, ask for approval and then re-run with:"
-echo "  export EDISON_ALLOW_DESTRUCTIVE_GIT=1"
-echo ""
-echo "Tip: If your goal is to validate/inspect, prefer:"
-echo "  git status --porcelain"
-echo "  git diff"
-echo ""
+❌ BLOCKED: destructive git command detected
 
-# Emit audit event (best-effort, fail-open)
-if [[ -n "$SESSION_ID" ]]; then
-  edison audit event "hook.prevent-destructive-git.blocked" \
-    --repo-root "$PWD" \
-    --session "$SESSION_ID" \
-    --field "hook_id=prevent-destructive-git" \
-    --field "command=$COMMAND" 2>/dev/null || true
-fi
+Command:
+  $COMMAND
+
+Matched:
+  $MATCHED
+
+Repo policy: do not discard, revert, or clean unrelated/uncommitted work unless the user explicitly asked for that exact destructive action.
+
+If this destructive operation is truly required, ask for explicit approval first. After approval, re-run with:
+  export ALLOW_DESTRUCTIVE_GIT=1
+
+Prefer inspection commands when possible:
+  git status --porcelain
+  git diff
+
+EOF
 
 exit 1

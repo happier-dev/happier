@@ -2,12 +2,79 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { createServer } from 'node:http';
-import { mkdtemp, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { setTimeout as delay } from 'node:timers/promises';
 
 import { resolveLocalServerPortForStack } from './resolve_stack_server_port.mjs';
+import { createListenerOwnershipCommandScope } from './listener_ownership.mjs';
+
+test('pinned stack port retries typed bind availability without requiring listener discovery', async () => {
+  let waitOptions = null;
+  const port = await reserveUnusedPort();
+  const selected = await resolveLocalServerPortForStack({
+    env: { HAPPIER_STACK_SERVER_PORT: String(port) },
+    stackMode: true,
+    stackName: 'repo-test-abc',
+    runtimeStatePath: null,
+    waitForTcpPortFreeImpl: async (_port, options) => {
+      waitOptions = options;
+      return { status: 'free' };
+    },
+  });
+
+  assert.equal(selected, port);
+  assert.equal(waitOptions?.host, '127.0.0.1');
+  assert.ok(waitOptions?.timeoutMs >= 1_000);
+});
+
+test('pinned stack port reports unresolved availability without claiming another process owns it', async () => {
+  const port = await reserveUnusedPort();
+  await assert.rejects(
+    () => resolveLocalServerPortForStack({
+      env: { HAPPIER_STACK_SERVER_PORT: String(port) },
+      stackMode: true,
+      stackName: 'repo-test-abc',
+      runtimeStatePath: null,
+      waitForTcpPortFreeImpl: async () => ({
+        status: 'inconclusive',
+        reason: 'port-availability-deadline-exceeded',
+      }),
+    }),
+    (error) => error?.code === 'EPORTSELECTIONINCONCLUSIVE'
+      && /could not determine whether/.test(error.message)
+      && !/in use by another process/.test(error.message),
+  );
+});
+
+async function reserveUnusedPort() {
+  const server = createServer();
+  await new Promise((resolve, reject) => server.once('error', reject).listen(0, '127.0.0.1', resolve));
+  const port = server.address().port;
+  await new Promise((resolve) => server.close(resolve));
+  return port;
+}
+
+test('runtime-port selection preserves inconclusive listener evidence instead of reallocating', async () => {
+  const tmp = await mkdtemp(join(tmpdir(), 'hstack-port-inconclusive-'));
+  const runtimeStatePath = join(tmp, 'stack.runtime.json');
+  await writeFile(runtimeStatePath, JSON.stringify({ ports: { server: 43123 } }), 'utf-8');
+
+  await assert.rejects(
+    () => resolveLocalServerPortForStack({
+      env: {},
+      stackMode: true,
+      stackName: 'repo-test-abc',
+      runtimeStatePath,
+      waitForTcpPortFreeImpl: async () => ({
+        status: 'inconclusive',
+        reason: 'listener-discovery-timeout',
+      }),
+    }),
+    (error) => error?.code === 'EPORTSELECTIONINCONCLUSIVE',
+  );
+});
 
 async function listenHealthServer() {
   const server = createServer((req, res) => {
@@ -155,7 +222,7 @@ async function stopChild(child) {
   });
 }
 
-test('non-main stack prefers runtime port when server is already running there', async () => {
+test('non-main stack does not adopt a healthy runtime port without stack listener ownership', async () => {
   const tmp = await mkdtemp(join(tmpdir(), 'hstack-port-'));
   const runtimeStatePath = join(tmp, 'stack.runtime.json');
   const { server, port } = await listenHealthServer();
@@ -168,7 +235,7 @@ test('non-main stack prefers runtime port when server is already running there',
       runtimeStatePath,
       defaultPort: 3005,
     });
-    assert.equal(out, port);
+    assert.notEqual(out, port);
   } finally {
     await new Promise((resolvePromise) => server.close(resolvePromise));
   }
@@ -207,6 +274,58 @@ test('non-main stack accepts pinned stable port during dev proxy maintenance whe
   }
 });
 
+test('pinned startup adopts the exact runtime proxy without a broad listener scan under load', async () => {
+  const tmp = await mkdtemp(join(tmpdir(), 'hstack-port-targeted-proxy-'));
+  const runtimeStatePath = join(tmp, 'stack.runtime.json');
+  const stackName = 'repo-test-targeted-proxy';
+  const envPath = join(tmp, 'env');
+  const proxyProcess = await spawnStackOwnedIdleProcess({ stackName, envPath });
+  const observations = [];
+  try {
+    await writeFile(runtimeStatePath, JSON.stringify({
+      version: 1,
+      stackName,
+      ports: { server: 52753 },
+      processes: { proxyPid: proxyProcess.pid },
+      serverProxy: { enabled: true, mode: 'proxy' },
+    }), 'utf-8');
+    const listenerObservationScope = createListenerOwnershipCommandScope({
+      listListenPidsWithStatusImpl: async (_port, options) => {
+        observations.push(options?.candidatePids ?? null);
+        if (options?.candidatePids?.includes(proxyProcess.pid)) {
+          return { status: 'ok', supported: true, pids: [proxyProcess.pid] };
+        }
+        return {
+          status: 'timeout',
+          supported: true,
+          pids: [],
+          reason: 'listener-discovery-timeout',
+        };
+      },
+      resolvePidStackOwnershipImpl: async () => ({
+        status: 'owned',
+        owned: true,
+        reason: 'env_file',
+      }),
+    });
+
+    const out = await resolveLocalServerPortForStack({
+      env: { HAPPIER_STACK_SERVER_PORT: '52753', HAPPIER_STACK_ENV_FILE: envPath },
+      stackMode: true,
+      stackName,
+      runtimeStatePath,
+      listenerObservationScope,
+      waitForTcpPortFreeImpl: async () => ({ status: 'occupied' }),
+    });
+
+    assert.equal(out, 52753);
+    assert.deepEqual(observations, [[proxyProcess.pid]]);
+  } finally {
+    await stopChild(proxyProcess);
+    await rm(tmp, { recursive: true, force: true });
+  }
+});
+
 test('non-main stack reuses runtime stable port during dev proxy maintenance when runtime owns the proxy', async () => {
   const tmp = await mkdtemp(join(tmpdir(), 'hstack-port-runtime-maintenance-'));
   const runtimeStatePath = join(tmp, 'stack.runtime.json');
@@ -239,6 +358,42 @@ test('non-main stack reuses runtime stable port during dev proxy maintenance whe
     await stopChild(proxyProcess);
   }
 });
+
+for (const [projectionName, serverProxy] of [
+  ['missing', undefined],
+  ['stale', { enabled: false, mode: 'direct' }],
+]) {
+  test(`strict resolver accepts an exact proxy pid during maintenance when proxy metadata is ${projectionName}`, async () => {
+    const tmp = await mkdtemp(join(tmpdir(), `hstack-port-${projectionName}-proxy-maintenance-`));
+    const runtimeStatePath = join(tmp, 'stack.runtime.json');
+    const stackName = 'repo-test-abc';
+    const envPath = join(tmp, 'env');
+    const { child: proxyProcess, port } = await spawnStackOwnedMaintenanceServer({ stackName, envPath });
+    try {
+      await writeFile(runtimeStatePath, JSON.stringify({
+        version: 1,
+        stackName,
+        ports: { server: port },
+        processes: { proxyPid: proxyProcess.pid },
+        ...(serverProxy ? { serverProxy } : {}),
+      }), 'utf-8');
+
+      const out = await resolveLocalServerPortForStack({
+        env: { HAPPIER_STACK_SERVER_PORT: String(port), HAPPIER_STACK_ENV_FILE: envPath },
+        stackMode: true,
+        stackName,
+        runtimeStatePath,
+        defaultPort: 3005,
+        waitForTcpPortFreeImpl: async () => ({ status: 'occupied' }),
+      });
+
+      assert.equal(out, port);
+    } finally {
+      await stopChild(proxyProcess);
+      await rm(tmp, { recursive: true, force: true });
+    }
+  });
+}
 
 test('non-main stack rejects runtime dev proxy maintenance port when proxy pid is not the listener', async () => {
   const tmp = await mkdtemp(join(tmpdir(), 'hstack-port-stale-proxy-maintenance-'));

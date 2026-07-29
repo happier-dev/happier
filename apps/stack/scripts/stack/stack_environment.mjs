@@ -4,34 +4,31 @@ import { ensureDir, readTextOrEmpty } from '../utils/fs/ops.mjs';
 import { parseEnvToObject } from '../utils/env/dotenv.mjs';
 import { getWorkspaceDir, resolveStackEnvPath } from '../utils/paths/paths.mjs';
 import { stackExistsSync } from '../utils/stack/stacks.mjs';
-import { STACK_WRAPPER_PRESERVE_KEYS, scrubHappierStackEnv } from '../utils/env/scrub_env.mjs';
-import { applyStackActiveServerScopeEnv } from '../utils/auth/stable_scope_id.mjs';
+import {
+  STACK_WRAPPER_CLEAR_UNPREFIXED_KEYS,
+  STACK_WRAPPER_PRESERVE_KEYS,
+  scrubHappierStackEnv,
+} from '../utils/env/scrub_env.mjs';
+import {
+  applyStackActiveServerScopeEnv,
+  applyStackDaemonLifecycleScopeEnv,
+} from '../utils/auth/stable_scope_id.mjs';
 import {
   getStackRuntimeStatePath,
-  hasLiveStackRuntimeProcesses,
-  isPidAlive,
   readStackRuntimeStateFile,
+  resolveTrustedStackRuntimeServerPort,
 } from '../utils/stack/runtime_state.mjs';
 import { readStackRuntimeStateWithDaemonSync } from '../utils/stack/runtime_daemon_state.mjs';
 import { checkDaemonState } from '../daemon.mjs';
 
 const readExistingEnv = readTextOrEmpty;
-const STACK_WRAPPER_CLEAR_UNPREFIXED_KEYS = [
-  'HAPPIER_SERVER_URL',
-  'HAPPIER_PUBLIC_SERVER_URL',
-  'HAPPIER_WEBAPP_URL',
-  'HAPPIER_HOME_DIR',
-  'APP_ENV',
-  'EXPO_UPDATES_CHANNEL',
-  'EXPO_PUBLIC_HAPPIER_FEATURE_POLICY_ENV',
-  'EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_ALLOW',
-  'EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_DENY',
-  // Runtime feature policy knobs should be stack-local; stale values from a prior stack can
-  // silently bleed into a newly selected stack and override expected defaults.
-  'HAPPIER_FEATURE_POLICY_ENV',
-  'HAPPIER_EMBEDDED_POLICY_ENV',
-  'HAPPIER_BUILD_FEATURES_ALLOW',
-  'HAPPIER_BUILD_FEATURES_DENY',
+
+const FOREIGN_STACK_CALLER_KEYS = [
+  'HAPPIER_STACK_RUNTIME_MODE',
+  'HAPPIER_STACK_EXPO_DEV_PORT',
+  'HAPPIER_STACK_EXPO_DEV_PORT_STRATEGY',
+  'HAPPIER_STACK_EXPO_DEV_PORT_BASE',
+  'HAPPIER_STACK_EXPO_DEV_PORT_RANGE',
 ];
 
 function stringifyEnv(env) {
@@ -68,7 +65,13 @@ export async function writeStackEnv({ stackName, env }) {
   return envPath;
 }
 
-export async function withStackEnv({ stackName, fn, extraEnv = {} }) {
+export async function withStackEnv({
+  stackName,
+  fn,
+  extraEnv = {},
+  reconcileDaemonRuntimeState = true,
+  beforeRuntimeReconcile = null,
+}) {
   const envPath = resolveStackEnvPath(stackName).envPath;
   if (!stackExistsSync(stackName)) {
     throw new Error(
@@ -86,6 +89,12 @@ export async function withStackEnv({ stackName, fn, extraEnv = {} }) {
     keepHappierStackKeys: STACK_WRAPPER_PRESERVE_KEYS,
     clearUnprefixedKeys: STACK_WRAPPER_CLEAR_UNPREFIXED_KEYS,
   });
+  const callerStackName = (process.env.HAPPIER_STACK_STACK ?? '').toString().trim();
+  if (callerStackName && callerStackName !== stackName) {
+    for (const key of FOREIGN_STACK_CALLER_KEYS) {
+      delete cleaned[key];
+    }
+  }
   const raw = await readExistingEnv(envPath);
   const stackEnv = parseEnvToObject(raw);
 
@@ -108,31 +117,45 @@ export async function withStackEnv({ stackName, fn, extraEnv = {} }) {
     stackName,
     cliIdentity: (env.HAPPIER_STACK_CLI_IDENTITY ?? '').toString().trim() || 'default',
   });
+  env = applyStackDaemonLifecycleScopeEnv({
+    env,
+    stackName,
+    cliIdentity: (env.HAPPIER_STACK_CLI_IDENTITY ?? '').toString().trim() || 'default',
+  });
+
+  if (typeof beforeRuntimeReconcile === 'function') {
+    await beforeRuntimeReconcile({ env, envPath, stackEnv, runtimeStatePath, initialRuntimeState });
+  }
+  const refreshedRuntimeState = await readStackRuntimeStateFile(runtimeStatePath);
 
   const runtimePortCandidate =
     Number(env.HAPPIER_STACK_SERVER_PORT) > 0
       ? Number(env.HAPPIER_STACK_SERVER_PORT)
-      : Number(initialRuntimeState?.ports?.server) > 0
-        ? Number(initialRuntimeState?.ports?.server)
+      : Number(refreshedRuntimeState?.ports?.server) > 0
+        ? Number(refreshedRuntimeState?.ports?.server)
         : null;
-  const runtimeState = await readStackRuntimeStateWithDaemonSync({
-    runtimeStatePath,
-    cliHomeDir: (env.HAPPIER_STACK_CLI_HOME_DIR ?? join(resolveStackEnvPath(stackName).baseDir, 'cli')).toString(),
-    internalServerUrl:
-      Number.isFinite(runtimePortCandidate) && runtimePortCandidate > 0 ? `http://127.0.0.1:${runtimePortCandidate}` : '',
-    env,
-  }, {
-    checkDaemonStateImpl: checkDaemonState,
-  });
+  const runtimeState = reconcileDaemonRuntimeState
+    ? await readStackRuntimeStateWithDaemonSync({
+        runtimeStatePath,
+        cliHomeDir: (env.HAPPIER_STACK_CLI_HOME_DIR ?? join(resolveStackEnvPath(stackName).baseDir, 'cli')).toString(),
+        internalServerUrl:
+          Number.isFinite(runtimePortCandidate) && runtimePortCandidate > 0 ? `http://127.0.0.1:${runtimePortCandidate}` : '',
+        env,
+      }, {
+        checkDaemonStateImpl: checkDaemonState,
+      })
+    : refreshedRuntimeState;
 
   // Runtime-only port overlay (ephemeral stacks): prefer stack.runtime.json ports when the stack
   // is still running, even if the original "owner" process is gone (common during dev restarts).
-  const ownerPid = Number(runtimeState?.ownerPid);
-  const shouldTrustRuntimePorts =
-    isPidAlive(ownerPid) ||
-    hasLiveStackRuntimeProcesses(runtimeState);
+  const runtimeProcessTrustContext = {
+    stackName,
+    envPath,
+    cliHomeDir: (env.HAPPIER_STACK_CLI_HOME_DIR ?? join(resolveStackEnvPath(stackName).baseDir, 'cli')).toString(),
+  };
+  const trustedRuntimeServerPort = await resolveTrustedStackRuntimeServerPort(runtimeState, runtimeProcessTrustContext);
 
-  if (shouldTrustRuntimePorts) {
+  if (trustedRuntimeServerPort !== null) {
     const ports = runtimeState?.ports && typeof runtimeState.ports === 'object' ? runtimeState.ports : {};
     const applyPort = (suffix, value) => {
       const n = Number(value);
@@ -170,8 +193,14 @@ export async function readStackEnvObject(stackName) {
 export async function getRuntimePortExtraEnv(stackName) {
   const runtimeStatePath = getStackRuntimeStatePath(stackName);
   const runtimeState = await readStackRuntimeStateFile(runtimeStatePath);
-  const runtimePort = Number(runtimeState?.ports?.server);
-  return Number.isFinite(runtimePort) && runtimePort > 0
+  const runtimeProcessTrustContext = {
+    stackName,
+    envPath: resolveStackEnvPath(stackName).envPath,
+    cliHomeDir: join(resolveStackEnvPath(stackName).baseDir, 'cli'),
+  };
+  const runtimePort = await resolveTrustedStackRuntimeServerPort(runtimeState, runtimeProcessTrustContext);
+
+  return runtimePort !== null
     ? {
         // Ephemeral stacks (PR stacks) store their chosen ports in stack.runtime.json, not the env file.
         // Ensure stack-scoped commands that compute URLs don't fall back to 3005 (main default).

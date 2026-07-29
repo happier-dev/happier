@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { buildTuiAuthArgs, buildTuiDaemonStartArgs, shouldHoldAfterAuthExit } from './actions.mjs';
+import { buildTuiAuthArgs, shouldHoldAfterAuthExit } from './actions.mjs';
 
 test('buildTuiAuthArgs builds stack-scoped auth login args', () => {
   assert.deepEqual(buildTuiAuthArgs({ happysBin: 'bin/hstack.mjs', stackName: 'main', force: false }), [
@@ -18,17 +18,6 @@ test('buildTuiAuthArgs builds stack-scoped auth login args', () => {
     'main',
     'login',
     '--force',
-  ]);
-});
-
-test('buildTuiDaemonStartArgs builds source-mode stack-scoped daemon start args', () => {
-  assert.deepEqual(buildTuiDaemonStartArgs({ happysBin: 'bin/hstack.mjs', stackName: 'main' }), [
-    'bin/hstack.mjs',
-    'stack',
-    'daemon',
-    'main',
-    'start',
-    '--source',
   ]);
 });
 

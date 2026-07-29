@@ -81,7 +81,7 @@ test('ensureServerLightSchemaReady builds source server internal workspace depen
       `  fs.writeFileSync(${JSON.stringify(buildMarkerPath)}, 'ok\\n', 'utf-8');`,
       '  process.exit(0);',
       '}',
-      `if (args[0] === '-s' && args[1] === 'migrate:sqlite:deploy') { fs.writeFileSync(${JSON.stringify(markerPath)}, 'ok\\n', 'utf-8'); process.exit(0); }`,
+      `if ((args[0] === '-s' && args[1] === 'migrate:sqlite:deploy') || (args[0] === 'run' && args[1] === 'migrate:sqlite:deploy')) { fs.writeFileSync(${JSON.stringify(markerPath)}, 'ok\\n', 'utf-8'); process.exit(0); }`,
       'process.exit(0);',
     ].join('\n') + '\n',
     'utf-8',

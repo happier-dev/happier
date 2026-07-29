@@ -1,5 +1,8 @@
 import { setTimeout as delay } from 'node:timers/promises';
 
+const DEFAULT_SERVER_MIGRATION_TIMEOUT_MS = 30 * 60_000;
+const MAX_SERVER_MIGRATION_TIMEOUT_MS = 24 * 60 * 60_000;
+
 function isCanonicalHappierHealthPayload(payload) {
   return payload?.service === 'happier-server' && payload?.status === 'ok';
 }
@@ -90,8 +93,92 @@ export function resolveServerReadyTimeoutMs({ serverComponentName = '', env = pr
   return serverComponentName === 'happier-server-light' ? 120_000 : 60_000;
 }
 
-export async function waitForServerReady(url, { timeoutMs = 60_000, intervalMs = 300, childProcess = null } = {}) {
-  const deadline = Date.now() + timeoutMs;
+export function resolveServerMigrationTimeoutMs({ env = process.env } = {}) {
+  const configured = Number.parseInt(String(env?.HAPPIER_STACK_SERVER_MIGRATION_TIMEOUT_MS ?? '').trim(), 10);
+  if (Number.isFinite(configured) && configured >= 1_000 && configured <= MAX_SERVER_MIGRATION_TIMEOUT_MS) {
+    return configured;
+  }
+  // Large SQLite schema changes can legitimately exceed ordinary startup readiness.
+  // Keep that lifetime finite by default while allowing operators to tune it for their database.
+  return DEFAULT_SERVER_MIGRATION_TIMEOUT_MS;
+}
+
+export function createServerReadinessDeadline({
+  readinessTimeoutMs,
+  migrationTimeoutMs,
+  nowImpl = Date.now,
+} = {}) {
+  const rawReadyMs = Number(readinessTimeoutMs);
+  const rawMigrationMs = Number(migrationTimeoutMs);
+  const readyMs = Number.isFinite(rawReadyMs) && rawReadyMs > 0 ? Math.trunc(rawReadyMs) : 60_000;
+  const migrationMs = Number.isFinite(rawMigrationMs) && rawMigrationMs > 0
+    ? Math.min(Math.trunc(rawMigrationMs), MAX_SERVER_MIGRATION_TIMEOUT_MS)
+    : DEFAULT_SERVER_MIGRATION_TIMEOUT_MS;
+  let phase = 'pending';
+  let deadlineMs = null;
+  let migrationStarted = false;
+  let migrationCompleted = false;
+  const now = () => {
+    const value = Number(nowImpl?.());
+    return Number.isFinite(value) ? value : Date.now();
+  };
+
+  const startReadiness = () => {
+    if (deadlineMs === null) {
+      phase = 'readiness';
+      deadlineMs = now() + readyMs;
+    }
+    return deadlineMs;
+  };
+
+  const observeSignal = (signal) => {
+    if (signal === 'migration_started' && !migrationStarted) {
+      migrationStarted = true;
+      phase = 'migration';
+      deadlineMs = now() + migrationMs;
+    } else if (signal === 'migration_completed' && migrationStarted && !migrationCompleted) {
+      migrationCompleted = true;
+      phase = 'readiness';
+      deadlineMs = now() + readyMs;
+    }
+    return signal;
+  };
+
+  return {
+    startReadiness,
+    observeSignal,
+    observeLine({ line } = {}) {
+      let signal = null;
+      try {
+        signal = JSON.parse(String(line ?? ''))?.happierStackTransition ?? null;
+      } catch {
+        return null;
+      }
+      return observeSignal(signal);
+    },
+    getDeadlineMs() {
+      return startReadiness();
+    },
+    getPhase() {
+      return phase;
+    },
+    isExpired() {
+      return now() >= startReadiness();
+    },
+  };
+}
+
+export async function waitForServerReady(url, {
+  timeoutMs = 60_000,
+  intervalMs = 300,
+  childProcess = null,
+  startupDeadline = null,
+} = {}) {
+  const deadline = startupDeadline ?? createServerReadinessDeadline({
+    readinessTimeoutMs: timeoutMs,
+    migrationTimeoutMs: timeoutMs,
+  });
+  deadline.startReadiness();
   let earlyExitError = null;
   const onExit = (code, signal) => {
     earlyExitError = new Error(formatServerReadyEarlyExit(url, code, signal));
@@ -105,7 +192,7 @@ export async function waitForServerReady(url, { timeoutMs = 60_000, intervalMs =
   }
 
   try {
-    while (Date.now() < deadline) {
+    while (!deadline.isExpired()) {
       if (earlyExitError) {
         throw earlyExitError;
       }
@@ -130,6 +217,9 @@ export async function waitForServerReady(url, { timeoutMs = 60_000, intervalMs =
     }
     if (earlyExitError) {
       throw earlyExitError;
+    }
+    if (deadline.getPhase() === 'migration') {
+      throw new Error(`Server migration timed out before readiness at ${url}`);
     }
     throw new Error(`Timed out waiting for server at ${url}`);
   } finally {

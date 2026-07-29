@@ -3,14 +3,15 @@ import { parseArgs } from './utils/cli/args.mjs';
 import { pathExists } from './utils/fs/fs.mjs';
 import { killProcessTree, runCapture, spawnProc } from './utils/proc/proc.mjs';
 import { getComponentDir, getDefaultAutostartPaths, getRootDir } from './utils/paths/paths.mjs';
-import { killPortListeners } from './utils/net/ports.mjs';
-import { getServerComponentName, isHappierServerRunning, waitForServerReady } from './utils/server/server.mjs';
-import { ensureCliBuilt, ensureDepsInstalled, pmExecBin, pmSpawnScript, requireDir } from './utils/proc/pm.mjs';
+import { killPortListeners, observeTcpPortAvailability } from './utils/net/ports.mjs';
+import { fetchHappierHealth, getServerComponentName, isHappierServerRunning, waitForServerReady } from './utils/server/server.mjs';
+import { resolveServerShutdownGraceMs } from './utils/server/shutdown_grace.mjs';
+import { ensureDepsInstalled, pmExecBin, requireDir } from './utils/proc/pm.mjs';
 import { join } from 'node:path';
 import { statSync } from 'node:fs';
 import { setTimeout as delay } from 'node:timers/promises';
 import { maybeResetTailscaleServe } from './tailscale.mjs';
-import { checkDaemonState, getDaemonEnv, isDaemonRunning, startLocalDaemonWithAuth, stopLocalDaemon } from './daemon.mjs';
+import { checkDaemonStatePingAware, getDaemonEnv, isDaemonRunning, startLocalDaemonWithAuth, stopLocalDaemon } from './daemon.mjs';
 import { printResult, wantsHelp, wantsJson } from './utils/cli/cli.mjs';
 import { assertServerComponentDirMatches, assertServerPrismaProviderMatches } from './utils/server/validate.mjs';
 import { resolveServerStartScript } from './utils/server/flavor_scripts.mjs';
@@ -22,15 +23,29 @@ import {
   probeExistingAccountCountForServerComponent,
   resolveAutoCopyFromMainEnabled,
 } from './utils/stack/startup.mjs';
-import { readStackRuntimeStateFile, recordStackRuntimeStart, recordStackRuntimeUpdate } from './utils/stack/runtime_state.mjs';
+import {
+  captureStackRuntimeStopSnapshot,
+  finalizeStackRuntimeStop,
+  readStackRuntimeStateFile,
+  recordStackRuntimeServerActivation,
+  recordStackRuntimeServerPids,
+  recordStackRuntimeStart,
+} from './utils/stack/runtime_state.mjs';
+import { startStackRuntimeDaemonPidReconciler } from './utils/stack/runtime_daemon_state.mjs';
+import { startOwnerDaemonLifecycleReconciler } from './utils/dev/daemonLifecycleReconciler.mjs';
 import { resolveStackContext } from './utils/stack/context.mjs';
 import { getPublicServerUrlEnvOverride, resolveServerUrls } from './utils/server/urls.mjs';
 import { preferStackLocalhostUrl } from './utils/paths/localhost_host.mjs';
 import { openUrlInBrowser } from './utils/ui/browser.mjs';
 import { ensureDevExpoServer, resolveExpoTailscaleEnabled } from './utils/dev/expo_dev.mjs';
+import { resolveStackOwnedServerListenPid } from './utils/dev/server.mjs';
 import { maybeRunInteractiveStackAuthSetup } from './utils/auth/interactive_stack_auth.mjs';
 import { getInvokedCwd, inferComponentFromCwd } from './utils/cli/cwd_scope.mjs';
-import { daemonStartGate, formatDaemonAuthRequiredError } from './utils/auth/daemon_gate.mjs';
+import {
+  daemonStartGate,
+  formatDaemonAuthRequiredError,
+  resolveStackDaemonStartRequested,
+} from './utils/auth/daemon_gate.mjs';
 import { applyStackActiveServerScopeEnv } from './utils/auth/stable_scope_id.mjs';
 import { buildServerRuntimeEnv } from './utils/server/server_env.mjs';
 import { applyBindModeToEnv, resolveBindModeFromArgs } from './utils/net/bind_mode.mjs';
@@ -42,14 +57,26 @@ import { isSandboxed } from './utils/env/sandbox.mjs';
 import { installExitCleanup } from './utils/proc/exit_cleanup.mjs';
 import { expandHome } from './utils/paths/canonical_home.mjs';
 import { validateUiServingConfig } from './utils/server/ui_build_check.mjs';
-import { resolveLocalServerPortForStack } from './utils/server/resolve_stack_server_port.mjs';
+import { observeRuntimePortOwnedByStackDevProxy, selectLocalServerPortCandidateForStack } from './utils/server/resolve_stack_server_port.mjs';
+import {
+  createListenerOwnershipCommandScope,
+  resolveSpawnedProcessGroupListenPid,
+} from './utils/server/listener_ownership.mjs';
 import { findExistingStackCredentialPath } from './utils/auth/credentials_paths.mjs';
 import { createServiceDaemonAutostarter } from './utils/service/daemon_autostart.mjs';
 import { applyRuntimeServerLightSqliteEnv } from './utils/server/apply_runtime_server_light_sqlite_env.mjs';
+import { spawnSourceServerScript } from './utils/server/source_server_workspace_deps.mjs';
+import { applyEffectiveDbProviderEnv } from './utils/server/effective_db_provider.mjs';
 import { resolveStackRuntimeLaunchContext } from './runtime/launch/resolveStackRuntimeLaunchContext.mjs';
-import { resolveCliRuntimeLaunchSpec } from './runtime/launch/resolveCliRuntimeLaunchSpec.mjs';
+import {
+  resolveCliRuntimeLaunchProvenance,
+  resolveCliRuntimeLaunchSpec,
+} from './runtime/launch/resolveCliRuntimeLaunchSpec.mjs';
 import { resolveServerRuntimeLaunchSpec } from './runtime/launch/resolveServerRuntimeLaunchSpec.mjs';
+import { spawnRuntimeServerAfterMigration } from './runtime/launch/runServerRuntimeMigration.mjs';
 import { spawnStackOwnerDeathWatchdog } from './utils/stack/owner_death_watchdog.mjs';
+import { completeInterruptedStackStopBeforeStart } from './utils/stack/stop.mjs';
+import { decideDevStartupTopology, observeDevServerStartupTopology } from './utils/dev/devStartupTopology.mjs';
 
 /**
  * Run the local stack in "production-like" mode:
@@ -142,15 +169,35 @@ async function main() {
   if (serverComponentName === 'both') {
     throw new Error(`[local] --server=both is not supported for run (pick one: happier-server-light or happier-server)`);
   }
+  const autostart = getDefaultAutostartPaths();
+  const cleanupEnv = { ...process.env };
+  const cleanupStackCtx = resolveStackContext({ env: cleanupEnv, autostart });
+  if (!json && cleanupStackCtx.stackMode && cleanupStackCtx.runtimeStatePath) {
+    await completeInterruptedStackStopBeforeStart({
+      rootDir,
+      stackName: cleanupStackCtx.stackName,
+      baseDir: autostart.baseDir,
+      env: cleanupEnv,
+      json,
+    });
+  }
   const runtimeLaunchContext = await resolveStackRuntimeLaunchContext({ argv, env: process.env });
   const runtimeSnapshot = runtimeLaunchContext.snapshot;
   const runtimeBackedStart = Boolean(runtimeSnapshot);
   const cliLaunchSpec = runtimeSnapshot ? resolveCliRuntimeLaunchSpec({ snapshot: runtimeSnapshot }) : null;
+  const cliRuntimeProvenance = resolveCliRuntimeLaunchProvenance(cliLaunchSpec);
   const serverLaunchSpec = runtimeSnapshot
     ? resolveServerRuntimeLaunchSpec({ serverComponent: serverComponentName, snapshot: runtimeSnapshot })
     : null;
+  const dbProvider = applyEffectiveDbProviderEnv({ serverComponentName, env: process.env });
+  if (dbProvider === 'mysql' && !String(process.env.DATABASE_URL ?? '').trim()) {
+    throw new Error('[local] mysql requires an explicit DATABASE_URL before startup');
+  }
 
-  const startDaemon = !flags.has('--no-daemon') && (process.env.HAPPIER_STACK_DAEMON ?? '1') !== '0';
+  const startDaemon = resolveStackDaemonStartRequested({
+    env: process.env,
+    noDaemon: flags.has('--no-daemon'),
+  });
   const serveUiWanted = !flags.has('--no-ui') && (process.env.HAPPIER_STACK_SERVE_UI ?? '1') !== '0';
   let serveUi = serveUiWanted;
   // Capability semantics: if UI serving is enabled, default to "required" (fail closed)
@@ -161,7 +208,6 @@ async function main() {
   const expoTailscale = flags.has('--expo-tailscale') || resolveExpoTailscaleEnabled({ env: process.env });
   const noBrowser = flags.has('--no-browser') || (process.env.HAPPIER_STACK_NO_BROWSER ?? '').toString().trim() === '1';
   const uiPrefix = process.env.HAPPIER_STACK_UI_PREFIX?.trim() ? process.env.HAPPIER_STACK_UI_PREFIX.trim() : '/';
-  const autostart = getDefaultAutostartPaths();
   const uiBuildDir = runtimeSnapshot
     ? join(runtimeSnapshot.launchPath ?? runtimeSnapshot.snapshotPath, 'ui')
     : process.env.HAPPIER_STACK_UI_BUILD_DIR?.trim()
@@ -191,6 +237,7 @@ async function main() {
       data: {
         mode: 'start',
         serverComponentName,
+        dbProvider,
         serverDir,
         uiDir,
         cliDir,
@@ -250,16 +297,39 @@ async function main() {
 
 	  const children = [];
 	  let shuttingDown = false;
+    let shutdown = null;
+    let pendingShutdownSignal = null;
+    let shutdownDispatchStarted = false;
+    const dispatchShutdown = (signal) => {
+      if (shutdownDispatchStarted) return;
+      if (!shutdown) {
+        pendingShutdownSignal = signal;
+        for (const child of children.filter((candidate) => candidate?.exitCode == null)) {
+          void killProcessTree(child, 'SIGINT').catch(() => {});
+        }
+        return;
+      }
+      shutdownDispatchStarted = true;
+      shutdown({ signal }).then(() => process.exit(0)).catch((error) => {
+        console.error('[local] shutdown failed:', error);
+        process.exit(1);
+      });
+    };
+    process.on('SIGINT', () => dispatchShutdown('SIGINT'));
+    process.on('SIGTERM', () => dispatchShutdown('SIGTERM'));
 	  let ownedDaemonPid = null;
 	  let daemonAutostarter = null;
+	  let daemonRuntimeReconciler = null;
+	  let daemonLifecycleReconciler = null;
 	  installExitCleanup({ label: 'local', children });
 	  const baseEnv = { ...process.env };
 	  const stackCtx = resolveStackContext({ env: baseEnv, autostart });
 	  const { stackMode, runtimeStatePath, stackName, envPath, ephemeral } = stackCtx;
 	  const daemonScopeEnv = applyStackActiveServerScopeEnv({ env: baseEnv, stackName, cliIdentity: 'default' });
 	  const serviceMode = (daemonScopeEnv.HAPPIER_STACK_SERVICE_MODE ?? '').toString().trim() === '1';
+  const terminalIsInteractive = Boolean(process.stdin.isTTY && process.stdout.isTTY);
 
-  serverPort = await resolveLocalServerPortForStack({
+  serverPort = await selectLocalServerPortCandidateForStack({
     env: baseEnv,
     stackMode,
     stackName,
@@ -274,17 +344,59 @@ async function main() {
   const { publicServerUrl: publicServerUrlPreview } = getPublicServerUrlEnvOverride({ serverPort, env: baseEnv, stackName });
   publicServerUrl = publicServerUrlPreview;
 
-  // Ensure happier-cli is install+build ready before starting the daemon.
-  const buildCli = (baseEnv.HAPPIER_STACK_CLI_BUILD ?? '1').toString().trim() !== '0';
-  if (!runtimeSnapshot && startDaemon) {
-    await ensureCliBuilt(cliDir, { buildCli });
+  const runtimeOwnershipObservationScope = createListenerOwnershipCommandScope();
+  const serverHealthObservation = await fetchHappierHealth(internalServerUrl);
+  const serverAlreadyRunning = serverHealthObservation.ok;
+  const daemonAlreadyRunning = startDaemon
+    ? ['running', 'starting'].includes((await checkDaemonStatePingAware(
+        cliHomeDir,
+        { serverUrl: internalServerUrl, env: daemonScopeEnv },
+      )).status)
+    : false;
+  const serverTopologyObservation = await observeDevServerStartupTopology({
+    serverRequested: true, stackMode, serverPort, serverHealthObservation,
+    ownershipArgs: { env: baseEnv, port: serverPort, stackName, runtimeStatePath, listenerObservationScope: runtimeOwnershipObservationScope },
+  }, {
+    observeTcpPortAvailabilityImpl: observeTcpPortAvailability,
+    observeRuntimePortOwnedByStackDevProxyImpl: observeRuntimePortOwnedByStackDevProxy,
+    resolveStackOwnedServerListenPidImpl: () => resolveStackOwnedServerListenPid(
+      { serverPort, stackName, envPath }, { observationScope: runtimeOwnershipObservationScope },
+    ),
+  });
+  const serverTopology = serverTopologyObservation.topology;
+  const existingServerOwnership = serverTopologyObservation.proxyOwned
+    ? { status: 'proxy-owned', pid: null }
+    : serverTopologyObservation.listenerPid
+      ? { status: 'known', pid: serverTopologyObservation.listenerPid }
+      : { status: serverTopology === 'foreign' ? 'foreign' : 'not-running', pid: null };
+  const startupDecision = decideDevStartupTopology({
+    serverRequested: true,
+    serverTopology,
+    daemonRequested: startDaemon,
+    daemonRunning: daemonAlreadyRunning,
+    expoRequested: startMobile,
+    expoRunning: false,
+    restart,
+  });
+
+  if (startupDecision.startDaemon && !serviceMode && !terminalIsInteractive) {
+    const initialGate = daemonStartGate({ env: daemonScopeEnv, cliHomeDir, serverUrl: internalServerUrl });
+    if (!initialGate.ok) {
+      throw new Error(
+        formatDaemonAuthRequiredError({
+          stackName: autostart.stackName,
+          cliHomeDir,
+          serverUrl: internalServerUrl,
+        })
+      );
+    }
   }
 
   // Ensure server deps exist before any Prisma/docker work.
-  if (!runtimeSnapshot) {
+  if (!runtimeSnapshot && startupDecision.startServer) {
     await ensureDepsInstalled(serverDir, serverComponentName);
   }
-  if (startMobile) {
+  if (startupDecision.startExpo) {
     await ensureDepsInstalled(uiDir, 'happier-ui');
   }
 
@@ -306,11 +418,23 @@ async function main() {
     publicServerUrl = resolvedUrls.publicServerUrl;
   }
 
-  const serverAlreadyRunning = await isHappierServerRunning(internalServerUrl);
-  const daemonAlreadyRunning = startDaemon
-    ? isDaemonRunning(cliHomeDir, { serverUrl: internalServerUrl, env: daemonScopeEnv })
-    : false;
-  if (!restart && serverAlreadyRunning && (!startDaemon || daemonAlreadyRunning)) {
+  const publishExistingServerOwnership = async () => {
+    if (!(startupDecision.adoptedServer && stackMode && runtimeStatePath)) return;
+    if (existingServerOwnership.status === 'proxy-owned') return;
+    if (existingServerOwnership.status === 'known') {
+      await recordStackRuntimeServerPids(runtimeStatePath, {
+        listenerPid: existingServerOwnership.pid,
+        wrapperPid: null,
+        serverPort,
+        clearProxyState: false,
+      });
+      return;
+    }
+  };
+  if (startupDecision.adoptedServer) {
+    await publishExistingServerOwnership();
+  }
+  if (!startupDecision.startServer && !startupDecision.startDaemon && !startupDecision.startExpo) {
     console.log(
       `${green('✓')} start: already running ${dim('(')}` +
         `${dim('server=')}${cyan(internalServerUrl)}` +
@@ -322,14 +446,15 @@ async function main() {
 
   // Stack runtime state (stack-scoped commands only): record the runner PID + chosen ports so stop/restart never kills other stacks.
   if (stackMode && runtimeStatePath) {
-    await recordStackRuntimeStart(runtimeStatePath, {
+    const startedRuntime = await recordStackRuntimeStart(runtimeStatePath, {
       stackName,
       script: 'run.mjs',
       ephemeral,
       ownerPid: process.pid,
       ports: { server: serverPort },
       runtimeSnapshotId: runtimeSnapshot?.snapshotId ?? null,
-    }).catch(() => {});
+      serveUi,
+    });
     spawnStackOwnerDeathWatchdog({
       rootDir,
       stackName,
@@ -337,6 +462,7 @@ async function main() {
       envPath,
       runtimeStatePath,
       ownerPid: process.pid,
+      ownerStartedAt: startedRuntime.startedAt,
       env: baseEnv,
     });
   }
@@ -344,7 +470,7 @@ async function main() {
   // Server
   // If a previous run left a server behind, free the port first (prevents false "ready" checks).
   // NOTE: In stack mode we avoid killing arbitrary port listeners (fail-closed instead).
-  if ((!serverAlreadyRunning || restart) && !stackMode) {
+  if (startupDecision.startServer && !stackMode) {
     await killPortListeners(serverPort, { label: 'server' });
   }
 
@@ -366,7 +492,7 @@ async function main() {
       applyRuntimeServerLightSqliteEnv({ env: serverEnv, serverDir });
     }
 
-    if (!runtimeBackedStart) {
+    if (!runtimeBackedStart && !startupDecision.adoptedServer) {
       // Source-backed starts ensure the light DB schema exists before daemon startup.
       const acct = await getAccountCountForServerComponent({
         serverComponentName,
@@ -385,90 +511,137 @@ async function main() {
     }
   }
   let effectiveInternalServerUrl = internalServerUrl;
+  let activeServerProcess = null;
   if (serverComponentName === 'happier-server') {
     const managed = (baseEnv.HAPPIER_STACK_MANAGED_INFRA ?? '1') !== '0';
     if (managed) {
-      const envPath = resolveExplicitStackEnvFilePath(baseEnv);
-      const infra = await ensureHappyServerManagedInfra({
-        stackName: autostart.stackName,
-        baseDir: autostart.baseDir,
-        serverPort,
-        publicServerUrl,
-        envPath,
-        env: baseEnv,
-      });
-
-      // Backend runs on a separate port; gateway owns the public port.
-      const backendPortRaw = (baseEnv.HAPPIER_STACK_SERVER_BACKEND_PORT ?? '').trim();
-      const backendPort = backendPortRaw ? Number(backendPortRaw) : serverPort + 10;
-      const backendUrl = `http://127.0.0.1:${backendPort}`;
-      if (!stackMode) {
-        await killPortListeners(backendPort, { label: 'happier-server-backend' });
-      }
-
-      const backendEnv = { ...serverEnv, ...infra.env, PORT: String(backendPort) };
-      if (!runtimeBackedStart) {
-        const autoMigrate = (baseEnv.HAPPIER_STACK_PRISMA_MIGRATE ?? '1') !== '0';
-        if (autoMigrate) {
-          await applyHappyServerMigrations({ serverDir: sourceServerDir, env: backendEnv });
-        }
-        // Account probe should use the *actual* DATABASE_URL/infra env (ephemeral stacks do not persist it in env files).
-        const acct = await getAccountCountForServerComponent({
-          serverComponentName,
-          serverDir: sourceServerDir,
-          env: backendEnv,
-          bestEffort: true,
+      if (startupDecision.startServer) {
+        const explicitDatabaseUrl = serverEnv.DATABASE_URL;
+        const infra = await ensureHappyServerManagedInfra({
+          stackName: autostart.stackName,
+          baseDir: autostart.baseDir,
+          serverPort,
+          publicServerUrl,
+          envPath,
+          env: serverEnv,
+          dbProvider,
         });
-        happierServerAccountCount = typeof acct.accountCount === 'number' ? acct.accountCount : null;
-      }
-      const backend = runtimeSnapshot
-        ? spawnProc('server', serverLaunchSpec.command, serverLaunchSpec.args, backendEnv, { cwd: serverDir })
-        : await pmSpawnScript({ label: 'server', dir: serverDir, script: 'start', env: backendEnv });
-      children.push(backend);
-      if (stackMode && runtimeStatePath) {
-        await recordStackRuntimeUpdate(runtimeStatePath, {
-          ports: { server: serverPort, backend: backendPort },
-          processes: { happierServerBackendPid: backend.pid },
-        }).catch(() => {});
-      }
-      await waitForServerReady(backendUrl);
+        if (dbProvider === 'mysql') infra.env.DATABASE_URL = explicitDatabaseUrl;
 
-      const gatewayArgs = [
-        join(rootDir, 'scripts', 'ui_gateway.mjs'),
-        `--port=${serverPort}`,
-        `--backend-url=${backendUrl}`,
-        `--minio-port=${infra.env.S3_PORT}`,
-        `--bucket=${infra.env.S3_BUCKET}`,
-      ];
-      if (serveUi && (await pathExists(uiBuildDir))) {
-        gatewayArgs.push(`--ui-dir=${uiBuildDir}`);
+        // Backend runs on a separate port; gateway owns the public port.
+        const backendPortRaw = (baseEnv.HAPPIER_STACK_SERVER_BACKEND_PORT ?? '').trim();
+        const backendPort = backendPortRaw ? Number(backendPortRaw) : serverPort + 10;
+        const backendUrl = `http://127.0.0.1:${backendPort}`;
+        if (!stackMode) {
+          await killPortListeners(backendPort, { label: 'happier-server-backend' });
+        }
+
+        const backendEnv = { ...serverEnv, ...infra.env, PORT: String(backendPort) };
+        if (!runtimeBackedStart) {
+          const autoMigrate = (baseEnv.HAPPIER_STACK_PRISMA_MIGRATE ?? '1') !== '0';
+          if (autoMigrate) {
+            await applyHappyServerMigrations({ serverDir: sourceServerDir, env: backendEnv, dbProvider });
+          }
+          // Account probe should use the *actual* DATABASE_URL/infra env (ephemeral stacks do not persist it in env files).
+          const accountProbeImpl = startupDecision.adoptedServer
+            ? probeExistingAccountCountForServerComponent
+            : getAccountCountForServerComponent;
+          const acct = await accountProbeImpl({
+            serverComponentName,
+            serverDir: sourceServerDir,
+            env: backendEnv,
+            bestEffort: true,
+          });
+          happierServerAccountCount = typeof acct.accountCount === 'number' ? acct.accountCount : null;
+        }
+        const backend = runtimeSnapshot
+          ? await spawnRuntimeServerAfterMigration({
+              serverLaunchSpec,
+              env: backendEnv,
+              children,
+              isCancellationRequested: () => pendingShutdownSignal !== null,
+            })
+          : await spawnSourceServerScript({ label: 'server', serverDir, script: 'start', env: backendEnv });
+        if (!runtimeSnapshot) children.push(backend);
+        activeServerProcess = backend;
+        await waitForServerReady(backendUrl, { childProcess: backend });
+        if (stackMode && runtimeStatePath) {
+          await recordStackRuntimeServerActivation(runtimeStatePath, {
+            stablePort: serverPort,
+            backendPort,
+            managedBackendPid: backend.pid,
+            mode: 'managed-backend',
+          });
+        }
+
+        const gatewayArgs = [
+          join(rootDir, 'scripts', 'ui_gateway.mjs'),
+          `--port=${serverPort}`,
+          `--backend-url=${backendUrl}`,
+          `--minio-port=${infra.env.S3_PORT}`,
+          `--bucket=${infra.env.S3_BUCKET}`,
+        ];
+        if (serveUi && (await pathExists(uiBuildDir))) {
+          gatewayArgs.push(`--ui-dir=${uiBuildDir}`);
+        } else {
+          gatewayArgs.push('--no-ui');
+        }
+
+        const gateway = spawnProc('ui', process.execPath, gatewayArgs, { ...backendEnv, PORT: String(serverPort) }, { cwd: rootDir });
+        children.push(gateway);
+        await waitForServerReady(internalServerUrl, { childProcess: gateway });
+        if (stackMode && runtimeStatePath) {
+          await recordStackRuntimeServerActivation(runtimeStatePath, {
+            stablePort: serverPort,
+            backendPort,
+            managedBackendPid: backend.pid,
+            managedGatewayPid: gateway.pid,
+            mode: 'managed-gateway',
+          });
+        }
+        effectiveInternalServerUrl = internalServerUrl;
+
+        // Skip default server spawn below
       } else {
-        gatewayArgs.push('--no-ui');
+        console.log(`${green('✓')} server: already running at ${cyan(internalServerUrl)}`);
       }
-
-      const gateway = spawnProc('ui', process.execPath, gatewayArgs, { ...backendEnv, PORT: String(serverPort) }, { cwd: rootDir });
-      children.push(gateway);
-      if (stackMode && runtimeStatePath) {
-        await recordStackRuntimeUpdate(runtimeStatePath, { processes: { uiGatewayPid: gateway.pid } }).catch(() => {});
-      }
-      await waitForServerReady(internalServerUrl);
-      effectiveInternalServerUrl = internalServerUrl;
-
-      // Skip default server spawn below
     }
   }
 
   // Default server start (happier-server-light, or happier-server without managed infra).
   if (!(serverComponentName === 'happier-server' && (baseEnv.HAPPIER_STACK_MANAGED_INFRA ?? '1') !== '0')) {
-    if (!serverAlreadyRunning || restart) {
-      const server = runtimeSnapshot
-        ? spawnProc('server', serverLaunchSpec.command, serverLaunchSpec.args, serverEnv, { cwd: serverDir })
-        : await pmSpawnScript({ label: 'server', dir: serverDir, script: serverStartScript, env: serverEnv });
-      children.push(server);
+    if (startupDecision.startServer) {
+      const server = runtimeSnapshot && serverComponentName === 'happier-server'
+        ? await spawnRuntimeServerAfterMigration({
+            serverLaunchSpec,
+            env: serverEnv,
+            children,
+            isCancellationRequested: () => pendingShutdownSignal !== null,
+          })
+        : runtimeSnapshot
+          ? spawnProc('server', serverLaunchSpec.command, serverLaunchSpec.args, serverEnv, { cwd: serverDir })
+          : await spawnSourceServerScript({ label: 'server', serverDir, script: serverStartScript, env: serverEnv });
+      if (!(runtimeSnapshot && serverComponentName === 'happier-server')) children.push(server);
+      activeServerProcess = server;
+      await waitForServerReady(internalServerUrl, { childProcess: server });
       if (stackMode && runtimeStatePath) {
-        await recordStackRuntimeUpdate(runtimeStatePath, { processes: { serverPid: server.pid } }).catch(() => {});
+        const listenerPid = await resolveSpawnedProcessGroupListenPid({
+          port: serverPort,
+          spawnedPid: server.pid,
+        });
+        if (!(Number.isFinite(Number(listenerPid)) && Number(listenerPid) > 1)) {
+          throw new Error(
+            `[local] server readiness ownership could not be proven on port ${serverPort}: no stack-owned listener PID was discovered`
+          );
+        }
+        await recordStackRuntimeServerActivation(runtimeStatePath, {
+          listenerPid: Number(listenerPid),
+          wrapperPid: server.pid,
+          stablePort: serverPort,
+          mode: 'direct',
+          clearProxyState: true,
+        });
       }
-      await waitForServerReady(internalServerUrl);
     } else {
       console.log(`${green('✓')} server: already running at ${cyan(internalServerUrl)}`);
     }
@@ -511,8 +684,7 @@ async function main() {
     }).join('\n'));
 
     // Auto-open UI (interactive only) using the stack-scoped hostname when applicable.
-    const isInteractive = Boolean(process.stdin.isTTY && process.stdout.isTTY);
-    if (isInteractive && !noBrowser) {
+    if (terminalIsInteractive && !noBrowser) {
       const prefix = uiPrefix.startsWith('/') ? uiPrefix : `/${uiPrefix}`;
       const openUrl = await preferStackLocalhostUrl(`http://localhost:${serverPort}${prefix}`, { stackName: autostart.stackName });
       const res = await openUrlInBrowser(openUrl);
@@ -523,13 +695,52 @@ async function main() {
   }
 
   // Daemon
-  if (startDaemon) {
-    const isInteractive = Boolean(process.stdin.isTTY && process.stdout.isTTY);
+  const startDaemonAndRecord = async ({
+    forceRestart = restart && !serviceMode,
+    preserveExistingRunning = false,
+  } = {}) => {
+    await startLocalDaemonWithAuth({
+      cliBin,
+      cliEntrypoint: cliLaunchSpec?.entrypoint ?? '',
+      cliNodeEntrypoint,
+      cliCommand,
+      cliCommandArgs,
+      cliHomeDir,
+      internalServerUrl: effectiveInternalServerUrl,
+      publicServerUrl,
+      runtimeStatePath,
+      isShuttingDown: () => shuttingDown,
+      forceRestart,
+      preserveExistingRunning,
+      env: daemonScopeEnv,
+              stackName,
+              cliIdentity: 'default',
+              ...cliRuntimeProvenance,
+    });
+    const daemonEnvForState = getDaemonEnv({
+      baseEnv: daemonScopeEnv,
+      cliHomeDir,
+      internalServerUrl: effectiveInternalServerUrl,
+      publicServerUrl: publicServerUrl || effectiveInternalServerUrl,
+      stackName,
+      cliIdentity: 'default',
+    });
+    const daemonState = await checkDaemonStatePingAware(cliHomeDir, {
+      serverUrl: effectiveInternalServerUrl,
+      env: daemonEnvForState,
+    });
+    ownedDaemonPid = typeof daemonState?.pid === 'number' ? daemonState.pid : null;
+  };
+
+  if (startupDecision.startDaemon) {
     const initialGate = daemonStartGate({ env: daemonScopeEnv, cliHomeDir, serverUrl: effectiveInternalServerUrl });
 
     if (initialGate.reason !== 'auth_flow_missing_credentials') {
       if (!runtimeBackedStart && serverComponentName === 'happier-server' && happierServerAccountCount == null) {
-        const acct = await getAccountCountForServerComponent({
+        const accountProbeImpl = startupDecision.adoptedServer
+          ? probeExistingAccountCountForServerComponent
+          : getAccountCountForServerComponent;
+        const acct = await accountProbeImpl({
           serverComponentName,
           serverDir: sourceServerDir,
           env: serverEnv,
@@ -539,14 +750,14 @@ async function main() {
       }
       const accountCount =
         serverComponentName === 'happier-server-light' ? serverLightAccountCount : happierServerAccountCount;
-      const autoSeedEnabled = resolveAutoCopyFromMainEnabled({ env: daemonScopeEnv, stackName, isInteractive });
+      const autoSeedEnabled = resolveAutoCopyFromMainEnabled({ env: daemonScopeEnv, stackName, isInteractive: terminalIsInteractive });
       await maybeRunInteractiveStackAuthSetup({
         rootDir,
         env: daemonScopeEnv,
         stackName,
         cliHomeDir,
         accountCount,
-        isInteractive,
+        isInteractive: terminalIsInteractive,
         autoSeedEnabled,
       });
       await prepareDaemonAuthSeedIfNeeded({
@@ -555,7 +766,7 @@ async function main() {
       stackName,
       cliHomeDir,
         startDaemon,
-        isInteractive,
+        isInteractive: terminalIsInteractive,
         accountCount,
         quiet: false,
       });
@@ -590,35 +801,6 @@ async function main() {
             }
           };
 
-          const startDaemonAndRecord = async () => {
-            await startLocalDaemonWithAuth({
-              cliBin,
-              cliEntrypoint: cliLaunchSpec?.entrypoint ?? '',
-              cliNodeEntrypoint,
-              cliCommand,
-              cliCommandArgs,
-              cliHomeDir,
-              internalServerUrl: effectiveInternalServerUrl,
-              publicServerUrl,
-              runtimeStatePath,
-              isShuttingDown: () => shuttingDown,
-              forceRestart: restart && !serviceMode,
-              env: daemonScopeEnv,
-              stackName,
-              cliIdentity: 'default',
-            });
-            const daemonEnvForState = getDaemonEnv({
-              baseEnv: daemonScopeEnv,
-              cliHomeDir,
-              internalServerUrl: effectiveInternalServerUrl,
-              publicServerUrl: publicServerUrl || effectiveInternalServerUrl,
-              stackName,
-              cliIdentity: 'default',
-            });
-            const daemonState = checkDaemonState(cliHomeDir, { serverUrl: effectiveInternalServerUrl, env: daemonEnvForState });
-            ownedDaemonPid = typeof daemonState?.pid === 'number' ? daemonState.pid : null;
-          };
-
           daemonAutostarter = createServiceDaemonAutostarter({
             enabled: true,
             isShuttingDown: () => shuttingDown,
@@ -634,7 +816,7 @@ async function main() {
           });
           daemonAutostarter.start();
         }
-      } else if (!isInteractive) {
+      } else if (!terminalIsInteractive) {
         throw new Error(
           formatDaemonAuthRequiredError({
             stackName: autostart.stackName,
@@ -644,36 +826,63 @@ async function main() {
         );
       }
     } else {
-      await startLocalDaemonWithAuth({
-          cliBin,
-          cliEntrypoint: cliLaunchSpec?.entrypoint ?? '',
-          cliNodeEntrypoint,
-          cliCommand,
-          cliCommandArgs,
-		      cliHomeDir,
-		      internalServerUrl: effectiveInternalServerUrl,
-		      publicServerUrl,
-		      runtimeStatePath,
-		      isShuttingDown: () => shuttingDown,
-		      forceRestart: restart && !serviceMode,
-		      env: daemonScopeEnv,
-	        stackName,
-	    });
-	      const daemonEnvForState = getDaemonEnv({
-	        baseEnv: daemonScopeEnv,
-	        cliHomeDir,
-	        internalServerUrl: effectiveInternalServerUrl,
-	        publicServerUrl: publicServerUrl || effectiveInternalServerUrl,
-	        stackName,
-	        cliIdentity: 'default',
-	      });
-	      const daemonState = checkDaemonState(cliHomeDir, { serverUrl: effectiveInternalServerUrl, env: daemonEnvForState });
-	      ownedDaemonPid = typeof daemonState?.pid === 'number' ? daemonState.pid : null;
+      await startDaemonAndRecord();
 	    }
 	  }
 
+  if (startDaemon && stackMode && runtimeStatePath) {
+    const daemonRuntimeEnv = getDaemonEnv({
+      baseEnv: daemonScopeEnv,
+      cliHomeDir,
+      internalServerUrl: effectiveInternalServerUrl,
+      publicServerUrl: publicServerUrl || effectiveInternalServerUrl,
+      stackName,
+      cliIdentity: 'default',
+    });
+    daemonRuntimeReconciler = startStackRuntimeDaemonPidReconciler(
+      {
+        runtimeStatePath,
+        cliHomeDir,
+        internalServerUrl: effectiveInternalServerUrl,
+        env: daemonRuntimeEnv,
+        isShuttingDown: () => shuttingDown,
+      },
+      { checkDaemonStateImpl: checkDaemonStatePingAware },
+    );
+    await daemonRuntimeReconciler?.syncNow?.();
+
+    if (!serviceMode) {
+      daemonLifecycleReconciler = startOwnerDaemonLifecycleReconciler({
+        enabled: true,
+        isShuttingDown: () => shuttingDown,
+        observe: async () => {
+          const gate = daemonStartGate({
+            env: daemonScopeEnv,
+            cliHomeDir,
+            serverUrl: effectiveInternalServerUrl,
+          });
+          if (!gate.ok) return { status: 'inconclusive', reason: gate.reason };
+          return await checkDaemonStatePingAware(cliHomeDir, {
+            serverUrl: effectiveInternalServerUrl,
+            env: daemonRuntimeEnv,
+	        stackName,
+	        runtimeBacked: cliLaunchSpec?.runtimeBacked === true,
+	        admittedDistClosureFingerprint: cliLaunchSpec?.daemonDistClosureFingerprint ?? null,
+	    });
+        },
+        recover: async () => {
+          await startDaemonAndRecord({
+            forceRestart: false,
+            preserveExistingRunning: true,
+          });
+          return { started: true };
+        },
+      });
+    }
+  }
+
   // Optional: start Expo dev-client Metro for mobile reviewers.
-  if (startMobile) {
+  if (startupDecision.startExpo) {
     const expoRes = await ensureDevExpoServer({
       startUi: false,
       startMobile: true,
@@ -694,14 +903,16 @@ async function main() {
     }
   }
 
-  const shutdown = async ({ signal = 'SIGTERM' } = {}) => {
+  shutdown = async ({ signal = 'SIGTERM' } = {}) => {
     if (shuttingDown) {
       return;
     }
     shuttingDown = true;
     let shutdownRequest = null;
+    let expectedStopState = null;
     if (runtimeStatePath) {
       shutdownRequest = (await readStackRuntimeStateFile(runtimeStatePath).catch(() => null))?.stopRequest ?? null;
+      expectedStopState = await captureStackRuntimeStopSnapshot(runtimeStatePath).catch(() => null);
     }
     console.log(`\n[local] shutting down (${signal})...`);
     if (shutdownRequest) {
@@ -724,6 +935,16 @@ async function main() {
 
     try {
       daemonAutostarter?.stop?.();
+    } catch {
+      // ignore
+    }
+    try {
+      daemonRuntimeReconciler?.close?.();
+    } catch {
+      // ignore
+    }
+    try {
+      daemonLifecycleReconciler?.close?.();
     } catch {
       // ignore
     }
@@ -761,24 +982,34 @@ async function main() {
 	      }
 	    }
 
+    const serverShutdownGraceMs = resolveServerShutdownGraceMs(baseEnv);
+    const cleanupResults = [];
     for (const child of children) {
       if (child.exitCode == null) {
-        killProcessTree(child, 'SIGINT');
+        cleanupResults.push(await killProcessTree(child, 'SIGINT',
+          child === activeServerProcess ? { graceMs: serverShutdownGraceMs } : undefined));
       }
     }
 
     await delay(1500);
     for (const child of children) {
       if (child.exitCode == null) {
-        killProcessTree(child, 'SIGKILL');
+        cleanupResults.push(await killProcessTree(child, 'SIGKILL'));
       }
     }
 
     await maybeResetTailscaleServe();
+    if (runtimeStatePath && expectedStopState) {
+      await finalizeStackRuntimeStop(runtimeStatePath, {
+        expected: expectedStopState,
+        preserveDaemon: preserveDaemonOnShutdown,
+        cleanupResults,
+        requireNoStopRequest: true,
+      }).catch(() => {});
+    }
   };
 
-  process.on('SIGINT', () => shutdown({ signal: 'SIGINT' }).then(() => process.exit(0)));
-  process.on('SIGTERM', () => shutdown({ signal: 'SIGTERM' }).then(() => process.exit(0)));
+  if (pendingShutdownSignal) dispatchShutdown(pendingShutdownSignal);
 
   // Keep running
   await new Promise(() => {});

@@ -10,3 +10,7 @@ export async function readLastLines(path, lines = 60) {
   }
 }
 
+export async function readLastLinesAfterProcessCompletion(proc, path, lines = 60) {
+  await proc?.completion?.catch?.(() => {});
+  return await readLastLines(path, lines);
+}

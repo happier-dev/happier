@@ -91,7 +91,8 @@ Notes:
 - **`hstack dev`** is for rapid iteration:
   - for `happier-server`: hstack runs `prisma migrate deploy` by default (configurable via `HAPPIER_STACK_PRISMA_MIGRATE`).
   - for `happier-server-light`:
-    - hstack runs the server package’s `migrate:light:deploy` script, which applies provider-specific light migrations (SQLite by default, or PGlite when configured).
+    - SQLite uses the server package’s canonical `migrate:sqlite:deploy` script.
+    - PGlite uses the server package’s `migrate:light:deploy` script.
 
 Important: for a given run (`hstack start` / `hstack dev`) you choose **one** flavor.
 

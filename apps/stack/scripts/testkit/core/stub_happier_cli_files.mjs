@@ -1,11 +1,26 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
+import cliDistBuildManifest from '../../utils/cli/cliDistBuildManifestLoader.mjs';
+
+export function writeStubCliDistBuildManifest(cliDir, { entrypointDir = 'dist' } = {}) {
+  return cliDistBuildManifest.writeCliDistBuildManifest(
+    join(cliDir, entrypointDir, 'index.mjs'),
+    {
+      outputDir: join(cliDir, entrypointDir),
+      builtAt: '2026-07-09T00:00:00.000Z',
+    },
+  );
+}
+
 export async function writeStubHappierCliFiles(
   monoRoot,
   {
     packageJsonContent,
     distIndexScript,
+    distBuildManifest = true,
+    packageDistIndexScript,
+    packageDistBuildManifest = true,
     srcIndexScript,
     binHappierScript,
     tsconfigContent,
@@ -23,6 +38,11 @@ export async function writeStubHappierCliFiles(
     await writeFile(join(cliDir, 'dist', 'index.mjs'), distIndexScript, 'utf-8');
   }
 
+  if (typeof packageDistIndexScript !== 'undefined') {
+    await mkdir(join(cliDir, 'package-dist'), { recursive: true });
+    await writeFile(join(cliDir, 'package-dist', 'index.mjs'), packageDistIndexScript, 'utf-8');
+  }
+
   if (typeof srcIndexScript !== 'undefined') {
     await mkdir(join(cliDir, 'src'), { recursive: true });
     await writeFile(join(cliDir, 'src', 'index.ts'), srcIndexScript, 'utf-8');
@@ -35,6 +55,13 @@ export async function writeStubHappierCliFiles(
 
   if (typeof tsconfigContent !== 'undefined') {
     await writeFile(join(cliDir, 'tsconfig.json'), tsconfigContent, 'utf-8');
+  }
+
+  if (typeof distIndexScript !== 'undefined' && distBuildManifest) {
+    writeStubCliDistBuildManifest(cliDir);
+  }
+  if (typeof packageDistIndexScript !== 'undefined' && packageDistBuildManifest) {
+    writeStubCliDistBuildManifest(cliDir, { entrypointDir: 'package-dist' });
   }
 
   return {

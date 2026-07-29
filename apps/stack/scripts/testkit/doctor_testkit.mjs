@@ -9,21 +9,28 @@ import { createTempFixture } from './core/temp_fixture.mjs';
 
 export const runNode = runNodeCapture;
 
-export async function createDoctorWorkspaceFixture(t, { tmpPrefix = 'happier-stack-doctor-' } = {}) {
+export async function createDoctorWorkspaceFixture(
+  t,
+  {
+    tmpPrefix = 'happier-stack-doctor-',
+    daemonStatusScript = `console.log('Daemon is running');`,
+  } = {},
+) {
   const fixture = await createTempFixture(t, { prefix: tmpPrefix });
   const tmp = fixture.root;
 
   const monoRoot = join(tmp, 'workspace', 'happier');
   await ensureMinimalMonorepoLayout(monoRoot);
+  const cliStatusScript = [
+    `if (process.argv.includes('daemon') && process.argv.includes('status')) {`,
+    `  ${daemonStatusScript}`,
+    `  process.exit(0);`,
+    `}`,
+    `console.log('ok');`,
+  ].join('\n');
   await writeStubHappierCliFiles(monoRoot, {
-    distIndexScript: 'export {};\n',
-    binHappierScript: [
-      `if (process.argv.includes('daemon') && process.argv.includes('status')) {`,
-      `  console.log('Daemon is running');`,
-      `  process.exit(0);`,
-      `}`,
-      `console.log('ok');`,
-    ].join('\n'),
+    distIndexScript: `${cliStatusScript}\nexport {};\n`,
+    binHappierScript: cliStatusScript,
   });
 
   return { tmp, monoRoot };

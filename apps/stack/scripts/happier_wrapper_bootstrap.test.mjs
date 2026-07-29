@@ -22,6 +22,7 @@ test('happier wrapper refreshes bundled workspace packages in preflight mode bef
     const syncMarkerPath = join(fixtureDir, 'sync.json');
     const cliMarkerPath = join(fixtureDir, 'cli.txt');
     const syncStubPath = join(fixtureDir, 'syncBundledWorkspacePackages.mjs');
+    const healthStubPath = join(fixtureDir, 'cliCommonWorkspaces.mjs');
     const resolveSyncModulePathStubPath = join(fixtureDir, 'resolveBundledWorkspaceSyncModulePath.mjs');
     const cliStubPath = join(fixtureDir, 'happier.mjs');
     const loaderPath = join(fixtureDir, 'loader.mjs');
@@ -32,6 +33,18 @@ test('happier wrapper refreshes bundled workspace packages in preflight mode bef
         "import { writeFileSync } from 'node:fs';",
         'export function syncBundledWorkspacePackages(opts) {',
         `  writeFileSync(${JSON.stringify(syncMarkerPath)}, JSON.stringify(opts), 'utf8');`,
+        '}',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+    writeFileSync(
+      healthStubPath,
+      [
+        'let callCount = 0;',
+        'export function hasBundledWorkspacePackagesHealthy() {',
+        '  callCount += 1;',
+        '  return callCount > 1;',
         '}',
         '',
       ].join('\n'),
@@ -62,6 +75,9 @@ test('happier wrapper refreshes bundled workspace packages in preflight mode bef
         "import { pathToFileURL } from 'node:url';",
         '',
         'export async function resolve(specifier, context, defaultResolve) {',
+        "  if (specifier.endsWith('/packages/cli-common/dist/workspaces/index.js')) {",
+        `    return { url: pathToFileURL(${JSON.stringify(healthStubPath)}).href, shortCircuit: true };`,
+        '  }',
         "  if (specifier === '../scripts/runtime/resolveBundledWorkspaceSyncModulePath.mjs') {",
         `    return { url: pathToFileURL(${JSON.stringify(resolveSyncModulePathStubPath)}).href, shortCircuit: true };`,
         '  }',

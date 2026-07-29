@@ -56,10 +56,6 @@ export function resolveServerLightPrismaSchemaArgs({ serverDir, provider }) {
   return [];
 }
 
-export function resolveServerLightPrismaMigrateDeployArgs({ serverDir, provider }) {
-  return ['migrate', 'deploy', ...resolveServerLightPrismaSchemaArgs({ serverDir, provider })];
-}
-
 export function resolveServerLightPrismaClientImport({ serverDir, provider }) {
   const flavor = detectServerLightDbFlavor({ serverDir, provider });
   if (flavor === 'pglite') {

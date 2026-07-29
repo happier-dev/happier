@@ -46,7 +46,11 @@ test('hstack stack new copies server-scoped credentials from source stack', asyn
   await writeFile(join(monoRoot, 'apps', 'server', 'prisma', 'sqlite', 'schema.prisma'), 'datasource db { provider = "sqlite" }\n', 'utf-8');
 
   const sourceCliHome = join(storageDir, sourceStack, 'cli');
-  const sourceCred = resolveStackCredentialPaths({ cliHomeDir: sourceCliHome, serverUrl });
+  const sourceCred = resolveStackCredentialPaths({
+    cliHomeDir: sourceCliHome,
+    serverUrl,
+    env: { ...process.env, HAPPIER_ACTIVE_SERVER_ID: '' },
+  });
   await mkdir(dirname(sourceCred.serverScopedPath), { recursive: true });
   await writeFile(sourceCred.serverScopedPath, 'seed-credential\n', 'utf-8');
   await writeFile(join(sourceCliHome, 'settings.json'), JSON.stringify({ machineId: 'seed-machine' }) + '\n', 'utf-8');
@@ -122,7 +126,11 @@ test('hstack stack new copy-auth prefers source server-scoped credentials over u
   await writeFile(join(monoRoot, 'apps', 'server', 'prisma', 'sqlite', 'schema.prisma'), 'datasource db { provider = "sqlite" }\n', 'utf-8');
 
   const sourceCliHome = join(storageDir, sourceStack, 'cli');
-  const sourceCred = resolveStackCredentialPaths({ cliHomeDir: sourceCliHome, serverUrl });
+  const sourceCred = resolveStackCredentialPaths({
+    cliHomeDir: sourceCliHome,
+    serverUrl,
+    env: { ...process.env, HAPPIER_ACTIVE_SERVER_ID: '' },
+  });
   await mkdir(dirname(sourceCred.serverScopedPath), { recursive: true });
   await writeFile(join(sourceCliHome, 'access.key'), 'legacy-wrong\n', 'utf-8');
   await writeFile(sourceCred.serverScopedPath, 'server-scoped-correct\n', 'utf-8');

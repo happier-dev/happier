@@ -10,13 +10,18 @@ import { getComponentDir, resolveStackEnvPath } from '../utils/paths/paths.mjs';
 import { run } from '../utils/proc/proc.mjs';
 import { resolveServerPortFromEnv, resolveServerUrls } from '../utils/server/urls.mjs';
 import { parseCliIdentityOrThrow, resolveCliHomeDirForIdentity } from '../utils/stack/cli_identities.mjs';
-import { readStackRuntimeStateFile, isPidAlive } from '../utils/stack/runtime_state.mjs';
+import { readStackRuntimeStateFile, isStackRuntimeProcessTrusted } from '../utils/stack/runtime_state.mjs';
 import { syncStackRuntimeDaemonPidFromDaemonState } from '../utils/stack/runtime_daemon_state.mjs';
 import { withStackEnv } from './stack_environment.mjs';
 import { banner, cmd as cmdFmt, sectionTitle } from '../utils/ui/layout.mjs';
 import { cyan, green } from '../utils/ui/ansi.mjs';
 import { resolveStackRuntimeLaunchContext } from '../runtime/launch/resolveStackRuntimeLaunchContext.mjs';
-import { resolveCliRuntimeLaunchSpec } from '../runtime/launch/resolveCliRuntimeLaunchSpec.mjs';
+import {
+  applyCliRuntimeLaunchProvenanceEnv,
+  resolveCliRuntimeLaunchProvenance,
+  resolveCliRuntimeLaunchSpec,
+} from '../runtime/launch/resolveCliRuntimeLaunchSpec.mjs';
+import { hasExplicitStackRuntimeModeArg } from '../runtime/shared/runtime_mode.mjs';
 import { applyStackActiveServerScopeEnv } from '../utils/auth/stable_scope_id.mjs';
 
 export async function resolveStackDaemonCommandContext({ rootDir, stackName, env, identity, argv = [] }) {
@@ -29,6 +34,7 @@ export async function resolveStackDaemonCommandContext({ rootDir, stackName, env
   const cliNodeEntrypoint = cliLaunchSpec?.nodeEntrypoint ?? '';
   const cliCommand = cliLaunchSpec?.command ?? '';
   const cliCommandArgs = cliLaunchSpec?.args ?? [];
+  const runtimeProvenance = resolveCliRuntimeLaunchProvenance(cliLaunchSpec);
   const baseCliHomeDir = (env.HAPPIER_STACK_CLI_HOME_DIR ?? join(resolveStackEnvPath(stackName).baseDir, 'cli')).toString();
   const cliHomeDir = resolveCliHomeDirForIdentity({ cliHomeDir: baseCliHomeDir, identity });
 
@@ -38,7 +44,16 @@ export async function resolveStackDaemonCommandContext({ rootDir, stackName, env
     const state = await readStackRuntimeStateFile(runtimePath).catch(() => null);
     const candidate = Number(state?.ports?.server);
     const serverPid = Number(state?.processes?.serverPid);
-    if (Number.isFinite(candidate) && candidate > 0 && isPidAlive(serverPid)) {
+    if (
+      Number.isFinite(candidate) &&
+      candidate > 0 &&
+      await isStackRuntimeProcessTrusted(serverPid, {
+        key: 'serverPid',
+        stackName,
+        envPath: String(env.HAPPIER_STACK_ENV_FILE ?? '').trim(),
+        cliHomeDir: baseCliHomeDir,
+      })
+    ) {
       runtimePort = candidate;
     }
   }
@@ -47,16 +62,19 @@ export async function resolveStackDaemonCommandContext({ rootDir, stackName, env
   const urls = await resolveServerUrls({ env, serverPort, allowEnable: false });
   const internalServerUrl = urls.internalServerUrl;
   const publicServerUrl = urls.publicServerUrl;
-  const envForIdentity = {
-    ...env,
-    HAPPIER_STACK_CLI_IDENTITY: identity,
-    ...(identity !== 'default'
-      ? {
-          HAPPIER_STACK_MIGRATE_CREDENTIALS: '0',
-          HAPPIER_STACK_AUTO_AUTH_SEED: '0',
-        }
-      : {}),
-  };
+  const envForIdentity = applyCliRuntimeLaunchProvenanceEnv({
+    cliLaunchSpec,
+    env: {
+      ...env,
+      HAPPIER_STACK_CLI_IDENTITY: identity,
+      ...(identity !== 'default'
+        ? {
+            HAPPIER_STACK_MIGRATE_CREDENTIALS: '0',
+            HAPPIER_STACK_AUTO_AUTH_SEED: '0',
+          }
+        : {}),
+    },
+  });
   const scopedEnvForIdentity = applyStackActiveServerScopeEnv({
     env: envForIdentity,
     stackName,
@@ -71,6 +89,7 @@ export async function resolveStackDaemonCommandContext({ rootDir, stackName, env
     cliNodeEntrypoint,
     cliCommand,
     cliCommandArgs,
+    runtimeProvenance,
     cliHomeDir,
     runtimePath,
     internalServerUrl,
@@ -126,6 +145,10 @@ export async function runStackDaemonCommand({ rootDir, stackName, argv, json }) 
 
   const res = await withStackEnv({
     stackName,
+    extraEnv:
+      action === 'status' && !hasExplicitStackRuntimeModeArg(argv)
+        ? { HAPPIER_STACK_RUNTIME_MODE: 'source' }
+        : {},
     fn: async ({ env }) => {
       const {
         cliBin,
@@ -133,6 +156,7 @@ export async function runStackDaemonCommand({ rootDir, stackName, argv, json }) 
         cliNodeEntrypoint,
         cliCommand,
         cliCommandArgs,
+        runtimeProvenance,
         cliHomeDir,
         runtimePath,
         internalServerUrl,
@@ -205,6 +229,7 @@ export async function runStackDaemonCommand({ rootDir, stackName, argv, json }) 
           env: envForIdentity,
           stackName,
           cliIdentity: identity,
+          ...runtimeProvenance,
         });
 
         const status = await daemonStatusSummary({

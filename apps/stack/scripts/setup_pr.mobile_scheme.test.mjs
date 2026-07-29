@@ -330,3 +330,129 @@ export async function resolve(specifier, context, defaultResolve) {
   const mobileScheme = lines.find((l) => l.startsWith('stack.mobileScheme=')) ?? '';
   assert.equal(mobileScheme, 'stack.mobileScheme=hstack-dev');
 });
+
+test('setup-pr summary omits stale Expo web UI metadata when the verified UI is down', async (t) => {
+  const scriptsDir = dirname(fileURLToPath(import.meta.url));
+  const rootDir = dirname(scriptsDir);
+  const tmp = await mkdtemp(join(tmpdir(), 'hstack-setup-pr-stale-ui-summary-'));
+  t.after(async () => {
+    await rm(tmp, { recursive: true, force: true });
+  });
+
+  const loaderPath = join(tmp, 'loader.mjs');
+  const registerPath = join(tmp, 'register-loader.mjs');
+  const staleUiPort = 45678;
+
+  const stubBySpecifier = {
+    './utils/cli/prereqs.mjs': toDataUrl(`
+export async function assertCliPrereqs() {}
+`),
+    './utils/cli/verbosity.mjs': toDataUrl(`
+export function getVerbosityLevel() {
+  return 1;
+}
+`),
+    './utils/cli/wizard.mjs': toDataUrl(`
+export function isTty() {
+  return true;
+}
+`),
+    './utils/auth/credentials_paths.mjs': toDataUrl(`
+export function findAnyCredentialPathInCliHome() {
+  return '/tmp/test-access-key';
+}
+`),
+    './utils/auth/guided_pr_auth.mjs': toDataUrl(`
+export function decidePrAuthPlan() {
+  return { mode: 'existing' };
+}
+`),
+    './utils/auth/orchestrated_stack_auth_flow.mjs': toDataUrl(`
+export async function runOrchestratedGuidedAuthFlow() {
+  return {};
+}
+export async function startDaemonPostAuth() {
+  return { ok: true };
+}
+`),
+    './utils/env/sandbox.mjs': toDataUrl(`
+export function isSandboxed() {
+  return false;
+}
+export function sandboxAllowsGlobalSideEffects() {
+  return true;
+}
+`),
+    './utils/proc/proc.mjs': toDataUrl(`
+export async function run() {
+  return { status: 0 };
+}
+export async function runCapture() {
+  return '';
+}
+export async function runCaptureResult() {
+  return { ok: true, status: 0, exitCode: 0, signal: null, out: '', err: '', durationMs: 0 };
+}
+export function spawnProc() {
+  return { pid: 123, stdout: null, stderr: null, on() {}, kill() {} };
+}
+export function killProcessTree() {}
+`),
+    './utils/stack/runtime_state.mjs': toDataUrl(`
+export function getStackRuntimeStatePath() {
+  return '/tmp/test-stack.runtime.json';
+}
+export async function readStackRuntimeStateFile() {
+  return {
+    ownerPid: 123,
+    processes: { serverPid: 234, expoPid: 345 },
+    ports: { server: 32123, backend: 32124 },
+    expo: { webPort: ${staleUiPort}, port: ${staleUiPort}, webEnabled: true },
+    logs: { runner: '/tmp/test-runner.log' },
+  };
+}
+`),
+  };
+
+  const loaderSource = `
+const stubBySpecifier = ${JSON.stringify(stubBySpecifier)};
+export async function resolve(specifier, context, defaultResolve) {
+  const stub = stubBySpecifier[specifier];
+  if (stub) return { url: stub, shortCircuit: true };
+  return defaultResolve(specifier, context, defaultResolve);
+}
+`;
+  await writeFile(loaderPath, loaderSource, 'utf-8');
+  await writeFile(
+    registerPath,
+    [
+      `import { register } from 'node:module';`,
+      `register(${JSON.stringify(pathToFileURL(loaderPath).href)}, import.meta.url);`,
+      '',
+    ].join('\n'),
+    'utf-8'
+  );
+
+  const env = {
+    ...process.env,
+    HAPPIER_STACK_HOME_DIR: join(tmp, 'home'),
+    HAPPIER_STACK_STORAGE_DIR: join(tmp, 'storage'),
+    HAPPIER_STACK_WORKSPACE_DIR: join(tmp, 'workspace'),
+  };
+
+  const res = await runNode(
+    [
+      '--import',
+      registerPath,
+      join(rootDir, 'scripts', 'setup_pr.mjs'),
+      '--repo=123',
+      '--name=pr123',
+      '--dev',
+      '--no-seed-auth',
+    ],
+    { cwd: rootDir, env }
+  );
+  assert.equal(res.code, 0, `expected exit 0, got ${res.code}\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
+  assert.match(res.stdout, /Review details/);
+  assert.doesNotMatch(res.stdout, new RegExp(`web UI.*${staleUiPort}`), res.stdout);
+});

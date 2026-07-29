@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import { getDaemonEnv } from './daemon.mjs';
 import { buildStackStableScopeId } from './utils/auth/stable_scope_id.mjs';
 
-test('getDaemonEnv prefers the matching cli settings server id over the stable scope id', async () => {
+test('getDaemonEnv keeps lifecycle state on the stable stack scope while selecting matching settings credentials', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'happy-stack-daemon-env-'));
   const serverUrl = 'http://127.0.0.1:3009';
   const canonicalServerId = 'stack-qa-server';
@@ -49,7 +49,26 @@ test('getDaemonEnv prefers the matching cli settings server id over the stable s
   });
 
   assert.equal(env.HAPPIER_ACTIVE_SERVER_ID, canonicalServerId);
+  assert.equal(env.HAPPIER_DAEMON_LIFECYCLE_SCOPE_ID, stableScopeId);
   assert.equal(env.HAPPIER_DAEMON_STARTUP_SOURCE, 'manual');
+});
+
+test('getDaemonEnv seeds stack ownership env from the resolved stack name', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'happy-stack-daemon-env-stack-'));
+
+  const env = getDaemonEnv({
+    baseEnv: {
+      HAPPIER_STACK_PROCESS_KIND: 'session',
+    },
+    cliHomeDir: dir,
+    internalServerUrl: 'http://127.0.0.1:3009',
+    publicServerUrl: 'http://127.0.0.1:3009',
+    stackName: 'dev',
+    cliIdentity: 'default',
+  });
+
+  assert.equal(env.HAPPIER_STACK_STACK, 'dev');
+  assert.equal(env.HAPPIER_STACK_PROCESS_KIND, 'daemon');
 });
 
 test('getDaemonEnv preserves explicit active server id when its saved profile matches', async () => {

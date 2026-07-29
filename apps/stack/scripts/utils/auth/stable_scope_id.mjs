@@ -89,3 +89,14 @@ export function applyStackActiveServerScopeEnv({ env = process.env, stackName = 
   base.HAPPIER_ACTIVE_SERVER_ID = activeServerId;
   return base;
 }
+
+export function applyStackDaemonLifecycleScopeEnv({ env = process.env, stackName = null, cliIdentity = null } = {}) {
+  const base = { ...(env ?? {}) };
+  const lifecycleScopeId = resolveStackActiveServerId({ env: base, stackName, cliIdentity });
+  if (!lifecycleScopeId) {
+    delete base.HAPPIER_DAEMON_LIFECYCLE_SCOPE_ID;
+    return base;
+  }
+  base.HAPPIER_DAEMON_LIFECYCLE_SCOPE_ID = lifecycleScopeId;
+  return base;
+}

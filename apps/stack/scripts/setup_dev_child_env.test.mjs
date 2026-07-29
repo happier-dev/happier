@@ -58,6 +58,10 @@ export function spawnProc() {
   return null;
 }
 
+export async function killProcessTree() {
+  return { ok: true, alreadyExited: true };
+}
+
 export async function run(_cmd, args, { env } = {}) {
   mark(JSON.stringify({
     type: 'run',

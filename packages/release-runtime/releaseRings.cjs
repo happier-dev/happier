@@ -184,6 +184,72 @@ function normalizePublicReleaseRingId(raw) {
   return ringId;
 }
 
+/**
+ * @param {PublicReleaseRingLabel} label
+ * @returns {typeof PUBLIC_RELEASE_RING_IDS[number]}
+ */
+function resolvePublicReleaseRingIdForLabel(label) {
+  if (label === 'preview') return 'preview';
+  if (label === 'dev') return 'publicdev';
+  return 'stable';
+}
+
+/**
+ * @param {typeof PUBLIC_RELEASE_RING_IDS[number]} id
+ * @returns {PublicReleaseRingLabel}
+ */
+function resolvePublicReleaseRingLabelForId(id) {
+  return getReleaseRingPublicLabel(id);
+}
+
+/**
+ * @param {typeof RELEASE_RING_IDS[number]} id
+ * @returns {typeof PUBLIC_RELEASE_RING_IDS[number]}
+ */
+function resolvePublicReleaseRingIdForAnyRingId(id) {
+  const entry = getReleaseRingCatalogEntry(id);
+  if (entry.visibility === 'public') {
+    return entry.id;
+  }
+  return resolvePublicReleaseRingIdForLabel(entry.publicLabel);
+}
+
+/**
+ * @param {unknown} raw
+ * @returns {PublicReleaseRingLabel | ''}
+ */
+function normalizePublicReleaseRingLabel(raw) {
+  const value = String(raw ?? '').trim().toLowerCase();
+  if (!value) return '';
+  if (value === 'stable' || value === 'production' || value === 'prod') return 'stable';
+  if (value === 'preview' || value === 'next') return 'preview';
+  if (value === 'dev' || value === 'publicdev' || value === 'public-dev' || value === 'public_dev') return 'dev';
+  return '';
+}
+
+/**
+ * @param {typeof PUBLIC_RELEASE_RING_IDS[number]} id
+ * @returns {'happier' | 'hprev' | 'hdev'}
+ */
+function resolveCliInvokerNameForPublicRing(id) {
+  if (id === 'preview') return 'hprev';
+  if (id === 'publicdev') return 'hdev';
+  return 'happier';
+}
+
+/**
+ * @param {unknown} raw
+ * @returns {typeof PUBLIC_RELEASE_RING_IDS[number] | ''}
+ */
+function resolvePublicReleaseRingIdForCliInvokerName(raw) {
+  const value = String(raw ?? '').trim().toLowerCase();
+  if (!value) return '';
+  if (value === 'hprev') return 'preview';
+  if (value === 'hdev') return 'publicdev';
+  if (value === 'happier') return 'stable';
+  return '';
+}
+
 module.exports = {
   RELEASE_RING_IDS,
   PUBLIC_RELEASE_RING_IDS,
@@ -195,5 +261,10 @@ module.exports = {
   listPublicReleaseRingCatalogEntries,
   listPublicReleaseRingLabels,
   normalizePublicReleaseRingId,
+  resolvePublicReleaseRingIdForLabel,
+  resolvePublicReleaseRingLabelForId,
+  resolvePublicReleaseRingIdForAnyRingId,
+  normalizePublicReleaseRingLabel,
+  resolveCliInvokerNameForPublicRing,
+  resolvePublicReleaseRingIdForCliInvokerName,
 };
-

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { resolveStackRuntimeMode } from './runtime_mode.mjs';
+import { hasExplicitStackRuntimeModeArg, resolveStackRuntimeMode } from './runtime_mode.mjs';
 
 test('resolveStackRuntimeMode defaults to source mode', () => {
   const resolved = resolveStackRuntimeMode({ argv: [], env: {} });
@@ -45,4 +45,11 @@ test('resolveStackRuntimeMode rejects conflicting launch flags', () => {
     () => resolveStackRuntimeMode({ argv: ['--runtime', '--source'], env: {} }),
     /cannot be used together/i,
   );
+});
+
+test('hasExplicitStackRuntimeModeArg detects source/runtime flags', () => {
+  assert.equal(hasExplicitStackRuntimeModeArg([]), false);
+  assert.equal(hasExplicitStackRuntimeModeArg(['status', '--json']), false);
+  assert.equal(hasExplicitStackRuntimeModeArg(['status', '--runtime', '--json']), true);
+  assert.equal(hasExplicitStackRuntimeModeArg(['status', '--source', '--json']), true);
 });

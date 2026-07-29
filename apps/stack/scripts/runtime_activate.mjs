@@ -69,13 +69,13 @@ async function main() {
   const rootDir = getRootDir(import.meta.url);
   const stackName = assertNamedStack(process.env);
   const selectedComponents = resolveSelectedComponents(flags);
-  const sourceMetadata = await collectBuildSourceMetadata({ rootDir, env: process.env });
   const retentionPolicy = resolveRuntimeRetentionPolicy({ env: process.env });
   const { baseDir: stackBaseDir } = resolveStackBaseDir(stackName, process.env);
   const runtimePaths = resolveStackRuntimePaths({ stackBaseDir });
   const releaseBuildLock = await acquireRuntimeBuildLock({ lockPath: runtimePaths.lockPath });
 
   try {
+    const sourceMetadata = await collectBuildSourceMetadata({ rootDir, env: process.env });
     const currentInspection = await inspectActiveRuntimeSnapshot({ stackBaseDir });
     const artifacts = {};
     for (const component of ['web', 'server', 'daemon']) {

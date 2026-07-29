@@ -13,7 +13,11 @@ import { writeRuntimeSnapshotLayout } from './testkit/core/runtime_snapshot_layo
 import { writeStubHappierCliFiles } from './testkit/core/stub_happier_cli_files.mjs';
 import { getExpoStatePaths, writePidState } from './utils/expo/expo.mjs';
 import { resolveStackCredentialPaths } from './utils/auth/credentials_paths.mjs';
-import { resolveStackWebappTargetForAuth } from './utils/auth/stack_guided_login.mjs';
+import {
+  assertExpoWebappBundlesOrThrow,
+  resolveStackWebappTargetForAuth,
+} from './utils/auth/stack_guided_login.mjs';
+import { prepareGuidedLoginWebapp } from './utils/auth/orchestrated_stack_auth_flow.mjs';
 
 async function createHealthyServer({
   rootBody = 'ok',
@@ -70,15 +74,60 @@ async function reserveUnusedPort() {
   return port;
 }
 
-async function spawnMetroLikeExpoWebServer({ projectDir, rootHtml = '<!doctype html><html><body>expo ui</body></html>\n' } = {}) {
+async function spawnMetroLikeExpoWebServer({
+  projectDir,
+  rootHtml = '<!doctype html><html><body>expo ui</body></html>\n',
+  bundleFailuresBeforeReady = 0,
+  bundleUnavailableForMs = 0,
+  bundleReadyDelayMs = 0,
+  failAfterBundleAbort = false,
+} = {}) {
   const script = `
     const http = require('node:http');
-    const projectDir = process.argv[2] || '';
-    const rootHtml = process.argv[3] || '<!doctype html><html><body>expo ui</body></html>\\n';
+    const projectDir = ${JSON.stringify(String(projectDir ?? ''))};
+    const rootHtml = process.argv[1] || '<!doctype html><html><body>expo ui</body></html>\\n';
+    let remainingBundleFailures = Number(process.argv[2] || '0');
+    const bundleUnavailableForMs = Number(process.argv[3] || '0');
+    const bundleReadyDelayMs = Number(process.argv[4] || '0');
+    const failAfterBundleAbort = process.argv[5] === '1';
+    let bundleWasAborted = false;
+    let firstBundleRequestAt = 0;
     const server = http.createServer((req, res) => {
       if (req.url === '/status') {
         res.writeHead(200, { 'content-type': 'text/plain' });
         res.end('packager-status:running');
+        return;
+      }
+      if (req.url === '/bundle.js') {
+        if (!firstBundleRequestAt) firstBundleRequestAt = Date.now();
+        if (Date.now() - firstBundleRequestAt < bundleUnavailableForMs) {
+          res.writeHead(503, { 'content-type': 'text/plain' });
+          res.end('bundle warming');
+          return;
+        }
+        if (bundleWasAborted) {
+          res.writeHead(503, { 'content-type': 'text/plain' });
+          res.end('bundle compilation was cancelled');
+          return;
+        }
+        if (remainingBundleFailures > 0) {
+          remainingBundleFailures -= 1;
+          res.writeHead(503, { 'content-type': 'text/plain' });
+          res.end('bundle warming');
+          return;
+        }
+        let completed = false;
+        const finish = () => {
+          completed = true;
+          res.writeHead(200, { 'content-type': 'application/javascript' });
+          res.end('globalThis.__bundleReady = true;');
+        };
+        const timer = setTimeout(finish, bundleReadyDelayMs);
+        req.once('close', () => {
+          if (completed || !failAfterBundleAbort) return;
+          clearTimeout(timer);
+          bundleWasAborted = true;
+        });
         return;
       }
       res.writeHead(200, { 'content-type': 'text/html' });
@@ -91,9 +140,21 @@ async function spawnMetroLikeExpoWebServer({ projectDir, rootHtml = '<!doctype h
     setInterval(() => {}, 1000);
   `.trim();
 
-  const child = spawn(process.execPath, ['-e', script, String(projectDir ?? ''), rootHtml], {
-    stdio: ['ignore', 'pipe', 'ignore'],
-  });
+  const child = spawn(
+    process.execPath,
+    [
+      '-e',
+      script,
+      rootHtml,
+      String(bundleFailuresBeforeReady),
+      String(bundleUnavailableForMs),
+      String(bundleReadyDelayMs),
+      failAfterBundleAbort ? '1' : '0',
+    ],
+    {
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }
+  );
   const line = await new Promise((resolve, reject) => {
     let buffer = '';
     child.stdout.on('data', (chunk) => {
@@ -343,7 +404,7 @@ export async function startDaemonPostAuth() {
   return registerPath;
 }
 
-async function writeProcRunStubLoader({ dir, markerPath }) {
+async function writeProcRunStubLoader({ dir, markerPath, daemonModulePath }) {
   const loaderPath = join(dir, 'proc-run-loader.mjs');
   const registerPath = join(dir, 'register-proc-run-loader.mjs');
   const procStubUrl = `data:text/javascript,${encodeURIComponent(`
@@ -400,6 +461,14 @@ export function checkDaemonState() {
   return { status: 'running', pid: 12345 };
 }
 
+export async function checkDaemonStatePingAware() {
+  return { status: 'running', pid: 12345 };
+}
+
+export async function startLocalDaemonWithAuth() {
+  return { pid: 999999 };
+}
+
 export async function stopLocalDaemon(options = {}) {
   appendFileSync(
     ${JSON.stringify(markerPath)},
@@ -425,7 +494,7 @@ export async function stopLocalDaemon(options = {}) {
     loaderPath,
     [
       `const targetSpecifier = './utils/proc/proc.mjs';`,
-      `const daemonSpecifier = './daemon.mjs';`,
+      `const daemonModuleUrl = ${JSON.stringify(pathToFileURL(daemonModulePath).href)};`,
       `const procStubUrl = ${JSON.stringify(procStubUrl)};`,
       `const daemonStubUrl = ${JSON.stringify(daemonStubUrl)};`,
       '',
@@ -433,10 +502,11 @@ export async function stopLocalDaemon(options = {}) {
       '  if (specifier === targetSpecifier) {',
       '    return { url: procStubUrl, shortCircuit: true };',
       '  }',
-      '  if (specifier === daemonSpecifier) {',
+      '  const resolved = await defaultResolve(specifier, context, defaultResolve);',
+      '  if (resolved.url === daemonModuleUrl) {',
       '    return { url: daemonStubUrl, shortCircuit: true };',
       '  }',
-      '  return defaultResolve(specifier, context, defaultResolve);',
+      '  return resolved;',
       '}',
       '',
     ].join('\n'),
@@ -626,6 +696,76 @@ test('resolveStackWebappTargetForAuth ignores stray Expo state when a runtime sn
   }
 });
 
+test('prepareGuidedLoginWebapp gives a resolved running Expo server one finite readiness budget', async (t) => {
+  let expo;
+  let resolutionCalls = 0;
+  try {
+    try {
+      expo = await spawnMetroLikeExpoWebServer({
+        rootHtml: '<!doctype html><html><body><script src="/bundle.js"></script></body></html>\n',
+        bundleUnavailableForMs: 75,
+      });
+    } catch (e) {
+      if (e && typeof e === 'object' && 'code' in e && e.code === 'EPERM') {
+        t.skip('sandbox disallows binding localhost test server (EPERM)');
+        return;
+      }
+      throw e;
+    }
+
+    await assert.rejects(
+      prepareGuidedLoginWebapp({
+        rootDir: process.cwd(),
+        stackName: 'guided-auth-warming-expo',
+        env: {
+          HAPPIER_STACK_AUTH_UI_READY_TIMEOUT_MS: '2000',
+          HAPPIER_STACK_AUTH_EXPO_BUNDLE_READY_TIMEOUT_MS: '100',
+          HAPPIER_STACK_AUTH_EXPO_PROGRESS_INTERVAL_MS: '0',
+        },
+        resolveWebappTargetForAuth: async () => {
+          resolutionCalls += 1;
+          return {
+            webappUrl: `http://127.0.0.1:${expo.port}`,
+            kind: 'expo',
+          };
+        },
+      }),
+      /Expo dev server is running, but the guided login web UI is still not ready/i
+    );
+    assert.equal(resolutionCalls, 1);
+  } finally {
+    if (expo) await expo.kill();
+  }
+});
+
+test('Expo guided-login readiness allows one cold bundle request to use the readiness deadline', async (t) => {
+  let expo;
+  try {
+    try {
+      expo = await spawnMetroLikeExpoWebServer({
+        rootHtml: '<!doctype html><html><body><script src="/bundle.js"></script></body></html>\n',
+        bundleReadyDelayMs: 8_200,
+        failAfterBundleAbort: true,
+      });
+    } catch (e) {
+      if (e && typeof e === 'object' && 'code' in e && e.code === 'EPERM') {
+        t.skip('sandbox disallows binding localhost test server (EPERM)');
+        return;
+      }
+      throw e;
+    }
+
+    await assertExpoWebappBundlesOrThrow({
+      rootDir: process.cwd(),
+      stackName: 'guided-auth-slow-first-bundle',
+      webappUrl: `http://127.0.0.1:${expo.port}`,
+      timeoutMs: 9_000,
+    });
+  } finally {
+    if (expo) await expo.kill();
+  }
+});
+
 test('hstack auth login uses the active runtime snapshot cli for the actual login flow', async (t) => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));
   const rootDir = dirname(scriptsDir);
@@ -790,6 +930,7 @@ test('hstack auth login --force stops only the daemon when the running stack ser
     const registerPath = await writeProcRunStubLoader({
       dir: fixture.tmp,
       markerPath,
+      daemonModulePath: join(rootDir, 'scripts', 'daemon.mjs'),
     });
 
     const res = await runNodeCapture(

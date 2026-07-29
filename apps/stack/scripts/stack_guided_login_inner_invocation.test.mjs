@@ -2,11 +2,17 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { join } from 'node:path';
-import { writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 
-import { assertGuidedAuthWebappReadyOrThrow, buildStackAuthLoginInvocation } from './utils/auth/stack_guided_login.mjs';
+import {
+  assertGuidedAuthWebappReadyOrThrow,
+  buildStackAuthLoginInvocation,
+  resolveServerPortForCoreAuth,
+} from './utils/auth/stack_guided_login.mjs';
 import { createAuthStackFixture, getStackRootFromMeta } from './testkit/auth_testkit.mjs';
 import { writeRuntimeSnapshotLayout } from './testkit/core/runtime_snapshot_layout.mjs';
+import { withPatchedProcessEnv } from './testkit/core/env_scope.mjs';
 
 function sourceRuntimeEnv() {
   return {
@@ -49,6 +55,38 @@ test('guided stack auth login invocation merges caller env', async () => {
   });
   assert.equal(inv.env.CUSTOM_FLAG, 'yes');
   assert.equal(inv.env.HAPPIER_STACK_AUTH_INNER, '0');
+});
+
+test('guided stack core auth port resolver ignores runtime port backed only by an untrusted live pid', async (t) => {
+  const tmp = await mkdtemp(join(tmpdir(), 'hstack-guided-auth-untrusted-runtime-'));
+  const storageDir = join(tmp, 'storage');
+  const stackName = 'guided-auth-untrusted';
+  const stackDir = join(storageDir, stackName);
+  await mkdir(stackDir, { recursive: true });
+  await writeFile(
+    join(stackDir, 'stack.runtime.json'),
+    JSON.stringify({ version: 1, stackName, ownerPid: process.pid, ports: { server: 4555 } }) + '\n',
+    'utf-8',
+  );
+
+  const restore = withPatchedProcessEnv(t, { HAPPIER_STACK_STORAGE_DIR: storageDir });
+  try {
+    const port = await resolveServerPortForCoreAuth({
+      stackName,
+      env: {
+        ...sourceRuntimeEnv(),
+        HAPPIER_STACK_STORAGE_DIR: storageDir,
+        HAPPIER_STACK_STACK: stackName,
+        HAPPIER_STACK_SERVER_PORT: '',
+        HAPPIER_SERVER_URL: '',
+        HAPPIER_PUBLIC_SERVER_URL: '',
+      },
+    });
+    assert.equal(port, null);
+  } finally {
+    restore();
+    await rm(tmp, { recursive: true, force: true });
+  }
 });
 
 test('guided stack auth login invocation rejects empty webappUrl', async () => {

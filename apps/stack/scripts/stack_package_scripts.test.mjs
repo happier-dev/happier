@@ -4,7 +4,7 @@ import { dirname, join } from 'node:path';
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 
-test('apps/stack package.json exposes a tauri launcher alias for stack-local cwd usage', async () => {
+test('apps/stack package.json routes package aliases through their canonical entrypoints', async () => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));
   const packageRoot = dirname(scriptsDir);
 
@@ -14,4 +14,6 @@ test('apps/stack package.json exposes a tauri launcher alias for stack-local cwd
 
   assert.equal(scripts['ui:tauri'], 'node ./scripts/tauri_dev.mjs');
   assert.equal(scripts['tauri:dev'], 'node ./scripts/tauri_dev.mjs');
+  assert.equal(scripts.happier, 'node ./bin/happier.mjs');
+  assert.equal(scripts.stack, 'node ./bin/hstack.mjs stack');
 });

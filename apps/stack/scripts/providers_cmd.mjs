@@ -3,7 +3,7 @@ import './utils/env/env.mjs';
 import { parseArgs } from './utils/cli/args.mjs';
 import { printResult, wantsHelp, wantsJson } from './utils/cli/cli.mjs';
 import { createStepPrinter } from './utils/cli/progress.mjs';
-import { installProviderCli } from '@happier-dev/cli-common/providers';
+import { installAgentCli } from '@happier-dev/cli-common/agents';
 import {
   assertKnownStackProviderIds,
   resolveStackProviderIds,
@@ -75,7 +75,7 @@ async function cmdInstall({ argv }) {
   // In json mode, preserve the existing structured behavior (no progress output).
   if (json) {
     const results = await Promise.all(
-      resolved.map((providerId) => installProviderCli({ providerId, platform, dryRun, skipIfInstalled, env: process.env })),
+      resolved.map((providerId) => installAgentCli({ agentId: providerId, platform, dryRun, skipIfInstalled, env: process.env })),
     );
     const failures = results.filter((r) => !r.ok);
     if (failures.length > 0) {
@@ -108,7 +108,7 @@ async function cmdInstall({ argv }) {
     const label = resolveStackProviderInstallLabel(providerId);
 
     steps.start(label);
-    const result = await installProviderCli({ providerId, platform, dryRun, skipIfInstalled, env: process.env });
+    const result = await installAgentCli({ agentId: providerId, platform, dryRun, skipIfInstalled, env: process.env });
     if (!result.ok) {
       steps.stop('x', label);
       const extra = result.logPath ? `\nlog: ${result.logPath}` : '';

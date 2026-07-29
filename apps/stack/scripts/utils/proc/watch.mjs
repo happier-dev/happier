@@ -20,12 +20,16 @@ function safeWatch(path, handler, watchImpl = watch) {
 export function watchDebounced({
   paths,
   debounceMs = 500,
+  shouldObserve = null,
+  onObservation = null,
   onChange,
   readSignature = null,
   pollIntervalMs = 0,
   watchImpl = watch,
   setIntervalImpl = setInterval,
   clearIntervalImpl = clearInterval,
+  setTimeoutImpl = setTimeout,
+  clearTimeoutImpl = clearTimeout,
 } = {}) {
   const list = Array.isArray(paths) ? paths.filter(Boolean) : [];
   if (!list.length) return null;
@@ -33,23 +37,56 @@ export function watchDebounced({
 
   let closed = false;
   let t = null;
+  let pendingSignatureInitializedAtObservation = null;
+  let pendingObservationHandled = false;
   const watchers = [];
   let lastSignature = null;
+  let signatureInitialized = false;
+  let initialSignaturePromise = null;
   if (typeof readSignature === 'function') {
     try {
-      lastSignature = readSignature();
+      const initialSignature = readSignature();
+      if (initialSignature && typeof initialSignature.then === 'function') {
+        initialSignaturePromise = Promise.resolve(initialSignature).then((signature) => {
+          if (closed) return;
+          lastSignature = signature;
+          signatureInitialized = true;
+        }).catch(() => {
+          // The first successful poll establishes the baseline.
+        });
+      } else {
+        lastSignature = initialSignature;
+        signatureInitialized = true;
+      }
     } catch {
       lastSignature = null;
     }
   }
 
-  const trigger = (eventType, filename) => {
+  const trigger = (eventType, filename, details = {}) => {
     if (closed) return;
-    if (t) clearTimeout(t);
-    t = setTimeout(() => {
+    const observation = { eventType, filename, ...details };
+    if (typeof shouldObserve === 'function' && !shouldObserve(observation)) return;
+    try {
+      pendingObservationHandled = onObservation?.({
+        ...observation,
+        signatureInitializedAtObservation: signatureInitialized,
+      }) === true || pendingObservationHandled;
+    } catch {
+      // The debounced change remains the recovery path.
+    }
+    pendingSignatureInitializedAtObservation = pendingSignatureInitializedAtObservation === false
+      ? false
+      : signatureInitialized;
+    if (t) clearTimeoutImpl(t);
+    t = setTimeoutImpl(() => {
       t = null;
+      const signatureInitializedAtObservation = pendingSignatureInitializedAtObservation;
+      const observationHandled = pendingObservationHandled;
+      pendingSignatureInitializedAtObservation = null;
+      pendingObservationHandled = false;
       try {
-        onChange({ eventType, filename });
+        onChange({ ...observation, signatureInitializedAtObservation, observationHandled });
       } catch {
         // ignore
       }
@@ -57,7 +94,11 @@ export function watchDebounced({
   };
 
   for (const p of list) {
-    const w = safeWatch(p, trigger, watchImpl);
+    const w = safeWatch(
+      p,
+      (eventType, filename) => trigger(eventType, filename, { watchPath: p }),
+      watchImpl,
+    );
     if (w) watchers.push(w);
   }
 
@@ -69,10 +110,20 @@ export function watchDebounced({
       if (closed || polling) return;
       polling = true;
       try {
-        const nextSignature = readSignature();
+        if (initialSignaturePromise) {
+          await initialSignaturePromise;
+          initialSignaturePromise = null;
+          if (closed) return;
+        }
+        const nextSignature = await readSignature();
+        if (!signatureInitialized) {
+          lastSignature = nextSignature;
+          signatureInitialized = true;
+          return;
+        }
         if (nextSignature !== lastSignature) {
           lastSignature = nextSignature;
-          trigger('poll', null);
+          trigger('poll', null, { signature: nextSignature });
         }
       } catch {
         // ignore; fs.watch remains the fast path and the next poll can recover
@@ -89,7 +140,9 @@ export function watchDebounced({
   return {
     close() {
       closed = true;
-      if (t) clearTimeout(t);
+      if (t) clearTimeoutImpl(t);
+      pendingSignatureInitializedAtObservation = null;
+      pendingObservationHandled = false;
       for (const w of watchers) {
         try {
           w.close();

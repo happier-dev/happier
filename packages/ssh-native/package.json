@@ -20,9 +20,10 @@
     "README.md"
   ],
   "scripts": {
+    "tsc": "node ../../scripts/workspaces/runTypeScriptCli.mjs",
     "smoke:openssh": "node scripts/openssh-smoke.mjs",
     "test": "node ../../node_modules/vitest/vitest.mjs run --config ../../vitest.config.ts src",
-    "typecheck": "node ../../node_modules/typescript/lib/tsc.js -p tsconfig.json --noEmit"
+    "typecheck": "node ../../scripts/workspaces/runTypeScriptCli.mjs -p tsconfig.json --noEmit"
   },
   "devDependencies": {
     "expo-modules-core": "55.0.20",

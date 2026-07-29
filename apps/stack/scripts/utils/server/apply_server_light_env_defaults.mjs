@@ -1,13 +1,13 @@
 import { join } from 'node:path';
-
-function resolveLightDbProvider(env) {
-  const raw = (env.HAPPIER_DB_PROVIDER ?? env.HAPPY_DB_PROVIDER ?? '').toString().trim().toLowerCase();
-  return raw === 'pglite' ? 'pglite' : 'sqlite';
-}
+import { applyEffectiveDbProviderEnv } from './effective_db_provider.mjs';
 
 export function applyServerLightEnvDefaults({ baseEnv, serverEnv, baseDir }) {
-  const dbProvider = resolveLightDbProvider(baseEnv);
-  serverEnv.HAPPIER_DB_PROVIDER = dbProvider;
+  const dbProvider = applyEffectiveDbProviderEnv({
+    serverComponentName: 'happier-server-light',
+    env: baseEnv,
+    targetEnv: serverEnv,
+  });
+  delete serverEnv.DATABASE_URL;
   const dataDir = baseEnv.HAPPIER_SERVER_LIGHT_DATA_DIR?.trim()
     ? baseEnv.HAPPIER_SERVER_LIGHT_DATA_DIR.trim()
     : join(baseDir, 'server-light');

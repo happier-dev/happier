@@ -1,4 +1,3 @@
-import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { commandExists, resolveBunCommand, resolveYarnCommand } from '@happier-dev/cli-common/componentArtifacts';
@@ -7,14 +6,13 @@ import { resolveStackBaseDir, resolveStackEnvPath } from '../utils/paths/paths.m
 import { parseArgs } from '../utils/cli/args.mjs';
 import { ensureCliBuilt } from '../utils/proc/pm.mjs';
 import { createRuntimeFingerprint } from '../runtime/shared/runtime_fingerprint.mjs';
-import { resolveStackComponentArtifactDir, resolveStackRuntimePaths } from '../runtime/shared/runtime_paths.mjs';
+import { resolveStackComponentArtifactDir } from '../runtime/shared/runtime_paths.mjs';
 import { collectBuildSourceMetadata } from './collect_build_source_metadata.mjs';
 import { buildWebArtifact } from './build_web_artifact.mjs';
 import { buildDaemonArtifact } from './build_daemon_artifact.mjs';
 import { buildServerArtifact } from './build_server_artifact.mjs';
 import { activateRuntimeSnapshot } from './activate_runtime_snapshot.mjs';
 import { parseBuildSelection } from './build_targets.mjs';
-import { acquireRuntimeBuildLock } from './runtime_build_lock.mjs';
 import { pruneComponentArtifacts, resolveRuntimeRetentionPolicy } from './runtime_retention.mjs';
 import { ensureStackRuntimeModePrefer } from '../runtime/shared/ensureStackRuntimeModePrefer.mjs';
 
@@ -74,91 +72,83 @@ export async function buildStackArtifacts({ rootDir, argv = [], env = process.en
   }
   assertSelectedBuildPrerequisites({ selection, env });
 
+  const { baseDir: stackBaseDir } = resolveStackBaseDir(stackName, env);
+  const retentionPolicy = resolveRuntimeRetentionPolicy({ env });
   const sourceMetadata = await collectBuildSourceMetadata({ rootDir, env });
   await ensureArtifactSourceInputsReady({
     selection,
     repoDir: sourceMetadata.repoDir,
     env,
   });
-  const { baseDir: stackBaseDir } = resolveStackBaseDir(stackName, env);
-  const runtimePaths = resolveStackRuntimePaths({ stackBaseDir });
-  const retentionPolicy = resolveRuntimeRetentionPolicy({ env });
-  await mkdir(runtimePaths.runtimeDir, { recursive: true });
-  const releaseBuildLock = await acquireRuntimeBuildLock({ lockPath: runtimePaths.lockPath });
-
-  try {
-    const artifacts = {};
-    const buildComponent = async (component, builder) => {
-      const buildInputs = [];
-      if (component === 'server') {
-        buildInputs.push(`bunExternals=${String(env.HAPPIER_SERVER_BUN_EXTERNALS ?? 'redis').trim() || 'redis'}`);
-        buildInputs.push(`platform=${process.platform}`);
-        buildInputs.push(`arch=${process.arch}`);
-      }
-      if (component === 'daemon') {
-        buildInputs.push(`bunExternals=${String(env.HAPPIER_CLI_BUN_EXTERNALS ?? '').trim()}`);
-        buildInputs.push(`platform=${process.platform}`);
-        buildInputs.push(`arch=${process.arch}`);
-      }
-      const artifactFingerprint = createRuntimeFingerprint({
-        repoDir: sourceMetadata.repoDir,
-        commitSha: sourceMetadata.commitSha,
-        dirtyHash: sourceMetadata.dirtyHash,
-        serverComponent: sourceMetadata.serverComponent,
-        dbProvider: sourceMetadata.dbProvider,
-        components: [component],
-        buildInputs,
-      });
-      const artifactDir = resolveStackComponentArtifactDir({ stackBaseDir, component, fingerprint: artifactFingerprint });
-      artifacts[component] = await builder({
-        rootDir,
-        artifactDir,
-        artifactFingerprint,
-        sourceMetadata,
-        forceRebuild: selection.forceRebuild,
-      });
-      await pruneComponentArtifacts({
-        stackBaseDir,
-        component,
-        keepCount: retentionPolicy.artifactKeepCount,
-      });
-    };
-
-    if (selection.components.web) await buildComponent('web', buildWebArtifact);
-    if (selection.components.server) await buildComponent('server', buildServerArtifact);
-    if (selection.components.daemon) await buildComponent('daemon', buildDaemonArtifact);
-
-    let runtime = null;
-    if (selection.activateRuntime) {
-      runtime = await activateRuntimeSnapshot({
-        stackBaseDir,
-        snapshotId: sourceMetadata.sourceFingerprint,
-        sourceMetadata,
-        artifacts,
-        runtimeSnapshotKeepCount: retentionPolicy.runtimeSnapshotKeepCount,
-      });
-
-      const { envPath } = resolveStackEnvPath(stackName, env);
-      await ensureStackRuntimeModePrefer({ envPath });
+  const artifacts = {};
+  const buildComponent = async (component, builder) => {
+    const buildInputs = [];
+    if (component === 'server') {
+      buildInputs.push(`bunExternals=${String(env.HAPPIER_SERVER_BUN_EXTERNALS ?? 'redis').trim() || 'redis'}`);
+      buildInputs.push(`platform=${process.platform}`);
+      buildInputs.push(`arch=${process.arch}`);
     }
-
-    return {
-      ok: true,
-      stackName,
+    if (component === 'daemon') {
+      buildInputs.push(`bunExternals=${String(env.HAPPIER_CLI_BUN_EXTERNALS ?? '').trim()}`);
+      buildInputs.push(`platform=${process.platform}`);
+      buildInputs.push(`arch=${process.arch}`);
+    }
+    const artifactFingerprint = createRuntimeFingerprint({
+      repoDir: sourceMetadata.repoDir,
+      commitSha: sourceMetadata.commitSha,
+      dirtyHash: sourceMetadata.dirtyHash,
+      serverComponent: sourceMetadata.serverComponent,
+      dbProvider: sourceMetadata.dbProvider,
+      components: [component],
+      buildInputs,
+    });
+    const artifactDir = resolveStackComponentArtifactDir({ stackBaseDir, component, fingerprint: artifactFingerprint });
+    artifacts[component] = await builder({
+      rootDir,
+      artifactDir,
+      artifactFingerprint,
+      sourceMetadata,
+      forceRebuild: selection.forceRebuild,
+    });
+    await pruneComponentArtifacts({
       stackBaseDir,
-      source: sourceMetadata,
-      artifacts: Object.fromEntries(
-        Object.entries(artifacts).map(([component, value]) => [
-          component,
-          {
-            artifactDir: value.artifactDir,
-            manifest: value.manifest,
-          },
-        ]),
-      ),
-      runtime,
-    };
-  } finally {
-    await releaseBuildLock();
+      component,
+      keepCount: retentionPolicy.artifactKeepCount,
+    });
+  };
+
+  if (selection.components.web) await buildComponent('web', buildWebArtifact);
+  if (selection.components.server) await buildComponent('server', buildServerArtifact);
+  if (selection.components.daemon) await buildComponent('daemon', buildDaemonArtifact);
+
+  let runtime = null;
+  if (selection.activateRuntime) {
+    runtime = await activateRuntimeSnapshot({
+      stackBaseDir,
+      snapshotId: sourceMetadata.sourceFingerprint,
+      sourceMetadata,
+      artifacts,
+      runtimeSnapshotKeepCount: retentionPolicy.runtimeSnapshotKeepCount,
+    });
+
+    const { envPath } = resolveStackEnvPath(stackName, env);
+    await ensureStackRuntimeModePrefer({ envPath });
   }
+
+  return {
+    ok: true,
+    stackName,
+    stackBaseDir,
+    source: sourceMetadata,
+    artifacts: Object.fromEntries(
+      Object.entries(artifacts).map(([component, value]) => [
+        component,
+        {
+          artifactDir: value.artifactDir,
+          manifest: value.manifest,
+        },
+      ]),
+    ),
+    runtime,
+  };
 }

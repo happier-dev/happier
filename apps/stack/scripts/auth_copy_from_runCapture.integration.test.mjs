@@ -213,7 +213,11 @@ test('hstack stack auth copy-from prefers source server-scoped credential over u
   await mkStackEnv(sourceStack, sourceCliHome);
   await mkStackEnv(targetStack, targetCliHome);
 
-  const sourceCred = resolveStackCredentialPaths({ cliHomeDir: sourceCliHome, serverUrl });
+  const sourceCred = resolveStackCredentialPaths({
+    cliHomeDir: sourceCliHome,
+    serverUrl,
+    env: { ...process.env, HAPPIER_ACTIVE_SERVER_ID: '' },
+  });
   await mkdir(dirname(sourceCred.serverScopedPath), { recursive: true });
   await writeFile(join(sourceCliHome, 'access.key'), 'legacy-wrong\n', 'utf-8');
   await writeFile(sourceCred.serverScopedPath, 'server-scoped-correct\n', 'utf-8');

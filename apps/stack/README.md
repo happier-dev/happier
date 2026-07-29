@@ -410,7 +410,6 @@ Details: `[docs/tauri.md](docs/tauri.md)`.
   - `hstack tools review-pr --repo=<pr-url|number> [--dev|--start]`
   - `hstack tools review` (local diff review)
   - `hstack tools import` (split repos → monorepo porting helpers)
-  - `hstack tools edison`
 - **Menu bar (SwiftBar)**:
   - `hstack menubar install`
 

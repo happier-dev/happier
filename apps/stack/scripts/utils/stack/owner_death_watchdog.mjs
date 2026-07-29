@@ -3,6 +3,8 @@ import { mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { normalizeStackRuntimeOwnerStartedAt } from './runtime_owner_incarnation.mjs';
+
 const ownerDeathWatchdogRunnerPath = fileURLToPath(new URL('./owner_death_watchdog_runner.mjs', import.meta.url));
 
 function parsePositiveInt(value, fallback = 0) {
@@ -17,18 +19,20 @@ export function spawnStackOwnerDeathWatchdog({
   envPath,
   runtimeStatePath,
   ownerPid,
+  ownerStartedAt,
   env = process.env,
   pollMs,
   logFile,
 } = {}) {
   const ownerPidNum = parsePositiveInt(ownerPid);
+  const ownerStartedAtValue = normalizeStackRuntimeOwnerStartedAt(ownerStartedAt);
   const rootDirValue = String(rootDir ?? '').trim();
   const stackNameValue = String(stackName ?? '').trim();
   const baseDirValue = String(baseDir ?? '').trim();
   const envPathValue = String(envPath ?? '').trim();
   const runtimeStatePathValue = String(runtimeStatePath ?? '').trim();
 
-  if (!ownerPidNum || !rootDirValue || !stackNameValue || !baseDirValue || !runtimeStatePathValue) {
+  if (!ownerPidNum || !ownerStartedAtValue || !rootDirValue || !stackNameValue || !baseDirValue || !runtimeStatePathValue) {
     return null;
   }
 
@@ -53,6 +57,7 @@ export function spawnStackOwnerDeathWatchdog({
       `--base-dir=${baseDirValue}`,
       `--runtime-state-path=${runtimeStatePathValue}`,
       `--owner-pid=${ownerPidNum}`,
+      `--owner-started-at=${ownerStartedAtValue}`,
       `--poll-ms=${effectivePollMs}`,
       ...(envPathValue ? [`--env-path=${envPathValue}`] : []),
       ...(effectiveLogFile ? [`--log-file=${effectiveLogFile}`] : []),

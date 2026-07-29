@@ -1,9 +1,10 @@
 import { spawn } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { parseArgs } from '../utils/cli/args.mjs';
 import { applyStackActiveServerScopeEnv } from '../utils/auth/stable_scope_id.mjs';
-import { resolveStackEnvPath } from '../utils/paths/paths.mjs';
+import { coerceHappyMonorepoRootFromPath, resolveStackEnvPath } from '../utils/paths/paths.mjs';
 import { parseCliIdentityOrThrow, resolveCliHomeDirForIdentity } from '../utils/stack/cli_identities.mjs';
 
 import { withStackEnv } from './stack_environment.mjs';
@@ -62,6 +63,28 @@ export function resolveStackHappierPassthroughInvocation({ passthrough = [] } = 
   };
 }
 
+export function resolveStackHappierPassthroughEntrypoint({ rootDir, env = process.env } = {}) {
+  const launcherRoot = String(rootDir ?? '').trim();
+  const repoRoot = coerceHappyMonorepoRootFromPath(env?.HAPPIER_STACK_REPO_DIR) || '';
+  if (repoRoot) {
+    const stackRoot = join(repoRoot, 'apps', 'stack');
+    const stackWrapperEntrypoint = join(stackRoot, 'bin', 'happier.mjs');
+    if (existsSync(stackWrapperEntrypoint)) {
+      return {
+        cwd: stackRoot,
+        entrypoint: stackWrapperEntrypoint,
+        source: 'stack-repo-wrapper',
+      };
+    }
+  }
+
+  return {
+    cwd: launcherRoot,
+    entrypoint: join(launcherRoot, 'scripts', 'happier.mjs'),
+    source: 'launcher-script',
+  };
+}
+
 export async function runStackHappierPassthroughCommand({ rootDir, stackName, passthrough }) {
   const { identity, childArgs } = resolveStackHappierPassthroughInvocation({ passthrough });
 
@@ -88,7 +111,8 @@ export async function runStackHappierPassthroughCommand({ rootDir, stackName, pa
         cliIdentity: identity || (envForHappy.HAPPIER_STACK_CLI_IDENTITY ?? '').toString().trim() || 'default',
       });
 
-      if (requiresStackDaemonPreflight(childArgs)) {
+      const passthroughEntrypoint = resolveStackHappierPassthroughEntrypoint({ rootDir, env: envForHappy });
+      if (passthroughEntrypoint.source !== 'stack-repo-wrapper' && requiresStackDaemonPreflight(childArgs)) {
         await ensureStackDaemonPreflight({
           rootDir,
           stackName,
@@ -98,8 +122,8 @@ export async function runStackHappierPassthroughCommand({ rootDir, stackName, pa
         });
       }
 
-      const child = spawn(process.execPath, [join(rootDir, 'scripts', 'happier.mjs'), ...childArgs], {
-        cwd: rootDir,
+      const child = spawn(process.execPath, [passthroughEntrypoint.entrypoint, ...childArgs], {
+        cwd: passthroughEntrypoint.cwd,
         env: envForHappy,
         stdio: 'inherit',
         shell: false,

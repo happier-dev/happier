@@ -3,7 +3,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 
-import { ensureEnvFileUpdated } from '../../env/env_file.mjs';
+import { ensureEnvFileMutated } from '../../env/env_file.mjs';
 import { readEnvObjectFromFile } from '../../env/read.mjs';
 import { sanitizeDnsLabel } from '../../net/dns.mjs';
 import { pickNextFreeTcpPort } from '../../net/ports.mjs';
@@ -11,6 +11,10 @@ import { pmExecBin } from '../../proc/pm.mjs';
 import { run, runCapture } from '../../proc/proc.mjs';
 import { randomToken } from '../../crypto/tokens.mjs';
 import { coercePort, INFRA_RESERVED_PORT_KEYS } from '../port.mjs';
+import {
+  applyEffectiveDbProviderEnv,
+  isCanonicalManagedPostgresAuthority,
+} from '../effective_db_provider.mjs';
 
 const readEnvObject = readEnvObjectFromFile;
 
@@ -56,6 +60,7 @@ export async function stopHappyServerManagedInfra({ stackName, baseDir, removeVo
 
 function buildComposeYaml({
   infraDir,
+  includePostgres,
   pgPort,
   pgUser,
   pgPassword,
@@ -68,8 +73,7 @@ function buildComposeYaml({
   s3Bucket,
 }) {
   // Keep it explicit (no env substitution); we generate this file per stack.
-  return `services:
-  postgres:
+  const postgresService = includePostgres ? `  postgres:
     image: postgres:16-alpine
     environment:
       POSTGRES_USER: ${pgUser}
@@ -85,7 +89,10 @@ function buildComposeYaml({
       timeout: 3s
       retries: 30
 
-  redis:
+` : '';
+
+  return `services:
+${postgresService}  redis:
     image: redis:7-alpine
     command: ["redis-server", "--appendonly", "yes"]
     ports:
@@ -276,42 +283,77 @@ export async function ensureHappyServerManagedInfra({
   env = process.env,
   quiet = false,
   skipMinioInit = false,
-}) {
-  await ensureDockerCompose();
-
+  dbProvider,
+}, {
+  ensureDockerComposeImpl = ensureDockerCompose,
+  pickNextFreeTcpPortImpl = pickNextFreeTcpPort,
+  dockerComposeImpl = dockerCompose,
+  waitForHealthyPostgresImpl = waitForHealthyPostgres,
+  waitForHealthyRedisImpl = waitForHealthyRedis,
+  waitForMinioReadyImpl = waitForMinioReady,
+} = {}) {
+  const effectiveDbProvider = applyEffectiveDbProviderEnv({
+    serverComponentName: 'happier-server',
+    env: dbProvider == null ? env : { HAPPIER_DB_PROVIDER: dbProvider },
+    targetEnv: { ...env },
+  });
   const infraDir = join(baseDir, 'happier-server', 'infra');
-  await mkdir(infraDir, { recursive: true });
-
   const existingEnv = envPath ? await readEnvObject(envPath) : {};
   const reservedPorts = new Set();
+  const explicitDatabaseUrl = env.DATABASE_URL ?? existingEnv.DATABASE_URL;
+  const normalizedExplicitDatabaseUrl = String(explicitDatabaseUrl ?? '').trim();
+  if (effectiveDbProvider === 'mysql' && !normalizedExplicitDatabaseUrl) {
+    throw new Error('[infra] mysql requires an explicit DATABASE_URL');
+  }
+  const explicitPostgresUrl = effectiveDbProvider === 'postgres' && normalizedExplicitDatabaseUrl;
+  if (explicitPostgresUrl) {
+    let protocol = '';
+    try {
+      protocol = new URL(explicitDatabaseUrl).protocol;
+    } catch {
+      protocol = '';
+    }
+    if (!['postgres:', 'postgresql:'].includes(protocol)) {
+      throw new Error('[infra] postgres DATABASE_URL must use postgres:// or postgresql://');
+    }
+  }
+  const postgresAuthorityEnv = { ...existingEnv, ...env };
+  const managedPostgres = effectiveDbProvider === 'postgres' && (
+    !explicitPostgresUrl ||
+    isCanonicalManagedPostgresAuthority({ databaseUrl: explicitDatabaseUrl, env: postgresAuthorityEnv })
+  );
+  await ensureDockerComposeImpl();
+  await mkdir(infraDir, { recursive: true });
 
   // Reserve known ports (if present) to avoid picking duplicates when auto-filling.
   for (const key of INFRA_RESERVED_PORT_KEYS) {
+    if (!managedPostgres && key === 'HAPPIER_STACK_PG_PORT') continue;
     const p = coercePort(existingEnv[key] ?? env[key]);
     if (p) reservedPorts.add(p);
   }
   if (Number.isFinite(serverPort) && serverPort > 0) reservedPorts.add(serverPort);
 
-  const pgPort =
-    coercePort(existingEnv.HAPPIER_STACK_PG_PORT ?? env.HAPPIER_STACK_PG_PORT) ??
-    (await pickNextFreeTcpPort(serverPort + 1000, { reservedPorts }));
-  reservedPorts.add(pgPort);
+  const pgPort = managedPostgres
+    ? coercePort(existingEnv.HAPPIER_STACK_PG_PORT ?? env.HAPPIER_STACK_PG_PORT) ??
+      (await pickNextFreeTcpPortImpl(serverPort + 1000, { reservedPorts }))
+    : null;
+  if (pgPort != null) reservedPorts.add(pgPort);
   const redisPort =
     coercePort(existingEnv.HAPPIER_STACK_REDIS_PORT ?? env.HAPPIER_STACK_REDIS_PORT) ??
-    (await pickNextFreeTcpPort(pgPort + 1, { reservedPorts }));
+    (await pickNextFreeTcpPortImpl(pgPort != null ? pgPort + 1 : serverPort + 1000, { reservedPorts }));
   reservedPorts.add(redisPort);
   const minioPort =
     coercePort(existingEnv.HAPPIER_STACK_MINIO_PORT ?? env.HAPPIER_STACK_MINIO_PORT) ??
-    (await pickNextFreeTcpPort(redisPort + 1, { reservedPorts }));
+    (await pickNextFreeTcpPortImpl(redisPort + 1, { reservedPorts }));
   reservedPorts.add(minioPort);
   const minioConsolePort =
     coercePort(existingEnv.HAPPIER_STACK_MINIO_CONSOLE_PORT ?? env.HAPPIER_STACK_MINIO_CONSOLE_PORT) ??
-    (await pickNextFreeTcpPort(minioPort + 1, { reservedPorts }));
+    (await pickNextFreeTcpPortImpl(minioPort + 1, { reservedPorts }));
   reservedPorts.add(minioConsolePort);
 
-  const pgUser = (existingEnv.HAPPIER_STACK_PG_USER ?? env.HAPPIER_STACK_PG_USER ?? 'handy').trim() || 'handy';
-  const pgPassword = (existingEnv.HAPPIER_STACK_PG_PASSWORD ?? env.HAPPIER_STACK_PG_PASSWORD ?? '').trim() || randomToken(24);
-  const pgDb = (existingEnv.HAPPIER_STACK_PG_DATABASE ?? env.HAPPIER_STACK_PG_DATABASE ?? 'handy').trim() || 'handy';
+  const pgUser = managedPostgres ? (existingEnv.HAPPIER_STACK_PG_USER ?? env.HAPPIER_STACK_PG_USER ?? 'handy').trim() || 'handy' : null;
+  const pgPassword = managedPostgres ? (existingEnv.HAPPIER_STACK_PG_PASSWORD ?? env.HAPPIER_STACK_PG_PASSWORD ?? '').trim() || randomToken(24) : null;
+  const pgDb = managedPostgres ? (existingEnv.HAPPIER_STACK_PG_DATABASE ?? env.HAPPIER_STACK_PG_DATABASE ?? 'handy').trim() || 'handy' : null;
 
   const s3Bucket =
     (existingEnv.S3_BUCKET ?? env.S3_BUCKET ?? '').trim() || sanitizeDnsLabel(`happier-${stackName}`, { fallback: 'happier' });
@@ -325,7 +367,9 @@ export async function ensureHappyServerManagedInfra({
     ? (existingEnv.HANDY_MASTER_SECRET ?? env.HANDY_MASTER_SECRET).trim()
     : await ensureTextFile({ path: secretFile, generate: () => randomToken(32) });
 
-  const databaseUrl = `postgresql://${encodeURIComponent(pgUser)}:${encodeURIComponent(pgPassword)}@127.0.0.1:${pgPort}/${encodeURIComponent(pgDb)}`;
+  const databaseUrl = managedPostgres
+    ? `postgresql://${encodeURIComponent(pgUser)}:${encodeURIComponent(pgPassword)}@127.0.0.1:${pgPort}/${encodeURIComponent(pgDb)}`
+    : explicitDatabaseUrl;
   const redisUrl = `redis://127.0.0.1:${redisPort}`;
   const s3Host = '127.0.0.1';
   const s3UseSsl = 'false';
@@ -343,18 +387,28 @@ export async function ensureHappyServerManagedInfra({
     // - non-main stacks are ephemeral-by-default unless the user explicitly pinned ports already.
     const runtimeEphemeral = (env.HAPPIER_STACK_EPHEMERAL_PORTS ?? '').toString().trim() === '1';
     const alreadyPinnedPorts =
-      Boolean((existingEnv.HAPPIER_STACK_PG_PORT ?? '').trim()) ||
+      (managedPostgres && Boolean((existingEnv.HAPPIER_STACK_PG_PORT ?? '').trim())) ||
       Boolean((existingEnv.HAPPIER_STACK_REDIS_PORT ?? '').trim()) ||
       Boolean((existingEnv.HAPPIER_STACK_MINIO_PORT ?? '').trim()) ||
       Boolean((existingEnv.HAPPIER_STACK_MINIO_CONSOLE_PORT ?? '').trim());
     const ephemeralPorts = runtimeEphemeral || (stackName !== 'main' && !alreadyPinnedPorts);
-    await ensureEnvFileUpdated({
+    await ensureEnvFileMutated({
       envPath,
+      removeKeys: managedPostgres
+        ? []
+        : [
+            'HAPPIER_STACK_PG_PORT',
+            'HAPPIER_STACK_PG_USER',
+            'HAPPIER_STACK_PG_PASSWORD',
+            'HAPPIER_STACK_PG_DATABASE',
+          ],
       updates: [
         // Stable credentials/files: persist these so restarts keep the same DB/user and S3 creds.
-        { key: 'HAPPIER_STACK_PG_USER', value: pgUser },
-        { key: 'HAPPIER_STACK_PG_PASSWORD', value: pgPassword },
-        { key: 'HAPPIER_STACK_PG_DATABASE', value: pgDb },
+        ...(managedPostgres ? [
+          { key: 'HAPPIER_STACK_PG_USER', value: pgUser },
+          { key: 'HAPPIER_STACK_PG_PASSWORD', value: pgPassword },
+          { key: 'HAPPIER_STACK_PG_DATABASE', value: pgDb },
+        ] : []),
         { key: 'HAPPIER_STACK_HANDY_MASTER_SECRET_FILE', value: secretFile },
         { key: 'S3_ACCESS_KEY', value: s3AccessKey },
         { key: 'S3_SECRET_KEY', value: s3SecretKey },
@@ -363,7 +417,7 @@ export async function ensureHappyServerManagedInfra({
         ...(ephemeralPorts
           ? []
           : [
-              { key: 'HAPPIER_STACK_PG_PORT', value: String(pgPort) },
+              ...(managedPostgres ? [{ key: 'HAPPIER_STACK_PG_PORT', value: String(pgPort) }] : []),
               { key: 'HAPPIER_STACK_REDIS_PORT', value: String(redisPort) },
               { key: 'HAPPIER_STACK_MINIO_PORT', value: String(minioPort) },
               { key: 'HAPPIER_STACK_MINIO_CONSOLE_PORT', value: String(minioConsolePort) },
@@ -383,6 +437,7 @@ export async function ensureHappyServerManagedInfra({
   const projectName = composeProjectName(stackName);
   const yaml = buildComposeYaml({
     infraDir,
+    includePostgres: managedPostgres,
     pgPort,
     pgUser,
     pgPassword,
@@ -396,20 +451,22 @@ export async function ensureHappyServerManagedInfra({
   });
   await writeFile(composePath, yaml, 'utf-8');
 
-  await dockerCompose({
+  await dockerComposeImpl({
     composePath,
     projectName,
     args: ['up', '-d', '--remove-orphans'],
     options: { cwd: baseDir, stdio: quiet ? 'ignore' : 'inherit' },
     quiet,
   });
-  await waitForHealthyPostgres({ composePath, projectName, pgUser, pgDb });
-  await waitForHealthyRedis({ composePath, projectName });
+  if (managedPostgres) {
+    await waitForHealthyPostgresImpl({ composePath, projectName, pgUser, pgDb });
+  }
+  await waitForHealthyRedisImpl({ composePath, projectName });
 
   if (!skipMinioInit) {
     // Ensure bucket exists (idempotent). This can race with Minio startup; retry a few times.
-    await waitForMinioReady({ composePath, projectName });
-    await dockerCompose({
+    await waitForMinioReadyImpl({ composePath, projectName });
+    await dockerComposeImpl({
       composePath,
       projectName,
       args: ['run', '--rm', '--no-deps', 'minio-init'],
@@ -438,7 +495,18 @@ export async function ensureHappyServerManagedInfra({
   };
 }
 
-export async function applyHappyServerMigrations({ serverDir, env, quiet = false }) {
-  // Non-interactive + idempotent. Safe for dev; also safe for managed stacks on start.
-  await pmExecBin({ dir: serverDir, bin: 'prisma', args: ['migrate', 'deploy'], env, quiet });
+export async function applyHappyServerMigrations(
+  { serverDir, env, quiet = false, dbProvider },
+  { pmExecBinImpl = pmExecBin } = {},
+) {
+  const effectiveDbProvider = applyEffectiveDbProviderEnv({
+    serverComponentName: 'happier-server',
+    env: dbProvider == null ? env : { HAPPIER_DB_PROVIDER: dbProvider },
+    targetEnv: { ...env },
+  });
+  if (effectiveDbProvider === 'mysql') {
+    await pmExecBinImpl({ dir: serverDir, bin: 'migrate:mysql:deploy', args: [], env, quiet });
+    return;
+  }
+  await pmExecBinImpl({ dir: serverDir, bin: 'prisma', args: ['migrate', 'deploy'], env, quiet });
 }

@@ -45,25 +45,28 @@ export function describeJsonOwnerLock(lockPath, nowMs) {
   return `pid=${String(owner.pid ?? 'unknown')} ageMs=${ageMs}`;
 }
 
-export function shouldReclaimJsonOwnerLockSnapshot(snapshot, staleAfterMs, nowMs, fallbackMtimeMs = 0) {
+export function shouldReclaimJsonOwnerLockSnapshot(snapshot, staleAfterMs, nowMs, fallbackMtimeMs = 0, options = {}) {
   if (!snapshot.exists) return true;
   const owner = snapshot.owner;
   const ownerPid = Number(owner?.pid);
   if (Number.isFinite(ownerPid) && ownerPid > 1) {
-    return !isPidAlive(ownerPid);
+    if (!isPidAlive(ownerPid)) return true;
+    if (options.allowLiveOwnerStaleReclaim !== true) return false;
+    const updatedAtMs = Number(owner?.updatedAtMs ?? owner?.createdAtMs ?? fallbackMtimeMs);
+    return updatedAtMs > 0 && nowMs - updatedAtMs > staleAfterMs;
   }
   const updatedAtMs = Number(owner?.updatedAtMs ?? owner?.createdAtMs ?? fallbackMtimeMs);
   return updatedAtMs > 0 && nowMs - updatedAtMs > staleAfterMs;
 }
 
-function shouldReclaimJsonOwnerLock(lockPath, staleAfterMs, nowMs) {
+function shouldReclaimJsonOwnerLock(lockPath, staleAfterMs, nowMs, options = {}) {
   let stats;
   try {
     stats = statSync(lockPath);
   } catch {
     return false;
   }
-  return shouldReclaimJsonOwnerLockSnapshot(readJsonOwnerLockSnapshot(lockPath), staleAfterMs, nowMs, stats.mtimeMs);
+  return shouldReclaimJsonOwnerLockSnapshot(readJsonOwnerLockSnapshot(lockPath), staleAfterMs, nowMs, stats.mtimeMs, options);
 }
 
 function reclaimJsonOwnerLockSnapshot(lockPath, expectedRaw) {
@@ -108,7 +111,7 @@ export function isJsonOwnerFileLockActive(lockPath, options = {}) {
   } catch {
     return false;
   }
-  return !shouldReclaimJsonOwnerLock(lockPath, staleAfterMs, nowMs);
+  return !shouldReclaimJsonOwnerLock(lockPath, staleAfterMs, nowMs, options);
 }
 
 export async function withJsonOwnerFileLock(fn, options = {}) {
@@ -144,7 +147,7 @@ export async function withJsonOwnerFileLock(fn, options = {}) {
       try {
         fallbackMtimeMs = statSync(lockPath).mtimeMs;
       } catch {}
-      if (shouldReclaimJsonOwnerLockSnapshot(snapshot, staleAfterMs, Date.now(), fallbackMtimeMs)) {
+      if (shouldReclaimJsonOwnerLockSnapshot(snapshot, staleAfterMs, Date.now(), fallbackMtimeMs, options)) {
         reclaimJsonOwnerLockSnapshot(lockPath, snapshot.raw);
         continue;
       }

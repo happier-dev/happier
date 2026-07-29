@@ -32,7 +32,7 @@ test('hstack mobile-dev-client --platform=android falls back to pipeline (test s
 
   assert.ok(parsed.steps.length >= 3, `expected plan to include build + cache copy + adb install steps\nstdout:\n${res.stdout}`);
   const cachedApkAbs = join(fixture.homeDir, 'mobile-dev-client', 'internaldev', 'android', 'happier-dev-client-android.apk');
-  const artifactAbs = join(fixture.repoDir, 'dist', 'ui-mobile', 'happier-dev-client-android.apk');
+  const artifactAbs = join(fixture.repoDir, 'dist', 'ui-mobile', 'internaldev', 'happier-dev-client-android.apk');
   const step1Args = Array.isArray(parsed.steps?.[1]?.args) ? parsed.steps[1].args : [];
   assert.ok(step1Args.some((a) => String(a).includes('copy_artifact.mjs')), `expected step 1 to invoke copy_artifact.mjs\nstdout:\n${res.stdout}`);
   assert.ok(step1Args.includes('--from') && step1Args.includes(artifactAbs), `expected step 1 to copy from built artifact\nstdout:\n${res.stdout}`);

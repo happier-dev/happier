@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
-import { setTimeout as delay } from 'node:timers/promises';
+import { readProcessInstanceFingerprintSync } from '../../../../../packages/cli-common/processInstance.mjs';
 import { isPidAlive } from '../proc/pids.mjs';
 import { isTcpPortFree, listListenPids } from '../net/ports.mjs';
 import { runCapture } from '../proc/proc.mjs';
@@ -321,7 +321,14 @@ export async function isStateProcessRunning(statePath) {
 
 export async function writePidState(statePath, state) {
   await mkdir(dirname(statePath), { recursive: true }).catch(() => {});
-  await writeFile(statePath, JSON.stringify(state, null, 2) + '\n', 'utf-8');
+  const pid = Number(state?.pid);
+  const processInstanceFingerprint = Number.isInteger(pid) && pid > 1
+    ? readProcessInstanceFingerprintSync(pid)
+    : null;
+  await writeFile(statePath, JSON.stringify({
+    ...state,
+    ...(processInstanceFingerprint ? { processInstanceFingerprint } : {}),
+  }, null, 2) + '\n', 'utf-8');
 }
 
 export async function findRunningExpoStateInRoot({ expoDevRoot, requireWeb = false, expectedProjectDir = '' } = {}) {
@@ -352,21 +359,4 @@ export async function findRunningExpoStateInRoot({ expoDevRoot, requireWeb = fal
     return { statePath, state: res.state };
   }
   return null;
-}
-
-export async function killPid(pid) {
-  const n = Number(pid);
-  if (!Number.isFinite(n) || n <= 1) return;
-  try {
-    process.kill(n, 'SIGTERM');
-  } catch {
-    return;
-  }
-  await delay(500);
-  try {
-    process.kill(n, 0);
-    process.kill(n, 'SIGKILL');
-  } catch {
-    // exited
-  }
 }

@@ -6,8 +6,120 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { isPidAlive } from './pids.mjs';
-import { killPidOwnedByStack, killProcessGroupOwnedByStack } from './ownership.mjs';
+import { killPidOwnedByStack, killProcessGroupOwnedByStack, observePsEnvLine } from './ownership.mjs';
 import { spawnDetachedTestProcess } from '../../testkit/core/spawn_test_process.mjs';
+
+test('process identity observation classifies failed ps for an exited pid as not found', async () => {
+  const unavailable = new Error('ps returned no matching process');
+  unavailable.code = 'ENOENT';
+  const observation = await observePsEnvLine(4242, {
+    platform: 'darwin',
+    runCaptureImpl: async () => { throw unavailable; },
+    readLinuxProcEnvironImpl: async () => '',
+    observePidLivenessImpl: () => ({ status: 'dead', reason: 'not_found' }),
+  });
+
+  assert.deepEqual(
+    { status: observation.status, line: observation.line, reason: observation.reason },
+    { status: 'not_found', line: null, reason: 'process-not-found' },
+  );
+});
+
+test('killProcessGroupOwnedByStack treats an already-exited pid as completed cleanup', async () => {
+  let terminated = false;
+  const result = await killProcessGroupOwnedByStack(4242, {
+    stackName: 't',
+    envPath: '/tmp/t/env',
+    json: true,
+    resolvePidStackOwnershipImpl: async () => ({
+      status: 'not_owned',
+      owned: false,
+      reason: 'process-not-found',
+    }),
+    terminateProcessGroupImpl: async () => {
+      terminated = true;
+      return { ok: true };
+    },
+  });
+
+  assert.deepEqual(result, { killed: true, reason: 'already_exited' });
+  assert.equal(terminated, false);
+});
+
+test('killProcessGroupOwnedByStack routes Windows owned cleanup through the tree owner', async () => {
+  const calls = [];
+  const predecessorFingerprint = 'win32-cim:2026-07-23T12:34:56.1234567Z';
+  const result = await killProcessGroupOwnedByStack(4242, {
+    stackName: 't',
+    envPath: 'C:\\stack\\env',
+    json: true,
+    platform: 'win32',
+    processInstanceFingerprint: predecessorFingerprint,
+    readProcessInstanceFingerprintSyncImpl: (_pid, options) => (
+      options?.expectedFingerprint === predecessorFingerprint
+        ? predecessorFingerprint
+        : 'win32-cim:jeudi 23 juillet 2026 14:34:56'
+    ),
+    getProcessGroupIdImpl: async () => { throw new Error('Windows must not require POSIX PGID'); },
+    terminateProcessGroupImpl: async (pid, options) => {
+      calls.push({ pid, options });
+      return { ok: true, signal: 'SIGKILL' };
+    },
+  });
+
+  assert.equal(result.killed, true);
+  assert.equal(result.reason, 'killed_tree');
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].pid, 4242);
+  assert.equal(calls[0].options.identityPid, 4242);
+  assert.equal(calls[0].options.processInstanceFingerprint, predecessorFingerprint);
+});
+
+test('killProcessGroupOwnedByStack fails closed on Windows without persisted incarnation proof', async () => {
+  let terminateCalls = 0;
+  const result = await killProcessGroupOwnedByStack(4242, {
+    stackName: 't',
+    envPath: 'C:\\stack\\env',
+    json: true,
+    platform: 'win32',
+    observePidLivenessImpl: () => ({ status: 'alive' }),
+    readProcessInstanceFingerprintSyncImpl: () => 'win32-cim:current',
+    terminateProcessGroupImpl: async () => {
+      terminateCalls += 1;
+      return { ok: true };
+    },
+  });
+
+  assert.equal(result.killed, false);
+  assert.equal(result.reason, 'process_instance_unavailable');
+  assert.equal(terminateCalls, 0);
+});
+
+test('killProcessGroupOwnedByStack snapshots and rechecks a POSIX incarnation around ownership proof', async () => {
+  const calls = [];
+  let fingerprintReads = 0;
+  const result = await killProcessGroupOwnedByStack(4242, {
+    stackName: 't',
+    envPath: '/tmp/t/env',
+    json: true,
+    platform: 'linux',
+    readProcessInstanceFingerprintSyncImpl: () => {
+      fingerprintReads += 1;
+      return 'linux-proc:1234';
+    },
+    resolvePidStackOwnershipImpl: async () => ({ owned: true, reason: 'env_file' }),
+    getProcessGroupIdImpl: async (pid) => Number(pid) === process.pid ? 9999 : 4242,
+    terminateProcessGroupImpl: async (pid, options) => {
+      calls.push({ pid, options });
+      return { ok: true, signal: 'SIGTERM' };
+    },
+  });
+
+  assert.equal(result.killed, true);
+  assert.equal(fingerprintReads >= 2, true);
+  assert.equal(calls[0].options.identityPid, 4242);
+  assert.equal(calls[0].options.processInstanceFingerprint, 'linux-proc:1234');
+});
 
 function spawnOwnedGracefulExit({ env, exitFile, readyFile }) {
   const cleanEnv = {};

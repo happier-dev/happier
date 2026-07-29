@@ -29,6 +29,10 @@ export function isAuthFlowEnabled(env) {
   return isTrue(v) || isTrue(wait);
 }
 
+export function resolveStackDaemonStartRequested({ env = process.env, noDaemon = false } = {}) {
+  return !noDaemon && String(env?.HAPPIER_STACK_DAEMON ?? '1').trim() !== '0';
+}
+
 /**
  * Returns { ok: boolean, reason: string } where ok=true means it's safe to start the daemon now.
  * When ok=false, callers should either:

@@ -5,6 +5,10 @@ function normalizeRuntimeMode(raw) {
   return 'source';
 }
 
+export function hasExplicitStackRuntimeModeArg(args = []) {
+  return Array.isArray(args) && (args.includes('--runtime') || args.includes('--source'));
+}
+
 export function resolveStackRuntimeMode({ argv = [], env = process.env } = {}) {
   const args = Array.isArray(argv) ? argv : [];
   const wantsRuntime = args.includes('--runtime');

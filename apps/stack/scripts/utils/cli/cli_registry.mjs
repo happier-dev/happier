@@ -120,6 +120,13 @@ export function gethstackRegistry() {
       description: 'Start local stack (dev)',
     },
     {
+      name: 'dev-targets',
+      kind: 'node',
+      scriptRelPath: 'scripts/dev_targets.mjs',
+      rootUsage: 'hstack dev-targets add|remove|list|show|doctor|path [--stack=NAME]',
+      description: 'Configure Mutagen-backed remote development daemons',
+    },
+    {
       name: 'stop',
       kind: 'node',
       scriptRelPath: 'scripts/stop.mjs',

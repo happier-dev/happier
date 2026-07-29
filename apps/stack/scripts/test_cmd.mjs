@@ -2,7 +2,7 @@ import './utils/env/env.mjs';
 import { parseArgs } from './utils/cli/args.mjs';
 import { printResult, wantsHelp, wantsJson } from './utils/cli/cli.mjs';
 import { getComponentDir, getRootDir } from './utils/paths/paths.mjs';
-import { ensureDepsInstalled } from './utils/proc/pm.mjs';
+import { createCommandDependencyAdmission } from './utils/proc/pm.mjs';
 import { ensureHappyMonorepoNestedDepsInstalled } from './utils/proc/happy_monorepo_deps.mjs';
 import { pathExists } from './utils/fs/fs.mjs';
 import { run, runCapture } from './utils/proc/proc.mjs';
@@ -147,6 +147,7 @@ async function main() {
   const wantAll = requested.includes('all');
   // Default `all` excludes "stacks" to avoid coupling to stack tests and their baselines.
   const targets = wantAll ? VALID_TARGETS : requested;
+  const admitDependencies = createCommandDependencyAdmission();
 
   const results = [];
   for (const target of targets) {
@@ -201,11 +202,11 @@ async function main() {
         happyTestDir: dir,
         quiet: json,
         env: process.env,
-        ensureDepsInstalled,
+        ensureDepsInstalled: admitDependencies,
       });
     }
 
-    await ensureDepsInstalled(dir, target, { quiet: json, env: process.env });
+    await admitDependencies(dir, target, { quiet: json, env: process.env });
     const pm = await detectPackageManagerCmd(dir);
 
     try {

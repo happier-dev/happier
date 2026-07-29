@@ -70,6 +70,7 @@ test('proxy flips new HTTP connections to the current backend and can enter main
     assert.equal(maintenance.headers['retry-after'], '2');
     assert.equal(maintenance.body, 'maintenance\n');
     proxy.flipUpstream({ targetPort: second.port });
+    assert.equal(proxy.getUpstream().targetPort, second.port);
     assert.equal((await request(proxy.port)).body, 'second');
   } finally {
     await proxy.stop();
@@ -145,6 +146,25 @@ test('maintenance upstream returns stable 503 retry semantics', async () => {
     assert.equal(response.headers['retry-after'], '3');
     assert.equal(response.headers['x-happier-retry-reason'], 'server_restarting');
     assert.equal(response.body, 'Server reload in progress\n');
+  } finally {
+    await upstream.stop();
+  }
+});
+
+test('terminal maintenance is distinguishable from transient retry maintenance', async () => {
+  const upstream = await startDevProxyMaintenanceUpstream({
+    host: '127.0.0.1',
+    port: 0,
+    retryAfterMs: 1000,
+    message: 'retrying',
+  });
+  try {
+    upstream.update({ retryable: false, message: 'Server unavailable; edit or restart the stack.' });
+    const response = await request(upstream.port);
+    assert.equal(response.statusCode, 503);
+    assert.equal(response.headers['retry-after'], undefined);
+    assert.equal(response.headers['x-happier-retry-reason'], 'server_unavailable');
+    assert.match(response.body, /Server unavailable/);
   } finally {
     await upstream.stop();
   }

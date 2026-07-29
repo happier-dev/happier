@@ -1,3 +1,5 @@
+import { findRestartControlOnlyArg } from '../stack/restart_args.mjs';
+
 export function isTuiHelpRequest(argv) {
   if (!Array.isArray(argv)) return false;
   if (argv.length === 1 && (argv[0] === '--help' || argv[0] === 'help')) return true;
@@ -56,5 +58,5 @@ export function isTuiStartLikeForwardedArgs(argv) {
 export function isTuiRestartableForwardedArgs(argv) {
   // Today we only support restart for long-lived stack processes (dev/start).
   // Keeping this as a separate predicate avoids expanding restart support by accident.
-  return isTuiStartLikeForwardedArgs(argv);
+  return isTuiStartLikeForwardedArgs(argv) && findRestartControlOnlyArg(argv) == null;
 }

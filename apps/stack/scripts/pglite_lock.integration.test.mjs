@@ -1,12 +1,21 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
-import { acquirePgliteDirLock } from './utils/pglite_lock.mjs';
+import { dirname, join, resolve } from 'node:path';
+import * as pgliteLock from './utils/pglite_lock.mjs';
+
+const { acquirePgliteDirLock } = pgliteLock;
 
 function lockPathForDbDir(dbDir) {
+  const resolvedDbDir = resolve(dbDir);
+  const short = createHash('sha256').update(resolvedDbDir).digest('hex').slice(0, 12);
+  return join(dirname(resolvedDbDir), `.happier.pglite.lock.${short}`);
+}
+
+function legacyAdjacentLockPathForDbDir(dbDir) {
   return join(dirname(dbDir), '.happier.pglite.lock');
 }
 
@@ -62,6 +71,9 @@ test('acquirePgliteDirLock creates and releases lock', async (t) => {
   const dbDir = join(base, 'pglite');
   const lockPath = lockPathForDbDir(dbDir);
 
+  assert.equal(typeof pgliteLock.getPgliteDirLockPath, 'function');
+  assert.equal(pgliteLock.getPgliteDirLockPath(dbDir), lockPath);
+
   const release = await acquirePgliteDirLock(dbDir, { purpose: 'test' });
   const raw = await readFile(lockPath, 'utf-8');
   const json = JSON.parse(raw);
@@ -72,6 +84,21 @@ test('acquirePgliteDirLock creates and releases lock', async (t) => {
 
   await release();
   await assert.rejects(() => readFile(lockPath, 'utf-8'), /no such file|ENOENT/i);
+});
+
+test('getPgliteDirLockPath matches relative and absolute dbDir values', async (t) => {
+  const base = await mkdtemp(join(tmpdir(), 'happier-pglite-lock-relative-'));
+  t.after(async () => {
+    await rm(base, { recursive: true, force: true });
+  });
+
+  const previousCwd = process.cwd();
+  try {
+    process.chdir(base);
+    assert.equal(pgliteLock.getPgliteDirLockPath('db'), pgliteLock.getPgliteDirLockPath(resolve('db')));
+  } finally {
+    process.chdir(previousCwd);
+  }
 });
 
 test('acquirePgliteDirLock replaces stale lock (dead pid)', async (t) => {
@@ -120,6 +147,30 @@ test('acquirePgliteDirLock fails closed when lock pid is alive', async (t) => {
   }
 });
 
+test('acquirePgliteDirLock fails closed when a live legacy adjacent lock owns the same db dir', async (t) => {
+  const base = await mkdtemp(join(tmpdir(), 'happier-pglite-lock-live-legacy-'));
+  t.after(async () => {
+    await rm(base, { recursive: true, force: true });
+  });
+  const dbDir = join(base, 'pglite');
+  const legacyLockPath = legacyAdjacentLockPathForDbDir(dbDir);
+
+  const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });
+  assert.ok(child.pid && child.pid > 1);
+
+  try {
+    await writeFile(
+      legacyLockPath,
+      JSON.stringify({ pid: child.pid, createdAt: new Date().toISOString(), purpose: 'legacy-live', dbDir }) + '\n',
+      'utf-8'
+    );
+
+    await assert.rejects(() => acquirePgliteDirLock(dbDir, { purpose: 'should-fail' }), /in use by pid=/i);
+  } finally {
+    await terminateChildProcessAndWait(child);
+  }
+});
+
 test('acquirePgliteDirLock replaces lock when pid is alive but the start-time fingerprint mismatches', async (t) => {
   const base = await mkdtemp(join(tmpdir(), 'happier-pglite-lock-mismatch-'));
   t.after(async () => {
@@ -149,4 +200,29 @@ test('acquirePgliteDirLock replaces lock when pid is alive but the start-time fi
   assert.notEqual(json.createdAt, originalCreatedAt);
 
   await release();
+});
+
+test('waitForPgliteDirLockRelease waits on the hashed lock path and returns false while a live owner holds it', async (t) => {
+  const base = await mkdtemp(join(tmpdir(), 'happier-pglite-lock-wait-live-'));
+  t.after(async () => {
+    await rm(base, { recursive: true, force: true });
+  });
+  const dbDir = join(base, 'pglite');
+  const lockPath = lockPathForDbDir(dbDir);
+
+  const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });
+  assert.ok(child.pid && child.pid > 1);
+
+  try {
+    await writeFile(
+      lockPath,
+      JSON.stringify({ pid: child.pid, createdAt: new Date().toISOString(), purpose: 'wait-live', dbDir }) + '\n',
+      'utf-8'
+    );
+
+    const released = await pgliteLock.waitForPgliteDirLockRelease(dbDir, { timeoutMs: 25, intervalMs: 5 });
+    assert.equal(released, false);
+  } finally {
+    await terminateChildProcessAndWait(child);
+  }
 });

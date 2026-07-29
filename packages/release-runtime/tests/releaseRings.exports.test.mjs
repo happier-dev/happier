@@ -24,4 +24,10 @@ test('release-runtime exposes a prebuilt CommonJS releaseRings entrypoint for co
   assert.deepEqual(releaseRings.PUBLIC_RELEASE_RING_IDS, ['stable', 'preview', 'publicdev']);
   assert.equal(releaseRings.normalizePublicReleaseRingId('dev'), 'publicdev');
   assert.deepEqual(releaseRings.listPublicReleaseRingLabels(), ['stable', 'preview', 'dev']);
+  assert.equal(releaseRings.resolvePublicReleaseRingIdForLabel('dev'), 'publicdev');
+  assert.equal(releaseRings.resolvePublicReleaseRingLabelForId('publicdev'), 'dev');
+  assert.equal(releaseRings.resolvePublicReleaseRingIdForAnyRingId('internalpreview'), 'preview');
+  assert.equal(releaseRings.normalizePublicReleaseRingLabel('publicdev'), 'dev');
+  assert.equal(releaseRings.resolveCliInvokerNameForPublicRing('publicdev'), 'hdev');
+  assert.equal(releaseRings.resolvePublicReleaseRingIdForCliInvokerName('hprev'), 'preview');
 });

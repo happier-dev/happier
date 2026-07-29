@@ -5,9 +5,19 @@ import { chmod, mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises
 import { existsSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { startLocalDaemonWithAuth, stopLocalDaemon } from './daemon.mjs';
 import { writeStubHappierCliFiles } from './testkit/core/stub_happier_cli_files.mjs';
+
+const DAEMON_TEST_PROCESS_HELPER_PATH = fileURLToPath(
+  new URL('./testkit/core/spawn_daemon_like_process.mjs', import.meta.url),
+);
+const FAST_DAEMON_START_VERIFY_ENV = Object.freeze({
+  HAPPIER_STACK_DAEMON_START_VERIFY_TIMEOUT_MS: '1500',
+  HAPPIER_STACK_DAEMON_START_VERIFY_POLL_MS: '25',
+  HAPPIER_STACK_DAEMON_START_VERIFY_STABLE_MS: '0',
+});
 
 function encodeBase64Url(value) {
   return Buffer.from(value, 'utf-8').toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
@@ -70,9 +80,9 @@ async function writeStackEnv({ storageDir, stackName, env }) {
 
 async function writeStubHappyCli({ cliDir }) {
   const script = `
-import { spawn } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { killDetachedProcessGroup, spawnDaemonLikeProcess } from ${JSON.stringify(DAEMON_TEST_PROCESS_HELPER_PATH)};
 
 const args = process.argv.slice(2);
 const home = process.env.HAPPIER_HOME_DIR || process.env.HAPPIER_STACK_CLI_HOME_DIR;
@@ -80,6 +90,9 @@ if (!home) process.exit(2);
 
 const attemptsPath = join(home, 'start-attempt.txt');
 const statePath = join(home, 'daemon.state.json');
+const activeServerId = String(process.env.HAPPIER_ACTIVE_SERVER_ID || '').trim();
+const serverScopedStatePath = activeServerId ? join(home, 'servers', activeServerId, 'daemon.state.json') : '';
+const statePaths = [statePath, serverScopedStatePath].filter(Boolean);
 const logsDir = join(home, 'logs');
 
 if (args[0] !== 'daemon') process.exit(0);
@@ -90,9 +103,12 @@ if (sub === 'stop') {
     try {
       const pid = Number(JSON.parse(readFileSync(statePath, 'utf-8')).pid);
       if (Number.isFinite(pid) && pid > 1) {
-        try { process.kill(pid, 'SIGTERM'); } catch {}
+        killDetachedProcessGroup(pid);
       }
     } catch {}
+  }
+  for (const path of statePaths) {
+    try { rmSync(path); } catch {}
   }
   process.exit(0);
 }
@@ -122,9 +138,12 @@ if (sub === 'start') {
     process.exit(1);
   }
 
-  const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { detached: true, stdio: 'ignore' });
-  child.unref();
-  writeFileSync(statePath, JSON.stringify({ pid: child.pid, httpPort: 0 }) + '\\n', 'utf-8');
+  spawnDaemonLikeProcess({
+    cliHomeDir: home,
+    internalServerUrl: String(process.env.HAPPIER_SERVER_URL || ''),
+    publicServerUrl: String(process.env.HAPPIER_WEBAPP_URL || ''),
+    statePaths,
+  });
   process.exit(0);
 }
 
@@ -187,6 +206,8 @@ test('invalid-auth auto-reseed uses resolved stack name instead of null placehol
 
     const env = {
       ...process.env,
+      ...FAST_DAEMON_START_VERIFY_ENV,
+      HAPPIER_STACK_REPO_DIR: tmp,
       PATH: `${binDir}:${process.env.PATH ?? ''}`,
       HAPPIER_STACK_STORAGE_DIR: storageDir,
       HAPPIER_STACK_STACK: 'dev',
@@ -222,6 +243,8 @@ test('invalid-auth auto-reseed uses resolved stack name instead of null placehol
       cliBin,
       internalServerUrl: 'http://127.0.0.1:4101',
       cliHomeDir: targetCliHome,
+      env,
+      stackName: 'dev',
     });
   } finally {
     if (profileServer) {
@@ -284,6 +307,8 @@ test('invalid-auth auto-reseed overwrites stale target credentials', async () =>
 
     const env = {
       ...process.env,
+      ...FAST_DAEMON_START_VERIFY_ENV,
+      HAPPIER_STACK_REPO_DIR: tmp,
       PATH: `${binDir}:${process.env.PATH ?? ''}`,
       HAPPIER_STACK_STORAGE_DIR: storageDir,
       HAPPIER_STACK_STACK: 'dev',
@@ -317,6 +342,8 @@ test('invalid-auth auto-reseed overwrites stale target credentials', async () =>
       cliBin,
       internalServerUrl: 'http://127.0.0.1:4201',
       cliHomeDir: targetCliHome,
+      env,
+      stackName: 'dev',
     });
   } finally {
     if (profileServer) {
@@ -392,6 +419,8 @@ test('invalid-auth auto-reseed falls back to the next usable seed when the confi
 
     const env = {
       ...process.env,
+      ...FAST_DAEMON_START_VERIFY_ENV,
+      HAPPIER_STACK_REPO_DIR: tmp,
       PATH: `${binDir}:${process.env.PATH ?? ''}`,
       HAPPIER_STACK_STORAGE_DIR: storageDir,
       HAPPIER_STACK_STACK: 'dev',
@@ -422,6 +451,8 @@ test('invalid-auth auto-reseed falls back to the next usable seed when the confi
       cliBin,
       internalServerUrl: 'http://127.0.0.1:4251',
       cliHomeDir: targetCliHome,
+      env,
+      stackName: 'dev',
     });
   } finally {
     if (profileServer) {
@@ -492,6 +523,8 @@ test('invalid-auth auto-reseed falls through to a later usable local seed when t
 
     const env = {
       ...process.env,
+      ...FAST_DAEMON_START_VERIFY_ENV,
+      HAPPIER_STACK_REPO_DIR: tmp,
       PATH: `${binDir}:${process.env.PATH ?? ''}`,
       HAPPIER_STACK_STORAGE_DIR: storageDir,
       HAPPIER_STACK_STACK: 'dev',
@@ -522,6 +555,8 @@ test('invalid-auth auto-reseed falls through to a later usable local seed when t
       cliBin,
       internalServerUrl: 'http://127.0.0.1:4351',
       cliHomeDir: targetCliHome,
+      env,
+      stackName: 'dev',
     });
   } finally {
     if (profileServer) {
@@ -537,10 +572,6 @@ test('invalid-auth reseed does not fall back to main when configured seed creden
   try {
     const storageDir = join(tmp, 'storage');
     const cliDir = join(tmp, 'apps', 'cli');
-
-    await mkdir(join(cliDir, 'bin'), { recursive: true });
-    await mkdir(join(cliDir, 'dist'), { recursive: true });
-    await writeFile(join(cliDir, 'package.json'), '{}\n', 'utf-8');
 
     const stub = `
 import { spawn } from 'node:child_process';
@@ -621,10 +652,13 @@ if (sub === 'start') {
 
 	process.exit(0);
 	`;
-    const cliBin = join(cliDir, 'bin', 'happier.mjs');
-    await writeFile(join(cliDir, 'dist', 'index.mjs'), stub.trimStart(), 'utf-8');
-    // If daemon.mjs accidentally invokes bin/happier.mjs, fail loudly.
-    await writeFile(cliBin, 'process.exit(42);\n', 'utf-8');
+    const { cliBinDir } = await writeStubHappierCliFiles(join(cliDir, '..', '..'), {
+      packageJsonContent: '{}\n',
+      distIndexScript: stub.trimStart(),
+      // If daemon.mjs accidentally invokes bin/happier.mjs, fail loudly.
+      binHappierScript: 'process.exit(42);\n',
+    });
+    const cliBin = join(cliBinDir, 'happier.mjs');
 
     const targetCliHome = join(storageDir, 'dev', 'cli');
     const devAuthCliHome = join(storageDir, 'dev-auth', 'cli');
@@ -687,6 +721,8 @@ if (sub === 'start') {
 
     const env = {
       ...process.env,
+      ...FAST_DAEMON_START_VERIFY_ENV,
+      HAPPIER_STACK_REPO_DIR: tmp,
       HAPPIER_STACK_STORAGE_DIR: storageDir,
       HAPPIER_STACK_STACK: 'dev',
       HAPPIER_STACK_AUTH_SEED_FROM: 'dev-auth',
@@ -734,6 +770,8 @@ if (sub === 'start') {
       cliBin,
       internalServerUrl: 'http://127.0.0.1:4301',
       cliHomeDir: targetCliHome,
+      env,
+      stackName: 'dev',
     });
   } finally {
     if (profileServer) {
@@ -748,10 +786,6 @@ test('invalid-auth auto-reseed does not overwrite manually-authenticated credent
   try {
     const storageDir = join(tmp, 'storage');
     const cliDir = join(tmp, 'apps', 'cli');
-
-    await mkdir(join(cliDir, 'bin'), { recursive: true });
-    await mkdir(join(cliDir, 'dist'), { recursive: true });
-    await writeFile(join(cliDir, 'package.json'), '{}\n', 'utf-8');
 
     const stub = `
 import { spawn } from 'node:child_process';
@@ -813,10 +847,13 @@ if (sub === 'start') {
 
 	process.exit(0);
 	`;
-    const cliBin = join(cliDir, 'bin', 'happier.mjs');
-    await writeFile(join(cliDir, 'dist', 'index.mjs'), stub.trimStart(), 'utf-8');
-    // If daemon.mjs accidentally invokes bin/happier.mjs, fail loudly.
-    await writeFile(cliBin, 'process.exit(42);\n', 'utf-8');
+    const { cliBinDir } = await writeStubHappierCliFiles(join(cliDir, '..', '..'), {
+      packageJsonContent: '{}\n',
+      distIndexScript: stub.trimStart(),
+      // If daemon.mjs accidentally invokes bin/happier.mjs, fail loudly.
+      binHappierScript: 'process.exit(42);\n',
+    });
+    const cliBin = join(cliBinDir, 'happier.mjs');
 
     const targetCliHome = join(storageDir, 'dev', 'cli');
     const seedCliHome = join(storageDir, 'dev-auth', 'cli');
@@ -859,6 +896,8 @@ if (sub === 'start') {
 
     const env = {
       ...process.env,
+      ...FAST_DAEMON_START_VERIFY_ENV,
+      HAPPIER_STACK_REPO_DIR: tmp,
       HAPPIER_STACK_STORAGE_DIR: storageDir,
       HAPPIER_STACK_STACK: 'dev',
       HAPPIER_STACK_AUTH_SEED_FROM: 'dev-auth',

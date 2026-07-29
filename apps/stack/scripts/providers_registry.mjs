@@ -1,5 +1,5 @@
 import { AGENT_IDS, getAgentCliRuntimeSpec } from '@happier-dev/agents';
-import { planProviderCliInstall } from '@happier-dev/cli-common/providers';
+import { planAgentCliInstall } from '@happier-dev/cli-common/agents';
 
 const PROVIDER_ID_SET = new Set(AGENT_IDS);
 
@@ -13,7 +13,7 @@ function resolveProviderInstallPlan(providerId, platform) {
   if (platform === 'unsupported') {
     return { ok: false, provider: providerId, error: 'Unsupported platform' };
   }
-  const planned = planProviderCliInstall({ providerId, platform });
+  const planned = planAgentCliInstall({ agentId: providerId, platform });
   if (!planned.ok) {
     return { ok: false, provider: providerId, error: planned.errorMessage };
   }

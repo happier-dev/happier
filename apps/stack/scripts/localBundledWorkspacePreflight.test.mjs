@@ -3,13 +3,14 @@ import assert from 'node:assert/strict';
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { runNodeCapture } from './testkit/core/run_node_capture.mjs';
 
 const scriptsDir = dirname(fileURLToPath(import.meta.url));
 const stackDir = resolve(scriptsDir, '..');
 const preflightModulePath = resolve(stackDir, 'bin', 'localBundledWorkspacePreflight.mjs');
+const bundleWorkspaceDepsModulePath = resolve(stackDir, 'scripts', 'bundleWorkspaceDeps.mjs');
 
 function writeJson(path, value) {
   writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
@@ -21,12 +22,13 @@ function appendNodeLoader(nodeOptions, loaderPath) {
   return existing ? `${existing} ${loaderOption}` : loaderOption;
 }
 
-function writeBundleWorkspaceDepsStub({ fixtureDir, markerPath }) {
+function writeBundleWorkspaceDepsStub({ fixtureDir, markerPath, loadModulePath = null }) {
   const bundleStubPath = join(fixtureDir, 'bundleWorkspaceDeps.stub.mjs');
   writeFileSync(
     bundleStubPath,
     [
       "import { writeFileSync } from 'node:fs';",
+      ...(loadModulePath ? [`import ${JSON.stringify(pathToFileURL(loadModulePath).href)};`] : []),
       'export async function bundleWorkspaceDeps(opts) {',
       `  writeFileSync(${JSON.stringify(markerPath)}, JSON.stringify(opts), 'utf8');`,
       '}',
@@ -37,7 +39,11 @@ function writeBundleWorkspaceDepsStub({ fixtureDir, markerPath }) {
   return bundleStubPath;
 }
 
-function writeBundleWorkspaceDepsLoader({ fixtureDir, bundleStubPath }) {
+function writeBundleWorkspaceDepsLoader({
+  fixtureDir,
+  bundleStubPath,
+  missingCliCommonProcessDistPath = null,
+}) {
   const loaderPath = join(fixtureDir, 'bundleWorkspaceDeps.loader.mjs');
   writeFileSync(
     loaderPath,
@@ -45,6 +51,15 @@ function writeBundleWorkspaceDepsLoader({ fixtureDir, bundleStubPath }) {
       "import { pathToFileURL } from 'node:url';",
       '',
       'export async function resolve(specifier, context, defaultResolve) {',
+      ...(missingCliCommonProcessDistPath
+        ? [
+            "  if (specifier === '@happier-dev/cli-common/process') {",
+            `    const error = new Error(${JSON.stringify(`Cannot find module '${missingCliCommonProcessDistPath}'`)});`,
+            "    error.code = 'ERR_MODULE_NOT_FOUND';",
+            '    throw error;',
+            '  }',
+          ]
+        : []),
       "  if (specifier === '../scripts/bundleWorkspaceDeps.mjs') {",
       `    return { url: pathToFileURL(${JSON.stringify(bundleStubPath)}).href, shortCircuit: true };`,
       '  }',
@@ -78,6 +93,11 @@ function createFixtureRepo(prefix) {
   writeJson(resolve(repoRoot, 'apps', 'ui', 'package.json'), { name: '@happier-dev/ui', private: true });
   writeJson(resolve(repoRoot, 'apps', 'cli', 'package.json'), { name: '@happier-dev/cli', private: true });
   writeJson(resolve(repoRoot, 'apps', 'server', 'package.json'), { name: '@happier-dev/server', private: true });
+  writeJson(resolve(repoRoot, 'packages', 'cli-common', 'package.json'), {
+    name: '@happier-dev/cli-common',
+    private: true,
+    type: 'module',
+  });
   writeJson(resolve(hostPackageDir, 'package.json'), {
     name: '@happier-dev/stack',
     private: true,
@@ -104,6 +124,22 @@ function writeSyncHelper({ repoRoot, markerPath }) {
       "import { writeFileSync } from 'node:fs';",
       'export function syncBundledWorkspacePackages(opts) {',
       `  writeFileSync(${JSON.stringify(markerPath)}, JSON.stringify(opts), 'utf8');`,
+      '}',
+      '',
+    ].join('\n'),
+    'utf8',
+  );
+  return syncModulePath;
+}
+
+function writeFailingSyncHelper({ repoRoot, message }) {
+  const syncModulePath = resolve(repoRoot, 'scripts', 'workspaces', 'syncBundledWorkspacePackages.mjs');
+  mkdirSync(dirname(syncModulePath), { recursive: true });
+  writeFileSync(
+    syncModulePath,
+    [
+      'export function syncBundledWorkspacePackages() {',
+      `  throw new Error(${JSON.stringify(message)});`,
       '}',
       '',
     ].join('\n'),
@@ -151,8 +187,23 @@ async function runPreflight({ cwd, hostPackageDir, loaderPath }) {
 test('local bundled workspace preflight falls back to bundleWorkspaceDeps when the monorepo sync helper is unavailable', async () => {
   const { fixtureDir, hostPackageDir, repoRoot } = createFixtureRepo('local-bundled-preflight-fallback-');
   const bundleMarkerPath = join(fixtureDir, 'bundle.json');
-  const bundleStubPath = writeBundleWorkspaceDepsStub({ fixtureDir, markerPath: bundleMarkerPath });
-  const loaderPath = writeBundleWorkspaceDepsLoader({ fixtureDir, bundleStubPath });
+  const bundleStubPath = writeBundleWorkspaceDepsStub({
+    fixtureDir,
+    markerPath: bundleMarkerPath,
+    loadModulePath: bundleWorkspaceDepsModulePath,
+  });
+  const loaderPath = writeBundleWorkspaceDepsLoader({
+    fixtureDir,
+    bundleStubPath,
+    missingCliCommonProcessDistPath: resolve(
+      repoRoot,
+      'packages',
+      'cli-common',
+      'dist',
+      'process',
+      'index.js',
+    ),
+  });
 
   try {
     const res = await runPreflight({ cwd: repoRoot, hostPackageDir, loaderPath });
@@ -166,7 +217,36 @@ test('local bundled workspace preflight falls back to bundleWorkspaceDeps when t
   }
 });
 
-test('local bundled workspace preflight skips bundleWorkspaceDeps when cli-common reports the synced bundles healthy', async () => {
+test('local bundled workspace preflight builds missing source dist when the fast sync cannot publish it', async () => {
+  const { fixtureDir, hostPackageDir, repoRoot } = createFixtureRepo('local-bundled-preflight-missing-dist-');
+  const healthMarkerPath = join(fixtureDir, 'health.json');
+  const bundleMarkerPath = join(fixtureDir, 'bundle.json');
+  const bundleStubPath = writeBundleWorkspaceDepsStub({ fixtureDir, markerPath: bundleMarkerPath });
+  const loaderPath = writeBundleWorkspaceDepsLoader({ fixtureDir, bundleStubPath });
+
+  writeFailingSyncHelper({
+    repoRoot,
+    message: 'Missing bundled workspace package dist: /repo/packages/agents/dist',
+  });
+  writeCliCommonHealthModule({
+    repoRoot,
+    markerPath: healthMarkerPath,
+    bodyLines: ['return false;'],
+  });
+
+  try {
+    const res = await runPreflight({ cwd: repoRoot, hostPackageDir, loaderPath });
+
+    assert.equal(res.code, 0, `expected exit 0, got ${res.code}\nstderr:\n${res.stderr}\nstdout:\n${res.stdout}`);
+    const bundleOptions = JSON.parse(readFileSync(bundleMarkerPath, 'utf8'));
+    assert.equal(bundleOptions.repoRoot, repoRoot);
+    assert.equal(bundleOptions.stackDir, hostPackageDir);
+  } finally {
+    rmSync(fixtureDir, { recursive: true, force: true });
+  }
+});
+
+test('local bundled workspace preflight skips sync and bundleWorkspaceDeps when cli-common reports bundles healthy', async () => {
   const { bundledProtocolDir, fixtureDir, hostPackageDir, protocolSrcDir, repoRoot } = createFixtureRepo('local-bundled-preflight-healthy-');
   const syncMarkerPath = join(fixtureDir, 'sync.json');
   const healthMarkerPath = join(fixtureDir, 'health.json');
@@ -202,12 +282,73 @@ test('local bundled workspace preflight skips bundleWorkspaceDeps when cli-commo
     const res = await runPreflight({ cwd: repoRoot, hostPackageDir, loaderPath });
 
     assert.equal(res.code, 0, `expected exit 0, got ${res.code}\nstderr:\n${res.stderr}\nstdout:\n${res.stdout}`);
-    const syncOptions = JSON.parse(readFileSync(syncMarkerPath, 'utf8'));
-    assert.equal(syncOptions.repoRoot, repoRoot);
     const healthOptions = JSON.parse(readFileSync(healthMarkerPath, 'utf8'));
     assert.equal(healthOptions.repoRoot, repoRoot);
     assert.equal(healthOptions.hostPackageDir, hostPackageDir);
+    assert.equal(existsSync(syncMarkerPath), false, 'expected healthy bundles to skip monorepo sync');
     assert.equal(existsSync(bundleMarkerPath), false);
+  } finally {
+    rmSync(fixtureDir, { recursive: true, force: true });
+  }
+});
+
+test('local bundled workspace preflight admits stale-present cli-common before checking bundle health', async () => {
+  const {
+    bundledProtocolDir,
+    fixtureDir,
+    hostPackageDir,
+    protocolSrcDir,
+    repoRoot,
+  } = createFixtureRepo('local-bundled-preflight-cli-common-admission-');
+  const healthMarkerPath = join(fixtureDir, 'health.json');
+  const generationMarkerPath = join(fixtureDir, 'generation.txt');
+
+  writeProtocolWorkspacePackage({
+    protocolSrcDir,
+    bundledProtocolDir,
+    workspacePackageJson: {
+      name: '@happier-dev/protocol',
+      version: '0.0.0',
+      type: 'module',
+      exports: { '.': { default: './dist/index.js' } },
+    },
+    bundledPackageJson: {
+      name: '@happier-dev/protocol',
+      version: '0.0.0',
+      private: true,
+      type: 'module',
+      exports: { '.': { default: './dist/index.js' } },
+    },
+  });
+  writeCliCommonHealthModule({
+    repoRoot,
+    markerPath: healthMarkerPath,
+    bodyLines: [
+      `writeFileSync(${JSON.stringify(generationMarkerPath)}, 'stale', 'utf8');`,
+      'return true;',
+    ],
+  });
+
+  try {
+    const { refreshLocalBundledWorkspacePackages } = await import(pathToFileURL(preflightModulePath).href);
+    await refreshLocalBundledWorkspacePackages(hostPackageDir, {
+      ensureWorkspacePackagesBuiltByName: async () => {
+        writeCliCommonHealthModule({
+          repoRoot,
+          markerPath: healthMarkerPath,
+          bodyLines: [
+            `writeFileSync(${JSON.stringify(generationMarkerPath)}, 'fresh', 'utf8');`,
+            'return true;',
+          ],
+        });
+        return { ok: true, built: ['@happier-dev/cli-common'], skipped: [] };
+      },
+    });
+
+    assert.equal(readFileSync(generationMarkerPath, 'utf8'), 'fresh');
+    const healthOptions = JSON.parse(readFileSync(healthMarkerPath, 'utf8'));
+    assert.equal(healthOptions.repoRoot, repoRoot);
+    assert.equal(healthOptions.hostPackageDir, hostPackageDir);
   } finally {
     rmSync(fixtureDir, { recursive: true, force: true });
   }

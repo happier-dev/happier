@@ -1,38 +1,292 @@
 import { spawn } from 'node:child_process';
-import { open, readFile as readFileText, readdir, rm } from 'node:fs/promises';
+import { open } from 'node:fs/promises';
 import { setTimeout as delay } from 'node:timers/promises';
 import { join } from 'node:path';
 import { buildConfigureServerLinks } from '@happier-dev/cli-common/links';
 
-import { cleanupStaleDaemonState, stopLocalDaemon } from '../daemon.mjs';
-import { findExistingStackCredentialPath, resolveStackDaemonStatePaths } from '../utils/auth/credentials_paths.mjs';
+import { checkDaemonStatePingAware } from '../daemon.mjs';
+import { findExistingStackCredentialPath } from '../utils/auth/credentials_paths.mjs';
+import {
+  isAuthFlowEnabled,
+  resolveStackDaemonStartRequested,
+} from '../utils/auth/daemon_gate.mjs';
 import { ensureDir } from '../utils/fs/ops.mjs';
 import { readLastLines } from '../utils/fs/tail.mjs';
-import { isTcpPortFree, listListenPids, pickNextFreeTcpPort } from '../utils/net/ports.mjs';
+import { isTcpPortFree, pickNextFreeTcpPort } from '../utils/net/ports.mjs';
 import { getComponentDir, resolveStackEnvPath } from '../utils/paths/paths.mjs';
 import { resolveLocalhostHost } from '../utils/paths/localhost_host.mjs';
-import { killProcessGroupOwnedByStack } from '../utils/proc/ownership.mjs';
-import { run } from '../utils/proc/proc.mjs';
+import { killProcessTree, run } from '../utils/proc/proc.mjs';
+import {
+  DEFAULT_CLI_DIST_BUILD_LOCK_TIMEOUT_MS,
+  observeCliDistBuildLock,
+  resolveCliDistBuildLockPath,
+} from '../utils/proc/cliDistBuildLock.mjs';
 import { coercePort } from '../utils/server/port.mjs';
-import { waitForHttpOk } from '../utils/server/server.mjs';
+import { waitForHappierHealthOk } from '../utils/server/server.mjs';
+import { parseArgs } from '../utils/cli/args.mjs';
+import { resolveDevServerConnection } from '../utils/dev/resolveDevServerConnection.mjs';
 import { getCliHomeDirFromEnvOrDefault } from '../utils/stack/dirs.mjs';
-import { findRunningExpoStateInRoot, looksLikeExpoMetro } from '../utils/expo/expo.mjs';
+import { resolveVerifiedStackServerEndpoint, resolveVerifiedStackUiEndpoint } from '../utils/stack/verified_endpoints.mjs';
 import { resolveExpoTailscaleEnabled } from '../utils/dev/expo_dev_tailscale.mjs';
 import {
-  deleteStackRuntimeStateFile,
+  deleteStackRuntimeStateIfOwnedBy,
+  getStackRuntimeProcessInstanceFingerprint,
   getStackRuntimeProcessEntries,
   getStackRuntimeStatePath,
   isPidAlive,
-  recordStackRuntimeStart,
+  isStackRuntimeProcessTrusted,
   readStackRuntimeStateFile,
+  withStackRuntimeStartClaim,
 } from '../utils/stack/runtime_state.mjs';
+import { normalizeStackRuntimeOwnerStartedAt } from '../utils/stack/runtime_owner_incarnation.mjs';
 import { listAllStackNames } from '../utils/stack/stacks.mjs';
-import { stopStackWithEnv } from '../utils/stack/stop.mjs';
+import { completeInterruptedStackStopBeforeStart, stopStackWithEnv } from '../utils/stack/stop.mjs';
 import { openUrlInBrowser } from '../utils/ui/browser.mjs';
+import { preflightDevServerRestart } from '../utils/dev/server.mjs';
 
 import { collectReservedStackPorts, getDefaultPortStart } from './port_reservation.mjs';
 import { withStackEnv } from './stack_environment.mjs';
 import { resolveStackRuntimeLaunchContext } from '../runtime/launch/resolveStackRuntimeLaunchContext.mjs';
+
+function shouldAwaitRequestedDaemonForBackgroundStart({ scriptPath, args = [], env = {} } = {}) {
+  if (scriptPath !== 'run.mjs' && scriptPath !== 'dev.mjs') return false;
+  if (!resolveStackDaemonStartRequested({ env, noDaemon: args.includes('--no-daemon') })) return false;
+  if (isAuthFlowEnabled(env)) return false;
+  return true;
+}
+
+async function waitForCanonicalServerHealth(baseUrl, options = {}) {
+  const ready = await waitForHappierHealthOk(baseUrl, options);
+  if (!ready) {
+    throw new Error(`Timed out waiting for Happier server health at ${baseUrl}`);
+  }
+}
+
+function isSourceDaemonPreparationActive({ env = {} } = {}) {
+  const repoDir = String(env.HAPPIER_STACK_REPO_DIR ?? '').trim();
+  if (!repoDir) return { active: false, ownerId: null };
+  return observeCliDistBuildLock(resolveCliDistBuildLockPath(repoDir), {
+    staleAfterMs: DEFAULT_CLI_DIST_BUILD_LOCK_TIMEOUT_MS,
+  });
+}
+
+export async function waitForBackgroundStackReadiness({
+  stackName,
+  scriptPath,
+  args = [],
+  env,
+  runtimeStatePath,
+  internalServerUrl,
+  expectedDaemonDistClosureFingerprint = null,
+  sourceDaemonLaunchAttempt = null,
+  timeoutMs = 180_000,
+  preparationTimeoutMs = DEFAULT_CLI_DIST_BUILD_LOCK_TIMEOUT_MS,
+  checkDaemonStateImpl = checkDaemonStatePingAware,
+  isRunnerAlive = null,
+  waitForServerReadyImpl = waitForCanonicalServerHealth,
+  isDaemonPreparationActiveImpl = isSourceDaemonPreparationActive,
+} = {}) {
+  const readyTimeoutMs = Number.isFinite(Number(timeoutMs)) && Number(timeoutMs) > 0
+    ? Number(timeoutMs)
+    : 180_000;
+  const daemonPreparationTimeoutMs =
+    Number.isFinite(Number(preparationTimeoutMs)) && Number(preparationTimeoutMs) > 0
+      ? Number(preparationTimeoutMs)
+      : DEFAULT_CLI_DIST_BUILD_LOCK_TIMEOUT_MS;
+  await waitForServerReadyImpl(internalServerUrl, {
+    timeoutMs: readyTimeoutMs,
+    intervalMs: 300,
+  });
+
+  if (!shouldAwaitRequestedDaemonForBackgroundStart({ scriptPath, args, env })) return;
+
+  // Server startup, source CLI preparation, and daemon publication are sequential, independently
+  // bounded phases. The build lock can appear after the first daemon observation or hand off
+  // between valid owners, so suspend publication while the finite preparation window is active.
+  let daemonReadyStartedAt = Date.now();
+  let preparationOverallStartedAt = null;
+  let preparationOwnerStartedAt = null;
+  let preparationOwnerId = null;
+  let preparationObserved = false;
+  let preparationCompleted = false;
+  const stackBaseDir = resolveStackEnvPath(stackName, env).baseDir;
+  const cliHomeDir = getCliHomeDirFromEnvOrDefault({ stackBaseDir, env });
+  const expectedFingerprint = String(expectedDaemonDistClosureFingerprint ?? '').trim().toLowerCase();
+  const observesSourcePreparation = !expectedFingerprint;
+  // Runtime-backed launches bring an immutable expected fingerprint. Source launches instead
+  // correlate the authenticated daemon fingerprint/process incarnation with this runner's
+  // runtime publication, and a true restart must retire the captured incumbent incarnation.
+  const sourceLaunchAdmission =
+    observesSourcePreparation && sourceDaemonLaunchAttempt && typeof sourceDaemonLaunchAttempt === 'object'
+      ? {
+          ownerPid: Number(sourceDaemonLaunchAttempt.ownerPid),
+          ownerStartedAt: normalizeStackRuntimeOwnerStartedAt(sourceDaemonLaunchAttempt.ownerStartedAt),
+          incumbentDaemonPid: Number(sourceDaemonLaunchAttempt.incumbentDaemonPid),
+          incumbentDaemonProcessInstanceFingerprint:
+            String(sourceDaemonLaunchAttempt.incumbentDaemonProcessInstanceFingerprint ?? '').trim(),
+        }
+      : null;
+  let lastObservation = null;
+  while (true) {
+    if (typeof isRunnerAlive === 'function' && !isRunnerAlive()) {
+      throw new Error(`[stack] ${stackName}: runner exited before requested daemon readiness was published.`);
+    }
+
+    const now = Date.now();
+    const preparationObservation =
+      observesSourcePreparation
+      && !preparationCompleted
+      && await isDaemonPreparationActiveImpl({ env });
+    const preparationActive = typeof preparationObservation === 'object'
+      ? preparationObservation?.active === true
+      : preparationObservation === true;
+    const observedPreparationOwnerId = typeof preparationObservation === 'object'
+      ? String(preparationObservation?.ownerId ?? '').trim() || null
+      : null;
+    if (preparationActive) {
+      preparationObserved = true;
+      preparationOverallStartedAt ??= now;
+      if (preparationOwnerStartedAt === null || observedPreparationOwnerId !== preparationOwnerId) {
+        preparationOwnerStartedAt = now;
+        preparationOwnerId = observedPreparationOwnerId;
+      }
+      const ownerExpired = now - preparationOwnerStartedAt >= daemonPreparationTimeoutMs;
+      // The canonical lock timeout bounds acquisition, not the acquired build callback. Permit
+      // an observed incumbent plus the startup's successor build, while retaining one finite
+      // acquisition-plus-build ceiling even if unrelated owners continue handing off the lock.
+      const overallExpired =
+        now - preparationOverallStartedAt >= daemonPreparationTimeoutMs * 2;
+      if (ownerExpired || overallExpired) {
+        throw new Error(
+          `[stack] ${stackName}: CLI preparation did not complete before timeout ` +
+            `(${JSON.stringify(lastObservation)}).`,
+        );
+      }
+    } else if (preparationObserved && !preparationCompleted) {
+      preparationCompleted = true;
+      daemonReadyStartedAt = now;
+    } else if (now - daemonReadyStartedAt >= readyTimeoutMs) {
+      break;
+    }
+
+    const remainingMs = Math.max(
+      100,
+      preparationActive
+        ? Math.min(
+          daemonPreparationTimeoutMs - (now - preparationOwnerStartedAt),
+          daemonPreparationTimeoutMs * 2 - (now - preparationOverallStartedAt),
+        )
+        : readyTimeoutMs - (now - daemonReadyStartedAt),
+    );
+    const daemonState = await checkDaemonStateImpl(cliHomeDir, {
+      serverUrl: internalServerUrl,
+      env,
+      stackName,
+      pingTimeoutMs: Math.min(1_000, remainingMs),
+    });
+    const runtimeState = await readStackRuntimeStateFile(runtimeStatePath);
+    const daemonPid = Number(daemonState?.pid);
+    const runtimeDaemonPid = Number(runtimeState?.processes?.daemonPid);
+    const observedFingerprint = String(daemonState?.distClosureFingerprint ?? '').trim().toLowerCase();
+    const observedProcessInstanceFingerprint =
+      String(daemonState?.processInstanceFingerprint ?? '').trim();
+    const runtimeDaemonProcessInstanceFingerprint =
+      getStackRuntimeProcessInstanceFingerprint(runtimeState, 'daemonPid', runtimeDaemonPid)
+      ?? getStackRuntimeProcessInstanceFingerprint(runtimeState, 'daemonPids', runtimeDaemonPid);
+    const runtimeDaemonDistClosureFingerprint =
+      String(runtimeState?.daemon?.distClosureFingerprint ?? '').trim().toLowerCase();
+    const runtimeOwnerPid = Number(runtimeState?.ownerPid);
+    const runtimeOwnerStartedAt = normalizeStackRuntimeOwnerStartedAt(runtimeState?.startedAt);
+    const sourceOwnerStartedAtMs = Date.parse(String(sourceLaunchAdmission?.ownerStartedAt ?? ''));
+    const runtimeOwnerStartedAtMs = Date.parse(String(runtimeOwnerStartedAt ?? ''));
+    const incumbentStillObserved = sourceLaunchAdmission
+      ? sourceLaunchAdmission.incumbentDaemonProcessInstanceFingerprint
+        ? runtimeDaemonProcessInstanceFingerprint ===
+          sourceLaunchAdmission.incumbentDaemonProcessInstanceFingerprint
+        : Number.isFinite(sourceLaunchAdmission.incumbentDaemonPid)
+          && sourceLaunchAdmission.incumbentDaemonPid > 1
+          && daemonPid === sourceLaunchAdmission.incumbentDaemonPid
+      : false;
+    const sourceLaunchAuthenticated = !sourceLaunchAdmission || (
+      Number.isFinite(sourceLaunchAdmission.ownerPid)
+      && sourceLaunchAdmission.ownerPid > 1
+      && runtimeOwnerPid === sourceLaunchAdmission.ownerPid
+      && Number.isFinite(sourceOwnerStartedAtMs)
+      && Number.isFinite(runtimeOwnerStartedAtMs)
+      && runtimeOwnerStartedAtMs >= sourceOwnerStartedAtMs
+      && Boolean(runtimeDaemonProcessInstanceFingerprint)
+      && (
+        !observedProcessInstanceFingerprint
+        || observedProcessInstanceFingerprint === runtimeDaemonProcessInstanceFingerprint
+      )
+      && Boolean(observedFingerprint)
+      && runtimeDaemonDistClosureFingerprint === observedFingerprint
+      && !incumbentStillObserved
+    );
+    lastObservation = {
+      status: daemonState?.status ?? null,
+      daemonPid: Number.isFinite(daemonPid) ? daemonPid : null,
+      runtimeDaemonPid: Number.isFinite(runtimeDaemonPid) ? runtimeDaemonPid : null,
+      distClosureFingerprint: observedFingerprint || null,
+      runtimeDistClosureFingerprint: runtimeDaemonDistClosureFingerprint || null,
+      processInstanceFingerprint: observedProcessInstanceFingerprint || null,
+      runtimeProcessInstanceFingerprint: runtimeDaemonProcessInstanceFingerprint || null,
+      runtimeOwnerPid: Number.isFinite(runtimeOwnerPid) ? runtimeOwnerPid : null,
+      runtimeOwnerStartedAt,
+      incumbentStillObserved,
+    };
+    if (
+      daemonState?.status === 'running'
+      && daemonPid > 1
+      && runtimeDaemonPid === daemonPid
+      && (!expectedFingerprint || observedFingerprint === expectedFingerprint)
+      && sourceLaunchAuthenticated
+    ) {
+      return;
+    }
+    await delay(Math.min(250, remainingMs));
+  }
+
+  throw new Error(
+    `[stack] ${stackName}: server became healthy but requested daemon readiness was not authenticated ` +
+      `and published before timeout (${JSON.stringify(lastObservation)}).`,
+  );
+}
+
+function createSourceDaemonLaunchAttempt({
+  runtimeSnapshotId = null,
+  startedRuntime = null,
+  incumbentRuntime = null,
+  requireDaemonReplacement = false,
+} = {}) {
+  if (String(runtimeSnapshotId ?? '').trim()) return null;
+  const ownerPid = Number(startedRuntime?.ownerPid);
+  const incumbentDaemonPid = requireDaemonReplacement
+    ? Number(incumbentRuntime?.processes?.daemonPid)
+    : null;
+  return {
+    ownerPid,
+    ownerStartedAt: normalizeStackRuntimeOwnerStartedAt(startedRuntime?.startedAt),
+    incumbentDaemonPid: Number.isFinite(incumbentDaemonPid) && incumbentDaemonPid > 1
+      ? incumbentDaemonPid
+      : null,
+    incumbentDaemonProcessInstanceFingerprint:
+      requireDaemonReplacement
+        ? (
+            getStackRuntimeProcessInstanceFingerprint(
+              incumbentRuntime,
+              'daemonPid',
+              incumbentDaemonPid,
+            )
+            ?? getStackRuntimeProcessInstanceFingerprint(
+              incumbentRuntime,
+              'daemonPids',
+              incumbentDaemonPid,
+            )
+          )
+        : null,
+  };
+}
 
 export function hasRecordedRuntimePortsForRestart(runtimeState = null) {
   const ports = runtimeState?.ports && typeof runtimeState.ports === 'object' ? runtimeState.ports : null;
@@ -41,6 +295,76 @@ export function hasRecordedRuntimePortsForRestart(runtimeState = null) {
 
 export function shouldReuseRuntimePortsOnRestart({ wantsRestart = false, runtimeState = null, wasRunning = false } = {}) {
   return Boolean(wantsRestart && (wasRunning || hasRecordedRuntimePortsForRestart(runtimeState)));
+}
+
+export function resolveRequestedStackServeUi({ args = [], env = {} } = {}) {
+  return !args.includes('--no-ui') && String(env.HAPPIER_STACK_SERVE_UI ?? '1').trim() !== '0';
+}
+
+function resolveBackgroundReadinessServerUrl({
+  scriptPath,
+  args = [],
+  env = {},
+  localServerUrl,
+} = {}) {
+  if (scriptPath !== 'dev.mjs') return localServerUrl;
+  const { flags, kv } = parseArgs(args);
+  return resolveDevServerConnection({
+    flags,
+    kv,
+    env,
+    resolvedLocalUrls: {
+      internalServerUrl: localServerUrl,
+      publicServerUrl: localServerUrl,
+      defaultPublicUrl: localServerUrl,
+    },
+  }).internalServerUrl;
+}
+
+export function createOuterStackRuntimeStartPublication({
+  stackName,
+  scriptPath,
+  ephemeral,
+  ownerPid,
+  ports,
+  runtimeSnapshotId,
+  args = [],
+  env = {},
+  logs,
+} = {}) {
+  return {
+    stackName,
+    script: scriptPath,
+    ephemeral: Boolean(ephemeral),
+    ownerPid,
+    ports,
+    runtimeSnapshotId,
+    serveUi: resolveRequestedStackServeUi({ args, env }),
+    ...(logs ? { logs } : {}),
+  };
+}
+
+export async function terminateSpawnedRunnerForBootFailure(
+  child,
+  {
+    runtimeStatePath,
+    expectedRuntimeState = null,
+    preserveRuntimeState = false,
+    killProcessTreeImpl = killProcessTree,
+    deleteStackRuntimeStateIfOwnedByImpl = deleteStackRuntimeStateIfOwnedBy,
+  } = {},
+) {
+  const termination = await killProcessTreeImpl(child, 'SIGTERM');
+  if (
+    termination?.ok === true
+    && !preserveRuntimeState
+    && runtimeStatePath
+    && child?.pid
+    && Number(expectedRuntimeState?.ownerPid) === Number(child.pid)
+  ) {
+    await deleteStackRuntimeStateIfOwnedByImpl(runtimeStatePath, expectedRuntimeState);
+  }
+  return termination;
 }
 
 function isMobileRequestedForDevScript({ args = [], env = process.env } = {}) {
@@ -64,48 +388,59 @@ export async function inspectExistingStartLikeRuntime({
   const existingExpoPid = Number(runtimeState?.processes?.expoPid);
   const existingForwarderPid = Number(runtimeState?.processes?.expoTailscaleForwarderPid);
   const existingServerPort = Number(runtimeState?.ports?.server);
-  const existingExpoPort = Number(runtimeState?.expo?.port ?? runtimeState?.expo?.webPort ?? runtimeState?.expo?.mobilePort);
 
   const wantsUi = scriptPath === 'dev.mjs' && !args.includes('--no-ui');
   const wantsMobile = scriptPath === 'dev.mjs' && isMobileRequestedForDevScript({ args, env });
+  const runtimeProcessTrustContext = { stackName, envPath };
 
-  const ownerRunning = Number.isFinite(existingOwnerPid) && existingOwnerPid > 1 ? isPidAlive(existingOwnerPid) : false;
-  const serverPidRunning = Number.isFinite(existingServerPid) && existingServerPid > 1 ? isPidAlive(existingServerPid) : false;
-  const expoPidRunning = Number.isFinite(existingExpoPid) && existingExpoPid > 1 ? isPidAlive(existingExpoPid) : false;
+  const ownerRunning = await isStackRuntimeProcessTrusted(
+    existingOwnerPid,
+    { ...runtimeProcessTrustContext, key: 'ownerPid' },
+  );
+  const serverPidRunning = await isStackRuntimeProcessTrusted(
+    existingServerPid,
+    { ...runtimeProcessTrustContext, key: 'serverPid' },
+  );
+  const expoPidRunning = await isStackRuntimeProcessTrusted(
+    existingExpoPid,
+    { ...runtimeProcessTrustContext, key: 'expoPid' },
+  );
   const forwarderRunning =
-    Number.isFinite(existingForwarderPid) && existingForwarderPid > 1 ? isPidAlive(existingForwarderPid) : false;
-  const serverPortListening =
+    await isStackRuntimeProcessTrusted(
+      existingForwarderPid,
+      { ...runtimeProcessTrustContext, key: 'expoTailscaleForwarderPid' },
+    );
+  const serverEndpoint = await resolveVerifiedStackServerEndpoint({ port: existingServerPort });
+  const serverRunning =
     Number.isFinite(existingServerPort) && existingServerPort > 0
-      ? !(await isTcpPortFree(existingServerPort, { host: '127.0.0.1' }).catch(() => true))
-      : false;
-  const serverRunning = serverPortListening || serverPidRunning;
+      ? serverEndpoint.running
+      : serverPidRunning;
 
   let uiRunning = false;
   let uiPort = null;
   if (wantsUi || wantsMobile) {
-    const base = String(baseDir ?? '').trim();
-    if (base) {
-      const res = await findRunningExpoStateInRoot({
-        expoDevRoot: join(base, 'expo-dev'),
-        requireWeb: wantsUi,
-        expectedProjectDir: expectedUiDir,
-      });
-      const p = Number(res?.state?.port);
-      if (res && Number.isFinite(p) && p > 0) {
-        uiRunning = true;
-        uiPort = p;
-      }
-    } else if (Number.isFinite(existingExpoPort) && existingExpoPort > 0) {
-      uiRunning = await looksLikeExpoMetro({ port: existingExpoPort, timeoutMs: 900 });
-      uiPort = uiRunning ? existingExpoPort : null;
-    }
+    const uiEndpoint = await resolveVerifiedStackUiEndpoint({
+      stackName,
+      baseDir,
+      runtimeState,
+      expectedProjectDir: expectedUiDir,
+      serverPort: existingServerPort,
+      serverRunning,
+      serveUiWanted: wantsUi,
+      acceptExpoState: wantsUi || wantsMobile,
+      requireWeb: wantsUi,
+      runtimeBackedStart: Boolean(String(runtimeState?.runtimeSnapshotId ?? '').trim()),
+    });
+    uiRunning = uiEndpoint.running;
+    uiPort = uiEndpoint.port;
   }
 
   const wasRunning = ownerRunning || serverRunning || uiRunning || serverPidRunning || expoPidRunning || forwarderRunning;
+  const nonDevReadyOrOwned = ownerRunning || serverRunning || serverPidRunning;
   const canShortCircuit =
     scriptPath === 'dev.mjs'
       ? serverRunning && (!wantsUi || uiRunning) && (!wantsMobile || uiRunning)
-      : wasRunning;
+      : nonDevReadyOrOwned;
 
   return {
     ownerRunning,
@@ -136,125 +471,23 @@ export function buildAlreadyRunningMobileMetroArgs(args = []) {
   return out;
 }
 
-async function forceStopRecordedPid(pid) {
-  const targetPid = Number(pid);
-  if (!Number.isFinite(targetPid) || targetPid <= 1 || !isPidAlive(targetPid)) {
-    return false;
-  }
-
-  const terminate = (signal) => {
-    try {
-      process.kill(-targetPid, signal);
-      return true;
-    } catch {
-      try {
-        process.kill(targetPid, signal);
-        return true;
-      } catch {
-        return false;
-      }
-    }
-  };
-
-  terminate('SIGTERM');
-  for (let attempt = 0; attempt < 10; attempt += 1) {
-    if (!isPidAlive(targetPid)) {
-      return true;
-    }
-    // eslint-disable-next-line no-await-in-loop
-    await delay(100);
-  }
-
-  terminate('SIGKILL');
-  for (let attempt = 0; attempt < 10; attempt += 1) {
-    if (!isPidAlive(targetPid)) {
-      return true;
-    }
-    // eslint-disable-next-line no-await-in-loop
-    await delay(100);
-  }
-
-  return !isPidAlive(targetPid);
-}
-
-async function collectDaemonStatePids({ cliHomeDir, serverUrl, env }) {
-  const pairs = resolveStackDaemonStatePaths({ cliHomeDir, serverUrl, env }).pairs ?? [];
-  const statePaths = new Set(
-    pairs
-      .map((pair) => String(pair?.statePath ?? '').trim())
-      .filter(Boolean),
-  );
-  try {
-    const serverEntries = await readdir(join(cliHomeDir, 'servers'), { withFileTypes: true });
-    for (const entry of serverEntries) {
-      if (!entry.isDirectory()) continue;
-      statePaths.add(join(cliHomeDir, 'servers', entry.name, 'daemon.state.json'));
-    }
-  } catch {
-    // ignore missing or unreadable server-scoped daemon directories
-  }
-  const pids = [];
-
-  for (const statePath of statePaths) {
-    try {
-      const parsed = JSON.parse(await readFileText(statePath, 'utf8'));
-      const pid = Number(parsed?.pid);
-      if (Number.isFinite(pid) && pid > 1) {
-        pids.push(pid);
-      }
-    } catch {
-      // ignore unreadable or missing daemon state files
-    }
-  }
-
-  return [...new Set(pids)];
-}
-
-async function removeDaemonStateFiles({ cliHomeDir, serverUrl, env }) {
-  const pairs = resolveStackDaemonStatePaths({ cliHomeDir, serverUrl, env }).pairs ?? [];
-  const statePaths = new Set(
-    pairs
-      .flatMap((pair) => [pair?.statePath, pair?.lockPath])
-      .map((path) => String(path ?? '').trim())
-      .filter(Boolean),
-  );
-  try {
-    const serverEntries = await readdir(join(cliHomeDir, 'servers'), { withFileTypes: true });
-    for (const entry of serverEntries) {
-      if (!entry.isDirectory()) continue;
-      statePaths.add(join(cliHomeDir, 'servers', entry.name, 'daemon.state.json'));
-      statePaths.add(join(cliHomeDir, 'servers', entry.name, 'daemon.state.json.lock'));
-    }
-  } catch {
-    // ignore missing or unreadable server-scoped daemon directories
-  }
-
-  for (const path of statePaths) {
-    // eslint-disable-next-line no-await-in-loop
-    await rm(path, { force: true }).catch(() => {});
-  }
-}
-
-async function cleanupFailedRestartAttempt({
+export async function cleanupFailedRestartAttempt({
   rootDir,
   stackName,
   baseDir,
   env,
   runtimeStatePath,
+  expectedRuntimeState = null,
   wantsJson = false,
 }) {
-  const runtimeStateBeforeCleanup = runtimeStatePath ? await readStackRuntimeStateFile(runtimeStatePath) : null;
-  const forcedRuntimePids = [
-    Number(runtimeStateBeforeCleanup?.ownerPid),
-    ...getStackRuntimeProcessEntries(runtimeStateBeforeCleanup).map(({ pid }) => Number(pid)),
-  ].filter((pid, index, all) => Number.isFinite(pid) && pid > 1 && all.indexOf(pid) === index);
-  const recordedDaemonPid = Number(runtimeStateBeforeCleanup?.processes?.daemonPid);
-  const cliHomeDir = (env.HAPPIER_STACK_CLI_HOME_DIR ?? join(baseDir, 'cli')).toString();
-  const serverPort = coercePort(env.HAPPIER_STACK_SERVER_PORT);
-  const internalServerUrl = serverPort ? `http://127.0.0.1:${serverPort}` : 'http://127.0.0.1:3005';
-
+  const expectedOwnerPid = Number(expectedRuntimeState?.ownerPid);
+  const expectedOwnerStartedAt = normalizeStackRuntimeOwnerStartedAt(expectedRuntimeState?.startedAt);
+  if (!Number.isFinite(expectedOwnerPid) || expectedOwnerPid <= 1 || !expectedOwnerStartedAt) {
+    return { cleaned: false, reason: 'invalid_owner_identity' };
+  }
+  let stopResult = null;
   try {
-    await stopStackWithEnv({
+    stopResult = await stopStackWithEnv({
       rootDir,
       stackName,
       baseDir,
@@ -265,71 +498,54 @@ async function cleanupFailedRestartAttempt({
       sweepOwned: true,
       autoSweep: true,
       preserveDaemon: false,
+      expectedOwnerPid,
+      expectedOwnerStartedAt,
     });
   } catch {
     // Best-effort cleanup; preserve the original restart failure.
   }
-
-  for (const pid of forcedRuntimePids) {
-    if (!isPidAlive(pid)) continue;
-    // eslint-disable-next-line no-await-in-loop
-    await forceStopRecordedPid(pid).catch(() => {});
+  if (stopResult?.stopAuthorization?.authorized !== true) {
+    return {
+      cleaned: false,
+      reason: stopResult?.stopAuthorization?.reason ?? 'stop_authorization_unconfirmed',
+    };
   }
-
-  await stopLocalDaemon({
-    cliBin: join(cliHomeDir, 'bin', 'happier.mjs'),
-    internalServerUrl,
-    cliHomeDir,
-    env,
-    runtimeStatePath,
-  }).catch(() => {});
-
-  const daemonStatePids = await collectDaemonStatePids({
-    cliHomeDir,
-    serverUrl: internalServerUrl,
-    env,
-  }).catch(() => []);
-  for (const daemonPid of daemonStatePids) {
-    // eslint-disable-next-line no-await-in-loop
-    await forceStopRecordedPid(daemonPid).catch(() => {});
+  if (stopResult?.finalization?.finalized === true) {
+    return { cleaned: true, reason: stopResult.finalization.reason ?? 'finalized' };
   }
-
-  const hasLiveDaemonPid = [recordedDaemonPid, ...daemonStatePids].some((daemonPid) => isPidAlive(daemonPid));
-  if (hasLiveDaemonPid) {
-    await cleanupStaleDaemonState(cliHomeDir, { serverUrl: internalServerUrl, env }).catch(() => {});
-  } else {
-    await removeDaemonStateFiles({
-      cliHomeDir,
-      serverUrl: internalServerUrl,
-      env,
-    }).catch(() => {});
-  }
-
-  if (!runtimeStatePath) {
-    return;
-  }
-  const runtimeStateAfterCleanup = await readStackRuntimeStateFile(runtimeStatePath);
-  const hasLiveTrackedProcesses = getStackRuntimeProcessEntries(runtimeStateAfterCleanup).some(({ pid }) => isPidAlive(pid));
-  if (!hasLiveTrackedProcesses) {
-    await deleteStackRuntimeStateFile(runtimeStatePath).catch(() => {});
-  }
+  return { cleaned: false, reason: stopResult?.finalization?.reason ?? 'cleanup_incomplete' };
 }
 
 export async function runStackScriptWithStackEnv({ rootDir, stackName, scriptPath, args, extraEnv = {}, background = false }) {
+  const isStartLikeScript = scriptPath === 'dev.mjs' || scriptPath === 'run.mjs';
+  const isStartLikeJsonDryRun = isStartLikeScript && args.includes('--json');
   await withStackEnv({
     stackName,
     extraEnv,
+    reconcileDaemonRuntimeState: !isStartLikeJsonDryRun,
+    beforeRuntimeReconcile: isStartLikeScript && !isStartLikeJsonDryRun
+      ? async ({ env }) => {
+          await completeInterruptedStackStopBeforeStart({
+            rootDir,
+            stackName,
+            baseDir: resolveStackEnvPath(stackName, env).baseDir,
+            env,
+            json: args.includes('--json'),
+          });
+        }
+      : null,
     fn: async ({ env, envPath, stackEnv, runtimeStatePath, runtimeState }) => {
       const isStartLike = scriptPath === 'dev.mjs' || scriptPath === 'run.mjs';
       const wantsRestart = args.includes('--restart');
       const wantsJson = args.includes('--json');
-      if (isStartLike && background && wantsJson) {
+      if (isStartLikeJsonDryRun) {
         // Dry-run JSON must never allocate ports, write runtime state, or wait for readiness.
         await run(process.execPath, [join(rootDir, 'scripts', scriptPath), ...args], { cwd: rootDir, env });
         return;
       }
       const { baseDir } = resolveStackEnvPath(stackName, env);
       const expectedUiDir = getComponentDir(rootDir, 'happier-ui', env);
+      let restartCleanupExpectedRuntimeState = runtimeState ?? null;
 
       let runtimeLaunchContext = { snapshot: null };
       if (scriptPath === 'run.mjs') {
@@ -372,6 +588,7 @@ export async function runStackScriptWithStackEnv({ rootDir, stackName, scriptPat
                 baseDir,
                 env,
                 runtimeStatePath,
+                expectedRuntimeState: restartCleanupExpectedRuntimeState,
                 wantsJson,
               });
             }
@@ -397,7 +614,6 @@ export async function runStackScriptWithStackEnv({ rootDir, stackName, scriptPat
         // If this is an ephemeral-port stack and it's already running, avoid spawning a second copy.
         const existingOwnerPid = Number(runtimeState?.ownerPid);
         const existingPort = Number(runtimeState?.ports?.server);
-        const existingUiPort = Number(runtimeState?.expo?.webPort);
         const existingPorts = runtimeState?.ports && typeof runtimeState.ports === 'object' ? runtimeState.ports : null;
         const existingRuntimeStatus = await inspectExistingStartLikeRuntime({
           stackName,
@@ -415,75 +631,100 @@ export async function runStackScriptWithStackEnv({ rootDir, stackName, scriptPat
         const isTrueRestart = shouldReuseRuntimePortsOnRestart({ wantsRestart, runtimeState, wasRunning });
 
         // Restart semantics (stack mode):
-        // - Stop stack-owned processes first (runner, daemon, Expo, etc.)
+        // - Preflight source-backed server rebuilds before stopping the old stack.
+        // - Stop stack-owned processes after preflight (runner, daemon, Expo, etc.)
         // - Never kill arbitrary port listeners
         // - Preserve previous runtime ports in memory so a true restart can reuse them
         if (wantsRestart && !wantsJson) {
-          try {
-            await stopStackWithEnv({
-              rootDir,
-              stackName,
-              baseDir,
+          if (scriptPath === 'dev.mjs') {
+            const { flags, kv } = parseArgs(args);
+            const serverConnection = resolveDevServerConnection({
+              flags,
+              kv,
               env,
-              json: false,
-              noDocker: false,
-              aggressive: false,
-              sweepOwned: true,
-              preserveDaemon: true,
+              resolvedLocalUrls: {
+                internalServerUrl: '',
+                publicServerUrl: '',
+                defaultPublicUrl: '',
+              },
             });
-            preservedDaemonForRestart = true;
-          } catch {
-            // ignore (fail-closed below on port checks)
+            if (serverConnection.startServer) {
+              const serverDir = getComponentDir(rootDir, serverComponent, env);
+              await preflightDevServerRestart({
+                serverDir,
+                serverComponentName: serverComponent,
+                serverEnv: env,
+                consoleImpl: console,
+              });
+              env.HAPPIER_STACK_SERVER_RESTART_PREFLIGHT_ALREADY_DONE = '1';
+            }
+          }
+          if (isTrueRestart) {
+            try {
+              await stopStackWithEnv({
+                rootDir,
+                stackName,
+                baseDir,
+                env,
+                json: false,
+                noDocker: false,
+                aggressive: false,
+                sweepOwned: true,
+                preserveDaemon: true,
+              });
+              preservedDaemonForRestart = true;
+            } catch {
+              // ignore (fail-closed below on port checks)
+            }
           }
         }
         if (existingRuntimeStatus.canShortCircuit) {
           if (!wantsRestart) {
-          const serverPart = Number.isFinite(existingPort) && existingPort > 0 ? ` server=${existingPort}` : '';
-          const uiPart =
-            scriptPath === 'dev.mjs' && Number.isFinite(existingRuntimeStatus.uiPort) && existingRuntimeStatus.uiPort > 0
-              ? ` ui=${existingRuntimeStatus.uiPort}`
-              : scriptPath === 'dev.mjs' && Number.isFinite(existingUiPort) && existingUiPort > 0
-              ? ` ui=${existingUiPort}`
-              : '';
-          console.log(`[stack] ${stackName}: already running (pid=${existingOwnerPid}${serverPart}${uiPart})`);
+            const verifiedUiPort = Number(existingRuntimeStatus.uiPort);
+            const serverPart = Number.isFinite(existingPort) && existingPort > 0 ? ` server=${existingPort}` : '';
+            const uiPart =
+              scriptPath === 'dev.mjs' && existingRuntimeStatus.wantsUi && Number.isFinite(verifiedUiPort) && verifiedUiPort > 0
+                ? ` ui=${verifiedUiPort}`
+                : '';
+            console.log(`[stack] ${stackName}: already running (pid=${existingOwnerPid}${serverPart}${uiPart})`);
 
-          const isInteractive = Boolean(process.stdin.isTTY && process.stdout.isTTY);
-          const noBrowser = args.includes('--no-browser') || (env.HAPPIER_STACK_NO_BROWSER ?? '').toString().trim() === '1';
-          const openBrowser = isInteractive && !wantsJson && !noBrowser;
+            const isInteractive = Boolean(process.stdin.isTTY && process.stdout.isTTY);
+            const noBrowser = args.includes('--no-browser') || (env.HAPPIER_STACK_NO_BROWSER ?? '').toString().trim() === '1';
+            const openBrowser = isInteractive && !wantsJson && !noBrowser;
 
-          const host = resolveLocalhostHost({ stackMode: true, stackName });
-          const uiUrl =
-            scriptPath === 'dev.mjs'
-              ? Number.isFinite(existingUiPort) && existingUiPort > 0
-                ? `http://${host}:${existingUiPort}`
-                : null
-              : Number.isFinite(existingPort) && existingPort > 0
-                ? `http://${host}:${existingPort}`
-                : null;
+            const host = resolveLocalhostHost({ stackMode: true, stackName });
+            const uiUrl =
+              scriptPath === 'dev.mjs'
+                ? existingRuntimeStatus.wantsUi && Number.isFinite(verifiedUiPort) && verifiedUiPort > 0
+                  ? `http://${host}:${verifiedUiPort}`
+                  : null
+                : Number.isFinite(existingPort) && existingPort > 0
+                  ? `http://${host}:${existingPort}`
+                  : null;
 
-          if (uiUrl) {
-            const serverUrlForUi = Number.isFinite(existingPort) && existingPort > 0 ? `http://localhost:${existingPort}` : '';
-            const uiOpenUrl = serverUrlForUi ? buildConfigureServerLinks({ webappUrl: uiUrl, serverUrl: serverUrlForUi }).webUrl : uiUrl;
-            console.log(`[stack] ${stackName}: ui: ${uiOpenUrl}`);
-            if (openBrowser) {
-              await openUrlInBrowser(uiOpenUrl);
+            if (uiUrl) {
+              const serverUrlForUi = Number.isFinite(existingPort) && existingPort > 0 ? `http://localhost:${existingPort}` : '';
+              const uiOpenUrl = serverUrlForUi ? buildConfigureServerLinks({ webappUrl: uiUrl, serverUrl: serverUrlForUi }).webUrl : uiUrl;
+              console.log(`[stack] ${stackName}: ui: ${uiOpenUrl}`);
+              if (openBrowser) {
+                await openUrlInBrowser(uiOpenUrl);
+              }
+            } else if (scriptPath === 'dev.mjs' && existingRuntimeStatus.wantsUi) {
+              console.log(`[stack] ${stackName}: ui: unknown (missing expo.webPort in stack.runtime.json)`);
             }
-          } else if (scriptPath === 'dev.mjs') {
-            console.log(`[stack] ${stackName}: ui: unknown (missing expo.webPort in stack.runtime.json)`);
-          }
 
-          // Opt-in: allow starting mobile Metro alongside an already-running stack without restarting the runner.
-          // This is important for workflows like re-running `setup-pr` with --mobile after the stack is already up.
-          const wantsMobile = isMobileRequestedForDevScript({ args, env });
-          if (wantsMobile) {
-            await run(process.execPath, [join(rootDir, 'scripts', 'mobile.mjs'), ...buildAlreadyRunningMobileMetroArgs(args)], {
-              cwd: rootDir,
-              env,
-            });
+            // Opt-in: allow starting mobile Metro alongside an already-running stack without restarting the runner.
+            // This is important for workflows like re-running `setup-pr` with --mobile after the stack is already up.
+            const wantsMobile = isMobileRequestedForDevScript({ args, env });
+            if (wantsMobile) {
+              await run(process.execPath, [join(rootDir, 'scripts', 'mobile.mjs'), ...buildAlreadyRunningMobileMetroArgs(args)], {
+                cwd: rootDir,
+                env,
+              });
+            }
+            return;
           }
-          return;
-        }
-        // Restart: already handled above (stopStackWithEnv is ownership-gated).
+          // Restart: already handled above (stopStackWithEnv is ownership-gated).
         }
 
         // Ephemeral ports: allocate at start time, store only in runtime state (not in stack env).
@@ -599,19 +840,6 @@ export async function runStackScriptWithStackEnv({ rootDir, stackName, scriptPat
                   continue;
                 }
 
-                // Last resort: if we can prove the listener is stack-owned, kill it.
-                // eslint-disable-next-line no-await-in-loop
-                const pids = await listListenPids(p);
-                const stackBaseDir = resolveStackEnvPath(stackName).baseDir;
-                const cliHomeDir = getCliHomeDirFromEnvOrDefault({ stackBaseDir, env });
-                for (const pid of pids) {
-                  // eslint-disable-next-line no-await-in-loop
-                  await killProcessGroupOwnedByStack(pid, { stackName, envPath, cliHomeDir, label: `port:${p}`, json: false });
-                }
-                // eslint-disable-next-line no-await-in-loop
-                if (await isTcpPortFree(p)) {
-                  continue;
-                }
               }
               throw new Error(
                 `[stack] ${stackName}: cannot reuse port ${p} on restart (port is not free).\n` +
@@ -672,8 +900,11 @@ export async function runStackScriptWithStackEnv({ rootDir, stackName, scriptPat
         // We must NOT start the daemon before credentials exist in orchestrated flows (setup-pr/review-pr),
         // because the daemon can enter its own auth flow and become stranded (lock held, no machine registration).
         if (background && scriptPath === 'dev.mjs') {
-          const startUi = !args.includes('--no-ui') && (env.HAPPIER_STACK_SERVE_UI ?? '1').toString().trim() !== '0';
-          const startDaemon = !args.includes('--no-daemon') && (env.HAPPIER_STACK_DAEMON ?? '1').toString().trim() !== '0';
+          const startUi = resolveRequestedStackServeUi({ args, env });
+          const startDaemon = resolveStackDaemonStartRequested({
+            env,
+            noDaemon: args.includes('--no-daemon'),
+          });
           if (startUi && startDaemon) {
             try {
               const stackBaseDir = resolveStackEnvPath(stackName).baseDir;
@@ -693,49 +924,57 @@ export async function runStackScriptWithStackEnv({ rootDir, stackName, scriptPat
         // remain clean while still providing actionable error logs.
         const stackBaseDir = resolveStackEnvPath(stackName).baseDir;
         const logsDir = join(stackBaseDir, 'logs');
-        const logPath = join(logsDir, `${scriptPath.replace(/\.mjs$/, '')}.${Date.now()}.log`);
-        if (background) {
-          await ensureDir(logsDir);
-        }
-
-        let logHandle = null;
-        let outFd = null;
-        if (background) {
-          logHandle = await open(logPath, 'a');
-          outFd = logHandle.fd;
-        }
-
-        // Spawn the runner (long-lived) and record its pid + ports for other stack-scoped commands.
-        const child = spawn(process.execPath, [join(rootDir, 'scripts', scriptPath), ...args], {
-          cwd: rootDir,
-          env: childEnv,
-          stdio: background ? ['ignore', outFd ?? 'ignore', outFd ?? 'ignore'] : 'inherit',
-          shell: false,
-          detached: background && process.platform !== 'win32',
-        });
-        try {
-          await logHandle?.close();
-        } catch {
-          // ignore
-        }
-
-        // Record the chosen ports immediately (before the runner finishes booting), so other stack commands
-        // can resolve the correct endpoints and `--restart` can reliably reuse the same ports.
-        await recordStackRuntimeStart(runtimeStatePath, {
-          stackName,
-          script: scriptPath,
-          ephemeral: true,
-          ownerPid: child.pid,
-          ports,
-          runtimeSnapshotId,
-          ...(background ? { logs: { runner: logPath } } : {}),
-        }).catch(() => {});
+        const launched = await withStackRuntimeStartClaim(
+          runtimeStatePath,
+          { stackName },
+          async ({ recordStart }) => {
+            const logPath = join(logsDir, `${scriptPath.replace(/\.mjs$/, '')}.${Date.now()}.log`);
+            if (background) await ensureDir(logsDir);
+            const logHandle = background ? await open(logPath, 'a') : null;
+            const outFd = logHandle?.fd ?? null;
+            const child = spawn(process.execPath, [join(rootDir, 'scripts', scriptPath), ...args], {
+              cwd: rootDir,
+              env: childEnv,
+              stdio: background ? ['ignore', outFd ?? 'ignore', outFd ?? 'ignore'] : 'inherit',
+              shell: false,
+              detached: background && process.platform !== 'win32',
+            });
+            let startedRuntime = null;
+            try {
+              startedRuntime = await recordStart(createOuterStackRuntimeStartPublication({
+                stackName,
+                scriptPath,
+                ephemeral: true,
+                ownerPid: child.pid,
+                ports,
+                runtimeSnapshotId,
+                args,
+                env: childEnv,
+                logs: background ? { runner: logPath } : null,
+              }));
+            } catch (error) {
+              await terminateSpawnedRunnerForBootFailure(child, { preserveRuntimeState: true })
+                .catch(() => ({ ok: false }));
+              throw error;
+            } finally {
+              await logHandle?.close().catch(() => {});
+            }
+            return { child, logPath, expectedRuntimeState: startedRuntime };
+          },
+        );
+        const { child, logPath, expectedRuntimeState } = launched;
+        restartCleanupExpectedRuntimeState = expectedRuntimeState;
 
         if (background) {
           // Keep stack.runtime.json so stack-scoped stop/restart can manage this runner.
           // This mode is used by higher-level commands that want to run guided auth steps
           // without mixing them into server logs.
-          const internalServerUrl = `http://127.0.0.1:${ports.server}`;
+          const internalServerUrl = resolveBackgroundReadinessServerUrl({
+            scriptPath,
+            args,
+            env: childEnv,
+            localServerUrl: `http://127.0.0.1:${ports.server}`,
+          });
 
           // Fail fast if the runner dies immediately or never exposes HTTP.
           // IMPORTANT: do not treat "some process answered /health" as success unless our runner
@@ -757,9 +996,22 @@ export async function runStackScriptWithStackEnv({ rootDir, stackName, scriptPat
             const readyPromise = (async () => {
               const timeoutMsRaw = (process.env.HAPPIER_STACK_STACK_BACKGROUND_READY_TIMEOUT_MS ?? '180000').toString().trim();
               const timeoutMs = timeoutMsRaw ? Number(timeoutMsRaw) : 180_000;
-              await waitForHttpOk(`${internalServerUrl}/health`, {
-                timeoutMs: Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : 180_000,
-                intervalMs: 300,
+              await waitForBackgroundStackReadiness({
+                stackName,
+                scriptPath,
+                args,
+                env: childEnv,
+                runtimeStatePath,
+                internalServerUrl,
+                expectedDaemonDistClosureFingerprint: runtimeLaunchContext.snapshot?.daemonDistClosureFingerprint ?? null,
+                sourceDaemonLaunchAttempt: createSourceDaemonLaunchAttempt({
+                  runtimeSnapshotId,
+                  startedRuntime: expectedRuntimeState,
+                  incumbentRuntime: runtimeState,
+                  requireDaemonReplacement: isTrueRestart,
+                }),
+                timeoutMs,
+                isRunnerAlive: () => isPidAlive(child.pid),
               });
               return { kind: 'ready' };
             })();
@@ -791,28 +1043,11 @@ export async function runStackScriptWithStackEnv({ rootDir, stackName, scriptPat
             } catch {
               // ignore
             }
-            // Best-effort cleanup on boot failure.
-            try {
-              // We spawned this runner process, so we can safely terminate it without relying
-              // on ownership heuristics (which can be unreliable on some platforms due to `ps` truncation).
-              if (background && process.platform !== 'win32') {
-                try {
-                  process.kill(-child.pid, 'SIGTERM');
-                } catch {
-                  // ignore
-                }
-              }
-              try {
-                child.kill('SIGTERM');
-              } catch {
-                // ignore
-              }
-            } catch {
-              // ignore
-            }
-            if (!preservedDaemonForRestart) {
-              await deleteStackRuntimeStateFile(runtimeStatePath).catch(() => {});
-            }
+            await terminateSpawnedRunnerForBootFailure(child, {
+              runtimeStatePath,
+              expectedRuntimeState,
+              preserveRuntimeState: preservedDaemonForRestart,
+            }).catch(() => ({ ok: false }));
             throw e;
           }
 
@@ -839,20 +1074,17 @@ export async function runStackScriptWithStackEnv({ rootDir, stackName, scriptPat
           });
         } finally {
           const cur = await readStackRuntimeStateFile(runtimeStatePath);
-          if (Number(cur?.ownerPid) === Number(child.pid)) {
+          if (Number(expectedRuntimeState?.ownerPid) === Number(child.pid)) {
             // Only delete runtime state when we're confident no child processes are left behind.
             // If the runner crashes but a child (server/expo/daemon) stays alive, keeping stack.runtime.json
             // allows `hstack stack stop --aggressive` to kill the recorded PIDs safely.
-            const processes = cur?.processes && typeof cur.processes === 'object' ? cur.processes : {};
-            const anyAlive = Object.values(processes)
-              .map((p) => Number(p))
-              .some((pid) => Number.isFinite(pid) && pid > 1 && isPidAlive(pid));
+            const anyAlive = getStackRuntimeProcessEntries(cur).some(({ pid }) => isPidAlive(pid));
             const portRaw = cur?.ports && typeof cur.ports === 'object' ? cur.ports.server : null;
             const port = Number(portRaw);
             const portOccupied = Number.isFinite(port) && port > 0 ? !(await isTcpPortFree(port, { host: '127.0.0.1' }).catch(() => true)) : false;
 
             if (!anyAlive && !portOccupied) {
-              await deleteStackRuntimeStateFile(runtimeStatePath);
+              await deleteStackRuntimeStateIfOwnedBy(runtimeStatePath, expectedRuntimeState);
             } else if (!wantsJson) {
               console.warn(
                 `[stack] ${stackName}: preserving ${runtimeStatePath} after runner exit (child processes still alive). ` +
@@ -879,36 +1111,51 @@ export async function runStackScriptWithStackEnv({ rootDir, stackName, scriptPat
 
         const stackBaseDir = resolveStackEnvPath(stackName).baseDir;
         const logsDir = join(stackBaseDir, 'logs');
-        const logPath = join(logsDir, `${scriptPath.replace(/\.mjs$/, '')}.${Date.now()}.log`);
-        await ensureDir(logsDir);
+        const { child, logPath, expectedRuntimeState } = await withStackRuntimeStartClaim(
+          runtimeStatePath,
+          { stackName },
+          async ({ recordStart }) => {
+            const logPath = join(logsDir, `${scriptPath.replace(/\.mjs$/, '')}.${Date.now()}.log`);
+            await ensureDir(logsDir);
+            const logHandle = await open(logPath, 'a');
+            const child = spawn(process.execPath, [join(rootDir, 'scripts', scriptPath), ...args], {
+              cwd: rootDir,
+              env,
+              stdio: ['ignore', logHandle.fd, logHandle.fd],
+              shell: false,
+              detached: process.platform !== 'win32',
+            });
+            let startedRuntime = null;
+            try {
+              startedRuntime = await recordStart(createOuterStackRuntimeStartPublication({
+                stackName,
+                scriptPath,
+                ephemeral: false,
+                ownerPid: child.pid,
+                ports: { server: pinnedPort },
+                runtimeSnapshotId,
+                args,
+                env,
+                logs: { runner: logPath },
+              }));
+            } catch (error) {
+              await terminateSpawnedRunnerForBootFailure(child, { preserveRuntimeState: true })
+                .catch(() => ({ ok: false }));
+              throw error;
+            } finally {
+              await logHandle.close().catch(() => {});
+            }
+            return { child, logPath, expectedRuntimeState: startedRuntime };
+          },
+        );
+        restartCleanupExpectedRuntimeState = expectedRuntimeState;
 
-        const logHandle = await open(logPath, 'a');
-        const outFd = logHandle.fd;
-
-        const child = spawn(process.execPath, [join(rootDir, 'scripts', scriptPath), ...args], {
-          cwd: rootDir,
+        const internalServerUrl = resolveBackgroundReadinessServerUrl({
+          scriptPath,
+          args,
           env,
-          stdio: ['ignore', outFd ?? 'ignore', outFd ?? 'ignore'],
-          shell: false,
-          detached: process.platform !== 'win32',
+          localServerUrl: `http://127.0.0.1:${pinnedPort}`,
         });
-        try {
-          await logHandle?.close();
-        } catch {
-          // ignore
-        }
-
-        await recordStackRuntimeStart(runtimeStatePath, {
-          stackName,
-          script: scriptPath,
-          ephemeral: false,
-          ownerPid: child.pid,
-          ports: { server: pinnedPort },
-          runtimeSnapshotId,
-          logs: { runner: logPath },
-        }).catch(() => {});
-
-        const internalServerUrl = `http://127.0.0.1:${pinnedPort}`;
         try {
           let exited = null;
           const exitPromise = new Promise((resolvePromise) => {
@@ -924,9 +1171,22 @@ export async function runStackScriptWithStackEnv({ rootDir, stackName, scriptPat
           const readyPromise = (async () => {
             const timeoutMsRaw = (process.env.HAPPIER_STACK_STACK_BACKGROUND_READY_TIMEOUT_MS ?? '180000').toString().trim();
             const timeoutMs = timeoutMsRaw ? Number(timeoutMsRaw) : 180_000;
-            await waitForHttpOk(`${internalServerUrl}/health`, {
-              timeoutMs: Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : 180_000,
-              intervalMs: 300,
+            await waitForBackgroundStackReadiness({
+              stackName,
+              scriptPath,
+              args,
+              env,
+              runtimeStatePath,
+              internalServerUrl,
+              expectedDaemonDistClosureFingerprint: runtimeLaunchContext.snapshot?.daemonDistClosureFingerprint ?? null,
+              sourceDaemonLaunchAttempt: createSourceDaemonLaunchAttempt({
+                runtimeSnapshotId,
+                startedRuntime: expectedRuntimeState,
+                incumbentRuntime: runtimeState,
+                requireDaemonReplacement: isTrueRestart,
+              }),
+              timeoutMs,
+              isRunnerAlive: () => isPidAlive(child.pid),
             });
             return { kind: 'ready' };
           })();
@@ -954,25 +1214,11 @@ export async function runStackScriptWithStackEnv({ rootDir, stackName, scriptPat
           } catch {
             // ignore
           }
-          try {
-            if (process.platform !== 'win32') {
-              try {
-                process.kill(-child.pid, 'SIGTERM');
-              } catch {
-                // ignore
-              }
-            }
-            try {
-              child.kill('SIGTERM');
-            } catch {
-              // ignore
-            }
-          } catch {
-            // ignore
-          }
-          if (!preservedDaemonForRestart) {
-            await deleteStackRuntimeStateFile(runtimeStatePath).catch(() => {});
-          }
+          await terminateSpawnedRunnerForBootFailure(child, {
+            runtimeStatePath,
+            expectedRuntimeState,
+            preserveRuntimeState: preservedDaemonForRestart,
+          }).catch(() => ({ ok: false }));
           throw e;
         }
 
@@ -986,23 +1232,13 @@ export async function runStackScriptWithStackEnv({ rootDir, stackName, scriptPat
         }
         return;
         }
-        if (wantsRestart && !wantsJson) {
+        if (isTrueRestart && !wantsJson) {
         const pinnedPort = coercePort(env.HAPPIER_STACK_SERVER_PORT);
         if (pinnedPort && !(await isTcpPortFree(pinnedPort))) {
-          // Last resort: kill listener only if it is stack-owned.
-          const pids = await listListenPids(pinnedPort);
-          const stackBaseDir = resolveStackEnvPath(stackName).baseDir;
-          const cliHomeDir = getCliHomeDirFromEnvOrDefault({ stackBaseDir, env });
-          for (const pid of pids) {
-            // eslint-disable-next-line no-await-in-loop
-            await killProcessGroupOwnedByStack(pid, { stackName, envPath, cliHomeDir, label: `port:${pinnedPort}`, json: false });
-          }
-          if (!(await isTcpPortFree(pinnedPort))) {
-            throw new Error(
-              `[stack] ${stackName}: server port ${pinnedPort} is not free on restart.\n` +
-                `[stack] Refusing to kill unknown listeners. Stop the process using it, or change the pinned port.`
-            );
-          }
+          throw new Error(
+            `[stack] ${stackName}: server port ${pinnedPort} is not free on restart.\n` +
+              `[stack] Refusing to kill listeners selected by port. Stop the process using it, or change the pinned port.`
+          );
         }
         }
         await run(process.execPath, [join(rootDir, 'scripts', scriptPath), ...args], { cwd: rootDir, env });
@@ -1014,6 +1250,7 @@ export async function runStackScriptWithStackEnv({ rootDir, stackName, scriptPat
             baseDir,
             env,
             runtimeStatePath,
+            expectedRuntimeState: restartCleanupExpectedRuntimeState,
             wantsJson,
           });
         }

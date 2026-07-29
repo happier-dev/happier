@@ -1,7 +1,12 @@
 import './utils/env/env.mjs';
 import { parseArgs } from './utils/cli/args.mjs';
-import { getComponentDir, getDefaultAutostartPaths, getRootDir } from './utils/paths/paths.mjs';
-import { ensureDepsInstalled, pmExecBin, requireDir } from './utils/proc/pm.mjs';
+import { getComponentDir, getDefaultAutostartPaths, getRootDir, resolveStackBaseDir } from './utils/paths/paths.mjs';
+import {
+  ensureDepsInstalled,
+  ensureWorkspacePackagesBuiltForComponent,
+  pmExecBin,
+  requireDir,
+} from './utils/proc/pm.mjs';
 import { resolveServerPortFromEnv } from './utils/server/urls.mjs';
 import { dirname, join } from 'node:path';
 import { readFile, rm, mkdir, writeFile } from 'node:fs/promises';
@@ -16,7 +21,9 @@ import { pathExists } from './utils/fs/fs.mjs';
 import { buildStackTauriExportEnv, buildStackWebExportEnv } from './utils/ui/ui_export_env.mjs';
 import { parseBuildSelection } from './build/build_targets.mjs';
 import { shouldBuildStackArtifacts } from './build/build_mode.mjs';
-import { buildStackArtifacts } from './build/build_stack_artifacts.mjs';
+import { acquireRuntimeBuildLock } from './build/runtime_build_lock.mjs';
+import { resolveStackRuntimePaths } from './runtime/shared/runtime_paths.mjs';
+import { refreshLocalBundledWorkspacePackages } from '../bin/localBundledWorkspacePreflight.mjs';
 
 async function prepareTauriSidecarForBuild({ env }) {
   const moduleUrl = new URL('../../ui/scripts/prepareTauriSidecar.mjs', import.meta.url);
@@ -72,17 +79,29 @@ async function main() {
   const selection = parseBuildSelection({ argv });
   const wantsArtifactBuild = shouldBuildStackArtifacts({ selection, argv, env: process.env });
   if (wantsArtifactBuild) {
-    const result = await buildStackArtifacts({ rootDir, argv, env: process.env });
-    if (json) {
-      printResult({ json, data: result });
-    } else {
-      console.log(`[build] stack artifacts ready for ${result.stackName}`);
-      for (const [component, artifact] of Object.entries(result.artifacts ?? {})) {
-        console.log(`[build] ${component}: ${artifact.artifactDir}`);
+    const stackName = String(process.env.HAPPIER_STACK_STACK ?? '').trim() || 'main';
+    const { baseDir: stackBaseDir } = resolveStackBaseDir(stackName, process.env);
+    const runtimePaths = resolveStackRuntimePaths({ stackBaseDir });
+    await mkdir(runtimePaths.runtimeDir, { recursive: true });
+    const releaseBuildLock = await acquireRuntimeBuildLock({ lockPath: runtimePaths.lockPath });
+    try {
+      await ensureWorkspacePackagesBuiltForComponent(rootDir, { quiet: true, env: process.env });
+      await refreshLocalBundledWorkspacePackages(rootDir);
+      const { buildStackArtifacts } = await import('./build/build_stack_artifacts.mjs');
+      const result = await buildStackArtifacts({ rootDir, argv, env: process.env });
+      if (json) {
+        printResult({ json, data: result });
+      } else {
+        console.log(`[build] stack artifacts ready for ${result.stackName}`);
+        for (const [component, artifact] of Object.entries(result.artifacts ?? {})) {
+          console.log(`[build] ${component}: ${artifact.artifactDir}`);
+        }
+        if (result.runtime?.snapshotPath) {
+          console.log(`[build] runtime snapshot activated: ${result.runtime.snapshotPath}`);
+        }
       }
-      if (result.runtime?.snapshotPath) {
-        console.log(`[build] runtime snapshot activated: ${result.runtime.snapshotPath}`);
-      }
+    } finally {
+      await releaseBuildLock();
     }
     return;
   }

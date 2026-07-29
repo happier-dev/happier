@@ -42,3 +42,9 @@ test('parseArgs does not let undocumented boolean-style flags swallow following 
     assert.equal(kv.has(flag), false, `${flag} should not consume the following positional`);
   }
 });
+
+test('parseArgs preserves equals characters inside an equals-form value', () => {
+  const databaseUrl = 'postgresql://operator@db.example/happier?sslmode=require';
+  const { kv } = parseArgs([`--database-url=${databaseUrl}`]);
+  assert.equal(kv.get('--database-url'), databaseUrl);
+});

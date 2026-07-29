@@ -1,6 +1,7 @@
 const DEFAULT_MAX_RESTART_ATTEMPTS = 3;
 const DEFAULT_RESTART_BASE_DELAY_MS = 1_000;
 const DEFAULT_RESTART_MAX_DELAY_MS = 30_000;
+const DEFAULT_RESTART_STABILITY_WINDOW_MS = 60_000;
 const MAX_RECENT_OUTPUT_LINES = 80;
 
 const OOM_LINE_REGEX =
@@ -24,8 +25,8 @@ function parseNonNegativeInteger(raw, fallback) {
 function parsePositiveInteger(raw, fallback) {
   const value = String(raw ?? '').trim();
   if (!value) return fallback;
-  const parsed = Number(value);
-  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : fallback;
+  const parsed = Math.floor(Number(value));
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
 export function resolveExpoRestartPolicy({ env = process.env, stackMode = false } = {}) {
@@ -43,12 +44,17 @@ export function resolveExpoRestartPolicy({ env = process.env, stackMode = false 
     env.HAPPIER_STACK_EXPO_RESTART_MAX_DELAY_MS,
     DEFAULT_RESTART_MAX_DELAY_MS
   );
+  const stabilityWindowMs = parsePositiveInteger(
+    env.HAPPIER_STACK_EXPO_RESTART_STABILITY_WINDOW_MS,
+    DEFAULT_RESTART_STABILITY_WINDOW_MS
+  );
 
   return {
     enabled,
     maxAttempts,
     baseDelayMs,
     maxDelayMs: Math.max(baseDelayMs, maxDelayMs),
+    stabilityWindowMs,
   };
 }
 

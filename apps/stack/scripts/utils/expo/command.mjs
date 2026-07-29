@@ -1,6 +1,7 @@
 import { join } from 'node:path';
 
 import { ensureDepsInstalled, ensureWorkspacePackagesBuiltForComponent } from '../proc/pm.mjs';
+import { resolveWorkspaceToolBinDirs } from '../proc/workspace_tool_bins.mjs';
 import { run } from '../proc/proc.mjs';
 import { spawnProc } from '../proc/proc.mjs';
 import { ensureExpoIsolationEnv, getExpoStatePaths, resolveExpoTmpDir, wantsExpoClearCache } from './expo.mjs';
@@ -18,6 +19,7 @@ import {
 const DEFAULT_EXPO_EXPORT_MAX_WORKERS_NONINTERACTIVE = 1;
 
 export async function resolveExpoBin(runnerDir) {
+  await resolveWorkspaceToolBinDirs(runnerDir);
   const workspaceBin = join(runnerDir, 'node_modules', '.bin', 'expo');
   const workspaceCmdBin = `${workspaceBin}.cmd`;
   if (process.platform === 'win32' && (await pathExists(workspaceCmdBin))) return workspaceCmdBin;

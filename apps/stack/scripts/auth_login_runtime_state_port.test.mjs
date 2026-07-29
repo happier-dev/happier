@@ -1,11 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { spawn } from 'node:child_process';
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { createAuthStackFixture, getStackRootFromMeta, hstackBinPath, runNodeCapture } from './testkit/auth_testkit.mjs';
 
-test('hstack auth login --print --json uses stack.runtime.json server port when HAPPIER_STACK_SERVER_PORT is missing', async () => {
+test('hstack auth login --print --json uses stack.runtime.json server port when HAPPIER_STACK_SERVER_PORT is missing', async (t) => {
   const rootDir = getStackRootFromMeta(import.meta.url);
   const fixture = await createAuthStackFixture({
     prefix: 'hstack-auth-runtime-port-',
@@ -17,10 +18,34 @@ test('hstack auth login --print --json uses stack.runtime.json server port when 
     ],
   });
   try {
+    const runtimeServer = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
+      stdio: 'ignore',
+      env: {
+        PATH: process.env.PATH ?? '',
+        HOME: process.env.HOME ?? '',
+        HAPPIER_STACK_STACK: 'dev-auth',
+        HAPPIER_STACK_ENV_FILE: fixture.envPath,
+        HAPPIER_STACK_CLI_HOME_DIR: join(fixture.storageDir, 'dev-auth', 'cli'),
+      },
+    });
+    t.after(() => {
+      try {
+        runtimeServer.kill('SIGKILL');
+      } catch {
+        // ignore
+      }
+    });
+
     const runtimeStatePath = join(fixture.storageDir, 'dev-auth', 'stack.runtime.json');
     await writeFile(
       runtimeStatePath,
-      JSON.stringify({ version: 1, stackName: 'dev-auth', ownerPid: process.pid, ports: { server: 3010 } }) + '\n',
+      JSON.stringify({
+        version: 1,
+        stackName: 'dev-auth',
+        ownerPid: 999_999_999,
+        processes: { serverPid: runtimeServer.pid },
+        ports: { server: 3010 },
+      }) + '\n',
       'utf-8'
     );
 
@@ -44,4 +69,3 @@ test('hstack auth login --print --json uses stack.runtime.json server port when 
     await fixture.cleanup();
   }
 });
-

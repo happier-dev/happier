@@ -141,6 +141,19 @@ test('compiled happier and server binaries execute from isolated cwd', async (t)
     `expected CLI version output, got: ${versionText || '<empty>'}`,
   );
 
+  const cliDaemonHelp = runWithHardTimeout(cliExtract.binaryPath, ['daemon', '--help'], {
+    cwd: '/tmp',
+    encoding: 'utf-8',
+    env: createSmokeCommandEnv({ HAPPIER_NONINTERACTIVE: '1' }),
+    timeout: 20_000,
+  });
+  assert.equal(cliDaemonHelp.status, 0, formatSpawnSyncResult(cliDaemonHelp));
+  assert.equal(didCommandTimeout(cliDaemonHelp), false, formatSpawnSyncResult(cliDaemonHelp));
+  assert.match(
+    `${cliDaemonHelp.stdout || ''}${cliDaemonHelp.stderr || ''}`,
+    /happier daemon.*Daemon management/is,
+  );
+
   if (isLinuxTarget(target)) {
     const buildServer = runWithHardTimeout(
       process.execPath,

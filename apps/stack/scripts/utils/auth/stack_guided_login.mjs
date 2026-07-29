@@ -257,8 +257,14 @@ export async function assertExpoWebappBundlesOrThrow({ rootDir, stackName, webap
       continue;
     }
 
+    // A cold Metro compilation can take longer than a short transport probe. Aborting that
+    // first request can cancel the compilation itself, so let it use the remaining readiness
+    // deadline instead of repeatedly restarting the same work.
+    const bundleRequestTimeoutMs = Math.max(1, deadline - Date.now());
     // eslint-disable-next-line no-await-in-loop
-    const bundleRes = await fetchResponse(`${base}${bundlePath.startsWith('/') ? '' : '/'}${bundlePath}`, { timeoutMs: 8000 });
+    const bundleRes = await fetchResponse(`${base}${bundlePath.startsWith('/') ? '' : '/'}${bundlePath}`, {
+      timeoutMs: bundleRequestTimeoutMs,
+    });
     if (bundleRes.ok && bundleRes.status >= 200 && bundleRes.status < 300) {
       bundleRes.response?.body?.cancel?.().catch?.(() => {});
       return;

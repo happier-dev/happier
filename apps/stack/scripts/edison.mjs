@@ -6,10 +6,10 @@ import { parseEnvToObject } from './utils/env/dotenv.mjs';
 import { pathExists } from './utils/fs/fs.mjs';
 import { readTextOrEmpty } from './utils/fs/ops.mjs';
 import { readJsonIfExists } from './utils/fs/json.mjs';
-import { isPidAlive } from './utils/proc/pids.mjs';
 import { run, runCapture } from './utils/proc/proc.mjs';
 import { preferStackLocalhostHost, resolveLocalhostHost } from './utils/paths/localhost_host.mjs';
 import { sanitizeStackName } from './utils/stack/names.mjs';
+import { resolveTrustedStackRuntimeServerPort } from './utils/stack/runtime_state.mjs';
 import { join } from 'node:path';
 import { spawn } from 'node:child_process';
 import { mkdir, lstat, rename, symlink, writeFile, readdir, chmod } from 'node:fs/promises';
@@ -32,28 +32,6 @@ function cleanHappyStacksEnv(baseEnv) {
 }
 
 const readExistingEnv = readTextOrEmpty;
-
-function inferServerPortFromRuntimeState(runtimeState) {
-  try {
-    const port = runtimeState?.ports?.server;
-    const n = Number(port);
-    return Number.isFinite(n) && n > 0 ? n : null;
-  } catch {
-    return null;
-  }
-}
-
-function isRuntimeStateAlive(runtimeState) {
-  try {
-    const ownerPid = runtimeState?.ownerPid;
-    if (isPidAlive(ownerPid)) return true;
-    // fallback: if ownerPid missing, accept if serverPid is alive
-    const serverPid = runtimeState?.processes?.serverPid;
-    return isPidAlive(serverPid);
-  } catch {
-    return false;
-  }
-}
 
 function isQaValidateCommand(edisonArgs) {
   const args = Array.isArray(edisonArgs) ? edisonArgs : [];
@@ -186,9 +164,8 @@ async function ensureStackServerPortForWebServerValidation({ rootDir, stackName,
   const runtimePath = join(baseDir, 'stack.runtime.json');
 
   const existing = await readJsonIfExists(runtimePath);
-  const existingPort = inferServerPortFromRuntimeState(existing);
-  const existingAlive = existingPort && isRuntimeStateAlive(existing);
-  if (existingPort && existingAlive) {
+  const existingPort = await resolveTrustedStackRuntimeServerPort(existing, { stackName });
+  if (existingPort) {
     env.HAPPIER_STACK_SERVER_PORT = String(existingPort);
     return;
   }
@@ -219,7 +196,7 @@ async function ensureStackServerPortForWebServerValidation({ rootDir, stackName,
   while (Date.now() < deadline) {
     // eslint-disable-next-line no-await-in-loop
     const st = await readJsonIfExists(runtimePath);
-    const port = inferServerPortFromRuntimeState(st);
+    const port = await resolveTrustedStackRuntimeServerPort(st, { stackName });
     if (port) {
       env.HAPPIER_STACK_SERVER_PORT = String(port);
       return;

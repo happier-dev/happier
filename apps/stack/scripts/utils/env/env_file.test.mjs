@@ -1,10 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm, stat, utimes, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, readFile, rm, stat, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { ensureEnvFilePruned, ensureEnvFileUpdated } from './env_file.mjs';
+import { ensureEnvFileMutated, ensureEnvFilePruned, ensureEnvFileUpdated } from './env_file.mjs';
 
 async function withTempRoot(t) {
   const dir = await mkdtemp(join(tmpdir(), 'happy-stacks-env-file-'));
@@ -46,4 +46,19 @@ test('ensureEnvFilePruned removes a key but keeps comments/blank lines', async (
 
   const next = await readFile(envPath, 'utf-8');
   assert.equal(next, '# header\n\nBAZ=qux\n');
+});
+
+test('ensureEnvFileMutated preserves an existing restrictive file mode', async (t) => {
+  const dir = await withTempRoot(t);
+  const envPath = join(dir, 'env');
+
+  await writeFile(envPath, 'STALE=value\n', 'utf-8');
+  await chmod(envPath, 0o600);
+  await ensureEnvFileMutated({
+    envPath,
+    removeKeys: ['STALE'],
+    updates: [{ key: 'SECRET', value: 'replacement' }],
+  });
+
+  assert.equal((await stat(envPath)).mode & 0o777, 0o600);
 });

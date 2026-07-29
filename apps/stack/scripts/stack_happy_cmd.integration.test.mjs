@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
@@ -59,6 +60,28 @@ async function createHappyStackFixture(
     await fixture.writeStackEnv({ port: '' });
   }
 
+  let runtimeServerPidValue = runtimeServerPid;
+  if (runtimeServerPid === 'stack-owned') {
+    const runtimeServer = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
+      stdio: 'ignore',
+      env: {
+        PATH: process.env.PATH ?? '',
+        HOME: process.env.HOME ?? '',
+        HAPPIER_STACK_STACK: stackName,
+        HAPPIER_STACK_ENV_FILE: fixture.envPath,
+        HAPPIER_STACK_CLI_HOME_DIR: fixture.stackCliHome,
+      },
+    });
+    t.after(() => {
+      try {
+        runtimeServer.kill('SIGKILL');
+      } catch {
+        // ignore
+      }
+    });
+    runtimeServerPidValue = runtimeServer.pid;
+  }
+
   if (stackCliSettings) {
     await mkdir(join(fixture.storageDir, stackName, 'cli'), { recursive: true });
     await writeFile(
@@ -78,7 +101,7 @@ async function createHappyStackFixture(
           ephemeral: true,
           ownerPid: runtimeOwnerPid,
           ports: { server: serverPort },
-          processes: { serverPid: runtimeServerPid },
+          processes: { serverPid: runtimeServerPidValue },
         },
         null,
         2
@@ -266,7 +289,7 @@ test('hstack stack happier <name> uses stack.runtime.json ports when env file do
     includePinnedServerPortInEnvFile: false,
     // Simulate a stale owner pid but a still-running server process.
     runtimeOwnerPid: 999999,
-    runtimeServerPid: process.pid,
+    runtimeServerPid: 'stack-owned',
   });
 
   const res = await runNodeCapture([join(rootDir, 'bin', 'hstack.mjs'), 'stack', 'happier', fixture.stackName], {
@@ -408,7 +431,7 @@ test('hstack happier (HAPPIER_STACK_STACK set) uses stack.runtime.json ports whe
     includePinnedServerPortInEnvFile: false,
     // Simulate a stale owner pid but a still-running server process.
     runtimeOwnerPid: 999999,
-    runtimeServerPid: process.pid,
+    runtimeServerPid: 'stack-owned',
   });
 
   const res = await runNodeCapture([join(rootDir, 'bin', 'happier.mjs')], {

@@ -48,6 +48,7 @@ test('env loader overlays explicit stack env over stale inherited stack/server c
           '  serverPort: process.env.HAPPIER_STACK_SERVER_PORT ?? null,',
           '  homeDir: process.env.HAPPIER_HOME_DIR ?? null,',
           '  serverUrl: process.env.HAPPIER_SERVER_URL ?? null,',
+          '  activeServerId: process.env.HAPPIER_ACTIVE_SERVER_ID ?? null,',
           '  webappUrl: process.env.HAPPIER_WEBAPP_URL ?? null,',
           '  tsxTsconfigPath: process.env.TSX_TSCONFIG_PATH ?? null,',
           '}));',
@@ -67,6 +68,7 @@ test('env loader overlays explicit stack env over stale inherited stack/server c
           HAPPIER_STACK_SERVER_PORT: '52753',
           HAPPIER_HOME_DIR: '/stale/home',
           HAPPIER_SERVER_URL: 'http://stale.localhost:9999',
+          HAPPIER_ACTIVE_SERVER_ID: 'stack_stale__id_default',
           HAPPIER_WEBAPP_URL: 'http://stale.localhost:9999',
           TSX_TSCONFIG_PATH: '/stale/launcher/tsconfig.json',
         },
@@ -81,6 +83,7 @@ test('env loader overlays explicit stack env over stale inherited stack/server c
     assert.equal(payload.serverPort, '4901');
     assert.equal(payload.homeDir, null);
     assert.equal(payload.serverUrl, null);
+    assert.equal(payload.activeServerId, 'stack_exp-test__id_default');
     assert.equal(payload.webappUrl, null);
     assert.equal(payload.tsxTsconfigPath, null);
   } finally {

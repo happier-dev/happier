@@ -2,15 +2,16 @@ import { spawnSync } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
 import { homedir } from 'node:os';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { scrubHappierStackEnv, STACK_WRAPPER_PRESERVE_KEYS } from './utils/env/scrub_env.mjs';
 import { applyStackActiveServerScopeEnv } from './utils/auth/stable_scope_id.mjs';
 import { ensureDepsInstalled } from './utils/proc/pm.mjs';
-import { ensureEnvFilePruned, ensureEnvFileUpdated } from './utils/env/env_file.mjs';
+import { ensureEnvFileMutated } from './utils/env/env_file.mjs';
 import { parseEnvToObject } from './utils/env/dotenv.mjs';
-import { resolveLocalServerPortForStack } from './utils/server/resolve_stack_server_port.mjs';
+import { selectLocalServerPortCandidateForStack } from './utils/server/resolve_stack_server_port.mjs';
+import { resolveEffectiveDbProviderTransition } from './utils/server/effective_db_provider.mjs';
 
 function shouldAutoInstallDepsForRepoLocalCommand(cmd) {
   const c = String(cmd ?? '').trim();
@@ -48,6 +49,12 @@ async function maybeAutoInstallRepoDeps({ repoRoot, cmd, env, autoInstallOverrid
   // Test hook: allow validating auto-install behavior without mutating the real repo checkout.
   const preflightRoot = String(preflightRootOverride ?? '').trim() || repoRoot;
   const installEnv = prepareRepoLocalDependencyInstallEnv({ cmd, env });
+
+  // This wrapper owns only clean-checkout bootstrap. Once a dependency tree exists, the
+  // component startup owner performs the canonical freshness check after hstack is running.
+  // Repeating that admission here can hold the CLI publication lock before the TUI or stack
+  // lifecycle has even had an opportunity to preserve/adopt an incumbent runtime.
+  if (existsSync(join(preflightRoot, 'node_modules'))) return;
 
   await ensureDepsInstalled(preflightRoot, 'happier-monorepo', { quiet: false, env: installEnv });
 }
@@ -173,14 +180,9 @@ async function syncRepoLocalEnvFile({ envPath, managedEnv = {}, pruneKeys = [] }
     .map(([k, v]) => ({ key: String(k ?? '').trim(), value: v == null ? '' : String(v) }))
     .filter((u) => u.key && u.value.trim() !== '');
 
-  // Preserve user keys: only upsert a small managed keyset, and prune specific stale managed keys.
-  if (updates.length) {
-    await ensureEnvFileUpdated({ envPath: target, updates });
-  }
   const removeKeys = Array.from(new Set((pruneKeys ?? []).map((k) => String(k ?? '').trim()).filter(Boolean)));
-  if (removeKeys.length) {
-    await ensureEnvFilePruned({ envPath: target, removeKeys });
-  }
+  // Preserve user keys while applying the managed projection atomically.
+  await ensureEnvFileMutated({ envPath: target, updates, removeKeys });
 }
 
 function stacklessIdForRepo({ repoRoot, stacksStorageRoot, createIfMissing }) {
@@ -235,6 +237,27 @@ function expandHomePath(p) {
   if (s === '~') return homedir();
   if (s.startsWith('~/')) return join(homedir(), s.slice(2));
   return s;
+}
+
+function normalizePathForComparison(p) {
+  const expanded = expandHomePath(p);
+  if (!expanded) return '';
+  const normalized = resolve(expanded);
+  return process.platform === 'win32' ? normalized.toLowerCase() : normalized;
+}
+
+function hasForeignStackSelection({ env, stackName, envPath, runtimeStatePath }) {
+  const inheritedStackName = String(env?.HAPPIER_STACK_STACK ?? '').trim();
+  if (inheritedStackName && inheritedStackName !== stackName) return true;
+
+  const expectedPaths = [
+    ['HAPPIER_STACK_ENV_FILE', envPath],
+    ['HAPPIER_STACK_RUNTIME_STATE_PATH', runtimeStatePath],
+  ];
+  return expectedPaths.some(([key, expectedPath]) => {
+    const inheritedPath = normalizePathForComparison(env?.[key]);
+    return inheritedPath && inheritedPath !== normalizePathForComparison(expectedPath);
+  });
 }
 
 function resolveStacksStorageRoot(env) {
@@ -337,6 +360,13 @@ async function main() {
     argv = ['stack', 'stop', stacklessName, ...forwarded];
   }
 
+  // The top-level `hstack daemon` command is intentionally a main-stack alias. Repo-local scripts own an
+  // isolated checkout stack, so route daemon lifecycle commands through the canonical stack command instead.
+  if (subcommand === 'daemon') {
+    const forwarded = argv.slice(1);
+    argv = ['stack', 'daemon', stacklessName, ...forwarded];
+  }
+
   // Convenience:
   // `yarn mobile:install` should install a local iOS build for the repo-local stack without requiring users
   // to know the generated stack name, and should run the full stack install flow (prebuild, identity, etc).
@@ -376,7 +406,15 @@ async function main() {
     ],
   });
 
-  const runtimeModeRaw = String(cleaned.HAPPIER_STACK_RUNTIME_MODE ?? '').trim();
+  const inheritedForeignStackSelection = hasForeignStackSelection({
+    env: cleaned,
+    stackName: stacklessName,
+    envPath: stacklessEnvPath,
+    runtimeStatePath: stacklessRuntimePath,
+  });
+  const runtimeModeRaw = inheritedForeignStackSelection
+    ? ''
+    : String(cleaned.HAPPIER_STACK_RUNTIME_MODE ?? '').trim();
   const env = {
     ...cleaned,
     HAPPIER_STACK_CLI_ROOT_DISABLE: '1',
@@ -391,6 +429,9 @@ async function main() {
           // Default to source mode for repo-local dev flows (ensures `yarn tui:with-tauri` reflects local changes
           // even if the user previously enabled runtime snapshots). Users can override by setting this env var.
           HAPPIER_STACK_RUNTIME_MODE: runtimeModeRaw || 'source',
+          // The repo-local wrapper owns the complete stack identity. Never inherit a runtime-state pointer from
+          // another active stack, or the selected name/env and the state writer can silently diverge.
+          HAPPIER_STACK_RUNTIME_STATE_PATH: stacklessRuntimePath,
           // Make stack-owned processes prove ownership (for stop/cleanup) and enable stack commands like `stack auth`.
           HAPPIER_STACK_ENV_FILE: stacklessEnvPath,
           HAPPIER_STACK_CLI_HOME_DIR: stacklessCliHomeDir,
@@ -441,7 +482,34 @@ async function main() {
       // ignore (best-effort)
     }
 
-	    const serverComponent = (effectiveEnv.HAPPIER_STACK_SERVER_COMPONENT ?? 'happier-server-light').toString().trim() || 'happier-server-light';
+	    const previousServerComponent = (existingStacklessEnv.HAPPIER_STACK_SERVER_COMPONENT ?? 'happier-server-light').toString().trim() || 'happier-server-light';
+	    const serverComponent = (
+	      effectiveEnv.HAPPIER_STACK_SERVER_COMPONENT ??
+	      existingStacklessEnv.HAPPIER_STACK_SERVER_COMPONENT ??
+	      'happier-server-light'
+	    ).toString().trim() || 'happier-server-light';
+	    const dbTransition = resolveEffectiveDbProviderTransition({
+	      previousServerComponentName: previousServerComponent,
+	      nextServerComponentName: serverComponent,
+	      env: existingStacklessEnv,
+	    });
+	    if (!dbTransition.ok) {
+	      if (dbTransition.reason === 'missing_mysql_database_url') {
+	        throw new Error('[repo-local] mysql requires an explicit DATABASE_URL');
+	      }
+	      throw new Error(`[repo-local] invalid DB provider for ${serverComponent}: ${dbTransition.input ?? dbTransition.reason}`);
+	    }
+	    effectiveEnv.HAPPIER_STACK_SERVER_COMPONENT = serverComponent;
+	    effectiveEnv.HAPPIER_DB_PROVIDER = dbTransition.provider;
+	    delete effectiveEnv.HAPPY_DB_PROVIDER;
+	    const persistedDatabaseUrl = String(existingStacklessEnv.DATABASE_URL ?? '').trim();
+	    if (dbTransition.provider === 'mysql') {
+	      effectiveEnv.DATABASE_URL = dbTransition.databaseUrl;
+	    } else if (dbTransition.provider === 'postgres' && !dbTransition.removeDatabaseUrl && persistedDatabaseUrl) {
+	      effectiveEnv.DATABASE_URL = persistedDatabaseUrl;
+	    } else {
+	      delete effectiveEnv.DATABASE_URL;
+	    }
 	    const serverBase = effectiveEnv.HAPPIER_STACK_SERVER_PORT_BASE;
 	    const serverRange = effectiveEnv.HAPPIER_STACK_SERVER_PORT_RANGE;
 	    const expoBase = effectiveEnv.HAPPIER_STACK_EXPO_DEV_PORT_BASE;
@@ -455,7 +523,7 @@ async function main() {
 	      if (runtimeServerPort && isPortWithinRange(runtimeServerPort, serverBase, serverRange)) {
 	        persistedServerPort = runtimeServerPort;
 	      } else {
-	        persistedServerPort = await resolveLocalServerPortForStack({
+		        persistedServerPort = await selectLocalServerPortCandidateForStack({
 	          env: {
 	            ...effectiveEnv,
 	            HAPPIER_STACK_SERVER_PORT_BASE: (effectiveEnv.HAPPIER_STACK_SERVER_PORT_BASE ?? '52005').toString(),
@@ -473,6 +541,9 @@ async function main() {
 	    // If a stale pinned port exists in the stackless env file but it doesn't match the configured stable range,
 	    // prune it so dev/start can pick a stable high port again.
 	    const pruneKeys = [];
+    if (dbTransition.removeDatabaseUrl) {
+      pruneKeys.push('DATABASE_URL');
+    }
     if (
       existingPinnedServerPort &&
       existingPinnedServerPort < 5000 &&
@@ -487,6 +558,8 @@ async function main() {
       HAPPIER_STACK_STACK: stacklessName,
       HAPPIER_STACK_REPO_DIR: repoRoot,
       HAPPIER_STACK_SERVER_COMPONENT: serverComponent,
+      HAPPIER_DB_PROVIDER: dbTransition.provider,
+      ...(dbTransition.provider === 'mysql' ? { DATABASE_URL: dbTransition.databaseUrl } : {}),
       HAPPIER_STACK_CLI_HOME_DIR: stacklessCliHomeDir,
       HAPPIER_STACK_SERVER_PORT_BASE: effectiveEnv.HAPPIER_STACK_SERVER_PORT_BASE,
       HAPPIER_STACK_SERVER_PORT_RANGE: effectiveEnv.HAPPIER_STACK_SERVER_PORT_RANGE,
@@ -534,6 +607,7 @@ async function main() {
             HAPPIER_ACTIVE_SERVER_ID: effectiveEnv.HAPPIER_ACTIVE_SERVER_ID,
             HAPPIER_STACK_INVOKED_CWD: effectiveEnv.HAPPIER_STACK_INVOKED_CWD,
             HAPPIER_STACK_RUNTIME_MODE: effectiveEnv.HAPPIER_STACK_RUNTIME_MODE,
+            HAPPIER_STACK_RUNTIME_STATE_PATH: effectiveEnv.HAPPIER_STACK_RUNTIME_STATE_PATH,
           },
         },
         null,

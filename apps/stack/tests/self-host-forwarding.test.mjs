@@ -23,6 +23,7 @@ function runHstack(repoRoot, args, extraEnv = {}) {
       ...process.env,
       HAPPIER_STACK_CLI_ROOT_DISABLE: '1',
       HAPPIER_STACK_UPDATE_CHECK: '0',
+      HAPPIER_STACK_SYNC_BUNDLED_WORKSPACES: '0',
       ...extraEnv,
     },
     encoding: 'utf8',
@@ -88,3 +89,46 @@ test('hstack self-host forwards to happier relay host when supported', async (t)
   assert.match(log, /"argv":\["relay","host","status","--json"\]/);
 });
 
+test('hstack self-host help renders locally without probing happier relay host', async (t) => {
+  const repoRoot = resolveRepoRoot();
+  const tempRoot = await mkdtemp(join(tmpdir(), 'hstack-self-host-help-local-'));
+  t.after(async () => {
+    // best-effort cleanup; avoid throwing in after hook
+    await import('node:fs/promises').then(({ rm }) => rm(tempRoot, { recursive: true, force: true })).catch(() => {});
+  });
+
+  const logPath = join(tempRoot, 'invocations.jsonl');
+  const stub = await writeHappierStub({ dir: tempRoot, logPath });
+
+  const res = runHstack(repoRoot, ['self-host', '--channel=dev', '-h'], {
+    PATH: `${stub.binDir}:${process.env.PATH ?? ''}`,
+    HAPPIER_STUB_LOG_PATH: logPath,
+  });
+
+  assert.equal(res.status, 0, res.stderr);
+  assert.match(res.stdout, /hstack self-host install/);
+  const log = await readFile(logPath, 'utf8').catch(() => '');
+  assert.equal(log, '');
+});
+
+test('hstack self-host local-only commands do not probe happier relay host', async (t) => {
+  const repoRoot = resolveRepoRoot();
+  const tempRoot = await mkdtemp(join(tmpdir(), 'hstack-self-host-local-command-'));
+  t.after(async () => {
+    // best-effort cleanup; avoid throwing in after hook
+    await import('node:fs/promises').then(({ rm }) => rm(tempRoot, { recursive: true, force: true })).catch(() => {});
+  });
+
+  const logPath = join(tempRoot, 'invocations.jsonl');
+  const stub = await writeHappierStub({ dir: tempRoot, logPath });
+
+  const res = runHstack(repoRoot, ['self-host', 'config', 'view', '--json'], {
+    PATH: `${stub.binDir}:${process.env.PATH ?? ''}`,
+    HAPPIER_STUB_LOG_PATH: logPath,
+  });
+
+  assert.equal(res.status, 0, res.stderr);
+  assert.match(res.stdout, /"ok": true/);
+  const log = await readFile(logPath, 'utf8').catch(() => '');
+  assert.equal(log, '');
+});

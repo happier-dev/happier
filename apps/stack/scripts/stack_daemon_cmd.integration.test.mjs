@@ -11,6 +11,7 @@ import { runNodeCapture as runNode } from './testkit/core/run_node_capture.mjs';
 import { spawnTestProcess } from './testkit/core/spawn_test_process.mjs';
 import { createTempFixture } from './testkit/core/temp_fixture.mjs';
 import { createStackHappierCliCommandFixture } from './testkit/stack_happier_cli_command_testkit.mjs';
+import { recordStackRuntimeStart } from './utils/stack/runtime_state.mjs';
 
 const scriptsDir = dirname(fileURLToPath(import.meta.url));
 const rootDir = dirname(scriptsDir);
@@ -62,9 +63,9 @@ async function writeServerScopedAuth({ cliHomeDir, serverUrl, env = {} }) {
 
 function buildStubHappyCliScript() {
   return `
-import { spawn } from 'node:child_process';
 import { existsSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
+import { killDetachedProcessGroup, spawnDaemonLikeProcess } from ${JSON.stringify(join(rootDir, 'scripts', 'testkit', 'core', 'spawn_daemon_like_process.mjs'))};
 
 const args = process.argv.slice(2);
 const home = process.env.HAPPIER_HOME_DIR || process.env.HAPPIER_STACK_CLI_HOME_DIR;
@@ -74,6 +75,9 @@ if (!home) {
 }
 const log = join(home, 'stub-daemon.log');
 const state = join(home, 'daemon.state.json');
+const activeServerId = String(process.env.HAPPIER_ACTIVE_SERVER_ID || '').trim();
+const serverScopedState = activeServerId ? join(home, 'servers', activeServerId, 'daemon.state.json') : '';
+const statePaths = [state, serverScopedState].filter(Boolean);
 
 function append(line) {
   try { writeFileSync(log, line + '\\n', { flag: 'a' }); } catch {}
@@ -91,10 +95,13 @@ if (sub === 'stop') {
     try {
       const pid = Number(JSON.parse(readFileSync(state, 'utf-8')).pid);
       if (Number.isFinite(pid) && pid > 1) {
-        try { process.kill(pid, 'SIGTERM'); } catch {}
+        killDetachedProcessGroup(pid);
       }
     } catch {}
     try { rmSync(state); } catch {}
+    if (serverScopedState) {
+      try { rmSync(serverScopedState); } catch {}
+    }
   }
   process.exit(0);
 }
@@ -108,9 +115,12 @@ if (sub === 'start') {
   append('direct_peer_advertised_hosts=' + String(process.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_ADVERTISED_HOSTS || ''));
   append('direct_peer_feature_enabled=' + String(process.env.HAPPIER_FEATURE_MACHINES_TRANSFER_DIRECT_PEER__ENABLED || ''));
   append('direct_peer_server_enabled=' + String(process.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_SERVER_ENABLED || ''));
-  const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { detached: true, stdio: 'ignore' });
-  child.unref();
-  writeFileSync(state, JSON.stringify({ pid: child.pid, httpPort: 0, startTime: new Date().toISOString() }) + '\\n', 'utf-8');
+  spawnDaemonLikeProcess({
+    cliHomeDir: home,
+    internalServerUrl: String(process.env.HAPPIER_SERVER_URL || ''),
+    publicServerUrl: String(process.env.HAPPIER_WEBAPP_URL || ''),
+    statePaths,
+  });
   process.exit(0);
 }
 
@@ -232,6 +242,12 @@ test('hstack stack daemon <name> start records daemon pid in stack.runtime.json 
   await fixture.writeStackEnv();
   registerDaemonCleanup(t, { env: fixture.baseEnv, stackName: fixture.stackName });
 
+  const runtimePath = join(fixture.storageDir, fixture.stackName, 'stack.runtime.json');
+  await recordStackRuntimeStart(runtimePath, {
+    stackName: fixture.stackName,
+    ownerPid: process.pid,
+  });
+
   const startRes = await runHstack(['stack', 'daemon', fixture.stackName, 'start', '--json'], { env: fixture.baseEnv });
   assertExitOk(startRes, 'stack daemon start');
 
@@ -241,7 +257,6 @@ test('hstack stack daemon <name> start records daemon pid in stack.runtime.json 
   const pidFromDaemon = Number(state?.pid);
   assert.ok(Number.isFinite(pidFromDaemon) && pidFromDaemon > 1, `expected pid in daemon.state.json, got ${pidFromDaemon}`);
 
-  const runtimePath = join(fixture.storageDir, fixture.stackName, 'stack.runtime.json');
   assert.equal(existsSync(runtimePath), true, 'expected stack.runtime.json to exist after daemon start');
   const runtime = JSON.parse(await readFile(runtimePath, 'utf-8'));
   const pidFromRuntime = Number(runtime?.processes?.daemonPid);
@@ -427,6 +442,31 @@ test('hstack stack daemon <name> status does not include global process inventor
   );
 });
 
+test('hstack stack daemon <name> status diagnoses a source stack even when caller requires runtime snapshots', async (t) => {
+  const fixture = await createDaemonFixture(t, {
+    prefix: 'happy-stacks-daemon-status-source-runtime-',
+    stackName: 'exp-test',
+    serverPort: 4101,
+  });
+
+  await writeDummyAuth({ cliHomeDir: fixture.stackCliHome });
+  await fixture.writeStackEnv();
+  registerDaemonCleanup(t, { env: fixture.baseEnv, stackName: fixture.stackName });
+
+  const statusRes = await runHstack(['stack', 'daemon', fixture.stackName, 'status', '--json'], {
+    env: {
+      ...fixture.baseEnv,
+      HAPPIER_STACK_RUNTIME_MODE: 'require',
+    },
+  });
+  assertExitOk(statusRes, 'stack daemon status with source stack and caller-required runtime');
+
+  const parsed = JSON.parse(statusRes.stdout.trim());
+  assert.equal(parsed.ok, true);
+  assert.equal(parsed.action, 'status');
+  assert.match(String(parsed.status ?? ''), /daemon: stopped/i);
+});
+
 test('hstack stack daemon <name> status falls back when cli dist entrypoint is missing', async (t) => {
   const fixture = await createDaemonFixture(t, {
     prefix: 'happy-stacks-daemon-status-fallback-',
@@ -509,7 +549,15 @@ test('hstack stack daemon <name> start uses runtime server port when env port is
   await fixture.writeStackEnv({ port: '' });
 
   // Create a runtime state file that indicates the stack server is running on fixture.serverPort.
-  const serverStub = spawnTestProcess(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });
+  const serverStub = spawnTestProcess(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
+    stdio: 'ignore',
+    env: {
+      ...fixture.baseEnv,
+      HAPPIER_STACK_STACK: fixture.stackName,
+      HAPPIER_STACK_ENV_FILE: join(fixture.storageDir, fixture.stackName, 'env'),
+      HAPPIER_STACK_CLI_HOME_DIR: fixture.stackCliHome,
+    },
+  });
   t.after(() => {
     try {
       serverStub.kill('SIGTERM');

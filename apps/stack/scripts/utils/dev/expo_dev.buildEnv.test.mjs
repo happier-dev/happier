@@ -35,6 +35,30 @@ test('buildExpoDevEnv does not inject auth auto-restore env vars', () => {
   assert.equal(env.EXPO_PUBLIC_HAPPIER_STACK_DEV_AUTH_ENCRYPTION_MACHINE_KEY, undefined);
 });
 
+test('buildExpoDevEnv explicitly enables the fail-closed onboarding tour for local dev', () => {
+  const enabled = buildExpoDevEnv({
+    baseEnv: {},
+    apiServerUrl: 'http://localhost:3010',
+    wantDevClient: false,
+    wantWeb: true,
+    stackMode: true,
+    stackName: 'qa-agent-x',
+  });
+  const explicitlyDisabled = buildExpoDevEnv({
+    baseEnv: {
+      EXPO_PUBLIC_HAPPIER_FEATURE_APP_UI_ONBOARDING_TOUR__ENABLED: '0',
+    },
+    apiServerUrl: 'http://localhost:3010',
+    wantDevClient: false,
+    wantWeb: true,
+    stackMode: true,
+    stackName: 'qa-agent-x',
+  });
+
+  assert.equal(enabled.EXPO_PUBLIC_HAPPIER_FEATURE_APP_UI_ONBOARDING_TOUR__ENABLED, '1');
+  assert.equal(explicitlyDisabled.EXPO_PUBLIC_HAPPIER_FEATURE_APP_UI_ONBOARDING_TOUR__ENABLED, '0');
+});
+
 test('buildExpoDevEnv forces stack context in stack mode even when base env sets a different context', () => {
   const baseEnv = {
     ...process.env,

@@ -39,11 +39,12 @@
     "access": "public"
   },
   "scripts": {
+    "tsc": "node ../../scripts/workspaces/runTypeScriptCli.mjs",
     "prepack": "yarn -s build && node ./scripts/bundleWorkspaceDeps.mjs",
-    "build": "node ./scripts/rmDist.mjs && tsc -p tsconfig.json",
+    "build": "node ../../scripts/workspaces/buildTypeScriptPackageDist.mjs -p tsconfig.json",
     "clean": "node ./scripts/rmDist.mjs",
     "test": "node ../../node_modules/vitest/vitest.mjs run --config vitest.config.ts",
-    "typecheck": "tsc --noEmit -p tsconfig.json"
+    "typecheck": "node ../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.json"
   },
   "engines": {
     "node": ">=22"

@@ -25,3 +25,17 @@ test('applyServerLightEnvDefaults preserves explicit pglite opt-in db dir', () =
   assert.equal(serverEnv.HAPPIER_DB_PROVIDER, 'pglite');
   assert.equal(serverEnv.HAPPIER_SERVER_LIGHT_DB_DIR, join('/stack/demo', 'server-light', 'pglite'));
 });
+
+test('applyServerLightEnvDefaults fails closed for explicit empty and unsupported providers', () => {
+  for (const provider of ['', '   ', 'postgres', 'unsupported']) {
+    assert.throws(
+      () => applyServerLightEnvDefaults({
+        baseEnv: { HAPPIER_DB_PROVIDER: provider },
+        serverEnv: {},
+        baseDir: '/stack/demo',
+      }),
+      /unsupported db provider/i,
+      `provider=${JSON.stringify(provider)}`,
+    );
+  }
+});

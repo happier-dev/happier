@@ -1,4 +1,4 @@
-import { test } from 'vitest';
+import test from 'node:test';
 import assert from 'node:assert/strict';
 import { dirname, join } from 'node:path';
 import { createServer } from 'node:net';
@@ -85,6 +85,41 @@ test('repo-local wrapper dry-run prints hstack invocation with repo-local env', 
   assert.ok(String(data.env.HAPPIER_STACK_LOG_TEE_DIR ?? '').trim() !== '', 'expected wrapper to set a stack-scoped log tee dir');
   assert.ok(String(data.env.HAPPIER_STACK_INVOKED_CWD ?? '').trim() !== '');
   assert.equal(data.env.HAPPIER_STACK_RUNTIME_MODE, 'source', 'expected repo-local wrapper to default to source runtime mode');
+});
+
+test('repo-local wrapper replaces an inherited runtime-state path with its checkout-owned path', async () => {
+  const scriptsDir = dirname(fileURLToPath(import.meta.url));
+  const packageRoot = dirname(scriptsDir);
+  const repoRoot = dirname(dirname(packageRoot));
+  const stacksRoot = mkdtempSync(join(tmpdir(), 'happier-repo-local-runtime-path-'));
+
+  try {
+    const inheritedRuntimePath = join(stacksRoot, 'another-stack', 'stack.runtime.json');
+    const res = await runNode(
+      [join(packageRoot, 'scripts', 'repo_local.mjs'), 'tui', '--dry-run'],
+      {
+        cwd: repoRoot,
+        env: {
+          ...process.env,
+          HAPPIER_STACK_STORAGE_DIR: stacksRoot,
+          HAPPIER_STACK_STACK: 'another-stack',
+          HAPPIER_STACK_ENV_FILE: join(stacksRoot, 'another-stack', 'env'),
+          HAPPIER_STACK_RUNTIME_MODE: 'require',
+          HAPPIER_STACK_RUNTIME_STATE_PATH: inheritedRuntimePath,
+        },
+      },
+    );
+
+    assert.equal(res.code, 0, `expected exit 0, got ${res.code}\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
+    const data = JSON.parse(res.stdout);
+    const repoLocalBaseDir = dirname(data.env.HAPPIER_STACK_ENV_FILE);
+
+    assert.equal(data.env.HAPPIER_STACK_RUNTIME_STATE_PATH, join(repoLocalBaseDir, 'stack.runtime.json'));
+    assert.notEqual(data.env.HAPPIER_STACK_RUNTIME_STATE_PATH, inheritedRuntimePath);
+    assert.equal(data.env.HAPPIER_STACK_RUNTIME_MODE, 'source');
+  } finally {
+    rmSync(stacksRoot, { recursive: true, force: true });
+  }
 });
 
 test('repo-local wrapper defaults `tui` to `tui dev` when no forwarded args are provided', async () => {
@@ -212,6 +247,27 @@ test('repo-local wrapper maps `stop` to stack stop for the repo-local stack', as
   assert.ok(String(data.args[3] ?? '').trim() !== '');
 });
 
+test('repo-local wrapper maps `daemon` to the repo-local stack instead of the main-stack alias', async () => {
+  const scriptsDir = dirname(fileURLToPath(import.meta.url));
+  const packageRoot = dirname(scriptsDir);
+  const repoRoot = dirname(dirname(packageRoot));
+
+  const res = await runNode(
+    [join(packageRoot, 'scripts', 'repo_local.mjs'), 'daemon', 'status', '--json', '--dry-run'],
+    {
+      cwd: repoRoot,
+      env: process.env,
+    },
+  );
+  assert.equal(res.code, 0, `expected exit 0, got ${res.code}\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
+
+  const data = JSON.parse(res.stdout);
+  assert.equal(data.args[1], 'stack');
+  assert.equal(data.args[2], 'daemon');
+  assert.equal(data.args[3], data.env.HAPPIER_STACK_STACK);
+  assert.deepEqual(data.args.slice(4), ['status', '--json']);
+});
+
 test('repo-local wrapper maps `mobile:install` to stack mobile:install for the repo-local stack', async () => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));
   const packageRoot = dirname(scriptsDir); // apps/stack
@@ -307,6 +363,45 @@ test('repo-local wrapper auto-installs deps when node_modules are missing', asyn
     assert.equal(res.code, 0, `expected exit 0, got ${res.code}\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
     const log = readFileSync(logPath, 'utf-8');
     assert.match(log, /\binstall\b/);
+  } finally {
+    rmSync(preflightRoot, { recursive: true, force: true });
+  }
+});
+
+test('repo-local wrapper leaves existing dependency freshness admission to the stack owner', async () => {
+  const scriptsDir = dirname(fileURLToPath(import.meta.url));
+  const packageRoot = dirname(scriptsDir);
+  const repoRoot = dirname(dirname(packageRoot));
+  const preflightRoot = mkdtempSync(join(tmpdir(), 'happier-repo-local-existing-deps-'));
+  try {
+    writeFileSync(join(preflightRoot, 'package.json'), JSON.stringify({ name: 'tmp', private: true }));
+    mkdirSync(join(preflightRoot, 'node_modules'), { recursive: true });
+    const binDir = join(preflightRoot, 'bin');
+    mkdirSync(binDir, { recursive: true });
+    const logPath = join(preflightRoot, 'yarn.log');
+    writeFileSync(logPath, '');
+    const yarnBin = join(binDir, 'yarn');
+    writeFileSync(
+      yarnBin,
+      '#!/usr/bin/env node\n' +
+        "import { appendFileSync } from 'node:fs';\n" +
+        "appendFileSync(process.env.YARN_LOG, process.argv.slice(2).join(' ') + '\\n');\n",
+    );
+    chmodSync(yarnBin, 0o755);
+
+    const res = await runNode([join(packageRoot, 'scripts', 'repo_local.mjs'), 'dev'], {
+      cwd: repoRoot,
+      env: {
+        ...process.env,
+        PATH: `${binDir}:${process.env.PATH ?? ''}`,
+        YARN_LOG: logPath,
+        HAPPIER_STACK_REPO_LOCAL_PREFLIGHT_ROOT: preflightRoot,
+        HAPPIER_STACK_REPO_LOCAL_PREFLIGHT_ONLY: '1',
+      },
+    });
+
+    assert.equal(res.code, 0, res.stderr || res.stdout);
+    assert.equal(readFileSync(logPath, 'utf-8'), '');
   } finally {
     rmSync(preflightRoot, { recursive: true, force: true });
   }

@@ -113,6 +113,9 @@ export async function tailscaleServeEnable({ internalServerUrl, timeoutMs } = {}
     timeoutMs: Number.isFinite(timeoutMs) ? timeoutMs : tailscaleUserEnableTimeoutMs(),
     upstreamUrl: upstream,
   });
+  const httpsUrl =
+    result.httpsUrl ||
+    (result.approvalUrl ? null : await tailscaleServeHttpsUrlForInternalServerUrl(upstream));
 
   if (result.approvalUrl) {
     try {
@@ -124,7 +127,7 @@ export async function tailscaleServeEnable({ internalServerUrl, timeoutMs } = {}
 
   return {
     enableUrl: result.approvalUrl,
-    httpsUrl: result.httpsUrl,
+    httpsUrl,
     status: result.rawStatus,
   };
 }

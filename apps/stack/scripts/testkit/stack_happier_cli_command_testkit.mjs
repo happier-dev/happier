@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { ensureMinimalMonorepoLayout } from './core/minimal_monorepo_layout.mjs';
 import { writeStubHappierCliFiles } from './core/stub_happier_cli_files.mjs';
 import { createTempFixture } from './core/temp_fixture.mjs';
+import { sanitizeStackTestRunnerEnv } from '../utils/test/test_env.mjs';
 
 export async function createStackHappierCliCommandFixture(
   t,
@@ -65,11 +66,14 @@ export async function createStackHappierCliCommandFixture(
     envPath,
     writeStackEnv,
     baseEnv: {
-      ...process.env,
+      ...sanitizeStackTestRunnerEnv(process.env),
       HAPPIER_STACK_HOME_DIR: homeDir,
       HAPPIER_STACK_STORAGE_DIR: storageDir,
       HAPPIER_STACK_WORKSPACE_DIR: workspaceDir,
       HAPPIER_STACK_CLI_ROOT_DISABLE: '1',
+      HAPPIER_STACK_DAEMON_START_VERIFY_TIMEOUT_MS: '5000',
+      HAPPIER_STACK_DAEMON_START_VERIFY_POLL_MS: '25',
+      HAPPIER_STACK_DAEMON_START_VERIFY_STABLE_MS: '0',
     },
   };
 }

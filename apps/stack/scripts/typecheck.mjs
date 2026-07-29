@@ -2,7 +2,7 @@ import './utils/env/env.mjs';
 import { parseArgs } from './utils/cli/args.mjs';
 import { printResult, wantsHelp, wantsJson } from './utils/cli/cli.mjs';
 import { getComponentDir, getRootDir } from './utils/paths/paths.mjs';
-import { ensureDepsInstalled } from './utils/proc/pm.mjs';
+import { createCommandDependencyAdmission } from './utils/proc/pm.mjs';
 import { pathExists } from './utils/fs/fs.mjs';
 import { run } from './utils/proc/proc.mjs';
 import { detectPackageManagerCmd, pickFirstScript, readPackageJsonScripts } from './utils/proc/package_scripts.mjs';
@@ -105,6 +105,7 @@ async function main() {
   const requested = normalizeTargetsOrThrow(positionals.length ? positionals : inferredTarget ? [inferredTarget] : ['all']);
   const wantAll = requested.includes('all');
   const targets = wantAll ? VALID_TARGETS : requested;
+  const admitDependencies = createCommandDependencyAdmission();
 
   const results = [];
   for (const target of targets) {
@@ -132,7 +133,7 @@ async function main() {
       continue;
     }
 
-    await ensureDepsInstalled(dir, target);
+    await admitDependencies(dir, target);
     const pm = await detectPackageManagerCmd(dir);
 
     try {

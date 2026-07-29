@@ -13,6 +13,7 @@ test('hstack stack stop sweeps legacy infra without HAPPIER_STACK_PROCESS_KIND=i
       ...process.env,
       HAPPIER_STACK_STACK: fixture.stackName,
       HAPPIER_STACK_ENV_FILE: fixture.envPath,
+      HAPPIER_STACK_PROCESS_KIND: undefined,
       // Simulate a yarn/npm-managed infra process from older stacks (no kind tag).
       npm_lifecycle_event: 'dev:light',
       npm_package_name: '@happier-dev/server',
@@ -27,6 +28,7 @@ test('hstack stack stop sweeps legacy infra without HAPPIER_STACK_PROCESS_KIND=i
       ...process.env,
       HAPPIER_STACK_STACK: fixture.stackName,
       HAPPIER_STACK_ENV_FILE: fixture.envPath,
+      HAPPIER_STACK_PROCESS_KIND: undefined,
       // Deliberately no npm_lifecycle_event and no process kind tag.
     },
   }));

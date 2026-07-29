@@ -44,3 +44,47 @@ test('probeExistingAccountCountForServerComponent reads account count from a run
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test('probeExistingAccountCountForServerComponent uses the bounded server-light sqlite pool without mutating caller env', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'stack-startup-runtime-probe-env-'));
+  const serverDir = join(root, 'server');
+  const generatedDir = join(serverDir, 'generated', 'sqlite-client');
+  const dataDir = join(root, 'data');
+
+  try {
+    await mkdir(generatedDir, { recursive: true });
+    await mkdir(dataDir, { recursive: true });
+    await writeFile(
+      join(generatedDir, 'index.js'),
+      [
+        'export class PrismaClient {',
+        '  constructor() {',
+        '    if (!process.env.DATABASE_URL.includes("socket_timeout=1&connection_limit=4")) {',
+        '      throw new Error(`unexpected DATABASE_URL: ${process.env.DATABASE_URL}`);',
+        '    }',
+        '    this.account = { count: async () => 3 };',
+        '  }',
+        '  async $disconnect() {}',
+        '}',
+        '',
+      ].join('\n'),
+      'utf-8',
+    );
+
+    const env = {
+      HAPPIER_SERVER_LIGHT_DATA_DIR: dataDir,
+      HAPPIER_SQLITE_BUSY_TIMEOUT_MS: '500',
+    };
+    const result = await probeExistingAccountCountForServerComponent({
+      serverComponentName: 'happier-server-light',
+      serverDir,
+      env,
+    });
+
+    assert.equal(result.ok, true);
+    assert.equal(result.accountCount, 3);
+    assert.equal(Object.hasOwn(env, 'DATABASE_URL'), false);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

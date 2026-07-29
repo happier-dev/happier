@@ -1,4 +1,7 @@
-const DEFAULT_DEV_RELOAD_POLL_INTERVAL_MS = 2000;
+// fs.watch is the primary reload signal. Keep the recursive signature sweep as a
+// low-frequency recovery path so an idle stack does not continuously traverse
+// the full CLI/server source closure.
+const DEFAULT_DEV_RELOAD_POLL_INTERVAL_MS = 10_000;
 
 export function resolveDevReloadPollIntervalMs(
   env = process.env,

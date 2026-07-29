@@ -3,6 +3,7 @@ import { rm } from 'node:fs/promises';
 import {
   resolveServiceBackend,
   buildServiceDefinition,
+  inspectServiceRegistration,
   planServiceAction,
   applyServicePlan,
 } from '@happier-dev/cli-common/service';
@@ -61,6 +62,12 @@ export async function uninstallService({
   const backend = resolveServiceBackend({ platform, mode });
   const definition = buildServiceDefinition({ backend, homeDir, spec });
   const taskName = taskNameFor({ backend, label });
+  const registration = inspectServiceRegistration({ backend, label, taskName, uid });
+
+  if (registration === 'absent') {
+    await rm(definition.path, { force: true });
+    return { backend, taskName: taskName || null };
+  }
 
   const plan = planServiceAction({
     backend,
@@ -73,7 +80,7 @@ export async function uninstallService({
     uid,
   });
   await applyServicePlan(plan);
-  await rm(definition.path, { force: true }).catch(() => {});
+  await rm(definition.path, { force: true });
   return { backend, taskName: taskName || null };
 }
 
@@ -93,4 +100,3 @@ export async function restartService({ platform = process.platform, mode = 'user
   await applyServicePlan(plan);
   return { backend };
 }
-

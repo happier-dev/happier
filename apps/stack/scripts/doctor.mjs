@@ -3,7 +3,16 @@ import { parseArgs } from './utils/cli/args.mjs';
 import { pathExists } from './utils/fs/fs.mjs';
 import { runCapture } from './utils/proc/proc.mjs';
 import { resolveCommandPath } from './utils/proc/commands.mjs';
-import { getComponentDir, getDefaultAutostartPaths, getHappyStacksHomeDir, getRootDir, getWorkspaceDir, resolveStackEnvPath } from './utils/paths/paths.mjs';
+import {
+  getComponentDir,
+  getDefaultAutostartPaths,
+  getHappyStacksHomeDir,
+  getRootDir,
+  getStackName,
+  getWorkspaceDir,
+  resolveStackBaseDir,
+  resolveStackEnvPath,
+} from './utils/paths/paths.mjs';
 import { killPortListeners } from './utils/net/ports.mjs';
 import { getServerComponentName } from './utils/server/server.mjs';
 import { fetchHappierHealth } from './utils/server/server.mjs';
@@ -23,8 +32,8 @@ import { banner, bullets, cmd, kv, sectionTitle } from './utils/ui/layout.mjs';
 import { cyan, dim, green, red, yellow } from './utils/ui/ansi.mjs';
 import { detectSwiftbarPluginInstalled } from './utils/menubar/swiftbar.mjs';
 import { expandHome } from './utils/paths/canonical_home.mjs';
-import { resolveStackRuntimeLaunchContext } from './runtime/launch/resolveStackRuntimeLaunchContext.mjs';
 import { inspectActiveRuntimeSnapshot } from './runtime/launch/inspectActiveRuntimeSnapshot.mjs';
+import { resolveStackRuntimeMode } from './runtime/shared/runtime_mode.mjs';
 
 /**
  * Doctor script for common happy-stacks failure modes.
@@ -105,9 +114,11 @@ async function main() {
   const autostart = getDefaultAutostartPaths();
   const stackCtx = resolveStackContext({ env: process.env, autostart });
   const stackMode = stackCtx.stackMode;
-  const runtimeLaunchContext = await resolveStackRuntimeLaunchContext({ argv, env: process.env });
-  const runtimeInspection = await inspectActiveRuntimeSnapshot({ stackBaseDir: runtimeLaunchContext.stackBaseDir });
-  const runtimeSnapshot = runtimeLaunchContext.snapshot;
+  const stackName = (process.env.HAPPIER_STACK_STACK ?? '').toString().trim() || getStackName(process.env);
+  const { baseDir: stackBaseDir } = resolveStackBaseDir(stackName, process.env);
+  const runtimeMode = resolveStackRuntimeMode({ argv, env: process.env });
+  const runtimeInspection = await inspectActiveRuntimeSnapshot({ stackBaseDir });
+  const runtimeSnapshot = runtimeMode.mode === 'source' ? null : runtimeInspection.snapshot;
 
   const serverPort = resolveServerPortFromEnv({ defaultPort: 3005 });
   const resolvedUrls = await resolveServerUrls({ serverPort, allowEnable: false });
@@ -150,7 +161,7 @@ async function main() {
       version: runtimeVersion,
       packageJson: runtimePkgJson,
       updateCache,
-      mode: runtimeLaunchContext.runtimeMode.mode,
+      mode: runtimeMode.mode,
       activeSnapshotId: runtimeInspection.activeSnapshotId,
       snapshotPath: runtimeInspection.snapshotPath,
       sourceFingerprint: runtimeInspection.sourceFingerprint,
@@ -184,7 +195,7 @@ async function main() {
       kv('cliHome:', cliHomeDir),
       kv('home:', homeDir),
       kv('runtime:', runtimeVersion ? `${runtimeDir} (${runtimeVersion})` : `${runtimeDir} (${yellow('not installed')})`),
-      kv('stackRuntime:', runtimeSnapshot?.snapshotId ? `${runtimeSnapshot.snapshotId} (${runtimeLaunchContext.runtimeMode.mode})` : `(${dim(runtimeLaunchContext.runtimeMode.mode)})`),
+      kv('stackRuntime:', runtimeSnapshot?.snapshotId ? `${runtimeSnapshot.snapshotId} (${runtimeMode.mode})` : `(${dim(runtimeMode.mode)})`),
       kv('workspace:', workspaceDir),
     ]));
     console.log('');
@@ -245,6 +256,20 @@ async function main() {
     if (!json) console.log(`${dim('ℹ')} ui serving disabled (HAPPIER_STACK_SERVE_UI=0)`);
   }
 
+  function resolveDaemonStatusCheck(output) {
+    const lines = String(output ?? '')
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean);
+    const stopped = lines.find((line) => /Daemon is not running/i.test(line));
+    if (stopped) return { ok: false, line: stopped };
+    const starting = lines.find((line) => /Daemon is starting/i.test(line));
+    if (starting) return { ok: false, line: starting };
+    const running = lines.find((line) => /Daemon is running/i.test(line));
+    if (running) return { ok: true, line: running };
+    return { ok: false, line: null };
+  }
+
   // Daemon status
   try {
     const out = await daemonStatusSummary({
@@ -253,9 +278,12 @@ async function main() {
       internalServerUrl,
       publicServerUrl,
     });
-    const line = out.split('\n').find((l) => l.includes('Daemon is running'))?.trim();
-    report.checks.daemon = { ok: true, line: line || null };
-    if (!json) console.log(`${green('✓')} daemon: ${line ? line : 'status ok'}`);
+    const daemonCheck = resolveDaemonStatusCheck(out);
+    report.checks.daemon = daemonCheck;
+    if (!json) {
+      const statusText = daemonCheck.line ?? 'status unavailable';
+      console.log(`${daemonCheck.ok ? green('✓') : red('x')} daemon: ${statusText}`);
+    }
   } catch (e) {
     const credentialPaths = resolveStackCredentialPaths({ cliHomeDir, serverUrl: internalServerUrl });
     const existingCredentialPath = findExistingStackCredentialPath({ cliHomeDir, serverUrl: internalServerUrl });

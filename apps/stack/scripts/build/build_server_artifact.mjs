@@ -4,6 +4,7 @@ import { readArtifactManifest, writeArtifactManifest, artifactPayloadDir } from 
 import { buildIntoTempThenReplace } from '../utils/fs/atomic_dir_swap.mjs';
 import {
   buildServerBinaryArtifactPayload,
+  prepareUiWebDist,
   SERVER_BINARY_TARGETS,
   resolveCurrentBinaryTarget,
 } from '@happier-dev/cli-common/componentArtifacts';
@@ -33,13 +34,16 @@ export async function buildServerArtifact({
     'sources',
     sourceMetadata.serverComponent === 'happier-server' ? 'main.ts' : 'main.light.ts',
   );
+  const uiWebDistPath = await prepareUiWebDist({ repoRoot: sourceMetadata.repoDir });
 
   await buildIntoTempThenReplace(artifactDir, async (tmpArtifactDir) => {
     const payloadDir = artifactPayloadDir(tmpArtifactDir);
     const built = await buildServerBinaryArtifactPayload({
       repoRoot: sourceMetadata.repoDir,
       payloadDir,
+      uiWebDistPath,
       target,
+      serverComponent: sourceMetadata.serverComponent,
       entrypoint: serverEntrypoint,
       externals,
     });

@@ -19,7 +19,7 @@ import { bold, cyan, dim } from './utils/ui/ansi.mjs';
 import { expandHome } from './utils/paths/canonical_home.mjs';
 import { fastForwardBranchToRemote } from './utils/git/fast_forward_to_remote.mjs';
 import { resolveDefaultRemoteBranch } from './utils/git/default_branch.mjs';
-import { shouldRunYarnInstall } from './utils/worktrees/yarn_install_guard.mjs';
+import { withYarnInstallGuard } from './utils/worktrees/yarn_install_guard.mjs';
 import { run } from './utils/proc/proc.mjs';
 import { applyStackCacheEnv } from './utils/proc/pm.mjs';
  
@@ -469,10 +469,7 @@ async function main() {
           const depsLabel = 'warm cached workspace deps (yarn)';
           updateSteps.start(depsLabel);
           try {
-            const needs = await shouldRunYarnInstall({ installDir: mainDir, componentDir: mainDir });
-            if (!needs) {
-              updateSteps.stop('✓', depsLabel);
-            } else {
+            await withYarnInstallGuard({ installDir: mainDir, componentDir: mainDir }, async () => {
               const pmCacheBaseDir = resolvePmCacheBaseDirFromWorkspaceDir(workspaceCache.workspaceDir);
               const env = await applyStackCacheEnv({
                 ...process.env,
@@ -482,26 +479,20 @@ async function main() {
               const quiet = verbosity === 0 && !json;
               try {
                 await run('yarn', ['install', '--frozen-lockfile'], { cwd: mainDir, env, stdio: quiet ? 'ignore' : 'inherit' });
-                updateSteps.stop('✓', depsLabel);
               } catch (e) {
                 // Re-run once with logs for diagnosis, then warn and continue.
                 if (quiet) {
                   try {
                     await run('yarn', ['install', '--frozen-lockfile'], { cwd: mainDir, env, stdio: 'inherit' });
-                  } catch {
-                    // ignore
+                    return;
+                  } catch (retryError) {
+                    throw retryError;
                   }
                 }
-                updateSteps.stop('!', depsLabel);
-                if (!json) {
-                  // eslint-disable-next-line no-console
-                  console.warn(
-                    `[review-pr] warning: failed to warm cached workspace deps (${mainDir}).\n` +
-                      `${e instanceof Error ? e.message : String(e)}`
-                  );
-                }
+                throw e;
               }
-            }
+            });
+            updateSteps.stop('✓', depsLabel);
           } catch (e) {
             updateSteps.stop('!', depsLabel);
             if (!json) {

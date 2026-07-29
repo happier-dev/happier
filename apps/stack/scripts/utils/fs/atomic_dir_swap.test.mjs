@@ -57,7 +57,7 @@ test('buildIntoTempThenReplace leaves the live dir in place when staged build fa
   assert.equal(await readFile(join(outDir, 'marker.txt'), 'utf-8'), 'old\n');
 });
 
-test('buildIntoTempThenReplace restores existing dir when a failed build deletes it', async (t) => {
+test('buildIntoTempThenReplace never republishes a stale pre-build snapshot after failure', async (t) => {
   const root = await withTempRoot(t);
   const outDir = join(root, 'ui');
   await mkdir(outDir, { recursive: true });
@@ -74,8 +74,10 @@ test('buildIntoTempThenReplace restores existing dir when a failed build deletes
     /boom/
   );
 
-  const after = await readFile(join(outDir, 'marker.txt'), 'utf-8');
-  assert.equal(after, 'old\n');
+  await assert.rejects(
+    () => readFile(join(outDir, 'marker.txt'), 'utf-8'),
+    /ENOENT/,
+  );
 });
 
 test('buildIntoTempThenReplace replaces dir on success', async (t) => {
@@ -90,6 +92,43 @@ test('buildIntoTempThenReplace replaces dir on success', async (t) => {
 
   const after = await readFile(join(outDir, 'marker.txt'), 'utf-8');
   assert.equal(after, 'new\n');
+});
+
+test('buildIntoTempThenReplace retries transient Windows rename locks', async (t) => {
+  const root = await withTempRoot(t);
+  const outDir = join(root, 'ui');
+  await mkdir(outDir, { recursive: true });
+  await writeFile(join(outDir, 'marker.txt'), 'old\n', 'utf-8');
+
+  let stagedRenameAttempts = 0;
+  const waits = [];
+  await buildIntoTempThenReplace(
+    outDir,
+    async (tmp) => {
+      await writeFile(join(tmp, 'marker.txt'), 'new\n', 'utf-8');
+    },
+    {
+      platform: 'win32',
+      async renameImpl(from, to) {
+        if (from.includes('.tmp.')) {
+          stagedRenameAttempts += 1;
+          if (stagedRenameAttempts < 3) {
+            const error = new Error('temporarily locked');
+            error.code = 'EBUSY';
+            throw error;
+          }
+        }
+        await import('node:fs/promises').then((fs) => fs.rename(from, to));
+      },
+      async waitImpl(ms) {
+        waits.push(ms);
+      },
+    },
+  );
+
+  assert.equal(stagedRenameAttempts, 3);
+  assert.deepEqual(waits, [25, 50]);
+  assert.equal(await readFile(join(outDir, 'marker.txt'), 'utf-8'), 'new\n');
 });
 
 test('buildIntoTempThenReplace validates required arguments', async () => {

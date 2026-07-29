@@ -58,6 +58,20 @@ test('buildTuiChildArgs does not force watch for start forwarded commands', () =
   ]);
 });
 
+test('buildTuiRestartChildArgs delegates plain dev restart to the named stack owner', () => {
+  assert.deepEqual(
+    tauriMode.buildTuiRestartChildArgs({ childArgs: ['dev', '--watch'], stackName: 'exp1' }),
+    ['stack', 'dev', 'exp1', '--watch', '--restart'],
+  );
+});
+
+test('buildTuiRestartChildArgs refuses control-only modes', () => {
+  assert.throws(
+    () => tauriMode.buildTuiRestartChildArgs({ childArgs: ['dev', '--json'], stackName: 'exp1' }),
+    (error) => error?.code === 'ESTACKRESTARTCONTROLARG',
+  );
+});
+
 test('resolveTauriPaneSpawnConfig builds a Tauri env with cargo available even when HOME is stack-isolated', async () => {
   const realHome = await mkdir(`${tmpdir()}/happier-tauri-pane-realhome-${Date.now()}`, { recursive: true });
   const isolatedHome = await mkdir(`${tmpdir()}/happier-tauri-pane-isolatedhome-${Date.now()}`, { recursive: true });

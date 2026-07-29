@@ -1,11 +1,12 @@
 import './utils/env/env.mjs';
 import { parseArgs } from './utils/cli/args.mjs';
 import { getRootDir } from './utils/paths/paths.mjs';
-import { ensureEnvFileUpdated } from './utils/env/env_file.mjs';
+import { ensureEnvFileMutated } from './utils/env/env_file.mjs';
 import { resolveUserConfigEnvPath } from './utils/env/config.mjs';
 import { isTty, promptSelect, withRl } from './utils/cli/wizard.mjs';
 import { printResult, wantsHelp, wantsJson } from './utils/cli/cli.mjs';
 import { bold, cyan, dim, green } from './utils/ui/ansi.mjs';
+import { resolveEffectiveDbProviderTransition } from './utils/server/effective_db_provider.mjs';
 
 const FLAVORS = [
   { label: `happier-server-light (${green('recommended')}) — simplest local install (serves UI)`, value: 'happier-server-light' },
@@ -20,6 +21,33 @@ function normalizeFlavor(raw) {
   return raw.trim();
 }
 
+async function writeFlavor({ rootDir, flavor }) {
+  const envPath = resolveUserConfigEnvPath({ cliRootDir: rootDir });
+  const previousFlavor = process.env.HAPPIER_STACK_SERVER_COMPONENT?.trim() || 'happier-server-light';
+  const transition = resolveEffectiveDbProviderTransition({
+    previousServerComponentName: previousFlavor,
+    nextServerComponentName: flavor,
+    env: process.env,
+  });
+  if (!transition.ok) {
+    if (transition.reason === 'missing_mysql_database_url') {
+      throw new Error('[server-flavor] mysql requires an explicit DATABASE_URL');
+    }
+    throw new Error(`[server-flavor] invalid DB provider for ${flavor}: ${transition.input ?? transition.reason}`);
+  }
+  const dbProvider = transition.provider;
+  await ensureEnvFileMutated({
+    envPath,
+    updates: [
+      { key: 'HAPPIER_STACK_SERVER_COMPONENT', value: flavor },
+      { key: 'HAPPIER_DB_PROVIDER', value: dbProvider },
+      ...(dbProvider === 'mysql' ? [{ key: 'DATABASE_URL', value: transition.databaseUrl }] : []),
+    ],
+    removeKeys: transition.removeDatabaseUrl ? ['DATABASE_URL'] : [],
+  });
+  return { envPath, dbProvider };
+}
+
 async function cmdUse({ rootDir, argv }) {
   const { flags } = parseArgs(argv);
   const positionals = argv.filter((a) => !a.startsWith('--'));
@@ -32,18 +60,12 @@ async function cmdUse({ rootDir, argv }) {
     throw new Error(`[server-flavor] unknown flavor: ${flavor}`);
   }
 
-  const envPath = resolveUserConfigEnvPath({ cliRootDir: rootDir });
-  await ensureEnvFileUpdated({
-    envPath,
-    updates: [
-      { key: 'HAPPIER_STACK_SERVER_COMPONENT', value: flavor },
-    ],
-  });
+  const { envPath, dbProvider } = await writeFlavor({ rootDir, flavor });
 
   const json = wantsJson(argv, { flags });
   printResult({
     json,
-    data: { ok: true, flavor },
+    data: { ok: true, flavor, dbProvider },
     text: `[server-flavor] set HAPPIER_STACK_SERVER_COMPONENT=${flavor} (saved to ${envPath})`,
   });
 }
@@ -58,16 +80,10 @@ async function cmdUseInteractive({ rootDir, argv }) {
       options: FLAVORS,
       defaultIndex: 0,
     });
-    const envPath = resolveUserConfigEnvPath({ cliRootDir: rootDir });
-    await ensureEnvFileUpdated({
-      envPath,
-      updates: [
-        { key: 'HAPPIER_STACK_SERVER_COMPONENT', value: flavor },
-      ],
-    });
+    const { envPath, dbProvider } = await writeFlavor({ rootDir, flavor });
     printResult({
       json,
-      data: { ok: true, flavor },
+      data: { ok: true, flavor, dbProvider },
       text: `[server-flavor] set HAPPIER_STACK_SERVER_COMPONENT=${flavor} (saved to ${envPath})`,
     });
   });

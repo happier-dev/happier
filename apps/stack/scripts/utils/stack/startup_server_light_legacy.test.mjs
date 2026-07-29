@@ -2,7 +2,6 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { pathToFileURL } from 'node:url';
 
 import { ensureServerLightSchemaReady } from './startup.mjs';
 import { buildServerLightEnv, createServerLightFixture } from './startup_server_light_testkit.mjs';
@@ -39,6 +38,7 @@ test('ensureServerLightSchemaReady honors HAPPY_SERVER_LIGHT_DATA_DIR legacy fal
       DATABASE_URL: undefined,
     },
   });
+  delete env.DATABASE_URL;
 
   assert.equal(existsSync(dataDir), false);
   assert.equal(Boolean(env.DATABASE_URL), false);
@@ -46,7 +46,7 @@ test('ensureServerLightSchemaReady honors HAPPY_SERVER_LIGHT_DATA_DIR legacy fal
   const res = await ensureServerLightSchemaReady({ serverDir, env });
   assert.equal(res.ok, true);
   assert.equal(existsSync(dataDir), true);
-  assert.equal(env.DATABASE_URL, `${pathToFileURL(join(dataDir, 'happier-server-light.sqlite')).href}?socket_timeout=30&connection_limit=4`);
+  assert.equal(Object.hasOwn(env, 'DATABASE_URL'), false);
   assert.equal(existsSync(markerPath), true, `expected migrate:sqlite:deploy to be invoked (${markerPath})`);
 });
 
@@ -55,7 +55,6 @@ test('ensureServerLightSchemaReady falls back to HAPPY_SERVER_LIGHT_DATA_DIR whe
     prefix: 'hs-startup-light-empty-prefers-legacy-',
     socketPort: 54325,
   });
-
   const dataDir = join(root, 'legacy-data-empty-fallback');
   const env = buildServerLightEnv({
     binDir,
@@ -68,6 +67,7 @@ test('ensureServerLightSchemaReady falls back to HAPPY_SERVER_LIGHT_DATA_DIR whe
       DATABASE_URL: undefined,
     },
   });
+  delete env.DATABASE_URL;
 
   assert.equal(existsSync(dataDir), false);
   assert.equal(Boolean(env.DATABASE_URL), false);
@@ -75,6 +75,6 @@ test('ensureServerLightSchemaReady falls back to HAPPY_SERVER_LIGHT_DATA_DIR whe
   const res = await ensureServerLightSchemaReady({ serverDir, env });
   assert.equal(res.ok, true);
   assert.equal(existsSync(dataDir), true);
-  assert.equal(env.DATABASE_URL, `${pathToFileURL(join(dataDir, 'happier-server-light.sqlite')).href}?socket_timeout=30&connection_limit=4`);
+  assert.equal(Object.hasOwn(env, 'DATABASE_URL'), false);
   assert.equal(existsSync(markerPath), true, `expected migrate:sqlite:deploy to be invoked (${markerPath})`);
 });

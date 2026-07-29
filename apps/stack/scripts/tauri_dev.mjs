@@ -19,6 +19,7 @@ import {
   buildTauriRuntimeEnv,
 } from './utils/dev/tauri_dev.mjs';
 import { parseEnvToObject } from './utils/env/dotenv.mjs';
+import { resolveVerifiedStackServerEndpoint, resolveVerifiedStackUiEndpoint } from './utils/stack/verified_endpoints.mjs';
 
 function buildDefaultStackTauriEnv(env, stackName) {
   const nextEnv = { ...env };
@@ -191,6 +192,23 @@ async function main() {
   const runtimeState = stackName
     ? await readStackRuntimeStateFile(getStackRuntimeStatePath(stackName))
     : null;
+  const stackBaseDir = stackName ? resolveStackEnvPath(stackName, envWithStackDefaults).baseDir : '';
+  const runtimeServerPort = Number(runtimeState?.ports?.server);
+  const runtimeServerEndpoint = Number.isFinite(runtimeServerPort) && runtimeServerPort > 0
+    ? await resolveVerifiedStackServerEndpoint({ port: runtimeServerPort })
+    : null;
+  const verifiedUiEndpoint = stackName
+    ? await resolveVerifiedStackUiEndpoint({
+      stackName,
+      baseDir: stackBaseDir,
+      runtimeState,
+      expectedProjectDir: uiDir,
+      serverPort: runtimeServerPort,
+      serverRunning: runtimeServerEndpoint?.running === true,
+      serveUiWanted: true,
+      runtimeBackedStart: Boolean(String(runtimeState?.runtimeSnapshotId ?? '').trim()),
+    })
+    : null;
   const defaultDevPort = (() => {
     const forcedExpoPort = Number(envWithStackDefaults.HAPPIER_STACK_EXPO_DEV_PORT ?? '');
     if (Number.isFinite(forcedExpoPort) && forcedExpoPort > 0) return Math.floor(forcedExpoPort);
@@ -224,6 +242,7 @@ async function main() {
       resolvedDevUrl: resolveStackTauriDevUrl({
         runtimeState,
         defaultPort: defaultDevPort,
+        verifiedUiEndpoint,
       }),
       devUrlSource: runtimeState ? 'runtimeState' : 'default',
     };
@@ -256,7 +275,7 @@ async function main() {
     resolveUserHomeDir,
   });
   assertCargoAvailableForTauri({ env: runtimeEnv, resolveUserHomeDir });
-  if (String(runtimeEnv.HAPPIER_STACK_TUI ?? '').trim() === '1') {
+  if (!json && String(runtimeEnv.HAPPIER_STACK_TUI ?? '').trim() === '1') {
     const pathEntries = String(runtimeEnv.PATH ?? '')
       .split(process.platform === 'win32' ? ';' : ':')
       .map((entry) => String(entry ?? '').trim())

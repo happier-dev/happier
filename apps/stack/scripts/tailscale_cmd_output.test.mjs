@@ -6,6 +6,8 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { buildStackFixtureEnv } from './testkit/core/env_scope.mjs';
+
 function runNode(args, { cwd, env }) {
   return new Promise((resolve, reject) => {
     const proc = spawn(process.execPath, args, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -59,19 +61,23 @@ test('tailscale enable output includes stack context + upstream', async () => {
     chmodSync(tailscaleBin, 0o755);
 
     const envPath = join(tmp, 'stack.env');
-    writeFileSync(envPath, '');
+    writeFileSync(envPath, `HAPPIER_STACK_SERVER_PORT=${internalPort}\n`);
 
     const res = await runNode([join(packageRoot, 'scripts', 'tailscale.mjs'), 'enable'], {
       cwd: repoRoot,
-      env: {
-        ...process.env,
-        HAPPIER_TAILSCALE_BIN: tailscaleBin,
-        HAPPIER_STACK_SERVER_PORT: String(internalPort),
-        HAPPIER_STACK_STACK: 'repo-test-1234',
-        HAPPIER_STACK_ENV_FILE: envPath,
-        // Prevent any other behavior from probing global state.
-        HAPPIER_STACK_SANDBOX_ALLOW_GLOBAL: '1',
-      },
+      env: buildStackFixtureEnv({
+        homeDir: join(tmp, 'home'),
+        storageDir: join(tmp, 'storage'),
+        stackName: 'repo-test-1234',
+        envPath,
+        stripStackEnv: true,
+        extraEnv: {
+          HAPPIER_TAILSCALE_BIN: tailscaleBin,
+          HAPPIER_STACK_SERVER_PORT: String(internalPort),
+          // Prevent any other behavior from probing global state.
+          HAPPIER_STACK_SANDBOX_ALLOW_GLOBAL: '1',
+        },
+      }),
     });
 
     assert.equal(res.code, 0, `expected exit 0, got ${res.code}\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
@@ -120,12 +126,16 @@ test('tailscale url returns the relay-comparable ts.net URL when multiple serve 
 
     const res = await runNode([join(packageRoot, 'scripts', 'tailscale.mjs'), 'url'], {
       cwd: repoRoot,
-      env: {
-        ...process.env,
-        HAPPIER_TAILSCALE_BIN: tailscaleBin,
-        HAPPIER_STACK_SERVER_PORT: String(relayPort),
-        HAPPIER_STACK_SANDBOX_ALLOW_GLOBAL: '1',
-      },
+      env: buildStackFixtureEnv({
+        homeDir: join(tmp, 'home'),
+        storageDir: join(tmp, 'storage'),
+        stripStackEnv: true,
+        extraEnv: {
+          HAPPIER_TAILSCALE_BIN: tailscaleBin,
+          HAPPIER_STACK_SERVER_PORT: String(relayPort),
+          HAPPIER_STACK_SANDBOX_ALLOW_GLOBAL: '1',
+        },
+      }),
     });
 
     assert.equal(res.code, 0, `expected exit 0, got ${res.code}\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
@@ -164,12 +174,16 @@ test('tailscale url fails closed when serve status points at a different local p
 
     const res = await runNode([join(packageRoot, 'scripts', 'tailscale.mjs'), 'url'], {
       cwd: repoRoot,
-      env: {
-        ...process.env,
-        HAPPIER_TAILSCALE_BIN: tailscaleBin,
-        HAPPIER_STACK_SERVER_PORT: '35555',
-        HAPPIER_STACK_SANDBOX_ALLOW_GLOBAL: '1',
-      },
+      env: buildStackFixtureEnv({
+        homeDir: join(tmp, 'home'),
+        storageDir: join(tmp, 'storage'),
+        stripStackEnv: true,
+        extraEnv: {
+          HAPPIER_TAILSCALE_BIN: tailscaleBin,
+          HAPPIER_STACK_SERVER_PORT: '35555',
+          HAPPIER_STACK_SANDBOX_ALLOW_GLOBAL: '1',
+        },
+      }),
     });
 
     assert.notEqual(res.code, 0, `expected non-zero exit, got ${res.code}\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`);

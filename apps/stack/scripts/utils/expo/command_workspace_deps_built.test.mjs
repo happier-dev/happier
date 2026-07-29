@@ -7,7 +7,7 @@ import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 
-import { expoExec } from './command.mjs';
+import { expoExec, resolveExpoBin } from './command.mjs';
 
 const execFileAsync = promisify(execFile);
 
@@ -271,6 +271,32 @@ test('expoExec falls back to the monorepo root expo bin when runnerDir lacks nod
   // Only assert stable suffixes.
   assert.match(argvLog, /expo:cwd=.*\/apps\/ui\b/);
   assert.match(argvLog, /bin=.*\/node_modules\/\.bin\/expo\b/);
+});
+
+test('resolveExpoBin repairs a missing workspace shim from the installed Expo package bin', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'hs-expo-missing-workspace-shim-'));
+  t.after(async () => {
+    await rm(root, { recursive: true, force: true });
+  });
+
+  await writeJson(join(root, 'package.json'), {
+    name: '@happier-dev/app',
+    private: true,
+    dependencies: { expo: '55.0.11' },
+  });
+  const expoPackageDir = join(root, 'node_modules', 'expo');
+  await mkdir(join(expoPackageDir, 'bin'), { recursive: true });
+  await writeJson(join(expoPackageDir, 'package.json'), {
+    name: 'expo',
+    version: '55.0.11',
+    bin: { expo: 'bin/cli' },
+  });
+  await writeFile(join(expoPackageDir, 'bin', 'cli'), '#!/usr/bin/env node\n', 'utf-8');
+
+  const expectedBin = join(root, 'node_modules', '.bin', process.platform === 'win32' ? 'expo.cmd' : 'expo');
+  assert.equal(await fileExists(expectedBin), false);
+  assert.equal(await resolveExpoBin(root), expectedBin);
+  assert.equal(await fileExists(expectedBin), true);
 });
 
 test('expoExec repairs Yarn shell shims inside Expo package bin files before invoking Expo', async (t) => {

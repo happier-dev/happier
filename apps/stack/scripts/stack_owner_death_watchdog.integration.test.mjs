@@ -13,6 +13,9 @@ import {
   waitForProcessAlive,
   waitForProcessExit,
 } from './testkit/stack_stop_sweeps_testkit.mjs';
+import { withJsonOwnerFileLock } from './utils/proc/jsonOwnerFileLock.mjs';
+import { spawnStackOwnerDeathWatchdog } from './utils/stack/owner_death_watchdog.mjs';
+import { recordStackRuntimeStart } from './utils/stack/runtime_state.mjs';
 
 function terminateProcessTree(pid) {
   if (!Number.isFinite(pid) || pid <= 1) return;
@@ -28,21 +31,207 @@ function terminateProcessTree(pid) {
   }
 }
 
-async function waitForLogMatch(path, pattern, { timeoutMs = 5_000, intervalMs = 50 } = {}) {
+async function waitForLogMatch(path, pattern, { timeoutMs = 15_000, intervalMs = 50 } = {}) {
   const deadline = Date.now() + timeoutMs;
+  let lastLog = '';
+  let lastReadError = null;
   while (Date.now() < deadline) {
     try {
-      const raw = await readFile(path, 'utf-8');
-      if (pattern.test(raw)) {
-        return raw;
+      lastLog = await readFile(path, 'utf-8');
+      lastReadError = null;
+      pattern.lastIndex = 0;
+      if (pattern.test(lastLog)) {
+        return lastLog;
       }
-    } catch {
-      // ignore
+    } catch (error) {
+      lastReadError = error;
     }
     await new Promise((resolve) => setTimeout(resolve, intervalMs));
   }
-  return await readFile(path, 'utf-8');
+
+  const readFailure = lastReadError instanceof Error ? `\nlast read error: ${lastReadError.message}` : '';
+  throw new Error(
+    `timeout waiting for watchdog log pattern ${String(pattern)} at ${path}${readFailure}\nlast log:\n${lastLog}`,
+  );
 }
+
+test('stack owner-death watchdog spawn fails closed without owner startedAt', () => {
+  const input = {
+    rootDir: '/tmp/root',
+    stackName: 'missing-incarnation',
+    baseDir: '/tmp/base',
+    runtimeStatePath: '/tmp/base/stack.runtime.json',
+    ownerPid: process.pid,
+  };
+  assert.equal(spawnStackOwnerDeathWatchdog(input), null);
+  assert.equal(spawnStackOwnerDeathWatchdog({ ...input, ownerStartedAt: 'not-a-timestamp' }), null);
+  assert.equal(spawnStackOwnerDeathWatchdog({ ...input, ownerStartedAt: '2026-07-17T08:04:00Z' }), null);
+});
+
+test('owner-death sweep no-ops when a successor publishes after the watched owner was observed', async (t) => {
+  const fixture = await setupStackStopSweepFixture({
+    importMetaUrl: import.meta.url,
+    t,
+    tmpPrefix: 'hstack-owner-death-watchdog-successor-race-',
+  });
+  const runtimeStatePath = join(fixture.baseDir, 'stack.runtime.json');
+  const watchdogLogPath = join(fixture.baseDir, 'logs', 'owner-death-watchdog.log');
+  const ownedEnv = {
+    ...process.env,
+    HAPPIER_STACK_STACK: fixture.stackName,
+    HAPPIER_STACK_ENV_FILE: fixture.envPath,
+    HAPPIER_STACK_PROCESS_KIND: 'infra',
+  };
+  const oldOwner = fixture.trackChild(spawnOwnedSleep({ env: ownedEnv }));
+  let successor = null;
+
+  await waitForProcessAlive({ pid: oldOwner.pid, timeoutMs: 2_000, intervalMs: 25, label: 'old lifecycle owner' });
+  const watchedRuntime = await recordStackRuntimeStart(runtimeStatePath, {
+    stackName: fixture.stackName,
+    script: 'owner-watchdog-successor-race-test',
+    ephemeral: true,
+    ownerPid: oldOwner.pid,
+    processes: { serverPid: oldOwner.pid },
+    ports: {},
+  });
+  fixture.trackChild(spawnStackOwnerDeathWatchdog({
+    rootDir: fixture.rootDir,
+    stackName: fixture.stackName,
+    baseDir: fixture.baseDir,
+    envPath: fixture.envPath,
+    runtimeStatePath,
+    ownerPid: oldOwner.pid,
+    ownerStartedAt: watchedRuntime.startedAt,
+    env: fixture.baseEnv,
+    pollMs: 25,
+    logFile: watchdogLogPath,
+  }));
+
+  await withJsonOwnerFileLock(async () => {
+    terminateProcessTree(oldOwner.pid);
+    await waitForProcessExit({ pid: oldOwner.pid, timeoutMs: 2_000, intervalMs: 25, label: 'old lifecycle owner' });
+    await waitForLogMatch(watchdogLogPath, /owner pid .* is gone; sweeping stack-owned runtime/i);
+
+    successor = fixture.trackChild(spawnOwnedSleep({ env: ownedEnv }));
+    await waitForProcessAlive({ pid: successor.pid, timeoutMs: 2_000, intervalMs: 25, label: 'successor lifecycle owner' });
+    const observed = JSON.parse(await readFile(runtimeStatePath, 'utf-8'));
+    await writeFile(runtimeStatePath, `${JSON.stringify({
+      ...observed,
+      ownerPid: successor.pid,
+      processes: { serverPid: successor.pid },
+      stopRequest: null,
+      updatedAt: new Date().toISOString(),
+    }, null, 2)}\n`, 'utf-8');
+  }, {
+    lockPath: `${runtimeStatePath}.lock`,
+    timeoutMs: 5_000,
+    pollIntervalMs: 5,
+    staleAfterMs: 10_000,
+    errorLabel: 'test runtime-state mutation lock',
+  });
+
+  const watchdogLog = await waitForLogMatch(watchdogLogPath, /successor runtime detected; no-op/i, { timeoutMs: 10_000 });
+  assert.ok(isAlive(successor.pid), `expected successor owner ${successor.pid} to remain alive`);
+  const current = JSON.parse(await readFile(runtimeStatePath, 'utf-8'));
+  assert.equal(current.ownerPid, successor.pid);
+  assert.deepEqual(current.processes, { serverPid: successor.pid });
+  assert.equal(current.stopRequest, null);
+  const structuredLine = watchdogLog.split('\n').find((line) => line.startsWith('[owner-watchdog-json] '));
+  assert.ok(structuredLine, `expected structured watchdog no-op line:\n${watchdogLog}`);
+  const structured = JSON.parse(structuredLine.slice('[owner-watchdog-json] '.length));
+  assert.equal(structured.event, 'owner_death_sweep_noop');
+  assert.equal(structured.actions?.stopAuthorization?.reason, 'successor_owner');
+  assert.equal(structured.killedCount, 0);
+});
+
+test('owner-death sweep no-ops when a successor reuses the watched pid with a new startedAt', async (t) => {
+  const fixture = await setupStackStopSweepFixture({
+    importMetaUrl: import.meta.url,
+    t,
+    tmpPrefix: 'hstack-owner-death-watchdog-pid-reuse-',
+  });
+  const runtimeStatePath = join(fixture.baseDir, 'stack.runtime.json');
+  const watchdogLogPath = join(fixture.baseDir, 'logs', 'owner-death-watchdog.log');
+  const ownedEnv = {
+    ...process.env,
+    HAPPIER_STACK_STACK: fixture.stackName,
+    HAPPIER_STACK_ENV_FILE: fixture.envPath,
+    HAPPIER_STACK_PROCESS_KIND: 'infra',
+  };
+  const oldOwner = fixture.trackChild(spawnOwnedSleep({ env: ownedEnv }));
+  let successor = null;
+
+  await waitForProcessAlive({ pid: oldOwner.pid, timeoutMs: 2_000, intervalMs: 25, label: 'old lifecycle owner' });
+  const watchedRuntime = await recordStackRuntimeStart(runtimeStatePath, {
+    stackName: fixture.stackName,
+    script: 'owner-watchdog-pid-reuse-test',
+    ephemeral: true,
+    ownerPid: oldOwner.pid,
+    processes: { serverPid: oldOwner.pid },
+    ports: {},
+  });
+  fixture.trackChild(spawnStackOwnerDeathWatchdog({
+    rootDir: fixture.rootDir,
+    stackName: fixture.stackName,
+    baseDir: fixture.baseDir,
+    envPath: fixture.envPath,
+    runtimeStatePath,
+    ownerPid: oldOwner.pid,
+    ownerStartedAt: watchedRuntime.startedAt,
+    env: fixture.baseEnv,
+    pollMs: 25,
+    logFile: watchdogLogPath,
+  }));
+
+  const successorStartedAt = '2026-07-17T08:03:00.000Z';
+  await withJsonOwnerFileLock(async () => {
+    terminateProcessTree(oldOwner.pid);
+    await waitForProcessExit({ pid: oldOwner.pid, timeoutMs: 2_000, intervalMs: 25, label: 'old lifecycle owner' });
+    await waitForLogMatch(watchdogLogPath, /owner pid .* is gone; sweeping stack-owned runtime/i);
+
+    successor = fixture.trackChild(spawnOwnedSleep({ env: ownedEnv }));
+    await waitForProcessAlive({ pid: successor.pid, timeoutMs: 2_000, intervalMs: 25, label: 'successor infra' });
+    const observed = JSON.parse(await readFile(runtimeStatePath, 'utf-8'));
+    await writeFile(runtimeStatePath, `${JSON.stringify({
+      ...observed,
+      ownerPid: oldOwner.pid,
+      startedAt: successorStartedAt,
+      processes: { serverPid: successor.pid },
+      serverProxy: { reloadGeneration: 2 },
+      stopRequest: null,
+      updatedAt: new Date().toISOString(),
+    }, null, 2)}\n`, 'utf-8');
+  }, {
+    lockPath: `${runtimeStatePath}.lock`,
+    timeoutMs: 5_000,
+    pollIntervalMs: 5,
+    staleAfterMs: 10_000,
+    errorLabel: 'test runtime-state mutation lock',
+  });
+
+  const watchdogLog = await waitForLogMatch(
+    watchdogLogPath,
+    /runtime stop not authorized \(successor_owner_incarnation\); no-op/i,
+    { timeoutMs: 10_000 },
+  );
+  assert.ok(isAlive(successor.pid), `expected successor infra ${successor.pid} to remain alive`);
+  const current = JSON.parse(await readFile(runtimeStatePath, 'utf-8'));
+  assert.equal(current.ownerPid, oldOwner.pid);
+  assert.equal(current.startedAt, successorStartedAt);
+  assert.deepEqual(current.processes, { serverPid: successor.pid });
+  assert.equal(current.serverProxy.reloadGeneration, 2);
+  assert.equal(current.stopRequest, null);
+  const structuredLine = watchdogLog.split('\n').find((line) => line.startsWith('[owner-watchdog-json] '));
+  assert.ok(structuredLine, `expected structured watchdog no-op line:\n${watchdogLog}`);
+  const structured = JSON.parse(structuredLine.slice('[owner-watchdog-json] '.length));
+  assert.equal(structured.event, 'owner_death_sweep_noop');
+  assert.equal(structured.actions?.stopAuthorization?.reason, 'successor_owner_incarnation');
+  assert.deepEqual(structured.actions?.stopAttribution, {
+    requestedBy: 'owner death watchdog',
+    reason: 'lifecycle owner exited; sweeping stack-owned runtime',
+  });
+  assert.equal(structured.killedCount, 0);
+});
 
 test('stack owner-death watchdog reaps stale infra and preserves session processes', async (t) => {
   const fixture = await setupStackStopSweepFixture({
@@ -76,7 +265,7 @@ test('stack owner-death watchdog reaps stale infra and preserves session process
     [
       `import { recordStackRuntimeStart, recordStackRuntimeUpdate } from ${JSON.stringify(runtimeStateUrl)};`,
       `import { spawnStackOwnerDeathWatchdog } from ${JSON.stringify(ownerWatchdogUrl)};`,
-      `await recordStackRuntimeStart(${JSON.stringify(runtimeStatePath)}, {`,
+      `const runtime = await recordStackRuntimeStart(${JSON.stringify(runtimeStatePath)}, {`,
       `  stackName: ${JSON.stringify(fixture.stackName)},`,
       `  script: 'owner-watchdog-test',`,
       `  ephemeral: true,`,
@@ -91,6 +280,7 @@ test('stack owner-death watchdog reaps stale infra and preserves session process
       `  envPath: ${JSON.stringify(fixture.envPath)},`,
       `  runtimeStatePath: ${JSON.stringify(runtimeStatePath)},`,
       `  ownerPid: process.pid,`,
+      `  ownerStartedAt: runtime.startedAt,`,
       `  env: process.env,`,
       `  pollMs: 25,`,
       `  logFile: ${JSON.stringify(watchdogLogPath)},`,
@@ -157,7 +347,7 @@ test('stack owner-death watchdog sweeps live infra children after owner death', 
       `  },`,
       `});`,
       `child.unref();`,
-      `await recordStackRuntimeStart(${JSON.stringify(runtimeStatePath)}, {`,
+      `const runtime = await recordStackRuntimeStart(${JSON.stringify(runtimeStatePath)}, {`,
       `  stackName: ${JSON.stringify(fixture.stackName)},`,
       `  script: 'owner-watchdog-test',`,
       `  ephemeral: true,`,
@@ -172,6 +362,7 @@ test('stack owner-death watchdog sweeps live infra children after owner death', 
       `  envPath: ${JSON.stringify(fixture.envPath)},`,
       `  runtimeStatePath: ${JSON.stringify(runtimeStatePath)},`,
       `  ownerPid: process.pid,`,
+      `  ownerStartedAt: runtime.startedAt,`,
       `  env: process.env,`,
       `  pollMs: 25,`,
       `  logFile: ${JSON.stringify(watchdogLogPath)},`,
@@ -206,6 +397,25 @@ test('stack owner-death watchdog sweeps live infra children after owner death', 
     const sweepLog = await waitForLogMatch(watchdogLogPath, /sweep complete \(killed=\d+, errors=0\)/i);
     assert.match(sweepLog, /owner pid .* is gone; sweeping stack-owned runtime/i);
     assert.match(sweepLog, /sweep complete \(killed=\d+, errors=0\)/i);
+    const structuredLine = sweepLog
+      .split('\n')
+      .find((line) => line.startsWith('[owner-watchdog-json] '));
+    assert.ok(structuredLine, `expected structured owner-watchdog-json line in log:\n${sweepLog}`);
+    const structured = JSON.parse(structuredLine.slice('[owner-watchdog-json] '.length));
+    assert.equal(structured.event, 'owner_death_sweep_complete');
+    assert.equal(structured.stackName, fixture.stackName);
+    assert.deepEqual(structured.actions?.stopAttribution, {
+      requestedBy: 'owner death watchdog',
+      reason: 'lifecycle owner exited; sweeping stack-owned runtime',
+    });
+    assert.equal(structured.errorCount, 0);
+    assert.ok(structured.killedCount >= 1, `expected at least one killed process, got ${structured.killedCount}`);
+    const directlyKilledPids = structured.actions?.processes?.killed?.map((entry) => entry.pid) ?? [];
+    const sweptPids = structured.actions?.sweep?.pids?.map((entry) => entry.pid) ?? [];
+    assert.ok(
+      [...directlyKilledPids, ...sweptPids].includes(infraPid),
+      `expected structured log to include infra pid ${infraPid}: ${structuredLine}`,
+    );
   } finally {
     terminateProcessTree(infraPid);
     await fixture.cleanup();
@@ -247,7 +457,7 @@ test('stack owner-death watchdog preserves daemonPid when runtime stopRequest se
       `};`,
       `const daemonChild = spawnOwned('infra');`,
       `const serverChild = spawnOwned('infra');`,
-      `await recordStackRuntimeStart(${JSON.stringify(runtimeStatePath)}, {`,
+      `const runtime = await recordStackRuntimeStart(${JSON.stringify(runtimeStatePath)}, {`,
       `  stackName: ${JSON.stringify(fixture.stackName)},`,
       `  script: 'owner-watchdog-preserve-daemon-test',`,
       `  ephemeral: true,`,
@@ -269,6 +479,7 @@ test('stack owner-death watchdog preserves daemonPid when runtime stopRequest se
       `  envPath: ${JSON.stringify(fixture.envPath)},`,
       `  runtimeStatePath: ${JSON.stringify(runtimeStatePath)},`,
       `  ownerPid: process.pid,`,
+      `  ownerStartedAt: runtime.startedAt,`,
       `  env: process.env,`,
       `  pollMs: 25,`,
       `  logFile: ${JSON.stringify(watchdogLogPath)},`,

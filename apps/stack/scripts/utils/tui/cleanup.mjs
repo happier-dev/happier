@@ -13,9 +13,21 @@ async function readEnvObject(envPath) {
   }
 }
 
-export async function stopStackForTuiExit({ rootDir, stackName, json = false, noDocker = false, env: outerEnv = process.env }) {
+export async function stopStackForTuiExit({
+  rootDir,
+  stackName,
+  json = false,
+  noDocker = false,
+  env: outerEnv = process.env,
+  expectedRuntimeOwner = null,
+}) {
   const { envPath, baseDir } = resolveStackEnvPath(stackName, outerEnv);
   const stackEnv = await readEnvObject(envPath);
+  const expectedOwnerPid = Number(expectedRuntimeOwner?.ownerPid);
+  const expectedOwnerStartedAt = String(expectedRuntimeOwner?.startedAt ?? '').trim();
+  const hasExpectedRuntimeOwner = Number.isInteger(expectedOwnerPid)
+    && expectedOwnerPid > 1
+    && expectedOwnerStartedAt;
 
   const env = {
     ...(outerEnv ?? process.env),
@@ -34,5 +46,8 @@ export async function stopStackForTuiExit({ rootDir, stackName, json = false, no
     aggressive: false,
     sweepOwned: false,
     autoSweep: true,
+    ...(hasExpectedRuntimeOwner
+      ? { expectedOwnerPid, expectedOwnerStartedAt }
+      : {}),
   });
 }

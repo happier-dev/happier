@@ -1,4 +1,5 @@
 import { mkdir, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawn } from 'node:child_process';
 
@@ -13,7 +14,12 @@ export async function withTempRoot(t) {
 }
 
 export function gitEnv() {
-  return buildGitIdentityEnv();
+  return buildGitIdentityEnv({
+    extraEnv: {
+      HAPPIER_STACK_HOME_DIR: join(tmpdir(), 'happier-stack-monorepo-port-test-home'),
+      HAPPIER_STACK_DISABLE_STACK_ENV_AUTOLOAD: '1',
+    },
+  });
 }
 
 export async function initMonorepoStub({ dir, env, seed = {}, layout = 'packages' }) {
@@ -50,15 +56,13 @@ export async function initSplitRepoStub({ dir, env, name, seed = {} }) {
 }
 
 function withTimeout(task, { timeoutMs, message }) {
-  return Promise.race([
-    task,
-    new Promise((_, reject) => {
-      const timer = setTimeout(() => {
-        clearTimeout(timer);
-        reject(new Error(message));
-      }, timeoutMs);
-    }),
-  ]);
+  let timer = null;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(message)), timeoutMs);
+  });
+  return Promise.race([task, timeout]).finally(() => {
+    if (timer) clearTimeout(timer);
+  });
 }
 
 export function spawnNodeWithCapture(command, args, { cwd, env, stdio = ['pipe', 'pipe', 'pipe'] } = {}) {
@@ -79,26 +83,32 @@ export function spawnNodeWithCapture(command, args, { cwd, env, stdio = ['pipe',
     stderr += d.toString();
     notify();
   });
+  child.stdin?.on('error', () => {
+    // The child may exit between a prompt becoming visible and the test sending its answer.
+  });
 
   const getOutput = () => ({ stdout, stderr, combined: `${stdout}\n${stderr}` });
 
   const waitForText = async (needle, timeoutMs = 10_000) => {
     if (getOutput().combined.includes(needle)) return;
-    await withTimeout(
-      new Promise((resolve) => {
-        const check = () => {
-          if (getOutput().combined.includes(needle)) {
-            outputWaiters.delete(check);
-            resolve();
-          }
-        };
-        outputWaiters.add(check);
-      }),
-      {
-        timeoutMs,
-        message: `timeout waiting for text: ${needle}\nstdout:\n${stdout}\nstderr:\n${stderr}`,
-      }
-    );
+    const check = () => {};
+    let waiter = check;
+    try {
+      await withTimeout(
+        new Promise((resolve) => {
+          waiter = () => {
+            if (getOutput().combined.includes(needle)) resolve();
+          };
+          outputWaiters.add(waiter);
+        }),
+        {
+          timeoutMs,
+          message: `timeout waiting for text: ${needle}\nstdout:\n${stdout}\nstderr:\n${stderr}`,
+        },
+      );
+    } finally {
+      outputWaiters.delete(waiter);
+    }
   };
 
   const waitForExit = async (timeoutMs = 20_000) => {
@@ -117,8 +127,26 @@ export function spawnNodeWithCapture(command, args, { cwd, env, stdio = ['pipe',
     return { code: child.exitCode, signal: child.signalCode, ...getOutput() };
   };
 
-  const sendLine = (line = '') => {
-    child.stdin?.write(String(line) + '\n');
+  const sendLine = async (line = '', timeoutMs = 10_000) => {
+    if (!child.stdin || child.stdin.destroyed || !child.stdin.writable) {
+      throw new Error(`cannot send input to exited or closed process\nstdout:\n${stdout}\nstderr:\n${stderr}`);
+    }
+
+    await withTimeout(
+      new Promise((resolve, reject) => {
+        child.stdin.write(String(line) + '\n', (error) => {
+          if (error) {
+            reject(error);
+            return;
+          }
+          resolve();
+        });
+      }),
+      {
+        timeoutMs,
+        message: `timeout writing process input\nstdout:\n${stdout}\nstderr:\n${stderr}`,
+      },
+    );
   };
 
   const kill = (signal = 'SIGKILL') => {

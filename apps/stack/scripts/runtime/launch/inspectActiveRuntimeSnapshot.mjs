@@ -3,6 +3,7 @@ import { resolve } from 'node:path';
 import { getFirstPartyComponentCatalogEntry } from '@happier-dev/cli-common/firstPartyRuntime';
 
 import { pathExists } from '../../utils/fs/fs.mjs';
+import { readJsonIfExists } from '../../utils/fs/json.mjs';
 import {
   readRuntimeManifest,
   readRuntimePointer,
@@ -34,6 +35,24 @@ async function collectSnapshotRuntimePayloadErrors({ snapshotPath }) {
   return (await pathExists(daemonNodeEntrypoint))
     ? []
     : [`[runtime] active runtime snapshot is incomplete: missing daemon node entrypoint (${daemonNodeEntrypoint}).`];
+}
+
+async function inspectDaemonDistClosure({ snapshotPath }) {
+  const daemonComponent = getFirstPartyComponentCatalogEntry('happier-daemon');
+  if (!daemonComponent.nodeEntrypointRelativePath) {
+    return { fingerprint: null, errors: ['[runtime] daemon runtime has no node entrypoint identity.'] };
+  }
+  const daemonNodeEntrypoint = resolve(snapshotPath, 'cli', daemonComponent.nodeEntrypointRelativePath);
+  const buildManifestPath = resolve(daemonNodeEntrypoint, '..', '.build-manifest.json');
+  const buildManifest = await readJsonIfExists(buildManifestPath, { defaultValue: null });
+  const fingerprint = String(buildManifest?.fingerprint ?? '').trim().toLowerCase();
+  if (!/^[a-f0-9]{16}$/.test(fingerprint)) {
+    return {
+      fingerprint: null,
+      errors: [`[runtime] active runtime daemon has an invalid dist closure fingerprint (${buildManifestPath}).`],
+    };
+  }
+  return { fingerprint, errors: [] };
 }
 
 export async function inspectActiveRuntimeSnapshot({ stackBaseDir }) {
@@ -69,6 +88,9 @@ export async function inspectActiveRuntimeSnapshot({ stackBaseDir }) {
   const validation = validateRuntimeManifest(manifest);
   const errors = [];
 
+  if (Number(pointer?.version) !== 1) {
+    errors.push('[runtime] active runtime pointer version must be 1.');
+  }
   if (normalizedPointerSnapshotPath !== normalizedExpectedSnapshotPath) {
     errors.push('[runtime] active runtime snapshot points outside the stack runtime builds dir.');
   }
@@ -76,6 +98,16 @@ export async function inspectActiveRuntimeSnapshot({ stackBaseDir }) {
     errors.push(`[runtime] invalid active runtime snapshot: ${validation.errors.join('; ')}`);
   }
   if (validation.ok) {
+    if (validation.manifest.snapshotId !== activeSnapshotId) {
+      errors.push('[runtime] active runtime pointer and manifest snapshot identity do not match.');
+    }
+    const pointerSourceFingerprint = String(pointer?.sourceFingerprint ?? '').trim();
+    if (
+      !pointerSourceFingerprint
+      || pointerSourceFingerprint !== validation.manifest.sourceFingerprint
+    ) {
+      errors.push('[runtime] active runtime pointer and manifest source fingerprint do not match.');
+    }
     errors.push(
       ...(await collectSnapshotEntrypointErrors({
         snapshotPath: normalizedExpectedSnapshotPath,
@@ -87,22 +119,15 @@ export async function inspectActiveRuntimeSnapshot({ stackBaseDir }) {
     );
   }
 
+  const daemonDistClosure = validation.ok
+    ? await inspectDaemonDistClosure({ snapshotPath: normalizedExpectedSnapshotPath })
+    : { fingerprint: null, errors: [] };
+  errors.push(...daemonDistClosure.errors);
+
   const sourceFingerprint =
     String(pointer?.sourceFingerprint ?? '').trim() || validation.manifest?.sourceFingerprint || null;
   const valid = errors.length === 0 && Boolean(validation.manifest);
-  let launchPath = normalizedExpectedSnapshotPath;
-  if (valid) {
-    const currentDirErrors = await collectSnapshotEntrypointErrors({
-      snapshotPath: runtimePaths.currentDir,
-      manifest: validation.manifest,
-    });
-    const currentRuntimePayloadErrors = await collectSnapshotRuntimePayloadErrors({
-      snapshotPath: runtimePaths.currentDir,
-    });
-    if (currentDirErrors.length === 0 && currentRuntimePayloadErrors.length === 0) {
-      launchPath = runtimePaths.currentDir;
-    }
-  }
+  const launchPath = normalizedExpectedSnapshotPath;
 
   return {
     missing: false,
@@ -112,6 +137,7 @@ export async function inspectActiveRuntimeSnapshot({ stackBaseDir }) {
     snapshotPath: normalizedPointerSnapshotPath,
     launchPath,
     sourceFingerprint,
+    daemonDistClosureFingerprint: daemonDistClosure.fingerprint,
     manifest: validation.manifest,
     snapshot: valid
       ? {
@@ -119,6 +145,7 @@ export async function inspectActiveRuntimeSnapshot({ stackBaseDir }) {
           snapshotPath: normalizedExpectedSnapshotPath,
           launchPath,
           sourceFingerprint,
+          daemonDistClosureFingerprint: daemonDistClosure.fingerprint,
           manifest: validation.manifest,
         }
       : null,

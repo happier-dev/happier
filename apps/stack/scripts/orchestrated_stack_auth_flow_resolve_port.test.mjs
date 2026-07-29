@@ -33,6 +33,34 @@ test('resolveServerPortForPostAuthDaemonStart falls back to env HAPPIER_STACK_SE
   }
 });
 
+test('resolveServerPortForPostAuthDaemonStart falls back to pinned stack env file port', async (t) => {
+  const tmp = await mkdtemp(join(tmpdir(), 'hstack-auth-flow-port-env-file-'));
+  const storageDir = join(tmp, 'storage');
+  const stackName = 'main';
+  const baseDir = join(storageDir, stackName);
+  const envPath = join(baseDir, 'env');
+  await mkdir(baseDir, { recursive: true });
+
+  await writeFile(join(baseDir, 'stack.runtime.json'), JSON.stringify({ version: 1, stackName, ports: {} }) + '\n', 'utf-8');
+  await writeFile(envPath, 'HAPPIER_STACK_SERVER_PORT=4333\n', 'utf-8');
+
+  const restore = withPatchedProcessEnv(t, { HAPPIER_STACK_STORAGE_DIR: storageDir });
+  try {
+    const port = await resolveServerPortForPostAuthDaemonStart({
+      stackName,
+      env: { ...process.env, HAPPIER_STACK_ENV_FILE: envPath },
+    });
+    assert.equal(port, 4333);
+  } finally {
+    restore();
+    try {
+      await rm(tmp, { recursive: true, force: true });
+    } catch {
+      // ignore
+    }
+  }
+});
+
 test('resolveServerPortForPostAuthDaemonStart throws when runtime and env ports are both unusable', async (t) => {
   const tmp = await mkdtemp(join(tmpdir(), 'hstack-auth-flow-port-invalid-'));
   const storageDir = join(tmp, 'storage');
@@ -72,6 +100,36 @@ test('resolveServerPortForPostAuthDaemonStart ignores runtime port when runtime 
   await writeFile(
     join(baseDir, 'stack.runtime.json'),
     JSON.stringify({ version: 1, stackName, ownerPid: 999_999_999, ports: { server: 4555 } }) + '\n',
+    'utf-8'
+  );
+
+  const restore = withPatchedProcessEnv(t, { HAPPIER_STACK_STORAGE_DIR: storageDir });
+  try {
+    const port = await resolveServerPortForPostAuthDaemonStart({
+      stackName,
+      env: { ...process.env, HAPPIER_STACK_SERVER_PORT: '4222' },
+    });
+    assert.equal(port, 4222);
+  } finally {
+    restore();
+    try {
+      await rm(tmp, { recursive: true, force: true });
+    } catch {
+      // ignore
+    }
+  }
+});
+
+test('resolveServerPortForPostAuthDaemonStart ignores runtime port when owner pid is live but not stack-owned', async (t) => {
+  const tmp = await mkdtemp(join(tmpdir(), 'hstack-auth-flow-port-untrusted-owner-'));
+  const storageDir = join(tmp, 'storage');
+  const stackName = 'main';
+  const baseDir = join(storageDir, stackName);
+  await mkdir(baseDir, { recursive: true });
+
+  await writeFile(
+    join(baseDir, 'stack.runtime.json'),
+    JSON.stringify({ version: 1, stackName, ownerPid: process.pid, ports: { server: 4555 } }) + '\n',
     'utf-8'
   );
 

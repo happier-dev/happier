@@ -16,7 +16,7 @@ import { fileURLToPath } from 'node:url';
 
 import { parseEnvToObject } from './utils/env/dotenv.mjs';
 import { run, runCapture } from './utils/proc/proc.mjs';
-import { applyStackCacheEnv, ensureDepsInstalled } from './utils/proc/pm.mjs';
+import { applyStackCacheEnv, ensureDepsInstalled, pmExecBin } from './utils/proc/pm.mjs';
 import { applyHappyServerMigrations, ensureHappyServerManagedInfra } from './utils/server/infra/happy_server_infra.mjs';
 import { resolvePrismaClientImportForDbProvider, resolvePrismaClientImportForServerComponent } from './utils/server/flavor_scripts.mjs';
 import { clearDevAuthKey, readDevAuthKey, writeDevAuthKey } from './utils/auth/dev_key.mjs';
@@ -26,7 +26,7 @@ import { clearStackForceLoginCredentialPaths } from './utils/auth/clearStackForc
 import { resolveHandyMasterSecretFromStack } from './utils/auth/handy_master_secret.mjs';
 import { ensureDir, readTextIfExists } from './utils/fs/ops.mjs';
 import { stackExistsSync } from './utils/stack/stacks.mjs';
-import { checkDaemonState, stopLocalDaemon } from './daemon.mjs';
+import { checkDaemonStatePingAware, stopLocalDaemon } from './daemon.mjs';
 import { isTty, prompt, promptSelect, withRl } from './utils/cli/wizard.mjs';
 import { parseCliIdentityOrThrow, resolveCliHomeDirForIdentity } from './utils/stack/cli_identities.mjs';
 import {
@@ -39,7 +39,7 @@ import { banner, bullets, cmd as cmdFmt, kv, ok, sectionTitle, warn } from './ut
 import { bold, cyan, dim } from './utils/ui/ansi.mjs';
 import {
   renderPrismaCompatibleSqliteDatabaseUrl,
-  resolvePrismaSqliteDatabaseUrlOptionsFromEnv,
+  resolveServerLightSqliteDatabaseUrlOptionsFromEnv,
 } from '@happier-dev/cli-common/firstPartyRuntime';
 import { getVerbosityLevel } from './utils/cli/verbosity.mjs';
 import { runOrchestratedGuidedAuthFlow, startDaemonPostAuth } from './utils/auth/orchestrated_stack_auth_flow.mjs';
@@ -56,8 +56,14 @@ import { resolveReusableAuthSeedSource } from './utils/auth/sources.mjs';
 import { decodeJwtPayloadUnsafe } from './utils/auth/decode_jwt_payload_unsafe.mjs';
 import { fileHasContent } from './utils/fs/file_has_content.mjs';
 import { buildConfigureServerLinks } from '@happier-dev/cli-common/links';
-import { getStackRuntimeStatePath, isPidAlive as isRuntimePidAlive, readStackRuntimeStateFile } from './utils/stack/runtime_state.mjs';
+import {
+  getStackRuntimeStatePath,
+  isPidAlive as isRuntimePidAlive,
+  readStackRuntimeStateFile,
+  resolveTrustedStackRuntimeServerPort,
+} from './utils/stack/runtime_state.mjs';
 import { resolveStackRuntimeLaunchContext } from './runtime/launch/resolveStackRuntimeLaunchContext.mjs';
+import { applyEffectiveDbProviderEnv } from './utils/server/effective_db_provider.mjs';
 
 function resolveGuidedStartAction({ healthOk = false, runtimeOwnerAlive = false, autoStart = false } = {}) {
   if (healthOk) return 'proceed';
@@ -82,10 +88,8 @@ async function getInternalServerUrlCompat() {
   try {
     const statePath = getStackRuntimeStatePath(stackName);
     const st = await readStackRuntimeStateFile(statePath);
-    const ownerPid = Number(st?.ownerPid);
-    const runtimeOwnerAlive = Number.isFinite(ownerPid) && ownerPid > 1 ? isRuntimePidAlive(ownerPid) : false;
-    const port = Number(st?.ports?.server);
-    if (runtimeOwnerAlive && Number.isFinite(port) && port > 0) {
+    const port = await resolveTrustedStackRuntimeServerPort(st, { stackName });
+    if (port !== null) {
       return { port, url: `http://127.0.0.1:${port}` };
     }
   } catch {
@@ -619,28 +623,33 @@ export function buildLightMigrationBaseEnv(processEnv, envIn) {
   delete baseEnv.HAPPY_SERVER_LIGHT_DB_DIR;
   delete baseEnv.HAPPIER_DB_PROVIDER;
   delete baseEnv.HAPPY_DB_PROVIDER;
-  return { ...baseEnv, ...(envIn && typeof envIn === 'object' ? envIn : {}) };
+  const fileEnv = { ...(envIn && typeof envIn === 'object' ? envIn : {}) };
+  delete fileEnv.DATABASE_URL;
+  delete fileEnv.HAPPY_DB_PROVIDER;
+  return { ...baseEnv, ...fileEnv };
 }
 
 export function resolveDbProviderForLightFromEnv(env) {
-  const raw = (env.HAPPIER_DB_PROVIDER ?? env.HAPPY_DB_PROVIDER ?? '').toString().trim().toLowerCase();
-  if (raw === 'sqlite') return 'sqlite';
-  if (raw === 'pglite') return 'pglite';
-  // Default for light flavor.
-  return 'sqlite';
+  return applyEffectiveDbProviderEnv({
+    serverComponentName: 'happier-server-light',
+    env,
+    targetEnv: { ...env },
+  });
 }
 
 function resolveDbProviderForFullFromEnv(env) {
-  const raw = (env.HAPPIER_DB_PROVIDER ?? env.HAPPY_DB_PROVIDER ?? '').toString().trim().toLowerCase();
-  if (raw === 'mysql') return 'mysql';
-  return 'postgres';
+  return applyEffectiveDbProviderEnv({
+    serverComponentName: 'happier-server',
+    env,
+    targetEnv: { ...env },
+  });
 }
 
 function resolveSqliteDatabaseUrlForLight({ dataDir, env }) {
   return renderPrismaCompatibleSqliteDatabaseUrl({
     dbPath: join(dataDir, 'happier-server-light.sqlite'),
     platform: process.platform,
-    sqlite: resolvePrismaSqliteDatabaseUrlOptionsFromEnv(env ?? {}),
+    sqlite: resolveServerLightSqliteDatabaseUrlOptionsFromEnv(env ?? {}),
   });
 }
 
@@ -657,7 +666,7 @@ async function ensureLightMigrationsApplied({ serverDir, baseDir, envIn, quiet =
   env.HAPPY_SERVER_LIGHT_DB_DIR = env.HAPPY_SERVER_LIGHT_DB_DIR ?? dbDir;
 
   const provider = resolveDbProviderForLightFromEnv(env);
-  env.HAPPIER_DB_PROVIDER = env.HAPPIER_DB_PROVIDER ?? provider;
+  env.HAPPIER_DB_PROVIDER = provider;
 
   // Migration step:
   // - pglite: spins a temporary pglite socket and runs prisma migrate deploy against prisma/schema.prisma
@@ -666,7 +675,7 @@ async function ensureLightMigrationsApplied({ serverDir, baseDir, envIn, quiet =
   // Both are idempotent and safe to re-run when the light DB is not held open.
   const envWithCache = await applyStackCacheEnv(env);
   const migrateScript = provider === 'sqlite' ? 'migrate:sqlite:deploy' : 'migrate:light:deploy';
-  await run('yarn', ['-s', migrateScript], { cwd: serverDir, env: envWithCache, stdio: quiet ? 'ignore' : 'inherit' });
+  await pmExecBin({ dir: serverDir, bin: migrateScript, args: [], env: envWithCache, quiet });
   return { dataDir, filesDir, dbDir };
 }
 
@@ -1488,6 +1497,7 @@ async function cmdCopyFrom({ argv, json }) {
             publicServerUrl,
             envPath,
             env: targetEnv,
+            dbProvider: targetDbProvider,
             quiet: json,
             // Auth seeding only needs Postgres; don't block on Minio bucket init.
             skipMinioInit: true,
@@ -1519,7 +1529,12 @@ async function cmdCopyFrom({ argv, json }) {
         if (targetServerComponent === 'happier-server-light') {
           await ensureLightMigrationsApplied({ serverDir: targetCwd, baseDir: targetBaseDir, envIn: targetEnv, quiet: json }).catch(() => {});
         } else if (targetServerComponent === 'happier-server') {
-          await applyHappyServerMigrations({ serverDir: targetCwd, env: targetEnv, quiet: json }).catch(() => {});
+          await applyHappyServerMigrations({
+            serverDir: targetCwd,
+            env: targetEnv,
+            quiet: json,
+            dbProvider: targetDbProvider,
+          }).catch(() => {});
         }
         return await runInsert();
       }
@@ -1578,8 +1593,13 @@ async function cmdStatus({ json }) {
     cliHomeDir: resolveAuthStackCliHomeDir({ stackName }),
     identity,
   });
-  const credentialPaths = resolveStackCredentialPaths({ cliHomeDir, serverUrl: internalServerUrl, env: process.env });
-  const existingCredentialPath = findExistingStackCredentialPath({ cliHomeDir, serverUrl: internalServerUrl, env: process.env });
+  const scopedEnv = applyStackActiveServerScopeEnv({
+    env: process.env,
+    stackName,
+    cliIdentity: identity,
+  });
+  const credentialPaths = resolveStackCredentialPaths({ cliHomeDir, serverUrl: internalServerUrl, env: scopedEnv });
+  const existingCredentialPath = findExistingStackCredentialPath({ cliHomeDir, serverUrl: internalServerUrl, env: scopedEnv });
   const settingsPath = join(cliHomeDir, 'settings.json');
 
   const auth = {
@@ -1598,7 +1618,7 @@ async function cmdStatus({ json }) {
     },
   };
 
-  const daemon = checkDaemonState(cliHomeDir, { serverUrl: internalServerUrl });
+  const daemon = await checkDaemonStatePingAware(cliHomeDir, { serverUrl: internalServerUrl, env: scopedEnv });
   const healthRaw = await fetchHappierHealth(internalServerUrl);
   const health = {
     ok: Boolean(healthRaw.ok),

@@ -1,11 +1,13 @@
-import { run, runCapture } from '../proc/proc.mjs';
-import { ensureDepsInstalled, ensureWorkspacePackagesBuiltForComponent } from '../proc/pm.mjs';
+import { runCapture } from '../proc/proc.mjs';
+import { ensureDepsInstalled, ensureWorkspacePackagesBuiltForComponent, pmExecBin } from '../proc/pm.mjs';
 import { isSandboxed, sandboxAllowsGlobalSideEffects } from '../env/sandbox.mjs';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { mkdir } from 'node:fs/promises';
 import { resolvePrismaClientImportForDbProvider, resolvePrismaClientImportForServerComponent } from '../server/flavor_scripts.mjs';
 import { findAnyCredentialPathInCliHome } from '../auth/credentials_paths.mjs';
+import { applyEffectiveDbProviderEnv } from '../server/effective_db_provider.mjs';
+import { applyHappyServerMigrations } from '../server/infra/happy_server_infra.mjs';
 import {
   renderPrismaCompatibleSqliteDatabaseUrl,
   resolveServerLightSqliteDatabaseUrlOptionsFromEnv,
@@ -25,9 +27,11 @@ function firstNonEmptyEnv(...values) {
 }
 
 function resolveLightDbProviderFromEnv(env) {
-  const raw = (env?.HAPPIER_DB_PROVIDER ?? env?.HAPPY_DB_PROVIDER ?? '').toString().trim().toLowerCase();
-  if (raw === 'pglite') return 'pglite';
-  return 'sqlite';
+  return applyEffectiveDbProviderEnv({
+    serverComponentName: 'happier-server-light',
+    env,
+    targetEnv: { ...env },
+  });
 }
 
 function resolveSqliteDatabaseUrlForDataDir({ dataDir, env }) {
@@ -38,7 +42,7 @@ function resolveSqliteDatabaseUrlForDataDir({ dataDir, env }) {
   });
 }
 
-async function probeAccountCount({ serverComponentName, serverDir, env, lightDbProvider = 'sqlite' }) {
+async function probeAccountCount({ serverComponentName, serverDir, env, lightDbProvider = 'sqlite', dbProvider = lightDbProvider }) {
   const probe =
     serverComponentName === 'happier-server-light' && lightDbProvider === 'pglite'
       ? `
@@ -133,7 +137,7 @@ async function probeAccountCount({ serverComponentName, serverDir, env, lightDbP
 	 	let db;
 		try {
 		  const { PrismaClient } = await import(${JSON.stringify(
-	      resolvePrismaClientImportForServerComponent({ serverComponentName, serverDir })
+	      resolvePrismaClientImportForDbProvider({ serverDir, provider: dbProvider })
 	    )});
 		  db = new PrismaClient();
 		  const accountCount = await db.account.count();
@@ -174,10 +178,12 @@ export async function probeExistingAccountCountForServerComponent({
   env,
 }) {
   try {
-    const lightDbProvider =
-      serverComponentName === 'happier-server-light'
-        ? resolveLightDbProviderFromEnv(env)
-        : 'sqlite';
+    const dbProvider = applyEffectiveDbProviderEnv({
+      serverComponentName,
+      env,
+      targetEnv: { ...env },
+    });
+    const lightDbProvider = serverComponentName === 'happier-server-light' ? dbProvider : 'sqlite';
     const probeEnv = { ...env };
     if (
       serverComponentName === 'happier-server-light' &&
@@ -194,6 +200,7 @@ export async function probeExistingAccountCountForServerComponent({
       serverDir,
       env: probeEnv,
       lightDbProvider,
+      dbProvider,
     });
     return { ok: true, accountCount };
   } catch (e) {
@@ -277,16 +284,18 @@ export async function ensureServerLightSchemaReady({ serverDir, env, bestEffort 
     }
   }
 
+  const runEnv = { ...env };
+
   if (
     lightDbProvider === 'sqlite' &&
     dataDir &&
-    !(env?.DATABASE_URL ?? '').toString().trim()
+    !(runEnv.DATABASE_URL ?? '').toString().trim()
   ) {
-    env.DATABASE_URL = resolveSqliteDatabaseUrlForDataDir({ dataDir, env });
+    runEnv.DATABASE_URL = resolveSqliteDatabaseUrlForDataDir({ dataDir, env: runEnv });
   }
 
   const probe = async () =>
-    await probeAccountCount({ serverComponentName: 'happier-server-light', serverDir, env, lightDbProvider });
+    await probeAccountCount({ serverComponentName: 'happier-server-light', serverDir, env: runEnv, lightDbProvider });
   // Apply provider-specific light migrations:
   // - sqlite: prisma/sqlite/schema.prisma
   // - pglite: embedded Postgres + pglite socket
@@ -296,7 +305,7 @@ export async function ensureServerLightSchemaReady({ serverDir, env, bestEffort 
   // When bestEffort=true (used for heuristics), skip migrations and only probe.
   const migrateScript = lightDbProvider === 'pglite' ? 'migrate:light:deploy' : 'migrate:sqlite:deploy';
   if (!bestEffort) {
-    await run('yarn', ['-s', migrateScript], { cwd: serverDir, env });
+    await pmExecBin({ dir: serverDir, bin: migrateScript, args: [], env: runEnv });
   }
 
   // 2) Probe account count (used for auth seeding heuristics).
@@ -319,23 +328,24 @@ export async function ensureServerLightSchemaReady({ serverDir, env, bestEffort 
 }
 
 export async function ensureHappyServerSchemaReady({ serverDir, env }) {
+  const dbProvider = applyEffectiveDbProviderEnv({
+    serverComponentName: 'happier-server',
+    env,
+    targetEnv: { ...env },
+  });
   await ensureWorkspacePackagesBuiltForComponent(serverDir, { env });
   await ensureDepsInstalled(serverDir, 'happier-server', { env });
 
   try {
-    const accountCount = await probeAccountCount({ serverComponentName: 'happier-server', serverDir, env });
+    const accountCount = await probeAccountCount({ serverComponentName: 'happier-server', serverDir, env, dbProvider });
     return { ok: true, migrated: false, accountCount };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     if (!looksLikeMissingTableError(msg)) {
       throw e;
     }
-    // If tables are missing, try migrations (safe for postgres). Then re-probe.
-    await run(process.execPath, ['./scripts/runTsx.mjs', '--tsconfig', './tsconfig.json', './scripts/migrate.full.deploy.ts'], {
-      cwd: serverDir,
-      env,
-    });
-    const accountCount = await probeAccountCount({ serverComponentName: 'happier-server', serverDir, env });
+    await applyHappyServerMigrations({ serverDir, env, dbProvider });
+    const accountCount = await probeAccountCount({ serverComponentName: 'happier-server', serverDir, env, dbProvider });
     return { ok: true, migrated: true, accountCount };
   }
 }

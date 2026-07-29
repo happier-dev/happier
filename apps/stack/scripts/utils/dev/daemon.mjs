@@ -1,15 +1,12 @@
-import { join, resolve } from 'node:path';
+import { join } from 'node:path';
 import { existsSync } from 'node:fs';
 
-import { ensureCliBuilt, ensureDepsInstalled } from '../proc/pm.mjs';
-import { readCliDistIntegrity } from '../cli/cliDistIntegrity.mjs';
-import { watchDebounced } from '../proc/watch.mjs';
+import { ensureCliBuilt } from '../proc/pm.mjs';
 import { getAccountCountForServerComponent, prepareDaemonAuthSeedIfNeeded } from '../stack/startup.mjs';
 import { startLocalDaemonWithAuth } from '../../daemon.mjs';
 import {
   readDevReloadWatchChangeSignature,
-  resolveDevReloadPollIntervalMs,
-  startDevReloadCoordinator,
+  readDevReloadWatchChangeSignatureAsync,
 } from './devReloadCoordinator.mjs';
 import {
   isDaemonControlRestartUnavailableError,
@@ -22,49 +19,44 @@ import {
   syncStackRuntimeDaemonPidFromDaemonState,
 } from '../stack/runtime_daemon_state.mjs';
 import { isPidAlive, readStackRuntimeStateFile } from '../stack/runtime_state.mjs';
+import { resolveHappyCliRuntimeInputGroups } from '../proc/cli_runtime_inputs.mjs';
+import { readCliDistBuildManifest } from '../cli/cliDistIntegrity.mjs';
+import { WORKSPACE_BUNDLE_LOCK_TIMEOUT_ERROR_CODE } from '../proc/cliDistBuildLock.mjs';
 
-export function createHappyCliReloadDescriptors({ cliDir, existsSyncImpl = existsSync } = {}) {
-  const repoRoot = resolve(cliDir, '..', '..');
-  const sharedPackages = ['agents', 'cli-common', 'protocol'];
-  const cliPaths = [
-    join(cliDir, 'src'),
-    join(cliDir, 'bin'),
-    join(cliDir, 'codex'),
-    join(cliDir, 'package.json'),
-    join(cliDir, 'tsconfig.json'),
-    join(cliDir, 'tsconfig.build.json'),
-    join(cliDir, 'pkgroll.config.mjs'),
-  ];
-  const makeDescriptor = (id, target, paths) => {
-    const existingPaths = paths.filter((p) => existsSyncImpl(p));
-    return {
-      id,
-      target,
-      paths: existingPaths,
-      readSignature: () => readHappyCliWatchChangeSignature(existingPaths),
-    };
-  };
+const CLI_MIXED_INPUT_REJECTION_DIAGNOSTICS = [
+  '[cli-build-inputs] runtime inputs changed while package prebuild was preparing dependencies; ' +
+    'refusing to build a mixed CLI closure',
+  '[cli-build-inputs] runtime inputs changed while this build was running; ' +
+    'refusing to finalize a mixed CLI closure',
+];
+const CLI_MIXED_INPUT_RETRY_MS = 250;
+const DAEMON_CONTROL_PUBLICATION_RETRY_DELAYS_MS = [100, 250, 500, 1_000, 2_000];
 
-  return [
-    makeDescriptor('daemon:cli', 'daemon', cliPaths),
-    ...sharedPackages.map((pkg) => makeDescriptor(
-      `shared:${pkg}`,
-      'shared',
-      [
-        join(repoRoot, 'packages', pkg, 'src'),
-        join(repoRoot, 'packages', pkg, 'package.json'),
-        join(repoRoot, 'packages', pkg, 'tsconfig.json'),
-      ],
-    )),
-  ].filter((descriptor) => descriptor.paths.length > 0);
+function sleepMs(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function resolveHappyCliWatchPaths({ cliDir, existsSyncImpl = existsSync }) {
-  return createHappyCliReloadDescriptors({ cliDir, existsSyncImpl }).flatMap((descriptor) => descriptor.paths);
+function annotateTransientCliBuildRejection(error) {
+  if (!(error instanceof Error) || error.code !== 'EEXIT') return;
+  const diagnosticLines = error.message.split(/\r?\n/).map((line) => line.trim());
+  if (!CLI_MIXED_INPUT_REJECTION_DIAGNOSTICS.some((diagnostic) => diagnosticLines.includes(diagnostic))) return;
+  error.reloadRetryAfterMs = CLI_MIXED_INPUT_RETRY_MS;
+}
+
+export function createHappyCliReloadDescriptors({ cliDir, existsSyncImpl = existsSync } = {}) {
+  return resolveHappyCliRuntimeInputGroups({ cliDir, existsSyncImpl }).map((group) => ({
+    ...group,
+    readSignature: () => readHappyCliWatchChangeSignature(group.paths),
+    readSignatureAsync: () => readHappyCliWatchChangeSignatureAsync(group.paths),
+  }));
 }
 
 function readHappyCliWatchChangeSignature(paths) {
   return readDevReloadWatchChangeSignature(paths);
+}
+
+function readHappyCliWatchChangeSignatureAsync(paths) {
+  return readDevReloadWatchChangeSignatureAsync(paths);
 }
 
 function collectRuntimeDaemonPids(runtimeState) {
@@ -117,65 +109,6 @@ async function shouldColdStartAfterDaemonControlMiss({
   return reason === 'missing_state';
 }
 
-function assertCliDistBuildManifest(distEntrypoint) {
-  const integrity = readCliDistIntegrity(distEntrypoint);
-  if (!integrity.ok) {
-    throw new Error(`[local] happier-cli build manifest is missing or invalid for ${distEntrypoint}: ${integrity.reason}`);
-  }
-}
-
-export async function ensureDevCliReady(
-  { cliDir, buildCli, env = process.env },
-  { logger = console } = {}
-) {
-  await ensureDepsInstalled(cliDir, 'happier-cli', { env });
-  const distEntrypoint = join(cliDir, 'dist', 'index.mjs');
-
-  const keepExistingDistOnBuildFailure = (error) => {
-    if (!existsSync(distEntrypoint)) return null;
-    const msg = error instanceof Error ? error.stack || error.message : String(error);
-    logger.warn(
-      `[local] happier-cli build failed; keeping previous build output at ${distEntrypoint}.`
-    );
-    logger.warn(msg);
-    return { built: false, reason: 'build_failed_using_existing_dist' };
-  };
-
-  let res;
-  try {
-    res = await ensureCliBuilt(cliDir, { buildCli, env });
-  } catch (error) {
-    const fallback = keepExistingDistOnBuildFailure(error);
-    if (fallback) return fallback;
-    throw error;
-  }
-
-  // Fail closed: dev mode must never start the daemon without a usable happier-cli build output.
-  // Even if the user disabled CLI builds globally (or build mode is "never"), missing dist will
-  // cause an immediate MODULE_NOT_FOUND crash when spawning the daemon.
-  if (!existsSync(distEntrypoint)) {
-    // Last-chance recovery: force a build once.
-    try {
-      await ensureCliBuilt(cliDir, { buildCli: true, env });
-    } catch (error) {
-      const fallback = keepExistingDistOnBuildFailure(error);
-      if (fallback) return fallback;
-      throw error;
-    }
-    if (!existsSync(distEntrypoint)) {
-      throw new Error(
-        `[local] happier-cli build output is missing.\n` +
-          `Expected: ${distEntrypoint}\n` +
-          `Fix: run the component build directly and inspect its output:\n` +
-          `  cd "${cliDir}" && yarn build`
-      );
-    }
-  }
-  assertCliDistBuildManifest(distEntrypoint);
-
-  return res;
-}
-
 export async function prepareDaemonAuthSeed({
   rootDir,
   env,
@@ -219,27 +152,46 @@ export async function startDevDaemon({
   publicServerUrl,
   runtimeStatePath = null,
   restart,
+  startLastGreen = false,
+  preserveExistingRunning = false,
   isShuttingDown,
   env = process.env,
   stackName = null,
   cliIdentity = 'default',
 }, {
   startLocalDaemonWithAuthImpl = startLocalDaemonWithAuth,
+  logger = console,
 } = {}) {
-  if (!startDaemon) return;
+  if (!startDaemon) return { started: false, reason: 'daemon-disabled' };
 
-  await startLocalDaemonWithAuthImpl({
-    cliBin,
-    cliHomeDir,
-    internalServerUrl,
-    publicServerUrl,
-    runtimeStatePath,
-    isShuttingDown,
-    forceRestart: Boolean(restart),
-    env,
-    stackName,
-    cliIdentity,
-  });
+  try {
+    await startLocalDaemonWithAuthImpl({
+      cliBin,
+      cliHomeDir,
+      internalServerUrl,
+      publicServerUrl,
+      runtimeStatePath,
+      isShuttingDown,
+      forceRestart: Boolean(restart),
+      admitPriorDistImmediately: Boolean(startLastGreen),
+      preserveExistingRunning: Boolean(preserveExistingRunning),
+      env,
+      stackName,
+      cliIdentity,
+    });
+    return { started: true };
+  } catch (error) {
+    if (!startLastGreen) throw error;
+    logger.warn(
+      '[local] daemon: the last-green CLI publication could not start; ' +
+        'continuing startup so the watch coordinator can repair it with a background rebuild. ' +
+        `(${error instanceof Error ? error.message : String(error)})`,
+    );
+    return {
+      started: false,
+      reason: 'prior-dist-start-failed',
+    };
+  }
 }
 
 export function createHappyCliReloadExecutor({
@@ -264,14 +216,59 @@ export function createHappyCliReloadExecutor({
   readStackRuntimeStateFileImpl = readStackRuntimeStateFile,
   isPidAliveImpl = isPidAlive,
   existsSyncImpl = existsSync,
+  sleepImpl = sleepMs,
   logger = console,
 } = {}) {
+  let successorDistClosureFingerprint = null;
+  let successorPublicationSuperseded = false;
+  let successorActivationMayOutliveGeneration = false;
   return {
     target: 'daemon',
-    async build() {
+    async build(context = {}) {
       if (!startDaemon) return { skipped: true, reason: 'daemon-disabled' };
+      successorDistClosureFingerprint = null;
+      successorPublicationSuperseded = false;
+      successorActivationMayOutliveGeneration = false;
       logger.log('[local] watch: happier-cli changed → rebuilding + restarting daemon...');
-      await ensureCliBuiltImpl(cliDir, { buildCli });
+      let buildResult;
+      for (;;) {
+        try {
+          buildResult = await ensureCliBuiltImpl(cliDir, { buildCli, env, quiet: true });
+          break;
+        } catch (error) {
+          annotateTransientCliBuildRejection(error);
+          if (
+            error?.code !== WORKSPACE_BUNDLE_LOCK_TIMEOUT_ERROR_CODE
+            || typeof context.revalidateGeneration !== 'function'
+          ) {
+            throw error;
+          }
+          if (!await context.revalidateGeneration()) {
+            return { skipped: true, reason: 'stale-generation' };
+          }
+          logger.warn(
+            '[local] watch: the shared happier-cli build is still active; ' +
+              'continuing to wait so this Stack can adopt its publication.',
+          );
+        }
+      }
+
+      const publishedSuccessfulBuild = buildResult?.built === true;
+      const adoptedConcurrentPublication = (
+        buildResult?.reason === 'concurrent_build_already_completed'
+        || buildResult?.reason === 'concurrent_build_superseded'
+      );
+      if (
+        buildResult?.current !== true
+        && !publishedSuccessfulBuild
+        && !adoptedConcurrentPublication
+      ) {
+        logger.warn(
+          `[local] watch: happier-cli rebuild is not current (${buildResult?.reason ?? 'unknown'}); ` +
+            'keeping the current daemon running.'
+        );
+        return { skipped: true, reason: `cli-build-${buildResult?.reason ?? 'unknown'}` };
+      }
 
       const distEntrypoint = join(cliDir, 'dist', 'index.mjs');
       if (!existsSyncImpl(distEntrypoint)) {
@@ -285,11 +282,48 @@ export function createHappyCliReloadExecutor({
           `[local] watch: happier-cli build manifest is missing (${manifestPath}); refusing to restart daemon to avoid downtime.`
         );
       }
-      return { ok: true };
+      const distClosure = readCliDistBuildManifest(distEntrypoint);
+      if (!distClosure.ok || !distClosure.fingerprint) {
+        throw new Error(
+          `[local] watch: happier-cli build manifest is invalid (${distClosure.reason}); ` +
+            'refusing to restart daemon to avoid runtime fingerprint drift.'
+        );
+      }
+      successorDistClosureFingerprint = distClosure.fingerprint;
+      successorActivationMayOutliveGeneration = (
+        publishedSuccessfulBuild
+        || adoptedConcurrentPublication
+      );
+      if (buildResult?.current !== true) {
+        successorPublicationSuperseded = true;
+        logger.warn(
+          '[local] watch: happier-cli published or adopted a runnable build that newer edits already superseded; ' +
+            'activating it now while the reload coordinator builds the trailing latest generation.'
+        );
+        return { ok: true, allowSupersededActivation: true };
+      }
+      return {
+        ok: true,
+        ...(successorActivationMayOutliveGeneration
+          ? { allowSupersededActivation: true }
+          : {}),
+      };
     },
-    async restart() {
+    async restart(context = {}) {
       if (!startDaemon || isShuttingDown?.()) return { skipped: true, reason: 'daemon-disabled' };
+      const generationIsCurrent = async () =>
+        typeof context.revalidateGeneration !== 'function'
+        || context.revalidateGeneration();
       const coldStart = async () => {
+        if (!successorActivationMayOutliveGeneration && !await generationIsCurrent()) {
+          return { skipped: true, reason: 'stale-generation' };
+        }
+        if (successorPublicationSuperseded) {
+          logger.warn(
+            '[local] watch: daemon is absent; starting the runnable superseded happier-cli publication in degraded mode ' +
+              'while the existing reload coordinator builds the trailing latest generation.'
+          );
+        }
         await startLocalDaemonWithAuthImpl({
           cliBin,
           cliHomeDir,
@@ -302,37 +336,89 @@ export function createHappyCliReloadExecutor({
           env,
           stackName,
           cliIdentity,
+          admittedDistClosureFingerprint: successorDistClosureFingerprint,
         });
-        return { restarted: true, mode: 'cold-start' };
+        return {
+          restarted: true,
+          mode: 'cold-start',
+          ...(successorPublicationSuperseded ? { degraded: true } : {}),
+        };
       };
 
-      const ping = await pingDaemonImpl({
+      let ping = await pingDaemonImpl({
         cliHomeDir,
         serverUrl: internalServerUrl,
         internalServerUrl,
         env,
         stackName,
       });
-      if (ping?.ok === true) {
-        try {
-          await restartDaemonViaControlServerImpl({
+      if (
+        ping?.ok !== true
+        && successorDistClosureFingerprint
+        && await hasLiveRuntimeDaemonPid(
+          { runtimeStatePath },
+          { readStackRuntimeStateFileImpl, isPidAliveImpl },
+        )
+      ) {
+        for (const delayMs of DAEMON_CONTROL_PUBLICATION_RETRY_DELAYS_MS) {
+          if (isShuttingDown?.()) return { skipped: true, reason: 'daemon-disabled' };
+          await sleepImpl(delayMs);
+          ping = await pingDaemonImpl({
             cliHomeDir,
+            serverUrl: internalServerUrl,
             internalServerUrl,
             env,
             stackName,
           });
+          if (ping?.ok === true) break;
+        }
+      }
+      if (ping?.ok === true) {
+        if (!successorActivationMayOutliveGeneration && !await generationIsCurrent()) {
+          return { skipped: true, reason: 'stale-generation' };
+        }
+        try {
+          const replacement = await restartDaemonViaControlServerImpl({
+            cliHomeDir,
+            internalServerUrl,
+            env,
+            stackName,
+            successorDistClosureFingerprint,
+          });
+          if (replacement?.status !== 'restarting' && replacement?.status !== 'already_restarting') {
+            throw new Error('[local] watch: daemon control restart did not return an owned replacement');
+          }
+          const successorPid = normalizeDaemonPid(replacement.pid);
+          if (!successorPid) {
+            throw new Error('[local] watch: daemon control restart did not confirm a successor pid');
+          }
+          if (runtimeStatePath) {
+            const successorObservation = {
+              status: 'running',
+              pid: successorPid,
+              ...(replacement.processInstanceFingerprint
+                ? { processInstanceFingerprint: replacement.processInstanceFingerprint }
+                : {}),
+              distClosureFingerprint: successorDistClosureFingerprint,
+            };
+            await syncStackRuntimeDaemonPidFromDaemonStateImpl(
+              {
+                runtimeStatePath,
+                cliHomeDir,
+                internalServerUrl,
+                runtimeDaemonPid: successorPid,
+                authenticatedProcessInstanceFingerprint:
+                  replacement.processInstanceFingerprint ?? null,
+                env,
+                daemonDistFingerprint: successorDistClosureFingerprint,
+              },
+              { checkDaemonStateImpl: async () => successorObservation },
+            );
+          }
         } catch (error) {
           if (!isDaemonControlRestartUnavailableError(error)) throw error;
           logger.warn('[local] watch: daemon control /restart is unavailable; keeping the current daemon running.');
           return { skipped: true, reason: 'daemon-control-restart-unavailable' };
-        }
-        if (runtimeStatePath) {
-          await syncStackRuntimeDaemonPidFromDaemonStateImpl({
-            runtimeStatePath,
-            cliHomeDir,
-            internalServerUrl,
-            env,
-          });
         }
         return { restarted: true, mode: 'overlap' };
       }
@@ -350,177 +436,4 @@ export function createHappyCliReloadExecutor({
       return await coldStart();
     },
   };
-}
-
-export function watchHappyCliAndRestartDaemon({
-  enabled,
-  startDaemon,
-  buildCli,
-  cliDir,
-  cliBin,
-  cliHomeDir,
-  internalServerUrl,
-  publicServerUrl,
-  runtimeStatePath = null,
-  isShuttingDown,
-  env = process.env,
-  stackName = null,
-  cliIdentity = 'default',
-}, {
-  watchDebouncedImpl = watchDebounced,
-  ensureCliBuiltImpl = ensureCliBuilt,
-  startLocalDaemonWithAuthImpl = startLocalDaemonWithAuth,
-  pingDaemonImpl = pingDaemon,
-  restartDaemonViaControlServerImpl = restartDaemonViaControlServer,
-  syncStackRuntimeDaemonPidFromDaemonStateImpl = syncStackRuntimeDaemonPidFromDaemonState,
-  readStackRuntimeStateFileImpl = readStackRuntimeStateFile,
-  isPidAliveImpl = isPidAlive,
-  readWatchChangeSignatureImpl = readHappyCliWatchChangeSignature,
-  existsSyncImpl = existsSync,
-  logger = console,
-} = {}) {
-  if (!enabled || !startDaemon) return null;
-
-  let inFlight = false;
-  let pending = false;
-
-  // IMPORTANT:
-  // Watch only source/config paths, not build outputs. Watching the whole repo can
-  // trigger rebuild loops because `yarn build` writes to `dist/` (and may touch other
-  // generated files), which then retriggers the watcher.
-  const watchPaths = resolveHappyCliWatchPaths({ cliDir, existsSyncImpl });
-  let lastWatchSignature = readWatchChangeSignatureImpl(watchPaths);
-
-  const hasRealWatchedChange = () => {
-    const nextWatchSignature = readWatchChangeSignatureImpl(watchPaths);
-    if (lastWatchSignature && nextWatchSignature && nextWatchSignature === lastWatchSignature) {
-      return false;
-    }
-    if (nextWatchSignature) {
-      lastWatchSignature = nextWatchSignature;
-    }
-    return true;
-  };
-
-  return watchDebouncedImpl({
-    paths: (watchPaths.length ? watchPaths : [cliDir]).map((p) => resolve(p)),
-    debounceMs: 500,
-    readSignature: () => readWatchChangeSignatureImpl(watchPaths),
-    pollIntervalMs: resolveDevReloadPollIntervalMs(env),
-    onChange: async () => {
-      if (isShuttingDown?.()) return;
-      if (!hasRealWatchedChange()) return;
-      if (inFlight) {
-        pending = true;
-        return;
-      }
-      inFlight = true;
-      try {
-        do {
-          pending = false;
-          if (isShuttingDown?.()) return;
-
-          logger.log('[local] watch: happier-cli changed → rebuilding + restarting daemon...');
-          try {
-            await ensureCliBuiltImpl(cliDir, { buildCli });
-          } catch (e) {
-            // IMPORTANT:
-            // - A rebuild can legitimately fail while an agent is mid-edit (e.g. TS errors).
-            // - In that case we must NOT restart the daemon (we'd just restart into a broken build),
-            //   and we must NOT crash the parent dev process. Keep watching for the next change.
-            const msg = e instanceof Error ? e.stack || e.message : String(e);
-            logger.error('[local] watch: happier-cli rebuild failed; keeping daemon running (will retry on next change).');
-            logger.error(msg);
-            if (pending) continue;
-            break;
-          }
-
-          const distEntrypoint = join(cliDir, 'dist', 'index.mjs');
-          if (!existsSyncImpl(distEntrypoint)) {
-            logger.warn(
-              `[local] watch: happier-cli build did not produce ${distEntrypoint}; refusing to restart daemon to avoid downtime.`
-            );
-            if (pending) continue;
-            break;
-          }
-
-          const coldStart = async () => {
-            await startLocalDaemonWithAuthImpl({
-              cliBin,
-              cliHomeDir,
-              internalServerUrl,
-              publicServerUrl,
-              runtimeStatePath,
-              isShuttingDown,
-              forceRestart: false,
-              preserveExistingRunning: true,
-              env,
-              stackName,
-              cliIdentity,
-            });
-          };
-
-          try {
-            const ping = await pingDaemonImpl({
-              cliHomeDir,
-              serverUrl: internalServerUrl,
-              internalServerUrl,
-              env,
-              stackName,
-            });
-            if (ping?.ok === true) {
-              try {
-                await restartDaemonViaControlServerImpl({
-                  cliHomeDir,
-                  internalServerUrl,
-                  env,
-                  stackName,
-                });
-              } catch (e) {
-                if (!isDaemonControlRestartUnavailableError(e)) {
-                  throw e;
-                }
-                logger.warn('[local] watch: daemon control /restart is unavailable; keeping the current daemon running.');
-                if (pending) continue;
-                break;
-              }
-              if (runtimeStatePath) {
-                await syncStackRuntimeDaemonPidFromDaemonStateImpl({
-                  runtimeStatePath,
-                  cliHomeDir,
-                  internalServerUrl,
-                  env,
-                });
-              }
-            } else {
-              const canColdStart = await shouldColdStartAfterDaemonControlMiss(
-                { ping, runtimeStatePath },
-                { readStackRuntimeStateFileImpl, isPidAliveImpl },
-              );
-              if (!canColdStart) {
-                logger.warn(
-                  `[local] watch: daemon control is unavailable (${ping?.reason ?? 'unknown'}); keeping the current daemon running.`
-                );
-                if (pending) continue;
-                break;
-              }
-              await coldStart();
-            }
-          } catch (e) {
-            const msg = e instanceof Error ? e.stack || e.message : String(e);
-            logger.error('[local] watch: daemon restart failed; keeping dev runner alive (will retry on next change).');
-            logger.error(msg);
-            if (pending) continue;
-            break;
-          }
-        } while (pending);
-      } catch (e) {
-        const msg = e instanceof Error ? e.stack || e.message : String(e);
-        logger.error('[local] watch: unexpected watcher error (continuing):');
-        logger.error(msg);
-      } finally {
-        inFlight = false;
-      }
-    },
-  });
 }

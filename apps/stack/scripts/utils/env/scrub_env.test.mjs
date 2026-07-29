@@ -110,6 +110,7 @@ test('scrubHappierStackEnv preserves stack wrapper routing and runtime selection
     HAPPIER_STACK_REPO_DIR: '/tmp/repo',
     HAPPIER_STACK_RUNTIME_MODE: 'require',
     HAPPIER_STACK_RUNTIME_STATE_PATH: '/tmp/stack/stack.runtime.json',
+    HAPPIER_STACK_DAEMON: '0',
     HAPPIER_STACK_CLI_HOME_DIR: '/tmp/stack/cli',
     HAPPIER_STACK_CLI_IDENTITY: 'default',
     HAPPIER_STACK_SECRET: 'drop-me',
@@ -126,6 +127,7 @@ test('scrubHappierStackEnv preserves stack wrapper routing and runtime selection
   assert.equal(scrubbed.HAPPIER_STACK_REPO_DIR, '/tmp/repo');
   assert.equal(scrubbed.HAPPIER_STACK_RUNTIME_MODE, 'require');
   assert.equal(scrubbed.HAPPIER_STACK_RUNTIME_STATE_PATH, '/tmp/stack/stack.runtime.json');
+  assert.equal(scrubbed.HAPPIER_STACK_DAEMON, '0');
   assert.equal(scrubbed.HAPPIER_STACK_CLI_HOME_DIR, '/tmp/stack/cli');
   assert.equal(scrubbed.HAPPIER_STACK_CLI_IDENTITY, 'default');
   assert.equal(scrubbed.HAPPIER_STACK_SECRET, undefined);

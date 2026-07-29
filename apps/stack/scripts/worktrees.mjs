@@ -34,7 +34,7 @@ import { ensureEnvFilePruned, ensureEnvFileUpdated } from './utils/env/env_file.
 import { isSandboxed } from './utils/env/sandbox.mjs';
 import { applyStackCacheEnv } from './utils/proc/pm.mjs';
 import { seedNodeModulesFromBase } from './utils/worktrees/seed_node_modules.mjs';
-import { shouldRunYarnInstall } from './utils/worktrees/yarn_install_guard.mjs';
+import { withYarnInstallGuard } from './utils/worktrees/yarn_install_guard.mjs';
 import { existsSync } from 'node:fs';
 import { getHomeEnvLocalPath, getHomeEnvPath, resolveUserConfigEnvPath } from './utils/env/config.mjs';
 import { detectServerComponentDirMismatch } from './utils/server/validate.mjs';
@@ -383,15 +383,6 @@ async function installDependencies({ dir }) {
 
   const env = await applyStackCacheEnv(process.env);
 
-  // Yarn-only, monorepo-friendly: avoid redundant installs when nothing changed.
-  // This keeps `wt pr --update` fast for the common case where PR code changed but deps did not.
-  if (pm.kind === 'yarn') {
-    const needs = await shouldRunYarnInstall({ installDir: dir, componentDir: dir });
-    if (!needs) {
-      return { installed: false, reason: 'up-to-date' };
-    }
-  }
-
   // IMPORTANT:
   // When a caller requests --json, stdout must be reserved for JSON output only.
   // Package managers (especially Yarn) write progress to stdout, which would corrupt JSON parsing
@@ -410,13 +401,22 @@ async function installDependencies({ dir }) {
     }
   };
 
-  // Yarn-only.
-  // Works for yarn classic; yarn berry will ignore/translate flags as needed.
-  if (jsonMode) {
-    await runForJson('yarn', ['install', '--frozen-lockfile']);
-  } else {
-    await run('yarn', ['install', '--frozen-lockfile'], { cwd: dir, env });
+  if (pm.kind === 'yarn') {
+    const outcome = await withYarnInstallGuard({ installDir: dir, componentDir: dir }, async () => {
+      // Works for yarn classic; yarn berry will ignore/translate flags as needed.
+      if (jsonMode) {
+        await runForJson('yarn', ['install', '--frozen-lockfile']);
+      } else {
+        await run('yarn', ['install', '--frozen-lockfile'], { cwd: dir, env });
+      }
+    });
+    return outcome.refreshed
+      ? { installed: true, reason: null }
+      : { installed: false, reason: 'up-to-date' };
   }
+
+  // Preserve the existing non-Yarn fallback behavior.
+  await run('yarn', ['install', '--frozen-lockfile'], { cwd: dir, env });
   return { installed: true, reason: null };
 }
 

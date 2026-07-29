@@ -6,6 +6,7 @@ import { resolveStackEnvPath } from '../paths/paths.mjs';
 import {
   getStackRuntimeStatePath,
   isPidAlive,
+  isStackRuntimeProcessTrusted,
   readStackRuntimeStateFile,
   resolveTrustedStackRuntimeServerPort,
 } from '../stack/runtime_state.mjs';
@@ -24,6 +25,10 @@ import {
 import { checkDaemonStatePingAware, startLocalDaemonWithAuth } from '../../daemon.mjs';
 import { isTty } from '../cli/wizard.mjs';
 import { resolveStackRuntimeLaunchContext } from '../../runtime/launch/resolveStackRuntimeLaunchContext.mjs';
+import {
+  resolveCliRuntimeLaunchProvenance,
+  resolveCliRuntimeLaunchSpec,
+} from '../../runtime/launch/resolveCliRuntimeLaunchSpec.mjs';
 
 function appendCauseText(baseMessage, cause) {
   const msg = String(baseMessage ?? '').trim();
@@ -184,7 +189,13 @@ export async function resolveRunnerLogPathFromRuntime({ stackName, waitMs = 10_0
   return '';
 }
 
-export async function prepareGuidedLoginWebapp({ rootDir, stackName, env, steps } = {}) {
+export async function prepareGuidedLoginWebapp({
+  rootDir,
+  stackName,
+  env,
+  steps,
+  resolveWebappTargetForAuth = resolveStackWebappTargetForAuth,
+} = {}) {
   const name = String(stackName ?? '').trim() || 'main';
   const label = 'prepare login (waiting for web UI)';
   const printer = steps && typeof steps.start === 'function' && typeof steps.stop === 'function' ? steps : null;
@@ -242,8 +253,10 @@ export async function prepareGuidedLoginWebapp({ rootDir, stackName, env, steps 
     };
   }
   try {
+    let lastResolvedTarget = null;
     const resolveAndAssert = async () => {
-      const target = await resolveStackWebappTargetForAuth({ rootDir, stackName: name, env });
+      const target = await resolveWebappTargetForAuth({ rootDir, stackName: name, env });
+      lastResolvedTarget = target;
       await assertGuidedAuthWebappReadyOrThrow({
         rootDir,
         stackName: name,
@@ -259,6 +272,20 @@ export async function prepareGuidedLoginWebapp({ rootDir, stackName, env, steps 
       if (printer) printer.stop('✓', label);
       return webappTarget;
     } catch (initialErr) {
+      // Resolving an Expo target proves that this stack's Metro server is already live.
+      // A bundle can still be warming on a cold first build; starting another stack owner
+      // would collide with the live owner instead of helping that build finish.
+      const reuseRunningExpo = lastResolvedTarget?.kind === 'expo';
+      if (reuseRunningExpo) {
+        const enriched = await appendRunnerLogTailDiagnostics({
+          stackName: name,
+          message: appendCauseText(
+            '[auth] Expo dev server is running, but the guided login web UI is still not ready.',
+            initialErr instanceof Error ? initialErr.message : String(initialErr)
+          ),
+        });
+        throw new Error(enriched);
+      }
       const recovery = await tryStartStackUiInBackgroundForAuth({
         rootDir,
         stackName: name,
@@ -365,16 +392,42 @@ export async function startDaemonPostAuth({
   webappUrl = '',
 } = {}) {
   const name = String(stackName ?? '').trim() || 'main';
+  const runtimeStatePath = getStackRuntimeStatePath(name);
+  const { envPath, baseDir } = resolveStackEnvPath(name, env);
+  const runtimeState = await readStackRuntimeStateFile(runtimeStatePath).catch(() => null);
+  const lifecycleOwnerPid = Number(runtimeState?.ownerPid);
+  const lifecycleOwnerTrusted = await isStackRuntimeProcessTrusted(lifecycleOwnerPid, {
+    key: 'ownerPid',
+    stackName: name,
+    envPath,
+    cliHomeDir: join(baseDir, 'cli'),
+  });
+  if (lifecycleOwnerTrusted) {
+    const runtimePort = Number(runtimeState?.ports?.server);
+    return {
+      ok: true,
+      status: 'delegated_to_lifecycle_owner',
+      ownerPid: lifecycleOwnerPid,
+      ...(Number.isFinite(runtimePort) && runtimePort > 0
+        ? { internalServerUrl: `http://127.0.0.1:${runtimePort}` }
+        : {}),
+    };
+  }
   const serverPort = await resolveServerPortForPostAuthDaemonStart({ stackName: name, env });
 
-  const { envPath, baseDir } = resolveStackEnvPath(name, env);
   const stackEnv = await readEnvObjectFromFile(envPath);
   const mergedEnv = { ...process.env, ...(stackEnv ?? {}), ...(env ?? {}) };
 
   const cliHomeDir =
     (mergedEnv.HAPPIER_STACK_CLI_HOME_DIR ?? '').toString().trim() ||
     join(baseDir, 'cli');
-  const cliBin = await resolveStackAuthCliExecutable({ rootDir, env: mergedEnv });
+  const runtimeLaunchContext = await resolveStackRuntimeLaunchContext({ argv: [], env: mergedEnv });
+  const cliLaunchSpec = runtimeLaunchContext.snapshot
+    ? resolveCliRuntimeLaunchSpec({ snapshot: runtimeLaunchContext.snapshot })
+    : null;
+  const runtimeProvenance = resolveCliRuntimeLaunchProvenance(cliLaunchSpec);
+  const cliBin = cliLaunchSpec?.command
+    || await resolveStackAuthCliExecutable({ rootDir, env: mergedEnv });
 
   const internalServerUrl = `http://127.0.0.1:${serverPort}`;
   const explicitWebappUrl = String(webappUrl ?? '').trim();
@@ -388,13 +441,19 @@ export async function startDaemonPostAuth({
 
   await startLocalDaemonWithAuth({
     cliBin,
+    cliEntrypoint: cliLaunchSpec?.entrypoint ?? '',
+    cliNodeEntrypoint: cliLaunchSpec?.nodeEntrypoint ?? '',
+    cliCommand: cliLaunchSpec?.command ?? '',
+    cliCommandArgs: cliLaunchSpec?.args ?? [],
     cliHomeDir,
     internalServerUrl,
     publicServerUrl,
+    runtimeStatePath,
     isShuttingDown: () => false,
     forceRestart: Boolean(forceRestart),
     env: mergedEnv,
     stackName: name,
+    ...runtimeProvenance,
   });
 
   // Verify (best-effort): daemon wrote state.

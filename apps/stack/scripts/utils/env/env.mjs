@@ -12,6 +12,7 @@ import {
   STACK_WRAPPER_PRESERVE_KEYS,
   scrubHappierStackEnv,
 } from './scrub_env.mjs';
+import { applyStackActiveServerScopeEnv } from '../auth/stable_scope_id.mjs';
 
 // Load stack env (optional). This is intentionally lightweight and does not require extra deps.
 // This file lives under scripts/utils/env, so repo root is three directories up.
@@ -189,6 +190,18 @@ if (hasHomeConfig) {
     process.env.HAPPIER_STACK_CLI_IDENTITY = explicitCliIdentity;
     if (explicitCliHomeDir) {
       process.env.HAPPIER_STACK_CLI_HOME_DIR = explicitCliHomeDir;
+    }
+  }
+  if (stacksEnv) {
+    const scoped = applyStackActiveServerScopeEnv({
+      env: process.env,
+      stackName: String(process.env.HAPPIER_STACK_STACK ?? '').trim() || 'main',
+      cliIdentity: String(process.env.HAPPIER_STACK_CLI_IDENTITY ?? '').trim() || 'default',
+    });
+    if (scoped.HAPPIER_ACTIVE_SERVER_ID) {
+      process.env.HAPPIER_ACTIVE_SERVER_ID = scoped.HAPPIER_ACTIVE_SERVER_ID;
+    } else {
+      delete process.env.HAPPIER_ACTIVE_SERVER_ID;
     }
   }
 }

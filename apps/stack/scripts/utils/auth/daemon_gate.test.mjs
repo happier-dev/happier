@@ -4,7 +4,12 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { daemonStartGate, formatDaemonAuthRequiredError, hasStackCredentials } from './daemon_gate.mjs';
+import {
+  daemonStartGate,
+  formatDaemonAuthRequiredError,
+  hasStackCredentials,
+  resolveStackDaemonStartRequested,
+} from './daemon_gate.mjs';
 import { resolveStackCredentialPaths } from './credentials_paths.mjs';
 
 async function withTempRoot(t) {
@@ -43,6 +48,14 @@ test('daemonStartGate blocks daemon start in auth flow when missing credentials'
   assert.equal(gate.reason, 'auth_flow_missing_credentials');
 });
 
+test('resolveStackDaemonStartRequested uses exact trimmed zero disable semantics', () => {
+  assert.equal(resolveStackDaemonStartRequested({ env: {} }), true);
+  assert.equal(resolveStackDaemonStartRequested({ env: { HAPPIER_STACK_DAEMON: '0' } }), false);
+  assert.equal(resolveStackDaemonStartRequested({ env: { HAPPIER_STACK_DAEMON: ' 0 ' } }), false);
+  assert.equal(resolveStackDaemonStartRequested({ env: { HAPPIER_STACK_DAEMON: 'false' } }), true);
+  assert.equal(resolveStackDaemonStartRequested({ env: {}, noDaemon: true }), false);
+});
+
 test('daemonStartGate blocks daemon start in daemon-wait auth flow when missing credentials', async (t) => {
   const dir = await withTempRoot(t);
   const gate = daemonStartGate({ env: { HAPPIER_STACK_DAEMON_WAIT_FOR_AUTH: '1' }, cliHomeDir: dir });
@@ -68,12 +81,13 @@ test('daemonStartGate allows daemon start when credentials exist', async (t) => 
 test('daemonStartGate resolves server-scoped credentials from env server url', async (t) => {
   const dir = await withTempRoot(t);
   const serverUrl = 'http://127.0.0.1:4010';
-  const paths = resolveStackCredentialPaths({ cliHomeDir: dir, serverUrl });
+  const env = { HAPPIER_SERVER_URL: serverUrl };
+  const paths = resolveStackCredentialPaths({ cliHomeDir: dir, serverUrl, env });
   await mkdir(join(dir, 'servers', paths.activeServerId), { recursive: true });
   await writeFile(paths.serverScopedPath, 'dummy', 'utf-8');
 
   const gate = daemonStartGate({
-    env: { HAPPIER_SERVER_URL: serverUrl },
+    env,
     cliHomeDir: dir,
   });
   assert.equal(gate.ok, true);

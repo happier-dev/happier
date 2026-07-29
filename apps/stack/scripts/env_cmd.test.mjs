@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runNodeCapture as runNode } from './testkit/stack_script_command_testkit.mjs';
+import { buildStackFixtureEnv } from './testkit/core/env_scope.mjs';
 
 async function withTempRoot(t) {
   const tmp = await mkdtemp(join(tmpdir(), 'happy-stacks-env-cmd-'));
@@ -24,12 +25,11 @@ test('hstack env path defaults to main stack env file when no explicit env file 
   await mkdir(storageDir, { recursive: true });
   await mkdir(homeDir, { recursive: true });
 
-  const baseEnv = {
-    ...process.env,
-    // Prevent loading the user's real ~/.happier-stack/.env via canonical discovery.
-    HAPPIER_STACK_HOME_DIR: homeDir,
-    HAPPIER_STACK_STORAGE_DIR: storageDir,
-  };
+  const baseEnv = buildStackFixtureEnv({
+    homeDir,
+    storageDir,
+    stripStackEnv: true,
+  });
 
   const res = await runNode([join(rootDir, 'scripts', 'env.mjs'), 'path', '--json'], {
     cwd: rootDir,
@@ -57,12 +57,12 @@ test('hstack env edits the explicit stack env file when HAPPIER_STACK_ENV_FILE i
   await mkdir(dirname(envPath), { recursive: true });
   await mkdir(homeDir, { recursive: true });
 
-  const baseEnv = {
-    ...process.env,
-    HAPPIER_STACK_HOME_DIR: homeDir,
-    HAPPIER_STACK_STORAGE_DIR: storageDir,
-    HAPPIER_STACK_ENV_FILE: envPath,
-  };
+  const baseEnv = buildStackFixtureEnv({
+    homeDir,
+    storageDir,
+    envPath,
+    stripStackEnv: true,
+  });
 
   const res = await runNode([join(rootDir, 'scripts', 'env.mjs'), 'set', 'FOO=bar'], { cwd: rootDir, env: baseEnv });
   assert.equal(res.code, 0, `expected exit 0, got ${res.code}\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
@@ -82,13 +82,13 @@ test('hstack env expands ~/ explicit env file overrides against HOME', async (t)
   await mkdir(storageDir, { recursive: true });
   await mkdir(homeDir, { recursive: true });
 
-  const baseEnv = {
-    ...process.env,
-    HOME: homeDir,
-    HAPPIER_STACK_HOME_DIR: homeDir,
-    HAPPIER_STACK_STORAGE_DIR: storageDir,
-    HAPPIER_STACK_ENV_FILE: '~/.happier/stacks/dev/env',
-  };
+  const baseEnv = buildStackFixtureEnv({
+    homeDir,
+    storageDir,
+    envPath: '~/.happier/stacks/dev/env',
+    stripStackEnv: true,
+    extraEnv: { HOME: homeDir },
+  });
 
   const setRes = await runNode([join(rootDir, 'scripts', 'env.mjs'), 'set', 'FOO=bar'], { cwd: rootDir, env: baseEnv });
   assert.equal(setRes.code, 0, `expected exit 0, got ${setRes.code}\nstdout:\n${setRes.stdout}\nstderr:\n${setRes.stderr}`);
@@ -113,11 +113,11 @@ test('hstack env (no subcommand) prints usage and exits 0', async (t) => {
   await mkdir(storageDir, { recursive: true });
   await mkdir(homeDir, { recursive: true });
 
-  const baseEnv = {
-    ...process.env,
-    HAPPIER_STACK_HOME_DIR: homeDir,
-    HAPPIER_STACK_STORAGE_DIR: storageDir,
-  };
+  const baseEnv = buildStackFixtureEnv({
+    homeDir,
+    storageDir,
+    stripStackEnv: true,
+  });
 
   const res = await runNode([join(rootDir, 'scripts', 'env.mjs')], { cwd: rootDir, env: baseEnv });
   assert.equal(res.code, 0, `expected exit 0, got ${res.code}\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
@@ -137,12 +137,12 @@ test('hstack env list prints keys in text mode', async (t) => {
   await mkdir(homeDir, { recursive: true });
   await writeFile(envPath, 'FOO=bar\n', 'utf-8');
 
-  const baseEnv = {
-    ...process.env,
-    HAPPIER_STACK_HOME_DIR: homeDir,
-    HAPPIER_STACK_STORAGE_DIR: storageDir,
-    HAPPIER_STACK_ENV_FILE: envPath,
-  };
+  const baseEnv = buildStackFixtureEnv({
+    homeDir,
+    storageDir,
+    envPath,
+    stripStackEnv: true,
+  });
 
   const res = await runNode([join(rootDir, 'scripts', 'env.mjs'), 'list'], { cwd: rootDir, env: baseEnv });
   assert.equal(res.code, 0, `expected exit 0, got ${res.code}\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`);

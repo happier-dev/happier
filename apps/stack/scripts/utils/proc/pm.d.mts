@@ -4,6 +4,16 @@ export type WorkspaceBuildResult = {
   skipped: string[];
 };
 
+export function ensureWorkspacePackagesBuiltByName(
+  monorepoPath: string,
+  packageNames: string[],
+  options?: {
+    quiet?: boolean;
+    env?: NodeJS.ProcessEnv;
+    force?: boolean;
+  },
+): Promise<WorkspaceBuildResult>;
+
 export function ensureWorkspacePackagesBuiltForComponent(
   componentDir: string,
   options?: {
