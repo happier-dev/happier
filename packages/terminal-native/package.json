@@ -1,0 +1,55 @@
+{
+  "name": "@happier-dev/terminal-native",
+  "version": "0.0.0",
+  "private": true,
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "files": [
+    "native-renderers.json",
+    "src",
+    "ios/HappierTerminalNativeModule.swift",
+    "ios/GhosttyRuntime.swift",
+    "ios/GhosttySurfaceBridge.swift",
+    "ios/GhosttySurfaceView.swift",
+    "ios/GhosttyInput.swift",
+    "ios/GhosttySelection.swift",
+    "ios/GhosttyLinks.swift",
+    "ios/GhosttyAccessibility.swift",
+    "ios/HappierTerminalNative.podspec",
+    "ios/Vendor/README.md",
+    "android/build.gradle",
+    "android/src",
+    "android/termux",
+    "scripts",
+    "expo-module.config.json",
+    "package.json",
+    "README.md"
+  ],
+  "scripts": {
+    "tsc": "node ../../scripts/workspaces/runTypeScriptCli.mjs",
+    "build:ghosttykit:ios": "node scripts/buildGhosttyKitIos.mjs",
+    "checksum": "node scripts/checksum.mjs",
+    "fetch:termux:android": "node scripts/fetchTermuxAndroid.mjs",
+    "license:notice": "node scripts/licenseNotice.mjs",
+    "probe:android": "node scripts/probeAndroid.mjs",
+    "probe:ios": "node scripts/probeIos.mjs",
+    "size:budget": "node scripts/sizeBudget.mjs",
+    "test": "yarn -s test:src && yarn -s test:probes",
+    "test:probes": "node --test scripts/probes.test.mjs",
+    "test:src": "node ../../node_modules/vitest/vitest.mjs run --config ../../vitest.config.ts src",
+    "typecheck": "node ../../scripts/workspaces/runTypeScriptCli.mjs -p tsconfig.json --noEmit"
+  },
+  "devDependencies": {
+    "expo-modules-core": "55.0.20",
+    "typescript": "^5.9.2",
+    "vitest": "^3.2.4"
+  },
+  "peerDependencies": {
+    "expo": "*"
+  },
+  "peerDependenciesMeta": {
+    "expo": {
+      "optional": true
+    }
+  }
+}

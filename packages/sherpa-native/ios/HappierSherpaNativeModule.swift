@@ -3,46 +3,27 @@ import ExpoModulesCore
 import Foundation
 
 public class HappierSherpaNativeModule: Module {
-  private static let vadSpeechEndEvent = "vadSpeechEnd"
-
   private let queue = DispatchQueue(label: "dev.happier.sherpa", qos: .userInitiated)
+  // Offline TTS synthesis runs on its own serial queue so that a `cancel`
+  // dispatched on `queue` can flip the engine's atomic cancel flag mid-synthesis.
+  // If synthesis ran on `queue`, the serial queue could not service the async
+  // cancel until synthesis finished, making cancellation a no-op.
+  private let synthQueue = DispatchQueue(label: "dev.happier.sherpa.synthesis", qos: .userInitiated)
   private var engines: [String: HappierSherpaOfflineTtsEngine] = [:]
   private var asrEngines: [String: HappierSherpaOnlineAsrEngine] = [:]
   private var asrStreams: [String: HappierSherpaOnlineAsrStream] = [:]
-  private var vadRunner: IosVadSessionRunner?
-
-  private func getOrCreateVadRunner() throws -> IosVadSessionRunner {
-    if let existing = vadRunner {
-      return existing
-    }
-
-    let created = IosVadSessionRunner(
-      makeAudioCapture: {
-        AvAudioEngineVadAudioCapture()
-      },
-      makeDetector: { minSpeechSec, minSilenceSec in
-        let modelPath = try VadModelResolver.resolveSileroVadModelPath()
-        return try SileroVadDetector(
-          modelPath: modelPath,
-          sampleRate: 16_000,
-          minSpeechSec: minSpeechSec,
-          minSilenceSec: minSilenceSec
-        )
-      },
-      onSpeechEnd: { [weak self] sessionId in
-        self?.sendEvent(Self.vadSpeechEndEvent, [
-          "sessionId": sessionId,
-        ])
-      }
+  private lazy var vadDetectors = FrameFedVadDetectorRegistry { sampleRate, minSpeechSec, minSilenceSec in
+    let modelPath = try VadModelResolver.resolveSileroVadModelPath()
+    return try SileroVadDetector(
+      modelPath: modelPath,
+      sampleRate: sampleRate,
+      minSpeechSec: minSpeechSec,
+      minSilenceSec: minSilenceSec
     )
-    vadRunner = created
-    return created
   }
 
   private func handleModuleDestroy() {
-    guard let runner = vadRunner else { return }
-    vadRunner = nil
-    runner.stopAny()
+    vadDetectors.cancelAll()
   }
 
   private func getEngine(assetsDir: String) throws -> HappierSherpaOfflineTtsEngine {
@@ -50,11 +31,7 @@ public class HappierSherpaNativeModule: Module {
       return cached
     }
 
-    var err: NSError?
-    let engine = HappierSherpaOfflineTtsEngine(assetsDir: assetsDir, error: &err)
-    if let err {
-      throw err
-    }
+    let engine = try HappierSherpaOfflineTtsEngine(assetsDir: assetsDir)
     engines[assetsDir] = engine
     return engine
   }
@@ -64,18 +41,13 @@ public class HappierSherpaNativeModule: Module {
     let key = "\(assetsDir)|\(langKey)"
     if let cached = asrEngines[key] { return cached }
 
-    var err: NSError?
-    let engine = HappierSherpaOnlineAsrEngine(assetsDir: assetsDir, sampleRate: 16000, language: langKey.isEmpty ? nil : langKey, error: &err)
-    if let err {
-      throw err
-    }
+    let engine = try HappierSherpaOnlineAsrEngine(assetsDir: assetsDir, sampleRate: 16000, language: langKey.isEmpty ? nil : langKey)
     asrEngines[key] = engine
     return engine
   }
 
   public func definition() -> ModuleDefinition {
     Name("HappierSherpaNative")
-    Events(Self.vadSpeechEndEvent)
     OnDestroy {
       self.handleModuleDestroy()
     }
@@ -123,8 +95,13 @@ public class HappierSherpaNativeModule: Module {
       if text.isEmpty { throw NSError(domain: "HappierSherpaNative", code: 105, userInfo: [NSLocalizedDescriptionKey: "text is required"]) }
       if outWavPath.isEmpty { throw NSError(domain: "HappierSherpaNative", code: 106, userInfo: [NSLocalizedDescriptionKey: "outWavPath is required"]) }
 
-      return try self.queue.sync {
-        let engine = try self.getEngine(assetsDir: assetsDir)
+      // Resolve/create the engine under the shared-state queue, but run the
+      // (potentially multi-second) synthesis on the dedicated synth queue so a
+      // concurrent `cancel` dispatched on `queue` can flip the atomic cancel flag.
+      let engine = try self.queue.sync {
+        try self.getEngine(assetsDir: assetsDir)
+      }
+      return try self.synthQueue.sync {
         try engine.synthesizeToWavFile(atPath: outWavPath, text: text, sid: Int32(sid), speed: Float(speed), jobId: jobId)
         return [
           "wavPath": outWavPath,
@@ -199,27 +176,51 @@ public class HappierSherpaNativeModule: Module {
       }
     }
 
-    AsyncFunction("startVadSession") { (params: [String: Any]) in
-      let sessionId = (params["sessionId"] as? String) ?? ""
+    AsyncFunction("createVadDetector") { (params: [String: Any]) in
+      let detectorId = (params["detectorId"] as? String) ?? ""
       let minSpeechMs = (params["minSpeechMs"] as? Int64) ?? Int64((params["minSpeechMs"] as? Int) ?? 0)
       let redemptionMs = (params["redemptionMs"] as? Int64) ?? Int64((params["redemptionMs"] as? Int) ?? 0)
+      let sampleRate = Int32((params["sampleRate"] as? Int) ?? 16_000)
 
       try self.queue.sync {
-        try self.getOrCreateVadRunner().startVadSession(
-          sessionId: sessionId,
+        try self.vadDetectors.create(
+          detectorId: detectorId,
+          sampleRate: sampleRate,
           minSpeechMs: minSpeechMs,
           redemptionMs: redemptionMs
         )
       }
     }
 
-    AsyncFunction("stopVadSession") { (params: [String: Any]) in
-      let sessionId = (params["sessionId"] as? String) ?? ""
-      if sessionId.isEmpty { return }
+    AsyncFunction("pushVadAudioFrame") { (params: [String: Any]) -> [String: Any] in
+      let detectorId = (params["detectorId"] as? String) ?? ""
+      let pcm16leBase64 = (params["pcm16leBase64"] as? String) ?? ""
+      let sampleRate = Int32((params["sampleRate"] as? Int) ?? 16_000)
+      let channels = Int32((params["channels"] as? Int) ?? 1)
+      guard let data = Data(base64Encoded: pcm16leBase64) else {
+        throw NSError(domain: "HappierSherpaNative", code: 404, userInfo: [NSLocalizedDescriptionKey: "pcm16leBase64 is invalid"])
+      }
+
+      return try self.queue.sync {
+        let result = try self.vadDetectors.push(
+          detectorId: detectorId,
+          data: data,
+          sampleRate: sampleRate,
+          channels: channels
+        )
+        return [
+          "speechStarted": result.speechStarted,
+          "speechEnded": result.speechEnded,
+        ]
+      }
+    }
+
+    AsyncFunction("cancelVadDetector") { (params: [String: Any]) in
+      let detectorId = (params["detectorId"] as? String) ?? ""
+      if detectorId.isEmpty { return }
 
       self.queue.sync {
-        guard let runner = self.vadRunner else { return }
-        runner.stopVadSession(sessionId: sessionId)
+        self.vadDetectors.cancel(detectorId: detectorId)
       }
     }
   }

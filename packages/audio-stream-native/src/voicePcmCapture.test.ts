@@ -1,0 +1,353 @@
+import { describe, expect, it, vi } from 'vitest';
+
+import type { AudioStreamFrameEvent, HappierAudioStreamNativeModule } from './HappierAudioStreamNative.types';
+import { createVoicePcmCapture } from './voicePcmCapture';
+import type { VoiceAudioSessionCoordinator } from './voiceAudioSessionCoordinator';
+
+const FORMAT = { sampleRate: 16_000, channels: 1 as const, frameMs: 20 };
+
+function createHarness() {
+  let frameListener: ((event: AudioStreamFrameEvent) => void) | null = null;
+  let nextStream = 0;
+  const nativeModule: HappierAudioStreamNativeModule = {
+    start: vi.fn(async () => ({ streamId: `stream-${++nextStream}` })),
+    stop: vi.fn(async () => undefined),
+    configureAudioSession: vi.fn(async ({ generation, configuration }) => ({
+      generation,
+      aecAvailable: true,
+      aecActive: configuration.aec !== 'off',
+      route: 'speaker',
+    })),
+    restoreAudioSession: vi.fn(async () => undefined),
+    addListener: vi.fn((eventName, listener) => {
+      if (eventName === 'audioFrame') frameListener = listener as (event: AudioStreamFrameEvent) => void;
+      return { remove: () => { frameListener = null; } };
+    }),
+  };
+  const sessionLease = { id: 'audio-lease', capabilities: { aecAvailable: true, aecActive: false, route: 'speaker' }, release: vi.fn(async () => undefined) };
+  const audioSessionCoordinator = {
+    acquire: vi.fn(async () => sessionLease),
+  } as unknown as VoiceAudioSessionCoordinator;
+  return {
+    nativeModule,
+    audioSessionCoordinator,
+    sessionLease,
+    emit: (event: AudioStreamFrameEvent) => frameListener?.(event),
+  };
+}
+
+describe('VoicePcmCapture', () => {
+  it('shares one native stream across compatible subscriber leases and stops after the final release', async () => {
+    const harness = createHarness();
+    const capture = createVoicePcmCapture(harness);
+    const firstFrames: string[] = [];
+    const secondFrames: string[] = [];
+    const first = await capture.acquire({ ownerId: 'stt', format: FORMAT, onFrame: (frame) => { firstFrames.push(frame.pcm16leBase64); } });
+    const second = await capture.acquire({ ownerId: 'vad', format: FORMAT, onFrame: (frame) => { secondFrames.push(frame.pcm16leBase64); } });
+
+    expect(first.streamId).toBe(second.streamId);
+    expect(harness.nativeModule.start).toHaveBeenCalledTimes(1);
+    harness.emit({ streamId: first.streamId, pcm16leBase64: 'AA==', sampleRate: 16_000, channels: 1 });
+    await capture.waitForDrain();
+    expect(firstFrames).toEqual(['AA==']);
+    expect(secondFrames).toEqual(['AA==']);
+
+    await first.release();
+    expect(harness.nativeModule.stop).not.toHaveBeenCalled();
+    await second.release();
+    expect(harness.nativeModule.stop).toHaveBeenCalledWith({ streamId: first.streamId });
+    expect(harness.sessionLease.release).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not lose an initial frame emitted before native start resolves', async () => {
+    const harness = createHarness();
+    vi.mocked(harness.nativeModule.start).mockImplementationOnce(async () => {
+      harness.emit({ streamId: 'stream-1', pcm16leBase64: 'AA==', sampleRate: 16_000, channels: 1 });
+      return { streamId: 'stream-1' };
+    });
+    const capture = createVoicePcmCapture(harness);
+    const frames: string[] = [];
+
+    const lease = await capture.acquire({
+      ownerId: 'stt',
+      format: FORMAT,
+      onFrame: (frame) => { frames.push(frame.pcm16leBase64); },
+    });
+    await lease.waitForDrain();
+
+    expect(frames).toEqual(['AA==']);
+    await lease.release();
+  });
+
+  it('rejects an incompatible format instead of restarting another consumer stream', async () => {
+    const harness = createHarness();
+    const capture = createVoicePcmCapture(harness);
+    const first = await capture.acquire({ ownerId: 'stt', format: FORMAT, onFrame: () => undefined });
+
+    await expect(capture.acquire({
+      ownerId: 'other',
+      format: { sampleRate: 24_000, channels: 1, frameMs: 20 },
+      onFrame: () => undefined,
+    })).rejects.toMatchObject({ code: 'capture_format_conflict' });
+    expect(harness.nativeModule.start).toHaveBeenCalledTimes(1);
+    await first.release();
+  });
+
+  it('rejects a capture subscriber that disables audio-session input', async () => {
+    const harness = createHarness();
+    const capture = createVoicePcmCapture(harness);
+
+    await expect(capture.acquire({
+      ownerId: 'invalid-playback-only-capture',
+      format: FORMAT,
+      audioSession: { mode: 'playback', input: false, output: true, aec: 'off' },
+      onFrame: () => undefined,
+    })).rejects.toMatchObject({ code: 'invalid_capture_request' });
+
+    expect(harness.audioSessionCoordinator.acquire).not.toHaveBeenCalled();
+    expect(harness.nativeModule.start).not.toHaveBeenCalled();
+  });
+
+  it('compares audio-session requests by values rather than object key order', async () => {
+    const harness = createHarness();
+    const capture = createVoicePcmCapture(harness);
+    const first = await capture.acquire({
+      ownerId: 'stt',
+      format: FORMAT,
+      audioSession: { mode: 'conversation', input: true, output: true, aec: 'preferred' },
+      onFrame: () => undefined,
+    });
+    const second = await capture.acquire({
+      ownerId: 'vad',
+      format: FORMAT,
+      audioSession: { aec: 'preferred', output: true, input: true, mode: 'conversation' },
+      onFrame: () => undefined,
+    });
+
+    expect(first.streamId).toBe(second.streamId);
+    expect(harness.audioSessionCoordinator.acquire).toHaveBeenCalledTimes(1);
+    expect(harness.audioSessionCoordinator.acquire).toHaveBeenCalledWith({
+      ownerId: 'stt',
+      mode: 'conversation',
+      input: true,
+      output: true,
+      aec: 'preferred',
+      capture: 'host_managed',
+    });
+    expect(harness.nativeModule.start).toHaveBeenCalledTimes(1);
+    await first.release();
+    await second.release();
+  });
+
+  it('bounds slow consumers independently and reports dropped frames without stalling fast consumers', async () => {
+    const harness = createHarness();
+    const capture = createVoicePcmCapture(harness);
+    const unblockSlow = { current: null as (() => void) | null };
+    const slow = vi.fn(async () => new Promise<void>((resolve) => { unblockSlow.current = resolve; }));
+    const fast = vi.fn(async () => undefined);
+    const dropped: number[] = [];
+    const slowLease = await capture.acquire({ ownerId: 'slow', format: FORMAT, maxQueuedFrames: 1, onFrame: slow, onDroppedFrames: (count) => dropped.push(count) });
+    const fastLease = await capture.acquire({ ownerId: 'fast', format: FORMAT, maxQueuedFrames: 8, onFrame: fast });
+
+    for (const value of ['AA==', 'AQ==', 'Ag==']) {
+      harness.emit({ streamId: slowLease.streamId, pcm16leBase64: value, sampleRate: 16_000, channels: 1 });
+    }
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(fast).toHaveBeenCalledTimes(3);
+    expect(slow).toHaveBeenCalledTimes(1);
+    expect(dropped).toEqual([1, 2]);
+    unblockSlow.current?.();
+    await capture.waitForDrain();
+    await slowLease.release();
+    await fastLease.release();
+  });
+
+  it('supports subscriber mute/filter without muting the shared native stream', async () => {
+    const harness = createHarness();
+    const capture = createVoicePcmCapture(harness);
+    let muted = true;
+    const mutedFrames = vi.fn();
+    const otherFrames = vi.fn();
+    const mutedLease = await capture.acquire({ ownerId: 'muted', format: FORMAT, shouldDeliver: () => !muted, onFrame: mutedFrames });
+    const otherLease = await capture.acquire({ ownerId: 'other', format: FORMAT, onFrame: otherFrames });
+
+    harness.emit({ streamId: mutedLease.streamId, pcm16leBase64: 'AA==', sampleRate: 16_000, channels: 1 });
+    await capture.waitForDrain();
+    expect(mutedFrames).not.toHaveBeenCalled();
+    expect(otherFrames).toHaveBeenCalledTimes(1);
+    muted = false;
+    harness.emit({ streamId: mutedLease.streamId, pcm16leBase64: 'AQ==', sampleRate: 16_000, channels: 1 });
+    await capture.waitForDrain();
+    expect(mutedFrames).toHaveBeenCalledTimes(1);
+    await mutedLease.release();
+    await otherLease.release();
+  });
+
+  it('isolates subscriber filter and error callbacks so one consumer cannot break fan-out', async () => {
+    const harness = createHarness();
+    const capture = createVoicePcmCapture(harness);
+    const broken = await capture.acquire({
+      ownerId: 'broken',
+      format: FORMAT,
+      shouldDeliver: () => { throw new Error('broken filter'); },
+      onFrame: () => undefined,
+      onError: () => { throw new Error('broken error observer'); },
+    });
+    const healthyFrames = vi.fn();
+    const healthy = await capture.acquire({ ownerId: 'healthy', format: FORMAT, onFrame: healthyFrames });
+
+    harness.emit({ streamId: broken.streamId, pcm16leBase64: 'AA==', sampleRate: 16_000, channels: 1 });
+    await capture.waitForDrain();
+
+    expect(healthyFrames).toHaveBeenCalledTimes(1);
+    await broken.release();
+    await healthy.release();
+  });
+
+  it('unwinds native stream and session lease on partial startup failure', async () => {
+    const harness = createHarness();
+    vi.mocked(harness.nativeModule.start).mockRejectedValueOnce(new Error('native start failed'));
+    const capture = createVoicePcmCapture(harness);
+
+    await expect(capture.acquire({ ownerId: 'stt', format: FORMAT, onFrame: () => undefined }))
+      .rejects.toThrow('native start failed');
+
+    expect(harness.sessionLease.release).toHaveBeenCalledTimes(1);
+    expect(capture.getSnapshot()).toMatchObject({ streamId: null, subscriberCount: 0 });
+  });
+
+  it('releases the audio-session lease even when native stream teardown fails', async () => {
+    const harness = createHarness();
+    const capture = createVoicePcmCapture(harness);
+    const lease = await capture.acquire({ ownerId: 'stt', format: FORMAT, onFrame: () => undefined });
+    vi.mocked(harness.nativeModule.stop).mockRejectedValueOnce(new Error('native stop failed'));
+
+    await expect(lease.release()).rejects.toThrow('native stop failed');
+
+    expect(harness.sessionLease.release).toHaveBeenCalledTimes(1);
+    expect(capture.getSnapshot()).toMatchObject({ streamId: null, subscriberCount: 0 });
+
+    await lease.release();
+    expect(harness.nativeModule.stop).toHaveBeenCalledTimes(2);
+  });
+
+  it('retains the audio-session lease until a failed restoration is retried successfully', async () => {
+    const harness = createHarness();
+    const capture = createVoicePcmCapture(harness);
+    const lease = await capture.acquire({ ownerId: 'stt', format: FORMAT, onFrame: () => undefined });
+    harness.sessionLease.release
+      .mockRejectedValueOnce(new Error('audio session restore failed'))
+      .mockResolvedValueOnce(undefined);
+
+    await expect(lease.release()).rejects.toThrow('audio session restore failed');
+    await lease.release();
+
+    expect(harness.nativeModule.stop).toHaveBeenCalledTimes(1);
+    expect(harness.sessionLease.release).toHaveBeenCalledTimes(2);
+  });
+
+  it('retries both native stop and audio-session restoration after a combined teardown failure', async () => {
+    const harness = createHarness();
+    const capture = createVoicePcmCapture(harness);
+    const lease = await capture.acquire({ ownerId: 'stt', format: FORMAT, onFrame: () => undefined });
+    vi.mocked(harness.nativeModule.stop)
+      .mockRejectedValueOnce(new Error('native stop failed'))
+      .mockResolvedValueOnce(undefined);
+    harness.sessionLease.release
+      .mockRejectedValueOnce(new Error('audio session restore failed'))
+      .mockResolvedValueOnce(undefined);
+
+    await expect(lease.release()).rejects.toBeInstanceOf(AggregateError);
+    await lease.release();
+
+    expect(harness.nativeModule.stop).toHaveBeenCalledTimes(2);
+    expect(harness.sessionLease.release).toHaveBeenCalledTimes(2);
+  });
+
+  it('ignores stale frames after stop and a new generation starts', async () => {
+    const harness = createHarness();
+    const capture = createVoicePcmCapture(harness);
+    const frames = vi.fn();
+    const first = await capture.acquire({ ownerId: 'first', format: FORMAT, onFrame: frames });
+    const firstStreamId = first.streamId;
+    await first.release();
+    const second = await capture.acquire({ ownerId: 'second', format: FORMAT, onFrame: frames });
+
+    harness.emit({ streamId: firstStreamId, pcm16leBase64: 'AA==', sampleRate: 16_000, channels: 1 });
+    harness.emit({ streamId: second.streamId, pcm16leBase64: 'AQ==', sampleRate: 16_000, channels: 1 });
+    await capture.waitForDrain();
+    expect(frames).toHaveBeenCalledTimes(1);
+    await Promise.all([second.release(), second.release()]);
+    expect(harness.nativeModule.stop).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not let a hung subscriber block lease release or native restoration', async () => {
+    const harness = createHarness();
+    const capture = createVoicePcmCapture(harness);
+    const lease = await capture.acquire({
+      ownerId: 'hung',
+      format: FORMAT,
+      onFrame: async () => new Promise<void>(() => {}),
+    });
+    harness.emit({ streamId: lease.streamId, pcm16leBase64: 'AA==', sampleRate: 16_000, channels: 1 });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const result = await Promise.race([
+      lease.release().then(() => 'released' as const),
+      new Promise<'timed_out'>((resolve) => setTimeout(() => resolve('timed_out'), 25)),
+    ]);
+
+    expect(result).toBe('released');
+    expect(harness.nativeModule.stop).toHaveBeenCalledTimes(1);
+    expect(harness.sessionLease.release).toHaveBeenCalledTimes(1);
+  });
+
+  it('lets each consumer drain only its own queue', async () => {
+    const harness = createHarness();
+    const capture = createVoicePcmCapture(harness);
+    const hung = await capture.acquire({
+      ownerId: 'hung',
+      format: FORMAT,
+      onFrame: async () => new Promise<void>(() => {}),
+    });
+    const fast = await capture.acquire({ ownerId: 'fast', format: FORMAT, onFrame: async () => undefined });
+    harness.emit({ streamId: hung.streamId, pcm16leBase64: 'AA==', sampleRate: 16_000, channels: 1 });
+
+    const result = await Promise.race([
+      fast.waitForDrain().then(() => 'drained' as const),
+      new Promise<'timed_out'>((resolve) => setTimeout(() => resolve('timed_out'), 25)),
+    ]);
+
+    expect(result).toBe('drained');
+    await hung.release();
+    await fast.release();
+  });
+
+  it('surfaces disposal failure and retries a pending native stop', async () => {
+    const harness = createHarness();
+    const capture = createVoicePcmCapture(harness);
+    await capture.acquire({ ownerId: 'stt', format: FORMAT, onFrame: () => undefined });
+    vi.mocked(harness.nativeModule.stop).mockRejectedValueOnce(new Error('native stop failed'));
+
+    await expect(capture.dispose()).rejects.toThrow('native stop failed');
+    await capture.dispose();
+
+    expect(harness.nativeModule.stop).toHaveBeenCalledTimes(2);
+    expect(harness.sessionLease.release).toHaveBeenCalledTimes(1);
+  });
+
+  it('surfaces disposal restoration failure and retries the retained session lease', async () => {
+    const harness = createHarness();
+    const capture = createVoicePcmCapture(harness);
+    await capture.acquire({ ownerId: 'stt', format: FORMAT, onFrame: () => undefined });
+    harness.sessionLease.release
+      .mockRejectedValueOnce(new Error('audio session restore failed'))
+      .mockResolvedValueOnce(undefined);
+
+    await expect(capture.dispose()).rejects.toThrow('audio session restore failed');
+    await capture.dispose();
+
+    expect(harness.nativeModule.stop).toHaveBeenCalledTimes(1);
+    expect(harness.sessionLease.release).toHaveBeenCalledTimes(2);
+  });
+});

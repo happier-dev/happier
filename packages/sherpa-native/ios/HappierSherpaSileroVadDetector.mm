@@ -80,11 +80,17 @@ bool Exists(const std::string &path) {
   [self close];
 }
 
-- (BOOL)acceptWaveform:(const float *)samples count:(int32_t)count {
+- (BOOL)acceptWaveform:(const float *)samples
+                 count:(int32_t)count
+        speechDetected:(BOOL *)speechDetected {
   std::lock_guard<std::mutex> lock(_mutex);
+  if (speechDetected) *speechDetected = NO;
   if (!_vad || !samples || count <= 0) return NO;
 
   SherpaOnnxVoiceActivityDetectorAcceptWaveform(_vad, samples, count);
+  if (speechDetected) {
+    *speechDetected = SherpaOnnxVoiceActivityDetectorDetected(_vad) != 0;
+  }
 
   if (SherpaOnnxVoiceActivityDetectorEmpty(_vad) != 0) {
     return NO;

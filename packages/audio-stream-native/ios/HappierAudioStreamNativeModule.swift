@@ -2,6 +2,7 @@ import ExpoModulesCore
 
 import AVFoundation
 import Foundation
+import UIKit
 
 private final class AudioStreamSession {
   private let queue: DispatchQueue
@@ -31,14 +32,21 @@ private final class AudioStreamSession {
     self.frameBytes = frameBytes
   }
 
-  func start(frameMs: Int) throws {
-    let session = AVAudioSession.sharedInstance()
-    try session.setCategory(.playAndRecord, mode: .measurement, options: [.allowBluetooth])
-    try session.setPreferredSampleRate(sampleRate)
-    try session.setActive(true, options: [])
-
+  func start(frameMs: Int, voiceProcessingEnabled: Bool) throws {
     let engine = AVAudioEngine()
     let input = engine.inputNode
+
+    if voiceProcessingEnabled {
+      if #available(iOS 13.0, *) {
+        try input.setVoiceProcessingEnabled(true)
+      } else {
+        throw NSError(
+          domain: "HappierAudioStreamNative",
+          code: 101,
+          userInfo: [NSLocalizedDescriptionKey: "aec_unavailable"]
+        )
+      }
+    }
 
     guard
       let format = AVAudioFormat(
@@ -76,8 +84,15 @@ private final class AudioStreamSession {
       }
     }
 
-    try engine.start()
-    self.engine = engine
+    do {
+      try engine.start()
+      self.engine = engine
+    } catch {
+      input.removeTap(onBus: 0)
+      engine.stop()
+      self.accumulated.removeAll(keepingCapacity: false)
+      throw error
+    }
   }
 
   func stop() {
@@ -87,22 +102,179 @@ private final class AudioStreamSession {
     self.engine = nil
     self.accumulated.removeAll(keepingCapacity: false)
 
-    do {
-      try AVAudioSession.sharedInstance().setActive(false, options: [.notifyOthersOnDeactivation])
-    } catch {
-      // best-effort
-    }
   }
+}
+
+private struct PreviousAudioSessionState {
+  let category: AVAudioSession.Category
+  let mode: AVAudioSession.Mode
+  let options: AVAudioSession.CategoryOptions
+  let preferredSampleRate: Double
 }
 
 public final class HappierAudioStreamNativeModule: Module {
   private let queue = DispatchQueue(label: "dev.happier.audioStream", qos: .userInitiated)
   private var active: AudioStreamSession? = nil
+  private var audioSessionGeneration: Int = 0
+  private var audioSessionConfigured = false
+  private var voiceProcessingEnabled = false
+  private var previousAudioSessionState: PreviousAudioSessionState? = nil
+  private var notificationObservers: [NSObjectProtocol] = []
+
+  private func emitAudioSessionEvent(_ event: [String: Any], generation: Int? = nil) {
+    var payload = event
+    payload["generation"] = generation ?? self.audioSessionGeneration
+    self.sendEvent("voiceAudioSessionEvent", payload)
+  }
+
+  private func currentRouteName() -> String? {
+    AVAudioSession.sharedInstance().currentRoute.outputs.first?.portType.rawValue
+  }
+
+  private func installNotificationObservers(generation: Int) {
+    removeNotificationObservers()
+    let center = NotificationCenter.default
+    notificationObservers.append(center.addObserver(
+      forName: AVAudioSession.interruptionNotification,
+      object: nil,
+      queue: nil
+    ) { [weak self] notification in
+      guard let self else { return }
+      let rawType = notification.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt
+      let type = rawType.flatMap(AVAudioSession.InterruptionType.init(rawValue:))
+      if type == .began {
+        self.emitAudioSessionEvent(["kind": "interruption_began"], generation: generation)
+      } else if type == .ended {
+        let rawOptions = notification.userInfo?[AVAudioSessionInterruptionOptionKey] as? UInt ?? 0
+        let shouldResume = AVAudioSession.InterruptionOptions(rawValue: rawOptions).contains(.shouldResume)
+        self.emitAudioSessionEvent(["kind": "interruption_ended", "shouldResume": shouldResume], generation: generation)
+      }
+    })
+    notificationObservers.append(center.addObserver(
+      forName: AVAudioSession.routeChangeNotification,
+      object: nil,
+      queue: nil
+    ) { [weak self] _ in
+      guard let self else { return }
+      self.emitAudioSessionEvent(["kind": "route_changed", "route": self.currentRouteName() ?? "unknown"], generation: generation)
+    })
+    notificationObservers.append(center.addObserver(
+      forName: UIApplication.didEnterBackgroundNotification,
+      object: nil,
+      queue: nil
+    ) { [weak self] _ in
+      self?.emitAudioSessionEvent(["kind": "lifecycle_changed", "state": "background"], generation: generation)
+    })
+    notificationObservers.append(center.addObserver(
+      forName: UIApplication.willEnterForegroundNotification,
+      object: nil,
+      queue: nil
+    ) { [weak self] _ in
+      self?.emitAudioSessionEvent(["kind": "lifecycle_changed", "state": "foreground"], generation: generation)
+    })
+  }
+
+  private func removeNotificationObservers() {
+    let center = NotificationCenter.default
+    notificationObservers.forEach { center.removeObserver($0) }
+    notificationObservers.removeAll()
+  }
+
+  private func configureAudioSession(_ params: [String: Any]) throws -> [String: Any] {
+    let generation = (params["generation"] as? Int) ?? 0
+    guard let configuration = params["configuration"] as? [String: Any] else {
+      throw NSError(domain: "HappierAudioStreamNative", code: 201, userInfo: [NSLocalizedDescriptionKey: "configuration_required"])
+    }
+    let mode = (configuration["mode"] as? String) ?? "dictation"
+    let input = (configuration["input"] as? Bool) ?? true
+    let output = (configuration["output"] as? Bool) ?? false
+    let aec = (configuration["aec"] as? String) ?? "off"
+    let session = AVAudioSession.sharedInstance()
+    if previousAudioSessionState == nil {
+      previousAudioSessionState = PreviousAudioSessionState(
+        category: session.category,
+        mode: session.mode,
+        options: session.categoryOptions,
+        preferredSampleRate: session.preferredSampleRate
+      )
+    }
+
+    let category: AVAudioSession.Category
+    let sessionMode: AVAudioSession.Mode
+    let options: AVAudioSession.CategoryOptions
+    switch mode {
+    case "conversation":
+      category = .playAndRecord
+      sessionMode = .voiceChat
+      options = [.allowBluetooth, .defaultToSpeaker]
+    case "playback" where !input:
+      category = .playback
+      sessionMode = .default
+      options = []
+    default:
+      category = output ? .playAndRecord : .record
+      sessionMode = .measurement
+      options = output ? [.allowBluetooth] : []
+    }
+
+    try session.setCategory(category, mode: sessionMode, options: options)
+    try session.setActive(true, options: [])
+    audioSessionGeneration = generation
+    audioSessionConfigured = true
+    let aecAvailable: Bool
+    if #available(iOS 13.0, *) { aecAvailable = true } else { aecAvailable = false }
+    voiceProcessingEnabled = mode == "conversation" && aec != "off" && aecAvailable
+    installNotificationObservers(generation: generation)
+    return [
+      "generation": generation,
+      "aecAvailable": aecAvailable,
+      "aecActive": voiceProcessingEnabled,
+      "route": currentRouteName() ?? "unknown",
+    ]
+  }
+
+  private func restoreAudioSession(_ generation: Int) throws {
+    guard generation >= audioSessionGeneration else { return }
+    let wasConfigured = audioSessionConfigured
+    active?.stop()
+    active = nil
+    let session = AVAudioSession.sharedInstance()
+    if let previous = previousAudioSessionState {
+      try session.setCategory(previous.category, mode: previous.mode, options: previous.options)
+      try session.setPreferredSampleRate(previous.preferredSampleRate)
+    }
+    try session.setActive(false, options: [.notifyOthersOnDeactivation])
+    previousAudioSessionState = nil
+    audioSessionGeneration = generation
+    audioSessionConfigured = false
+    voiceProcessingEnabled = false
+    removeNotificationObservers()
+    if wasConfigured {
+      emitAudioSessionEvent(["kind": "restoration_completed"])
+    }
+  }
 
   public func definition() -> ModuleDefinition {
     Name("HappierAudioStreamNative")
 
-    Events("audioFrame")
+    Events("audioFrame", "voiceAudioSessionEvent")
+
+    OnDestroy {
+      self.queue.sync {
+        self.active?.stop()
+        self.active = nil
+        try? self.restoreAudioSession(self.audioSessionGeneration + 1)
+      }
+    }
+
+    AsyncFunction("configureAudioSession") { (params: [String: Any]) -> [String: Any] in
+      return try self.queue.sync { try self.configureAudioSession(params) }
+    }
+
+    AsyncFunction("restoreAudioSession") { (params: [String: Any]) -> Void in
+      let generation = (params["generation"] as? Int) ?? 0
+      try self.queue.sync { try self.restoreAudioSession(generation) }
+    }
 
     AsyncFunction("start") { (params: [String: Any]) -> [String: String] in
       let sampleRate = (params["sampleRate"] as? Double) ?? 16000
@@ -114,27 +286,41 @@ public final class HappierAudioStreamNativeModule: Module {
       if frameMs <= 0 { throw NSError(domain: "HappierAudioStreamNative", code: 3, userInfo: [NSLocalizedDescriptionKey: "frameMs must be > 0"]) }
 
       return try self.queue.sync {
+        guard self.audioSessionConfigured else {
+          throw NSError(
+            domain: "HappierAudioStreamNative",
+            code: 202,
+            userInfo: [NSLocalizedDescriptionKey: "audio_session_not_configured"]
+          )
+        }
         self.active?.stop()
         self.active = nil
+        do {
+          try AVAudioSession.sharedInstance().setPreferredSampleRate(sampleRate)
 
-        let streamId = UUID().uuidString
-        let bytesPerFrame = channels * 2
-        let frameBytes = Int(sampleRate * Double(frameMs) / 1000.0) * bytesPerFrame
+          let streamId = UUID().uuidString
+          let bytesPerFrame = channels * 2
+          let frameBytes = Int(sampleRate * Double(frameMs) / 1000.0) * bytesPerFrame
 
-        let session = AudioStreamSession(
-          queue: self.queue,
-          emitFrame: { event in
-            self.sendEvent("audioFrame", event)
-          },
-          streamId: streamId,
-          sampleRate: sampleRate,
-          channels: channels,
-          frameBytes: max(1, frameBytes)
-        )
+          let session = AudioStreamSession(
+            queue: self.queue,
+            emitFrame: { event in
+              self.sendEvent("audioFrame", event)
+            },
+            streamId: streamId,
+            sampleRate: sampleRate,
+            channels: channels,
+            frameBytes: max(1, frameBytes)
+          )
 
-        try session.start(frameMs: frameMs)
-        self.active = session
-        return ["streamId": streamId]
+          try session.start(frameMs: frameMs, voiceProcessingEnabled: self.voiceProcessingEnabled)
+          self.active = session
+          return ["streamId": streamId]
+        } catch {
+          self.active?.stop()
+          self.active = nil
+          throw error
+        }
       }
     }
 

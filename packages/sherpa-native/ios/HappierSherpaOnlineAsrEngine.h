@@ -17,14 +17,13 @@ NS_ASSUME_NONNULL_BEGIN
 
 @interface HappierSherpaOnlineAsrEngine : NSObject
 
-- (instancetype)initWithAssetsDir:(NSString *)assetsDir
-                       sampleRate:(int32_t)sampleRate
-                         language:(NSString * _Nullable)language
-                            error:(NSError * _Nullable * _Nullable)error;
+- (nullable instancetype)initWithAssetsDir:(NSString *)assetsDir
+                                sampleRate:(int32_t)sampleRate
+                                  language:(NSString * _Nullable)language
+                                     error:(NSError * _Nullable * _Nullable)error;
 
 - (HappierSherpaOnlineAsrStream * _Nullable)createStreamWithError:(NSError * _Nullable * _Nullable)error;
 
 @end
 
 NS_ASSUME_NONNULL_END
-

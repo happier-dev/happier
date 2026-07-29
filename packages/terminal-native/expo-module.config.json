@@ -1,0 +1,10 @@
+{
+  "name": "HappierTerminalNative",
+  "platforms": ["ios", "android"],
+  "ios": {
+    "modules": ["HappierTerminalNativeModule"]
+  },
+  "android": {
+    "modules": ["dev.happier.terminal.HappierTerminalNativeModule"]
+  }
+}

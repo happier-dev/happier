@@ -69,4 +69,17 @@ describe('loopbackEndpoint', () => {
         });
         expect(candidate.endpoint?.endpointFingerprint).toMatch(/^loopback_/);
     });
+
+    it('rejects a URL-only loopback fingerprint without a fresh daemon runtime id', () => {
+        // @ts-expect-error The public contract requires a fresh runtime id; keep a runtime guard for untyped callers.
+        expect(() => createPeerLoopbackRouteCandidate({
+            url: 'http://127.0.0.1:3456/peer-mediation/v1/probe',
+            expiresAt: 10_000,
+        })).toThrow(/runtime id/i);
+        expect(() => createPeerLoopbackEndpointFingerprint({
+            url: 'http://127.0.0.1:3456/peer-mediation/v1/probe',
+            routeKind: 'loopback_direct',
+            daemonRuntimeId: '   ',
+        })).toThrow(/runtime id/i);
+    });
 });

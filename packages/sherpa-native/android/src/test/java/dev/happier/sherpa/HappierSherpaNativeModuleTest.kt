@@ -5,23 +5,23 @@ import org.junit.Test
 
 class HappierSherpaNativeModuleTest {
   @Test
-  fun handleModuleDestroy_stopsExistingVadRunner() {
-    val runner = FakeVadSessionRunnerControl()
-    val module = HappierSherpaNativeModule(createVadRunner = { runner })
+  fun handleModuleDestroy_cancelsExistingVadRegistry() {
+    val registry = FakeVadDetectorRegistryControl()
+    val module = HappierSherpaNativeModule(createVadRegistry = { registry })
 
-    module.getOrCreateVadRunner()
+    module.getOrCreateVadRegistry()
     module.handleModuleDestroy()
 
-    assertEquals(1, runner.stopAnyCallCount)
+    assertEquals(1, registry.cancelAllCallCount)
   }
 
   @Test
-  fun handleModuleDestroy_doesNotCreateVadRunnerWhenNeverStarted() {
+  fun handleModuleDestroy_doesNotCreateVadRegistryWhenNeverStarted() {
     var createCount = 0
     val module = HappierSherpaNativeModule(
-      createVadRunner = {
+      createVadRegistry = {
         createCount += 1
-        FakeVadSessionRunnerControl()
+        FakeVadDetectorRegistryControl()
       }
     )
 
@@ -31,14 +31,17 @@ class HappierSherpaNativeModuleTest {
   }
 }
 
-private class FakeVadSessionRunnerControl : VadSessionRunnerControl {
-  var stopAnyCallCount: Int = 0
+private class FakeVadDetectorRegistryControl : FrameFedVadDetectorRegistryControl {
+  var cancelAllCallCount: Int = 0
 
-  override fun startVadSession(sessionId: String, minSpeechMs: Long, redemptionMs: Long) = Unit
+  override fun create(detectorId: String, sampleRate: Int, minSpeechMs: Long, redemptionMs: Long) = Unit
 
-  override fun stopVadSession(sessionId: String) = Unit
+  override fun push(detectorId: String, pcm16: ShortArray, sampleRate: Int, channels: Int) =
+    FrameFedVadFrameResult(false, false)
 
-  override fun stopAny() {
-    stopAnyCallCount += 1
+  override fun cancel(detectorId: String) = Unit
+
+  override fun cancelAll() {
+    cancelAllCallCount += 1
   }
 }

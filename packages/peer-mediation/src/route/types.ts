@@ -19,7 +19,6 @@ export type PeerEndpointTransport =
 
 export type PeerEndpointMechanism =
     | 'loopback_http'
-    | 'lan_http'
     | 'tailscale_serve_https'
     | 'loopback_ws'
     | 'lan_ws'

@@ -6,12 +6,19 @@
   "types": "./src/index.ts",
   "files": [
     "src",
+    "common",
+    "scripts",
     "ios",
     "android",
     "expo-module.config.json",
     "package.json",
     "README.md"
   ],
+  "scripts": {
+    "test": "yarn -s test:scripts",
+    "test:native": "node scripts/run-native-tts-job-registry-test.mjs",
+    "test:scripts": "node --test scripts/resolve-sherpa-checksum.test.mjs scripts/sherpa-checksum-integration.test.mjs scripts/sherpa-native-build-configuration.test.mjs scripts/android-tts-job-registry-integration.test.mjs"
+  },
   "devDependencies": {
     "expo-modules-core": "55.0.20"
   },

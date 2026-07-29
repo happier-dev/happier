@@ -12,8 +12,14 @@
     "package.json",
     "README.md"
   ],
+  "scripts": {
+    "test": "node ../../node_modules/vitest/vitest.mjs run --config ../../vitest.config.ts src",
+    "typecheck": "node ../../scripts/workspaces/runTypeScriptCli.mjs -p tsconfig.json --noEmit"
+  },
   "devDependencies": {
-    "expo-modules-core": "55.0.20"
+    "expo-modules-core": "55.0.20",
+    "typescript": "^5.9.2",
+    "vitest": "^3.2.4"
   },
   "peerDependencies": {
     "expo": "*"

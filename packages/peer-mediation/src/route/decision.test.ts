@@ -95,9 +95,9 @@ describe('resolvePeerRouteDecision', () => {
                 createCandidate({
                     routeKind: 'lan_direct',
                     endpoint: {
-                        transport: 'http',
-                        mechanism: 'lan_http',
-                        url: 'http://192.168.1.10:46001/machine-transfers/direct/a',
+                        transport: 'ws',
+                        mechanism: 'lan_ws',
+                        url: 'ws://192.168.1.10:46001/peer-mediation',
                         endpointFingerprint: 'fingerprint-lan-b',
                     },
                 }),

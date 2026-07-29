@@ -1,0 +1,77 @@
+{
+  "name": "@happier-dev/plugin-ui",
+  "version": "0.0.0",
+  "description": "Host runtime React primitives for Happier plugin UI.",
+  "private": true,
+  "license": "MIT",
+  "repository": "happier-dev/happier",
+  "type": "module",
+  "sideEffects": false,
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./components": {
+      "types": "./dist/components/index.d.ts",
+      "default": "./dist/components/index.js"
+    },
+    "./compatibility": {
+      "types": "./dist/compatibility.d.ts",
+      "default": "./dist/compatibility.js"
+    },
+    "./hostApi": {
+      "types": "./dist/hostApi/index.d.ts",
+      "default": "./dist/hostApi/index.js"
+    },
+    "./testing": {
+      "types": "./dist/testing/render.d.ts",
+      "default": "./dist/testing/render.js"
+    }
+  },
+  "files": [
+    "dist",
+    "package.json",
+    "README.md"
+  ],
+  "happier": {
+    "publicSdkRelease": {
+      "posture": "prepublish_hold",
+      "supportPolicy": "README.md#plugin-ui-release-posture",
+      "externalPublicationRequiresApproval": true
+    },
+    "internalRuntimePackage": {
+      "posture": "prepublish_hold",
+      "supportPolicy": "README.md#plugin-ui-release-posture",
+      "externalPublicationRequiresApproval": true
+    }
+  },
+  "scripts": {
+    "tsc": "node ../../scripts/workspaces/runTypeScriptCli.mjs",
+    "build": "node ../../scripts/workspaces/buildTypeScriptPackageDist.mjs -p tsconfig.json",
+    "test": "vitest run --config ./vitest.config.ts",
+    "typecheck": "node ../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@happier-dev/protocol": "0.0.0"
+  },
+  "peerDependencies": {
+    "react": "19.2.0",
+    "react-test-renderer": "19.2.0"
+  },
+  "peerDependenciesMeta": {
+    "react-test-renderer": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@types/react": "~19.2.10",
+    "@types/react-test-renderer": "^19.1.0",
+    "react": "19.2.0",
+    "react-test-renderer": "19.2.0",
+    "typescript": "^5.9.2",
+    "vitest": "^3.2.4"
+  }
+}

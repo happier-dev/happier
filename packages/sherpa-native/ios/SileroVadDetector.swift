@@ -1,6 +1,6 @@
 import Foundation
 
-final class SileroVadDetector: VadDetector {
+final class SileroVadDetector: FrameFedVadDetector {
   private let lock = NSLock()
   private var inner: HappierSherpaSileroVadDetector?
 
@@ -14,11 +14,49 @@ final class SileroVadDetector: VadDetector {
     inner = d
   }
 
-  func acceptWaveform(samples: UnsafePointer<Float>, count: Int32) -> Bool {
+  func acceptPcm16(data: Data, sampleRate: Int32, channels: Int32) throws -> FrameFedVadDetection {
+    guard sampleRate == 16_000 else {
+      throw NSError(domain: "HappierSherpaNative", code: 414, userInfo: [NSLocalizedDescriptionKey: "VAD expects 16000 Hz PCM"])
+    }
+    guard channels > 0, data.count.isMultiple(of: 2) else {
+      throw NSError(domain: "HappierSherpaNative", code: 415, userInfo: [NSLocalizedDescriptionKey: "VAD expects complete PCM16 samples"])
+    }
+
+    let channelCount = Int(channels)
+    let rawSampleCount = data.count / 2
+    guard rawSampleCount >= channelCount else {
+      return FrameFedVadDetection(speechDetected: false, speechEnded: false)
+    }
+
+    var samples = [Float]()
+    samples.reserveCapacity(rawSampleCount / channelCount)
+    data.withUnsafeBytes { bytes in
+      let raw = bytes.bindMemory(to: UInt8.self)
+      var frameIndex = 0
+      while frameIndex + channelCount <= rawSampleCount {
+        var sum: Float = 0
+        for channel in 0..<channelCount {
+          let sampleIndex = frameIndex + channel
+          let byteIndex = sampleIndex * 2
+          let bits = UInt16(raw[byteIndex]) | (UInt16(raw[byteIndex + 1]) << 8)
+          sum += Float(Int16(bitPattern: bits)) / 32768.0
+        }
+        samples.append(sum / Float(channelCount))
+        frameIndex += channelCount
+      }
+    }
+
     lock.lock()
     defer { lock.unlock() }
-    guard let inner else { return false }
-    return inner.acceptWaveform(samples, count: count)
+    guard let inner else {
+      throw NSError(domain: "HappierSherpaNative", code: 416, userInfo: [NSLocalizedDescriptionKey: "VAD detector is closed"])
+    }
+    var speechDetected = ObjCBool(false)
+    let speechEnded = samples.withUnsafeBufferPointer { buffer -> Bool in
+      guard let baseAddress = buffer.baseAddress else { return false }
+      return inner.acceptWaveform(baseAddress, count: Int32(buffer.count), speechDetected: &speechDetected)
+    }
+    return FrameFedVadDetection(speechDetected: speechDetected.boolValue, speechEnded: speechEnded)
   }
 
   func close() {

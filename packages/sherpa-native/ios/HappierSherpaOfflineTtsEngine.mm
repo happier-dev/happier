@@ -1,20 +1,16 @@
 #import "HappierSherpaOfflineTtsEngine.h"
+#import "HappierSherpaTtsJobRegistry.h"
 
-#include <atomic>
-#include <mutex>
+#include <cstring>
+#include <memory>
 #include <string>
-#include <unordered_map>
 
 #include <sherpa-onnx/c-api/c-api.h>
 
 namespace {
 
-struct JobState {
-  std::atomic<bool> cancelled{false};
-};
-
 struct ProgressArg {
-  JobState *state;
+  happier_sherpa::TtsJobState *state;
 };
 
 int32_t ProgressCallback(const float * /*samples*/, int32_t /*n*/, float /*p*/, void *arg) {
@@ -34,8 +30,7 @@ int32_t ProgressCallback(const float * /*samples*/, int32_t /*n*/, float /*p*/, 
   std::string _tokensPath;
   std::string _dataDirPath;
 
-  std::mutex _mutex;
-  std::unordered_map<std::string, std::unique_ptr<JobState>> _jobs;
+  happier_sherpa::TtsJobRegistry _jobs;
 }
 @end
 
@@ -117,10 +112,7 @@ int32_t ProgressCallback(const float * /*samples*/, int32_t /*n*/, float /*p*/, 
 
 - (void)cancelJob:(NSString *)jobId {
   const std::string key([jobId UTF8String]);
-  std::lock_guard<std::mutex> lock(_mutex);
-  auto it = _jobs.find(key);
-  if (it == _jobs.end()) return;
-  it->second->cancelled.store(true);
+  _jobs.cancel(key);
 }
 
 - (BOOL)synthesizeToWavFileAtPath:(NSString *)wavPath
@@ -135,11 +127,15 @@ int32_t ProgressCallback(const float * /*samples*/, int32_t /*n*/, float /*p*/, 
   }
 
   const std::string jobKey([jobId UTF8String]);
-  auto state = std::make_unique<JobState>();
-  JobState *statePtr = state.get();
-  {
-    std::lock_guard<std::mutex> lock(_mutex);
-    _jobs[jobKey] = std::move(state);
+  bool wasAlreadyCancelled = false;
+  happier_sherpa::TtsJobState *statePtr = _jobs.beginJob(jobKey, &wasAlreadyCancelled);
+  if (wasAlreadyCancelled) {
+    if (error) *error = [NSError errorWithDomain:@"HappierSherpaNative" code:8 userInfo:@{NSLocalizedDescriptionKey: @"Synthesis cancelled"}];
+    return NO;
+  }
+  if (!statePtr) {
+    if (error) *error = [NSError errorWithDomain:@"HappierSherpaNative" code:8 userInfo:@{NSLocalizedDescriptionKey: @"Synthesis cancelled"}];
+    return NO;
   }
 
   ProgressArg arg;
@@ -160,13 +156,9 @@ int32_t ProgressCallback(const float * /*samples*/, int32_t /*n*/, float /*p*/, 
   const SherpaOnnxGeneratedAudio *audio = SherpaOnnxOfflineTtsGenerateWithConfig(
       _tts, [text UTF8String], &genCfg, ProgressCallback, &arg);
 
-  {
-    std::lock_guard<std::mutex> lock(_mutex);
-    _jobs.erase(jobKey);
-  }
-
   if (!audio) {
-    if (statePtr->cancelled.load()) {
+    const bool wasCancelled = _jobs.finishJob(jobKey);
+    if (wasCancelled) {
       if (error) *error = [NSError errorWithDomain:@"HappierSherpaNative" code:8 userInfo:@{NSLocalizedDescriptionKey: @"Synthesis cancelled"}];
       return NO;
     }
@@ -174,9 +166,22 @@ int32_t ProgressCallback(const float * /*samples*/, int32_t /*n*/, float /*p*/, 
     return NO;
   }
 
+  if (statePtr->cancelled.load()) {
+    _jobs.finishJob(jobKey);
+    SherpaOnnxDestroyOfflineTtsGeneratedAudio(audio);
+    if (error) *error = [NSError errorWithDomain:@"HappierSherpaNative" code:8 userInfo:@{NSLocalizedDescriptionKey: @"Synthesis cancelled"}];
+    return NO;
+  }
+
   const std::string out([wavPath UTF8String]);
   const int32_t ok = SherpaOnnxWriteWave(audio->samples, audio->n, audio->sample_rate, out.c_str());
+  const bool wasCancelled = _jobs.finishJob(jobKey);
   SherpaOnnxDestroyOfflineTtsGeneratedAudio(audio);
+
+  if (wasCancelled) {
+    if (error) *error = [NSError errorWithDomain:@"HappierSherpaNative" code:8 userInfo:@{NSLocalizedDescriptionKey: @"Synthesis cancelled"}];
+    return NO;
+  }
 
   if (!ok) {
     if (error) *error = [NSError errorWithDomain:@"HappierSherpaNative" code:10 userInfo:@{NSLocalizedDescriptionKey: @"Failed to write wav"}];

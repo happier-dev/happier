@@ -1,0 +1,24 @@
+{
+  "name": "@happier-dev/bundled-voice-runtime-contract",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": ["dist", "package.json"],
+  "scripts": {
+    "tsc": "node ../../scripts/workspaces/runTypeScriptCli.mjs",
+    "build": "node ../../scripts/workspaces/buildTypeScriptPackageDist.mjs -p tsconfig.json",
+    "typecheck": "node ../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.json && node ../../scripts/workspaces/runTypeScriptCli.mjs -p tsconfig.type-tests.json"
+  },
+  "exports": {
+    ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" }
+  },
+  "dependencies": {
+    "@happier-dev/plugin-sdk": "0.0.0",
+    "@happier-dev/protocol": "0.0.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.2"
+  }
+}

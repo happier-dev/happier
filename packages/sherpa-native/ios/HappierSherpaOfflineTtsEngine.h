@@ -4,7 +4,7 @@ NS_ASSUME_NONNULL_BEGIN
 
 @interface HappierSherpaOfflineTtsEngine : NSObject
 
-- (instancetype)initWithAssetsDir:(NSString *)assetsDir error:(NSError **)error;
+- (nullable instancetype)initWithAssetsDir:(NSString *)assetsDir error:(NSError **)error;
 
 - (int32_t)sampleRate;
 - (int32_t)numSpeakers;
@@ -21,4 +21,3 @@ NS_ASSUME_NONNULL_BEGIN
 @end
 
 NS_ASSUME_NONNULL_END
-

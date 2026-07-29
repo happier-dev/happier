@@ -1,48 +1,35 @@
 package dev.happier.sherpa
 
 import android.util.Base64
-import dev.happier.sherpa.vad.AndroidVadSessionRunner
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
 import java.util.concurrent.ConcurrentHashMap
 
 class HappierSherpaNativeModule internal constructor(
-  private val createVadRunner: (() -> VadSessionRunnerControl)? = null
+  private val createVadRegistry: (() -> FrameFedVadDetectorRegistryControl)? = null
 ) : Module() {
-  private companion object {
-    private const val VAD_SPEECH_END_EVENT = "vadSpeechEnd"
-  }
-
   private val enginesByAssetsDir = ConcurrentHashMap<String, Long>()
-  private var vadRunner: VadSessionRunnerControl? = null
+  private var vadRegistry: FrameFedVadDetectorRegistryControl? = null
 
-  internal fun getOrCreateVadRunner(): VadSessionRunnerControl {
-    val existing = vadRunner
+  internal fun getOrCreateVadRegistry(): FrameFedVadDetectorRegistryControl {
+    val existing = vadRegistry
     if (existing != null) {
       return existing
     }
 
-    val created = createVadRunner?.invoke() ?: run {
+    val created = createVadRegistry?.invoke() ?: run {
       val reactContext = appContext.reactContext
         ?: throw Exception("React context is unavailable")
-      AndroidVadSessionRunner(
-        context = reactContext.applicationContext,
-        onSpeechEnd = { sessionId ->
-          sendEvent(
-            VAD_SPEECH_END_EVENT,
-            mapOf("sessionId" to sessionId)
-          )
-        }
-      )
+      FrameFedVadDetectorRegistry(context = reactContext.applicationContext)
     }
-    vadRunner = created
+    vadRegistry = created
     return created
   }
 
   internal fun handleModuleDestroy() {
-    val runner = vadRunner ?: return
-    vadRunner = null
-    runner.stopAny()
+    val registry = vadRegistry ?: return
+    vadRegistry = null
+    registry.cancelAll()
   }
 
   private fun requireEngine(assetsDir: String): Long {
@@ -60,7 +47,6 @@ class HappierSherpaNativeModule internal constructor(
 
   override fun definition() = ModuleDefinition {
     Name("HappierSherpaNative")
-    Events(VAD_SPEECH_END_EVENT)
     OnDestroy {
       handleModuleDestroy()
     }
@@ -154,22 +140,43 @@ class HappierSherpaNativeModule internal constructor(
       return@AsyncFunction mapOf("text" to text)
     }
 
-    AsyncFunction("startVadSession") { params: Map<String, Any?> ->
-      val sessionId = params["sessionId"] as? String ?: ""
+    AsyncFunction("createVadDetector") { params: Map<String, Any?> ->
+      val detectorId = params["detectorId"] as? String ?: ""
       val minSpeechMs = (params["minSpeechMs"] as? Number)?.toLong() ?: 0L
       val redemptionMs = (params["redemptionMs"] as? Number)?.toLong() ?: 0L
+      val sampleRate = (params["sampleRate"] as? Number)?.toInt() ?: 16_000
 
-      getOrCreateVadRunner().startVadSession(
-        sessionId = sessionId,
+      getOrCreateVadRegistry().create(
+        detectorId = detectorId,
+        sampleRate = sampleRate,
         minSpeechMs = minSpeechMs,
         redemptionMs = redemptionMs
       )
     }
 
-    AsyncFunction("stopVadSession") { params: Map<String, Any?> ->
-      val sessionId = params["sessionId"] as? String ?: ""
-      if (sessionId.isBlank()) return@AsyncFunction
-      getOrCreateVadRunner().stopVadSession(sessionId)
+    AsyncFunction("pushVadAudioFrame") { params: Map<String, Any?> ->
+      val detectorId = params["detectorId"] as? String ?: ""
+      val pcm16leBase64 = params["pcm16leBase64"] as? String ?: ""
+      val sampleRate = (params["sampleRate"] as? Number)?.toInt() ?: 16_000
+      val channels = (params["channels"] as? Number)?.toInt() ?: 1
+      val bytes = if (pcm16leBase64.isBlank()) ByteArray(0) else Base64.decode(pcm16leBase64, Base64.DEFAULT)
+      require(bytes.size % 2 == 0) { "pcm16leBase64 must contain complete PCM16 samples" }
+      val pcm16 = ShortArray(bytes.size / 2) { index ->
+        val low = bytes[index * 2].toInt() and 0xff
+        val high = bytes[index * 2 + 1].toInt() and 0xff
+        ((high shl 8) or low).toShort()
+      }
+      val result = getOrCreateVadRegistry().push(detectorId, pcm16, sampleRate, channels)
+      return@AsyncFunction mapOf(
+        "speechStarted" to result.speechStarted,
+        "speechEnded" to result.speechEnded
+      )
+    }
+
+    AsyncFunction("cancelVadDetector") { params: Map<String, Any?> ->
+      val detectorId = params["detectorId"] as? String ?: ""
+      if (detectorId.isBlank()) return@AsyncFunction
+      getOrCreateVadRegistry().cancel(detectorId)
     }
   }
 }
@@ -196,6 +203,6 @@ object HappierSherpaNativeJni {
   external fun nativeCancelStreaming(jobId: String)
 
   external fun nativeCreateVadSession(modelPath: String, sampleRate: Int, minSpeechSec: Float, minSilenceSec: Float): Long
-  external fun nativeVadAcceptPcm16(handle: Long, pcm16: ShortArray, count: Int, channels: Int): Boolean
+  external fun nativeVadAcceptPcm16(handle: Long, pcm16: ShortArray, count: Int, channels: Int): Int
   external fun nativeDestroyVadSession(handle: Long)
 }

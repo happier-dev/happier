@@ -1,0 +1,151 @@
+{
+  "iosGhostty": {
+    "renderer": "ios-ghosttykit",
+    "integration": "expo-module-libghostty-spm-vendored-xcframework",
+    "artifact": {
+      "path": "ios/Vendor/GhosttyKit.xcframework",
+      "requiredSlices": [
+        "ios-arm64",
+        "ios-arm64_x86_64-simulator"
+      ],
+      "source": "libghostty-spm",
+      "upstreamRelease": "storage.1.2.4",
+      "upstreamZipSha256": "f1484a5411559bf4a5b665b82a5bb91cb8a3ca2065467dc15202fb191d7a5c9d",
+      "expandedSha256": "f59c864108a9ef3002f6dcaaa00f87e5b56ce4966fb6c90d5ad744cc7aef37c7",
+      "vendoredBinaryAllowedAfterApproval": true,
+      "directGhosttyBuildEscapeHatch": true
+    },
+    "upstream": {
+      "name": "libghostty-spm",
+      "url": "https://github.com/Lakr233/libghostty-spm",
+      "observedRegistryVersion": "1.0.1775374806",
+      "observedPackageVersion": "1.2.4",
+      "observedCommit": "c069f05e0a4ef50143e943e954ed75e52e947009",
+      "pinRequired": true
+    },
+    "fallbackUpstream": {
+      "name": "ghostty",
+      "url": "https://github.com/ghostty-org/ghostty",
+      "useWhen": "libghostty-spm becomes stale, divergent, unavailable, or release-blocking"
+    },
+    "referenceImplementations": {
+      "libghosttySpm": {
+        "referenceOnly": false,
+        "url": "https://github.com/Lakr233/libghostty-spm",
+        "notes": [
+          "Selected iOS v1 substrate for the GhosttyKit XCFramework artifact and libghostty C module bridge.",
+          "GhosttyTerminal Swift sources are an API/lifecycle reference unless Happier explicitly vendors/builds that source target later.",
+          "Must be pinned by exact revision/version and checksum before production bundling.",
+          "Patch/source provenance, license/NOTICE, size, ABI smoke, App Store/export, and update/rollback procedure are release gates."
+        ]
+      },
+      "remodex": {
+        "referenceOnly": true,
+        "url": "https://github.com/Emanuele-web04/remodex",
+        "observedCommit": "7efa7dffb51ef84d761702c8d6d278488e664429",
+        "notes": [
+          "Vendors GhosttyKit.xcframework directly in an iOS Xcode project.",
+          "Wraps the Ghostty C surface API from Swift for runtime/app/surface lifecycle, byte feed, write callback, resize, draw, selection, text extraction, and clipboard.",
+          "Use as lifecycle/API reference only; do not make Remodex a production binary supply-chain dependency."
+        ]
+      }
+    },
+    "gates": [
+      "pinned-libghostty-spm-version",
+      "checksum-pinned-artifact",
+      "wrapper-source-patch-provenance",
+      "license-notice-review",
+      "app-store-export-review",
+      "binary-size-budget",
+      "abi-smoke-test",
+      "crash-to-webview-fallback",
+      "custom-accessibility-model-or-webview-accessible-fallback"
+    ]
+  },
+  "androidTermux": {
+    "renderer": "android-termux",
+    "integration": "expo-module-termux-emulator-renderer-remote-session",
+    "upstream": {
+      "name": "termux-app terminal libraries",
+      "url": "https://github.com/termux/termux-app",
+      "observedCommit": "401bbe54b8f4e68302b1ff70678015a24628fb1d",
+      "pinRequired": true,
+      "modules": [
+        {
+          "name": "terminal-view",
+          "path": "terminal-view",
+          "license": "Apache-2.0"
+        },
+        {
+          "name": "terminal-emulator",
+          "path": "terminal-emulator",
+          "license": "Apache-2.0"
+        }
+      ]
+    },
+    "forbiddenModules": [
+      {
+        "name": "app",
+        "reason": "The full Termux app is GPL-3.0-only and is out of scope for the native renderer package."
+      },
+      {
+        "name": "termux-shared",
+        "reason": "TERM-6 only approves terminal-view and terminal-emulator until dependency closure review says otherwise."
+      }
+    ],
+    "remoteSessionAdapter": {
+      "required": true,
+      "reason": "Termux TerminalSession/TerminalView are process-backed; Happier adapts TerminalEmulator and TerminalRenderer to the remote daemon byte stream without spawning a local Android shell."
+    },
+    "interactionModel": {
+      "kind": "happier-owned-remote-session-adapter",
+      "uses": [
+        "TerminalEmulator",
+        "TerminalRenderer"
+      ],
+      "doesNotEmbed": "process-backed Termux TerminalView widget",
+    "implementedInAdapter": [
+      "ime-commit-text",
+      "hardware-key-escape-mapping",
+      "mouse-tracking-and-scrollback",
+      "safe-http-link-tap-routing"
+    ],
+      "remainingGaps": [
+        "selection-handles",
+        "custom-accessibility",
+        "crash-fallback-device-proof",
+        "interaction-device-qa"
+      ],
+      "requiresDeviceQa": [
+        "ime-keyboard-and-mouse-smoke",
+        "selection-copy-smoke",
+        "fallback-crash-smoke"
+      ]
+    },
+    "sourceStrategy": {
+      "kind": "ignored-source-extract",
+      "vendorRoot": "android/termux/vendor",
+      "metadataFile": "android/termux/vendor/TERMUX-SOURCE.json",
+      "fetchScript": "scripts/fetchTermuxAndroid.mjs",
+      "gradleConsumesWhenPresent": true
+    },
+    "license": {
+      "kind": "Apache-2.0",
+      "scope": "terminal-view-and-terminal-emulator-exception-only",
+      "fullTermuxAppLicense": "GPL-3.0-only",
+      "bundleFullTermuxApp": false,
+      "noticeRequired": true
+    },
+    "gates": [
+      "pinned-upstream-revision",
+      "dependency-closure-review",
+      "legal-product-approval",
+      "license-notice-review",
+      "aar-gradle-build-proof",
+      "binary-size-budget",
+      "abi-smoke-test",
+      "crash-to-webview-fallback",
+      "custom-accessibility-model-or-webview-accessible-fallback"
+    ]
+  }
+}

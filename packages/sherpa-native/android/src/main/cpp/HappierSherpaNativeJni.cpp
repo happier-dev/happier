@@ -1,7 +1,7 @@
 #include <jni.h>
 
 #include <algorithm>
-#include <atomic>
+#include <cstdint>
 #include <cstring>
 #include <mutex>
 #include <unordered_map>
@@ -12,17 +12,14 @@
 #include <android/log.h>
 
 #include "sherpa-onnx/c-api/c-api.h"
+#include "HappierSherpaTtsJobRegistry.h"
 
 namespace {
 
 constexpr const char *kLogTag = "HappierSherpaNative";
 
-struct JobState {
-  std::atomic<bool> cancelled{false};
-};
-
 struct ProgressArg {
-  JobState *state;
+  happier_sherpa::TtsJobState *state;
 };
 
 int32_t ProgressCallback(const float * /*samples*/, int32_t /*n*/, float /*p*/, void *arg) {
@@ -40,8 +37,7 @@ struct Engine {
   std::string tokensPath;
   std::string dataDirPath;
 
-  std::mutex mutex;
-  std::unordered_map<std::string, std::unique_ptr<JobState>> jobs;
+  happier_sherpa::TtsJobRegistry jobs;
 
   ~Engine() {
     if (tts) {
@@ -336,11 +332,10 @@ Java_dev_happier_sherpa_HappierSherpaNativeJni_nativeSynthesizeToWavFile(
   const std::string inputText = JStringToUtf8(env, text);
   if (jobKey.empty() || outPath.empty() || inputText.empty()) return 0;
 
-  auto state = std::make_unique<JobState>();
-  JobState *statePtr = state.get();
-  {
-    std::lock_guard<std::mutex> lock(engine->mutex);
-    engine->jobs[jobKey] = std::move(state);
+  bool wasAlreadyCancelled = false;
+  happier_sherpa::TtsJobState *statePtr = engine->jobs.beginJob(jobKey, &wasAlreadyCancelled);
+  if (wasAlreadyCancelled || !statePtr) {
+    return 0;
   }
 
   ProgressArg arg{statePtr};
@@ -355,18 +350,21 @@ Java_dev_happier_sherpa_HappierSherpaNativeJni_nativeSynthesizeToWavFile(
   const SherpaOnnxGeneratedAudio *audio = SherpaOnnxOfflineTtsGenerateWithConfig(
       engine->tts, inputText.c_str(), &genCfg, ProgressCallback, &arg);
 
-  {
-    std::lock_guard<std::mutex> lock(engine->mutex);
-    engine->jobs.erase(jobKey);
+  if (!audio) {
+    engine->jobs.finishJob(jobKey);
+    return 0;
   }
 
-  if (!audio) {
+  if (statePtr->cancelled.load()) {
+    engine->jobs.finishJob(jobKey);
+    SherpaOnnxDestroyOfflineTtsGeneratedAudio(audio);
     return 0;
   }
 
   const int32_t ok = SherpaOnnxWriteWave(audio->samples, audio->n, audio->sample_rate, outPath.c_str());
+  const bool wasCancelled = engine->jobs.finishJob(jobKey);
   SherpaOnnxDestroyOfflineTtsGeneratedAudio(audio);
-  return ok ? 1 : 0;
+  return ok && !wasCancelled ? 1 : 0;
 }
 
 extern "C" JNIEXPORT void JNICALL
@@ -375,10 +373,7 @@ Java_dev_happier_sherpa_HappierSherpaNativeJni_nativeCancel(JNIEnv *env, jclass 
   if (!engine) return;
   const std::string jobKey = JStringToUtf8(env, jobId);
   if (jobKey.empty()) return;
-  std::lock_guard<std::mutex> lock(engine->mutex);
-  auto it = engine->jobs.find(jobKey);
-  if (it == engine->jobs.end()) return;
-  it->second->cancelled.store(true);
+  engine->jobs.cancel(jobKey);
 }
 
 extern "C" JNIEXPORT jint JNICALL
@@ -525,7 +520,7 @@ Java_dev_happier_sherpa_HappierSherpaNativeJni_nativeDestroyVadSession(
   delete session;
 }
 
-extern "C" JNIEXPORT jboolean JNICALL
+extern "C" JNIEXPORT jint JNICALL
 Java_dev_happier_sherpa_HappierSherpaNativeJni_nativeVadAcceptPcm16(
     JNIEnv *env,
     jclass /*clazz*/,
@@ -535,13 +530,13 @@ Java_dev_happier_sherpa_HappierSherpaNativeJni_nativeVadAcceptPcm16(
     jint channels) {
   auto *session = reinterpret_cast<VadSession *>(handle);
   if (!session || !session->vad || !pcm16 || count <= 0) {
-    return JNI_FALSE;
+    return 0;
   }
 
   const jsize available = env->GetArrayLength(pcm16);
   const jsize sampleCount = std::min<jsize>(available, count);
   if (sampleCount <= 0) {
-    return JNI_FALSE;
+    return 0;
   }
 
   std::vector<int16_t> samples16(static_cast<size_t>(sampleCount));
@@ -549,18 +544,21 @@ Java_dev_happier_sherpa_HappierSherpaNativeJni_nativeVadAcceptPcm16(
 
   const auto mono = Pcm16LeToMonoFloats(samples16.data(), samples16.size(), channels);
   if (mono.empty()) {
-    return JNI_FALSE;
+    return 0;
   }
 
   SherpaOnnxVoiceActivityDetectorAcceptWaveform(session->vad, mono.data(), static_cast<int32_t>(mono.size()));
+  jint result = SherpaOnnxVoiceActivityDetectorDetected(session->vad) != 0 ? 1 : 0;
   if (SherpaOnnxVoiceActivityDetectorEmpty(session->vad) != 0) {
-    return JNI_FALSE;
+    return result;
   }
+
+  result |= 2;
 
   while (SherpaOnnxVoiceActivityDetectorEmpty(session->vad) == 0) {
     SherpaOnnxVoiceActivityDetectorPop(session->vad);
   }
   SherpaOnnxVoiceActivityDetectorClear(session->vad);
   SherpaOnnxVoiceActivityDetectorReset(session->vad);
-  return JNI_TRUE;
+  return result;
 }

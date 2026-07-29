@@ -10,5 +10,6 @@ export type {
   SherpaNativeModule,
   SherpaNativeSynthesizeParams,
   SherpaNativeSynthesizeResult,
+  SherpaNativeVadFrameResult,
   SherpaNativeVoice,
 } from './HappierSherpaNative.types';

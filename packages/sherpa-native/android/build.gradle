@@ -13,6 +13,7 @@ def sherpaDir = new File(buildDir, "sherpa-onnx/${sherpaVersion}")
 def sherpaArchiveFile = new File(sherpaDir, sherpaArchive)
 def sherpaChecksumFile = new File(sherpaDir, "checksum.txt")
 def sherpaExtractDir = new File(sherpaDir, "extracted")
+def sherpaChecksumResolver = new File(projectDir, "../scripts/resolve-sherpa-checksum.mjs").canonicalFile
 
 static String sha256Hex(File file) {
   def digest = java.security.MessageDigest.getInstance("SHA-256")
@@ -40,6 +41,16 @@ def downloadBinary(String url, File outFile) {
   }
 }
 
+def resolveSherpaChecksum = { File checksumFile, String archive ->
+  if (!sherpaChecksumResolver.exists()) {
+    throw new GradleException("[HappierSherpaNative] Missing checksum resolver at ${sherpaChecksumResolver.absolutePath}")
+  }
+
+  return providers.exec {
+    commandLine("node", sherpaChecksumResolver.absolutePath, checksumFile.absolutePath, archive)
+  }.standardOutput.asText.get().trim()
+}
+
 tasks.register("prepareSherpaOnnxAndroid") {
   outputs.dir(sherpaExtractDir)
   doLast {
@@ -55,15 +66,7 @@ tasks.register("prepareSherpaOnnxAndroid") {
       downloadBinary("${sherpaBaseUrl}/${sherpaArchive}", sherpaArchiveFile)
     }
 
-    def expected = null
-    sherpaChecksumFile.eachLine { line ->
-      def parts = line.trim().split("\\s+")
-      if (parts.length >= 2 && parts[1] == sherpaArchive) expected = parts[0]
-      if (parts.length >= 2 && parts[0] == sherpaArchive) expected = parts[1]
-    }
-    if (expected == null || expected.toString().trim().isEmpty()) {
-      throw new GradleException("[HappierSherpaNative] sha256 not found for ${sherpaArchive}")
-    }
+    def expected = resolveSherpaChecksum(sherpaChecksumFile, sherpaArchive)
 
     def actual = sha256Hex(sherpaArchiveFile)
     if (expected.toString().toLowerCase() != actual.toLowerCase()) {
@@ -114,3 +117,7 @@ android {
 }
 
 preBuild.dependsOn(tasks.named("prepareSherpaOnnxAndroid"))
+
+dependencies {
+  testImplementation 'junit:junit:4.13.2'
+}

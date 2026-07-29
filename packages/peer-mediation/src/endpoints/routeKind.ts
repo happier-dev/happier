@@ -11,7 +11,6 @@ export function resolvePeerRouteKindForEndpointMechanism(
         case 'loopback_http':
         case 'loopback_ws':
             return 'loopback_direct';
-        case 'lan_http':
         case 'lan_ws':
             return 'lan_direct';
         case 'tailscale_serve_https':
@@ -53,7 +52,7 @@ export function resolvePeerRouteKindForEndpointCandidate(
         return 'tailscale_serve_direct';
     }
 
-    return isLoopbackHostname(url.hostname) ? 'loopback_direct' : 'lan_direct';
+    return isLoopbackHostname(url.hostname) ? 'loopback_direct' : null;
 }
 
 export function resolvePeerRouteKindsForEndpointCandidates(

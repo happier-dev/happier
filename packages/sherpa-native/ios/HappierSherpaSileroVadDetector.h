@@ -10,8 +10,11 @@ NS_ASSUME_NONNULL_BEGIN
                             minSilenceSec:(float)minSilenceSec
                                     error:(NSError * _Nullable * _Nullable)error;
 
-/// Returns true when a speech segment is available (i.e. "speech ended").
-- (BOOL)acceptWaveform:(const float *)samples count:(int32_t)count;
+/// Returns true when a completed speech segment is available. `speechDetected`
+/// reports the current candidate state before any completed segment is reset.
+- (BOOL)acceptWaveform:(const float *)samples
+                 count:(int32_t)count
+        speechDetected:(BOOL *)speechDetected;
 
 - (void)close;
 

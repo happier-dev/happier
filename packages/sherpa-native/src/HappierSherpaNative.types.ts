@@ -32,12 +32,12 @@ export type SherpaNativeCancelParams = {
   jobId: string;
 };
 
-export type SherpaNativeVadSubscription = {
-  remove: () => void;
+export type SherpaNativeVadFrameResult = {
+  speechStarted: boolean;
+  speechEnded: boolean;
 };
 
 export type SherpaNativeModule = {
-  addListener(eventName: 'vadSpeechEnd', listener: (event: { sessionId?: string | null }) => void): SherpaNativeVadSubscription;
   initialize(params: SherpaNativeInitializeParams): Promise<void>;
   listVoices(params: SherpaNativeListVoicesParams): Promise<SherpaNativeVoice[]>;
   synthesizeToWavFile(params: SherpaNativeSynthesizeParams): Promise<SherpaNativeSynthesizeResult>;
@@ -55,13 +55,20 @@ export type SherpaNativeModule = {
     channels: number;
   }): Promise<{ text: string; isEndpoint: boolean }>;
   finishStreaming(params: { jobId: string }): Promise<{ text: string }>;
-  startVadSession(params: {
-    sessionId: string;
+  createVadDetector(params: {
+    detectorId: string;
     minSpeechMs: number;
     redemptionMs: number;
+    sampleRate: number;
   }): Promise<void>;
-  stopVadSession(params: {
-    sessionId: string;
+  pushVadAudioFrame(params: {
+    detectorId: string;
+    pcm16leBase64: string;
+    sampleRate: number;
+    channels: number;
+  }): Promise<SherpaNativeVadFrameResult>;
+  cancelVadDetector(params: {
+    detectorId: string;
   }): Promise<void>;
   cancel(params: SherpaNativeCancelParams): Promise<void>;
 };

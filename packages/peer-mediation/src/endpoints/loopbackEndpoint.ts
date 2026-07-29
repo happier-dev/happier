@@ -57,18 +57,21 @@ function fingerprintPeerLoopbackEndpoint(input: string): string {
 export function createPeerLoopbackEndpointFingerprint(input: Readonly<{
     url: string;
     routeKind: 'loopback_direct';
-    daemonRuntimeId?: string;
+    daemonRuntimeId: string;
 }>): string {
     const normalizedUrl = normalizePeerLoopbackEndpointUrl(input.url);
     if (!normalizedUrl) {
         throw new Error('Peer loopback endpoint URL must be local and secret-free');
+    }
+    if (typeof input.daemonRuntimeId !== 'string' || input.daemonRuntimeId.trim().length === 0) {
+        throw new Error('Peer loopback endpoint fingerprint requires a fresh daemon runtime id');
     }
 
     return fingerprintPeerLoopbackEndpoint([
         'peer-loopback-endpoint-v1',
         input.routeKind,
         normalizedUrl,
-        input.daemonRuntimeId ?? '',
+        input.daemonRuntimeId,
     ].join('\u0000'));
 }
 
@@ -102,7 +105,7 @@ function resolveLoopbackEndpointTransport(url: URL): Readonly<{
 export function createPeerLoopbackRouteCandidate(input: Readonly<{
     url: string;
     expiresAt: number;
-    daemonRuntimeId?: string;
+    daemonRuntimeId: string;
 }>): PeerRouteCandidate {
     const normalizedUrl = normalizePeerLoopbackEndpointUrl(input.url);
     if (!normalizedUrl) {

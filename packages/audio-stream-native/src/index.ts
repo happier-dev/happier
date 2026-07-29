@@ -1,4 +1,36 @@
-export { HAPPIER_AUDIO_STREAM_NATIVE_MODULE_NAME, getOptionalHappierAudioStreamNativeModule } from './HappierAudioStreamNative';
+export type {
+  AudioStreamFrameEvent,
+} from './HappierAudioStreamNative.types';
 
-export type { AudioStreamFrameEvent, HappierAudioStreamNativeModule } from './HappierAudioStreamNative.types';
+export {
+  VoiceAudioSessionCoordinatorError,
+} from './voiceAudioSessionCoordinator';
+export type {
+  VoiceAudioCaptureOwnership,
+  VoiceAudioSessionAec,
+  VoiceAudioSessionApplyRequest,
+  VoiceAudioSessionApplyResult,
+  VoiceAudioSessionCapabilities,
+  VoiceAudioSessionConfiguration,
+  VoiceAudioSessionCoordinator,
+  VoiceAudioSessionLease,
+  VoiceAudioSessionMode,
+  VoiceAudioSessionPlatform,
+  VoiceAudioSessionPlatformEvent,
+  VoiceAudioSessionRequest,
+  VoiceAudioSessionSnapshot,
+} from './voiceAudioSessionCoordinator';
 
+export { VoicePcmCaptureError } from './voicePcmCapture';
+export type {
+  VoicePcmCapture,
+  VoicePcmCaptureFormat,
+  VoicePcmCaptureLease,
+  VoicePcmCaptureSnapshot,
+  VoicePcmCaptureSubscriberRequest,
+} from './voicePcmCapture';
+
+export {
+  getSharedVoiceAudioSessionCoordinator,
+  getSharedVoicePcmCapture,
+} from './sharedVoicePcmCapture';

@@ -271,6 +271,7 @@ void SherpaOnnxDestroyVoiceActivityDetector(const SherpaOnnxVoiceActivityDetecto
 void SherpaOnnxVoiceActivityDetectorAcceptWaveform(
     const SherpaOnnxVoiceActivityDetector *p, const float *samples, int32_t n);
 int32_t SherpaOnnxVoiceActivityDetectorEmpty(const SherpaOnnxVoiceActivityDetector *p);
+int32_t SherpaOnnxVoiceActivityDetectorDetected(const SherpaOnnxVoiceActivityDetector *p);
 void SherpaOnnxVoiceActivityDetectorPop(const SherpaOnnxVoiceActivityDetector *p);
 void SherpaOnnxVoiceActivityDetectorClear(const SherpaOnnxVoiceActivityDetector *p);
 void SherpaOnnxVoiceActivityDetectorReset(const SherpaOnnxVoiceActivityDetector *p);

@@ -1,0 +1,76 @@
+plugins {
+  id 'com.android.library'
+  id 'expo-module-gradle-plugin'
+}
+
+group = 'dev.happier.terminal'
+version = '0.0.0'
+
+def termuxVendorDir = file("termux/vendor")
+def hasTermuxSource = termuxVendorDir.exists() &&
+  file("termux/vendor/TERMUX-SOURCE.json").exists() &&
+  file("termux/vendor/terminal-view/src/main/java/com/termux/view/TerminalView.java").exists() &&
+  file("termux/vendor/terminal-emulator/src/main/java/com/termux/terminal/TerminalEmulator.java").exists()
+
+def readBooleanGate = { String name ->
+  def rawValue = project.findProperty(name) ?: System.getenv(name)
+  if (rawValue == null) return false
+  return rawValue.toString().trim().toLowerCase(java.util.Locale.ROOT) in ["1", "true", "yes", "on"]
+}
+
+def dependencyClosureApproved = readBooleanGate("HAPPIER_TERMINAL_NATIVE_ANDROID_DEPENDENCY_CLOSURE_APPROVED")
+def legalAccepted = readBooleanGate("HAPPIER_TERMINAL_NATIVE_ANDROID_LEGAL_ACCEPTED")
+def gradleBuildProven = readBooleanGate("HAPPIER_TERMINAL_NATIVE_ANDROID_GRADLE_BUILD_PROVEN")
+def abiSmokePassed = readBooleanGate("HAPPIER_TERMINAL_NATIVE_ANDROID_ABI_SMOKE_PASSED")
+def crashFallbackProven = readBooleanGate("HAPPIER_TERMINAL_NATIVE_ANDROID_CRASH_FALLBACK_PROVEN")
+def accessibilityNative = readBooleanGate("HAPPIER_TERMINAL_NATIVE_ANDROID_ACCESSIBILITY_NATIVE")
+
+if (termuxVendorDir.exists()) {
+  ["app", "termux-shared"].each { moduleName ->
+    if (file("termux/vendor/${moduleName}").exists()) {
+      throw new GradleException("[HappierTerminalNative] Forbidden Termux module present in android/termux/vendor: ${moduleName}")
+    }
+  }
+  if (!hasTermuxSource) {
+    throw new GradleException("[HappierTerminalNative] Incomplete Termux source vendor tree. Run scripts/fetchTermuxAndroid.mjs.")
+  }
+}
+
+android {
+  namespace "dev.happier.terminal"
+  defaultConfig {
+    versionCode 1
+    versionName version
+    buildConfigField "boolean", "HAPPIER_TERMINAL_NATIVE_HAS_TERMUX_SOURCE", hasTermuxSource ? "true" : "false"
+    buildConfigField "String", "HAPPIER_TERMINAL_NATIVE_TERMUX_SOURCE_STATUS", hasTermuxSource ? "\"present\"" : "\"missing\""
+    buildConfigField "boolean", "HAPPIER_TERMINAL_NATIVE_ANDROID_DEPENDENCY_CLOSURE_APPROVED", dependencyClosureApproved ? "true" : "false"
+    buildConfigField "boolean", "HAPPIER_TERMINAL_NATIVE_ANDROID_LEGAL_ACCEPTED", legalAccepted ? "true" : "false"
+    buildConfigField "boolean", "HAPPIER_TERMINAL_NATIVE_ANDROID_GRADLE_BUILD_PROVEN", gradleBuildProven ? "true" : "false"
+    buildConfigField "boolean", "HAPPIER_TERMINAL_NATIVE_ANDROID_ABI_SMOKE_PASSED", abiSmokePassed ? "true" : "false"
+    buildConfigField "boolean", "HAPPIER_TERMINAL_NATIVE_ANDROID_CRASH_FALLBACK_PROVEN", crashFallbackProven ? "true" : "false"
+    buildConfigField "boolean", "HAPPIER_TERMINAL_NATIVE_ANDROID_ACCESSIBILITY_NATIVE", accessibilityNative ? "true" : "false"
+  }
+
+  buildFeatures {
+    buildConfig true
+  }
+
+  if (hasTermuxSource) {
+    sourceSets {
+      main {
+        java.srcDirs += [
+          "termux/vendor/terminal-view/src/main/java",
+          "termux/vendor/terminal-emulator/src/main/java",
+          "termux/adapter-src/main/java"
+        ]
+        res.srcDirs += [
+          "termux/vendor/terminal-view/src/main/res"
+        ]
+      }
+    }
+  }
+}
+
+dependencies {
+  implementation "androidx.annotation:annotation:1.9.0"
+}
