@@ -1486,6 +1486,25 @@ export const it: TranslationStructure = {
       useAccountDefault: "Usa predefinito account",
       currently: ({ label }: { label: string }) => `Attualmente: ${label}`,
     },
+    codingPromptBehavior: {
+        title: 'Coding prompt behavior',
+        footer: 'Overrides the account-level system-prompt behavior for coding sessions when this profile is selected.',
+        useSystemDefault: 'Use system default',
+        accountDefaultSubtitle: ({ label }: { label: string }) => `Account default: ${label}`,
+        currently: ({ label }: { label: string }) => `Currently: ${label}`,
+        sessionTitleUpdates: {
+            label: 'Session title updates',
+            ongoing: 'Ongoing',
+            initial: 'Initial only',
+            disabled: 'Disabled',
+        },
+        responseOptions: {
+            label: 'Response options',
+            agent: 'agent',
+            disabled: 'Disabled',
+        },
+    },
+
     aiBackend: {
       title: "Backend IA",
       selectAtLeastOneError: "Seleziona almeno un backend IA.",

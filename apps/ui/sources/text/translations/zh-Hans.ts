@@ -10203,6 +10203,25 @@ settingsSession: {
       useAccountDefault: "使用账号默认值",
       currently: ({ label }: { label: string }) => `当前：${label}`,
     },
+    codingPromptBehavior: {
+        title: 'Coding prompt behavior',
+        footer: 'Overrides the account-level system-prompt behavior for coding sessions when this profile is selected.',
+        useSystemDefault: 'Use system default',
+        accountDefaultSubtitle: ({ label }: { label: string }) => `Account default: ${label}`,
+        currently: ({ label }: { label: string }) => `Currently: ${label}`,
+        sessionTitleUpdates: {
+            label: 'Session title updates',
+            ongoing: 'Ongoing',
+            initial: 'Initial only',
+            disabled: 'Disabled',
+        },
+        responseOptions: {
+            label: 'Response options',
+            agent: 'agent',
+            disabled: 'Disabled',
+        },
+    },
+
     aiBackend: {
       title: "AI 后端",
       selectAtLeastOneError: "至少选择一个 AI 后端。",
