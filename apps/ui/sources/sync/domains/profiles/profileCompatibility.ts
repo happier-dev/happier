@@ -6,6 +6,7 @@ import {
     getProfileEnvironmentVariables as getProfileEnvironmentVariablesProtocol,
     isProfileCompatibleWithBackendTarget as isProfileCompatibleWithBackendTargetProtocol,
     isProfileCompatibleWithAgent as isProfileCompatibleWithAgentProtocol,
+    type CodingPromptBehaviorOverrideV1,
 } from '@happier-dev/protocol';
 import type { AgentId } from '@/agents/catalog/catalog';
 
@@ -42,4 +43,11 @@ export function isProfileCompatibleWithAgent(
 
 export function getProfileEnvironmentVariables(profile: AIBackendProfile): Record<string, string> {
     return getProfileEnvironmentVariablesProtocol(profile);
+}
+
+export function getProfileCodingPromptBehaviorOverride(profile: AIBackendProfile): CodingPromptBehaviorOverrideV1 | null {
+    if (profile.codingPromptBehaviorV1 === undefined) {
+        return null;
+    }
+    return profile.codingPromptBehaviorV1;
 }
