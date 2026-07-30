@@ -262,4 +262,94 @@ describe('resolveEffectiveCodingPromptText', () => {
     expect(out).not.toContain('# Plan mode with options');
     expect(out).not.toContain('<options>');
   });
+
+  it('applies a profile codingPromptBehaviorV1 override that disables responseOptions', async () => {
+    const credentials = createCredentials();
+
+    const settings = {
+      profiles: [
+        {
+          id: 'profile-no-options',
+          name: 'Profile (no options)',
+          codingPromptBehaviorV1: {
+            v: 1,
+            responseOptions: 'disabled',
+          },
+        },
+      ],
+    };
+
+    const out = await resolveEffectiveCodingPromptText({
+      credentials,
+      settings,
+      profileId: 'profile-no-options',
+      executionRunsFeatureEnabled: false,
+      providerId: 'claude',
+      fetchPromptArtifactRecord: async () => null,
+    });
+
+    // Override wins: responseOptions disabled => options block omitted.
+    expect(out).not.toContain('# Options');
+    expect(out).not.toContain('<options>');
+    // The other knob still inherits the global default (ongoing title updates).
+    expect(out).toContain('# Session title');
+  });
+
+  it('inherits the global default when the selected profile has no codingPromptBehaviorV1 override', async () => {
+    const credentials = createCredentials();
+
+    const settings = {
+      profiles: [
+        {
+          id: 'profile-default',
+          name: 'Profile (default)',
+          // No codingPromptBehaviorV1 field => inherit global default.
+        },
+      ],
+    };
+
+    const out = await resolveEffectiveCodingPromptText({
+      credentials,
+      settings,
+      profileId: 'profile-default',
+      executionRunsFeatureEnabled: false,
+      providerId: 'claude',
+      fetchPromptArtifactRecord: async () => null,
+    });
+
+    // Global default responseOptions is 'agent' => options block present.
+    expect(out).toContain('# Options');
+    expect(out).toContain('<options>');
+  });
+
+  it('applies a profile override that disables session title updates while leaving options at the global default', async () => {
+    const credentials = createCredentials();
+
+    const settings = {
+      profiles: [
+        {
+          id: 'profile-no-title',
+          name: 'Profile (no title)',
+          codingPromptBehaviorV1: {
+            v: 1,
+            sessionTitleUpdates: 'disabled',
+          },
+        },
+      ],
+    };
+
+    const out = await resolveEffectiveCodingPromptText({
+      credentials,
+      settings,
+      profileId: 'profile-no-title',
+      executionRunsFeatureEnabled: false,
+      providerId: 'claude',
+      fetchPromptArtifactRecord: async () => null,
+    });
+
+    // Override wins only for title; options inherit the global default.
+    expect(out).not.toContain('# Session title');
+    expect(out).toContain('# Options');
+    expect(out).toContain('<options>');
+  });
 });
