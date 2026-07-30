@@ -78,9 +78,15 @@ export const CLAUDE_BUILT_IN_BACKEND_PROFILES: ReadonlyArray<AIBackendProfile> =
       { name: 'ANTHROPIC_BASE_URL', value: '${MINIMAX_BASE_URL:-https://api.minimax.io/anthropic}' },
       { name: 'ANTHROPIC_AUTH_TOKEN', value: '${MINIMAX_AUTH_TOKEN}' },
       { name: 'API_TIMEOUT_MS', value: '${MINIMAX_API_TIMEOUT_MS:-600000}' },
-      { name: 'ANTHROPIC_MODEL', value: '${MINIMAX_MODEL:-MiniMax-M3}' },
-      { name: 'ANTHROPIC_DEFAULT_OPUS_MODEL', value: '${MINIMAX_OPUS_MODEL:-MiniMax-M3}' },
-      { name: 'ANTHROPIC_DEFAULT_SONNET_MODEL', value: '${MINIMAX_SONNET_MODEL:-MiniMax-M3}' },
+      // MiniMax's Claude Code guide pairs the `[1m]` extended-context model id with
+      // an explicit compaction window; without both, sessions compact against the
+      // 200K the endpoint advertises by default instead of M3's 1M.
+      { name: 'CLAUDE_CODE_AUTO_COMPACT_WINDOW', value: '${MINIMAX_AUTO_COMPACT_WINDOW:-1000000}' },
+      { name: 'ANTHROPIC_MODEL', value: '${MINIMAX_MODEL:-MiniMax-M3[1m]}' },
+      { name: 'ANTHROPIC_DEFAULT_OPUS_MODEL', value: '${MINIMAX_OPUS_MODEL:-MiniMax-M3[1m]}' },
+      { name: 'ANTHROPIC_DEFAULT_SONNET_MODEL', value: '${MINIMAX_SONNET_MODEL:-MiniMax-M3[1m]}' },
+      // MiniMax maps every tier to M3; we keep the cheaper documented M2.7 for
+      // Haiku-class background work, which is what that tier exists for.
       { name: 'ANTHROPIC_DEFAULT_HAIKU_MODEL', value: '${MINIMAX_HAIKU_MODEL:-MiniMax-M2.7}' },
       { name: 'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC', value: '${MINIMAX_CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC:-1}' },
     ],
@@ -104,9 +110,10 @@ export const CLAUDE_BUILT_IN_BACKEND_PROFILES: ReadonlyArray<AIBackendProfile> =
       { name: 'ANTHROPIC_BASE_URL', value: '${MINIMAX_CN_BASE_URL:-https://api.minimaxi.com/anthropic}' },
       { name: 'ANTHROPIC_AUTH_TOKEN', value: '${MINIMAX_CN_AUTH_TOKEN}' },
       { name: 'API_TIMEOUT_MS', value: '${MINIMAX_CN_API_TIMEOUT_MS:-600000}' },
-      { name: 'ANTHROPIC_MODEL', value: '${MINIMAX_CN_MODEL:-MiniMax-M3}' },
-      { name: 'ANTHROPIC_DEFAULT_OPUS_MODEL', value: '${MINIMAX_CN_OPUS_MODEL:-MiniMax-M3}' },
-      { name: 'ANTHROPIC_DEFAULT_SONNET_MODEL', value: '${MINIMAX_CN_SONNET_MODEL:-MiniMax-M3}' },
+      { name: 'CLAUDE_CODE_AUTO_COMPACT_WINDOW', value: '${MINIMAX_CN_AUTO_COMPACT_WINDOW:-1000000}' },
+      { name: 'ANTHROPIC_MODEL', value: '${MINIMAX_CN_MODEL:-MiniMax-M3[1m]}' },
+      { name: 'ANTHROPIC_DEFAULT_OPUS_MODEL', value: '${MINIMAX_CN_OPUS_MODEL:-MiniMax-M3[1m]}' },
+      { name: 'ANTHROPIC_DEFAULT_SONNET_MODEL', value: '${MINIMAX_CN_SONNET_MODEL:-MiniMax-M3[1m]}' },
       { name: 'ANTHROPIC_DEFAULT_HAIKU_MODEL', value: '${MINIMAX_CN_HAIKU_MODEL:-MiniMax-M2.7}' },
       { name: 'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC', value: '${MINIMAX_CN_CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC:-1}' },
     ],

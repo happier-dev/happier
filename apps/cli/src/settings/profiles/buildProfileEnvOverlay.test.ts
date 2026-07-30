@@ -203,12 +203,16 @@ describe('buildProfileEnvOverlay with the shipped MiniMax built-in profiles', ()
       expect(result.envOverlayExpanded).toMatchObject({
         ANTHROPIC_BASE_URL: expectedBaseUrl,
         ANTHROPIC_AUTH_TOKEN: 'mm-from-env',
-        ANTHROPIC_MODEL: 'MiniMax-M3',
+        // The `[1m]` suffix and the compaction window are a pair: MiniMax's Claude
+        // Code guide specifies both, and without them sessions compact against the
+        // 200K the endpoint advertises rather than M3's 1M.
+        ANTHROPIC_MODEL: 'MiniMax-M3[1m]',
+        CLAUDE_CODE_AUTO_COMPACT_WINDOW: '1000000',
         // Claude Code resolves the opus/sonnet/haiku aliases through these keys.
         // Without them a model switch would send "opus"/"sonnet" upstream, which
         // MiniMax rejects.
-        ANTHROPIC_DEFAULT_OPUS_MODEL: 'MiniMax-M3',
-        ANTHROPIC_DEFAULT_SONNET_MODEL: 'MiniMax-M3',
+        ANTHROPIC_DEFAULT_OPUS_MODEL: 'MiniMax-M3[1m]',
+        ANTHROPIC_DEFAULT_SONNET_MODEL: 'MiniMax-M3[1m]',
         ANTHROPIC_DEFAULT_HAIKU_MODEL: 'MiniMax-M2.7',
         API_TIMEOUT_MS: '600000',
       });
