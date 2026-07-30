@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { BackendTargetKeySchema } from '../backendTargets/backendTargetRef.js';
 import { SecretStringV1Schema } from '../crypto/settingsSecretStringsV1.js';
 import { SESSION_PERMISSION_MODES } from '../sessionMetadata/sessionPermissionModes.js';
+import { CodingPromptBehaviorOverrideV1Schema } from '../prompts/codingPromptBehaviorV1.js';
 
 const ENV_VAR_NAME_REGEX = /^[A-Z_][A-Z0-9_]*$/;
 
@@ -95,8 +96,11 @@ export const AIBackendProfileSchema = z.object({
   createdAt: z.number().default(() => Date.now()),
   updatedAt: z.number().default(() => Date.now()),
   version: z.string().default('1.0.0'),
+
+  // Per-profile coding prompt behavior overrides (partial, with .catch({}) to drop malformed)
+  codingPromptBehaviorV1: CodingPromptBehaviorOverrideV1Schema.optional(),
 })
-  // NOTE: Zod v4 marks `superRefine` as deprecated in favor of `.check(...)`.
+  // NOTE: Zod v4 marks `superRefine` as deprecated in favor of `.check(...)`. 
   // We use chained `.refine(...)` here to preserve per-field error paths/messages.
   .refine((profile) => {
     return !(profile.requiresMachineLoginTargetKey && profile.authMode !== 'machineLogin');
