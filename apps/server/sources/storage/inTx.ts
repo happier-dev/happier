@@ -3,6 +3,7 @@ import { delay } from "@/utils/runtime/delay";
 import { db } from "@/storage/db";
 import { getDbProviderFromEnv, isPrismaErrorCode, type TransactionClient } from "@/storage/prisma";
 import { isRetryableSqliteWriteError } from "@/storage/sqliteRetryClassifier";
+import { warn } from "@/utils/logging/log";
 
 export type Tx = TransactionClient;
 
@@ -123,8 +124,10 @@ export async function inTx<T>(fn: (tx: Tx) => Promise<T>): Promise<T> {
             for (let callback of result.callbacks) {
                 try {
                     callback();
-                } catch {
-                    // Ignore callback failures; transactional result is already committed.
+                } catch (error) {
+                    // The transaction is already committed, so the failure must not propagate,
+                    // but a silent drop here loses post-commit fan-out (socket updates etc.).
+                    warn({ module: "inTx", error }, "afterTx callback failed after commit");
                 }
             }
             return result.result;

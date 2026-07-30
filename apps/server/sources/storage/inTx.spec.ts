@@ -13,6 +13,7 @@ installDbModuleMock({
 });
 
 vi.mock("@/utils/runtime/delay", () => ({ delay: delayMock }));
+vi.mock("@/utils/logging/log", () => ({ log: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() }));
 
 describe("inTx", () => {
     const envSnapshot = snapshotEnv();
@@ -77,6 +78,35 @@ describe("inTx", () => {
                 maxWait: 7000,
                 timeout: 12000,
             }),
+        );
+    });
+
+    it("logs afterTx callback failures and still runs remaining callbacks", async () => {
+        restoreEnv(envSnapshot);
+        applyEnvValues({
+            HAPPY_DB_PROVIDER: undefined,
+            HAPPIER_DB_PROVIDER: undefined,
+        });
+
+        const failure = new Error("fan-out failed");
+        const laterCallback = vi.fn();
+        const { inTx, afterTx } = await import("./inTx");
+        const { warn } = await import("@/utils/logging/log");
+
+        const result = await inTx(async (tx) => {
+            afterTx(tx, () => {
+                throw failure;
+            });
+            afterTx(tx, laterCallback);
+            return 321;
+        });
+
+        expect(result).toBe(321);
+        expect(laterCallback).toHaveBeenCalledTimes(1);
+        expect(warn).toHaveBeenCalledTimes(1);
+        expect(warn).toHaveBeenCalledWith(
+            expect.objectContaining({ module: "inTx", error: failure }),
+            expect.any(String),
         );
     });
 
