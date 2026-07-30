@@ -4,7 +4,7 @@ import { StyleSheet } from 'react-native-unistyles';
 import { useUnistyles } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
-import { type AIBackendProfile } from '@/sync/domains/profiles/profileCompatibility';
+import { buildCodingPromptBehaviorOverrideV1, type AIBackendProfile } from '@/sync/domains/profiles/profileCompatibility';
 import { type SavedSecret } from '@/sync/domains/settings/savedSecretTypes';
 import { normalizeProfileDefaultPermissionMode, type PermissionMode } from '@/sync/domains/permissions/permissionTypes';
 import { getPermissionModeLabelForAgentType, getPermissionModeOptionsForAgentType, normalizePermissionModeForAgentType } from '@/sync/domains/permissions/permissionModeOptions';
@@ -29,7 +29,12 @@ import { DEFAULT_AGENT_ID, getAgentCore, type AgentId } from '@/agents/catalog/c
 import { AgentIcon } from '@/agents/registry/AgentIcon';
 import { getResolvedBackendCatalogEntries, type ResolvedBackendCatalogEntry } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { buildBackendTargetKey } from '@happier-dev/protocol';
+import {
+    buildBackendTargetKey,
+    resolveCodingPromptBehaviorV1,
+    type CodingPromptBehaviorModeV1,
+    type CodingPromptSessionTitleUpdatesModeV1,
+} from '@happier-dev/protocol';
 import { supportsDirectTranscriptStorageForNewSession } from '@/components/sessions/new/modules/newSessionTranscriptStorage';
 import { readAccountTranscriptStorageDefaults, type SessionTranscriptStorageMode } from '@/sync/domains/session/transcriptStorageDefaults';
 import { MachinePreviewModal } from './MachinePreviewModal';
@@ -182,6 +187,11 @@ export function ProfileEditForm({
     const sessionDefaultPermissionModeByTargetKey = useSetting('sessionDefaultPermissionModeByTargetKey');
     const newSessionDefaultPersistenceModeV1 = useSetting('newSessionDefaultPersistenceModeV1');
     const newSessionDefaultPersistenceModeByTargetKeyV1 = useSetting('newSessionDefaultPersistenceModeByTargetKeyV1');
+    const accountCodingPromptBehaviorRaw = useSetting('codingPromptBehaviorV1');
+    const accountCodingPromptBehavior = React.useMemo(
+        () => resolveCodingPromptBehaviorV1({ codingPromptBehaviorV1: accountCodingPromptBehaviorRaw }),
+        [accountCodingPromptBehaviorRaw],
+    );
 
     const [defaultPermissionModesByTargetKey, setDefaultPermissionModesByTargetKey] = React.useState<Record<string, PermissionMode | null>>(() => {
         const explicitByTargetKey = (profile.defaultPermissionModeByTargetKey as Record<string, PermissionMode | undefined>) ?? {};
@@ -254,6 +264,12 @@ export function ProfileEditForm({
 
     const [authMode, setAuthMode] = React.useState<AIBackendProfile['authMode']>(profile.authMode);
     const [requiresMachineLogin, setRequiresMachineLogin] = React.useState<AIBackendProfile['requiresMachineLogin']>(profile.requiresMachineLogin);
+    const [codingPromptSessionTitleUpdates, setCodingPromptSessionTitleUpdates] = React.useState<CodingPromptSessionTitleUpdatesModeV1 | null>(
+        () => profile.codingPromptBehaviorV1?.sessionTitleUpdates ?? null,
+    );
+    const [codingPromptResponseOptions, setCodingPromptResponseOptions] = React.useState<CodingPromptBehaviorModeV1 | null>(
+        () => profile.codingPromptBehaviorV1?.responseOptions ?? null,
+    );
     /**
      * Requirements live in the env-var editor UI, but are persisted in `profile.envVarRequirements`
      * (derived) and `secretBindingsByProfileId` (per-profile default saved secret choice).
@@ -459,6 +475,7 @@ export function ProfileEditForm({
 
     const [openPermissionProvider, setOpenPermissionProvider] = React.useState<null | string>(null);
     const [openStorageProvider, setOpenStorageProvider] = React.useState<null | string>(null);
+    const [openCodingBehaviorControl, setOpenCodingBehaviorControl] = React.useState<null | 'title' | 'responseOptions'>(null);
 
     const canSelectMachineLogin = machineLoginRequirement.selectableTargetKey !== null;
     const effectiveAuthMode = authMode === 'machineLogin' && canSelectMachineLogin ? 'machineLogin' : undefined;
@@ -537,6 +554,8 @@ export function ProfileEditForm({
             derivedEnvVarRequirements,
             // Bindings are settings-level but edited here; include for dirty tracking.
             secretBindings: secretBindingsByProfileId[profile.id] ?? null,
+            codingPromptSessionTitleUpdates,
+            codingPromptResponseOptions,
         });
     }
 
@@ -551,6 +570,8 @@ export function ProfileEditForm({
             requiresMachineLogin,
             derivedEnvVarRequirements,
             secretBindings: secretBindingsByProfileId[profile.id] ?? null,
+            codingPromptSessionTitleUpdates,
+            codingPromptResponseOptions,
         });
         return currentSnapshot !== initialSnapshotRef.current;
     }, [
@@ -563,6 +584,8 @@ export function ProfileEditForm({
         derivedEnvVarRequirements,
         requiresMachineLogin,
         secretBindingsByProfileId,
+        codingPromptSessionTitleUpdates,
+        codingPromptResponseOptions,
         profile.id,
     ]);
 
@@ -642,6 +665,10 @@ export function ProfileEditForm({
         }
 
         const persistedAuthMode = effectiveAuthMode;
+        const codingPromptBehaviorV1 = buildCodingPromptBehaviorOverrideV1({
+            sessionTitleUpdates: codingPromptSessionTitleUpdates,
+            responseOptions: codingPromptResponseOptions,
+        });
         return onSave({
             ...profileBase,
             name: name.trim(),
@@ -660,6 +687,7 @@ export function ProfileEditForm({
             defaultPersistenceModeByAgent: {},
             compatibilityByTargetKey,
             compatibility: {},
+            codingPromptBehaviorV1,
             updatedAt: Date.now(),
         });
     }, [
@@ -676,6 +704,8 @@ export function ProfileEditForm({
         effectiveAuthMode,
         machineLoginRequirement.selectableTargetKey,
         supportedDirectBackendEntries,
+        codingPromptSessionTitleUpdates,
+        codingPromptResponseOptions,
     ]);
 
     React.useEffect(() => {
@@ -989,6 +1019,131 @@ export function ProfileEditForm({
                         })}
                 </ItemGroup>
             ) : null}
+
+            <ItemGroup
+                title={t('profiles.codingPromptBehavior.title')}
+                footer={t('profiles.codingPromptBehavior.footer')}
+            >
+                <DropdownMenu
+                    open={openCodingBehaviorControl === 'title'}
+                    onOpenChange={(next) => setOpenCodingBehaviorControl(next ? 'title' : null)}
+                    popoverBoundaryRef={popoverBoundaryRef}
+                    variant="selectable"
+                    search={false}
+                    showCategoryTitles={false}
+                    matchTriggerWidth={true}
+                    connectToTrigger={true}
+                    rowKind="item"
+                    selectedId={codingPromptSessionTitleUpdates ?? '__account__'}
+                    trigger={({ open, toggle }) => (
+                        <Item
+                            selected={false}
+                            title={t('profiles.codingPromptBehavior.sessionTitleUpdates.label')}
+                            subtitle={codingPromptSessionTitleUpdates
+                                ? t(`profiles.codingPromptBehavior.sessionTitleUpdates.${codingPromptSessionTitleUpdates}`)
+                                : t('profiles.codingPromptBehavior.accountDefaultSubtitle', { label: t(`profiles.codingPromptBehavior.sessionTitleUpdates.${accountCodingPromptBehavior.sessionTitleUpdates}`) })
+                            }
+                            icon={<Ionicons name="text-outline" size={29} color={theme.colors.text.secondary} />}
+                            rightElement={(
+                                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                                    <Ionicons name={open ? 'chevron-up' : 'chevron-down'} size={20} color={theme.colors.text.secondary} />
+                                </View>
+                            )}
+                            showChevron={false}
+                            onPress={toggle}
+                            showDivider={true}
+                        />
+                    )}
+                    items={[
+                        {
+                            id: '__account__',
+                            title: t('profiles.codingPromptBehavior.useSystemDefault'),
+                            subtitle: t('profiles.codingPromptBehavior.currently', { label: t(`profiles.codingPromptBehavior.sessionTitleUpdates.${accountCodingPromptBehavior.sessionTitleUpdates}`) }),
+                            icon: (
+                                <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
+                                    <Ionicons name="settings-outline" size={22} color={theme.colors.text.secondary} />
+                                </View>
+                            ),
+                        },
+                        ...(['ongoing', 'initial', 'disabled'] as const).map((mode) => ({
+                            id: mode,
+                            title: t(`profiles.codingPromptBehavior.sessionTitleUpdates.${mode}`),
+                            icon: (
+                                <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
+                                    <Ionicons name={mode === 'disabled' ? 'close-circle-outline' : mode === 'initial' ? 'flag-outline' : 'sync-outline'} size={22} color={theme.colors.text.secondary} />
+                                </View>
+                            ),
+                        })),
+                    ]}
+                    onSelect={(id) => {
+                        if (id === '__account__') {
+                            setCodingPromptSessionTitleUpdates(null);
+                        } else {
+                            setCodingPromptSessionTitleUpdates(id as CodingPromptSessionTitleUpdatesModeV1);
+                        }
+                        setOpenCodingBehaviorControl(null);
+                    }}
+                />
+                <DropdownMenu
+                    open={openCodingBehaviorControl === 'responseOptions'}
+                    onOpenChange={(next) => setOpenCodingBehaviorControl(next ? 'responseOptions' : null)}
+                    popoverBoundaryRef={popoverBoundaryRef}
+                    variant="selectable"
+                    search={false}
+                    showCategoryTitles={false}
+                    matchTriggerWidth={true}
+                    connectToTrigger={true}
+                    rowKind="item"
+                    selectedId={codingPromptResponseOptions ?? '__account__'}
+                    trigger={({ open, toggle }) => (
+                        <Item
+                            selected={false}
+                            title={t('profiles.codingPromptBehavior.responseOptions.label')}
+                            subtitle={codingPromptResponseOptions
+                                ? t(`profiles.codingPromptBehavior.responseOptions.${codingPromptResponseOptions}`)
+                                : t('profiles.codingPromptBehavior.accountDefaultSubtitle', { label: t(`profiles.codingPromptBehavior.responseOptions.${accountCodingPromptBehavior.responseOptions}`) })
+                            }
+                            icon={<Ionicons name="options-outline" size={29} color={theme.colors.text.secondary} />}
+                            rightElement={(
+                                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                                    <Ionicons name={open ? 'chevron-up' : 'chevron-down'} size={20} color={theme.colors.text.secondary} />
+                                </View>
+                            )}
+                            showChevron={false}
+                            onPress={toggle}
+                        />
+                    )}
+                    items={[
+                        {
+                            id: '__account__',
+                            title: t('profiles.codingPromptBehavior.useSystemDefault'),
+                            subtitle: t('profiles.codingPromptBehavior.currently', { label: t(`profiles.codingPromptBehavior.responseOptions.${accountCodingPromptBehavior.responseOptions}`) }),
+                            icon: (
+                                <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
+                                    <Ionicons name="settings-outline" size={22} color={theme.colors.text.secondary} />
+                                </View>
+                            ),
+                        },
+                        ...(['agent', 'disabled'] as const).map((mode) => ({
+                            id: mode,
+                            title: t(`profiles.codingPromptBehavior.responseOptions.${mode}`),
+                            icon: (
+                                <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
+                                    <Ionicons name={mode === 'disabled' ? 'close-circle-outline' : 'checkmark-circle-outline'} size={22} color={theme.colors.text.secondary} />
+                                </View>
+                            ),
+                        })),
+                    ]}
+                    onSelect={(id) => {
+                        if (id === '__account__') {
+                            setCodingPromptResponseOptions(null);
+                        } else {
+                            setCodingPromptResponseOptions(id as CodingPromptBehaviorModeV1);
+                        }
+                        setOpenCodingBehaviorControl(null);
+                    }}
+                />
+            </ItemGroup>
 
             {!routeMachine && (
                 <ItemGroup title={t('profiles.previewMachine.title')}>

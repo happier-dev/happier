@@ -9696,6 +9696,24 @@ settingsSession: {
       useAccountDefault: 'Use account default',
       currently: ({ label }: { label: string }) => `Currently: ${label}`,
     },
+        codingPromptBehavior: {
+            title: 'Coding prompt behavior',
+            footer: 'Overrides the account-level system-prompt behavior for coding sessions when this profile is selected.',
+            useSystemDefault: 'Use system default',
+            accountDefaultSubtitle: ({ label }: { label: string }) => `Account default: ${label}`,
+            currently: ({ label }: { label: string }) => `Currently: ${label}`,
+            sessionTitleUpdates: {
+                label: 'Session title updates',
+                ongoing: 'Ongoing',
+                initial: 'Initial only',
+                disabled: 'Disabled',
+            },
+            responseOptions: {
+                label: 'Response options',
+                agent: 'agent',
+                disabled: 'Disabled',
+            },
+        },
         aiBackend: {
             title: 'AI Backend',
             selectAtLeastOneError: 'Select at least one AI backend.',
