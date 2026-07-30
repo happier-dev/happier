@@ -46,3 +46,52 @@ export function isCodingPromptSessionTitleUpdatesEnabled(settingsLike: unknown):
 export function isCodingPromptResponseOptionsEnabled(settingsLike: unknown): boolean {
   return resolveCodingPromptBehaviorV1(settingsLike).responseOptions === 'agent';
 }
+
+// Override schema for per-profile overrides (partial, no field defaults)
+export const CodingPromptBehaviorOverrideV1Schema = z.object({
+  v: z.literal(1).default(1),
+  sessionTitleUpdates: CodingPromptSessionTitleUpdatesInputV1Schema.optional(),
+  responseOptions: CodingPromptBehaviorModeV1Schema.optional(),
+}).catch({ v: 1 });
+
+export type CodingPromptBehaviorOverrideV1 = z.infer<typeof CodingPromptBehaviorOverrideV1Schema>;
+
+// Merge resolver: global defaults; override fields win when set; v from global
+export function resolveCodingPromptBehaviorV1WithOverride(params: {
+  settingsLike: unknown;
+  override?: CodingPromptBehaviorOverrideV1 | null;
+}): CodingPromptBehaviorV1 {
+  const global = resolveCodingPromptBehaviorV1(params.settingsLike);
+  
+  if (!params.override) {
+    return global;
+  }
+
+  // Override is an object (could be minimal from .catch({ v: 1 }))
+  const overrideObj = params.override as Record<string, unknown> | null;
+  
+  // Build merged result: v always from global, other fields use override if set
+  return {
+    v: global.v,
+    sessionTitleUpdates: (overrideObj?.sessionTitleUpdates ?? global.sessionTitleUpdates) as CodingPromptSessionTitleUpdatesModeV1,
+    responseOptions: (overrideObj?.responseOptions ?? global.responseOptions) as CodingPromptBehaviorModeV1,
+  };
+}
+
+// Settings-record helper: returns { ...settings, codingPromptBehaviorV1: <resolved full object> }
+export function applyCodingPromptBehaviorOverrideToSettings(params: {
+  settings: Readonly<Record<string, unknown>> | null | undefined;
+  override?: CodingPromptBehaviorOverrideV1 | null;
+}): Record<string, unknown> {
+  if (!params.override) {
+    // No override => settings unchanged reference
+    return params.settings ?? {};
+  }
+
+  const resolved = resolveCodingPromptBehaviorV1WithOverride({
+    settingsLike: params.settings,
+    override: params.override,
+  });
+
+  return { ...params.settings, codingPromptBehaviorV1: resolved };
+}
