@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
     AIBackendProfileSchema,
+    buildCodingPromptBehaviorOverrideV1,
     getProfileCodingPromptBehaviorOverride,
     type AIBackendProfile,
 } from '@/sync/domains/profiles/profileCompatibility';
@@ -46,5 +47,41 @@ describe('getProfileCodingPromptBehaviorOverride', () => {
         });
         // Malformed override is reduced to { v: 1 } (no knobs set => inherit global for both).
         expect(getProfileCodingPromptBehaviorOverride(profile)).toEqual({ v: 1 });
+    });
+});
+
+describe('buildCodingPromptBehaviorOverrideV1', () => {
+    it('returns undefined when no knob is set (omit-means-inherit on save)', () => {
+        expect(buildCodingPromptBehaviorOverrideV1({})).toBeUndefined();
+        expect(buildCodingPromptBehaviorOverrideV1({ sessionTitleUpdates: null, responseOptions: null })).toBeUndefined();
+    });
+
+    it('builds a partial override when only sessionTitleUpdates is set', () => {
+        expect(buildCodingPromptBehaviorOverrideV1({ sessionTitleUpdates: 'initial' })).toEqual({
+            v: 1,
+            sessionTitleUpdates: 'initial',
+        });
+    });
+
+    it('builds a partial override when only responseOptions is set', () => {
+        expect(buildCodingPromptBehaviorOverrideV1({ responseOptions: 'disabled' })).toEqual({
+            v: 1,
+            responseOptions: 'disabled',
+        });
+    });
+
+    it('builds a full override when both knobs are set', () => {
+        expect(buildCodingPromptBehaviorOverrideV1({ sessionTitleUpdates: 'ongoing', responseOptions: 'agent' })).toEqual({
+            v: 1,
+            sessionTitleUpdates: 'ongoing',
+            responseOptions: 'agent',
+        });
+    });
+
+    it('treats null like omitted for each knob independently', () => {
+        expect(buildCodingPromptBehaviorOverrideV1({ sessionTitleUpdates: null, responseOptions: 'disabled' })).toEqual({
+            v: 1,
+            responseOptions: 'disabled',
+        });
     });
 });
