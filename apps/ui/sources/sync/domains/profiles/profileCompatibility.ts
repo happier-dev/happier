@@ -6,7 +6,9 @@ import {
     getProfileEnvironmentVariables as getProfileEnvironmentVariablesProtocol,
     isProfileCompatibleWithBackendTarget as isProfileCompatibleWithBackendTargetProtocol,
     isProfileCompatibleWithAgent as isProfileCompatibleWithAgentProtocol,
+    type CodingPromptBehaviorModeV1,
     type CodingPromptBehaviorOverrideV1,
+    type CodingPromptSessionTitleUpdatesModeV1,
 } from '@happier-dev/protocol';
 import type { AgentId } from '@/agents/catalog/catalog';
 
@@ -50,4 +52,27 @@ export function getProfileCodingPromptBehaviorOverride(profile: AIBackendProfile
         return null;
     }
     return profile.codingPromptBehaviorV1;
+}
+
+/**
+ * Builds a per-profile codingPromptBehaviorV1 override from explicit per-knob choices.
+ * A knob set to null/undefined is omitted so it inherits the account (system) default.
+ * Returns undefined when neither knob is set, so callers can omit the field entirely
+ * (omit-means-inherit semantics preserved on save).
+ */
+export function buildCodingPromptBehaviorOverrideV1(params: {
+    sessionTitleUpdates?: CodingPromptSessionTitleUpdatesModeV1 | null;
+    responseOptions?: CodingPromptBehaviorModeV1 | null;
+}): CodingPromptBehaviorOverrideV1 | undefined {
+    const sessionTitleUpdates = params.sessionTitleUpdates ?? null;
+    const responseOptions = params.responseOptions ?? null;
+    if (!sessionTitleUpdates && !responseOptions) return undefined;
+    const override: CodingPromptBehaviorOverrideV1 = { v: 1 };
+    if (sessionTitleUpdates) {
+        override.sessionTitleUpdates = sessionTitleUpdates;
+    }
+    if (responseOptions) {
+        override.responseOptions = responseOptions;
+    }
+    return override;
 }
