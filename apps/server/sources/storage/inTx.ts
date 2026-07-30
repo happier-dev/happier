@@ -90,13 +90,21 @@ export function isRetryableTransactionError(params: Readonly<{ provider: string;
     return false;
 }
 
-export function afterTx(tx: Tx, callback: () => void) {
+type AfterTxCallback = () => void | Promise<void>;
+
+function logAfterTxCallbackFailure(error: unknown) {
+    // The transaction is already committed, so the failure must not propagate,
+    // but a silent drop here loses post-commit fan-out (socket updates etc.).
+    warn({ module: "inTx", error }, "afterTx callback failed after commit");
+}
+
+export function afterTx(tx: Tx, callback: AfterTxCallback) {
     // Golden rule:
     // - Do NOT emit socket updates inside a DB transaction.
     // - Instead, schedule them with afterTx so they only fire after commit.
     //
     // `afterTx` is only valid for transactions created via `inTx()`.
-    const callbacks = (tx as any)[symbol] as (() => void)[] | undefined;
+    const callbacks = (tx as any)[symbol] as AfterTxCallback[] | undefined;
     if (!callbacks) {
         throw new Error('afterTx(tx, ...) called outside inTx() transaction');
     }
@@ -112,7 +120,7 @@ export async function inTx<T>(fn: (tx: Tx) => Promise<T>): Promise<T> {
     let wrapped = async (tx: Tx) => {
         (tx as any)[symbol] = [];
         let result = await fn(tx);
-        let callbacks = (tx as any)[symbol] as (() => void)[];
+        let callbacks = (tx as any)[symbol] as AfterTxCallback[];
         return { result, callbacks };
     }
     while (true) {
@@ -123,11 +131,14 @@ export async function inTx<T>(fn: (tx: Tx) => Promise<T>): Promise<T> {
             let result = await db.$transaction(wrapped, txOpts);
             for (let callback of result.callbacks) {
                 try {
-                    callback();
+                    // Callbacks stay fire-and-forget: async ones are not awaited, only
+                    // observed so their rejections are logged instead of going unhandled.
+                    const value = callback();
+                    if (value instanceof Promise) {
+                        value.catch(logAfterTxCallbackFailure);
+                    }
                 } catch (error) {
-                    // The transaction is already committed, so the failure must not propagate,
-                    // but a silent drop here loses post-commit fan-out (socket updates etc.).
-                    warn({ module: "inTx", error }, "afterTx callback failed after commit");
+                    logAfterTxCallbackFailure(error);
                 }
             }
             return result.result;

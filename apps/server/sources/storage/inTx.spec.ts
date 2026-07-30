@@ -110,6 +110,37 @@ describe("inTx", () => {
         );
     });
 
+    it("logs async afterTx callback rejections without an unhandled rejection", async () => {
+        restoreEnv(envSnapshot);
+        applyEnvValues({
+            HAPPY_DB_PROVIDER: undefined,
+            HAPPIER_DB_PROVIDER: undefined,
+        });
+
+        const failure = new Error("async fan-out failed");
+        const unhandled = vi.fn();
+        process.once("unhandledRejection", unhandled);
+        const { inTx, afterTx } = await import("./inTx");
+        const { warn } = await import("@/utils/logging/log");
+
+        const result = await inTx(async (tx) => {
+            afterTx(tx, async () => {
+                throw failure;
+            });
+            return 654;
+        });
+
+        expect(result).toBe(654);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(warn).toHaveBeenCalledTimes(1);
+        expect(warn).toHaveBeenCalledWith(
+            expect.objectContaining({ module: "inTx", error: failure }),
+            expect.any(String),
+        );
+        expect(unhandled).not.toHaveBeenCalled();
+        process.removeListener("unhandledRejection", unhandled);
+    });
+
     it("retries P2034 and eventually succeeds", async () => {
         restoreEnv(envSnapshot);
         applyEnvValues({
