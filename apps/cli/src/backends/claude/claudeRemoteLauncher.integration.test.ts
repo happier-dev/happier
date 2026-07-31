@@ -1591,7 +1591,6 @@ function createRemoteHarness(options?: {
     const consumerOptions = createSessionProviderInputConsumerSpy.mock.calls.at(-1)?.[0] as
       | SessionProviderInputConsumerOptions<EnhancedMode, string>
       | undefined;
-    expect(consumerOptions?.resolveActiveTurnDeliveryPolicy?.()).toBe('allow_live_delivery');
     expect(consumerOptions?.session.materializeNextPendingMessageSafely).toEqual(expect.any(Function));
 
     await expect(consumerOptions?.session.popPendingMessage()).resolves.toBe(true);

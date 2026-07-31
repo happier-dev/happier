@@ -1,5 +1,4 @@
 import type { MaterializeNextPendingResult } from '@/api/session/sessionClientPort';
-import type { PendingMaterializationActiveTurnPolicy } from '@/api/session/pendingMaterializationActiveTurnPolicy';
 import type { PendingQueueReconcileWhenEmpty } from '@/api/session/pendingQueueReadPolicy';
 
 export type MessageBatch<Mode, Message> = {
@@ -22,7 +21,6 @@ export type MessageBatch<Mode, Message> = {
 };
 
 export type PendingMaterializationReconcileWhenEmpty = PendingQueueReconcileWhenEmpty;
-export type { PendingMaterializationActiveTurnPolicy };
 
 export type PendingMaterializationResult = MaterializeNextPendingResult;
 
@@ -42,8 +40,6 @@ export type DrainPendingOptions = {
   abortSignal?: AbortSignal | undefined;
   shouldContinue?: (() => boolean) | undefined;
   logPrefix?: string | undefined;
-  activeTurnDeliveryPolicy?: PendingMaterializationActiveTurnPolicy | undefined;
-  resolveActiveTurnDeliveryPolicy?: (() => PendingMaterializationActiveTurnPolicy | undefined) | undefined;
 };
 
 export type DrainPendingResult = {

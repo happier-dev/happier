@@ -1176,7 +1176,6 @@ describe('claudeUnifiedTerminalLauncher', () => {
 
     expect(materializeNextPendingMessageSafely).toHaveBeenCalledWith({
       reconcileWhenEmpty: 'skip',
-      activeTurnDeliveryPolicy: 'allow_live_delivery',
     });
   });
 

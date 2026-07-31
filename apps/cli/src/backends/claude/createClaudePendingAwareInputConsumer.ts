@@ -1,20 +1,9 @@
 import { createSessionProviderInputConsumer } from '@/agent/runtime/sessionInput/SessionProviderInputConsumer';
-import type {
-    PendingMaterializationActiveTurnPolicy,
-    SessionProviderInputConsumer,
-} from '@/agent/runtime/sessionInput/types';
+import type { SessionProviderInputConsumer } from '@/agent/runtime/sessionInput/types';
 import { resolveSessionPendingQueueMaxPopPerWake } from '@/agent/runtime/sessionInput/pendingQueueDrainPolicy';
 
 import type { EnhancedMode } from './loop';
 import type { Session } from './session';
-
-function resolveClaudePendingActiveTurnDeliveryPolicy(
-    accountSettings: Session['accountSettings'],
-): PendingMaterializationActiveTurnPolicy | undefined {
-    return accountSettings?.sessionBusySteerSendPolicy === 'server_pending'
-        ? undefined
-        : 'allow_live_delivery';
-}
 
 /**
  * Canonical Claude session input consumer: local agent queue + daemon-owned
@@ -39,6 +28,11 @@ export function createClaudePendingAwareInputConsumer(
             ? session.client.materializeNextPendingMessageSafely.bind(session.client)
             : null;
 
+    // Daemon-owned pending rows must keep the shared consumer's default
+    // active-turn block. "Steer immediately" belongs to the explicit UI
+    // send-now path, which writes to this local queue directly; applying that
+    // setting here would consume ordinary pending rows before they can still
+    // be edited or deleted.
     return createSessionProviderInputConsumer<EnhancedMode, string>({
         messageQueue: session.queue,
         session: {
@@ -59,16 +53,15 @@ export function createClaudePendingAwareInputConsumer(
                 }
                 return (await materializeNextPendingMessageSafely({ reconcileWhenEmpty: 'force' })).type === 'materialized';
             },
-            shouldAttemptPendingMaterialization: (attemptOpts) =>
+            shouldAttemptPendingMaterialization: () =>
                 session.queue.size() <= 0
-                && (session.client.shouldAttemptPendingMaterialization?.(attemptOpts) ?? true),
+                && (session.client.shouldAttemptPendingMaterialization?.() ?? true),
             reconcilePendingQueueState: async (reconcileOpts) => {
                 await session.client.reconcilePendingQueueState?.(reconcileOpts);
             },
             waitForMetadataUpdate: (signal) => session.client.waitForMetadataUpdate(signal),
         },
         pendingDrainMaxPopPerWake: resolveSessionPendingQueueMaxPopPerWake(session.accountSettings ?? null),
-        resolveActiveTurnDeliveryPolicy: () => resolveClaudePendingActiveTurnDeliveryPolicy(session.accountSettings),
         ...(opts?.onMetadataUpdate ? { onMetadataUpdate: opts.onMetadataUpdate } : {}),
     });
 }

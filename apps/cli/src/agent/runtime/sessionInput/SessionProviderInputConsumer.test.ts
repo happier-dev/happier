@@ -95,72 +95,25 @@ describe('SessionProviderInputConsumer drainPending', () => {
     expect(popPendingMessage).not.toHaveBeenCalled();
   });
 
-  it('passes the active-turn delivery policy into the drain preflight gate', async () => {
-    const shouldAttemptPendingMaterialization = vi.fn((
-      opts?: { activeTurnDeliveryPolicy?: 'block' | 'allow_live_delivery' },
-    ) => opts?.activeTurnDeliveryPolicy === 'allow_live_delivery');
-    const materializeNextPendingMessageSafely = vi
-      .fn<() => Promise<MaterializeNextPendingResult>>()
-      .mockResolvedValue({
-        type: 'materialized',
-        localId: 'local-live',
-        seq: 11,
-        content: null,
-      });
-
-    const consumer = createDrainConsumer(
-      {
-        popPendingMessage: vi.fn(async () => false),
-        materializeNextPendingMessageSafely,
-        shouldAttemptPendingMaterialization,
-        waitForMetadataUpdate: async () => false,
-      },
-      { activeTurnDeliveryPolicy: 'allow_live_delivery' },
-    );
-
-    await expect(consumer.drainPending?.({ reason: 'test-live-preflight' })).resolves.toEqual({
-      materialized: 1,
-      stoppedReason: 'max_pop_per_wake',
-    });
-    expect(shouldAttemptPendingMaterialization).toHaveBeenCalledWith({
-      activeTurnDeliveryPolicy: 'allow_live_delivery',
-    });
-    expect(materializeNextPendingMessageSafely).toHaveBeenCalledWith({
-      reconcileWhenEmpty: 'force',
-      activeTurnDeliveryPolicy: 'allow_live_delivery',
-    });
-  });
-
-  it('lets an explicit drain active-turn policy override a default resolver', async () => {
+  it('leaves active-turn delivery policy to the session client instead of overriding it per drain', async () => {
     const shouldAttemptPendingMaterialization = vi.fn(() => true);
     const materializeNextPendingMessageSafely = vi
       .fn<() => Promise<MaterializeNextPendingResult>>()
       .mockResolvedValue({ type: 'no_pending' });
 
-    const consumer = createDrainConsumer(
-      {
-        popPendingMessage: vi.fn(async () => false),
-        materializeNextPendingMessageSafely,
-        shouldAttemptPendingMaterialization,
-        waitForMetadataUpdate: async () => false,
-      },
-      { resolveActiveTurnDeliveryPolicy: () => 'allow_live_delivery' },
-    );
+    const consumer = createDrainConsumer({
+      popPendingMessage: vi.fn(async () => false),
+      materializeNextPendingMessageSafely,
+      shouldAttemptPendingMaterialization,
+      waitForMetadataUpdate: async () => false,
+    });
 
-    await expect(consumer.drainPending?.({
-      reason: 'test-explicit-block-over-default-resolver',
-      activeTurnDeliveryPolicy: 'block',
-    })).resolves.toEqual({
+    await expect(consumer.drainPending?.({ reason: 'test-no-policy-override' })).resolves.toEqual({
       materialized: 0,
       stoppedReason: 'no_pending',
     });
-    expect(shouldAttemptPendingMaterialization).toHaveBeenCalledWith({
-      activeTurnDeliveryPolicy: 'block',
-    });
-    expect(materializeNextPendingMessageSafely).toHaveBeenCalledWith({
-      reconcileWhenEmpty: 'force',
-      activeTurnDeliveryPolicy: 'block',
-    });
+    expect(shouldAttemptPendingMaterialization).toHaveBeenCalledWith();
+    expect(materializeNextPendingMessageSafely).toHaveBeenCalledWith({ reconcileWhenEmpty: 'force' });
   });
 
   it('returns an error result when reconciliation fails during drain', async () => {
@@ -232,7 +185,7 @@ describe('SessionProviderInputConsumer waitForNextInput', () => {
     expect(popPendingMessage).not.toHaveBeenCalled();
   });
 
-  it('logs text-free materialization decisions with delivery policy metadata', async () => {
+  it('logs text-free materialization decisions', async () => {
     const debugSpy = vi.spyOn(logger, 'debug').mockImplementation(() => {});
     const materializeNextPendingMessageSafely = vi
       .fn<() => Promise<MaterializeNextPendingResult>>()
@@ -250,7 +203,6 @@ describe('SessionProviderInputConsumer waitForNextInput', () => {
         materializeNextPendingMessageSafely,
         waitForMetadataUpdate: async () => false,
       },
-      activeTurnDeliveryPolicy: 'allow_live_delivery',
       reconcileWhenEmpty: 'skip',
       idleWakePollIntervalMs: 0,
     });
@@ -258,7 +210,6 @@ describe('SessionProviderInputConsumer waitForNextInput', () => {
     await expect(consumer.waitForNextInput({ abortSignal: new AbortController().signal })).resolves.toBeNull();
 
     expect(debugSpy).toHaveBeenCalledWith('[pendingQueue] input consumer materialization decision', {
-      activeTurnDeliveryPolicy: 'allow_live_delivery',
       localId: 'local-secret',
       reconcileWhenEmpty: 'skip',
       resultType: 'materialized',
