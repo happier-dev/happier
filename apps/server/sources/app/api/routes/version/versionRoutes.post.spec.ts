@@ -3,6 +3,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ClientVersionCheckResponseV1Schema } from '@happier-dev/protocol';
 import { createRouteTestBuilder } from '../../testkit/routeTestBuilder';
 
+const APP_STORE_URL = 'https://apps.apple.com/us/app/happier-claude-codex-opencode/id6758537388';
+
 describe('versionRoutes POST /v1/version', () => {
     afterEach(() => {
         vi.unstubAllEnvs();
@@ -25,72 +27,127 @@ describe('versionRoutes POST /v1/version', () => {
         return ClientVersionCheckResponseV1Schema.parse(await invokeRaw(body));
     }
 
-    it('returns the protocol-owned current response for a supported native app', async () => {
+    function stubCompatibilityMinimums(minimums: Record<string, string>) {
+        vi.stubEnv('HAPPIER_SESSION_SYNC_COMPATIBILITY__ENFORCEMENT', 'required');
+        vi.stubEnv('HAPPIER_SESSION_SYNC_COMPATIBILITY__MINIMUM_PROTOCOL_VERSION', '2');
+        vi.stubEnv(
+            'HAPPIER_SESSION_SYNC_COMPATIBILITY__MINIMUM_VERSIONS_JSON',
+            JSON.stringify(minimums),
+        );
+    }
+
+    it('reports a store-channel iOS build on the shipped version line as current', async () => {
         await expect(invoke({
             v: 1,
             clientKind: 'ui-ios',
-            appVersion: '1.4.1',
-            releaseChannel: 'stable',
+            appVersion: '0.2.10',
+            releaseChannel: 'production',
             appId: 'dev.happier.app',
         })).resolves.toEqual({ v: 1, status: 'current' });
     });
 
-    it('returns a non-dismissible protocol-owned required upgrade for an old iOS app', async () => {
-        await expect(invoke({
-            v: 1,
-            clientKind: 'ui-ios',
-            appVersion: '1.3.0',
-            appId: 'dev.happier.app',
-        })).resolves.toEqual({
-            v: 1,
-            status: 'upgrade-required',
-            minimumAppVersion: '1.4.1',
-            updateUrl: 'https://apps.apple.com/us/app/happier-claude-codex-opencode/id6758537388',
-        });
-    });
-
-    it('keeps required upgrade truthful when no safe Android update URL is configured', async () => {
+    it('reports a development-channel build as current', async () => {
         await expect(invoke({
             v: 1,
             clientKind: 'ui-android',
-            appVersion: '1.0.0',
+            appVersion: '0.2.10',
+            releaseChannel: 'dev',
+            appId: 'dev.happier.app.publicdev',
+        })).resolves.toEqual({ v: 1, status: 'current' });
+    });
+
+    it('requires an upgrade from the configured compatibility minimum and links iOS to the App Store', async () => {
+        stubCompatibilityMinimums({ 'ui-ios': '0.3.0' });
+
+        await expect(invoke({
+            v: 1,
+            clientKind: 'ui-ios',
+            appVersion: '0.2.10',
+            releaseChannel: 'production',
             appId: 'dev.happier.app',
         })).resolves.toEqual({
             v: 1,
             status: 'upgrade-required',
-            minimumAppVersion: '1.4.1',
+            minimumAppVersion: '0.3.0',
+            updateUrl: APP_STORE_URL,
+        });
+    });
+
+    it('keeps the required upgrade truthful when no safe Android update URL is configured', async () => {
+        stubCompatibilityMinimums({ 'ui-android': '0.3.0' });
+
+        await expect(invoke({
+            v: 1,
+            clientKind: 'ui-android',
+            appVersion: '0.2.10',
+            releaseChannel: 'production',
+            appId: 'dev.happier.app',
+        })).resolves.toEqual({
+            v: 1,
+            status: 'upgrade-required',
+            minimumAppVersion: '0.3.0',
             updateUrl: null,
         });
     });
 
-    it('keeps the deployed native request/response shape working during the compatibility rollout', async () => {
-        await expect(invokeRaw({
-            platform: 'ios',
-            version: '1.3.0',
-            app_id: 'dev.happier.app',
+    it('applies the configured compatibility minimum to a development-channel build', async () => {
+        stubCompatibilityMinimums({ 'ui-android': '0.3.0' });
+
+        await expect(invoke({
+            v: 1,
+            clientKind: 'ui-android',
+            appVersion: '0.2.10',
+            releaseChannel: 'dev',
+            appId: 'dev.happier.app.publicdev',
         })).resolves.toEqual({
-            update_required: true,
-            update_url: 'https://apps.apple.com/us/app/happier-claude-codex-opencode/id6758537388',
+            v: 1,
+            status: 'upgrade-required',
+            minimumAppVersion: '0.3.0',
+            updateUrl: null,
         });
     });
 
-    it('uses the central compatibility minimum when it is stricter than the distribution floor', async () => {
-        vi.stubEnv('HAPPIER_SESSION_SYNC_COMPATIBILITY__ENFORCEMENT', 'required');
-        vi.stubEnv('HAPPIER_SESSION_SYNC_COMPATIBILITY__MINIMUM_PROTOCOL_VERSION', '2');
-        vi.stubEnv('HAPPIER_SESSION_SYNC_COMPATIBILITY__MINIMUM_VERSIONS_JSON', JSON.stringify({
-            'ui-ios': '1.5.0',
-        }));
+    it('prefers a configured upgrade URL over the built-in App Store link', async () => {
+        stubCompatibilityMinimums({ 'ui-ios': '0.3.0' });
+        vi.stubEnv(
+            'HAPPIER_SESSION_SYNC_COMPATIBILITY__UPGRADE_URLS_JSON',
+            JSON.stringify({ 'ui-ios': 'https://happier.dev/upgrade' }),
+        );
 
         await expect(invoke({
             v: 1,
             clientKind: 'ui-ios',
-            appVersion: '1.4.1',
+            appVersion: '0.2.10',
             appId: 'dev.happier.app',
         })).resolves.toEqual({
             v: 1,
             status: 'upgrade-required',
-            minimumAppVersion: '1.5.0',
-            updateUrl: 'https://apps.apple.com/us/app/happier-claude-codex-opencode/id6758537388',
+            minimumAppVersion: '0.3.0',
+            updateUrl: 'https://happier.dev/upgrade',
+        });
+    });
+
+    it('keeps the deployed legacy native request/response shape working', async () => {
+        await expect(invokeRaw({
+            platform: 'ios',
+            version: '0.2.10',
+            app_id: 'dev.happier.app',
+        })).resolves.toEqual({
+            update_required: false,
+            update_url: null,
+        });
+    });
+
+    it('reports a legacy required upgrade from the configured compatibility minimum', async () => {
+        stubCompatibilityMinimums({ 'ui-ios': '0.3.0' });
+
+        await expect(invokeRaw({
+            platform: 'ios',
+            version: '0.2.10',
+            app_id: 'dev.happier.app',
+        })).resolves.toEqual({
+            update_required: true,
+            update_url: APP_STORE_URL,
         });
     });
 });
