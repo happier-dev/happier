@@ -11,6 +11,8 @@ import { resolveClientVersionDecision } from '@/app/clientCompatibility/versionD
 // from the session-sync compatibility policy.
 const IOS_UPDATE_URL = 'https://apps.apple.com/us/app/happier-claude-codex-opencode/id6758537388';
 
+const POLICY_INVALID_ERROR = 'compatibility_policy_invalid' as const;
+
 const LegacyClientVersionCheckRequestSchema = z.object({
     platform: z.string(),
     version: z.string(),
@@ -46,10 +48,17 @@ export function versionRoutes(app: Fastify) {
             body: z.union([ClientVersionCheckRequestV1Schema, LegacyClientVersionCheckRequestSchema]),
             response: {
                 200: z.union([ClientVersionCheckResponseV1Schema, LegacyClientVersionCheckResponseSchema]),
+                500: z.object({ error: z.literal(POLICY_INVALID_ERROR) }),
             }
         }
-    }, async (request) => {
+    }, async (request, reply) => {
         const policy = resolveSessionSyncCompatibilityPolicy(process.env);
+        // The operator asked for enforcement but the policy could not be read, so
+        // no minimum is available. Answering `current` would silently under-report
+        // a required upgrade, so refuse rather than assert an unverified claim.
+        if (!policy.valid && policy.requestedEnforcement === 'required') {
+            return reply.code(500).send({ error: POLICY_INVALID_ERROR });
+        }
         if (!('v' in request.body)) {
             const platform = request.body.platform.toLowerCase();
             if (platform !== 'ios' && platform !== 'android') {

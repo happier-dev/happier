@@ -10,7 +10,7 @@ describe('versionRoutes POST /v1/version', () => {
         vi.unstubAllEnvs();
     });
 
-    async function invokeRaw(body: Record<string, unknown>) {
+    async function invokeWithStatus(body: Record<string, unknown>) {
         const { versionRoutes } = await import('./versionRoutes');
         const route = createRouteTestBuilder({
             method: 'POST',
@@ -19,8 +19,12 @@ describe('versionRoutes POST /v1/version', () => {
                 versionRoutes(app as never);
             },
         });
-        const { response } = await route.invoke({ body });
-        return response;
+        const { reply, response } = await route.invoke({ body });
+        return { statusCode: reply.statusCode as number, response };
+    }
+
+    async function invokeRaw(body: Record<string, unknown>) {
+        return (await invokeWithStatus(body)).response;
     }
 
     async function invoke(body: Record<string, unknown>) {
@@ -136,6 +140,50 @@ describe('versionRoutes POST /v1/version', () => {
             update_required: false,
             update_url: null,
         });
+    });
+
+    it('refuses to answer when enforcement is required and the configured minimums are unusable', async () => {
+        vi.stubEnv('HAPPIER_SESSION_SYNC_COMPATIBILITY__ENFORCEMENT', 'required');
+        vi.stubEnv('HAPPIER_SESSION_SYNC_COMPATIBILITY__MINIMUM_PROTOCOL_VERSION', '2');
+        // '1.2' is not comparable semver, so the whole policy resolves as invalid.
+        vi.stubEnv('HAPPIER_SESSION_SYNC_COMPATIBILITY__MINIMUM_VERSIONS_JSON', '{"ui-ios":"1.2"}');
+
+        await expect(invokeWithStatus({
+            v: 1,
+            clientKind: 'ui-ios',
+            appVersion: '0.2.10',
+            appId: 'dev.happier.app',
+        })).resolves.toEqual({
+            statusCode: 500,
+            response: { error: 'compatibility_policy_invalid' },
+        });
+    });
+
+    it('refuses to answer a legacy check when enforcement is required and the policy is unusable', async () => {
+        vi.stubEnv('HAPPIER_SESSION_SYNC_COMPATIBILITY__ENFORCEMENT', 'required');
+        vi.stubEnv('HAPPIER_SESSION_SYNC_COMPATIBILITY__MINIMUM_PROTOCOL_VERSION', '2');
+        vi.stubEnv('HAPPIER_SESSION_SYNC_COMPATIBILITY__MINIMUM_VERSIONS_JSON', '{"ui-ios":"1.2"}');
+
+        await expect(invokeWithStatus({
+            platform: 'ios',
+            version: '0.2.10',
+            app_id: 'dev.happier.app',
+        })).resolves.toEqual({
+            statusCode: 500,
+            response: { error: 'compatibility_policy_invalid' },
+        });
+    });
+
+    it('reports current when an unusable policy is only observed', async () => {
+        vi.stubEnv('HAPPIER_SESSION_SYNC_COMPATIBILITY__ENFORCEMENT', 'observe');
+        vi.stubEnv('HAPPIER_SESSION_SYNC_COMPATIBILITY__MINIMUM_VERSIONS_JSON', '{"ui-ios":"1.2"}');
+
+        await expect(invoke({
+            v: 1,
+            clientKind: 'ui-ios',
+            appVersion: '0.2.10',
+            appId: 'dev.happier.app',
+        })).resolves.toEqual({ v: 1, status: 'current' });
     });
 
     it('reports a legacy required upgrade from the configured compatibility minimum', async () => {
