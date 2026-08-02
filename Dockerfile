@@ -367,7 +367,14 @@ RUN set -eux; \
       --os web \
       --arch any \
       --dest /opt/happier/ui-web \
-      --pubkey /tmp/happier-release.pub
+      --pubkey /tmp/happier-release.pub; \
+    rm -rf /opt/happier/server/ui-web; \
+    rm -rf /opt/happier/server/generated/mysql-client; \
+    find /opt/happier/server/generated/sqlite-client -name '*.node' \
+        ! -name "libquery_engine-debian-openssl-3.0.x.so.node" \
+        ! -name "libquery_engine-linux-arm64-openssl-3.0.x.so.node" -delete; \
+    rm -rf /opt/happier/server/node_modules/@img/sharp-libvips-linuxmusl-x64 \
+           /opt/happier/server/node_modules/@img/sharp-linuxmusl-x64
 
 FROM debian:12-slim AS relay-server
 WORKDIR /opt/happier/server
