@@ -22,6 +22,12 @@ const LegacyClientVersionCheckResponseSchema = z.object({
     update_url: z.string().nullable(),
 }).strict();
 
+/**
+ * Registers the client version endpoints: a `GET` reachability probe and a
+ * `POST` upgrade check accepting both the v1 protocol body and the legacy
+ * `{ platform, version, app_id }` shape still sent by deployed native builds.
+ * Both bodies resolve through the same compatibility-policy decision.
+ */
 export function versionRoutes(app: Fastify) {
     app.get('/v1/version', {
         schema: {
