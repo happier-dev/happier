@@ -95,12 +95,45 @@ function publisherIntentKey(binding: PublisherBinding, snapshot: SessionRuntimeA
 
 class RegistrationContentionError extends Error {}
 
+/**
+ * How long an explicit stop request stays able to explain a publisher disconnect.
+ * Comfortably longer than a stop round trip, far shorter than the presence timeout
+ * fence so a stale intent can never close an unrelated later publisher.
+ */
+const EXPLICIT_STOP_REQUEST_TTL_MS = 2 * 60 * 1000;
+
 export function createSessionPublisherPresence(options: Readonly<{ now?: () => Date }> = {}) {
     const now = options.now ?? (() => new Date());
     const registrations = new WeakMap<object, Registration>();
     const registrationAttempts = new WeakMap<object, RegistrationAttempt>();
     const closeResults = new WeakMap<object, Promise<ClosePublisherResult>>();
     const operationTails = new WeakMap<object, Promise<void>>();
+    // Sessions with an explicit stop in flight. A stop that never proves physical
+    // termination still reaches the server only as a publisher disconnect, so the
+    // intent has to survive from the stop request until that disconnect arrives.
+    const explicitStopRequestedAtBySessionId = new Map<string, number>();
+
+    const markExplicitStopRequested = (params: Readonly<{ sessionId: string }>): void => {
+        const at = now().getTime();
+        // Intents are consumed by the disconnect they explain, but a stop whose publisher
+        // never disconnects leaves one behind. Sweep on write so the map cannot grow
+        // unbounded on a long-lived server.
+        for (const [sessionId, requestedAt] of explicitStopRequestedAtBySessionId) {
+            if (at - requestedAt > EXPLICIT_STOP_REQUEST_TTL_MS) {
+                explicitStopRequestedAtBySessionId.delete(sessionId);
+            }
+        }
+        explicitStopRequestedAtBySessionId.set(params.sessionId, at);
+    };
+
+    const consumeExplicitStopRequest = (sessionId: string): boolean => {
+        const requestedAt = explicitStopRequestedAtBySessionId.get(sessionId);
+        if (requestedAt === undefined) return false;
+        explicitStopRequestedAtBySessionId.delete(sessionId);
+        // A stop request only explains a disconnect that follows it closely. Beyond the
+        // window the disconnect is incidental and must not close a later publisher.
+        return now().getTime() - requestedAt <= EXPLICIT_STOP_REQUEST_TTL_MS;
+    };
 
     const serialize = async <T>(socket: object, operation: () => Promise<T>): Promise<T> => {
         const prior = operationTails.get(socket) ?? Promise.resolve();
@@ -490,11 +523,25 @@ export function createSessionPublisherPresence(options: Readonly<{ now?: () => D
         resolveCurrentPublisher,
         runAsCurrentPublisher,
         publishSnapshot,
+        markExplicitStopRequested,
         forgetDisconnectedPublisher: async (params: Readonly<{ socket: object }>) => await serialize(params.socket, async () => {
             try {
                 const registration = registrations.get(params.socket);
                 if (!registration) return { status: "unregistered" } as const;
                 if (closeResults.has(params.socket)) return { status: "closed" } as const;
+                // An explicit stop is an intentional termination, so the disconnect it
+                // produces ends the session now. Without this the row stays active until
+                // the presence timeout fence expires, which blocks archive for that whole
+                // window. A superseded fence means a successor publisher owns the session,
+                // so fall through and only record observer loss.
+                if (consumeExplicitStopRequest(registration.binding.sessionId)) {
+                    const closed = await closeBindingAtFence({
+                        binding: registration.binding,
+                        committedFence: registration.committedFence,
+                        mutationId: `explicit-stop-disconnect:${registration.committedFence.getTime()}`,
+                    });
+                    if (closed.status === "closed") return closed;
+                }
                 return await inTx(async (tx) => {
                     const session = await tx.session.findUnique({
                         where: { id: registration.binding.sessionId },

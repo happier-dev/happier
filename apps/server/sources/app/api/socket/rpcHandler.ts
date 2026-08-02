@@ -130,6 +130,32 @@ function readExplicitMachineStopRequest(method: string, value: unknown): Readonl
     return { machineId, sessionId: trimmedSessionId };
 }
 
+/**
+ * Session-scoped stop (`<sessionId>:killSession`). The runner answers this one directly,
+ * so unlike the machine-scoped stop there is no result the server can fence on — the only
+ * later signal is the publisher disconnect, which needs the recorded intent to be read as
+ * an intentional termination rather than an incidental drop.
+ */
+function readSessionScopedStopSessionId(method: string): string | null {
+    const separatorIndex = method.indexOf(':');
+    if (separatorIndex <= 0) return null;
+    if (method.slice(separatorIndex + 1) !== RPC_METHODS.KILL_SESSION) return null;
+    const sessionId = method.slice(0, separatorIndex).trim();
+    if (!sessionId || sessionId.length > MAX_RPC_METHOD_NAME_LENGTH) return null;
+    return sessionId;
+}
+
+/**
+ * A stop the runner accepted: either proven termination or an acknowledged request.
+ * A transport error, refusal, or missing method is not acceptance.
+ */
+function isAcceptedStopResponse(targetResponse: unknown): boolean {
+    const strict = StopSessionResultSchema.safeParse(targetResponse);
+    if (strict.success) return strict.data.status === "stopped" || strict.data.status === "requested";
+    if (!targetResponse || typeof targetResponse !== "object") return false;
+    return (targetResponse as { success?: unknown }).success === true;
+}
+
 function revalidatePrivilegedRpcTargetCompatibility(socket: Socket, method: string) {
     if (!resolveSocketRpcProviderStartingMethod(method)) return null;
     const socketData = readHappierSocketData(socket);
@@ -170,7 +196,7 @@ export function rpcHandler(
         redisRegistry: RpcRedisRegistryConfig;
         sessionPublisherPresence?: Pick<
             ReturnType<typeof createSessionPublisherPresence>,
-            "captureExplicitMachineStop" | "finalizeExplicitMachineStop"
+            "captureExplicitMachineStop" | "finalizeExplicitMachineStop" | "markExplicitStopRequested"
         >;
     },
 ) {
@@ -328,6 +354,7 @@ export function rpcHandler(
 
             let { targetUserId, targetSocket } = targetResolution;
             const explicitMachineStopRequest = readExplicitMachineStopRequest(method, rpcAuthorization);
+            const sessionScopedStopSessionId = readSessionScopedStopSessionId(method);
             if (method.endsWith(`:${RPC_METHODS.STOP_SESSION}`) && !explicitMachineStopRequest) {
                 callback?.({
                     ok: false,
@@ -351,6 +378,15 @@ export function rpcHandler(
             };
             const forwardTargetResponse = async (targetResponse: unknown) => {
                 const forwarded = forwardedRpcTargetResponse({ method, targetResponse });
+                // Only a stop the runner accepted may explain a later disconnect. Recording
+                // intent for an attempt that failed would let an unrelated incidental
+                // disconnect end a session whose runner is still alive.
+                const acceptedStopSessionId = sessionScopedStopSessionId ?? explicitMachineStopRequest?.sessionId ?? null;
+                if (acceptedStopSessionId && isAcceptedStopResponse(targetResponse)) {
+                    ctx.sessionPublisherPresence?.markExplicitStopRequested({
+                        sessionId: acceptedStopSessionId,
+                    });
+                }
                 if (!explicitMachineStopRequest || explicitMachineStopCapture?.status !== "captured") {
                     return forwarded;
                 }

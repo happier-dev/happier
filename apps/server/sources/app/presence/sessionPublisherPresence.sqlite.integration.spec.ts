@@ -454,6 +454,44 @@ describe("session publisher presence on SQLite", () => {
         });
     });
 
+    it("closes the exact publisher on disconnect after an explicit stop was requested", async () => {
+        const seeded = await seed();
+        const presence = createSessionPublisherPresence({ now: () => new Date(seeded.fence.getTime() + 10) });
+        const socket = {};
+        const registered = await presence.registerPublisher({
+            socket,
+            binding: seeded.binding,
+            completeActivitySnapshot: { state: "active", activeCount: 1 },
+        });
+        if (registered.status !== "registered") throw new Error("expected registration");
+
+        // An explicit stop was requested but the runner died before it could prove
+        // physical termination, so only the disconnect reaches the server.
+        presence.markExplicitStopRequested({ sessionId: seeded.binding.sessionId });
+
+        const disconnected = await presence.forgetDisconnectedPublisher({ socket });
+        // A terminal close carries participant cursors; the bare already-closed marker
+        // does not, so the fanout is what proves the session actually ended here.
+        if (!("participantCursors" in disconnected)) throw new Error("expected a terminal close with fanout");
+        expect(disconnected.status).toBe("closed");
+        expect(disconnected.participantCursors.map((cursor) => cursor.accountId).sort())
+            .toEqual(seeded.participantIds);
+        await expect(db.session.findUniqueOrThrow({
+            where: { id: seeded.binding.sessionId },
+            select: {
+                active: true,
+                lastActiveAt: true,
+                runtimeActivityState: true,
+                runtimeActivityActiveCount: true,
+            },
+        })).resolves.toEqual({
+            active: false,
+            lastActiveAt: registered.committedFence,
+            runtimeActivityState: "unknown",
+            runtimeActivityActiveCount: 0,
+        });
+    });
+
     it("does not let a completed explicit stop close a successor publisher that registered meanwhile", async () => {
         const seeded = await seed();
         let now = new Date(seeded.fence.getTime() + 10);

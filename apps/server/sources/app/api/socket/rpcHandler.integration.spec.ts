@@ -658,6 +658,34 @@ describe("rpcHandler", () => {
     );
   });
 
+  it("records no explicit-stop intent when a session stop RPC has no reachable runner", async () => {
+    vi.resetModules();
+    const { rpcHandler } = await import("./rpcHandler");
+    const socket = createFakeSocket();
+    const markExplicitStopRequested = vi.fn();
+
+    rpcHandler("user-1", socket as any, new Map<string, any>() as any, new Map<string, any>() as any, {
+      io: {} as any,
+      redisRegistry: { enabled: false },
+      sessionPublisherPresence: {
+        captureExplicitMachineStop: vi.fn(),
+        finalizeExplicitMachineStop: vi.fn(),
+        markExplicitStopRequested,
+      } as any,
+    });
+
+    const handler = getSocketHandler(socket, SOCKET_RPC_EVENTS.CALL);
+    const callback = vi.fn();
+    await handler({ method: `sess_1:${RPC_METHODS.KILL_SESSION}`, params: {} }, callback);
+
+    // The stop never reached a runner, so nothing may later read a disconnect as an
+    // intentional termination — that would end a session whose runner is still alive.
+    expect(callback).toHaveBeenCalledWith(
+      expect.objectContaining({ ok: false, errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE }),
+    );
+    expect(markExplicitStopRequested).not.toHaveBeenCalled();
+  });
+
   it("uses Redis RPC registry + io.emitWithAck when enabled", async () => {
     vi.resetModules();
     const targetSocketId = "target-socket";

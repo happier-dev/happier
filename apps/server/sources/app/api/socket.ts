@@ -349,6 +349,20 @@ export function startSocket(app: Fastify) {
             decrementWebSocketConnection(connection.connectionType);
             if (connection.connectionType === 'session-scoped') {
                 void sessionPublisherPresence.forgetDisconnectedPublisher({ socket }).then(async (result) => {
+                    // A disconnect that completes an explicit stop ends the session, so
+                    // participants have to learn it went inactive now rather than when the
+                    // presence timeout fence eventually expires.
+                    if (result.status === 'closed' && 'participantCursors' in result) {
+                        await publishSessionPublisherLifecycleUpdate({
+                            sessionId: connection.sessionId,
+                            participantCursors: result.participantCursors,
+                            active: false,
+                            activeAt: result.activeAt.getTime(),
+                            ...(result.projection ? { projection: result.projection } : {}),
+                            ...(result.turnProjection ?? {}),
+                        });
+                        return;
+                    }
                     if (result.status !== 'applied') return;
                     await publishSessionPublisherLifecycleUpdate({
                         sessionId: connection.sessionId,
