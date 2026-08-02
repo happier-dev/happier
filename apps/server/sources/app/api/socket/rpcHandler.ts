@@ -383,7 +383,10 @@ export function rpcHandler(
                 // disconnect end a session whose runner is still alive.
                 const acceptedStopSessionId = sessionScopedStopSessionId ?? explicitMachineStopRequest?.sessionId ?? null;
                 if (acceptedStopSessionId && isAcceptedStopResponse(targetResponse)) {
-                    ctx.sessionPublisherPresence?.markExplicitStopRequested({
+                    // The intent is durable, so it has to be committed before the caller
+                    // learns the stop was accepted — the publisher disconnect that reads it
+                    // can arrive as soon as the runner starts tearing down.
+                    await ctx.sessionPublisherPresence?.markExplicitStopRequested({
                         sessionId: acceptedStopSessionId,
                     });
                 }

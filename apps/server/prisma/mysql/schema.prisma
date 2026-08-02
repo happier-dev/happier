@@ -321,6 +321,10 @@ model Session {
     runtimeActivityRevision BigInt @default(0)
     meaningfulActivityAt DateTime?
     active            Boolean             @default(false)
+    // When a runner accepted an explicit stop. The disconnect that completes the stop can
+    // reach a different server instance than the RPC that requested it, so the intent has
+    // to live on the session row rather than in the accepting instance's memory.
+    stopRequestedAt   DateTime?
     archivedAt        DateTime?
     lastActiveAt      DateTime            @default(now())
     createdAt         DateTime            @default(now())

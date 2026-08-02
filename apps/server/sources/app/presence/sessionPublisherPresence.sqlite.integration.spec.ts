@@ -467,7 +467,7 @@ describe("session publisher presence on SQLite", () => {
 
         // An explicit stop was requested but the runner died before it could prove
         // physical termination, so only the disconnect reaches the server.
-        presence.markExplicitStopRequested({ sessionId: seeded.binding.sessionId });
+        await presence.markExplicitStopRequested({ sessionId: seeded.binding.sessionId });
 
         const disconnected = await presence.forgetDisconnectedPublisher({ socket });
         // A terminal close carries participant cursors; the bare already-closed marker
@@ -489,6 +489,40 @@ describe("session publisher presence on SQLite", () => {
             lastActiveAt: registered.committedFence,
             runtimeActivityState: "unknown",
             runtimeActivityActiveCount: 0,
+        });
+    });
+
+    it("closes the publisher on disconnect when another server instance accepted the stop", async () => {
+        const seeded = await seed();
+        const now = () => new Date(seeded.fence.getTime() + 10);
+        // With a Redis RPC registry the stop call and the runner's publisher socket land on
+        // different server instances, so the intent only reaches the disconnect if it is
+        // durable rather than held in the accepting instance's memory.
+        const publisherInstance = createSessionPublisherPresence({ now });
+        const rpcInstance = createSessionPublisherPresence({ now });
+        const socket = {};
+        const registered = await publisherInstance.registerPublisher({
+            socket,
+            binding: seeded.binding,
+            completeActivitySnapshot: { state: "active", activeCount: 1 },
+        });
+        if (registered.status !== "registered") throw new Error("expected registration");
+
+        await rpcInstance.markExplicitStopRequested({ sessionId: seeded.binding.sessionId });
+
+        const disconnected = await publisherInstance.forgetDisconnectedPublisher({ socket });
+        if (!("participantCursors" in disconnected)) throw new Error("expected a terminal close with fanout");
+        expect(disconnected.status).toBe("closed");
+        expect(disconnected.participantCursors.map((cursor) => cursor.accountId).sort())
+            .toEqual(seeded.participantIds);
+        await expect(db.session.findUniqueOrThrow({
+            where: { id: seeded.binding.sessionId },
+            select: { active: true, lastActiveAt: true, stopRequestedAt: true },
+        })).resolves.toEqual({
+            active: false,
+            lastActiveAt: registered.committedFence,
+            // Consumed by the disconnect it explained, so it cannot end a later publisher.
+            stopRequestedAt: null,
         });
     });
 
