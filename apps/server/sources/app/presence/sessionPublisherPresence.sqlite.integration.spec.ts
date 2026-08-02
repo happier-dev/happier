@@ -526,6 +526,45 @@ describe("session publisher presence on SQLite", () => {
         });
     });
 
+    it("does not let a successor publisher's disconnect consume a stop intent recorded for its predecessor", async () => {
+        const seeded = await seed();
+        let now = new Date(seeded.fence.getTime() + 10);
+        const presence = createSessionPublisherPresence({ now: () => now });
+        const predecessor = {};
+        const first = await presence.registerPublisher({
+            socket: predecessor,
+            binding: seeded.binding,
+            completeActivitySnapshot: { state: "active", activeCount: 1 },
+        });
+        if (first.status !== "registered") throw new Error("expected first registration");
+
+        // The stop was accepted but never killed the runner, so its intent is still on the
+        // row when a successor takes the session over.
+        await presence.markExplicitStopRequested({ sessionId: seeded.binding.sessionId });
+
+        now = new Date(first.committedFence.getTime() + 10);
+        const successorSocket = {};
+        const successor = await presence.registerPublisher({
+            socket: successorSocket,
+            binding: seeded.binding,
+            completeActivitySnapshot: { state: "active", activeCount: 1 },
+        });
+        if (successor.status !== "registered") throw new Error("expected successor registration");
+
+        // The successor's own disconnect is incidental. Reading the predecessor's intent
+        // here would end a session whose runner never agreed to stop.
+        const disconnected = await presence.forgetDisconnectedPublisher({ socket: successorSocket });
+        expect(disconnected.status).not.toBe("closed");
+        await expect(db.session.findUniqueOrThrow({
+            where: { id: seeded.binding.sessionId },
+            select: { active: true, lastActiveAt: true, stopRequestedAt: true },
+        })).resolves.toEqual({
+            active: true,
+            lastActiveAt: successor.committedFence,
+            stopRequestedAt: null,
+        });
+    });
+
     it("does not let a completed explicit stop close a successor publisher that registered meanwhile", async () => {
         const seeded = await seed();
         let now = new Date(seeded.fence.getTime() + 10);

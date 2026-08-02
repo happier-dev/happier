@@ -178,7 +178,10 @@ export function createSessionPublisherPresence(options: Readonly<{ now?: () => D
                     archivedAt: null,
                     lastActiveAt: session.lastActiveAt,
                 },
-                data: { active: true, lastActiveAt: committedFence },
+                // A registering publisher is a new binding, so any stop intent left by a
+                // predecessor no longer explains anything. Clearing it here is what keeps
+                // the successor's own later disconnect from being read as that stop.
+                data: { active: true, lastActiveAt: committedFence, stopRequestedAt: null },
             });
             if (updated.count === 0) throw new RegistrationContentionError();
             const participantCursors = await markSessionParticipantsChanged({ tx, sessionId: binding.sessionId });
