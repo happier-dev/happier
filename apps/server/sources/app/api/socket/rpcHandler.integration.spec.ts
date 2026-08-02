@@ -686,6 +686,37 @@ describe("rpcHandler", () => {
     expect(markExplicitStopRequested).not.toHaveBeenCalled();
   });
 
+  it("records an accepted stop even when the caller sends no acknowledgement callback", async () => {
+    vi.resetModules();
+    const { rpcHandler } = await import("./rpcHandler");
+    const method = `sess_1:${RPC_METHODS.KILL_SESSION}`;
+    const markExplicitStopRequested = vi.fn();
+    const targetEmitWithAck = vi.fn().mockResolvedValue({ status: "requested" });
+    const targetSocket = createFakeSocket({
+      id: "runner-socket",
+      timeout: vi.fn(() => ({ emitWithAck: targetEmitWithAck })) as any,
+    });
+    const callerSocket = createFakeSocket({ id: "caller-socket" });
+
+    rpcHandler("user-1", callerSocket as any, new Map<string, any>([[method, targetSocket]]) as any, new Map<string, any>() as any, {
+      io: {} as any,
+      redisRegistry: { enabled: false },
+      sessionPublisherPresence: {
+        captureExplicitMachineStop: vi.fn(),
+        finalizeExplicitMachineStop: vi.fn(),
+        markExplicitStopRequested,
+      } as any,
+    });
+
+    // Socket.IO lets a caller emit without an acknowledgement. The runner still accepted
+    // the stop, so the disconnect it produces has to stay explainable — otherwise the
+    // session holds `active` for the full presence fence and archive keeps returning 409.
+    await getSocketHandler(callerSocket, SOCKET_RPC_EVENTS.CALL)({ method, params: {} });
+
+    expect(targetEmitWithAck).toHaveBeenCalledTimes(1);
+    expect(markExplicitStopRequested).toHaveBeenCalledWith({ sessionId: "sess_1" });
+  });
+
   it("uses Redis RPC registry + io.emitWithAck when enabled", async () => {
     vi.resetModules();
     const targetSocketId = "target-socket";

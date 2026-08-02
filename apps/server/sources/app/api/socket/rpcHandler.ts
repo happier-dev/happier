@@ -376,6 +376,9 @@ export function rpcHandler(
                 }
                 return allRpcListeners.get(targetUserId)?.get(method) ?? null;
             };
+            // Owns the explicit-stop lifecycle — intent recording and machine-stop
+            // finalization — not just the shape of the caller's response. Every successful
+            // forward must run it, including one the caller made without an acknowledgement.
             const forwardTargetResponse = async (targetResponse: unknown) => {
                 const forwarded = forwardedRpcTargetResponse({ method, targetResponse });
                 // Only a stop the runner accepted may explain a later disconnect. Recording
@@ -526,9 +529,11 @@ export function rpcHandler(
                             SOCKET_RPC_EVENTS.REQUEST,
                             buildForwardedRequest(),
                         );
-                        if (callback) {
-                            callback(await forwardTargetResponse(response));
-                        }
+                        // Evaluated before the optional call: `callback?.(await ...)` would
+                        // short-circuit its argument and skip the stop lifecycle entirely
+                        // when the caller emitted without an acknowledgement.
+                        const forwardedResponse = await forwardTargetResponse(response);
+                        callback?.(forwardedResponse);
                         return;
                     }
                     if (!targetSocketId) {
@@ -624,9 +629,8 @@ export function rpcHandler(
                     }
                     const response = Array.isArray(responses) ? responses[0] : responses;
 
-                    if (callback) {
-                        callback(await forwardTargetResponse(response));
-                    }
+                    const forwardedResponse = await forwardTargetResponse(response);
+                    callback?.(forwardedResponse);
                     return;
                 }
 
@@ -691,9 +695,8 @@ export function rpcHandler(
                     buildForwardedRequest(),
                 );
 
-                if (callback) {
-                    callback(await forwardTargetResponse(response));
-                }
+                const forwardedResponse = await forwardTargetResponse(response);
+                callback?.(forwardedResponse);
 
             } catch (error) {
                 const errorMsg = error instanceof Error ? error.message : 'RPC call failed';
