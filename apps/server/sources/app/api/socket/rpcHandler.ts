@@ -9,8 +9,11 @@ import {
     RPC_ERROR_MESSAGES,
     type SocketRpcAuthorizationContext,
 } from "@happier-dev/protocol/rpc";
-import { StopSessionResultSchema } from "@happier-dev/protocol";
-import { SOCKET_RPC_EVENTS } from "@happier-dev/protocol/socketRpc";
+import {
+    SOCKET_RPC_EVENTS,
+    SOCKET_RPC_TRANSPORT_RESPONSE_ENVELOPE_VERSION_V1,
+    SocketRpcTransportResponseEnvelopeV1Schema,
+} from "@happier-dev/protocol/socketRpc";
 import { checkSessionAccess, requireAccessLevel } from "@/app/share/accessControl";
 import { resolveRpcForwardTimeoutMs } from "./rpcForwardTimeout";
 import { resolveRpcMethodAvailabilityGraceMs, resolveRpcMethodAvailabilityPollMs } from "./rpcMethodAvailabilityGrace";
@@ -114,6 +117,20 @@ function readMachineIdPrefix(method: string): string | null {
     return method.slice(0, separatorIndex);
 }
 
+function canRegisterMachineScopedRpcMethod(socket: Socket, method: string): boolean {
+    const machineId = readMachineScopedSocketMachineId(socket);
+    if (!machineId) return true;
+    const methodMachineId = readMachineIdPrefix(method);
+    return methodMachineId === null || methodMachineId === machineId;
+}
+
+function isExplicitMachineStopTargetSocket(params: Readonly<{
+    socket: Socket;
+    request: Readonly<{ machineId: string }>;
+}>): boolean {
+    return readMachineScopedSocketMachineId(params.socket) === params.request.machineId;
+}
+
 function readExplicitMachineStopRequest(method: string, value: unknown): Readonly<{
     machineId: string;
     sessionId: string;
@@ -128,32 +145,6 @@ function readExplicitMachineStopRequest(method: string, value: unknown): Readonl
     const trimmedSessionId = sessionId.trim();
     if (!trimmedSessionId || trimmedSessionId.length > MAX_RPC_METHOD_NAME_LENGTH) return null;
     return { machineId, sessionId: trimmedSessionId };
-}
-
-/**
- * Session-scoped stop (`<sessionId>:killSession`). The runner answers this one directly,
- * so unlike the machine-scoped stop there is no result the server can fence on — the only
- * later signal is the publisher disconnect, which needs the recorded intent to be read as
- * an intentional termination rather than an incidental drop.
- */
-function readSessionScopedStopSessionId(method: string): string | null {
-    const separatorIndex = method.indexOf(':');
-    if (separatorIndex <= 0) return null;
-    if (method.slice(separatorIndex + 1) !== RPC_METHODS.KILL_SESSION) return null;
-    const sessionId = method.slice(0, separatorIndex).trim();
-    if (!sessionId || sessionId.length > MAX_RPC_METHOD_NAME_LENGTH) return null;
-    return sessionId;
-}
-
-/**
- * A stop the runner accepted: either proven termination or an acknowledged request.
- * A transport error, refusal, or missing method is not acceptance.
- */
-function isAcceptedStopResponse(targetResponse: unknown): boolean {
-    const strict = StopSessionResultSchema.safeParse(targetResponse);
-    if (strict.success) return strict.data.status === "stopped" || strict.data.status === "requested";
-    if (!targetResponse || typeof targetResponse !== "object") return false;
-    return (targetResponse as { success?: unknown }).success === true;
 }
 
 function revalidatePrivilegedRpcTargetCompatibility(socket: Socket, method: string) {
@@ -196,7 +187,7 @@ export function rpcHandler(
         redisRegistry: RpcRedisRegistryConfig;
         sessionPublisherPresence?: Pick<
             ReturnType<typeof createSessionPublisherPresence>,
-            "captureExplicitMachineStop" | "finalizeExplicitMachineStop" | "markExplicitStopRequested"
+            "captureExplicitMachineStop" | "finalizeExplicitMachineStop"
         >;
     },
 ) {
@@ -227,7 +218,10 @@ export function rpcHandler(
                 return;
             }
 
-            if (!canRegisterSessionScopedRpcMethod({ socket, method })) {
+            if (
+                !canRegisterSessionScopedRpcMethod({ socket, method })
+                || !canRegisterMachineScopedRpcMethod(socket, method)
+            ) {
                 socket.emit(SOCKET_RPC_EVENTS.ERROR, { type: 'register', error: 'Forbidden' });
                 return;
             }
@@ -354,7 +348,6 @@ export function rpcHandler(
 
             let { targetUserId, targetSocket } = targetResolution;
             const explicitMachineStopRequest = readExplicitMachineStopRequest(method, rpcAuthorization);
-            const sessionScopedStopSessionId = readSessionScopedStopSessionId(method);
             if (method.endsWith(`:${RPC_METHODS.STOP_SESSION}`) && !explicitMachineStopRequest) {
                 callback?.({
                     ok: false,
@@ -369,6 +362,12 @@ export function rpcHandler(
                 method,
                 params: callParams,
                 ...(rpcAuthorization ? { authorization: rpcAuthorization } : {}),
+                ...(explicitMachineStopRequest
+                    ? {
+                        transportResponseEnvelopeVersion:
+                            SOCKET_RPC_TRANSPORT_RESPONSE_ENVELOPE_VERSION_V1,
+                    }
+                    : {}),
             });
             const lookupInMemoryTargetSocket = (): Socket | null => {
                 if (targetUserId === userId && !allRpcListeners.has(userId)) {
@@ -376,28 +375,23 @@ export function rpcHandler(
                 }
                 return allRpcListeners.get(targetUserId)?.get(method) ?? null;
             };
-            // Owns the explicit-stop lifecycle — intent recording and machine-stop
-            // finalization — not just the shape of the caller's response. Every successful
-            // forward must run it, including one the caller made without an acknowledgement.
+            // Explicit machine-stop lifecycle work is independent from whether the caller
+            // supplied an acknowledgement callback, so every successful forward runs it.
             const forwardTargetResponse = async (targetResponse: unknown) => {
-                const forwarded = forwardedRpcTargetResponse({ method, targetResponse });
-                // Only a stop the runner accepted may explain a later disconnect. Recording
-                // intent for an attempt that failed would let an unrelated incidental
-                // disconnect end a session whose runner is still alive.
-                const acceptedStopSessionId = sessionScopedStopSessionId ?? explicitMachineStopRequest?.sessionId ?? null;
-                if (acceptedStopSessionId && isAcceptedStopResponse(targetResponse)) {
-                    // The intent is durable, so it has to be committed before the caller
-                    // learns the stop was accepted — the publisher disconnect that reads it
-                    // can arrive as soon as the runner starts tearing down.
-                    await ctx.sessionPublisherPresence?.markExplicitStopRequested({
-                        sessionId: acceptedStopSessionId,
-                    });
-                }
+                const envelope = explicitMachineStopRequest
+                    ? SocketRpcTransportResponseEnvelopeV1Schema.safeParse(targetResponse)
+                    : null;
+                const targetResult = envelope?.success ? envelope.data.result : targetResponse;
+                const forwarded = forwardedRpcTargetResponse({ method, targetResponse: targetResult });
                 if (!explicitMachineStopRequest || explicitMachineStopCapture?.status !== "captured") {
                     return forwarded;
                 }
-                const stopResult = StopSessionResultSchema.safeParse(targetResponse);
-                if (!stopResult.success || stopResult.data.status !== "stopped") return forwarded;
+                const didProveStopped = (
+                    envelope?.success
+                    && envelope.data.acknowledgement?.kind === "session.stop"
+                    && envelope.data.acknowledgement.status === "stopped"
+                );
+                if (!didProveStopped) return forwarded;
                 const presence = ctx.sessionPublisherPresence;
                 if (!presence) {
                     return {
@@ -489,7 +483,17 @@ export function rpcHandler(
                         targetSocketId = awaited.targetSocketId;
                         targetSocket = awaited.targetSocket ?? targetSocket;
                     }
-                    const fallbackSocket = targetSocket ?? lookupInMemoryTargetSocket();
+                    const fallbackCandidate = targetSocket ?? lookupInMemoryTargetSocket();
+                    const fallbackSocket = (
+                        fallbackCandidate
+                        && (
+                            !explicitMachineStopRequest
+                            || !targetSocketId
+                            || fallbackCandidate.id === targetSocketId
+                        )
+                    )
+                        ? fallbackCandidate
+                        : null;
                     if (fallbackSocket && fallbackSocket.connected) {
                         if (fallbackSocket === socket) {
                             if (callback) {
@@ -502,6 +506,20 @@ export function rpcHandler(
                         }
 
                         const fallbackMachineId = readMachineScopedSocketMachineId(fallbackSocket);
+                        if (
+                            explicitMachineStopRequest
+                            && !isExplicitMachineStopTargetSocket({
+                                socket: fallbackSocket,
+                                request: explicitMachineStopRequest,
+                            })
+                        ) {
+                            callback?.({
+                                ok: false,
+                                error: RPC_ERROR_MESSAGES.METHOD_NOT_AVAILABLE,
+                                errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
+                            });
+                            return;
+                        }
                         if (fallbackMachineId) {
                             const fallbackMachine = await validateCurrentMachineSocket({
                                 accountId: targetUserId,
@@ -560,7 +578,7 @@ export function rpcHandler(
                     }
 
                     attemptedTargetSocketId = targetSocketId;
-                    if (resolveSocketRpcProviderStartingMethod(method)) {
+                    if (resolveSocketRpcProviderStartingMethod(method) || explicitMachineStopRequest) {
                         const currentTargets = await ctx.io.in(targetSocketId).fetchSockets();
                         const currentTarget = currentTargets.find((candidate) => candidate.id === targetSocketId);
                         if (!currentTarget) {
@@ -573,6 +591,20 @@ export function rpcHandler(
                             return;
                         }
                         const currentMachineId = readMachineScopedSocketMachineId(currentTarget as unknown as Socket);
+                        if (
+                            explicitMachineStopRequest
+                            && !isExplicitMachineStopTargetSocket({
+                                socket: currentTarget as unknown as Socket,
+                                request: explicitMachineStopRequest,
+                            })
+                        ) {
+                            callback?.({
+                                ok: false,
+                                error: RPC_ERROR_MESSAGES.METHOD_NOT_AVAILABLE,
+                                errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
+                            });
+                            return;
+                        }
                         if (!currentMachineId) {
                             const upgradeRequired = buildPrivilegedRpcUpgradeRequiredResponse(
                                 currentTarget as unknown as Socket,
@@ -666,6 +698,20 @@ export function rpcHandler(
                 }
 
                 const targetMachineId = readMachineScopedSocketMachineId(targetSocket);
+                if (
+                    explicitMachineStopRequest
+                    && !isExplicitMachineStopTargetSocket({
+                        socket: targetSocket,
+                        request: explicitMachineStopRequest,
+                    })
+                ) {
+                    callback?.({
+                        ok: false,
+                        error: RPC_ERROR_MESSAGES.METHOD_NOT_AVAILABLE,
+                        errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
+                    });
+                    return;
+                }
                 if (targetMachineId) {
                     const targetMachine = await validateCurrentMachineSocket({
                         accountId: targetUserId,

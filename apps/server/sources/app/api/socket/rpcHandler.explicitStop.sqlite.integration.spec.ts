@@ -69,7 +69,19 @@ describe("explicit machine stop RPC on SQLite", () => {
         const method = `${seeded.machineId}:${RPC_METHODS.STOP_SESSION}`;
         const targetEmitWithAck = vi.fn(async () => {
             await params.beforeResponse?.();
-            return params.targetResponse;
+            const isStopped = (
+                params.targetResponse
+                && typeof params.targetResponse === "object"
+                && !Array.isArray(params.targetResponse)
+                && (params.targetResponse as { status?: unknown }).status === "stopped"
+            );
+            return {
+                v: 1,
+                result: params.targetResponse,
+                ...(isStopped
+                    ? { acknowledgement: { kind: "session.stop", status: "stopped" } }
+                    : {}),
+            };
         });
         const target = createFakeSocket({
             id: "target-socket",
@@ -117,6 +129,7 @@ describe("explicit machine stop RPC on SQLite", () => {
                     kind: "session.write",
                     sessionId: result.session.id,
                 },
+                transportResponseEnvelopeVersion: 1,
             },
         );
         expect(result.callback).toHaveBeenCalledWith({
@@ -166,7 +179,11 @@ describe("explicit machine stop RPC on SQLite", () => {
                     });
                     if (successor.status !== "registered") throw new Error("expected successor registration");
                     successorFence = successor.committedFence;
-                    return { status: "stopped" };
+                    return {
+                        v: 1,
+                        result: { status: "stopped" },
+                        acknowledgement: { kind: "session.stop", status: "stopped" },
+                    };
                 },
             })),
         });

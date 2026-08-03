@@ -19,7 +19,7 @@ import {
     writeSessionRuntimeActivityObserverLossInTx,
     writeSessionRuntimeActivityProjectionInTx,
 } from "@/app/session/runtimeActivity/writeProjection";
-import { inTx, type Tx } from "@/storage/inTx";
+import { inTx } from "@/storage/inTx";
 import { blockInheritedProviderDeliveryClaims } from "@/app/session/pending/providerDeliveryClaimStaleness";
 import { applyLatestSessionTurnEndInTx } from "@/app/session/sessionWriteService";
 
@@ -95,53 +95,12 @@ function publisherIntentKey(binding: PublisherBinding, snapshot: SessionRuntimeA
 
 class RegistrationContentionError extends Error {}
 
-/**
- * How long an explicit stop request stays able to explain a publisher disconnect.
- * Comfortably longer than a stop round trip, far shorter than the presence timeout
- * fence so a stale intent can never close an unrelated later publisher.
- */
-const EXPLICIT_STOP_REQUEST_TTL_MS = 2 * 60 * 1000;
-
-/**
- * Read-and-clear the durable stop intent for the disconnect that is being handled.
- * Clearing is unconditional: an intent older than the window no longer explains a
- * disconnect, and leaving it behind would let a much later incidental drop end a
- * session whose runner is alive.
- */
-async function consumeExplicitStopRequestInTx(params: Readonly<{
-    tx: Tx;
-    sessionId: string;
-    stopRequestedAt: Date | null;
-    at: Date;
-}>): Promise<boolean> {
-    if (params.stopRequestedAt === null) return false;
-    await params.tx.session.updateMany({
-        where: { id: params.sessionId, stopRequestedAt: params.stopRequestedAt },
-        data: { stopRequestedAt: null },
-    });
-    return params.at.getTime() - params.stopRequestedAt.getTime() <= EXPLICIT_STOP_REQUEST_TTL_MS;
-}
-
 export function createSessionPublisherPresence(options: Readonly<{ now?: () => Date }> = {}) {
     const now = options.now ?? (() => new Date());
     const registrations = new WeakMap<object, Registration>();
     const registrationAttempts = new WeakMap<object, RegistrationAttempt>();
     const closeResults = new WeakMap<object, Promise<ClosePublisherResult>>();
     const operationTails = new WeakMap<object, Promise<void>>();
-
-    // A stop that never proves physical termination reaches the server only as a publisher
-    // disconnect, and with a Redis RPC registry that disconnect can land on a different
-    // instance than the accepting call. The intent lives on the session row so it survives
-    // the hop from stop request to disconnect.
-    const markExplicitStopRequested = async (params: Readonly<{ sessionId: string }>): Promise<void> => {
-        const at = now();
-        await inTx(async (tx) => {
-            await tx.session.updateMany({
-                where: { id: params.sessionId },
-                data: { stopRequestedAt: at },
-            });
-        });
-    };
 
     const serialize = async <T>(socket: object, operation: () => Promise<T>): Promise<T> => {
         const prior = operationTails.get(socket) ?? Promise.resolve();
@@ -178,10 +137,7 @@ export function createSessionPublisherPresence(options: Readonly<{ now?: () => D
                     archivedAt: null,
                     lastActiveAt: session.lastActiveAt,
                 },
-                // A registering publisher is a new binding, so any stop intent left by a
-                // predecessor no longer explains anything. Clearing it here is what keeps
-                // the successor's own later disconnect from being read as that stop.
-                data: { active: true, lastActiveAt: committedFence, stopRequestedAt: null },
+                data: { active: true, lastActiveAt: committedFence },
             });
             if (updated.count === 0) throw new RegistrationContentionError();
             const participantCursors = await markSessionParticipantsChanged({ tx, sessionId: binding.sessionId });
@@ -241,13 +197,11 @@ export function createSessionPublisherPresence(options: Readonly<{ now?: () => D
         }
     };
 
-    const closeBindingAtFenceInTx = async (params: Readonly<{
-        tx: Tx;
+    const closeBindingAtFence = async (params: Readonly<{
         binding: PublisherBinding;
         committedFence: Date;
         mutationId: string;
-    }>): Promise<ClosePublisherResult> => {
-        const tx = params.tx;
+    }>): Promise<ClosePublisherResult> => await inTx(async (tx): Promise<ClosePublisherResult> => {
         const session = await tx.session.findUnique({
             where: { id: params.binding.sessionId },
             select: { active: true, archivedAt: true, lastActiveAt: true },
@@ -258,6 +212,7 @@ export function createSessionPublisherPresence(options: Readonly<{ now?: () => D
         }
         if (session.archivedAt !== null) return { status: "rejected", reason: "archived" };
         if (session.lastActiveAt.getTime() !== params.committedFence.getTime()) return { status: "superseded" };
+        if (!session.active) return { status: "already_inactive" };
         const turnResult = await applyLatestSessionTurnEndInTx({
             tx,
             sessionId: params.binding.sessionId,
@@ -304,15 +259,7 @@ export function createSessionPublisherPresence(options: Readonly<{ now?: () => D
                 }
                 : {}),
         };
-    };
-
-    const closeBindingAtFence = async (params: Readonly<{
-        binding: PublisherBinding;
-        committedFence: Date;
-        mutationId: string;
-    }>): Promise<ClosePublisherResult> => await inTx(
-        async (tx) => await closeBindingAtFenceInTx({ tx, ...params }),
-    );
+    });
 
     const captureExplicitMachineStop = async (params: Readonly<{
         binding: PublisherBinding;
@@ -544,7 +491,6 @@ export function createSessionPublisherPresence(options: Readonly<{ now?: () => D
         resolveCurrentPublisher,
         runAsCurrentPublisher,
         publishSnapshot,
-        markExplicitStopRequested,
         forgetDisconnectedPublisher: async (params: Readonly<{ socket: object }>) => await serialize(params.socket, async () => {
             try {
                 const registration = registrations.get(params.socket);
@@ -553,33 +499,13 @@ export function createSessionPublisherPresence(options: Readonly<{ now?: () => D
                 return await inTx(async (tx) => {
                     const session = await tx.session.findUnique({
                         where: { id: registration.binding.sessionId },
-                        select: { active: true, archivedAt: true, lastActiveAt: true, stopRequestedAt: true },
+                        select: { active: true, archivedAt: true, lastActiveAt: true },
                     });
                     if (!session) return { status: "rejected", reason: "not_found" } as const;
                     if (!await hasCurrentSessionScopedMachineAccessInTx({ tx, ...registration.binding })) {
                         return { status: "rejected", reason: "unauthorized" } as const;
                     }
                     if (session.archivedAt !== null) return { status: "rejected", reason: "archived" } as const;
-                    // An explicit stop is an intentional termination, so the disconnect it
-                    // produces ends the session now. Without this the row stays active until
-                    // the presence timeout fence expires, which blocks archive for that whole
-                    // window. A superseded fence means a successor publisher owns the session,
-                    // so fall through and only record observer loss.
-                    const explicitStopRequested = await consumeExplicitStopRequestInTx({
-                        tx,
-                        sessionId: registration.binding.sessionId,
-                        stopRequestedAt: session.stopRequestedAt,
-                        at: now(),
-                    });
-                    if (explicitStopRequested) {
-                        const closed = await closeBindingAtFenceInTx({
-                            tx,
-                            binding: registration.binding,
-                            committedFence: registration.committedFence,
-                            mutationId: `explicit-stop-disconnect:${registration.committedFence.getTime()}`,
-                        });
-                        if (closed.status === "closed") return closed;
-                    }
                     if (session.lastActiveAt.getTime() !== registration.committedFence.getTime()) {
                         return { status: "rejected", reason: "superseded" } as const;
                     }

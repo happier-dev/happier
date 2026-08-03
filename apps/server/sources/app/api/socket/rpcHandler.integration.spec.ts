@@ -127,6 +127,34 @@ describe("rpcHandler", () => {
     }
   });
 
+  it("rejects a machine-scoped socket registering another machine's RPC prefix", async () => {
+    vi.resetModules();
+    dbMockFns.machineFindFirst.mockResolvedValue({
+      id: "machine-1",
+      revokedAt: null,
+      replacedByMachineId: null,
+    });
+    const { rpcHandler } = await import("./rpcHandler");
+    const socket = createFakeSocket({
+      data: { clientType: "machine-scoped", machineId: "machine-1" },
+    });
+    const listeners = new Map<string, any>();
+
+    rpcHandler("user-1", socket as any, listeners, new Map(), {
+      io: {} as any,
+      redisRegistry: { enabled: false },
+    });
+
+    const method = `machine-2:${RPC_METHODS.STOP_SESSION}`;
+    await getSocketHandler(socket, SOCKET_RPC_EVENTS.REGISTER)({ method });
+
+    expect(listeners.has(method)).toBe(false);
+    expect(socket.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR, {
+      type: "register",
+      error: "Forbidden",
+    });
+  });
+
   it.each([
     {
       method: `machine-1:${RPC_METHODS.SPAWN_HAPPY_SESSION}`,
@@ -658,42 +686,33 @@ describe("rpcHandler", () => {
     );
   });
 
-  it("records no explicit-stop intent when a session stop RPC has no reachable runner", async () => {
+  it("finalizes daemon-proven machine stop even when the caller sends no acknowledgement callback", async () => {
     vi.resetModules();
-    const { rpcHandler } = await import("./rpcHandler");
-    const socket = createFakeSocket();
-    const markExplicitStopRequested = vi.fn();
-
-    rpcHandler("user-1", socket as any, new Map<string, any>() as any, new Map<string, any>() as any, {
-      io: {} as any,
-      redisRegistry: { enabled: false },
-      sessionPublisherPresence: {
-        captureExplicitMachineStop: vi.fn(),
-        finalizeExplicitMachineStop: vi.fn(),
-        markExplicitStopRequested,
-      } as any,
+    dbMockFns.machineFindFirst.mockResolvedValue({
+      id: "machine-1",
+      revokedAt: null,
+      replacedByMachineId: null,
     });
-
-    const handler = getSocketHandler(socket, SOCKET_RPC_EVENTS.CALL);
-    const callback = vi.fn();
-    await handler({ method: `sess_1:${RPC_METHODS.KILL_SESSION}`, params: {} }, callback);
-
-    // The stop never reached a runner, so nothing may later read a disconnect as an
-    // intentional termination — that would end a session whose runner is still alive.
-    expect(callback).toHaveBeenCalledWith(
-      expect.objectContaining({ ok: false, errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE }),
-    );
-    expect(markExplicitStopRequested).not.toHaveBeenCalled();
-  });
-
-  it("records an accepted stop even when the caller sends no acknowledgement callback", async () => {
-    vi.resetModules();
+    dbMockFns.sessionFindUnique.mockResolvedValue({
+      accountId: "user-1",
+      active: true,
+      lastActiveAt: new Date(1_000),
+    });
     const { rpcHandler } = await import("./rpcHandler");
-    const method = `sess_1:${RPC_METHODS.KILL_SESSION}`;
-    const markExplicitStopRequested = vi.fn();
-    const targetEmitWithAck = vi.fn().mockResolvedValue({ status: "requested" });
+    const method = `machine-1:${RPC_METHODS.STOP_SESSION}`;
+    const capturedTarget = {
+      binding: { accountId: "user-1", machineId: "machine-1", sessionId: "sess_1" },
+      committedFence: new Date(1_000),
+    };
+    const finalizeExplicitMachineStop = vi.fn().mockResolvedValue({ status: "already_inactive" });
+    const targetEmitWithAck = vi.fn().mockResolvedValue({
+      v: 1,
+      result: "opaque-e2ee-result",
+      acknowledgement: { kind: "session.stop", status: "stopped" },
+    });
     const targetSocket = createFakeSocket({
-      id: "runner-socket",
+      id: "daemon-socket",
+      data: { clientType: "machine-scoped", machineId: "machine-1" },
       timeout: vi.fn(() => ({ emitWithAck: targetEmitWithAck })) as any,
     });
     const callerSocket = createFakeSocket({ id: "caller-socket" });
@@ -702,19 +721,291 @@ describe("rpcHandler", () => {
       io: {} as any,
       redisRegistry: { enabled: false },
       sessionPublisherPresence: {
-        captureExplicitMachineStop: vi.fn(),
-        finalizeExplicitMachineStop: vi.fn(),
-        markExplicitStopRequested,
+        captureExplicitMachineStop: vi.fn().mockResolvedValue({ status: "captured", target: capturedTarget }),
+        finalizeExplicitMachineStop,
       } as any,
     });
 
-    // Socket.IO lets a caller emit without an acknowledgement. The runner still accepted
-    // the stop, so the disconnect it produces has to stay explainable — otherwise the
-    // session holds `active` for the full presence fence and archive keeps returning 409.
-    await getSocketHandler(callerSocket, SOCKET_RPC_EVENTS.CALL)({ method, params: {} });
+    await getSocketHandler(callerSocket, SOCKET_RPC_EVENTS.CALL)({
+      method,
+      params: "opaque-e2ee-params",
+      authorization: { kind: "session.write", sessionId: "sess_1" },
+    });
 
     expect(targetEmitWithAck).toHaveBeenCalledTimes(1);
-    expect(markExplicitStopRequested).toHaveBeenCalledWith({ sessionId: "sess_1" });
+    expect(finalizeExplicitMachineStop).toHaveBeenCalledWith({ target: capturedTarget });
+  });
+
+  it("finalizes an encrypted machine stop from authenticated transport proof", async () => {
+    vi.resetModules();
+    dbMockFns.machineFindFirst.mockResolvedValue({
+      id: "machine-1",
+      revokedAt: null,
+      replacedByMachineId: null,
+    });
+    dbMockFns.sessionFindUnique.mockResolvedValue({
+      accountId: "user-1",
+      active: true,
+      lastActiveAt: new Date(1_000),
+    });
+    const { rpcHandler } = await import("./rpcHandler");
+    const method = `machine-1:${RPC_METHODS.STOP_SESSION}`;
+    const encryptedResult = "opaque-e2ee-result";
+    const targetEmitWithAck = vi.fn().mockResolvedValue({
+      v: 1,
+      result: encryptedResult,
+      acknowledgement: { kind: "session.stop", status: "stopped" },
+    });
+    const targetSocket = createFakeSocket({
+      id: "daemon-socket",
+      data: { clientType: "machine-scoped", machineId: "machine-1" },
+      timeout: vi.fn(() => ({ emitWithAck: targetEmitWithAck })) as any,
+    });
+    const callerSocket = createFakeSocket({ id: "caller-socket" });
+    const capturedTarget = {
+      binding: { accountId: "user-1", machineId: "machine-1", sessionId: "sess_1" },
+      committedFence: new Date(1_000),
+    };
+    const captureExplicitMachineStop = vi.fn().mockResolvedValue({
+      status: "captured",
+      target: capturedTarget,
+    });
+    const finalizeExplicitMachineStop = vi.fn().mockResolvedValue({ status: "already_inactive" });
+
+    rpcHandler(
+      "user-1",
+      callerSocket as any,
+      new Map<string, any>([[method, targetSocket]]) as any,
+      new Map<string, any>() as any,
+      {
+        io: {} as any,
+        redisRegistry: { enabled: false },
+        sessionPublisherPresence: {
+          captureExplicitMachineStop,
+          finalizeExplicitMachineStop,
+        } as any,
+      },
+    );
+
+    const callback = vi.fn();
+    await getSocketHandler(callerSocket, SOCKET_RPC_EVENTS.CALL)({
+      method,
+      params: "opaque-e2ee-params",
+      authorization: { kind: "session.write", sessionId: "sess_1" },
+    }, callback);
+
+    expect(targetEmitWithAck).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.REQUEST, {
+      method,
+      params: "opaque-e2ee-params",
+      authorization: { kind: "session.write", sessionId: "sess_1" },
+      transportResponseEnvelopeVersion: 1,
+    });
+    expect(finalizeExplicitMachineStop).toHaveBeenCalledWith({ target: capturedTarget });
+    expect(callback).toHaveBeenCalledWith({ ok: true, result: encryptedResult });
+  });
+
+  it("forwards an older daemon's raw encrypted result without treating it as stop proof", async () => {
+    vi.resetModules();
+    dbMockFns.machineFindFirst.mockResolvedValue({
+      id: "machine-1",
+      revokedAt: null,
+      replacedByMachineId: null,
+    });
+    dbMockFns.sessionFindUnique.mockResolvedValue({
+      accountId: "user-1",
+      active: true,
+      lastActiveAt: new Date(1_000),
+    });
+    const { rpcHandler } = await import("./rpcHandler");
+    const method = `machine-1:${RPC_METHODS.STOP_SESSION}`;
+    const encryptedResult = "legacy-opaque-e2ee-result";
+    const targetSocket = createFakeSocket({
+      id: "daemon-socket",
+      data: { clientType: "machine-scoped", machineId: "machine-1" },
+      timeout: vi.fn(() => ({ emitWithAck: vi.fn().mockResolvedValue(encryptedResult) })) as any,
+    });
+    const callerSocket = createFakeSocket({ id: "caller-socket" });
+    const finalizeExplicitMachineStop = vi.fn();
+
+    rpcHandler(
+      "user-1",
+      callerSocket as any,
+      new Map<string, any>([[method, targetSocket]]) as any,
+      new Map<string, any>() as any,
+      {
+        io: {} as any,
+        redisRegistry: { enabled: false },
+        sessionPublisherPresence: {
+          captureExplicitMachineStop: vi.fn().mockResolvedValue({
+            status: "captured",
+            target: {
+              binding: { accountId: "user-1", machineId: "machine-1", sessionId: "sess_1" },
+              committedFence: new Date(1_000),
+            },
+          }),
+          finalizeExplicitMachineStop,
+        } as any,
+      },
+    );
+
+    const callback = vi.fn();
+    await getSocketHandler(callerSocket, SOCKET_RPC_EVENTS.CALL)({
+      method,
+      params: "opaque-e2ee-params",
+      authorization: { kind: "session.write", sessionId: "sess_1" },
+    }, callback);
+
+    expect(finalizeExplicitMachineStop).not.toHaveBeenCalled();
+    expect(callback).toHaveBeenCalledWith({ ok: true, result: encryptedResult });
+  });
+
+  it("does not accept stop proof from a different machine-scoped responder", async () => {
+    vi.resetModules();
+    dbMockFns.machineFindFirst.mockResolvedValue({
+      id: "machine-2",
+      revokedAt: null,
+      replacedByMachineId: null,
+    });
+    dbMockFns.sessionFindUnique.mockResolvedValue({
+      accountId: "user-1",
+      active: true,
+      lastActiveAt: new Date(1_000),
+    });
+    const { rpcHandler } = await import("./rpcHandler");
+    const method = `machine-1:${RPC_METHODS.STOP_SESSION}`;
+    const targetEmitWithAck = vi.fn().mockResolvedValue({
+      v: 1,
+      result: "opaque-e2ee-result",
+      acknowledgement: { kind: "session.stop", status: "stopped" },
+    });
+    const wrongMachineSocket = createFakeSocket({
+      id: "wrong-machine-socket",
+      data: { clientType: "machine-scoped", machineId: "machine-2" },
+      timeout: vi.fn(() => ({ emitWithAck: targetEmitWithAck })) as any,
+    });
+    const callerSocket = createFakeSocket({ id: "caller-socket" });
+    const finalizeExplicitMachineStop = vi.fn();
+
+    rpcHandler(
+      "user-1",
+      callerSocket as any,
+      new Map<string, any>([[method, wrongMachineSocket]]) as any,
+      new Map<string, any>() as any,
+      {
+        io: {} as any,
+        redisRegistry: { enabled: false },
+        sessionPublisherPresence: {
+          captureExplicitMachineStop: vi.fn().mockResolvedValue({
+            status: "captured",
+            target: {
+              binding: { accountId: "user-1", machineId: "machine-1", sessionId: "sess_1" },
+              committedFence: new Date(1_000),
+            },
+          }),
+          finalizeExplicitMachineStop,
+        } as any,
+      },
+    );
+
+    const callback = vi.fn();
+    await getSocketHandler(callerSocket, SOCKET_RPC_EVENTS.CALL)({
+      method,
+      params: "opaque-e2ee-params",
+      authorization: { kind: "session.write", sessionId: "sess_1" },
+    }, callback);
+
+    expect(targetEmitWithAck).not.toHaveBeenCalled();
+    expect(finalizeExplicitMachineStop).not.toHaveBeenCalled();
+    expect(callback).toHaveBeenCalledWith(expect.objectContaining({
+      ok: false,
+      errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
+    }));
+  });
+
+  it("uses the Redis-selected current daemon instead of a stale same-machine local listener for stop proof", async () => {
+    vi.resetModules();
+    const targetSocketId = "current-daemon-socket";
+    const hmget = vi.fn().mockResolvedValue([targetSocketId]);
+    const evalFn = vi.fn();
+    const multi = vi.fn(() => ({ hset: () => ({ expire: () => ({ exec: vi.fn() }) }) }));
+    vi.doMock("@/storage/redis/redis", () => ({
+      getRedisClient: () => ({ hmget, eval: evalFn, multi }),
+    }));
+    dbMockFns.machineFindFirst.mockResolvedValue({
+      id: "machine-1",
+      revokedAt: null,
+      replacedByMachineId: null,
+    });
+    dbMockFns.sessionFindUnique.mockResolvedValue({
+      accountId: "user-1",
+      active: true,
+      lastActiveAt: new Date(1_000),
+    });
+
+    try {
+      const { rpcHandler } = await import("./rpcHandler");
+      const method = `machine-1:${RPC_METHODS.STOP_SESSION}`;
+      const staleLocalEmitWithAck = vi.fn().mockResolvedValue({
+        v: 1,
+        result: "stale-result",
+        acknowledgement: { kind: "session.stop", status: "stopped" },
+      });
+      const staleLocalSocket = createFakeSocket({
+        id: "stale-local-daemon-socket",
+        data: { clientType: "machine-scoped", machineId: "machine-1" },
+        timeout: vi.fn(() => ({ emitWithAck: staleLocalEmitWithAck })) as any,
+      });
+      const currentRemoteSocket = createFakeSocket({
+        id: targetSocketId,
+        data: { clientType: "machine-scoped", machineId: "machine-1" },
+      });
+      const remoteEmitWithAck = vi.fn().mockResolvedValue([{
+        v: 1,
+        result: "current-result",
+        acknowledgement: { kind: "session.stop", status: "stopped" },
+      }]);
+      const to = vi.fn(() => ({ emitWithAck: remoteEmitWithAck }));
+      const timeout = vi.fn(() => ({ to }));
+      const fetchSockets = vi.fn().mockResolvedValue([currentRemoteSocket]);
+      const io = { timeout, in: vi.fn(() => ({ fetchSockets })) } as any;
+      const callerSocket = createFakeSocket({ id: "caller-socket" });
+      const finalizeExplicitMachineStop = vi.fn().mockResolvedValue({ status: "already_inactive" });
+
+      rpcHandler(
+        "user-1",
+        callerSocket as any,
+        new Map<string, any>([[method, staleLocalSocket]]) as any,
+        new Map<string, any>() as any,
+        {
+          io,
+          redisRegistry: { enabled: true, instanceId: "instance-1", ttlSeconds: 120 },
+          sessionPublisherPresence: {
+            captureExplicitMachineStop: vi.fn().mockResolvedValue({
+              status: "captured",
+              target: {
+                binding: { accountId: "user-1", machineId: "machine-1", sessionId: "sess_1" },
+                committedFence: new Date(1_000),
+              },
+            }),
+            finalizeExplicitMachineStop,
+          } as any,
+        },
+      );
+
+      const callback = vi.fn();
+      await getSocketHandler(callerSocket, SOCKET_RPC_EVENTS.CALL)({
+        method,
+        params: "opaque-e2ee-params",
+        authorization: { kind: "session.write", sessionId: "sess_1" },
+      }, callback);
+
+      expect(staleLocalEmitWithAck).not.toHaveBeenCalled();
+      expect(remoteEmitWithAck).toHaveBeenCalledTimes(1);
+      expect(callback).toHaveBeenCalledWith({ ok: true, result: "current-result" });
+      expect(finalizeExplicitMachineStop).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.doUnmock("@/storage/redis/redis");
+    }
   });
 
   it("uses Redis RPC registry + io.emitWithAck when enabled", async () => {
