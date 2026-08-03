@@ -32,4 +32,28 @@ describe('SocketRpcTransportResponseEnvelopeV1Schema', () => {
       acknowledgement: { kind: 'session.stop', status: 'stopped' },
     }).success).toBe(false);
   });
+
+  it('rejects unsupported envelope versions', () => {
+    expect(SocketRpcTransportResponseEnvelopeV1Schema.safeParse({
+      v: 2,
+      result: 'opaque-encrypted-result',
+    }).success).toBe(false);
+  });
+
+  it('rejects unknown envelope and acknowledgement fields', () => {
+    expect(SocketRpcTransportResponseEnvelopeV1Schema.safeParse({
+      v: 1,
+      result: 'opaque-encrypted-result',
+      extra: true,
+    }).success).toBe(false);
+    expect(SocketRpcTransportResponseEnvelopeV1Schema.safeParse({
+      v: 1,
+      result: 'opaque-encrypted-result',
+      acknowledgement: {
+        kind: 'session.stop',
+        status: 'stopped',
+        extra: true,
+      },
+    }).success).toBe(false);
+  });
 });

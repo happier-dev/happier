@@ -131,6 +131,23 @@ function isExplicitMachineStopTargetSocket(params: Readonly<{
     return readMachineScopedSocketMachineId(params.socket) === params.request.machineId;
 }
 
+function readExplicitMachineStopTargetMismatch(params: Readonly<{
+    socket: Socket;
+    request: Readonly<{ machineId: string }> | null;
+}>): Readonly<{ ok: false; error: string; errorCode: string }> | null {
+    if (!params.request || isExplicitMachineStopTargetSocket({
+        socket: params.socket,
+        request: params.request,
+    })) {
+        return null;
+    }
+    return {
+        ok: false,
+        error: RPC_ERROR_MESSAGES.METHOD_NOT_AVAILABLE,
+        errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
+    };
+}
+
 function readExplicitMachineStopRequest(method: string, value: unknown): Readonly<{
     machineId: string;
     sessionId: string;
@@ -506,18 +523,12 @@ export function rpcHandler(
                         }
 
                         const fallbackMachineId = readMachineScopedSocketMachineId(fallbackSocket);
-                        if (
-                            explicitMachineStopRequest
-                            && !isExplicitMachineStopTargetSocket({
-                                socket: fallbackSocket,
-                                request: explicitMachineStopRequest,
-                            })
-                        ) {
-                            callback?.({
-                                ok: false,
-                                error: RPC_ERROR_MESSAGES.METHOD_NOT_AVAILABLE,
-                                errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
-                            });
+                        const fallbackStopTargetMismatch = readExplicitMachineStopTargetMismatch({
+                            socket: fallbackSocket,
+                            request: explicitMachineStopRequest,
+                        });
+                        if (fallbackStopTargetMismatch) {
+                            callback?.(fallbackStopTargetMismatch);
                             return;
                         }
                         if (fallbackMachineId) {
@@ -591,18 +602,12 @@ export function rpcHandler(
                             return;
                         }
                         const currentMachineId = readMachineScopedSocketMachineId(currentTarget as unknown as Socket);
-                        if (
-                            explicitMachineStopRequest
-                            && !isExplicitMachineStopTargetSocket({
-                                socket: currentTarget as unknown as Socket,
-                                request: explicitMachineStopRequest,
-                            })
-                        ) {
-                            callback?.({
-                                ok: false,
-                                error: RPC_ERROR_MESSAGES.METHOD_NOT_AVAILABLE,
-                                errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
-                            });
+                        const currentStopTargetMismatch = readExplicitMachineStopTargetMismatch({
+                            socket: currentTarget as unknown as Socket,
+                            request: explicitMachineStopRequest,
+                        });
+                        if (currentStopTargetMismatch) {
+                            callback?.(currentStopTargetMismatch);
                             return;
                         }
                         if (!currentMachineId) {
@@ -698,18 +703,12 @@ export function rpcHandler(
                 }
 
                 const targetMachineId = readMachineScopedSocketMachineId(targetSocket);
-                if (
-                    explicitMachineStopRequest
-                    && !isExplicitMachineStopTargetSocket({
-                        socket: targetSocket,
-                        request: explicitMachineStopRequest,
-                    })
-                ) {
-                    callback?.({
-                        ok: false,
-                        error: RPC_ERROR_MESSAGES.METHOD_NOT_AVAILABLE,
-                        errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
-                    });
+                const stopTargetMismatch = readExplicitMachineStopTargetMismatch({
+                    socket: targetSocket,
+                    request: explicitMachineStopRequest,
+                });
+                if (stopTargetMismatch) {
+                    callback?.(stopTargetMismatch);
                     return;
                 }
                 if (targetMachineId) {
