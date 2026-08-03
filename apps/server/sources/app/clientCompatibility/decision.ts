@@ -8,7 +8,7 @@ import {
 } from '@happier-dev/protocol';
 
 import type { SessionSyncCompatibilityPolicy } from './policy';
-import { isAppVersionAtLeastMinimum } from './versionDecision';
+import { resolveClientAppVersionDecision } from './versionDecision';
 
 export type SessionSyncCompatibilityOutcome =
     | 'accepted'
@@ -119,8 +119,12 @@ export function evaluateSessionSyncCompatibility(
         };
     }
 
-    const minimumAppVersion = policy.requirements.minimumVersionsByClientKind?.[declaration.clientKind];
-    if (minimumAppVersion !== undefined && !isAppVersionAtLeastMinimum(declaration.appVersion, minimumAppVersion)) {
+    const appVersionDecision = resolveClientAppVersionDecision({
+        clientKind: declaration.clientKind,
+        appVersion: declaration.appVersion,
+        policy,
+    });
+    if (appVersionDecision.status === 'upgrade-required') {
         return {
             accepted: !required,
             outcome: required ? 'reject-app-version-too-old' : 'observe-app-version-too-old',

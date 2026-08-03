@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
 
 import { createRouteTestBuilder } from "../../testkit/routeTestBuilder";
+import { versionRoutes } from "./versionRoutes";
 
 describe("versionRoutes GET /v1/version", () => {
     it("responds with ok=true for server validation probes", async () => {
-        const { versionRoutes } = await import("./versionRoutes");
         const route = createRouteTestBuilder({
             method: "GET",
             path: "/v1/version",
