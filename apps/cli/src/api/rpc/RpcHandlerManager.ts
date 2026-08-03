@@ -13,7 +13,11 @@ import {
     type RpcAuthorizationResult,
 } from './types';
 import { Socket } from 'socket.io-client';
-import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
+import {
+    SOCKET_RPC_EVENTS,
+    SOCKET_RPC_TRANSPORT_RESPONSE_ENVELOPE_VERSION_V1,
+    type SocketRpcTransportAcknowledgementV1,
+} from '@happier-dev/protocol/socketRpc';
 import {
     RPC_ERROR_CODES,
     RPC_ERROR_MESSAGES,
@@ -30,6 +34,7 @@ export class RpcHandlerManager {
     private readonly logger: (message: string, data?: any) => void;
     private readonly onRegistrationError: RpcHandlerConfig['onRegistrationError'];
     private readonly authorizeRequest: RpcHandlerConfig['authorizeRequest'];
+    private readonly projectTransportAcknowledgement: RpcHandlerConfig['projectTransportAcknowledgement'];
     private socket: Socket | null = null;
     private inFlightRequestCount = 0;
     private idleResolvers = new Set<() => void>();
@@ -42,6 +47,7 @@ export class RpcHandlerManager {
         this.logger = config.logger || ((msg, data) => defaultLogger.debug(msg, data));
         this.onRegistrationError = config.onRegistrationError;
         this.authorizeRequest = config.authorizeRequest;
+        this.projectTransportAcknowledgement = config.projectTransportAcknowledgement;
     }
 
     private encodeResponse(response: unknown): unknown {
@@ -83,7 +89,7 @@ export class RpcHandlerManager {
             if (!handler) {
                 this.logger('[RPC] [ERROR] Method not found', { method: request.method });
                 const errorResponse = { error: RPC_ERROR_MESSAGES.METHOD_NOT_FOUND, errorCode: RPC_ERROR_CODES.METHOD_NOT_FOUND };
-                return this.encodeResponse(errorResponse);
+                return this.encodeTransportResponse(request, errorResponse);
             }
 
             // Decrypt the incoming params (unless session is plaintext).
@@ -96,7 +102,7 @@ export class RpcHandlerManager {
               const errorResponse = {
                 error: 'Invalid RPC params',
               };
-              return this.encodeResponse(errorResponse);
+              return this.encodeTransportResponse(request, errorResponse);
             }
 
             const authorizationResult: RpcAuthorizationResult = this.authorizeRequest
@@ -107,7 +113,7 @@ export class RpcHandlerManager {
               })
               : { ok: true };
             if (authorizationResult.ok !== true) {
-              return this.encodeResponse({
+              return this.encodeTransportResponse(request, {
                 error: authorizationResult.error,
                 ...(authorizationResult.errorCode ? { errorCode: authorizationResult.errorCode } : {}),
               });
@@ -119,9 +125,20 @@ export class RpcHandlerManager {
             this.logger('[RPC] Handler returned', { method: request.method, hasResult: result !== undefined });
 
             // Encrypt and return the response
-            const response = this.encodeResponse(result);
-            if (this.encryptionMode !== 'plain' && typeof response === 'string') {
-              this.logger('[RPC] Sending encrypted response', { method: request.method, responseLength: response.length });
+            const acknowledgement = this.projectAcknowledgement(request, decryptedParams, result);
+            const response = this.encodeTransportResponse(request, result, acknowledgement);
+            if (this.encryptionMode !== 'plain') {
+              const encodedResult = request.transportResponseEnvelopeVersion
+                === SOCKET_RPC_TRANSPORT_RESPONSE_ENVELOPE_VERSION_V1
+                && response
+                && typeof response === 'object'
+                && !Array.isArray(response)
+                ? (response as { result?: unknown }).result
+                : response;
+              this.logger('[RPC] Sending encrypted response', {
+                method: request.method,
+                responseLength: typeof encodedResult === 'string' ? encodedResult.length : 0,
+              });
             }
             return response;
         } catch (error) {
@@ -129,7 +146,7 @@ export class RpcHandlerManager {
             const errorResponse = {
                 error: error instanceof Error ? error.message : 'Unknown error'
             };
-            return this.encodeResponse(errorResponse);
+            return this.encodeTransportResponse(request, errorResponse);
         } finally {
             this.finishInFlightRequest();
         }
@@ -222,6 +239,53 @@ export class RpcHandlerManager {
      */
     private getPrefixedMethod(method: string): string {
         return `${this.scopePrefix}:${method}`;
+    }
+
+    private encodeTransportResponse(
+        request: RpcRequest,
+        result: unknown,
+        acknowledgement: SocketRpcTransportAcknowledgementV1 | null = null,
+    ): unknown {
+        const encodedResult = this.encodeResponse(result);
+        if (
+            request.transportResponseEnvelopeVersion
+            !== SOCKET_RPC_TRANSPORT_RESPONSE_ENVELOPE_VERSION_V1
+        ) {
+            return encodedResult;
+        }
+        return {
+            v: SOCKET_RPC_TRANSPORT_RESPONSE_ENVELOPE_VERSION_V1,
+            result: encodedResult,
+            ...(acknowledgement ? { acknowledgement } : {}),
+        };
+    }
+
+    private projectAcknowledgement(
+        request: RpcRequest,
+        params: unknown,
+        result: unknown,
+    ): SocketRpcTransportAcknowledgementV1 | null {
+        if (
+            request.transportResponseEnvelopeVersion
+            !== SOCKET_RPC_TRANSPORT_RESPONSE_ENVELOPE_VERSION_V1
+            || !this.projectTransportAcknowledgement
+        ) {
+            return null;
+        }
+        try {
+            return this.projectTransportAcknowledgement({
+                method: request.method,
+                params,
+                result,
+                ...(request.authorization ? { authorization: request.authorization } : {}),
+            });
+        } catch (error) {
+            this.logger('[RPC] Transport acknowledgement projection failed', {
+                method: request.method,
+                error,
+            });
+            return null;
+        }
     }
 
     private beginInFlightRequest(): void {

@@ -48,6 +48,7 @@ import { recoverDaemonTerminalSessionMutationJournals } from './session/mutation
 
 import type { DaemonToServerEvents, ServerToDaemonEvents } from './machine/socketTypes';
 import { authorizeMachineRpcRequest } from './machine/machineRpcAuthorization';
+import { projectMachineRpcTransportAcknowledgement } from './machine/projectMachineRpcTransportAcknowledgement';
 import { registerMachineRpcHandlers, type MachineRpcHandlerDeps, type MachineRpcHandlers } from './machine/rpcHandlers';
 import { resolveMachineRpcWorkingDirectory } from './machine/resolveMachineRpcWorkingDirectory';
 import type { Socket } from 'socket.io-client';
@@ -255,6 +256,7 @@ export class ApiMachineClient {
                 }
             },
             authorizeRequest: authorizeMachineRpcRequest,
+            projectTransportAcknowledgement: projectMachineRpcTransportAcknowledgement,
         });
 
         const machineRpcWorkingDirectory = resolveMachineRpcWorkingDirectory();

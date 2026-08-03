@@ -139,6 +139,45 @@ describe('RpcHandlerManager.handleRequest (plaintext)', () => {
 });
 
 describe('RpcHandlerManager.handleRequest (encrypted)', () => {
+  it('keeps the encrypted result opaque while exposing requested transport acknowledgement metadata', async () => {
+    const encryptionKey = new Uint8Array(32).fill(3);
+    const rpc = new RpcHandlerManager({
+      scopePrefix: 'machine-1',
+      encryptionKey,
+      encryptionVariant: 'dataKey',
+      logger: () => {},
+      projectTransportAcknowledgement: ({ method, result }) => (
+        method === 'machine-1:stop-session'
+        && typeof result === 'object'
+        && result !== null
+        && (result as { status?: unknown }).status === 'stopped'
+          ? { kind: 'session.stop' as const, status: 'stopped' as const }
+          : null
+      ),
+    });
+
+    rpc.registerHandler('stop-session', async () => ({ status: 'stopped' }));
+
+    const res = await rpc.handleRequest({
+      method: 'machine-1:stop-session',
+      params: encodeBase64(encrypt(encryptionKey, 'dataKey', { sessionId: 'sess_1' })),
+      transportResponseEnvelopeVersion: 1,
+    });
+
+    expect(res).toEqual({
+      v: 1,
+      result: expect.any(String),
+      acknowledgement: { kind: 'session.stop', status: 'stopped' },
+    });
+    expect(
+      decrypt(
+        encryptionKey,
+        'dataKey',
+        decodeBase64((res as { result: string }).result),
+      ),
+    ).toEqual({ status: 'stopped' });
+  });
+
   it('rejects encrypted requests when the authorization hook rejects the decrypted params', async () => {
     const encryptionKey = new Uint8Array(32).fill(5);
     const authorizeRequest = vi.fn(() => ({

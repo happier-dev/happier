@@ -1,4 +1,8 @@
 import type { SocketRpcAuthorizationContext } from '@happier-dev/protocol';
+import type {
+    SocketRpcRequestPayload,
+    SocketRpcTransportAcknowledgementV1,
+} from '@happier-dev/protocol/socketRpc';
 
 /**
  * Common RPC types and interfaces for both session and machine clients
@@ -34,11 +38,7 @@ export type RpcHandlerMap = Map<string, RpcHandler>;
 /**
  * RPC request data from server
  */
-export interface RpcRequest {
-    method: string;
-    params: unknown;
-    authorization?: SocketRpcAuthorizationContext;
-}
+export type RpcRequest = SocketRpcRequestPayload;
 
 /**
  * RPC response callback
@@ -60,6 +60,12 @@ export interface RpcHandlerConfig {
         params: unknown;
         authorization?: SocketRpcAuthorizationContext;
     }>) => RpcAuthorizationResult | Promise<RpcAuthorizationResult>;
+    projectTransportAcknowledgement?: (request: Readonly<{
+        method: string;
+        params: unknown;
+        result: unknown;
+        authorization?: SocketRpcAuthorizationContext;
+    }>) => SocketRpcTransportAcknowledgementV1 | null;
 }
 
 export type RpcAuthorizationResult =

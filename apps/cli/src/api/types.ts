@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { UsageSchema } from '@/api/usage'
-import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc'
+import { SOCKET_RPC_EVENTS, type SocketRpcRequestPayload as ProtocolSocketRpcRequestPayload } from '@happier-dev/protocol/socketRpc'
 import { SentFromSchema } from '@happier-dev/protocol'
 import type { ExecutionRunPublicState } from '@happier-dev/protocol'
 import type {
@@ -19,7 +19,6 @@ import type {
   SessionRollbackRangesV1,
   SessionUsageLimitRecoveryV1,
   SessionTerminalMetadata,
-  SocketRpcAuthorizationContext,
   SessionMessageRole,
   ProviderSessionInfoV1,
   SessionRuntimeActivityState,
@@ -140,11 +139,7 @@ export type UpdateMachineBody = Extract<Update['body'], { t: 'update-machine' }>
 export const SessionBroadcastSchema = SessionBroadcastContainerSchema
 export type SessionBroadcast = SessionBroadcastContainer
 
-export interface SocketRpcRequestPayload {
-  method: string
-  params: unknown
-  authorization?: SocketRpcAuthorizationContext
-}
+export type SocketRpcRequestPayload = ProtocolSocketRpcRequestPayload
 
 export interface SocketRpcCallPayload extends SocketRpcRequestPayload {
   timeoutMs?: number

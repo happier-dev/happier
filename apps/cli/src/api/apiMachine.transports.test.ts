@@ -12,7 +12,7 @@ import {
 import { logger } from '@/ui/logger';
 import type { Machine } from './types';
 
-const { configurationMock, mockAxiosGet, mockAxiosIsAxiosError, mockAxiosPost, mockIo } = vi.hoisted(() => ({
+const { configurationMock, mockAxiosGet, mockAxiosIsAxiosError, mockAxiosPost, mockIo, rpcHandlerConfigs } = vi.hoisted(() => ({
   configurationMock: {
     apiServerUrl: 'http://localhost:3005',
     activeServerDir: '',
@@ -29,6 +29,7 @@ const { configurationMock, mockAxiosGet, mockAxiosIsAxiosError, mockAxiosPost, m
     emitWithAck: vi.fn(),
     io: { on: vi.fn() },
   })),
+  rpcHandlerConfigs: [] as Array<Record<string, unknown>>,
 }));
 
 vi.mock('socket.io-client', () => ({
@@ -63,6 +64,9 @@ vi.mock('@/rpc/handlers/machineFileBrowser/registerMachineFileBrowserHandlers', 
 vi.mock('./machine/rpcHandlers', () => ({ registerMachineRpcHandlers: vi.fn() }));
 vi.mock('./rpc/RpcHandlerManager', () => ({
   RpcHandlerManager: class {
+    constructor(config: Record<string, unknown>) {
+      rpcHandlerConfigs.push(config);
+    }
     registerHandler() {}
     onSocketConnect() {}
     onSocketDisconnect() {}
@@ -88,6 +92,7 @@ describe('ApiMachineClient transports', () => {
     mockAxiosPost.mockResolvedValue({ status: 200, data: { success: true, applied: true } });
     mockAxiosGet.mockResolvedValue({ status: 200, data: { machine: null } });
     bindApiSessionSocketMock(mockIo, createApiSessionSocketStub());
+    rpcHandlerConfigs.length = 0;
   });
 
   afterEach(() => {
@@ -121,6 +126,32 @@ describe('ApiMachineClient transports', () => {
     expect(opts.transports).toEqual(['polling', 'websocket']);
     expect(opts.reconnection).toBe(false);
     expect(opts.autoConnect).toBe(false);
+  });
+
+  it('configures machine RPC to project only strict completed-stop transport proof', async () => {
+    const mod = await import('./apiMachine');
+    const { RPC_METHODS } = await import('@happier-dev/protocol/rpc');
+
+    new mod.ApiMachineClient('fake-token', {
+      id: 'test-machine',
+      encryptionKey: new Uint8Array(32),
+      encryptionVariant: 'legacy',
+      metadata: null,
+      metadataVersion: 0,
+      daemonState: null,
+      daemonStateVersion: 0,
+    });
+
+    const projector = rpcHandlerConfigs.at(-1)?.projectTransportAcknowledgement;
+    expect(projector).toBeTypeOf('function');
+    expect((projector as (input: { method: string; result: unknown }) => unknown)({
+      method: `test-machine:${RPC_METHODS.STOP_SESSION}`,
+      result: { status: 'stopped' },
+    })).toEqual({ kind: 'session.stop', status: 'stopped' });
+    expect((projector as (input: { method: string; result: unknown }) => unknown)({
+      method: `test-machine:${RPC_METHODS.STOP_SESSION}`,
+      result: { status: 'requested' },
+    })).toBeNull();
   });
 
   it('serializes machine refresh errors without dumping axios request details', async () => {
