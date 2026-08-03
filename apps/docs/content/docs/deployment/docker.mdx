@@ -29,6 +29,8 @@ Published images:
 
 The published `relay-server` image is built from signed server-runtime and UI-web release artifacts. It runs as the non-root `happier` user, embeds the UI bundle at image build time, and does not need a source checkout or `hstack`.
 
+Prebuilt `relay-server` images support the default SQLite setup and the documented Postgres override. They intentionally do not include the generated MySQL Prisma client. To run Happier with MySQL, build a source-based `server` image from this repository with MySQL included at build time.
+
 Tags:
 
 - `:preview` (floating preview tag)
@@ -73,7 +75,7 @@ Notes:
 
 ### Prebuilt image: use Postgres (full flavor)
 
-The `relay-server` image is built from the same server runtime and can run full flavor too — you just override the defaults.
+The `relay-server` image is built from the same server runtime and can run full flavor too — you just override the defaults. Postgres is the external database supported by the prebuilt image.
 
 Example `docker-compose.yml` (Postgres + local files backend):
 
@@ -199,7 +201,7 @@ The release pipeline resolves these build args from GitHub releases automaticall
 
 ### Optional: build only selected DB providers
 
-By default, the server image includes generated Prisma clients for all supported DB providers.
+By default, source-built `server` and `server-worker` images include generated Prisma clients for all supported DB providers. The prebuilt `relay-server` image is artifact-based and prunes the generated MySQL Prisma client; use the `server` target below when you need MySQL.
 
 If you want a smaller, provider-specific image, you can limit which Prisma clients are generated at build time:
 
@@ -310,6 +312,8 @@ Supported values:
 
 - Full flavor: `postgres` (default), `mysql` (MySQL 8.0.16+)
 - Light flavor: `pglite` (default), `sqlite`
+
+Image support depends on how the image was built. Prebuilt `relay-server` images include SQLite and Postgres runtime support; MySQL requires a source-built `server` image with MySQL included.
 
 ## Quick start (single container)
 

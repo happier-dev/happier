@@ -23,6 +23,7 @@ Common options:
 - Disable UI serving: `-e HAPPIER_SERVER_UI_DIR=`
 - Serve UI under `/ui`: `-e HAPPIER_SERVER_UI_PREFIX=/ui`
 - Use Postgres: `-e HAPPIER_DB_PROVIDER=postgres -e DATABASE_URL=...`
+- Use MySQL: build the source-based `server` target with `--build-arg HAPPIER_BUILD_DB_PROVIDERS='postgres|mysql'`; prebuilt `relay-server` images do not include the generated MySQL Prisma client.
 
 Docs:
 

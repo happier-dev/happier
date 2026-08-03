@@ -38,6 +38,14 @@ test("relay-server target is artifact based and keeps the self-host runtime cont
   assert.match(artifactSection, /HAPPIER_RELAY_UI_WEB_VERSION/);
   assert.match(artifactSection, /happier-server/);
   assert.match(artifactSection, /happier-ui-web/);
+  assert.match(artifactSection, /rm -rf \/opt\/happier\/server\/ui-web/);
+  assert.match(artifactSection, /rm -rf \/opt\/happier\/server\/generated\/mysql-client/);
+  assert.match(artifactSection, /libquery_engine-debian-openssl-3\.0\.x\.so\.node/);
+  assert.match(artifactSection, /libquery_engine-linux-arm64-openssl-3\.0\.x\.so\.node/);
+  assert.match(artifactSection, /sharp-libvips-linuxmusl-x64/);
+  assert.match(artifactSection, /sharp-linuxmusl-x64/);
+  assert.match(artifactSection, /sharp-libvips-linuxmusl-arm64/);
+  assert.match(artifactSection, /sharp-linuxmusl-arm64/);
 
   assert.doesNotMatch(raw, /^FROM\s+server\s+AS\s+relay-server\s*$/m);
   assert.match(runtimeSection, /COPY --from=relay-artifacts --chown=happier:happier \/opt\/happier\/server \/opt\/happier\/server/);
