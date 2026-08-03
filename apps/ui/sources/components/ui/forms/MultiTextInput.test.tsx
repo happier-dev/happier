@@ -559,6 +559,23 @@ describe('MultiTextInput', () => {
         });
 
         expect(onContentHeightChange).toHaveBeenCalledTimes(1);
+
+        mockTextarea.scrollHeight = 96;
+        await act(async () => {
+            tree!.update(
+                <MultiTextInput
+                    testID="composer-input"
+                    value="line"
+                    maxHeight={144}
+                    onChangeText={() => {}}
+                    onContentHeightChange={onContentHeightChange}
+                    textStyle={{ fontSize: 16 }}
+                />,
+            );
+        });
+
+        expect(onContentHeightChange).toHaveBeenCalledTimes(2);
+        expect(onContentHeightChange).toHaveBeenLastCalledWith(96);
     });
 
     it('reports true web content height for oversized text so the expand toggle can appear', async () => {

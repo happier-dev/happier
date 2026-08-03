@@ -460,8 +460,8 @@ describe('AgentInput (action bar auto layout)', () => {
         const firstInput = screen.tree.root.findByProps({ testID: 'session-composer-input' });
         const firstHeightReporter = firstInput.props.onContentHeightChange;
 
-        await act(async () => {
-            firstInput.parent?.props.onLayout({ nativeEvent: { layout: { height: 60 } } });
+        act(() => {
+            firstHeightReporter(220);
         });
 
         const nextInput = screen.tree.root.findByProps({ testID: 'session-composer-input' });
