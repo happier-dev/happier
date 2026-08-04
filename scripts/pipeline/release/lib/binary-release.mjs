@@ -702,6 +702,38 @@ async function pruneFlatBundledNativePlatformRootDir(params) {
   }
 }
 
+// Some vendored packages ship a dist/ with build outputs for every consumer (browser, CJS,
+// minified, ...) even though this payload -- a Bun/Node-only CLI, never a browser or a require()
+// consumer -- only ever reaches one of them via the package's own package.json `exports` map.
+// Match the package's dist/ root and keep only the listed files (relative to that dist/ dir);
+// everything else in the directory (recursively) is deleted.
+//
+// @huggingface/transformers: its package.json `exports.node.import.default` points at
+// dist/transformers.node.mjs, which is exactly what createLocalTransformersEmbeddingsProvider.ts's
+// `await import('@huggingface/transformers')` resolves to on Node/Bun (confirmed: its own error
+// handling explicitly checks for this filename). The other dist/ entries (transformers.js/.min.js,
+// transformers.web.js/.min.js, transformers.node.cjs/.min.cjs/.min.mjs, and their .map files) are
+// for browser and CommonJS require() consumers this payload never becomes. The bundled
+// ort-wasm-simd-threaded.jsep.{mjs,wasm} pair is onnxruntime-web's browser-only WASM backend --
+// the node build imports onnxruntime-node (native binding) instead, confirmed by
+// transformers.node.mjs's own bundler comments ("onnxruntime-web (ignored)" in the node build).
+const DIST_ROOT_KEEP_FILE_ALLOWLIST = [
+  {
+    dirPattern: /\/node_modules\/@huggingface\/transformers\/dist$/,
+    keepFileNames: new Set(['transformers.node.mjs', 'transformers.node.mjs.map']),
+  },
+];
+
+async function pruneDistRootToAllowlist(params) {
+  const entries = await readdir(params.directoryPath, { withFileTypes: true }).catch(() => []);
+
+  for (const entry of entries) {
+    if (!params.keepFileNames.has(entry.name)) {
+      await rm(join(params.directoryPath, entry.name), { recursive: true, force: true });
+    }
+  }
+}
+
 async function prunePackageDistDualFormatDir(params) {
   const entries = await readdir(params.directoryPath, { withFileTypes: true }).catch(() => []);
 
@@ -753,6 +785,14 @@ async function prunePackagedTreeDirectory(params) {
     if (entry.name === 'package-dist') {
       await prunePackageDistDualFormatDir({ directoryPath: childPath });
       continue;
+    }
+
+    {
+      const distAllowlist = DIST_ROOT_KEEP_FILE_ALLOWLIST.find((entry_) => entry_.dirPattern.test(childPath.replaceAll('\\', '/')));
+      if (distAllowlist) {
+        await pruneDistRootToAllowlist({ directoryPath: childPath, keepFileNames: distAllowlist.keepFileNames });
+        continue;
+      }
     }
 
     if (childInNodeModulesTree) {
