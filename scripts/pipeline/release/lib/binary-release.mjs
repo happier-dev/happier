@@ -553,7 +553,7 @@ function packageDirMatchesTarget(packageJson, target) {
   return true;
 }
 
-async function sanitizePackagedNodeModulesTree(params) {
+export async function sanitizePackagedNodeModulesTree(params) {
   const stageDir = String(params?.stageDir ?? '').trim();
   if (!stageDir) return;
 
@@ -566,6 +566,43 @@ async function sanitizePackagedNodeModulesTree(params) {
 
 function isNestedNodeModulesBinDir(path) {
   return path.includes('/node_modules/.bin') || path.includes('\\node_modules\\.bin');
+}
+
+// Some packages (e.g. onnxruntime-node) bundle prebuilt native binaries for every
+// supported platform/arch inside their own tree instead of splitting them into
+// per-target optionalDependencies, so package.json os/cpu constraints alone can't
+// prune them. Match known bundle root directories (whose children are "<platform>"
+// dirs, each containing "<arch>" dirs) and drop the ones that don't match the target.
+const BUNDLED_NATIVE_PLATFORM_ROOT_DIR_PATTERNS = [
+  // onnxruntime-node: bin/napi-v<N>/<platform>/<arch>/...
+  /\/node_modules\/onnxruntime-node\/bin\/napi-v\d+$/,
+];
+
+function isBundledNativePlatformRootDir(path) {
+  const normalized = path.replaceAll('\\', '/');
+  return BUNDLED_NATIVE_PLATFORM_ROOT_DIR_PATTERNS.some((pattern) => pattern.test(normalized));
+}
+
+async function pruneBundledNativePlatformRootDir(params) {
+  const targetNodePlatform = resolveTargetNodePlatform(params.target);
+  const targetArch = String(params.target?.arch ?? '').trim().toLowerCase();
+  const entries = await readdir(params.directoryPath, { withFileTypes: true }).catch(() => []);
+
+  for (const entry of entries) {
+    const childPath = join(params.directoryPath, entry.name);
+
+    if (!entry.isDirectory() || entry.name.toLowerCase() !== targetNodePlatform) {
+      await rm(childPath, { recursive: true, force: true });
+      continue;
+    }
+
+    const archEntries = await readdir(childPath, { withFileTypes: true }).catch(() => []);
+    for (const archEntry of archEntries) {
+      if (archEntry.isDirectory() && archEntry.name.toLowerCase() !== targetArch) {
+        await rm(join(childPath, archEntry.name), { recursive: true, force: true });
+      }
+    }
+  }
 }
 
 async function prunePackagedTreeDirectory(params) {
@@ -593,6 +630,11 @@ async function prunePackagedTreeDirectory(params) {
         await rm(childPath, { recursive: true, force: true });
         continue;
       }
+    }
+
+    if (isBundledNativePlatformRootDir(childPath)) {
+      await pruneBundledNativePlatformRootDir({ directoryPath: childPath, target: params.target });
+      continue;
     }
 
     await prunePackagedTreeDirectory({
