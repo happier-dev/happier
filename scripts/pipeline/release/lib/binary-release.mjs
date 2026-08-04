@@ -603,6 +603,63 @@ const DUPLICATE_VENDORED_PACKAGE_DIR_PATTERNS = [
   /\/node_modules\/@huggingface\/transformers\/node_modules\/onnxruntime-node\/node_modules\/tar$/,
   // @modelcontextprotocol/sdk duplicated inside claude-agent-sdk's own node_modules.
   /\/node_modules\/@anthropic-ai\/claude-agent-sdk\/node_modules\/@modelcontextprotocol\/sdk$/,
+  // zod duplicated inside @modelcontextprotocol/sdk's, @happier-dev/agents's,
+  // @happier-dev/protocol's, and @happier-dev/protocol's own zod-to-json-schema's node_modules.
+  // Confirmed byte-identical to the top-level zod (same version, apps/cli depends on zod
+  // directly, so a top-level copy is always vendored).
+  /\/node_modules\/@modelcontextprotocol\/sdk\/node_modules\/zod$/,
+  /\/node_modules\/@happier-dev\/agents\/node_modules\/zod$/,
+  /\/node_modules\/@happier-dev\/protocol\/node_modules\/zod$/,
+  /\/node_modules\/@happier-dev\/protocol\/node_modules\/zod-to-json-schema\/node_modules\/zod$/,
+  // NOTE: an "ajv duplicated across fastify/@modelcontextprotocol-sdk" pattern was considered
+  // here but rejected on re-verification: although the 4 copies found are byte-identical to
+  // *each other*, none of them has any surviving ancestor `node_modules/ajv` to fall back to --
+  // there is no top-level ajv in the payload at all, so each copy is the only copy reachable
+  // from its respective dependent and must be kept. Do not add an ajv pattern without a
+  // verified surviving ancestor for every occurrence being removed.
+  // archiver-utils duplicated inside archiver's own zip-stream dependency's node_modules.
+  // Confirmed byte-identical to archiver's own archiver-utils copy. Removing this also removes
+  // its nested lazystream/readable-stream (v2.3.8) subtree as a byproduct, which is fine: that
+  // subtree isn't independently referenced elsewhere.
+  /\/node_modules\/archiver\/node_modules\/zip-stream\/node_modules\/archiver-utils$/,
+  // qs duplicated inside @modelcontextprotocol/sdk's express's own body-parser dependency's
+  // node_modules. Confirmed byte-identical (and same version) to express's own top-level qs
+  // copy, which is resolvable by walking up from body-parser. Apply this before the
+  // get-intrinsic pattern below: it removes most of the get-intrinsic duplication under this
+  // qs copy as a byproduct.
+  /\/node_modules\/@modelcontextprotocol\/sdk\/node_modules\/express\/node_modules\/body-parser\/node_modules\/qs$/,
+  // get-intrinsic duplicated inside a sibling call-bound package's own node_modules. call-bound
+  // itself depends on get-intrinsic, but each of these copies is confirmed byte-identical to
+  // the get-intrinsic already vendored one level up (call-bound's own parent package's
+  // node_modules), which upward-walking resolution finds once the nested copy is removed.
+  /\/node_modules\/call-bound\/node_modules\/get-intrinsic$/,
+  // readable-stream duplicated across archiver's own nested zip-stream/archiver-utils/
+  // compress-commons/crc32-stream dependency chain. All confirmed byte-identical (same v4.7.0)
+  // to archiver's own top-level readable-stream copy, resolvable by walking up once each nested
+  // duplicate is removed (verified via simulated multi-deletion + fresh resolution walk).
+  /\/node_modules\/archiver\/node_modules\/zip-stream\/node_modules\/readable-stream$/,
+  /\/node_modules\/archiver\/node_modules\/archiver-utils\/node_modules\/readable-stream$/,
+  /\/node_modules\/archiver\/node_modules\/zip-stream\/node_modules\/compress-commons\/node_modules\/readable-stream$/,
+  /\/node_modules\/archiver\/node_modules\/zip-stream\/node_modules\/compress-commons\/node_modules\/crc32-stream\/node_modules\/readable-stream$/,
+];
+
+// @modelcontextprotocol/sdk vendors several optional-feature dependencies (HTTP server
+// framework, OAuth helpers) inside its own node_modules that are only required by SDK source
+// files happier never imports (server/express.js, server/auth/router.js,
+// server/auth/handlers/*.js, client/auth-extensions.js) or, for `hono`, only referenced from
+// type-only .d.ts files never executed by @hono/node-server (which IS used and stays). Verified
+// by tracing every require() from happier's actual reachable SDK entry points (server/mcp.js,
+// server/stdio.js, server/streamableHttp.js, client/*.js) and cross-checking against `strings`
+// on the compiled darwin-arm64 binary, which shows zero occurrences of these package names
+// despite the surrounding SDK source being compiled in directly. Do NOT extend this list to
+// cover first-party SDK source under dist/{cjs,esm}/server/auth -- server/auth/errors.js is on
+// the reachable path (via client/auth.js) and must not be deleted.
+const UNUSED_VENDORED_MCP_SDK_DEPENDENCY_DIR_PATTERNS = [
+  /\/node_modules\/@modelcontextprotocol\/sdk\/node_modules\/express$/,
+  /\/node_modules\/@modelcontextprotocol\/sdk\/node_modules\/express-rate-limit$/,
+  /\/node_modules\/@modelcontextprotocol\/sdk\/node_modules\/cors$/,
+  /\/node_modules\/@modelcontextprotocol\/sdk\/node_modules\/jose$/,
+  /\/node_modules\/@modelcontextprotocol\/sdk\/node_modules\/hono$/,
 ];
 
 function matchesAnyPattern(path, patterns) {
@@ -654,7 +711,10 @@ async function prunePackageDistDualFormatDir(params) {
       await prunePackageDistDualFormatDir({ directoryPath: childPath });
       continue;
     }
-    if (entry.isFile() && entry.name.endsWith('.cjs')) {
+    if (
+      entry.isFile() &&
+      (entry.name.endsWith('.cjs') || entry.name.endsWith('.d.mts') || entry.name.endsWith('.d.cts'))
+    ) {
       await rm(childPath, { force: true });
     }
   }
@@ -717,6 +777,11 @@ async function prunePackagedTreeDirectory(params) {
     }
 
     if (matchesAnyPattern(childPath, DUPLICATE_VENDORED_PACKAGE_DIR_PATTERNS)) {
+      await rm(childPath, { recursive: true, force: true });
+      continue;
+    }
+
+    if (matchesAnyPattern(childPath, UNUSED_VENDORED_MCP_SDK_DEPENDENCY_DIR_PATTERNS)) {
       await rm(childPath, { recursive: true, force: true });
       continue;
     }
