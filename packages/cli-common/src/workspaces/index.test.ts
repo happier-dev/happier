@@ -1,7 +1,19 @@
 import { atomicReplaceDirSync, bundleWorkspacePackage, copyDirSafeSync } from './index';
-import { cpSync, existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  cpSync,
+  existsSync,
+  lstatSync,
+  mkdtempSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  readlinkSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
 describe('bundleWorkspacePackage', () => {
@@ -161,6 +173,100 @@ describe('bundleWorkspacePackage', () => {
       './workspaceLockLease.mjs',
     );
     expect(readFileSync(resolve(destPackageDir, 'workspaceLockLease.mjs'), 'utf8')).toContain('canonical');
+  });
+
+  it('dedupes an identical name@version runtime dependency vendored twice via a diamond dependency, symlinking the second copy instead of recopying', async () => {
+    rootDir = mkdtempSync(join(tmpdir(), 'happier-cli-common-bundle-workspace-'));
+
+    const workspaceModule = await import('./index');
+    const bundleWorkspacePackageWithRuntimeDependencies =
+      (workspaceModule as Record<string, unknown>).bundleWorkspacePackageWithRuntimeDependencies;
+    expect(bundleWorkspacePackageWithRuntimeDependencies).toBeTypeOf('function');
+
+    // Diamond shape mirroring @modelcontextprotocol/sdk being a direct dep of apps/cli AND a
+    // transitive dep of @anthropic-ai/claude-agent-sdk (also a direct dep of apps/cli): the shared
+    // dependency is resolved and vendored twice within the same vendorRuntimeDependencyTree walk.
+    const srcPackageDir = resolve(rootDir, 'packages/agents');
+    const srcDistDir = resolve(srcPackageDir, 'dist');
+    const sharedDepDir = resolve(srcPackageDir, 'node_modules/shared-dep');
+    const consumerDepDir = resolve(srcPackageDir, 'node_modules/consumer-dep');
+    const nestedSharedDepDir = resolve(consumerDepDir, 'node_modules/shared-dep');
+
+    mkdirSync(srcDistDir, { recursive: true });
+    mkdirSync(sharedDepDir, { recursive: true });
+    mkdirSync(consumerDepDir, { recursive: true });
+    mkdirSync(nestedSharedDepDir, { recursive: true });
+
+    writeFileSync(
+      resolve(srcPackageDir, 'package.json'),
+      JSON.stringify(
+        {
+          name: '@happier-dev/agents',
+          version: '0.0.0',
+          type: 'module',
+          exports: { '.': { default: './dist/index.js' } },
+          dependencies: { 'shared-dep': '1.2.3', 'consumer-dep': '1.0.0' },
+        },
+        null,
+        2,
+      ),
+    );
+    writeFileSync(resolve(srcDistDir, 'index.js'), 'export {};');
+
+    writeFileSync(
+      resolve(sharedDepDir, 'package.json'),
+      JSON.stringify({ name: 'shared-dep', version: '1.2.3', dependencies: {} }, null, 2),
+    );
+    writeFileSync(resolve(sharedDepDir, 'index.js'), 'module.exports = "shared";\n');
+
+    writeFileSync(
+      resolve(consumerDepDir, 'package.json'),
+      JSON.stringify({ name: 'consumer-dep', version: '1.0.0', dependencies: { 'shared-dep': '1.2.3' } }, null, 2),
+    );
+    writeFileSync(resolve(consumerDepDir, 'index.js'), 'module.exports = "consumer";\n');
+
+    // The nested copy is resolvable independently (npm-style: consumer-dep's own node_modules)
+    // and is byte-identical to the top-level copy, matching the real-world duplication shape.
+    writeFileSync(
+      resolve(nestedSharedDepDir, 'package.json'),
+      JSON.stringify({ name: 'shared-dep', version: '1.2.3', dependencies: {} }, null, 2),
+    );
+    writeFileSync(resolve(nestedSharedDepDir, 'index.js'), 'module.exports = "shared";\n');
+
+    const destPackageDir = resolve(rootDir, 'apps/cli/node_modules/@happier-dev/agents');
+
+    (bundleWorkspacePackageWithRuntimeDependencies as (params: {
+      packageName: string;
+      srcDir: string;
+      destDir: string;
+    }) => void)({
+      packageName: '@happier-dev/agents',
+      srcDir: srcPackageDir,
+      destDir: destPackageDir,
+    });
+
+    const vendoredSharedDepDir = resolve(destPackageDir, 'node_modules/shared-dep');
+    const vendoredNestedSharedDepDir = resolve(
+      destPackageDir,
+      'node_modules/consumer-dep/node_modules/shared-dep',
+    );
+
+    // First occurrence is vendored normally as a real directory.
+    expect(lstatSync(vendoredSharedDepDir).isSymbolicLink()).toBe(false);
+    expect(readFileSync(resolve(vendoredSharedDepDir, 'index.js'), 'utf8')).toBe('module.exports = "shared";\n');
+
+    // Second occurrence (same name@version) is a symlink, not a full recopy. The link target is
+    // captured at build time inside the atomically-built staging tree (before the whole
+    // node_modules dir is renamed into its final place), so assert on the relationship (same
+    // basename as the surviving vendored copy) and on content equivalence rather than the final
+    // absolute path.
+    expect(lstatSync(vendoredNestedSharedDepDir).isSymbolicLink()).toBe(true);
+    const linkTarget = readlinkSync(vendoredNestedSharedDepDir);
+    const resolvedLinkTarget = resolve(dirname(vendoredNestedSharedDepDir), linkTarget);
+    expect(basename(resolvedLinkTarget)).toBe('shared-dep');
+    expect(readFileSync(resolve(vendoredNestedSharedDepDir, 'index.js'), 'utf8')).toBe(
+      'module.exports = "shared";\n',
+    );
   });
 });
 

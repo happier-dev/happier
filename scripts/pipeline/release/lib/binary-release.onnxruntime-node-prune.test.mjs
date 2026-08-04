@@ -6,35 +6,38 @@ import { tmpdir } from 'node:os';
 
 import { sanitizePackagedNodeModulesTree } from './binary-release.mjs';
 
-// onnxruntime-node bundles prebuilt native binaries for every platform/arch inside
-// its own package tree (bin/napi-v<N>/<platform>/<arch>/...) rather than splitting
-// them into per-target optionalDependencies. A single-platform CLI release tarball
-// should only ship the binaries for its own target.
+// Native-binary bundling packages that ship prebuilt binaries for every
+// platform/arch inside their own package tree (instead of splitting per-target
+// into optionalDependencies), so package.json os/cpu constraints alone can't
+// prune them. Every single-platform CLI release tarball should only ship the
+// binaries for its own target, regardless of which target that is.
+const CLI_TARGETS = [
+  { os: 'linux', arch: 'x64' },
+  { os: 'linux', arch: 'arm64' },
+  { os: 'darwin', arch: 'x64' },
+  { os: 'darwin', arch: 'arm64' },
+  { os: 'windows', arch: 'x64' },
+];
+
+const NESTED_PLATFORM_ARCH_PAIRS = [
+  ['linux', 'x64'],
+  ['linux', 'arm64'],
+  ['darwin', 'x64'],
+  ['darwin', 'arm64'],
+  ['win32', 'x64'],
+  ['win32', 'arm64'],
+];
+
 async function buildFakeOnnxruntimeNodeTree(stageDir) {
   const pkgDir = join(stageDir, 'node_modules', 'onnxruntime-node');
+  await mkdir(pkgDir, { recursive: true });
   await writeFile(
     join(pkgDir, 'package.json'),
     JSON.stringify({ name: 'onnxruntime-node', os: ['win32', 'darwin', 'linux'] }),
     'utf-8',
-  ).catch(async (error) => {
-    if (error.code !== 'ENOENT') throw error;
-    await mkdir(pkgDir, { recursive: true });
-    await writeFile(
-      join(pkgDir, 'package.json'),
-      JSON.stringify({ name: 'onnxruntime-node', os: ['win32', 'darwin', 'linux'] }),
-      'utf-8',
-    );
-  });
+  );
 
-  const platformArchPairs = [
-    ['linux', 'x64'],
-    ['linux', 'arm64'],
-    ['darwin', 'x64'],
-    ['darwin', 'arm64'],
-    ['win32', 'x64'],
-    ['win32', 'arm64'],
-  ];
-  for (const [platform, arch] of platformArchPairs) {
+  for (const [platform, arch] of NESTED_PLATFORM_ARCH_PAIRS) {
     const dir = join(pkgDir, 'bin', 'napi-v3', platform, arch);
     await mkdir(dir, { recursive: true });
     await writeFile(join(dir, 'onnxruntime_binding.node'), 'fake-binary', 'utf-8');
@@ -43,47 +46,55 @@ async function buildFakeOnnxruntimeNodeTree(stageDir) {
   return pkgDir;
 }
 
-test('sanitizePackagedNodeModulesTree prunes onnxruntime-node bundled binaries to the packaging target only', async () => {
-  const stageDir = await mkdtemp(join(tmpdir(), 'happier-binary-release-onnx-prune-'));
+async function buildFakeFlatPrebuildsTree(stageDir, packageName) {
+  const pkgDir = join(stageDir, 'node_modules', ...packageName.split('/'));
+  await mkdir(pkgDir, { recursive: true });
+  await writeFile(join(pkgDir, 'package.json'), JSON.stringify({ name: packageName }), 'utf-8');
 
-  try {
-    const pkgDir = await buildFakeOnnxruntimeNodeTree(stageDir);
-
-    await sanitizePackagedNodeModulesTree({
-      stageDir,
-      target: { os: 'darwin', arch: 'arm64' },
-    });
-
-    const napiDir = join(pkgDir, 'bin', 'napi-v3');
-    const remainingPlatforms = await readdir(napiDir);
-    assert.deepEqual(remainingPlatforms.sort(), ['darwin']);
-
-    const remainingArches = await readdir(join(napiDir, 'darwin'));
-    assert.deepEqual(remainingArches, ['arm64']);
-  } finally {
-    await rm(stageDir, { recursive: true, force: true });
+  const prebuildsDir = join(pkgDir, 'prebuilds');
+  for (const [platform, arch] of NESTED_PLATFORM_ARCH_PAIRS) {
+    const dir = join(prebuildsDir, `${platform}-${arch}`);
+    await mkdir(dir, { recursive: true });
+    await writeFile(join(dir, 'pty.node'), 'fake-binary', 'utf-8');
   }
-});
 
-test('sanitizePackagedNodeModulesTree keeps only the matching arch for windows targets', async () => {
-  const stageDir = await mkdtemp(join(tmpdir(), 'happier-binary-release-onnx-prune-win-'));
+  return pkgDir;
+}
 
-  try {
-    const pkgDir = await buildFakeOnnxruntimeNodeTree(stageDir);
+for (const target of CLI_TARGETS) {
+  const expectedNodePlatform = target.os === 'windows' ? 'win32' : target.os;
 
-    await sanitizePackagedNodeModulesTree({
-      stageDir,
-      // buildBinaryTarget.mjs uses os: 'windows'; resolveTargetNodePlatform maps it to 'win32'.
-      target: { os: 'windows', arch: 'x64' },
+  test(`sanitizePackagedNodeModulesTree prunes onnxruntime-node (nested layout) to ${target.os}/${target.arch} only`, async () => {
+    const stageDir = await mkdtemp(join(tmpdir(), 'happier-binary-release-onnx-prune-'));
+    try {
+      const pkgDir = await buildFakeOnnxruntimeNodeTree(stageDir);
+
+      await sanitizePackagedNodeModulesTree({ stageDir, target });
+
+      const napiDir = join(pkgDir, 'bin', 'napi-v3');
+      const remainingPlatforms = await readdir(napiDir);
+      assert.deepEqual(remainingPlatforms, [expectedNodePlatform]);
+
+      const remainingArches = await readdir(join(napiDir, expectedNodePlatform));
+      assert.deepEqual(remainingArches, [target.arch]);
+    } finally {
+      await rm(stageDir, { recursive: true, force: true });
+    }
+  });
+
+  for (const packageName of ['node-pty', '@homebridge/node-pty-prebuilt-multiarch']) {
+    test(`sanitizePackagedNodeModulesTree prunes ${packageName} (flat layout) to ${target.os}/${target.arch} only`, async () => {
+      const stageDir = await mkdtemp(join(tmpdir(), 'happier-binary-release-flat-prune-'));
+      try {
+        const pkgDir = await buildFakeFlatPrebuildsTree(stageDir, packageName);
+
+        await sanitizePackagedNodeModulesTree({ stageDir, target });
+
+        const remaining = await readdir(join(pkgDir, 'prebuilds'));
+        assert.deepEqual(remaining, [`${expectedNodePlatform}-${target.arch}`]);
+      } finally {
+        await rm(stageDir, { recursive: true, force: true });
+      }
     });
-
-    const napiDir = join(pkgDir, 'bin', 'napi-v3');
-    const remainingPlatforms = await readdir(napiDir);
-    assert.deepEqual(remainingPlatforms.sort(), ['win32']);
-
-    const remainingArches = await readdir(join(napiDir, 'win32'));
-    assert.deepEqual(remainingArches, ['x64']);
-  } finally {
-    await rm(stageDir, { recursive: true, force: true });
   }
-});
+}

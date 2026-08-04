@@ -1,6 +1,6 @@
-import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
-import { basename, dirname, resolve } from 'node:path';
+import { basename, dirname, relative, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 export function findRepoRoot(startDir: string): string {
@@ -545,16 +545,18 @@ function vendorRuntimeDependencyTree(params: Readonly<{
   resolveFromPackageJsonPath?: string;
   destNodeModulesDir: string;
   visited?: Set<string>;
+  dedupeByNameVersion?: Map<string, string>;
 }>): void {
   const pkgJson = readJson(params.packageJsonPath);
   const roots = collectExternalRuntimeDepNamesFromPackageJson(pkgJson);
   const require = createRequire(pathToFileURL(params.resolveFromPackageJsonPath ?? params.packageJsonPath).href);
 
   const visited = params.visited ?? new Set<string>();
+  const dedupeByNameVersion = params.dedupeByNameVersion ?? new Map<string, string>();
   mkdirSync(params.destNodeModulesDir, { recursive: true });
 
   for (const dep of roots) {
-    let resolved: Readonly<{ packageDir: string; packageJsonPath: string }>;
+    let resolved: Readonly<{ packageDir: string; packageJsonPath: string; packageJson: any }>;
     try {
       resolved = resolveInstalledPackage({ require, packageName: dep.name });
     } catch (error) {
@@ -566,13 +568,37 @@ function vendorRuntimeDependencyTree(params: Readonly<{
     if (visited.has(depDestDir)) continue;
     visited.add(depDestDir);
 
+    const version = typeof resolved.packageJson?.version === 'string' ? resolved.packageJson.version : undefined;
+    const dedupeKey = version ? `${dep.name}@${version}` : undefined;
+    const existingDedupePath = dedupeKey ? dedupeByNameVersion.get(dedupeKey) : undefined;
+
+    if (existingDedupePath) {
+      // Already vendored elsewhere in this same tree at the identical name+version. Symlink to
+      // the surviving copy instead of copying again -- behaviorally identical for any consumer
+      // (including one that reads from disk directly), since the two source trees are the same
+      // resolved version. Skip recursing into its subtree: those deps were already vendored under
+      // the first copy.
+      //
+      // Use a relative link target: both paths currently live inside the same not-yet-renamed
+      // atomic-build staging tree, and the whole tree (staging dir and all its contents, symlink
+      // included) gets renamed as one unit into its final place. An absolute target captured now
+      // would point at the staging path and dangle once that rename happens; a relative target
+      // survives the rename because the relationship between the two paths doesn't change.
+      rmDirSafeSync(depDestDir);
+      mkdirSync(dirname(depDestDir), { recursive: true });
+      symlinkSync(relative(dirname(depDestDir), existingDedupePath), depDestDir, 'dir');
+      continue;
+    }
+
     resetDir(depDestDir);
     copyDirSafeSync(resolved.packageDir, depDestDir, { dereference: true });
+    if (dedupeKey) dedupeByNameVersion.set(dedupeKey, depDestDir);
 
     vendorRuntimeDependencyTree({
       packageJsonPath: resolved.packageJsonPath,
       destNodeModulesDir: resolve(depDestDir, 'node_modules'),
       visited,
+      dedupeByNameVersion,
     });
   }
 }

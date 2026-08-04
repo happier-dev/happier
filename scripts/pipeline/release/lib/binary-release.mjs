@@ -568,22 +568,49 @@ function isNestedNodeModulesBinDir(path) {
   return path.includes('/node_modules/.bin') || path.includes('\\node_modules\\.bin');
 }
 
-// Some packages (e.g. onnxruntime-node) bundle prebuilt native binaries for every
-// supported platform/arch inside their own tree instead of splitting them into
-// per-target optionalDependencies, so package.json os/cpu constraints alone can't
-// prune them. Match known bundle root directories (whose children are "<platform>"
-// dirs, each containing "<arch>" dirs) and drop the ones that don't match the target.
-const BUNDLED_NATIVE_PLATFORM_ROOT_DIR_PATTERNS = [
+// Some packages bundle prebuilt native binaries for every supported platform/arch
+// inside their own tree instead of splitting them into per-target
+// optionalDependencies, so package.json os/cpu constraints alone can't prune them.
+// Match known bundle root directories and drop the platform/arch combinations that
+// don't match the packaging target.
+//
+// Two layouts are recognized:
+//  - nested:  <root>/<platform>/<arch>/...            (e.g. onnxruntime-node)
+//  - flat:    <root>/<platform>-<arch>/...             (e.g. node-pty, node-pty-prebuilt-multiarch)
+const NESTED_BUNDLED_NATIVE_PLATFORM_ROOT_DIR_PATTERNS = [
   // onnxruntime-node: bin/napi-v<N>/<platform>/<arch>/...
   /\/node_modules\/onnxruntime-node\/bin\/napi-v\d+$/,
 ];
 
-function isBundledNativePlatformRootDir(path) {
+const FLAT_BUNDLED_NATIVE_PLATFORM_ROOT_DIR_PATTERNS = [
+  // node-pty, @homebridge/node-pty-prebuilt-multiarch: prebuilds/<platform>-<arch>/...
+  /\/node_modules\/(?:node-pty|@homebridge\/node-pty-prebuilt-multiarch)\/prebuilds$/,
+  // bare-fs, bare-url, bare-os (nested under archiver -> tar-stream): prebuilds/<platform>-<arch>/...
+  /\/node_modules\/bare-(?:fs|url|os)\/prebuilds$/,
+];
+
+// The independent per-package vendoring entry points (vendorBundledPackageRuntimeDependencies
+// for apps/cli's own deps vs. bundleInstalledPackageWithRuntimeDependencies for each
+// CLI_RUNTIME_EXTERNAL_PACKAGES package) don't share a "visited" set with each other, so a
+// transitive dependency already present at the top-level node_modules can also get copied again
+// into a nested package's own node_modules. These nested copies are confirmed exact duplicates
+// (same version, byte-identical trees) of a package already present at the payload's top-level
+// node_modules, so ordinary upward-walking Node/Bun module resolution finds the top-level copy
+// once the nested duplicate is removed. Delete the whole nested directory outright.
+const DUPLICATE_VENDORED_PACKAGE_DIR_PATTERNS = [
+  // tar duplicated inside onnxruntime-node's own node_modules (only used by onnxruntime-node's
+  // postinstall script, which never runs against the shipped prebuilt payload).
+  /\/node_modules\/@huggingface\/transformers\/node_modules\/onnxruntime-node\/node_modules\/tar$/,
+  // @modelcontextprotocol/sdk duplicated inside claude-agent-sdk's own node_modules.
+  /\/node_modules\/@anthropic-ai\/claude-agent-sdk\/node_modules\/@modelcontextprotocol\/sdk$/,
+];
+
+function matchesAnyPattern(path, patterns) {
   const normalized = path.replaceAll('\\', '/');
-  return BUNDLED_NATIVE_PLATFORM_ROOT_DIR_PATTERNS.some((pattern) => pattern.test(normalized));
+  return patterns.some((pattern) => pattern.test(normalized));
 }
 
-async function pruneBundledNativePlatformRootDir(params) {
+async function pruneNestedBundledNativePlatformRootDir(params) {
   const targetNodePlatform = resolveTargetNodePlatform(params.target);
   const targetArch = String(params.target?.arch ?? '').trim().toLowerCase();
   const entries = await readdir(params.directoryPath, { withFileTypes: true }).catch(() => []);
@@ -605,11 +632,53 @@ async function pruneBundledNativePlatformRootDir(params) {
   }
 }
 
+async function pruneFlatBundledNativePlatformRootDir(params) {
+  const targetNodePlatform = resolveTargetNodePlatform(params.target);
+  const targetArch = String(params.target?.arch ?? '').trim().toLowerCase();
+  const targetDirName = `${targetNodePlatform}-${targetArch}`;
+  const entries = await readdir(params.directoryPath, { withFileTypes: true }).catch(() => []);
+
+  for (const entry of entries) {
+    if (!entry.isDirectory() || entry.name.toLowerCase() !== targetDirName) {
+      await rm(join(params.directoryPath, entry.name), { recursive: true, force: true });
+    }
+  }
+}
+
+async function prunePackageDistDualFormatDir(params) {
+  const entries = await readdir(params.directoryPath, { withFileTypes: true }).catch(() => []);
+
+  for (const entry of entries) {
+    const childPath = join(params.directoryPath, entry.name);
+    if (entry.isDirectory()) {
+      await prunePackageDistDualFormatDir({ directoryPath: childPath });
+      continue;
+    }
+    if (entry.isFile() && entry.name.endsWith('.cjs')) {
+      await rm(childPath, { force: true });
+    }
+  }
+}
+
+// ps-list bundles Windows-only fastlist helper binaries unconditionally (no os/cpu
+// package.json gating), so they should be stripped whenever the packaging target
+// isn't Windows.
+const WINDOWS_ONLY_VENDOR_EXECUTABLE_PATTERNS = [
+  /\/node_modules\/ps-list\/vendor\/.*\.exe$/i,
+];
+
 async function prunePackagedTreeDirectory(params) {
   const entries = await readdir(params.directoryPath, { withFileTypes: true }).catch(() => []);
 
   for (const entry of entries) {
     if (!entry.isDirectory()) {
+      const childPath = join(params.directoryPath, entry.name);
+      if (
+        params.target?.os !== 'windows' &&
+        matchesAnyPattern(childPath, WINDOWS_ONLY_VENDOR_EXECUTABLE_PATTERNS)
+      ) {
+        await rm(childPath, { force: true });
+      }
       continue;
     }
 
@@ -618,6 +687,11 @@ async function prunePackagedTreeDirectory(params) {
 
     if (entry.name === '.bin' && childInNodeModulesTree && isNestedNodeModulesBinDir(childPath)) {
       await rm(childPath, { recursive: true, force: true });
+      continue;
+    }
+
+    if (entry.name === 'package-dist') {
+      await prunePackageDistDualFormatDir({ directoryPath: childPath });
       continue;
     }
 
@@ -632,8 +706,18 @@ async function prunePackagedTreeDirectory(params) {
       }
     }
 
-    if (isBundledNativePlatformRootDir(childPath)) {
-      await pruneBundledNativePlatformRootDir({ directoryPath: childPath, target: params.target });
+    if (matchesAnyPattern(childPath, NESTED_BUNDLED_NATIVE_PLATFORM_ROOT_DIR_PATTERNS)) {
+      await pruneNestedBundledNativePlatformRootDir({ directoryPath: childPath, target: params.target });
+      continue;
+    }
+
+    if (matchesAnyPattern(childPath, FLAT_BUNDLED_NATIVE_PLATFORM_ROOT_DIR_PATTERNS)) {
+      await pruneFlatBundledNativePlatformRootDir({ directoryPath: childPath, target: params.target });
+      continue;
+    }
+
+    if (matchesAnyPattern(childPath, DUPLICATE_VENDORED_PACKAGE_DIR_PATTERNS)) {
+      await rm(childPath, { recursive: true, force: true });
       continue;
     }
 
