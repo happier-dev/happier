@@ -381,6 +381,92 @@ describe('bundleWorkspacePackage', () => {
     );
   });
 
+  it('vendors two different versions of the same package name independently, never deduping by name alone', async () => {
+    rootDir = mkdtempSync(join(tmpdir(), 'happier-cli-common-bundle-workspace-'));
+
+    const workspaceModule = await import('./index');
+    const bundleWorkspacePackageWithRuntimeDependencies =
+      (workspaceModule as Record<string, unknown>).bundleWorkspacePackageWithRuntimeDependencies;
+    expect(bundleWorkspacePackageWithRuntimeDependencies).toBeTypeOf('function');
+
+    // Same diamond shape as the name@version dedup test above, but the nested copy declares a
+    // DIFFERENT version of shared-dep. The dedupeByNameVersion map is keyed by "name@version", so
+    // this must never even reach the equivalence check -- a name-only key would incorrectly treat
+    // these as the same dependency.
+    const srcPackageDir = resolve(rootDir, 'packages/agents');
+    const srcDistDir = resolve(srcPackageDir, 'dist');
+    const sharedDepDir = resolve(srcPackageDir, 'node_modules/shared-dep');
+    const consumerDepDir = resolve(srcPackageDir, 'node_modules/consumer-dep');
+    const nestedSharedDepDir = resolve(consumerDepDir, 'node_modules/shared-dep');
+
+    mkdirSync(srcDistDir, { recursive: true });
+    mkdirSync(sharedDepDir, { recursive: true });
+    mkdirSync(consumerDepDir, { recursive: true });
+    mkdirSync(nestedSharedDepDir, { recursive: true });
+
+    writeFileSync(
+      resolve(srcPackageDir, 'package.json'),
+      JSON.stringify(
+        {
+          name: '@happier-dev/agents',
+          version: '0.0.0',
+          type: 'module',
+          exports: { '.': { default: './dist/index.js' } },
+          dependencies: { 'shared-dep': '1.2.3', 'consumer-dep': '1.0.0' },
+        },
+        null,
+        2,
+      ),
+    );
+    writeFileSync(resolve(srcDistDir, 'index.js'), 'export {};');
+
+    writeFileSync(
+      resolve(sharedDepDir, 'package.json'),
+      JSON.stringify({ name: 'shared-dep', version: '1.2.3', dependencies: {} }, null, 2),
+    );
+    writeFileSync(resolve(sharedDepDir, 'index.js'), 'module.exports = "shared-v1";\n');
+
+    writeFileSync(
+      resolve(consumerDepDir, 'package.json'),
+      JSON.stringify({ name: 'consumer-dep', version: '1.0.0', dependencies: { 'shared-dep': '2.0.0' } }, null, 2),
+    );
+    writeFileSync(resolve(consumerDepDir, 'index.js'), 'module.exports = "consumer";\n');
+
+    // Different version (2.0.0, not 1.2.3) and different content -- must be vendored as its own
+    // real directory, not symlinked to the v1.2.3 copy.
+    writeFileSync(
+      resolve(nestedSharedDepDir, 'package.json'),
+      JSON.stringify({ name: 'shared-dep', version: '2.0.0', dependencies: {} }, null, 2),
+    );
+    writeFileSync(resolve(nestedSharedDepDir, 'index.js'), 'module.exports = "shared-v2";\n');
+
+    const destPackageDir = resolve(rootDir, 'apps/cli/node_modules/@happier-dev/agents');
+
+    (bundleWorkspacePackageWithRuntimeDependencies as (params: {
+      packageName: string;
+      srcDir: string;
+      destDir: string;
+    }) => void)({
+      packageName: '@happier-dev/agents',
+      srcDir: srcPackageDir,
+      destDir: destPackageDir,
+    });
+
+    const vendoredSharedDepDir = resolve(destPackageDir, 'node_modules/shared-dep');
+    const vendoredNestedSharedDepDir = resolve(
+      destPackageDir,
+      'node_modules/consumer-dep/node_modules/shared-dep',
+    );
+
+    // Both versions are vendored as real, independent directories -- no symlink either direction.
+    expect(lstatSync(vendoredSharedDepDir).isSymbolicLink()).toBe(false);
+    expect(lstatSync(vendoredNestedSharedDepDir).isSymbolicLink()).toBe(false);
+    expect(readFileSync(resolve(vendoredSharedDepDir, 'index.js'), 'utf8')).toBe('module.exports = "shared-v1";\n');
+    expect(readFileSync(resolve(vendoredNestedSharedDepDir, 'index.js'), 'utf8')).toBe(
+      'module.exports = "shared-v2";\n',
+    );
+  });
+
   it('does not dedupe two resolved directories that share name@version but differ in content', async () => {
     rootDir = mkdtempSync(join(tmpdir(), 'happier-cli-common-bundle-workspace-'));
 
