@@ -1,14 +1,15 @@
-import { createReadStream } from 'node:fs';
+import { createReadStream, createWriteStream } from 'node:fs';
 import type { EventEmitter } from 'node:events';
-import { lstat, mkdir, mkdtemp, readdir, rename, rm, rmdir } from 'node:fs/promises';
+import { lstat, mkdir, mkdtemp, open, readdir, rename, rm, rmdir } from 'node:fs/promises';
 import { basename, dirname, join, resolve } from 'node:path';
 import { Readable, Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import type { ReadableStream as NodeReadableStream } from 'node:stream/web';
+import { createInflateRaw } from 'node:zlib';
 
-import extractZip from 'extract-zip';
 import * as tar from 'tar';
 import type { TarOptionsWithAliasesAsyncNoFile } from 'tar';
+import * as yauzl from 'yauzl';
 
 const WINDOWS_INVALID_PATH_CHARACTER = /[\u0000-\u001f<>:"|?*]/u;
 const WINDOWS_RESERVED_PATH_SEGMENT = /^(?:con|prn|aux|nul|com[1-9¹²³]|lpt[1-9¹²³])(?:\.|$)/iu;
@@ -404,20 +405,166 @@ export async function inspectTarArchiveEntries(params: Readonly<{
 
 type ZipArchiveEntry = Readonly<{
   compressedSize: number;
+  compressionMethod: number;
+  crc32: number;
+  decodedRawFileName: string;
   externalFileAttributes: number;
   fileName: string;
+  generalPurposeBitFlag: number;
+  rawFileName: Buffer;
+  relativeOffsetOfLocalHeader: number;
   uncompressedSize: number;
+  usesZip64DataDescriptor: boolean;
   versionMadeBy: number;
 }>;
+
+type ValidatedZipArchiveEntry = ZipArchiveEntry & Readonly<{
+  kind: ArchiveEntryKind;
+  mode: number;
+  path: string | null;
+}>;
+
+const CRC32_TABLE = Uint32Array.from({ length: 256 }, (_, index) => {
+  let value = index;
+  for (let bit = 0; bit < 8; bit += 1) {
+    value = (value & 1) !== 0
+      ? 0xedb88320 ^ (value >>> 1)
+      : value >>> 1;
+  }
+  return value >>> 0;
+});
+
+function updateCrc32(previousChecksum: number, chunk: Buffer): number {
+  let checksum = (previousChecksum ^ 0xffffffff) >>> 0;
+  for (const byte of chunk) {
+    checksum = (CRC32_TABLE[(checksum ^ byte) & 0xff]! ^ (checksum >>> 8)) >>> 0;
+  }
+  return (checksum ^ 0xffffffff) >>> 0;
+}
+
+const CP437_CHARACTERS = Array.from(
+  '\u0000☺☻♥♦♣♠•◘○◙♂♀♪♫☼►◄↕‼¶§▬↨↑↓→←∟↔▲▼ !"#$%&\'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~⌂ÇüéâäàåçêëèïîìÄÅÉæÆôöòûùÿÖÜ¢£¥₧ƒáíóúñÑªº¿⌐¬½¼¡«»░▒▓│┤╡╢╖╕╣║╗╝╜╛┐└┴┬├─┼╞╟╚╔╩╦╠═╬╧╨╤╥╙╘╒╓╫╪┘┌█▄▌▐▀αßΓπΣσµτΦΘΩδ∞φε∩≡±≥≤⌠⌡÷≈°∙·√ⁿ²■ ',
+);
+const UTF8_DECODER = new TextDecoder('utf-8', { fatal: true });
+
+type RawYauzlEntry = Omit<yauzl.Entry, 'fileName'> & Readonly<{
+  fileName: Buffer;
+}>;
+
+type ZipExtraField = Readonly<{
+  data: Buffer;
+  id: number;
+}>;
+
+function decodeZipUnicodePath(params: Readonly<{
+  extraFields: readonly ZipExtraField[];
+  headerName: 'central' | 'local';
+  rawFileName: Buffer;
+}>): string | null {
+  let unicodeFileName: string | null = null;
+  for (const field of params.extraFields) {
+    if (
+      field.id !== 0x7075
+      || field.data.byteLength < 6
+      || field.data.readUInt8(0) !== 1
+      || field.data.readUInt32LE(1) !== updateCrc32(0, params.rawFileName)
+    ) {
+      continue;
+    }
+    let decodedName: string;
+    try {
+      decodedName = UTF8_DECODER.decode(field.data.subarray(5));
+    } catch {
+      throw new Error(
+        `[release-runtime] ZIP ${params.headerName} Unicode path extra field is not valid UTF-8`,
+      );
+    }
+    if (unicodeFileName !== null && unicodeFileName !== decodedName) {
+      throw new Error(
+        `[release-runtime] ZIP ${params.headerName} header has conflicting Unicode path extra fields`,
+      );
+    }
+    unicodeFileName = decodedName;
+  }
+  return unicodeFileName;
+}
+
+function decodeZipEntryFileName(entry: RawYauzlEntry): ZipArchiveEntry {
+  const rawFileName = Buffer.from(entry.fileName);
+  let fileName: string;
+  if ((entry.generalPurposeBitFlag & 0x800) !== 0) {
+    try {
+      fileName = UTF8_DECODER.decode(rawFileName);
+    } catch {
+      throw new Error('[release-runtime] ZIP entry filename is not valid UTF-8');
+    }
+  } else {
+    fileName = Array.from(rawFileName, (byte) => CP437_CHARACTERS[byte]!).join('');
+  }
+  const decodedRawFileName = fileName;
+
+  const unicodeFileName = decodeZipUnicodePath({
+    extraFields: entry.extraFields,
+    headerName: 'central',
+    rawFileName,
+  });
+  if (
+    unicodeFileName !== null
+    && (entry.generalPurposeBitFlag & 0x800) !== 0
+    && unicodeFileName !== decodedRawFileName
+  ) {
+    throw new Error(
+      '[release-runtime] ZIP central Unicode path extra field conflicts with its UTF-8 filename',
+    );
+  }
+  if (unicodeFileName !== null) fileName = unicodeFileName;
+
+  return {
+    compressedSize: entry.compressedSize,
+    compressionMethod: entry.compressionMethod,
+    crc32: entry.crc32,
+    decodedRawFileName,
+    externalFileAttributes: entry.externalFileAttributes,
+    fileName,
+    generalPurposeBitFlag: entry.generalPurposeBitFlag,
+    rawFileName,
+    relativeOffsetOfLocalHeader: entry.relativeOffsetOfLocalHeader,
+    uncompressedSize: entry.uncompressedSize,
+    usesZip64DataDescriptor: (
+      (entry.generalPurposeBitFlag & 0x8) !== 0
+      && entry.extraFields.some((field) => field.id === 0x0001)
+    ),
+    versionMadeBy: entry.versionMadeBy,
+  };
+}
 
 function createZipEntryValidator(params: Readonly<{
   allowedEntryRoots?: readonly string[];
   abortContext: ArchiveAbortContext;
   budget: ArchiveBudget;
-}>): (entry: ZipArchiveEntry) => void {
+}>): (entry: ZipArchiveEntry) => ValidatedZipArchiveEntry {
   const validatePath = createArchiveEntryValidator(params.allowedEntryRoots);
   return (entry) => {
     params.abortContext.throwIfAborted();
+    if ((entry.generalPurposeBitFlag & 0x1) !== 0) {
+      throw new Error(`[release-runtime] encrypted archive entries are not supported (${entry.fileName})`);
+    }
+    if (entry.compressionMethod !== 0 && entry.compressionMethod !== 8) {
+      throw new Error(
+        `[release-runtime] ZIP compression method is not supported: ${entry.compressionMethod} (${entry.fileName})`,
+      );
+    }
+    if (
+      !Number.isSafeInteger(entry.compressedSize)
+      || entry.compressedSize < 0
+      || !Number.isSafeInteger(entry.relativeOffsetOfLocalHeader)
+      || entry.relativeOffsetOfLocalHeader < 0
+    ) {
+      throw new Error(`[release-runtime] archive entry has invalid ZIP offsets (${entry.fileName})`);
+    }
+    if (entry.compressionMethod === 0 && entry.compressedSize !== entry.uncompressedSize) {
+      throw new Error(`[release-runtime] stored ZIP entry has inconsistent sizes (${entry.fileName})`);
+    }
     const unixMode = (entry.externalFileAttributes >>> 16) & 0xffff;
     const unixFileType = unixMode & 0o170000;
     const madeBy = entry.versionMadeBy >>> 8;
@@ -427,8 +574,14 @@ function createZipEntryValidator(params: Readonly<{
     if (unixFileType !== 0 && unixFileType !== 0o040000 && unixFileType !== 0o100000) {
       throw new Error(`[release-runtime] archive entry type is not supported: link or special file (${entry.fileName})`);
     }
-    params.budget.account(isDirectory ? 'directory' : 'file', isDirectory ? 0 : entry.uncompressedSize);
-    validatePath(entry.fileName, isDirectory ? 'directory' : 'file');
+    const kind = isDirectory ? 'directory' : 'file';
+    params.budget.account(kind, isDirectory ? 0 : entry.uncompressedSize);
+    return {
+      ...entry,
+      kind,
+      mode: unixMode & 0o777,
+      path: validatePath(entry.fileName, kind),
+    };
   };
 }
 
@@ -584,7 +737,528 @@ async function extractTarArchiveToDirectory(params: Readonly<{
   }
 }
 
-type ZipFileCloser = Readonly<{ close: () => void }>;
+async function readValidatedZipEntries(params: Readonly<{
+  abortContext: ArchiveAbortContext;
+  archivePath: string;
+  validateEntry: (entry: ZipArchiveEntry) => ValidatedZipArchiveEntry;
+}>): Promise<readonly ValidatedZipArchiveEntry[]> {
+  const entries: ValidatedZipArchiveEntry[] = [];
+  await new Promise<void>((resolvePromise, rejectPromise) => {
+    let zipFile: yauzl.ZipFile | null = null;
+    let openCompleted = false;
+    let settlementRequested = false;
+    let settlementError: unknown;
+    let completed = false;
+    const complete = () => {
+      if (completed) return;
+      completed = true;
+      if (settlementError === undefined) {
+        resolvePromise();
+      } else {
+        rejectPromise(settlementError);
+      }
+    };
+    const closeThenComplete = () => {
+      if (zipFile?.isOpen) {
+        zipFile.once('close', complete);
+        zipFile.close();
+        return;
+      }
+      complete();
+    };
+    const settle = (error?: unknown) => {
+      if (settlementRequested) return;
+      settlementRequested = true;
+      settlementError = error;
+      params.abortContext.signal.removeEventListener('abort', onAbort);
+      if (openCompleted) closeThenComplete();
+    };
+    const onAbort = () => settle(params.abortContext.signal.reason);
+    params.abortContext.signal.addEventListener('abort', onAbort, { once: true });
+
+    yauzl.open(
+      params.archivePath,
+      {
+        autoClose: false,
+        decodeStrings: false,
+        lazyEntries: true,
+        strictFileNames: false,
+        validateEntrySizes: true,
+      },
+      (openError, openedZipFile) => {
+        openCompleted = true;
+        if (openError) {
+          settle(openError);
+          closeThenComplete();
+          return;
+        }
+        zipFile = openedZipFile;
+        if (settlementRequested) {
+          closeThenComplete();
+          return;
+        }
+        zipFile.once('error', settle);
+        zipFile.on('entry', (entry: yauzl.Entry) => {
+          try {
+            entries.push(params.validateEntry(
+              decodeZipEntryFileName(entry as unknown as RawYauzlEntry),
+            ));
+            zipFile?.readEntry();
+          } catch (error) {
+            settle(error);
+          }
+        });
+        zipFile.once('end', () => settle());
+        zipFile.readEntry();
+      },
+    );
+  });
+  params.abortContext.throwIfAborted();
+  return entries;
+}
+
+type ZipCentralDirectory = Readonly<{
+  offset: number;
+  size: number;
+}>;
+
+type ValidatedZipEntryRange = Readonly<{
+  dataOffset: number;
+  rangeEnd: number;
+  rangeStart: number;
+}>;
+
+async function readZipArchiveBytes(params: Readonly<{
+  abortContext: ArchiveAbortContext;
+  archiveBytes: number;
+  archiveFile: Awaited<ReturnType<typeof open>>;
+  byteLength: number;
+  position: number;
+}>): Promise<Buffer> {
+  const end = params.position + params.byteLength;
+  if (
+    !Number.isSafeInteger(params.position)
+    || params.position < 0
+    || !Number.isSafeInteger(end)
+    || end > params.archiveBytes
+  ) {
+    throw new Error('[release-runtime] ZIP structure is outside the archive payload');
+  }
+
+  const buffer = Buffer.alloc(params.byteLength);
+  let bytesRead = 0;
+  while (bytesRead < buffer.byteLength) {
+    params.abortContext.throwIfAborted();
+    const readResult = await params.archiveFile.read(
+      buffer,
+      bytesRead,
+      buffer.byteLength - bytesRead,
+      params.position + bytesRead,
+    );
+    params.abortContext.throwIfAborted();
+    if (readResult.bytesRead === 0) break;
+    bytesRead += readResult.bytesRead;
+  }
+  if (bytesRead !== buffer.byteLength) {
+    throw new Error('[release-runtime] ZIP structure is truncated');
+  }
+  return buffer;
+}
+
+function readSafeZipUInt64(buffer: Buffer, offset: number, description: string): number {
+  const value = buffer.readBigUInt64LE(offset);
+  if (value > BigInt(Number.MAX_SAFE_INTEGER)) {
+    throw new Error(`[release-runtime] ZIP ${description} exceeds the supported numeric range`);
+  }
+  return Number(value);
+}
+
+async function readZipCentralDirectory(params: Readonly<{
+  abortContext: ArchiveAbortContext;
+  archiveBytes: number;
+  archiveFile: Awaited<ReturnType<typeof open>>;
+}>): Promise<ZipCentralDirectory> {
+  const minimumEndRecordBytes = 22;
+  if (params.archiveBytes < minimumEndRecordBytes) {
+    throw new Error('[release-runtime] ZIP end record is missing');
+  }
+  const tailByteLength = Math.min(params.archiveBytes, minimumEndRecordBytes + 0xffff);
+  const tailPosition = params.archiveBytes - tailByteLength;
+  const tail = await readZipArchiveBytes({
+    ...params,
+    byteLength: tailByteLength,
+    position: tailPosition,
+  });
+  let endRecordOffset = -1;
+  for (let offset = tail.byteLength - minimumEndRecordBytes; offset >= 0; offset -= 1) {
+    if (
+      tail.readUInt32LE(offset) === 0x06054b50
+      && offset + minimumEndRecordBytes + tail.readUInt16LE(offset + 20) === tail.byteLength
+    ) {
+      endRecordOffset = offset;
+      break;
+    }
+  }
+  if (endRecordOffset < 0) {
+    throw new Error('[release-runtime] ZIP end record is missing or malformed');
+  }
+  if (
+    tail.readUInt16LE(endRecordOffset + 4) !== 0
+    || tail.readUInt16LE(endRecordOffset + 6) !== 0
+  ) {
+    throw new Error('[release-runtime] multi-disk ZIP archives are not supported');
+  }
+
+  const absoluteEndRecordOffset = tailPosition + endRecordOffset;
+  let size = tail.readUInt32LE(endRecordOffset + 12);
+  let offset = tail.readUInt32LE(endRecordOffset + 16);
+  let metadataStart = absoluteEndRecordOffset;
+  if (size === 0xffffffff || offset === 0xffffffff) {
+    const locatorPosition = absoluteEndRecordOffset - 20;
+    const locator = await readZipArchiveBytes({
+      ...params,
+      byteLength: 20,
+      position: locatorPosition,
+    });
+    if (
+      locator.readUInt32LE(0) !== 0x07064b50
+      || locator.readUInt32LE(4) !== 0
+      || locator.readUInt32LE(16) !== 1
+    ) {
+      throw new Error('[release-runtime] ZIP64 end locator is missing or unsupported');
+    }
+    const zip64EndRecordOffset = readSafeZipUInt64(locator, 8, 'ZIP64 end-record offset');
+    const zip64EndRecord = await readZipArchiveBytes({
+      ...params,
+      byteLength: 56,
+      position: zip64EndRecordOffset,
+    });
+    if (
+      zip64EndRecord.readUInt32LE(0) !== 0x06064b50
+      || zip64EndRecord.readUInt32LE(16) !== 0
+      || zip64EndRecord.readUInt32LE(20) !== 0
+    ) {
+      throw new Error('[release-runtime] ZIP64 end record is missing or unsupported');
+    }
+    size = readSafeZipUInt64(zip64EndRecord, 40, 'central-directory size');
+    offset = readSafeZipUInt64(zip64EndRecord, 48, 'central-directory offset');
+    metadataStart = zip64EndRecordOffset;
+  }
+
+  const centralDirectoryEnd = offset + size;
+  if (
+    !Number.isSafeInteger(centralDirectoryEnd)
+    || offset < 0
+    || centralDirectoryEnd > metadataStart
+  ) {
+    throw new Error('[release-runtime] ZIP central directory is outside its declared range');
+  }
+  return { offset, size };
+}
+
+function parseZipExtraFields(buffer: Buffer, headerName: 'central' | 'local'): readonly ZipExtraField[] {
+  const fields: ZipExtraField[] = [];
+  let offset = 0;
+  while (offset < buffer.byteLength) {
+    if (offset + 4 > buffer.byteLength) {
+      throw new Error(`[release-runtime] ZIP ${headerName} extra field is malformed`);
+    }
+    const fieldSize = buffer.readUInt16LE(offset + 2);
+    const fieldEnd = offset + 4 + fieldSize;
+    if (fieldEnd > buffer.byteLength) {
+      throw new Error(`[release-runtime] ZIP ${headerName} extra field is malformed`);
+    }
+    fields.push({
+      data: buffer.subarray(offset + 4, fieldEnd),
+      id: buffer.readUInt16LE(offset),
+    });
+    offset = fieldEnd;
+  }
+  return fields;
+}
+
+function readLocalZipSizes(params: Readonly<{
+  compressedSize: number;
+  extraFields: readonly ZipExtraField[];
+  uncompressedSize: number;
+}>): Readonly<{ compressedSize: number; uncompressedSize: number }> {
+  let compressedSize = params.compressedSize;
+  let uncompressedSize = params.uncompressedSize;
+  if (compressedSize !== 0xffffffff && uncompressedSize !== 0xffffffff) {
+    return { compressedSize, uncompressedSize };
+  }
+
+  const zip64Data = params.extraFields.find((field) => field.id === 0x0001)?.data ?? null;
+  if (!zip64Data) {
+    throw new Error('[release-runtime] ZIP local header is missing ZIP64 sizes');
+  }
+
+  let zip64Offset = 0;
+  if (uncompressedSize === 0xffffffff) {
+    if (zip64Offset + 8 > zip64Data.byteLength) {
+      throw new Error('[release-runtime] ZIP local header is missing its ZIP64 uncompressed size');
+    }
+    uncompressedSize = readSafeZipUInt64(zip64Data, zip64Offset, 'local uncompressed size');
+    zip64Offset += 8;
+  }
+  if (compressedSize === 0xffffffff) {
+    if (zip64Offset + 8 > zip64Data.byteLength) {
+      throw new Error('[release-runtime] ZIP local header is missing its ZIP64 compressed size');
+    }
+    compressedSize = readSafeZipUInt64(zip64Data, zip64Offset, 'local compressed size');
+  }
+  return { compressedSize, uncompressedSize };
+}
+
+function readZipDataDescriptorSize(params: Readonly<{
+  descriptor: Buffer;
+  entry: ValidatedZipArchiveEntry;
+}>): number {
+  const candidates: number[] = [];
+  const hasSignature = (
+    params.descriptor.byteLength >= 4
+    && params.descriptor.readUInt32LE(0) === 0x08074b50
+  );
+  const signatureVariants = hasSignature ? [true, false] : [false];
+  const sizeVariants: readonly (4 | 8)[] = params.entry.usesZip64DataDescriptor ? [8] : [4];
+
+  for (const signed of signatureVariants) {
+    for (const sizeBytes of sizeVariants) {
+      const valueOffset = signed ? 4 : 0;
+      const byteLength = valueOffset + 4 + (2 * sizeBytes);
+      if (byteLength > params.descriptor.byteLength) continue;
+      const checksum = params.descriptor.readUInt32LE(valueOffset);
+      const compressedSize = sizeBytes === 4
+        ? params.descriptor.readUInt32LE(valueOffset + 4)
+        : readSafeZipUInt64(params.descriptor, valueOffset + 4, 'descriptor compressed size');
+      const uncompressedSize = sizeBytes === 4
+        ? params.descriptor.readUInt32LE(valueOffset + 8)
+        : readSafeZipUInt64(
+            params.descriptor,
+            valueOffset + 4 + sizeBytes,
+            'descriptor uncompressed size',
+          );
+      if (
+        checksum === params.entry.crc32
+        && compressedSize === params.entry.compressedSize
+        && uncompressedSize === params.entry.uncompressedSize
+      ) {
+        candidates.push(byteLength);
+      }
+    }
+  }
+
+  if (candidates.length === 0) {
+    throw new Error(
+      `[release-runtime] ZIP data descriptor is missing or conflicts with the central header (${params.entry.fileName})`,
+    );
+  }
+  return candidates[0]!;
+}
+
+async function readZipEntryDataOffset(params: Readonly<{
+  abortContext: ArchiveAbortContext;
+  archiveBytes: number;
+  archiveFile: Awaited<ReturnType<typeof open>>;
+  centralDirectoryOffset: number;
+  entry: ValidatedZipArchiveEntry;
+}>): Promise<ValidatedZipEntryRange> {
+  const localHeader = await readZipArchiveBytes({
+    ...params,
+    byteLength: 30,
+    position: params.entry.relativeOffsetOfLocalHeader,
+  });
+  if (
+    localHeader.readUInt32LE(0) !== 0x04034b50
+  ) {
+    throw new Error(`[release-runtime] archive entry has an invalid ZIP local header (${params.entry.fileName})`);
+  }
+
+  const localFlags = localHeader.readUInt16LE(6);
+  const localCompressionMethod = localHeader.readUInt16LE(8);
+  if (
+    localFlags !== params.entry.generalPurposeBitFlag
+    || localCompressionMethod !== params.entry.compressionMethod
+  ) {
+    throw new Error(`[release-runtime] ZIP central and local headers disagree (${params.entry.fileName})`);
+  }
+
+  const fileNameBytes = localHeader.readUInt16LE(26);
+  const extraFieldBytes = localHeader.readUInt16LE(28);
+  const localVariableFields = await readZipArchiveBytes({
+    ...params,
+    byteLength: fileNameBytes + extraFieldBytes,
+    position: params.entry.relativeOffsetOfLocalHeader + localHeader.byteLength,
+  });
+  const localFileName = localVariableFields.subarray(0, fileNameBytes);
+  const localExtraField = localVariableFields.subarray(fileNameBytes);
+  if (!localFileName.equals(params.entry.rawFileName)) {
+    throw new Error(`[release-runtime] ZIP central and local headers disagree (${params.entry.fileName})`);
+  }
+  const localExtraFields = parseZipExtraFields(localExtraField, 'local');
+  const localUnicodeFileName = decodeZipUnicodePath({
+    extraFields: localExtraFields,
+    headerName: 'local',
+    rawFileName: localFileName,
+  });
+  if (
+    localUnicodeFileName !== null
+    && (localFlags & 0x800) !== 0
+    && localUnicodeFileName !== params.entry.decodedRawFileName
+  ) {
+    throw new Error(
+      `[release-runtime] ZIP local Unicode path extra field conflicts with its UTF-8 filename (${params.entry.fileName})`,
+    );
+  }
+  const localSemanticFileName = localUnicodeFileName ?? params.entry.decodedRawFileName;
+  if (params.entry.fileName !== localSemanticFileName) {
+    throw new Error(
+      `[release-runtime] ZIP central and local Unicode path fields disagree (${params.entry.fileName})`,
+    );
+  }
+  if ((localFlags & 0x8) === 0) {
+    const localSizes = readLocalZipSizes({
+      compressedSize: localHeader.readUInt32LE(18),
+      extraFields: localExtraFields,
+      uncompressedSize: localHeader.readUInt32LE(22),
+    });
+    if (
+      localHeader.readUInt32LE(14) !== params.entry.crc32
+      || localSizes.compressedSize !== params.entry.compressedSize
+      || localSizes.uncompressedSize !== params.entry.uncompressedSize
+    ) {
+      throw new Error(`[release-runtime] ZIP central and local headers disagree (${params.entry.fileName})`);
+    }
+  }
+
+  const dataOffset = params.entry.relativeOffsetOfLocalHeader
+    + localHeader.byteLength
+    + fileNameBytes
+    + extraFieldBytes;
+  const dataEnd = dataOffset + params.entry.compressedSize;
+  if (
+    !Number.isSafeInteger(dataOffset)
+    || dataOffset < 0
+    || !Number.isSafeInteger(dataEnd)
+    || dataEnd > params.centralDirectoryOffset
+  ) {
+    throw new Error(`[release-runtime] archive entry data enters the ZIP central directory (${params.entry.fileName})`);
+  }
+  let rangeEnd = dataEnd;
+  if ((localFlags & 0x8) !== 0) {
+    const descriptor = await readZipArchiveBytes({
+      ...params,
+      byteLength: Math.min(24, params.centralDirectoryOffset - dataEnd),
+      position: dataEnd,
+    });
+    rangeEnd += readZipDataDescriptorSize({
+      descriptor,
+      entry: params.entry,
+    });
+    if (rangeEnd > params.centralDirectoryOffset) {
+      throw new Error(
+        `[release-runtime] ZIP data descriptor enters the central directory (${params.entry.fileName})`,
+      );
+    }
+  }
+  return {
+    dataOffset,
+    rangeEnd,
+    rangeStart: params.entry.relativeOffsetOfLocalHeader,
+  };
+}
+
+function createZipPayloadVerifier(params: Readonly<{
+  abortContext: ArchiveAbortContext;
+  entry: ValidatedZipArchiveEntry;
+}>): Transform {
+  let byteLength = 0;
+  let checksum = 0;
+  return new Transform({
+    transform(chunk: Buffer, _encoding, callback) {
+      byteLength += chunk.byteLength;
+      if (byteLength > params.entry.uncompressedSize) {
+        const error = new Error(
+          `[release-runtime] ZIP entry expanded beyond its declared size (${params.entry.fileName})`,
+        );
+        params.abortContext.abort(error);
+        callback(error);
+        return;
+      }
+      checksum = updateCrc32(checksum, chunk);
+      callback(null, chunk);
+    },
+    flush(callback) {
+      if (byteLength !== params.entry.uncompressedSize) {
+        callback(new Error(
+          `[release-runtime] ZIP entry size does not match its declaration (${params.entry.fileName})`,
+        ));
+        return;
+      }
+      if ((checksum >>> 0) !== (params.entry.crc32 >>> 0)) {
+        callback(new Error(
+          `[release-runtime] ZIP entry checksum does not match its declaration (${params.entry.fileName})`,
+        ));
+        return;
+      }
+      callback();
+    },
+  });
+}
+
+async function extractValidatedZipEntry(params: Readonly<{
+  abortContext: ArchiveAbortContext;
+  archivePath: string;
+  entry: ValidatedZipArchiveEntry & Readonly<{ dataOffset: number }>;
+  extractDir: string;
+}>): Promise<void> {
+  params.abortContext.throwIfAborted();
+  if (params.entry.path === null) return;
+  const outputPath = join(params.extractDir, ...params.entry.path.split('/'));
+  if (params.entry.kind === 'directory') {
+    await mkdir(outputPath, {
+      recursive: true,
+      mode: params.entry.mode || 0o755,
+    });
+    return;
+  }
+
+  await mkdir(dirname(outputPath), { recursive: true });
+  const payloadSource = params.entry.compressedSize === 0
+    ? Readable.from([])
+    : createReadStream(params.archivePath, {
+        start: params.entry.dataOffset,
+        end: params.entry.dataOffset + params.entry.compressedSize - 1,
+      });
+  const verifier = createZipPayloadVerifier(params);
+  const output = createWriteStream(outputPath, {
+    flags: 'wx',
+    mode: params.entry.mode || 0o644,
+  });
+  if (params.entry.compressionMethod === 8) {
+    const inflater = createInflateRaw();
+    await pipeline(
+      payloadSource,
+      inflater,
+      verifier,
+      output,
+      { signal: params.abortContext.signal },
+    );
+    if (inflater.bytesWritten !== params.entry.compressedSize) {
+      throw new Error(
+        `[release-runtime] ZIP deflate stream did not consume its declared compressed span (${params.entry.fileName})`,
+      );
+    }
+  } else {
+    await pipeline(
+      payloadSource,
+      verifier,
+      output,
+      { signal: params.abortContext.signal },
+    );
+  }
+  params.abortContext.throwIfAborted();
+}
 
 async function extractZipArchiveToDirectory(params: Readonly<{
   abortContext: ArchiveAbortContext;
@@ -603,20 +1277,57 @@ async function extractZipArchiveToDirectory(params: Readonly<{
     abortContext: params.abortContext,
     budget,
   });
-  let activeZipFile: ZipFileCloser | null = null;
-  const onAbort = () => activeZipFile?.close();
-  params.abortContext.signal.addEventListener('abort', onAbort, { once: true });
+  const entries = await readValidatedZipEntries({
+    abortContext: params.abortContext,
+    archivePath: params.archivePath,
+    validateEntry,
+  });
+  const archiveFile = await open(params.archivePath, 'r');
   try {
-    await extractZip(params.archivePath, {
-      dir: params.extractDir,
-      onEntry: (entry, zipFile) => {
-        activeZipFile = zipFile;
-        validateEntry(entry);
-      },
+    const centralDirectory = await readZipCentralDirectory({
+      abortContext: params.abortContext,
+      archiveBytes: params.archiveBytes,
+      archiveFile,
     });
-    params.abortContext.throwIfAborted();
+    const entriesWithOffsets: Array<ValidatedZipArchiveEntry & Readonly<{ dataOffset: number }>> = [];
+    const ranges: Array<ValidatedZipEntryRange & Readonly<{ fileName: string }>> = [];
+    for (const entry of entries) {
+      params.abortContext.throwIfAborted();
+      const range = await readZipEntryDataOffset({
+        abortContext: params.abortContext,
+        archiveBytes: params.archiveBytes,
+        archiveFile,
+        centralDirectoryOffset: centralDirectory.offset,
+        entry,
+      });
+      entriesWithOffsets.push({
+        ...entry,
+        dataOffset: range.dataOffset,
+      });
+      ranges.push({ ...range, fileName: entry.fileName });
+    }
+    ranges.sort((left, right) => left.rangeStart - right.rangeStart);
+    for (let index = 1; index < ranges.length; index += 1) {
+      const previous = ranges[index - 1]!;
+      const current = ranges[index]!;
+      if (current.rangeStart < previous.rangeEnd) {
+        throw new Error(
+          `[release-runtime] ZIP local header and payload ranges overlap (${previous.fileName}, ${current.fileName})`,
+        );
+      }
+    }
+    await archiveFile.close();
+
+    for (const entry of entriesWithOffsets) {
+      await extractValidatedZipEntry({
+        abortContext: params.abortContext,
+        archivePath: params.archivePath,
+        entry,
+        extractDir: params.extractDir,
+      });
+    }
   } finally {
-    params.abortContext.signal.removeEventListener('abort', onAbort);
+    await archiveFile.close().catch(() => undefined);
   }
 }
 

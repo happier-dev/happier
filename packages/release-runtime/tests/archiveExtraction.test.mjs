@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { chmod, link, mkdir, mkdtemp, readFile, readdir, rm, stat, symlink, writeFile } from 'node:fs/promises';
+import { chmod, link, mkdir, mkdtemp, readFile, readdir, rename, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { deflateRawSync, gzipSync } from 'node:zlib';
@@ -63,7 +63,7 @@ function createStoredZip(entries) {
   const centralRecords = [];
   let localOffset = 0;
   for (const entry of entries) {
-    const name = Buffer.from(entry.name, 'utf8');
+    const name = entry.rawName ?? Buffer.from(entry.name, 'utf8');
     const contents = Buffer.from(entry.contents, 'utf8');
     const checksum = crc32(contents);
     const localHeader = Buffer.alloc(30);
@@ -106,34 +106,93 @@ function createDeflatedZip(entries) {
   const centralRecords = [];
   let localOffset = 0;
   for (const entry of entries) {
-    const name = Buffer.from(entry.name, 'utf8');
+    const name = entry.rawName ?? Buffer.from(entry.name, 'utf8');
     const contents = Buffer.isBuffer(entry.contents)
       ? entry.contents
       : Buffer.from(entry.contents, 'utf8');
-    const compressedContents = deflateRawSync(contents);
+    const fullCompressedContents = deflateRawSync(contents);
+    const truncatedByteCount = entry.truncateCompressedBytes ?? 0;
+    const compressedContents = Buffer.concat([
+      fullCompressedContents.subarray(
+        0,
+        Math.max(0, fullCompressedContents.length - truncatedByteCount),
+      ),
+      Buffer.alloc(entry.trailingBytes ?? 0, 0xa5),
+    ]);
+    const declaredCompressedSize = entry.declaredCompressedSize
+      ?? (truncatedByteCount === 0 ? compressedContents.length : fullCompressedContents.length);
     const checksum = crc32(contents);
+    const generalPurposeBitFlag = (entry.dataDescriptor ? 0x8 : 0) | (entry.utf8Name ? 0x800 : 0);
+    const localExtraField = entry.localExtraField ?? Buffer.alloc(0);
+    const centralExtraField = entry.centralExtraField
+      ?? (entry.zip64Descriptor ? Buffer.from([0x01, 0x00, 0x00, 0x00]) : Buffer.alloc(0));
     const localHeader = Buffer.alloc(30);
     localHeader.writeUInt32LE(0x04034b50, 0);
-    localHeader.writeUInt16LE(20, 4);
+    localHeader.writeUInt16LE(entry.zip64Descriptor ? 45 : 20, 4);
+    localHeader.writeUInt16LE(generalPurposeBitFlag, 6);
     localHeader.writeUInt16LE(8, 8);
-    localHeader.writeUInt32LE(checksum, 14);
-    localHeader.writeUInt32LE(compressedContents.length, 18);
-    localHeader.writeUInt32LE(contents.length, 22);
+    localHeader.writeUInt32LE(entry.dataDescriptor ? 0 : checksum, 14);
+    localHeader.writeUInt32LE(entry.dataDescriptor ? 0 : declaredCompressedSize, 18);
+    localHeader.writeUInt32LE(entry.dataDescriptor ? 0 : contents.length, 22);
     localHeader.writeUInt16LE(name.length, 26);
-    localRecords.push(localHeader, name, compressedContents);
+    localHeader.writeUInt16LE(localExtraField.length, 28);
+    let descriptor = Buffer.alloc(0);
+    if (entry.dataDescriptor) {
+      const includeSignature = entry.descriptorSignature !== false;
+      const descriptorSizeBytes = entry.zip64Descriptor ? 8 : 4;
+      descriptor = Buffer.alloc((includeSignature ? 4 : 0) + 4 + (2 * descriptorSizeBytes));
+      let descriptorOffset = 0;
+      if (includeSignature) {
+        descriptor.writeUInt32LE(0x08074b50, descriptorOffset);
+        descriptorOffset += 4;
+      }
+      descriptor.writeUInt32LE((entry.descriptorCrc32 ?? checksum) >>> 0, descriptorOffset);
+      if (entry.zip64Descriptor) {
+        descriptor.writeBigUInt64LE(
+          BigInt(entry.descriptorCompressedSize ?? declaredCompressedSize),
+          descriptorOffset + 4,
+        );
+        descriptor.writeBigUInt64LE(
+          BigInt(entry.descriptorUncompressedSize ?? contents.length),
+          descriptorOffset + 12,
+        );
+      } else {
+        descriptor.writeUInt32LE(
+          entry.descriptorCompressedSize ?? declaredCompressedSize,
+          descriptorOffset + 4,
+        );
+        descriptor.writeUInt32LE(
+          entry.descriptorUncompressedSize ?? contents.length,
+          descriptorOffset + 8,
+        );
+      }
+      if (entry.truncateDescriptorBytes) {
+        descriptor = descriptor.subarray(
+          0,
+          Math.max(0, descriptor.length - entry.truncateDescriptorBytes),
+        );
+      }
+    }
+    localRecords.push(localHeader, name, localExtraField, compressedContents, descriptor);
 
     const centralHeader = Buffer.alloc(46);
     centralHeader.writeUInt32LE(0x02014b50, 0);
     centralHeader.writeUInt16LE(20, 4);
-    centralHeader.writeUInt16LE(20, 6);
+    centralHeader.writeUInt16LE(entry.zip64Descriptor ? 45 : 20, 6);
+    centralHeader.writeUInt16LE(generalPurposeBitFlag, 8);
     centralHeader.writeUInt16LE(8, 10);
     centralHeader.writeUInt32LE(checksum, 16);
-    centralHeader.writeUInt32LE(compressedContents.length, 20);
+    centralHeader.writeUInt32LE(declaredCompressedSize, 20);
     centralHeader.writeUInt32LE(contents.length, 24);
     centralHeader.writeUInt16LE(name.length, 28);
+    centralHeader.writeUInt16LE(centralExtraField.length, 30);
     centralHeader.writeUInt32LE(localOffset, 42);
-    centralRecords.push(centralHeader, name);
-    localOffset += localHeader.length + name.length + compressedContents.length;
+    centralRecords.push(centralHeader, name, centralExtraField);
+    localOffset += localHeader.length
+      + name.length
+      + localExtraField.length
+      + compressedContents.length
+      + descriptor.length;
   }
 
   const centralSize = centralRecords.reduce((size, record) => size + record.length, 0);
@@ -144,6 +203,27 @@ function createDeflatedZip(entries) {
   endRecord.writeUInt32LE(centralSize, 12);
   endRecord.writeUInt32LE(localOffset, 16);
   return Buffer.concat([...localRecords, ...centralRecords, endRecord]);
+}
+
+function createUnicodePathExtra(rawName, unicodeName) {
+  const encodedName = Buffer.from(unicodeName, 'utf8');
+  const fieldData = Buffer.alloc(5 + encodedName.length);
+  fieldData.writeUInt8(1, 0);
+  fieldData.writeUInt32LE(crc32(Buffer.from(rawName, 'utf8')), 1);
+  encodedName.copy(fieldData, 5);
+  const field = Buffer.alloc(4 + fieldData.length);
+  field.writeUInt16LE(0x7075, 0);
+  field.writeUInt16LE(fieldData.length, 2);
+  fieldData.copy(field, 4);
+  return field;
+}
+
+function findZipRecordOffsets(archive, signature) {
+  const offsets = [];
+  for (let offset = 0; offset <= archive.length - 4; offset += 1) {
+    if (archive.readUInt32LE(offset) === signature) offsets.push(offset);
+  }
+  return offsets;
 }
 
 test('extractArchivePayloadToDirectory extracts tar.gz without a system PATH', async () => {
@@ -256,6 +336,427 @@ test('extractArchivePayloadToDirectory extracts Windows zip payloads in-process'
 
     assert.equal(await readFile(join(extractDir, 'tool.exe'), 'utf8'), 'zip-payload');
     assert.equal(await readFile(join(extractDir, 'dist', 'index.js'), 'utf8'), 'zip-support');
+  } finally {
+    await rm(rootDir, { recursive: true, force: true });
+  }
+});
+
+test('extractArchivePayloadToDirectory extracts a durable multi-entry deflated ZIP', async () => {
+  const rootDir = await mkdtemp(join(tmpdir(), 'release-runtime-extract-deflated-zip-'));
+  try {
+    const archivePath = join(rootDir, 'payload.zip');
+    const extractDir = join(rootDir, 'extract');
+    let randomState = 0x6d2b79f5;
+    const repeatedPayload = Buffer.alloc(96 * 1024);
+    for (let index = 0; index < repeatedPayload.length; index += 1) {
+      randomState ^= randomState << 13;
+      randomState ^= randomState >>> 17;
+      randomState ^= randomState << 5;
+      repeatedPayload[index] = randomState & 0xff;
+    }
+    await writeFile(archivePath, createDeflatedZip([
+      { name: 'codex.exe', contents: repeatedPayload },
+      { name: 'codex-command-runner.exe', contents: 'runner' },
+      { name: 'codex-windows-sandbox.exe', contents: 'sandbox' },
+    ]));
+
+    await extractArchivePayloadToDirectory({ archiveName: 'payload.zip', archivePath, extractDir });
+
+    assert.deepEqual(await readFile(join(extractDir, 'codex.exe')), repeatedPayload);
+    assert.equal(await readFile(join(extractDir, 'codex-command-runner.exe'), 'utf8'), 'runner');
+    assert.equal(await readFile(join(extractDir, 'codex-windows-sandbox.exe'), 'utf8'), 'sandbox');
+  } finally {
+    await rm(rootDir, { recursive: true, force: true });
+  }
+});
+
+test('extractArchivePayloadToDirectory verifies ZIP payload checksums before publishing output', async () => {
+  const rootDir = await mkdtemp(join(tmpdir(), 'release-runtime-extract-zip-checksum-'));
+  try {
+    const archivePath = join(rootDir, 'payload.zip');
+    const extractDir = join(rootDir, 'extract');
+    const archive = createStoredZip([
+      { name: 'tool.exe', contents: 'zip-payload' },
+    ]);
+    const payloadOffset = archive.indexOf(Buffer.from('zip-payload', 'utf8'));
+    assert.notEqual(payloadOffset, -1);
+    archive[payloadOffset] ^= 0xff;
+    await writeFile(archivePath, archive);
+
+    await assert.rejects(
+      extractArchivePayloadToDirectory({ archiveName: 'payload.zip', archivePath, extractDir }),
+      /checksum/iu,
+    );
+    await assert.rejects(stat(extractDir), { code: 'ENOENT' });
+  } finally {
+    await rm(rootDir, { recursive: true, force: true });
+  }
+});
+
+test('extractArchivePayloadToDirectory rejects disagreement between ZIP central and local headers', async () => {
+  const rootDir = await mkdtemp(join(tmpdir(), 'release-runtime-extract-zip-header-consistency-'));
+  try {
+    const baseArchive = createStoredZip([
+      { name: 'tool.exe', contents: 'zip-payload' },
+    ]);
+    const mutations = [
+      ['name', (archive) => { archive[30] ^= 0x01; }],
+      ['crc', (archive) => { archive.writeUInt32LE(archive.readUInt32LE(14) ^ 0x01, 14); }],
+      ['compressed-size', (archive) => { archive.writeUInt32LE(archive.readUInt32LE(18) + 1, 18); }],
+      ['uncompressed-size', (archive) => { archive.writeUInt32LE(archive.readUInt32LE(22) + 1, 22); }],
+    ];
+
+    for (const [suffix, mutate] of mutations) {
+      const archive = Buffer.from(baseArchive);
+      mutate(archive);
+      const archivePath = join(rootDir, `${suffix}.zip`);
+      const extractDir = join(rootDir, `extract-${suffix}`);
+      await writeFile(archivePath, archive);
+      await assert.rejects(
+        extractArchivePayloadToDirectory({ archiveName: 'payload.zip', archivePath, extractDir }),
+        /central and local headers disagree/iu,
+      );
+      await assert.rejects(stat(extractDir), { code: 'ENOENT' });
+    }
+  } finally {
+    await rm(rootDir, { recursive: true, force: true });
+  }
+});
+
+test('extractArchivePayloadToDirectory requires central and local Unicode path semantics to agree', async () => {
+  const rootDir = await mkdtemp(join(tmpdir(), 'release-runtime-extract-zip-unicode-path-'));
+  try {
+    const rawName = 'tool.exe';
+    const validArchivePath = join(rootDir, 'valid.zip');
+    const validExtractDir = join(rootDir, 'extract-valid');
+    const matchingExtra = createUnicodePathExtra(rawName, '工具.exe');
+    await writeFile(validArchivePath, createDeflatedZip([
+      {
+        name: rawName,
+        contents: 'zip-payload',
+        localExtraField: matchingExtra,
+        centralExtraField: matchingExtra,
+      },
+    ]));
+    await extractArchivePayloadToDirectory({
+      archiveName: 'valid.zip',
+      archivePath: validArchivePath,
+      extractDir: validExtractDir,
+    });
+    assert.equal(await readFile(join(validExtractDir, '工具.exe'), 'utf8'), 'zip-payload');
+
+    const encodedNamesArchivePath = join(rootDir, 'encoded-names.zip');
+    const encodedNamesExtractDir = join(rootDir, 'extract-encoded-names');
+    await writeFile(encodedNamesArchivePath, createDeflatedZip([
+      {
+        name: 'unused-cp437-name',
+        rawName: Buffer.from([0x82, 0x2e, 0x74, 0x78, 0x74]),
+        contents: 'cp437',
+      },
+      {
+        name: '原生.txt',
+        contents: 'utf8',
+        utf8Name: true,
+      },
+    ]));
+    await extractArchivePayloadToDirectory({
+      archiveName: 'encoded-names.zip',
+      archivePath: encodedNamesArchivePath,
+      extractDir: encodedNamesExtractDir,
+    });
+    assert.equal(await readFile(join(encodedNamesExtractDir, 'é.txt'), 'utf8'), 'cp437');
+    assert.equal(await readFile(join(encodedNamesExtractDir, '原生.txt'), 'utf8'), 'utf8');
+
+    const conflictingArchivePath = join(rootDir, 'conflicting.zip');
+    const conflictingExtractDir = join(rootDir, 'extract-conflicting');
+    await writeFile(conflictingArchivePath, createDeflatedZip([
+      {
+        name: rawName,
+        contents: 'zip-payload',
+        localExtraField: createUnicodePathExtra(rawName, '另一工具.exe'),
+        centralExtraField: matchingExtra,
+      },
+    ]));
+    await assert.rejects(
+      extractArchivePayloadToDirectory({
+        archiveName: 'conflicting.zip',
+        archivePath: conflictingArchivePath,
+        extractDir: conflictingExtractDir,
+      }),
+      /Unicode path|central and local headers disagree/iu,
+    );
+    await assert.rejects(stat(conflictingExtractDir), { code: 'ENOENT' });
+
+    for (const [suffix, localExtraField, centralExtraField] of [
+      ['local-only', matchingExtra, Buffer.alloc(0)],
+      ['central-only', Buffer.alloc(0), matchingExtra],
+    ]) {
+      const archivePath = join(rootDir, `${suffix}.zip`);
+      const extractDir = join(rootDir, `extract-${suffix}`);
+      await writeFile(archivePath, createDeflatedZip([
+        {
+          name: rawName,
+          contents: 'zip-payload',
+          localExtraField,
+          centralExtraField,
+        },
+      ]));
+      await assert.rejects(
+        extractArchivePayloadToDirectory({
+          archiveName: `${suffix}.zip`,
+          archivePath,
+          extractDir,
+        }),
+        /Unicode path fields disagree/iu,
+      );
+      await assert.rejects(stat(extractDir), { code: 'ENOENT' });
+    }
+  } finally {
+    await rm(rootDir, { recursive: true, force: true });
+  }
+});
+
+test('extractArchivePayloadToDirectory does not let Unicode path extras rename bit-11 UTF-8 names', async () => {
+  const rootDir = await mkdtemp(join(tmpdir(), 'release-runtime-extract-zip-utf8-extra-'));
+  try {
+    const rawName = '原生.txt';
+    const matchingExtra = createUnicodePathExtra(rawName, rawName);
+    const validArchivePath = join(rootDir, 'valid.zip');
+    const validExtractDir = join(rootDir, 'extract-valid');
+    await writeFile(validArchivePath, createDeflatedZip([
+      {
+        name: rawName,
+        contents: 'utf8-payload',
+        utf8Name: true,
+        localExtraField: matchingExtra,
+        centralExtraField: matchingExtra,
+      },
+    ]));
+    await extractArchivePayloadToDirectory({
+      archiveName: 'valid.zip',
+      archivePath: validArchivePath,
+      extractDir: validExtractDir,
+    });
+    assert.equal(await readFile(join(validExtractDir, rawName), 'utf8'), 'utf8-payload');
+
+    const renamedExtra = createUnicodePathExtra(rawName, '另一.txt');
+    const renamedArchivePath = join(rootDir, 'renamed.zip');
+    const renamedExtractDir = join(rootDir, 'extract-renamed');
+    await writeFile(renamedArchivePath, createDeflatedZip([
+      {
+        name: rawName,
+        contents: 'utf8-payload',
+        utf8Name: true,
+        localExtraField: renamedExtra,
+        centralExtraField: renamedExtra,
+      },
+    ]));
+    await assert.rejects(
+      extractArchivePayloadToDirectory({
+        archiveName: 'renamed.zip',
+        archivePath: renamedArchivePath,
+        extractDir: renamedExtractDir,
+      }),
+      /Unicode path|UTF-8/iu,
+    );
+    await assert.rejects(stat(renamedExtractDir), { code: 'ENOENT' });
+  } finally {
+    await rm(rootDir, { recursive: true, force: true });
+  }
+});
+
+test('extractArchivePayloadToDirectory validates and accounts for ZIP data descriptors', async () => {
+  const rootDir = await mkdtemp(join(tmpdir(), 'release-runtime-extract-zip-descriptor-'));
+  try {
+    for (const [suffix, descriptorSignature, zip64Descriptor] of [
+      ['signed', true, false],
+      ['unsigned', false, false],
+      ['zip64-signed', true, true],
+      ['zip64-unsigned', false, true],
+    ]) {
+      const archivePath = join(rootDir, `${suffix}.zip`);
+      const extractDir = join(rootDir, `extract-${suffix}`);
+      await writeFile(archivePath, createDeflatedZip([
+        {
+          name: 'tool.exe',
+          contents: 'zip-payload'.repeat(128),
+          dataDescriptor: true,
+          descriptorSignature,
+          zip64Descriptor,
+        },
+        {
+          name: 'runner.exe',
+          contents: 'runner',
+          dataDescriptor: true,
+          descriptorSignature,
+          zip64Descriptor,
+        },
+      ]));
+      await extractArchivePayloadToDirectory({
+        archiveName: `${suffix}.zip`,
+        archivePath,
+        extractDir,
+      });
+      assert.equal(await readFile(join(extractDir, 'tool.exe'), 'utf8'), 'zip-payload'.repeat(128));
+      assert.equal(await readFile(join(extractDir, 'runner.exe'), 'utf8'), 'runner');
+    }
+
+    const invalidEntries = [
+      ['missing', { truncateDescriptorBytes: 16 }],
+      ['truncated', { truncateDescriptorBytes: 1 }],
+      ['crc', { descriptorCrc32: 0x12345678 }],
+      ['compressed-size', { descriptorCompressedSize: 1 }],
+      ['uncompressed-size', { descriptorUncompressedSize: 1 }],
+    ];
+    for (const [suffix, descriptorMutation] of invalidEntries) {
+      const archivePath = join(rootDir, `${suffix}.zip`);
+      const extractDir = join(rootDir, `extract-${suffix}`);
+      await writeFile(archivePath, createDeflatedZip([
+        {
+          name: 'tool.exe',
+          contents: 'zip-payload'.repeat(128),
+          dataDescriptor: true,
+          ...descriptorMutation,
+        },
+      ]));
+      await assert.rejects(
+        extractArchivePayloadToDirectory({
+          archiveName: `${suffix}.zip`,
+          archivePath,
+          extractDir,
+        }),
+        /data descriptor|central directory|overlap|ZIP/iu,
+      );
+      await assert.rejects(stat(extractDir), { code: 'ENOENT' });
+    }
+  } finally {
+    await rm(rootDir, { recursive: true, force: true });
+  }
+});
+
+test('extractArchivePayloadToDirectory rejects duplicate or central-directory ZIP payload ranges', async () => {
+  const rootDir = await mkdtemp(join(tmpdir(), 'release-runtime-extract-zip-ranges-'));
+  try {
+    const duplicateArchive = createStoredZip([
+      { name: 'a.txt', contents: 'same' },
+      { name: 'b.txt', contents: 'same' },
+    ]);
+    const centralOffsets = findZipRecordOffsets(duplicateArchive, 0x02014b50);
+    assert.equal(centralOffsets.length, 2);
+    duplicateArchive.writeUInt32LE(0, centralOffsets[1] + 42);
+    const duplicateArchivePath = join(rootDir, 'duplicate.zip');
+    const duplicateExtractDir = join(rootDir, 'extract-duplicate');
+    await writeFile(duplicateArchivePath, duplicateArchive);
+    await assert.rejects(
+      extractArchivePayloadToDirectory({
+        archiveName: 'duplicate.zip',
+        archivePath: duplicateArchivePath,
+        extractDir: duplicateExtractDir,
+      }),
+      /central and local headers disagree|overlap/iu,
+    );
+    await assert.rejects(stat(duplicateExtractDir), { code: 'ENOENT' });
+
+    const overlappingArchive = createStoredZip([
+      { name: 'a.txt', contents: 'same' },
+      { name: 'b.txt', contents: 'same' },
+    ]);
+    const overlappingCentralOffsets = findZipRecordOffsets(overlappingArchive, 0x02014b50);
+    const firstExpandedPayload = overlappingArchive.subarray(35, 40);
+    const firstExpandedChecksum = crc32(firstExpandedPayload);
+    overlappingArchive.writeUInt32LE(firstExpandedChecksum, 14);
+    overlappingArchive.writeUInt32LE(5, 18);
+    overlappingArchive.writeUInt32LE(5, 22);
+    overlappingArchive.writeUInt32LE(firstExpandedChecksum, overlappingCentralOffsets[0] + 16);
+    overlappingArchive.writeUInt32LE(5, overlappingCentralOffsets[0] + 20);
+    overlappingArchive.writeUInt32LE(5, overlappingCentralOffsets[0] + 24);
+    const overlappingArchivePath = join(rootDir, 'overlap.zip');
+    const overlappingExtractDir = join(rootDir, 'extract-overlap');
+    await writeFile(overlappingArchivePath, overlappingArchive);
+    await assert.rejects(
+      extractArchivePayloadToDirectory({
+        archiveName: 'overlap.zip',
+        archivePath: overlappingArchivePath,
+        extractDir: overlappingExtractDir,
+      }),
+      /overlap/iu,
+    );
+    await assert.rejects(stat(overlappingExtractDir), { code: 'ENOENT' });
+
+    const centralRangeArchive = createDeflatedZip([
+      {
+        name: 'tool.exe',
+        contents: 'zip-payload',
+        declaredCompressedSize: deflateRawSync(Buffer.from('zip-payload')).length + 1,
+      },
+    ]);
+    const centralRangeArchivePath = join(rootDir, 'central-range.zip');
+    const centralRangeExtractDir = join(rootDir, 'extract-central-range');
+    await writeFile(centralRangeArchivePath, centralRangeArchive);
+    await assert.rejects(
+      extractArchivePayloadToDirectory({
+        archiveName: 'central-range.zip',
+        archivePath: centralRangeArchivePath,
+        extractDir: centralRangeExtractDir,
+      }),
+      /central directory/iu,
+    );
+    await assert.rejects(stat(centralRangeExtractDir), { code: 'ENOENT' });
+  } finally {
+    await rm(rootDir, { recursive: true, force: true });
+  }
+});
+
+test('extractArchivePayloadToDirectory rejects truncated and trailing deflate payloads', async () => {
+  const rootDir = await mkdtemp(join(tmpdir(), 'release-runtime-extract-zip-deflate-span-'));
+  try {
+    const archives = [
+      ['truncated', createDeflatedZip([
+        { name: 'tool.exe', contents: 'zip-payload'.repeat(128), truncateCompressedBytes: 1 },
+      ])],
+      ...[1, 16, 1024].map((trailingBytes) => [
+        `trailing-${trailingBytes}`,
+        createDeflatedZip([
+          { name: 'tool.exe', contents: 'zip-payload'.repeat(128), trailingBytes },
+        ]),
+      ]),
+    ];
+
+    for (const [suffix, archive] of archives) {
+      const archivePath = join(rootDir, `${suffix}.zip`);
+      const extractDir = join(rootDir, `extract-${suffix}`);
+      await writeFile(archivePath, archive);
+      await assert.rejects(
+        extractArchivePayloadToDirectory({ archiveName: 'payload.zip', archivePath, extractDir }),
+        /ZIP|deflate|compressed|central directory|unexpected end/iu,
+      );
+      await assert.rejects(stat(extractDir), { code: 'ENOENT' });
+    }
+  } finally {
+    await rm(rootDir, { recursive: true, force: true });
+  }
+});
+
+test('extractArchivePayloadToDirectory rejects a deflated ZIP CRC mismatch before publishing', async () => {
+  const rootDir = await mkdtemp(join(tmpdir(), 'release-runtime-extract-zip-deflate-crc-'));
+  try {
+    const archive = createDeflatedZip([
+      { name: 'tool.exe', contents: 'zip-payload'.repeat(128) },
+    ]);
+    const centralOffsets = findZipRecordOffsets(archive, 0x02014b50);
+    assert.equal(centralOffsets.length, 1);
+    const incorrectChecksum = (archive.readUInt32LE(14) ^ 0x01) >>> 0;
+    archive.writeUInt32LE(incorrectChecksum, 14);
+    archive.writeUInt32LE(incorrectChecksum, centralOffsets[0] + 16);
+    const archivePath = join(rootDir, 'payload.zip');
+    const extractDir = join(rootDir, 'extract');
+    await writeFile(archivePath, archive);
+
+    await assert.rejects(
+      extractArchivePayloadToDirectory({ archiveName: 'payload.zip', archivePath, extractDir }),
+      /checksum/iu,
+    );
+    await assert.rejects(stat(extractDir), { code: 'ENOENT' });
   } finally {
     await rm(rootDir, { recursive: true, force: true });
   }
@@ -478,6 +979,38 @@ test('extractArchivePayloadToDirectory honors cancellation and timeout before pu
     );
     await assert.rejects(stat(join(rootDir, 'extract-aborted')), { code: 'ENOENT' });
     await assert.rejects(stat(join(rootDir, 'extract-timeout')), { code: 'ENOENT' });
+  } finally {
+    await rm(rootDir, { recursive: true, force: true });
+  }
+});
+
+test('extractArchivePayloadToDirectory closes ZIP census resources before reporting cancellation', async () => {
+  const rootDir = await mkdtemp(join(tmpdir(), 'release-runtime-extract-zip-abort-'));
+  try {
+    const archivePath = join(rootDir, 'payload.zip');
+    const renamedArchivePath = join(rootDir, 'renamed.zip');
+    const extractDir = join(rootDir, 'extract');
+    await writeFile(archivePath, createStoredZip(
+      Array.from({ length: 4000 }, (_, index) => ({
+        name: `entries/${index.toString().padStart(4, '0')}.txt`,
+        contents: 'payload',
+      })),
+    ));
+    const controller = new AbortController();
+    setImmediate(() => controller.abort(new Error('caller stopped ZIP extraction')));
+
+    await assert.rejects(
+      extractArchivePayloadToDirectory({
+        archiveName: 'payload.zip',
+        archivePath,
+        extractDir,
+        limits: { maxEntries: 5000 },
+        signal: controller.signal,
+      }),
+      /aborted/iu,
+    );
+    await rename(archivePath, renamedArchivePath);
+    await assert.rejects(stat(extractDir), { code: 'ENOENT' });
   } finally {
     await rm(rootDir, { recursive: true, force: true });
   }
