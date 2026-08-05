@@ -561,6 +561,7 @@ export async function sanitizePackagedNodeModulesTree(params) {
     directoryPath: stageDir,
     target: params.target,
     inNodeModulesTree: false,
+    stageRootDir: stageDir,
   });
 }
 
@@ -782,7 +783,7 @@ async function prunePackagedTreeDirectory(params) {
       continue;
     }
 
-    if (entry.name === 'package-dist') {
+    if (entry.name === 'package-dist' && params.directoryPath === params.stageRootDir) {
       await prunePackageDistDualFormatDir({ directoryPath: childPath });
       continue;
     }
@@ -830,6 +831,7 @@ async function prunePackagedTreeDirectory(params) {
       directoryPath: childPath,
       target: params.target,
       inNodeModulesTree: childInNodeModulesTree,
+      stageRootDir: params.stageRootDir,
     });
   }
 }

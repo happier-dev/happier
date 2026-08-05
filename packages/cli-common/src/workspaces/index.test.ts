@@ -381,6 +381,93 @@ describe('bundleWorkspacePackage', () => {
     );
   });
 
+  it('does not dedupe two resolved directories that share name@version but differ in content', async () => {
+    rootDir = mkdtempSync(join(tmpdir(), 'happier-cli-common-bundle-workspace-'));
+
+    const workspaceModule = await import('./index');
+    const bundleWorkspacePackageWithRuntimeDependencies =
+      (workspaceModule as Record<string, unknown>).bundleWorkspacePackageWithRuntimeDependencies;
+    expect(bundleWorkspacePackageWithRuntimeDependencies).toBeTypeOf('function');
+
+    // Same diamond shape as the dedup test above, but the nested copy's file content differs from
+    // the top-level copy despite declaring the identical name@version -- name@version alone must
+    // not be trusted as proof of equivalence.
+    const srcPackageDir = resolve(rootDir, 'packages/agents');
+    const srcDistDir = resolve(srcPackageDir, 'dist');
+    const sharedDepDir = resolve(srcPackageDir, 'node_modules/shared-dep');
+    const consumerDepDir = resolve(srcPackageDir, 'node_modules/consumer-dep');
+    const nestedSharedDepDir = resolve(consumerDepDir, 'node_modules/shared-dep');
+
+    mkdirSync(srcDistDir, { recursive: true });
+    mkdirSync(sharedDepDir, { recursive: true });
+    mkdirSync(consumerDepDir, { recursive: true });
+    mkdirSync(nestedSharedDepDir, { recursive: true });
+
+    writeFileSync(
+      resolve(srcPackageDir, 'package.json'),
+      JSON.stringify(
+        {
+          name: '@happier-dev/agents',
+          version: '0.0.0',
+          type: 'module',
+          exports: { '.': { default: './dist/index.js' } },
+          dependencies: { 'shared-dep': '1.2.3', 'consumer-dep': '1.0.0' },
+        },
+        null,
+        2,
+      ),
+    );
+    writeFileSync(resolve(srcDistDir, 'index.js'), 'export {};');
+
+    writeFileSync(
+      resolve(sharedDepDir, 'package.json'),
+      JSON.stringify({ name: 'shared-dep', version: '1.2.3', dependencies: {} }, null, 2),
+    );
+    writeFileSync(resolve(sharedDepDir, 'index.js'), 'module.exports = "shared";\n');
+
+    writeFileSync(
+      resolve(consumerDepDir, 'package.json'),
+      JSON.stringify({ name: 'consumer-dep', version: '1.0.0', dependencies: { 'shared-dep': '1.2.3' } }, null, 2),
+    );
+    writeFileSync(resolve(consumerDepDir, 'index.js'), 'module.exports = "consumer";\n');
+
+    // Declares the same name@version as the top-level copy, but its file content is different
+    // (longer file, different bytes) -- a mismatched-closure scenario a version string alone
+    // cannot rule out.
+    writeFileSync(
+      resolve(nestedSharedDepDir, 'package.json'),
+      JSON.stringify({ name: 'shared-dep', version: '1.2.3', dependencies: {} }, null, 2),
+    );
+    writeFileSync(resolve(nestedSharedDepDir, 'index.js'), 'module.exports = "shared-but-actually-different";\n');
+
+    const destPackageDir = resolve(rootDir, 'apps/cli/node_modules/@happier-dev/agents');
+
+    (bundleWorkspacePackageWithRuntimeDependencies as (params: {
+      packageName: string;
+      srcDir: string;
+      destDir: string;
+    }) => void)({
+      packageName: '@happier-dev/agents',
+      srcDir: srcPackageDir,
+      destDir: destPackageDir,
+    });
+
+    const vendoredSharedDepDir = resolve(destPackageDir, 'node_modules/shared-dep');
+    const vendoredNestedSharedDepDir = resolve(
+      destPackageDir,
+      'node_modules/consumer-dep/node_modules/shared-dep',
+    );
+
+    // Both occurrences must be real, independent directories -- the mismatch must prevent the
+    // symlink dedup, even though name@version matches.
+    expect(lstatSync(vendoredSharedDepDir).isSymbolicLink()).toBe(false);
+    expect(lstatSync(vendoredNestedSharedDepDir).isSymbolicLink()).toBe(false);
+    expect(readFileSync(resolve(vendoredSharedDepDir, 'index.js'), 'utf8')).toBe('module.exports = "shared";\n');
+    expect(readFileSync(resolve(vendoredNestedSharedDepDir, 'index.js'), 'utf8')).toBe(
+      'module.exports = "shared-but-actually-different";\n',
+    );
+  });
+
   it('skips vendoring a specific excluded package while still vendoring the rest', async () => {
     rootDir = mkdtempSync(join(tmpdir(), 'happier-cli-common-bundle-workspace-'));
 

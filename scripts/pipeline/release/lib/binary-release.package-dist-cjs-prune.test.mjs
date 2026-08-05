@@ -66,3 +66,35 @@ for (const target of CLI_TARGETS) {
     }
   });
 }
+
+// The staged payload's own top-level package-dist/ is the CLI's npm-publish dual-format build
+// output (pruned above), but a vendored third-party node_modules package could in principle ship
+// its own directory that happens to be named "package-dist" for unrelated reasons. Pruning must be
+// scoped to the actual staged root only, not any directory with that name at any depth.
+async function buildFakeNestedPackageDistTree(stageDir) {
+  const pkgDistDir = join(stageDir, 'package-dist');
+  await mkdir(pkgDistDir, { recursive: true });
+  await writeFile(join(pkgDistDir, 'index.mjs'), 'export default 1;', 'utf-8');
+  await writeFile(join(pkgDistDir, 'index.cjs'), 'module.exports = 1;', 'utf-8');
+
+  const nestedVendoredPkgDistDir = join(stageDir, 'node_modules', 'some-package', 'package-dist');
+  await mkdir(nestedVendoredPkgDistDir, { recursive: true });
+  await writeFile(join(nestedVendoredPkgDistDir, 'index.mjs'), 'export default 1;', 'utf-8');
+  await writeFile(join(nestedVendoredPkgDistDir, 'index.cjs'), 'module.exports = 1;', 'utf-8');
+
+  return { pkgDistDir, nestedVendoredPkgDistDir };
+}
+
+test('sanitizePackagedNodeModulesTree only prunes the staged root package-dist, not a same-named nested vendored directory', async () => {
+  const stageDir = await mkdtemp(join(tmpdir(), 'happier-binary-release-package-dist-nested-'));
+  try {
+    const { pkgDistDir, nestedVendoredPkgDistDir } = await buildFakeNestedPackageDistTree(stageDir);
+
+    await sanitizePackagedNodeModulesTree({ stageDir, target: { os: 'darwin', arch: 'arm64' } });
+
+    assert.deepEqual((await readdir(pkgDistDir)).sort(), ['index.mjs']);
+    assert.deepEqual((await readdir(nestedVendoredPkgDistDir)).sort(), ['index.cjs', 'index.mjs']);
+  } finally {
+    await rm(stageDir, { recursive: true, force: true });
+  }
+});

@@ -1,4 +1,4 @@
-import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { basename, dirname, relative, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -542,6 +542,42 @@ function resolveInstalledPackage(params: Readonly<{ require: NodeRequire; packag
   throw new Error(`Failed to locate installed package.json for ${params.packageName} (resolved: ${resolvedEntry})`);
 }
 
+// name@version alone doesn't prove two resolved package directories are actually identical --
+// different resolution paths could in principle land on different builds/patches published under
+// the same version string. Before symlinking one onto the other, verify the two trees have the
+// same relative file paths and byte sizes. This is not a full content hash (that would defeat much
+// of the point of skipping a redundant copy for large trees), but it catches the realistic failure
+// mode of the two directories actually differing while remaining cheap.
+function collectRelativeFileSizes(rootDir: string): Map<string, number> {
+  const result = new Map<string, number>();
+  const stack: string[] = [rootDir];
+  while (stack.length > 0) {
+    const dir = stack.pop();
+    if (!dir) continue;
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const entryPath = resolve(dir, entry.name);
+      if (entry.isDirectory()) {
+        stack.push(entryPath);
+        continue;
+      }
+      if (!entry.isFile() && !entry.isSymbolicLink()) continue;
+      const size = statSync(entryPath).size;
+      result.set(relative(rootDir, entryPath), size);
+    }
+  }
+  return result;
+}
+
+function areDirectoryTreesEquivalent(dirA: string, dirB: string): boolean {
+  const filesA = collectRelativeFileSizes(dirA);
+  const filesB = collectRelativeFileSizes(dirB);
+  if (filesA.size !== filesB.size) return false;
+  for (const [relPath, size] of filesA) {
+    if (filesB.get(relPath) !== size) return false;
+  }
+  return true;
+}
+
 function vendorRuntimeDependencyTree(params: Readonly<{
   packageJsonPath: string;
   resolveFromPackageJsonPath?: string;
@@ -576,12 +612,14 @@ function vendorRuntimeDependencyTree(params: Readonly<{
     const dedupeKey = version ? `${dep.name}@${version}` : undefined;
     const existingDedupePath = dedupeKey ? dedupeByNameVersion.get(dedupeKey) : undefined;
 
-    if (existingDedupePath) {
-      // Already vendored elsewhere in this same tree at the identical name+version. Symlink to
-      // the surviving copy instead of copying again -- behaviorally identical for any consumer
-      // (including one that reads from disk directly), since the two source trees are the same
-      // resolved version. Skip recursing into its subtree: those deps were already vendored under
-      // the first copy.
+    // name@version alone doesn't prove the two resolved package directories are actually
+    // identical (see areDirectoryTreesEquivalent above) -- verify before deduping. If they differ,
+    // fall through to a normal copy rather than symlinking to the wrong content.
+    if (existingDedupePath && areDirectoryTreesEquivalent(resolved.packageDir, existingDedupePath)) {
+      // Already vendored elsewhere in this same tree at the identical name+version, with verified
+      // matching content. Symlink to the surviving copy instead of copying again -- behaviorally
+      // identical for any consumer (including one that reads from disk directly). Skip recursing
+      // into its subtree: those deps were already vendored under the first copy.
       //
       // Use a relative link target: both paths currently live inside the same not-yet-renamed
       // atomic-build staging tree, and the whole tree (staging dir and all its contents, symlink
@@ -590,13 +628,24 @@ function vendorRuntimeDependencyTree(params: Readonly<{
       // survives the rename because the relationship between the two paths doesn't change.
       rmDirSafeSync(depDestDir);
       mkdirSync(dirname(depDestDir), { recursive: true });
-      symlinkSync(relative(dirname(depDestDir), existingDedupePath), depDestDir, 'dir');
+      try {
+        symlinkSync(relative(dirname(depDestDir), existingDedupePath), depDestDir, 'dir');
+      } catch (error) {
+        // Directory symlinks require elevated privileges or Developer Mode on Windows and can
+        // throw EPERM on an ordinary build host. Fall back to a real copy -- larger on disk than
+        // a symlink, but still avoids re-vendoring this dependency's own transitive tree (we still
+        // skip the recursive vendorRuntimeDependencyTree call below), and behaves identically for
+        // any consumer.
+        const code = error && typeof error === 'object' && 'code' in error ? String(Reflect.get(error, 'code')) : '';
+        if (code !== 'EPERM' && code !== 'ENOSYS' && code !== 'EACCES') throw error;
+        copyDirSafeSync(existingDedupePath, depDestDir, { dereference: true });
+      }
       continue;
     }
 
     resetDir(depDestDir);
     copyDirSafeSync(resolved.packageDir, depDestDir, { dereference: true });
-    if (dedupeKey) dedupeByNameVersion.set(dedupeKey, depDestDir);
+    if (dedupeKey && !existingDedupePath) dedupeByNameVersion.set(dedupeKey, depDestDir);
 
     vendorRuntimeDependencyTree({
       packageJsonPath: resolved.packageJsonPath,
