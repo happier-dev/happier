@@ -83,7 +83,13 @@
 }
 
 html.light {
-    --bg: #F7F5F0;
+    /* Neutral, faintly cool paper — matched to the planet plate's own ground.
+       background5_white_jpg60.jpg is 44% #FCFCFC at chroma 0.01, i.e. perfectly
+       neutral; its warmth is a light source, not a paper tone. A warm page (the
+       former #F7F5F0 sat at LAB b* +2.6, hue 94° — yellow-green) fought the art
+       and read as a cast. Dark mode already derives its --bg from the dark
+       plate's ground hue; this is the light-mode equivalent. */
+    --bg: #F5F5F7;
     --fg: #0A0A0B;
     --fg-primary: #000000;
     --fg-primary-soft: rgba(0, 0, 0, 0.55);
@@ -114,6 +120,221 @@ body {
        already animates the source values, and adding a redundant transition
        creates a "transition chasing transition" lag where the element's color
        takes ~1.4s to settle instead of 700ms. */
+}
+
+/* Vertical rhythm.
+
+   Adjacent sections each pay HALF of --section-gap, so the token is literally
+   the distance between one section's last ink and the next section's first ink
+   — no arithmetic at the call site. --section-head-gap is the drop from a
+   section's title block to its content.
+
+   Sections must not set their own vertical padding: every section previously
+   carried its own `py-32 md:py-44`, which stacked to 352px between neighbours
+   while AlternatingFeatures (no padding at all) sat at 176px. Routing all of
+   them through these two values is what keeps the page rhythm even. */
+:root {
+    --section-gap: 120px;
+    --section-head-gap: 88px;
+}
+
+@media (max-width: 767px) {
+    :root {
+        --section-gap: 96px;
+        --section-head-gap: 56px;
+    }
+}
+
+.section-y {
+    padding-block: calc(var(--section-gap) / 2);
+}
+
+/* For a block that continues the one above it (the hero showcase) and so only
+   owes the half-gap on its bottom edge. */
+.section-y-end {
+    padding-bottom: calc(var(--section-gap) / 2);
+}
+
+.section-head {
+    margin-bottom: var(--section-head-gap);
+}
+
+/* Self-host stack: the three layers you own, in a row, with live traffic on the
+   links between them. Dots run both ways — forward is what you send, back is
+   what comes home — so the picture says "this link is live" without a label.
+
+   --stack-icon is the shared invariant: the rails have to land exactly on the
+   icons' centre line, so the icon cell and the rail both derive from it rather
+   than each hard-coding a number that would drift apart. Dots are translated,
+   not offset, so the loop stays on the compositor. */
+.stackrow {
+    --stack-icon: 46px;
+    --stack-glyph: 36px;
+    --stack-clear: 13px;
+    position: relative;
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.stackrow__icon {
+    display: flex;
+    height: var(--stack-icon);
+    align-items: center;
+    justify-content: center;
+}
+
+.stackrow__detail {
+    text-wrap: balance;
+}
+
+/* The three icon centres land at 1/6, 3/6 and 5/6 of the row, so each rail is
+   anchored in percentages and keeps the same clearance from the glyphs at every
+   width. A fixed-width rail living in the flex gutter left a short stub
+   marooned in the middle of the gap, nowhere near the icons it connects. */
+.stackflow {
+    position: absolute;
+    top: calc(var(--stack-icon) / 2);
+    height: 1px;
+    background: linear-gradient(90deg,
+        transparent 0%,
+        var(--card-border) 10%,
+        var(--card-border) 90%,
+        transparent 100%);
+}
+
+.stackflow--1 {
+    left: calc(16.6667% + var(--stack-glyph) / 2 + var(--stack-clear));
+    right: calc(50% + var(--stack-glyph) / 2 + var(--stack-clear));
+}
+
+.stackflow--2 {
+    left: calc(50% + var(--stack-glyph) / 2 + var(--stack-clear));
+    right: calc(16.6667% + var(--stack-glyph) / 2 + var(--stack-clear));
+}
+
+/* Each dot is a full-rail-width carrier that paints a 4px head at its leading
+   edge. That is what lets translateX(100%) resolve to the RAIL's width — a
+   percentage translate is relative to the element itself — so the travel stays
+   exact at any breakpoint while remaining a compositor-only transform. */
+.stackflow__dot {
+    position: absolute;
+    left: 0;
+    top: -1.5px;
+    width: 100%;
+    height: 4px;
+    will-change: transform, opacity;
+    animation: stackflow-forward 2.6s linear infinite;
+}
+
+.stackflow__dot::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 4px;
+    height: 4px;
+    border-radius: 999px;
+    background: var(--accent);
+}
+
+.stackflow__dot--back {
+    animation-name: stackflow-back;
+}
+
+@keyframes stackflow-forward {
+    0% { transform: translateX(-4px); opacity: 0; }
+    12% { opacity: 1; }
+    88% { opacity: 1; }
+    100% { transform: translateX(100%); opacity: 0; }
+}
+
+@keyframes stackflow-back {
+    0% { transform: translateX(100%); opacity: 0; }
+    12% { opacity: 1; }
+    88% { opacity: 1; }
+    100% { transform: translateX(-4px); opacity: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .stackflow__dot {
+        animation: none;
+        transform: translateX(50%);
+        opacity: 0.75;
+    }
+    .stackflow__dot--back {
+        display: none;
+    }
+}
+
+/* Rolling counter (see RollingNumber.tsx). Every dimension is derived from the
+   inherited type — 1ch wide, 1lh tall — so the component needs no size props and
+   cannot drift from the text it sits in. `cv01`/`cv02` are Inter's disambiguated
+   digit forms, which keep 1/7 and 0/O legible at small sizes while rolling. */
+.rollnum {
+    display: inline-flex;
+    align-items: baseline;
+    line-height: inherit;
+}
+
+.rollnum__glyphs {
+    display: inline-flex;
+    align-items: baseline;
+    height: 1lh;
+    line-height: inherit;
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: 'cv01' on, 'cv02' on;
+}
+
+.rollnum__static {
+    display: inline-block;
+    height: 1lh;
+    line-height: inherit;
+}
+
+/* NOTE: no `layout` containment here. Layout containment makes a box opaque for
+   baseline alignment, so the column would align by its bottom edge and the
+   number would ride visibly high against the text beside it. Codex hits the same
+   thing and disables containment on its inline variant. Paint and style
+   containment measured identical to `none` for baseline purposes, so they stay. */
+.rollnum__col {
+    position: relative;
+    display: inline-block;
+    width: 1ch;
+    height: 1lh;
+    line-height: inherit;
+    contain: paint style;
+}
+
+/* Establishes the column's box AND its baseline before any digit paints. */
+.rollnum__col::before {
+    content: '0';
+    visibility: hidden;
+}
+
+.rollnum__window {
+    position: absolute;
+    inset: 0;
+    overflow: hidden;
+}
+
+.rollnum__stack {
+    display: flex;
+    flex-direction: column;
+    height: 1lh;
+    contain: layout size style;
+    will-change: transform;
+    transition: transform 1100ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.rollnum__stack > span {
+    flex: 0 0 1lh;
+    height: 1lh;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .rollnum__stack {
+        transition: none;
+    }
 }
 
 .font-display {
@@ -252,4 +473,298 @@ html {
         -webkit-clip-path: inset(0);
         clip-path: inset(0);
     }
+}
+
+/* ============================================================================
+   Feature panels ("specimen panels")
+   ----------------------------------------------------------------------------
+   One primitive, one light source. Each panel contains a CROP of the planet
+   photograph, blended so its own rectangle is physically invisible:
+
+     dark  → black-sky planet + mix-blend-mode: screen
+             (screen-blending near-black onto near-black contributes nothing)
+     light → white-sky planet + mix-blend-mode: multiply
+             (multiplying white onto warm paper contributes nothing)
+
+   So there is no sticker edge to see in either theme — the only edge is the
+   panel's own gradient hairline, which is brightest at the top-right corner the
+   light arrives from. Three variables art-direct each panel from ONE asset:
+     --sz  zoom      --sp  sample position (hue anchor)      --so  intensity
+   ========================================================================== */
+
+.fpanel {
+    --sz: 300%;
+    --sp: 70% 30%;
+    --so: 0.5;
+    /* One owner for the panel's inset: the copy pads by it and the in-flow art
+       bleeds back out past it, so they cannot drift apart. */
+    --fp-pad: clamp(22px, 2.7vw, 44px);
+    position: relative;
+    isolation: isolate;
+    overflow: hidden;
+    border-radius: 28px;
+    border: 1px solid transparent;
+    background:
+        linear-gradient(var(--fp-glass), var(--fp-glass)) padding-box,
+        linear-gradient(225deg,
+            var(--fp-edge-1) 0%,
+            var(--fp-edge-2) 34%,
+            var(--fp-edge-3) 66%,
+            var(--fp-edge-4) 100%) border-box;
+    box-shadow: var(--fp-shadow);
+    contain: paint;
+    /* entrance state; --ty/--tsc are animated by .is-in and nudged by :hover */
+    --ty: 32px;
+    --tsc: 0.99;
+    opacity: 0;
+    transform: translate3d(0, var(--ty), 0) scale(var(--tsc));
+    transition:
+        opacity 900ms cubic-bezier(0.16, 1, 0.3, 1),
+        transform 1050ms cubic-bezier(0.16, 1, 0.3, 1),
+        box-shadow 750ms cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+.fpanel.is-in {
+    opacity: 1;
+    --ty: 0px;
+    --tsc: 1;
+}
+
+/* Hover: the panel lifts a hair, its shadow deepens, and an amber flare warms
+   the corner the light already arrives from. */
+.fpanel.is-in:hover {
+    --ty: -3px;
+    box-shadow: var(--fp-shadow-hover);
+    transition:
+        transform 420ms cubic-bezier(0.32, 0.72, 0, 1),
+        box-shadow 420ms cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+.fpanel__flare {
+    position: absolute;
+    inset: 0;
+    z-index: 0;
+    pointer-events: none;
+    background: radial-gradient(78% 70% at 96% -4%,
+        rgba(245, 181, 71, 0.3),
+        rgba(245, 181, 71, 0.05) 46%,
+        transparent 70%);
+    mix-blend-mode: var(--fp-blend);
+    opacity: 0;
+    transition: opacity 700ms cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+.fpanel.is-in:hover .fpanel__flare { opacity: 1; }
+
+/* The star drifts a touch toward the light on hover — the only thing that
+   suggests the panel is a window onto something moving. */
+.fpanel__star {
+    transition: transform 900ms cubic-bezier(0.32, 0.72, 0, 1), opacity 1200ms cubic-bezier(0.16, 1, 0.3, 1) 140ms;
+}
+.fpanel.is-in:hover .fpanel__star { transform: scale(1.028); }
+
+@media (prefers-reduced-motion: reduce) {
+    .fpanel,
+    .fpanel.is-in,
+    .fpanel.is-in:hover { transform: none; transition: opacity 200ms linear, box-shadow 200ms linear; }
+    .fpanel.is-in:hover .fpanel__star { transform: none; }
+}
+
+:root {
+    /* Page-wide weight of the planet art behind every panel. Each panel's --so
+       is its RELATIVE intensity; this scales all of them together. */
+    --fp-star-gain: 0.42;
+    --fp-glass: rgba(255, 255, 255, 0.028);
+    --fp-edge-1: rgba(255, 255, 255, 0.24);
+    --fp-edge-2: rgba(255, 255, 255, 0.085);
+    --fp-edge-3: rgba(255, 255, 255, 0.035);
+    --fp-edge-4: rgba(255, 255, 255, 0.07);
+    --fp-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.045), -18px 34px 80px -46px rgba(0, 0, 0, 0.95);
+    --fp-shadow-hover: inset 0 1px 0 rgba(255, 255, 255, 0.07), -22px 44px 96px -46px rgba(0, 0, 0, 1);
+    /* art is transparent now, so CSS owns its shadow — cast down-LEFT, away from
+       the light the panel's star brings in from the top-right */
+    --fp-art-shadow: drop-shadow(-10px 16px 26px rgba(0, 0, 0, 0.5)) drop-shadow(-2px 4px 8px rgba(0, 0, 0, 0.4));
+    --fp-star: url('/images/background5_black_jpg60.jpg');
+    --fp-blend: screen;
+    --fp-star-filter: saturate(1.05) brightness(0.7);
+    /* The veil is the page colour laid back over the art, so it reads var(--bg)
+       rather than repeating its channels — otherwise every page-colour change
+       has to be applied in six places and any miss shows up as a seam. */
+    --fp-veil: linear-gradient(202deg,
+        color-mix(in srgb, var(--bg) 5%, transparent) 0%,
+        color-mix(in srgb, var(--bg) 50%, transparent) 33%,
+        color-mix(in srgb, var(--bg) 86%, transparent) 64%,
+        color-mix(in srgb, var(--bg) 94%, transparent) 100%);
+}
+
+html.light {
+    /* Light needs ~2.6x the gain for the same perceptual presence. `screen` over
+       a near-black panel ADDS the plate's luminance, so a little goes a long way;
+       `multiply` over a near-white panel can only SUBTRACT, and the plate's own
+       ground is white (multiply identity), so only the orb's pastel body does
+       any work at all. At the dark-mode gain the art reads as a faint stain
+       rather than as light falling across the card. */
+    --fp-star-gain: 1.1;
+    --fp-glass: rgba(255, 255, 255, 0.62);
+    --fp-edge-1: rgba(255, 255, 255, 0.9);
+    --fp-edge-2: rgba(10, 10, 11, 0.06);
+    --fp-edge-3: rgba(10, 10, 11, 0.09);
+    --fp-edge-4: rgba(10, 10, 11, 0.05);
+    /* Shadows follow the paper: neutral-cool, not the sepia these used to cast
+       when the page was a warm cream — and light, because on near-white the
+       card is already separated by its hairline and inner highlight. A dark
+       mode shadow ported straight to light reads as a drop-shadow sticker. */
+    --fp-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8), -8px 16px 40px -34px rgba(38, 38, 48, 0.2);
+    --fp-shadow-hover: inset 0 1px 0 rgba(255, 255, 255, 0.95), -10px 22px 52px -34px rgba(38, 38, 48, 0.3);
+    --fp-art-shadow: drop-shadow(-5px 9px 16px rgba(38, 38, 48, 0.15)) drop-shadow(-1px 2px 4px rgba(38, 38, 48, 0.1));
+    --fp-star: url('/images/background5_white_jpg60.jpg');
+    --fp-blend: multiply;
+    --fp-star-filter: saturate(1.02) brightness(1.04);
+    --fp-veil: linear-gradient(202deg,
+        color-mix(in srgb, var(--bg) 4%, transparent) 0%,
+        color-mix(in srgb, var(--bg) 46%, transparent) 33%,
+        color-mix(in srgb, var(--bg) 84%, transparent) 64%,
+        color-mix(in srgb, var(--bg) 93%, transparent) 100%);
+}
+
+.fpanel__star {
+    position: absolute;
+    inset: -10% -6%;
+    z-index: 0;
+    pointer-events: none;
+    background-image: var(--fp-star);
+    background-repeat: no-repeat;
+    background-size: var(--sz);
+    background-position: var(--sp);
+    mix-blend-mode: var(--fp-blend);
+    filter: var(--fp-star-filter);
+    opacity: calc(var(--so) * var(--fp-star-gain));
+}
+
+.fpanel__veil {
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    pointer-events: none;
+    background: var(--fp-veil);
+}
+
+.fpanel__in {
+    position: relative;
+    z-index: 2;
+    padding: var(--fp-pad);
+}
+
+/* Panel art.
+ *
+ * The DEFAULT is the in-flow layout: the art sits under the copy and bleeds
+ * past the panel's padding on both sides and the bottom, so the panel edge
+ * crops it.
+ *
+ * Wide (12-col) panels swap to an absolute overlay beside the copy — but only
+ * from `md`. Below that the grid collapses to a single column, the copy fills
+ * the whole panel, and the overlay landed on top of the text with dead space
+ * beneath it. Making the overlay the exception rather than the default is what
+ * keeps phones correct.
+ */
+.fpanel__art {
+    position: relative;
+    z-index: 1;
+    flex: 1 1 auto;
+    min-height: 190px;
+    margin-top: 28px;
+    margin-inline: calc(-1 * var(--fp-pad) - 2%);
+    margin-bottom: calc(-1 * var(--fp-pad));
+    overflow: hidden;
+    pointer-events: none;
+}
+
+/* Centred rather than left-aligned so that zooming past the container width
+   crops both edges evenly. At the default 100% this is identical to left: 0. */
+.fpanel__art img {
+    position: absolute;
+    left: 50%;
+    top: 0;
+    transform: translateX(-50%);
+    display: block;
+    width: 100%;
+    /* Tailwind preflight caps every img at max-width:100%, which silently clamps
+       any zoom past the container and leaves the art at panel width. */
+    max-width: none;
+    user-select: none;
+    filter: var(--fp-art-shadow);
+}
+
+/* Phone: a wide landscape composition shown at panel width is an illegible
+   strip, so it may zoom past the edges. Scoped below md because the md+ overlay
+   sizes itself from --fp-art-w instead. */
+@media (max-width: 767px) {
+    .fpanel__art {
+        min-height: var(--fp-art-mobile-min, 190px);
+    }
+
+    .fpanel__art img {
+        width: var(--fp-art-mobile-w, 100%);
+    }
+}
+
+@media (min-width: 768px) {
+    .fpanel__art--wide {
+        position: absolute;
+        right: -2%;
+        top: 11%;
+        bottom: 0;
+        width: var(--fp-art-w, 61%);
+        flex: none;
+        min-height: 0;
+        margin: 0;
+    }
+
+    /* Rests the art on the panel floor instead of hanging it from the top, for
+       assets already cropped at their own bottom edge: the crop then reads as
+       the panel cropping them rather than a cut-off picture floating with a gap
+       beneath. Starts higher so the taller image is not clipped at the top. */
+    .fpanel__art--floor {
+        top: -4%;
+    }
+
+    .fpanel__art--floor img {
+        top: auto;
+        bottom: 0;
+    }
+}
+
+/* At phone width the copy sits UNDER the light rather than beside it, so the
+   veil becomes vertical and the star steps back.
+
+   The step-back has to be applied to the GAIN, not to --so: every panel sets its
+   own --so as an inline style, and an inline custom property always beats a
+   stylesheet one, so a `.fpanel { --so: … }` rule here would silently never
+   apply. --fp-star-gain only ever lives on :root, so it is the one that can be
+   overridden per breakpoint. */
+@media (max-width: 920px) {
+    :root {
+        --fp-star-gain: 0.3;
+    }
+    /* html.light out-specifies :root, so the light gain has to step down here
+       too or it would keep its desktop value on phones. */
+    html.light {
+        --fp-star-gain: 0.78;
+    }
+    .fpanel__veil {
+        background: linear-gradient(180deg,
+            color-mix(in srgb, var(--bg) 12%, transparent) 0%,
+            color-mix(in srgb, var(--bg) 72%, transparent) 46%,
+            color-mix(in srgb, var(--bg) 94%, transparent) 100%);
+    }
+    html.light .fpanel__veil {
+        background: linear-gradient(180deg,
+            color-mix(in srgb, var(--bg) 10%, transparent) 0%,
+            color-mix(in srgb, var(--bg) 72%, transparent) 46%,
+            color-mix(in srgb, var(--bg) 93%, transparent) 100%);
+    }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+    .fpanel__star { opacity: calc(var(--so) * var(--fp-star-gain) * 0.55); }
 }

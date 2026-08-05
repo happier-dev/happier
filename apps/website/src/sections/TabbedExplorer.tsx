@@ -32,8 +32,8 @@ export function TabbedExplorer() {
 
     return (
         <section className="relative">
-            <div className="mx-auto max-w-[1400px] px-6 py-32 md:px-10 md:py-44">
-                <div className="mx-auto mb-14 max-w-[760px] text-center md:mb-20">
+            <div className="section-y mx-auto max-w-[1400px] px-6 md:px-10">
+                <div className="section-head mx-auto max-w-[760px] text-center">
                     <div
                         className="mb-5 text-[11.5px] font-semibold uppercase tracking-[0.18em]"
                         style={{ color: 'var(--muted)' }}

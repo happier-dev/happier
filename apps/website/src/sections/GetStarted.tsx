@@ -46,8 +46,8 @@ export const GET_STARTED_SECTION_ID = 'get-started';
 export function GetStarted() {
     return (
         <section id={GET_STARTED_SECTION_ID} className="relative">
-            <div className="mx-auto max-w-[1400px] px-6 py-32 md:px-10 md:py-44">
-                <div className="mx-auto mb-16 max-w-[760px] text-center md:mb-20">
+            <div className="section-y mx-auto max-w-[1400px] px-6 md:px-10">
+                <div className="section-head mx-auto max-w-[760px] text-center">
                     <div
                         className="mb-5 text-[11.5px] font-semibold uppercase tracking-[0.18em]"
                         style={{ color: 'var(--muted)' }}
@@ -91,9 +91,13 @@ export function GetStarted() {
                                     )}
                                 </div>
 
-                                {/* Content: text on the left, this step's CTA on the right */}
+                                {/* Content: text on the left, this step's CTA on the right.
+                                    min-w-0 on both this track and the CTA cell: a grid item
+                                    defaults to min-width:auto, which would let the install
+                                    command's min-content width push the whole page wider than
+                                    the viewport on a phone instead of letting the chip truncate. */}
                                 <div
-                                    className={`grid gap-y-5 md:grid-cols-[minmax(0,1fr)_auto] md:items-start md:gap-x-10 ${isLast ? 'pb-0' : 'pb-14'}`}
+                                    className={`grid min-w-0 gap-y-5 md:grid-cols-[minmax(0,1fr)_auto] md:items-start md:gap-x-10 ${isLast ? 'pb-0' : 'pb-14'}`}
                                 >
                                     <div className="pt-[7px]">
                                         <h3
@@ -109,7 +113,7 @@ export function GetStarted() {
                                             {step.description}
                                         </p>
                                     </div>
-                                    <div className="md:justify-self-end">{step.cta}</div>
+                                    <div className="min-w-0 md:justify-self-end">{step.cta}</div>
                                 </div>
                             </div>
                         );

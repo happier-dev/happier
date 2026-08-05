@@ -46,7 +46,7 @@ export function HeroShowcase() {
     return (
         <div
             ref={sectionRef}
-            className="relative mx-auto w-full max-w-[1460px] px-0 pb-10 pt-0 sm:px-10 md:pb-16"
+            className="section-y-end relative mx-auto w-full max-w-[1460px] px-0 pt-0 sm:px-10"
         >
             {/* Ambient glow (static — does not repaint on scroll) */}
             <div

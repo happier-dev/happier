@@ -370,7 +370,7 @@ export function DownloadBadges({ webApp = false }: { webApp?: boolean } = {}) {
                                             <span
                                                 className="rounded-full px-1.5 py-[1px] text-[9px] font-semibold uppercase tracking-[0.12em]"
                                                 style={{
-                                                    color: isDark ? '#0A0A0B' : '#F7F5F0',
+                                                    color: 'var(--bg)',
                                                     background: 'var(--fg)',
                                                 }}
                                             >

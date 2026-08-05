@@ -1,6 +1,7 @@
 import { useTheme } from '../components/ThemeContext';
 import { RevealText } from '../components/RevealText';
 import { InstallCommand } from '../components/InstallCommand';
+import { DiscordMembers } from '../components/DiscordMembers';
 
 export function CallToAction() {
     const { theme } = useTheme();
@@ -8,7 +9,7 @@ export function CallToAction() {
 
     return (
         <section className="relative isolate overflow-hidden">
-            <div className="mx-auto max-w-[1400px] px-6 py-32 md:px-10 md:py-44">
+            <div className="section-y mx-auto max-w-[1400px] px-6 md:px-10">
                 <div className="relative overflow-hidden rounded-[28px] border" style={{ borderColor: 'var(--card-border)' }}>
                     <img
                         src={bg}
@@ -20,10 +21,13 @@ export function CallToAction() {
                     <div
                         className="absolute inset-0"
                         style={{
+                            // Scrim colour is always the page colour; only the ramp
+                            // differs by theme, so it reads var(--bg) rather than
+                            // repeating the channels.
                             background:
                                 theme === 'dark'
-                                    ? 'linear-gradient(180deg, rgba(5,5,7,0.35) 0%, rgba(5,5,7,0.8) 100%)'
-                                    : 'linear-gradient(180deg, rgba(247,245,240,0.15) 0%, rgba(247,245,240,0.7) 100%)',
+                                    ? 'linear-gradient(180deg, color-mix(in srgb, var(--bg) 35%, transparent) 0%, color-mix(in srgb, var(--bg) 80%, transparent) 100%)'
+                                    : 'linear-gradient(180deg, color-mix(in srgb, var(--bg) 15%, transparent) 0%, color-mix(in srgb, var(--bg) 70%, transparent) 100%)',
                         }}
                     />
 
@@ -56,6 +60,9 @@ export function CallToAction() {
                                 </svg>
                             </a>
                             <InstallCommand />
+                        </div>
+                        <div className="mt-8 flex justify-center">
+                            <DiscordMembers />
                         </div>
                     </div>
                 </div>

@@ -28,16 +28,35 @@ export const SELF_HOST_TERMINAL_LINES = [
     { prompt: true, text: STATUS_CMD },
 ] as const;
 
-export const SELF_HOST_SERVICES = [
-    { name: 'Relay server', status: 'running' },
-    { name: 'Web UI', status: 'running' },
-    { name: 'Managed service', status: 'running' },
+/**
+ * The three layers a self-hoster owns, top to bottom. Read as a column they are
+ * literally the stack the headline refers to, and the repeated "Your" is the
+ * whole argument — there is no fourth node, because nothing else is in the path.
+ */
+export const SELF_HOST_STACK_NODES = [
+    {
+        id: 'device',
+        label: 'Your device',
+        detail: 'iOS, Android, desktop, web',
+    },
+    {
+        id: 'relay',
+        label: 'Your relay',
+        detail: 'Docker or bare metal',
+    },
+    {
+        id: 'machine',
+        label: 'Your machine',
+        detail: 'Claude Code, Codex, OpenCode',
+    },
 ] as const;
+
+type StackNode = (typeof SELF_HOST_STACK_NODES)[number];
 
 export function SelfHost() {
     return (
         <section className="relative">
-            <div className="mx-auto max-w-[1400px] px-6 py-32 md:px-10 md:py-44">
+            <div className="section-y mx-auto max-w-[1400px] px-6 md:px-10">
                 <div className="grid items-center gap-16 md:grid-cols-2 lg:gap-24">
                     <div>
                         <div
@@ -81,33 +100,105 @@ export function SelfHost() {
                     </div>
 
                     <div className="flex flex-col gap-5">
-                        <TerminalBlock
-                            lines={SELF_HOST_TERMINAL_LINES}
-                        />
-
-                        <div
-                            className="rounded-2xl border p-5"
-                            style={{ borderColor: 'var(--card-border)' }}
-                        >
-                            <div className="space-y-3">
-                                {SELF_HOST_SERVICES.map((svc) => (
-                                    <div
-                                        key={svc.name}
-                                        className="flex items-center justify-between text-[14px]"
-                                    >
-                                        <span style={{ color: 'var(--fg)' }}>{svc.name}</span>
-                                        <span className="inline-flex items-center gap-1.5 text-emerald-400">
-                                            <span className="h-2 w-2 rounded-full bg-emerald-400" />
-                                            {svc.status}
-                                        </span>
-                                    </div>
-                                ))}
-                            </div>
-                        </div>
+                        <OwnedStack />
+                        <TerminalBlock lines={SELF_HOST_TERMINAL_LINES} />
                     </div>
                 </div>
             </div>
         </section>
+    );
+}
+
+/**
+ * The stack, drawn: device → relay → machine, with live traffic on the links.
+ * No frames of any kind — the three bare glyphs and the repeated "Your" are the
+ * whole argument, and a box around them would only compete with the terminal
+ * block underneath.
+ */
+function OwnedStack() {
+    return (
+        <div className="stackrow">
+            {SELF_HOST_STACK_NODES.map((node) => (
+                <div key={node.id} className="text-center">
+                    <span className="stackrow__icon" style={{ color: 'var(--fg)' }}>
+                        <StackIcon id={node.id} />
+                    </span>
+                    {/* 15px wraps "Your machine" at phone column widths while the other
+                        two labels hold one line, which staggers the subtitles. */}
+                    <span
+                        className="mt-3.5 block text-[13px] font-semibold leading-tight sm:text-[15px]"
+                        style={{ color: 'var(--fg)' }}
+                    >
+                        {node.label}
+                    </span>
+                    <span
+                        className="stackrow__detail mt-1 block text-[12.5px] leading-[1.45]"
+                        style={{ color: 'var(--muted)' }}
+                    >
+                        {node.detail}
+                    </span>
+                </div>
+            ))}
+
+            {/* Rails are siblings of the cells, not gutter items, so they can be
+                anchored to the icon centres rather than to whatever space is left. */}
+            <FlowRail className="stackflow--1" />
+            <FlowRail className="stackflow--2" />
+        </div>
+    );
+}
+
+/** Two dots out, one back — enough to read as traffic without becoming a barber pole. */
+function FlowRail({ className }: { className: string }) {
+    return (
+        <div className={`stackflow ${className}`} aria-hidden>
+            <span className="stackflow__dot" />
+            <span className="stackflow__dot" style={{ animationDelay: '1.3s' }} />
+            <span className="stackflow__dot stackflow__dot--back" style={{ animationDelay: '0.65s' }} />
+        </div>
+    );
+}
+
+function StackIcon({ id }: { id: StackNode['id'] }) {
+    // Stroke thins as the glyph grows so the rendered line stays ~1.9px at 36px
+    // — a 1.6 stroke scaled 1.5x would read as a much heavier icon set.
+    const props = {
+        width: 36,
+        height: 36,
+        viewBox: '0 0 24 24',
+        fill: 'none',
+        stroke: 'currentColor',
+        strokeWidth: 1.3,
+        strokeLinecap: 'round' as const,
+        strokeLinejoin: 'round' as const,
+        'aria-hidden': true,
+    };
+
+    if (id === 'device') {
+        return (
+            <svg {...props}>
+                <rect x="7" y="2.5" width="10" height="19" rx="2.6" />
+                <path d="M10.9 5.5h2.2" />
+            </svg>
+        );
+    }
+
+    if (id === 'relay') {
+        return (
+            <svg {...props}>
+                <rect x="3" y="4" width="18" height="6.5" rx="2" />
+                <rect x="3" y="13.5" width="18" height="6.5" rx="2" />
+                <path d="M6.7 7.25h.01M6.7 16.75h.01" />
+            </svg>
+        );
+    }
+
+    return (
+        <svg {...props}>
+            <rect x="2.5" y="4" width="19" height="13" rx="2.4" />
+            <path d="m6.8 8.7 2.5 1.8-2.5 1.8M12 12.9h4.6" />
+            <path d="M9 20.5h6" />
+        </svg>
     );
 }
 

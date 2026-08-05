@@ -48,8 +48,8 @@ export const PRIMARY_FEATURES: ReadonlyArray<Feature> = [
         visual: 'mobileAndDesktop',
         accent: 'sun',
         image: {
-            src: '/images/features/start-anywhere-continue-everywhere.png',
-            src2x: '/images/features/start-anywhere-continue-everywhere@2x.png',
+            src: '/images/features/anywhere.png',
+            src2x: '/images/features/anywhere@2x.png',
         },
     },
     {
@@ -95,10 +95,6 @@ export const PRIMARY_FEATURES: ReadonlyArray<Feature> = [
         body: 'Launch subagents to review, plan, or delegate — and choose which backend runs each one: Claude, Codex, or any ACP-compatible CLI. Mix providers in a single workspace and watch every subagent work in the timeline.',
         visual: 'mobileAndDesktop',
         accent: 'magenta',
-        image: {
-            src: '/images/features/subagents.png',
-            src2x: '/images/features/subagents@2x.png',
-        },
     },
     {
         id: 'queue',
@@ -107,10 +103,6 @@ export const PRIMARY_FEATURES: ReadonlyArray<Feature> = [
         body: 'Queue messages while the agent works — reorder, edit, or send them now. Steer a running turn without interrupting it. Fork from any message to explore a different path.',
         visual: 'mobile',
         accent: 'rose',
-        image: {
-            src: '/images/features/queue-steer-fork.png',
-            src2x: '/images/features/queue-steer-fork@2x.png',
-        },
     },
     {
         id: 'attention',
@@ -164,8 +156,8 @@ export const PRIMARY_FEATURES: ReadonlyArray<Feature> = [
         visual: 'mobile',
         accent: 'indigo',
         image: {
-            src: '/images/features/connected-services.png',
-            src2x: '/images/features/connected-services@2x.png',
+            src: '/images/features/subscriptions.png',
+            src2x: '/images/features/subscriptions@2x.png',
         },
     },
     {
@@ -176,8 +168,8 @@ export const PRIMARY_FEATURES: ReadonlyArray<Feature> = [
         visual: 'mobile',
         accent: 'rose',
         image: {
-            src: '/images/features/connected-services-pools-resets.png',
-            src2x: '/images/features/connected-services-pools-resets@2x.png',
+            src: '/images/features/sail-past-limits.png',
+            src2x: '/images/features/sail-past-limits@2x.png',
         },
     },
     {

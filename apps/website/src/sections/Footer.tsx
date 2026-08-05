@@ -1,4 +1,5 @@
 import { HappierMark } from '../components/HappierMark';
+import { DISCORD_INVITE_URL } from '../data/community';
 
 export const FOOTER_COLUMNS = [
     {
@@ -22,7 +23,7 @@ export const FOOTER_COLUMNS = [
         title: 'Resources',
         links: [
             { label: 'Changelog', href: 'https://docs.happier.dev/changelog', external: true },
-            { label: 'Discord', href: 'https://discord.gg/happier', external: true },
+            { label: 'Discord', href: DISCORD_INVITE_URL, external: true },
         ],
     },
 ] as const;

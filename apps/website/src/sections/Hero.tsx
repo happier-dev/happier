@@ -42,7 +42,7 @@ export function Hero() {
                     />
                     <div
                         className="absolute inset-x-0 bottom-0 h-1/3"
-                        style={{ background: 'linear-gradient(to bottom, transparent 0%, #050507 100%)' }}
+                        style={{ background: 'linear-gradient(to bottom, transparent 0%, var(--bg) 100%)' }}
                     />
                 </div>
                 {/* Light theme layer — sunrise planet over cream bg */}
@@ -59,7 +59,7 @@ export function Hero() {
                     />
                     <div
                         className="absolute inset-x-0 bottom-0 h-1/4"
-                        style={{ background: 'linear-gradient(to bottom, transparent 0%, #F7F5F0 100%)' }}
+                        style={{ background: 'linear-gradient(to bottom, transparent 0%, var(--bg) 100%)' }}
                     />
                 </div>
             </div>

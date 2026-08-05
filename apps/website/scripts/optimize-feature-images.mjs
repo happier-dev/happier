@@ -10,15 +10,19 @@
  *     <name>.webp     (@1x, smaller)
  *     <name>@2x.webp  (@2x, smaller)
  *
- * The renderer (DeviceVisual) prefers .webp and falls back to .png; a missing
- * file simply falls back to the generic device mockup, so it is always safe to
- * run this — or to reference art that has not been generated yet.
+ * The renderer (the feature panels in src/sections/AlternatingFeatures.tsx)
+ * prefers .webp and falls back to .png; a missing file simply falls back to the
+ * generic device mockup, so it is always safe to run this — or to reference art
+ * that has not been generated yet.
+ *
+ * Sources are expected to be TRANSPARENT cut-outs of real app UI: the panel
+ * supplies the background and the shadow, so any baked-in plate reads as a
+ * sticker pasted onto it. Alpha is carried through to both outputs.
  *
  * Workflow: drop a full-res PNG into apps/website/assets/features/, named after
  * the image BASENAME referenced in src/data/features.ts (the path basename, NOT
- * the feature id) — e.g. start-anywhere-continue-everywhere.png,
- * existing-sessions.png, terminal.png, one-tap-away.png, connected-services.png,
- * voice.png — then run:
+ * the feature id) — e.g. anywhere.png, existing-sessions.png, terminal.png,
+ * one-tap-away.png, subscriptions.png, voice.png — then run:
  *     npm run optimize:images        # from apps/website
  *
  * sharp is declared in this package's devDependencies (and hoisted from the

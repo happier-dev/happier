@@ -2,4 +2,5 @@
 
 # Full-resolution feature-art sources. The optimized web variants are generated
 # into public/images/features (committed) via `npm run optimize:images`.
-/assets/features/*.png
+# Includes _superseded/, which keeps the previous generation of raws locally.
+/assets/features/**/*.png
