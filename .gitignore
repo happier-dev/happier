@@ -59,6 +59,7 @@ __pycache__/
 **/.restore.*/
 **/.backup.*/
 **/.runner-snapshots/
+/.happier-first-party-runner-matrix-*/
 /apps/cli/dist.probe.manual/
 /apps/cli/prime-isolated-home/
 /apps/cli/.g3-real-child-*/
