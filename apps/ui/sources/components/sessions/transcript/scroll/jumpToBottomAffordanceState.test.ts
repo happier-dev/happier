@@ -23,6 +23,66 @@ describe('resolveJumpToBottomAffordanceState', () => {
         }).isVisible).toBe(false);
     });
 
+    it('shows the affordance when a stale pin claim is contradicted by physical distance', () => {
+        // E-7. An explicit jump leaves the derived pin bit stale `true`, and `isPinned` was the
+        // first thing consulted — so the ONLY escape from a 69,000px-deep window was silently
+        // deleted. "Am I at the tail" has one answer: physical distance. More than a full
+        // viewport from the tail is not "at the tail" no matter what the pin bit says.
+        expect(resolveJumpToBottomAffordanceState({
+            distanceFromBottom: 69_000,
+            enabled: true,
+            isPinned: true,
+            minNewActivityCount: 1,
+            newActivityCount: 0,
+            revealThresholdPx: 300,
+            viewportHeightPx: 600,
+        })).toEqual({
+            count: 0,
+            isVisible: true,
+            presentation: 'standard',
+        });
+
+        // Within one viewport the pin bit still owns the answer: renderer maintain-at-end and
+        // the near-tail dead-zone are exactly the band where a pinned reader sees no pill.
+        expect(resolveJumpToBottomAffordanceState({
+            distanceFromBottom: 400,
+            enabled: true,
+            isPinned: true,
+            minNewActivityCount: 1,
+            newActivityCount: 0,
+            revealThresholdPx: 300,
+            viewportHeightPx: 600,
+        }).isVisible).toBe(false);
+    });
+
+    it('shows the affordance in target-window mode with more-newer content regardless of local distance', () => {
+        // A jump landing can sit at the RENDERED window's bottom edge (local dfb=0) while the
+        // session tail is far below (hasMoreNewer). The affordance must offer the way back to
+        // the live tail (live RG4 cold-route evidence: pill absent after a correct landing).
+        expect(resolveJumpToBottomAffordanceState({
+            distanceFromBottom: 0,
+            enabled: true,
+            hasMoreNewerBeyondRenderedWindow: true,
+            isPinned: true,
+            minNewActivityCount: 1,
+            newActivityCount: 0,
+            revealThresholdPx: 500,
+        })).toEqual({
+            count: 0,
+            isVisible: true,
+            presentation: 'standard',
+        });
+        expect(resolveJumpToBottomAffordanceState({
+            distanceFromBottom: 0,
+            enabled: false,
+            hasMoreNewerBeyondRenderedWindow: true,
+            isPinned: true,
+            minNewActivityCount: 1,
+            newActivityCount: 0,
+            revealThresholdPx: 500,
+        }).isVisible).toBe(false);
+    });
+
     it('keeps the full jump affordance hidden in the near-bottom dead-zone without new activity', () => {
         expect(resolveJumpToBottomAffordanceState({
             distanceFromBottom: 300,

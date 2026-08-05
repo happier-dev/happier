@@ -12,6 +12,10 @@ import type {
 import type { TranscriptLifecycleHost } from '@/components/sessions/transcript/viewport/lifecycle/lifecycleHost';
 import type { TranscriptRendererAtEndState } from '@/components/sessions/transcript/viewport/shell/renderer/types';
 
+import type {
+    TranscriptUserScrollIntentOwner,
+} from '@/components/sessions/transcript/viewport/driver/userScrollIntentOwner';
+
 type MutableRef<T> = { current: T };
 
 type LiveTailIntentHostDeps = Readonly<{
@@ -22,11 +26,11 @@ type LiveTailIntentHostDeps = Readonly<{
     emitViewportChange(state: TranscriptViewportChangeState): boolean;
     isPinnedRef: MutableRef<boolean>;
     lastPinOffsetForIntentRef: MutableRef<number | null>;
-    lastUserScrollIntentAtMsRef: MutableRef<number>;
     lifecycleHost: Pick<TranscriptLifecycleHost, 'planExplicitReturnToLiveTail'>;
     scrollPinRef: MutableRef<TranscriptScrollPinState>;
     sessionId: string;
     transcriptScrollPinEnabled: boolean;
+    userScrollIntent: TranscriptUserScrollIntentOwner;
     wantsPinnedRef: MutableRef<boolean>;
 }>;
 
@@ -71,10 +75,21 @@ export function useTranscriptLiveTailIntentHost(deps: LiveTailIntentHostDeps) {
         for (const effect of plan.explicitReturnEffects) {
             if (effect.sessionId !== current.sessionId) continue;
             if (effect.type === 'apply-explicit-return-clear-user-scroll-intent') {
-                current.lastUserScrollIntentAtMsRef.current = Number.NEGATIVE_INFINITY;
+                current.userScrollIntent.revokeInputEvidence();
+                // Jump-to-bottom / follow-bottom intent IS the reader's consent to be followed
+                // again. Without this the parked state outlives the deliberate return and every
+                // subsequent automatic bottom-follow write stays refused for the life of the mount.
+                current.userScrollIntent.releaseLiveTailParking();
                 continue;
             }
             current.commitScrollPinState({ ...current.scrollPinRef.current, isPinned: effect.isPinned, newActivityCount: 0 });
+            // The explicit return is the one owner that knows where the reader ends up, and
+            // `distanceFromLiveTailPx` is its own answer — already the emit's offsetY below and
+            // already what the sync boundary persists. The jump affordance was the only consumer
+            // of that answer left unwritten, so it kept reading whichever producer last wrote a
+            // detached distance (the renderer detach sentinel, or a restored entry anchor) and
+            // offered the reader a way back to a tail they were already on.
+            current.commitJumpToBottomDistanceForVisibilityRef.current(effect.distanceFromLiveTailPx);
             const emitted = current.emitViewportChange({
                 isPinned: effect.isPinned,
                 offsetY: effect.distanceFromLiveTailPx,

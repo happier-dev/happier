@@ -29,6 +29,8 @@ import {
 } from '@/components/sessions/transcript/viewport/bottomFollow/writeScheduler';
 import { useExplicitJumpWriteBarrier } from '@/components/sessions/transcript/viewport/bottomFollow/explicitJumpWriteBarrier';
 
+import type { TranscriptUserScrollIntentOwner } from '@/components/sessions/transcript/viewport/driver/userScrollIntentOwner';
+
 type MutableRef<T> = { current: T };
 
 type BottomFollowLifecycleHost = Pick<
@@ -61,6 +63,7 @@ export type TranscriptBottomFollowHostDeps = Readonly<{
     scrollPinRef: MutableRef<TranscriptScrollPinState>;
     sessionId: string;
     tryPinToBottomDom(): boolean;
+    userScrollIntent: TranscriptUserScrollIntentOwner;
     wantsPinnedRef: MutableRef<boolean>;
 }>;
 
@@ -100,6 +103,7 @@ export function useTranscriptBottomFollowHost(deps: TranscriptBottomFollowHostDe
         scrollPinRef,
         sessionId,
         tryPinToBottomDom,
+        userScrollIntent,
         wantsPinnedRef,
     } = deps;
 
@@ -153,9 +157,24 @@ export function useTranscriptBottomFollowHost(deps: TranscriptBottomFollowHostDe
         tryPinToBottomDom,
     ]);
 
+    /**
+     * The reader deliberately parked away from the live tail. No AUTOMATIC writer may move them,
+     * for as long as that holds — which is the half every input-recency window structurally cannot
+     * cover, because they have all gone false by the time the reported symptom happens ("I scroll,
+     * the scroll ENDS, and then it moves back"). STATE, not an event; it does not expire.
+     *
+     * This is a decision NOT to write — never a window, cover, or delay that hides movement.
+     */
+    const isReaderParkedAwayFromLiveTail = React.useCallback((): boolean => (
+        userScrollIntent.isParkedAwayFromLiveTail()
+    ), [userScrollIntent]);
+
     const applyAuthorizedBottomFollowWrite = React.useCallback((
         effect: Extract<BottomFollowWriteSchedulerEffect, { type: 'authorize-write' }>,
     ): boolean => {
+        // THE single choke point for every automatic bottom-follow write. `blank-recovery` is
+        // exempt: it is a fault response to a viewport showing nothing, not a follow decision.
+        if (effect.writer !== 'blank-recovery' && isReaderParkedAwayFromLiveTail()) return false;
         return executeViewportCommand(resolveViewportCommand({
             type: 'pin-bottom',
             sessionId,
@@ -166,6 +185,7 @@ export function useTranscriptBottomFollowHost(deps: TranscriptBottomFollowHostDe
         }));
     }, [
         executeViewportCommand,
+        isReaderParkedAwayFromLiveTail,
         resolveViewportCommand,
         sessionId,
     ]);

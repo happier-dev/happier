@@ -15,7 +15,7 @@ export function TranscriptWindowGapRow(props: Readonly<{
         <TranscriptSeparatorRow
             accessibilityLabel={title}
             chipTestID={`transcript-window-gap-chip:${props.gap.direction}`}
-            iconName="ellipsis-horizontal-circle-outline"
+            iconName="dots-three"
             testID={`transcript-window-gap:${props.gap.direction}`}
             title={title}
             titleTestID={`transcript-window-gap-title:${props.gap.direction}`}

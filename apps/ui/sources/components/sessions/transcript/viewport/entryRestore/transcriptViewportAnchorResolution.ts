@@ -75,26 +75,38 @@ function itemOwnsMessageId(item: TranscriptViewportAnchorResolvableItem, message
     });
 }
 
+/**
+ * The recorded item wins whenever it is still rendered, because the anchor's `itemOffsetPx` is an
+ * INTRA-ITEM offset measured against exactly that item — resolving a different row while reusing
+ * that offset is one measurement split across two keys, and lands the reader a whole row apart.
+ * It is reachable wherever a row deliberately borrows another row's message id: a tool group's
+ * header/expand/footer caps are keyed by their first tool message, so message-identity resolution
+ * picks the sibling tool row instead of the cap the reader was actually parked on.
+ *
+ * Item ids are content-derived (`msg:${messageId}`, `${groupId}#header`, `turn:${baseId}`), so an
+ * id that still resolves names the same content; message identity and seq stay as RECOVERY for a
+ * recorded item that is gone (a re-chunked group, a re-split turn, a local→server id swap).
+ */
 export function resolveTranscriptViewportAnchorIndex(params: Readonly<{
     anchor: Pick<SessionViewportAnchorSnapshot, 'messageId' | 'itemId' | 'seq'>;
     items: readonly TranscriptViewportAnchorResolvableItem[];
 }>): number | null {
+    const itemIndex = params.items.findIndex((item) => (
+        item.kind !== 'transcript-window-gap' && item.id === params.anchor.itemId
+    ));
+    if (itemIndex >= 0) return itemIndex;
+
     const messageId = typeof params.anchor.messageId === 'string' && params.anchor.messageId.length > 0
         ? params.anchor.messageId
         : null;
     if (messageId) {
-        // Two-pass resolution (N2c): exact message-owning rows win over containment so a
+        // Two-pass recovery (N2c): exact message-owning rows win over containment so a
         // visible per-unit tool row beats its group's header cap.
         const owningIndex = params.items.findIndex((item) => itemOwnsMessageId(item, messageId));
         if (owningIndex >= 0) return owningIndex;
         const containingIndex = params.items.findIndex((item) => headerUnitContainsMessageId(item, messageId));
         if (containingIndex >= 0) return containingIndex;
     }
-
-    const itemIndex = params.items.findIndex((item) => (
-        item.kind !== 'transcript-window-gap' && item.id === params.anchor.itemId
-    ));
-    if (itemIndex >= 0) return itemIndex;
 
     const anchorSeq = normalizeSeq(params.anchor.seq);
     if (anchorSeq == null) return null;

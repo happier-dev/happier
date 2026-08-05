@@ -81,6 +81,10 @@ import { resolveSessionEntryViewportState } from '@/components/sessions/transcri
 import type { LastNativeRestoreIndexCommand, ScrollableChatListRef } from '@/components/sessions/transcript/viewport/transcriptScrollableListTypes';
 import { createWebDomScrollObservation, type WebDomScrollObservation } from '@/components/sessions/transcript/viewport/driver/webDomObservation';
 import {
+    createTranscriptUserScrollIntentOwner,
+    type TranscriptUserScrollIntentOwner,
+} from '@/components/sessions/transcript/viewport/driver/userScrollIntentOwner';
+import {
     resolveTranscriptScrollPinStateUpdate,
     type TranscriptBottomFollowModeState,
     type TranscriptScrollPinEvent,
@@ -401,7 +405,6 @@ export const ChatListInternal = React.memo((props: ChatListInternalProps) => {
     const observeCommittedProjectionLayoutRef = React.useRef<() => void>(() => {});
     const wantsPinnedRef = React.useRef(true);
     const pinThresholdPxRef = React.useRef(72);
-    const lastUserScrollIntentAtMsRef = React.useRef(Number.NEGATIVE_INFINITY);
     const lastExplicitWebScrollIntentAtMsRef = React.useRef(Number.NEGATIVE_INFINITY);
     const nativeTranscriptTouchStartYRef = React.useRef<number | null>(null);
     const resolveJumpToSeqIndexForCommandRef = React.useRef<(
@@ -410,9 +413,20 @@ export const ChatListInternal = React.memo((props: ChatListInternalProps) => {
         transcriptBlockIndex?: number | null,
         role?: TranscriptJumpTargetRole | null,
     ) => number | null>(() => null);
+    // ONE owner of "is the reader scrolling / does the reader still want the live tail", shared
+    // with the renderer through the same observation object. `timestampRef` IS the ref every host
+    // consumer below reads — the renderer no longer keeps a same-named second copy, and the
+    // renderer's drag/momentum liveness is now visible to the host's pin guards (a web scrollbar
+    // drag used to be invisible to them entirely).
+    const userScrollIntentRef = React.useRef<TranscriptUserScrollIntentOwner | null>(null);
+    if (userScrollIntentRef.current === null) {
+        userScrollIntentRef.current = createTranscriptUserScrollIntentOwner();
+    }
+    const userScrollIntent = userScrollIntentRef.current;
+    const lastUserScrollIntentAtMsRef = userScrollIntent.timestampRef;
     const webDomObservationRef = React.useRef<WebDomScrollObservation | null>(null);
     if (webDomObservationRef.current === null) {
-        webDomObservationRef.current = createWebDomScrollObservation();
+        webDomObservationRef.current = createWebDomScrollObservation({ userScrollIntent });
     }
     const webDomObservation = webDomObservationRef.current;
     const lastPinOffsetForIntentRef = React.useRef<number | null>(null);
@@ -675,11 +689,11 @@ export const ChatListInternal = React.memo((props: ChatListInternalProps) => {
         emitViewportChange,
         isPinnedRef,
         lastPinOffsetForIntentRef,
-        lastUserScrollIntentAtMsRef,
         lifecycleHost,
         scrollPinRef,
         sessionId: props.sessionId,
         transcriptScrollPinEnabled,
+        userScrollIntent,
         wantsPinnedRef,
     });
     const cancelScheduledViewportAnchorCapture = React.useCallback(() => {
@@ -716,10 +730,10 @@ export const ChatListInternal = React.memo((props: ChatListInternalProps) => {
         consumedSessionEntryViewportRef,
         entryRestoreOwner,
         lifecycleHost,
-        lastUserScrollIntentAtMsRef,
         measurementHost,
         nativeInitialViewportPendingObservationRef,
         platformOS: Platform.OS,
+        userScrollIntent,
         preemptEntryRestoreTransaction,
         sessionEntryViewportRef,
         sessionId: props.sessionId,
@@ -770,11 +784,11 @@ export const ChatListInternal = React.memo((props: ChatListInternalProps) => {
         lastPinOffsetForIntentRef,
         lastRouteJumpProtectionClearingWebMovementAtMsRef,
         lastScrollOffsetForIntentRef,
-        lastUserScrollIntentAtMsRef,
         lifecycleHost,
         listContentHeightRef,
         listLayoutHeightRef,
         measurementHost,
+        userScrollIntent,
         nativeBottomFollowRearmedAfterDragRef,
         nativeEntryRestorePaintReleaseTimeoutRef,
         nativeFirstPaintFallbackReleaseTimeoutRef,
@@ -804,7 +818,10 @@ export const ChatListInternal = React.memo((props: ChatListInternalProps) => {
                     preemptEntryRestoreTransaction();
                     break;
                 case 'follow-bottom-intent-clear-user-scroll-intent':
-                    lastUserScrollIntentAtMsRef.current = Number.NEGATIVE_INFINITY;
+                    userScrollIntent.revokeInputEvidence();
+                    // Follow-bottom intent is a deliberate return to the live tail, so it also
+                    // releases the parked position (the revoke covers input recency only).
+                    userScrollIntent.releaseLiveTailParking();
                     break;
                 case 'follow-bottom-intent-record-live-tail-pin-offset':
                     lastPinOffsetForIntentRef.current = effect.distanceFromLiveTailPx;
@@ -1587,6 +1604,7 @@ export const ChatListInternal = React.memo((props: ChatListInternalProps) => {
         scrollPinRef,
         sessionId: props.sessionId,
         tryPinToBottomDom,
+        userScrollIntent,
         wantsPinnedRef,
     });
     const {
@@ -1637,6 +1655,7 @@ export const ChatListInternal = React.memo((props: ChatListInternalProps) => {
         lastScrollOffsetForIntentRef,
         lastUserScrollIntentAtMsRef,
         latestJumpToSeqRef,
+        userScrollIntent,
         listContentHeight,
         listContentHeightRef,
         listDataLength: listData.length,
@@ -1734,7 +1753,11 @@ export const ChatListInternal = React.memo((props: ChatListInternalProps) => {
         sessionId: props.sessionId,
         stampViewportAnchorForEmit,
         targetWindowHasMoreNewer: targetWindowHostFacts.hasMoreNewer,
-        targetWindowIsWindowMode: targetWindowHostFacts.targetWindowActive,
+        // The newer gap descriptor IS the adapter's answer to "is the live tail below what we
+        // rendered" — an unexhausted newer cursor OR loaded rows the window range leaves out —
+        // and it is the same fact that decides whether a newer gap row is rendered. The jump
+        // affordance reads it so the pill and the gap row cannot disagree.
+        targetWindowHasNewerBeyondRenderedWindow: targetWindowHostFacts.gaps.newer !== null,
         transcriptNavigationEntries: props.transcriptNavigationEntries,
         transcriptNavigationRuntimeAnchorsRef,
         waitForNextVisualUpdate,
@@ -1872,6 +1895,7 @@ export const ChatListInternal = React.memo((props: ChatListInternalProps) => {
         lifecycleHost,
         listContentHeightRef,
         listDataRef,
+        userScrollIntent,
         listLayoutHeightRef,
         listRef,
         loadOlderInFlightRef: loadOlderInFlight,

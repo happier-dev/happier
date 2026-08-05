@@ -26,6 +26,17 @@ type RestoreWebTranscriptViewportAnchor = (params: Readonly<{
     status: 'restored' | 'already_aligned' | 'not_found' | 'not_applied';
 };
 
+type ResolveWebTranscriptViewportAnchorAlignment = (params: Readonly<{
+    container: HTMLElement;
+    anchor: Readonly<{
+        kind: 'message' | 'toolGroup' | 'item';
+        messageId?: string | null;
+        itemId: string;
+        itemOffsetPx: number;
+    }>;
+    tolerancePx?: number;
+}>) => { status: 'aligned' | 'misaligned'; deltaPx: number } | { status: 'not_found' };
+
 function resolveModuleFunction<TFunction extends (...args: never[]) => unknown>(name: string): TFunction | null {
     const moduleExports = webTranscriptPrependAnchorModule as unknown as Record<string, unknown>;
     const exported = moduleExports[name];
@@ -125,6 +136,59 @@ function installFakeHTMLElement() {
     globalWithHTMLElement.HTMLElement = FakeElement;
     return () => {
         globalWithHTMLElement.HTMLElement = originalHTMLElement;
+    };
+}
+
+/**
+ * A tool group rendered as separate transcript items (the per-unit renderer): the group header
+ * row carries `transcript-anchor-tool-group-<lastToolMessageId>` inside its own
+ * `…#header` item, while each tool row carries `transcript-anchor-tool-call-<messageId>`
+ * inside its own `…#tool:<id>` item. Both anchors name the SAME message id, so an anchor
+ * identity built from `messageId` alone cannot say which of the two items was measured.
+ */
+function createSplitToolGroupScene(params: Readonly<{ focusedRow: 'header' | 'tool' }>) {
+    const headerTop = params.focusedRow === 'header' ? 78 : -40;
+    const toolTop = headerTop + 116;
+    const headerItem = new FakeElement('transcript-item-toolCalls:g1#header', { top: headerTop, bottom: headerTop + 98 });
+    const headerAnchor = new FakeElement('transcript-anchor-tool-group-t3', { top: headerTop, bottom: headerTop + 98 });
+    const toolItem = new FakeElement('transcript-item-toolCalls:g1#tool:t3', { top: toolTop, bottom: toolTop + 106 });
+    const toolAnchor = new FakeElement('transcript-anchor-tool-call-t3', { top: toolTop, bottom: toolTop + 106 });
+    const container = createContainer({
+        scrollTop: 500,
+        scrollHeight: 4000,
+        clientHeight: 600,
+        anchors: [headerItem, headerAnchor, toolItem, toolAnchor],
+    });
+    headerItem.parentElement = container;
+    headerAnchor.parentElement = headerItem;
+    toolItem.parentElement = container;
+    toolAnchor.parentElement = toolItem;
+    return {
+        container,
+        expectedAnchor: params.focusedRow === 'header'
+            ? { kind: 'toolGroup', messageId: 't3', itemId: 'toolCalls:g1#header', itemOffsetPx: headerTop }
+            : { kind: 'toolGroup', messageId: 't3', itemId: 'toolCalls:g1#tool:t3', itemOffsetPx: toolTop },
+        measuredItem: params.focusedRow === 'header' ? headerItem : toolItem,
+        name: `split tool group, ${params.focusedRow} row at the focus offset`,
+    };
+}
+
+function createMessageScene() {
+    const messageItem = new FakeElement('transcript-item-turn:7', { top: 90, bottom: 300 });
+    const messageAnchor = new FakeElement('transcript-anchor-message-m9', { top: 90, bottom: 300 });
+    const container = createContainer({
+        scrollTop: 500,
+        scrollHeight: 4000,
+        clientHeight: 600,
+        anchors: [messageItem, messageAnchor],
+    });
+    messageItem.parentElement = container;
+    messageAnchor.parentElement = messageItem;
+    return {
+        container,
+        expectedAnchor: { kind: 'message', messageId: 'm9', itemId: 'turn:7', itemOffsetPx: 90 },
+        measuredItem: messageItem,
+        name: 'message row at the focus offset',
     };
 }
 
@@ -376,7 +440,9 @@ describe('webTranscriptPrependAnchor', () => {
                 status: 'restored',
             });
             expect(container.scrollTop).toBe(608);
-            expect(container.querySelectorCount).toBe(2);
+            // One exact lookup: the recorded item IS the element whose top was stored, so no
+            // identity re-resolution and no second lookup to read it back.
+            expect(container.querySelectorCount).toBe(1);
             expect(container.querySelectorAllCount).toBe(0);
         } finally {
             restoreHTMLElement();
@@ -415,8 +481,81 @@ describe('webTranscriptPrependAnchor', () => {
                 status: 'restored',
             });
             expect(container.scrollTop).toBe(608);
-            expect(container.querySelectorCount).toBe(2);
-            expect(container.querySelectorAllCount).toBe(2);
+            expect(container.querySelectorCount).toBe(1);
+            expect(container.querySelectorAllCount).toBe(1);
+        } finally {
+            restoreHTMLElement();
+        }
+    });
+
+    it('aligns a captured anchor against the element whose top it stored, for every anchor family', () => {
+        const captureWebTranscriptViewportAnchor =
+            resolveModuleFunction<CaptureWebTranscriptViewportAnchor>('captureWebTranscriptViewportAnchor');
+        const resolveWebTranscriptViewportAnchorAlignment =
+            resolveModuleFunction<ResolveWebTranscriptViewportAnchorAlignment>(
+                'resolveWebTranscriptViewportAnchorAlignment',
+            );
+        if (!captureWebTranscriptViewportAnchor || !resolveWebTranscriptViewportAnchorAlignment) return;
+        const restoreHTMLElement = installFakeHTMLElement();
+
+        try {
+            const scenes = [
+                createSplitToolGroupScene({ focusedRow: 'header' }),
+                createSplitToolGroupScene({ focusedRow: 'tool' }),
+                createMessageScene(),
+            ];
+            for (const scene of scenes) {
+                const container = scene.container as unknown as HTMLElement;
+                const anchor = captureWebTranscriptViewportAnchor({ container });
+                expect({ name: scene.name, anchor }).toEqual({ name: scene.name, anchor: scene.expectedAnchor });
+                if (!anchor) continue;
+
+                // Nothing moved between capture and alignment, so the only honest answer is
+                // zero. A non-zero delta here is the distance between two DIFFERENT elements
+                // and is spent on the reader as a phantom scroll correction.
+                expect({ name: scene.name, alignment: resolveWebTranscriptViewportAnchorAlignment({
+                    container,
+                    anchor,
+                }) }).toEqual({ name: scene.name, alignment: { status: 'aligned', deltaPx: 0 } });
+
+                // ...and it must still be a real measurement of that element, not a constant.
+                scene.measuredItem.setRect({
+                    top: anchor.itemOffsetPx + 37,
+                    bottom: anchor.itemOffsetPx + 37 + 98,
+                });
+                expect({ name: scene.name, alignment: resolveWebTranscriptViewportAnchorAlignment({
+                    container,
+                    anchor,
+                }) }).toEqual({ name: scene.name, alignment: { status: 'misaligned', deltaPx: 37 } });
+            }
+        } finally {
+            restoreHTMLElement();
+        }
+    });
+
+    it('leaves scroll untouched when a captured tool-group header anchor has not moved', () => {
+        const captureWebTranscriptViewportAnchor =
+            resolveModuleFunction<CaptureWebTranscriptViewportAnchor>('captureWebTranscriptViewportAnchor');
+        const restoreWebTranscriptViewportAnchor =
+            resolveModuleFunction<RestoreWebTranscriptViewportAnchor>('restoreWebTranscriptViewportAnchor');
+        if (!captureWebTranscriptViewportAnchor || !restoreWebTranscriptViewportAnchor) return;
+        const restoreHTMLElement = installFakeHTMLElement();
+
+        try {
+            const scene = createSplitToolGroupScene({ focusedRow: 'header' });
+            const container = scene.container as unknown as HTMLElement;
+            const anchor = captureWebTranscriptViewportAnchor({ container });
+            expect(anchor).not.toBeNull();
+            if (!anchor) return;
+
+            expect(restoreWebTranscriptViewportAnchor({
+                container,
+                anchor,
+            }, writeScrollTopFor(scene.container))).toEqual({
+                didAdjustScroll: false,
+                status: 'already_aligned',
+            });
+            expect(scene.container.scrollTop).toBe(500);
         } finally {
             restoreHTMLElement();
         }

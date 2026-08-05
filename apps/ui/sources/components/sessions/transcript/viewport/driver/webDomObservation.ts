@@ -5,6 +5,11 @@ import {
 } from '@/components/sessions/transcript/scroll/resolveWebGenuineScrollMovement';
 import type { WebTranscriptScrollMetrics } from '@/components/sessions/transcript/webTranscriptScrollMetrics';
 import {
+    createTranscriptUserScrollIntentOwner,
+    TRANSCRIPT_USER_SCROLL_INPUT_CONTINUATION_WINDOW_MS,
+    type TranscriptUserScrollIntentOwner,
+} from './userScrollIntentOwner';
+import {
     writeWebScrollTopAndObserve,
     type WebScrollTopWriteResult,
     type WebScrollTopWriteTarget,
@@ -42,9 +47,16 @@ export type WebDomScrollObservation = Readonly<{
         nowMs: number;
     }>): void;
     reset(): void;
+    /**
+     * The ONE user-scroll-intent owner for this transcript instance, carried here because this
+     * object is already the single host<->renderer channel for "who moved the viewport". The host
+     * reads its `timestampRef` for the auto-pin/entry/prepend guards; the renderer records input
+     * into it and reads its liveness. There is no second copy on either side.
+     */
+    readonly userScrollIntent: TranscriptUserScrollIntentOwner;
 }>;
 
-const USER_MOVEMENT_CONTINUATION_WINDOW_MS = 320;
+const USER_MOVEMENT_CONTINUATION_WINDOW_MS = TRANSCRIPT_USER_SCROLL_INPUT_CONTINUATION_WINDOW_MS;
 
 /**
  * C3b web DOM observation owner.
@@ -54,7 +66,10 @@ const USER_MOVEMENT_CONTINUATION_WINDOW_MS = 320;
  * LANDED `scrollTop`/`scrollHeight`, and the scroll echo is genuine only if it moves away from that
  * recorded value.
  */
-export function createWebDomScrollObservation(): WebDomScrollObservation {
+export function createWebDomScrollObservation(params?: Readonly<{
+    userScrollIntent?: TranscriptUserScrollIntentOwner;
+}>): WebDomScrollObservation {
+    const userScrollIntent = params?.userScrollIntent ?? createTranscriptUserScrollIntentOwner();
     const observedScrollTopRef = { current: null as number | null };
     const observedScrollHeightRef = { current: null as number | null };
     const observedClientHeightRef = { current: null as number | null };
@@ -78,6 +93,7 @@ export function createWebDomScrollObservation(): WebDomScrollObservation {
             };
         },
         invalidateUserMovementAuthority,
+        userScrollIntent,
         observeGenuineScrollMovement(params) {
             const observedScrollTop = observedScrollTopRef.current;
             const observedScrollHeight = observedScrollHeightRef.current;
@@ -86,6 +102,19 @@ export function createWebDomScrollObservation(): WebDomScrollObservation {
                 observedScrollHeight != null &&
                 observedScrollHeight !== params.metrics.scrollHeight &&
                 params.fallbackObservedScrollTop != null;
+            // Resolved BEFORE the classifier so churn cannot veto a gesture the intent owner has
+            // already attested. A command-caused frame never counts: that exclusion is below.
+            const hasWitnessedUserInput =
+                params.semanticContext?.atEndNonUserCause !== 'command'
+                && (
+                    params.semanticContext?.isUserInputActive === true
+                    || (
+                        pendingUserInput !== null
+                        && params.semanticContext != null
+                        && params.semanticContext.nowMs - pendingUserInput.atMs
+                            <= USER_MOVEMENT_CONTINUATION_WINDOW_MS
+                    )
+                );
             const movement = resolveWebGenuineScrollMovement({
                 scrollTop: params.metrics.scrollTop,
                 scrollHeight: params.metrics.scrollHeight,
@@ -102,6 +131,7 @@ export function createWebDomScrollObservation(): WebDomScrollObservation {
                     ?? params.metrics.clientHeight,
                 previousStreak: streak,
                 distanceFromBottom: params.distanceFromBottom,
+                hasWitnessedUserInput,
                 pinThresholdPx: params.pinThresholdPx,
                 sustainFrames: params.sustainFrames,
                 isTrusted: params.isTrusted,
@@ -175,7 +205,15 @@ export function createWebDomScrollObservation(): WebDomScrollObservation {
                 observedScrollTopRef,
             });
             if (write.ok) {
-                invalidateUserMovementAuthority();
+                // Our own write re-bases movement measurement, so the STREAK must restart. It does
+                // NOT end the reader's gesture: wiping their input evidence here left the next frame
+                // of an in-progress wheel scroll unclassified, bottom-follow unreleased, and the
+                // auto-pin free to snap them back to the tail. A command/geometry boundary still
+                // revokes everything through `invalidateUserMovementAuthority`.
+                streak = null;
+                if (!userScrollIntent.isLive(Date.now())) {
+                    invalidateUserMovementAuthority();
+                }
             }
             return write;
         },

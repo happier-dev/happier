@@ -258,7 +258,13 @@ export type TranscriptJumpHostDeps = Readonly<{
     sessionId: string;
     stampViewportAnchorForEmit(anchor: SessionViewportAnchorSnapshot | null | undefined): SessionViewportAnchorSnapshot | null | undefined;
     targetWindowHasMoreNewer: boolean;
-    targetWindowIsWindowMode: boolean;
+    /**
+     * Whether the session's live tail sits BELOW the rendered window — the target-window
+     * adapter's own newer-gap answer (`gaps.newer !== null`), i.e. an unexhausted newer cursor
+     * OR loaded rows the window range leaves out. Window PRESENCE is not that fact: a window
+     * that has caught up renders the live tail at its bottom edge.
+     */
+    targetWindowHasNewerBeyondRenderedWindow: boolean;
     transcriptNavigationEntries: readonly TranscriptNavigationEntry[];
     transcriptNavigationRuntimeAnchorsRef: MutableRef<readonly TranscriptNavigationRuntimeAnchor[]>;
     waitForNextVisualUpdate(): Promise<void>;
@@ -353,7 +359,7 @@ export function useTranscriptJumpHost(deps: TranscriptJumpHostDeps): TranscriptJ
         sessionId,
         stampViewportAnchorForEmit,
         targetWindowHasMoreNewer,
-        targetWindowIsWindowMode,
+        targetWindowHasNewerBeyondRenderedWindow,
         transcriptNavigationEntries,
         transcriptNavigationRuntimeAnchorsRef,
         waitForNextVisualUpdate,
@@ -730,11 +736,12 @@ export function useTranscriptJumpHost(deps: TranscriptJumpHostDeps): TranscriptJ
     const jumpToBottomAffordance = resolveJumpToBottomAffordanceState({
         distanceFromBottom: jumpToBottomDistanceFromBottom,
         enabled: jumpEnabled,
-        hasMoreNewerBeyondRenderedWindow: targetWindowIsWindowMode,
+        hasMoreNewerBeyondRenderedWindow: targetWindowHasNewerBeyondRenderedWindow,
         isPinned: scrollPin.isPinned,
         minNewActivityCount: jumpMinNewCount,
         newActivityCount: scrollPin.newActivityCount,
         revealThresholdPx: jumpRevealOffsetThresholdPx,
+        viewportHeightPx: listLayoutHeight,
     });
 
     const transcriptNavigationRuntimeAnchors = React.useMemo(

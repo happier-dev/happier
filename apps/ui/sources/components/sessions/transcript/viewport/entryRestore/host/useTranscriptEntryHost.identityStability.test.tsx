@@ -19,6 +19,7 @@ import { resolveTranscriptRenderWindowProjection } from '@/components/sessions/t
 import { createTranscriptWindowGapItem } from '@/components/sessions/transcript/viewport/window/transcriptWindowGapItem';
 import type { ChatTranscriptListItem } from '@/components/sessions/transcript/chatListTypes';
 import { useTranscriptEntryHost } from './useTranscriptEntryHost';
+import { createTranscriptUserScrollIntentOwner } from '@/components/sessions/transcript/viewport/driver/userScrollIntentOwner';
 
 vi.mock('@/sync/sync', () => ({
     sync: {
@@ -80,6 +81,7 @@ function createStableMembers() {
         isViewportAnchorSeqLoaded: vi.fn(() => false),
         lastScrollOffsetForIntentRef: { current: null },
         lastUserScrollIntentAtMsRef: { current: Number.NEGATIVE_INFINITY },
+        userScrollIntent: createTranscriptUserScrollIntentOwner(),
         latestJumpToSeqRef: { current: null },
         listContentHeightRef: { current: 0 },
         listDataRef: { current: items },

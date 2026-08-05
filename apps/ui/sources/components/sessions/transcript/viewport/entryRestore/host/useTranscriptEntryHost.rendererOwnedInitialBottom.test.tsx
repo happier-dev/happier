@@ -16,6 +16,7 @@ import type { ChatTranscriptListItem } from '@/components/sessions/transcript/ch
 import type { WebTranscriptScrollMetrics } from '@/components/sessions/transcript/webTranscriptScrollMetrics';
 import type { SessionEntryViewportRefValue } from './useTranscriptEntryHost';
 import { useTranscriptEntryHost } from './useTranscriptEntryHost';
+import { createTranscriptUserScrollIntentOwner } from '@/components/sessions/transcript/viewport/driver/userScrollIntentOwner';
 
 vi.mock('@/sync/sync', () => ({
     sync: {
@@ -101,6 +102,7 @@ function createEnvelopeHarness() {
         isViewportAnchorSeqLoaded: vi.fn(() => false),
         lastScrollOffsetForIntentRef: { current: null },
         lastUserScrollIntentAtMsRef: { current: Number.NEGATIVE_INFINITY },
+        userScrollIntent: createTranscriptUserScrollIntentOwner(),
         latestJumpToSeqRef: { current: null },
         listContentHeightRef: { current: 46080 },
         listDataRef: { current: items },

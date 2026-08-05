@@ -1,7 +1,10 @@
 import { defineConfig } from 'vitest/config';
 import { resolve } from 'node:path';
 
-import integrationConfig, { NATIVE_LEGEND_INTEGRATION_INCLUDE_GLOB } from './vitest.integration.config';
+import integrationConfig, {
+    NATIVE_LEGEND_INTEGRATION_INCLUDE_GLOB,
+    SHIPPED_NATIVE_LEGEND_INCLUDE_GLOB,
+} from './vitest.integration.config';
 import { resolveVitestFeatureTestExcludeGlobs } from '../../scripts/testing/featureTestGating';
 
 const integration = integrationConfig as any;
@@ -21,7 +24,14 @@ export default defineConfig({
     test: {
         ...(integration.test ?? {}),
         include: [NATIVE_LEGEND_INTEGRATION_INCLUDE_GLOB],
-        exclude: [...resolveVitestFeatureTestExcludeGlobs()],
+        exclude: [
+            ...resolveVitestFeatureTestExcludeGlobs(),
+            // `foo.fabric.native.real.integration.test.tsx` also matches this lane's glob, and this
+            // lane runs Legend on OLD architecture. Left in, those files would report green while
+            // exercising `PositionViewAnimated` - the exact false-green this program was burned by.
+            // `vitest.legend-fabric.config.ts` owns them.
+            SHIPPED_NATIVE_LEGEND_INCLUDE_GLOB,
+        ],
         server: {
             ...(integration.test?.server ?? {}),
             deps: {

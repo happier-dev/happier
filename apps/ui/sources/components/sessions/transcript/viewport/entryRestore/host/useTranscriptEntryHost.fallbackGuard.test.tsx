@@ -29,6 +29,7 @@ import type { ChatTranscriptListItem } from '@/components/sessions/transcript/ch
 import type { WebTranscriptScrollMetrics } from '@/components/sessions/transcript/webTranscriptScrollMetrics';
 import type { SessionEntryViewportRefValue } from './useTranscriptEntryHost';
 import { useTranscriptEntryHost } from './useTranscriptEntryHost';
+import { createTranscriptUserScrollIntentOwner } from '@/components/sessions/transcript/viewport/driver/userScrollIntentOwner';
 
 const syncMockState = vi.hoisted(() => ({
     loadTargetWindowMessages: vi.fn(),
@@ -118,6 +119,7 @@ function createStableMembers(overrides?: {
         isViewportAnchorSeqLoaded: vi.fn(() => false),
         lastScrollOffsetForIntentRef: overrides?.lastScrollOffsetForIntentRef ?? { current: null },
         lastUserScrollIntentAtMsRef: { current: Number.NEGATIVE_INFINITY },
+        userScrollIntent: createTranscriptUserScrollIntentOwner(),
         latestJumpToSeqRef: { current: null },
         listContentHeightRef: { current: 0 },
         listDataRef: { current: items },

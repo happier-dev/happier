@@ -122,7 +122,7 @@ function buildDeps(members: ReturnType<typeof createStableMembers>): JumpHostDep
         scrollPin: { isPinned: true, lastActivityKey: null, newActivityCount: 0 },
         sessionId: 's1',
         targetWindowHasMoreNewer: false,
-        targetWindowIsWindowMode: false,
+        targetWindowHasNewerBeyondRenderedWindow: false,
         transcriptNavigationEntries: [],
         transcriptNavigationRenderedSources: [],
     } as unknown as JumpHostDeps;
@@ -406,6 +406,43 @@ describe('useTranscriptJumpHost identity stability', () => {
 
         expect(members.pinThresholdPxRef.current).toBe(120);
         expect(hook.getCurrent().jumpToBottomAffordance.isVisible).toBe(false);
+        await hook.unmount();
+    });
+
+    it('offers the return to the live tail on unreached newer content, not on target-window presence', async () => {
+        // A deep-linked session stays in target-window mode until an explicit live-tail intent
+        // resets it — reaching the window's newer edge loads pages but never exits it. Once the
+        // window has caught up, the rendered bottom IS the session's live tail, the window
+        // renders no newer gap row, and a pinned reader sitting there must see no pill. Window
+        // PRESENCE cannot answer "is the live tail below what I rendered"; the newer-content
+        // fact — the same one that decides whether a newer gap row is rendered — can.
+        const members = createStableMembers();
+        const caughtUpWindowDeps = {
+            ...buildDeps(members),
+            scrollPin: { isPinned: true, lastActivityKey: null, newActivityCount: 0 },
+            targetWindowHasMoreNewer: false,
+            targetWindowHasNewerBeyondRenderedWindow: false,
+        } as JumpHostDeps;
+        const hook = await renderHook(
+            (deps: JumpHostDeps) => useTranscriptJumpHost(deps),
+            { initialProps: caughtUpWindowDeps },
+        );
+
+        expect(hook.getCurrent().jumpToBottomAffordance.isVisible).toBe(false);
+
+        // Loaded rows newer than the window's range are omitted from the render, so the live
+        // tail is below the rendered bottom while the server-side cursor reports nothing more.
+        // `hasMoreNewer` alone would hide the reader's only way back here.
+        await hook.rerender({
+            ...caughtUpWindowDeps,
+            targetWindowHasNewerBeyondRenderedWindow: true,
+        } as JumpHostDeps);
+
+        expect(hook.getCurrent().jumpToBottomAffordance).toEqual({
+            count: 0,
+            isVisible: true,
+            presentation: 'standard',
+        });
         await hook.unmount();
     });
 

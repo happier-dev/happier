@@ -55,18 +55,6 @@ function resolveElementByTestId(params: Readonly<{
     return null;
 }
 
-function resolveVisibleAnchorTop(params: Readonly<{
-    container: HTMLElement;
-    anchorTestId: string;
-}>): number | null {
-    if (typeof params.container.getBoundingClientRect !== 'function') return null;
-    const anchorElement = resolveElementByTestId(params);
-    if (!anchorElement) return null;
-    const containerRect = params.container.getBoundingClientRect();
-    const anchorRect = anchorElement.getBoundingClientRect();
-    return anchorRect.top - containerRect.top;
-}
-
 function resolveAnchorFocusOffsetPx(containerHeight: number): number {
     const preferred = Math.round(containerHeight * 0.18);
     return Math.max(64, Math.min(128, preferred));
@@ -222,38 +210,77 @@ function createTrackedAnchorScan(container: HTMLElement): TrackedAnchorScan | nu
     return { bestAny, bestItem, bestStable, byTestId };
 }
 
-function resolveContainingItemAnchorTestId(
+/**
+ * The one containment rule: an anchor element's position is the position of the transcript
+ * ITEM that contains it. Capture and every later read walk this same chain, so the element a
+ * capture measured is the element a later read can name.
+ */
+function resolveContainingItemElement(
     container: HTMLElement,
-    anchorTestId: string | null,
-): string | null {
-    if (!anchorTestId) return null;
-    const anchorElement = resolveElementByTestId({ container, anchorTestId });
+    anchorElement: HTMLElement | null,
+): HTMLElement | null {
     let current: HTMLElement | null = anchorElement?.parentElement ?? null;
     while (current && current !== container) {
         const testId = current.getAttribute('data-testid');
         if (testId?.startsWith(TRANSCRIPT_WEB_PREPEND_ANCHOR_TEST_ID_PREFIX)) {
-            return testId;
+            return current;
         }
         current = current.parentElement;
     }
     return null;
 }
 
-function resolveViewportRestoreItemAnchorTestId(
+/**
+ * Resolves the element an anchor's `itemOffsetPx` was measured on.
+ *
+ * `itemId` is capture's own record of that element (`captureWebTranscriptAnchorSelection`
+ * stores the top of `transcript-item-<itemId>`), so reading it back is what makes the stored
+ * offset comparable at all. Anything else is a different element, and the CONSTANT distance
+ * between the two is spent on the reader as a phantom scroll correction: a tool group rendered
+ * as per-unit items carries `transcript-anchor-tool-group-<id>` in its `…#header` item and
+ * `transcript-anchor-tool-call-<id>` in its `…#tool:<id>` item, both naming the same message
+ * id, so an identity rebuilt from `kind` + `messageId` alone cannot say which was measured.
+ * Rebuilding the tool-CALL anchor for every `toolGroup` anchor was the measured web
+ * scroll-back (11/11 captured writes carried a `#header` anchor whose stored offset equalled
+ * its own live top exactly, while the rebuilt element read 32/88/116 px away; 2026-08-04).
+ *
+ * The message-identity walk below is RECOVERY ONLY — it runs when the recorded item is no
+ * longer mounted (a turn re-split, a tool group re-chunked), where no element can reproduce
+ * the original measurement and placing the remembered message approximately is the best
+ * available answer.
+ */
+function resolveViewportAnchorItemElement(
     container: HTMLElement,
     anchor: WebTranscriptViewportAnchor,
-): string {
+): HTMLElement | null {
+    const measuredItem = resolveElementByTestId({
+        container,
+        anchorTestId: `${TRANSCRIPT_WEB_PREPEND_ANCHOR_TEST_ID_PREFIX}${anchor.itemId}`,
+    });
+    if (measuredItem) return measuredItem;
+
     const stableAnchorTestId =
         anchor.kind === 'message' && anchor.messageId
             ? `${TRANSCRIPT_WEB_MESSAGE_PREPEND_ANCHOR_TEST_ID_PREFIX}${anchor.messageId}`
             : anchor.kind === 'toolGroup' && anchor.messageId
                 ? `${TRANSCRIPT_WEB_TOOL_CALL_PREPEND_ANCHOR_TEST_ID_PREFIX}${anchor.messageId}`
                 : null;
-    if (stableAnchorTestId) {
-        const currentItemTestId = resolveContainingItemAnchorTestId(container, stableAnchorTestId);
-        if (currentItemTestId) return currentItemTestId;
-    }
-    return `${TRANSCRIPT_WEB_PREPEND_ANCHOR_TEST_ID_PREFIX}${anchor.itemId}`;
+    if (!stableAnchorTestId) return null;
+    return resolveContainingItemElement(
+        container,
+        resolveElementByTestId({ container, anchorTestId: stableAnchorTestId }),
+    );
+}
+
+function resolveViewportAnchorItemTop(
+    container: HTMLElement,
+    anchor: WebTranscriptViewportAnchor,
+): number | null {
+    if (typeof container.getBoundingClientRect !== 'function') return null;
+    const itemElement = resolveViewportAnchorItemElement(container, anchor);
+    if (!itemElement) return null;
+    const top = itemElement.getBoundingClientRect().top - container.getBoundingClientRect().top;
+    return Number.isFinite(top) ? top : null;
 }
 
 function resolveContainingItemAnchorTestIdFromScan(
@@ -262,15 +289,8 @@ function resolveContainingItemAnchorTestIdFromScan(
     anchorTestId: string | null,
 ): string | null {
     if (!anchorTestId) return null;
-    let current: HTMLElement | null = scan.byTestId.get(anchorTestId)?.element.parentElement ?? null;
-    while (current && current !== container) {
-        const testId = current.getAttribute('data-testid');
-        if (testId?.startsWith(TRANSCRIPT_WEB_PREPEND_ANCHOR_TEST_ID_PREFIX)) {
-            return testId;
-        }
-        current = current.parentElement;
-    }
-    return null;
+    const itemElement = resolveContainingItemElement(container, scan.byTestId.get(anchorTestId)?.element ?? null);
+    return itemElement?.getAttribute('data-testid') ?? null;
 }
 
 function resolvePreferredItemAnchorTestIdFromScan(
@@ -337,11 +357,8 @@ export function resolveWebTranscriptViewportAnchorAlignment(params: Readonly<{
     anchor: WebTranscriptViewportAnchor;
     tolerancePx?: number;
 }>): Readonly<{ status: 'aligned' | 'misaligned'; deltaPx: number }> | Readonly<{ status: 'not_found' }> {
-    const itemTop = resolveVisibleAnchorTop({
-        container: params.container,
-        anchorTestId: resolveViewportRestoreItemAnchorTestId(params.container, params.anchor),
-    });
-    if (typeof itemTop !== 'number' || !Number.isFinite(itemTop)) {
+    const itemTop = resolveViewportAnchorItemTop(params.container, params.anchor);
+    if (itemTop === null) {
         return { status: 'not_found' };
     }
     const deltaPx = Math.trunc(itemTop - params.anchor.itemOffsetPx);
@@ -356,11 +373,8 @@ export function restoreWebTranscriptViewportAnchor(params: Readonly<{
     container: HTMLElement;
     anchor: WebTranscriptViewportAnchor;
 }>, options: WebTranscriptScrollTopWriteOptions): WebTranscriptViewportAnchorRestoreResult {
-    const itemTop = resolveVisibleAnchorTop({
-        container: params.container,
-        anchorTestId: resolveViewportRestoreItemAnchorTestId(params.container, params.anchor),
-    });
-    if (typeof itemTop !== 'number' || !Number.isFinite(itemTop)) {
+    const itemTop = resolveViewportAnchorItemTop(params.container, params.anchor);
+    if (itemTop === null) {
         return { didAdjustScroll: false, status: 'not_found' };
     }
 

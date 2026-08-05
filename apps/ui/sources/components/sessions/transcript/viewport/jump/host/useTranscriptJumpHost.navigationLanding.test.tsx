@@ -191,7 +191,7 @@ function buildDeps(overrides: Readonly<{
         sessionId: SESSION_ID,
         stampViewportAnchorForEmit: vi.fn((anchor: unknown) => anchor ?? null),
         targetWindowHasMoreNewer: false,
-        targetWindowIsWindowMode: false,
+        targetWindowHasNewerBeyondRenderedWindow: false,
         transcriptNavigationEntries: overrides.entries ?? ENTRIES,
         transcriptNavigationRuntimeAnchorsRef: createRef([]),
         waitForNextVisualUpdate: vi.fn(() => Promise.resolve()),

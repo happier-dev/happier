@@ -55,6 +55,17 @@ export type WebGenuineScrollMovementResult = WebScrollMovementFact & Readonly<{
  * scroll never changes clientHeight. Real gestures emit a continuous stream of frames, so they still release
  * immediately in practice. This is the pure, orientation-agnostic single owner of web release authority —
  * no duplication between the FlashList-onScroll and DOM-observer paths.
+ *
+ * WITNESSED INPUT (`hasWitnessedUserInput`). Churn-filtering answers "could this frame be our own
+ * write or a reflow?" — a question that only has to be asked when nothing else attests the reader.
+ * A content-height change is also the ONLY thing that arms the auto-pin, so making churn a blanket
+ * veto left the classifier structurally blind exactly when the pin decision needed it: the reader
+ * scrolls up while the tail grows, no frame can be certified, bottom-follow is never released, and
+ * the pin writes them back to the bottom. When the user-scroll-intent owner attests unforgeable raw
+ * input (`viewport/driver/userScrollIntentOwner`), that outranks the churn heuristic. Q1-WEB-1 is
+ * preserved by construction, not by the churn clause: a programmatic write records its LANDED value,
+ * so its echo is excluded by value identity above, and command-caused frames are excluded outright by
+ * the DOM observation owner's semantic context. `isTrusted` alone is still never sufficient.
  */
 export function resolveWebGenuineScrollMovement(params: Readonly<{
     scrollTop: number;
@@ -65,6 +76,8 @@ export function resolveWebGenuineScrollMovement(params: Readonly<{
     previousObservedClientHeight: number | null;
     previousStreak: WebScrollMovementStreak | null;
     distanceFromBottom: number;
+    /** The intent owner attests raw wheel/drag/keyboard/touch input for this frame. */
+    hasWitnessedUserInput?: boolean;
     pinThresholdPx: number;
     sustainFrames: number;
     isTrusted: boolean;
@@ -78,6 +91,7 @@ export function resolveWebGenuineScrollMovement(params: Readonly<{
         previousObservedClientHeight,
         previousStreak,
         distanceFromBottom,
+        hasWitnessedUserInput,
         pinThresholdPx,
         sustainFrames,
         isTrusted,
@@ -114,7 +128,9 @@ export function resolveWebGenuineScrollMovement(params: Readonly<{
     // clientHeight and shifts scrollTop in the same commit) breaks the sustained streak so it can't
     // accumulate into "sustained user intent". A user scroll never changes either height.
     const layoutChurn = contentHeightChanged || viewportHeightChanged;
-    const basisStreak = layoutChurn ? null : previousStreak;
+    // Witnessed raw input is direct evidence of the reader. It keeps the streak alive across churn
+    // so a growing tail cannot, by itself, prevent certification of a gesture already in progress.
+    const basisStreak = layoutChurn && hasWitnessedUserInput !== true ? null : previousStreak;
     const streakCount = basisStreak?.direction === direction ? basisStreak.count + 1 : 1;
     const nextStreak: WebScrollMovementStreak = { direction, count: streakCount };
 
@@ -128,7 +144,9 @@ export function resolveWebGenuineScrollMovement(params: Readonly<{
     // adjustments (Legend MVCP) and inset compensations can land arbitrarily far in one frame.
     const movementMagnitudePx = Math.abs(scrollTop - previousObservedScrollTop);
     const eagerTrustedRelease =
-        isTrusted === true && !layoutChurn && movementMagnitudePx > EAGER_MOVEMENT_EPSILON_PX;
+        isTrusted === true
+        && (!layoutChurn || hasWitnessedUserInput === true)
+        && movementMagnitudePx > EAGER_MOVEMENT_EPSILON_PX;
     const upwardIntent = direction === -1 && (eagerTrustedRelease || sustainedMovement);
     const downwardIntent = direction === 1 && beyondPinThreshold && sustainedMovement;
 

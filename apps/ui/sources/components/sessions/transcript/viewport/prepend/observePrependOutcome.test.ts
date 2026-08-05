@@ -427,6 +427,43 @@ describe('observePrependOutcome corrector deference (N2d.1)', () => {
         })).toMatchObject({ kind: 'needs-fallback', deltaPx: 49 });
     });
 
+    it('reads a preserved tool-group cap anchor off the cap row it measured, not a sibling tool row', () => {
+        // Native prepend, reader parked on an EXPANDED tool group's header cap. The capture stored
+        // the header's own top; the group's cap rows borrow the first tool message id, so resolving
+        // the index by message identity measures the TOOL row instead and manufactures a corrective
+        // write of exactly the header→tool distance while the reader never moved.
+        const groupId = 'toolCalls:linear:t1';
+        const groupItems = [
+            messageItem('m0'),
+            messageItem('m1'),
+            { id: `${groupId}#header`, kind: 'tool-group-header', toolMessageIds: ['t1', 't2'] },
+            { id: `${groupId}#tool:t1`, kind: 'tool-group-tool', toolMessageId: 't1', toolMessageIds: ['t1', 't2'] },
+            { id: `${groupId}#tool:t2`, kind: 'tool-group-tool', toolMessageId: 't2', toolMessageIds: ['t1', 't2'] },
+            { id: `${groupId}#footer`, kind: 'tool-group-footer', toolMessageIds: ['t1', 't2'] },
+        ] as const;
+
+        const outcome = observePrependOutcome({
+            capturedAnchor: {
+                key: { itemId: `${groupId}#header`, messageId: 't1' },
+                itemOffsetPx: 80,
+                capturedDataLength: 4,
+                capturedFirstItemId: `${groupId}#header`,
+            },
+            postCommit: {
+                items: groupItems,
+                // MVCP held: the header sits at exactly its captured 80px viewport offset.
+                getLayout: (index) => ({ 0: 400, 1: 700, 2: 1080, 3: 1196, 4: 1400, 5: 1600 }[index] == null
+                    ? undefined
+                    : { y: { 0: 400, 1: 700, 2: 1080, 3: 1196, 4: 1400, 5: 1600 }[index]! }),
+                absoluteScrollOffset: 1000,
+                contentHeight: 4000,
+                layoutHeight: 800,
+            },
+        });
+
+        expect(outcome).toEqual({ kind: 'mvcp-preserved', observedItemOffsetPx: 80, deltaPx: 0 });
+    });
+
     it('still falls back on real partial coverage even with the wider covered tolerance', () => {
         const outcome = observePrependOutcome({
             capturedAnchor: capturedAnchor(),

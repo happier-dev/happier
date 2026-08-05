@@ -56,6 +56,11 @@ import type {
 import type { TranscriptRenderWindowProjection } from '@/components/sessions/transcript/viewport/window/resolveTranscriptRenderWindowProjection';
 import type { TranscriptJumpTarget } from '@/components/sessions/transcript/viewport/jump/transcriptJumpTargetTypes';
 
+import type {
+    TranscriptUserScrollIntentOwner,
+    TranscriptUserScrollIntentTimestampReader,
+} from '@/components/sessions/transcript/viewport/driver/userScrollIntentOwner';
+
 type MutableRef<T> = { current: T };
 type LoadOlderOptions = TranscriptPrependOlderLoadOptions;
 
@@ -143,7 +148,8 @@ type TranscriptEntryHostDeps = Readonly<{
     isViewportAnchorSeqLoaded(seq: number, items: readonly ChatTranscriptListItem[]): boolean;
     jumpToSeq: number | null | undefined;
     lastScrollOffsetForIntentRef: MutableRef<number | null>;
-    lastUserScrollIntentAtMsRef: MutableRef<number>;
+    lastUserScrollIntentAtMsRef: TranscriptUserScrollIntentTimestampReader;
+    userScrollIntent: TranscriptUserScrollIntentOwner;
     latestJumpToSeqRef: MutableRef<number | null>;
     listContentHeight: number;
     listContentHeightRef: MutableRef<number>;

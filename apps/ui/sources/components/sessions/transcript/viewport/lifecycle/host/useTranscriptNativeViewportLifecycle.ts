@@ -12,6 +12,10 @@ import {
     shouldIgnoreNativeInvalidScrollObservation as resolveShouldIgnoreNativeInvalidScrollObservation,
 } from '@/components/sessions/transcript/viewport/nativePassiveScrollPolicy';
 
+import type {
+    TranscriptUserScrollIntentOwner,
+} from '@/components/sessions/transcript/viewport/driver/userScrollIntentOwner';
+
 type MutableRef<T> = { current: T };
 type NativeUserScrollTakeoverApplyEffect =
     TranscriptLifecycleHostNativeUserScrollTakeoverPlan['nativeUserScrollTakeoverEffects'][number];
@@ -21,7 +25,7 @@ export function useTranscriptNativeViewportLifecycle(params: Readonly<{
     consumedSessionEntryViewportRef: MutableRef<{ entryKind: string; sessionId: string } | null>;
     entryRestoreOwner: EntryRestoreOwner;
     lifecycleHost: TranscriptLifecycleHost;
-    lastUserScrollIntentAtMsRef: MutableRef<number>;
+    userScrollIntent: TranscriptUserScrollIntentOwner;
     measurementHost: TranscriptMeasurementHost;
     nativeInitialViewportPendingObservationRef: MutableRef<boolean>;
     platformOS: string;
@@ -36,7 +40,7 @@ export function useTranscriptNativeViewportLifecycle(params: Readonly<{
         consumedSessionEntryViewportRef,
         entryRestoreOwner,
         lifecycleHost,
-        lastUserScrollIntentAtMsRef,
+        userScrollIntent,
         measurementHost,
         nativeInitialViewportPendingObservationRef,
         platformOS,
@@ -74,13 +78,13 @@ export function useTranscriptNativeViewportLifecycle(params: Readonly<{
                     updateNativeInitialViewportPendingObservation(false);
                     break;
                 case 'native-user-scroll-record-intent-timestamp':
-                    lastUserScrollIntentAtMsRef.current = effect.timestampMs;
+                    userScrollIntent.recordInput({ atMs: effect.timestampMs });
                     break;
             }
         }
     }, [
         consumedSessionEntryViewportRef,
-        lastUserScrollIntentAtMsRef,
+        userScrollIntent,
         preemptEntryRestoreTransaction,
         sessionEntryViewportRef,
         sessionId,

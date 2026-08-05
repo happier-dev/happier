@@ -164,8 +164,16 @@ export function performWebDomViewportCommand(
             // and never mount the target index at any scrollTop. Ask the renderer to re-anchor
             // its window at the target; prepend/entry restores intentionally stay DOM-only so
             // they preserve the existing anchor-recovery ownership contract.
+            //
+            // NEVER default an unresolved target to index 0. Index 0 is the HEAD of the
+            // transcript, so `index ?? 0` would turn "I could not locate the jump target" into
+            // a silent teleport to the top of the content — the same head-collapse class
+            // measured on 2026-07-30, where Legend resolving an index it could not place
+            // collapsed the target to offset 0 and parked the reader on the fork divider.
+            // `index` is already narrowed to a number by the indexless early return above, so
+            // the default was dead code encoding the wrong recovery.
             try {
-                deps.listRef.current?.scrollToIndex?.({ index: index ?? 0, animated: false });
+                deps.listRef.current?.scrollToIndex?.({ index, animated: false });
             } catch {
                 // Renderer refusal is non-fatal; the DOM estimate write still applies.
             }

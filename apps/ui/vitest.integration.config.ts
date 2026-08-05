@@ -18,6 +18,17 @@ const base = baseConfig as any;
  */
 export const NATIVE_LEGEND_INTEGRATION_INCLUDE_GLOB = 'sources/**/*.native.real.integration.test.{ts,tsx}';
 
+/**
+ * Harnesses that must run the SHIPPED native path: the native build AND `Platform.OS === 'ios'`
+ * AND New Architecture ON. Owned by `vitest.legend-fabric.config.ts`.
+ *
+ * Declared here, next to the glob it deliberately overlaps, because both lane configs need it and
+ * importing it across them would make the two configs cyclic. Note the overlap is intentional: this
+ * pattern also matches `NATIVE_LEGEND_INTEGRATION_INCLUDE_GLOB`, so the exclusion already written
+ * below keeps these files out of the web-resolving run, and the native lane excludes them too.
+ */
+export const SHIPPED_NATIVE_LEGEND_INCLUDE_GLOB = 'sources/**/*.fabric.native.real.integration.test.{ts,tsx}';
+
 export default defineConfig({
     define: base.define,
     optimizeDeps: base.optimizeDeps,

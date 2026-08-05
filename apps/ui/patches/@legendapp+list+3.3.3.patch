@@ -81,7 +81,7 @@ index 8204015..00b30cf 100644
       * Clears internal virtualization caches.
       * @param options - Cache clearing options.
 diff --git a/node_modules/@legendapp/list/react-native.js b/node_modules/@legendapp/list/react-native.js
-index 229f09a..a099dfc 100644
+index 229f09a..f162e22 100644
 --- a/node_modules/@legendapp/list/react-native.js
 +++ b/node_modules/@legendapp/list/react-native.js
 @@ -965,6 +965,34 @@ function clearPreservedInitialScrollTarget(state) {
@@ -129,9 +129,54 @@ index 229f09a..a099dfc 100644
      if (shouldReleaseDeferredPublicOnScroll) {
        releaseDeferredPublicOnScroll(ctx, finalScrollOffset);
      }
-@@ -1143,11 +1174,58 @@ function findContainerId(ctx, key) {
+@@ -1057,11 +1088,25 @@ function updateContentMetricsState(ctx) {
  }
- 
+
+ // src/core/addTotalSize.ts
++// HAPPIER-NULLKEY-ABSOLUTE-TOTAL (owner half): `addTotalSize` overloaded `key === null` as its
++// ABSOLUTE-WRITE sentinel ("this number IS the total"), and `getId` returns `null` for any index
++// past the end of `data` ("there is no such row"). Two meanings, one value. One probe of a row the
++// current `data` no longer contains therefore assigned the whole content size to be one unmeasured
++// row: getId -> null -> getItemSize falls through to `estimatedItemSize` -> setSize with a null key
++// -> addTotalSize with a null key -> totalSize = est, written absolutely. MEASURED on device with a
++// 4/4 identical stack (checkResetContainers -> calculateItemsInView -> prepareMVCP's closure ->
++// getItemSize(ctx, getId(state, scrollingTo.index), ...)): totalSize 2,322 -> 240 on a 43-row
++// transcript AND 266,020 -> 240 on a 419-row one - the SAME constant, i.e. one row rather than a
++// sum - then alignItemsAtEndPadding grown to 297 (12 + 142 + 240 + 297 = 691, the viewport, to the
++// pixel) and UIScrollView clamping contentOffset to that one-viewport content.
++// The sentinel is given a private value no item key can ever take, so the invalid state stops being
++// representable rather than being guarded against at one caller.
++var HAPPIER_TOTAL_SIZE_ABSOLUTE = { happierTotalSizeAbsolute: true };
+ function addTotalSize(ctx, key, add, notifyTotalSize = true) {
+   const state = ctx.state;
+   const prevTotalSize = state.totalSize;
+   let totalSize = state.totalSize;
+-  if (key === null) {
++  if (key === HAPPIER_TOTAL_SIZE_ABSOLUTE) {
+     totalSize = add;
+     if (state.timeoutSetPaddingTop) {
+       clearTimeout(state.timeoutSetPaddingTop);
+@@ -1088,6 +1133,17 @@ function addTotalSize(ctx, key, add, notifyTotalSize = true) {
+
+ // src/core/setSize.ts
+ function setSize(ctx, itemKey, size, notifyTotalSize = true) {
++  // HAPPIER-NULLKEY-NO-ROW-NO-SIZE (choke-point half): `getId` returns `null` for an index past the
++  // end of `data`, and ~15 call sites hand a `getId` result straight to `getItemSize` with no null
++  // check (the MEASURED device stack goes through prepareMVCP's closure, NOT through
++  // `getItemSizeAtIndex`, so guarding that one caller would not have covered it). `setSize` is the
++  // single choke point every resolved size passes, so refusing a key that is not a row here keeps a
++  // non-existent row from contributing to the running total or occupying a `sizes` entry, for every
++  // present and future caller. Paired with HAPPIER-NULLKEY-ABSOLUTE-TOTAL: that one removes the
++  // ambiguity, this one removes the phantom contribution the disambiguation would otherwise leave.
++  if (itemKey === null) {
++    return;
++  }
+   const state = ctx.state;
+   const { sizes } = state;
+   const previousSize = sizes.get(itemKey);
+@@ -1143,11 +1199,58 @@ function findContainerId(ctx, key) {
+ }
+
  // src/utils/getItemSize.ts
 -function getKnownOrFixedSize(ctx, key, index, data, resolved) {
 +function reverseItemSizeContribution(state, key) {
@@ -190,7 +235,7 @@ index 229f09a..a099dfc 100644
    if (size === void 0 && key && getFixedItemSize) {
      const itemType = (_b = resolved == null ? void 0 : resolved.itemType) != null ? _b : getItemType ? (_a3 = getItemType(data, index)) != null ? _a3 : "" : "";
      const fixedSize = (resolved == null ? void 0 : resolved.didResolveFixedItemSize) ? resolved.fixedItemSize : getFixedItemSize(data, index, itemType);
-@@ -1170,7 +1248,7 @@ function areKnownOrFixedItemSizesAvailable(ctx, startIndex, endIndex) {
+@@ -1170,7 +1273,7 @@ function areKnownOrFixedItemSizesAvailable(ctx, startIndex, endIndex) {
    }
    return true;
  }
@@ -199,7 +244,7 @@ index 229f09a..a099dfc 100644
    var _a3, _b, _c, _d;
    const state = ctx.state;
    const {
-@@ -1179,7 +1257,7 @@ function getItemSize(ctx, key, index, data, useAverageSize, preferCachedSize, no
+@@ -1179,7 +1282,7 @@ function getItemSize(ctx, key, index, data, useAverageSize, preferCachedSize, no
      props: { estimatedItemSize, getItemType },
      scrollingTo
    } = state;
@@ -208,7 +253,7 @@ index 229f09a..a099dfc 100644
    if (sizeKnown !== void 0) {
      return sizeKnown;
    }
-@@ -1190,12 +1268,23 @@ function getItemSize(ctx, key, index, data, useAverageSize, preferCachedSize, no
+@@ -1190,12 +1293,23 @@ function getItemSize(ctx, key, index, data, useAverageSize, preferCachedSize, no
        return renderedSize;
      }
    }
@@ -233,9 +278,18 @@ index 229f09a..a099dfc 100644
    if (useAverageSize && !scrollingTo) {
      const averageSizeForType = (_c = averageSizes[itemType]) == null ? void 0 : _c.avg;
      if (averageSizeForType !== void 0) {
-@@ -1501,6 +1590,21 @@ function doScrollTo(ctx, params) {
+@@ -1286,7 +1400,7 @@ function finishScrollTo(ctx) {
+     state.scrollingTo = void 0;
+     state.scrollTargetPinnedRange = void 0;
+     if (state.pendingTotalSize !== void 0) {
+-      addTotalSize(ctx, null, state.pendingTotalSize);
++      addTotalSize(ctx, HAPPIER_TOTAL_SIZE_ABSOLUTE, state.pendingTotalSize);
+     }
+     if (PlatformAdjustBreaksScroll) {
+       state.scrollAdjustHandler.commitPendingAdjust(scrollingTo);
+@@ -1501,6 +1615,21 @@ function doScrollTo(ctx, params) {
  }
- 
+
  // src/core/doMaintainScrollAtEnd.ts
 +function hasExternalMaintainScrollAtEndIntent(maintainScrollAtEnd) {
 +  return !!(maintainScrollAtEnd && typeof maintainScrollAtEnd.isMaintainingScrollAtEnd === "function" && maintainScrollAtEnd.isMaintainingScrollAtEnd());
@@ -255,7 +309,7 @@ index 229f09a..a099dfc 100644
  function doMaintainScrollAtEnd(ctx) {
    const state = ctx.state;
    const {
-@@ -1510,7 +1614,14 @@ function doMaintainScrollAtEnd(ctx) {
+@@ -1510,7 +1639,14 @@ function doMaintainScrollAtEnd(ctx) {
      props: { maintainScrollAtEnd }
    } = state;
    const isWithinMaintainScrollAtEndThreshold = peek$(ctx, "isWithinMaintainScrollAtEndThreshold");
@@ -271,7 +325,7 @@ index 229f09a..a099dfc 100644
    if (pendingNativeMVCPAdjust) {
      state.pendingMaintainScrollAtEnd = shouldMaintainScrollAtEnd;
      return false;
-@@ -1526,7 +1637,10 @@ function doMaintainScrollAtEnd(ctx) {
+@@ -1526,7 +1662,10 @@ function doMaintainScrollAtEnd(ctx) {
        const activeState = maintainScrollAtEnd.animated ? "animated" : "instant";
        state.maintainingScrollAtEnd = pendingState;
        requestAnimationFrame(() => {
@@ -283,7 +337,132 @@ index 229f09a..a099dfc 100644
            state.maintainingScrollAtEnd = activeState;
            const scroller = refScroller.current;
            if (state.props.horizontal && isHorizontalRTL(state)) {
-@@ -1909,7 +2023,11 @@ function prepareMVCP(ctx, dataChanged) {
+@@ -1592,11 +1731,20 @@ function requestAdjust(ctx, positionDiff, dataChanged) {
+         if (!state.ignoreScrollFromMVCP) {
+           state.ignoreScrollFromMVCP = {};
+         }
++        // HAPPIER-MVCP-IGNORE-BAND-DIRECTION: this threshold object is REUSED across adjusts,
++        // so an earlier opposite-direction adjust left its bound in place and the accept set
++        // became the interval [lt, gt] - MEASURED collapsing to a single acceptable offset
++        // (lt === gt === 2100) across an insert+delete pair on a 4000px list, and empty outright
++        // whenever lt > gt, with nothing anywhere enforcing lt <= gt. Only the most recent
++        // adjust can explain an observation, so it now defines the whole band.
+         if (positionDiff > 0) {
+           state.ignoreScrollFromMVCP.lt = threshold;
++          state.ignoreScrollFromMVCP.gt = void 0;
+         } else {
+           state.ignoreScrollFromMVCP.gt = threshold;
++          state.ignoreScrollFromMVCP.lt = void 0;
+         }
++        state.ignoreScrollFromMVCPDeferredScroll = void 0;
+         if (state.ignoreScrollFromMVCPTimeout) {
+           clearTimeout(state.ignoreScrollFromMVCPTimeout);
+         }
+@@ -1605,10 +1753,17 @@ function requestAdjust(ctx, positionDiff, dataChanged) {
+           var _a3;
+           state.ignoreScrollFromMVCP = void 0;
+           const shouldForceUpdate = state.ignoreScrollFromMVCPIgnored && state.scrollProcessingEnabled !== false;
++          // Reprocess the offset the band REJECTED, not state.scroll. On native state.scroll is an
++          // open-loop prediction (this build reads the real scroll offset nowhere), so reprocessing
++          // it re-decides on the same unverified number while the observed offset is gone for good
++          // - the suppressed observation was destroyed, not deferred. No timer duration changes.
++          const deferredScroll = state.ignoreScrollFromMVCPDeferredScroll;
++          state.ignoreScrollFromMVCPDeferredScroll = void 0;
+           if (shouldForceUpdate) {
+             state.ignoreScrollFromMVCPIgnored = false;
+-            state.scrollPending = state.scroll;
+-            (_a3 = state.reprocessCurrentScroll) == null ? void 0 : _a3.call(state);
++            const reprocessScroll = deferredScroll !== void 0 ? deferredScroll : state.scroll;
++            state.scrollPending = reprocessScroll;
++            (_a3 = state.reprocessCurrentScroll) == null ? void 0 : _a3.call(state, reprocessScroll);
+           }
+         }, delay);
+       }
+@@ -1642,26 +1797,30 @@ function resolveAnchorLock(state, enableMVCPAnchorLock, mvcpData, now) {
+   return lock;
+ }
+ function updateAnchorLock(state, params) {
+-  if (Platform.OS === "web") {
+-    const { anchorId, anchorPosition, dataChanged, now, positionDiff } = params;
+-    const enableMVCPAnchorLock = !!dataChanged || !!state.mvcpAnchorLock;
+-    const mvcpData = state.props.maintainVisibleContentPosition.data;
+-    if (!enableMVCPAnchorLock || !mvcpData || state.scrollingTo || !anchorId || anchorPosition === void 0) {
+-      return;
+-    }
+-    const existingLock = state.mvcpAnchorLock;
+-    const quietPasses = !dataChanged && Math.abs(positionDiff) <= MVCP_POSITION_EPSILON && (existingLock == null ? void 0 : existingLock.id) === anchorId ? existingLock.quietPasses + 1 : 0;
+-    if (!dataChanged && quietPasses >= MVCP_ANCHOR_LOCK_QUIET_PASSES_TO_RELEASE) {
+-      state.mvcpAnchorLock = void 0;
+-      return;
+-    }
+-    state.mvcpAnchorLock = {
+-      expiresAt: now + MVCP_ANCHOR_LOCK_TTL_MS,
+-      id: anchorId,
+-      position: anchorPosition,
+-      quietPasses
+-    };
++  // HAPPIER-MVCP-ANCHOR-LOCK-NATIVE: this whole body was wrapped in `Platform.OS === "web"`, so
++  // state.mvcpAnchorLock was never written on native and resolveAnchorLock /
++  // shouldValidateLockedAnchor were permanently dead there. Native therefore re-picked its MVCP
++  // anchor out of idsInView on every pass, with no identity or position continuity across a data
++  // change - which is exactly the shape of a message-send crossover. Nothing here is web-specific:
++  // it reads props and indexByKey and writes state, with no DOM read and no measurement.
++  const { anchorId, anchorPosition, dataChanged, now, positionDiff } = params;
++  const enableMVCPAnchorLock = !!dataChanged || !!state.mvcpAnchorLock;
++  const mvcpData = state.props.maintainVisibleContentPosition.data;
++  if (!enableMVCPAnchorLock || !mvcpData || state.scrollingTo || !anchorId || anchorPosition === void 0) {
++    return;
++  }
++  const existingLock = state.mvcpAnchorLock;
++  const quietPasses = !dataChanged && Math.abs(positionDiff) <= MVCP_POSITION_EPSILON && (existingLock == null ? void 0 : existingLock.id) === anchorId ? existingLock.quietPasses + 1 : 0;
++  if (!dataChanged && quietPasses >= MVCP_ANCHOR_LOCK_QUIET_PASSES_TO_RELEASE) {
++    state.mvcpAnchorLock = void 0;
++    return;
+   }
++  state.mvcpAnchorLock = {
++    expiresAt: now + MVCP_ANCHOR_LOCK_TTL_MS,
++    id: anchorId,
++    position: anchorPosition,
++    quietPasses
++  };
+ }
+ function shouldQueueNativeMVCPAdjust(dataChanged, state, positionDiff, prevTotalSize, prevScroll, scrollTarget) {
+   if (!dataChanged || Platform.OS === "web" || !state.props.maintainVisibleContentPosition.data || scrollTarget !== void 0 || positionDiff >= -MVCP_POSITION_EPSILON) {
+@@ -1765,13 +1924,20 @@ function prepareMVCP(ctx, dataChanged) {
+   } = props;
+   const isWeb = Platform.OS === "web";
+   const now = Date.now();
+-  const enableMVCPAnchorLock = isWeb && (!!dataChanged || !!state.mvcpAnchorLock);
++  const enableMVCPAnchorLock = !!dataChanged || !!state.mvcpAnchorLock;
+   const scrollingTo = state.scrollingTo;
+-  if (isWeb && dataChanged && state.pendingScrollToEnd && scrollingTo === void 0) {
++  // The lock must be dropped on both platforms when a scroll-to-end is queued, or native would
++  // anchor to a row the queued scroll is about to leave. Skipping MVCP entirely stays web-only:
++  // that is a separate upstream decision this patch does not change.
++  if (dataChanged && state.pendingScrollToEnd && scrollingTo === void 0) {
+     state.mvcpAnchorLock = void 0;
+-    return void 0;
++    if (isWeb) {
++      return void 0;
++    }
+   }
+-  const anchorLock = isWeb ? resolveAnchorLock(state, enableMVCPAnchorLock, mvcpData, now) : void 0;
++  // HAPPIER-MVCP-ANCHOR-LOCK-NATIVE (consumer half): native resolved to `void 0` unconditionally,
++  // so even a written lock could never be read back.
++  const anchorLock = resolveAnchorLock(state, enableMVCPAnchorLock, mvcpData, now);
+   let prevPosition;
+   let targetId;
+   const idsInViewWithPositions = [];
+@@ -1822,7 +1988,7 @@ function prepareMVCP(ctx, dataChanged) {
+       let anchorPositionForLock;
+       let skipTargetAnchor = false;
+       const data = state.props.data;
+-      const shouldValidateLockedAnchor = isWeb && dataChanged && mvcpData && scrollTarget === void 0 && targetId !== void 0 && (anchorLock == null ? void 0 : anchorLock.id) === targetId && shouldRestorePosition !== void 0;
++      const shouldValidateLockedAnchor = dataChanged && mvcpData && scrollTarget === void 0 && targetId !== void 0 && (anchorLock == null ? void 0 : anchorLock.id) === targetId && shouldRestorePosition !== void 0;
+       if (shouldValidateLockedAnchor && targetId !== void 0) {
+         const index = indexByKey.get(targetId);
+         if (index !== void 0) {
+@@ -1909,7 +2075,11 @@ function prepareMVCP(ctx, dataChanged) {
          return;
        }
        if (Math.abs(positionDiff) > MVCP_POSITION_EPSILON) {
@@ -296,15 +475,48 @@ index 229f09a..a099dfc 100644
          if (!shouldSkipAdjustForMaintainedEnd) {
            requestAdjust(ctx, positionDiff, dataChanged && mvcpData);
          }
-@@ -1973,7 +2091,6 @@ function isInMVCPActiveMode(state) {
- 
+@@ -1973,7 +2143,6 @@ function isInMVCPActiveMode(state) {
+
  // src/core/updateScroll.ts
  function updateScroll(ctx, newScroll, forceUpdate, options) {
 -  var _a3;
    const state = ctx.state;
    const { ignoreScrollFromMVCP, lastScrollAdjustForHistory, scrollAdjustHandler, scrollHistory, scrollingTo } = state;
    const prevScroll = state.scroll;
-@@ -2047,7 +2164,7 @@ function updateScroll(ctx, newScroll, forceUpdate, options) {
+@@ -1999,10 +2168,32 @@ function updateScroll(ctx, newScroll, forceUpdate, options) {
+   if (ignoreScrollFromMVCP && !scrollingTo) {
+     const { lt, gt } = ignoreScrollFromMVCP;
+     if (lt && newScroll < lt || gt && newScroll > gt) {
++      // HAPPIER-MVCP-IGNORE-RESOLVES-PENDING: resolvePendingNativeMVCPAdjust used to sit BELOW
++      // this early return, so an armed pendingNativeMVCPAdjust blinded the only channel that can
++      // retire it - and arming it is what armed this band in the first place. While it survives,
++      // native turns off render-range projection, user-scroll detection, the large-jump escape
++      // hatch, every subsequent MVCP pass and doMaintainScrollAtEnd. Retiring it here is the fix.
++      // BOUNDED, NOT UNIVERSAL - the offset handed to the resolve is the one this band just
++      // rejected. When the band in force was armed by this pending's OWN manual leg the rejection
++      // is wrong-direction for it and the pending is merely dropped: shouldQueueNativeMVCPAdjust
++      // admits only amount < 0, so the leg is <= 0, arms the `gt` bound, and a rejected offset
++      // lies above the post-leg prediction. But maybeApplyPredictedNativeMVCPAdjust returns with
++      // manualApplied still 0 whenever the predicted native clamp is 0, and such a pending arms no
++      // band of its own - the band in force can then be a FOREIGN one from a requestAdjust caller
++      // outside prepareMVCP's pending gate (scroll-offset diff, header size, content inset, list
++      // padding). In that composition the rejected offset need not be wrong-direction and
++      // settlePendingNativeMVCPAdjust can re-request an adjust computed from it. DERIVED, never
++      // observed in any capture: left documented rather than guarded, and named as an instrumented
++      // target so a guard is built only if it is measured to fire. See
++      // .project/reviews/2026-08-01-send-transition/Q4-adversarial-review.md (F-Q4-1) and
++      // Z1-divergence-instrument.md.
++      resolvePendingNativeMVCPAdjust(ctx, newScroll);
+       state.ignoreScrollFromMVCPIgnored = true;
++      state.ignoreScrollFromMVCPDeferredScroll = newScroll;
+       return;
+     }
+   }
++  state.ignoreScrollFromMVCPDeferredScroll = void 0;
+   state.scrollPrev = prevScroll;
+   state.scrollPrevTime = state.scrollTime;
+   state.scroll = newScroll;
+@@ -2047,7 +2238,7 @@ function updateScroll(ctx, newScroll, forceUpdate, options) {
      } else {
        runCalculateItems();
      }
@@ -313,9 +525,9 @@ index 229f09a..a099dfc 100644
      if (didResolvePendingNativeMVCPAdjust && shouldMaintainScrollAtEndAfterPendingSettle) {
        state.pendingMaintainScrollAtEnd = false;
        doMaintainScrollAtEnd(ctx);
-@@ -2398,7 +2515,8 @@ function advanceCurrentInitialScrollSession(ctx, options) {
+@@ -2398,7 +2589,8 @@ function advanceCurrentInitialScrollSession(ctx, options) {
  }
- 
+
  // src/utils/checkAllSizesKnown.ts
 -function checkAllSizesKnown(state, start, end) {
 +function checkAllSizesKnown(ctx, start, end) {
@@ -323,7 +535,7 @@ index 229f09a..a099dfc 100644
    if (start == null || end == null || start < 0 || end < start) {
      return false;
    }
-@@ -2408,7 +2526,7 @@ function checkAllSizesKnown(state, start, end) {
+@@ -2408,7 +2600,7 @@ function checkAllSizesKnown(state, start, end) {
      if (index !== void 0 && index >= start && index <= end) {
        hasMountedIndex = true;
        const id = getId(state, index);
@@ -332,7 +544,7 @@ index 229f09a..a099dfc 100644
          return false;
        }
      }
-@@ -2788,11 +2906,13 @@ function handleBootstrapInitialScrollDataChange(ctx, options) {
+@@ -2788,11 +2980,13 @@ function handleBootstrapInitialScrollDataChange(ctx, options) {
        setInitialScrollTarget(ctx, updatedInitialScroll, {
          resetDidFinish: shouldResetDidFinish
        });
@@ -351,7 +563,7 @@ index 229f09a..a099dfc 100644
        return;
      }
    }
-@@ -2913,7 +3033,7 @@ function evaluateBootstrapInitialScroll(ctx) {
+@@ -2913,7 +3107,7 @@ function evaluateBootstrapInitialScroll(ctx) {
      bootstrapInitialScroll.targetIndexSeed = void 0;
    }
    const resolvedOffset = resolveInitialScrollOffset(ctx, initialScroll);
@@ -360,7 +572,7 @@ index 229f09a..a099dfc 100644
    const didResolvedOffsetChange = Math.abs(bootstrapInitialScroll.scroll - resolvedOffset) > 1;
    const { data } = state.props;
    const visibleIndices = getBootstrapRevealVisibleIndices({
-@@ -2931,7 +3051,7 @@ function evaluateBootstrapInitialScroll(ctx) {
+@@ -2931,7 +3125,7 @@ function evaluateBootstrapInitialScroll(ctx) {
    const areVisibleIndicesMeasured = visibleIndices.length > 0 && visibleIndices.every((index) => {
      var _a4;
      const id = (_a4 = state.idCache[index]) != null ? _a4 : getId(state, index);
@@ -369,7 +581,51 @@ index 229f09a..a099dfc 100644
    });
    const previousResolvedOffset = bootstrapInitialScroll.previousResolvedOffset;
    const previousVisibleIndices = bootstrapInitialScroll.visibleIndices;
-@@ -3417,7 +3537,7 @@ function updateItemPositions(ctx, dataChanged, {
+@@ -3324,9 +3518,27 @@ function updateTotalSize(ctx) {
+     positions,
+     props: { data }
+   } = state;
++  // HAPPIER-TOTALSIZE-STALE-POSITIONS: `state.props` is mutated during RENDER, so `props.data`
++  // can already be the next render's array while `positions` still describes the previous one.
++  // Any event-driven pass (a delivered scroll, a layout) that runs before the reconciling
++  // `dataChanged` pass sees that pair. When the new data is SHORTER, updateItemPositions' walk
++  // range (`startIndex = minIndexSizeChanged ?? startBuffered`) is already past its end, so no row
++  // is walked and the absolute total below is computed from stale positions: with a one-row
++  // `data`, `positions[0]` is 0 and the row size is unknown, so the list publishes exactly
++  // `estimatedItemSize` for a transcript of any height. Measured on device: 2,322 -> 240 on a
++  // 43-row transcript and 266,020 -> 240 on a 419-row one (the SAME 240, i.e. one row, not a sum),
++  // alignItemsAtEndPadding then grown to fill the viewport and UIScrollView clamping
++  // contentOffset to that one-viewport content.
++  // The mirror case is already refused: when data GREW, `positions[lastIndex]` is undefined and
++  // the `lastPosition !== void 0` guard below suppresses the publish. This makes the shrink
++  // direction symmetric. Nothing is lost by waiting - the reconciling pass walks from index 0,
++  // leaves `positions.length === data.length`, and republishes the exact total.
++  if (positions.length > data.length) {
++    return;
++  }
+   const numColumns = (_a3 = peek$(ctx, "numColumns")) != null ? _a3 : 1;
+   if (data.length === 0) {
+-    addTotalSize(ctx, null, 0);
++    addTotalSize(ctx, HAPPIER_TOTAL_SIZE_ABSOLUTE, 0);
+   } else {
+     const lastIndex = data.length - 1;
+     const lastId = getId(state, lastIndex);
+@@ -3349,12 +3561,12 @@ function updateTotalSize(ctx) {
+             maxSize = size;
+           }
+         }
+-        addTotalSize(ctx, null, lastPosition + maxSize);
++        addTotalSize(ctx, HAPPIER_TOTAL_SIZE_ABSOLUTE, lastPosition + maxSize);
+       } else {
+         const lastSize = getItemSize(ctx, lastId, lastIndex, data[lastIndex]);
+         if (lastSize !== void 0) {
+           const totalSize = lastPosition + lastSize;
+-          addTotalSize(ctx, null, totalSize);
++          addTotalSize(ctx, HAPPIER_TOTAL_SIZE_ABSOLUTE, totalSize);
+         }
+       }
+     }
+@@ -3417,7 +3629,7 @@ function updateItemPositions(ctx, dataChanged, {
    const shouldOptimize = !forceFullUpdate && !dataChanged && (optimizeForVisibleWindow || Math.abs(velocity) > 0 || Platform.OS === "web" && state.scrollLength > 0 && lastScrollDelta > state.scrollLength);
    const maxVisibleArea = scrollBottomBuffered + 1e3;
    const useAverageSize = true;
@@ -378,7 +634,7 @@ index 229f09a..a099dfc 100644
    const notifyTotalSizeWhileCachingSizes = false;
    let currentRowTop = 0;
    let column = 1;
-@@ -3446,7 +3566,7 @@ function updateItemPositions(ctx, dataChanged, {
+@@ -3446,7 +3658,7 @@ function updateItemPositions(ctx, dataChanged, {
        const prevIndex = startIndex - 1;
        const prevId = getId(state, prevIndex);
        const prevPosition = (_c = positions[prevIndex]) != null ? _c : 0;
@@ -387,7 +643,7 @@ index 229f09a..a099dfc 100644
          ctx,
          prevId,
          prevIndex,
-@@ -3464,7 +3584,25 @@ function updateItemPositions(ctx, dataChanged, {
+@@ -3464,7 +3676,25 @@ function updateItemPositions(ctx, dataChanged, {
    let breakAt;
    for (let i = startIndex; i < dataLength; i++) {
      if (shouldOptimize && breakAt !== void 0 && i > breakAt) {
@@ -414,7 +670,7 @@ index 229f09a..a099dfc 100644
        break;
      }
      if (shouldOptimize && breakAt === void 0 && !scrollingTo && !dataChanged && currentRowTop > maxVisibleArea) {
-@@ -3486,8 +3624,7 @@ function updateItemPositions(ctx, dataChanged, {
+@@ -3486,8 +3716,7 @@ function updateItemPositions(ctx, dataChanged, {
        column = 1;
        maxSizeInRow = 0;
      }
@@ -424,7 +680,7 @@ index 229f09a..a099dfc 100644
      if (IS_DEV && needsIndexByKey) {
        if (indexByKeyForChecking.has(id)) {
          console.error(
-@@ -4379,6 +4516,17 @@ function calculateItemsInView(ctx, params = {}) {
+@@ -4379,6 +4608,17 @@ function calculateItemsInView(ctx, params = {}) {
          }
        }
      }
@@ -442,7 +698,7 @@ index 229f09a..a099dfc 100644
      Object.assign(state, {
        endBuffered,
        endNoBuffer: visibleRange.endNoBuffer,
-@@ -4582,7 +4730,7 @@ function calculateItemsInView(ctx, params = {}) {
+@@ -4582,7 +4822,7 @@ function calculateItemsInView(ctx, params = {}) {
      }
      maybeEmitFirstVisibleItemChanged(state, visibleRange.startNoBuffer);
      if (!queuedInitialLayout && !state.didContainersLayout) {
@@ -451,7 +707,7 @@ index 229f09a..a099dfc 100644
        if (isInitialLayoutReady) {
          setDidLayout(ctx);
          handleInitialScrollLayoutReady(ctx);
-@@ -4781,11 +4929,16 @@ function applyItemSize(ctx, itemKey, sizeObj, resolvedMeasurementItem) {
+@@ -4781,11 +5021,16 @@ function applyItemSize(ctx, itemKey, sizeObj, resolvedMeasurementItem) {
    } = state;
    if (!data) return { didMeasureUserScrollAnchorResetItem };
    const index = state.indexByKey.get(itemKey);
@@ -469,7 +725,7 @@ index 229f09a..a099dfc 100644
      if (itemData === void 0) {
        return { didMeasureUserScrollAnchorResetItem };
      }
-@@ -4798,7 +4951,7 @@ function applyItemSize(ctx, itemKey, sizeObj, resolvedMeasurementItem) {
+@@ -4798,7 +5043,7 @@ function applyItemSize(ctx, itemKey, sizeObj, resolvedMeasurementItem) {
        };
      }
      const size2 = resolvedMeasurementItem.fixedItemSize;
@@ -478,7 +734,7 @@ index 229f09a..a099dfc 100644
        updateOtherAxisSizeIfNeeded(ctx, sizeObj, horizontal);
        return { didMeasureUserScrollAnchorResetItem };
      }
-@@ -4806,8 +4959,7 @@ function applyItemSize(ctx, itemKey, sizeObj, resolvedMeasurementItem) {
+@@ -4806,8 +5051,7 @@ function applyItemSize(ctx, itemKey, sizeObj, resolvedMeasurementItem) {
    let needsRecalculate = !didContainersLayout;
    let shouldMaintainScrollAtEnd = false;
    let minIndexSizeChanged;
@@ -488,7 +744,7 @@ index 229f09a..a099dfc 100644
    const size = roundSize(horizontal ? sizeObj.width : sizeObj.height);
    if (diff !== 0) {
      minIndexSizeChanged = minIndexSizeChanged !== void 0 ? Math.min(minIndexSizeChanged, index) : index;
-@@ -4816,7 +4968,8 @@ function applyItemSize(ctx, itemKey, sizeObj, resolvedMeasurementItem) {
+@@ -4816,7 +5060,8 @@ function applyItemSize(ctx, itemKey, sizeObj, resolvedMeasurementItem) {
      if (!needsRecalculate && state.containerItemKeys.has(itemKey)) {
        needsRecalculate = true;
      }
@@ -498,7 +754,7 @@ index 229f09a..a099dfc 100644
        shouldMaintainScrollAtEnd = true;
      }
      onItemSizeChanged == null ? void 0 : onItemSizeChanged({
-@@ -4832,7 +4985,7 @@ function applyItemSize(ctx, itemKey, sizeObj, resolvedMeasurementItem) {
+@@ -4832,7 +5077,7 @@ function applyItemSize(ctx, itemKey, sizeObj, resolvedMeasurementItem) {
      state.minIndexSizeChanged = state.minIndexSizeChanged !== void 0 ? Math.min(state.minIndexSizeChanged, minIndexSizeChanged) : minIndexSizeChanged;
    }
    updateOtherAxisSizeIfNeeded(ctx, sizeObj, horizontal);
@@ -507,7 +763,7 @@ index 229f09a..a099dfc 100644
      const canMaintainScrollAtEnd = shouldMaintainScrollAtEnd && !!(maintainScrollAtEnd == null ? void 0 : maintainScrollAtEnd.onItemLayout);
      return {
        didChange: diff !== 0,
-@@ -4846,7 +4999,7 @@ function applyItemSize(ctx, itemKey, sizeObj, resolvedMeasurementItem) {
+@@ -4846,7 +5091,7 @@ function applyItemSize(ctx, itemKey, sizeObj, resolvedMeasurementItem) {
      didMeasureUserScrollAnchorResetItem
    };
  }
@@ -516,7 +772,7 @@ index 229f09a..a099dfc 100644
    var _a3, _b;
    const state = ctx.state;
    const {
-@@ -4869,7 +5022,7 @@ function updateOneItemSize(ctx, itemKey, sizeObj, resolvedMeasurementItem) {
+@@ -4869,7 +5114,7 @@ function updateOneItemSize(ctx, itemKey, sizeObj, resolvedMeasurementItem) {
      fixedItemSize,
      itemType
    } : void 0;
@@ -525,7 +781,7 @@ index 229f09a..a099dfc 100644
    const rawSize = horizontal ? sizeObj.width : sizeObj.height;
    const prevSizeKnown = sizesKnown.get(itemKey);
    if (Platform.OS !== "web" && prevSizeKnown !== void 0 && isNativeLayoutNoise(rawSize - prevSizeKnown)) {
-@@ -4892,6 +5045,7 @@ function updateOneItemSize(ctx, itemKey, sizeObj, resolvedMeasurementItem) {
+@@ -4892,6 +5137,7 @@ function updateOneItemSize(ctx, itemKey, sizeObj, resolvedMeasurementItem) {
        averages.avg = (averages.avg * averages.num + size) / (averages.num + 1);
        averages.num++;
      }
@@ -533,7 +789,7 @@ index 229f09a..a099dfc 100644
    }
    if (!prevSize || Math.abs(prevSize - size) > 0.1) {
      setSize(ctx, itemKey, size);
-@@ -4935,7 +5089,9 @@ function measureContainersInLayoutEffect(ctx, targetContainerIds = null) {
+@@ -4935,7 +5181,9 @@ function measureContainersInLayoutEffect(ctx, targetContainerIds = null) {
        const generation = ((_a3 = state.containerItemGenerations[containerId]) != null ? _a3 : 0) + 1;
        state.containerItemGenerations[containerId] = generation;
        const fixedItemSize = resolveFixedItemSize(ctx, containerId, itemKey);
@@ -544,7 +800,7 @@ index 229f09a..a099dfc 100644
        if (canSkipMeasurement) {
          resolveSkippedAnchorReset(ctx, itemKey);
        } else if (viewRef) {
-@@ -5395,7 +5551,8 @@ function processContainerLayout({ containerId, ctx, rectangle, ref, state }) {
+@@ -5395,7 +5643,8 @@ function processContainerLayout({ containerId, ctx, rectangle, ref, state }) {
    const axis = state.horizontal ? "width" : "height";
    const size = roundSize(rectangle[axis]);
    const localPreviousSize = state.lastSize ? roundSize(state.lastSize[axis]) : void 0;
@@ -554,7 +810,7 @@ index 229f09a..a099dfc 100644
    const previousSize = Platform.OS === "web" ? coreKnownSize : localPreviousSize;
    const applyLayout = () => {
      state.lastSize = layout;
-@@ -6055,6 +6212,8 @@ function checkResetContainers(ctx, dataProp, { didColumnsChange = false } = {})
+@@ -6055,6 +6304,8 @@ function checkResetContainers(ctx, dataProp, { didColumnsChange = false } = {})
    if (didColumnsChange) {
      state.sizes.clear();
      state.sizesKnown.clear();
@@ -563,7 +819,7 @@ index 229f09a..a099dfc 100644
      invalidateContainerFixedItemSizes(state);
      for (const key in state.averageSizes) {
        delete state.averageSizes[key];
-@@ -6491,6 +6650,13 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
+@@ -6491,6 +6742,13 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
    const IMPERATIVE_SCROLL_SETTLE_MAX_WAIT_MS = 800;
    const IMPERATIVE_SCROLL_SETTLE_STABLE_FRAMES = 2;
    let imperativeScrollToken = 0;
@@ -577,7 +833,7 @@ index 229f09a..a099dfc 100644
    const isSettlingAfterDataChange = () => !!state.didDataChange || !!state.didColumnsChange || state.queuedMVCPRecalculate !== void 0 || state.ignoreScrollFromMVCP !== void 0;
    const isScrollToIndexReady = (targetIndex, allowEmpty = false) => {
      var _a3;
-@@ -6512,6 +6678,7 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
+@@ -6512,6 +6770,7 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
      const startedAt = Date.now();
      let stableFrames = 0;
      const check = () => {
@@ -585,7 +841,7 @@ index 229f09a..a099dfc 100644
        if (token !== imperativeScrollToken) {
          return;
        }
-@@ -6525,9 +6692,10 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
+@@ -6525,9 +6784,10 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
          run();
          return;
        }
@@ -598,7 +854,7 @@ index 229f09a..a099dfc 100644
    };
    const runScrollRequest = (token, resolve, run, isReady = () => true) => {
      const runNow = () => {
-@@ -6550,12 +6718,21 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
+@@ -6550,12 +6810,21 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
    };
    const startImperativeScroll = (resolve) => {
      var _a3;
@@ -620,7 +876,7 @@ index 229f09a..a099dfc 100644
    const runScrollWithPromise = (run, isReady = () => true) => new Promise((resolve) => {
      const token = startImperativeScroll(resolve);
      runScrollRequest(token, resolve, run, isReady);
-@@ -6596,6 +6773,8 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
+@@ -6596,6 +6865,8 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
      const mode = (_a3 = options == null ? void 0 : options.mode) != null ? _a3 : "sizes";
      state.sizes.clear();
      state.sizesKnown.clear();
@@ -629,7 +885,7 @@ index 229f09a..a099dfc 100644
      invalidateContainerFixedItemSizes(state);
      for (const key in state.averageSizes) {
        delete state.averageSizes[key];
-@@ -6616,6 +6795,7 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
+@@ -6616,6 +6887,7 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
      (_b = state.triggerCalculateItemsInView) == null ? void 0 : _b.call(state, { forceFullItemPositions: true });
    };
    return {
@@ -637,7 +893,7 @@ index 229f09a..a099dfc 100644
      clearCaches,
      flashScrollIndicators: () => refScroller.current.flashScrollIndicators(),
      getAnimatableRef: () => {
-@@ -6653,7 +6833,10 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
+@@ -6653,7 +6925,10 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
        scroll: state.scroll,
        scrollLength: state.scrollLength,
        scrollVelocity: getScrollVelocity(state),
@@ -649,7 +905,7 @@ index 229f09a..a099dfc 100644
        sizes: state.sizesKnown,
        start: state.startNoBuffer,
        startBuffered: state.startBuffered
-@@ -6834,7 +7017,8 @@ function normalizeMaintainScrollAtEnd(value) {
+@@ -6834,7 +7109,8 @@ function normalizeMaintainScrollAtEnd(value) {
    const normalizedTriggers = normalizeMaintainScrollAtEndOn(value.on, "on" in value);
    return {
      ...normalizedTriggers,
@@ -658,8 +914,8 @@ index 229f09a..a099dfc 100644
 +    isMaintainingScrollAtEnd: value.isMaintainingScrollAtEnd
    };
  }
- 
-@@ -6964,6 +7148,8 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+
+@@ -6964,6 +7240,8 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
      estimatedListSize,
      extraData,
      getFixedItemSize,
@@ -668,7 +924,7 @@ index 229f09a..a099dfc 100644
      getItemType,
      horizontal,
      rtl,
-@@ -7156,6 +7342,8 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+@@ -7156,6 +7434,8 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
          scrollTime: 0,
          sizes: /* @__PURE__ */ new Map(),
          sizesKnown: /* @__PURE__ */ new Map(),
@@ -677,7 +933,16 @@ index 229f09a..a099dfc 100644
          startBuffered: -1,
          startNoBuffer: -1,
          startReachedSnapshot: void 0,
-@@ -7221,6 +7409,8 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+@@ -7168,7 +7448,7 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+       };
+       const internalState = ctx.state;
+       internalState.triggerCalculateItemsInView = (params) => calculateItemsInView(ctx, params);
+-      internalState.reprocessCurrentScroll = () => updateScroll(ctx, internalState.scroll, true);
++      internalState.reprocessCurrentScroll = (offset) => updateScroll(ctx, offset !== void 0 ? offset : internalState.scroll, true);
+       set$(ctx, "maintainVisibleContentPosition", maintainVisibleContentPositionConfig);
+       set$(ctx, "extraData", extraData);
+       if (estimatedHeaderSize !== void 0) {
+@@ -7221,6 +7501,8 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
      drawDistance,
      estimatedItemSize,
      getFixedItemSize: useWrapIfItem(getFixedItemSize),
@@ -686,7 +951,7 @@ index 229f09a..a099dfc 100644
      getItemType: useWrapIfItem(getItemType),
      horizontal: !!horizontal,
      itemsAreEqual,
-@@ -7498,10 +7688,20 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+@@ -7498,10 +7780,20 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
          cancelAnimationFrame(state.queuedFullDrawDistancePrewarm);
          state.queuedFullDrawDistancePrewarm = void 0;
        }
@@ -708,7 +973,7 @@ index 229f09a..a099dfc 100644
    }, [state]);
    React2.useLayoutEffect(() => {
 diff --git a/node_modules/@legendapp/list/react-native.mjs b/node_modules/@legendapp/list/react-native.mjs
-index c2e0f38..209ff26 100644
+index c2e0f38..b70aea2 100644
 --- a/node_modules/@legendapp/list/react-native.mjs
 +++ b/node_modules/@legendapp/list/react-native.mjs
 @@ -944,6 +944,34 @@ function clearPreservedInitialScrollTarget(state) {
@@ -756,9 +1021,54 @@ index c2e0f38..209ff26 100644
      if (shouldReleaseDeferredPublicOnScroll) {
        releaseDeferredPublicOnScroll(ctx, finalScrollOffset);
      }
-@@ -1122,11 +1153,58 @@ function findContainerId(ctx, key) {
+@@ -1036,11 +1067,25 @@ function updateContentMetricsState(ctx) {
  }
- 
+
+ // src/core/addTotalSize.ts
++// HAPPIER-NULLKEY-ABSOLUTE-TOTAL (owner half): `addTotalSize` overloaded `key === null` as its
++// ABSOLUTE-WRITE sentinel ("this number IS the total"), and `getId` returns `null` for any index
++// past the end of `data` ("there is no such row"). Two meanings, one value. One probe of a row the
++// current `data` no longer contains therefore assigned the whole content size to be one unmeasured
++// row: getId -> null -> getItemSize falls through to `estimatedItemSize` -> setSize with a null key
++// -> addTotalSize with a null key -> totalSize = est, written absolutely. MEASURED on device with a
++// 4/4 identical stack (checkResetContainers -> calculateItemsInView -> prepareMVCP's closure ->
++// getItemSize(ctx, getId(state, scrollingTo.index), ...)): totalSize 2,322 -> 240 on a 43-row
++// transcript AND 266,020 -> 240 on a 419-row one - the SAME constant, i.e. one row rather than a
++// sum - then alignItemsAtEndPadding grown to 297 (12 + 142 + 240 + 297 = 691, the viewport, to the
++// pixel) and UIScrollView clamping contentOffset to that one-viewport content.
++// The sentinel is given a private value no item key can ever take, so the invalid state stops being
++// representable rather than being guarded against at one caller.
++var HAPPIER_TOTAL_SIZE_ABSOLUTE = { happierTotalSizeAbsolute: true };
+ function addTotalSize(ctx, key, add, notifyTotalSize = true) {
+   const state = ctx.state;
+   const prevTotalSize = state.totalSize;
+   let totalSize = state.totalSize;
+-  if (key === null) {
++  if (key === HAPPIER_TOTAL_SIZE_ABSOLUTE) {
+     totalSize = add;
+     if (state.timeoutSetPaddingTop) {
+       clearTimeout(state.timeoutSetPaddingTop);
+@@ -1067,6 +1112,17 @@ function addTotalSize(ctx, key, add, notifyTotalSize = true) {
+
+ // src/core/setSize.ts
+ function setSize(ctx, itemKey, size, notifyTotalSize = true) {
++  // HAPPIER-NULLKEY-NO-ROW-NO-SIZE (choke-point half): `getId` returns `null` for an index past the
++  // end of `data`, and ~15 call sites hand a `getId` result straight to `getItemSize` with no null
++  // check (the MEASURED device stack goes through prepareMVCP's closure, NOT through
++  // `getItemSizeAtIndex`, so guarding that one caller would not have covered it). `setSize` is the
++  // single choke point every resolved size passes, so refusing a key that is not a row here keeps a
++  // non-existent row from contributing to the running total or occupying a `sizes` entry, for every
++  // present and future caller. Paired with HAPPIER-NULLKEY-ABSOLUTE-TOTAL: that one removes the
++  // ambiguity, this one removes the phantom contribution the disambiguation would otherwise leave.
++  if (itemKey === null) {
++    return;
++  }
+   const state = ctx.state;
+   const { sizes } = state;
+   const previousSize = sizes.get(itemKey);
+@@ -1122,11 +1178,58 @@ function findContainerId(ctx, key) {
+ }
+
  // src/utils/getItemSize.ts
 -function getKnownOrFixedSize(ctx, key, index, data, resolved) {
 +function reverseItemSizeContribution(state, key) {
@@ -817,7 +1127,7 @@ index c2e0f38..209ff26 100644
    if (size === void 0 && key && getFixedItemSize) {
      const itemType = (_b = resolved == null ? void 0 : resolved.itemType) != null ? _b : getItemType ? (_a3 = getItemType(data, index)) != null ? _a3 : "" : "";
      const fixedSize = (resolved == null ? void 0 : resolved.didResolveFixedItemSize) ? resolved.fixedItemSize : getFixedItemSize(data, index, itemType);
-@@ -1149,7 +1227,7 @@ function areKnownOrFixedItemSizesAvailable(ctx, startIndex, endIndex) {
+@@ -1149,7 +1252,7 @@ function areKnownOrFixedItemSizesAvailable(ctx, startIndex, endIndex) {
    }
    return true;
  }
@@ -826,7 +1136,7 @@ index c2e0f38..209ff26 100644
    var _a3, _b, _c, _d;
    const state = ctx.state;
    const {
-@@ -1158,7 +1236,7 @@ function getItemSize(ctx, key, index, data, useAverageSize, preferCachedSize, no
+@@ -1158,7 +1261,7 @@ function getItemSize(ctx, key, index, data, useAverageSize, preferCachedSize, no
      props: { estimatedItemSize, getItemType },
      scrollingTo
    } = state;
@@ -835,7 +1145,7 @@ index c2e0f38..209ff26 100644
    if (sizeKnown !== void 0) {
      return sizeKnown;
    }
-@@ -1169,12 +1247,23 @@ function getItemSize(ctx, key, index, data, useAverageSize, preferCachedSize, no
+@@ -1169,12 +1272,23 @@ function getItemSize(ctx, key, index, data, useAverageSize, preferCachedSize, no
        return renderedSize;
      }
    }
@@ -860,9 +1170,18 @@ index c2e0f38..209ff26 100644
    if (useAverageSize && !scrollingTo) {
      const averageSizeForType = (_c = averageSizes[itemType]) == null ? void 0 : _c.avg;
      if (averageSizeForType !== void 0) {
-@@ -1480,6 +1569,21 @@ function doScrollTo(ctx, params) {
+@@ -1265,7 +1379,7 @@ function finishScrollTo(ctx) {
+     state.scrollingTo = void 0;
+     state.scrollTargetPinnedRange = void 0;
+     if (state.pendingTotalSize !== void 0) {
+-      addTotalSize(ctx, null, state.pendingTotalSize);
++      addTotalSize(ctx, HAPPIER_TOTAL_SIZE_ABSOLUTE, state.pendingTotalSize);
+     }
+     if (PlatformAdjustBreaksScroll) {
+       state.scrollAdjustHandler.commitPendingAdjust(scrollingTo);
+@@ -1480,6 +1594,21 @@ function doScrollTo(ctx, params) {
  }
- 
+
  // src/core/doMaintainScrollAtEnd.ts
 +function hasExternalMaintainScrollAtEndIntent(maintainScrollAtEnd) {
 +  return !!(maintainScrollAtEnd && typeof maintainScrollAtEnd.isMaintainingScrollAtEnd === "function" && maintainScrollAtEnd.isMaintainingScrollAtEnd());
@@ -882,7 +1201,7 @@ index c2e0f38..209ff26 100644
  function doMaintainScrollAtEnd(ctx) {
    const state = ctx.state;
    const {
-@@ -1489,7 +1593,14 @@ function doMaintainScrollAtEnd(ctx) {
+@@ -1489,7 +1618,14 @@ function doMaintainScrollAtEnd(ctx) {
      props: { maintainScrollAtEnd }
    } = state;
    const isWithinMaintainScrollAtEndThreshold = peek$(ctx, "isWithinMaintainScrollAtEndThreshold");
@@ -898,7 +1217,7 @@ index c2e0f38..209ff26 100644
    if (pendingNativeMVCPAdjust) {
      state.pendingMaintainScrollAtEnd = shouldMaintainScrollAtEnd;
      return false;
-@@ -1505,7 +1616,10 @@ function doMaintainScrollAtEnd(ctx) {
+@@ -1505,7 +1641,10 @@ function doMaintainScrollAtEnd(ctx) {
        const activeState = maintainScrollAtEnd.animated ? "animated" : "instant";
        state.maintainingScrollAtEnd = pendingState;
        requestAnimationFrame(() => {
@@ -910,7 +1229,132 @@ index c2e0f38..209ff26 100644
            state.maintainingScrollAtEnd = activeState;
            const scroller = refScroller.current;
            if (state.props.horizontal && isHorizontalRTL(state)) {
-@@ -1888,7 +2002,11 @@ function prepareMVCP(ctx, dataChanged) {
+@@ -1571,11 +1710,20 @@ function requestAdjust(ctx, positionDiff, dataChanged) {
+         if (!state.ignoreScrollFromMVCP) {
+           state.ignoreScrollFromMVCP = {};
+         }
++        // HAPPIER-MVCP-IGNORE-BAND-DIRECTION: this threshold object is REUSED across adjusts,
++        // so an earlier opposite-direction adjust left its bound in place and the accept set
++        // became the interval [lt, gt] - MEASURED collapsing to a single acceptable offset
++        // (lt === gt === 2100) across an insert+delete pair on a 4000px list, and empty outright
++        // whenever lt > gt, with nothing anywhere enforcing lt <= gt. Only the most recent
++        // adjust can explain an observation, so it now defines the whole band.
+         if (positionDiff > 0) {
+           state.ignoreScrollFromMVCP.lt = threshold;
++          state.ignoreScrollFromMVCP.gt = void 0;
+         } else {
+           state.ignoreScrollFromMVCP.gt = threshold;
++          state.ignoreScrollFromMVCP.lt = void 0;
+         }
++        state.ignoreScrollFromMVCPDeferredScroll = void 0;
+         if (state.ignoreScrollFromMVCPTimeout) {
+           clearTimeout(state.ignoreScrollFromMVCPTimeout);
+         }
+@@ -1584,10 +1732,17 @@ function requestAdjust(ctx, positionDiff, dataChanged) {
+           var _a3;
+           state.ignoreScrollFromMVCP = void 0;
+           const shouldForceUpdate = state.ignoreScrollFromMVCPIgnored && state.scrollProcessingEnabled !== false;
++          // Reprocess the offset the band REJECTED, not state.scroll. On native state.scroll is an
++          // open-loop prediction (this build reads the real scroll offset nowhere), so reprocessing
++          // it re-decides on the same unverified number while the observed offset is gone for good
++          // - the suppressed observation was destroyed, not deferred. No timer duration changes.
++          const deferredScroll = state.ignoreScrollFromMVCPDeferredScroll;
++          state.ignoreScrollFromMVCPDeferredScroll = void 0;
+           if (shouldForceUpdate) {
+             state.ignoreScrollFromMVCPIgnored = false;
+-            state.scrollPending = state.scroll;
+-            (_a3 = state.reprocessCurrentScroll) == null ? void 0 : _a3.call(state);
++            const reprocessScroll = deferredScroll !== void 0 ? deferredScroll : state.scroll;
++            state.scrollPending = reprocessScroll;
++            (_a3 = state.reprocessCurrentScroll) == null ? void 0 : _a3.call(state, reprocessScroll);
+           }
+         }, delay);
+       }
+@@ -1621,26 +1776,30 @@ function resolveAnchorLock(state, enableMVCPAnchorLock, mvcpData, now) {
+   return lock;
+ }
+ function updateAnchorLock(state, params) {
+-  if (Platform.OS === "web") {
+-    const { anchorId, anchorPosition, dataChanged, now, positionDiff } = params;
+-    const enableMVCPAnchorLock = !!dataChanged || !!state.mvcpAnchorLock;
+-    const mvcpData = state.props.maintainVisibleContentPosition.data;
+-    if (!enableMVCPAnchorLock || !mvcpData || state.scrollingTo || !anchorId || anchorPosition === void 0) {
+-      return;
+-    }
+-    const existingLock = state.mvcpAnchorLock;
+-    const quietPasses = !dataChanged && Math.abs(positionDiff) <= MVCP_POSITION_EPSILON && (existingLock == null ? void 0 : existingLock.id) === anchorId ? existingLock.quietPasses + 1 : 0;
+-    if (!dataChanged && quietPasses >= MVCP_ANCHOR_LOCK_QUIET_PASSES_TO_RELEASE) {
+-      state.mvcpAnchorLock = void 0;
+-      return;
+-    }
+-    state.mvcpAnchorLock = {
+-      expiresAt: now + MVCP_ANCHOR_LOCK_TTL_MS,
+-      id: anchorId,
+-      position: anchorPosition,
+-      quietPasses
+-    };
++  // HAPPIER-MVCP-ANCHOR-LOCK-NATIVE: this whole body was wrapped in `Platform.OS === "web"`, so
++  // state.mvcpAnchorLock was never written on native and resolveAnchorLock /
++  // shouldValidateLockedAnchor were permanently dead there. Native therefore re-picked its MVCP
++  // anchor out of idsInView on every pass, with no identity or position continuity across a data
++  // change - which is exactly the shape of a message-send crossover. Nothing here is web-specific:
++  // it reads props and indexByKey and writes state, with no DOM read and no measurement.
++  const { anchorId, anchorPosition, dataChanged, now, positionDiff } = params;
++  const enableMVCPAnchorLock = !!dataChanged || !!state.mvcpAnchorLock;
++  const mvcpData = state.props.maintainVisibleContentPosition.data;
++  if (!enableMVCPAnchorLock || !mvcpData || state.scrollingTo || !anchorId || anchorPosition === void 0) {
++    return;
++  }
++  const existingLock = state.mvcpAnchorLock;
++  const quietPasses = !dataChanged && Math.abs(positionDiff) <= MVCP_POSITION_EPSILON && (existingLock == null ? void 0 : existingLock.id) === anchorId ? existingLock.quietPasses + 1 : 0;
++  if (!dataChanged && quietPasses >= MVCP_ANCHOR_LOCK_QUIET_PASSES_TO_RELEASE) {
++    state.mvcpAnchorLock = void 0;
++    return;
+   }
++  state.mvcpAnchorLock = {
++    expiresAt: now + MVCP_ANCHOR_LOCK_TTL_MS,
++    id: anchorId,
++    position: anchorPosition,
++    quietPasses
++  };
+ }
+ function shouldQueueNativeMVCPAdjust(dataChanged, state, positionDiff, prevTotalSize, prevScroll, scrollTarget) {
+   if (!dataChanged || Platform.OS === "web" || !state.props.maintainVisibleContentPosition.data || scrollTarget !== void 0 || positionDiff >= -MVCP_POSITION_EPSILON) {
+@@ -1744,13 +1903,20 @@ function prepareMVCP(ctx, dataChanged) {
+   } = props;
+   const isWeb = Platform.OS === "web";
+   const now = Date.now();
+-  const enableMVCPAnchorLock = isWeb && (!!dataChanged || !!state.mvcpAnchorLock);
++  const enableMVCPAnchorLock = !!dataChanged || !!state.mvcpAnchorLock;
+   const scrollingTo = state.scrollingTo;
+-  if (isWeb && dataChanged && state.pendingScrollToEnd && scrollingTo === void 0) {
++  // The lock must be dropped on both platforms when a scroll-to-end is queued, or native would
++  // anchor to a row the queued scroll is about to leave. Skipping MVCP entirely stays web-only:
++  // that is a separate upstream decision this patch does not change.
++  if (dataChanged && state.pendingScrollToEnd && scrollingTo === void 0) {
+     state.mvcpAnchorLock = void 0;
+-    return void 0;
++    if (isWeb) {
++      return void 0;
++    }
+   }
+-  const anchorLock = isWeb ? resolveAnchorLock(state, enableMVCPAnchorLock, mvcpData, now) : void 0;
++  // HAPPIER-MVCP-ANCHOR-LOCK-NATIVE (consumer half): native resolved to `void 0` unconditionally,
++  // so even a written lock could never be read back.
++  const anchorLock = resolveAnchorLock(state, enableMVCPAnchorLock, mvcpData, now);
+   let prevPosition;
+   let targetId;
+   const idsInViewWithPositions = [];
+@@ -1801,7 +1967,7 @@ function prepareMVCP(ctx, dataChanged) {
+       let anchorPositionForLock;
+       let skipTargetAnchor = false;
+       const data = state.props.data;
+-      const shouldValidateLockedAnchor = isWeb && dataChanged && mvcpData && scrollTarget === void 0 && targetId !== void 0 && (anchorLock == null ? void 0 : anchorLock.id) === targetId && shouldRestorePosition !== void 0;
++      const shouldValidateLockedAnchor = dataChanged && mvcpData && scrollTarget === void 0 && targetId !== void 0 && (anchorLock == null ? void 0 : anchorLock.id) === targetId && shouldRestorePosition !== void 0;
+       if (shouldValidateLockedAnchor && targetId !== void 0) {
+         const index = indexByKey.get(targetId);
+         if (index !== void 0) {
+@@ -1888,7 +2054,11 @@ function prepareMVCP(ctx, dataChanged) {
          return;
        }
        if (Math.abs(positionDiff) > MVCP_POSITION_EPSILON) {
@@ -923,15 +1367,48 @@ index c2e0f38..209ff26 100644
          if (!shouldSkipAdjustForMaintainedEnd) {
            requestAdjust(ctx, positionDiff, dataChanged && mvcpData);
          }
-@@ -1952,7 +2070,6 @@ function isInMVCPActiveMode(state) {
- 
+@@ -1952,7 +2122,6 @@ function isInMVCPActiveMode(state) {
+
  // src/core/updateScroll.ts
  function updateScroll(ctx, newScroll, forceUpdate, options) {
 -  var _a3;
    const state = ctx.state;
    const { ignoreScrollFromMVCP, lastScrollAdjustForHistory, scrollAdjustHandler, scrollHistory, scrollingTo } = state;
    const prevScroll = state.scroll;
-@@ -2026,7 +2143,7 @@ function updateScroll(ctx, newScroll, forceUpdate, options) {
+@@ -1978,10 +2147,32 @@ function updateScroll(ctx, newScroll, forceUpdate, options) {
+   if (ignoreScrollFromMVCP && !scrollingTo) {
+     const { lt, gt } = ignoreScrollFromMVCP;
+     if (lt && newScroll < lt || gt && newScroll > gt) {
++      // HAPPIER-MVCP-IGNORE-RESOLVES-PENDING: resolvePendingNativeMVCPAdjust used to sit BELOW
++      // this early return, so an armed pendingNativeMVCPAdjust blinded the only channel that can
++      // retire it - and arming it is what armed this band in the first place. While it survives,
++      // native turns off render-range projection, user-scroll detection, the large-jump escape
++      // hatch, every subsequent MVCP pass and doMaintainScrollAtEnd. Retiring it here is the fix.
++      // BOUNDED, NOT UNIVERSAL - the offset handed to the resolve is the one this band just
++      // rejected. When the band in force was armed by this pending's OWN manual leg the rejection
++      // is wrong-direction for it and the pending is merely dropped: shouldQueueNativeMVCPAdjust
++      // admits only amount < 0, so the leg is <= 0, arms the `gt` bound, and a rejected offset
++      // lies above the post-leg prediction. But maybeApplyPredictedNativeMVCPAdjust returns with
++      // manualApplied still 0 whenever the predicted native clamp is 0, and such a pending arms no
++      // band of its own - the band in force can then be a FOREIGN one from a requestAdjust caller
++      // outside prepareMVCP's pending gate (scroll-offset diff, header size, content inset, list
++      // padding). In that composition the rejected offset need not be wrong-direction and
++      // settlePendingNativeMVCPAdjust can re-request an adjust computed from it. DERIVED, never
++      // observed in any capture: left documented rather than guarded, and named as an instrumented
++      // target so a guard is built only if it is measured to fire. See
++      // .project/reviews/2026-08-01-send-transition/Q4-adversarial-review.md (F-Q4-1) and
++      // Z1-divergence-instrument.md.
++      resolvePendingNativeMVCPAdjust(ctx, newScroll);
+       state.ignoreScrollFromMVCPIgnored = true;
++      state.ignoreScrollFromMVCPDeferredScroll = newScroll;
+       return;
+     }
+   }
++  state.ignoreScrollFromMVCPDeferredScroll = void 0;
+   state.scrollPrev = prevScroll;
+   state.scrollPrevTime = state.scrollTime;
+   state.scroll = newScroll;
+@@ -2026,7 +2217,7 @@ function updateScroll(ctx, newScroll, forceUpdate, options) {
      } else {
        runCalculateItems();
      }
@@ -940,9 +1417,9 @@ index c2e0f38..209ff26 100644
      if (didResolvePendingNativeMVCPAdjust && shouldMaintainScrollAtEndAfterPendingSettle) {
        state.pendingMaintainScrollAtEnd = false;
        doMaintainScrollAtEnd(ctx);
-@@ -2377,7 +2494,8 @@ function advanceCurrentInitialScrollSession(ctx, options) {
+@@ -2377,7 +2568,8 @@ function advanceCurrentInitialScrollSession(ctx, options) {
  }
- 
+
  // src/utils/checkAllSizesKnown.ts
 -function checkAllSizesKnown(state, start, end) {
 +function checkAllSizesKnown(ctx, start, end) {
@@ -950,7 +1427,7 @@ index c2e0f38..209ff26 100644
    if (start == null || end == null || start < 0 || end < start) {
      return false;
    }
-@@ -2387,7 +2505,7 @@ function checkAllSizesKnown(state, start, end) {
+@@ -2387,7 +2579,7 @@ function checkAllSizesKnown(state, start, end) {
      if (index !== void 0 && index >= start && index <= end) {
        hasMountedIndex = true;
        const id = getId(state, index);
@@ -959,7 +1436,7 @@ index c2e0f38..209ff26 100644
          return false;
        }
      }
-@@ -2767,11 +2885,13 @@ function handleBootstrapInitialScrollDataChange(ctx, options) {
+@@ -2767,11 +2959,13 @@ function handleBootstrapInitialScrollDataChange(ctx, options) {
        setInitialScrollTarget(ctx, updatedInitialScroll, {
          resetDidFinish: shouldResetDidFinish
        });
@@ -978,7 +1455,7 @@ index c2e0f38..209ff26 100644
        return;
      }
    }
-@@ -2892,7 +3012,7 @@ function evaluateBootstrapInitialScroll(ctx) {
+@@ -2892,7 +3086,7 @@ function evaluateBootstrapInitialScroll(ctx) {
      bootstrapInitialScroll.targetIndexSeed = void 0;
    }
    const resolvedOffset = resolveInitialScrollOffset(ctx, initialScroll);
@@ -987,7 +1464,7 @@ index c2e0f38..209ff26 100644
    const didResolvedOffsetChange = Math.abs(bootstrapInitialScroll.scroll - resolvedOffset) > 1;
    const { data } = state.props;
    const visibleIndices = getBootstrapRevealVisibleIndices({
-@@ -2910,7 +3030,7 @@ function evaluateBootstrapInitialScroll(ctx) {
+@@ -2910,7 +3104,7 @@ function evaluateBootstrapInitialScroll(ctx) {
    const areVisibleIndicesMeasured = visibleIndices.length > 0 && visibleIndices.every((index) => {
      var _a4;
      const id = (_a4 = state.idCache[index]) != null ? _a4 : getId(state, index);
@@ -996,7 +1473,51 @@ index c2e0f38..209ff26 100644
    });
    const previousResolvedOffset = bootstrapInitialScroll.previousResolvedOffset;
    const previousVisibleIndices = bootstrapInitialScroll.visibleIndices;
-@@ -3396,7 +3516,7 @@ function updateItemPositions(ctx, dataChanged, {
+@@ -3303,9 +3497,27 @@ function updateTotalSize(ctx) {
+     positions,
+     props: { data }
+   } = state;
++  // HAPPIER-TOTALSIZE-STALE-POSITIONS: `state.props` is mutated during RENDER, so `props.data`
++  // can already be the next render's array while `positions` still describes the previous one.
++  // Any event-driven pass (a delivered scroll, a layout) that runs before the reconciling
++  // `dataChanged` pass sees that pair. When the new data is SHORTER, updateItemPositions' walk
++  // range (`startIndex = minIndexSizeChanged ?? startBuffered`) is already past its end, so no row
++  // is walked and the absolute total below is computed from stale positions: with a one-row
++  // `data`, `positions[0]` is 0 and the row size is unknown, so the list publishes exactly
++  // `estimatedItemSize` for a transcript of any height. Measured on device: 2,322 -> 240 on a
++  // 43-row transcript and 266,020 -> 240 on a 419-row one (the SAME 240, i.e. one row, not a sum),
++  // alignItemsAtEndPadding then grown to fill the viewport and UIScrollView clamping
++  // contentOffset to that one-viewport content.
++  // The mirror case is already refused: when data GREW, `positions[lastIndex]` is undefined and
++  // the `lastPosition !== void 0` guard below suppresses the publish. This makes the shrink
++  // direction symmetric. Nothing is lost by waiting - the reconciling pass walks from index 0,
++  // leaves `positions.length === data.length`, and republishes the exact total.
++  if (positions.length > data.length) {
++    return;
++  }
+   const numColumns = (_a3 = peek$(ctx, "numColumns")) != null ? _a3 : 1;
+   if (data.length === 0) {
+-    addTotalSize(ctx, null, 0);
++    addTotalSize(ctx, HAPPIER_TOTAL_SIZE_ABSOLUTE, 0);
+   } else {
+     const lastIndex = data.length - 1;
+     const lastId = getId(state, lastIndex);
+@@ -3328,12 +3540,12 @@ function updateTotalSize(ctx) {
+             maxSize = size;
+           }
+         }
+-        addTotalSize(ctx, null, lastPosition + maxSize);
++        addTotalSize(ctx, HAPPIER_TOTAL_SIZE_ABSOLUTE, lastPosition + maxSize);
+       } else {
+         const lastSize = getItemSize(ctx, lastId, lastIndex, data[lastIndex]);
+         if (lastSize !== void 0) {
+           const totalSize = lastPosition + lastSize;
+-          addTotalSize(ctx, null, totalSize);
++          addTotalSize(ctx, HAPPIER_TOTAL_SIZE_ABSOLUTE, totalSize);
+         }
+       }
+     }
+@@ -3396,7 +3608,7 @@ function updateItemPositions(ctx, dataChanged, {
    const shouldOptimize = !forceFullUpdate && !dataChanged && (optimizeForVisibleWindow || Math.abs(velocity) > 0 || Platform.OS === "web" && state.scrollLength > 0 && lastScrollDelta > state.scrollLength);
    const maxVisibleArea = scrollBottomBuffered + 1e3;
    const useAverageSize = true;
@@ -1005,7 +1526,7 @@ index c2e0f38..209ff26 100644
    const notifyTotalSizeWhileCachingSizes = false;
    let currentRowTop = 0;
    let column = 1;
-@@ -3425,7 +3545,7 @@ function updateItemPositions(ctx, dataChanged, {
+@@ -3425,7 +3637,7 @@ function updateItemPositions(ctx, dataChanged, {
        const prevIndex = startIndex - 1;
        const prevId = getId(state, prevIndex);
        const prevPosition = (_c = positions[prevIndex]) != null ? _c : 0;
@@ -1014,7 +1535,7 @@ index c2e0f38..209ff26 100644
          ctx,
          prevId,
          prevIndex,
-@@ -3443,7 +3563,25 @@ function updateItemPositions(ctx, dataChanged, {
+@@ -3443,7 +3655,25 @@ function updateItemPositions(ctx, dataChanged, {
    let breakAt;
    for (let i = startIndex; i < dataLength; i++) {
      if (shouldOptimize && breakAt !== void 0 && i > breakAt) {
@@ -1041,7 +1562,7 @@ index c2e0f38..209ff26 100644
        break;
      }
      if (shouldOptimize && breakAt === void 0 && !scrollingTo && !dataChanged && currentRowTop > maxVisibleArea) {
-@@ -3465,8 +3603,7 @@ function updateItemPositions(ctx, dataChanged, {
+@@ -3465,8 +3695,7 @@ function updateItemPositions(ctx, dataChanged, {
        column = 1;
        maxSizeInRow = 0;
      }
@@ -1051,7 +1572,7 @@ index c2e0f38..209ff26 100644
      if (IS_DEV && needsIndexByKey) {
        if (indexByKeyForChecking.has(id)) {
          console.error(
-@@ -4358,6 +4495,17 @@ function calculateItemsInView(ctx, params = {}) {
+@@ -4358,6 +4587,17 @@ function calculateItemsInView(ctx, params = {}) {
          }
        }
      }
@@ -1069,7 +1590,7 @@ index c2e0f38..209ff26 100644
      Object.assign(state, {
        endBuffered,
        endNoBuffer: visibleRange.endNoBuffer,
-@@ -4561,7 +4709,7 @@ function calculateItemsInView(ctx, params = {}) {
+@@ -4561,7 +4801,7 @@ function calculateItemsInView(ctx, params = {}) {
      }
      maybeEmitFirstVisibleItemChanged(state, visibleRange.startNoBuffer);
      if (!queuedInitialLayout && !state.didContainersLayout) {
@@ -1078,7 +1599,7 @@ index c2e0f38..209ff26 100644
        if (isInitialLayoutReady) {
          setDidLayout(ctx);
          handleInitialScrollLayoutReady(ctx);
-@@ -4760,11 +4908,16 @@ function applyItemSize(ctx, itemKey, sizeObj, resolvedMeasurementItem) {
+@@ -4760,11 +5000,16 @@ function applyItemSize(ctx, itemKey, sizeObj, resolvedMeasurementItem) {
    } = state;
    if (!data) return { didMeasureUserScrollAnchorResetItem };
    const index = state.indexByKey.get(itemKey);
@@ -1096,7 +1617,7 @@ index c2e0f38..209ff26 100644
      if (itemData === void 0) {
        return { didMeasureUserScrollAnchorResetItem };
      }
-@@ -4777,7 +4930,7 @@ function applyItemSize(ctx, itemKey, sizeObj, resolvedMeasurementItem) {
+@@ -4777,7 +5022,7 @@ function applyItemSize(ctx, itemKey, sizeObj, resolvedMeasurementItem) {
        };
      }
      const size2 = resolvedMeasurementItem.fixedItemSize;
@@ -1105,7 +1626,7 @@ index c2e0f38..209ff26 100644
        updateOtherAxisSizeIfNeeded(ctx, sizeObj, horizontal);
        return { didMeasureUserScrollAnchorResetItem };
      }
-@@ -4785,8 +4938,7 @@ function applyItemSize(ctx, itemKey, sizeObj, resolvedMeasurementItem) {
+@@ -4785,8 +5030,7 @@ function applyItemSize(ctx, itemKey, sizeObj, resolvedMeasurementItem) {
    let needsRecalculate = !didContainersLayout;
    let shouldMaintainScrollAtEnd = false;
    let minIndexSizeChanged;
@@ -1115,7 +1636,7 @@ index c2e0f38..209ff26 100644
    const size = roundSize(horizontal ? sizeObj.width : sizeObj.height);
    if (diff !== 0) {
      minIndexSizeChanged = minIndexSizeChanged !== void 0 ? Math.min(minIndexSizeChanged, index) : index;
-@@ -4795,7 +4947,8 @@ function applyItemSize(ctx, itemKey, sizeObj, resolvedMeasurementItem) {
+@@ -4795,7 +5039,8 @@ function applyItemSize(ctx, itemKey, sizeObj, resolvedMeasurementItem) {
      if (!needsRecalculate && state.containerItemKeys.has(itemKey)) {
        needsRecalculate = true;
      }
@@ -1125,7 +1646,7 @@ index c2e0f38..209ff26 100644
        shouldMaintainScrollAtEnd = true;
      }
      onItemSizeChanged == null ? void 0 : onItemSizeChanged({
-@@ -4811,7 +4964,7 @@ function applyItemSize(ctx, itemKey, sizeObj, resolvedMeasurementItem) {
+@@ -4811,7 +5056,7 @@ function applyItemSize(ctx, itemKey, sizeObj, resolvedMeasurementItem) {
      state.minIndexSizeChanged = state.minIndexSizeChanged !== void 0 ? Math.min(state.minIndexSizeChanged, minIndexSizeChanged) : minIndexSizeChanged;
    }
    updateOtherAxisSizeIfNeeded(ctx, sizeObj, horizontal);
@@ -1134,7 +1655,7 @@ index c2e0f38..209ff26 100644
      const canMaintainScrollAtEnd = shouldMaintainScrollAtEnd && !!(maintainScrollAtEnd == null ? void 0 : maintainScrollAtEnd.onItemLayout);
      return {
        didChange: diff !== 0,
-@@ -4825,7 +4978,7 @@ function applyItemSize(ctx, itemKey, sizeObj, resolvedMeasurementItem) {
+@@ -4825,7 +5070,7 @@ function applyItemSize(ctx, itemKey, sizeObj, resolvedMeasurementItem) {
      didMeasureUserScrollAnchorResetItem
    };
  }
@@ -1143,7 +1664,7 @@ index c2e0f38..209ff26 100644
    var _a3, _b;
    const state = ctx.state;
    const {
-@@ -4848,7 +5001,7 @@ function updateOneItemSize(ctx, itemKey, sizeObj, resolvedMeasurementItem) {
+@@ -4848,7 +5093,7 @@ function updateOneItemSize(ctx, itemKey, sizeObj, resolvedMeasurementItem) {
      fixedItemSize,
      itemType
    } : void 0;
@@ -1152,7 +1673,7 @@ index c2e0f38..209ff26 100644
    const rawSize = horizontal ? sizeObj.width : sizeObj.height;
    const prevSizeKnown = sizesKnown.get(itemKey);
    if (Platform.OS !== "web" && prevSizeKnown !== void 0 && isNativeLayoutNoise(rawSize - prevSizeKnown)) {
-@@ -4871,6 +5024,7 @@ function updateOneItemSize(ctx, itemKey, sizeObj, resolvedMeasurementItem) {
+@@ -4871,6 +5116,7 @@ function updateOneItemSize(ctx, itemKey, sizeObj, resolvedMeasurementItem) {
        averages.avg = (averages.avg * averages.num + size) / (averages.num + 1);
        averages.num++;
      }
@@ -1160,7 +1681,7 @@ index c2e0f38..209ff26 100644
    }
    if (!prevSize || Math.abs(prevSize - size) > 0.1) {
      setSize(ctx, itemKey, size);
-@@ -4914,7 +5068,9 @@ function measureContainersInLayoutEffect(ctx, targetContainerIds = null) {
+@@ -4914,7 +5160,9 @@ function measureContainersInLayoutEffect(ctx, targetContainerIds = null) {
        const generation = ((_a3 = state.containerItemGenerations[containerId]) != null ? _a3 : 0) + 1;
        state.containerItemGenerations[containerId] = generation;
        const fixedItemSize = resolveFixedItemSize(ctx, containerId, itemKey);
@@ -1171,7 +1692,7 @@ index c2e0f38..209ff26 100644
        if (canSkipMeasurement) {
          resolveSkippedAnchorReset(ctx, itemKey);
        } else if (viewRef) {
-@@ -5374,7 +5530,8 @@ function processContainerLayout({ containerId, ctx, rectangle, ref, state }) {
+@@ -5374,7 +5622,8 @@ function processContainerLayout({ containerId, ctx, rectangle, ref, state }) {
    const axis = state.horizontal ? "width" : "height";
    const size = roundSize(rectangle[axis]);
    const localPreviousSize = state.lastSize ? roundSize(state.lastSize[axis]) : void 0;
@@ -1181,7 +1702,7 @@ index c2e0f38..209ff26 100644
    const previousSize = Platform.OS === "web" ? coreKnownSize : localPreviousSize;
    const applyLayout = () => {
      state.lastSize = layout;
-@@ -6034,6 +6191,8 @@ function checkResetContainers(ctx, dataProp, { didColumnsChange = false } = {})
+@@ -6034,6 +6283,8 @@ function checkResetContainers(ctx, dataProp, { didColumnsChange = false } = {})
    if (didColumnsChange) {
      state.sizes.clear();
      state.sizesKnown.clear();
@@ -1190,7 +1711,7 @@ index c2e0f38..209ff26 100644
      invalidateContainerFixedItemSizes(state);
      for (const key in state.averageSizes) {
        delete state.averageSizes[key];
-@@ -6470,6 +6629,13 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
+@@ -6470,6 +6721,13 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
    const IMPERATIVE_SCROLL_SETTLE_MAX_WAIT_MS = 800;
    const IMPERATIVE_SCROLL_SETTLE_STABLE_FRAMES = 2;
    let imperativeScrollToken = 0;
@@ -1204,7 +1725,7 @@ index c2e0f38..209ff26 100644
    const isSettlingAfterDataChange = () => !!state.didDataChange || !!state.didColumnsChange || state.queuedMVCPRecalculate !== void 0 || state.ignoreScrollFromMVCP !== void 0;
    const isScrollToIndexReady = (targetIndex, allowEmpty = false) => {
      var _a3;
-@@ -6491,6 +6657,7 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
+@@ -6491,6 +6749,7 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
      const startedAt = Date.now();
      let stableFrames = 0;
      const check = () => {
@@ -1212,7 +1733,7 @@ index c2e0f38..209ff26 100644
        if (token !== imperativeScrollToken) {
          return;
        }
-@@ -6504,9 +6671,10 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
+@@ -6504,9 +6763,10 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
          run();
          return;
        }
@@ -1225,7 +1746,7 @@ index c2e0f38..209ff26 100644
    };
    const runScrollRequest = (token, resolve, run, isReady = () => true) => {
      const runNow = () => {
-@@ -6529,12 +6697,21 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
+@@ -6529,12 +6789,21 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
    };
    const startImperativeScroll = (resolve) => {
      var _a3;
@@ -1247,7 +1768,7 @@ index c2e0f38..209ff26 100644
    const runScrollWithPromise = (run, isReady = () => true) => new Promise((resolve) => {
      const token = startImperativeScroll(resolve);
      runScrollRequest(token, resolve, run, isReady);
-@@ -6575,6 +6752,8 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
+@@ -6575,6 +6844,8 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
      const mode = (_a3 = options == null ? void 0 : options.mode) != null ? _a3 : "sizes";
      state.sizes.clear();
      state.sizesKnown.clear();
@@ -1256,7 +1777,7 @@ index c2e0f38..209ff26 100644
      invalidateContainerFixedItemSizes(state);
      for (const key in state.averageSizes) {
        delete state.averageSizes[key];
-@@ -6595,6 +6774,7 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
+@@ -6595,6 +6866,7 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
      (_b = state.triggerCalculateItemsInView) == null ? void 0 : _b.call(state, { forceFullItemPositions: true });
    };
    return {
@@ -1264,7 +1785,7 @@ index c2e0f38..209ff26 100644
      clearCaches,
      flashScrollIndicators: () => refScroller.current.flashScrollIndicators(),
      getAnimatableRef: () => {
-@@ -6632,7 +6812,10 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
+@@ -6632,7 +6904,10 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
        scroll: state.scroll,
        scrollLength: state.scrollLength,
        scrollVelocity: getScrollVelocity(state),
@@ -1276,7 +1797,7 @@ index c2e0f38..209ff26 100644
        sizes: state.sizesKnown,
        start: state.startNoBuffer,
        startBuffered: state.startBuffered
-@@ -6813,7 +6996,8 @@ function normalizeMaintainScrollAtEnd(value) {
+@@ -6813,7 +7088,8 @@ function normalizeMaintainScrollAtEnd(value) {
    const normalizedTriggers = normalizeMaintainScrollAtEndOn(value.on, "on" in value);
    return {
      ...normalizedTriggers,
@@ -1285,8 +1806,8 @@ index c2e0f38..209ff26 100644
 +    isMaintainingScrollAtEnd: value.isMaintainingScrollAtEnd
    };
  }
- 
-@@ -6943,6 +7127,8 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+
+@@ -6943,6 +7219,8 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
      estimatedListSize,
      extraData,
      getFixedItemSize,
@@ -1295,7 +1816,7 @@ index c2e0f38..209ff26 100644
      getItemType,
      horizontal,
      rtl,
-@@ -7135,6 +7321,8 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+@@ -7135,6 +7413,8 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
          scrollTime: 0,
          sizes: /* @__PURE__ */ new Map(),
          sizesKnown: /* @__PURE__ */ new Map(),
@@ -1304,7 +1825,16 @@ index c2e0f38..209ff26 100644
          startBuffered: -1,
          startNoBuffer: -1,
          startReachedSnapshot: void 0,
-@@ -7200,6 +7388,8 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+@@ -7147,7 +7427,7 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+       };
+       const internalState = ctx.state;
+       internalState.triggerCalculateItemsInView = (params) => calculateItemsInView(ctx, params);
+-      internalState.reprocessCurrentScroll = () => updateScroll(ctx, internalState.scroll, true);
++      internalState.reprocessCurrentScroll = (offset) => updateScroll(ctx, offset !== void 0 ? offset : internalState.scroll, true);
+       set$(ctx, "maintainVisibleContentPosition", maintainVisibleContentPositionConfig);
+       set$(ctx, "extraData", extraData);
+       if (estimatedHeaderSize !== void 0) {
+@@ -7200,6 +7480,8 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
      drawDistance,
      estimatedItemSize,
      getFixedItemSize: useWrapIfItem(getFixedItemSize),
@@ -1313,7 +1843,7 @@ index c2e0f38..209ff26 100644
      getItemType: useWrapIfItem(getItemType),
      horizontal: !!horizontal,
      itemsAreEqual,
-@@ -7477,10 +7667,20 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+@@ -7477,10 +7759,20 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
          cancelAnimationFrame(state.queuedFullDrawDistancePrewarm);
          state.queuedFullDrawDistancePrewarm = void 0;
        }
@@ -1376,7 +1906,7 @@ index db7841d..f00d3a3 100644
       * Clears internal virtualization caches.
       * @param options - Cache clearing options.
 diff --git a/node_modules/@legendapp/list/react-native.web.js b/node_modules/@legendapp/list/react-native.web.js
-index 544cca8..b5b254b 100644
+index 544cca8..c6509c0 100644
 --- a/node_modules/@legendapp/list/react-native.web.js
 +++ b/node_modules/@legendapp/list/react-native.web.js
 @@ -936,6 +936,38 @@ function clearPreservedInitialScrollTarget(state) {
@@ -1428,9 +1958,54 @@ index 544cca8..b5b254b 100644
      if (shouldReleaseDeferredPublicOnScroll) {
        releaseDeferredPublicOnScroll(ctx, finalScrollOffset);
      }
-@@ -1112,11 +1147,58 @@ function findContainerId(ctx, key) {
+@@ -1028,11 +1063,25 @@ function updateContentMetricsState(ctx) {
  }
- 
+
+ // src/core/addTotalSize.ts
++// HAPPIER-NULLKEY-ABSOLUTE-TOTAL (owner half): `addTotalSize` overloaded `key === null` as its
++// ABSOLUTE-WRITE sentinel ("this number IS the total"), and `getId` returns `null` for any index
++// past the end of `data` ("there is no such row"). Two meanings, one value. One probe of a row the
++// current `data` no longer contains therefore assigned the whole content size to be one unmeasured
++// row: getId -> null -> getItemSize falls through to `estimatedItemSize` -> setSize with a null key
++// -> addTotalSize with a null key -> totalSize = est, written absolutely. MEASURED on device with a
++// 4/4 identical stack (checkResetContainers -> calculateItemsInView -> prepareMVCP's closure ->
++// getItemSize(ctx, getId(state, scrollingTo.index), ...)): totalSize 2,322 -> 240 on a 43-row
++// transcript AND 266,020 -> 240 on a 419-row one - the SAME constant, i.e. one row rather than a
++// sum - then alignItemsAtEndPadding grown to 297 (12 + 142 + 240 + 297 = 691, the viewport, to the
++// pixel) and UIScrollView clamping contentOffset to that one-viewport content.
++// The sentinel is given a private value no item key can ever take, so the invalid state stops being
++// representable rather than being guarded against at one caller.
++var HAPPIER_TOTAL_SIZE_ABSOLUTE = { happierTotalSizeAbsolute: true };
+ function addTotalSize(ctx, key, add, notifyTotalSize = true) {
+   const state = ctx.state;
+   const prevTotalSize = state.totalSize;
+   let totalSize = state.totalSize;
+-  if (key === null) {
++  if (key === HAPPIER_TOTAL_SIZE_ABSOLUTE) {
+     totalSize = add;
+     if (state.timeoutSetPaddingTop) {
+       clearTimeout(state.timeoutSetPaddingTop);
+@@ -1057,6 +1106,17 @@ function addTotalSize(ctx, key, add, notifyTotalSize = true) {
+
+ // src/core/setSize.ts
+ function setSize(ctx, itemKey, size, notifyTotalSize = true) {
++  // HAPPIER-NULLKEY-NO-ROW-NO-SIZE (choke-point half): `getId` returns `null` for an index past the
++  // end of `data`, and ~15 call sites hand a `getId` result straight to `getItemSize` with no null
++  // check (the MEASURED device stack goes through prepareMVCP's closure, NOT through
++  // `getItemSizeAtIndex`, so guarding that one caller would not have covered it). `setSize` is the
++  // single choke point every resolved size passes, so refusing a key that is not a row here keeps a
++  // non-existent row from contributing to the running total or occupying a `sizes` entry, for every
++  // present and future caller. Paired with HAPPIER-NULLKEY-ABSOLUTE-TOTAL: that one removes the
++  // ambiguity, this one removes the phantom contribution the disambiguation would otherwise leave.
++  if (itemKey === null) {
++    return;
++  }
+   const state = ctx.state;
+   const { sizes } = state;
+   const previousSize = sizes.get(itemKey);
+@@ -1112,11 +1172,58 @@ function findContainerId(ctx, key) {
+ }
+
  // src/utils/getItemSize.ts
 -function getKnownOrFixedSize(ctx, key, index, data, resolved) {
 +function reverseItemSizeContribution(state, key) {
@@ -1489,7 +2064,7 @@ index 544cca8..b5b254b 100644
    if (size === void 0 && key && getFixedItemSize) {
      const itemType = (_b = resolved == null ? void 0 : resolved.itemType) != null ? _b : getItemType ? (_a3 = getItemType(data, index)) != null ? _a3 : "" : "";
      const fixedSize = (resolved == null ? void 0 : resolved.didResolveFixedItemSize) ? resolved.fixedItemSize : getFixedItemSize(data, index, itemType);
-@@ -1139,7 +1221,7 @@ function areKnownOrFixedItemSizesAvailable(ctx, startIndex, endIndex) {
+@@ -1139,7 +1246,7 @@ function areKnownOrFixedItemSizesAvailable(ctx, startIndex, endIndex) {
    }
    return true;
  }
@@ -1498,7 +2073,7 @@ index 544cca8..b5b254b 100644
    var _a3, _b, _c, _d;
    const state = ctx.state;
    const {
-@@ -1148,7 +1230,7 @@ function getItemSize(ctx, key, index, data, useAverageSize, preferCachedSize, no
+@@ -1148,7 +1255,7 @@ function getItemSize(ctx, key, index, data, useAverageSize, preferCachedSize, no
      props: { estimatedItemSize, getItemType },
      scrollingTo
    } = state;
@@ -1507,7 +2082,7 @@ index 544cca8..b5b254b 100644
    if (sizeKnown !== void 0) {
      return sizeKnown;
    }
-@@ -1159,12 +1241,23 @@ function getItemSize(ctx, key, index, data, useAverageSize, preferCachedSize, no
+@@ -1159,12 +1266,23 @@ function getItemSize(ctx, key, index, data, useAverageSize, preferCachedSize, no
        return renderedSize;
      }
    }
@@ -1532,9 +2107,9 @@ index 544cca8..b5b254b 100644
    if (useAverageSize && !scrollingTo) {
      const averageSizeForType = (_c = averageSizes[itemType]) == null ? void 0 : _c.avg;
      if (averageSizeForType !== void 0) {
-@@ -1244,12 +1337,28 @@ function clampScrollOffset(ctx, offset, scrollTarget) {
+@@ -1244,18 +1362,34 @@ function clampScrollOffset(ctx, offset, scrollTarget) {
  }
- 
+
  // src/core/finishScrollTo.ts
 -function finishScrollTo(ctx) {
 +function cancelPendingNonAnimatedScrollCompletion(state) {
@@ -1564,7 +2139,14 @@ index 544cca8..b5b254b 100644
      const scrollingTo = state.scrollingTo;
      state.scrollHistory.length = 0;
      state.scrollingTo = void 0;
-@@ -1299,6 +1408,7 @@ function doScrollTo(ctx, params) {
+     state.scrollTargetPinnedRange = void 0;
+     if (state.pendingTotalSize !== void 0) {
+-      addTotalSize(ctx, null, state.pendingTotalSize);
++      addTotalSize(ctx, HAPPIER_TOTAL_SIZE_ABSOLUTE, state.pendingTotalSize);
+     }
+     {
+       state.scrollAdjustHandler.commitPendingAdjust(scrollingTo);
+@@ -1299,6 +1433,7 @@ function doScrollTo(ctx, params) {
    const contentSize = isHorizontal ? getContentSize(ctx) : void 0;
    const left = isHorizontal ? toNativeHorizontalOffset(state, offset, contentSize) : 0;
    const top = isHorizontal ? 0 : offset;
@@ -1572,7 +2154,7 @@ index 544cca8..b5b254b 100644
    scroller.scrollTo({ animated: isAnimated, x: left, y: top });
    if (isAnimated) {
      const target = (_b = (_a3 = scroller.getScrollEventTarget) == null ? void 0 : _a3.call(scroller)) != null ? _b : null;
-@@ -1309,9 +1419,16 @@ function doScrollTo(ctx, params) {
+@@ -1309,9 +1444,16 @@ function doScrollTo(ctx, params) {
      });
    } else {
      state.scroll = offset;
@@ -1592,9 +2174,9 @@ index 544cca8..b5b254b 100644
    }
  }
  function listenForScrollEnd(ctx, params) {
-@@ -1367,6 +1484,21 @@ function listenForScrollEnd(ctx, params) {
+@@ -1367,6 +1509,21 @@ function listenForScrollEnd(ctx, params) {
  }
- 
+
  // src/core/doMaintainScrollAtEnd.ts
 +function hasExternalMaintainScrollAtEndIntent(maintainScrollAtEnd) {
 +  return !!(maintainScrollAtEnd && typeof maintainScrollAtEnd.isMaintainingScrollAtEnd === "function" && maintainScrollAtEnd.isMaintainingScrollAtEnd());
@@ -1614,7 +2196,7 @@ index 544cca8..b5b254b 100644
  function doMaintainScrollAtEnd(ctx) {
    const state = ctx.state;
    const {
-@@ -1376,7 +1508,14 @@ function doMaintainScrollAtEnd(ctx) {
+@@ -1376,7 +1533,14 @@ function doMaintainScrollAtEnd(ctx) {
      props: { maintainScrollAtEnd }
    } = state;
    const isWithinMaintainScrollAtEndThreshold = peek$(ctx, "isWithinMaintainScrollAtEndThreshold");
@@ -1630,7 +2212,7 @@ index 544cca8..b5b254b 100644
    if (pendingNativeMVCPAdjust) {
      state.pendingMaintainScrollAtEnd = shouldMaintainScrollAtEnd;
      return false;
-@@ -1392,7 +1531,10 @@ function doMaintainScrollAtEnd(ctx) {
+@@ -1392,7 +1556,10 @@ function doMaintainScrollAtEnd(ctx) {
        const activeState = maintainScrollAtEnd.animated ? "animated" : "instant";
        state.maintainingScrollAtEnd = pendingState;
        requestAnimationFrame(() => {
@@ -1642,7 +2224,7 @@ index 544cca8..b5b254b 100644
            state.maintainingScrollAtEnd = activeState;
            const scroller = refScroller.current;
            if (state.props.horizontal && isHorizontalRTL(state)) {
-@@ -1737,7 +1879,11 @@ function prepareMVCP(ctx, dataChanged) {
+@@ -1737,7 +1904,11 @@ function prepareMVCP(ctx, dataChanged) {
          return;
        }
        if (Math.abs(positionDiff) > MVCP_POSITION_EPSILON) {
@@ -1655,15 +2237,15 @@ index 544cca8..b5b254b 100644
          if (!shouldSkipAdjustForMaintainedEnd) {
            requestAdjust(ctx, positionDiff);
          }
-@@ -1809,7 +1955,6 @@ function isInMVCPActiveMode(state) {
- 
+@@ -1809,7 +1980,6 @@ function isInMVCPActiveMode(state) {
+
  // src/core/updateScroll.ts
  function updateScroll(ctx, newScroll, forceUpdate, options) {
 -  var _a3;
    const state = ctx.state;
    const { ignoreScrollFromMVCP, lastScrollAdjustForHistory, scrollAdjustHandler, scrollHistory, scrollingTo } = state;
    const prevScroll = state.scroll;
-@@ -1883,7 +2028,7 @@ function updateScroll(ctx, newScroll, forceUpdate, options) {
+@@ -1883,7 +2053,7 @@ function updateScroll(ctx, newScroll, forceUpdate, options) {
      } else {
        runCalculateItems();
      }
@@ -1672,9 +2254,9 @@ index 544cca8..b5b254b 100644
      if (didResolvePendingNativeMVCPAdjust && shouldMaintainScrollAtEndAfterPendingSettle) {
        state.pendingMaintainScrollAtEnd = false;
        doMaintainScrollAtEnd(ctx);
-@@ -2234,7 +2379,8 @@ function advanceCurrentInitialScrollSession(ctx, options) {
+@@ -2234,7 +2404,8 @@ function advanceCurrentInitialScrollSession(ctx, options) {
  }
- 
+
  // src/utils/checkAllSizesKnown.ts
 -function checkAllSizesKnown(state, start, end) {
 +function checkAllSizesKnown(ctx, start, end) {
@@ -1682,7 +2264,7 @@ index 544cca8..b5b254b 100644
    if (start == null || end == null || start < 0 || end < start) {
      return false;
    }
-@@ -2244,7 +2390,7 @@ function checkAllSizesKnown(state, start, end) {
+@@ -2244,7 +2415,7 @@ function checkAllSizesKnown(state, start, end) {
      if (index !== void 0 && index >= start && index <= end) {
        hasMountedIndex = true;
        const id = getId(state, index);
@@ -1691,7 +2273,7 @@ index 544cca8..b5b254b 100644
          return false;
        }
      }
-@@ -2624,11 +2770,13 @@ function handleBootstrapInitialScrollDataChange(ctx, options) {
+@@ -2624,11 +2795,13 @@ function handleBootstrapInitialScrollDataChange(ctx, options) {
        setInitialScrollTarget(ctx, updatedInitialScroll, {
          resetDidFinish: shouldResetDidFinish
        });
@@ -1710,7 +2292,7 @@ index 544cca8..b5b254b 100644
        return;
      }
    }
-@@ -2749,7 +2897,7 @@ function evaluateBootstrapInitialScroll(ctx) {
+@@ -2749,7 +2922,7 @@ function evaluateBootstrapInitialScroll(ctx) {
      bootstrapInitialScroll.targetIndexSeed = void 0;
    }
    const resolvedOffset = resolveInitialScrollOffset(ctx, initialScroll);
@@ -1719,7 +2301,7 @@ index 544cca8..b5b254b 100644
    const didResolvedOffsetChange = Math.abs(bootstrapInitialScroll.scroll - resolvedOffset) > 1;
    const { data } = state.props;
    const visibleIndices = getBootstrapRevealVisibleIndices({
-@@ -2767,7 +2915,7 @@ function evaluateBootstrapInitialScroll(ctx) {
+@@ -2767,7 +2940,7 @@ function evaluateBootstrapInitialScroll(ctx) {
    const areVisibleIndicesMeasured = visibleIndices.length > 0 && visibleIndices.every((index) => {
      var _a4;
      const id = (_a4 = state.idCache[index]) != null ? _a4 : getId(state, index);
@@ -1728,7 +2310,51 @@ index 544cca8..b5b254b 100644
    });
    const previousResolvedOffset = bootstrapInitialScroll.previousResolvedOffset;
    const previousVisibleIndices = bootstrapInitialScroll.visibleIndices;
-@@ -3439,7 +3587,7 @@ function updateItemPositions(ctx, dataChanged, {
+@@ -3346,9 +3519,27 @@ function updateTotalSize(ctx) {
+     positions,
+     props: { data }
+   } = state;
++  // HAPPIER-TOTALSIZE-STALE-POSITIONS: `state.props` is mutated during RENDER, so `props.data`
++  // can already be the next render's array while `positions` still describes the previous one.
++  // Any event-driven pass (a delivered scroll, a layout) that runs before the reconciling
++  // `dataChanged` pass sees that pair. When the new data is SHORTER, updateItemPositions' walk
++  // range (`startIndex = minIndexSizeChanged ?? startBuffered`) is already past its end, so no row
++  // is walked and the absolute total below is computed from stale positions: with a one-row
++  // `data`, `positions[0]` is 0 and the row size is unknown, so the list publishes exactly
++  // `estimatedItemSize` for a transcript of any height. Measured on device: 2,322 -> 240 on a
++  // 43-row transcript and 266,020 -> 240 on a 419-row one (the SAME 240, i.e. one row, not a sum),
++  // alignItemsAtEndPadding then grown to fill the viewport and UIScrollView clamping
++  // contentOffset to that one-viewport content.
++  // The mirror case is already refused: when data GREW, `positions[lastIndex]` is undefined and
++  // the `lastPosition !== void 0` guard below suppresses the publish. This makes the shrink
++  // direction symmetric. Nothing is lost by waiting - the reconciling pass walks from index 0,
++  // leaves `positions.length === data.length`, and republishes the exact total.
++  if (positions.length > data.length) {
++    return;
++  }
+   const numColumns = (_a3 = peek$(ctx, "numColumns")) != null ? _a3 : 1;
+   if (data.length === 0) {
+-    addTotalSize(ctx, null, 0);
++    addTotalSize(ctx, HAPPIER_TOTAL_SIZE_ABSOLUTE, 0);
+   } else {
+     const lastIndex = data.length - 1;
+     const lastId = getId(state, lastIndex);
+@@ -3371,12 +3562,12 @@ function updateTotalSize(ctx) {
+             maxSize = size;
+           }
+         }
+-        addTotalSize(ctx, null, lastPosition + maxSize);
++        addTotalSize(ctx, HAPPIER_TOTAL_SIZE_ABSOLUTE, lastPosition + maxSize);
+       } else {
+         const lastSize = getItemSize(ctx, lastId, lastIndex, data[lastIndex]);
+         if (lastSize !== void 0) {
+           const totalSize = lastPosition + lastSize;
+-          addTotalSize(ctx, null, totalSize);
++          addTotalSize(ctx, HAPPIER_TOTAL_SIZE_ABSOLUTE, totalSize);
+         }
+       }
+     }
+@@ -3439,7 +3630,7 @@ function updateItemPositions(ctx, dataChanged, {
    const shouldOptimize = !forceFullUpdate && !dataChanged && (optimizeForVisibleWindow || Math.abs(velocity) > 0 || state.scrollLength > 0 && lastScrollDelta > state.scrollLength);
    const maxVisibleArea = scrollBottomBuffered + 1e3;
    const useAverageSize = true;
@@ -1737,7 +2363,7 @@ index 544cca8..b5b254b 100644
    const notifyTotalSizeWhileCachingSizes = false;
    let currentRowTop = 0;
    let column = 1;
-@@ -3468,7 +3616,7 @@ function updateItemPositions(ctx, dataChanged, {
+@@ -3468,7 +3659,7 @@ function updateItemPositions(ctx, dataChanged, {
        const prevIndex = startIndex - 1;
        const prevId = getId(state, prevIndex);
        const prevPosition = (_c = positions[prevIndex]) != null ? _c : 0;
@@ -1746,7 +2372,7 @@ index 544cca8..b5b254b 100644
          ctx,
          prevId,
          prevIndex,
-@@ -3486,7 +3634,25 @@ function updateItemPositions(ctx, dataChanged, {
+@@ -3486,7 +3677,25 @@ function updateItemPositions(ctx, dataChanged, {
    let breakAt;
    for (let i = startIndex; i < dataLength; i++) {
      if (shouldOptimize && breakAt !== void 0 && i > breakAt) {
@@ -1773,7 +2399,7 @@ index 544cca8..b5b254b 100644
        break;
      }
      if (shouldOptimize && breakAt === void 0 && !scrollingTo && !dataChanged && currentRowTop > maxVisibleArea) {
-@@ -3508,8 +3674,7 @@ function updateItemPositions(ctx, dataChanged, {
+@@ -3508,8 +3717,7 @@ function updateItemPositions(ctx, dataChanged, {
        column = 1;
        maxSizeInRow = 0;
      }
@@ -1783,7 +2409,7 @@ index 544cca8..b5b254b 100644
      if (IS_DEV && needsIndexByKey) {
        if (indexByKeyForChecking.has(id)) {
          console.error(
-@@ -4401,6 +4566,17 @@ function calculateItemsInView(ctx, params = {}) {
+@@ -4401,6 +4609,17 @@ function calculateItemsInView(ctx, params = {}) {
          }
        }
      }
@@ -1801,7 +2427,7 @@ index 544cca8..b5b254b 100644
      Object.assign(state, {
        endBuffered,
        endNoBuffer: visibleRange.endNoBuffer,
-@@ -4604,7 +4780,7 @@ function calculateItemsInView(ctx, params = {}) {
+@@ -4604,7 +4823,7 @@ function calculateItemsInView(ctx, params = {}) {
      }
      maybeEmitFirstVisibleItemChanged(state, visibleRange.startNoBuffer);
      if (!queuedInitialLayout && !state.didContainersLayout) {
@@ -1810,7 +2436,7 @@ index 544cca8..b5b254b 100644
        if (isInitialLayoutReady) {
          setDidLayout(ctx);
          handleInitialScrollLayoutReady(ctx);
-@@ -4790,11 +4966,16 @@ function applyItemSize(ctx, itemKey, sizeObj, resolvedMeasurementItem) {
+@@ -4790,11 +5009,16 @@ function applyItemSize(ctx, itemKey, sizeObj, resolvedMeasurementItem) {
    } = state;
    if (!data) return { didMeasureUserScrollAnchorResetItem };
    const index = state.indexByKey.get(itemKey);
@@ -1828,7 +2454,7 @@ index 544cca8..b5b254b 100644
      if (itemData === void 0) {
        return { didMeasureUserScrollAnchorResetItem };
      }
-@@ -4807,7 +4988,7 @@ function applyItemSize(ctx, itemKey, sizeObj, resolvedMeasurementItem) {
+@@ -4807,7 +5031,7 @@ function applyItemSize(ctx, itemKey, sizeObj, resolvedMeasurementItem) {
        };
      }
      const size2 = resolvedMeasurementItem.fixedItemSize;
@@ -1837,7 +2463,7 @@ index 544cca8..b5b254b 100644
        updateOtherAxisSizeIfNeeded(ctx, sizeObj, horizontal);
        return { didMeasureUserScrollAnchorResetItem };
      }
-@@ -4815,8 +4996,7 @@ function applyItemSize(ctx, itemKey, sizeObj, resolvedMeasurementItem) {
+@@ -4815,8 +5039,7 @@ function applyItemSize(ctx, itemKey, sizeObj, resolvedMeasurementItem) {
    let needsRecalculate = !didContainersLayout;
    let shouldMaintainScrollAtEnd = false;
    let minIndexSizeChanged;
@@ -1847,7 +2473,7 @@ index 544cca8..b5b254b 100644
    const size = roundSize(horizontal ? sizeObj.width : sizeObj.height);
    if (diff !== 0) {
      minIndexSizeChanged = minIndexSizeChanged !== void 0 ? Math.min(minIndexSizeChanged, index) : index;
-@@ -4825,7 +5005,8 @@ function applyItemSize(ctx, itemKey, sizeObj, resolvedMeasurementItem) {
+@@ -4825,7 +5048,8 @@ function applyItemSize(ctx, itemKey, sizeObj, resolvedMeasurementItem) {
      if (!needsRecalculate && state.containerItemKeys.has(itemKey)) {
        needsRecalculate = true;
      }
@@ -1857,7 +2483,7 @@ index 544cca8..b5b254b 100644
        shouldMaintainScrollAtEnd = true;
      }
      onItemSizeChanged == null ? void 0 : onItemSizeChanged({
-@@ -4841,7 +5022,7 @@ function applyItemSize(ctx, itemKey, sizeObj, resolvedMeasurementItem) {
+@@ -4841,7 +5065,7 @@ function applyItemSize(ctx, itemKey, sizeObj, resolvedMeasurementItem) {
      state.minIndexSizeChanged = state.minIndexSizeChanged !== void 0 ? Math.min(state.minIndexSizeChanged, minIndexSizeChanged) : minIndexSizeChanged;
    }
    updateOtherAxisSizeIfNeeded(ctx, sizeObj, horizontal);
@@ -1866,7 +2492,7 @@ index 544cca8..b5b254b 100644
      const canMaintainScrollAtEnd = shouldMaintainScrollAtEnd && !!(maintainScrollAtEnd == null ? void 0 : maintainScrollAtEnd.onItemLayout);
      return {
        didChange: diff !== 0,
-@@ -4855,7 +5036,7 @@ function applyItemSize(ctx, itemKey, sizeObj, resolvedMeasurementItem) {
+@@ -4855,7 +5079,7 @@ function applyItemSize(ctx, itemKey, sizeObj, resolvedMeasurementItem) {
      didMeasureUserScrollAnchorResetItem
    };
  }
@@ -1875,7 +2501,7 @@ index 544cca8..b5b254b 100644
    var _a3, _b;
    const state = ctx.state;
    const {
-@@ -4878,7 +5059,7 @@ function updateOneItemSize(ctx, itemKey, sizeObj, resolvedMeasurementItem) {
+@@ -4878,7 +5102,7 @@ function updateOneItemSize(ctx, itemKey, sizeObj, resolvedMeasurementItem) {
      fixedItemSize,
      itemType
    } : void 0;
@@ -1884,7 +2510,7 @@ index 544cca8..b5b254b 100644
    const rawSize = horizontal ? sizeObj.width : sizeObj.height;
    const prevSizeKnown = sizesKnown.get(itemKey);
    const size = Math.round(rawSize) ;
-@@ -4898,6 +5079,7 @@ function updateOneItemSize(ctx, itemKey, sizeObj, resolvedMeasurementItem) {
+@@ -4898,6 +5122,7 @@ function updateOneItemSize(ctx, itemKey, sizeObj, resolvedMeasurementItem) {
        averages.avg = (averages.avg * averages.num + size) / (averages.num + 1);
        averages.num++;
      }
@@ -1892,7 +2518,7 @@ index 544cca8..b5b254b 100644
    }
    if (!prevSize || Math.abs(prevSize - size) > 0.1) {
      setSize(ctx, itemKey, size);
-@@ -5359,7 +5541,8 @@ function processContainerLayout({ containerId, ctx, rectangle, ref, state }) {
+@@ -5359,7 +5584,8 @@ function processContainerLayout({ containerId, ctx, rectangle, ref, state }) {
    const axis = state.horizontal ? "width" : "height";
    const size = roundSize(rectangle[axis]);
    state.lastSize ? roundSize(state.lastSize[axis]) : void 0;
@@ -1902,7 +2528,7 @@ index 544cca8..b5b254b 100644
    const previousSize = coreKnownSize ;
    const applyLayout = () => {
      state.lastSize = layout;
-@@ -6691,6 +6874,8 @@ function checkResetContainers(ctx, dataProp, { didColumnsChange = false } = {})
+@@ -6691,6 +6917,8 @@ function checkResetContainers(ctx, dataProp, { didColumnsChange = false } = {})
    if (didColumnsChange) {
      state.sizes.clear();
      state.sizesKnown.clear();
@@ -1911,7 +2537,7 @@ index 544cca8..b5b254b 100644
      invalidateContainerFixedItemSizes(state);
      for (const key in state.averageSizes) {
        delete state.averageSizes[key];
-@@ -7110,6 +7295,13 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
+@@ -7110,6 +7338,13 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
    const IMPERATIVE_SCROLL_SETTLE_MAX_WAIT_MS = 800;
    const IMPERATIVE_SCROLL_SETTLE_STABLE_FRAMES = 2;
    let imperativeScrollToken = 0;
@@ -1925,7 +2551,7 @@ index 544cca8..b5b254b 100644
    const isSettlingAfterDataChange = () => !!state.didDataChange || !!state.didColumnsChange || state.queuedMVCPRecalculate !== void 0 || state.ignoreScrollFromMVCP !== void 0;
    const isScrollToIndexReady = (targetIndex, allowEmpty = false) => {
      var _a3;
-@@ -7131,6 +7323,7 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
+@@ -7131,6 +7366,7 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
      const startedAt = Date.now();
      let stableFrames = 0;
      const check = () => {
@@ -1933,7 +2559,7 @@ index 544cca8..b5b254b 100644
        if (token !== imperativeScrollToken) {
          return;
        }
-@@ -7144,9 +7337,10 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
+@@ -7144,9 +7380,10 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
          run();
          return;
        }
@@ -1946,7 +2572,7 @@ index 544cca8..b5b254b 100644
    };
    const runScrollRequest = (token, resolve, run, isReady = () => true) => {
      const runNow = () => {
-@@ -7169,12 +7363,22 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
+@@ -7169,12 +7406,22 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
    };
    const startImperativeScroll = (resolve) => {
      var _a3;
@@ -1969,7 +2595,7 @@ index 544cca8..b5b254b 100644
    const runScrollWithPromise = (run, isReady = () => true) => new Promise((resolve) => {
      const token = startImperativeScroll(resolve);
      runScrollRequest(token, resolve, run, isReady);
-@@ -7215,6 +7419,8 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
+@@ -7215,6 +7462,8 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
      const mode = (_a3 = options == null ? void 0 : options.mode) != null ? _a3 : "sizes";
      state.sizes.clear();
      state.sizesKnown.clear();
@@ -1978,7 +2604,7 @@ index 544cca8..b5b254b 100644
      invalidateContainerFixedItemSizes(state);
      for (const key in state.averageSizes) {
        delete state.averageSizes[key];
-@@ -7235,6 +7441,7 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
+@@ -7235,6 +7484,7 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
      (_b = state.triggerCalculateItemsInView) == null ? void 0 : _b.call(state, { forceFullItemPositions: true });
    };
    return {
@@ -1986,7 +2612,7 @@ index 544cca8..b5b254b 100644
      clearCaches,
      flashScrollIndicators: () => refScroller.current.flashScrollIndicators(),
      getAnimatableRef: () => {
-@@ -7272,7 +7479,10 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
+@@ -7272,7 +7522,10 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
        scroll: state.scroll,
        scrollLength: state.scrollLength,
        scrollVelocity: getScrollVelocity(state),
@@ -1998,7 +2624,7 @@ index 544cca8..b5b254b 100644
        sizes: state.sizesKnown,
        start: state.startNoBuffer,
        startBuffered: state.startBuffered
-@@ -7453,7 +7663,8 @@ function normalizeMaintainScrollAtEnd(value) {
+@@ -7453,7 +7706,8 @@ function normalizeMaintainScrollAtEnd(value) {
    const normalizedTriggers = normalizeMaintainScrollAtEndOn(value.on, "on" in value);
    return {
      ...normalizedTriggers,
@@ -2007,8 +2633,8 @@ index 544cca8..b5b254b 100644
 +    isMaintainingScrollAtEnd: value.isMaintainingScrollAtEnd
    };
  }
- 
-@@ -7583,6 +7794,8 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+
+@@ -7583,6 +7837,8 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
      estimatedListSize,
      extraData,
      getFixedItemSize,
@@ -2017,7 +2643,7 @@ index 544cca8..b5b254b 100644
      getItemType,
      horizontal,
      rtl,
-@@ -7775,6 +7988,8 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+@@ -7775,6 +8031,8 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
          scrollTime: 0,
          sizes: /* @__PURE__ */ new Map(),
          sizesKnown: /* @__PURE__ */ new Map(),
@@ -2026,7 +2652,7 @@ index 544cca8..b5b254b 100644
          startBuffered: -1,
          startNoBuffer: -1,
          startReachedSnapshot: void 0,
-@@ -7840,6 +8055,8 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+@@ -7840,6 +8098,8 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
      drawDistance,
      estimatedItemSize,
      getFixedItemSize: useWrapIfItem(getFixedItemSize),
@@ -2035,7 +2661,7 @@ index 544cca8..b5b254b 100644
      getItemType: useWrapIfItem(getItemType),
      horizontal: !!horizontal,
      itemsAreEqual,
-@@ -8109,10 +8326,20 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+@@ -8109,10 +8369,20 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
          cancelAnimationFrame(state.queuedFullDrawDistancePrewarm);
          state.queuedFullDrawDistancePrewarm = void 0;
        }
@@ -2057,7 +2683,7 @@ index 544cca8..b5b254b 100644
    }, [state]);
    React3.useLayoutEffect(() => {
 diff --git a/node_modules/@legendapp/list/react-native.web.mjs b/node_modules/@legendapp/list/react-native.web.mjs
-index 6b2d901..c93beac 100644
+index 6b2d901..0390f6c 100644
 --- a/node_modules/@legendapp/list/react-native.web.mjs
 +++ b/node_modules/@legendapp/list/react-native.web.mjs
 @@ -915,6 +915,38 @@ function clearPreservedInitialScrollTarget(state) {
@@ -2109,9 +2735,54 @@ index 6b2d901..c93beac 100644
      if (shouldReleaseDeferredPublicOnScroll) {
        releaseDeferredPublicOnScroll(ctx, finalScrollOffset);
      }
-@@ -1091,11 +1126,58 @@ function findContainerId(ctx, key) {
+@@ -1007,11 +1042,25 @@ function updateContentMetricsState(ctx) {
  }
- 
+
+ // src/core/addTotalSize.ts
++// HAPPIER-NULLKEY-ABSOLUTE-TOTAL (owner half): `addTotalSize` overloaded `key === null` as its
++// ABSOLUTE-WRITE sentinel ("this number IS the total"), and `getId` returns `null` for any index
++// past the end of `data` ("there is no such row"). Two meanings, one value. One probe of a row the
++// current `data` no longer contains therefore assigned the whole content size to be one unmeasured
++// row: getId -> null -> getItemSize falls through to `estimatedItemSize` -> setSize with a null key
++// -> addTotalSize with a null key -> totalSize = est, written absolutely. MEASURED on device with a
++// 4/4 identical stack (checkResetContainers -> calculateItemsInView -> prepareMVCP's closure ->
++// getItemSize(ctx, getId(state, scrollingTo.index), ...)): totalSize 2,322 -> 240 on a 43-row
++// transcript AND 266,020 -> 240 on a 419-row one - the SAME constant, i.e. one row rather than a
++// sum - then alignItemsAtEndPadding grown to 297 (12 + 142 + 240 + 297 = 691, the viewport, to the
++// pixel) and UIScrollView clamping contentOffset to that one-viewport content.
++// The sentinel is given a private value no item key can ever take, so the invalid state stops being
++// representable rather than being guarded against at one caller.
++var HAPPIER_TOTAL_SIZE_ABSOLUTE = { happierTotalSizeAbsolute: true };
+ function addTotalSize(ctx, key, add, notifyTotalSize = true) {
+   const state = ctx.state;
+   const prevTotalSize = state.totalSize;
+   let totalSize = state.totalSize;
+-  if (key === null) {
++  if (key === HAPPIER_TOTAL_SIZE_ABSOLUTE) {
+     totalSize = add;
+     if (state.timeoutSetPaddingTop) {
+       clearTimeout(state.timeoutSetPaddingTop);
+@@ -1036,6 +1085,17 @@ function addTotalSize(ctx, key, add, notifyTotalSize = true) {
+
+ // src/core/setSize.ts
+ function setSize(ctx, itemKey, size, notifyTotalSize = true) {
++  // HAPPIER-NULLKEY-NO-ROW-NO-SIZE (choke-point half): `getId` returns `null` for an index past the
++  // end of `data`, and ~15 call sites hand a `getId` result straight to `getItemSize` with no null
++  // check (the MEASURED device stack goes through prepareMVCP's closure, NOT through
++  // `getItemSizeAtIndex`, so guarding that one caller would not have covered it). `setSize` is the
++  // single choke point every resolved size passes, so refusing a key that is not a row here keeps a
++  // non-existent row from contributing to the running total or occupying a `sizes` entry, for every
++  // present and future caller. Paired with HAPPIER-NULLKEY-ABSOLUTE-TOTAL: that one removes the
++  // ambiguity, this one removes the phantom contribution the disambiguation would otherwise leave.
++  if (itemKey === null) {
++    return;
++  }
+   const state = ctx.state;
+   const { sizes } = state;
+   const previousSize = sizes.get(itemKey);
+@@ -1091,11 +1151,58 @@ function findContainerId(ctx, key) {
+ }
+
  // src/utils/getItemSize.ts
 -function getKnownOrFixedSize(ctx, key, index, data, resolved) {
 +function reverseItemSizeContribution(state, key) {
@@ -2170,7 +2841,7 @@ index 6b2d901..c93beac 100644
    if (size === void 0 && key && getFixedItemSize) {
      const itemType = (_b = resolved == null ? void 0 : resolved.itemType) != null ? _b : getItemType ? (_a3 = getItemType(data, index)) != null ? _a3 : "" : "";
      const fixedSize = (resolved == null ? void 0 : resolved.didResolveFixedItemSize) ? resolved.fixedItemSize : getFixedItemSize(data, index, itemType);
-@@ -1118,7 +1200,7 @@ function areKnownOrFixedItemSizesAvailable(ctx, startIndex, endIndex) {
+@@ -1118,7 +1225,7 @@ function areKnownOrFixedItemSizesAvailable(ctx, startIndex, endIndex) {
    }
    return true;
  }
@@ -2179,7 +2850,7 @@ index 6b2d901..c93beac 100644
    var _a3, _b, _c, _d;
    const state = ctx.state;
    const {
-@@ -1127,7 +1209,7 @@ function getItemSize(ctx, key, index, data, useAverageSize, preferCachedSize, no
+@@ -1127,7 +1234,7 @@ function getItemSize(ctx, key, index, data, useAverageSize, preferCachedSize, no
      props: { estimatedItemSize, getItemType },
      scrollingTo
    } = state;
@@ -2188,7 +2859,7 @@ index 6b2d901..c93beac 100644
    if (sizeKnown !== void 0) {
      return sizeKnown;
    }
-@@ -1138,12 +1220,23 @@ function getItemSize(ctx, key, index, data, useAverageSize, preferCachedSize, no
+@@ -1138,12 +1245,23 @@ function getItemSize(ctx, key, index, data, useAverageSize, preferCachedSize, no
        return renderedSize;
      }
    }
@@ -2213,9 +2884,9 @@ index 6b2d901..c93beac 100644
    if (useAverageSize && !scrollingTo) {
      const averageSizeForType = (_c = averageSizes[itemType]) == null ? void 0 : _c.avg;
      if (averageSizeForType !== void 0) {
-@@ -1223,12 +1316,28 @@ function clampScrollOffset(ctx, offset, scrollTarget) {
+@@ -1223,18 +1341,34 @@ function clampScrollOffset(ctx, offset, scrollTarget) {
  }
- 
+
  // src/core/finishScrollTo.ts
 -function finishScrollTo(ctx) {
 +function cancelPendingNonAnimatedScrollCompletion(state) {
@@ -2245,7 +2916,14 @@ index 6b2d901..c93beac 100644
      const scrollingTo = state.scrollingTo;
      state.scrollHistory.length = 0;
      state.scrollingTo = void 0;
-@@ -1278,6 +1387,7 @@ function doScrollTo(ctx, params) {
+     state.scrollTargetPinnedRange = void 0;
+     if (state.pendingTotalSize !== void 0) {
+-      addTotalSize(ctx, null, state.pendingTotalSize);
++      addTotalSize(ctx, HAPPIER_TOTAL_SIZE_ABSOLUTE, state.pendingTotalSize);
+     }
+     {
+       state.scrollAdjustHandler.commitPendingAdjust(scrollingTo);
+@@ -1278,6 +1412,7 @@ function doScrollTo(ctx, params) {
    const contentSize = isHorizontal ? getContentSize(ctx) : void 0;
    const left = isHorizontal ? toNativeHorizontalOffset(state, offset, contentSize) : 0;
    const top = isHorizontal ? 0 : offset;
@@ -2253,7 +2931,7 @@ index 6b2d901..c93beac 100644
    scroller.scrollTo({ animated: isAnimated, x: left, y: top });
    if (isAnimated) {
      const target = (_b = (_a3 = scroller.getScrollEventTarget) == null ? void 0 : _a3.call(scroller)) != null ? _b : null;
-@@ -1288,9 +1398,16 @@ function doScrollTo(ctx, params) {
+@@ -1288,9 +1423,16 @@ function doScrollTo(ctx, params) {
      });
    } else {
      state.scroll = offset;
@@ -2273,9 +2951,9 @@ index 6b2d901..c93beac 100644
    }
  }
  function listenForScrollEnd(ctx, params) {
-@@ -1346,6 +1463,21 @@ function listenForScrollEnd(ctx, params) {
+@@ -1346,6 +1488,21 @@ function listenForScrollEnd(ctx, params) {
  }
- 
+
  // src/core/doMaintainScrollAtEnd.ts
 +function hasExternalMaintainScrollAtEndIntent(maintainScrollAtEnd) {
 +  return !!(maintainScrollAtEnd && typeof maintainScrollAtEnd.isMaintainingScrollAtEnd === "function" && maintainScrollAtEnd.isMaintainingScrollAtEnd());
@@ -2295,7 +2973,7 @@ index 6b2d901..c93beac 100644
  function doMaintainScrollAtEnd(ctx) {
    const state = ctx.state;
    const {
-@@ -1355,7 +1487,14 @@ function doMaintainScrollAtEnd(ctx) {
+@@ -1355,7 +1512,14 @@ function doMaintainScrollAtEnd(ctx) {
      props: { maintainScrollAtEnd }
    } = state;
    const isWithinMaintainScrollAtEndThreshold = peek$(ctx, "isWithinMaintainScrollAtEndThreshold");
@@ -2311,7 +2989,7 @@ index 6b2d901..c93beac 100644
    if (pendingNativeMVCPAdjust) {
      state.pendingMaintainScrollAtEnd = shouldMaintainScrollAtEnd;
      return false;
-@@ -1371,7 +1510,10 @@ function doMaintainScrollAtEnd(ctx) {
+@@ -1371,7 +1535,10 @@ function doMaintainScrollAtEnd(ctx) {
        const activeState = maintainScrollAtEnd.animated ? "animated" : "instant";
        state.maintainingScrollAtEnd = pendingState;
        requestAnimationFrame(() => {
@@ -2323,7 +3001,7 @@ index 6b2d901..c93beac 100644
            state.maintainingScrollAtEnd = activeState;
            const scroller = refScroller.current;
            if (state.props.horizontal && isHorizontalRTL(state)) {
-@@ -1716,7 +1858,11 @@ function prepareMVCP(ctx, dataChanged) {
+@@ -1716,7 +1883,11 @@ function prepareMVCP(ctx, dataChanged) {
          return;
        }
        if (Math.abs(positionDiff) > MVCP_POSITION_EPSILON) {
@@ -2336,15 +3014,15 @@ index 6b2d901..c93beac 100644
          if (!shouldSkipAdjustForMaintainedEnd) {
            requestAdjust(ctx, positionDiff);
          }
-@@ -1788,7 +1934,6 @@ function isInMVCPActiveMode(state) {
- 
+@@ -1788,7 +1959,6 @@ function isInMVCPActiveMode(state) {
+
  // src/core/updateScroll.ts
  function updateScroll(ctx, newScroll, forceUpdate, options) {
 -  var _a3;
    const state = ctx.state;
    const { ignoreScrollFromMVCP, lastScrollAdjustForHistory, scrollAdjustHandler, scrollHistory, scrollingTo } = state;
    const prevScroll = state.scroll;
-@@ -1862,7 +2007,7 @@ function updateScroll(ctx, newScroll, forceUpdate, options) {
+@@ -1862,7 +2032,7 @@ function updateScroll(ctx, newScroll, forceUpdate, options) {
      } else {
        runCalculateItems();
      }
@@ -2353,9 +3031,9 @@ index 6b2d901..c93beac 100644
      if (didResolvePendingNativeMVCPAdjust && shouldMaintainScrollAtEndAfterPendingSettle) {
        state.pendingMaintainScrollAtEnd = false;
        doMaintainScrollAtEnd(ctx);
-@@ -2213,7 +2358,8 @@ function advanceCurrentInitialScrollSession(ctx, options) {
+@@ -2213,7 +2383,8 @@ function advanceCurrentInitialScrollSession(ctx, options) {
  }
- 
+
  // src/utils/checkAllSizesKnown.ts
 -function checkAllSizesKnown(state, start, end) {
 +function checkAllSizesKnown(ctx, start, end) {
@@ -2363,7 +3041,7 @@ index 6b2d901..c93beac 100644
    if (start == null || end == null || start < 0 || end < start) {
      return false;
    }
-@@ -2223,7 +2369,7 @@ function checkAllSizesKnown(state, start, end) {
+@@ -2223,7 +2394,7 @@ function checkAllSizesKnown(state, start, end) {
      if (index !== void 0 && index >= start && index <= end) {
        hasMountedIndex = true;
        const id = getId(state, index);
@@ -2372,7 +3050,7 @@ index 6b2d901..c93beac 100644
          return false;
        }
      }
-@@ -2603,11 +2749,13 @@ function handleBootstrapInitialScrollDataChange(ctx, options) {
+@@ -2603,11 +2774,13 @@ function handleBootstrapInitialScrollDataChange(ctx, options) {
        setInitialScrollTarget(ctx, updatedInitialScroll, {
          resetDidFinish: shouldResetDidFinish
        });
@@ -2391,7 +3069,7 @@ index 6b2d901..c93beac 100644
        return;
      }
    }
-@@ -2728,7 +2876,7 @@ function evaluateBootstrapInitialScroll(ctx) {
+@@ -2728,7 +2901,7 @@ function evaluateBootstrapInitialScroll(ctx) {
      bootstrapInitialScroll.targetIndexSeed = void 0;
    }
    const resolvedOffset = resolveInitialScrollOffset(ctx, initialScroll);
@@ -2400,7 +3078,7 @@ index 6b2d901..c93beac 100644
    const didResolvedOffsetChange = Math.abs(bootstrapInitialScroll.scroll - resolvedOffset) > 1;
    const { data } = state.props;
    const visibleIndices = getBootstrapRevealVisibleIndices({
-@@ -2746,7 +2894,7 @@ function evaluateBootstrapInitialScroll(ctx) {
+@@ -2746,7 +2919,7 @@ function evaluateBootstrapInitialScroll(ctx) {
    const areVisibleIndicesMeasured = visibleIndices.length > 0 && visibleIndices.every((index) => {
      var _a4;
      const id = (_a4 = state.idCache[index]) != null ? _a4 : getId(state, index);
@@ -2409,7 +3087,51 @@ index 6b2d901..c93beac 100644
    });
    const previousResolvedOffset = bootstrapInitialScroll.previousResolvedOffset;
    const previousVisibleIndices = bootstrapInitialScroll.visibleIndices;
-@@ -3418,7 +3566,7 @@ function updateItemPositions(ctx, dataChanged, {
+@@ -3325,9 +3498,27 @@ function updateTotalSize(ctx) {
+     positions,
+     props: { data }
+   } = state;
++  // HAPPIER-TOTALSIZE-STALE-POSITIONS: `state.props` is mutated during RENDER, so `props.data`
++  // can already be the next render's array while `positions` still describes the previous one.
++  // Any event-driven pass (a delivered scroll, a layout) that runs before the reconciling
++  // `dataChanged` pass sees that pair. When the new data is SHORTER, updateItemPositions' walk
++  // range (`startIndex = minIndexSizeChanged ?? startBuffered`) is already past its end, so no row
++  // is walked and the absolute total below is computed from stale positions: with a one-row
++  // `data`, `positions[0]` is 0 and the row size is unknown, so the list publishes exactly
++  // `estimatedItemSize` for a transcript of any height. Measured on device: 2,322 -> 240 on a
++  // 43-row transcript and 266,020 -> 240 on a 419-row one (the SAME 240, i.e. one row, not a sum),
++  // alignItemsAtEndPadding then grown to fill the viewport and UIScrollView clamping
++  // contentOffset to that one-viewport content.
++  // The mirror case is already refused: when data GREW, `positions[lastIndex]` is undefined and
++  // the `lastPosition !== void 0` guard below suppresses the publish. This makes the shrink
++  // direction symmetric. Nothing is lost by waiting - the reconciling pass walks from index 0,
++  // leaves `positions.length === data.length`, and republishes the exact total.
++  if (positions.length > data.length) {
++    return;
++  }
+   const numColumns = (_a3 = peek$(ctx, "numColumns")) != null ? _a3 : 1;
+   if (data.length === 0) {
+-    addTotalSize(ctx, null, 0);
++    addTotalSize(ctx, HAPPIER_TOTAL_SIZE_ABSOLUTE, 0);
+   } else {
+     const lastIndex = data.length - 1;
+     const lastId = getId(state, lastIndex);
+@@ -3350,12 +3541,12 @@ function updateTotalSize(ctx) {
+             maxSize = size;
+           }
+         }
+-        addTotalSize(ctx, null, lastPosition + maxSize);
++        addTotalSize(ctx, HAPPIER_TOTAL_SIZE_ABSOLUTE, lastPosition + maxSize);
+       } else {
+         const lastSize = getItemSize(ctx, lastId, lastIndex, data[lastIndex]);
+         if (lastSize !== void 0) {
+           const totalSize = lastPosition + lastSize;
+-          addTotalSize(ctx, null, totalSize);
++          addTotalSize(ctx, HAPPIER_TOTAL_SIZE_ABSOLUTE, totalSize);
+         }
+       }
+     }
+@@ -3418,7 +3609,7 @@ function updateItemPositions(ctx, dataChanged, {
    const shouldOptimize = !forceFullUpdate && !dataChanged && (optimizeForVisibleWindow || Math.abs(velocity) > 0 || state.scrollLength > 0 && lastScrollDelta > state.scrollLength);
    const maxVisibleArea = scrollBottomBuffered + 1e3;
    const useAverageSize = true;
@@ -2418,7 +3140,7 @@ index 6b2d901..c93beac 100644
    const notifyTotalSizeWhileCachingSizes = false;
    let currentRowTop = 0;
    let column = 1;
-@@ -3447,7 +3595,7 @@ function updateItemPositions(ctx, dataChanged, {
+@@ -3447,7 +3638,7 @@ function updateItemPositions(ctx, dataChanged, {
        const prevIndex = startIndex - 1;
        const prevId = getId(state, prevIndex);
        const prevPosition = (_c = positions[prevIndex]) != null ? _c : 0;
@@ -2427,7 +3149,7 @@ index 6b2d901..c93beac 100644
          ctx,
          prevId,
          prevIndex,
-@@ -3465,7 +3613,25 @@ function updateItemPositions(ctx, dataChanged, {
+@@ -3465,7 +3656,25 @@ function updateItemPositions(ctx, dataChanged, {
    let breakAt;
    for (let i = startIndex; i < dataLength; i++) {
      if (shouldOptimize && breakAt !== void 0 && i > breakAt) {
@@ -2454,7 +3176,7 @@ index 6b2d901..c93beac 100644
        break;
      }
      if (shouldOptimize && breakAt === void 0 && !scrollingTo && !dataChanged && currentRowTop > maxVisibleArea) {
-@@ -3487,8 +3653,7 @@ function updateItemPositions(ctx, dataChanged, {
+@@ -3487,8 +3696,7 @@ function updateItemPositions(ctx, dataChanged, {
        column = 1;
        maxSizeInRow = 0;
      }
@@ -2464,7 +3186,7 @@ index 6b2d901..c93beac 100644
      if (IS_DEV && needsIndexByKey) {
        if (indexByKeyForChecking.has(id)) {
          console.error(
-@@ -4380,6 +4545,17 @@ function calculateItemsInView(ctx, params = {}) {
+@@ -4380,6 +4588,17 @@ function calculateItemsInView(ctx, params = {}) {
          }
        }
      }
@@ -2482,7 +3204,7 @@ index 6b2d901..c93beac 100644
      Object.assign(state, {
        endBuffered,
        endNoBuffer: visibleRange.endNoBuffer,
-@@ -4583,7 +4759,7 @@ function calculateItemsInView(ctx, params = {}) {
+@@ -4583,7 +4802,7 @@ function calculateItemsInView(ctx, params = {}) {
      }
      maybeEmitFirstVisibleItemChanged(state, visibleRange.startNoBuffer);
      if (!queuedInitialLayout && !state.didContainersLayout) {
@@ -2491,7 +3213,7 @@ index 6b2d901..c93beac 100644
        if (isInitialLayoutReady) {
          setDidLayout(ctx);
          handleInitialScrollLayoutReady(ctx);
-@@ -4769,11 +4945,16 @@ function applyItemSize(ctx, itemKey, sizeObj, resolvedMeasurementItem) {
+@@ -4769,11 +4988,16 @@ function applyItemSize(ctx, itemKey, sizeObj, resolvedMeasurementItem) {
    } = state;
    if (!data) return { didMeasureUserScrollAnchorResetItem };
    const index = state.indexByKey.get(itemKey);
@@ -2509,7 +3231,7 @@ index 6b2d901..c93beac 100644
      if (itemData === void 0) {
        return { didMeasureUserScrollAnchorResetItem };
      }
-@@ -4786,7 +4967,7 @@ function applyItemSize(ctx, itemKey, sizeObj, resolvedMeasurementItem) {
+@@ -4786,7 +5010,7 @@ function applyItemSize(ctx, itemKey, sizeObj, resolvedMeasurementItem) {
        };
      }
      const size2 = resolvedMeasurementItem.fixedItemSize;
@@ -2518,7 +3240,7 @@ index 6b2d901..c93beac 100644
        updateOtherAxisSizeIfNeeded(ctx, sizeObj, horizontal);
        return { didMeasureUserScrollAnchorResetItem };
      }
-@@ -4794,8 +4975,7 @@ function applyItemSize(ctx, itemKey, sizeObj, resolvedMeasurementItem) {
+@@ -4794,8 +5018,7 @@ function applyItemSize(ctx, itemKey, sizeObj, resolvedMeasurementItem) {
    let needsRecalculate = !didContainersLayout;
    let shouldMaintainScrollAtEnd = false;
    let minIndexSizeChanged;
@@ -2528,7 +3250,7 @@ index 6b2d901..c93beac 100644
    const size = roundSize(horizontal ? sizeObj.width : sizeObj.height);
    if (diff !== 0) {
      minIndexSizeChanged = minIndexSizeChanged !== void 0 ? Math.min(minIndexSizeChanged, index) : index;
-@@ -4804,7 +4984,8 @@ function applyItemSize(ctx, itemKey, sizeObj, resolvedMeasurementItem) {
+@@ -4804,7 +5027,8 @@ function applyItemSize(ctx, itemKey, sizeObj, resolvedMeasurementItem) {
      if (!needsRecalculate && state.containerItemKeys.has(itemKey)) {
        needsRecalculate = true;
      }
@@ -2538,7 +3260,7 @@ index 6b2d901..c93beac 100644
        shouldMaintainScrollAtEnd = true;
      }
      onItemSizeChanged == null ? void 0 : onItemSizeChanged({
-@@ -4820,7 +5001,7 @@ function applyItemSize(ctx, itemKey, sizeObj, resolvedMeasurementItem) {
+@@ -4820,7 +5044,7 @@ function applyItemSize(ctx, itemKey, sizeObj, resolvedMeasurementItem) {
      state.minIndexSizeChanged = state.minIndexSizeChanged !== void 0 ? Math.min(state.minIndexSizeChanged, minIndexSizeChanged) : minIndexSizeChanged;
    }
    updateOtherAxisSizeIfNeeded(ctx, sizeObj, horizontal);
@@ -2547,7 +3269,7 @@ index 6b2d901..c93beac 100644
      const canMaintainScrollAtEnd = shouldMaintainScrollAtEnd && !!(maintainScrollAtEnd == null ? void 0 : maintainScrollAtEnd.onItemLayout);
      return {
        didChange: diff !== 0,
-@@ -4834,7 +5015,7 @@ function applyItemSize(ctx, itemKey, sizeObj, resolvedMeasurementItem) {
+@@ -4834,7 +5058,7 @@ function applyItemSize(ctx, itemKey, sizeObj, resolvedMeasurementItem) {
      didMeasureUserScrollAnchorResetItem
    };
  }
@@ -2556,7 +3278,7 @@ index 6b2d901..c93beac 100644
    var _a3, _b;
    const state = ctx.state;
    const {
-@@ -4857,7 +5038,7 @@ function updateOneItemSize(ctx, itemKey, sizeObj, resolvedMeasurementItem) {
+@@ -4857,7 +5081,7 @@ function updateOneItemSize(ctx, itemKey, sizeObj, resolvedMeasurementItem) {
      fixedItemSize,
      itemType
    } : void 0;
@@ -2565,7 +3287,7 @@ index 6b2d901..c93beac 100644
    const rawSize = horizontal ? sizeObj.width : sizeObj.height;
    const prevSizeKnown = sizesKnown.get(itemKey);
    const size = Math.round(rawSize) ;
-@@ -4877,6 +5058,7 @@ function updateOneItemSize(ctx, itemKey, sizeObj, resolvedMeasurementItem) {
+@@ -4877,6 +5101,7 @@ function updateOneItemSize(ctx, itemKey, sizeObj, resolvedMeasurementItem) {
        averages.avg = (averages.avg * averages.num + size) / (averages.num + 1);
        averages.num++;
      }
@@ -2573,7 +3295,7 @@ index 6b2d901..c93beac 100644
    }
    if (!prevSize || Math.abs(prevSize - size) > 0.1) {
      setSize(ctx, itemKey, size);
-@@ -5338,7 +5520,8 @@ function processContainerLayout({ containerId, ctx, rectangle, ref, state }) {
+@@ -5338,7 +5563,8 @@ function processContainerLayout({ containerId, ctx, rectangle, ref, state }) {
    const axis = state.horizontal ? "width" : "height";
    const size = roundSize(rectangle[axis]);
    state.lastSize ? roundSize(state.lastSize[axis]) : void 0;
@@ -2583,7 +3305,7 @@ index 6b2d901..c93beac 100644
    const previousSize = coreKnownSize ;
    const applyLayout = () => {
      state.lastSize = layout;
-@@ -6670,6 +6853,8 @@ function checkResetContainers(ctx, dataProp, { didColumnsChange = false } = {})
+@@ -6670,6 +6896,8 @@ function checkResetContainers(ctx, dataProp, { didColumnsChange = false } = {})
    if (didColumnsChange) {
      state.sizes.clear();
      state.sizesKnown.clear();
@@ -2592,7 +3314,7 @@ index 6b2d901..c93beac 100644
      invalidateContainerFixedItemSizes(state);
      for (const key in state.averageSizes) {
        delete state.averageSizes[key];
-@@ -7089,6 +7274,13 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
+@@ -7089,6 +7317,13 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
    const IMPERATIVE_SCROLL_SETTLE_MAX_WAIT_MS = 800;
    const IMPERATIVE_SCROLL_SETTLE_STABLE_FRAMES = 2;
    let imperativeScrollToken = 0;
@@ -2606,7 +3328,7 @@ index 6b2d901..c93beac 100644
    const isSettlingAfterDataChange = () => !!state.didDataChange || !!state.didColumnsChange || state.queuedMVCPRecalculate !== void 0 || state.ignoreScrollFromMVCP !== void 0;
    const isScrollToIndexReady = (targetIndex, allowEmpty = false) => {
      var _a3;
-@@ -7110,6 +7302,7 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
+@@ -7110,6 +7345,7 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
      const startedAt = Date.now();
      let stableFrames = 0;
      const check = () => {
@@ -2614,7 +3336,7 @@ index 6b2d901..c93beac 100644
        if (token !== imperativeScrollToken) {
          return;
        }
-@@ -7123,9 +7316,10 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
+@@ -7123,9 +7359,10 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
          run();
          return;
        }
@@ -2627,7 +3349,7 @@ index 6b2d901..c93beac 100644
    };
    const runScrollRequest = (token, resolve, run, isReady = () => true) => {
      const runNow = () => {
-@@ -7148,12 +7342,22 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
+@@ -7148,12 +7385,22 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
    };
    const startImperativeScroll = (resolve) => {
      var _a3;
@@ -2650,7 +3372,7 @@ index 6b2d901..c93beac 100644
    const runScrollWithPromise = (run, isReady = () => true) => new Promise((resolve) => {
      const token = startImperativeScroll(resolve);
      runScrollRequest(token, resolve, run, isReady);
-@@ -7194,6 +7398,8 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
+@@ -7194,6 +7441,8 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
      const mode = (_a3 = options == null ? void 0 : options.mode) != null ? _a3 : "sizes";
      state.sizes.clear();
      state.sizesKnown.clear();
@@ -2659,7 +3381,7 @@ index 6b2d901..c93beac 100644
      invalidateContainerFixedItemSizes(state);
      for (const key in state.averageSizes) {
        delete state.averageSizes[key];
-@@ -7214,6 +7420,7 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
+@@ -7214,6 +7463,7 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
      (_b = state.triggerCalculateItemsInView) == null ? void 0 : _b.call(state, { forceFullItemPositions: true });
    };
    return {
@@ -2667,7 +3389,7 @@ index 6b2d901..c93beac 100644
      clearCaches,
      flashScrollIndicators: () => refScroller.current.flashScrollIndicators(),
      getAnimatableRef: () => {
-@@ -7251,7 +7458,10 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
+@@ -7251,7 +7501,10 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
        scroll: state.scroll,
        scrollLength: state.scrollLength,
        scrollVelocity: getScrollVelocity(state),
@@ -2679,7 +3401,7 @@ index 6b2d901..c93beac 100644
        sizes: state.sizesKnown,
        start: state.startNoBuffer,
        startBuffered: state.startBuffered
-@@ -7432,7 +7642,8 @@ function normalizeMaintainScrollAtEnd(value) {
+@@ -7432,7 +7685,8 @@ function normalizeMaintainScrollAtEnd(value) {
    const normalizedTriggers = normalizeMaintainScrollAtEndOn(value.on, "on" in value);
    return {
      ...normalizedTriggers,
@@ -2688,8 +3410,8 @@ index 6b2d901..c93beac 100644
 +    isMaintainingScrollAtEnd: value.isMaintainingScrollAtEnd
    };
  }
- 
-@@ -7562,6 +7773,8 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+
+@@ -7562,6 +7816,8 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
      estimatedListSize,
      extraData,
      getFixedItemSize,
@@ -2698,7 +3420,7 @@ index 6b2d901..c93beac 100644
      getItemType,
      horizontal,
      rtl,
-@@ -7754,6 +7967,8 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+@@ -7754,6 +8010,8 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
          scrollTime: 0,
          sizes: /* @__PURE__ */ new Map(),
          sizesKnown: /* @__PURE__ */ new Map(),
@@ -2707,7 +3429,7 @@ index 6b2d901..c93beac 100644
          startBuffered: -1,
          startNoBuffer: -1,
          startReachedSnapshot: void 0,
-@@ -7819,6 +8034,8 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+@@ -7819,6 +8077,8 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
      drawDistance,
      estimatedItemSize,
      getFixedItemSize: useWrapIfItem(getFixedItemSize),
@@ -2716,7 +3438,7 @@ index 6b2d901..c93beac 100644
      getItemType: useWrapIfItem(getItemType),
      horizontal: !!horizontal,
      itemsAreEqual,
-@@ -8088,10 +8305,20 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+@@ -8088,10 +8348,20 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
          cancelAnimationFrame(state.queuedFullDrawDistancePrewarm);
          state.queuedFullDrawDistancePrewarm = void 0;
        }
@@ -2779,7 +3501,7 @@ index db7841d..f00d3a3 100644
       * Clears internal virtualization caches.
       * @param options - Cache clearing options.
 diff --git a/node_modules/@legendapp/list/react.js b/node_modules/@legendapp/list/react.js
-index 544cca8..b5b254b 100644
+index 544cca8..c6509c0 100644
 --- a/node_modules/@legendapp/list/react.js
 +++ b/node_modules/@legendapp/list/react.js
 @@ -936,6 +936,38 @@ function clearPreservedInitialScrollTarget(state) {
@@ -2831,9 +3553,54 @@ index 544cca8..b5b254b 100644
      if (shouldReleaseDeferredPublicOnScroll) {
        releaseDeferredPublicOnScroll(ctx, finalScrollOffset);
      }
-@@ -1112,11 +1147,58 @@ function findContainerId(ctx, key) {
+@@ -1028,11 +1063,25 @@ function updateContentMetricsState(ctx) {
  }
- 
+
+ // src/core/addTotalSize.ts
++// HAPPIER-NULLKEY-ABSOLUTE-TOTAL (owner half): `addTotalSize` overloaded `key === null` as its
++// ABSOLUTE-WRITE sentinel ("this number IS the total"), and `getId` returns `null` for any index
++// past the end of `data` ("there is no such row"). Two meanings, one value. One probe of a row the
++// current `data` no longer contains therefore assigned the whole content size to be one unmeasured
++// row: getId -> null -> getItemSize falls through to `estimatedItemSize` -> setSize with a null key
++// -> addTotalSize with a null key -> totalSize = est, written absolutely. MEASURED on device with a
++// 4/4 identical stack (checkResetContainers -> calculateItemsInView -> prepareMVCP's closure ->
++// getItemSize(ctx, getId(state, scrollingTo.index), ...)): totalSize 2,322 -> 240 on a 43-row
++// transcript AND 266,020 -> 240 on a 419-row one - the SAME constant, i.e. one row rather than a
++// sum - then alignItemsAtEndPadding grown to 297 (12 + 142 + 240 + 297 = 691, the viewport, to the
++// pixel) and UIScrollView clamping contentOffset to that one-viewport content.
++// The sentinel is given a private value no item key can ever take, so the invalid state stops being
++// representable rather than being guarded against at one caller.
++var HAPPIER_TOTAL_SIZE_ABSOLUTE = { happierTotalSizeAbsolute: true };
+ function addTotalSize(ctx, key, add, notifyTotalSize = true) {
+   const state = ctx.state;
+   const prevTotalSize = state.totalSize;
+   let totalSize = state.totalSize;
+-  if (key === null) {
++  if (key === HAPPIER_TOTAL_SIZE_ABSOLUTE) {
+     totalSize = add;
+     if (state.timeoutSetPaddingTop) {
+       clearTimeout(state.timeoutSetPaddingTop);
+@@ -1057,6 +1106,17 @@ function addTotalSize(ctx, key, add, notifyTotalSize = true) {
+
+ // src/core/setSize.ts
+ function setSize(ctx, itemKey, size, notifyTotalSize = true) {
++  // HAPPIER-NULLKEY-NO-ROW-NO-SIZE (choke-point half): `getId` returns `null` for an index past the
++  // end of `data`, and ~15 call sites hand a `getId` result straight to `getItemSize` with no null
++  // check (the MEASURED device stack goes through prepareMVCP's closure, NOT through
++  // `getItemSizeAtIndex`, so guarding that one caller would not have covered it). `setSize` is the
++  // single choke point every resolved size passes, so refusing a key that is not a row here keeps a
++  // non-existent row from contributing to the running total or occupying a `sizes` entry, for every
++  // present and future caller. Paired with HAPPIER-NULLKEY-ABSOLUTE-TOTAL: that one removes the
++  // ambiguity, this one removes the phantom contribution the disambiguation would otherwise leave.
++  if (itemKey === null) {
++    return;
++  }
+   const state = ctx.state;
+   const { sizes } = state;
+   const previousSize = sizes.get(itemKey);
+@@ -1112,11 +1172,58 @@ function findContainerId(ctx, key) {
+ }
+
  // src/utils/getItemSize.ts
 -function getKnownOrFixedSize(ctx, key, index, data, resolved) {
 +function reverseItemSizeContribution(state, key) {
@@ -2892,7 +3659,7 @@ index 544cca8..b5b254b 100644
    if (size === void 0 && key && getFixedItemSize) {
      const itemType = (_b = resolved == null ? void 0 : resolved.itemType) != null ? _b : getItemType ? (_a3 = getItemType(data, index)) != null ? _a3 : "" : "";
      const fixedSize = (resolved == null ? void 0 : resolved.didResolveFixedItemSize) ? resolved.fixedItemSize : getFixedItemSize(data, index, itemType);
-@@ -1139,7 +1221,7 @@ function areKnownOrFixedItemSizesAvailable(ctx, startIndex, endIndex) {
+@@ -1139,7 +1246,7 @@ function areKnownOrFixedItemSizesAvailable(ctx, startIndex, endIndex) {
    }
    return true;
  }
@@ -2901,7 +3668,7 @@ index 544cca8..b5b254b 100644
    var _a3, _b, _c, _d;
    const state = ctx.state;
    const {
-@@ -1148,7 +1230,7 @@ function getItemSize(ctx, key, index, data, useAverageSize, preferCachedSize, no
+@@ -1148,7 +1255,7 @@ function getItemSize(ctx, key, index, data, useAverageSize, preferCachedSize, no
      props: { estimatedItemSize, getItemType },
      scrollingTo
    } = state;
@@ -2910,7 +3677,7 @@ index 544cca8..b5b254b 100644
    if (sizeKnown !== void 0) {
      return sizeKnown;
    }
-@@ -1159,12 +1241,23 @@ function getItemSize(ctx, key, index, data, useAverageSize, preferCachedSize, no
+@@ -1159,12 +1266,23 @@ function getItemSize(ctx, key, index, data, useAverageSize, preferCachedSize, no
        return renderedSize;
      }
    }
@@ -2935,9 +3702,9 @@ index 544cca8..b5b254b 100644
    if (useAverageSize && !scrollingTo) {
      const averageSizeForType = (_c = averageSizes[itemType]) == null ? void 0 : _c.avg;
      if (averageSizeForType !== void 0) {
-@@ -1244,12 +1337,28 @@ function clampScrollOffset(ctx, offset, scrollTarget) {
+@@ -1244,18 +1362,34 @@ function clampScrollOffset(ctx, offset, scrollTarget) {
  }
- 
+
  // src/core/finishScrollTo.ts
 -function finishScrollTo(ctx) {
 +function cancelPendingNonAnimatedScrollCompletion(state) {
@@ -2967,7 +3734,14 @@ index 544cca8..b5b254b 100644
      const scrollingTo = state.scrollingTo;
      state.scrollHistory.length = 0;
      state.scrollingTo = void 0;
-@@ -1299,6 +1408,7 @@ function doScrollTo(ctx, params) {
+     state.scrollTargetPinnedRange = void 0;
+     if (state.pendingTotalSize !== void 0) {
+-      addTotalSize(ctx, null, state.pendingTotalSize);
++      addTotalSize(ctx, HAPPIER_TOTAL_SIZE_ABSOLUTE, state.pendingTotalSize);
+     }
+     {
+       state.scrollAdjustHandler.commitPendingAdjust(scrollingTo);
+@@ -1299,6 +1433,7 @@ function doScrollTo(ctx, params) {
    const contentSize = isHorizontal ? getContentSize(ctx) : void 0;
    const left = isHorizontal ? toNativeHorizontalOffset(state, offset, contentSize) : 0;
    const top = isHorizontal ? 0 : offset;
@@ -2975,7 +3749,7 @@ index 544cca8..b5b254b 100644
    scroller.scrollTo({ animated: isAnimated, x: left, y: top });
    if (isAnimated) {
      const target = (_b = (_a3 = scroller.getScrollEventTarget) == null ? void 0 : _a3.call(scroller)) != null ? _b : null;
-@@ -1309,9 +1419,16 @@ function doScrollTo(ctx, params) {
+@@ -1309,9 +1444,16 @@ function doScrollTo(ctx, params) {
      });
    } else {
      state.scroll = offset;
@@ -2995,9 +3769,9 @@ index 544cca8..b5b254b 100644
    }
  }
  function listenForScrollEnd(ctx, params) {
-@@ -1367,6 +1484,21 @@ function listenForScrollEnd(ctx, params) {
+@@ -1367,6 +1509,21 @@ function listenForScrollEnd(ctx, params) {
  }
- 
+
  // src/core/doMaintainScrollAtEnd.ts
 +function hasExternalMaintainScrollAtEndIntent(maintainScrollAtEnd) {
 +  return !!(maintainScrollAtEnd && typeof maintainScrollAtEnd.isMaintainingScrollAtEnd === "function" && maintainScrollAtEnd.isMaintainingScrollAtEnd());
@@ -3017,7 +3791,7 @@ index 544cca8..b5b254b 100644
  function doMaintainScrollAtEnd(ctx) {
    const state = ctx.state;
    const {
-@@ -1376,7 +1508,14 @@ function doMaintainScrollAtEnd(ctx) {
+@@ -1376,7 +1533,14 @@ function doMaintainScrollAtEnd(ctx) {
      props: { maintainScrollAtEnd }
    } = state;
    const isWithinMaintainScrollAtEndThreshold = peek$(ctx, "isWithinMaintainScrollAtEndThreshold");
@@ -3033,7 +3807,7 @@ index 544cca8..b5b254b 100644
    if (pendingNativeMVCPAdjust) {
      state.pendingMaintainScrollAtEnd = shouldMaintainScrollAtEnd;
      return false;
-@@ -1392,7 +1531,10 @@ function doMaintainScrollAtEnd(ctx) {
+@@ -1392,7 +1556,10 @@ function doMaintainScrollAtEnd(ctx) {
        const activeState = maintainScrollAtEnd.animated ? "animated" : "instant";
        state.maintainingScrollAtEnd = pendingState;
        requestAnimationFrame(() => {
@@ -3045,7 +3819,7 @@ index 544cca8..b5b254b 100644
            state.maintainingScrollAtEnd = activeState;
            const scroller = refScroller.current;
            if (state.props.horizontal && isHorizontalRTL(state)) {
-@@ -1737,7 +1879,11 @@ function prepareMVCP(ctx, dataChanged) {
+@@ -1737,7 +1904,11 @@ function prepareMVCP(ctx, dataChanged) {
          return;
        }
        if (Math.abs(positionDiff) > MVCP_POSITION_EPSILON) {
@@ -3058,15 +3832,15 @@ index 544cca8..b5b254b 100644
          if (!shouldSkipAdjustForMaintainedEnd) {
            requestAdjust(ctx, positionDiff);
          }
-@@ -1809,7 +1955,6 @@ function isInMVCPActiveMode(state) {
- 
+@@ -1809,7 +1980,6 @@ function isInMVCPActiveMode(state) {
+
  // src/core/updateScroll.ts
  function updateScroll(ctx, newScroll, forceUpdate, options) {
 -  var _a3;
    const state = ctx.state;
    const { ignoreScrollFromMVCP, lastScrollAdjustForHistory, scrollAdjustHandler, scrollHistory, scrollingTo } = state;
    const prevScroll = state.scroll;
-@@ -1883,7 +2028,7 @@ function updateScroll(ctx, newScroll, forceUpdate, options) {
+@@ -1883,7 +2053,7 @@ function updateScroll(ctx, newScroll, forceUpdate, options) {
      } else {
        runCalculateItems();
      }
@@ -3075,9 +3849,9 @@ index 544cca8..b5b254b 100644
      if (didResolvePendingNativeMVCPAdjust && shouldMaintainScrollAtEndAfterPendingSettle) {
        state.pendingMaintainScrollAtEnd = false;
        doMaintainScrollAtEnd(ctx);
-@@ -2234,7 +2379,8 @@ function advanceCurrentInitialScrollSession(ctx, options) {
+@@ -2234,7 +2404,8 @@ function advanceCurrentInitialScrollSession(ctx, options) {
  }
- 
+
  // src/utils/checkAllSizesKnown.ts
 -function checkAllSizesKnown(state, start, end) {
 +function checkAllSizesKnown(ctx, start, end) {
@@ -3085,7 +3859,7 @@ index 544cca8..b5b254b 100644
    if (start == null || end == null || start < 0 || end < start) {
      return false;
    }
-@@ -2244,7 +2390,7 @@ function checkAllSizesKnown(state, start, end) {
+@@ -2244,7 +2415,7 @@ function checkAllSizesKnown(state, start, end) {
      if (index !== void 0 && index >= start && index <= end) {
        hasMountedIndex = true;
        const id = getId(state, index);
@@ -3094,7 +3868,7 @@ index 544cca8..b5b254b 100644
          return false;
        }
      }
-@@ -2624,11 +2770,13 @@ function handleBootstrapInitialScrollDataChange(ctx, options) {
+@@ -2624,11 +2795,13 @@ function handleBootstrapInitialScrollDataChange(ctx, options) {
        setInitialScrollTarget(ctx, updatedInitialScroll, {
          resetDidFinish: shouldResetDidFinish
        });
@@ -3113,7 +3887,7 @@ index 544cca8..b5b254b 100644
        return;
      }
    }
-@@ -2749,7 +2897,7 @@ function evaluateBootstrapInitialScroll(ctx) {
+@@ -2749,7 +2922,7 @@ function evaluateBootstrapInitialScroll(ctx) {
      bootstrapInitialScroll.targetIndexSeed = void 0;
    }
    const resolvedOffset = resolveInitialScrollOffset(ctx, initialScroll);
@@ -3122,7 +3896,7 @@ index 544cca8..b5b254b 100644
    const didResolvedOffsetChange = Math.abs(bootstrapInitialScroll.scroll - resolvedOffset) > 1;
    const { data } = state.props;
    const visibleIndices = getBootstrapRevealVisibleIndices({
-@@ -2767,7 +2915,7 @@ function evaluateBootstrapInitialScroll(ctx) {
+@@ -2767,7 +2940,7 @@ function evaluateBootstrapInitialScroll(ctx) {
    const areVisibleIndicesMeasured = visibleIndices.length > 0 && visibleIndices.every((index) => {
      var _a4;
      const id = (_a4 = state.idCache[index]) != null ? _a4 : getId(state, index);
@@ -3131,7 +3905,51 @@ index 544cca8..b5b254b 100644
    });
    const previousResolvedOffset = bootstrapInitialScroll.previousResolvedOffset;
    const previousVisibleIndices = bootstrapInitialScroll.visibleIndices;
-@@ -3439,7 +3587,7 @@ function updateItemPositions(ctx, dataChanged, {
+@@ -3346,9 +3519,27 @@ function updateTotalSize(ctx) {
+     positions,
+     props: { data }
+   } = state;
++  // HAPPIER-TOTALSIZE-STALE-POSITIONS: `state.props` is mutated during RENDER, so `props.data`
++  // can already be the next render's array while `positions` still describes the previous one.
++  // Any event-driven pass (a delivered scroll, a layout) that runs before the reconciling
++  // `dataChanged` pass sees that pair. When the new data is SHORTER, updateItemPositions' walk
++  // range (`startIndex = minIndexSizeChanged ?? startBuffered`) is already past its end, so no row
++  // is walked and the absolute total below is computed from stale positions: with a one-row
++  // `data`, `positions[0]` is 0 and the row size is unknown, so the list publishes exactly
++  // `estimatedItemSize` for a transcript of any height. Measured on device: 2,322 -> 240 on a
++  // 43-row transcript and 266,020 -> 240 on a 419-row one (the SAME 240, i.e. one row, not a sum),
++  // alignItemsAtEndPadding then grown to fill the viewport and UIScrollView clamping
++  // contentOffset to that one-viewport content.
++  // The mirror case is already refused: when data GREW, `positions[lastIndex]` is undefined and
++  // the `lastPosition !== void 0` guard below suppresses the publish. This makes the shrink
++  // direction symmetric. Nothing is lost by waiting - the reconciling pass walks from index 0,
++  // leaves `positions.length === data.length`, and republishes the exact total.
++  if (positions.length > data.length) {
++    return;
++  }
+   const numColumns = (_a3 = peek$(ctx, "numColumns")) != null ? _a3 : 1;
+   if (data.length === 0) {
+-    addTotalSize(ctx, null, 0);
++    addTotalSize(ctx, HAPPIER_TOTAL_SIZE_ABSOLUTE, 0);
+   } else {
+     const lastIndex = data.length - 1;
+     const lastId = getId(state, lastIndex);
+@@ -3371,12 +3562,12 @@ function updateTotalSize(ctx) {
+             maxSize = size;
+           }
+         }
+-        addTotalSize(ctx, null, lastPosition + maxSize);
++        addTotalSize(ctx, HAPPIER_TOTAL_SIZE_ABSOLUTE, lastPosition + maxSize);
+       } else {
+         const lastSize = getItemSize(ctx, lastId, lastIndex, data[lastIndex]);
+         if (lastSize !== void 0) {
+           const totalSize = lastPosition + lastSize;
+-          addTotalSize(ctx, null, totalSize);
++          addTotalSize(ctx, HAPPIER_TOTAL_SIZE_ABSOLUTE, totalSize);
+         }
+       }
+     }
+@@ -3439,7 +3630,7 @@ function updateItemPositions(ctx, dataChanged, {
    const shouldOptimize = !forceFullUpdate && !dataChanged && (optimizeForVisibleWindow || Math.abs(velocity) > 0 || state.scrollLength > 0 && lastScrollDelta > state.scrollLength);
    const maxVisibleArea = scrollBottomBuffered + 1e3;
    const useAverageSize = true;
@@ -3140,7 +3958,7 @@ index 544cca8..b5b254b 100644
    const notifyTotalSizeWhileCachingSizes = false;
    let currentRowTop = 0;
    let column = 1;
-@@ -3468,7 +3616,7 @@ function updateItemPositions(ctx, dataChanged, {
+@@ -3468,7 +3659,7 @@ function updateItemPositions(ctx, dataChanged, {
        const prevIndex = startIndex - 1;
        const prevId = getId(state, prevIndex);
        const prevPosition = (_c = positions[prevIndex]) != null ? _c : 0;
@@ -3149,7 +3967,7 @@ index 544cca8..b5b254b 100644
          ctx,
          prevId,
          prevIndex,
-@@ -3486,7 +3634,25 @@ function updateItemPositions(ctx, dataChanged, {
+@@ -3486,7 +3677,25 @@ function updateItemPositions(ctx, dataChanged, {
    let breakAt;
    for (let i = startIndex; i < dataLength; i++) {
      if (shouldOptimize && breakAt !== void 0 && i > breakAt) {
@@ -3176,7 +3994,7 @@ index 544cca8..b5b254b 100644
        break;
      }
      if (shouldOptimize && breakAt === void 0 && !scrollingTo && !dataChanged && currentRowTop > maxVisibleArea) {
-@@ -3508,8 +3674,7 @@ function updateItemPositions(ctx, dataChanged, {
+@@ -3508,8 +3717,7 @@ function updateItemPositions(ctx, dataChanged, {
        column = 1;
        maxSizeInRow = 0;
      }
@@ -3186,7 +4004,7 @@ index 544cca8..b5b254b 100644
      if (IS_DEV && needsIndexByKey) {
        if (indexByKeyForChecking.has(id)) {
          console.error(
-@@ -4401,6 +4566,17 @@ function calculateItemsInView(ctx, params = {}) {
+@@ -4401,6 +4609,17 @@ function calculateItemsInView(ctx, params = {}) {
          }
        }
      }
@@ -3204,7 +4022,7 @@ index 544cca8..b5b254b 100644
      Object.assign(state, {
        endBuffered,
        endNoBuffer: visibleRange.endNoBuffer,
-@@ -4604,7 +4780,7 @@ function calculateItemsInView(ctx, params = {}) {
+@@ -4604,7 +4823,7 @@ function calculateItemsInView(ctx, params = {}) {
      }
      maybeEmitFirstVisibleItemChanged(state, visibleRange.startNoBuffer);
      if (!queuedInitialLayout && !state.didContainersLayout) {
@@ -3213,7 +4031,7 @@ index 544cca8..b5b254b 100644
        if (isInitialLayoutReady) {
          setDidLayout(ctx);
          handleInitialScrollLayoutReady(ctx);
-@@ -4790,11 +4966,16 @@ function applyItemSize(ctx, itemKey, sizeObj, resolvedMeasurementItem) {
+@@ -4790,11 +5009,16 @@ function applyItemSize(ctx, itemKey, sizeObj, resolvedMeasurementItem) {
    } = state;
    if (!data) return { didMeasureUserScrollAnchorResetItem };
    const index = state.indexByKey.get(itemKey);
@@ -3231,7 +4049,7 @@ index 544cca8..b5b254b 100644
      if (itemData === void 0) {
        return { didMeasureUserScrollAnchorResetItem };
      }
-@@ -4807,7 +4988,7 @@ function applyItemSize(ctx, itemKey, sizeObj, resolvedMeasurementItem) {
+@@ -4807,7 +5031,7 @@ function applyItemSize(ctx, itemKey, sizeObj, resolvedMeasurementItem) {
        };
      }
      const size2 = resolvedMeasurementItem.fixedItemSize;
@@ -3240,7 +4058,7 @@ index 544cca8..b5b254b 100644
        updateOtherAxisSizeIfNeeded(ctx, sizeObj, horizontal);
        return { didMeasureUserScrollAnchorResetItem };
      }
-@@ -4815,8 +4996,7 @@ function applyItemSize(ctx, itemKey, sizeObj, resolvedMeasurementItem) {
+@@ -4815,8 +5039,7 @@ function applyItemSize(ctx, itemKey, sizeObj, resolvedMeasurementItem) {
    let needsRecalculate = !didContainersLayout;
    let shouldMaintainScrollAtEnd = false;
    let minIndexSizeChanged;
@@ -3250,7 +4068,7 @@ index 544cca8..b5b254b 100644
    const size = roundSize(horizontal ? sizeObj.width : sizeObj.height);
    if (diff !== 0) {
      minIndexSizeChanged = minIndexSizeChanged !== void 0 ? Math.min(minIndexSizeChanged, index) : index;
-@@ -4825,7 +5005,8 @@ function applyItemSize(ctx, itemKey, sizeObj, resolvedMeasurementItem) {
+@@ -4825,7 +5048,8 @@ function applyItemSize(ctx, itemKey, sizeObj, resolvedMeasurementItem) {
      if (!needsRecalculate && state.containerItemKeys.has(itemKey)) {
        needsRecalculate = true;
      }
@@ -3260,7 +4078,7 @@ index 544cca8..b5b254b 100644
        shouldMaintainScrollAtEnd = true;
      }
      onItemSizeChanged == null ? void 0 : onItemSizeChanged({
-@@ -4841,7 +5022,7 @@ function applyItemSize(ctx, itemKey, sizeObj, resolvedMeasurementItem) {
+@@ -4841,7 +5065,7 @@ function applyItemSize(ctx, itemKey, sizeObj, resolvedMeasurementItem) {
      state.minIndexSizeChanged = state.minIndexSizeChanged !== void 0 ? Math.min(state.minIndexSizeChanged, minIndexSizeChanged) : minIndexSizeChanged;
    }
    updateOtherAxisSizeIfNeeded(ctx, sizeObj, horizontal);
@@ -3269,7 +4087,7 @@ index 544cca8..b5b254b 100644
      const canMaintainScrollAtEnd = shouldMaintainScrollAtEnd && !!(maintainScrollAtEnd == null ? void 0 : maintainScrollAtEnd.onItemLayout);
      return {
        didChange: diff !== 0,
-@@ -4855,7 +5036,7 @@ function applyItemSize(ctx, itemKey, sizeObj, resolvedMeasurementItem) {
+@@ -4855,7 +5079,7 @@ function applyItemSize(ctx, itemKey, sizeObj, resolvedMeasurementItem) {
      didMeasureUserScrollAnchorResetItem
    };
  }
@@ -3278,7 +4096,7 @@ index 544cca8..b5b254b 100644
    var _a3, _b;
    const state = ctx.state;
    const {
-@@ -4878,7 +5059,7 @@ function updateOneItemSize(ctx, itemKey, sizeObj, resolvedMeasurementItem) {
+@@ -4878,7 +5102,7 @@ function updateOneItemSize(ctx, itemKey, sizeObj, resolvedMeasurementItem) {
      fixedItemSize,
      itemType
    } : void 0;
@@ -3287,7 +4105,7 @@ index 544cca8..b5b254b 100644
    const rawSize = horizontal ? sizeObj.width : sizeObj.height;
    const prevSizeKnown = sizesKnown.get(itemKey);
    const size = Math.round(rawSize) ;
-@@ -4898,6 +5079,7 @@ function updateOneItemSize(ctx, itemKey, sizeObj, resolvedMeasurementItem) {
+@@ -4898,6 +5122,7 @@ function updateOneItemSize(ctx, itemKey, sizeObj, resolvedMeasurementItem) {
        averages.avg = (averages.avg * averages.num + size) / (averages.num + 1);
        averages.num++;
      }
@@ -3295,7 +4113,7 @@ index 544cca8..b5b254b 100644
    }
    if (!prevSize || Math.abs(prevSize - size) > 0.1) {
      setSize(ctx, itemKey, size);
-@@ -5359,7 +5541,8 @@ function processContainerLayout({ containerId, ctx, rectangle, ref, state }) {
+@@ -5359,7 +5584,8 @@ function processContainerLayout({ containerId, ctx, rectangle, ref, state }) {
    const axis = state.horizontal ? "width" : "height";
    const size = roundSize(rectangle[axis]);
    state.lastSize ? roundSize(state.lastSize[axis]) : void 0;
@@ -3305,7 +4123,7 @@ index 544cca8..b5b254b 100644
    const previousSize = coreKnownSize ;
    const applyLayout = () => {
      state.lastSize = layout;
-@@ -6691,6 +6874,8 @@ function checkResetContainers(ctx, dataProp, { didColumnsChange = false } = {})
+@@ -6691,6 +6917,8 @@ function checkResetContainers(ctx, dataProp, { didColumnsChange = false } = {})
    if (didColumnsChange) {
      state.sizes.clear();
      state.sizesKnown.clear();
@@ -3314,7 +4132,7 @@ index 544cca8..b5b254b 100644
      invalidateContainerFixedItemSizes(state);
      for (const key in state.averageSizes) {
        delete state.averageSizes[key];
-@@ -7110,6 +7295,13 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
+@@ -7110,6 +7338,13 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
    const IMPERATIVE_SCROLL_SETTLE_MAX_WAIT_MS = 800;
    const IMPERATIVE_SCROLL_SETTLE_STABLE_FRAMES = 2;
    let imperativeScrollToken = 0;
@@ -3328,7 +4146,7 @@ index 544cca8..b5b254b 100644
    const isSettlingAfterDataChange = () => !!state.didDataChange || !!state.didColumnsChange || state.queuedMVCPRecalculate !== void 0 || state.ignoreScrollFromMVCP !== void 0;
    const isScrollToIndexReady = (targetIndex, allowEmpty = false) => {
      var _a3;
-@@ -7131,6 +7323,7 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
+@@ -7131,6 +7366,7 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
      const startedAt = Date.now();
      let stableFrames = 0;
      const check = () => {
@@ -3336,7 +4154,7 @@ index 544cca8..b5b254b 100644
        if (token !== imperativeScrollToken) {
          return;
        }
-@@ -7144,9 +7337,10 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
+@@ -7144,9 +7380,10 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
          run();
          return;
        }
@@ -3349,7 +4167,7 @@ index 544cca8..b5b254b 100644
    };
    const runScrollRequest = (token, resolve, run, isReady = () => true) => {
      const runNow = () => {
-@@ -7169,12 +7363,22 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
+@@ -7169,12 +7406,22 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
    };
    const startImperativeScroll = (resolve) => {
      var _a3;
@@ -3372,7 +4190,7 @@ index 544cca8..b5b254b 100644
    const runScrollWithPromise = (run, isReady = () => true) => new Promise((resolve) => {
      const token = startImperativeScroll(resolve);
      runScrollRequest(token, resolve, run, isReady);
-@@ -7215,6 +7419,8 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
+@@ -7215,6 +7462,8 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
      const mode = (_a3 = options == null ? void 0 : options.mode) != null ? _a3 : "sizes";
      state.sizes.clear();
      state.sizesKnown.clear();
@@ -3381,7 +4199,7 @@ index 544cca8..b5b254b 100644
      invalidateContainerFixedItemSizes(state);
      for (const key in state.averageSizes) {
        delete state.averageSizes[key];
-@@ -7235,6 +7441,7 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
+@@ -7235,6 +7484,7 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
      (_b = state.triggerCalculateItemsInView) == null ? void 0 : _b.call(state, { forceFullItemPositions: true });
    };
    return {
@@ -3389,7 +4207,7 @@ index 544cca8..b5b254b 100644
      clearCaches,
      flashScrollIndicators: () => refScroller.current.flashScrollIndicators(),
      getAnimatableRef: () => {
-@@ -7272,7 +7479,10 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
+@@ -7272,7 +7522,10 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
        scroll: state.scroll,
        scrollLength: state.scrollLength,
        scrollVelocity: getScrollVelocity(state),
@@ -3401,7 +4219,7 @@ index 544cca8..b5b254b 100644
        sizes: state.sizesKnown,
        start: state.startNoBuffer,
        startBuffered: state.startBuffered
-@@ -7453,7 +7663,8 @@ function normalizeMaintainScrollAtEnd(value) {
+@@ -7453,7 +7706,8 @@ function normalizeMaintainScrollAtEnd(value) {
    const normalizedTriggers = normalizeMaintainScrollAtEndOn(value.on, "on" in value);
    return {
      ...normalizedTriggers,
@@ -3410,8 +4228,8 @@ index 544cca8..b5b254b 100644
 +    isMaintainingScrollAtEnd: value.isMaintainingScrollAtEnd
    };
  }
- 
-@@ -7583,6 +7794,8 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+
+@@ -7583,6 +7837,8 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
      estimatedListSize,
      extraData,
      getFixedItemSize,
@@ -3420,7 +4238,7 @@ index 544cca8..b5b254b 100644
      getItemType,
      horizontal,
      rtl,
-@@ -7775,6 +7988,8 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+@@ -7775,6 +8031,8 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
          scrollTime: 0,
          sizes: /* @__PURE__ */ new Map(),
          sizesKnown: /* @__PURE__ */ new Map(),
@@ -3429,7 +4247,7 @@ index 544cca8..b5b254b 100644
          startBuffered: -1,
          startNoBuffer: -1,
          startReachedSnapshot: void 0,
-@@ -7840,6 +8055,8 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+@@ -7840,6 +8098,8 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
      drawDistance,
      estimatedItemSize,
      getFixedItemSize: useWrapIfItem(getFixedItemSize),
@@ -3438,7 +4256,7 @@ index 544cca8..b5b254b 100644
      getItemType: useWrapIfItem(getItemType),
      horizontal: !!horizontal,
      itemsAreEqual,
-@@ -8109,10 +8326,20 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+@@ -8109,10 +8369,20 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
          cancelAnimationFrame(state.queuedFullDrawDistancePrewarm);
          state.queuedFullDrawDistancePrewarm = void 0;
        }
@@ -3460,7 +4278,7 @@ index 544cca8..b5b254b 100644
    }, [state]);
    React3.useLayoutEffect(() => {
 diff --git a/node_modules/@legendapp/list/react.mjs b/node_modules/@legendapp/list/react.mjs
-index 6b2d901..c93beac 100644
+index 6b2d901..0390f6c 100644
 --- a/node_modules/@legendapp/list/react.mjs
 +++ b/node_modules/@legendapp/list/react.mjs
 @@ -915,6 +915,38 @@ function clearPreservedInitialScrollTarget(state) {
@@ -3512,9 +4330,54 @@ index 6b2d901..c93beac 100644
      if (shouldReleaseDeferredPublicOnScroll) {
        releaseDeferredPublicOnScroll(ctx, finalScrollOffset);
      }
-@@ -1091,11 +1126,58 @@ function findContainerId(ctx, key) {
+@@ -1007,11 +1042,25 @@ function updateContentMetricsState(ctx) {
  }
- 
+
+ // src/core/addTotalSize.ts
++// HAPPIER-NULLKEY-ABSOLUTE-TOTAL (owner half): `addTotalSize` overloaded `key === null` as its
++// ABSOLUTE-WRITE sentinel ("this number IS the total"), and `getId` returns `null` for any index
++// past the end of `data` ("there is no such row"). Two meanings, one value. One probe of a row the
++// current `data` no longer contains therefore assigned the whole content size to be one unmeasured
++// row: getId -> null -> getItemSize falls through to `estimatedItemSize` -> setSize with a null key
++// -> addTotalSize with a null key -> totalSize = est, written absolutely. MEASURED on device with a
++// 4/4 identical stack (checkResetContainers -> calculateItemsInView -> prepareMVCP's closure ->
++// getItemSize(ctx, getId(state, scrollingTo.index), ...)): totalSize 2,322 -> 240 on a 43-row
++// transcript AND 266,020 -> 240 on a 419-row one - the SAME constant, i.e. one row rather than a
++// sum - then alignItemsAtEndPadding grown to 297 (12 + 142 + 240 + 297 = 691, the viewport, to the
++// pixel) and UIScrollView clamping contentOffset to that one-viewport content.
++// The sentinel is given a private value no item key can ever take, so the invalid state stops being
++// representable rather than being guarded against at one caller.
++var HAPPIER_TOTAL_SIZE_ABSOLUTE = { happierTotalSizeAbsolute: true };
+ function addTotalSize(ctx, key, add, notifyTotalSize = true) {
+   const state = ctx.state;
+   const prevTotalSize = state.totalSize;
+   let totalSize = state.totalSize;
+-  if (key === null) {
++  if (key === HAPPIER_TOTAL_SIZE_ABSOLUTE) {
+     totalSize = add;
+     if (state.timeoutSetPaddingTop) {
+       clearTimeout(state.timeoutSetPaddingTop);
+@@ -1036,6 +1085,17 @@ function addTotalSize(ctx, key, add, notifyTotalSize = true) {
+
+ // src/core/setSize.ts
+ function setSize(ctx, itemKey, size, notifyTotalSize = true) {
++  // HAPPIER-NULLKEY-NO-ROW-NO-SIZE (choke-point half): `getId` returns `null` for an index past the
++  // end of `data`, and ~15 call sites hand a `getId` result straight to `getItemSize` with no null
++  // check (the MEASURED device stack goes through prepareMVCP's closure, NOT through
++  // `getItemSizeAtIndex`, so guarding that one caller would not have covered it). `setSize` is the
++  // single choke point every resolved size passes, so refusing a key that is not a row here keeps a
++  // non-existent row from contributing to the running total or occupying a `sizes` entry, for every
++  // present and future caller. Paired with HAPPIER-NULLKEY-ABSOLUTE-TOTAL: that one removes the
++  // ambiguity, this one removes the phantom contribution the disambiguation would otherwise leave.
++  if (itemKey === null) {
++    return;
++  }
+   const state = ctx.state;
+   const { sizes } = state;
+   const previousSize = sizes.get(itemKey);
+@@ -1091,11 +1151,58 @@ function findContainerId(ctx, key) {
+ }
+
  // src/utils/getItemSize.ts
 -function getKnownOrFixedSize(ctx, key, index, data, resolved) {
 +function reverseItemSizeContribution(state, key) {
@@ -3573,7 +4436,7 @@ index 6b2d901..c93beac 100644
    if (size === void 0 && key && getFixedItemSize) {
      const itemType = (_b = resolved == null ? void 0 : resolved.itemType) != null ? _b : getItemType ? (_a3 = getItemType(data, index)) != null ? _a3 : "" : "";
      const fixedSize = (resolved == null ? void 0 : resolved.didResolveFixedItemSize) ? resolved.fixedItemSize : getFixedItemSize(data, index, itemType);
-@@ -1118,7 +1200,7 @@ function areKnownOrFixedItemSizesAvailable(ctx, startIndex, endIndex) {
+@@ -1118,7 +1225,7 @@ function areKnownOrFixedItemSizesAvailable(ctx, startIndex, endIndex) {
    }
    return true;
  }
@@ -3582,7 +4445,7 @@ index 6b2d901..c93beac 100644
    var _a3, _b, _c, _d;
    const state = ctx.state;
    const {
-@@ -1127,7 +1209,7 @@ function getItemSize(ctx, key, index, data, useAverageSize, preferCachedSize, no
+@@ -1127,7 +1234,7 @@ function getItemSize(ctx, key, index, data, useAverageSize, preferCachedSize, no
      props: { estimatedItemSize, getItemType },
      scrollingTo
    } = state;
@@ -3591,7 +4454,7 @@ index 6b2d901..c93beac 100644
    if (sizeKnown !== void 0) {
      return sizeKnown;
    }
-@@ -1138,12 +1220,23 @@ function getItemSize(ctx, key, index, data, useAverageSize, preferCachedSize, no
+@@ -1138,12 +1245,23 @@ function getItemSize(ctx, key, index, data, useAverageSize, preferCachedSize, no
        return renderedSize;
      }
    }
@@ -3616,9 +4479,9 @@ index 6b2d901..c93beac 100644
    if (useAverageSize && !scrollingTo) {
      const averageSizeForType = (_c = averageSizes[itemType]) == null ? void 0 : _c.avg;
      if (averageSizeForType !== void 0) {
-@@ -1223,12 +1316,28 @@ function clampScrollOffset(ctx, offset, scrollTarget) {
+@@ -1223,18 +1341,34 @@ function clampScrollOffset(ctx, offset, scrollTarget) {
  }
- 
+
  // src/core/finishScrollTo.ts
 -function finishScrollTo(ctx) {
 +function cancelPendingNonAnimatedScrollCompletion(state) {
@@ -3648,7 +4511,14 @@ index 6b2d901..c93beac 100644
      const scrollingTo = state.scrollingTo;
      state.scrollHistory.length = 0;
      state.scrollingTo = void 0;
-@@ -1278,6 +1387,7 @@ function doScrollTo(ctx, params) {
+     state.scrollTargetPinnedRange = void 0;
+     if (state.pendingTotalSize !== void 0) {
+-      addTotalSize(ctx, null, state.pendingTotalSize);
++      addTotalSize(ctx, HAPPIER_TOTAL_SIZE_ABSOLUTE, state.pendingTotalSize);
+     }
+     {
+       state.scrollAdjustHandler.commitPendingAdjust(scrollingTo);
+@@ -1278,6 +1412,7 @@ function doScrollTo(ctx, params) {
    const contentSize = isHorizontal ? getContentSize(ctx) : void 0;
    const left = isHorizontal ? toNativeHorizontalOffset(state, offset, contentSize) : 0;
    const top = isHorizontal ? 0 : offset;
@@ -3656,7 +4526,7 @@ index 6b2d901..c93beac 100644
    scroller.scrollTo({ animated: isAnimated, x: left, y: top });
    if (isAnimated) {
      const target = (_b = (_a3 = scroller.getScrollEventTarget) == null ? void 0 : _a3.call(scroller)) != null ? _b : null;
-@@ -1288,9 +1398,16 @@ function doScrollTo(ctx, params) {
+@@ -1288,9 +1423,16 @@ function doScrollTo(ctx, params) {
      });
    } else {
      state.scroll = offset;
@@ -3676,9 +4546,9 @@ index 6b2d901..c93beac 100644
    }
  }
  function listenForScrollEnd(ctx, params) {
-@@ -1346,6 +1463,21 @@ function listenForScrollEnd(ctx, params) {
+@@ -1346,6 +1488,21 @@ function listenForScrollEnd(ctx, params) {
  }
- 
+
  // src/core/doMaintainScrollAtEnd.ts
 +function hasExternalMaintainScrollAtEndIntent(maintainScrollAtEnd) {
 +  return !!(maintainScrollAtEnd && typeof maintainScrollAtEnd.isMaintainingScrollAtEnd === "function" && maintainScrollAtEnd.isMaintainingScrollAtEnd());
@@ -3698,7 +4568,7 @@ index 6b2d901..c93beac 100644
  function doMaintainScrollAtEnd(ctx) {
    const state = ctx.state;
    const {
-@@ -1355,7 +1487,14 @@ function doMaintainScrollAtEnd(ctx) {
+@@ -1355,7 +1512,14 @@ function doMaintainScrollAtEnd(ctx) {
      props: { maintainScrollAtEnd }
    } = state;
    const isWithinMaintainScrollAtEndThreshold = peek$(ctx, "isWithinMaintainScrollAtEndThreshold");
@@ -3714,7 +4584,7 @@ index 6b2d901..c93beac 100644
    if (pendingNativeMVCPAdjust) {
      state.pendingMaintainScrollAtEnd = shouldMaintainScrollAtEnd;
      return false;
-@@ -1371,7 +1510,10 @@ function doMaintainScrollAtEnd(ctx) {
+@@ -1371,7 +1535,10 @@ function doMaintainScrollAtEnd(ctx) {
        const activeState = maintainScrollAtEnd.animated ? "animated" : "instant";
        state.maintainingScrollAtEnd = pendingState;
        requestAnimationFrame(() => {
@@ -3726,7 +4596,7 @@ index 6b2d901..c93beac 100644
            state.maintainingScrollAtEnd = activeState;
            const scroller = refScroller.current;
            if (state.props.horizontal && isHorizontalRTL(state)) {
-@@ -1716,7 +1858,11 @@ function prepareMVCP(ctx, dataChanged) {
+@@ -1716,7 +1883,11 @@ function prepareMVCP(ctx, dataChanged) {
          return;
        }
        if (Math.abs(positionDiff) > MVCP_POSITION_EPSILON) {
@@ -3739,15 +4609,15 @@ index 6b2d901..c93beac 100644
          if (!shouldSkipAdjustForMaintainedEnd) {
            requestAdjust(ctx, positionDiff);
          }
-@@ -1788,7 +1934,6 @@ function isInMVCPActiveMode(state) {
- 
+@@ -1788,7 +1959,6 @@ function isInMVCPActiveMode(state) {
+
  // src/core/updateScroll.ts
  function updateScroll(ctx, newScroll, forceUpdate, options) {
 -  var _a3;
    const state = ctx.state;
    const { ignoreScrollFromMVCP, lastScrollAdjustForHistory, scrollAdjustHandler, scrollHistory, scrollingTo } = state;
    const prevScroll = state.scroll;
-@@ -1862,7 +2007,7 @@ function updateScroll(ctx, newScroll, forceUpdate, options) {
+@@ -1862,7 +2032,7 @@ function updateScroll(ctx, newScroll, forceUpdate, options) {
      } else {
        runCalculateItems();
      }
@@ -3756,9 +4626,9 @@ index 6b2d901..c93beac 100644
      if (didResolvePendingNativeMVCPAdjust && shouldMaintainScrollAtEndAfterPendingSettle) {
        state.pendingMaintainScrollAtEnd = false;
        doMaintainScrollAtEnd(ctx);
-@@ -2213,7 +2358,8 @@ function advanceCurrentInitialScrollSession(ctx, options) {
+@@ -2213,7 +2383,8 @@ function advanceCurrentInitialScrollSession(ctx, options) {
  }
- 
+
  // src/utils/checkAllSizesKnown.ts
 -function checkAllSizesKnown(state, start, end) {
 +function checkAllSizesKnown(ctx, start, end) {
@@ -3766,7 +4636,7 @@ index 6b2d901..c93beac 100644
    if (start == null || end == null || start < 0 || end < start) {
      return false;
    }
-@@ -2223,7 +2369,7 @@ function checkAllSizesKnown(state, start, end) {
+@@ -2223,7 +2394,7 @@ function checkAllSizesKnown(state, start, end) {
      if (index !== void 0 && index >= start && index <= end) {
        hasMountedIndex = true;
        const id = getId(state, index);
@@ -3775,7 +4645,7 @@ index 6b2d901..c93beac 100644
          return false;
        }
      }
-@@ -2603,11 +2749,13 @@ function handleBootstrapInitialScrollDataChange(ctx, options) {
+@@ -2603,11 +2774,13 @@ function handleBootstrapInitialScrollDataChange(ctx, options) {
        setInitialScrollTarget(ctx, updatedInitialScroll, {
          resetDidFinish: shouldResetDidFinish
        });
@@ -3794,7 +4664,7 @@ index 6b2d901..c93beac 100644
        return;
      }
    }
-@@ -2728,7 +2876,7 @@ function evaluateBootstrapInitialScroll(ctx) {
+@@ -2728,7 +2901,7 @@ function evaluateBootstrapInitialScroll(ctx) {
      bootstrapInitialScroll.targetIndexSeed = void 0;
    }
    const resolvedOffset = resolveInitialScrollOffset(ctx, initialScroll);
@@ -3803,7 +4673,7 @@ index 6b2d901..c93beac 100644
    const didResolvedOffsetChange = Math.abs(bootstrapInitialScroll.scroll - resolvedOffset) > 1;
    const { data } = state.props;
    const visibleIndices = getBootstrapRevealVisibleIndices({
-@@ -2746,7 +2894,7 @@ function evaluateBootstrapInitialScroll(ctx) {
+@@ -2746,7 +2919,7 @@ function evaluateBootstrapInitialScroll(ctx) {
    const areVisibleIndicesMeasured = visibleIndices.length > 0 && visibleIndices.every((index) => {
      var _a4;
      const id = (_a4 = state.idCache[index]) != null ? _a4 : getId(state, index);
@@ -3812,7 +4682,51 @@ index 6b2d901..c93beac 100644
    });
    const previousResolvedOffset = bootstrapInitialScroll.previousResolvedOffset;
    const previousVisibleIndices = bootstrapInitialScroll.visibleIndices;
-@@ -3418,7 +3566,7 @@ function updateItemPositions(ctx, dataChanged, {
+@@ -3325,9 +3498,27 @@ function updateTotalSize(ctx) {
+     positions,
+     props: { data }
+   } = state;
++  // HAPPIER-TOTALSIZE-STALE-POSITIONS: `state.props` is mutated during RENDER, so `props.data`
++  // can already be the next render's array while `positions` still describes the previous one.
++  // Any event-driven pass (a delivered scroll, a layout) that runs before the reconciling
++  // `dataChanged` pass sees that pair. When the new data is SHORTER, updateItemPositions' walk
++  // range (`startIndex = minIndexSizeChanged ?? startBuffered`) is already past its end, so no row
++  // is walked and the absolute total below is computed from stale positions: with a one-row
++  // `data`, `positions[0]` is 0 and the row size is unknown, so the list publishes exactly
++  // `estimatedItemSize` for a transcript of any height. Measured on device: 2,322 -> 240 on a
++  // 43-row transcript and 266,020 -> 240 on a 419-row one (the SAME 240, i.e. one row, not a sum),
++  // alignItemsAtEndPadding then grown to fill the viewport and UIScrollView clamping
++  // contentOffset to that one-viewport content.
++  // The mirror case is already refused: when data GREW, `positions[lastIndex]` is undefined and
++  // the `lastPosition !== void 0` guard below suppresses the publish. This makes the shrink
++  // direction symmetric. Nothing is lost by waiting - the reconciling pass walks from index 0,
++  // leaves `positions.length === data.length`, and republishes the exact total.
++  if (positions.length > data.length) {
++    return;
++  }
+   const numColumns = (_a3 = peek$(ctx, "numColumns")) != null ? _a3 : 1;
+   if (data.length === 0) {
+-    addTotalSize(ctx, null, 0);
++    addTotalSize(ctx, HAPPIER_TOTAL_SIZE_ABSOLUTE, 0);
+   } else {
+     const lastIndex = data.length - 1;
+     const lastId = getId(state, lastIndex);
+@@ -3350,12 +3541,12 @@ function updateTotalSize(ctx) {
+             maxSize = size;
+           }
+         }
+-        addTotalSize(ctx, null, lastPosition + maxSize);
++        addTotalSize(ctx, HAPPIER_TOTAL_SIZE_ABSOLUTE, lastPosition + maxSize);
+       } else {
+         const lastSize = getItemSize(ctx, lastId, lastIndex, data[lastIndex]);
+         if (lastSize !== void 0) {
+           const totalSize = lastPosition + lastSize;
+-          addTotalSize(ctx, null, totalSize);
++          addTotalSize(ctx, HAPPIER_TOTAL_SIZE_ABSOLUTE, totalSize);
+         }
+       }
+     }
+@@ -3418,7 +3609,7 @@ function updateItemPositions(ctx, dataChanged, {
    const shouldOptimize = !forceFullUpdate && !dataChanged && (optimizeForVisibleWindow || Math.abs(velocity) > 0 || state.scrollLength > 0 && lastScrollDelta > state.scrollLength);
    const maxVisibleArea = scrollBottomBuffered + 1e3;
    const useAverageSize = true;
@@ -3821,7 +4735,7 @@ index 6b2d901..c93beac 100644
    const notifyTotalSizeWhileCachingSizes = false;
    let currentRowTop = 0;
    let column = 1;
-@@ -3447,7 +3595,7 @@ function updateItemPositions(ctx, dataChanged, {
+@@ -3447,7 +3638,7 @@ function updateItemPositions(ctx, dataChanged, {
        const prevIndex = startIndex - 1;
        const prevId = getId(state, prevIndex);
        const prevPosition = (_c = positions[prevIndex]) != null ? _c : 0;
@@ -3830,7 +4744,7 @@ index 6b2d901..c93beac 100644
          ctx,
          prevId,
          prevIndex,
-@@ -3465,7 +3613,25 @@ function updateItemPositions(ctx, dataChanged, {
+@@ -3465,7 +3656,25 @@ function updateItemPositions(ctx, dataChanged, {
    let breakAt;
    for (let i = startIndex; i < dataLength; i++) {
      if (shouldOptimize && breakAt !== void 0 && i > breakAt) {
@@ -3857,7 +4771,7 @@ index 6b2d901..c93beac 100644
        break;
      }
      if (shouldOptimize && breakAt === void 0 && !scrollingTo && !dataChanged && currentRowTop > maxVisibleArea) {
-@@ -3487,8 +3653,7 @@ function updateItemPositions(ctx, dataChanged, {
+@@ -3487,8 +3696,7 @@ function updateItemPositions(ctx, dataChanged, {
        column = 1;
        maxSizeInRow = 0;
      }
@@ -3867,7 +4781,7 @@ index 6b2d901..c93beac 100644
      if (IS_DEV && needsIndexByKey) {
        if (indexByKeyForChecking.has(id)) {
          console.error(
-@@ -4380,6 +4545,17 @@ function calculateItemsInView(ctx, params = {}) {
+@@ -4380,6 +4588,17 @@ function calculateItemsInView(ctx, params = {}) {
          }
        }
      }
@@ -3885,7 +4799,7 @@ index 6b2d901..c93beac 100644
      Object.assign(state, {
        endBuffered,
        endNoBuffer: visibleRange.endNoBuffer,
-@@ -4583,7 +4759,7 @@ function calculateItemsInView(ctx, params = {}) {
+@@ -4583,7 +4802,7 @@ function calculateItemsInView(ctx, params = {}) {
      }
      maybeEmitFirstVisibleItemChanged(state, visibleRange.startNoBuffer);
      if (!queuedInitialLayout && !state.didContainersLayout) {
@@ -3894,7 +4808,7 @@ index 6b2d901..c93beac 100644
        if (isInitialLayoutReady) {
          setDidLayout(ctx);
          handleInitialScrollLayoutReady(ctx);
-@@ -4769,11 +4945,16 @@ function applyItemSize(ctx, itemKey, sizeObj, resolvedMeasurementItem) {
+@@ -4769,11 +4988,16 @@ function applyItemSize(ctx, itemKey, sizeObj, resolvedMeasurementItem) {
    } = state;
    if (!data) return { didMeasureUserScrollAnchorResetItem };
    const index = state.indexByKey.get(itemKey);
@@ -3912,7 +4826,7 @@ index 6b2d901..c93beac 100644
      if (itemData === void 0) {
        return { didMeasureUserScrollAnchorResetItem };
      }
-@@ -4786,7 +4967,7 @@ function applyItemSize(ctx, itemKey, sizeObj, resolvedMeasurementItem) {
+@@ -4786,7 +5010,7 @@ function applyItemSize(ctx, itemKey, sizeObj, resolvedMeasurementItem) {
        };
      }
      const size2 = resolvedMeasurementItem.fixedItemSize;
@@ -3921,7 +4835,7 @@ index 6b2d901..c93beac 100644
        updateOtherAxisSizeIfNeeded(ctx, sizeObj, horizontal);
        return { didMeasureUserScrollAnchorResetItem };
      }
-@@ -4794,8 +4975,7 @@ function applyItemSize(ctx, itemKey, sizeObj, resolvedMeasurementItem) {
+@@ -4794,8 +5018,7 @@ function applyItemSize(ctx, itemKey, sizeObj, resolvedMeasurementItem) {
    let needsRecalculate = !didContainersLayout;
    let shouldMaintainScrollAtEnd = false;
    let minIndexSizeChanged;
@@ -3931,7 +4845,7 @@ index 6b2d901..c93beac 100644
    const size = roundSize(horizontal ? sizeObj.width : sizeObj.height);
    if (diff !== 0) {
      minIndexSizeChanged = minIndexSizeChanged !== void 0 ? Math.min(minIndexSizeChanged, index) : index;
-@@ -4804,7 +4984,8 @@ function applyItemSize(ctx, itemKey, sizeObj, resolvedMeasurementItem) {
+@@ -4804,7 +5027,8 @@ function applyItemSize(ctx, itemKey, sizeObj, resolvedMeasurementItem) {
      if (!needsRecalculate && state.containerItemKeys.has(itemKey)) {
        needsRecalculate = true;
      }
@@ -3941,7 +4855,7 @@ index 6b2d901..c93beac 100644
        shouldMaintainScrollAtEnd = true;
      }
      onItemSizeChanged == null ? void 0 : onItemSizeChanged({
-@@ -4820,7 +5001,7 @@ function applyItemSize(ctx, itemKey, sizeObj, resolvedMeasurementItem) {
+@@ -4820,7 +5044,7 @@ function applyItemSize(ctx, itemKey, sizeObj, resolvedMeasurementItem) {
      state.minIndexSizeChanged = state.minIndexSizeChanged !== void 0 ? Math.min(state.minIndexSizeChanged, minIndexSizeChanged) : minIndexSizeChanged;
    }
    updateOtherAxisSizeIfNeeded(ctx, sizeObj, horizontal);
@@ -3950,7 +4864,7 @@ index 6b2d901..c93beac 100644
      const canMaintainScrollAtEnd = shouldMaintainScrollAtEnd && !!(maintainScrollAtEnd == null ? void 0 : maintainScrollAtEnd.onItemLayout);
      return {
        didChange: diff !== 0,
-@@ -4834,7 +5015,7 @@ function applyItemSize(ctx, itemKey, sizeObj, resolvedMeasurementItem) {
+@@ -4834,7 +5058,7 @@ function applyItemSize(ctx, itemKey, sizeObj, resolvedMeasurementItem) {
      didMeasureUserScrollAnchorResetItem
    };
  }
@@ -3959,7 +4873,7 @@ index 6b2d901..c93beac 100644
    var _a3, _b;
    const state = ctx.state;
    const {
-@@ -4857,7 +5038,7 @@ function updateOneItemSize(ctx, itemKey, sizeObj, resolvedMeasurementItem) {
+@@ -4857,7 +5081,7 @@ function updateOneItemSize(ctx, itemKey, sizeObj, resolvedMeasurementItem) {
      fixedItemSize,
      itemType
    } : void 0;
@@ -3968,7 +4882,7 @@ index 6b2d901..c93beac 100644
    const rawSize = horizontal ? sizeObj.width : sizeObj.height;
    const prevSizeKnown = sizesKnown.get(itemKey);
    const size = Math.round(rawSize) ;
-@@ -4877,6 +5058,7 @@ function updateOneItemSize(ctx, itemKey, sizeObj, resolvedMeasurementItem) {
+@@ -4877,6 +5101,7 @@ function updateOneItemSize(ctx, itemKey, sizeObj, resolvedMeasurementItem) {
        averages.avg = (averages.avg * averages.num + size) / (averages.num + 1);
        averages.num++;
      }
@@ -3976,7 +4890,7 @@ index 6b2d901..c93beac 100644
    }
    if (!prevSize || Math.abs(prevSize - size) > 0.1) {
      setSize(ctx, itemKey, size);
-@@ -5338,7 +5520,8 @@ function processContainerLayout({ containerId, ctx, rectangle, ref, state }) {
+@@ -5338,7 +5563,8 @@ function processContainerLayout({ containerId, ctx, rectangle, ref, state }) {
    const axis = state.horizontal ? "width" : "height";
    const size = roundSize(rectangle[axis]);
    state.lastSize ? roundSize(state.lastSize[axis]) : void 0;
@@ -3986,7 +4900,7 @@ index 6b2d901..c93beac 100644
    const previousSize = coreKnownSize ;
    const applyLayout = () => {
      state.lastSize = layout;
-@@ -6670,6 +6853,8 @@ function checkResetContainers(ctx, dataProp, { didColumnsChange = false } = {})
+@@ -6670,6 +6896,8 @@ function checkResetContainers(ctx, dataProp, { didColumnsChange = false } = {})
    if (didColumnsChange) {
      state.sizes.clear();
      state.sizesKnown.clear();
@@ -3995,7 +4909,7 @@ index 6b2d901..c93beac 100644
      invalidateContainerFixedItemSizes(state);
      for (const key in state.averageSizes) {
        delete state.averageSizes[key];
-@@ -7089,6 +7274,13 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
+@@ -7089,6 +7317,13 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
    const IMPERATIVE_SCROLL_SETTLE_MAX_WAIT_MS = 800;
    const IMPERATIVE_SCROLL_SETTLE_STABLE_FRAMES = 2;
    let imperativeScrollToken = 0;
@@ -4009,7 +4923,7 @@ index 6b2d901..c93beac 100644
    const isSettlingAfterDataChange = () => !!state.didDataChange || !!state.didColumnsChange || state.queuedMVCPRecalculate !== void 0 || state.ignoreScrollFromMVCP !== void 0;
    const isScrollToIndexReady = (targetIndex, allowEmpty = false) => {
      var _a3;
-@@ -7110,6 +7302,7 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
+@@ -7110,6 +7345,7 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
      const startedAt = Date.now();
      let stableFrames = 0;
      const check = () => {
@@ -4017,7 +4931,7 @@ index 6b2d901..c93beac 100644
        if (token !== imperativeScrollToken) {
          return;
        }
-@@ -7123,9 +7316,10 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
+@@ -7123,9 +7359,10 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
          run();
          return;
        }
@@ -4030,7 +4944,7 @@ index 6b2d901..c93beac 100644
    };
    const runScrollRequest = (token, resolve, run, isReady = () => true) => {
      const runNow = () => {
-@@ -7148,12 +7342,22 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
+@@ -7148,12 +7385,22 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
    };
    const startImperativeScroll = (resolve) => {
      var _a3;
@@ -4053,7 +4967,7 @@ index 6b2d901..c93beac 100644
    const runScrollWithPromise = (run, isReady = () => true) => new Promise((resolve) => {
      const token = startImperativeScroll(resolve);
      runScrollRequest(token, resolve, run, isReady);
-@@ -7194,6 +7398,8 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
+@@ -7194,6 +7441,8 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
      const mode = (_a3 = options == null ? void 0 : options.mode) != null ? _a3 : "sizes";
      state.sizes.clear();
      state.sizesKnown.clear();
@@ -4062,7 +4976,7 @@ index 6b2d901..c93beac 100644
      invalidateContainerFixedItemSizes(state);
      for (const key in state.averageSizes) {
        delete state.averageSizes[key];
-@@ -7214,6 +7420,7 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
+@@ -7214,6 +7463,7 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
      (_b = state.triggerCalculateItemsInView) == null ? void 0 : _b.call(state, { forceFullItemPositions: true });
    };
    return {
@@ -4070,7 +4984,7 @@ index 6b2d901..c93beac 100644
      clearCaches,
      flashScrollIndicators: () => refScroller.current.flashScrollIndicators(),
      getAnimatableRef: () => {
-@@ -7251,7 +7458,10 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
+@@ -7251,7 +7501,10 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
        scroll: state.scroll,
        scrollLength: state.scrollLength,
        scrollVelocity: getScrollVelocity(state),
@@ -4082,7 +4996,7 @@ index 6b2d901..c93beac 100644
        sizes: state.sizesKnown,
        start: state.startNoBuffer,
        startBuffered: state.startBuffered
-@@ -7432,7 +7642,8 @@ function normalizeMaintainScrollAtEnd(value) {
+@@ -7432,7 +7685,8 @@ function normalizeMaintainScrollAtEnd(value) {
    const normalizedTriggers = normalizeMaintainScrollAtEndOn(value.on, "on" in value);
    return {
      ...normalizedTriggers,
@@ -4091,8 +5005,8 @@ index 6b2d901..c93beac 100644
 +    isMaintainingScrollAtEnd: value.isMaintainingScrollAtEnd
    };
  }
- 
-@@ -7562,6 +7773,8 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+
+@@ -7562,6 +7816,8 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
      estimatedListSize,
      extraData,
      getFixedItemSize,
@@ -4101,7 +5015,7 @@ index 6b2d901..c93beac 100644
      getItemType,
      horizontal,
      rtl,
-@@ -7754,6 +7967,8 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+@@ -7754,6 +8010,8 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
          scrollTime: 0,
          sizes: /* @__PURE__ */ new Map(),
          sizesKnown: /* @__PURE__ */ new Map(),
@@ -4110,7 +5024,7 @@ index 6b2d901..c93beac 100644
          startBuffered: -1,
          startNoBuffer: -1,
          startReachedSnapshot: void 0,
-@@ -7819,6 +8034,8 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+@@ -7819,6 +8077,8 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
      drawDistance,
      estimatedItemSize,
      getFixedItemSize: useWrapIfItem(getFixedItemSize),
@@ -4119,7 +5033,7 @@ index 6b2d901..c93beac 100644
      getItemType: useWrapIfItem(getItemType),
      horizontal: !!horizontal,
      itemsAreEqual,
-@@ -8088,10 +8305,20 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+@@ -8088,10 +8348,20 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
          cancelAnimationFrame(state.queuedFullDrawDistancePrewarm);
          state.queuedFullDrawDistancePrewarm = void 0;
        }
