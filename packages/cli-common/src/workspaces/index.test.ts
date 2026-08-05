@@ -132,6 +132,118 @@ describe('bundleWorkspacePackage', () => {
     );
   });
 
+  it('skips vendoring an excluded runtime dependency of a workspace bundle while still vendoring the rest', async () => {
+    rootDir = mkdtempSync(join(tmpdir(), 'happier-cli-common-bundle-workspace-'));
+
+    const workspaceModule = await import('./index');
+    const bundleWorkspacePackageWithRuntimeDependencies =
+      (workspaceModule as Record<string, unknown>).bundleWorkspacePackageWithRuntimeDependencies;
+    expect(bundleWorkspacePackageWithRuntimeDependencies).toBeTypeOf('function');
+
+    const srcPackageDir = resolve(rootDir, 'packages/protocol');
+    const srcDistDir = resolve(srcPackageDir, 'dist');
+    const tweetnaclPackageDir = resolve(srcPackageDir, 'node_modules/tweetnacl');
+    const nobleHashesPackageDir = resolve(srcPackageDir, 'node_modules/@noble/hashes');
+    mkdirSync(srcDistDir, { recursive: true });
+    mkdirSync(tweetnaclPackageDir, { recursive: true });
+    mkdirSync(nobleHashesPackageDir, { recursive: true });
+    writeFileSync(
+      resolve(srcPackageDir, 'package.json'),
+      JSON.stringify(
+        {
+          name: '@happier-dev/protocol',
+          version: '0.0.0',
+          type: 'module',
+          exports: { '.': { default: './dist/index.js' } },
+          dependencies: { tweetnacl: '1.0.3', '@noble/hashes': '1.8.0' },
+        },
+        null,
+        2,
+      ),
+    );
+    writeFileSync(resolve(srcDistDir, 'index.js'), 'export {};');
+    writeFileSync(
+      resolve(tweetnaclPackageDir, 'package.json'),
+      JSON.stringify({ name: 'tweetnacl', version: '1.0.3', dependencies: {} }, null, 2),
+    );
+    writeFileSync(resolve(tweetnaclPackageDir, 'nacl.js'), 'module.exports = {};\n');
+    writeFileSync(
+      resolve(nobleHashesPackageDir, 'package.json'),
+      JSON.stringify({ name: '@noble/hashes', version: '1.8.0', dependencies: {} }, null, 2),
+    );
+    writeFileSync(resolve(nobleHashesPackageDir, 'sha256.js'), 'module.exports = {};\n');
+
+    const destPackageDir = resolve(rootDir, 'apps/cli/node_modules/@happier-dev/protocol');
+
+    (bundleWorkspacePackageWithRuntimeDependencies as (params: {
+      packageName: string;
+      srcDir: string;
+      destDir: string;
+      excludePackageNames?: ReadonlySet<string>;
+    }) => void)({
+      packageName: '@happier-dev/protocol',
+      srcDir: srcPackageDir,
+      destDir: destPackageDir,
+      excludePackageNames: new Set(['tweetnacl']),
+    });
+
+    expect(existsSync(resolve(destPackageDir, 'node_modules/tweetnacl'))).toBe(false);
+    expect(readFileSync(resolve(destPackageDir, 'node_modules/@noble/hashes/sha256.js'), 'utf8')).toBe(
+      'module.exports = {};\n',
+    );
+  });
+
+  it('vendors every declared runtime dependency of a workspace bundle when no exclusion set is provided', async () => {
+    rootDir = mkdtempSync(join(tmpdir(), 'happier-cli-common-bundle-workspace-'));
+
+    const workspaceModule = await import('./index');
+    const bundleWorkspacePackageWithRuntimeDependencies =
+      (workspaceModule as Record<string, unknown>).bundleWorkspacePackageWithRuntimeDependencies;
+    expect(bundleWorkspacePackageWithRuntimeDependencies).toBeTypeOf('function');
+
+    const srcPackageDir = resolve(rootDir, 'packages/protocol');
+    const srcDistDir = resolve(srcPackageDir, 'dist');
+    const tweetnaclPackageDir = resolve(srcPackageDir, 'node_modules/tweetnacl');
+    mkdirSync(srcDistDir, { recursive: true });
+    mkdirSync(tweetnaclPackageDir, { recursive: true });
+    writeFileSync(
+      resolve(srcPackageDir, 'package.json'),
+      JSON.stringify(
+        {
+          name: '@happier-dev/protocol',
+          version: '0.0.0',
+          type: 'module',
+          exports: { '.': { default: './dist/index.js' } },
+          dependencies: { tweetnacl: '1.0.3' },
+        },
+        null,
+        2,
+      ),
+    );
+    writeFileSync(resolve(srcDistDir, 'index.js'), 'export {};');
+    writeFileSync(
+      resolve(tweetnaclPackageDir, 'package.json'),
+      JSON.stringify({ name: 'tweetnacl', version: '1.0.3', dependencies: {} }, null, 2),
+    );
+    writeFileSync(resolve(tweetnaclPackageDir, 'nacl.js'), 'module.exports = {};\n');
+
+    const destPackageDir = resolve(rootDir, 'apps/cli/node_modules/@happier-dev/protocol');
+
+    (bundleWorkspacePackageWithRuntimeDependencies as (params: {
+      packageName: string;
+      srcDir: string;
+      destDir: string;
+    }) => void)({
+      packageName: '@happier-dev/protocol',
+      srcDir: srcPackageDir,
+      destDir: destPackageDir,
+    });
+
+    expect(readFileSync(resolve(destPackageDir, 'node_modules/tweetnacl/nacl.js'), 'utf8')).toBe(
+      'module.exports = {};\n',
+    );
+  });
+
   it('copies non-dist package export targets so the bundled public surface remains loadable', async () => {
     rootDir = mkdtempSync(join(tmpdir(), 'happier-cli-common-bundle-workspace-'));
 

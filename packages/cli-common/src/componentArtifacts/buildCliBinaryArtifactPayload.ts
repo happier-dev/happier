@@ -59,6 +59,22 @@ const CLI_RUNTIME_EXTERNAL_PACKAGES = [
 // package vendored. Notably `sharp` is NOT included here: it does a runtime-constructed
 // `require()` of a platform-specific native `.node` binding, the same reason node-pty is external
 // above, so it must stay vendored on disk.
+// Same rationale and audit trail as CLI_BINARY_PAYLOAD_VENDORING_EXCLUDED_PACKAGES above, but for
+// the runtime dependencies declared by apps/cli's own bundled @happier-dev/* workspace packages
+// (see bundleWorkspacePackageWithRuntimeDependencies below), rather than apps/cli's own
+// dependencies. Confirmed via `strings` on a real compiled binary that these packages' distinctive
+// exports (not just an inert package-name string) are compiled in -- e.g. @happier-dev/protocol's
+// own nested tweetnacl/@noble/hashes/base64-js/zod-to-json-schema copies -- and that no sidecar or
+// dynamic require() reads any of them from disk. See investigate/workspace-bundle-vendoring-audit.
+//
+// Scoped to the compiled CLI binary payload only, same as CLI_BINARY_PAYLOAD_VENDORING_EXCLUDED_PACKAGES.
+const CLI_BINARY_PAYLOAD_WORKSPACE_BUNDLE_VENDORING_EXCLUDED_PACKAGES = new Set<string>([
+  '@noble/hashes',
+  'base64-js',
+  'tweetnacl',
+  'zod-to-json-schema',
+]);
+
 const CLI_BINARY_PAYLOAD_VENDORING_EXCLUDED_PACKAGES = new Set<string>([
   '@agentclientprotocol/sdk',
   '@anthropic-ai/claude-agent-sdk',
@@ -169,6 +185,7 @@ async function copyCliNodeRuntimePayload(
       packageName,
       srcDir,
       destDir: join(payloadDir, 'node_modules', ...packageName.split('/')),
+      excludePackageNames: CLI_BINARY_PAYLOAD_WORKSPACE_BUNDLE_VENDORING_EXCLUDED_PACKAGES,
     });
   }
 }

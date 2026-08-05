@@ -394,6 +394,7 @@ export function bundleWorkspacePackageWithRuntimeDependencies(params: Readonly<{
   destDir: string;
   includeFiles?: string[];
   resolveFromPackageJsonPath?: string;
+  excludePackageNames?: ReadonlySet<string>;
 }>): void {
   const packageDetails = readWorkspacePackageDetails(params);
 
@@ -411,6 +412,7 @@ export function bundleWorkspacePackageWithRuntimeDependencies(params: Readonly<{
         packageJsonPath: packageDetails.srcPackageJsonPath,
         resolveFromPackageJsonPath: params.resolveFromPackageJsonPath,
         destNodeModulesDir: resolve(tempDir, 'node_modules'),
+        excludePackageNames: params.excludePackageNames,
       });
     },
   });
