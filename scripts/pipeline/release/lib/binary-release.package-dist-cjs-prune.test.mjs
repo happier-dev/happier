@@ -81,6 +81,8 @@ async function buildFakeNestedPackageDistTree(stageDir) {
   await mkdir(nestedVendoredPkgDistDir, { recursive: true });
   await writeFile(join(nestedVendoredPkgDistDir, 'index.mjs'), 'export default 1;', 'utf-8');
   await writeFile(join(nestedVendoredPkgDistDir, 'index.cjs'), 'module.exports = 1;', 'utf-8');
+  await writeFile(join(nestedVendoredPkgDistDir, 'index.d.mts'), 'export declare const x: number;', 'utf-8');
+  await writeFile(join(nestedVendoredPkgDistDir, 'index.d.cts'), 'export declare const x: number;', 'utf-8');
 
   return { pkgDistDir, nestedVendoredPkgDistDir };
 }
@@ -93,7 +95,10 @@ test('sanitizePackagedNodeModulesTree only prunes the staged root package-dist, 
     await sanitizePackagedNodeModulesTree({ stageDir, target: { os: 'darwin', arch: 'arm64' } });
 
     assert.deepEqual((await readdir(pkgDistDir)).sort(), ['index.mjs']);
-    assert.deepEqual((await readdir(nestedVendoredPkgDistDir)).sort(), ['index.cjs', 'index.mjs']);
+    assert.deepEqual(
+      (await readdir(nestedVendoredPkgDistDir)).sort(),
+      ['index.cjs', 'index.d.cts', 'index.d.mts', 'index.mjs'],
+    );
   } finally {
     await rm(stageDir, { recursive: true, force: true });
   }

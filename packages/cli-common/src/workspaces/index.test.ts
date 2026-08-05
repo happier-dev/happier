@@ -10,10 +10,11 @@ import {
   readlinkSync,
   renameSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { basename, dirname, join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
 describe('bundleWorkspacePackage', () => {
@@ -367,15 +368,15 @@ describe('bundleWorkspacePackage', () => {
     expect(lstatSync(vendoredSharedDepDir).isSymbolicLink()).toBe(false);
     expect(readFileSync(resolve(vendoredSharedDepDir, 'index.js'), 'utf8')).toBe('module.exports = "shared";\n');
 
-    // Second occurrence (same name@version) is a symlink, not a full recopy. The link target is
-    // captured at build time inside the atomically-built staging tree (before the whole
-    // node_modules dir is renamed into its final place), so assert on the relationship (same
-    // basename as the surviving vendored copy) and on content equivalence rather than the final
-    // absolute path.
+    // Second occurrence (same name@version) is a symlink, not a full recopy. The link is written
+    // as a relative path (so it survives the atomic staging-dir rename that happens inside
+    // bundleWorkspacePackageWithRuntimeDependencies), but by the time that function returns,
+    // destPackageDir is already the final real path -- so resolving the link here points at the
+    // exact same directory as the surviving copy, not just something with a matching basename.
     expect(lstatSync(vendoredNestedSharedDepDir).isSymbolicLink()).toBe(true);
     const linkTarget = readlinkSync(vendoredNestedSharedDepDir);
     const resolvedLinkTarget = resolve(dirname(vendoredNestedSharedDepDir), linkTarget);
-    expect(basename(resolvedLinkTarget)).toBe('shared-dep');
+    expect(resolvedLinkTarget).toBe(vendoredSharedDepDir);
     expect(readFileSync(resolve(vendoredNestedSharedDepDir, 'index.js'), 'utf8')).toBe(
       'module.exports = "shared";\n',
     );
@@ -551,6 +552,96 @@ describe('bundleWorkspacePackage', () => {
     expect(readFileSync(resolve(vendoredSharedDepDir, 'index.js'), 'utf8')).toBe('module.exports = "shared";\n');
     expect(readFileSync(resolve(vendoredNestedSharedDepDir, 'index.js'), 'utf8')).toBe(
       'module.exports = "shared-but-actually-different";\n',
+    );
+  });
+
+  it('does not abort vendoring when a resolved package tree contains a dangling symlink', async () => {
+    rootDir = mkdtempSync(join(tmpdir(), 'happier-cli-common-bundle-workspace-'));
+
+    const workspaceModule = await import('./index');
+    const bundleWorkspacePackageWithRuntimeDependencies =
+      (workspaceModule as Record<string, unknown>).bundleWorkspacePackageWithRuntimeDependencies;
+    expect(bundleWorkspacePackageWithRuntimeDependencies).toBeTypeOf('function');
+
+    // Same diamond shape again, but the top-level shared-dep tree contains a symlink pointing at
+    // a path that doesn't exist -- a realistic node_modules artifact (e.g. a broken .bin shim, or
+    // an optional dependency that failed to install). The equivalence check must tolerate this
+    // instead of letting a raw statSync ENOENT abort the whole vendoring run.
+    const srcPackageDir = resolve(rootDir, 'packages/agents');
+    const srcDistDir = resolve(srcPackageDir, 'dist');
+    const sharedDepDir = resolve(srcPackageDir, 'node_modules/shared-dep');
+    const consumerDepDir = resolve(srcPackageDir, 'node_modules/consumer-dep');
+    const nestedSharedDepDir = resolve(consumerDepDir, 'node_modules/shared-dep');
+
+    mkdirSync(srcDistDir, { recursive: true });
+    mkdirSync(sharedDepDir, { recursive: true });
+    mkdirSync(consumerDepDir, { recursive: true });
+    mkdirSync(nestedSharedDepDir, { recursive: true });
+
+    writeFileSync(
+      resolve(srcPackageDir, 'package.json'),
+      JSON.stringify(
+        {
+          name: '@happier-dev/agents',
+          version: '0.0.0',
+          type: 'module',
+          exports: { '.': { default: './dist/index.js' } },
+          dependencies: { 'shared-dep': '1.2.3', 'consumer-dep': '1.0.0' },
+        },
+        null,
+        2,
+      ),
+    );
+    writeFileSync(resolve(srcDistDir, 'index.js'), 'export {};');
+
+    writeFileSync(
+      resolve(sharedDepDir, 'package.json'),
+      JSON.stringify({ name: 'shared-dep', version: '1.2.3', dependencies: {} }, null, 2),
+    );
+    writeFileSync(resolve(sharedDepDir, 'index.js'), 'module.exports = "shared";\n');
+    symlinkSync(resolve(sharedDepDir, 'does-not-exist'), resolve(sharedDepDir, 'dangling-link'));
+
+    writeFileSync(
+      resolve(consumerDepDir, 'package.json'),
+      JSON.stringify({ name: 'consumer-dep', version: '1.0.0', dependencies: { 'shared-dep': '1.2.3' } }, null, 2),
+    );
+    writeFileSync(resolve(consumerDepDir, 'index.js'), 'module.exports = "consumer";\n');
+
+    writeFileSync(
+      resolve(nestedSharedDepDir, 'package.json'),
+      JSON.stringify({ name: 'shared-dep', version: '1.2.3', dependencies: {} }, null, 2),
+    );
+    writeFileSync(resolve(nestedSharedDepDir, 'index.js'), 'module.exports = "shared";\n');
+
+    const destPackageDir = resolve(rootDir, 'apps/cli/node_modules/@happier-dev/agents');
+
+    // Must not throw despite the dangling symlink in the top-level copy's tree.
+    expect(() =>
+      (bundleWorkspacePackageWithRuntimeDependencies as (params: {
+        packageName: string;
+        srcDir: string;
+        destDir: string;
+      }) => void)({
+        packageName: '@happier-dev/agents',
+        srcDir: srcPackageDir,
+        destDir: destPackageDir,
+      }),
+    ).not.toThrow();
+
+    const vendoredSharedDepDir = resolve(destPackageDir, 'node_modules/shared-dep');
+    const vendoredNestedSharedDepDir = resolve(
+      destPackageDir,
+      'node_modules/consumer-dep/node_modules/shared-dep',
+    );
+
+    // The dangling symlink makes the two trees compare as non-equivalent (its size can't be
+    // determined), so both copies are vendored as real, independent directories rather than
+    // deduped -- conservative fallback, not a crash.
+    expect(lstatSync(vendoredSharedDepDir).isSymbolicLink()).toBe(false);
+    expect(lstatSync(vendoredNestedSharedDepDir).isSymbolicLink()).toBe(false);
+    expect(readFileSync(resolve(vendoredSharedDepDir, 'index.js'), 'utf8')).toBe('module.exports = "shared";\n');
+    expect(readFileSync(resolve(vendoredNestedSharedDepDir, 'index.js'), 'utf8')).toBe(
+      'module.exports = "shared";\n',
     );
   });
 

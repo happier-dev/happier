@@ -561,7 +561,15 @@ function collectRelativeFileSizes(rootDir: string): Map<string, number> {
         continue;
       }
       if (!entry.isFile() && !entry.isSymbolicLink()) continue;
-      const size = statSync(entryPath).size;
+      // A dangling symlink must not abort vendoring here. Record NaN as a sentinel so this entry
+      // always compares as a mismatch (NaN !== NaN) -- the pair conservatively falls through to a
+      // normal copy instead of throwing.
+      let size: number;
+      try {
+        size = statSync(entryPath).size;
+      } catch {
+        size = Number.NaN;
+      }
       result.set(relative(rootDir, entryPath), size);
     }
   }
