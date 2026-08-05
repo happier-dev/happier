@@ -12,7 +12,7 @@ if [[ -n "${HAPPIER_WITH_DAEMON+x}" ]]; then
 fi
 NO_PATH_UPDATE="${HAPPIER_NO_PATH_UPDATE:-0}"
 NONINTERACTIVE="${HAPPIER_NONINTERACTIVE:-0}"
-ACTION="${HAPPIER_INSTALLER_ACTION:-install}" # install|reinstall|version|check|uninstall|restart|rollback
+ACTION="${HAPPIER_INSTALLER_ACTION:-install}" # install|reinstall|version|check|uninstall|restart|payload-reversion
 INSTALL_VERSION="${HAPPIER_INSTALL_VERSION:-}"
 RUN_ACTION="${HAPPIER_INSTALLER_RUN_ACTION:-}"
 SETUP_RELAY_SHORTCUT="0"
@@ -787,7 +787,7 @@ sync_installer_version_pointer_atomic() {
   fi
 }
 
-restore_cli_rollback_publications() {
+restore_cli_payload_reversion_publications() {
   local install_root="$1"
   local current_version="$2"
   local previous_version="$3"
@@ -826,7 +826,7 @@ cli_default_channel_matches_selected_channel() {
   [[ "${CHANNEL}" == "stable" ]]
 }
 
-sync_cli_rollback_shim() {
+sync_cli_payload_reversion_shim() {
   local shim_name="$1"
   local managed_root="$2"
   local install_shim_path="${INSTALL_DIR}/bin/${shim_name}"
@@ -839,9 +839,9 @@ sync_cli_rollback_shim() {
   ln -sfn "${install_shim_path}" "${path_shim_path}"
 }
 
-action_rollback() {
+action_payload_reversion() {
   if [[ "${PRODUCT}" != "cli" ]]; then
-    echo "Rollback is only supported for the CLI installer." >&2
+    echo "Payload reversion is only supported for the CLI installer." >&2
     return 1
   fi
 
@@ -858,7 +858,7 @@ action_rollback() {
 
   local install_root="${INSTALL_DIR}/${managed_root}"
   if [[ ! -d "${install_root}" ]]; then
-    echo "No previous ${shim_name} version is available for rollback." >&2
+    echo "No previous ${shim_name} payload is available for reversion." >&2
     return 1
   fi
   if ! acquire_cli_payload_mutation_lock "${install_root}"; then
@@ -869,13 +869,13 @@ action_rollback() {
   local previous_version=""
   previous_version="$(read_installer_marker_file "${install_root}/previous.version" 2>/dev/null || true)"
   if [[ -z "${previous_version}" ]]; then
-    echo "No previous ${shim_name} version is available for rollback." >&2
+    echo "No previous ${shim_name} payload is available for reversion." >&2
     release_cli_payload_mutation_lock
     trap - EXIT
     return 1
   fi
   if ! is_valid_installer_version_id "${previous_version}"; then
-    echo "Rollback target marker contains an invalid version id: ${previous_version}" >&2
+    echo "Payload-reversion target marker contains an invalid version id: ${previous_version}" >&2
     release_cli_payload_mutation_lock
     trap - EXIT
     return 1
@@ -883,7 +883,7 @@ action_rollback() {
 
   local previous_dir="${install_root}/versions/${previous_version}"
   if [[ ! -x "${previous_dir}/happier" ]]; then
-    echo "Rollback target is missing or incomplete: ${previous_dir}" >&2
+    echo "Payload-reversion target is missing or incomplete: ${previous_dir}" >&2
     release_cli_payload_mutation_lock
     trap - EXIT
     return 1
@@ -903,7 +903,7 @@ action_rollback() {
   fi
   local legacy_current_backup_path=""
   if [[ -z "${current_version}" && -d "${install_root}/current" && ! -L "${install_root}/current" ]]; then
-    legacy_current_backup_path="${install_root}/.current.rollback-$$-${RANDOM}"
+    legacy_current_backup_path="${install_root}/.current.payload-reversion-$$-${RANDOM}"
   fi
 
   local mutation_failed=0
@@ -930,29 +930,29 @@ action_rollback() {
   fi
 
   if (( mutation_failed != 0 )); then
-    if ! restore_cli_rollback_publications "${install_root}" "${current_version}" "${previous_version}" "${legacy_current_backup_path}"; then
-      echo "Rollback failed and the prior pointer/marker state could not be completely restored." >&2
+    if ! restore_cli_payload_reversion_publications "${install_root}" "${current_version}" "${previous_version}" "${legacy_current_backup_path}"; then
+      echo "Payload reversion failed and the prior pointer/marker state could not be completely restored." >&2
     else
-      echo "Rollback failed; the prior pointer/marker state was restored." >&2
+      echo "Payload reversion failed; the prior pointer/marker state was restored." >&2
     fi
     release_cli_payload_mutation_lock
     trap - EXIT
     return 1
   fi
 
-  sync_cli_rollback_shim "${shim_name}" "${managed_root}" || mutation_failed=1
+  sync_cli_payload_reversion_shim "${shim_name}" "${managed_root}" || mutation_failed=1
   if [[ "${shim_name}" != "happier" ]] && cli_default_channel_matches_selected_channel; then
-    sync_cli_rollback_shim "happier" "${managed_root}" || mutation_failed=1
+    sync_cli_payload_reversion_shim "happier" "${managed_root}" || mutation_failed=1
   fi
   if (( mutation_failed != 0 )); then
-    restore_cli_rollback_publications "${install_root}" "${current_version}" "${previous_version}" "${legacy_current_backup_path}" || true
-    sync_cli_rollback_shim "${shim_name}" "${managed_root}" || true
+    restore_cli_payload_reversion_publications "${install_root}" "${current_version}" "${previous_version}" "${legacy_current_backup_path}" || true
+    sync_cli_payload_reversion_shim "${shim_name}" "${managed_root}" || true
     if [[ "${shim_name}" != "happier" ]] && cli_default_channel_matches_selected_channel; then
-      sync_cli_rollback_shim "happier" "${managed_root}" || true
+      sync_cli_payload_reversion_shim "happier" "${managed_root}" || true
     fi
     release_cli_payload_mutation_lock
     trap - EXIT
-    echo "Rollback failed while publishing CLI shims; the prior payload state was restored." >&2
+    echo "Payload reversion failed while publishing CLI shims; the prior payload state was restored." >&2
     return 1
   fi
 
@@ -961,7 +961,7 @@ action_rollback() {
   fi
   release_cli_payload_mutation_lock
   trap - EXIT
-  success "Rolled back ${shim_name} from ${current_version:-current} to ${previous_version}."
+  success "Selected previous ${shim_name} payload ${previous_version} for pre-activation release QA."
   say "Tip: if your shell still can't find changes, run:"
   shell_command_cache_hint
   return 0
@@ -1698,7 +1698,6 @@ Options:
   --without-daemon
   --check
   --version [version]
-  --rollback
   --reinstall
   --restart
   --uninstall [--purge]
@@ -1796,10 +1795,6 @@ while [[ $# -gt 0 ]]; do
       ACTION="install"
       shift 1
       ;;
-    --rollback)
-      ACTION="rollback"
-      shift 1
-      ;;
     --reinstall)
       ACTION="install"
       shift 1
@@ -1846,6 +1841,18 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+case "${ACTION}" in
+  reinstall)
+    ACTION="install"
+    ;;
+  install|version|check|restart|uninstall|payload-reversion)
+    ;;
+  *)
+    echo "Unsupported HAPPIER_INSTALLER_ACTION '${ACTION}' for install.sh. Expected install, reinstall, version, check, restart, uninstall, or payload-reversion." >&2
+    exit 1
+    ;;
+esac
 
 CHANNEL="$(normalize_channel "${CHANNEL}")"
 
@@ -2051,8 +2058,8 @@ if [[ "${ACTION}" == "uninstall" ]]; then
   action_uninstall
   exit $?
 fi
-if [[ "${ACTION}" == "rollback" ]]; then
-  action_rollback
+if [[ "${ACTION}" == "payload-reversion" ]]; then
+  action_payload_reversion
   exit $?
 fi
 
@@ -2062,7 +2069,7 @@ if [[ -n "${RUN_ACTION}" ]]; then
     exit 1
   fi
   if [[ "${ACTION}" != "install" ]]; then
-    echo "--run cannot be combined with installer actions like --check/--version/--rollback/--uninstall." >&2
+    echo "--run cannot be combined with installer actions like --check/--version/--uninstall." >&2
     exit 1
   fi
   INSTALLED_CLI_BIN="$(resolve_installed_cli_invoker_for_channel "${CHANNEL}" 2>/dev/null || true)"

@@ -2,7 +2,6 @@ param(
   [string] $Channel = $(if ($env:HAPPIER_CHANNEL) { $env:HAPPIER_CHANNEL } else { "stable" }),
   [string] $Version = $(if ($env:HAPPIER_INSTALL_VERSION) { $env:HAPPIER_INSTALL_VERSION } else { "" }),
   [switch] $SetupRelay,
-  [switch] $Rollback,
   [switch] $WithDaemon,
   [switch] $WithoutDaemon,
   [string] $Run = $(if ($env:HAPPIER_INSTALLER_RUN_ACTION) { $env:HAPPIER_INSTALLER_RUN_ACTION } else { "" }),
@@ -21,14 +20,11 @@ if ($env:HAPPIER_INSTALLER_SETUP_RELAY -and $env:HAPPIER_INSTALLER_SETUP_RELAY -
 }
 
 $InstallerAction = if ($env:HAPPIER_INSTALLER_ACTION) { ([string]$env:HAPPIER_INSTALLER_ACTION).Trim().ToLowerInvariant() } else { "install" }
-if ($Rollback.IsPresent) {
-  $InstallerAction = "rollback"
-}
 if ($InstallerAction -eq "reinstall") {
   $InstallerAction = "install"
 }
-if ($InstallerAction -ne "install" -and $InstallerAction -ne "rollback") {
-  throw "Unsupported HAPPIER_INSTALLER_ACTION '$InstallerAction' for install.ps1. Expected install or rollback."
+if ($InstallerAction -ne "install" -and $InstallerAction -ne "payload-reversion") {
+  throw "Unsupported HAPPIER_INSTALLER_ACTION '$InstallerAction' for install.ps1. Expected install or payload-reversion."
 }
 if ($Version -and $Version -notmatch '^[A-Za-z0-9][A-Za-z0-9._+-]*$') {
   throw "Invalid install version '$Version'. Expected a release version such as 0.2.1."
@@ -294,7 +290,7 @@ function Set-InstallerDirectoryPointer {
   }
 }
 
-function Restore-InstallerCliRollbackPublications {
+function Restore-InstallerCliPayloadReversionPublications {
   param (
     [Parameter(Mandatory = $true)] [string] $InstallRoot,
     [Parameter(Mandatory = $false)] [string] $CurrentVersion,
@@ -356,7 +352,7 @@ function Test-InstallerDefaultChannelMatchesSelectedChannel {
   return $Channel -eq "stable"
 }
 
-function Sync-InstallerCliRollbackShim {
+function Sync-InstallerCliPayloadReversionShim {
   param (
     [Parameter(Mandatory = $true)] [string] $ShimName,
     [Parameter(Mandatory = $true)] [string] $BinaryPath
@@ -372,26 +368,26 @@ function Sync-InstallerCliRollbackShim {
   }
 }
 
-function Invoke-InstallerCliRollback {
+function Invoke-InstallerCliPayloadReversion {
   $managedRoot = Resolve-CliInstallRootName
   $installRoot = Join-Path $InstallDir $managedRoot
   if (-not (Test-Path $installRoot -PathType Container)) {
-    throw "No previous $(Resolve-CliShimName) version is available for rollback."
+    throw "No previous $(Resolve-CliShimName) payload is available for reversion."
   }
   $mutationLockPath = Enter-InstallerPayloadMutationLock -InstallRoot $installRoot
   try {
     $previousVersion = Read-InstallerMarkerFile -Path (Join-Path $installRoot "previous.version")
     if (-not $previousVersion) {
-      throw "No previous $(Resolve-CliShimName) version is available for rollback."
+      throw "No previous $(Resolve-CliShimName) payload is available for reversion."
     }
     if (-not (Test-InstallerVersionId -Value $previousVersion)) {
-      throw "FIRST_PARTY_VERSION_ID_INVALID: rollback target marker contains an invalid version id '$previousVersion'."
+      throw "FIRST_PARTY_VERSION_ID_INVALID: payload-reversion target marker contains an invalid version id '$previousVersion'."
     }
 
     $previousDir = Join-Path (Join-Path $installRoot "versions") $previousVersion
     $previousBinary = Join-Path $previousDir "happier.exe"
     if (-not (Test-Path $previousBinary -PathType Leaf)) {
-      throw "Rollback target is missing or incomplete: $previousDir"
+      throw "Payload-reversion target is missing or incomplete: $previousDir"
     }
 
     $currentVersion = Read-InstallerMarkerFile -Path (Join-Path $installRoot "current.version")
@@ -401,7 +397,7 @@ function Invoke-InstallerCliRollback {
     $legacyCurrentBackupPath = ""
     $currentPointerPath = Join-Path $installRoot "current"
     if (-not $currentVersion -and (Test-Path $currentPointerPath -PathType Container)) {
-      $legacyCurrentBackupPath = Join-Path $installRoot (".current.rollback-$PID-" + [System.Guid]::NewGuid().ToString("N"))
+      $legacyCurrentBackupPath = Join-Path $installRoot (".current.payload-reversion-$PID-" + [System.Guid]::NewGuid().ToString("N"))
     }
     $shimName = Resolve-CliShimName
     $syncDefaultShim = $shimName -ne "happier" -and (Test-InstallerDefaultChannelMatchesSelectedChannel)
@@ -429,9 +425,9 @@ function Invoke-InstallerCliRollback {
         Remove-Item -Path (Join-Path $installRoot "previous.version") -Force -ErrorAction SilentlyContinue
       }
 
-      Sync-InstallerCliRollbackShim -ShimName $shimName -BinaryPath $previousBinary
+      Sync-InstallerCliPayloadReversionShim -ShimName $shimName -BinaryPath $previousBinary
       if ($syncDefaultShim) {
-        Sync-InstallerCliRollbackShim -ShimName "happier" -BinaryPath $previousBinary
+        Sync-InstallerCliPayloadReversionShim -ShimName "happier" -BinaryPath $previousBinary
       }
 
       if ($legacyCurrentBackupPath) {
@@ -442,7 +438,7 @@ function Invoke-InstallerCliRollback {
       $mutationError = $_
       $restorationErrors = New-Object System.Collections.Generic.List[string]
       try {
-        Restore-InstallerCliRollbackPublications `
+        Restore-InstallerCliPayloadReversionPublications `
           -InstallRoot $installRoot `
           -CurrentVersion $currentVersion `
           -PreviousVersion $previousVersion `
@@ -461,9 +457,9 @@ function Invoke-InstallerCliRollback {
           $restoredBinaryPath = Join-Path (Join-Path $installRoot "current") "happier.exe"
         }
         if ($restoredBinaryPath -and (Test-Path $restoredBinaryPath -PathType Leaf)) {
-          Sync-InstallerCliRollbackShim -ShimName $shimName -BinaryPath $restoredBinaryPath
+          Sync-InstallerCliPayloadReversionShim -ShimName $shimName -BinaryPath $restoredBinaryPath
           if ($syncDefaultShim) {
-            Sync-InstallerCliRollbackShim -ShimName "happier" -BinaryPath $restoredBinaryPath
+            Sync-InstallerCliPayloadReversionShim -ShimName "happier" -BinaryPath $restoredBinaryPath
           }
         }
         else {
@@ -478,12 +474,12 @@ function Invoke-InstallerCliRollback {
       }
 
       if ($restorationErrors.Count -gt 0) {
-        throw "Rollback failed ($($mutationError.Exception.Message)) and the prior state could not be completely restored ($($restorationErrors -join '; '))."
+        throw "Payload reversion failed ($($mutationError.Exception.Message)) and the prior state could not be completely restored ($($restorationErrors -join '; '))."
       }
       throw $mutationError
     }
 
-    Write-Host "Rolled back $shimName from $(if ($currentVersion) { $currentVersion } else { 'current' }) to $previousVersion."
+    Write-Host "Selected previous $shimName payload $previousVersion for pre-activation release QA."
   }
   finally {
     Exit-InstallerPayloadMutationLock -LockPath $mutationLockPath
@@ -1327,8 +1323,8 @@ function Invoke-PostInstallAction {
   Invoke-InstallerCommandWithDaemonServiceContext -CliPath $CliPath -CommandArgs $argsToPass -HomeDir $DaemonServiceStateHomeDir
 }
 
-if ($InstallerAction -eq "rollback") {
-  Invoke-InstallerCliRollback
+if ($InstallerAction -eq "payload-reversion") {
+  Invoke-InstallerCliPayloadReversion
   exit 0
 }
 
