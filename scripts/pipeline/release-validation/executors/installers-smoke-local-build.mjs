@@ -5,6 +5,7 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { delimiter, dirname, join, resolve } from 'node:path';
 import {
+  capturePackedAuthorCandidateArtifacts,
   loadPackedAuthorCandidateManifest,
 } from '../../../../packages/tests/scripts/plugin-platform/run-packed-author-ui-compat.mjs';
 
@@ -101,49 +102,86 @@ export async function prepareInstallersSmokeCandidateAssets({
   repoRoot,
   platform,
   candidateManifestPath,
-}) {
-  const signing = await prepareReleaseValidationMinisignEnv({ repoRoot });
+}, {
+  loadCandidateImpl = async (manifestPath) => await loadPackedAuthorCandidateManifest(
+    ['--candidate', manifestPath],
+    { cwd: repoRoot },
+  ),
+  captureCandidateImpl = capturePackedAuthorCandidateArtifacts,
+  prepareMinisignEnvImpl = prepareReleaseValidationMinisignEnv,
+  readFileImpl = readFile,
+  removeCapturedRootImpl = async (root) => await rm(root, { recursive: true, force: true }),
+} = {}) {
+  let captured = null;
+  let signing = null;
   try {
     const manifestPath = resolve(repoRoot, candidateManifestPath);
-    const candidate = await loadPackedAuthorCandidateManifest(
-      ['--candidate', manifestPath],
-      { cwd: repoRoot },
-    );
-    if (!candidate.standaloneCli?.signature) {
+    const sourceCandidate = await loadCandidateImpl(manifestPath);
+    if (!sourceCandidate.standaloneCli?.signature) {
       throw new Error('installers-smoke exact candidate requires a bound minisign signature');
     }
     const targetOs = platform === 'win32' ? 'windows' : platform;
+    const sourceTarget = sourceCandidate.standaloneCli.archives.find(
+      (artifact) => artifact.os === targetOs && artifact.arch === process.arch,
+    );
+    if (!sourceTarget) {
+      throw new Error(
+        `installers-smoke candidate does not contain native target ${targetOs}-${process.arch}`,
+      );
+    }
+    const installerField = platform === 'win32' ? 'powershell' : 'shell';
+    captured = await captureCandidateImpl(sourceCandidate, {
+      manifestPath,
+      destinationParent: tmpdir(),
+      selection: {
+        installers: [installerField, 'publicKey'],
+        standaloneCli: {
+          archiveTargets: [`${targetOs}-${process.arch}`],
+          checksums: true,
+          signature: true,
+        },
+      },
+      rmImpl: removeCapturedRootImpl,
+    });
+    const candidate = captured.candidate;
     const target = candidate.standaloneCli.archives.find(
       (artifact) => artifact.os === targetOs && artifact.arch === process.arch,
     );
     if (!target) {
       throw new Error(
-        `installers-smoke candidate does not contain native target ${targetOs}-${process.arch}`,
+        `installers-smoke private candidate does not contain native target ${targetOs}-${process.arch}`,
       );
     }
     const assetsDir = dirname(target.archivePath);
     const boundAssetPaths = [
-      ...candidate.standaloneCli.archives.map((artifact) => artifact.archivePath),
+      target.archivePath,
       candidate.standaloneCli.checksums.filePath,
       candidate.standaloneCli.signature.filePath,
     ];
     if (boundAssetPaths.some((artifactPath) => dirname(artifactPath) !== assetsDir)) {
       throw new Error('installers-smoke candidate native matrix must share one assets directory');
     }
+    signing = await prepareMinisignEnvImpl({ repoRoot });
     return {
       assetsDir,
       installVersion: candidate.cli.version,
-      installerPath: platform === 'win32'
-        ? candidate.installers.powershell.filePath
-        : candidate.installers.shell.filePath,
-      publicKey: await readFile(candidate.installers.publicKey.filePath, 'utf8'),
+      installerPath: candidate.installers[installerField].filePath,
+      publicKey: await readFileImpl(candidate.installers.publicKey.filePath, 'utf8'),
       envPathEntries: signing.keyPathEntries,
       async cleanup() {
-        await signing.cleanup();
+        try {
+          await signing.cleanup();
+        } finally {
+          await captured.cleanup();
+        }
       },
     };
   } catch (error) {
-    await signing.cleanup();
+    try {
+      if (signing) await signing.cleanup();
+    } finally {
+      if (captured) await captured.cleanup();
+    }
     throw error;
   }
 }

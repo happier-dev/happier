@@ -83,13 +83,26 @@ export function resolveInstallersSmokePlan({ platform, source, releaseChannel })
 }
 
 /**
- * @param {{ platform: 'linux' | 'darwin' | 'win32'; source: { kind: string; ref: string } | null; releaseChannel?: string }} params
+ * @param {{
+ *   platform: 'linux' | 'darwin' | 'win32';
+ *   source: { kind: string; ref: string } | null;
+ *   update?: {
+ *     from: { kind: string; ref: string };
+ *     to: { kind: string; ref: string };
+ *   } | null;
+ *   releaseChannel?: string;
+ *   payloadPublicationAdmission?: {
+ *     status?: string;
+ *     exactPayloadReversionAllowed?: boolean;
+ *   };
+ * }} params
  */
 export function resolveInstallersSmokeExecution({
   platform,
   source,
   update = null,
   releaseChannel,
+  payloadPublicationAdmission,
 }) {
   return {
     type: 'installers-smoke',
@@ -98,6 +111,7 @@ export function resolveInstallersSmokeExecution({
           platform,
           update,
           releaseChannel,
+          payloadPublicationAdmission,
         })
       : resolveInstallersSmokePlan({ platform, source, releaseChannel }),
   };
@@ -130,8 +144,8 @@ export function resolveInstallersSmokeUpdateLifecycleSteps({ platform }) {
     'predecessor-version',
     'candidate-update',
     'candidate-version',
-    'rollback',
-    'rollback-version',
+    'previous-payload-reversion',
+    'previous-payload-version',
     'candidate-reinstall',
     'candidate-version',
   ];
@@ -148,13 +162,27 @@ export function resolveInstallersSmokeUpdateLifecycleSteps({ platform }) {
  *     to: { kind: string; ref: string };
  *   };
  *   releaseChannel?: string;
+ *   payloadPublicationAdmission?: {
+ *     status?: string;
+ *     exactPayloadReversionAllowed?: boolean;
+ *   };
  * }} params
  */
 export function resolveInstallersSmokeUpdatePlan({
   platform,
   update,
   releaseChannel,
+  payloadPublicationAdmission,
 }) {
+  if (
+    payloadPublicationAdmission?.status !== 'pre-activation'
+    || payloadPublicationAdmission?.exactPayloadReversionAllowed !== true
+  ) {
+    throw new Error(
+      'installers-smoke may schedule pre-activation exact-payload reversion only; ' +
+      'old-server, old-daemon, and loaded-runtime rollback are never scheduled',
+    );
+  }
   const predecessorChannel = update?.from?.kind === 'published-channel'
     ? normalizePublicReleaseChannel(update.from.ref)
     : null;
@@ -164,11 +192,11 @@ export function resolveInstallersSmokeUpdatePlan({
     || update?.to?.kind !== 'local-build'
   ) {
     throw new Error(
-      'installers-smoke update rollback requires a published-channel dev predecessor and exact local candidate',
+      'installers-smoke update payload reversion requires a published-channel dev predecessor and exact local candidate',
     );
   }
   return {
-    mode: 'update-rollback',
+    mode: 'update-payload-reversion',
     from: resolveInstallersSmokePlan({
       platform,
       source: { ...update.from, ref: predecessorChannel },
@@ -190,6 +218,12 @@ export function resolveInstallersSmokeUpdatePlan({
  * }} params
  */
 export function resolveInstallersSmokeStepEnv({ baseEnv, platform, step }) {
+  if (step === 'previous-payload-reversion') {
+    return {
+      ...baseEnv,
+      HAPPIER_INSTALLER_ACTION: 'payload-reversion',
+    };
+  }
   if (
     platform === 'win32'
     && (step === 'reinstall' || step === 'candidate-reinstall')
@@ -344,11 +378,17 @@ export async function runInstallersSmokeValidation({
   source,
   update = null,
   releaseChannel,
+  payloadPublicationAdmission,
 }) {
   assertNativePlatform(platform);
 
   const updatePlan = update
-    ? resolveInstallersSmokeUpdatePlan({ platform, update, releaseChannel })
+    ? resolveInstallersSmokeUpdatePlan({
+        platform,
+        update,
+        releaseChannel,
+        payloadPublicationAdmission,
+      })
     : null;
   const plan = updatePlan?.to
     ?? resolveInstallersSmokePlan({ platform, source, releaseChannel });
@@ -381,13 +421,15 @@ export async function runInstallersSmokeValidation({
   const installDir = join(scratch, '.happier');
   const requestedBinDir = join(scratch, '.local', 'bin');
   const candidateSource = update?.to ?? source;
-  const localBuildAssets = candidateSource?.kind === 'local-build'
-    ? await prepareInstallersSmokeCandidateAssets({
-        repoRoot,
-        platform,
-        candidateManifestPath: candidateSource.ref,
-      })
-    : null;
+  let localBuildAssets = null;
+  try {
+    localBuildAssets = candidateSource?.kind === 'local-build'
+      ? await prepareInstallersSmokeCandidateAssets({
+          repoRoot,
+          platform,
+          candidateManifestPath: candidateSource.ref,
+        })
+      : null;
   const installerSourcePath = localBuildAssets?.installerPath
     ?? resolve(repoRoot, 'apps', 'website', 'public', plan.installer);
   const installerScratchPath = join(scratch, `candidate-${plan.installer}`);
@@ -477,7 +519,6 @@ export async function runInstallersSmokeValidation({
     binaryName: plan.binaryName,
   });
 
-  try {
     if (updatePlan) {
       if (!predecessorInstallerScratchPath || !predecessorEnv) {
         throw new Error('installers-smoke update predecessor was not prepared');
@@ -526,14 +567,21 @@ export async function runInstallersSmokeValidation({
       }
       runInstaller(
         installerScratchPath,
-        platform === 'win32' ? ['-Rollback'] : ['--rollback'],
-        stepTimeout('rollback', 'local-build'),
+        [],
+        stepTimeout('previous-payload-reversion', 'local-build'),
+        resolveInstallersSmokeStepEnv({
+          baseEnv: env,
+          platform,
+          step: 'previous-payload-reversion',
+        }),
+      );
+      const previousPayloadVersionOutput = readInstalledVersion(
+        'previous-payload-version',
         env,
       );
-      const rollbackVersionOutput = readInstalledVersion('rollback-version', env);
-      if (rollbackVersionOutput !== predecessorVersionOutput) {
+      if (previousPayloadVersionOutput !== predecessorVersionOutput) {
         throw new Error(
-          'installers-smoke rollback did not restore the exact predecessor version',
+          'installers-smoke payload reversion did not select the exact predecessor payload',
         );
       }
       runInstaller(
@@ -572,7 +620,7 @@ export async function runInstallersSmokeValidation({
       const result = {
         ok: true,
         skipped: false,
-        mode: 'update-rollback',
+        mode: 'update-payload-reversion',
         predecessorTag: predecessorPlan?.tag ?? null,
         candidateManifestPath: plan.candidateManifestPath,
         binaryPath,
@@ -580,7 +628,7 @@ export async function runInstallersSmokeValidation({
         versionEvidence: {
           predecessor: predecessorVersionOutput,
           candidate: candidateVersionOutput,
-          rollback: rollbackVersionOutput,
+          previousPayload: previousPayloadVersionOutput,
           reinstalledCandidate: reinstalledCandidateVersionOutput,
         },
       };

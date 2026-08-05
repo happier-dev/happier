@@ -191,7 +191,7 @@ test('installers-smoke lifecycle steps include reinstall/check/uninstall where s
   ]);
 });
 
-test('installers-smoke plans a real released-dev predecessor to exact candidate update and rollback', () => {
+test('installers-smoke plans pre-activation exact previous-payload reversion only', () => {
   assert.deepEqual(resolveInstallersSmokeUpdatePlan({
     platform: 'darwin',
     update: {
@@ -199,8 +199,14 @@ test('installers-smoke plans a real released-dev predecessor to exact candidate 
       to: { kind: 'local-build', ref: '/candidate/candidate.json' },
     },
     releaseChannel: 'dev',
+    payloadPublicationAdmission: {
+      status: 'pre-activation',
+      exactPayloadReversionAllowed: true,
+      oldServerRollbackAllowed: false,
+      oldDaemonRollbackAllowed: false,
+    },
   }), {
-    mode: 'update-rollback',
+    mode: 'update-payload-reversion',
     from: {
       platform: 'darwin',
       tag: 'cli-dev',
@@ -233,8 +239,8 @@ test('installers-smoke plans a real released-dev predecessor to exact candidate 
       'predecessor-version',
       'candidate-update',
       'candidate-version',
-      'rollback',
-      'rollback-version',
+      'previous-payload-reversion',
+      'previous-payload-version',
       'candidate-reinstall',
       'candidate-version',
       'check',
@@ -248,8 +254,8 @@ test('installers-smoke plans a real released-dev predecessor to exact candidate 
       'predecessor-version',
       'candidate-update',
       'candidate-version',
-      'rollback',
-      'rollback-version',
+      'previous-payload-reversion',
+      'previous-payload-version',
       'candidate-reinstall',
       'candidate-version',
     ],
@@ -262,12 +268,46 @@ test('installers-smoke plans a real released-dev predecessor to exact candidate 
         to: { kind: 'local-build', ref: '/candidate/candidate.json' },
       },
       releaseChannel: 'dev',
+      payloadPublicationAdmission: {
+        status: 'pre-activation',
+        exactPayloadReversionAllowed: true,
+        oldServerRollbackAllowed: false,
+        oldDaemonRollbackAllowed: false,
+      },
     }),
     /published-channel dev predecessor/u,
   );
+  assert.throws(
+    () => resolveInstallersSmokeUpdatePlan({
+      platform: 'linux',
+      update: {
+        from: { kind: 'published-channel', ref: 'dev' },
+        to: { kind: 'local-build', ref: '/candidate/candidate.json' },
+      },
+      releaseChannel: 'dev',
+      payloadPublicationAdmission: {
+        status: 'post-activation-compatible',
+        exactPayloadReversionAllowed: false,
+        oldServerRollbackAllowed: false,
+        oldDaemonRollbackAllowed: false,
+      },
+    }),
+    /pre-activation exact-payload reversion/i,
+  );
+  assert.throws(
+    () => resolveInstallersSmokeUpdatePlan({
+      platform: 'linux',
+      update: {
+        from: { kind: 'published-channel', ref: 'dev' },
+        to: { kind: 'local-build', ref: '/candidate/candidate.json' },
+      },
+      releaseChannel: 'dev',
+    }),
+    /pre-activation exact-payload reversion/i,
+  );
 });
 
-test('installers-smoke forwards the Windows reinstall action through the executed step environment', () => {
+test('installers-smoke forwards only internal installer actions through the executed step environment', () => {
   const baseEnv = { PATH: 'C:\\Windows\\System32' };
   assert.deepEqual(
     resolveInstallersSmokeStepEnv({
@@ -288,6 +328,19 @@ test('installers-smoke forwards the Windows reinstall action through the execute
     }),
     baseEnv,
   );
+  for (const platform of ['linux', 'darwin', 'win32']) {
+    assert.deepEqual(
+      resolveInstallersSmokeStepEnv({
+        baseEnv,
+        platform,
+        step: 'previous-payload-reversion',
+      }),
+      {
+        PATH: 'C:\\Windows\\System32',
+        HAPPIER_INSTALLER_ACTION: 'payload-reversion',
+      },
+    );
+  }
 });
 
 test('installers-smoke predecessor inherits the isolated home/PATH fences but not candidate assets', () => {

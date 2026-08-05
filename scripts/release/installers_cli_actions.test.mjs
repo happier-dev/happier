@@ -266,7 +266,56 @@ test('install.sh --uninstall does not deadlock when the managed install root is 
   await rm(root, { recursive: true, force: true });
 });
 
-test('install.sh --rollback restores the previous CLI version without network or current binary execution', async () => {
+test('install.sh rejects the undeployed public --rollback product surface', async () => {
+  const installerPath = join(repoRoot, 'scripts', 'release', 'installers', 'install.sh');
+  const res = spawnSync('bash', [installerPath, '--rollback'], {
+    env: {
+      ...process.env,
+      HAPPIER_NONINTERACTIVE: '1',
+      HAPPIER_WITH_DAEMON: '0',
+    },
+    encoding: 'utf8',
+    timeout: 2_000,
+  });
+
+  assert.notEqual(res.status, 0);
+  assert.match(String(res.stderr ?? ''), /unknown argument.+--rollback/i);
+});
+
+test('install.sh rejects the retired internal rollback action instead of falling through to install', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'happier-installer-cli-retired-rollback-'));
+  const homeDir = join(root, 'home');
+  const installDir = join(root, 'install');
+  const outBinDir = join(root, 'out-bin');
+  await mkdir(homeDir, { recursive: true });
+  await mkdir(installDir, { recursive: true });
+  await mkdir(outBinDir, { recursive: true });
+
+  const installerPath = join(repoRoot, 'scripts', 'release', 'installers', 'install.sh');
+  const res = spawnSync('bash', [installerPath], {
+    env: {
+      ...process.env,
+      HOME: homeDir,
+      HAPPIER_INSTALL_DIR: installDir,
+      HAPPIER_BIN_DIR: outBinDir,
+      HAPPIER_INSTALLER_ACTION: 'rollback',
+      HAPPIER_NONINTERACTIVE: '1',
+      HAPPIER_WITH_DAEMON: '0',
+    },
+    encoding: 'utf8',
+    timeout: 2_000,
+  });
+
+  assert.notEqual(res.status, 0);
+  assert.match(
+    String(res.stderr ?? ''),
+    /unsupported HAPPIER_INSTALLER_ACTION.+rollback.+payload-reversion/i,
+  );
+
+  await rm(root, { recursive: true, force: true });
+});
+
+test('install.sh internal payload-reversion action selects the previous CLI payload without network or current binary execution', async () => {
   const root = await mkdtemp(join(tmpdir(), 'happier-installer-cli-rollback-'));
   const homeDir = join(root, 'home');
   const binDir = join(root, 'bin');
@@ -282,10 +331,16 @@ test('install.sh --rollback restores the previous CLI version without network or
   await mkdir(join(installDir, 'bin'), { recursive: true });
   await mkdir(join(cliRoot, 'versions', currentVersion), { recursive: true });
   await mkdir(join(cliRoot, 'versions', previousVersion), { recursive: true });
+  await mkdir(join(cliRoot, 'versions', currentVersion, 'tools', 'unpacked'), {
+    recursive: true,
+  });
+  await mkdir(join(cliRoot, 'versions', previousVersion, 'tools', 'unpacked'), {
+    recursive: true,
+  });
   await mkdir(outBinDir, { recursive: true });
 
   const curlStubPath = join(binDir, 'curl');
-  await writeFile(curlStubPath, '#!/usr/bin/env bash\necho "curl should not run in --rollback" >&2\nexit 88\n', 'utf8');
+  await writeFile(curlStubPath, '#!/usr/bin/env bash\necho "curl should not run in payload reversion" >&2\nexit 88\n', 'utf8');
   await chmod(curlStubPath, 0o755);
 
   await writeFile(
@@ -311,6 +366,30 @@ exit 0
     'utf8',
   );
   await chmod(join(cliRoot, 'versions', previousVersion, 'happier'), 0o755);
+  for (const version of [currentVersion, previousVersion]) {
+    const unpacked = join(
+      cliRoot,
+      'versions',
+      version,
+      'tools',
+      'unpacked',
+    );
+    await writeFile(
+      join(unpacked, 'happier-cliproxyapi-managed'),
+      `wrapper-${version}\n`,
+      'utf8',
+    );
+    await writeFile(
+      join(unpacked, 'CLIProxyAPI-LICENSE'),
+      `license-${version}\n`,
+      'utf8',
+    );
+    await writeFile(
+      join(unpacked, 'CLIProxyAPI-THIRD-PARTY-NOTICES'),
+      `notices-${version}\n`,
+      'utf8',
+    );
+  }
 
   await symlink(`versions/${currentVersion}`, join(cliRoot, 'current'));
   await symlink(`versions/${previousVersion}`, join(cliRoot, 'previous'));
@@ -328,15 +407,16 @@ exit 0
     HAPPIER_INSTALL_DIR: installDir,
     HAPPIER_BIN_DIR: outBinDir,
     HAPPIER_NONINTERACTIVE: '1',
+    HAPPIER_INSTALLER_ACTION: 'payload-reversion',
   };
 
-  const res = spawnSync('bash', [installerPath, '--rollback'], { env, encoding: 'utf8' });
+  const res = spawnSync('bash', [installerPath], { env, encoding: 'utf8' });
   const stdout = String(res.stdout ?? '');
   const stderr = String(res.stderr ?? '');
-  assert.equal(res.status, 0, `rollback failed:\n--- stdout ---\n${stdout}\n--- stderr ---\n${stderr}\n`);
+  assert.equal(res.status, 0, `payload reversion failed:\n--- stdout ---\n${stdout}\n--- stderr ---\n${stderr}\n`);
 
   const versionRes = spawnSync(join(outBinDir, 'happier'), ['--version'], { env, encoding: 'utf8' });
-  assert.equal(versionRes.status, 0, `rolled-back shim failed: ${String(versionRes.stderr ?? '')}`);
+  assert.equal(versionRes.status, 0, `reverted-payload shim failed: ${String(versionRes.stderr ?? '')}`);
   assert.match(String(versionRes.stdout ?? ''), new RegExp(previousVersion.replaceAll('.', '[.]')));
 
   const currentLink = spawnSync('readlink', [join(cliRoot, 'current')], { encoding: 'utf8' });
@@ -344,12 +424,31 @@ exit 0
   assert.match(String(currentLink.stdout ?? ''), /versions\/1\.2\.3/);
   assert.equal((await readFile(join(cliRoot, 'current.version'), 'utf8')).trim(), previousVersion);
   assert.equal((await readFile(join(cliRoot, 'previous.version'), 'utf8')).trim(), currentVersion);
+  const selectedPayloadRoot = join(cliRoot, 'current', 'tools', 'unpacked');
+  assert.equal(
+    await readFile(
+      join(selectedPayloadRoot, 'happier-cliproxyapi-managed'),
+      'utf8',
+    ),
+    `wrapper-${previousVersion}\n`,
+  );
+  assert.equal(
+    await readFile(join(selectedPayloadRoot, 'CLIProxyAPI-LICENSE'), 'utf8'),
+    `license-${previousVersion}\n`,
+  );
+  assert.equal(
+    await readFile(
+      join(selectedPayloadRoot, 'CLIProxyAPI-THIRD-PARTY-NOTICES'),
+      'utf8',
+    ),
+    `notices-${previousVersion}\n`,
+  );
   assert.equal(await readFile(tracePath, 'utf8').catch(() => ''), '', 'expected rollback to avoid invoking the broken current binary');
 
   await rm(root, { recursive: true, force: true });
 });
 
-test('install.sh --rollback restores the original pointers and markers when publication fails', async () => {
+test('install.sh internal payload-reversion action restores the original pointers and markers when publication fails', async () => {
   const root = await mkdtemp(join(tmpdir(), 'happier-installer-cli-rollback-failure-'));
   const homeDir = join(root, 'home');
   const binDir = join(root, 'bin');
@@ -408,9 +507,10 @@ exec /bin/ln "$@"
     HAPPIER_INSTALL_DIR: installDir,
     HAPPIER_BIN_DIR: outBinDir,
     HAPPIER_NONINTERACTIVE: '1',
+    HAPPIER_INSTALLER_ACTION: 'payload-reversion',
   };
 
-  const res = spawnSync('bash', [installerPath, '--rollback'], { env, encoding: 'utf8' });
+  const res = spawnSync('bash', [installerPath], { env, encoding: 'utf8' });
   assert.notEqual(res.status, 0, 'expected injected previous-pointer publication failure');
   assert.equal((await readFile(join(cliRoot, 'current.version'), 'utf8')).trim(), currentVersion);
   assert.equal((await readFile(join(cliRoot, 'previous.version'), 'utf8')).trim(), previousVersion);
@@ -426,7 +526,7 @@ exec /bin/ln "$@"
   await rm(root, { recursive: true, force: true });
 });
 
-test('install.sh --rollback replaces a legacy physical current payload without leaving divergent previous state', async () => {
+test('install.sh internal payload-reversion action replaces a legacy physical current payload without leaving divergent previous state', async () => {
   const root = await mkdtemp(join(tmpdir(), 'happier-installer-cli-rollback-legacy-'));
   const homeDir = join(root, 'home');
   const binDir = join(root, 'bin');
@@ -459,9 +559,10 @@ test('install.sh --rollback replaces a legacy physical current payload without l
     HAPPIER_INSTALL_DIR: installDir,
     HAPPIER_BIN_DIR: outBinDir,
     HAPPIER_NONINTERACTIVE: '1',
+    HAPPIER_INSTALLER_ACTION: 'payload-reversion',
   };
 
-  const res = spawnSync('bash', [installerPath, '--rollback'], { env, encoding: 'utf8' });
+  const res = spawnSync('bash', [installerPath], { env, encoding: 'utf8' });
   assert.equal(res.status, 0, `legacy rollback failed:\n${String(res.stdout ?? '')}\n${String(res.stderr ?? '')}`);
   assert.equal(
     String(spawnSync('readlink', [join(cliRoot, 'current')], { encoding: 'utf8' }).stdout ?? '').trim(),
@@ -477,7 +578,7 @@ test('install.sh --rollback replaces a legacy physical current payload without l
   await rm(root, { recursive: true, force: true });
 });
 
-test('install.sh --rollback waits for the shared first-party payload mutation lock before reading markers', async () => {
+test('install.sh internal payload-reversion action waits for the shared first-party payload mutation lock before reading markers', async () => {
   const root = await mkdtemp(join(tmpdir(), 'happier-installer-cli-rollback-lock-'));
   const homeDir = join(root, 'home');
   const binDir = join(root, 'bin');
@@ -516,8 +617,9 @@ test('install.sh --rollback waits for the shared first-party payload mutation lo
     HAPPIER_INSTALL_DIR: installDir,
     HAPPIER_BIN_DIR: outBinDir,
     HAPPIER_NONINTERACTIVE: '1',
+    HAPPIER_INSTALLER_ACTION: 'payload-reversion',
   };
-  const child = spawn('bash', [installerPath, '--rollback'], { env, stdio: ['ignore', 'pipe', 'pipe'] });
+  const child = spawn('bash', [installerPath], { env, stdio: ['ignore', 'pipe', 'pipe'] });
   const stdout = [];
   const stderr = [];
   child.stdout.on('data', (chunk) => stdout.push(String(chunk)));

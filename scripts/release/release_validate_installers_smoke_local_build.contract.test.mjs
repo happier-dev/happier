@@ -5,8 +5,83 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import {
+  prepareInstallersSmokeCandidateAssets,
   resolveSigningEnvForTests,
 } from '../pipeline/release-validation/executors/installers-smoke-local-build.mjs';
+
+test('installers-smoke exposes only consumer-private candidate assets after verification', async () => {
+  const platform = process.platform;
+  const targetOs = platform === 'win32' ? 'windows' : platform;
+  const installerField = platform === 'win32' ? 'powershell' : 'shell';
+  const sourceCandidate = {
+    cli: { version: '1.2.3' },
+    standaloneCli: {
+      signature: { filePath: '/candidate/native/checksums.txt.minisig' },
+      checksums: { filePath: '/candidate/native/checksums.txt' },
+      archives: [{
+        os: targetOs,
+        arch: process.arch,
+        archivePath: `/candidate/native/happier-v1.2.3-${targetOs}-${process.arch}.tar.gz`,
+      }],
+    },
+    installers: {
+      shell: { filePath: '/candidate/installers/install-dev.sh' },
+      powershell: { filePath: '/candidate/installers/install-dev.ps1' },
+      publicKey: { filePath: '/candidate/installers/happier-release.pub' },
+    },
+  };
+  const privateCandidate = {
+    ...sourceCandidate,
+    standaloneCli: {
+      ...sourceCandidate.standaloneCli,
+      signature: { filePath: '/private/native/checksums.txt.minisig' },
+      checksums: { filePath: '/private/native/checksums.txt' },
+      archives: [{
+        ...sourceCandidate.standaloneCli.archives[0],
+        archivePath: `/private/native/happier-v1.2.3-${targetOs}-${process.arch}.tar.gz`,
+      }],
+    },
+    installers: {
+      shell: { filePath: '/private/installers/install-dev.sh' },
+      powershell: { filePath: '/private/installers/install-dev.ps1' },
+      publicKey: { filePath: '/private/installers/happier-release.pub' },
+    },
+  };
+  const events = [];
+  const prepared = await prepareInstallersSmokeCandidateAssets({
+    repoRoot: '/repo',
+    platform,
+    candidateManifestPath: '/candidate/candidate.json',
+  }, {
+    loadCandidateImpl: async () => sourceCandidate,
+    captureCandidateImpl: async (_candidate, options) => {
+      events.push('captured');
+      return {
+        candidate: privateCandidate,
+        cleanup: async () => await options.rmImpl('/private'),
+        root: '/private',
+        manifestPath: null,
+      };
+    },
+    prepareMinisignEnvImpl: async () => ({
+      keyPathEntries: ['/private/minisign'],
+      env: {},
+      cleanup: async () => events.push('minisign-cleanup'),
+    }),
+    readFileImpl: async (path) => {
+      assert.equal(path, privateCandidate.installers.publicKey.filePath);
+      return 'verified-public-key';
+    },
+    removeCapturedRootImpl: async () => events.push('capture-cleanup'),
+  });
+
+  assert.equal(events[0], 'captured');
+  assert.equal(prepared.assetsDir, '/private/native');
+  assert.equal(prepared.installerPath, privateCandidate.installers[installerField].filePath);
+  assert.equal(prepared.publicKey, 'verified-public-key');
+  await prepared.cleanup();
+  assert.deepEqual(events, ['captured', 'minisign-cleanup', 'capture-cleanup']);
+});
 
 test('installers-smoke local-build bootstrap still returns a minisign dir when GITHUB_PATH is set', async () => {
   const root = await mkdtemp(join(tmpdir(), 'happier-installers-smoke-local-build-test-'));

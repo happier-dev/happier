@@ -158,33 +158,33 @@ test('install.ps1 semver-sorts rolling assets and keeps default asset patterns c
   );
 });
 
-test('install.ps1 exposes installer-side rollback without invoking the current happier command', async () => {
+test('install.ps1 keeps payload reversion internal without invoking the current happier command', async () => {
   const path = join(repoRoot, 'scripts', 'release', 'installers', 'install.ps1');
   const raw = await readFile(path, 'utf8');
 
-  assert.match(raw, /\[switch\]\s+\$Rollback/i);
-  assert.match(raw, /HAPPIER_INSTALLER_ACTION/i);
-  assert.match(raw, /function Invoke-InstallerCliRollback\s*\{/i);
+  assert.doesNotMatch(raw, /\[switch\]\s+\$Rollback/i);
+  assert.match(raw, /HAPPIER_INSTALLER_ACTION[\s\S]*payload-reversion/i);
+  assert.match(raw, /function Invoke-InstallerCliPayloadReversion\s*\{/i);
   assert.match(raw, /previous\.version/i);
   assert.match(raw, /New-Item\s+-ItemType\s+HardLink[\s\S]*Resolve-CliShimName/i);
   assert.match(raw, /function Enter-InstallerPayloadMutationLock\s*\{/i);
   assert.match(raw, /\.mutation\.lock/i);
   assert.match(raw, /function Write-InstallerMarkerFileAtomic\s*\{/i);
-  assert.match(raw, /function Restore-InstallerCliRollbackPublications\s*\{/i);
+  assert.match(raw, /function Restore-InstallerCliPayloadReversionPublications\s*\{/i);
   assert.match(raw, /FIRST_PARTY_VERSION_ID_INVALID|invalid version id/i);
   assert.match(
     raw,
-    /Invoke-InstallerCliRollback[\s\S]*Enter-InstallerPayloadMutationLock[\s\S]*try\s*\{[\s\S]*Restore-InstallerCliRollbackPublications[\s\S]*finally\s*\{[\s\S]*Exit-InstallerPayloadMutationLock/i,
+    /Invoke-InstallerCliPayloadReversion[\s\S]*Enter-InstallerPayloadMutationLock[\s\S]*try\s*\{[\s\S]*Restore-InstallerCliPayloadReversionPublications[\s\S]*finally\s*\{[\s\S]*Exit-InstallerPayloadMutationLock/i,
   );
-  const rollbackBodyStart = raw.indexOf('function Invoke-InstallerCliRollback');
-  const rollbackBodyEnd = raw.indexOf('function Resolve-TarExecutablePath', rollbackBodyStart);
-  const rollbackBody = raw.slice(rollbackBodyStart, rollbackBodyEnd);
-  const legacyBackupDecision = rollbackBody.indexOf('$legacyCurrentBackupPath = ""');
-  const publicationTry = rollbackBody.indexOf('try {', legacyBackupDecision);
-  const publicationCatch = rollbackBody.indexOf('catch {', publicationTry);
-  const shimPublication = rollbackBody.indexOf('Sync-InstallerCliRollbackShim', publicationTry);
-  const legacyBackupCleanup = rollbackBody.indexOf('Remove-Item -Path $legacyCurrentBackupPath', publicationTry);
-  assert.ok(publicationTry >= 0 && publicationCatch >= 0, 'expected a rollback publication transaction');
+  const payloadReversionBodyStart = raw.indexOf('function Invoke-InstallerCliPayloadReversion');
+  const payloadReversionBodyEnd = raw.indexOf('function Resolve-TarExecutablePath', payloadReversionBodyStart);
+  const payloadReversionBody = raw.slice(payloadReversionBodyStart, payloadReversionBodyEnd);
+  const legacyBackupDecision = payloadReversionBody.indexOf('$legacyCurrentBackupPath = ""');
+  const publicationTry = payloadReversionBody.indexOf('try {', legacyBackupDecision);
+  const publicationCatch = payloadReversionBody.indexOf('catch {', publicationTry);
+  const shimPublication = payloadReversionBody.indexOf('Sync-InstallerCliPayloadReversionShim', publicationTry);
+  const legacyBackupCleanup = payloadReversionBody.indexOf('Remove-Item -Path $legacyCurrentBackupPath', publicationTry);
+  assert.ok(publicationTry >= 0 && publicationCatch >= 0, 'expected a payload-reversion publication transaction');
   assert.ok(
     shimPublication > publicationTry && shimPublication < publicationCatch,
     'expected shim publication failure to restore the prior pointer/marker transaction',
@@ -193,12 +193,12 @@ test('install.ps1 exposes installer-side rollback without invoking the current h
     legacyBackupCleanup > shimPublication && legacyBackupCleanup < publicationCatch,
     'expected legacy current backup cleanup only after shim publication succeeds',
   );
-  const rollbackDispatchIndex = raw.indexOf('if ($InstallerAction -eq "rollback")');
+  const payloadReversionDispatchIndex = raw.indexOf('if ($InstallerAction -eq "payload-reversion")');
   const installedCliFastPathIndex = raw.indexOf('if ($Run -and -not $SetupRelay -and ($existing = Resolve-InstalledCliInvoker))');
-  assert.ok(rollbackDispatchIndex >= 0, 'expected install.ps1 to dispatch rollback directly');
+  assert.ok(payloadReversionDispatchIndex >= 0, 'expected install.ps1 to dispatch payload reversion directly');
   assert.ok(installedCliFastPathIndex >= 0, 'expected install.ps1 to keep the installed CLI fast path');
   assert.ok(
-    rollbackDispatchIndex < installedCliFastPathIndex,
-    'expected rollback to run before any installed CLI fast path can invoke the current happier command',
+    payloadReversionDispatchIndex < installedCliFastPathIndex,
+    'expected payload reversion to run before any installed CLI fast path can invoke the current happier command',
   );
 });
