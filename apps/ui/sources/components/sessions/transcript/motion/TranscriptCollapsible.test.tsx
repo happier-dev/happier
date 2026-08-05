@@ -87,7 +87,7 @@ describe('TranscriptCollapsible', () => {
 
     it('announces row layout mutation before collapsing mounted children', async () => {
         const runtime: any = {
-            gate: { isFresh: vi.fn(() => true), consumeFreshness: vi.fn(() => true), markSeen: vi.fn(), isSeen: vi.fn() },
+            gate: { isFresh: vi.fn(() => true), consumeFreshness: vi.fn(() => true), markPainted: vi.fn(), markSeen: vi.fn(), isSeen: vi.fn() },
             config: {
                 preset: 'subtle',
                 freshnessMs: 60_000,
@@ -216,7 +216,7 @@ describe('TranscriptCollapsible', () => {
     });
 
     it('animates expand when enabled and fresh-only allows', async () => {
-        const gate = { isFresh: vi.fn(() => true), consumeFreshness: vi.fn(() => true), markSeen: vi.fn(), isSeen: vi.fn() };
+        const gate = { isFresh: vi.fn(() => true), consumeFreshness: vi.fn(() => true), markPainted: vi.fn(), markSeen: vi.fn(), isSeen: vi.fn() };
         const runtime: any = {
             gate,
             config: {
@@ -256,7 +256,7 @@ describe('TranscriptCollapsible', () => {
     });
 
     it('does not animate when fresh-only gate rejects', async () => {
-        const gate = { isFresh: vi.fn(() => false), consumeFreshness: vi.fn(() => false), markSeen: vi.fn(), isSeen: vi.fn() };
+        const gate = { isFresh: vi.fn(() => false), consumeFreshness: vi.fn(() => false), markPainted: vi.fn(), markSeen: vi.fn(), isSeen: vi.fn() };
         const runtime: any = {
             gate,
             config: {

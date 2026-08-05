@@ -22,6 +22,7 @@ import { ToolCallsGroupUnitToolRowWithSessionCommon } from '@/components/session
 import { ToolCallsGroupUnitFooterRowWithSessionCommon } from '@/components/sessions/transcript/toolCalls/units/ToolCallsGroupUnitFooterRow';
 import { TranscriptLiveMessagesRowShell } from '@/components/sessions/transcript/rowHost/TranscriptLiveMessagesRowShell';
 import { TranscriptEnterWrapper } from '@/components/sessions/transcript/motion/TranscriptEnterWrapper';
+import { resolveTranscriptRowPaintedIdentities } from '@/components/sessions/transcript/motion/transcriptRowPaintedIdentities';
 import { OlderLoadProgressOverlay } from '@/components/sessions/transcript/OlderLoadProgressOverlay';
 import { CatchUpProgressOverlay } from '@/components/sessions/transcript/CatchUpProgressOverlay';
 import { resolveTranscriptListShellEdgeSlots } from '@/components/sessions/transcript/viewport/shell/transcriptListShellEdgeSlots';
@@ -230,7 +231,11 @@ export function useTranscriptItemRenderer(deps: TranscriptItemRendererDeps) {
         if (item.kind === 'pending-queue') {
             const createdAt = item.pendingMessages[0]?.createdAt ?? item.discardedMessages[0]?.createdAt ?? 0;
             return wrapTranscriptItemForAnchor(item, (
-                <TranscriptEnterWrapper id={item.id} createdAt={createdAt}>
+                <TranscriptEnterWrapper
+                    id={item.id}
+                    createdAt={createdAt}
+                    paintedIds={resolveTranscriptRowPaintedIdentities(item, getMessageById)}
+                >
                     <PendingMessagesTranscriptBlock
                         sessionId={sessionId}
                         pendingMessages={item.pendingMessages}
@@ -300,6 +305,7 @@ export function useTranscriptItemRenderer(deps: TranscriptItemRendererDeps) {
                     ) : (
                         <ExternalSessionOperationSharedCard
                             presentation={item.presentation}
+                            onDismiss={onDismissExternalSessionOperation}
                         />
                     )}
                 </TranscriptEnterWrapper>
@@ -467,7 +473,11 @@ export function useTranscriptItemRenderer(deps: TranscriptItemRendererDeps) {
                 resolveKindForMessageId(prev.messageId) === 'tool-call';
             const wrapperStyle = shouldTightenToolStack ? { marginTop: -12 } : undefined;
             return wrapTranscriptItemForAnchor(item, (
-                <TranscriptEnterWrapper id={item.id} createdAt={item.createdAt}>
+                <TranscriptEnterWrapper
+                    id={item.id}
+                    createdAt={item.createdAt}
+                    paintedIds={resolveTranscriptRowPaintedIdentities(item, getMessageById)}
+                >
                     <View style={wrapperStyle}>
                         <ChatListMessageRow
                             sessionId={sessionId}

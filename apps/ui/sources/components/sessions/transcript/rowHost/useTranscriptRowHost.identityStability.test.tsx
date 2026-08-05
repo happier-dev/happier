@@ -12,6 +12,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const resumeOperationSpy = vi.hoisted(() => vi.fn());
 const retryOperationSpy = vi.hoisted(() => vi.fn());
+const cancelOperationSpy = vi.hoisted(() => vi.fn());
+const discardOperationSpy = vi.hoisted(() => vi.fn());
 const useMachineSpy = vi.hoisted(() => vi.fn());
 const onlineMachine = vi.hoisted(() => ({
     id: 'machine-1',
@@ -26,8 +28,8 @@ vi.mock('@/components/ui/feedback/ShimmerView', () => ({
     ShimmerView: ({ children }: { children?: unknown }) => children ?? null,
 }));
 vi.mock('@/sync/ops/machineExternalSessions', () => ({
-    machineExternalSessionOperationCancel: vi.fn(),
-    machineExternalSessionOperationDiscard: vi.fn(),
+    machineExternalSessionOperationCancel: cancelOperationSpy,
+    machineExternalSessionOperationDiscard: discardOperationSpy,
     machineExternalSessionOperationResume: resumeOperationSpy,
     machineExternalSessionOperationRetry: retryOperationSpy,
 }));
@@ -114,6 +116,8 @@ describe('useTranscriptItemRenderer identity stability', () => {
     beforeEach(() => {
         resumeOperationSpy.mockReset();
         retryOperationSpy.mockReset();
+        cancelOperationSpy.mockReset();
+        discardOperationSpy.mockReset();
         useMachineSpy.mockClear();
     });
 
@@ -511,10 +515,12 @@ describe('useTranscriptItemRenderer identity stability', () => {
         await hook.unmount();
     });
 
-    it('renders a generic read-only card when complete owner progress is unavailable', async () => {
+    it('delegates shared terminal dismissal without invoking an owner machine action', async () => {
+        const onDismissExternalSessionOperation = vi.fn();
         const hook = await renderHook(() => useTranscriptItemRenderer(
             createRendererDeps(createRendererProps({
                 metadata: { machineId: 'machine-1' },
+                onDismissExternalSessionOperation,
             })),
         ));
         const row = hook.getCurrent().renderItem({
@@ -526,8 +532,8 @@ describe('useTranscriptItemRenderer identity stability', () => {
                     operationId: 'operation-1',
                     revision: 4,
                     kind: 'materialize',
-                    status: 'running',
-                    phase: 'importing',
+                    status: 'completed',
+                    phase: 'publishing',
                 },
                 progress: null,
                 createdAt: 0,
@@ -539,18 +545,28 @@ describe('useTranscriptItemRenderer identity stability', () => {
         const card = row.props.children.props.children;
 
         expect(card.type).toBe(ExternalSessionOperationSharedCard);
-        expect(card.props).toEqual({
+        expect(card.props).toMatchObject({
             presentation: {
                 v: 1,
                 operationId: 'operation-1',
                 revision: 4,
                 kind: 'materialize',
-                status: 'running',
-                phase: 'importing',
+                status: 'completed',
+                phase: 'publishing',
             },
+            onDismiss: onDismissExternalSessionOperation,
+        });
+        await (card.props.onDismiss as (
+            ref: { operationId: string; revision: number },
+        ) => void)({ operationId: 'operation-1', revision: 4 });
+        expect(onDismissExternalSessionOperation).toHaveBeenCalledWith({
+            operationId: 'operation-1',
+            revision: 4,
         });
         expect(resumeOperationSpy).not.toHaveBeenCalled();
         expect(retryOperationSpy).not.toHaveBeenCalled();
+        expect(cancelOperationSpy).not.toHaveBeenCalled();
+        expect(discardOperationSpy).not.toHaveBeenCalled();
         await hook.unmount();
     });
 });

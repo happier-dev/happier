@@ -36,6 +36,7 @@ vi.mock('./TranscriptMotionContext', () => ({
         gate: {
             isFresh: () => motionState.shouldAnimate,
             consumeFreshness: () => motionState.shouldAnimate,
+            markPainted: () => undefined,
         },
     }),
 }));

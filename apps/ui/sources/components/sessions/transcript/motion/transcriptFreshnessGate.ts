@@ -1,6 +1,21 @@
+const TRANSCRIPT_UTTERANCE_IDENTITY_PREFIX = 'utterance:';
+
+export function resolveTranscriptUtteranceIdentity(localId: string | null | undefined): string | null {
+    if (typeof localId !== 'string' || localId.length === 0) return null;
+    return `${TRANSCRIPT_UTTERANCE_IDENTITY_PREFIX}${localId}`;
+}
+
+export type TranscriptFreshnessQuery = Readonly<{
+    id: string;
+    createdAt: number;
+    /** Content identities painted by this row across projection-shape handovers. */
+    paintedIds?: readonly string[] | null;
+}>;
+
 export type TranscriptFreshnessGate = {
-    isFresh: (params: { id: string; createdAt: number }) => boolean;
-    consumeFreshness: (params: { id: string; createdAt: number }) => boolean;
+    isFresh: (params: TranscriptFreshnessQuery) => boolean;
+    consumeFreshness: (params: TranscriptFreshnessQuery) => boolean;
+    markPainted: (ids: readonly string[] | null | undefined) => void;
     markSeen: (id: string) => void;
     isSeen: (id: string) => boolean;
 };
@@ -18,11 +33,20 @@ export function createTranscriptFreshnessGate(opts: {
             seen.add(id);
         }
     };
+    const markPainted = (ids: readonly string[] | null | undefined) => {
+        if (!Array.isArray(ids)) return;
+        for (const id of ids) markSeen(id);
+    };
 
-    const isFresh = (params: { id: string; createdAt: number }) => {
+    const isFresh = (params: TranscriptFreshnessQuery) => {
         const id = params.id;
         if (typeof id !== 'string' || id.length === 0) return false;
         if (seen.has(id)) return false;
+        if (Array.isArray(params.paintedIds)) {
+            for (const paintedId of params.paintedIds) {
+                if (typeof paintedId === 'string' && seen.has(paintedId)) return false;
+            }
+        }
 
         const createdAt = params.createdAt;
         if (typeof createdAt !== 'number' || !Number.isFinite(createdAt)) return false;
@@ -35,11 +59,12 @@ export function createTranscriptFreshnessGate(opts: {
         return true;
     };
 
-    const consumeFreshness = (params: { id: string; createdAt: number }) => {
+    const consumeFreshness = (params: TranscriptFreshnessQuery) => {
         if (!isFresh(params)) return false;
         seen.add(params.id);
+        markPainted(params.paintedIds);
         return true;
     };
 
-    return { isFresh, consumeFreshness, markSeen, isSeen };
+    return { isFresh, consumeFreshness, markPainted, markSeen, isSeen };
 }

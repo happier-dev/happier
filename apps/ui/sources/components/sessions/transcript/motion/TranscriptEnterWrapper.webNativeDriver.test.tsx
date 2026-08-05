@@ -1,7 +1,7 @@
 import * as React from 'react';
 
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { flushHookEffects, invokeTestInstanceHandler, renderScreen } from '@/dev/testkit';
+import { flushHookEffects, renderScreen } from '@/dev/testkit';
 import { installTranscriptMotionCommonModuleMocks } from './transcriptMotionTestHelpers';
 
 
@@ -37,6 +37,7 @@ vi.mock('./TranscriptMotionContext', () => ({
     gate: {
       isFresh: () => true,
       consumeFreshness: () => true,
+      markPainted: () => undefined,
     },
   }),
 }));
@@ -46,22 +47,13 @@ describe('TranscriptEnterWrapper (web native driver)', () => {
     capturedTimingConfigs = [];
   });
 
-  it('waits for first layout before starting the enter animation', async () => {
+  it('starts the enter animation on commit, without a layout event', async () => {
     const { TranscriptEnterWrapper } = await import('./TranscriptEnterWrapper');
 
-    const screen = await renderScreen(<TranscriptEnterWrapper id="m1" createdAt={1}>
+    await renderScreen(<TranscriptEnterWrapper id="m1" createdAt={1}>
           <div />
         </TranscriptEnterWrapper>);
     await flushHookEffects();
-
-    expect(capturedTimingConfigs).toHaveLength(0);
-
-    invokeTestInstanceHandler(
-      screen.findByType('Animated.View'),
-      'onLayout',
-      { nativeEvent: { layout: { width: 320, height: 48 } } },
-      'transcript enter wrapper',
-    );
 
     expect(capturedTimingConfigs.length).toBeGreaterThan(0);
   });
@@ -69,15 +61,9 @@ describe('TranscriptEnterWrapper (web native driver)', () => {
   it('does not use native driver on web (avoids Animated warnings and jitter)', async () => {
     const { TranscriptEnterWrapper } = await import('./TranscriptEnterWrapper');
 
-    const screen = await renderScreen(<TranscriptEnterWrapper id="m1" createdAt={1}>
+    await renderScreen(<TranscriptEnterWrapper id="m1" createdAt={1}>
           <div />
         </TranscriptEnterWrapper>);
-    invokeTestInstanceHandler(
-      screen.findByType('Animated.View'),
-      'onLayout',
-      { nativeEvent: { layout: { width: 320, height: 48 } } },
-      'transcript enter wrapper',
-    );
 
     expect(capturedTimingConfigs.length).toBeGreaterThan(0);
     for (const cfg of capturedTimingConfigs) {
@@ -88,15 +74,9 @@ describe('TranscriptEnterWrapper (web native driver)', () => {
   it('does not animate translateY on web (avoids hit-target overlap during enter)', async () => {
     const { TranscriptEnterWrapper } = await import('./TranscriptEnterWrapper');
 
-    const screen = await renderScreen(<TranscriptEnterWrapper id="m1" createdAt={1}>
+    await renderScreen(<TranscriptEnterWrapper id="m1" createdAt={1}>
           <div />
         </TranscriptEnterWrapper>);
-    invokeTestInstanceHandler(
-      screen.findByType('Animated.View'),
-      'onLayout',
-      { nativeEvent: { layout: { width: 320, height: 48 } } },
-      'transcript enter wrapper',
-    );
 
     // The translateY timing uses `toValue: 0`. On web we skip it to avoid
     // temporarily overlapping neighboring rows and intercepting pointer events.

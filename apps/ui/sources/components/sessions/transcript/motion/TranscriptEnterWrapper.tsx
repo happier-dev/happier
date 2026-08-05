@@ -5,39 +5,30 @@ import { motionTokens } from '@/components/ui/motion/motionTokens';
 
 import { useTranscriptMotion } from './TranscriptMotionContext';
 
-function scheduleNextVisualFrame(callback: () => void): () => void {
-    const raf = globalThis.requestAnimationFrame;
-    if (typeof raf !== 'function') {
-        callback();
-        return () => {};
-    }
-
-    let cancelled = false;
-    const id = raf(() => {
-        if (!cancelled) {
-            callback();
-        }
-    });
-
-    return () => {
-        cancelled = true;
-        globalThis.cancelAnimationFrame?.(id);
-    };
-}
-
 export const TranscriptEnterWrapper = React.memo(function TranscriptEnterWrapper(props: {
     id: string;
     createdAt: number;
+    paintedIds?: readonly string[] | null;
     children: React.ReactNode;
 }) {
     const runtime = useTranscriptMotion();
+    const paintedIds = props.paintedIds ?? null;
 
     const shouldPrepareEnterRef = React.useRef(
         runtime != null &&
         runtime.config.preset !== 'off' &&
         runtime.config.animateNewItemsEnabled === true &&
-        runtime.gate.isFresh({ id: props.id, createdAt: props.createdAt }),
+        runtime.gate.isFresh({ id: props.id, createdAt: props.createdAt, paintedIds }),
     );
+
+    const gate = runtime?.gate;
+    const paintedIdsRef = React.useRef(paintedIds);
+    paintedIdsRef.current = paintedIds;
+    const paintedIdsKey = paintedIds ? paintedIds.join('\u0000') : '';
+    React.useEffect(() => {
+        if (paintedIdsKey.length === 0) return;
+        gate?.markPainted(paintedIdsRef.current);
+    }, [gate, paintedIdsKey]);
 
     if (!shouldPrepareEnterRef.current || runtime == null) {
         return <>{props.children}</>;
@@ -47,6 +38,7 @@ export const TranscriptEnterWrapper = React.memo(function TranscriptEnterWrapper
         <AnimatedTranscriptEnterWrapper
             id={props.id}
             createdAt={props.createdAt}
+            paintedIds={paintedIds}
             runtime={runtime}
         >
             {props.children}
@@ -54,33 +46,31 @@ export const TranscriptEnterWrapper = React.memo(function TranscriptEnterWrapper
     );
 });
 
+/**
+ * A fresh row enters by FADE ONLY, on every platform.
+ *
+ * J/D4 (2026-07-30) — deliberate decision, recorded because the previous code hid the opposite one
+ * behind a misnamed flag: `const animateTranslateOnWeb = Platform.OS !== 'web'` is TRUE on native,
+ * so native rows faded AND slid 6px while web rows only faded. The 6px slide is removed rather than
+ * renamed. Reasons: (1) the reason web opted out — a row translated toward its neighbour briefly
+ * overlaps it and intercepts touches — is a platform-neutral hazard, not a web one; (2) a send
+ * creates two fresh rows (the pending row, then its committed twin), so it was two native-only 6px
+ * movements inside exactly the window whose movement the user is objecting to, on top of the
+ * measured MVCP excursion at that handover; (3) it removes a native/web asymmetry that no product
+ * decision asked for. Whether new rows animate at all remains owned by the motion preset /
+ * `animateNewItemsEnabled`, not by a platform check here.
+ */
 const AnimatedTranscriptEnterWrapper = React.memo(function AnimatedTranscriptEnterWrapper(props: {
     id: string;
     createdAt: number;
+    paintedIds: readonly string[] | null;
     runtime: NonNullable<ReturnType<typeof useTranscriptMotion>>;
     children: React.ReactNode;
 }) {
     const runtime = props.runtime;
     const opacity = React.useRef(new Animated.Value(0)).current;
-    const animateTranslateOnWeb = Platform.OS !== 'web';
-    const translateY = React.useRef(new Animated.Value(animateTranslateOnWeb ? 6 : 0)).current;
     const animationStartedRef = React.useRef(false);
-    const cancelScheduledStartRef = React.useRef<(() => void) | null>(null);
     const shouldAnimateRef = React.useRef<boolean | null>(null);
-
-    React.useLayoutEffect(() => {
-        if (shouldAnimateRef.current == null) {
-            shouldAnimateRef.current = runtime.gate.consumeFreshness({
-                id: props.id,
-                createdAt: props.createdAt,
-            });
-        }
-
-        if (shouldAnimateRef.current !== true) {
-            opacity.setValue(1);
-            translateY.setValue(0);
-        }
-    }, [opacity, props.createdAt, props.id, runtime.gate, translateY]);
 
     const startEnterAnimation = React.useCallback(() => {
         if (animationStartedRef.current) return;
@@ -91,45 +81,33 @@ const AnimatedTranscriptEnterWrapper = React.memo(function AnimatedTranscriptEnt
                 ? motionTokens.durationMs.base
                 : motionTokens.durationMs.fast;
         const useNativeDriver = Platform.OS !== 'web';
-        const anims = [
-            Animated.timing(opacity, {
-                toValue: 1,
-                duration,
-                easing: motionTokens.easing.standard,
-                useNativeDriver,
-            }),
-        ];
-        if (animateTranslateOnWeb) {
-            anims.push(Animated.timing(translateY, {
-                toValue: 0,
-                duration,
-                easing: motionTokens.easing.standard,
-                useNativeDriver,
-            }));
+        Animated.timing(opacity, {
+            toValue: 1,
+            duration,
+            easing: motionTokens.easing.standard,
+            useNativeDriver,
+        }).start();
+    }, [opacity, runtime?.config.preset]);
+
+    React.useLayoutEffect(() => {
+        if (shouldAnimateRef.current == null) {
+            shouldAnimateRef.current = runtime.gate.consumeFreshness({
+                id: props.id,
+                createdAt: props.createdAt,
+                paintedIds: props.paintedIds,
+            });
         }
-        Animated.parallel(anims).start();
-    }, [animateTranslateOnWeb, opacity, runtime?.config.preset, translateY]);
 
-    const handleLayout = React.useCallback(() => {
-        if (shouldAnimateRef.current !== true) return;
-        if (animationStartedRef.current) return;
-        if (cancelScheduledStartRef.current) return;
+        if (shouldAnimateRef.current !== true) {
+            opacity.setValue(1);
+            return;
+        }
 
-        cancelScheduledStartRef.current = scheduleNextVisualFrame(() => {
-            cancelScheduledStartRef.current = null;
-            startEnterAnimation();
-        });
-    }, [startEnterAnimation]);
-
-    React.useEffect(() => {
-        return () => {
-            cancelScheduledStartRef.current?.();
-            cancelScheduledStartRef.current = null;
-        };
-    }, []);
+        startEnterAnimation();
+    }, [opacity, props.createdAt, props.id, props.paintedIds, runtime.gate, startEnterAnimation]);
 
     return (
-        <Animated.View onLayout={handleLayout} style={{ opacity, transform: animateTranslateOnWeb ? [{ translateY }] : undefined }}>
+        <Animated.View style={{ opacity }}>
             {props.children}
         </Animated.View>
     );
