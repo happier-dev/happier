@@ -7,31 +7,90 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
+  buildVitestShardRunArgs,
   resolveVitestPassthroughArgs,
-  resolveVitestRunPassthroughArgs,
-  stripTrailingPositionalFileFilters,
+  resolveVitestPositionalFilters,
 } from './runVitestShards.mjs';
 
 const scriptsDir = dirname(fileURLToPath(import.meta.url));
 const packageRoot = dirname(scriptsDir);
 const runnerPath = join(scriptsDir, 'runVitestShards.mjs');
 
-test('resolveVitestRunPassthroughArgs strips trailing positional file filters used for vitest list', () => {
+test('the list pass keeps the caller filters that select the files', () => {
   const argv = ['node', './scripts/runVitestShards.mjs', '--config', 'vitest.config.ts', 'sources/voice'];
   assert.deepEqual(resolveVitestPassthroughArgs(argv), ['sources/voice']);
-  assert.deepEqual(resolveVitestRunPassthroughArgs(argv), []);
 });
 
-test('stripTrailingPositionalFileFilters strips multiple trailing positional filters', () => {
-  assert.deepEqual(stripTrailingPositionalFileFilters(['sources/voice', 'sources/voice/output/speakAssistantText.spec.ts']), []);
+test('a bare-name positional filter is not forwarded into the per-shard run', async () => {
+  // Vitest ORs positional filters with an explicit file list, so a filter that survives into the
+  // shard invocation makes EVERY shard re-run the whole filtered set - the same file executed once
+  // per shard (24x by default) instead of once. A bare name carries no separator and no extension,
+  // which is exactly what the previous shape heuristic could not recognise.
+  const passthroughArgs = ['legendListRenderer'];
+  const positionalFilters = await resolveVitestPositionalFilters(passthroughArgs);
+  assert.deepEqual(positionalFilters, ['legendListRenderer']);
+  assert.deepEqual(
+    buildVitestShardRunArgs({
+      configPath: 'vitest.config.ts',
+      passthroughArgs,
+      positionalFilters,
+      files: ['/abs/a.test.ts'],
+    }),
+    ['run', '--config', 'vitest.config.ts', '--no-file-parallelism', '/abs/a.test.ts'],
+  );
 });
 
-test('stripTrailingPositionalFileFilters preserves flags and their values', () => {
-  assert.deepEqual(stripTrailingPositionalFileFilters(['--reporter', 'dot', 'sources/voice']), ['--reporter', 'dot']);
+test('multiple positional filters are all dropped from the shard run', async () => {
+  const passthroughArgs = ['sources/voice', 'sources/voice/output/speakAssistantText.spec.ts'];
+  assert.deepEqual(
+    buildVitestShardRunArgs({
+      configPath: 'vitest.config.ts',
+      passthroughArgs,
+      positionalFilters: await resolveVitestPositionalFilters(passthroughArgs),
+      files: ['/abs/a.test.ts'],
+    }),
+    ['run', '--config', 'vitest.config.ts', '--no-file-parallelism', '/abs/a.test.ts'],
+  );
 });
 
-test('stripTrailingPositionalFileFilters does not strip known flag values even if they look like paths', () => {
-  assert.deepEqual(stripTrailingPositionalFileFilters(['--include', 'sources/voice']), ['--include', 'sources/voice']);
+test('option values are preserved even when spelled like the dropped filter', async () => {
+  const passthroughArgs = ['--reporter', 'dot', '--testNamePattern', 'sources/voice', 'sources/voice'];
+  const positionalFilters = await resolveVitestPositionalFilters(passthroughArgs);
+  // Vitest's own parser knows `sources/voice` is the value of `--testNamePattern` the first time
+  // and a path filter the second; a local option table could only guess.
+  assert.deepEqual(positionalFilters, ['sources/voice']);
+  assert.deepEqual(
+    buildVitestShardRunArgs({
+      configPath: 'vitest.config.ts',
+      passthroughArgs,
+      positionalFilters,
+      files: ['/abs/a.test.ts'],
+    }),
+    [
+      'run',
+      '--config',
+      'vitest.config.ts',
+      '--no-file-parallelism',
+      '--reporter',
+      'dot',
+      '--testNamePattern',
+      'sources/voice',
+      '/abs/a.test.ts',
+    ],
+  );
+});
+
+test('an unfiltered run (the CI lane shape) carries only its shard files', async () => {
+  assert.deepEqual(await resolveVitestPositionalFilters([]), []);
+  assert.deepEqual(
+    buildVitestShardRunArgs({
+      configPath: 'vitest.config.ts',
+      passthroughArgs: [],
+      positionalFilters: [],
+      files: ['/abs/a.test.ts'],
+    }),
+    ['run', '--config', 'vitest.config.ts', '--no-file-parallelism', '/abs/a.test.ts'],
+  );
 });
 
 test('runVitestShards launches shards without relying on PATH vitest lookup', async () => {

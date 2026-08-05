@@ -81,69 +81,52 @@ export function resolveVitestPassthroughArgs(argv) {
   return cleaned;
 }
 
-function looksLikePositionalFileFilter(arg) {
-  if (typeof arg !== 'string') return false;
-  const value = arg.trim();
-  if (!value) return false;
-  // Globs / paths / filenames. We intentionally keep this a heuristic since Vitest treats
-  // trailing positional args as file filters. We only strip these for the *sharded run*
-  // once explicit file lists are provided.
-  if (/[\\\/]/.test(value)) return true;
-  if (/[*?[\]{}()]/.test(value)) return true;
-  if (/\.(c|m)?jsx?$/.test(value)) return true;
-  if (/\.(spec|test)\.(c|m)?tsx?$/.test(value)) return true;
-  if (/\.(c|m)?tsx?$/.test(value)) return true;
-  return false;
+/**
+ * Vitest ORs positional filters: a shard invocation that carries both the caller's path
+ * filter and the shard's file list re-runs the whole filtered set, so every shard executes
+ * the same files (24x by default) instead of once. The shard file list is already the
+ * resolved form of those filters, so the filters must be dropped from the per-shard run.
+ *
+ * Classification uses Vitest's own CLI parser rather than a local option table plus a
+ * shape heuristic. The heuristic this replaced could not see a bare-name filter
+ * (`legendListRenderer` has no separator and no extension), and its hand-maintained
+ * value-flag table silently misclassified the value of any option it did not list.
+ */
+export async function resolveVitestPositionalFilters(passthroughArgs) {
+  const args = Array.from(passthroughArgs ?? []);
+  if (args.length === 0) return [];
+
+  const { parseCLI } = await import('vitest/node');
+  // parseCLI mutates the argv it is given, so hand it a throwaway array.
+  const { filter } = parseCLI(['vitest', 'run', ...args]);
+  return Array.isArray(filter) ? Array.from(filter) : [];
 }
 
-const FLAGS_WITH_VALUE = new Set([
-  '--reporter',
-  '--testNamePattern',
-  '-t',
-  '--root',
-  '--dir',
-  '--include',
-  '--exclude',
-  '--setupFiles',
-  '--outputFile',
-  '--shard',
-  '--poolOptions.threads.singleThread',
-  '--pool',
-  '--environment',
-]);
-
-export function stripTrailingPositionalFileFilters(passthroughArgs) {
-  const args = Array.isArray(passthroughArgs) ? passthroughArgs.slice() : [];
-  const valueIndexes = new Set();
-  for (let i = 0; i < args.length; i += 1) {
-    const arg = args[i];
-    if (typeof arg !== 'string') continue;
-    if (!arg.startsWith('-')) continue;
-    if (arg === '--') break;
-    if (arg.includes('=')) continue;
-    if (FLAGS_WITH_VALUE.has(arg) && i + 1 < args.length) {
-      valueIndexes.add(i + 1);
-      i += 1;
-    }
+/** The vitest argv tail for one shard: caller options, minus the path filters, plus its files. */
+export function buildVitestShardRunArgs({ configPath, passthroughArgs, positionalFilters, files }) {
+  const droppable = new Map();
+  for (const filter of positionalFilters ?? []) {
+    droppable.set(filter, (droppable.get(filter) ?? 0) + 1);
   }
 
-  while (args.length > 0) {
-    const lastIndex = args.length - 1;
-    const last = args[lastIndex];
-    if (typeof last !== 'string' || last.startsWith('-') || valueIndexes.has(lastIndex)) {
-      break;
+  const optionArgs = [];
+  for (const arg of passthroughArgs ?? []) {
+    const remaining = droppable.get(arg) ?? 0;
+    if (remaining > 0) {
+      droppable.set(arg, remaining - 1);
+      continue;
     }
-    if (!looksLikePositionalFileFilter(last)) {
-      break;
-    }
-    args.pop();
+    optionArgs.push(arg);
   }
 
-  return args;
-}
-
-export function resolveVitestRunPassthroughArgs(argv) {
-  return stripTrailingPositionalFileFilters(resolveVitestPassthroughArgs(argv));
+  return [
+    'run',
+    '--config',
+    configPath,
+    '--no-file-parallelism',
+    ...optionArgs,
+    ...(files ?? []),
+  ];
 }
 
 function parseVitestListJson(raw) {
@@ -255,17 +238,12 @@ async function resolveVitestTestFiles({ vitestCommand, configPath, nodeOptions, 
   }
 }
 
-function spawnVitestRun({ vitestCommand, configPath, nodeOptions, passthroughArgs, files }) {
+function spawnVitestRun({ vitestCommand, configPath, nodeOptions, passthroughArgs, positionalFilters, files }) {
   return runManagedChildCommand({
     command: vitestCommand.command,
     args: [
       ...vitestCommand.argsPrefix,
-      'run',
-      '--config',
-      configPath,
-      '--no-file-parallelism',
-      ...passthroughArgs,
-      ...files,
+      ...buildVitestShardRunArgs({ configPath, passthroughArgs, positionalFilters, files }),
     ],
     spawnOptions: {
       env: {
@@ -281,17 +259,12 @@ function spawnVitestRun({ vitestCommand, configPath, nodeOptions, passthroughArg
   });
 }
 
-function startVitestRun({ vitestCommand, configPath, nodeOptions, passthroughArgs, files }) {
+function startVitestRun({ vitestCommand, configPath, nodeOptions, passthroughArgs, positionalFilters, files }) {
   const child = spawn(
     vitestCommand.command,
     [
       ...vitestCommand.argsPrefix,
-      'run',
-      '--config',
-      configPath,
-      '--no-file-parallelism',
-      ...passthroughArgs,
-      ...files,
+      ...buildVitestShardRunArgs({ configPath, passthroughArgs, positionalFilters, files }),
     ],
     {
       env: {
@@ -408,7 +381,9 @@ async function main(argv) {
   const sizeMb = resolveMaxOldSpaceSizeMb(process.env);
   const nodeOptions = upsertMaxOldSpaceSize(process.env.NODE_OPTIONS, sizeMb);
   const passthroughArgs = resolveVitestPassthroughArgs(argv);
-  const runPassthroughArgs = stripTrailingPositionalFileFilters(passthroughArgs);
+  // The list pass keeps the caller's filters (they are what selects the files); the shard runs
+  // drop exactly those filters, because the resolved file list already carries them.
+  const positionalFilters = await resolveVitestPositionalFilters(passthroughArgs);
   const vitestCommand = resolveVitestNodeCommand();
 
   const allFiles = await resolveVitestTestFiles({ vitestCommand, configPath, nodeOptions, passthroughArgs });
@@ -424,7 +399,8 @@ async function main(argv) {
           vitestCommand,
           configPath,
           nodeOptions,
-          passthroughArgs: runPassthroughArgs,
+          passthroughArgs,
+          positionalFilters,
           files: entry.files,
         }),
         cancel: async () => {},
@@ -435,7 +411,8 @@ async function main(argv) {
       vitestCommand,
       configPath,
       nodeOptions,
-      passthroughArgs: runPassthroughArgs,
+      passthroughArgs,
+      positionalFilters,
       files: entry.files,
     });
   };
