@@ -23,9 +23,6 @@ type ProperLockfileApi = Readonly<{
   ) => Promise<ProperLockfileRelease>;
 }>;
 
-// `proper-lockfile` is CommonJS and ships no declarations. Keep the cast at that package boundary.
-const properLockfile = createRequire(import.meta.url)('proper-lockfile') as ProperLockfileApi;
-
 const PAYLOAD_MUTATION_LOCK_STALE_MS = 10 * 60_000;
 const PAYLOAD_MUTATION_LOCK_UPDATE_MS = 30_000;
 
@@ -47,6 +44,9 @@ export async function withFirstPartyPayloadMutationLock<T>(params: Readonly<{
   layout: FirstPartyInstallLayout;
   operation: () => Promise<T>;
 }>): Promise<T> {
+  // `proper-lockfile` is CommonJS and ships no declarations. Load it only for the
+  // mutation path so unrelated consumers of the first-party-runtime barrel stay side-effect-free.
+  const properLockfile = createRequire(import.meta.url)('proper-lockfile') as ProperLockfileApi;
   await mkdir(params.layout.happyHomeDir, { recursive: true });
   const lockfilePath = `${params.layout.installRoot}.mutation.lock`;
   let compromisedError: Error | null = null;

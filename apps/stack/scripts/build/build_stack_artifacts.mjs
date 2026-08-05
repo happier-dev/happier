@@ -1,6 +1,11 @@
 import { join } from 'node:path';
 
-import { commandExists, resolveBunCommand, resolveYarnCommand } from '@happier-dev/cli-common/componentArtifacts';
+import {
+  commandExists,
+  resolveBunCommand,
+  resolveYarnCommand,
+  SERVER_BINARY_DEFAULT_EXTERNALS,
+} from '@happier-dev/cli-common/componentArtifacts';
 
 import { resolveStackBaseDir, resolveStackEnvPath } from '../utils/paths/paths.mjs';
 import { parseArgs } from '../utils/cli/args.mjs';
@@ -84,7 +89,10 @@ export async function buildStackArtifacts({ rootDir, argv = [], env = process.en
   const buildComponent = async (component, builder) => {
     const buildInputs = [];
     if (component === 'server') {
-      buildInputs.push(`bunExternals=${String(env.HAPPIER_SERVER_BUN_EXTERNALS ?? 'redis').trim() || 'redis'}`);
+      const defaultServerExternals = SERVER_BINARY_DEFAULT_EXTERNALS.join(',');
+      buildInputs.push(
+        `bunExternals=${String(env.HAPPIER_SERVER_BUN_EXTERNALS ?? defaultServerExternals).trim() || defaultServerExternals}`,
+      );
       buildInputs.push(`platform=${process.platform}`);
       buildInputs.push(`arch=${process.arch}`);
     }

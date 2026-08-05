@@ -5,6 +5,7 @@ import { buildIntoTempThenReplace } from '../utils/fs/atomic_dir_swap.mjs';
 import {
   buildServerBinaryArtifactPayload,
   prepareUiWebDist,
+  SERVER_BINARY_DEFAULT_EXTERNALS,
   SERVER_BINARY_TARGETS,
   resolveCurrentBinaryTarget,
 } from '@happier-dev/cli-common/componentArtifacts';
@@ -23,7 +24,9 @@ export async function buildServerArtifact({
   }
 
   const target = resolveCurrentBinaryTarget({ availableTargets: SERVER_BINARY_TARGETS });
-  const externals = String(process.env.HAPPIER_SERVER_BUN_EXTERNALS ?? 'redis')
+  const externals = String(
+    process.env.HAPPIER_SERVER_BUN_EXTERNALS ?? SERVER_BINARY_DEFAULT_EXTERNALS.join(','),
+  )
     .split(',')
     .map((value) => value.trim())
     .filter(Boolean);

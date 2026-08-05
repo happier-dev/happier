@@ -16,6 +16,10 @@ interface TokenVerifierLike {
     verify: (token: string) => Promise<any>;
 }
 
+// Persistent tokens have no expiry. Retain this read-only compatibility window until an
+// explicit token epoch or forced re-auth retires tokens issued by privacy-kit 0.0.25 on Bun.
+const LEGACY_BUN_SEED_CANDIDATE_COUNT = 64;
+
 interface AuthTokens {
     generator: TokenGeneratorLike;
     verifier: TokenVerifierLike;
@@ -72,32 +76,7 @@ class AuthModule {
         return masterSecret;
     }
 
-    private resolvePersistentSeedCompatibilityAttempts(env: NodeJS.ProcessEnv): number {
-        const raw = (env.HAPPIER_AUTH_SEED_COMPAT_ATTEMPTS ?? "").toString().trim();
-        const parsed = raw ? Number.parseInt(raw, 10) : Number.NaN;
-        const attempts = Number.isFinite(parsed) && parsed > 0 ? parsed : 32;
-        return Math.max(1, Math.min(64, attempts));
-    }
-
-    private isRetryableRuntimeSeedCompatibilityError(error: unknown): boolean {
-        if (!error || typeof error !== "object") {
-            return false;
-        }
-        const errorName =
-            typeof (error as { name?: unknown }).name === "string"
-                ? String((error as { name?: unknown }).name)
-                : "";
-        const errorMessage =
-            typeof (error as { message?: unknown }).message === "string"
-                ? String((error as { message?: unknown }).message)
-                : "";
-        return (
-            errorName === "DataError" ||
-            /data provided to an operation does not meet requirements/i.test(errorMessage)
-        );
-    }
-
-    private derivePersistentSeedCandidate(masterSecret: string, attempt: number): string {
+    private deriveLegacyBunSeedCandidate(masterSecret: string, attempt: number): string {
         if (attempt === 0) {
             return masterSecret;
         }
@@ -107,42 +86,45 @@ class AuthModule {
     }
 
     private async createPersistentAuthTokens(masterSecret: string): Promise<AuthTokens> {
-        const maxAttempts = this.resolvePersistentSeedCompatibilityAttempts(process.env);
-        let lastError: unknown = null;
+        const generator = await privacyKit.createPersistentTokenGenerator({
+            service: "handy",
+            seed: masterSecret,
+        });
+        const primaryVerifier = await privacyKit.createPersistentTokenVerifier({
+            service: "handy",
+            publicKey: Uint8Array.from(generator.publicKey),
+        });
 
-        for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
-            const seed = this.derivePersistentSeedCandidate(masterSecret, attempt);
-            try {
-                const generator = await privacyKit.createPersistentTokenGenerator({
-                    service: "handy",
-                    seed,
-                });
-                const verifier = await privacyKit.createPersistentTokenVerifier({
-                    service: "handy",
-                    publicKey: Uint8Array.from(generator.publicKey),
-                });
-                if (attempt > 0) {
-                    log(
-                        { module: "auth", level: "warn" },
-                        `Persistent auth seed required runtime compatibility derivation (attempt=${attempt + 1})`,
-                    );
-                }
-                return { generator, verifier };
-            } catch (error) {
-                lastError = error;
-                if (
-                    attempt < maxAttempts - 1 &&
-                    this.isRetryableRuntimeSeedCompatibilityError(error)
-                ) {
-                    continue;
-                }
-                throw error;
-            }
+        const legacySeedCandidates = Array.from(
+            { length: LEGACY_BUN_SEED_CANDIDATE_COUNT },
+            (_, attempt) => this.deriveLegacyBunSeedCandidate(masterSecret, attempt),
+        );
+        const legacyKey =
+            await privacyKit.resolveLegacyBunStandardBase64PersistentTokenPublicKey({
+                service: "handy",
+                seedCandidates: legacySeedCandidates,
+            });
+
+        if (!legacyKey || legacyKey.candidateIndex === 0) {
+            return { generator, verifier: primaryVerifier };
         }
 
-        throw lastError instanceof Error
-            ? lastError
-            : new Error("Failed to initialize persistent auth tokens");
+        const legacyVerifier = await privacyKit.createPersistentTokenVerifier({
+            service: "handy",
+            publicKey: legacyKey.publicKey,
+        });
+        log(
+            { module: "auth", level: "warn" },
+            `Historical Bun auth-token verification enabled (attempt=${legacyKey.candidateIndex})`,
+        );
+
+        return {
+            generator,
+            verifier: {
+                verify: async (token: string) =>
+                    (await primaryVerifier.verify(token)) ?? (await legacyVerifier.verify(token)),
+            },
+        };
     }
 
     private async getOauthStateTokens(): Promise<OAuthStateTokens> {
@@ -166,10 +148,14 @@ class AuthModule {
                     publicKey: Uint8Array.from(oauthStateGenerator.publicKey),
                 });
                 return { oauthStateGenerator, oauthStateVerifier };
-            } catch {
+            } catch (error) {
+                const errorName =
+                    error && typeof error === "object" && "name" in error
+                        ? String(error.name)
+                        : "unknown";
                 log(
                     { module: "auth", level: "warn" },
-                    "OAuth state backend unavailable (ephemeral token init failed)"
+                    `OAuth state backend unavailable (ephemeral token init failed; error=${errorName})`
                 );
                 throw new OAuthStateUnavailableError();
             }

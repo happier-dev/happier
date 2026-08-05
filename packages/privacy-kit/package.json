@@ -1,0 +1,45 @@
+{
+  "name": "privacy-kit",
+  "version": "0.0.25",
+  "private": true,
+  "repository": "https://github.com/happier-dev/happier.git",
+  "author": "Steve Korshakov <steve@korshakov.com>",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "tsc": "node ../../scripts/workspaces/runTypeScriptCli.mjs",
+    "test": "vitest run",
+    "test:runtime:bun": "bun run scripts/tokenRuntimeCompatibility.ts",
+    "test:watch": "vitest",
+    "build": "pkgroll",
+    "typecheck": "node ../../scripts/workspaces/runTypeScriptCli.mjs --noEmit"
+  },
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.mjs",
+  "types": "./dist/index.d.cts",
+  "exports": {
+    "require": {
+      "types": "./dist/index.d.cts",
+      "default": "./dist/index.cjs"
+    },
+    "import": {
+      "types": "./dist/index.d.mts",
+      "default": "./dist/index.mjs"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "devDependencies": {
+    "@types/node": "^22.15.2",
+    "pkgroll": "^2.12.2",
+    "vitest": "^3.1.2"
+  },
+  "dependencies": {
+    "@noble/curves": "^1.9.0",
+    "@stablelib/base64": "^2.0.1",
+    "@stablelib/hex": "^2.0.1",
+    "jose": "^6.0.11",
+    "tweetnacl": "^1.0.3"
+  }
+}

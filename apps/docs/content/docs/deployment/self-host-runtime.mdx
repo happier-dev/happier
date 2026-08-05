@@ -55,6 +55,12 @@ happier relay host restart
 
 To update, rerun `happier relay host install` (it installs or updates to the latest version in that channel).
 
+### Auth compatibility during this update
+
+Keep `HANDY_MASTER_SECRET` unchanged. Persistent auth tokens and encrypted server data are both derived from it, so rotating it is not an auth-repair procedure and can make existing data unreadable.
+
+When updating from a preview relay that used Bun 1.3.5, stop or drain every old relay process before starting the new version. Do not run old and new relay binaries behind the same endpoint during the rollout: the corrected version accepts both the canonical historical key and the Bun-retry key, but an old process may reject tokens newly issued with the canonical key. A complete restart removes that mixed-version direction while preserving existing sessions.
+
 After installing a local Relay, you can save or activate the matching local Relay profile with:
 
 ```bash

@@ -8,6 +8,7 @@ import { randomUUID } from 'node:crypto';
 
 import {
   SERVER_TARGETS,
+  SERVER_BINARY_DEFAULT_EXTERNALS,
   buildServerBinaryArtifactPayload,
   normalizeChannel,
   packagePreparedTargetBinary,
@@ -45,7 +46,11 @@ async function main() {
       'sources',
       serverComponent === 'happier-server' ? 'main.ts' : 'main.light.ts',
     );
-  const externals = parseCsv(kv.get('--externals') ?? process.env.HAPPIER_SERVER_BUN_EXTERNALS ?? 'redis');
+  const externals = parseCsv(
+    kv.get('--externals')
+      ?? process.env.HAPPIER_SERVER_BUN_EXTERNALS
+      ?? SERVER_BINARY_DEFAULT_EXTERNALS.join(','),
+  );
   const targets = resolveTargets({
     availableTargets: SERVER_TARGETS,
     requested: kv.get('--targets'),

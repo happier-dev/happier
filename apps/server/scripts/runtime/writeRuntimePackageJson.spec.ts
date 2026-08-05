@@ -47,9 +47,11 @@ describe('writeRuntimePackageJson', () => {
           require: './dist/index.cjs',
         },
         dependencies: {
-          '@cloudflare/voprf-ts': '^1.0.0',
           '@noble/curves': '^1.9.0',
-          '@noble/hashes': '^1.8.0',
+          '@stablelib/base64': '^2.0.1',
+          '@stablelib/hex': '^2.0.1',
+          jose: '^6.0.11',
+          tweetnacl: '^1.0.3',
         },
       }) + '\n',
       'utf-8',
@@ -70,9 +72,11 @@ describe('writeRuntimePackageJson', () => {
         fastify: '^5.0.0',
         '@happier-dev/agents': '0.0.0',
         'privacy-kit': '^0.0.25',
-        '@cloudflare/voprf-ts': '^1.0.0',
         '@noble/curves': '^1.9.0',
-        '@noble/hashes': '^1.8.0',
+        '@stablelib/base64': '^2.0.1',
+        '@stablelib/hex': '^2.0.1',
+        jose: '^6.0.11',
+        tweetnacl: '^1.0.3',
       },
     });
   });

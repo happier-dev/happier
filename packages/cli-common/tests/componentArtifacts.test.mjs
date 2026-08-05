@@ -1134,6 +1134,10 @@ test('buildServerBinaryArtifactPayload stages and finalizes self-contained runti
     assert.equal(compileCalls.length, 1);
     assert.deepEqual(runCalls, [
       {
+        cmd: process.execPath,
+        args: ['apps/server/scripts/buildSharedDeps.mjs', '--quiet'],
+      },
+      {
         cmd: 'yarn',
         args: ['--cwd', 'apps/server', '-s', 'generate:providers'],
       },
@@ -1326,6 +1330,7 @@ test('buildServerBinaryArtifactPayload stages sharp runtime sidecars for the ser
     writeFileSync(join(sharpDarwinArm64Dir, 'binding.node'), 'darwin sharp binding\n', 'utf8');
 
     const artifacts = await import('../dist/componentArtifacts/index.js');
+    const compileCalls = [];
     await artifacts.buildServerBinaryArtifactPayload({
       repoRoot,
       payloadDir,
@@ -1339,11 +1344,13 @@ test('buildServerBinaryArtifactPayload stages sharp runtime sidecars for the ser
       }),
       commandProbe: () => true,
       runCommand: () => {},
-      compileBinary: async ({ outfile }) => {
+      compileBinary: async ({ outfile, externals }) => {
+        compileCalls.push({ externals });
         writeFileSync(outfile, '#!/bin/sh\necho happier-server\n', 'utf8');
       },
     });
 
+    assert.deepEqual(compileCalls, [{ externals: ['redis'] }]);
     assert.equal(readFileSync(join(payloadDir, 'node_modules', 'sharp', 'index.js'), 'utf8'), 'module.exports = {};\n');
     assert.equal(
       readFileSync(join(payloadDir, 'node_modules', '@img', 'sharp-linux-x64', 'binding.node'), 'utf8'),
@@ -1430,6 +1437,10 @@ test('buildServerBinaryArtifactPayload delegates provider freshness to generate:
     });
 
     assert.deepEqual(runCalls, [
+      {
+        cmd: process.execPath,
+        args: ['apps/server/scripts/buildSharedDeps.mjs', '--quiet'],
+      },
       {
         cmd: 'yarn',
         args: ['--cwd', 'apps/server', '-s', 'generate:providers'],
@@ -1635,6 +1646,7 @@ test('prepareUiWebDist refreshes an existing ui-web dist before server sidecars 
       { cmd: process.execPath, args: ['apps/ui/scripts/ensureWorkspacePackagesBuilt.mjs'] },
       { cmd: 'yarn', args: ['--cwd', 'apps/ui', '-s', 'expo', 'export', '--platform', 'web', '--output-dir', 'dist'] },
       { cmd: process.execPath, args: ['scripts/pipeline/release/precompress-ui-web-assets.mjs', '--dir', 'apps/ui/dist'] },
+      { cmd: process.execPath, args: ['apps/server/scripts/buildSharedDeps.mjs', '--quiet'] },
       { cmd: 'yarn', args: ['--cwd', 'apps/server', '-s', 'generate:providers'] },
     ]);
     assert.equal(uiWebDistPath, uiDistDir);

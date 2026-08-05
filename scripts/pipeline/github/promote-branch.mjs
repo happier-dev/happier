@@ -130,7 +130,7 @@ function classifyChangedComponents(files) {
   for (const filename of files) {
     if (filename.startsWith('apps/ui/')) changedUi = true;
     else if (filename.startsWith('apps/cli/')) changedCli = true;
-    else if (filename.startsWith('apps/server/')) changedServer = true;
+    else if (filename.startsWith('apps/server/') || filename.startsWith('packages/privacy-kit/')) changedServer = true;
     else if (filename.startsWith('apps/website/')) changedWebsite = true;
     else if (filename.startsWith('apps/docs/')) changedDocs = true;
     else if (filename.startsWith('packages/agents/') || filename.startsWith('packages/protocol/')) changedShared = true;

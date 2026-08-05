@@ -199,6 +199,7 @@ function main() {
   const server = planOne('deploy_server', `deploy/${deployEnvironment}/server`, deployServer, [
     'apps/server/*',
     'packages/relay-server/*',
+    'packages/privacy-kit/*',
     'packages/agents/*',
     'packages/protocol/*',
   ]);
