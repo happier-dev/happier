@@ -546,9 +546,11 @@ function vendorRuntimeDependencyTree(params: Readonly<{
   destNodeModulesDir: string;
   visited?: Set<string>;
   dedupeByNameVersion?: Map<string, string>;
+  excludePackageNames?: ReadonlySet<string>;
 }>): void {
   const pkgJson = readJson(params.packageJsonPath);
-  const roots = collectExternalRuntimeDepNamesFromPackageJson(pkgJson);
+  const roots = collectExternalRuntimeDepNamesFromPackageJson(pkgJson)
+    .filter((dep) => !params.excludePackageNames?.has(dep.name));
   const require = createRequire(pathToFileURL(params.resolveFromPackageJsonPath ?? params.packageJsonPath).href);
 
   const visited = params.visited ?? new Set<string>();
@@ -599,6 +601,7 @@ function vendorRuntimeDependencyTree(params: Readonly<{
       destNodeModulesDir: resolve(depDestDir, 'node_modules'),
       visited,
       dedupeByNameVersion,
+      excludePackageNames: params.excludePackageNames,
     });
   }
 }
@@ -607,6 +610,7 @@ export function vendorBundledPackageRuntimeDependencies(params: Readonly<{
   srcPackageJsonPath: string;
   resolveFromPackageJsonPath?: string;
   destPackageDir: string;
+  excludePackageNames?: ReadonlySet<string>;
 }>): void {
   if (!existsSync(params.srcPackageJsonPath)) {
     throw new Error(`Missing package.json: ${params.srcPackageJsonPath}`);
@@ -628,6 +632,7 @@ export function vendorBundledPackageRuntimeDependencies(params: Readonly<{
         packageJsonPath: params.srcPackageJsonPath,
         resolveFromPackageJsonPath: params.resolveFromPackageJsonPath,
         destNodeModulesDir: tempNodeModulesDir,
+        excludePackageNames: params.excludePackageNames,
       });
     },
   });

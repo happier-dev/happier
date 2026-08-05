@@ -268,6 +268,108 @@ describe('bundleWorkspacePackage', () => {
       'module.exports = "shared";\n',
     );
   });
+
+  it('skips vendoring a specific excluded package while still vendoring the rest', async () => {
+    rootDir = mkdtempSync(join(tmpdir(), 'happier-cli-common-bundle-workspace-'));
+
+    const workspaceModule = await import('./index');
+    const vendorBundledPackageRuntimeDependencies =
+      (workspaceModule as Record<string, unknown>).vendorBundledPackageRuntimeDependencies;
+    expect(vendorBundledPackageRuntimeDependencies).toBeTypeOf('function');
+
+    const cliDir = resolve(rootDir, 'apps/cli');
+    const zodPackageDir = resolve(cliDir, 'node_modules/zod');
+    const sharpPackageDir = resolve(cliDir, 'node_modules/sharp');
+    mkdirSync(zodPackageDir, { recursive: true });
+    mkdirSync(sharpPackageDir, { recursive: true });
+
+    writeFileSync(
+      resolve(cliDir, 'package.json'),
+      JSON.stringify(
+        {
+          name: '@happier-dev/cli',
+          version: '0.0.0',
+          dependencies: { zod: '4.3.6', sharp: '0.34.3' },
+        },
+        null,
+        2,
+      ),
+    );
+    writeFileSync(
+      resolve(zodPackageDir, 'package.json'),
+      JSON.stringify({ name: 'zod', version: '4.3.6', dependencies: {} }, null, 2),
+    );
+    writeFileSync(resolve(zodPackageDir, 'index.js'), 'module.exports = {};\n');
+    writeFileSync(
+      resolve(sharpPackageDir, 'package.json'),
+      JSON.stringify({ name: 'sharp', version: '0.34.3', dependencies: {} }, null, 2),
+    );
+    writeFileSync(resolve(sharpPackageDir, 'index.js'), 'module.exports = {};\n');
+
+    const payloadDir = resolve(rootDir, 'payload');
+
+    (vendorBundledPackageRuntimeDependencies as (params: {
+      srcPackageJsonPath: string;
+      resolveFromPackageJsonPath?: string;
+      destPackageDir: string;
+      excludePackageNames?: ReadonlySet<string>;
+    }) => void)({
+      srcPackageJsonPath: resolve(cliDir, 'package.json'),
+      destPackageDir: payloadDir,
+      excludePackageNames: new Set(['zod']),
+    });
+
+    expect(existsSync(resolve(payloadDir, 'node_modules/zod'))).toBe(false);
+    expect(readFileSync(resolve(payloadDir, 'node_modules/sharp/index.js'), 'utf8')).toBe(
+      'module.exports = {};\n',
+    );
+  });
+
+  it('vendors every declared dependency when no exclusion set is provided', async () => {
+    rootDir = mkdtempSync(join(tmpdir(), 'happier-cli-common-bundle-workspace-'));
+
+    const workspaceModule = await import('./index');
+    const vendorBundledPackageRuntimeDependencies =
+      (workspaceModule as Record<string, unknown>).vendorBundledPackageRuntimeDependencies;
+    expect(vendorBundledPackageRuntimeDependencies).toBeTypeOf('function');
+
+    const cliDir = resolve(rootDir, 'apps/cli');
+    const zodPackageDir = resolve(cliDir, 'node_modules/zod');
+    mkdirSync(zodPackageDir, { recursive: true });
+
+    writeFileSync(
+      resolve(cliDir, 'package.json'),
+      JSON.stringify(
+        {
+          name: '@happier-dev/cli',
+          version: '0.0.0',
+          dependencies: { zod: '4.3.6' },
+        },
+        null,
+        2,
+      ),
+    );
+    writeFileSync(
+      resolve(zodPackageDir, 'package.json'),
+      JSON.stringify({ name: 'zod', version: '4.3.6', dependencies: {} }, null, 2),
+    );
+    writeFileSync(resolve(zodPackageDir, 'index.js'), 'module.exports = {};\n');
+
+    const payloadDir = resolve(rootDir, 'payload');
+
+    (vendorBundledPackageRuntimeDependencies as (params: {
+      srcPackageJsonPath: string;
+      resolveFromPackageJsonPath?: string;
+      destPackageDir: string;
+    }) => void)({
+      srcPackageJsonPath: resolve(cliDir, 'package.json'),
+      destPackageDir: payloadDir,
+    });
+
+    expect(readFileSync(resolve(payloadDir, 'node_modules/zod/index.js'), 'utf8')).toBe(
+      'module.exports = {};\n',
+    );
+  });
 });
 
 describe('atomicReplaceDirSync', () => {
