@@ -19,10 +19,10 @@ import {
 import {
   resolveRollingPublishVersion,
   resolveRollingRecoveryVersion,
+  validateExactRollingPublishVersion,
 } from '../lib/rolling-version-allocation.mjs';
 import { withCurrentVersionLine } from '../lib/rolling-release-notes.mjs';
 import { resolveGitHubRepoSlug } from '../../github/resolve-github-repo-slug.mjs';
-import { prepareBinaryReleaseAssets } from './prepare-binary-assets.mjs';
 import { getBinaryPublishProductSpec } from './product-specs.mjs';
 
 const GITHUB_RELEASE_SCRIPT_RELATIVE_PATH = 'scripts/pipeline/github/publish-release.mjs';
@@ -189,6 +189,7 @@ export function parsePublishBinaryReleaseArgs(argv) {
       'authorized-sha': { type: 'string', default: '' },
       'base-version': { type: 'string', default: '' },
       'prepared-artifacts': { type: 'boolean', default: false },
+      'finalized-artifacts': { type: 'boolean', default: false },
       'resolve-version-only': { type: 'boolean', default: false },
       'github-output': { type: 'string', default: '' },
       'dry-run': { type: 'boolean', default: false },
@@ -231,6 +232,10 @@ export async function publishBinaryReleaseMain(options = {}) {
   const checkInstallers = parseBool(values['check-installers'], '--check-installers');
   const releaseMessage = String(values['release-message'] ?? '').trim();
   const explicitVersion = String(values.version ?? '').trim();
+  const finalizedArtifacts = values['finalized-artifacts'] === true;
+  if (finalizedArtifacts && !explicitVersion) {
+    throw new Error('--version is required with --finalized-artifacts');
+  }
   const phase = String(values.phase ?? 'publish').trim();
   if (!['publish', 'promote-rolling'].includes(phase)) {
     throw new Error('--phase must be publish|promote-rolling');
@@ -241,6 +246,8 @@ export async function publishBinaryReleaseMain(options = {}) {
 
   const releaseRing = getPublicReleaseRingEntry(channel);
   const embeddedPolicy = resolveEmbeddedPolicyForChannel(channel);
+  const baseVersion = String(values['base-version'] ?? '').trim()
+    || readBaseVersion(repoRoot, productSpec);
   const version = phase === 'promote-rolling'
     ? (
         await resolveRollingRecoveryVersion({
@@ -251,16 +258,23 @@ export async function publishBinaryReleaseMain(options = {}) {
           env: process.env,
         })
       ).version
-    : await computePublishVersion(
-        productSpec,
-        channel,
-        String(values['base-version'] ?? '').trim() || readBaseVersion(repoRoot, productSpec),
-        {
-          repoRoot,
-          explicitVersion,
-          dryRun: opts.dryRun,
-        },
-      );
+    : finalizedArtifacts
+      ? validateExactRollingPublishVersion({
+          productId: productSpec.id,
+          channel,
+          baseVersion,
+          version: explicitVersion,
+        })
+      : await computePublishVersion(
+          productSpec,
+          channel,
+          baseVersion,
+          {
+            repoRoot,
+            explicitVersion,
+            dryRun: opts.dryRun,
+          },
+        );
   if (values['resolve-version-only'] === true) {
     const githubOutputPath = String(values['github-output'] ?? '').trim();
     if (githubOutputPath) {
@@ -299,7 +313,9 @@ export async function publishBinaryReleaseMain(options = {}) {
     }`,
   );
 
-  if (phase !== 'promote-rolling') await preflightMinisignKey(productSpec, opts);
+  if (phase !== 'promote-rolling' && !finalizedArtifacts) {
+    await preflightMinisignKey(productSpec, opts);
+  }
 
   if (runContracts) {
     run(opts, 'yarn', ['-s', 'test:release:contracts'], {
@@ -311,7 +327,9 @@ export async function publishBinaryReleaseMain(options = {}) {
     run(opts, process.execPath, [INSTALLER_SYNC_SCRIPT_RELATIVE_PATH, '--check'], { cwd: repoRoot });
   }
 
-  ensureMinisign(repoRoot, productSpec, opts);
+  if (!finalizedArtifacts) {
+    ensureMinisign(repoRoot, productSpec, opts);
+  }
 
   if (phase === 'promote-rolling') {
     const githubOutputPath = String(values['github-output'] ?? '').trim();
@@ -357,6 +375,9 @@ export async function publishBinaryReleaseMain(options = {}) {
     }
     const assetsBaseUrl = `https://github.com/${repoSlug}/releases/download/${versionTag}`;
 
+    // Version allocation runs before workspace dependencies are installed in release workflows.
+    // Keep the artifact-builder dependency graph behind the first phase that actually needs it.
+    const { prepareBinaryReleaseAssets } = await import('./prepare-binary-assets.mjs');
     await prepareBinaryReleaseAssets({
       repoRoot,
       productId: productSpec.id,
@@ -364,8 +385,14 @@ export async function publishBinaryReleaseMain(options = {}) {
       version,
       assetsBaseUrl,
       commitSha: targetSha,
-      workflowRunId: String(process.env.GITHUB_RUN_ID ?? ''),
-      preparedArtifacts: values['prepared-artifacts'] === true,
+      buildWorkflowRunId: String(
+        process.env.HAPPIER_CANDIDATE_BUILD_RUN_ID
+          ?? process.env.GITHUB_RUN_ID
+          ?? '',
+      ),
+      publicationWorkflowRunId: String(process.env.GITHUB_RUN_ID ?? ''),
+      preparedArtifacts: values['prepared-artifacts'] === true || finalizedArtifacts,
+      finalizedArtifacts,
       dryRun: opts.dryRun,
       env: {
         HAPPIER_EMBEDDED_POLICY_ENV: process.env.HAPPIER_EMBEDDED_POLICY_ENV ?? embeddedPolicy,

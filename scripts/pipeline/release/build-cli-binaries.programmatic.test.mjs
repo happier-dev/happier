@@ -1,8 +1,11 @@
 import assert from 'node:assert/strict';
+import { writeFileSync } from 'node:fs';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
 import test from 'node:test';
+
+import cliDistBuildManifest from '../../../packages/cli-common/cliDistBuildManifest.cjs';
 
 import {
   buildCliBinaryArtifacts,
@@ -28,6 +31,12 @@ const linuxArm64Target = Object.freeze({
   exeExt: '',
   bunTarget: 'bun-linux-arm64',
 });
+const darwinArm64Target = Object.freeze({
+  os: 'darwin',
+  arch: 'arm64',
+  exeExt: '',
+  bunTarget: 'bun-darwin-arm64',
+});
 
 function createTestReleaseOwners() {
   const availableTargets = [linuxX64Target, linuxArm64Target];
@@ -39,6 +48,7 @@ function createTestReleaseOwners() {
       .map((value) => value.trim())
       .filter(Boolean),
     readVersionFromPackageJson: () => '0.2.10',
+    refreshCliBinaryArtifactRuntimeAssetBuildManifest: () => {},
     resolveTargets: ({ availableTargets: candidates, requested }) => {
       const requestedKeys = String(requested ?? '')
         .split(',')
@@ -59,16 +69,23 @@ function createTestReleaseOwners() {
 async function createFixture() {
   const root = await mkdtemp(join(tmpdir(), 'happier-cli-binary-owner-'));
   const repoRoot = join(root, 'repo');
+  const cliPackageJsonPath = join(repoRoot, 'apps', 'cli', 'package.json');
   const outputRoot = join(root, 'candidate', 'native');
   const sharedOutputRoot = join(repoRoot, 'dist', 'release-assets', 'cli');
   const managedRuntimeExecutablePath = join(root, 'wrapper', 'happier-cliproxyapi-managed');
   await mkdir(sharedOutputRoot, { recursive: true });
+  await mkdir(resolve(cliPackageJsonPath, '..'), { recursive: true });
   await mkdir(resolve(managedRuntimeExecutablePath, '..'), { recursive: true });
   await writeFile(join(sharedOutputRoot, 'sentinel.txt'), 'shared-output-must-not-change\n');
+  await writeFile(
+    cliPackageJsonPath,
+    `${JSON.stringify({ name: '@happier-dev/cli', version: '0.2.10' }, null, 2)}\n`,
+  );
   await writeFile(managedRuntimeExecutablePath, 'same-basis-wrapper\n');
   return {
     root,
     repoRoot,
+    cliPackageJsonPath,
     outputRoot,
     sharedOutputRoot,
     managedRuntimeExecutablePath,
@@ -233,6 +250,141 @@ test('programmatic CLI binary build stays in the caller output root and propagat
   assert.equal(process.env[envMarkerName], previousMarker);
 });
 
+test('programmatic CLI binary build embeds the requested version and restores package.json', async (t) => {
+  const fixture = await createFixture();
+  t.after(() => rm(fixture.root, { recursive: true, force: true }));
+  const requestedVersion = '0.2.10-preview.47';
+  const observedPackageVersions = [];
+
+  await buildCliBinaryArtifacts(
+    {
+      repoRoot: fixture.repoRoot,
+      outDir: fixture.outputRoot,
+      channel: 'preview',
+      version: requestedVersion,
+      targets: [linuxX64TargetKey],
+      cliProxyApiManagedRuntime: { kind: 'build-from-workspace-source' },
+      env: process.env,
+    },
+    {
+      loadCliBinaryReleaseOwnersImpl: async () => createTestReleaseOwners(),
+      buildCliBinaryArtifactPayloadImpl: async ({ payloadDir }) => {
+        observedPackageVersions.push(
+          JSON.parse(await readFile(fixture.cliPackageJsonPath, 'utf8')).version,
+        );
+        await mkdir(payloadDir, { recursive: true });
+      },
+      finalizeMacOSPayloadForArchiveImpl: () => null,
+      packagePreparedTargetBinaryImpl: async ({ outDir, target, version }) => ({
+        name: `happier-v${version}-${target.os}-${target.arch}.tar.gz`,
+        path: join(outDir, `happier-v${version}-${target.os}-${target.arch}.tar.gz`),
+        os: target.os,
+        arch: target.arch,
+      }),
+      writeChecksumsFileImpl: async ({ outDir, version }) => join(
+        outDir,
+        `checksums-happier-v${version}.txt`,
+      ),
+      maybeSignFileImpl: async () => null,
+      cleanupTempDirBestEffortImpl: async () => ({ timedOut: false }),
+    },
+  );
+
+  assert.deepEqual(observedPackageVersions, [requestedVersion]);
+  assert.equal(
+    JSON.parse(await readFile(fixture.cliPackageJsonPath, 'utf8')).version,
+    '0.2.10',
+  );
+});
+
+test('Darwin finalization refreshes managed-runtime integrity before payload evidence and archive custody', async (t) => {
+  const fixture = await createFixture();
+  t.after(() => rm(fixture.root, { recursive: true, force: true }));
+  const events = [];
+
+  await buildCliBinaryArtifacts(
+    {
+      repoRoot: fixture.repoRoot,
+      outDir: fixture.outputRoot,
+      channel: 'preview',
+      version: '0.2.10-candidate.7',
+      targets: ['darwin-arm64'],
+      cliProxyApiManagedRuntime: { kind: 'build-from-workspace-source' },
+      env: process.env,
+    },
+    {
+      loadCliBinaryReleaseOwnersImpl: async () => ({
+        ...createTestReleaseOwners(),
+        CLI_STACK_TARGETS: [darwinArm64Target],
+      }),
+      buildCliBinaryArtifactPayloadImpl: async ({ payloadDir }) => {
+        events.push('payload');
+        const entrypoint = join(payloadDir, 'package-dist', 'index.mjs');
+        const wrapperPath = join(
+          payloadDir,
+          'tools',
+          'unpacked',
+          'happier-cliproxyapi-managed',
+        );
+        await mkdir(join(payloadDir, 'package-dist'), { recursive: true });
+        await mkdir(join(payloadDir, 'tools', 'unpacked'), { recursive: true });
+        await writeFile(entrypoint, 'export default true;\n');
+        await writeFile(wrapperPath, 'managed-runtime-A');
+        cliDistBuildManifest.writeCliDistBuildManifest(entrypoint);
+        cliDistBuildManifest.writeCliRuntimeAssetBuildManifest({
+          runtimeRoot: payloadDir,
+          entrypoint,
+          relativePath: 'tools/unpacked/happier-cliproxyapi-managed',
+        });
+      },
+      finalizeMacOSPayloadForArchiveImpl: (params) => {
+        events.push('codesign');
+        writeFileSync(
+          join(
+            params.stageDir,
+            'tools',
+            'unpacked',
+            'happier-cliproxyapi-managed',
+          ),
+          'managed-runtime-B',
+        );
+        assert.equal(typeof params.refreshRuntimeAssetManifest, 'function');
+        params.refreshRuntimeAssetManifest();
+        events.push('evidence');
+        return { payloadSha256: 'a'.repeat(64) };
+      },
+      refreshCliBinaryArtifactRuntimeAssetBuildManifestImpl: ({ payloadDir }) => {
+        events.push('refresh');
+        cliDistBuildManifest.refreshCliRuntimeAssetBuildManifest({
+          runtimeRoot: payloadDir,
+          entrypoint: join(payloadDir, 'package-dist', 'index.mjs'),
+        });
+      },
+      packagePreparedTargetBinaryImpl: async ({ stageDir, outDir, target }) => {
+        events.push('archive');
+        assert.equal(cliDistBuildManifest.readCliRuntimeAssetIntegrity({
+          runtimeRoot: stageDir,
+          relativePath: 'tools/unpacked/happier-cliproxyapi-managed',
+        }).ok, true);
+        return {
+          name: 'happier-v0.2.10-candidate.7-darwin-arm64.tar.gz',
+          path: join(outDir, 'happier-v0.2.10-candidate.7-darwin-arm64.tar.gz'),
+          os: target.os,
+          arch: target.arch,
+        };
+      },
+      writeChecksumsFileImpl: async ({ outDir }) => join(outDir, 'checksums.txt'),
+      maybeSignFileImpl: async () => null,
+      cleanupTempDirBestEffortImpl: async ({ tempDir }) => {
+        await rm(tempDir, { recursive: true, force: true });
+        return { timedOut: false };
+      },
+    },
+  );
+
+  assert.deepEqual(events, ['payload', 'codesign', 'refresh', 'evidence', 'archive']);
+});
+
 test('programmatic CLI binary build requires an explicit exact managed-runtime input', async () => {
   await assert.rejects(
     buildCliBinaryArtifacts({
@@ -381,6 +533,10 @@ test('intermediate failure still cleans the caller temp build and restores env w
     ]);
     assert.equal(process.env.HAPPIER_WORKSPACE_DIST_BUILD_LOCK_HELD, undefined);
     assert.equal(process.env[envMarkerName], undefined);
+    assert.equal(
+      JSON.parse(await readFile(fixture.cliPackageJsonPath, 'utf8')).version,
+      '0.2.10',
+    );
   } finally {
     if (previousLease === undefined) {
       delete process.env.HAPPIER_WORKSPACE_DIST_BUILD_LOCK_HELD;

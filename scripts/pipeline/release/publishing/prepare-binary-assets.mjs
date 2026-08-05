@@ -130,6 +130,25 @@ export async function finalizePreparedBinaryArtifacts(params) {
     os: artifact.os,
     arch: artifact.arch,
   }));
+  const evidenceNames = (await readdir(artifactsDir))
+    .filter((name) => name.endsWith('.cli.json'))
+    .sort();
+  if (evidenceNames.length > 0) {
+    const expectedEvidenceNames = ['darwin-arm64.cli.json', 'darwin-x64.cli.json'];
+    if (
+      params.productSpec.id !== 'cli'
+      || evidenceNames.length !== expectedEvidenceNames.length
+      || evidenceNames.some((name, index) => name !== expectedEvidenceNames[index])
+    ) {
+      throw new Error(`unexpected prepared evidence set for ${params.productSpec.id} ${version}`);
+    }
+    artifacts.push(...evidenceNames.map((name) => ({
+      name,
+      path: path.join(artifactsDir, name),
+      os: 'darwin',
+      arch: name.includes('arm64') ? 'arm64' : 'x64',
+    })));
+  }
   const checksumsPath = await writeChecksums({
     product: params.productSpec.manifestProduct,
     version,
@@ -158,9 +177,12 @@ export async function finalizePreparedBinaryArtifacts(params) {
  *   version: string;
  *   assetsBaseUrl: string;
  *   commitSha: string;
+ *   buildWorkflowRunId?: string;
+ *   publicationWorkflowRunId?: string;
  *   workflowRunId?: string;
  *   skipSmoke?: boolean;
  *   preparedArtifacts?: boolean;
+ *   finalizedArtifacts?: boolean;
  *   dryRun?: boolean;
  *   env?: Record<string, string | undefined>;
  *   finalizePrepared?: typeof finalizePreparedBinaryArtifacts;
@@ -189,7 +211,11 @@ export async function prepareBinaryReleaseAssets(params) {
   const opts = { dryRun: params.dryRun === true };
   if (params.preparedArtifacts === true) {
     const artifactsDir = withinRepo(repoRoot, productSpec.artifactsDir);
-    if (!opts.dryRun || params.finalizePrepared) {
+    if (params.finalizedArtifacts === true) {
+      console.log(
+        `${opts.dryRun ? '[dry-run]' : '[pipeline]'} preserve authenticated finalized artifacts under ${productSpec.artifactsDir}`,
+      );
+    } else if (!opts.dryRun || params.finalizePrepared) {
       await (params.finalizePrepared ?? finalizePreparedBinaryArtifacts)({
         artifactsDir,
         productSpec,
@@ -228,8 +254,10 @@ export async function prepareBinaryReleaseAssets(params) {
       assetsBaseUrl,
       '--commit-sha',
       commitSha,
-      '--workflow-run-id',
-      String(params.workflowRunId ?? ''),
+      '--build-workflow-run-id',
+      String(params.buildWorkflowRunId ?? params.workflowRunId ?? ''),
+      '--publication-workflow-run-id',
+      String(params.publicationWorkflowRunId ?? params.workflowRunId ?? ''),
     ],
     { cwd: repoRoot },
   );
@@ -265,6 +293,9 @@ export async function prepareBinaryReleaseAssets(params) {
       skipSmoke: params.skipSmoke === true,
     },
   });
+  if (params.finalizedArtifacts === true) {
+    execution.args.push('--require-all-artifacts-checksummed', '--require-signature');
+  }
   runBinaryAssetStep(opts, execution.command, execution.args, {
     cwd: execution.cwd,
   });
@@ -283,7 +314,8 @@ function parsePrepareBinaryAssetsArgs(argv) {
       'artifacts-dir': { type: 'string', default: '' },
       'assets-base-url': { type: 'string' },
       'commit-sha': { type: 'string' },
-      'workflow-run-id': { type: 'string', default: '' },
+      'build-workflow-run-id': { type: 'string', default: '' },
+      'publication-workflow-run-id': { type: 'string', default: '' },
       'finalize-prepared-only': { type: 'boolean', default: false },
       'skip-smoke': { type: 'boolean', default: false },
       'dry-run': { type: 'boolean', default: false },
@@ -325,7 +357,8 @@ export async function prepareBinaryAssetsMain(options = {}) {
     version: String(values.version ?? ''),
     assetsBaseUrl: String(values['assets-base-url'] ?? ''),
     commitSha: String(values['commit-sha'] ?? ''),
-    workflowRunId: String(values['workflow-run-id'] ?? ''),
+    buildWorkflowRunId: String(values['build-workflow-run-id'] ?? ''),
+    publicationWorkflowRunId: String(values['publication-workflow-run-id'] ?? ''),
     skipSmoke: values['skip-smoke'] === true,
     dryRun: values['dry-run'] === true,
   });

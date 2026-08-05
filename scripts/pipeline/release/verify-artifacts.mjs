@@ -9,12 +9,8 @@ import { basename, join, resolve } from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 
-import {
-  extractArchivePayloadToDirectory,
-  inspectTarArchiveEntries,
-} from '@happier-dev/release-runtime/archiveExtraction';
-
 import { fileSha256, parseArtifactChecksums } from './lib/artifact-checksums.mjs';
+import { parseArtifactFilename } from './lib/manifests.mjs';
 import { parseArgs } from './lib/release-script-arguments.mjs';
 import { shouldSmokeTestReleaseArtifact } from './publishing/artifact-smoke-compatibility.mjs';
 import { terminateProcessTreeByPid } from '../../testing/process/processTree.mjs';
@@ -182,6 +178,10 @@ function assertCanonicalArchiveLayout({ archiveName, identity, entries }) {
 
 /** @param {{ archivePath: string; archiveName: string }} params */
 export async function verifyReleaseArchiveAdmission({ archivePath, archiveName }) {
+  const {
+    extractArchivePayloadToDirectory,
+    inspectTarArchiveEntries,
+  } = await import('@happier-dev/release-runtime/archiveExtraction');
   const identity = parseReleaseArchiveIdentity(archiveName);
   if (!identity) {
     throw new ReleaseArchiveAdmissionError(
@@ -376,6 +376,10 @@ async function runSmokeCommand({ command, args, cwd, env, timeoutMs }) {
 }
 
 async function smokeTestArchive({ archivePath }) {
+  const artifact = parseArtifactFilename(basename(archivePath));
+  const {
+    extractArchivePayloadToDirectory,
+  } = await import('@happier-dev/release-runtime/archiveExtraction');
   const scratch = await mkdtemp(join(tmpdir(), 'happier-release-smoke-'));
   try {
     await extractArchivePayloadToDirectory({
@@ -420,6 +424,9 @@ async function smokeTestArchive({ archivePath }) {
     const timedOut = result.timedOut === true;
     if (timedOut) {
       const output = formatSmokeOutput(result);
+      if (artifact?.product === 'happier') {
+        throw new Error(`[release] smoke test timed out for ${archivePath}: ${output.trim()}`);
+      }
       if (serverBinary) {
         if (/ERR_MODULE_NOT_FOUND|Cannot find module/i.test(output)) {
           throw new Error(`[release] smoke test failed for ${archivePath}: ${output.trim()}`);
@@ -433,6 +440,14 @@ async function smokeTestArchive({ archivePath }) {
     }
     if ((result.status ?? 1) !== 0) {
       throw new Error(`[release] smoke test failed for ${archivePath}: ${formatSmokeOutput(result)}`);
+    }
+    if (artifact?.product === 'happier') {
+      const actualVersion = String(result.stdout ?? '').trim();
+      if (actualVersion !== artifact.version) {
+        throw new Error(
+          `[release] CLI version mismatch for ${archivePath}: expected ${artifact.version}, got ${actualVersion || '<empty>'}`,
+        );
+      }
     }
   } finally {
     await rm(scratch, { recursive: true, force: true });
@@ -459,6 +474,40 @@ async function main() {
   const entries = parseArtifactChecksums(checksumsRaw);
   for (const entry of entries) {
     assertChecksummedArtifactNameSafe(entry.name);
+  }
+  if (flags.has('--require-all-archives-checksummed')) {
+    const checksummedArchives = entries
+      .map((entry) => entry.name)
+      .filter((name) => name.endsWith('.tar.gz'))
+      .sort((left, right) => left.localeCompare(right));
+    const presentArchives = (await readdir(artifactsDir))
+      .filter((name) => name.endsWith('.tar.gz'))
+      .sort((left, right) => left.localeCompare(right));
+    if (
+      checksummedArchives.length !== presentArchives.length
+      || checksummedArchives.some((name, index) => name !== presentArchives[index])
+    ) {
+      throw new Error('[release] archive set does not match the checksum manifest');
+    }
+  }
+  if (flags.has('--require-all-artifacts-checksummed')) {
+    const checksumName = basename(checksumsPath);
+    const signatureName = `${checksumName}.minisig`;
+    const checksummedArtifacts = entries
+      .map((entry) => entry.name)
+      .sort((left, right) => left.localeCompare(right));
+    const presentArtifacts = (await readdir(artifactsDir, { withFileTypes: true }))
+      .filter((entry) => entry.isFile() && entry.name !== checksumName && entry.name !== signatureName)
+      .map((entry) => entry.name)
+      .sort((left, right) => left.localeCompare(right));
+    if (
+      checksummedArtifacts.length !== presentArtifacts.length
+      || checksummedArtifacts.some((name, index) => name !== presentArtifacts[index])
+    ) {
+      throw new Error('[release] artifact set does not match the checksum manifest');
+    }
+  }
+  for (const entry of entries) {
     const path = join(artifactsDir, entry.name);
     const hash = await fileSha256(path);
     if (hash !== entry.sha256) {
@@ -468,6 +517,9 @@ async function main() {
 
   const minisigPath = `${checksumsPath}.minisig`;
   const pubKeyPath = String(kv.get('--public-key') ?? process.env.MINISIGN_PUBLIC_KEY ?? '').trim();
+  if (flags.has('--require-signature') && !existsSync(minisigPath)) {
+    throw new Error('[release] required checksum signature is missing');
+  }
   if (existsSync(minisigPath)) {
     if (!pubKeyPath) {
       throw new Error('[release] signature found but no --public-key/MINISIGN_PUBLIC_KEY provided');
@@ -482,20 +534,26 @@ async function main() {
     );
   }
 
-  for (const entry of entries) {
-    if (!entry.name.endsWith('.tar.gz')) continue;
-    await verifyReleaseArchiveAdmission({
-      archivePath: join(artifactsDir, entry.name),
-      archiveName: entry.name,
-    });
-  }
-
-  if (!flags.has('--skip-smoke')) {
+  if (!flags.has('--skip-archive-admission')) {
     for (const entry of entries) {
       if (!entry.name.endsWith('.tar.gz')) continue;
-      if (!shouldSmokeTestReleaseArtifact({ archiveName: entry.name })) continue;
-      await smokeTestArchive({ archivePath: join(artifactsDir, entry.name) });
+      await verifyReleaseArchiveAdmission({
+        archivePath: join(artifactsDir, entry.name),
+        archiveName: entry.name,
+      });
     }
+  }
+
+  const skipOptionalSmoke = flags.has('--skip-smoke');
+  const cliVersionAttestations = [];
+  for (const entry of entries) {
+    if (!entry.name.endsWith('.tar.gz')) continue;
+    if (!shouldSmokeTestReleaseArtifact({ archiveName: entry.name })) continue;
+    const artifact = parseArtifactFilename(entry.name);
+    const requiresCliVersionAttestation = artifact?.product === 'happier';
+    if (skipOptionalSmoke && !requiresCliVersionAttestation) continue;
+    await smokeTestArchive({ archivePath: join(artifactsDir, entry.name) });
+    if (requiresCliVersionAttestation) cliVersionAttestations.push(entry.name);
   }
 
   console.log(JSON.stringify({
@@ -503,7 +561,8 @@ async function main() {
     artifactsDir,
     checksumsPath,
     verified: entries.map((entry) => entry.name),
-    smoke: !flags.has('--skip-smoke'),
+    smoke: !skipOptionalSmoke,
+    cliVersionAttestations,
   }, null, 2));
 }
 

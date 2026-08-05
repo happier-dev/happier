@@ -17,6 +17,7 @@ import { parseArgs } from './release-script-arguments.mjs';
 
 const {
   CLI_BINARY_TARGETS,
+  SERVER_BINARY_DEFAULT_EXTERNALS,
   SERVER_BINARY_TARGETS,
   buildCliBinaryArtifactPayload,
   buildServerBinaryArtifactPayload,
@@ -25,6 +26,7 @@ const {
   ensureFileExists,
   execOrThrow,
   prepareUiWebDist,
+  refreshCliBinaryArtifactRuntimeAssetBuildManifest,
   resolveYarnCommand,
 } = await loadCliCommonDistModule({
   repoRoot: fileURLToPath(new URL('../../../../', import.meta.url)),
@@ -40,7 +42,9 @@ export {
   ensureFileExists,
   execOrThrow,
   prepareUiWebDist,
+  refreshCliBinaryArtifactRuntimeAssetBuildManifest,
   resolveYarnCommand,
+  SERVER_BINARY_DEFAULT_EXTERNALS,
 };
 export { fileSha256 } from './artifact-checksums.mjs';
 export { prepareMinisignSecretKeyFile } from './minisign-secret-key.mjs';

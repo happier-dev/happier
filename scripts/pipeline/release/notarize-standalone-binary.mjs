@@ -277,7 +277,10 @@ function run([command, args], options = {}) {
   });
 }
 
-export function repairAdHocDarwinPayloadSignatures(rawPayloadPath) {
+export function repairAdHocDarwinPayloadSignatures(
+  rawPayloadPath,
+  { finalizePayloadBeforeSnapshot = () => {} } = {},
+) {
   if (process.platform !== 'darwin') {
     throw new Error('[release] ad-hoc Darwin payload signing must run on macOS');
   }
@@ -289,6 +292,7 @@ export function repairAdHocDarwinPayloadSignatures(rawPayloadPath) {
   const commands = resolveAdHocDarwinPayloadSigningCommands(machOCode);
   commands.codesign.forEach((command) => run(command));
   commands.verify.forEach((command) => run(command));
+  finalizePayloadBeforeSnapshot();
   return {
     payload: path.basename(payloadPath),
     signatureType: 'adhoc',
@@ -405,6 +409,7 @@ export function finalizeMacOSPayloadForArchive({
   notarizationOutputPath = '',
   repairSignature = repairAdHocDarwinPayloadSignatures,
   notarizePayload = notarizeDarwinPayloadMain,
+  refreshRuntimeAssetManifest = () => {},
 }) {
   const identity = String(signingIdentity ?? '').trim();
   const evidencePath = String(notarizationOutputPath ?? '').trim();
@@ -424,7 +429,9 @@ export function finalizeMacOSPayloadForArchive({
   }
 
   if (!identity) {
-    return repairSignature(stageDir);
+    return repairSignature(stageDir, {
+      finalizePayloadBeforeSnapshot: refreshRuntimeAssetManifest,
+    });
   }
   return notarizePayload([
     '--payload',
@@ -433,7 +440,9 @@ export function finalizeMacOSPayloadForArchive({
     identity,
     '--out',
     evidencePath,
-  ]);
+  ], {
+    finalizePayloadBeforeSnapshot: refreshRuntimeAssetManifest,
+  });
 }
 
 function writePrivateKey(pathname, rawValue) {
@@ -461,6 +470,7 @@ export function notarizeDarwinPayload({
   environment = process.env,
   runCommand = run,
   logger = console,
+  finalizePayloadBeforeSnapshot = () => {},
 }) {
   if (!fs.statSync(payloadPath, { throwIfNoEntry: false })?.isDirectory()) {
     throw new Error(`[release] Darwin payload does not exist: ${payloadPath}`);
@@ -495,6 +505,7 @@ export function notarizeDarwinPayload({
     });
     provisional.codesign.forEach((command) => runCommand(command));
     provisional.verify.forEach((command) => runCommand(command));
+    finalizePayloadBeforeSnapshot();
     const signedSnapshot = snapshotDarwinPayload(payloadPath);
     runCommand(provisional.archive);
     const archiveSha256 = fileSha256(zipPath);
@@ -544,7 +555,10 @@ export function notarizeDarwinPayload({
   }
 }
 
-export function notarizeDarwinPayloadMain(argv = process.argv.slice(2)) {
+export function notarizeDarwinPayloadMain(
+  argv = process.argv.slice(2),
+  { finalizePayloadBeforeSnapshot = () => {} } = {},
+) {
   if (process.platform !== 'darwin') {
     throw new Error('[release] Darwin payload notarization must run on macOS');
   }
@@ -569,6 +583,7 @@ export function notarizeDarwinPayloadMain(argv = process.argv.slice(2)) {
     identity,
     outPath,
     githubOutput: String(values['github-output'] ?? '').trim(),
+    finalizePayloadBeforeSnapshot,
   });
 }
 

@@ -32,7 +32,7 @@ const PRODUCT_SPECS = Object.freeze({
     publishSurfaceLabel: 'CLI binary publishing',
     minisignRequirementLabel: 'CLI release artifacts',
     packageJsonPath: 'apps/cli/package.json',
-    patchPackageVersionOnRolling: true,
+    patchPackageVersionOnRolling: false,
     buildScriptPath: 'scripts/pipeline/release/build-cli-binaries.mjs',
     artifactsDir: 'dist/release-assets/cli',
     manifestProduct: 'happier',

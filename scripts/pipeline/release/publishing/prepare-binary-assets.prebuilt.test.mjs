@@ -27,6 +27,11 @@ async function writeCliArchives(artifactsDir, version, targets = CLI_TARGETS) {
   }
 }
 
+async function writeCliEvidence(artifactsDir) {
+  await writeFile(join(artifactsDir, 'darwin-x64.cli.json'), '{"target":"darwin-x64"}\n', 'utf8');
+  await writeFile(join(artifactsDir, 'darwin-arm64.cli.json'), '{"target":"darwin-arm64"}\n', 'utf8');
+}
+
 test('finalizePreparedBinaryArtifacts signs one complete native CLI artifact matrix', async () => {
   const artifactsDir = await mkdtemp(join(tmpdir(), 'happier-prebuilt-cli-'));
   const version = '1.2.3-preview.4';
@@ -61,6 +66,40 @@ test('finalizePreparedBinaryArtifacts signs one complete native CLI artifact mat
     }]);
     assert.equal(result.artifacts.length, CLI_TARGETS.length);
     assert.equal(result.signaturePath, join(artifactsDir, `checksums-happier-v${version}.txt.minisig`));
+  } finally {
+    await rm(artifactsDir, { recursive: true, force: true });
+  }
+});
+
+test('finalizePreparedBinaryArtifacts signs the complete CLI candidate envelope including notarization evidence', async () => {
+  const artifactsDir = await mkdtemp(join(tmpdir(), 'happier-prebuilt-cli-evidence-'));
+  const version = '1.2.3-dev.4';
+  try {
+    await writeCliArchives(artifactsDir, version);
+    await writeCliEvidence(artifactsDir);
+    const writes = [];
+
+    await finalizePreparedBinaryArtifacts({
+      artifactsDir,
+      productSpec: getBinaryPublishProductSpec('cli'),
+      channel: 'dev',
+      version,
+      targets: CLI_TARGETS.map(([os, arch]) => ({ os, arch })),
+      writeChecksums: async (input) => {
+        writes.push(input);
+        return join(artifactsDir, `checksums-happier-v${version}.txt`);
+      },
+      signFile: async ({ path }) => `${path}.minisig`,
+    });
+
+    assert.deepEqual(
+      writes[0].artifacts.map((artifact) => artifact.name).sort(),
+      [
+        ...CLI_TARGETS.map(([os, arch]) => `happier-v${version}-${os}-${arch}.tar.gz`),
+        'darwin-arm64.cli.json',
+        'darwin-x64.cli.json',
+      ].sort(),
+    );
   } finally {
     await rm(artifactsDir, { recursive: true, force: true });
   }
@@ -158,6 +197,45 @@ test('prepareBinaryReleaseAssets consumes a prepared matrix without rebuilding i
   }
 });
 
+test('prepareBinaryReleaseAssets publishes an already-finalized candidate envelope without re-signing or rebuilding', async () => {
+  const repoRoot = await mkdtemp(join(tmpdir(), 'happier-prepare-finalized-cli-'));
+  const logs = [];
+  const originalLog = console.log;
+  console.log = (...args) => {
+    logs.push(args.join(' '));
+  };
+  try {
+    await prepareBinaryReleaseAssets({
+      repoRoot,
+      productId: 'cli',
+      channel: 'preview',
+      version: '1.2.3-preview.4',
+      assetsBaseUrl: 'https://example.test/cli-preview',
+      commitSha: 'a'.repeat(40),
+      preparedArtifacts: true,
+      finalizedArtifacts: true,
+      dryRun: true,
+      finalizePrepared: async () => {
+        throw new Error('an authenticated candidate envelope must not be re-signed');
+      },
+    });
+
+    assert.equal(logs.some((line) => line.includes('build-cli-binaries.mjs')), false);
+    assert.equal(logs.some((line) => line.includes('would finalize prepared artifacts')), false);
+    assert.equal(
+      logs.some(
+        (line) => line.includes('--require-all-artifacts-checksummed')
+          && line.includes('--require-signature'),
+      ),
+      true,
+      'finalized artifact publishing must re-admit the exact signed payload set without rewriting it',
+    );
+  } finally {
+    console.log = originalLog;
+    await rm(repoRoot, { recursive: true, force: true });
+  }
+});
+
 test('prepare-binary-assets exposes the existing complete-matrix finalizer without publishing', async () => {
   const calls = [];
   await prepareBinaryAssetsMain({
@@ -202,6 +280,20 @@ test('binary publisher accepts the prepared-artifacts handoff explicitly', () =>
   ]);
 
   assert.equal(values['prepared-artifacts'], true);
+});
+
+test('binary publisher accepts an exact finalized-artifacts handoff explicitly', () => {
+  const values = parsePublishBinaryReleaseArgs([
+    '--product',
+    'cli',
+    '--channel',
+    'dev',
+    '--version',
+    '1.2.3-dev.4',
+    '--finalized-artifacts',
+  ]);
+
+  assert.equal(values['finalized-artifacts'], true);
 });
 
 test('binary publisher can resolve one version for all native build jobs', () => {

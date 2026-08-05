@@ -284,6 +284,14 @@ test('Darwin payload execution completes every sign and strict verification befo
         APPLE_API_PRIVATE_KEY: '-----BEGIN PRIVATE KEY-----\ntest-only\n-----END PRIVATE KEY-----',
       },
       logger: { log: (value) => loggedEvidence.push(String(value)) },
+      finalizePayloadBeforeSnapshot: () => {
+        invocations.push({ command: 'refresh-runtime-asset-manifest', args: [] });
+        writeFileSync(
+          path.join(payloadDir, 'runtime-asset-manifest'),
+          'post-codesign-digest',
+          'utf8',
+        );
+      },
       runCommand: ([command, args], options = {}) => {
         invocations.push({ command, args: [...args] });
         if (command === 'ditto') {
@@ -301,6 +309,9 @@ test('Darwin payload execution completes every sign and strict verification befo
     });
 
     const archiveIndex = invocations.findIndex(({ command }) => command === 'ditto');
+    const refreshIndex = invocations.findIndex(({ command }) => (
+      command === 'refresh-runtime-asset-manifest'
+    ));
     const submitIndex = invocations.findIndex(({ command, args }) => (
       command === 'xcrun' && args[1] === 'submit'
     ));
@@ -316,13 +327,15 @@ test('Darwin payload execution completes every sign and strict verification befo
     ]);
     assert.equal(signInvocations.length, evidence.machO.length);
     assert.equal(verifyInvocations.length, evidence.machO.length);
-    assert.equal(invocations.slice(0, archiveIndex).every(({ command }) => command === 'codesign'), true);
+    assert.equal(refreshIndex > invocations.lastIndexOf(verifyInvocations.at(-1)), true);
+    assert.equal(refreshIndex < archiveIndex, true);
     assert.equal(submitIndex > archiveIndex, true);
     assert.equal(
       invocations.slice(submitIndex + 1).some(({ command }) => command === 'spctl'),
       true,
     );
     assert.equal(evidence.notarization.archiveSha256.length, 64);
+    assert.equal(evidence.payloadSha256, snapshotDarwinPayload(payloadDir).payloadSha256);
     const persistedEvidence = JSON.parse(readFileSync(evidencePath, 'utf8'));
     assert.equal('logPath' in persistedEvidence.notarization, false);
     assert.equal(JSON.stringify(persistedEvidence).includes(workDir), false);

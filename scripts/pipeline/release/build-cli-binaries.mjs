@@ -3,7 +3,7 @@
 // @ts-check
 
 import { join, resolve } from 'node:path';
-import { mkdir, rm } from 'node:fs/promises';
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 
@@ -119,6 +119,24 @@ async function withInheritedBuildEnvironment(env, fn) {
   }
 }
 
+async function patchCliPackageVersion(repoRoot, nextVersion) {
+  const packageJsonPath = join(repoRoot, 'apps', 'cli', 'package.json');
+  const raw = await readFile(packageJsonPath, 'utf8');
+  const parsed = JSON.parse(raw);
+  const previousVersion = String(parsed.version ?? '').trim();
+  if (!previousVersion) {
+    throw new Error(`[release] CLI package.json missing version: ${packageJsonPath}`);
+  }
+  if (previousVersion === nextVersion) {
+    return async () => {};
+  }
+  parsed.version = nextVersion;
+  await writeFile(packageJsonPath, `${JSON.stringify(parsed, null, 2)}\n`, 'utf8');
+  return async () => {
+    await writeFile(packageJsonPath, raw, 'utf8');
+  };
+}
+
 /**
  * Builds standalone CLI archives through the canonical payload and archive owners.
  *
@@ -146,6 +164,7 @@ export async function buildCliBinaryArtifacts(
     loadCliBinaryReleaseOwnersImpl = loadCliBinaryReleaseOwners,
     buildCliBinaryArtifactPayloadImpl,
     finalizeMacOSPayloadForArchiveImpl,
+    refreshCliBinaryArtifactRuntimeAssetBuildManifestImpl,
     packagePreparedTargetBinaryImpl,
     writeChecksumsFileImpl,
     maybeSignFileImpl,
@@ -210,6 +229,13 @@ export async function buildCliBinaryArtifacts(
       ?? releaseOwners.buildCliBinaryArtifactPayload;
     const finalizeMacOSPayload = finalizeMacOSPayloadForArchiveImpl
       ?? releaseOwners.finalizeMacOSPayloadForArchive;
+    const refreshRuntimeAssetManifest = (
+      refreshCliBinaryArtifactRuntimeAssetBuildManifestImpl
+      ?? releaseOwners.refreshCliBinaryArtifactRuntimeAssetBuildManifest
+    );
+    if (typeof refreshRuntimeAssetManifest !== 'function') {
+      throw new Error('[release] CLI runtime asset manifest refresh owner is unavailable');
+    }
     const packagePreparedTarget = packagePreparedTargetBinaryImpl
       ?? releaseOwners.packagePreparedTargetBinary;
     const writeChecksums = writeChecksumsFileImpl
@@ -217,6 +243,10 @@ export async function buildCliBinaryArtifacts(
     const maybeSign = maybeSignFileImpl
       ?? releaseOwners.maybeSignFile;
 
+    const restorePackageVersion = await patchCliPackageVersion(
+      normalizedRepoRoot,
+      normalizedVersion,
+    );
     let tempDirCreated = false;
     let primaryFailure = null;
     try {
@@ -245,7 +275,13 @@ export async function buildCliBinaryArtifacts(
           stageDir,
           signingIdentity: normalizedMacOSSigningIdentity,
           notarizationOutputPath: normalizedMacOSNotarizationOutputPath,
+          refreshRuntimeAssetManifest: () => {
+            refreshRuntimeAssetManifest({ payloadDir: stageDir });
+          },
         });
+        if (target.os !== 'darwin') {
+          refreshRuntimeAssetManifest({ payloadDir: stageDir });
+        }
         artifacts.push(await packagePreparedTarget({
           product: 'happier',
           version: normalizedVersion,
@@ -284,20 +320,22 @@ export async function buildCliBinaryArtifacts(
       primaryFailure = error;
       throw error;
     } finally {
-      if (tempDirCreated) {
-        try {
+      try {
+        if (tempDirCreated) {
           // Best-effort cleanup applies to both success and every intermediate failure.
           await cleanupTempDirBestEffortImpl({ tempDir });
-        } catch (cleanupError) {
-          if (primaryFailure === null) {
-            throw cleanupError;
-          }
-          warnImpl(
-            `[release] temp cleanup failed after CLI binary build failure: ${
-              cleanupError instanceof Error ? cleanupError.message : String(cleanupError)
-            }`,
-          );
         }
+      } catch (cleanupError) {
+        if (primaryFailure === null) {
+          throw cleanupError;
+        }
+        warnImpl(
+          `[release] temp cleanup failed after CLI binary build failure: ${
+            cleanupError instanceof Error ? cleanupError.message : String(cleanupError)
+          }`,
+        );
+      } finally {
+        await restorePackageVersion();
       }
     }
   });

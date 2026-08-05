@@ -5,14 +5,16 @@ import { finalizeMacOSPayloadForArchive } from './notarize-standalone-binary.mjs
 
 test('local Darwin archive builds repair and verify the complete Mach-O payload before packaging', () => {
   const repairs = [];
+  const refreshes = [];
   const notarizations = [];
 
   const result = finalizeMacOSPayloadForArchive({
     target: { os: 'darwin', arch: 'arm64' },
     stageDir: '/tmp/stage',
     platform: 'darwin',
-    repairSignature: (payloadPath) => {
+    repairSignature: (payloadPath, { finalizePayloadBeforeSnapshot }) => {
       repairs.push(payloadPath);
+      finalizePayloadBeforeSnapshot();
       return {
         signatureType: 'adhoc',
         payload: 'stage',
@@ -22,16 +24,19 @@ test('local Darwin archive builds repair and verify the complete Mach-O payload 
     notarizePayload: (argv) => {
       notarizations.push(argv);
     },
+    refreshRuntimeAssetManifest: () => refreshes.push('before-evidence'),
   });
 
   assert.equal(result?.signatureType, 'adhoc');
   assert.deepEqual(repairs, ['/tmp/stage']);
+  assert.deepEqual(refreshes, ['before-evidence']);
   assert.deepEqual(notarizations, []);
 });
 
 test('release Darwin archive builds Developer-ID sign and notarize the complete staged payload before packaging', () => {
   const repairs = [];
   const notarizations = [];
+  const refreshes = [];
 
   const result = finalizeMacOSPayloadForArchive({
     target: { os: 'darwin', arch: 'x64' },
@@ -42,14 +47,17 @@ test('release Darwin archive builds Developer-ID sign and notarize the complete 
     repairSignature: (binaryPath) => {
       repairs.push(binaryPath);
     },
-    notarizePayload: (argv) => {
+    notarizePayload: (argv, { finalizePayloadBeforeSnapshot }) => {
       notarizations.push(argv);
+      finalizePayloadBeforeSnapshot();
       return { signingIdentity: 'Developer ID Application: Happier Dev (TEAMID)' };
     },
+    refreshRuntimeAssetManifest: () => refreshes.push('before-evidence'),
   });
 
   assert.equal(result?.signingIdentity, 'Developer ID Application: Happier Dev (TEAMID)');
   assert.deepEqual(repairs, []);
+  assert.deepEqual(refreshes, ['before-evidence']);
   assert.deepEqual(notarizations, [[
     '--payload',
     '/tmp/stage',

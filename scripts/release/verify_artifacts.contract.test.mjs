@@ -133,7 +133,12 @@ async function createReleaseArchiveFixture({
   return { archiveName, archivePath, archiveRoot, stageRoot, artifactsDir, checksumsPath };
 }
 
-function verifyArchiveFixture({ artifactsDir, checksumsPath, env = process.env }) {
+function verifyArchiveFixture({
+  artifactsDir,
+  checksumsPath,
+  env = process.env,
+  extraArgs = [],
+}) {
   return spawnSync(
     process.execPath,
     [
@@ -143,6 +148,7 @@ function verifyArchiveFixture({ artifactsDir, checksumsPath, env = process.env }
       '--checksums',
       checksumsPath,
       '--skip-smoke',
+      ...extraArgs,
     ],
     {
       cwd: repoRoot,
@@ -152,6 +158,129 @@ function verifyArchiveFixture({ artifactsDir, checksumsPath, env = process.env }
     },
   );
 }
+
+test('verify-artifacts can require a signed checksum manifest', async () => {
+  const workspace = await mkdtemp(join(tmpdir(), 'happier-verify-artifacts-require-signature-'));
+  try {
+    const artifactsDir = join(workspace, 'artifacts');
+    const artifactName = 'artifact.bin';
+    const artifactPath = join(artifactsDir, artifactName);
+    const checksumsPath = join(artifactsDir, 'checksums-happier-v0.0.0-test.txt');
+
+    await mkdir(artifactsDir, { recursive: true });
+    await writeFile(artifactPath, 'artifact\n', 'utf-8');
+    await writeFile(checksumsPath, `${await sha256(artifactPath)}  ${artifactName}\n`, 'utf-8');
+
+    const result = spawnSync(
+      process.execPath,
+      [
+        verifyArtifactsPath,
+        '--artifacts-dir',
+        artifactsDir,
+        '--checksums',
+        checksumsPath,
+        '--require-signature',
+        '--skip-smoke',
+      ],
+      {
+        cwd: repoRoot,
+        encoding: 'utf-8',
+        timeout: 5_000,
+      },
+    );
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /required checksum signature is missing/);
+  } finally {
+    await rm(workspace, { recursive: true, force: true });
+  }
+});
+
+test('verify-artifacts can require every archive to appear in the signed checksum manifest', async () => {
+  const workspace = await mkdtemp(join(tmpdir(), 'happier-verify-artifacts-complete-archives-'));
+  try {
+    const fixture = await createReleaseArchiveFixture({
+      workspace,
+      files: [{ path: 'happier', contents: 'binary\n', mode: 0o755 }],
+    });
+    await writeFile(
+      join(fixture.artifactsDir, 'happier-v0.0.0-admission-linux-arm64.tar.gz'),
+      'unchecksummed archive\n',
+      'utf-8',
+    );
+
+    const result = verifyArchiveFixture({
+      artifactsDir: fixture.artifactsDir,
+      checksumsPath: fixture.checksumsPath,
+      extraArgs: ['--require-all-archives-checksummed'],
+    });
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /archive set does not match the checksum manifest/);
+  } finally {
+    await rm(workspace, { recursive: true, force: true });
+  }
+});
+
+test('verify-artifacts can require every candidate payload file to appear in the signed checksum manifest', async () => {
+  const workspace = await mkdtemp(join(tmpdir(), 'happier-verify-artifacts-complete-envelope-'));
+  try {
+    const fixture = await createReleaseArchiveFixture({
+      workspace,
+      files: [{ path: 'happier', contents: 'binary\n', mode: 0o755 }],
+    });
+    await writeFile(
+      join(fixture.artifactsDir, 'darwin-x64.cli.json'),
+      '{"tampered":true}\n',
+      'utf-8',
+    );
+
+    const result = verifyArchiveFixture({
+      artifactsDir: fixture.artifactsDir,
+      checksumsPath: fixture.checksumsPath,
+      extraArgs: ['--require-all-artifacts-checksummed'],
+    });
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /artifact set does not match the checksum manifest/);
+  } finally {
+    await rm(workspace, { recursive: true, force: true });
+  }
+});
+
+test('verify-artifacts rejects notarization evidence changed after its checksum was signed', async () => {
+  const workspace = await mkdtemp(join(tmpdir(), 'happier-verify-artifacts-tampered-evidence-'));
+  try {
+    const artifactsDir = join(workspace, 'artifacts');
+    const evidenceName = 'darwin-arm64.cli.json';
+    const evidencePath = join(artifactsDir, evidenceName);
+    const checksumsPath = join(artifactsDir, 'checksums-happier-v0.0.0-test.txt');
+    await mkdir(artifactsDir, { recursive: true });
+    await writeFile(evidencePath, '{"status":"accepted"}\n', 'utf-8');
+    await writeFile(checksumsPath, `${await sha256(evidencePath)}  ${evidenceName}\n`, 'utf-8');
+    await writeFile(evidencePath, '{"status":"tampered"}\n', 'utf-8');
+
+    const result = spawnSync(
+      process.execPath,
+      [
+        verifyArtifactsPath,
+        '--artifacts-dir',
+        artifactsDir,
+        '--checksums',
+        checksumsPath,
+        '--require-all-artifacts-checksummed',
+        '--skip-archive-admission',
+        '--skip-smoke',
+      ],
+      {
+        cwd: repoRoot,
+        encoding: 'utf-8',
+        timeout: 5_000,
+      },
+    );
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /checksum mismatch for darwin-arm64\.cli\.json/);
+  } finally {
+    await rm(workspace, { recursive: true, force: true });
+  }
+});
 
 async function rewriteFixtureChecksum(fixture) {
   await writeFile(
@@ -821,6 +950,95 @@ test('verify-artifacts includes stdout in smoke failures when stderr is empty', 
         ),
       /stdout-only smoke failure/,
     );
+  } finally {
+    await rm(workspace, { recursive: true, force: true });
+  }
+});
+
+test('verify-artifacts rejects a CLI version mismatch even when optional smoke is skipped', {
+  skip: process.platform === 'win32',
+}, async () => {
+  const workspace = await mkdtemp(join(tmpdir(), 'happier-verify-artifacts-cli-version-'));
+  try {
+    const archivePlatform = normalizeArchivePlatform(process.platform);
+    const archiveArch = normalizeArchiveArch(process.arch);
+    const fixture = await createReleaseArchiveFixture({
+      workspace,
+      archiveStem: `happier-v1.2.3-${archivePlatform}-${archiveArch}`,
+      files: [{
+        path: 'happier',
+        contents: "#!/bin/sh\nprintf '%s\\n' '1.2.3-preview.99'\n",
+        mode: 0o755,
+      }],
+    });
+
+    const result = verifyArchiveFixture(fixture);
+    assert.notEqual(result.status, 0);
+    assert.match(
+      `${result.stdout ?? ''}\n${result.stderr ?? ''}`,
+      /version mismatch.*expected 1\.2\.3.*got 1\.2\.3-preview\.99/i,
+    );
+  } finally {
+    await rm(workspace, { recursive: true, force: true });
+  }
+});
+
+test('verify-artifacts accepts a CLI binary whose version matches its archive version', {
+  skip: process.platform === 'win32',
+}, async () => {
+  const workspace = await mkdtemp(join(tmpdir(), 'happier-verify-artifacts-cli-version-match-'));
+  try {
+    const archivePlatform = normalizeArchivePlatform(process.platform);
+    const archiveArch = normalizeArchiveArch(process.arch);
+    const version = '1.2.3-preview.99';
+    const fixture = await createReleaseArchiveFixture({
+      workspace,
+      archiveStem: `happier-v${version}-${archivePlatform}-${archiveArch}`,
+      files: [{
+        path: 'happier',
+        contents: `#!/bin/sh\nprintf '%s\\n' '${version}'\n`,
+        mode: 0o755,
+      }],
+    });
+
+    const result = verifyArchiveFixture(fixture);
+    assert.equal(result.status, 0, `${result.stdout ?? ''}\n${result.stderr ?? ''}`);
+  } finally {
+    await rm(workspace, { recursive: true, force: true });
+  }
+});
+
+test('verify-artifacts rejects a CLI that times out before its version can be attested', {
+  skip: process.platform === 'win32',
+}, async () => {
+  const workspace = await mkdtemp(join(tmpdir(), 'happier-verify-artifacts-cli-version-timeout-'));
+  try {
+    const archivePlatform = normalizeArchivePlatform(process.platform);
+    const archiveArch = normalizeArchiveArch(process.arch);
+    const fixture = await createReleaseArchiveFixture({
+      workspace,
+      archiveStem: `happier-v1.2.3-${archivePlatform}-${archiveArch}`,
+      files: [{
+        path: 'happier',
+        contents: [
+          '#!/bin/sh',
+          "printf 'version %s\\n' '1.2.3-preview.99'",
+          'while true; do sleep 1; done',
+          '',
+        ].join('\n'),
+        mode: 0o755,
+      }],
+    });
+
+    const result = verifyArchiveFixture({
+      ...fixture,
+      env: {
+        ...process.env,
+        HAPPIER_RELEASE_BINARY_SMOKE_TIMEOUT_MS: '500',
+      },
+    });
+    assert.notEqual(result.status, 0);
+    assert.match(`${result.stdout ?? ''}\n${result.stderr ?? ''}`, /smoke test timed out/i);
   } finally {
     await rm(workspace, { recursive: true, force: true });
   }
