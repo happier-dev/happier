@@ -13,6 +13,66 @@ function git(cwd, args) {
   execFileSync('git', args, { cwd, stdio: 'ignore' });
 }
 
+test('exact finalized candidate versions preserve allocated dev and preview identities without reallocating', async () => {
+  const { validateExactRollingPublishVersion } = await import('../pipeline/release/lib/rolling-version-allocation.mjs');
+
+  assert.equal(validateExactRollingPublishVersion({
+    productId: 'cli',
+    channel: 'publicdev',
+    baseVersion: '0.2.10',
+    version: '0.2.10-dev.41',
+  }), '0.2.10-dev.41');
+  assert.equal(validateExactRollingPublishVersion({
+    productId: 'cli',
+    channel: 'publicdev',
+    baseVersion: '0.2.10',
+    version: '0.2.10-dev.41.2',
+  }), '0.2.10-dev.41.2');
+  assert.equal(validateExactRollingPublishVersion({
+    productId: 'cli',
+    channel: 'preview',
+    baseVersion: '0.2.10',
+    version: '0.2.10-preview.42',
+  }), '0.2.10-preview.42');
+  assert.equal(validateExactRollingPublishVersion({
+    productId: 'cli',
+    channel: 'preview',
+    baseVersion: '0.2.10',
+    version: '0.2.10-preview.42.2',
+  }), '0.2.10-preview.42.2');
+  assert.throws(() => validateExactRollingPublishVersion({
+    productId: 'cli',
+    channel: 'publicdev',
+    baseVersion: '0.2.10',
+    version: '0.2.10',
+  }), /must match 0\.2\.10-dev\.<number>/);
+  assert.throws(() => validateExactRollingPublishVersion({
+    productId: 'cli',
+    channel: 'preview',
+    baseVersion: '0.2.10',
+    version: '0.2.10',
+  }), /must match 0\.2\.10-preview\.<number>/);
+  for (const { channel, version } of [
+    { channel: 'publicdev', version: '0.2.10-dev.01' },
+    { channel: 'publicdev', version: '0.2.10-dev.1.01' },
+    { channel: 'preview', version: '0.2.10-preview.01' },
+    { channel: 'preview', version: '0.2.10-preview.1.01' },
+  ]) {
+    assert.throws(() => validateExactRollingPublishVersion({
+      productId: 'cli',
+      channel,
+      baseVersion: '0.2.10',
+      version,
+    }), /must match 0\.2\.10-(?:dev|preview)\.<number>/);
+  }
+  assert.throws(() => validateExactRollingPublishVersion({
+    productId: 'cli',
+    channel: 'stable',
+    baseVersion: '01.2.3',
+    version: '01.2.3',
+  }), /Invalid version/);
+});
+
 test('rolling version allocation uses the max published GitHub or npm version for a product channel', async () => {
   const { resolveRollingPublishVersion } = await import('../pipeline/release/lib/rolling-version-allocation.mjs');
 
@@ -139,6 +199,35 @@ test('same-version rolling recovery derives identity from the latest immutable G
 
   assert.equal(recovery.version, '0.2.1-preview.127');
   assert.equal(recovery.source, 'github-release');
+});
+
+test('same-version rolling recovery rejects non-SemVer release identities', async () => {
+  const { resolveRollingRecoveryVersion } = await import('../pipeline/release/lib/rolling-version-allocation.mjs');
+
+  for (const { channel, version } of [
+    { channel: 'publicdev', version: '0.2.1-dev.01' },
+    { channel: 'publicdev', version: '0.2.1-dev.1.01' },
+    { channel: 'preview', version: '0.2.1-preview.01' },
+    { channel: 'preview', version: '0.2.1-preview.1.01' },
+    { channel: 'stable', version: '01.2.1' },
+  ]) {
+    await assert.rejects(
+      resolveRollingRecoveryVersion({
+        repoRoot,
+        productId: 'cli',
+        channel,
+        explicitVersion: version,
+        env: {
+          ...process.env,
+          HAPPIER_RELEASE_PUBLISHED_VERSIONS_JSON: JSON.stringify({
+            github: { cli: [`cli-v${version}`] },
+            npm: {},
+          }),
+        },
+      }),
+      /does not match.*immutable release identity/i,
+    );
+  }
 });
 
 test('same-version rolling recovery rejects an older or cross-channel immutable Release', async () => {

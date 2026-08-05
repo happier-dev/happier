@@ -38,11 +38,48 @@ const PRODUCT_SOURCES = Object.freeze({
 export function normalizeRollingBaseVersion(version) {
   const match = String(version ?? '')
     .trim()
-    .match(/^(\d+)\.(\d+)\.(\d+)/);
+    .match(/^((?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*))(?:$|[-+])/);
   if (!match) {
     throw new Error(`Invalid version: ${version}`);
   }
-  return `${match[1]}.${match[2]}.${match[3]}`;
+  return match[1];
+}
+
+/**
+ * Validates a previously allocated exact version without consulting mutable
+ * publication state or allocating a replacement.
+ *
+ * @param {{
+ *   productId: string;
+ *   channel: import('@happier-dev/release-runtime/releaseRings').PublicReleaseRingId;
+ *   baseVersion: string;
+ *   version: string;
+ * }} opts
+ */
+export function validateExactRollingPublishVersion(opts) {
+  const baseVersion = normalizeRollingBaseVersion(opts.baseVersion);
+  const explicitVersion = String(opts.version ?? '').trim();
+  if (opts.channel === 'stable') {
+    if (explicitVersion !== baseVersion) {
+      throw new Error(
+        `[release] --version must match ${baseVersion} for ${opts.productId} stable releases (got: ${explicitVersion})`,
+      );
+    }
+    return explicitVersion;
+  }
+  const product = getProductSource(opts.productId);
+  const channelSuffix = resolveRollingReleaseTagSuffix(opts.channel);
+  const explicitBuild = parseRollingVersionBuild(explicitVersion, {
+    baseVersion,
+    channelSuffix,
+    githubTagPrefix: product.githubTagPrefix,
+  });
+  if (!explicitBuild) {
+    throw new Error(
+      `[release] --version must match ${baseVersion}-${channelSuffix}.<number> for ${opts.productId} ${channelSuffix} releases (got: ${explicitVersion})`,
+    );
+  }
+  return explicitBuild.version;
 }
 
 /**
@@ -122,7 +159,7 @@ function escapeRegex(value) {
 function parseRollingVersionBuild(version, { baseVersion, channelSuffix, githubTagPrefix }) {
   const candidate = stripKnownPrefix(String(version ?? '').trim(), githubTagPrefix);
   const pattern = new RegExp(
-    `^${escapeRegex(baseVersion)}-${escapeRegex(channelSuffix)}\\.(\\d+)(?:\\.(\\d+))?$`,
+    `^${escapeRegex(baseVersion)}-${escapeRegex(channelSuffix)}\\.([1-9]\\d*)(?:\\.([1-9]\\d*))?$`,
   );
   const match = candidate.match(pattern);
   if (!match) return null;
@@ -355,15 +392,19 @@ export async function resolveRollingPublishVersion(opts) {
   const previousForSurface = publishSurface === 'all' ? previous : latestBuild(builds.filter((build) => build.surface === publishSurface));
 
   if (explicitVersion) {
+    validateExactRollingPublishVersion({
+      productId: opts.productId,
+      channel: opts.channel,
+      baseVersion,
+      version: explicitVersion,
+    });
     const explicitBuild = parseRollingVersionBuild(explicitVersion, {
       baseVersion,
       channelSuffix,
       githubTagPrefix: product.githubTagPrefix,
     });
     if (!explicitBuild) {
-      throw new Error(
-        `[release] --version must match ${baseVersion}-${channelSuffix}.<number> for ${opts.productId} ${channelSuffix} releases (got: ${explicitVersion})`,
-      );
+      throw new Error('[release] exact rolling version validation returned an inconsistent result');
     }
     const comparisonBuild = previousForSurface ?? previous;
     const isOlderThanOverall = previous && compareBuildOrder(explicitBuild, previous) < 0;
@@ -412,9 +453,12 @@ export async function resolveRollingPublishVersion(opts) {
 function parseRecoveryVersion(version, { channelSuffix, githubTagPrefix, stable }) {
   const candidate = stripKnownPrefix(String(version ?? '').trim(), githubTagPrefix);
   const match = stable
-    ? candidate.match(/^(\d+)\.(\d+)\.(\d+)$/)
+    ? candidate.match(/^((?:0|[1-9]\d*))\.((?:0|[1-9]\d*))\.((?:0|[1-9]\d*))$/)
     : candidate.match(
-      new RegExp(`^(\\d+)\\.(\\d+)\\.(\\d+)-${escapeRegex(channelSuffix)}\\.(\\d+)(?:\\.(\\d+))?$`),
+      new RegExp(
+        `^((?:0|[1-9]\\d*))\\.((?:0|[1-9]\\d*))\\.((?:0|[1-9]\\d*))`
+        + `-${escapeRegex(channelSuffix)}\\.([1-9]\\d*)(?:\\.([1-9]\\d*))?$`,
+      ),
     );
   if (!match) return null;
   const major = Number(match[1]);
