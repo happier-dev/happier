@@ -16,8 +16,9 @@ import {
 } from './mobile-release-environments.mjs';
 import { buildAscBuildsListUrl } from './testflight-asc-builds-url.mjs';
 import { buildEasBuildViewArgs } from './testflight-eas-cli-args.mjs';
-import { resolveExternalGroupSelections } from './testflight-group-resolution.mjs';
+import { isAscResourceId, resolveExternalGroupSelections } from './testflight-group-resolution.mjs';
 import { readIosIpaMetadata } from './read-ios-ipa-metadata.mjs';
+import { ensureBetaReviewSubmission } from './testflight-beta-review.mjs';
 
 function fail(message) {
   console.error(message);
@@ -119,14 +120,14 @@ async function ascRequest(input) {
 }
 
 /**
- * @param {{ token: string; url: string }} input
+ * @param {{ request: (input: { method?: string; url: string; body?: unknown }) => Promise<any>; url: string }} input
  * @returns {Promise<any[]>}
  */
 async function ascListAll(input) {
   const rows = [];
   let nextUrl = input.url;
   while (nextUrl) {
-    const body = await ascRequest({ token: input.token, url: nextUrl });
+    const body = await input.request({ url: nextUrl });
     rows.push(...(Array.isArray(body?.data) ? body.data : []));
     nextUrl = String(body?.links?.next ?? '').trim();
   }
@@ -252,11 +253,11 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function resolveBuildForDistribution({ token, ascAppId, buildNumber, appVersion, waitProcessing, timeoutSeconds }) {
+async function resolveBuildForDistribution({ request, ascAppId, buildNumber, appVersion, waitProcessing, timeoutSeconds }) {
   const deadline = Date.now() + timeoutSeconds * 1000;
   while (true) {
     const url = buildAscBuildsListUrl({ ascAppId, limit: 200 });
-    const body = await ascRequest({ token, url });
+    const body = await request({ url });
     const builds = Array.isArray(body?.data) ? body.data : [];
     const included = Array.isArray(body?.included) ? body.included : [];
     const preReleaseVersions = getIncludedMap(included, 'preReleaseVersions');
@@ -305,8 +306,11 @@ async function resolveBuildForDistribution({ token, ascAppId, buildNumber, appVe
   }
 }
 
-async function resolveExternalGroups({ token, ascAppId, externalGroupNames }) {
-  const groups = await ascListAll({ token, url: buildAscBaseUrl(`/v1/apps/${ascAppId}/betaGroups?limit=200`) });
+async function resolveExternalGroups({ request, ascAppId, externalGroupNames }) {
+  const needsNameLookup = externalGroupNames.some((selection) => !isAscResourceId(selection));
+  const groups = needsNameLookup
+    ? await ascListAll({ request, url: buildAscBaseUrl(`/v1/apps/${ascAppId}/betaGroups?limit=200`) })
+    : [];
   const resolved = resolveExternalGroupSelections({ groups, selections: externalGroupNames });
   return resolved.map((group, index) => {
     if (!group) fail(`Unable to find external TestFlight group '${externalGroupNames[index]}' for app ${ascAppId}.`);
@@ -314,7 +318,7 @@ async function resolveExternalGroups({ token, ascAppId, externalGroupNames }) {
   });
 }
 
-async function attachBuildToGroups({ token, build, groups }) {
+async function attachBuildToGroups({ request, build, groups }) {
   const existingGroupIds = new Set(
     (Array.isArray(build?.relationships?.betaGroups?.data) ? build.relationships.betaGroups.data : [])
       .map((entry) => String(entry?.id ?? '').trim())
@@ -324,44 +328,16 @@ async function attachBuildToGroups({ token, build, groups }) {
   for (const group of groups) {
     const groupId = String(group?.id ?? '').trim();
     if (!groupId || existingGroupIds.has(groupId)) continue;
-    await ascRequest({
-      token,
+    await request({
       method: 'POST',
       url: buildAscBaseUrl(`/v1/betaGroups/${groupId}/relationships/builds`),
       body: {
         data: [{ type: 'builds', id: String(build?.id ?? '').trim() }],
       },
     });
-    console.log(`[pipeline] attached build ${String(build?.id ?? '').trim()} to TestFlight group ${String(group?.attributes?.name ?? '').trim()}`);
+    const groupLabel = String(group?.attributes?.name ?? '').trim() || groupId;
+    console.log(`[pipeline] attached build ${String(build?.id ?? '').trim()} to TestFlight group ${groupLabel}`);
   }
-}
-
-async function ensureBetaReviewSubmission({ token, build, submitBetaReview }) {
-  if (submitBetaReview === 'false') return;
-  const existingSubmissionId = String(build?.relationships?.betaAppReviewSubmission?.data?.id ?? '').trim();
-  if (existingSubmissionId) {
-    console.log(`[pipeline] beta review submission already exists for build ${String(build?.id ?? '').trim()}: ${existingSubmissionId}`);
-    return;
-  }
-  await ascRequest({
-    token,
-    method: 'POST',
-    url: buildAscBaseUrl('/v1/betaAppReviewSubmissions'),
-    body: {
-      data: {
-        type: 'betaAppReviewSubmissions',
-        relationships: {
-          build: {
-            data: {
-              type: 'builds',
-              id: String(build?.id ?? '').trim(),
-            },
-          },
-        },
-      },
-    },
-  });
-  console.log(`[pipeline] submitted build ${String(build?.id ?? '').trim()} for TestFlight Beta App Review`);
 }
 
 async function main() {
@@ -447,25 +423,30 @@ async function main() {
 
   if (dryRun) return;
 
-  const token = createJwt({
+  const ascCredentials = {
     issuerId: ascApiKeyIssuerId,
     keyId: ascApiKeyId,
     privateKeyPem: normalizeAscPrivateKeyPem(privateKeyRaw),
+  };
+  const request = (input) => ascRequest({
+    ...input,
+    token: createJwt(ascCredentials),
   });
   const build = await resolveBuildForDistribution({
-    token,
+    request,
     ascAppId,
     buildNumber,
     appVersion,
     waitProcessing,
     timeoutSeconds,
   });
-  const groups = await resolveExternalGroups({ token, ascAppId, externalGroupNames: externalGroups });
-  await attachBuildToGroups({ token, build, groups });
+  const groups = await resolveExternalGroups({ request, ascAppId, externalGroupNames: externalGroups });
+  await attachBuildToGroups({ request, build, groups });
   await ensureBetaReviewSubmission({
-    token,
     build,
-    submitBetaReview: submitBetaReview === 'auto' ? 'true' : submitBetaReview,
+    submitBetaReview,
+    request,
+    buildAscBaseUrl,
   });
 }
 
