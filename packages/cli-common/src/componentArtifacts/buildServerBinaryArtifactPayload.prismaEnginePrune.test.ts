@@ -143,6 +143,6 @@ describe('pruneServerPrismaArtifactsForTarget', () => {
         await expect(pruneServerPrismaArtifactsForTarget({
             payloadDir,
             target: { bunTarget: 'bun-linux-arm64', os: 'linux', arch: 'arm64', exeExt: '' },
-        })).rejects.toThrow();
+        })).rejects.toMatchObject({ code: 'ENOTDIR' });
     });
 });
