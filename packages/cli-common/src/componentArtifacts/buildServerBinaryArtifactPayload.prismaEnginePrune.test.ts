@@ -131,4 +131,18 @@ describe('pruneServerPrismaArtifactsForTarget', () => {
             target: { bunTarget: 'bun-linux-arm64', os: 'linux', arch: 'arm64', exeExt: '' },
         })).resolves.toBeUndefined();
     });
+
+    it('rejects instead of silently skipping pruning when an expected Prisma directory path is actually a file', async () => {
+        const payloadDir = await createTempPayloadDir();
+        const dotPrismaClientPath = join(payloadDir, 'node_modules', '.prisma', 'client');
+        await mkdir(join(dotPrismaClientPath, '..'), { recursive: true });
+        // A file where a directory is expected (e.g. from a corrupted staging step) must surface as an
+        // error, not be silently treated as "directory has no files to prune".
+        await writeFile(dotPrismaClientPath, 'not a directory', 'utf8');
+
+        await expect(pruneServerPrismaArtifactsForTarget({
+            payloadDir,
+            target: { bunTarget: 'bun-linux-arm64', os: 'linux', arch: 'arm64', exeExt: '' },
+        })).rejects.toThrow();
+    });
 });

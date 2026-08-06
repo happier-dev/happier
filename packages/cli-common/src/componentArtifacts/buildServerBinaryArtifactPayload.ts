@@ -1,4 +1,5 @@
 import { cp, mkdir, readdir, rm, stat } from 'node:fs/promises';
+import type { Dirent } from 'node:fs';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 
@@ -33,13 +34,26 @@ async function ensureFile(path: string, message: string): Promise<void> {
   }
 }
 
+// Prisma client directories are always staged before pruning runs (resolveServerBinarySidecarEntries
+// asserts their existence), so a missing directory here is not itself an error worth failing the
+// build over -- but any other readdir failure (permission denied, path is actually a file, ...) must
+// not be silently treated as "nothing to prune": that would let foreign-platform engines, unreachable
+// WASM engines, or sourcemaps survive into the release artifact while validateServerPrismaEnginesForTarget
+// still passes (it only checks that the *kept* engine file exists, not that pruning actually ran).
+async function readdirOrEmptyIfMissing(directoryPath: string): Promise<Dirent<string>[]> {
+  return readdir(directoryPath, { withFileTypes: true, encoding: 'utf8' }).catch((error: NodeJS.ErrnoException) => {
+    if (error.code === 'ENOENT') return [];
+    throw error;
+  });
+}
+
 // Each generated Prisma client directory (generated/*-client, node_modules/.prisma/client) ships a
 // native query-engine file per platform (binaryTargets in schema.prisma lists all 5: linux-x64,
 // linux-arm64, darwin-x64, darwin-arm64, windows-x64), but a single-platform release payload only
 // ever runs on the one platform it was built for. Keep only that target's engine file.
 async function pruneNonTargetPrismaEngineFiles(directoryPath: string, target: BinaryTarget): Promise<void> {
   const keepFileName = resolvePrismaEngineFileNameForTarget(target);
-  const entries = await readdir(directoryPath, { withFileTypes: true }).catch(() => []);
+  const entries = await readdirOrEmptyIfMissing(directoryPath);
   for (const entry of entries) {
     if (!entry.isFile()) continue;
     const isEngineFile = entry.name.startsWith('libquery_engine-') || entry.name.startsWith('query_engine-');
@@ -58,7 +72,7 @@ async function pruneNonTargetPrismaEngineFiles(directoryPath: string, target: Bi
 const PRISMA_RUNTIME_NEVER_REACHABLE_PROVIDER_MARKERS = ['.cockroachdb.', '.sqlserver.'];
 
 async function pruneUnreachablePrismaRuntimeFiles(runtimeDirectoryPath: string): Promise<void> {
-  const entries = await readdir(runtimeDirectoryPath, { withFileTypes: true }).catch(() => []);
+  const entries = await readdirOrEmptyIfMissing(runtimeDirectoryPath);
   for (const entry of entries) {
     if (!entry.isFile()) continue;
     const isNeverReachableProviderFile = PRISMA_RUNTIME_NEVER_REACHABLE_PROVIDER_MARKERS.some(
@@ -81,7 +95,7 @@ export async function pruneServerPrismaArtifactsForTarget({
   await pruneNonTargetPrismaEngineFiles(join(payloadDir, 'node_modules', '.prisma', 'client'), target);
 
   const generatedDir = join(payloadDir, 'generated');
-  const generatedEntries = await readdir(generatedDir, { withFileTypes: true }).catch(() => []);
+  const generatedEntries = await readdirOrEmptyIfMissing(generatedDir);
   for (const entry of generatedEntries) {
     if (entry.isDirectory() && entry.name.endsWith('-client')) {
       await pruneNonTargetPrismaEngineFiles(join(generatedDir, entry.name), target);
