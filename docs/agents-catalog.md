@@ -143,6 +143,44 @@ Instead:
 - explicit “resume inactive session” is **fail-closed**: if `loadSession` fails, we surface the error instead of silently starting a fresh vendor session
 - any ACP capability probing (e.g. `includeAcpCapabilities`) is reserved for opt-in diagnostics / e2e probes, not day-to-day UX
 
+### Dynamic model lists
+
+Whether a provider's model list is resolved at runtime is one catalog fact:
+`AGENT_MODEL_CONFIG.<agentId>.dynamicProbe` in `@happier-dev/agents`.
+
+- `'static-only'` — the curated `staticModels` list is the whole truth. The app does not run the
+  preflight models probe and ignores any `sessionModelsV1` the session publishes.
+- `'auto'` (default when omitted) — the app runs the preflight models probe on the new-session
+  screen **and** consumes the in-session `sessionModelsV1` list. Both readers share this one flag,
+  so flipping it turns on both.
+
+A provider that publishes `sessionModelsV1` from its runtime and is left on `'static-only'` has an
+active producer with its consumer gated off — the published list is silently discarded. Flipping
+that flag is a user-visible change: the app switches to the dynamic row builder, which carries less
+per-model metadata than the static one, so audit what the dynamic path drops before flipping.
+
+A provider with both surfaces needs **one owner** for the model list. Claude's is
+`apps/cli/src/backends/claude/models/resolveClaudeModelCatalog.ts`: the preflight probe adapter and
+the in-session `sessionModelsV1` publisher both read it, so the two pickers cannot disagree about
+which models exist or which effort tiers they report. It caches per resolved account config dir +
+endpoint + ambient-credential fingerprint, so a session start does not pay a network round trip.
+Effort tiers are resolved once when the session mode is built and travel on the mode, so spawn-time
+resolution and launch-option hashing see the same value and hashing stays pure.
+
+Provider-owned probing:
+- Implement the probe in `apps/cli/src/backends/<provider>/preflight/**` and register it through
+  `getPreflightSessionControlsProbeAdapter`. Type it as `PreflightSessionControlsProbeAdapter` —
+  that is the shape the caller invokes, and its params carry `connectedServices` and
+  `accountSettings`. Typing it as the narrower `PreflightModelsProbeAdapter` compiles but silently
+  drops those inputs.
+- Set `resolveModelsProbeVariant` on the catalog entry whenever the probe result depends on
+  something other than the agent id — runtime flavor, auth method, or the bound connected account.
+  The returned string partitions the probe cache; without it, results computed for one account or
+  runtime mode are served to another. Codex and Claude both key theirs on the connected-service
+  binding.
+- Fail closed to the static catalog. A probe that cannot authenticate returns `null` rather than
+  probing with whatever credential happens to be in the daemon's environment.
+
 ---
 
 ## Adding a new agent/provider (end-to-end)

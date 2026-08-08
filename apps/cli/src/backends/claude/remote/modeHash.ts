@@ -59,13 +59,16 @@ function buildClaudeUnifiedTerminalLaunchOptionsHashInput(mode: EnhancedMode): R
         permissionMode: mode.permissionMode,
         agentModeId: effectiveAgentModeId,
     });
+    const supportedLevels = mode.modelEffortLevels;
     const resolvedEffort = resolveClaudeEffortForModel({
         modelId: mode.model,
         effort: mode.reasoningEffort,
+        supportedLevels,
     });
     const resolvedUltracode = resolveClaudeUltracodeForModel({
         modelId: mode.model,
         ultracode: mode.ultracode,
+        supportedLevels,
     });
     const debugCategories = normalizeClaudeRemoteDebugCategories(mode);
 
@@ -105,13 +108,16 @@ export function hashClaudeEnhancedModeForQueue(mode: EnhancedMode): string {
 
     // Spawn-only config for Claude: effort is a query-start option in the Agent SDK and has no dynamic setter.
     // We normalize effort to the effective value the provider would actually apply (treating "high" as default).
+    const supportedLevels = mode.modelEffortLevels;
     const resolvedEffort = resolveClaudeEffortForModel({
         modelId: mode.model,
         effort: mode.reasoningEffort,
+        supportedLevels,
     });
     const resolvedUltracode = resolveClaudeUltracodeForModel({
         modelId: mode.model,
         ultracode: mode.ultracode,
+        supportedLevels,
     });
 
     const debugCategories = normalizeClaudeRemoteDebugCategories(mode);

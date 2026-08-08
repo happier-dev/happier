@@ -192,6 +192,7 @@ export function resolveClaudeTerminalCliOptions(params: Readonly<{
     extraArgs.push(...buildClaudeEffortCliArgs({
         modelId: effectiveModel,
         effort: argOverrides.effort ?? params.mode.reasoningEffort,
+        supportedLevels: params.mode.modelEffortLevels,
     }));
     if (effectiveModel) {
         extraArgs.push('--model', effectiveModel);
@@ -233,6 +234,7 @@ export function resolveClaudeTerminalCliOptions(params: Readonly<{
         ultracodeEnabled: resolveClaudeUltracodeForModel({
             modelId: effectiveModel,
             ultracode: params.mode.ultracode,
+            supportedLevels: params.mode.modelEffortLevels,
         }),
         diagnostics: Object.freeze([...diagnostics]),
     });

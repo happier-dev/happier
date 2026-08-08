@@ -118,6 +118,8 @@ export {
   type AgentModelConfig,
   type AgentModelDescriptor,
   type AgentModelNonAcpApplyScope,
+  type AgentModelOption,
+  type AgentModelOptionValueId,
 } from './models.js';
 export {
   AGENT_LOCAL_CLI_CONFIG,

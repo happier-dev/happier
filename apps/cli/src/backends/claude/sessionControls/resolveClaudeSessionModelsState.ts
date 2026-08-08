@@ -1,6 +1,5 @@
-import { AGENT_MODEL_CONFIG } from '@happier-dev/agents';
-
 import type { Metadata } from '@/api/types';
+import { resolveClaudeModelCatalog } from '@/backends/claude/models/resolveClaudeModelCatalog';
 
 type ClaudeSessionModelsState = NonNullable<Metadata['sessionModelsV1']>;
 
@@ -18,7 +17,12 @@ export async function resolveClaudeSessionModelsState(params: Readonly<{
   if (!supportsEffort) return null;
 
   const updatedAt = params.nowMs();
-  const models = AGENT_MODEL_CONFIG.claude.staticModels ?? [];
+  // Same owner as the new-session preflight probe, so the in-session picker cannot disagree about
+  // which models exist or which effort tiers they support. Cached per account; falls back to the
+  // curated catalog when the Models API is unavailable.
+  // No binding needed here: an in-session process already has CLAUDE_CONFIG_DIR pointed at the
+  // materialized account, and the catalog keys its cache on that resolved dir.
+  const models = await resolveClaudeModelCatalog({ timeoutMs: params.timeoutMs });
 
   return {
     v: 1,
@@ -32,6 +36,7 @@ export async function resolveClaudeSessionModelsState(params: Readonly<{
         name: model.name,
         ...(description ? { description } : {}),
         ...(typeof model.contextWindowTokens === 'number' ? { contextWindowTokens: model.contextWindowTokens } : {}),
+        ...(typeof model.extendedContextModelId === 'string' ? { extendedContextModelId: model.extendedContextModelId } : {}),
         ...(Array.isArray(model.modelOptions) && model.modelOptions.length > 0
           ? { modelOptions: model.modelOptions }
           : {}),

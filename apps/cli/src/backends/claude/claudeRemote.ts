@@ -36,6 +36,7 @@ import { isClaudeLegacyRequiredHookObservationFailure } from './remote/runtimeAc
 function buildClaudeEffortArgs(params: Readonly<{
     modelId: unknown;
     effort: unknown;
+    supportedLevels?: readonly string[];
 }>): string[] {
     return buildClaudeEffortCliArgs(params);
 }
@@ -227,6 +228,7 @@ export async function claudeRemote(opts: {
     const effortArgs = buildClaudeEffortArgs({
         modelId: argOverrides.model ?? initial.mode.model,
         effort: argOverrides.effort ?? initial.mode.reasoningEffort,
+        supportedLevels: initial.mode.modelEffortLevels,
     });
     const extraArgs = [
         ...(opts.hookPluginDir ? ['--plugin-dir', opts.hookPluginDir] : []),

@@ -96,6 +96,11 @@ import { archiveAndCloseRuntimeSession } from '@/session/services/archiveAndClos
 import { createSessionMetadataShutdownDeadline } from '@/session/services/sessionMetadataShutdownDeadline';
 import { resolveRequestedSessionDirectory } from '@/agent/runtime/resolveRequestedSessionDirectory';
 import { publishClaudeSessionModelsMetadataBestEffort } from '@/backends/claude/sessionControls/publishClaudeSessionModelsMetadataBestEffort';
+import {
+    resolveClaudeEffortLevelsFromModelDescriptor,
+    resolveClaudeModelCatalog,
+} from '@/backends/claude/models/resolveClaudeModelCatalog';
+import { isCuratedClaudeModelId } from '@/backends/claude/utils/claudeEffort';
 import { resolveTerminationArchiveDecision } from '@/agent/runtime/terminationArchivePolicy';
 import { buildClaudeAgentState } from '@/backends/claude/localControl/buildClaudeAgentState';
 import { serializeAxiosErrorForLog } from '@/api/client/serializeAxiosErrorForLog';
@@ -825,6 +830,28 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
     let currentAgentModeUpdatedAt = typeof options.agentModeUpdatedAt === 'number' ? options.agentModeUpdatedAt : 0;
         let currentReasoningEffort: string | undefined = undefined;
         let currentReasoningEffortUpdatedAt = 0;
+        // Effort tiers the selected model reports. Resolved from the shared Claude model catalog
+        // (cached, best-effort) and carried on the mode so spawn-time resolution and launch-option
+        // hashing both see the same value instead of reading a cache at hash time.
+        let currentModelEffortLevels: readonly string[] = [];
+        let currentModelEffortLevelsModelId: string | null = null;
+        const refreshCurrentModelEffortLevels = async (modelId: unknown): Promise<void> => {
+            const normalized = typeof modelId === 'string' ? modelId.trim() : '';
+            if (!normalized || normalized === currentModelEffortLevelsModelId) return;
+            currentModelEffortLevelsModelId = normalized;
+            if (isCuratedClaudeModelId(normalized)) {
+                // Curated models resolve effort from the static table; no catalog lookup needed.
+                currentModelEffortLevels = [];
+                return;
+            }
+            try {
+                const models = await resolveClaudeModelCatalog({ timeoutMs: resolveClaudeHelpProbeTimeoutMs() });
+                const model = models.find((candidate) => candidate.id === normalized) ?? null;
+                currentModelEffortLevels = resolveClaudeEffortLevelsFromModelDescriptor(model);
+            } catch {
+                currentModelEffortLevels = [];
+            }
+        };
         let currentUltracode: boolean | undefined = undefined;
         let currentUltracodeUpdatedAt = 0;
         let currentFallbackModel: string | undefined = undefined; // Track current fallback model
@@ -841,6 +868,7 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
         });
         if (adoptedModel.didChange) {
             currentModel = adoptedModel.modelId;
+            void refreshCurrentModelEffortLevels(currentModel);
             currentModelUpdatedAt = adoptedModel.updatedAt;
             logger.debug(`[loop] Model updated from session metadata: ${adoptedModel.modelId || 'reset to default'}`);
         }
@@ -922,6 +950,7 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
         if (message.meta?.hasOwnProperty('model')) {
             messageModel = message.meta.model || undefined; // null becomes undefined
             currentModel = messageModel;
+            void refreshCurrentModelEffortLevels(currentModel);
             currentModelUpdatedAt =
                 typeof message.createdAt === 'number' && Number.isFinite(message.createdAt) && message.createdAt > 0
                     ? message.createdAt
@@ -1010,6 +1039,7 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
             customSystemPrompt: messageCustomSystemPrompt,
             appendSystemPrompt: messageAppendSystemPrompt,
             reasoningEffort: currentReasoningEffort,
+            modelEffortLevels: currentModelEffortLevels,
             ultracode: currentUltracode,
             ...currentClaudeRemoteMetaState,
         };
@@ -1219,6 +1249,7 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
                 customSystemPrompt: currentCustomSystemPrompt,
                 appendSystemPrompt: currentAppendSystemPrompt,
                 reasoningEffort: currentReasoningEffort,
+                modelEffortLevels: currentModelEffortLevels,
                 ultracode: currentUltracode,
                 ...currentClaudeRemoteMetaState,
             }, sessionRuntimeModeKind),
@@ -1275,6 +1306,7 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
                         typeof options.modelId === 'string'
                             ? options.modelId.trim()
                             : (typeof options.model === 'string' ? options.model.trim() : '');
+                    void refreshCurrentModelEffortLevels(currentModelId);
                     void publishClaudeSessionModelsMetadataBestEffort({
                         cwd: workingDirectory,
                         timeoutMs: resolveClaudeHelpProbeTimeoutMs(),
@@ -1464,6 +1496,25 @@ async function runClaudeLocalFastStart(credentials: Credentials, options: StartO
     let currentModelUpdatedAt = typeof options.modelUpdatedAt === 'number' ? options.modelUpdatedAt : 0;
     let currentReasoningEffort: string | undefined = undefined;
     let currentReasoningEffortUpdatedAt = 0;
+    // See the sibling runtime path above: tiers travel on the mode so hashing stays pure.
+    let currentModelEffortLevels: readonly string[] = [];
+    let currentModelEffortLevelsModelId: string | null = null;
+    const refreshCurrentModelEffortLevels = async (modelId: unknown): Promise<void> => {
+        const normalized = typeof modelId === 'string' ? modelId.trim() : '';
+        if (!normalized || normalized === currentModelEffortLevelsModelId) return;
+        currentModelEffortLevelsModelId = normalized;
+        if (isCuratedClaudeModelId(normalized)) {
+            currentModelEffortLevels = [];
+            return;
+        }
+        try {
+            const models = await resolveClaudeModelCatalog({ timeoutMs: resolveClaudeHelpProbeTimeoutMs() });
+            const model = models.find((candidate) => candidate.id === normalized) ?? null;
+            currentModelEffortLevels = resolveClaudeEffortLevelsFromModelDescriptor(model);
+        } catch {
+            currentModelEffortLevels = [];
+        }
+    };
     let currentUltracode: boolean | undefined = undefined;
     let currentUltracodeUpdatedAt = 0;
     let currentFallbackModel: string | undefined = undefined;
@@ -1743,6 +1794,7 @@ async function runClaudeLocalFastStart(credentials: Credentials, options: StartO
                     });
                     if (adoptedModel.didChange) {
                         currentModel = adoptedModel.modelId;
+                        void refreshCurrentModelEffortLevels(currentModel);
                         currentModelUpdatedAt = adoptedModel.updatedAt;
                     }
 
@@ -1814,6 +1866,7 @@ async function runClaudeLocalFastStart(credentials: Credentials, options: StartO
                     if (message.meta?.hasOwnProperty('model')) {
                         messageModel = message.meta.model || undefined;
                         currentModel = messageModel;
+                        void refreshCurrentModelEffortLevels(currentModel);
                         currentModelUpdatedAt =
                             typeof message.createdAt === 'number' && Number.isFinite(message.createdAt) && message.createdAt > 0
                                 ? message.createdAt
@@ -1885,6 +1938,7 @@ async function runClaudeLocalFastStart(credentials: Credentials, options: StartO
                         customSystemPrompt: messageCustomSystemPrompt,
                         appendSystemPrompt: messageAppendSystemPrompt,
                         reasoningEffort: currentReasoningEffort,
+                        modelEffortLevels: currentModelEffortLevels,
                         ultracode: currentUltracode,
                         ...currentClaudeRemoteMetaState,
                     };
@@ -2026,6 +2080,7 @@ async function runClaudeLocalFastStart(credentials: Credentials, options: StartO
                             customSystemPrompt: currentCustomSystemPrompt,
                             appendSystemPrompt: currentAppendSystemPrompt,
                             reasoningEffort: currentReasoningEffort,
+                            modelEffortLevels: currentModelEffortLevels,
                             ultracode: currentUltracode,
                             ...currentClaudeRemoteMetaState,
                         }, sessionRuntimeModeKind),
@@ -2068,6 +2123,7 @@ async function runClaudeLocalFastStart(credentials: Credentials, options: StartO
                                     typeof options.modelId === 'string'
                                         ? options.modelId.trim()
                                         : (typeof options.model === 'string' ? options.model.trim() : '');
+                                void refreshCurrentModelEffortLevels(currentModelId);
                                 void publishClaudeSessionModelsMetadataBestEffort({
                                     cwd: workingDirectory,
                                     timeoutMs: resolveClaudeHelpProbeTimeoutMs(),

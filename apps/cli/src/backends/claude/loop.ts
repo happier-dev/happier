@@ -54,6 +54,15 @@ export interface EnhancedMode {
      * never `--effort` or the SDK `effort` option. Only honored on xhigh-capable models.
      */
     ultracode?: boolean;
+    /**
+     * Effort tiers the selected model reports (Anthropic Models API), resolved once when the mode
+     * is built.
+     *
+     * Curated models carry their own static effort table; this supplies the same evidence for a
+     * discovered model. It is part of the mode — not read from a cache at spawn time — so
+     * launch-option hashing stays a pure function of the mode.
+     */
+    modelEffortLevels?: readonly string[];
 
     // Claude remote-mode (provider-scoped) settings forwarded via message meta.
     claudeRemoteAgentSdkEnabled?: boolean;

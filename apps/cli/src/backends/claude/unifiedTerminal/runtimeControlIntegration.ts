@@ -178,7 +178,11 @@ export function mapEnhancedModeToDesiredRuntimeConfig(mode: EnhancedMode): Claud
   if (typeof mode.ultracode === 'boolean') {
     // Capability-gate here so the controller never types `/effort ultracode` at a model
     // that does not offer it (conservative: an unhonorable request resolves to off).
-    desired.ultracode = resolveClaudeUltracodeForModel({ modelId: mode.model, ultracode: mode.ultracode });
+    desired.ultracode = resolveClaudeUltracodeForModel({
+        modelId: mode.model,
+        ultracode: mode.ultracode,
+        supportedLevels: mode.modelEffortLevels,
+    });
   }
   return desired;
 }
