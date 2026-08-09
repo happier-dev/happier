@@ -52,10 +52,19 @@ const DirectSessionsOpenCodeServerSourceSchema = z
   })
   .passthrough();
 
+const DirectSessionsPiAgentDirSourceSchema = z
+  .object({
+    kind: z.literal('piAgentDir'),
+    // Resolved ~/.pi/agent directory; falls back to env PI_CODING_AGENT_DIR / ~/.pi/agent when nullish.
+    agentDir: z.string().min(1).max(10_000).nullish(),
+  })
+  .passthrough();
+
 export const DirectSessionsSourceSchema = z.discriminatedUnion('kind', [
   DirectSessionsCodexHomeSourceSchema,
   DirectSessionsClaudeConfigSourceSchema,
   DirectSessionsOpenCodeServerSourceSchema,
+  DirectSessionsPiAgentDirSourceSchema,
 ]);
 export type DirectSessionsSource = z.infer<typeof DirectSessionsSourceSchema>;
 

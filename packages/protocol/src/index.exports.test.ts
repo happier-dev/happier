@@ -125,6 +125,10 @@ describe('protocol package root exports', () => {
         expect((protocol as any).DirectSessionsProviderIdSchema.parse('codex')).toBe('codex');
         expect((protocol as any).DirectSessionsProviderIdSchema.parse('claude')).toBe('claude');
         expect((protocol as any).DirectSessionsProviderIdSchema.parse('opencode')).toBe('opencode');
+        expect((protocol as any).DirectSessionsProviderIdSchema.parse('pi')).toBe('pi');
+        expect((protocol as any).DirectSessionsSourceSchema.safeParse({ kind: 'piAgentDir' }).success).toBe(true);
+        expect((protocol as any).DirectSessionsSourceSchema.safeParse({ kind: 'piAgentDir', agentDir: '/custom/.pi/agent' }).success).toBe(true);
+        expect((protocol as any).DirectSessionsSourceSchema.safeParse({ kind: 'piAgentDir', agentDir: '' }).success).toBe(false);
         expect(typeof (protocol as any).DirectSessionsCandidatesListRequestSchema?.safeParse).toBe('function');
         expect(typeof (protocol as any).DirectTranscriptPageRequestSchema?.safeParse).toBe('function');
         expect(typeof (protocol as any).DirectTranscriptReadAfterRequestSchema?.safeParse).toBe('function');

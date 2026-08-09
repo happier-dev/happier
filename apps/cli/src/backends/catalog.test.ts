@@ -218,6 +218,13 @@ describe('AGENTS', () => {
     await expect(getDirectSessionProviderOps('opencode')).resolves.toMatchObject({
       listCandidates: expect.any(Function),
     });
+    await expect(getDirectSessionProviderOps('pi')).resolves.toMatchObject({
+      listCandidates: expect.any(Function),
+      pageTranscript: expect.any(Function),
+      readAfterTranscript: expect.any(Function),
+      getActivity: expect.any(Function),
+      resolveTakeoverSpawnOptions: expect.any(Function),
+    });
   });
 
   it('loads provider-attach ops through backend catalog hooks only for supporting providers', async () => {
