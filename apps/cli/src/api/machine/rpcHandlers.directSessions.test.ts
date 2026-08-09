@@ -143,6 +143,92 @@ describe('registerMachineDirectSessionsRpcHandlers', () => {
     );
   });
 
+  it('takes over a direct pi session using header cwd and the configured agent dir', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-directSessions-rpc-takeover-pi-'));
+    const agentDir = join(root, '.pi', 'agent');
+    const cwd = '/tmp/direct-pi-worktree';
+    const sessionsDir = join(agentDir, 'sessions', '--tmp-direct-pi-worktree--');
+    await mkdir(sessionsDir, { recursive: true });
+    const piSessionId = '019f4a42-4617-767a-8e7c-189b454a0352';
+    const sessionFile = join(sessionsDir, `2024-12-03T14-00-00-000Z_${piSessionId}.jsonl`);
+    await writeFile(
+      sessionFile,
+      [
+        jsonlLine({ type: 'session', id: piSessionId, timestamp: '2024-12-03T14:00:00.000Z', cwd, version: 3 }),
+        jsonlLine({
+          type: 'message',
+          id: 'm1',
+          parentId: null,
+          timestamp: '2024-12-03T14:00:01.000Z',
+          message: { role: 'user', content: [{ type: 'text', text: 'hello' }], timestamp: Date.parse('2024-12-03T14:00:01.000Z') },
+        }),
+      ].join(''),
+      'utf8',
+    );
+    const resolvedAgentDir = await realpath(agentDir).catch(() => agentDir);
+    vi.stubEnv('PI_CODING_AGENT_DIR', agentDir);
+
+    readCredentialsMock.mockResolvedValueOnce({
+      token: 'token-direct',
+      encryption: { type: 'legacy', secret: new Uint8Array([1, 2, 3]) },
+    });
+    fetchSessionByIdMock.mockResolvedValueOnce({
+      id: 'sess_happy_direct_pi',
+      metadataVersion: 1,
+      encryptionMode: 'plain',
+      metadata: JSON.stringify({
+        path: '',
+        machineId: 'm1',
+        flavor: 'pi',
+        piSessionId,
+        directSessionV1: {
+          v: 1,
+          providerId: 'pi',
+          machineId: 'm1',
+          remoteSessionId: piSessionId,
+          source: { kind: 'piAgentDir' },
+          linkedAtMs: Date.now(),
+        },
+      }),
+    });
+
+    const spawnSession = vi.fn(async (_options: SpawnSessionOptions): Promise<SpawnSessionResult> => ({
+      type: 'success',
+      sessionId: 'sess_happy_direct_pi',
+    }));
+    const stopSession = vi.fn(async () => true);
+    const registered = new Map<string, (params: any) => Promise<any>>();
+    const rpcHandlerManager = {
+      registerHandler: (method: string, handler: (params: any) => Promise<any>) => {
+        registered.set(method, handler);
+      },
+    } as any;
+
+    registerMachineDirectSessionsRpcHandlers({ rpcHandlerManager, spawnSession, stopSession });
+
+    const handler = registered.get(RPC_METHODS.DAEMON_DIRECT_SESSION_TAKEOVER);
+    expect(handler).toBeDefined();
+
+    const res = await handler!({
+      machineId: 'm1',
+      sessionId: 'sess_happy_direct_pi',
+    });
+
+    expect(res).toEqual({ ok: true });
+    expect(stopSession).not.toHaveBeenCalled();
+    expect(spawnSession).toHaveBeenCalledWith(
+      expect.objectContaining({
+        directory: cwd,
+        backendTarget: { kind: 'builtInAgent', agentId: 'pi' },
+        existingSessionId: 'sess_happy_direct_pi',
+        resume: piSessionId,
+        approvedNewDirectoryCreation: true,
+        transcriptStorage: 'direct',
+        environmentVariables: expect.objectContaining({ PI_CODING_AGENT_DIR: resolvedAgentDir }),
+      }),
+    );
+  });
+
   it('requires forceStop before taking over when a trusted local runner still owns the provider session', async () => {
     vi.stubEnv('HAPPIER_CLAUDE_CONFIG_DIR', '/tmp/claude-direct');
     readCredentialsMock.mockResolvedValueOnce({

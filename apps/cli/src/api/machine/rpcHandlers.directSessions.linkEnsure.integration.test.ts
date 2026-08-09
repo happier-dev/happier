@@ -35,6 +35,7 @@ describe('daemon.directSessions.link.ensure (integration)', () => {
     'HAPPIER_WEBAPP_URL',
     'HAPPIER_HOME_DIR',
     'HAPPIER_CLAUDE_CONFIG_DIR',
+    'PI_CODING_AGENT_DIR',
   ] as const;
   let envScope = createEnvKeyScope(envKeys);
   let server: Server | null = null;
@@ -147,6 +148,7 @@ describe('daemon.directSessions.link.ensure (integration)', () => {
     process.env.HAPPIER_WEBAPP_URL = 'http://127.0.0.1:3000';
     process.env.HAPPIER_HOME_DIR = happyHomeDir;
     process.env.HAPPIER_CLAUDE_CONFIG_DIR = '/tmp';
+    process.env.PI_CODING_AGENT_DIR = happyHomeDir;
 
     const { reloadConfiguration } = await import('@/configuration');
     reloadConfiguration();
@@ -292,6 +294,62 @@ describe('daemon.directSessions.link.ensure (integration)', () => {
 
     expect(parsedMeta.data.codexBackendMode).toBe('appServer');
     expect(parsedMeta.data.directSessionV1.codexBackendMode).toBe('appServer');
+  });
+
+  it('creates a linked pi direct session with piSessionId metadata and an active-branch source', async () => {
+    const { registerMachineDirectSessionsRpcHandlers } = await import('./rpcHandlers.directSessions');
+
+    const registered = new Map<string, (params: any) => Promise<any>>();
+    const rpcHandlerManager = {
+      registerHandler: (method: string, handler: (params: any) => Promise<any>) => {
+        registered.set(method, handler);
+      },
+    } as any;
+
+    registerMachineDirectSessionsRpcHandlers({ rpcHandlerManager });
+
+    const handler = registered.get(RPC_METHODS.DAEMON_DIRECT_SESSION_LINK_ENSURE);
+    expect(handler).toBeDefined();
+
+    const res = await handler!({
+      machineId: 'machine_1',
+      providerId: 'pi',
+      remoteSessionId: 'remote_pi_123',
+      titleHint: 'Linked Pi Session',
+      directoryHint: '/tmp/project-pi',
+      source: { kind: 'piAgentDir' },
+    });
+
+    expect(res.ok).toBe(true);
+    expect(res.created).toBe(true);
+    expect(typeof res.sessionId).toBe('string');
+
+    const createdSession = sessionsById.get(res.sessionId);
+    const creds = await readCredentialsMock();
+    const meta = tryDecryptSessionMetadata({ credentials: creds!, rawSession: createdSession });
+    const parsedMeta = z.object({
+      tag: z.string().min(1),
+      name: z.string(),
+      path: z.string(),
+      piSessionId: z.string(),
+      directSessionV1: z.object({
+        providerId: z.literal('pi'),
+        remoteSessionId: z.string().min(1),
+        machineId: z.string().min(1),
+        source: z.object({ kind: z.literal('piAgentDir') }).passthrough(),
+      }).passthrough(),
+    }).passthrough().safeParse(meta);
+    if (!parsedMeta.success) {
+      throw new Error('Expected pi direct session metadata payload');
+    }
+
+    expect(parsedMeta.data.tag).toMatch(/^direct:v1:/);
+    expect(parsedMeta.data.name).toBe('Linked Pi Session');
+    expect(parsedMeta.data.path).toBe('/tmp/project-pi');
+    expect(parsedMeta.data.piSessionId).toBe('remote_pi_123');
+    expect(parsedMeta.data.directSessionV1.providerId).toBe('pi');
+    expect(parsedMeta.data.directSessionV1.remoteSessionId).toBe('remote_pi_123');
+    expect(parsedMeta.data.directSessionV1.source.kind).toBe('piAgentDir');
   });
 
   it('returns created=false and the same sessionId on repeat calls', async () => {
