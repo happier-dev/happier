@@ -408,7 +408,7 @@ export const AGENTS_CORE = {
             },
         },
         resume: { vendorResume: 'supported', vendorResumeIdField: 'piSessionId' },
-        sessionStorage: { direct: false, persisted: true },
+        sessionStorage: { direct: true, persisted: true },
         sessionCapabilities: {
             sessionListing: 'unsupported',
             sessionFork: { conversation: 'unsupported', fromMessage: 'unsupported' },

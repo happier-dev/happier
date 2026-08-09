@@ -5839,6 +5839,7 @@ deps: {
         browseSourceCodexConnectedServices: ({ service }: { service: string }) => `${service} connected services`,
         browseSourceClaudeDefault: "Configuració predeterminada de Claude",
         browseSourceOpenCodeDefault: "Servidor predeterminat d'OpenCode",
+        browseSourcePiDefault: "Directori per defecte de l'agent pi",
         browseCandidates: "Sessions disponibles",
         browseNoMachines: "Encara no hi ha màquines disponibles per a sessions directes.",
         browseNoCandidates: "No s'han trobat sessions del proveïdor per a aquesta màquina i aquest proveïdor.",
