@@ -9,6 +9,7 @@ import {
     DYNAMIC_MODEL_PROBE_SUCCESS_TTL_MS,
 } from '@/sync/domains/models/dynamicModelProbeCache';
 import { installCapabilitiesOpsModuleMock } from '@/dev/testkit/mocks/capabilities';
+import { getModelOptionsForAgentType } from '@/sync/domains/models/modelOptions';
 
 const machineCapabilitiesInvokeMock = vi.fn();
 type DeferredModelProbeResult = {
@@ -36,7 +37,7 @@ describe('useNewSessionPreflightModelsState (refresh)', () => {
         const { useNewSessionPreflightModelsState } = await import('./useNewSessionPreflightModelsState');
         const hook = await renderHook(
             () => useNewSessionPreflightModelsState({
-                backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+                backendTarget: { kind: 'builtInAgent', agentId: 'qwen' },
                 selectedMachineId: 'machine-1',
                 capabilityServerId: 'server-1',
                 cwd: '/repo',
@@ -44,9 +45,46 @@ describe('useNewSessionPreflightModelsState (refresh)', () => {
         );
 
         expect(machineCapabilitiesInvokeMock).not.toHaveBeenCalled();
-        expect(hook.getCurrent().modelOptions.some((o) => o.value === 'claude-opus-4-6')).toBe(true);
+        expect(hook.getCurrent().modelOptions.map((o) => o.value)).toEqual(
+            getModelOptionsForAgentType('qwen').map((o) => o.value),
+        );
         expect(hook.getCurrent().probe.phase).toBe('idle');
         expect(hook.getCurrent().probe.onRefresh).toBeUndefined();
+
+        await hook.unmount();
+    });
+
+    it('probes models for Claude, which resolves its list at runtime', async () => {
+        vi.resetModules();
+        machineCapabilitiesInvokeMock.mockReset();
+        resetDynamicModelProbeCacheForTests();
+        vi.doMock('@/sync/ops/capabilities', installCapabilitiesOpsModuleMock({
+            machineCapabilitiesInvoke: machineCapabilitiesInvokeMock,
+        }));
+
+        machineCapabilitiesInvokeMock.mockImplementation(async () => ({
+            supported: true as const,
+            response: {
+                ok: true as const,
+                result: { availableModels: [{ id: 'claude-opus-9', name: 'Opus 9' }], supportsFreeform: true },
+            },
+        }));
+
+        const { useNewSessionPreflightModelsState } = await import('./useNewSessionPreflightModelsState');
+        const hook = await renderHook(
+            () => useNewSessionPreflightModelsState({
+                backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+                selectedMachineId: 'machine-1',
+                capabilityServerId: 'server-1',
+                cwd: '/repo',
+            }),
+        );
+
+        await flushHookEffects();
+
+        expect(machineCapabilitiesInvokeMock).toHaveBeenCalledTimes(1);
+        expect(hook.getCurrent().modelOptions.some((o) => o.value === 'claude-opus-9')).toBe(true);
+        expect(hook.getCurrent().probe.onRefresh).toBeDefined();
 
         await hook.unmount();
     });
@@ -247,7 +285,7 @@ describe('useNewSessionPreflightModelsState (refresh)', () => {
 
         const { useNewSessionPreflightModelsState } = await import('./useNewSessionPreflightModelsState');
         const hook = await renderHook(
-            (props: { backendTarget: { kind: 'builtInAgent'; agentId: 'codex' | 'claude' } }) =>
+            (props: { backendTarget: { kind: 'builtInAgent'; agentId: 'codex' | 'qwen' } }) =>
                 useNewSessionPreflightModelsState({
                     backendTarget: props.backendTarget,
                     selectedMachineId: 'machine-1',
@@ -261,12 +299,14 @@ describe('useNewSessionPreflightModelsState (refresh)', () => {
         expect(hook.getCurrent().preflightModelsTargetKey).toBe('agent:codex');
         expect(hook.getCurrent().modelOptions.some((option) => option.value === 'gpt-5.5')).toBe(true);
 
-        await hook.rerender({ backendTarget: { kind: 'builtInAgent', agentId: 'claude' } });
+        await hook.rerender({ backendTarget: { kind: 'builtInAgent', agentId: 'qwen' } });
 
         expect(hook.getCurrent().preflightModels).toBeNull();
         expect(hook.getCurrent().preflightModelsTargetKey).toBeNull();
         expect(hook.getCurrent().modelOptions.some((option) => option.value === 'gpt-5.5')).toBe(false);
-        expect(hook.getCurrent().modelOptions.some((option) => option.value === 'claude-opus-4-6')).toBe(true);
+        expect(hook.getCurrent().modelOptions.map((option) => option.value)).toEqual(
+            getModelOptionsForAgentType('qwen').map((option) => option.value),
+        );
         expect(machineCapabilitiesInvokeMock).toHaveBeenCalledTimes(1);
 
         await hook.unmount();

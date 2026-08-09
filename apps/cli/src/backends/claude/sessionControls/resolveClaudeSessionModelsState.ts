@@ -13,8 +13,10 @@ export async function resolveClaudeSessionModelsState(params: Readonly<{
   const helpText = await params.probeHelpText({ cwd: params.cwd, timeoutMs: params.timeoutMs });
   if (!helpText) return null;
 
+  // `--effort` support gates the effort CONTROL, not the model list. Returning null here would
+  // leave the new-session picker showing an account-specific list while the running session
+  // published none.
   const supportsEffort = /\B--effort\b/i.test(helpText);
-  if (!supportsEffort) return null;
 
   const updatedAt = params.nowMs();
   // Same owner as the new-session preflight probe, so the in-session picker cannot disagree about
@@ -37,9 +39,13 @@ export async function resolveClaudeSessionModelsState(params: Readonly<{
         ...(description ? { description } : {}),
         ...(typeof model.contextWindowTokens === 'number' ? { contextWindowTokens: model.contextWindowTokens } : {}),
         ...(typeof model.extendedContextModelId === 'string' ? { extendedContextModelId: model.extendedContextModelId } : {}),
-        ...(Array.isArray(model.modelOptions) && model.modelOptions.length > 0
-          ? { modelOptions: model.modelOptions }
-          : {}),
+        ...(() => {
+          const modelOptions = Array.isArray(model.modelOptions)
+            ? model.modelOptions.filter((option) => supportsEffort
+              || (option.id !== 'reasoning_effort' && option.id !== 'ultracode'))
+            : [];
+          return modelOptions.length > 0 ? { modelOptions } : {};
+        })(),
       };
     }),
   } satisfies ClaudeSessionModelsState;

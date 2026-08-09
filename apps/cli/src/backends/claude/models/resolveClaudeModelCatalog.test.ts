@@ -14,9 +14,10 @@ vi.mock('@/backends/claude/preflight/anthropicModelsFetch', async (importOrigina
   return { ...actual, fetchAnthropicModels: fetchAnthropicModelsMock };
 });
 
-vi.mock('@/backends/claude/connectedServices/nativeAuth/claudeCodeCredentialFile', () => ({
-  readClaudeCodeNativeCredential: readClaudeCodeNativeCredentialMock,
-}));
+vi.mock('@/backends/claude/connectedServices/nativeAuth/claudeCodeCredentialFile', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/backends/claude/connectedServices/nativeAuth/claudeCodeCredentialFile')>();
+  return { ...actual, readClaudeCodeNativeCredential: readClaudeCodeNativeCredentialMock };
+});
 
 import { buildClaudeEffortCliArgs } from '@/backends/claude/utils/claudeEffort';
 import {
@@ -55,6 +56,9 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  // Leave no cached catalog behind: the cache is module state, so a later suite sharing this
+  // module context would otherwise read entries this one populated.
+  resetClaudeModelCatalogCacheForTests();
   envScope.restore();
   envScope = createEnvKeyScope(envKeys);
 });
@@ -109,6 +113,54 @@ describe('resolveClaudeModelCatalog', () => {
     process.env.ANTHROPIC_API_KEY = 'sk-ant-key-two';
     await resolveClaudeModelCatalog({ timeoutMs: 1_000 });
     expect(fetchAnthropicModelsMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('refetches when the on-disk credential is replaced in the same config dir', async () => {
+    readClaudeCodeNativeCredentialMock.mockResolvedValue({
+      payload: { claudeAiOauth: { accessToken: 'sk-ant-oat01-account-one', scopes: [] } },
+      updatedAtMs: 0,
+      source: 'file',
+    });
+    fetchAnthropicModelsMock.mockResolvedValue([{ id: 'claude-opus-9', displayName: 'Opus 9' }]);
+    await resolveClaudeModelCatalog({ timeoutMs: 1_000 });
+    expect(fetchAnthropicModelsMock).toHaveBeenCalledTimes(1);
+
+    // Re-authing the same slot to a different account must not inherit the previous list for the
+    // rest of the TTL — the config dir is unchanged, so the credential itself has to key the cache.
+    readClaudeCodeNativeCredentialMock.mockResolvedValue({
+      payload: { claudeAiOauth: { accessToken: 'sk-ant-oat01-account-two', scopes: [] } },
+      updatedAtMs: 1,
+      source: 'file',
+    });
+    await resolveClaudeModelCatalog({ timeoutMs: 1_000 });
+    expect(fetchAnthropicModelsMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not let an unreadable credential evict a valid cached catalog', async () => {
+    readClaudeCodeNativeCredentialMock.mockResolvedValue({
+      payload: { claudeAiOauth: { accessToken: 'sk-ant-oat01-account', scopes: [] } },
+      updatedAtMs: 0,
+      source: 'file',
+    });
+    fetchAnthropicModelsMock.mockResolvedValue([{ id: 'claude-opus-9', displayName: 'Opus 9' }]);
+    const warm = await resolveClaudeModelCatalog({ timeoutMs: 1_000 });
+    expect(warm.some((m) => m.id === 'claude-opus-9')).toBe(true);
+
+    // A transient credential read failure degrades this call to the curated catalog...
+    readClaudeCodeNativeCredentialMock.mockRejectedValue(new Error('EIO'));
+    const degraded = await resolveClaudeModelCatalog({ timeoutMs: 1_000 });
+    expect(degraded.some((m) => m.id === 'claude-opus-9')).toBe(false);
+
+    // ...but must not have evicted or shadowed the still-valid entry: recovery is immediate and
+    // does not require a refetch.
+    readClaudeCodeNativeCredentialMock.mockResolvedValue({
+      payload: { claudeAiOauth: { accessToken: 'sk-ant-oat01-account', scopes: [] } },
+      updatedAtMs: 0,
+      source: 'file',
+    });
+    const recovered = await resolveClaudeModelCatalog({ timeoutMs: 1_000 });
+    expect(recovered.some((m) => m.id === 'claude-opus-9')).toBe(true);
+    expect(fetchAnthropicModelsMock).toHaveBeenCalledTimes(1);
   });
 
   it('carries the extended-context model id through to the picker rows', async () => {

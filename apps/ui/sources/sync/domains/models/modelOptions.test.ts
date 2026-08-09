@@ -4,6 +4,7 @@ import {
     findModelOptionForEffectiveModelId,
     getModelOptionsForAgentType,
     getModelOptionsForModes,
+    getModelOptionsForPreflightModelList,
     getModelOptionsForSession,
     getSelectableModelIdsForSession,
     hasDynamicModelListForSession,
@@ -160,8 +161,64 @@ describe('modelOptions', () => {
     });
 
     it('ignores stale dynamic session model rows for static-only providers and uses the static catalog', () => {
-        const staticClaudeValues = getModelOptionsForAgentType('claude').map((option) => option.value);
+        const staticKiroValues = getModelOptionsForAgentType('kiro').map((option) => option.value);
         const out = getModelOptionsForSession(
+            'kiro',
+            withMetadata({
+                sessionModelsV1: {
+                    v: 1,
+                    provider: 'kiro',
+                    updatedAt: 1,
+                    currentModelId: 'kiro-from-session',
+                    availableModels: [
+                        { id: 'kiro-from-session', name: 'Kiro (From Session)' },
+                    ],
+                },
+            }),
+        );
+
+        expect(out.map((option) => option.value)).toEqual(staticKiroValues);
+        expect(out.some((option) => option.value === 'kiro-from-session')).toBe(false);
+    });
+
+    it('keeps the extended-context variant for a curated model that arrives via the dynamic path', () => {
+        // AgentInput gates the 1M-context toggle on extendedContextModelId. The dynamic row builder
+        // has no reason to know about it, so the catalog merge must restore it — otherwise turning
+        // a provider dynamic silently removes the toggle.
+        const out = getModelOptionsForSession(
+            'claude',
+            withMetadata({
+                sessionModelsV1: {
+                    v: 1,
+                    provider: 'claude',
+                    updatedAt: 1,
+                    currentModelId: 'claude-sonnet-4-6',
+                    availableModels: [{ id: 'claude-sonnet-4-6', name: 'Sonnet 4.6 (From Session)' }],
+                },
+            }),
+        );
+
+        const staticSonnet = getModelOptionsForAgentType('claude')
+            .find((option) => option.value === 'claude-sonnet-4-6') ?? null;
+        expect(staticSonnet?.extendedContextModelId).toBeTruthy();
+        expect(out.find((option) => option.value === 'claude-sonnet-4-6')?.extendedContextModelId)
+            .toBe(staticSonnet?.extendedContextModelId);
+    });
+
+    it('carries an extended-context variant declared by the dynamic source itself', () => {
+        const out = getModelOptionsForPreflightModelList({
+            availableModels: [
+                { id: 'claude-opus-9', name: 'Opus 9', extendedContextModelId: 'claude-opus-9[1m]' },
+            ],
+            supportsFreeform: true,
+        });
+
+        expect(out.find((option) => option.value === 'claude-opus-9')?.extendedContextModelId)
+            .toBe('claude-opus-9[1m]');
+    });
+
+    it('uses the published session model list for Claude and keeps the static catalog as the fallback', () => {
+        const withSession = getModelOptionsForSession(
             'claude',
             withMetadata({
                 sessionModelsV1: {
@@ -171,21 +228,30 @@ describe('modelOptions', () => {
                     currentModelId: 'claude-opus-4-6',
                     availableModels: [
                         { id: 'claude-opus-4-6', name: 'Opus 4.6 (From Session)' },
-                        { id: 'claude-sonnet-4-6', name: 'Sonnet 4.6 (From Session)' },
+                        { id: 'claude-opus-9', name: 'Opus 9 (Discovered)' },
                     ],
                 },
             }),
         );
 
-        expect(out.map((option) => option.value)).toEqual(staticClaudeValues);
-        expect(out.find((option) => option.value === 'claude-opus-4-6')).toMatchObject({
+        // Claude publishes sessionModelsV1 from the CLI, so a discovered model reaches the picker,
+        // published rows lead, and the curated catalog is still appended behind them.
+        const values = withSession.map((option) => option.value);
+        expect(values.slice(0, 3)).toEqual(['default', 'claude-opus-4-6', 'claude-opus-9']);
+        for (const staticValue of getModelOptionsForAgentType('claude').map((option) => option.value)) {
+            expect(values).toContain(staticValue);
+        }
+        expect(withSession.find((option) => option.value === 'claude-opus-9')?.label)
+            .toBe('Opus 9 (Discovered)');
+
+        const staticOnly = getModelOptionsForSession('claude', withMetadata({}));
+        expect(staticOnly.map((option) => option.value))
+            .toEqual(getModelOptionsForAgentType('claude').map((option) => option.value));
+        expect(staticOnly.find((option) => option.value === 'claude-opus-4-6')).toMatchObject({
             label: 'Opus 4.6',
             modelOptions: expect.arrayContaining([
                 expect.objectContaining({ id: 'reasoning_effort' }),
             ]),
-        });
-        expect(out.find((option) => option.value === 'claude-sonnet-4-6')).toMatchObject({
-            label: 'Sonnet 4.6',
         });
     });
 
@@ -231,47 +297,47 @@ describe('modelOptions', () => {
     });
 
     it('appends custom metadata override models after the static catalog for static-only providers', () => {
-        const staticClaudeValues = getModelOptionsForAgentType('claude').map((option) => option.value);
+        const staticKiroValues = getModelOptionsForAgentType('kiro').map((option) => option.value);
         const out = getModelOptionsForSession(
-            'claude',
+            'kiro',
             withMetadata({
                 sessionModelsV1: {
                     v: 1,
-                    provider: 'claude',
+                    provider: 'kiro',
                     updatedAt: 1,
-                    currentModelId: 'claude-sonnet-4-6',
+                    currentModelId: 'kiro-from-session',
                     availableModels: [
-                        { id: 'claude-sonnet-4-6', name: 'Sonnet 4.6 (From Session)' },
+                        { id: 'kiro-from-session', name: 'Kiro (From Session)' },
                     ],
                 },
-                modelOverrideV1: { v: 1, updatedAt: 100, modelId: 'claude-custom-model' },
+                modelOverrideV1: { v: 1, updatedAt: 100, modelId: 'kiro-custom-model' },
             }),
         );
 
         expect(out.map((option) => option.value)).toEqual([
-            ...staticClaudeValues,
-            'claude-custom-model',
+            ...staticKiroValues,
+            'kiro-custom-model',
         ]);
     });
 
     it('derives selectable ids from the same static-only session model policy for freeform providers', () => {
-        const staticClaudeValues = getModelOptionsForAgentType('claude').map((option) => option.value);
+        const staticKiroValues = getModelOptionsForAgentType('kiro').map((option) => option.value);
         const metadata = withMetadata({
             sessionModelsV1: {
                 v: 1,
-                provider: 'claude',
+                provider: 'kiro',
                 updatedAt: 1,
-                currentModelId: 'claude-sonnet-4-6',
+                currentModelId: 'kiro-from-session',
                 availableModels: [
-                    { id: 'claude-sonnet-4-6', name: 'Sonnet 4.6 (From Session)' },
+                    { id: 'kiro-from-session', name: 'Kiro (From Session)' },
                 ],
             },
-            modelOverrideV1: { v: 1, updatedAt: 100, modelId: 'claude-custom-model' },
+            modelOverrideV1: { v: 1, updatedAt: 100, modelId: 'kiro-custom-model' },
         });
 
-        expect(getSelectableModelIdsForSession('claude', metadata)).toEqual([
-            ...staticClaudeValues,
-            'claude-custom-model',
+        expect(getSelectableModelIdsForSession('kiro', metadata)).toEqual([
+            ...staticKiroValues,
+            'kiro-custom-model',
         ]);
     });
 
@@ -338,6 +404,23 @@ describe('modelOptions', () => {
     it('does not treat static-only provider metadata as dynamic list support', () => {
         expect(
             hasDynamicModelListForSession(
+                'kiro',
+                withMetadata({
+                    sessionModelsV1: {
+                        v: 1,
+                        provider: 'kiro',
+                        updatedAt: 1,
+                        currentModelId: 'kiro-from-session',
+                        availableModels: [{ id: 'kiro-from-session', name: 'Kiro (From Session)' }],
+                    },
+                }),
+            ),
+        ).toBe(false);
+    });
+
+    it('treats a published Claude session model list as dynamic list support', () => {
+        expect(
+            hasDynamicModelListForSession(
                 'claude',
                 withMetadata({
                     sessionModelsV1: {
@@ -345,11 +428,11 @@ describe('modelOptions', () => {
                         provider: 'claude',
                         updatedAt: 1,
                         currentModelId: 'claude-haiku-4-5',
-                        availableModels: [{ id: 'haiku', name: 'Haiku' }],
+                        availableModels: [{ id: 'claude-haiku-4-5', name: 'Haiku' }],
                     },
                 }),
             ),
-        ).toBe(false);
+        ).toBe(true);
     });
 
     it('falls back to legacy ACP session models when canonical key is absent', () => {

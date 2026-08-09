@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { resolveClaudeSessionModelsState } from './resolveClaudeSessionModelsState';
 
 describe('resolveClaudeSessionModelsState', () => {
-  it('returns null when the installed Claude CLI does not expose --effort', async () => {
+  it('still publishes the model list when the installed Claude CLI does not expose --effort', async () => {
     const res = await resolveClaudeSessionModelsState({
       cwd: '/',
       timeoutMs: 250,
@@ -12,7 +12,13 @@ describe('resolveClaudeSessionModelsState', () => {
       probeHelpText: async () => 'Claude Code help output without effort',
     });
 
-    expect(res).toBeNull();
+    // Missing `--effort` disables the effort CONTROL, not the list itself; suppressing the list
+    // would leave the new-session picker and the running session disagreeing about which models
+    // exist.
+    expect(res?.availableModels.length).toBeGreaterThan(0);
+    const optionIds = (res?.availableModels ?? []).flatMap((m) => (m.modelOptions ?? []).map((o) => o.id));
+    expect(optionIds).not.toContain('reasoning_effort');
+    expect(optionIds).not.toContain('ultracode');
   });
 
   it('publishes a dynamic session model list with a Thinking option when --effort is supported', async () => {

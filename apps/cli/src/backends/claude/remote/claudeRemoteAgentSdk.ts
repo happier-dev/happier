@@ -33,6 +33,7 @@ import { normalizeClaudeToolUseNamesInSdkMessage } from '@/backends/claude/utils
 import { tryMergeUserMcpConfigArgsIntoHappierMcp } from '@/backends/claude/utils/mcpConfigMerge';
 import { ensureClaudeJsRuntimeExecutable } from '@/backends/claude/utils/ensureClaudeJsRuntimeExecutable';
 import {
+    resolveModeEffortLevelsForModel,
     buildClaudeUltracodeSettingsJson,
     resolveClaudeEffortForModel,
     resolveClaudeUltracodeForModel,
@@ -694,7 +695,7 @@ export async function claudeRemoteAgentSdk(opts: {
                 ? opts.resumeSessionAt.trim()
                 : null;
         const effortModelId = argOverrides.model ?? mode.model;
-        const effortSupportedLevels = mode.modelEffortLevels;
+        const effortSupportedLevels = resolveModeEffortLevelsForModel(mode, effortModelId);
         const resolvedEffort = resolveClaudeEffortForModel({
             modelId: effortModelId,
             effort: argOverrides.effort ?? mode.reasoningEffort,

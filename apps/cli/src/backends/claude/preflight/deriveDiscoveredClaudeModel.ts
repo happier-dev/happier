@@ -1,14 +1,14 @@
-import { providers, type AgentModelDescriptor, type AgentModelOption } from '@happier-dev/agents';
+import {
+  buildClaudeUltracodeModelOption,
+  providers,
+  type AgentModelDescriptor,
+  type AgentModelOption,
+} from '@happier-dev/agents';
 
 import type { AnthropicModelEntry } from './anthropicModelsFetch';
 
 const EFFORT_TIER_ORDER = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
 type EffortTier = (typeof EFFORT_TIER_ORDER)[number];
-
-// Ultracode copy mirrors the static catalog's `withClaudeEffortModelOptions` (models.ts) so a
-// discovered xhigh-capable model surfaces the same session-only toggle as a curated one.
-const ULTRACODE_DESCRIPTION =
-  'Maximum reasoning with dynamic workflows (forces XHigh effort). Applies to the current session only.';
 
 function resolveSupportedEffortTiers(entry: AnthropicModelEntry): readonly EffortTier[] {
   const effort = entry.capabilities?.effort;
@@ -48,15 +48,8 @@ export function deriveClaudeModelOptionsFromCapabilities(
       currentValue,
       options: tiers.map((tier) => ({ value: tier, name: providers.claude.formatClaudeEffortLevelLabel(tier) })),
     });
-    if (tiers.includes('xhigh')) {
-      modelOptions.push({
-        id: 'ultracode',
-        name: 'Ultracode',
-        description: ULTRACODE_DESCRIPTION,
-        type: 'boolean',
-        currentValue: 'false',
-      });
-    }
+    // Same option the curated catalog builds, from one owner.
+    if (tiers.includes('xhigh')) modelOptions.push(buildClaudeUltracodeModelOption());
   }
 
   return {

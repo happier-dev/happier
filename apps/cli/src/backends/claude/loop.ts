@@ -63,6 +63,13 @@ export interface EnhancedMode {
      * launch-option hashing stays a pure function of the mode.
      */
     modelEffortLevels?: readonly string[];
+    /**
+     * The model `modelEffortLevels` was resolved for.
+     *
+     * Call sites can override the model (e.g. `--model` inside `claudeArgs`), so tiers are only
+     * evidence when they belong to the model actually being launched.
+     */
+    modelEffortLevelsModelId?: string | null;
 
     // Claude remote-mode (provider-scoped) settings forwarded via message meta.
     claudeRemoteAgentSdkEnabled?: boolean;

@@ -47,6 +47,7 @@ export type PreflightModelList = Readonly<{
         name: string;
         description?: string;
         contextWindowTokens?: number;
+        extendedContextModelId?: string;
         modelOptions?: readonly SessionConfigOption[];
     }>>;
     supportsFreeform: boolean;
@@ -58,9 +59,22 @@ type SessionModelListState = Readonly<{
         id?: unknown;
         name?: unknown;
         description?: unknown;
+        extendedContextModelId?: unknown;
         modelOptions?: unknown;
     }>;
 }>;
+
+/**
+ * Normalize a catalog- or session-declared extended-context variant id.
+ *
+ * One owner for the rule, because the value now flows through the preflight parse, the probe cache,
+ * and both dynamic row builders — four places that must agree on what counts as present.
+ */
+export function readExtendedContextModelId(value: unknown): string | undefined {
+    if (typeof value !== 'string') return undefined;
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : undefined;
+}
 
 function dedupeModelOptionsByValue(options: readonly ModelOption[]): readonly ModelOption[] {
     const seen = new Set<string>();
@@ -79,10 +93,17 @@ function mergeDynamicModelOptionWithCatalog(
     if (!catalog) return option;
     const hasModelOptions = Array.isArray(option.modelOptions) && option.modelOptions.length > 0;
     const hasDescription = typeof option.description === 'string' && option.description.trim().length > 0;
+    const hasExtendedContext = typeof option.extendedContextModelId === 'string'
+        && option.extendedContextModelId.trim().length > 0;
     return {
         ...option,
         ...(!hasDescription && catalog.description ? { description: catalog.description } : {}),
         ...(!hasModelOptions && catalog.modelOptions ? { modelOptions: catalog.modelOptions } : {}),
+        // Without this a curated model arriving through the dynamic path loses its extended-context
+        // variant, and the 1M toggle disappears for a model that still supports it.
+        ...(!hasExtendedContext && catalog.extendedContextModelId
+            ? { extendedContextModelId: catalog.extendedContextModelId }
+            : {}),
     };
 }
 
@@ -141,6 +162,9 @@ export function getModelOptionsForPreflightModelList(list: PreflightModelList): 
             value: String(m.id),
             label: String(m.name),
             description: typeof m.description === 'string' ? m.description : '',
+            ...(readExtendedContextModelId(m.extendedContextModelId)
+                ? { extendedContextModelId: readExtendedContextModelId(m.extendedContextModelId) }
+                : {}),
             ...(Array.isArray(m.modelOptions) && m.modelOptions.length > 0 ? { modelOptions: m.modelOptions } : {}),
         }));
 
@@ -272,6 +296,9 @@ function resolveModelOptionsForSession(agentType: AgentType, metadata: Metadata 
                     value,
                     label: String(m.name),
                     description,
+                    ...(readExtendedContextModelId(m.extendedContextModelId)
+                        ? { extendedContextModelId: readExtendedContextModelId(m.extendedContextModelId) }
+                        : {}),
                     ...(modelOptionsRaw ? { modelOptions: modelOptionsRaw } : {}),
                 };
             });

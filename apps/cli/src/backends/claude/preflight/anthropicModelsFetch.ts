@@ -65,14 +65,23 @@ function readCapabilities(value: unknown): AnthropicModelCapabilities | undefine
   const caps = readObject(value);
   const effort = readObject(caps?.effort);
   if (!effort) return undefined;
+
+  const tiers = {
+    low: readEffortTier(effort.low),
+    medium: readEffortTier(effort.medium),
+    high: readEffortTier(effort.high),
+    xhigh: readEffortTier(effort.xhigh),
+    max: readEffortTier(effort.max),
+  } as const;
+
   return {
     effort: {
       ...(typeof effort.supported === 'boolean' ? { supported: effort.supported } : {}),
-      ...(readEffortTier(effort.low) ? { low: readEffortTier(effort.low) } : {}),
-      ...(readEffortTier(effort.medium) ? { medium: readEffortTier(effort.medium) } : {}),
-      ...(readEffortTier(effort.high) ? { high: readEffortTier(effort.high) } : {}),
-      ...(readEffortTier(effort.xhigh) ? { xhigh: readEffortTier(effort.xhigh) } : {}),
-      ...(readEffortTier(effort.max) ? { max: readEffortTier(effort.max) } : {}),
+      ...(tiers.low ? { low: tiers.low } : {}),
+      ...(tiers.medium ? { medium: tiers.medium } : {}),
+      ...(tiers.high ? { high: tiers.high } : {}),
+      ...(tiers.xhigh ? { xhigh: tiers.xhigh } : {}),
+      ...(tiers.max ? { max: tiers.max } : {}),
     },
   };
 }
@@ -99,11 +108,12 @@ export function parseAnthropicModelsResponse(body: unknown): AnthropicModelEntry
     const maxInputTokens = typeof entry?.max_input_tokens === 'number' && Number.isFinite(entry.max_input_tokens)
       ? entry.max_input_tokens
       : undefined;
+    const capabilities = readCapabilities(entry?.capabilities);
     entries.push({
       id,
       ...(displayName ? { displayName } : {}),
       ...(maxInputTokens !== undefined ? { maxInputTokens } : {}),
-      ...(readCapabilities(entry?.capabilities) ? { capabilities: readCapabilities(entry?.capabilities) } : {}),
+      ...(capabilities ? { capabilities } : {}),
     });
   }
   return entries.length > 0 ? entries : null;

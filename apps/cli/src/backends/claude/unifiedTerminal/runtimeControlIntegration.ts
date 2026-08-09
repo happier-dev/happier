@@ -5,7 +5,7 @@ import type {
 } from '@happier-dev/protocol';
 
 import type { InFlightConfigApplyOutcome } from '@/agent/runtime/permission/bindPermissionModeQueue';
-import { resolveClaudeUltracodeForModel } from '@/backends/claude/utils/claudeEffort';
+import { resolveClaudeUltracodeForModel, resolveModeEffortLevelsForModel } from '@/backends/claude/utils/claudeEffort';
 
 import type { EnhancedMode } from '../loop';
 import { controlResultToChangeOutcome } from './tuiControls/outcome';
@@ -181,7 +181,7 @@ export function mapEnhancedModeToDesiredRuntimeConfig(mode: EnhancedMode): Claud
     desired.ultracode = resolveClaudeUltracodeForModel({
         modelId: mode.model,
         ultracode: mode.ultracode,
-        supportedLevels: mode.modelEffortLevels,
+        supportedLevels: resolveModeEffortLevelsForModel(mode, mode.model),
     });
   }
   return desired;

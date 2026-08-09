@@ -28,6 +28,20 @@ describe('resolveAgentProbeVariant', () => {
     expect(new Set([profileA, profileB, native]).size).toBe(3);
   });
 
+  it('returns a stable variant for an equivalent binding', () => {
+    const binding = {
+      v: 1 as const,
+      bindingsByServiceId: {
+        'claude-subscription': { source: 'connected' as const, selection: 'profile' as const, profileId: 'profile-a' },
+      },
+    };
+
+    // A variant that changed per call would pass the separation assertions above while silently
+    // disabling cache reuse.
+    expect(resolveAgentProbeVariant({ agentId: 'claude', connectedServices: binding }))
+      .toBe(resolveAgentProbeVariant({ agentId: 'claude', connectedServices: binding }));
+  });
+
   it('partitions the Claude models probe cache by group binding', () => {
     const group = resolveAgentProbeVariant({
       agentId: 'claude',

@@ -50,16 +50,15 @@ function resolveEvidencedClaudeEffortLevels(
     modelIdRaw: unknown,
     reportedRaw: unknown,
 ): readonly ClaudeEffortLevel[] {
-    // A discovered id that merely CONTAINS a curated alias (`claude-opus-5-preview` matching the
-    // `opus-5` substring rule) is not that model. Its own reported tiers win, so the picker and the
-    // spawned flag cannot disagree.
-    const reported = normalizeReportedClaudeEffortLevels(reportedRaw);
-    if (!isCuratedClaudeModelId(modelIdRaw) && reported.length > 0) return reported;
+    // A discovered id is only ever evidenced by its own reported tiers. It may CONTAIN a curated
+    // alias (`claude-opus-5-preview` matches the `opus-5` substring rule) without being that model,
+    // so the curated table must not be consulted for it at all — otherwise a stale session effort
+    // would be clamped against another model's tiers and forwarded.
+    if (!isCuratedClaudeModelId(modelIdRaw)) return normalizeReportedClaudeEffortLevels(reportedRaw);
 
-    const staticLevels = resolveClaudeEffortLevelsForKnownAliasOrModel(modelIdRaw);
-    if (staticLevels.length > 0) return staticLevels;
-    if (isCuratedClaudeModelId(modelIdRaw)) return [];
-    return reported;
+    // Curated models own their table, including curated models with no effort support (Haiku),
+    // which reported tiers must never override.
+    return resolveClaudeEffortLevelsForKnownAliasOrModel(modelIdRaw);
 }
 
 function normalizeClaudeEffortLevel(raw: unknown): ClaudeEffortLevel | null {
@@ -149,6 +148,21 @@ function resolveBestSupportedClaudeEffort(
         if (supportedLevels.includes(candidate)) return candidate;
     }
     return null;
+}
+
+/**
+ * Tiers carried on the session mode, but only when they belong to `modelId`.
+ *
+ * A launch can override the model (`--model` in `claudeArgs`), and one model's reported tiers must
+ * never gate another model's effort or ultracode.
+ */
+export function resolveModeEffortLevelsForModel(
+    mode: Readonly<{ modelEffortLevels?: readonly string[]; modelEffortLevelsModelId?: string | null }>,
+    modelId: unknown,
+): readonly string[] | undefined {
+    const normalized = typeof modelId === 'string' ? modelId.trim() : '';
+    if (!normalized) return undefined;
+    return mode.modelEffortLevelsModelId === normalized ? mode.modelEffortLevels : undefined;
 }
 
 export function resolveClaudeEffortForModel(params: Readonly<{

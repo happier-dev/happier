@@ -151,7 +151,6 @@ describe('probeAgentModelsBestEffort (static-only providers)', () => {
 
     expect(res.provider).toBe('claude');
     expect(res.source).toBe('static');
-    expect(createConfiguredAcpProbeBackendMock).not.toHaveBeenCalled();
 
     expect(res.availableModels).toEqual(expect.arrayContaining([
       expect.objectContaining({ id: 'default', name: 'Default' }),

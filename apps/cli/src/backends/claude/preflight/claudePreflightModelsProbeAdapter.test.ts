@@ -14,9 +14,10 @@ vi.mock('@/backends/claude/preflight/anthropicModelsFetch', async (importOrigina
   return { ...actual, fetchAnthropicModels: fetchAnthropicModelsMock };
 });
 
-vi.mock('@/backends/claude/connectedServices/nativeAuth/claudeCodeCredentialFile', () => ({
-  readClaudeCodeNativeCredential: readClaudeCodeNativeCredentialMock,
-}));
+vi.mock('@/backends/claude/connectedServices/nativeAuth/claudeCodeCredentialFile', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/backends/claude/connectedServices/nativeAuth/claudeCodeCredentialFile')>();
+  return { ...actual, readClaudeCodeNativeCredential: readClaudeCodeNativeCredentialMock };
+});
 
 import { claudePreflightModelsProbeAdapter } from './claudePreflightModelsProbeAdapter';
 import { resetClaudeModelCatalogCacheForTests } from '@/backends/claude/models/resolveClaudeModelCatalog';

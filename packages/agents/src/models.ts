@@ -91,6 +91,22 @@ export type AgentModelConfig = Readonly<{
   staticModels?: readonly AgentModelDescriptor[];
 }>;
 
+/**
+ * The Ultracode toggle as the picker renders it.
+ *
+ * Shared so a model discovered at runtime surfaces the identical control to a curated one; two
+ * copies of this copy would drift.
+ */
+export function buildClaudeUltracodeModelOption(): AgentModelOption {
+  return {
+    id: 'ultracode',
+    name: 'Ultracode',
+    description: 'Maximum reasoning with dynamic workflows (forces XHigh effort). Applies to the current session only.',
+    type: 'boolean',
+    currentValue: 'false',
+  };
+}
+
 function withClaudeEffortModelOptions(model: AgentModelDescriptor): AgentModelDescriptor {
   const levels = resolveClaudeEffortLevelsForModelId(model.id);
   const currentValue = resolveClaudeDefaultEffortLevelForModelId(model.id);
@@ -108,13 +124,7 @@ function withClaudeEffortModelOptions(model: AgentModelDescriptor): AgentModelDe
   // Ultracode is a session-only Claude Code setting (forces xhigh + Dynamic Workflows),
   // orthogonal to the effort axis — surfaced as a boolean toggle, never a 6th effort pill.
   if (isClaudeUltracodeSupportedModelId(model.id)) {
-    modelOptions.push({
-      id: 'ultracode',
-      name: 'Ultracode',
-      description: 'Maximum reasoning with dynamic workflows (forces XHigh effort). Applies to the current session only.',
-      type: 'boolean',
-      currentValue: 'false',
-    });
+    modelOptions.push(buildClaudeUltracodeModelOption());
   }
 
   return { ...model, modelOptions };
@@ -220,7 +230,9 @@ export const AGENT_MODEL_CONFIG: Readonly<Record<AgentId, AgentModelConfig>> = O
     supportsSelection: true,
     supportsFreeform: true,
     nonAcpApplyScope: 'next_prompt',
-    dynamicProbe: 'static-only',
+    // Augment the curated static catalog with any models the account can run (fetched from the
+    // Anthropic Models API in the Claude preflight adapter). Falls back to static on any failure.
+    dynamicProbe: 'auto',
     defaultMode: 'default',
     allowedModes: [
       ...CLAUDE_STATIC_MODELS.map((model) => model.id),

@@ -118,6 +118,7 @@ export {
   type AgentModelConfig,
   type AgentModelDescriptor,
   type AgentModelNonAcpApplyScope,
+  buildClaudeUltracodeModelOption,
   type AgentModelOption,
   type AgentModelOptionValueId,
 } from './models.js';

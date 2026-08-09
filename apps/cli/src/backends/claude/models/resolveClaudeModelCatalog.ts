@@ -102,7 +102,11 @@ function readConfiguredBaseUrl(): string | null {
 function isAnthropicFirstPartyBaseUrl(baseUrl: string | null): boolean {
   if (!baseUrl) return true;
   try {
-    const host = new URL(baseUrl).hostname.toLowerCase();
+    const url = new URL(baseUrl);
+    // Host alone is not enough: `http://api.anthropic.com` would otherwise be treated as
+    // first-party and the on-disk subscription token sent in plaintext.
+    if (url.protocol !== 'https:') return false;
+    const host = url.hostname.toLowerCase();
     return host === 'anthropic.com' || host.endsWith('.anthropic.com');
   } catch {
     return true;
@@ -248,34 +252,47 @@ function mergeStaticWithDiscovered(entries: readonly AnthropicModelEntry[]): Age
 }
 
 /**
- * Non-reversible fingerprint of an ambient env credential, or `''` when none is set.
+ * Non-reversible fingerprint of the credential this catalog was fetched with.
  *
- * The config dir identifies a bound or on-disk account, but an ambient `ANTHROPIC_API_KEY` or
- * token can be swapped without it changing — which would otherwise serve the previous key's model
- * list for the whole TTL. Only env-derived credentials need this: rotating an on-disk credential
- * does not change which models the same account can run. The secret itself never enters the key.
+ * The config dir identifies the account slot, but the credential inside it can be replaced —
+ * re-authing a bound profile to a different account, or swapping an ambient key — without the dir
+ * changing. Fingerprinting the resolved credential means a new one always gets its own entry
+ * instead of inheriting the previous account's list for the rest of the TTL. The secret itself
+ * never enters the key.
  */
-function resolveAmbientCredentialFingerprint(bound: ClaudeProbeBinding | null): string {
-  const value = resolveAllowedEnvKeys(bound)
-    .map((key) => readEnvValue(key))
-    .find((candidate): candidate is string => candidate !== null);
-  if (!value) return '';
+function resolveCredentialFingerprint(target: ClaudeProbeTarget): string {
+  const value = 'apiKey' in target.credential ? target.credential.apiKey : target.credential.accessToken;
   return createHash('sha256').update(value).digest('hex').slice(0, 12);
 }
 
-function resolveCatalogCacheKey(bound: ClaudeProbeBinding | null): string {
+function resolveCatalogCacheKey(bound: ClaudeProbeBinding | null, target: ClaudeProbeTarget): string {
   return [
     resolveClaudeCatalogConfigDir(bound),
     readConfiguredBaseUrl() ?? 'default',
-    resolveAmbientCredentialFingerprint(bound),
+    resolveCredentialFingerprint(target),
   ].join('|');
 }
 
 type CatalogCacheEntry = Readonly<{ models: readonly AgentModelDescriptor[]; expiresAtMs: number }>;
 const catalogCache = new Map<string, CatalogCacheEntry>();
+/**
+ * Resolutions currently in flight, keyed the same as the cache.
+ *
+ * The preflight probe and the `sessionModelsV1` publisher both resolve at session start; without
+ * this they miss the cache in parallel and each issue their own fetch for the same account.
+ */
+const inFlightCatalogResolutions = new Map<string, Promise<readonly AgentModelDescriptor[]>>();
 
 export function resetClaudeModelCatalogCacheForTests(): void {
   catalogCache.clear();
+  inFlightCatalogResolutions.clear();
+}
+
+/** Drop expired entries so a long-lived daemon does not retain one per rotated credential. */
+function pruneExpiredCatalogEntries(nowMs: number): void {
+  for (const [key, entry] of catalogCache) {
+    if (entry.expiresAtMs <= nowMs) catalogCache.delete(key);
+  }
 }
 
 export type ResolveClaudeModelCatalogParams = Readonly<{
@@ -292,27 +309,48 @@ export async function resolveClaudeModelCatalog(
   params: ResolveClaudeModelCatalogParams,
 ): Promise<readonly AgentModelDescriptor[]> {
   const nowMs = params.nowMs ?? (() => Date.now());
-  const cacheKey = resolveCatalogCacheKey(resolveClaudeProbeBinding(params.connectedServices));
+  // Resolving the target first is what lets the cache key carry the credential identity. It is env
+  // reads plus at most one local credential-file read — cheap next to the network fetch it guards,
+  // and this runs at session start and on model change, not on a hot path.
+  const bound = resolveClaudeProbeBinding(params.connectedServices);
+  const target = await resolveClaudeCatalogTarget(params.connectedServices);
 
+  // No resolvable credential is an absence of identity, not an identity of its own. Caching under a
+  // placeholder key would let one unreadable credential file evict a valid catalog for the whole
+  // failure TTL, so degrade to the curated catalog for this call only and leave the cache untouched.
+  if (!target) return resolveStaticClaudeModels();
+
+  const cacheKey = resolveCatalogCacheKey(bound, target);
   const cached = catalogCache.get(cacheKey);
   if (cached && cached.expiresAtMs > nowMs()) return cached.models;
 
-  const target = await resolveClaudeCatalogTarget(params.connectedServices);
-  const entries = target
-    ? await fetchAnthropicModels({
+  const inFlight = inFlightCatalogResolutions.get(cacheKey);
+  if (inFlight) return await inFlight;
+
+  const resolution = (async () => {
+    const entries = await fetchAnthropicModels({
       ...('apiKey' in target.credential ? { apiKey: target.credential.apiKey } : {}),
       ...('accessToken' in target.credential ? { accessToken: target.credential.accessToken } : {}),
       ...(target.baseUrl ? { baseUrl: target.baseUrl } : {}),
       timeoutMs: params.timeoutMs,
-    })
-    : null;
+    });
 
-  const models = entries ? mergeStaticWithDiscovered(entries) : resolveStaticClaudeModels();
-  catalogCache.set(cacheKey, {
-    models,
-    expiresAtMs: nowMs() + (entries ? CATALOG_SUCCESS_TTL_MS : CATALOG_FAILURE_TTL_MS),
-  });
-  return models;
+    const models = entries ? mergeStaticWithDiscovered(entries) : resolveStaticClaudeModels();
+    const resolvedAtMs = nowMs();
+    pruneExpiredCatalogEntries(resolvedAtMs);
+    catalogCache.set(cacheKey, {
+      models,
+      expiresAtMs: resolvedAtMs + (entries ? CATALOG_SUCCESS_TTL_MS : CATALOG_FAILURE_TTL_MS),
+    });
+    return models;
+  })();
+
+  inFlightCatalogResolutions.set(cacheKey, resolution);
+  try {
+    return await resolution;
+  } finally {
+    inFlightCatalogResolutions.delete(cacheKey);
+  }
 }
 
 /** Whether the catalog fetch found anything beyond the curated list (used to report probe source). */

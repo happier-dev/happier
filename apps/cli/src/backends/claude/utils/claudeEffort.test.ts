@@ -4,6 +4,7 @@ import {
   buildClaudeEffortCliArgs,
   resolveClaudeDefaultEffortForModel,
   resolveClaudeUltracodeForModel,
+  resolveModeEffortLevelsForModel,
 } from './claudeEffort';
 
 describe('buildClaudeEffortCliArgs', () => {
@@ -75,6 +76,20 @@ describe('buildClaudeEffortCliArgs', () => {
     })).toEqual([]);
   });
 
+  it('does not let a discovered id inherit curated tiers through a substring alias', () => {
+    // `claude-opus-5-preview` contains the `opus-5` substring the alias table matches on. Without
+    // reported tiers there is no evidence for it, so nothing may be forwarded — clamping against
+    // the curated Opus 5 table would apply another model's capabilities.
+    expect(buildClaudeEffortCliArgs({ modelId: 'claude-opus-5-preview', effort: 'max' })).toEqual([]);
+    expect(resolveClaudeUltracodeForModel({ modelId: 'claude-opus-5-preview', ultracode: true })).toBe(false);
+    // With its own reported tiers it behaves normally.
+    expect(buildClaudeEffortCliArgs({
+      modelId: 'claude-opus-5-preview',
+      effort: 'max',
+      supportedLevels: ['low', 'medium'],
+    })).toEqual(['--effort', 'medium']);
+  });
+
   it('never sends --effort when no model is selected', () => {
     expect(buildClaudeEffortCliArgs({ modelId: undefined, effort: 'max' })).toEqual([]);
     expect(buildClaudeEffortCliArgs({ modelId: '', effort: 'max' })).toEqual([]);
@@ -120,6 +135,19 @@ describe('resolveClaudeUltracodeForModel', () => {
     })).toBe(false);
     // Same rule as effort: a stale session `ultracode` override is not evidence of support.
     expect(resolveClaudeUltracodeForModel({ modelId: 'claude-opus-9', ultracode: true })).toBe(false);
+  });
+});
+
+describe('resolveModeEffortLevelsForModel', () => {
+  it('only supplies tiers when they belong to the model being launched', () => {
+    const mode = { modelEffortLevels: ['low', 'xhigh'], modelEffortLevelsModelId: 'claude-opus-9' };
+
+    expect(resolveModeEffortLevelsForModel(mode, 'claude-opus-9')).toEqual(['low', 'xhigh']);
+    // A launch-time override (e.g. `--model` inside claudeArgs) must not reuse another model's
+    // tiers as evidence.
+    expect(resolveModeEffortLevelsForModel(mode, 'claude-opus-8')).toBeUndefined();
+    expect(resolveModeEffortLevelsForModel(mode, '')).toBeUndefined();
+    expect(resolveModeEffortLevelsForModel({ modelEffortLevels: ['low'] }, 'claude-opus-9')).toBeUndefined();
   });
 });
 

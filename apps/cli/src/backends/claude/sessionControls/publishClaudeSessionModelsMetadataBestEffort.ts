@@ -4,6 +4,37 @@ import { logger } from '@/ui/logger';
 import { probeClaudeHelpText } from './probeClaudeHelpText';
 import { resolveClaudeSessionModelsState } from './resolveClaudeSessionModelsState';
 
+/** Options that only exist while the installed CLI can apply `--effort`. */
+const EFFORT_DEPENDENT_OPTION_IDS = ['reasoning_effort', 'ultracode'] as const;
+
+/**
+ * Drop effort-dependent overrides a session set earlier when the runtime can no longer apply them.
+ *
+ * Hiding the controls from `sessionModelsV1` is not enough: the composer emits whatever overrides
+ * are in metadata regardless of which options are advertised, and treats them as non-steerable — so
+ * a stale `ultracode` would keep riding later prompts and could push a busy send down the
+ * "provider config change refused" path.
+ */
+function withoutEffortDependentOverrides(prev: Metadata): Metadata {
+  const next = { ...prev };
+  let changed = false;
+
+  for (const key of ['sessionConfigOptionOverridesV1', 'acpConfigOptionOverridesV1'] as const) {
+    const state = prev[key];
+    const overrides = state?.overrides;
+    if (!overrides) continue;
+    if (!EFFORT_DEPENDENT_OPTION_IDS.some((id) => id in overrides)) continue;
+
+    const retained = Object.fromEntries(
+      Object.entries(overrides).filter(([id]) => !EFFORT_DEPENDENT_OPTION_IDS.includes(id as typeof EFFORT_DEPENDENT_OPTION_IDS[number])),
+    );
+    next[key] = { ...state, overrides: retained };
+    changed = true;
+  }
+
+  return changed ? next : prev;
+}
+
 export async function publishClaudeSessionModelsMetadataBestEffort(params: Readonly<{
   cwd: string;
   timeoutMs: number;
@@ -30,9 +61,13 @@ export async function publishClaudeSessionModelsMetadataBestEffort(params: Reado
   }).catch(() => null);
   if (!state) return;
 
+  const supportsEffort = state.availableModels.some(
+    (model) => (model.modelOptions ?? []).some((option) => option.id === 'reasoning_effort'),
+  );
+
   try {
     await params.session.updateMetadata((prev) => ({
-      ...prev,
+      ...(supportsEffort ? prev : withoutEffortDependentOverrides(prev)),
       sessionModelsV1: state,
       acpSessionModelsV1: state,
     }));

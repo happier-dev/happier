@@ -1,3 +1,4 @@
+import { readExtendedContextModelId } from './modelOptions';
 import { normalizeSessionConfigOptionsArray, type SessionConfigOption } from '@/sync/domains/sessionControl/configOptionsControl';
 import type { PreflightModelList } from '@/sync/domains/models/modelOptions';
 import type { ProbedResourceSnapshot } from '@happier-dev/protocol';
@@ -47,6 +48,9 @@ function normalizePersistedModelList(input: unknown): PreflightModelList | null 
             id: modelRecord.id,
             name: modelRecord.name,
             ...(typeof modelRecord.description === 'string' ? { description: modelRecord.description } : {}),
+            ...(readExtendedContextModelId(modelRecord.extendedContextModelId)
+                ? { extendedContextModelId: readExtendedContextModelId(modelRecord.extendedContextModelId) }
+                : {}),
             ...(typeof modelRecord.contextWindowTokens === 'number' && Number.isFinite(modelRecord.contextWindowTokens) && modelRecord.contextWindowTokens > 0
                 ? { contextWindowTokens: Math.trunc(modelRecord.contextWindowTokens) }
                 : {}),
