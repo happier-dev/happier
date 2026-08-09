@@ -80,6 +80,11 @@ function resolveMetadataRemoteSessionId(
       if (openCodeSessionId) return openCodeSessionId;
       break;
     }
+    case 'pi': {
+      const piSessionId = normalizeNullableString(metadata.piSessionId);
+      if (piSessionId) return piSessionId;
+      break;
+    }
   }
 
   const runtimeDescriptor = asMetadataRecord(metadata.agentRuntimeDescriptorV1);
@@ -91,16 +96,16 @@ function resolveMetadataRemoteSessionId(
 function resolveMarkerProviderId(marker: DaemonSessionMarker): DirectSessionsProviderId | null {
   const metadata = asMetadataRecord(marker.metadata);
   const metadataFlavor = normalizeNullableString(metadata?.flavor);
-  if (metadataFlavor === 'claude' || metadataFlavor === 'codex' || metadataFlavor === 'opencode') {
+  if (metadataFlavor === 'claude' || metadataFlavor === 'codex' || metadataFlavor === 'opencode' || metadataFlavor === 'pi') {
     return metadataFlavor;
   }
-  if (marker.flavor === 'claude' || marker.flavor === 'codex' || marker.flavor === 'opencode') {
+  if (marker.flavor === 'claude' || marker.flavor === 'codex' || marker.flavor === 'opencode' || marker.flavor === 'pi') {
     return marker.flavor;
   }
   const respawn = asMetadataRecord(marker.respawn);
   const backendTarget = asMetadataRecord(respawn?.backendTarget);
   const agentId = normalizeNullableString(backendTarget?.agentId);
-  return agentId === 'claude' || agentId === 'codex' || agentId === 'opencode' ? agentId : null;
+  return agentId === 'claude' || agentId === 'codex' || agentId === 'opencode' || agentId === 'pi' ? agentId : null;
 }
 
 function resolveMarkerRemoteSessionId(marker: DaemonSessionMarker, providerId: DirectSessionsProviderId): string | null {
@@ -377,6 +382,11 @@ function resolveSourceKey(providerId: DirectSessionsProviderId, source: DirectSe
       const baseUrl = normalizeNullableString(source.baseUrl) ?? '';
       const directory = normalizeNullableString(source.directory) ?? '';
       return `opencodeServer:${baseUrl}:${directory}`;
+    }
+    case 'pi': {
+      if (source.kind !== 'piAgentDir') return 'piAgentDir:invalid';
+      const agentDir = normalizeNullableString(source.agentDir) ?? '';
+      return `piAgentDir:${agentDir}`;
     }
     default:
       return 'unknown';
@@ -678,6 +688,9 @@ function buildDirectSessionMetadata(params: Readonly<{
       break;
     case 'claude':
       base.claudeSessionId = params.remoteSessionId;
+      break;
+    case 'pi':
+      base.piSessionId = params.remoteSessionId;
       break;
     case 'opencode':
       base.opencodeSessionId = params.remoteSessionId;

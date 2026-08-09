@@ -608,4 +608,115 @@ describe('ensureDirectSessionLink', () => {
     expect(JSON.stringify(updatedMetadata)).not.toContain('OPENCODE_AUTH_CONTENT');
     expect(JSON.stringify(updatedMetadata)).not.toContain('must-not-be-copied');
   });
+
+  it('creates a pi direct link with piSessionId metadata and a piAgentDir source key', async () => {
+    getOrCreateSessionByTagMock.mockResolvedValueOnce({
+      session: { id: 'sess_direct_pi_1', metadata: {} },
+    });
+
+    const result = await ensureDirectSessionLink({
+      credentials: { token: 'token', encryption: { type: 'legacy', secret: new Uint8Array([1]) } },
+      machineId: 'machine_1',
+      providerId: 'pi',
+      remoteSessionId: 'pi_sess_1',
+      source: { kind: 'piAgentDir', agentDir: '/home/user/.pi/agent' },
+      titleHint: 'Pi linked session',
+      directoryHint: '/repo',
+      nowMs: () => 123,
+    });
+
+    const expectedTag = `direct:v1:${sha256Hex('machine_1|pi|pi_sess_1|piAgentDir:/home/user/.pi/agent')}`;
+    expect(result.tag).toBe(expectedTag);
+    expect(getOrCreateSessionByTagMock.mock.calls[0]?.[0]?.tag).toBe(expectedTag);
+    const createdMetadata = getOrCreateSessionByTagMock.mock.calls[0]?.[0]?.metadata;
+    expect(createdMetadata).toMatchObject({
+      flavor: 'pi',
+      piSessionId: 'pi_sess_1',
+      directSessionV1: {
+        v: 1,
+        providerId: 'pi',
+        machineId: 'machine_1',
+        remoteSessionId: 'pi_sess_1',
+        source: { kind: 'piAgentDir', agentDir: '/home/user/.pi/agent' },
+      },
+    });
+  });
+
+  it('discriminates pi direct sessions by agentDir so identical remote ids do not collide', async () => {
+    getOrCreateSessionByTagMock.mockResolvedValueOnce({ session: { id: 'sess_direct_pi_a', metadata: {} } });
+    getOrCreateSessionByTagMock.mockResolvedValueOnce({ session: { id: 'sess_direct_pi_b', metadata: {} } });
+
+    const resultAlice = await ensureDirectSessionLink({
+      credentials: { token: 'token', encryption: { type: 'legacy', secret: new Uint8Array([1]) } },
+      machineId: 'machine_1',
+      providerId: 'pi',
+      remoteSessionId: 'pi_sess_shared',
+      source: { kind: 'piAgentDir', agentDir: '/home/alice/.pi/agent' },
+      nowMs: () => 123,
+    });
+    const resultBob = await ensureDirectSessionLink({
+      credentials: { token: 'token', encryption: { type: 'legacy', secret: new Uint8Array([1]) } },
+      machineId: 'machine_1',
+      providerId: 'pi',
+      remoteSessionId: 'pi_sess_shared',
+      source: { kind: 'piAgentDir', agentDir: '/home/bob/.pi/agent' },
+      nowMs: () => 123,
+    });
+
+    expect(resultAlice.tag).not.toBe(resultBob.tag);
+    expect(resultAlice.tag).toBe(`direct:v1:${sha256Hex('machine_1|pi|pi_sess_shared|piAgentDir:/home/alice/.pi/agent')}`);
+    expect(resultBob.tag).toBe(`direct:v1:${sha256Hex('machine_1|pi|pi_sess_shared|piAgentDir:/home/bob/.pi/agent')}`);
+  });
+
+  it('recognizes a pi daemon marker by flavor and resolves its remoteSessionId from piSessionId metadata', async () => {
+    const connectedServices = {
+      v: 1,
+      bindingsByServiceId: {
+        'openai-codex': { source: 'connected', selection: 'group', groupId: 'happier', profileId: 'work' },
+      },
+    } satisfies ConnectedServiceBindingsV1;
+    const materializationIdentity = {
+      v: 1,
+      id: 'csm_pi_link',
+      createdAtMs: 1_718_719_900_000,
+    } satisfies ConnectedServiceMaterializationIdentityV1;
+    listSessionMarkersMock.mockResolvedValueOnce([
+      {
+        pid: 12345,
+        updatedAt: 200,
+        flavor: 'pi',
+        cwd: '/repo',
+        metadata: { flavor: 'pi', path: '/repo', piSessionId: 'pi_connected' },
+        respawn: {
+          version: 1,
+          directory: '/repo',
+          backendTarget: { kind: 'builtInAgent', agentId: 'pi' },
+          connectedServices,
+          connectedServicesUpdatedAt: 1_718_719_899_000,
+          connectedServiceMaterializationIdentityV1: materializationIdentity,
+        },
+      },
+    ]);
+    getOrCreateSessionByTagMock.mockResolvedValueOnce({
+      session: { id: 'sess_direct_pi_connected', metadata: {} },
+    });
+
+    await ensureDirectSessionLink({
+      credentials: { token: 'token', encryption: { type: 'legacy', secret: new Uint8Array([1]) } },
+      machineId: 'machine_1',
+      providerId: 'pi',
+      remoteSessionId: 'pi_connected',
+      source: { kind: 'piAgentDir', agentDir: '/home/user/.pi/agent' },
+      directoryHint: '/repo',
+      nowMs: () => 123,
+    });
+
+    const createdMetadata = getOrCreateSessionByTagMock.mock.calls[0]?.[0]?.metadata;
+    expect(createdMetadata).toMatchObject({
+      connectedServices,
+      connectedServicesUpdatedAt: 1_718_719_899_000,
+      connectedServiceMaterializationIdentityV1: materializationIdentity,
+      directSessionV1: { remoteSessionId: 'pi_connected' },
+    });
+  });
 });
