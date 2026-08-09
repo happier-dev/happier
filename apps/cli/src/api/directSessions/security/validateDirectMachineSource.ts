@@ -7,6 +7,7 @@ import { expandHomeDirPath } from '@happier-dev/cli-common/providers';
 import {
   resolveConfiguredClaudeConfigDir,
 } from '@/backends/claude/directSessions/resolveClaudeConfigDir';
+import { resolvePiAgentDir } from '@/backends/pi/directSessions/resolvePiAgentDir';
 
 type DirectSourceValidationResult =
   | Readonly<{ ok: true; source: DirectSessionsSource }>
@@ -69,6 +70,27 @@ export function validateDirectMachineSource(params: Readonly<{
         source: {
           ...source,
           configDir: configuredConfigDir,
+        },
+      };
+    }
+    case 'pi': {
+      if (source.kind !== 'piAgentDir') return err('provider/source mismatch');
+      const requestedAgentDir =
+        typeof source.agentDir === 'string' && source.agentDir.trim().length > 0
+          ? canonicalizePath(source.agentDir, env)
+          : null;
+      // The configured dir is daemon-controlled (env PI_CODING_AGENT_DIR or default ~/.pi/agent).
+      // A client may omit agentDir; if supplied it must match the configured dir (path-traversal guard,
+      // mirroring the claude configDir policy).
+      const configuredAgentDir = canonicalizePath(resolvePiAgentDir({ source: { kind: 'piAgentDir' }, env }), env);
+      if (requestedAgentDir && requestedAgentDir !== configuredAgentDir) {
+        return err('source agentDir override is not allowed');
+      }
+      return {
+        ok: true,
+        source: {
+          ...source,
+          agentDir: configuredAgentDir,
         },
       };
     }
