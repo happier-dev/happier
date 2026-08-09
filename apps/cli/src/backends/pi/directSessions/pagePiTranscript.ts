@@ -6,24 +6,25 @@ import type { PiSessionEntry } from './piEntryContext';
 import { mapPiSessionToDirectMessages } from './mapPiSessionToDirectMessages';
 import { resolvePiDirectSessionFile } from './resolvePiDirectSessionFile';
 
-type PiBackwardCursorV1 = Readonly<{ v: 1; kind: 'piBackward'; consumed: number }>;
+type PiBackwardCursorV1 = Readonly<{ v: 1; kind: 'piBackward'; endExclusive: number }>;
 type PiForwardCursorV1 = Readonly<{ v: 1; kind: 'piForward'; delivered: number }>;
 
 function encodeBackwardCursor(value: PiBackwardCursorV1): string {
   return Buffer.from(JSON.stringify(value), 'utf8').toString('base64url');
 }
 
-function decodeBackwardCursor(raw: string | undefined): number {
-  if (typeof raw !== 'string' || raw.trim().length === 0) return 0;
+function decodeBackwardCursor(raw: string | undefined): number | null {
+  if (typeof raw !== 'string' || raw.trim().length === 0) return null;
   try {
     const parsed = JSON.parse(Buffer.from(raw, 'base64url').toString('utf8')) as unknown;
-    if (!parsed || typeof parsed !== 'object') return 0;
+    if (!parsed || typeof parsed !== 'object') return null;
     const value = parsed as Record<string, unknown>;
-    if (value.v !== 1 || value.kind !== 'piBackward') return 0;
-    const consumed = typeof value.consumed === 'number' && Number.isFinite(value.consumed) ? value.consumed : 0;
-    return Math.max(0, Math.trunc(consumed));
+    if (value.v !== 1 || value.kind !== 'piBackward') return null;
+    const endExclusive = typeof value.endExclusive === 'number' && Number.isFinite(value.endExclusive) ? value.endExclusive : NaN;
+    if (!Number.isFinite(endExclusive) || endExclusive < 0) return null;
+    return Math.trunc(endExclusive);
   } catch {
-    return 0;
+    return null;
   }
 }
 
@@ -120,34 +121,35 @@ export async function pagePiTranscript(params: Readonly<{
 
   const items = await loadMappedItems(resolved.filePath, resolved.fileRelPath);
   const total = items.length;
-  const consumed = decodeBackwardCursor(params.cursor);
+  const maxItems = Math.max(1, Math.trunc(params.maxItems));
+  const maxBytes = Math.max(1, Math.trunc(params.maxBytes));
   const tailCursor = encodePiForwardCursor({ v: 1, kind: 'piForward', delivered: total });
 
-  const remaining = total - consumed;
-  if (remaining <= 0) {
+  // Backward paging uses an `endExclusive` cursor: each page delivers a contiguous block ending at
+  // endExclusive, collected newest-first so byte-limit truncation cuts the OLDER end and the next
+  // page's window begins exactly where this one stopped. This keeps pages gap-free, overlap-free,
+  // and reconstructable into full chronological order even when maxBytes truncates below maxItems.
+  const decoded = decodeBackwardCursor(params.cursor);
+  const endExclusive = decoded === null ? total : Math.min(Math.max(0, decoded), total);
+  if (endExclusive <= 0) {
     return { items: [], nextCursor: null, tailCursor, hasMore: false };
   }
 
-  const maxItems = Math.max(1, Math.trunc(params.maxItems));
-  const maxBytes = Math.max(1, Math.trunc(params.maxBytes));
-
-  const pageStart = Math.max(0, total - consumed - maxItems);
-  const pageEndExclusive = total - consumed;
-
-  const pageItems: DirectTranscriptRawMessageV1[] = [];
+  const windowStart = Math.max(0, endExclusive - maxItems);
+  const collected: DirectTranscriptRawMessageV1[] = [];
   let bytesUsed = 0;
-  for (let i = pageStart; i < pageEndExclusive; i += 1) {
+  for (let i = endExclusive - 1; i >= windowStart && collected.length < maxItems; i -= 1) {
     const item = items[i]!;
-    if (pageItems.length >= maxItems) break;
     const size = itemByteSize(item);
-    if (pageItems.length > 0 && bytesUsed + size > maxBytes) break;
-    pageItems.push(item);
+    if (collected.length > 0 && bytesUsed + size > maxBytes) break;
+    collected.push(item);
     bytesUsed += size;
   }
+  collected.reverse(); // newest-first collection → chronological intra-page order
 
-  const newConsumed = consumed + pageItems.length;
-  const hasMore = newConsumed < total;
-  const nextCursor = hasMore ? encodeBackwardCursor({ v: 1, kind: 'piBackward', consumed: newConsumed }) : null;
+  const newEndExclusive = endExclusive - collected.length;
+  const hasMore = newEndExclusive > 0;
+  const nextCursor = hasMore ? encodeBackwardCursor({ v: 1, kind: 'piBackward', endExclusive: newEndExclusive }) : null;
 
-  return { items: pageItems, nextCursor, tailCursor, hasMore };
+  return { items: collected, nextCursor, tailCursor, hasMore };
 }

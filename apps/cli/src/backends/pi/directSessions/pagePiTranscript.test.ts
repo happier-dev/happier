@@ -124,4 +124,30 @@ describe('pagePiTranscript', () => {
       Date.parse('2024-12-03T14:00:05.000Z'),
     ]);
   });
+
+  it('reconstructs chronologically with no duplicates or gaps when maxBytes truncates pages below maxItems', async () => {
+    // Regression: byte-truncation must not overlap the next page's window. With small maxBytes each
+    // page delivers fewer items than maxItems; the reconstruction must still be chronological,
+    // gap-free, and duplicate-free across the whole active branch.
+    const agentDir = freshAgentDir();
+    const { source, env } = writeSession(agentDir, [
+      header,
+      msg('m1', null, 'user', 'message one', '2024-12-03T14:00:01.000Z'),
+      msg('m2', 'm1', 'assistant', 'message two', '2024-12-03T14:00:02.000Z'),
+      msg('m3', 'm2', 'user', 'message three', '2024-12-03T14:00:03.000Z'),
+      msg('m4', 'm3', 'assistant', 'message four', '2024-12-03T14:00:04.000Z'),
+      msg('m5', 'm4', 'user', 'message five', '2024-12-03T14:00:05.000Z'),
+      msg('m6', 'm5', 'assistant', 'message six', '2024-12-03T14:00:06.000Z'),
+    ]);
+
+    const ordered = await importAll(source, env, { maxBytes: 512, maxItems: 10 });
+    // all six, no duplicates
+    expect(ordered).toHaveLength(6);
+    expect(new Set(ordered.map((i) => i.id)).size).toBe(6);
+    // strictly chronological
+    for (let i = 1; i < ordered.length; i += 1) {
+      expect(ordered[i]!.createdAtMs).toBeGreaterThanOrEqual(ordered[i - 1]!.createdAtMs);
+    }
+    expect(ordered.map((i) => i.id).map((id) => id.slice(-2))).toEqual(['m1', 'm2', 'm3', 'm4', 'm5', 'm6']);
+  });
 });
