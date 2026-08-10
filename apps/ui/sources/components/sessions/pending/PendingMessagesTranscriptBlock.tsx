@@ -12,6 +12,7 @@ import { Text } from '@/components/ui/text/Text';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { t } from '@/text';
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
+import type { PopoverAnchor } from '@/components/ui/popover';
 import { ScrollEdgeFades } from '@/components/ui/scroll/ScrollEdgeFades';
 import { ScrollEdgeIndicators } from '@/components/ui/scroll/ScrollEdgeIndicators';
 import { useScrollEdgeFades } from '@/components/ui/scroll/useScrollEdgeFades';
@@ -50,6 +51,21 @@ function getPendingText(message: PendingMessage | DiscardedPendingMessage): stri
 
 function getPendingMaterializingKey(message: Pick<PendingMessage, 'id' | 'localId'>): string {
     return typeof message.localId === 'string' && message.localId.length > 0 ? message.localId : message.id;
+}
+
+type PendingMessageMenuPressAnchor = Extract<PopoverAnchor, { kind: 'rect' }>;
+
+function resolvePendingMessageMenuPressAnchor(event: unknown): PendingMessageMenuPressAnchor | null {
+    if (!event || typeof event !== 'object') return null;
+    const nativeEvent = (event as { nativeEvent?: unknown }).nativeEvent;
+    if (!nativeEvent || typeof nativeEvent !== 'object') return null;
+    const { pageX, pageY } = nativeEvent as { pageX?: unknown; pageY?: unknown };
+    if (typeof pageX !== 'number' || !Number.isFinite(pageX)) return null;
+    if (typeof pageY !== 'number' || !Number.isFinite(pageY)) return null;
+    return {
+        kind: 'rect',
+        rect: { left: pageX, top: pageY, height: 1 },
+    };
 }
 
 function isAcceptedLocalPendingProjection(message: PendingMessage): boolean {
@@ -307,15 +323,13 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
             ? Math.max(1, Math.trunc(collapsedLinesSetting))
             : settingsDefaults.transcriptPendingMessageCollapsedLines;
 
-    const reorderRowHeightSetting = useSetting('transcriptPendingQueueReorderRowHeightPx');
-    const reorderEstimatedRowHeightPx =
-        typeof reorderRowHeightSetting === 'number' && Number.isFinite(reorderRowHeightSetting)
-            ? Math.max(24, Math.trunc(reorderRowHeightSetting))
-            : settingsDefaults.transcriptPendingQueueReorderRowHeightPx;
-
     const [expandedMessageIds, setExpandedMessageIds] = React.useState<Record<string, true>>({});
     const [isPendingQueueExpanded, setIsPendingQueueExpanded] = React.useState(false);
     const [openMenuKey, setOpenMenuKey] = React.useState<string | null>(null);
+    const [menuPressAnchor, setMenuPressAnchor] = React.useState<Readonly<{
+        menuKey: string;
+        anchor: PendingMessageMenuPressAnchor;
+    }> | null>(null);
     const [scrollContentHeightPx, setScrollContentHeightPx] = React.useState<number | null>(null);
     const isWeb = Platform.OS === 'web';
     const [hoveredMessageId, setHoveredMessageId] = React.useState<string | null>(null);
@@ -339,14 +353,6 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
             setIsPendingQueueExpanded(false);
         }
     }, [props.pendingMessages.length]);
-
-    const pendingIndexById = React.useMemo(() => {
-        const map: Record<string, number> = {};
-        props.pendingMessages.forEach((m, i) => {
-            map[m.id] = i;
-        });
-        return map;
-    }, [props.pendingMessages]);
 
     const toggleMessageExpanded = React.useCallback((id: string) => {
         setExpandedMessageIds((prev) => {
@@ -668,13 +674,8 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
 
         const menuKey = `active:${message.id}`;
         const menuOpen = openMenuKey === menuKey;
+        const menuAnchor = menuPressAnchor?.menuKey === menuKey ? menuPressAnchor.anchor : undefined;
         const hasDecryptFailure = message.pendingDecryptFailure?.kind === 'decrypt_failed';
-        const hoveredIndex =
-            hoveredMessageId && pendingIndexById[hoveredMessageId] !== undefined
-                ? pendingIndexById[hoveredMessageId]!
-                : null;
-        const hideChipBecauseNextHovered =
-            isWeb && hoveredIndex !== null && hoveredIndex + 1 === index && hoveredMessageId !== message.id;
         const hasEarlierPendingPredecessor = props.pendingMessages
             .slice(0, index)
             .some(isActivePendingFifoRow);
@@ -801,7 +802,12 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
             <DropdownMenu
                 key={message.id}
                 open={menuOpen}
-                onOpenChange={(next) => setOpenMenuKey(next ? menuKey : null)}
+                onOpenChange={(next) => {
+                    setOpenMenuKey(next ? menuKey : null);
+                    if (!next) {
+                        setMenuPressAnchor((current) => current?.menuKey === menuKey ? null : current);
+                    }
+                }}
                 items={menuItems}
                 onSelect={async (itemId) => {
                     setOpenMenuKey(null);
@@ -824,9 +830,11 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
                     if (itemId === 'steerNow') await handleSteerNow(message);
                     if (itemId === 'sendNow') await handleSendNow(message);
                 }}
-                placement="top"
+                popoverAnchor={menuAnchor}
+                placement="auto-vertical"
                 gap={6}
-                trigger={({ toggle }) => (
+                matchTriggerWidth={menuAnchor ? false : undefined}
+                trigger={({ openMenu, closeMenu }) => (
                     <View
                         testID={`pendingMessages.row:${message.id}`}
                         style={[
@@ -842,7 +850,15 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
                             : null)}
                     >
                         <Pressable
-                            onPress={toggle}
+                            onPress={(event) => {
+                                if (menuOpen) {
+                                    closeMenu();
+                                    return;
+                                }
+                                const anchor = resolvePendingMessageMenuPressAnchor(event);
+                                setMenuPressAnchor(anchor ? { menuKey, anchor } : null);
+                                openMenu();
+                            }}
                             testID={`pendingMessages.message:${message.id}`}
                             accessibilityRole="button"
                             accessibilityLabel={`${t('session.pendingMessages.title')} · ${deliveryStateLabel}`}
@@ -888,7 +904,6 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
                             style={[
                                 styles.pendingAffordanceChip,
                                 { backgroundColor: theme.colors.surface.base, borderColor: theme.colors.border.default },
-                                hideChipBecauseNextHovered ? { opacity: 0 } : null,
                             ]}
                         >
                             {visualState.showSpinner ? (
@@ -971,13 +986,7 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
                         {deliveryVisualState.kind === 'queued_behind_turn' ? (
                             <View
                                 testID={`pendingMessages.queuedReason:${deliveryVisualState.queuedBehindTurn?.reason ?? 'waiting_for_foreground_turn'}:${message.id}`}
-                                style={[
-                                    styles.blockedDeliveryNotice,
-                                    {
-                                        backgroundColor: theme.colors.surface.base,
-                                        borderColor: theme.colors.border.default,
-                                    },
-                                ]}
+                                style={styles.queuedReasonNotice}
                             >
                                 <Icon name="clock" size={14} color={theme.colors.text.secondary} />
                                 <Text style={[styles.blockedDeliveryNoticeText, { color: theme.colors.text.secondary }]}>
@@ -989,11 +998,8 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
                         {isWeb ? (
                             <View
                                 testID={`pendingMessages.actionsOverlay:${message.id}`}
-                                pointerEvents={hoveredMessageId === message.id || menuOpen ? 'auto' : 'none'}
-                                style={[
-                                    styles.messageActionContainer,
-                                    !(hoveredMessageId === message.id || menuOpen) ? styles.messageActionContainerHidden : null,
-                                ]}
+                                pointerEvents="auto"
+                                style={styles.messageActionContainer}
                             >
                                 {canReorderPendingMessages ? (
                                     renderDragHandle({
@@ -1131,7 +1137,7 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
         sessionRuntimeInput,
         sendNowActionLabel,
         openMenuKey,
-        pendingIndexById,
+        menuPressAnchor,
         props.pendingMessages.length,
         theme.colors.border.default,
         theme.colors.surface.base,
@@ -1146,6 +1152,7 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
         const text = getPendingText(message).trim();
         const menuKey = `discarded:${message.id}`;
         const menuOpen = openMenuKey === menuKey;
+        const menuAnchor = menuPressAnchor?.menuKey === menuKey ? menuPressAnchor.anchor : undefined;
 
         const menuItems: DropdownMenuItem[] = [
             { id: 'requeue', title: t('session.pendingMessages.actions.requeue'), icon: <Icon name="arrow-elbow-up-left" size={16} color={theme.colors.text.secondary} /> },
@@ -1162,7 +1169,12 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
             <DropdownMenu
                 key={`discarded-${message.id}`}
                 open={menuOpen}
-                onOpenChange={(next) => setOpenMenuKey(next ? menuKey : null)}
+                onOpenChange={(next) => {
+                    setOpenMenuKey(next ? menuKey : null);
+                    if (!next) {
+                        setMenuPressAnchor((current) => current?.menuKey === menuKey ? null : current);
+                    }
+                }}
                 items={menuItems}
                 onSelect={async (itemId) => {
                     setOpenMenuKey(null);
@@ -1171,9 +1183,11 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
                     if (itemId === 'steerNow') await handleSteerDiscardedNow(message);
                     if (itemId === 'sendNow') await handleSendDiscardedNow(message);
                 }}
-                placement="top"
+                popoverAnchor={menuAnchor}
+                placement="auto-vertical"
                 gap={6}
-                trigger={({ toggle }) => (
+                matchTriggerWidth={menuAnchor ? false : undefined}
+                trigger={({ openMenu, closeMenu }) => (
                     <View
                         testID={`pendingMessages.discarded.row:${message.id}`}
                         style={[styles.userMessageWrapper, { opacity: 0.85 }]}
@@ -1186,7 +1200,15 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
                             : null)}
                     >
                         <Pressable
-                            onPress={toggle}
+                            onPress={(event) => {
+                                if (menuOpen) {
+                                    closeMenu();
+                                    return;
+                                }
+                                const anchor = resolvePendingMessageMenuPressAnchor(event);
+                                setMenuPressAnchor(anchor ? { menuKey, anchor } : null);
+                                openMenu();
+                            }}
                             testID={`pendingMessages.discarded.message:${message.id}`}
                             accessibilityRole="button"
                             accessibilityLabel={t('session.pendingMessages.discarded.label')}
@@ -1214,11 +1236,8 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
                         {isWeb ? (
                             <View
                                 testID={`pendingMessages.discarded.actionsOverlay:${message.id}`}
-                                pointerEvents={hoveredMessageId === message.id || menuOpen ? 'auto' : 'none'}
-                                style={[
-                                    styles.messageActionContainer,
-                                    !(hoveredMessageId === message.id || menuOpen) ? styles.messageActionContainerHidden : null,
-                                ]}
+                                pointerEvents="auto"
+                                style={styles.messageActionContainer}
                             >
                                 <IconAction
                                     testID={`pendingMessages.discarded.requeue:${message.id}`}
@@ -1262,6 +1281,7 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
         handleSendDiscardedNow,
         handleSteerDiscardedNow,
         isWeb,
+        menuPressAnchor,
         openMenuKey,
         sendNowActionLabel,
         theme.colors.input.background,
@@ -1416,7 +1436,6 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
                             >
                                 <PendingMessagesDragReorderList
                                     messages={props.pendingMessages}
-                                    estimatedRowHeightPx={reorderEstimatedRowHeightPx}
                                     longPressMs={200}
                                     scrollRef={scrollRef}
                                     viewportHeightPx={scrollViewportHeightPx}
@@ -1603,6 +1622,14 @@ const styles = StyleSheet.create(() => ({
         alignItems: 'center',
         gap: 4,
     },
+    queuedReasonNotice: {
+        alignSelf: 'flex-end',
+        marginTop: 4,
+        marginBottom: 2,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 4,
+    },
     blockedDeliveryNoticeText: {
         fontSize: 11,
         lineHeight: 14,
@@ -1635,17 +1662,11 @@ const styles = StyleSheet.create(() => ({
         marginBottom: 0,
     },
     messageActionContainer: {
-        position: 'absolute',
-        right: 0,
-        bottom: 0,
         flexDirection: 'row',
+        alignSelf: 'flex-end',
         justifyContent: 'flex-end',
-        zIndex: 40,
-        opacity: 1,
+        marginTop: 2,
         gap: 3,
-    },
-    messageActionContainerHidden: {
-        opacity: 0,
     },
     discardedTitle: {
         marginTop: 6,

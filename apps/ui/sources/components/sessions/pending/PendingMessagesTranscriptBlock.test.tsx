@@ -209,7 +209,12 @@ vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
                 item.title,
             ))
             : null;
-        return React.createElement('DropdownMenu', { open: props.open }, trigger, items);
+        return React.createElement('DropdownMenu', {
+            open: props.open,
+            popoverAnchor: props.popoverAnchor,
+            placement: props.placement,
+            matchTriggerWidth: props.matchTriggerWidth,
+        }, trigger, items);
     },
 }));
 
@@ -1284,7 +1289,7 @@ describe('PendingMessagesTranscriptBlock', () => {
         expect(screen.findByTestId('pendingMessages.reorder:p2')).toBeFalsy();
     });
 
-    it('does not show per-message action icons until hover on web', async () => {
+    it('shows per-message action icons without hover on web', async () => {
         const PendingMessagesTranscriptBlock = await loadPendingMessagesTranscriptBlock();
         const screen = await renderScreen(React.createElement(PendingMessagesTranscriptBlock, {
                 sessionId: 's1',
@@ -1294,17 +1299,34 @@ describe('PendingMessagesTranscriptBlock', () => {
 
         const overlay = screen.findByTestId('pendingMessages.actionsOverlay:p1');
         expect(overlay).toBeTruthy();
-        expect(flattenStyle(overlay!.props.style).opacity).toBe(0);
-        expect(overlay!.props.pointerEvents).toBe('none');
-        expect(flattenStyle(overlay!.props.style).pointerEvents).toBeUndefined();
+        expect(overlay!.props.pointerEvents).toBe('auto');
+        expect(screen.findByTestId('pendingMessages.remove:p1')).toBeTruthy();
+    });
 
-        await hoverPendingMessageRow(screen, 'p1');
+    it('anchors a pending-message menu to the visible press point', async () => {
+        const PendingMessagesTranscriptBlock = await loadPendingMessagesTranscriptBlock();
+        const screen = await renderScreen(React.createElement(PendingMessagesTranscriptBlock, {
+            sessionId: 's1',
+            pendingMessages: [{ id: 'p1', text: 'x'.repeat(600), displayText: undefined, createdAt: 0, updatedAt: 0, localId: 'p1', rawRecord: {} }],
+            discardedMessages: [],
+        }));
 
-        const overlayAfterHover = screen.findByTestId('pendingMessages.actionsOverlay:p1');
-        expect(overlayAfterHover).toBeTruthy();
-        expect(flattenStyle(overlayAfterHover!.props.style).opacity).toBe(1);
-        expect(overlayAfterHover!.props.pointerEvents).toBe('auto');
-        expect(flattenStyle(overlayAfterHover!.props.style).pointerEvents).toBeUndefined();
+        await act(async () => {
+            invokeTestInstanceHandler(
+                screen.findByTestId('pendingMessages.message:p1')!,
+                'onPress',
+                { nativeEvent: { pageX: 120, pageY: 360 } },
+            );
+        });
+
+        const menu = screen.findByType('DropdownMenu' as any);
+        expect(menu?.props.open).toBe(true);
+        expect(menu?.props.popoverAnchor).toEqual({
+            kind: 'rect',
+            rect: { left: 120, top: 360, height: 1 },
+        });
+        expect(menu?.props.placement).toBe('auto-vertical');
+        expect(menu?.props.matchTriggerWidth).toBe(false);
     });
 
     it('offers steer-now while a steer-capable session is thinking and does not abort the turn', async () => {
@@ -2391,7 +2413,7 @@ describe('PendingMessagesTranscriptBlock', () => {
         expect(screen.findByTestId('pendingMessages.acceptedIndicator:p1')).toBeNull();
     });
 
-    it('does not show discarded action icons until hover on web', async () => {
+    it('shows discarded action icons without hover on web', async () => {
         const PendingMessagesTranscriptBlock = await loadPendingMessagesTranscriptBlock();
         const screen = await renderScreen(React.createElement(PendingMessagesTranscriptBlock, {
                 sessionId: 's1',
@@ -2403,17 +2425,36 @@ describe('PendingMessagesTranscriptBlock', () => {
 
         const overlay = screen.findByTestId('pendingMessages.discarded.actionsOverlay:d1');
         expect(overlay).toBeTruthy();
-        expect(flattenStyle(overlay!.props.style).opacity).toBe(0);
-        expect(overlay!.props.pointerEvents).toBe('none');
-        expect(flattenStyle(overlay!.props.style).pointerEvents).toBeUndefined();
+        expect(overlay!.props.pointerEvents).toBe('auto');
+        expect(screen.findByTestId('pendingMessages.discarded.remove:d1')).toBeTruthy();
+    });
 
-        await hoverDiscardedMessageRow(screen, 'd1');
+    it('anchors a discarded-message menu to the visible press point', async () => {
+        const PendingMessagesTranscriptBlock = await loadPendingMessagesTranscriptBlock();
+        const screen = await renderScreen(React.createElement(PendingMessagesTranscriptBlock, {
+            sessionId: 's1',
+            pendingMessages: [],
+            discardedMessages: [
+                { id: 'd1', text: 'x'.repeat(600), displayText: undefined, createdAt: 0, updatedAt: 0, discardedAt: 1, discardedReason: 'manual', localId: 'd1', rawRecord: {} },
+            ],
+        }));
 
-        const overlayAfterHover = screen.findByTestId('pendingMessages.discarded.actionsOverlay:d1');
-        expect(overlayAfterHover).toBeTruthy();
-        expect(flattenStyle(overlayAfterHover!.props.style).opacity).toBe(1);
-        expect(overlayAfterHover!.props.pointerEvents).toBe('auto');
-        expect(flattenStyle(overlayAfterHover!.props.style).pointerEvents).toBeUndefined();
+        await act(async () => {
+            invokeTestInstanceHandler(
+                screen.findByTestId('pendingMessages.discarded.message:d1')!,
+                'onPress',
+                { nativeEvent: { pageX: 200, pageY: 420 } },
+            );
+        });
+
+        const menu = screen.findByType('DropdownMenu' as any);
+        expect(menu?.props.open).toBe(true);
+        expect(menu?.props.popoverAnchor).toEqual({
+            kind: 'rect',
+            rect: { left: 200, top: 420, height: 1 },
+        });
+        expect(menu?.props.placement).toBe('auto-vertical');
+        expect(menu?.props.matchTriggerWidth).toBe(false);
     });
 
     it('renders system-discarded tombstones with their reason and a remove action', async () => {
@@ -2444,7 +2485,7 @@ describe('PendingMessagesTranscriptBlock', () => {
         expect(screen.findByTestId('pendingMessages.discarded.requeue:d1')).toBeTruthy();
     });
 
-    it('hides the next pending chip while hovering a message on web', async () => {
+    it('keeps pending status chips visible while hovering another message on web', async () => {
         const PendingMessagesTranscriptBlock = await loadPendingMessagesTranscriptBlock();
         const screen = await renderScreen(React.createElement(PendingMessagesTranscriptBlock, {
                 sessionId: 's1',
@@ -2463,7 +2504,7 @@ describe('PendingMessagesTranscriptBlock', () => {
 
         const chipP2After = screen.findByTestId('pendingMessages.pendingAffordance:p2');
         expect(chipP2After).toBeTruthy();
-        expect(flattenStyle(chipP2After!.props.style).opacity).toBe(0);
+        expect(flattenStyle(chipP2After!.props.style).opacity).not.toBe(0);
     });
 
     it('does not render per-message up/down chevron actions', async () => {

@@ -11,7 +11,6 @@ describe('buildAccountSettingsSnapshot', () => {
             transcriptToolCallsCollapsedPreviewCount: 10,
             transcriptPendingQueueMaxHeightPx: 120,
             transcriptPendingQueueExpandedMaxHeightPx: 700,
-            transcriptPendingQueueReorderRowHeightPx: 48,
             transcriptPendingMessageCollapseThresholdChars: 400,
             transcriptPendingMessageCollapsedLines: 5,
             transcriptStreamingCoalesceWindowMs: 50,
@@ -25,7 +24,6 @@ describe('buildAccountSettingsSnapshot', () => {
         expect(snapshot.properties.acct_setting__transcriptToolCallsCollapsedPreviewCount).toBe('large');
         expect(snapshot.properties.acct_setting__transcriptPendingQueueMaxHeightPx).toBe('large');
         expect(snapshot.properties.acct_setting__transcriptPendingQueueExpandedMaxHeightPx).toBe('large');
-        expect(snapshot.properties.acct_setting__transcriptPendingQueueReorderRowHeightPx).toBe('small');
         expect(snapshot.properties.acct_setting__transcriptPendingMessageCollapseThresholdChars).toBe('large');
         expect(snapshot.properties.acct_setting__transcriptPendingMessageCollapsedLines).toBe('large');
         expect(snapshot.properties.acct_setting__transcriptStreamingCoalesceWindowMs).toBe('large');
