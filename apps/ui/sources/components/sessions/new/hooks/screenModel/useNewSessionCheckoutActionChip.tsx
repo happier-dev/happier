@@ -16,6 +16,7 @@ import { generateWorktreeName } from '@/utils/worktree/generateWorktreeName';
 import type { NewSessionCheckoutCreationDraft } from '@/sync/domains/state/newSessionCheckoutDraft';
 import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
 import { Icon } from '@/components/ui/icons/Icon';
+import { useNowMs } from '@/hooks/time/useNowMs';
 import { AGENT_INPUT_CHIP_ICON_SIZE_PX, AGENT_INPUT_CHIP_ICON_STYLE } from '@/components/sessions/agentInput/definitions/agentInputChipIconMetrics';
 
 import {
@@ -25,20 +26,6 @@ import {
 } from './buildWorktreeSelectionListSteps';
 
 const CHIP_KEY = 'new-session-checkout';
-const WORKTREE_RELATIVE_TIME_TICK_MS = 60_000;
-
-function useWorktreePickerNowMs(): number {
-    const [nowMs, setNowMs] = React.useState(() => Date.now());
-
-    React.useEffect(() => {
-        const interval = setInterval(() => {
-            setNowMs(Date.now());
-        }, WORKTREE_RELATIVE_TIME_TICK_MS);
-        return () => clearInterval(interval);
-    }, []);
-
-    return nowMs;
-}
 
 export function useNewSessionCheckoutActionChip(params: Readonly<{
     repoScmSnapshot: ScmWorkingSnapshot | null;
@@ -64,7 +51,7 @@ export function useNewSessionCheckoutActionChip(params: Readonly<{
     // Tick once a minute so RelativeTimeText / stale-threshold pills inside the worktree
     // picker recompute without depending on unrelated state (R16b: previously `Date.now()`
     // was captured once per memo and never advanced).
-    const nowMs = useWorktreePickerNowMs();
+    const nowMs = useNowMs();
     const { theme } = useUnistyles();
     const rowIconColor = theme.colors.text.tertiary;
     // Stable suggested name for this composer session. Pre-populates the
