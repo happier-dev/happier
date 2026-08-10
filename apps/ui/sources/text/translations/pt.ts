@@ -5363,6 +5363,7 @@ export const pt: TranslationStructure = {
             recent: "Recentes",
             emptyActive: "Nenhum agente ativo.",
             emptyRecent: "Ainda não há agentes recentes.",
+            tabWithRunningCount: ({ count }: { count: number }) => `Agentes, ${count} em execução`,
             openFull: "Abrir visualização completa",
             openAdvancedRun: "Detalhes da execução",
             send: "Enviar mensagem",

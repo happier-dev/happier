@@ -4891,6 +4891,7 @@ export const en = {
                 recent: 'Recent',
                 emptyActive: 'No active agents.',
                 emptyRecent: 'No recent agents yet.',
+                tabWithRunningCount: ({ count }: { count: number }) => `Agents, ${count} running`,
                 openFull: 'Open full view',
                 openAdvancedRun: 'Advanced details',
                 send: 'Send message',

@@ -4537,6 +4537,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
                   recent: "最近",
                   emptyActive: "沒有活躍代理。",
                   emptyRecent: "尚無最近的代理。",
+                  tabWithRunningCount: ({ count }: { count: number }) => `代理，${count} 個執行中`,
                   openFull: "打開完整檢視",
                   openAdvancedRun: "執行詳情",
                   send: "發送訊息",

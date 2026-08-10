@@ -4909,6 +4909,7 @@ deps: {
                       recent: "Recents",
                       emptyActive: "No hi ha agents actius.",
                       emptyRecent: "Encara no hi ha agents recents.",
+                      tabWithRunningCount: ({ count }: { count: number }) => `Subagents, ${count} en execució`,
                       openFull: "Obre la vista completa",
                       openAdvancedRun: "Detalls de l'execució",
                       send: "Envia un missatge",

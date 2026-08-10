@@ -5513,6 +5513,7 @@ localTailscale: {
             recent: "最近",
             emptyActive: "稼働中のエージェントはありません。",
             emptyRecent: "最近のエージェントはまだありません。",
+            tabWithRunningCount: ({ count }: { count: number }) => `エージェント、${count} 件稼働中`,
             openFull: "全画面表示を開く",
             openAdvancedRun: "ランの詳細",
             send: "メッセージを送信",

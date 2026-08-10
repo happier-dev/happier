@@ -5060,6 +5060,7 @@ export const zhHans: TranslationStructure = {
           recent: "最近",
           emptyActive: "没有活跃代理。",
           emptyRecent: "还没有最近的代理。",
+          tabWithRunningCount: ({ count }: { count: number }) => `代理，${count} 个运行中`,
           openFull: "打开完整视图",
           openAdvancedRun: "运行详情",
           send: "发送消息",

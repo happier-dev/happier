@@ -20,6 +20,9 @@ const styles = StyleSheet.create((theme) => ({
         justifyContent: 'center',
         alignItems: 'center',
     },
+    countBadgeNeutral: {
+        backgroundColor: theme.colors.accent.blue,
+    },
     countText: {
         color: theme.colors.button.primary.tint,
         fontSize: 8,
@@ -72,9 +75,25 @@ const styles = StyleSheet.create((theme) => ({
     },
 }));
 
+/**
+ * What a count means, not what colour it is.
+ *
+ * `'alert'` is the default and stays red: something is wrong or waiting. `'neutral'` is for a count
+ * that is merely informative — work in progress is not a problem, and painting it red spends the
+ * one colour reserved for "a person is needed" on something that needs nobody.
+ */
+export type TabBadgeCountTone = 'alert' | 'neutral';
+
 type TabBadgeProps =
     | Readonly<{ variant: 'dot'; style?: StyleProp<ViewStyle>; testID?: string }>
-    | Readonly<{ variant: 'count'; value: number; max?: number; style?: StyleProp<ViewStyle>; testID?: string }>
+    | Readonly<{
+        variant: 'count';
+        value: number;
+        max?: number;
+        tone?: TabBadgeCountTone;
+        style?: StyleProp<ViewStyle>;
+        testID?: string;
+    }>
     | Readonly<{
         variant: 'diff';
         added: number;
@@ -96,7 +115,14 @@ export function TabBadge(props: TabBadgeProps): React.ReactElement {
 
     if (props.variant === 'count') {
         return (
-            <View testID={props.testID} style={props.style ? [styles.countBadge, props.style] : styles.countBadge}>
+            <View
+                testID={props.testID}
+                style={[
+                    styles.countBadge,
+                    props.tone === 'neutral' ? styles.countBadgeNeutral : null,
+                    props.style ?? null,
+                ]}
+            >
                 <Text style={styles.countText}>{formatBadgeCount(props.value, props.max)}</Text>
             </View>
         );

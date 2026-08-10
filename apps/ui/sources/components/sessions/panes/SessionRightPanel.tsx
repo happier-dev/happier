@@ -15,6 +15,7 @@ import { SessionGitSurface } from '@/components/sessions/panes/surfaces/SessionG
 import { SessionTerminalSurface } from '@/components/sessions/panes/surfaces/SessionTerminalSurface';
 import { SessionTranscriptNavigationPane } from '@/components/sessions/panes/SessionTranscriptNavigationPane';
 import { useSessionFileDetailsOpener } from '@/components/sessions/panes/useSessionFileDetailsOpener';
+import { useSessionSubagentCounts } from '@/hooks/session/useSessionSubagentCounts';
 import { useSessionTerminalAvailability } from '@/components/sessions/terminal/useSessionTerminalAvailability';
 import { t } from '@/text';
 import { resolveOptionalSessionScreenTestId, useSessionScreenTestIdsEnabled } from '../shell/sessionScreenTestIds';
@@ -76,6 +77,10 @@ export const SessionRightPanel = React.memo((props: SessionRightPanelProps) => {
         serverId: props.serverId ?? null,
     });
     const sessionScreenTestIdsEnabled = useSessionScreenTestIdsEnabled();
+    // The Agents tab is the one tab whose contents can change while you are looking at another tab,
+    // so it is the one tab that needs to say so from the bar. The count comes from the session's
+    // subagent owner, not from a second tally.
+    const runningAgentCount = useSessionSubagentCounts(props.sessionId).active;
     const terminalTabAvailable = terminalAvailability.sidebarTabAvailable;
     const closeButtonAtStart = props.presentation === 'screen' && Platform.OS !== 'web';
     const rawActiveTab = (scopeState?.right.activeTabId as RightTabId | null) ?? 'git';
@@ -109,13 +114,24 @@ export const SessionRightPanel = React.memo((props: SessionRightPanelProps) => {
             { id: 'git', label: t('session.rightPanel.tabs.git'), icon: glyph('git-branch') },
             { id: 'files', label: t('common.files'), icon: glyph('folder') },
             { id: 'navigation', label: t('session.transcriptNavigation.title'), icon: glyph('list-bullets') },
-            { id: 'agents', label: t('session.subagents.panel.title'), icon: glyph('robot') },
+            {
+                id: 'agents',
+                label: t('session.subagents.panel.title'),
+                icon: glyph('robot'),
+                // Running agents only. A tab badge is a live indicator, and a session that finished
+                // an agent an hour ago has nothing for the user to go and look at — the same rule
+                // the session header's agent count already follows.
+                badgeCount: runningAgentCount,
+                accessibilityLabel: runningAgentCount > 0
+                    ? t('session.subagents.panel.tabWithRunningCount', { count: runningAgentCount })
+                    : undefined,
+            },
         ];
         if (terminalTabAvailable) {
             base.push({ id: 'terminal', label: t('settings.terminal'), icon: glyph('terminal') });
         }
         return base;
-    }, [terminalTabAvailable, theme.colors.text.secondary]);
+    }, [runningAgentCount, terminalTabAvailable, theme.colors.text.secondary]);
 
     const closeButton = (
         <IconAction

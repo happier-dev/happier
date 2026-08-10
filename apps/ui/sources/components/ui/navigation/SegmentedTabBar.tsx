@@ -6,6 +6,7 @@ import { shadowLevelStyle } from '@/shadowElevation';
 import { Text } from '@/components/ui/text/Text';
 import { ICON_SIZE } from '@/components/ui/icons/Icon';
 import { GradientSurface } from '@/components/ui/surfaces/GradientSurface';
+import { TabBadge } from '@/components/ui/navigation/tabBadge/TabBadge';
 
 /**
  * The glyph size for an icon-only segmented bar.
@@ -27,6 +28,18 @@ export type SegmentedTab<T extends string = string> = Readonly<{
      * opt-in and the other consumers are unaffected.
      */
     icon?: React.ReactNode;
+    /**
+     * Live count riding the tab's top-right corner; nothing renders at zero or below. A count, not
+     * a word: an iconic bar in a narrow pane has no room for a second string, and the number is the
+     * part that changes.
+     */
+    badgeCount?: number;
+    /**
+     * Overrides the accessible name. `label` is the default and is right for a plain tab; a tab
+     * carrying a badge needs a name that says what the number means, because the badge itself is
+     * unreadable to a screen reader.
+     */
+    accessibilityLabel?: string;
 }>;
 
 export type SegmentedTabBarProps<T extends string = string> = Readonly<{
@@ -85,6 +98,11 @@ const stylesheet = StyleSheet.create((theme) => ({
         justifyContent: 'center',
         height: SEGMENTED_TAB_ICON_SIZE_PX,
     },
+    // Only wraps content that actually carries a badge, so an unbadged bar keeps its current tree.
+    tabBadgeAnchor: {
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
 }));
 
 function SegmentedTabBarInner<T extends string>(props: SegmentedTabBarProps<T>) {
@@ -102,6 +120,13 @@ function SegmentedTabBarInner<T extends string>(props: SegmentedTabBarProps<T>) 
             >
                 {props.tabs.map((tab) => {
                     const active = props.activeTabId === tab.id;
+                    const badgeCount = tab.badgeCount ?? 0;
+                    const accessibleName = tab.accessibilityLabel ?? tab.label;
+                    const content = iconOnly ? (
+                        <View style={styles.tabIcon}>{tab.icon}</View>
+                    ) : (
+                        <Text style={[styles.tabLabel, compact ? styles.tabLabelCompact : null, active ? styles.tabLabelActive : null]}>{tab.label}</Text>
+                    );
                     return (
                         <Pressable
                             key={tab.id}
@@ -113,8 +138,8 @@ function SegmentedTabBarInner<T extends string>(props: SegmentedTabBarProps<T>) 
                             aria-selected={active}
                             // The label is still the accessible name when the glyph replaces it,
                             // and it doubles as the native tooltip on web.
-                            accessibilityLabel={iconOnly ? tab.label : undefined}
-                            {...(iconOnly ? ({ title: tab.label } as object) : {})}
+                            accessibilityLabel={iconOnly || tab.accessibilityLabel ? accessibleName : undefined}
+                            {...(iconOnly ? ({ title: accessibleName } as object) : {})}
                         >
                             {active ? (
                                 <GradientSurface
@@ -124,11 +149,17 @@ function SegmentedTabBarInner<T extends string>(props: SegmentedTabBarProps<T>) 
                                     style={StyleSheet.absoluteFillObject}
                                 />
                             ) : null}
-                            {iconOnly ? (
-                                <View style={styles.tabIcon}>{tab.icon}</View>
-                            ) : (
-                                <Text style={[styles.tabLabel, compact ? styles.tabLabelCompact : null, active ? styles.tabLabelActive : null]}>{tab.label}</Text>
-                            )}
+                            {badgeCount > 0 ? (
+                                <View style={styles.tabBadgeAnchor}>
+                                    {content}
+                                    <TabBadge
+                                        variant="count"
+                                        value={badgeCount}
+                                        tone="neutral"
+                                        testID={props.testIDPrefix ? `${props.testIDPrefix}:${tab.id}:badge` : undefined}
+                                    />
+                                </View>
+                            ) : content}
                         </Pressable>
                     );
                 })}
