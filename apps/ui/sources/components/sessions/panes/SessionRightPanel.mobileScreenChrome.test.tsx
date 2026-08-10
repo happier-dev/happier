@@ -112,7 +112,7 @@ describe('SessionRightPanel (mobile screen chrome)', () => {
             throw new Error('Expected close button to render');
         }
         expect(closeButton.props.accessibilityLabel).toBe('common.back');
-        expect(findTestInstanceByTypeWithProps(closeButton, 'Icon', { name: 'chevron-left' })).toBeTruthy();
+        expect(findTestInstanceByTypeWithProps(closeButton, 'Icon', { name: 'caret-left' })).toBeTruthy();
 
         const header = findParentContaining(screen.tree.root, closeButton);
         if (!header) {

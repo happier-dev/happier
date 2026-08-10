@@ -62,19 +62,6 @@ installSessionDetailsPanelCommonModuleMocks({
     },
 });
 
-vi.mock('@/sync/store/hooks', async (importOriginal) => {
-    const { createStoreHooksModuleMock, createSessionMessagesHooksMock } = await import('@/dev/testkit/mocks/storage');
-    return createStoreHooksModuleMock({
-        importOriginal: importOriginal as <T>() => Promise<T>,
-        overrides: createSessionMessagesHooksMock({
-            bySessionId: {
-                ...busySession.sessionMessagesBySessionId,
-                ...idleSession.sessionMessagesBySessionId,
-            },
-        }),
-    });
-});
-
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({
     useFeatureEnabled: () => false,
 }));

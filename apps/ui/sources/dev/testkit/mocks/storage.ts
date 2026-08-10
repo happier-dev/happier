@@ -7,6 +7,16 @@ import type { Profile } from '@/sync/domains/profiles/profile';
 import { create, type StoreApi, type UseBoundStore } from 'zustand';
 
 import { mergeModuleMock, type MergeModuleMockOptions } from './_shared';
+import { createSessionMessagesHooksMock } from './sessionMessagesHooks';
+
+// Published from the storage mock because it overrides storage-module hooks; implemented next door
+// so this file stays a flat catalogue of mock factories.
+export {
+    createSessionMessagesHooksMock,
+    type CreateSessionMessagesHooksMockOptions,
+    type SessionMessagesHooksMock,
+    type TestkitSessionMessagesState,
+} from './sessionMessagesHooks';
 
 type StorageModule = typeof import('@/sync/domains/state/storage');
 type StorageStoreModule = typeof import('@/sync/domains/state/storageStore');
@@ -93,9 +103,10 @@ export function createStorageModuleStub<TOverrides extends object>(overrides: TO
     const sessionTranscriptIds = [] as string[];
     const sessionMessagesById = {} as ReturnType<StorageModule['useSessionMessagesById']>;
     const messagesByRefs = [] as ReturnType<StorageModule['useMessagesByRefs']>;
-    const sessionMessagesReducerState = null as unknown as ReturnType<StorageModule['useSessionMessagesReducerState']>;
     const connectedServiceAccountSwitchEvents = [] as ReturnType<StorageModule['useSessionConnectedServiceAccountSwitchEvents']>;
-    const subagentSourceMessages = [] as ReturnType<StorageModule['useSessionSubagentSourceMessages']>;
+    // Session-message hooks come from the shared factory so a caller can express live agent state by
+    // spreading `createSessionMessagesHooksMock({ bySessionId })` into `overrides`.
+    const sessionMessagesHooks = createSessionMessagesHooksMock();
     const socketStatus = {
         status: 'disconnected',
         lastConnectedAt: null,
@@ -142,10 +153,10 @@ export function createStorageModuleStub<TOverrides extends object>(overrides: TO
         useSettingMutable,
         useLocalSetting,
         useLocalSettingMutable,
-        useSessionMessages: () => ({ messages: [], isLoaded: true } as const),
+        useSessionMessages: sessionMessagesHooks.useSessionMessages,
         useSessionMessagesById: () => sessionMessagesById,
         useMessagesByRefs: () => messagesByRefs,
-        useSessionMessagesReducerState: () => sessionMessagesReducerState,
+        useSessionMessagesReducerState: sessionMessagesHooks.useSessionMessagesReducerState,
         useSessionConnectedServiceAccountSwitchEvents: () => connectedServiceAccountSwitchEvents,
         useSessionTranscriptIds: () => ({ ids: sessionTranscriptIds, isLoaded: true } as const),
         useSessionReadyActivity: () => ({
@@ -153,7 +164,7 @@ export function createStorageModuleStub<TOverrides extends object>(overrides: TO
             latestReadyEventAt: null,
         }),
         useSessionVisibleReadSeq: () => null,
-        useSessionSubagentSourceMessages: () => subagentSourceMessages,
+        useSessionSubagentSourceMessages: sessionMessagesHooks.useSessionSubagentSourceMessages,
         useSessionMessagesVersion: () => 0,
         useSessionsReady: () => true,
         useSessionRpcAvailabilityState: () => ({
