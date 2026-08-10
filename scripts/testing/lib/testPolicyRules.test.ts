@@ -274,3 +274,34 @@ test('collectPolicyFindings ignores detached spawn calls inside nested generated
   const finding = report.findings.find((item) => item.ruleId === 'no-raw-detached-background-test-spawn');
   assert.equal(finding, undefined);
 });
+
+// A raw NUL byte in source makes Git classify the file as binary, after which recursive
+// rg/grep skip it in silence -- returning exit 1 rather than any warning. Three files in
+// the mention corridor became invisible to negative-requirement audits exactly this way.
+// The safe spelling of a separator is the escape sequence, never the byte.
+test('collectPolicyFindings bans a raw NUL byte in source', () => {
+  const report = collectPolicyFindings([
+    {
+      filePath: 'apps/ui/sources/sync/domains/input/compositeKey.ts',
+      // The NUL sits inside a template literal on purpose: that is the shape every real
+      // instance has taken, and stripStringsAndComments erases template literals -- so this
+      // also pins that the rule reads the raw content and not the stripped code text.
+      content: 'export const key = (a: string, b: string): string => `${a}' + String.fromCharCode(0) + '${b}`;',
+    },
+  ]);
+
+  assert.equal(report.findings.length, 1);
+  assert.equal(report.findings[0]?.ruleId, 'no-nul-byte-in-source');
+  assert.equal(report.findings[0]?.mode, 'enforce');
+});
+
+test('collectPolicyFindings accepts the escaped NUL spelling', () => {
+  const report = collectPolicyFindings([
+    {
+      filePath: 'apps/ui/sources/sync/domains/input/compositeKey.ts',
+      content: 'export const key = (a: string, b: string): string => `${a}\\u0000${b}`;',
+    },
+  ]);
+
+  assert.equal(report.findings.length, 0);
+});
