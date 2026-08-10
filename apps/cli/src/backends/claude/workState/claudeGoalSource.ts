@@ -13,11 +13,19 @@ import { buildEmptyClaudeGoalWorkStateSnapshot, createClaudeGoalStatusWorkStateT
  * deliberately excluding `cache_read_input_tokens` (re-reading the growing context each turn would
  * multiply-count it). The provider's authoritative `goal_status.tokens` WINS on completion, so this
  * mid-run figure is an honest estimate, not a precise accounting.
+ *
+ * MAIN-CHAIN ONLY. A subagent's assistant rows ride the SAME raw transcript channel as the parent's,
+ * distinguished by `isSidechain: true`, and their cost belongs to the CHILD — folding them in bills a
+ * subagent's budget to the parent goal's meter (measured on a real transcript: 42,277 sidechain
+ * tokens against 13,955 main-chain, a 3× overstatement). Every sibling reader on this channel already
+ * takes the same guard: `readClaudeTranscriptTurnSignal`, `sdkToLogConverter`'s
+ * `readAssistantContextUsedTokens` gate, and `createClaudeRawMessageTurnDiffBridge`'s flush gate.
  */
 function readAssistantTurnTokens(message: unknown): number {
   if (!message || typeof message !== 'object') return 0;
   const record = message as Record<string, unknown>;
   if (record.type !== 'assistant') return 0;
+  if (record.isSidechain === true) return 0;
   const inner = record.message;
   const usage = inner && typeof inner === 'object' ? (inner as Record<string, unknown>).usage : undefined;
   if (!usage || typeof usage !== 'object') return 0;

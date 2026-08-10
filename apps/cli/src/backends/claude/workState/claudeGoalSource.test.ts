@@ -297,11 +297,17 @@ describe('createClaudeGoalWorkStateSource', () => {
 describe('createClaudeGoalWorkStateSource — live usage accumulation (G-3/E)', () => {
   const NOW_BASE = 1_000_000;
 
-  function assistantWithUsage(params: Readonly<{ inputTokens: number; outputTokens: number; endTurn?: boolean; timestamp?: string }>): unknown {
+  function assistantWithUsage(params: Readonly<{
+    inputTokens: number;
+    outputTokens: number;
+    endTurn?: boolean;
+    timestamp?: string;
+    isSidechain?: boolean;
+  }>): unknown {
     return {
       type: 'assistant',
       sessionId: SOURCE_SESSION_ID,
-      isSidechain: false,
+      isSidechain: params.isSidechain ?? false,
       ...(params.timestamp ? { timestamp: params.timestamp } : {}),
       message: {
         role: 'assistant',
@@ -390,6 +396,51 @@ describe('createClaudeGoalWorkStateSource — live usage accumulation (G-3/E)', 
     const item = goalItem(published[published.length - 1]);
     expect(item).toMatchObject({ status: 'complete', tokensUsed: 2393 });
     expect(item.timeUsedSeconds).toBeCloseTo(41.613, 2);
+  });
+
+  // D-7 / N-USAGE: a subagent's assistant turns ride the SAME raw transcript channel as the parent's,
+  // distinguished only by `isSidechain: true`. Their tokens are the CHILD's cost and must never be
+  // billed to the parent goal's meter. Three sibling readers on this channel already carry the guard
+  // (readClaudeTranscriptTurnSignal, sdkToLogConverter, createClaudeRawMessageTurnDiffBridge).
+  it('does NOT bill a subagent (sidechain) assistant turn to the parent goal meter', () => {
+    const { source, published, advance } = createUsageSource();
+
+    source.observeTranscriptMessage(activeGoalAttachment({ uuid: 'g-1', condition: 'ship it' }));
+    const afterGoal = published.length;
+
+    // A subagent burns a large budget of its own. Even carrying `stop_reason:'end_turn'`, a sidechain
+    // row is not a parent turn boundary, so it must neither publish nor leave accrued tokens behind.
+    source.observeTranscriptMessage(assistantWithUsage({
+      inputTokens: 40_000,
+      outputTokens: 10_000,
+      endTurn: true,
+      isSidechain: true,
+    }));
+    expect(published.length).toBe(afterGoal);
+
+    advance(30_000);
+    source.observeTranscriptMessage(assistantWithUsage({ inputTokens: 800, outputTokens: 400, endTurn: true }));
+
+    expect(published.length).toBe(afterGoal + 1);
+    expect(goalItem(published[published.length - 1])).toMatchObject({
+      status: 'active',
+      tokensUsed: 1200,
+      timeUsedSeconds: 30,
+    });
+  });
+
+  // A sidechain turn that never ends the parent turn must also not leak into a LATER parent fold —
+  // the guard belongs at the read, not at the boundary, so nothing is left in the accumulator.
+  it('does not carry sidechain tokens into a subsequent parent turn boundary', () => {
+    const { source, published } = createUsageSource();
+
+    source.observeTranscriptMessage(activeGoalAttachment({ uuid: 'g-1', condition: 'ship it' }));
+
+    source.observeTranscriptMessage(assistantWithUsage({ inputTokens: 7_000, outputTokens: 3_000, isSidechain: true }));
+    source.observeTranscriptMessage(assistantWithUsage({ inputTokens: 100, outputTokens: 50 }));
+    source.observeTranscriptMessage(assistantWithUsage({ inputTokens: 100, outputTokens: 50, endTurn: true }));
+
+    expect(goalItem(published[published.length - 1])).toMatchObject({ tokensUsed: 300 });
   });
 
   it('does not accumulate usage when there is no active goal', () => {
