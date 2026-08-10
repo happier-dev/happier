@@ -2126,7 +2126,7 @@ describe("pendingMessageService (shared sessions)", () => {
         });
     });
 
-    it("releases only an exact pre-effect steering-unavailable block when replacing its action with send_now", async () => {
+    it("reopens proven pre-effect blocks while keeping provider-effect-possible rows fenced", async () => {
         const owner = await createAccount("requested-action-steering-unavailable-owner");
         const session = await createSession(owner.id);
         const releasableLocalId = `requested-action-releasable-${randomUUID()}`;
@@ -2291,7 +2291,7 @@ describe("pendingMessageService (shared sessions)", () => {
         });
     });
 
-    it("does not reopen a runtime-disposed-before-delivery row through an action update", async () => {
+    it("reopens a proven pre-effect runtime-disposed row for an explicit send_now retry", async () => {
         const owner = await createAccount("requested-action-runtime-disposed-owner");
         const session = await createSession(owner.id);
         const localId = `requested-action-runtime-disposed-${randomUUID()}`;
@@ -2315,14 +2315,18 @@ describe("pendingMessageService (shared sessions)", () => {
             sessionId: session.id,
             localId,
             requestedAction: { v: 1, kind: "send_now" },
-        })).resolves.toEqual({ ok: false, error: "action-conflict" });
+        })).resolves.toMatchObject({
+            ok: true,
+            didUpdate: true,
+            pendingBlockedCount: 0,
+        });
         await expect(db.sessionPendingMessage.findUniqueOrThrow({
             where: { sessionId_localId: { sessionId: session.id, localId } },
             select: { requestedAction: true, deliveryState: true, deliveryBlockedReason: true },
         })).resolves.toEqual({
-            requestedAction: { v: 1, kind: "enqueue" },
-            deliveryState: "blocked",
-            deliveryBlockedReason: "runtime_disposed_before_delivery",
+            requestedAction: { v: 1, kind: "send_now" },
+            deliveryState: null,
+            deliveryBlockedReason: null,
         });
     });
 

@@ -34,6 +34,7 @@ describe('createConnectedServiceContinuationMessageDispatcher', () => {
       idOrPrefix: 'session-1',
       message: 'continue',
       localId: 'connected-service-continuation:test',
+      requestedAction: { v: 1, kind: 'send_now' },
       pendingAdmissionMode: 'continuation_if_no_queued_user_input',
       resumeInactiveSession: false,
       wait: false,

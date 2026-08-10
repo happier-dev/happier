@@ -36,6 +36,10 @@ import type { ActionsSettingsV1 } from './actionSettings.js';
 import type { ReviewStartInput } from '../reviews/reviewStart.js';
 import type { AcpConfigOptionOverridesV1 } from '../sessionMetadata/metadataOverridesV1.js';
 import type { ConnectedServiceBindingsV1 } from '../connect/connectedServiceBindings.js';
+import {
+  PendingRequestedActionV1Schema,
+  type PendingRequestedActionV1,
+} from '../sessionMessages/pendingRequestedActionV1.js';
 import { normalizeConnectedServiceSelectionInput } from '../connect/normalizeConnectedServiceSelectionInput.js';
 import type { SessionMcpSelectionV1 } from '../mcpServers/sessionSelectionV1.js';
 import {
@@ -255,6 +259,7 @@ export type ActionExecutorDeps = Readonly<{
   sessionSendMessage: (args: Readonly<{
     sessionId: string;
     message: string;
+    requestedAction: PendingRequestedActionV1;
     permissionModeOverride?: string;
     modelOverride?: string | null;
     wait?: boolean;
@@ -1984,6 +1989,9 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           const res = await deps.sessionSendMessage({
             sessionId,
             message: (parsed.data as any).message,
+            requestedAction: PendingRequestedActionV1Schema.parse(
+              parsed.data.requestedAction ?? { v: 1, kind: 'steer_if_active' },
+            ),
             ...(permissionDecision?.ok === true
               ? { permissionModeOverride: permissionDecision.normalizedMode }
               : permissionOverrideRaw ? { permissionModeOverride: permissionOverrideRaw } : {}),

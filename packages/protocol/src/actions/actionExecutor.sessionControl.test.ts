@@ -60,6 +60,7 @@ describe('createActionExecutor (session control)', () => {
         message: 'Hello',
         permissionModeOverride: 'read_only',
         modelOverride: 'gpt-4o',
+        requestedAction: { v: 1, kind: 'send_now' },
         wait: true,
         timeoutSeconds: 42,
       },
@@ -72,8 +73,26 @@ describe('createActionExecutor (session control)', () => {
       message: 'Hello',
       permissionModeOverride: 'read_only',
       modelOverride: 'gpt-4o',
+      requestedAction: { v: 1, kind: 'send_now' },
       wait: true,
       timeoutSeconds: 42,
+    }));
+  });
+
+  it('defaults generic session.message.send callers to conditional steering instead of interruption', async () => {
+    const sessionSendMessage = vi.fn(async () => ({ ok: true }));
+    const executor = createExecutor({ sessionSendMessage });
+
+    await expect(executor.execute(
+      'session.message.send' as any,
+      { sessionId: 's1', message: 'Hello' },
+      { surface: 'mcp', defaultSessionId: null },
+    )).resolves.toEqual({ ok: true, result: { ok: true } });
+
+    expect(sessionSendMessage).toHaveBeenCalledWith(expect.objectContaining({
+      sessionId: 's1',
+      message: 'Hello',
+      requestedAction: { v: 1, kind: 'steer_if_active' },
     }));
   });
 

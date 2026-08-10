@@ -698,18 +698,14 @@ export async function updatePendingRequestedAction(params: {
         const nextUpdatedAt = new Date(Math.max(Date.now(), existing.updatedAt.getTime() + 1));
 
         return await inTx(async (tx) => {
-            const releasesSteeringUnavailableBlock =
+            const retriesProvenPreEffectBlock =
                 existing.deliveryState === "blocked"
-                && existing.deliveryBlockedReason === "steering_unavailable"
-                && (currentActionValue.kind === "steer_now" || currentActionValue.kind === "steer_if_active")
-                && requestedActionResult.data.kind === "send_now";
-            const retriesReversiblePreAcceptanceBlock =
-                existing.deliveryState === "blocked"
-                && (
-                    existing.deliveryBlockedReason === "provider_rejected_before_acceptance"
-                    || existing.deliveryBlockedReason === "provider_unavailable_before_acceptance"
-                );
-            if (releasesSteeringUnavailableBlock || retriesReversiblePreAcceptanceBlock) {
+                && !isPendingDeliveryProviderEffectPossibleV1(normalizePendingDeliveryStatusV1({
+                    status: "queued",
+                    deliveryState: existing.deliveryState,
+                    deliveryBlockedReason: existing.deliveryBlockedReason,
+                }));
+            if (retriesProvenPreEffectBlock) {
                 const updated = await tx.sessionPendingMessage.updateMany({
                     where: {
                         sessionId,

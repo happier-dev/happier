@@ -22,6 +22,7 @@ import {
 } from '../sessionWorkState/sessionWorkStateRpc.js';
 import { SessionTerminalComposerClearRequestV1Schema } from '../sessionControl/sessionTerminalComposerClearV1.js';
 import { SessionPendingInputInterruptAndRunRequestV1Schema } from '../sessionControl/sessionPendingInputInterruptAndRunV1.js';
+import { PendingRequestedActionV1Schema } from '../sessionMessages/pendingRequestedActionV1.js';
 import { SessionWorkStateStatusV1Schema } from '../sessionWorkState/sessionWorkStateV1.js';
 import { STRUCTURED_QUESTION_LIMITS } from '../tools/structuredQuestionAnswersV1.js';
 import { AcpConfigOptionOverridesV1Schema } from '../sessionMetadata/metadataOverridesV1.js';
@@ -783,6 +784,7 @@ const ActionOptionsResolveInputSchema = z.object({
 const SessionSendMessageInputSchema = z.object({
   sessionId: z.string().min(1).optional(),
   message: z.string().min(1),
+  requestedAction: PendingRequestedActionV1Schema.optional(),
   permissionModeOverride: z.string().trim().min(1).optional(),
   modelOverride: z.union([
     z.string().refine((value) => value.trim().length > 0, { message: 'Model override must not be blank' }),

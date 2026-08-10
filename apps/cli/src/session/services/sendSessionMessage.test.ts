@@ -909,7 +909,7 @@ describe('sendSessionMessage', () => {
         }
     });
 
-    it('uses an explicit localId and send_now action for durable delivery, then wakes the canonical owner', async () => {
+    it('preserves an explicit requested action for durable delivery, then wakes the canonical owner', async () => {
         const callSessionRpc = vi.fn(async () => ({ ok: true }));
         const sendSessionMessageViaSocketCommitted = vi.fn(async () => undefined);
         const enqueuePendingQueueV2MessageViaHttp = vi.fn(async () => undefined);
@@ -949,6 +949,7 @@ describe('sendSessionMessage', () => {
             idOrPrefix: 'sess-1',
             message: 'continue',
             localId: ' connected-service-continuation:test\n',
+            requestedAction: { v: 1, kind: 'steer_if_active' },
             wait: false,
             timeoutMs: 1,
         })).resolves.toEqual({
@@ -963,7 +964,7 @@ describe('sendSessionMessage', () => {
             sessionId: 'sess-1',
             body: expect.objectContaining({
                 localId: ' connected-service-continuation:test\n',
-                requestedAction: { v: 1, kind: 'send_now' },
+                requestedAction: { v: 1, kind: 'steer_if_active' },
             }),
         }));
         expect(callSessionRpc).toHaveBeenCalledOnce();
@@ -1010,6 +1011,7 @@ describe('sendSessionMessage', () => {
             idOrPrefix: 'sess-1',
             message: 'continue',
             localId: 'connected-service-continuation:test',
+            requestedAction: { v: 1, kind: 'send_now' },
             pendingAdmissionMode: 'continuation_if_no_queued_user_input',
             wait: false,
             timeoutMs: 1,
@@ -1025,6 +1027,7 @@ describe('sendSessionMessage', () => {
             idOrPrefix: 'sess-1',
             message: 'continue',
             localId: 'connected-service-continuation:test',
+            requestedAction: { v: 1, kind: 'send_now' },
             pendingAdmissionMode: 'continuation_if_no_queued_user_input',
             wait: false,
             timeoutMs: 1,

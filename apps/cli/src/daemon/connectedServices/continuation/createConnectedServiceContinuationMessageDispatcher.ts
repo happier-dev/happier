@@ -53,6 +53,7 @@ export function createConnectedServiceContinuationMessageDispatcher(
         idOrPrefix: input.sessionId,
         message: input.prompt,
         localId: input.localId,
+        requestedAction: { v: 1, kind: 'send_now' },
         pendingAdmissionMode: 'continuation_if_no_queued_user_input',
         resumeInactiveSession: false,
         wait: false,

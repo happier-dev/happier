@@ -7,7 +7,7 @@ import {
   type PermissionIntent,
 } from '@happier-dev/agents';
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
-import { readPendingLocalId } from '@happier-dev/protocol';
+import { readPendingLocalId, type PendingRequestedActionV1 } from '@happier-dev/protocol';
 
 import { fetchEncryptedTranscriptPageAfterSeq } from '@/api/session/fetchEncryptedTranscriptWindow';
 import {
@@ -431,6 +431,7 @@ export async function sendSessionMessage(params: Readonly<{
   resumeInactiveSession?: boolean;
   permissionModeOverride?: string;
   modelOverride?: string | null;
+  requestedAction?: PendingRequestedActionV1;
   pendingAdmissionMode?: 'continuation_if_no_queued_user_input';
 }>): Promise<SendSessionMessageResult> {
   const sessionTarget = await resolveSessionTransportContext({
@@ -495,6 +496,7 @@ export async function sendSessionMessage(params: Readonly<{
 
   const shouldUseRuntimeRpc = sessionTarget.rawSession.active === true;
   let enqueueResult: Awaited<ReturnType<typeof enqueuePendingQueueV2MessageViaHttp>>;
+  const requestedAction = params.requestedAction ?? { v: 1, kind: 'steer_if_active' as const };
   try {
     enqueueResult = await enqueuePendingQueueV2MessageViaHttp({
       token: params.credentials.token,
@@ -504,14 +506,14 @@ export async function sendSessionMessage(params: Readonly<{
             localId,
             ciphertext: content.c,
             messageRole: 'user',
-            requestedAction: { v: 1, kind: 'send_now' },
+            requestedAction,
             ...(params.pendingAdmissionMode ? { deliveryMode: params.pendingAdmissionMode } : {}),
           }
         : {
             localId,
             content,
             messageRole: 'user',
-            requestedAction: { v: 1, kind: 'send_now' },
+            requestedAction,
             ...(params.pendingAdmissionMode ? { deliveryMode: params.pendingAdmissionMode } : {}),
           },
     });
