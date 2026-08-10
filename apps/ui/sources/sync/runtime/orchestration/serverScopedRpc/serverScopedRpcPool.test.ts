@@ -5,6 +5,19 @@ import {
     resolveScopedMachineDataKey,
 } from './serverScopedRpcPool';
 
+function readAuthorizationHeader(headers: RequestInit['headers']): string {
+    if (!headers) return '';
+    if (typeof Headers !== 'undefined' && headers instanceof Headers) {
+        return headers.get('Authorization') ?? '';
+    }
+    if (Array.isArray(headers)) {
+        const entry = headers.find(([name]) => String(name).toLowerCase() === 'authorization');
+        return entry ? String(entry[1] ?? '') : '';
+    }
+    const record = headers as Record<string, string>;
+    return String(record.Authorization ?? record.authorization ?? '');
+}
+
 describe('resolveScopedMachineDataKey', () => {
     afterEach(async () => {
         vi.unstubAllGlobals();
@@ -61,7 +74,10 @@ describe('resolveScopedMachineDataKey', () => {
             if (String(_url).endsWith('/health') || String(_url).endsWith('/v1/auth/ping')) {
                 return { ok: true, status: 200, json: async () => ({}) };
             }
-            const auth = String(init?.headers && (init.headers as any).Authorization ? (init.headers as any).Authorization : '');
+            // `runtimeFetchWithServerReachability` normalizes init.headers into a Headers
+            // instance, so reading an own `Authorization` property finds nothing and this
+            // case silently stops discriminating between tokens.
+            const auth = readAuthorizationHeader(init?.headers);
             const token = auth.startsWith('Bearer ') ? auth.slice('Bearer '.length) : '';
             const dataEncryptionKey = token === 'Aa' ? 'encrypted-key-1' : token === 'BB' ? 'encrypted-key-2' : 'encrypted-key-unknown';
             return {

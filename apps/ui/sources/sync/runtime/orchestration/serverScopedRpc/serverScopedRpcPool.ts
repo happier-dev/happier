@@ -5,43 +5,21 @@ import {
     isTerminalAuthError,
 } from '@/sync/runtime/connectivity/authErrors';
 
+import { createScopedCacheTokenKeyRegistry } from './scopedCacheTokenKey';
+import { createScopedResolutionSingleFlight } from './scopedResolutionSingleFlight';
+
 function normalizeId(raw: unknown): string {
     return String(raw ?? '').trim();
 }
 
-function getOrCreateTokenCacheKey(token: string): string {
-    // Avoid using the raw token in cache keys (accidental leaks in error/debug output),
-    // but also avoid collision-prone hashing (which can cause cross-token cache reuse).
-    let key = tokenCacheKeyByToken.get(token);
-    if (key) {
-        // Refresh LRU ordering.
-        tokenCacheKeyByToken.delete(token);
-        tokenCacheKeyByToken.set(token, key);
-        return key;
-    }
-
-    const cryptoAny = (globalThis as any).crypto as { randomUUID?: () => string } | undefined;
-    key =
-        typeof cryptoAny?.randomUUID === 'function'
-            ? cryptoAny.randomUUID()
-            : `tk_${Date.now().toString(36)}_${Math.random().toString(36).slice(2)}`;
-    tokenCacheKeyByToken.set(token, key);
-
-    const max = readMaxMachineKeyCacheEntriesFromEnv();
-    while (tokenCacheKeyByToken.size > max) {
-        const oldest = tokenCacheKeyByToken.keys().next();
-        if (oldest.done) break;
-        tokenCacheKeyByToken.delete(oldest.value);
-    }
-    return key;
-}
-
 function toMachineDataKeyCacheKey(serverId: string, machineId: string, token: string): string {
-    return `${serverId}::${machineId}::${getOrCreateTokenCacheKey(token)}`;
+    const tokenKey = machineTokenKeys.getOrCreate(token, readMaxMachineKeyCacheEntriesFromEnv());
+    return `${serverId}::${machineId}::${tokenKey}`;
 }
 
 const machineDataKeyCache = new Map<string, Uint8Array | null>();
-const tokenCacheKeyByToken = new Map<string, string>();
+const machineDataKeyResolutions = createScopedResolutionSingleFlight<Uint8Array | null>();
+const machineTokenKeys = createScopedCacheTokenKeyRegistry();
 
 function readMaxMachineKeyCacheEntriesFromEnv(): number {
     const raw = String(process.env.EXPO_PUBLIC_HAPPIER_SCOPED_RPC_MACHINE_KEY_CACHE_MAX ?? '').trim();
@@ -137,23 +115,35 @@ export async function resolveScopedMachineDataKey(params: Readonly<{
     const timeoutMs = typeof params.timeoutMs === 'number' && params.timeoutMs > 0 ? params.timeoutMs : 30_000;
     const keyCacheKey = toMachineDataKeyCacheKey(serverId, machineId, token);
 
-    let machineDataKey = getMachineDataKeyFromCache(keyCacheKey);
-    if (machineDataKey === undefined) {
-        machineDataKey = await fetchMachineDataKey({
+    const cached = getMachineDataKeyFromCache(keyCacheKey);
+    if (cached !== undefined) {
+        return cached ?? null;
+    }
+
+    // Coalesce the burst. `keyCacheKey` covers the target server, the machine and the
+    // bearer token, and the token determines the credentials the caller's
+    // `decryptEncryptionKey` was built from — so joiners of one resolution always share
+    // the caller inputs that decide the plaintext, and never adopt another machine's,
+    // another server's or another account's key.
+    const machineDataKey = await machineDataKeyResolutions.run(keyCacheKey, async () => {
+        const resolved = await fetchMachineDataKey({
             serverUrl: params.serverUrl,
             token,
             machineId,
             decryptEncryptionKey: params.decryptEncryptionKey,
             timeoutMs,
         });
-        if (machineDataKey) {
-            setMachineDataKeyCache(keyCacheKey, machineDataKey);
+        // A missing key stays uncached so the next caller retries it for real.
+        if (resolved) {
+            setMachineDataKeyCache(keyCacheKey, resolved);
         }
-    }
+        return resolved;
+    });
     return machineDataKey ?? null;
 }
 
 export function resetScopedMachineDataKeyCacheForTests(): void {
     machineDataKeyCache.clear();
-    tokenCacheKeyByToken.clear();
+    machineDataKeyResolutions.reset();
+    machineTokenKeys.reset();
 }
