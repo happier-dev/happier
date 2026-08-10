@@ -11,9 +11,11 @@ import type {
     SessionSubagent,
     SessionSubagentActiveExecutionRunState,
 } from '@/sync/domains/session/subagents/types';
+import type { SessionParticipantTarget } from '@/sync/domains/session/participants/participantTargets';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { useDirectSessionRuntime, type UseDirectSessionRuntimeResult } from '@/components/sessions/model/useDirectSessionRuntime';
+import { reconcileStableRows } from './reconcileStableRows';
 import { useSessionRunningExecutionRuns } from './useSessionRunningExecutionRuns';
 
 const sessionSubagentToolMessageSignatureCache = new WeakMap<Message, string>();
@@ -112,14 +114,6 @@ function useStableMessagesBySignature(
     return ref.current.messages;
 }
 
-function buildStableJsonSignature(value: unknown): string {
-    try {
-        return JSON.stringify(value ?? null) ?? 'null';
-    } catch {
-        return String(value);
-    }
-}
-
 function buildExecutionRunStateSignature(runs: readonly SessionSubagentActiveExecutionRunState[]): string {
     if (runs.length === 0) return '';
     return runs.map((run) => `${run.runId}\u0000${run.status ?? ''}`).join('\u0001');
@@ -134,6 +128,28 @@ function useStableValueBySignature<T>(value: T, signature: string): T {
         ref.current = { signature, value };
     }
     return ref.current.value;
+}
+
+/**
+ * Derived rosters are rebuilt in full on every transcript tick. Reconciling them by key keeps the
+ * object identity of rows that did not change, which is what makes a memoized row real — and costs
+ * a short-circuiting structural compare instead of serialising the whole array.
+ */
+function useReconciledStableRows<Row>(
+    rows: readonly Row[],
+    readKey: (row: Row) => string,
+): readonly Row[] {
+    const ref = React.useRef<readonly Row[]>(rows);
+    ref.current = reconcileStableRows(ref.current, rows, readKey);
+    return ref.current;
+}
+
+function readSubagentKey(subagent: SessionSubagent): string {
+    return subagent.id;
+}
+
+function readParticipantTargetKey(target: SessionParticipantTarget): string {
+    return target.key;
 }
 
 export function useSessionSubagents(params: Readonly<{
@@ -211,20 +227,12 @@ export function useSessionSubagents(params: Readonly<{
         subagentMessages,
         sessionFlavor,
     ]);
-    const subagentsSignature = React.useMemo(
-        () => buildStableJsonSignature(derivedSubagents),
-        [derivedSubagents],
-    );
-    const subagents = useStableValueBySignature(derivedSubagents, subagentsSignature);
+    const subagents = useReconciledStableRows(derivedSubagents, readSubagentKey);
 
     const derivedParticipantTargets = React.useMemo(() => {
         return deriveSessionSubagentRecipients(subagents);
     }, [subagents]);
-    const participantTargetsSignature = React.useMemo(
-        () => buildStableJsonSignature(derivedParticipantTargets),
-        [derivedParticipantTargets],
-    );
-    const participantTargets = useStableValueBySignature(derivedParticipantTargets, participantTargetsSignature);
+    const participantTargets = useReconciledStableRows(derivedParticipantTargets, readParticipantTargetKey);
 
     const derivedSidechainIds = React.useMemo(() => {
         return deriveSessionSubagentSidechainIds(subagents);

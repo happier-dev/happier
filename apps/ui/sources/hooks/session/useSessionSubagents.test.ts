@@ -524,4 +524,56 @@ describe('useSessionSubagents', () => {
         expect(hook.getCurrent().sidechainIds).toEqual([]);
         await hook.unmount();
     });
+
+    it('keeps the object identity of subagents a recompute did not change', async () => {
+        const now = Date.now();
+        const buildRunMessage = (runId: string, state: 'running' | 'completed'): any => ({
+            kind: 'tool-call',
+            id: `tool-call-${runId}-${state}`,
+            localId: null,
+            createdAt: now,
+            tool: {
+                id: `toolu_${runId}`,
+                name: 'SubAgentRun',
+                state,
+                input: { runId, label: runId },
+                ...(state === 'completed' ? { result: { runId, ok: true } } : {}),
+                createdAt: now,
+                startedAt: now,
+                completedAt: state === 'completed' ? now + 1 : null,
+                description: null,
+            },
+            children: [],
+        });
+
+        const firstRunMessage = buildRunMessage('run_1', 'running');
+        const hook = await renderHook((messages: readonly any[]) =>
+            useSessionSubagents({
+                sessionId: 'session-1',
+                session: {
+                    id: 'session-1',
+                    metadata: { flavor: 'claude' },
+                } as any,
+                messages,
+                directSessionRuntime: directSessionRuntimeState,
+            }), {
+                initialProps: [firstRunMessage, buildRunMessage('run_2', 'running')] as readonly any[],
+            });
+
+        const before = hook.getCurrent().subagents;
+        expect(before.map((subagent) => subagent.id))
+            .toEqual(['execution_run:run_1', 'execution_run:run_2']);
+        expect(before[1]?.status).toBe('running');
+
+        // Only run_2 moves. run_1's row is byte-identical, so a memoized row must not re-render.
+        await hook.rerender([firstRunMessage, buildRunMessage('run_2', 'completed')]);
+
+        const after = hook.getCurrent().subagents;
+        expect(after).not.toBe(before);
+        expect(after[1]?.status).toBe('succeeded');
+        expect(after[1]).not.toBe(before[1]);
+        expect(after[0]).toBe(before[0]);
+
+        await hook.unmount();
+    });
 });
