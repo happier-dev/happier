@@ -460,4 +460,26 @@ runPkgrollBuild({
       rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  it('forwards the admitted build environment to the pkgroll subprocess', () => {
+    const fixture = writeIsolatedPkgrollRepo('happier-cli-pkgroll-build-env-');
+    const spawn = vi.fn(() => ({ status: 0 }));
+    const env = {
+      PATH: process.env.PATH ?? '',
+      NODE_OPTIONS: '--trace-warnings --max-old-space-size=8192',
+    };
+
+    try {
+      runPkgrollBuild({
+        packageJsonPath: fixture.packageJsonPath,
+        outputDir: fixture.outputDir,
+        spawn,
+        env,
+      });
+
+      expect(spawn.mock.calls[0]?.[2]).toEqual(expect.objectContaining({ env }));
+    } finally {
+      rmSync(fixture.repoRoot, { recursive: true, force: true });
+    }
+  });
 });

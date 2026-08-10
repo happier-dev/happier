@@ -25,6 +25,43 @@ function writeRuntimeManifest(packageRoot: string): void {
 }
 
 describe('buildCliDist', () => {
+  it('provides the CLI build heap budget to every generation subprocess', async () => {
+    const packageRoot = createTempDirSync('happier-cli-build-heap-budget-');
+    try {
+      writeRuntimeManifest(packageRoot);
+      const subprocessNodeOptions: string[] = [];
+      await buildCliDist({
+        packageRoot,
+        skipLock: true,
+        env: {
+          ...process.env,
+          NODE_OPTIONS: '--trace-warnings',
+        },
+        rmDistImpl: async () => {},
+        resolveTypeScriptCliPathImpl: () => '/repo/node_modules/@typescript/native/bin/tsc',
+        runTypecheckImpl: (_scriptPath: string, _args: string[], options: { env: NodeJS.ProcessEnv }) => {
+          subprocessNodeOptions.push(options.env.NODE_OPTIONS ?? '');
+        },
+        runPkgrollBuildImpl: (options: { env: NodeJS.ProcessEnv }) => {
+          subprocessNodeOptions.push(options.env.NODE_OPTIONS ?? '');
+        },
+        resolveDistRuntimeEntrypointsImpl: () => ['/tmp/entrypoint.mjs'],
+        probeDistRuntimeImportImpl: (_entrypoint: string, options: { env: NodeJS.ProcessEnv }) => {
+          subprocessNodeOptions.push(options.env.NODE_OPTIONS ?? '');
+        },
+        finalizeDistImpl: () => {},
+      });
+
+      expect(subprocessNodeOptions).toEqual([
+        '--trace-warnings --max-old-space-size=8192',
+        '--trace-warnings --max-old-space-size=8192',
+        '--trace-warnings --max-old-space-size=8192',
+      ]);
+    } finally {
+      rmSync(packageRoot, { recursive: true, force: true });
+    }
+  });
+
   it('admits test-only type errors while full typecheck rejects them and runtime errors still fail', () => {
     const packageRoot = createTempDirSync('happier-cli-runtime-tsconfig-contract-');
     try {
