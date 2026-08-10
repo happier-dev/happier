@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import { getDaemonEnv } from './daemon.mjs';
 import { buildStackStableScopeId } from './utils/auth/stable_scope_id.mjs';
 
-test('getDaemonEnv keeps lifecycle state on the stable stack scope while selecting matching settings credentials', async () => {
+test('getDaemonEnv keeps machine identity and lifecycle state on the stable stack scope', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'happy-stack-daemon-env-'));
   const serverUrl = 'http://127.0.0.1:3009';
   const canonicalServerId = 'stack-qa-server';
@@ -48,7 +48,7 @@ test('getDaemonEnv keeps lifecycle state on the stable stack scope while selecti
     cliIdentity: 'default',
   });
 
-  assert.equal(env.HAPPIER_ACTIVE_SERVER_ID, canonicalServerId);
+  assert.equal(env.HAPPIER_ACTIVE_SERVER_ID, stableScopeId);
   assert.equal(env.HAPPIER_DAEMON_LIFECYCLE_SCOPE_ID, stableScopeId);
   assert.equal(env.HAPPIER_DAEMON_STARTUP_SOURCE, 'manual');
 });

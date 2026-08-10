@@ -129,7 +129,7 @@ test('resolveStackCredentialPaths uses HAPPIER_ACTIVE_SERVER_ID when provided', 
   assert.notEqual(out.serverScopedPath, out.urlHashServerScopedPath);
 });
 
-test('resolveStackCredentialPaths prefers the matching cli settings server id over a leaked stable scope alias', async () => {
+test('resolveStackCredentialPaths keeps the stable runtime scope and treats a matching settings profile as a credential source', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'happy-stacks-cred-paths-settings-'));
   const serverUrl = 'http://127.0.0.1:3009';
   const canonicalServerId = 'stack-dev-profile';
@@ -163,9 +163,10 @@ test('resolveStackCredentialPaths prefers the matching cli settings server id ov
     env: { HAPPIER_ACTIVE_SERVER_ID: 'stack_dev__id_default' },
   });
 
-  assert.equal(out.activeServerId, canonicalServerId);
-  assert.equal(out.serverScopedPath, join(dir, 'servers', canonicalServerId, 'access.key'));
-  assert.ok(out.paths.includes(join(dir, 'servers', 'stack_dev__id_default', 'access.key')));
+  assert.equal(out.activeServerId, 'stack_dev__id_default');
+  assert.equal(out.settingsServerId, canonicalServerId);
+  assert.equal(out.serverScopedPath, join(dir, 'servers', 'stack_dev__id_default', 'access.key'));
+  assert.ok(out.paths.includes(join(dir, 'servers', canonicalServerId, 'access.key')));
 });
 
 test('findExistingStackCredentialPath accepts the stable scope alias when settings select another matching profile', async () => {
@@ -199,8 +200,8 @@ test('findExistingStackCredentialPath accepts the stable scope alias when settin
   await mkdir(join(dir, 'servers', stableServerId), { recursive: true });
   await writeFile(stableCredentialPath, 'stable-stack-credential\n', 'utf-8');
 
-  assert.equal(out.serverScopedPath, join(dir, 'servers', settingsServerId, 'access.key'));
-  assert.ok(out.aliasServerScopedPaths.includes(stableCredentialPath));
+  assert.equal(out.serverScopedPath, stableCredentialPath);
+  assert.ok(out.aliasServerScopedPaths.includes(join(dir, 'servers', settingsServerId, 'access.key')));
   assert.equal(
     findExistingStackCredentialPath({ cliHomeDir: dir, serverUrl, env }),
     stableCredentialPath,

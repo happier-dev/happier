@@ -9,7 +9,6 @@ import { resolveJavaScriptRuntimeCommand } from '@happier-dev/cli-common/provide
 import {
   findAnyCredentialPathInCliHome,
   findExistingStackCredentialPath,
-  resolvePreferredStackServerIdFromCliSettings,
   resolvePreferredStackDaemonStatePaths,
   resolveStackCredentialPaths,
 } from './utils/auth/credentials_paths.mjs';
@@ -1442,16 +1441,8 @@ export function getDaemonEnv({
   const startupSource =
     explicitStartupSource ||
     (String(baseEnv?.HAPPIER_STACK_SERVICE_MODE ?? '').trim() === '1' ? 'background-service' : 'manual');
-  // Endpoint and credential selection may follow a matching CLI settings profile. Daemon lifecycle
-  // state and locks remain independently bound to HAPPIER_DAEMON_LIFECYCLE_SCOPE_ID.
-  const settingsServerId = resolvePreferredStackServerIdFromCliSettings({
-    cliHomeDir,
-    serverUrl: internalServerUrl,
-    env: scopedEnv,
-  });
-  if (settingsServerId) {
-    scopedEnv.HAPPIER_ACTIVE_SERVER_ID = settingsServerId;
-  }
+  // Machine identity, credentials, state, and locks stay on the stable stack scope. Matching
+  // settings profiles remain credential migration sources in resolveStackCredentialPaths().
   const stackNameForOwnership =
     String(stackName ?? '').trim() ||
     String(scopedEnv.HAPPIER_STACK_STACK ?? '').trim();

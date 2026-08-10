@@ -19,7 +19,13 @@ async function runAuthLoginPrintJson({ rootDir, prefix, stackEnvLines, extraEnv 
   try {
     const res = await runNodeCapture(
       [hstackBinPath(rootDir), 'auth', 'login', '--print', '--no-open', '--json', ...args],
-      { cwd: rootDir, env: fixture.buildEnv(extraEnv) }
+      {
+        cwd: rootDir,
+        env: fixture.buildEnv({
+          HAPPIER_STACK_RUNTIME_MODE: 'source',
+          ...extraEnv,
+        }),
+      }
     );
     assert.equal(res.code, 0, `expected exit 0, got ${res.code}\nstderr:\n${res.stderr}\nstdout:\n${res.stdout}`);
     return JSON.parse(res.stdout.trim());
@@ -52,7 +58,7 @@ test('hstack auth login --print --json includes configure-server links and publi
   );
 });
 
-test('hstack stack auth login --print --json prefers the canonical settings server id over the stable stack scope alias', async () => {
+test('hstack stack auth login --print --json keeps the stable stack scope when a matching settings alias exists', async () => {
   const rootDir = getStackRootFromMeta(import.meta.url);
   const fixture = await createAuthStackFixture({
     prefix: 'hstack-auth-canonical-server-id-',
@@ -101,8 +107,8 @@ test('hstack stack auth login --print --json prefers the canonical settings serv
     assert.equal(res.code, 0, `expected exit 0, got ${res.code}\nstderr:\n${res.stderr}\nstdout:\n${res.stdout}`);
 
     const parsed = JSON.parse(res.stdout.trim());
-    assert.match(parsed.cmd, /HAPPIER_ACTIVE_SERVER_ID="stack-qa-external-mcp"/);
-    assert.doesNotMatch(parsed.cmd, /stack_qa-external-mcp-qa-20260327__id_default/);
+    assert.match(parsed.cmd, /HAPPIER_ACTIVE_SERVER_ID="stack_qa-external-mcp-qa-20260327__id_default"/);
+    assert.doesNotMatch(parsed.cmd, /HAPPIER_ACTIVE_SERVER_ID="stack-qa-external-mcp"/);
   } finally {
     await fixture.cleanup();
   }

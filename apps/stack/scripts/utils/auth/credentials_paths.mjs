@@ -204,11 +204,13 @@ export function resolveStackCredentialPaths({ cliHomeDir, serverUrl = '', env = 
   const stableScopeServerId = resolveActiveServerIdOverride(env);
   const daemonLifecycleScopeId = resolveDaemonLifecycleScopeIdOverride(env);
   const settingsServerId = resolvePreferredStackServerIdFromCliSettings({ cliHomeDir: home, serverUrl: normalizedServerUrl, env });
-  const activeServerId = settingsServerId || stableScopeServerId || urlHashServerId;
+  // Runtime identity follows the explicit stack scope. A matching settings profile is only a
+  // credential migration source; letting it become active also changes the CLI machine-id scope.
+  const activeServerId = stableScopeServerId || daemonLifecycleScopeId || urlHashServerId;
   const serverScopedPath = join(home, 'servers', activeServerId, 'access.key');
   const aliasServerIds = [
+    settingsServerId && settingsServerId !== activeServerId ? settingsServerId : null,
     daemonLifecycleScopeId && daemonLifecycleScopeId !== activeServerId ? daemonLifecycleScopeId : null,
-    stableScopeServerId && stableScopeServerId !== activeServerId ? stableScopeServerId : null,
     urlHashServerId && urlHashServerId !== activeServerId ? urlHashServerId : null,
     hostPortServerId && hostPortServerId !== activeServerId && hostPortServerId !== urlHashServerId ? hostPortServerId : null,
   ]

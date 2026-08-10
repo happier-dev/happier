@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { runNodeCapture } from './testkit/stack_script_command_testkit.mjs';
 import { createStackHappierCliCommandFixture } from './testkit/stack_happier_cli_command_testkit.mjs';
 import { createRuntimeSnapshotFixture } from './testkit/runtime_snapshot_testkit.mjs';
+import { buildStackStableScopeId } from './utils/auth/stable_scope_id.mjs';
 
 const scriptsDir = dirname(fileURLToPath(import.meta.url));
 const rootDir = dirname(scriptsDir);
@@ -218,7 +219,7 @@ test('hstack stack happier <name> seeds stack server profile in CLI settings for
   assert.equal(settings.servers[out.activeServerId].webappUrl, 'http://localhost:45123');
 });
 
-test('hstack stack happier <name> reuses an equivalent loopback profile id when seeding stack settings', async (t) => {
+test('hstack stack happier <name> migrates an equivalent loopback profile into the stable stack scope', async (t) => {
   const fixture = await createHappyStackFixture(t, {
     prefix: 'happier-stack-stack-happy-seed-loopback-',
     message: 'seed-loopback',
@@ -227,6 +228,8 @@ test('hstack stack happier <name> reuses an equivalent loopback profile id when 
       schemaVersion: 6,
       onboardingCompleted: true,
       activeServerId: 'stack-local',
+      machineIdByServerId: { 'stack-local': 'machine-stack-local' },
+      machineIdByServerIdByAccountId: { 'stack-local': { 'account-1': 'machine-stack-local-account-1' } },
       servers: {
         'stack-local': {
           id: 'stack-local',
@@ -251,9 +254,13 @@ test('hstack stack happier <name> reuses an equivalent loopback profile id when 
 
   const out = JSON.parse(res.stdout.trim());
   const settings = JSON.parse(await readFile(settingsPath, 'utf-8'));
-  assert.equal(out.activeServerId, 'stack-local');
-  assert.equal(settings.activeServerId, 'stack-local');
-  assert.equal(Object.keys(settings.servers).filter((id) => id === 'stack-local').length, 1);
+  const stableScopeId = buildStackStableScopeId({ stackName: fixture.stackName, cliIdentity: 'default' });
+  assert.equal(out.activeServerId, stableScopeId);
+  assert.equal(settings.activeServerId, stableScopeId);
+  assert.ok(settings.servers[stableScopeId]);
+  assert.ok(settings.servers['stack-local']);
+  assert.equal(settings.machineIdByServerId[stableScopeId], 'machine-stack-local');
+  assert.equal(settings.machineIdByServerIdByAccountId[stableScopeId]['account-1'], 'machine-stack-local-account-1');
 });
 
 test('hstack stack happier <name> uses stack.runtime.json ports when env file does not pin HAPPIER_STACK_SERVER_PORT', async (t) => {
@@ -314,13 +321,18 @@ test('hstack happier (HAPPIER_STACK_STACK set) uses stack.runtime.json ports whe
     runtimeServerPid: process.pid,
   });
 
+  const env = {
+    ...fixture.baseEnv,
+    HAPPIER_STACK_STACK: fixture.stackName,
+    HAPPIER_STACK_ENV_FILE: join(fixture.storageDir, fixture.stackName, 'env'),
+    HAPPIER_STACK_RUNTIME_MODE: 'source',
+  };
+  delete env.HAPPIER_STACK_SERVER_PORT_BASE;
+  delete env.HAPPIER_STACK_SERVER_PORT_RANGE;
+
   const res = await runNodeCapture([join(rootDir, 'bin', 'happier.mjs')], {
     cwd: rootDir,
-    env: {
-      ...fixture.baseEnv,
-      HAPPIER_STACK_STACK: fixture.stackName,
-      HAPPIER_STACK_ENV_FILE: join(fixture.storageDir, fixture.stackName, 'env'),
-    },
+    env,
   });
   assert.equal(res.code, 0, `expected exit 0, got ${res.code}\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
 
@@ -331,7 +343,7 @@ test('hstack happier (HAPPIER_STACK_STACK set) uses stack.runtime.json ports whe
   assert.equal(out.webappUrl, 'http://localhost:4888');
 });
 
-test('hstack happier prefers the matching stack server profile id over the stable scope id', async (t) => {
+test('hstack happier keeps the stable scope when another settings profile matches the stack URL', async (t) => {
   const fixture = await createHappyStackFixture(t, {
     prefix: 'happier-stack-explicit-stack-scope-',
     message: 'explicit-stack-scope',
@@ -357,6 +369,7 @@ test('hstack happier prefers the matching stack server profile id over the stabl
   const env = {
     ...fixture.baseEnv,
     HAPPIER_STACK_STACK: fixture.stackName,
+    HAPPIER_STACK_RUNTIME_MODE: 'source',
   };
   delete env.HAPPIER_STACK_ENV_FILE;
 
@@ -373,7 +386,10 @@ test('hstack happier prefers the matching stack server profile id over the stabl
   assert.equal(out.homeDir, join(fixture.storageDir, fixture.stackName, 'cli'));
   assert.equal(out.serverUrl, 'http://127.0.0.1:5123');
   assert.equal(out.webappUrl, 'http://localhost:5123');
-  assert.equal(out.activeServerId, 'stack-local');
+  assert.equal(
+    out.activeServerId,
+    buildStackStableScopeId({ stackName: fixture.stackName, cliIdentity: 'default' }),
+  );
 });
 
 test('hstack stack happier <name> --identity=<name> uses identity-scoped HAPPIER_HOME_DIR', async (t) => {

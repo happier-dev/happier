@@ -17,7 +17,6 @@ import {
   applyStackDaemonLifecycleScopeEnv,
   buildStackStableScopeId,
 } from './utils/auth/stable_scope_id.mjs';
-import { resolvePreferredStackServerIdFromCliSettings } from './utils/auth/credentials_paths.mjs';
 import { probeCliDistRuntimeImport, readCliDistIntegrity } from './utils/cli/cliDistIntegrity.mjs';
 import { resolveStackRuntimeLaunchContext } from './runtime/launch/resolveStackRuntimeLaunchContext.mjs';
 import {
@@ -225,7 +224,7 @@ function isIdentityScopedCliHomeDir(value) {
   return /(^|[\\/])cli-identities([\\/]|$)/.test(String(value ?? '').trim());
 }
 
-function bestEffortSeedStackServerProfileInCliSettings({ cliHomeDir, stackName, cliIdentity, internalServerUrl, publicServerUrl }) {
+function bestEffortReconcileStackServerProfileInCliSettings({ cliHomeDir, stackName, cliIdentity, internalServerUrl, publicServerUrl }) {
   const home = String(cliHomeDir ?? '').trim();
   if (!home) return;
   const serverUrl = normalizeServerUrl(internalServerUrl);
@@ -248,7 +247,7 @@ function bestEffortSeedStackServerProfileInCliSettings({ cliHomeDir, stackName, 
   const serversRaw = parsed.servers && typeof parsed.servers === 'object' ? parsed.servers : {};
   const servers = { ...serversRaw };
 
-  const matchingId = Object.entries(servers).find(([, profile]) => {
+  const matchingIds = Object.entries(servers).filter(([, profile]) => {
     const coerced = coerceServerProfileFromSettings(profile);
     if (!coerced) return false;
     const targetComparableKey = comparableServerUrl(serverUrl);
@@ -258,12 +257,19 @@ function bestEffortSeedStackServerProfileInCliSettings({ cliHomeDir, stackName, 
       || normalizeServerUrl(coerced.serverUrl) === serverUrl
       || normalizeServerUrl(coerced.localServerUrl) === serverUrl
     );
-  })?.[0] ?? '';
+  }).map(([id]) => id);
 
   const stableId = buildStackStableScopeId({ stackName, cliIdentity });
-  const targetId = matchingId || stableId;
+  const activeServerId = typeof parsed.activeServerId === 'string' ? parsed.activeServerId.trim() : '';
+  const sourceId = matchingIds.includes(activeServerId)
+    ? activeServerId
+    : matchingIds.length === 1
+      ? matchingIds[0]
+      : '';
+  const targetId = stableId;
 
-  const existing = servers[targetId] && typeof servers[targetId] === 'object' ? servers[targetId] : {};
+  const source = sourceId && servers[sourceId] && typeof servers[sourceId] === 'object' ? servers[sourceId] : {};
+  const existing = servers[targetId] && typeof servers[targetId] === 'object' ? servers[targetId] : source;
   const now = Date.now();
   const nextProfile = {
     ...existing,
@@ -277,16 +283,39 @@ function bestEffortSeedStackServerProfileInCliSettings({ cliHomeDir, stackName, 
     lastUsedAt: now,
   };
 
+  let nextSettings = { ...parsed, activeServerId: targetId, servers: { ...servers, [targetId]: nextProfile } };
+  let didMigrateServerScopedState = false;
+  if (sourceId && sourceId !== targetId) {
+    const migrateServerScopedEntry = (key) => {
+      const sourceMap = parsed[key];
+      if (!sourceMap || typeof sourceMap !== 'object' || !(sourceId in sourceMap)) return;
+      const targetMap = { ...sourceMap };
+      if (!(targetId in targetMap)) {
+        targetMap[targetId] = sourceMap[sourceId];
+        didMigrateServerScopedState = true;
+      }
+      nextSettings = { ...nextSettings, [key]: targetMap };
+    };
+    for (const key of [
+      'machineIdByServerId',
+      'machineIdByServerIdByAccountId',
+      'machineReplacementCandidatesByServerIdByAccountId',
+      'lastTokenSubByServerId',
+      'machineIdConfirmedByServerByServerId',
+      'lastChangesCursorByServerIdByAccountId',
+    ]) {
+      migrateServerScopedEntry(key);
+    }
+  }
+
   const shouldWrite =
     parsed.activeServerId !== targetId ||
     !servers[targetId] ||
     normalizeServerUrl(servers[targetId].serverUrl) !== serverUrl ||
-    normalizeServerUrl(servers[targetId].webappUrl) !== webappUrl;
+    normalizeServerUrl(servers[targetId].webappUrl) !== webappUrl ||
+    didMigrateServerScopedState;
 
   if (!shouldWrite) return;
-
-  servers[targetId] = nextProfile;
-  const nextSettings = { ...parsed, activeServerId: targetId, servers };
 
   try {
     writeFileSync(settingsPath, JSON.stringify(nextSettings, null, 2) + '\n', 'utf-8');
@@ -426,7 +455,7 @@ async function main() {
 
   if (isStackScopedInvocation && !prefixServerSelection.hasExplicitSelection) {
     const cliIdentity = (env.HAPPIER_STACK_CLI_IDENTITY ?? '').toString().trim() || 'default';
-    bestEffortSeedStackServerProfileInCliSettings({
+    bestEffortReconcileStackServerProfileInCliSettings({
       cliHomeDir,
       stackName,
       cliIdentity,
@@ -491,14 +520,6 @@ async function main() {
       stackName,
       cliIdentity: (env.HAPPIER_STACK_CLI_IDENTITY ?? '').toString().trim() || 'default',
     });
-    const settingsServerId = resolvePreferredStackServerIdFromCliSettings({
-      cliHomeDir,
-      serverUrl: internalServerUrl,
-      env,
-    });
-    if (settingsServerId) {
-      env.HAPPIER_ACTIVE_SERVER_ID = settingsServerId;
-    }
   }
 
   if (cliLaunchSpec?.nodeEntrypoint) {
