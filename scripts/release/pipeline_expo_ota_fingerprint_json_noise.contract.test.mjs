@@ -12,13 +12,14 @@ function writeExecutable(filePath, content) {
   fs.writeFileSync(filePath, content, { encoding: 'utf8', mode: 0o700 });
 }
 
-test('expo ota fingerprint generation captures large EAS JSON output without ENOBUFS', () => {
+test('expo ota fingerprint generation is local, credential-free, and captures large JSON output', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'happier-pipeline-eas-ota-large-fingerprint-json-'));
   const binDir = path.join(dir, 'bin');
   fs.mkdirSync(binDir, { recursive: true });
 
   const envLogPath = path.join(dir, 'env.log');
   const npxLogPath = path.join(dir, 'npx.log');
+  const yarnLogPath = path.join(dir, 'yarn.log');
   const fingerprintJsonPath = path.join(dir, 'fingerprint.json');
   fs.writeFileSync(
     fingerprintJsonPath,
@@ -40,6 +41,13 @@ test('expo ota fingerprint generation captures large EAS JSON output without ENO
     [
       '#!/usr/bin/env bash',
       'set -euo pipefail',
+      `echo "$*" >> ${JSON.stringify(yarnLogPath)}`,
+      'if [[ "$*" == *"fingerprint:generate"* ]]; then',
+      `  echo "EXPO_TOKEN=\${EXPO_TOKEN:-}" >> ${JSON.stringify(envLogPath)}`,
+      `  echo "HAPPIER_ANDROID_BUILD_ARCHS=\${HAPPIER_ANDROID_BUILD_ARCHS:-}" >> ${JSON.stringify(envLogPath)}`,
+      `  cat ${JSON.stringify(fingerprintJsonPath)}`,
+      '  exit 0',
+      'fi',
       'exit 0',
       '',
     ].join('\n'),
@@ -51,10 +59,6 @@ test('expo ota fingerprint generation captures large EAS JSON output without ENO
       '#!/usr/bin/env bash',
       'set -euo pipefail',
       `echo "$*" >> ${JSON.stringify(npxLogPath)}`,
-      'if [[ "$*" == *"fingerprint:generate"* ]]; then',
-      `  cat ${JSON.stringify(fingerprintJsonPath)}`,
-      '  exit 0',
-      'fi',
       'if [[ "$*" == *" update "* ]]; then',
       `  echo "HAPPIER_EXPO_RUNTIME_VERSION=${'${HAPPIER_EXPO_RUNTIME_VERSION:-}'}" >> ${JSON.stringify(envLogPath)}`,
       '  exit 0',
@@ -93,20 +97,25 @@ test('expo ota fingerprint generation captures large EAS JSON output without ENO
   );
 
   const npxLog = fs.readFileSync(npxLogPath, 'utf8');
+  const yarnLog = fs.readFileSync(yarnLogPath, 'utf8');
   const envLog = fs.readFileSync(envLogPath, 'utf8');
 
-  assert.match(npxLog, /fingerprint:generate/);
+  assert.match(yarnLog, /fingerprint fingerprint:generate --platform android/);
+  assert.doesNotMatch(npxLog, /fingerprint:generate/);
   assert.match(npxLog, /update --channel dev --platform android/);
+  assert.match(envLog, /^EXPO_TOKEN=$/m);
+  assert.match(envLog, /^HAPPIER_ANDROID_BUILD_ARCHS=arm64-v8a$/m);
   assert.match(envLog, new RegExp(`^HAPPIER_EXPO_RUNTIME_VERSION=${CANONICAL_EMPTY_FINGERPRINT_HASH}$`, 'm'));
 });
 
-test('expo ota fingerprint generation tolerates noisy pretty-printed EAS JSON output', () => {
+test('expo ota fingerprint generation accepts pretty-printed local fingerprint JSON', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'happier-pipeline-eas-ota-fingerprint-json-noise-'));
   const binDir = path.join(dir, 'bin');
   fs.mkdirSync(binDir, { recursive: true });
 
   const envLogPath = path.join(dir, 'env.log');
   const npxLogPath = path.join(dir, 'npx.log');
+  const yarnLogPath = path.join(dir, 'yarn.log');
 
   writeExecutable(
     path.join(binDir, 'git'),
@@ -118,6 +127,11 @@ test('expo ota fingerprint generation tolerates noisy pretty-printed EAS JSON ou
     [
       '#!/usr/bin/env bash',
       'set -euo pipefail',
+      `echo "$*" >> ${JSON.stringify(yarnLogPath)}`,
+      'if [[ "$*" == *"fingerprint:generate"* ]]; then',
+      `  printf '{\\n  "hash": "${CANONICAL_EMPTY_FINGERPRINT_HASH}",\\n  "sources": []\\n}\\n'`,
+      '  exit 0',
+      'fi',
       'exit 0',
       '',
     ].join('\n'),
@@ -129,11 +143,6 @@ test('expo ota fingerprint generation tolerates noisy pretty-printed EAS JSON ou
       '#!/usr/bin/env bash',
       'set -euo pipefail',
       `echo "$*" >> ${JSON.stringify(npxLogPath)}`,
-      'if [[ "$*" == *"fingerprint:generate"* ]]; then',
-      '  echo "Expo fingerprint cache hit"',
-      `  printf '{\\n  "hash": "${CANONICAL_EMPTY_FINGERPRINT_HASH}",\\n  "sources": []\\n}\\n'`,
-      '  exit 0',
-      'fi',
       'if [[ "$*" == *" update "* ]]; then',
       `  echo "HAPPIER_EXPO_RUNTIME_VERSION=${'${HAPPIER_EXPO_RUNTIME_VERSION:-}'}" >> ${JSON.stringify(envLogPath)}`,
       '  exit 0',
@@ -172,9 +181,11 @@ test('expo ota fingerprint generation tolerates noisy pretty-printed EAS JSON ou
   );
 
   const npxLog = fs.readFileSync(npxLogPath, 'utf8');
+  const yarnLog = fs.readFileSync(yarnLogPath, 'utf8');
   const envLog = fs.readFileSync(envLogPath, 'utf8');
 
-  assert.match(npxLog, /fingerprint:generate/);
+  assert.match(yarnLog, /fingerprint fingerprint:generate --platform android/);
+  assert.doesNotMatch(npxLog, /fingerprint:generate/);
   assert.match(npxLog, /update --channel dev --platform android/);
   assert.match(envLog, new RegExp(`^HAPPIER_EXPO_RUNTIME_VERSION=${CANONICAL_EMPTY_FINGERPRINT_HASH}$`, 'm'));
 });
