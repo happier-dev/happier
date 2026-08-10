@@ -3,7 +3,9 @@ export { lookupSha256 } from './checksums.js';
 export { resolveReleaseAssetBundle } from './assets.js';
 export {
   DEFAULT_ARCHIVE_EXTRACTION_LIMITS,
+  FIRST_PARTY_RELEASE_ARCHIVE_EXTRACTION_LIMITS,
   extractArchivePayloadToDirectory,
+  extractFirstPartyReleaseArchiveToDirectory,
 } from './archiveExtraction.js';
 export { downloadVerifiedReleaseAssetBundle } from './verifiedDownload.js';
 export { fetchGitHubLatestRelease, fetchGitHubReleaseByTag, fetchFirstGitHubReleaseByTags } from './github.js';

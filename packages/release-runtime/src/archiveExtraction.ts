@@ -36,6 +36,18 @@ export const DEFAULT_ARCHIVE_EXTRACTION_LIMITS: ArchiveExtractionLimits = Object
   timeoutMs: 120_000,
 });
 
+// Happier's checksum-verified release payloads intentionally include their bundled
+// runtime dependency trees. Keep generic/provider archives on the stricter default
+// while giving those first-party artifacts bounds calibrated from shipped payloads.
+export const FIRST_PARTY_RELEASE_ARCHIVE_EXTRACTION_LIMITS: ArchiveExtractionLimits = Object.freeze({
+  ...DEFAULT_ARCHIVE_EXTRACTION_LIMITS,
+  maxArchiveBytes: 1024 * 1024 * 1024,
+  maxEntries: 250_000,
+  maxFiles: 100_000,
+  maxExpandedBytes: 4 * 1024 * 1024 * 1024,
+  timeoutMs: 10 * 60_000,
+});
+
 type ArchiveEntryKind = 'directory' | 'file';
 type ArchiveBudgetEntryKind = ArchiveEntryKind | 'metadata';
 
@@ -1386,7 +1398,7 @@ async function extractZipArchiveToDirectory(params: Readonly<{
   }
 }
 
-export async function extractArchivePayloadToDirectory(params: Readonly<{
+export type ArchiveExtractionParams = Readonly<{
   allowedEntryRoots?: readonly string[];
   archivePath: string;
   archiveName: string;
@@ -1394,7 +1406,23 @@ export async function extractArchivePayloadToDirectory(params: Readonly<{
   limits?: Partial<ArchiveExtractionLimits>;
   signal?: AbortSignal;
   tarLinkPolicy?: TarLinkPolicy;
-}>): Promise<void> {
+}>;
+
+export async function extractFirstPartyReleaseArchiveToDirectory(
+  params: ArchiveExtractionParams,
+): Promise<void> {
+  await extractArchivePayloadToDirectory({
+    ...params,
+    limits: {
+      ...FIRST_PARTY_RELEASE_ARCHIVE_EXTRACTION_LIMITS,
+      ...params.limits,
+    },
+  });
+}
+
+export async function extractArchivePayloadToDirectory(
+  params: ArchiveExtractionParams,
+): Promise<void> {
   const archiveName = params.archiveName.toLowerCase();
   const archiveType = archiveName.endsWith('.zip')
     ? 'zip'

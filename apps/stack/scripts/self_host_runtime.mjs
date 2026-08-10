@@ -55,7 +55,7 @@ import {
 } from '@happier-dev/release-runtime/releaseRings';
 import { resolveReleaseAssetBundle } from '@happier-dev/release-runtime/assets';
 import { downloadVerifiedReleaseAssetBundle } from '@happier-dev/release-runtime/verifiedDownload';
-import { extractArchivePayloadToDirectory } from '@happier-dev/release-runtime/archiveExtraction';
+import { extractFirstPartyReleaseArchiveToDirectory } from '@happier-dev/release-runtime/archiveExtraction';
 import { fetchFirstGitHubReleaseByTags, fetchGitHubReleaseByTag } from '@happier-dev/release-runtime/github';
 import { findExtractedExecutableByName } from './self_host/findExtractedExecutableByName.mjs';
 import { maybeInstallCompanionCli } from './self_host/install_companion_cli.mjs';
@@ -1514,7 +1514,7 @@ export async function installSelfHostBinaryFromBundle({
 
     const extractDir = join(tempDir, 'extract');
     await mkdir(extractDir, { recursive: true });
-    await extractArchivePayloadToDirectory({
+    await extractFirstPartyReleaseArchiveToDirectory({
       archiveName: downloaded.archiveName,
       archivePath: downloaded.archivePath,
       extractDir,

@@ -61,6 +61,32 @@ test('node archive owner creates and extracts one portable payload tree', async 
   }
 });
 
+test('node archive extraction accepts first-party release payloads beyond generic entry limits', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'happier-node-archive-first-party-scale-'));
+  try {
+    const archive = path.join(root, 'payload.tar.gz');
+    const extracted = path.join(root, 'extracted');
+    const metadataEntryCount = 20_001;
+    await writeFile(archive, createTarGzip([
+      ...Array.from(
+        { length: metadataEntryCount },
+        (_, index) => ({
+          name: `GlobalHead.${String(index).padStart(5, '0')}`,
+          type: 'g',
+          contents: '13 comment=x\n',
+        }),
+      ),
+      { name: 'payload/file', contents: 'payload-bytes' },
+    ]));
+
+    await extractNodeArchive({ archivePath: archive, extractDir: extracted });
+
+    assert.equal(await readFile(path.join(extracted, 'payload', 'file'), 'utf8'), 'payload-bytes');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('node archive extraction rejects links before materializing hostile payloads', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'happier-node-archive-link-'));
   try {
