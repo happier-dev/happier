@@ -617,18 +617,24 @@ vi.mock('@/components/sessions/new/hooks/useNewSessionWizardProps', () => ({
     useNewSessionWizardProps: (params: any) => {
         React.useMemo(() => null, []);
         return {
-            layout: {},
             profiles: {
                 selectedProfileId: params.selectedProfileId,
                 onPressProfile: params.onPressProfile,
                 getProfileDisabled: params.getProfileDisabled,
             },
-            agent: {
-                agentType: params.agentType,
-                agentLabel: params.agentLabel,
-            },
-            machine: {},
-            footer: {},
+            // Mirrors the real hook: the wizard-only sections exist only when the wizard is the
+            // rendered variant.
+            wizardSections: params.enabled
+                ? {
+                    layout: {},
+                    agent: {
+                        agentType: params.agentType,
+                        agentLabel: params.agentLabel,
+                    },
+                    machine: {},
+                    footer: {},
+                }
+                : null,
         };
     },
 }));

@@ -745,7 +745,6 @@ vi.mock('@/components/sessions/new/hooks/useCreateNewSession', () => ({
 vi.mock('@/components/sessions/new/hooks/useNewSessionWizardProps', () => ({
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     useNewSessionWizardProps: (params: any) => ({
-        layout: {},
         profiles: {
             selectedProfileId: params.selectedProfileId,
             getProfileSubtitleExtra: params.getProfileSubtitleExtra,
@@ -755,9 +754,15 @@ vi.mock('@/components/sessions/new/hooks/useNewSessionWizardProps', () => ({
             openProfileEdit: params.openProfileEdit,
             handleDuplicateProfile: params.handleDuplicateProfile,
         },
-        agent: {},
-        machine: {},
-        footer: {},
+        // Mirrors the real hook: wizard-only sections exist only for the wizard variant.
+        wizardSections: params.enabled
+            ? {
+                layout: {},
+                agent: {},
+                machine: {},
+                footer: {},
+            }
+            : null,
     }),
 }));
 
