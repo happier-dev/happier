@@ -1022,18 +1022,31 @@ function LegendListTranscriptRendererInner<TItem>(
         legendListRef.current?.cancelInitialScrollPreservation();
     }, []);
 
+    // IDENTITY AMPLIFICATION — the two resolvers below are the root of the held-intent callback
+    // chain (`readHeldIntentLanding`/`writeHeldIntentResidual` -> `requestHeldIntentSettle` -> the
+    // dataset layout effect). Taking `props.keyExtractor` as a DEPENDENCY made a caller that
+    // renders an inline arrow re-open a full LEGEND_HELD_INTENT_SETTLE_MS window of per-frame
+    // polling on every commit — 94 `requestAnimationFrame` calls for a commit that changed nothing
+    // (`legendIdleFrameCost.fabric.native.real.integration.test.tsx`). Both resolvers run only from
+    // post-commit paths (frames, layout/scroll callbacks, imperative commands), so the COMMITTED
+    // value is the correct one to read and the renderer stops converting caller prop-identity
+    // churn into scroll-corrector work. Data-driven invalidation is unchanged: `data`,
+    // `dataLength` and `projectChronologicalIndex` remain dependencies.
+    const keyExtractorRef = React.useRef(props.keyExtractor);
+    useCommittedTranscriptRef(keyExtractorRef, props.keyExtractor);
+
     const resolveHeldIntentIndex = React.useCallback((intent: Extract<LegendHeldScrollIntent, { kind: 'index' }>): number => {
         const currentIndex = data.findIndex((item, index) => (
-            props.keyExtractor(item, toSourceIndex(index, dataLength, projectChronologicalIndex)) === intent.key
+            keyExtractorRef.current(item, toSourceIndex(index, dataLength, projectChronologicalIndex)) === intent.key
         ));
         return currentIndex >= 0 ? currentIndex : intent.fallbackIndex;
-    }, [data, dataLength, projectChronologicalIndex, props.keyExtractor]);
+    }, [data, dataLength, projectChronologicalIndex]);
 
     const resolveAnchorHoldDataIndex = React.useCallback((itemId: string): number => {
         return data.findIndex((item, index) => (
-            props.keyExtractor(item, toSourceIndex(index, dataLength, projectChronologicalIndex)) === itemId
+            keyExtractorRef.current(item, toSourceIndex(index, dataLength, projectChronologicalIndex)) === itemId
         ));
-    }, [data, dataLength, projectChronologicalIndex, props.keyExtractor]);
+    }, [data, dataLength, projectChronologicalIndex]);
 
     const requestWebHeldEndMaterialization = React.useCallback((intent: LegendHeldScrollIntent): boolean => {
         if (!isWebFrame || intent.kind !== 'end' || dataLength === 0) return false;
@@ -2948,6 +2961,23 @@ function LegendListTranscriptRendererInner<TItem>(
             <LayoutCommitObserver
                 onCommitLayoutEffect={() => {
                     invalidateNativePhysicalViewportCapture();
+                    // IDLE FRAME COST, MEASURED AND DELIBERATELY LEFT — this observer is a
+                    // `useLayoutEffect` with no dependency array
+                    // (`@shopify/flash-list/.../LayoutCommitObserver.js`), so it fires on EVERY
+                    // commit of this subtree, including one that changed no row, no size and no
+                    // layout. The `end` hold is durable by design (`finishHeldIntentSettle` closes
+                    // the window, never the intent), so this settle request re-opens a full
+                    // LEGEND_HELD_INTENT_SETTLE_MS window of per-frame polling for every such
+                    // commit: 94 `requestAnimationFrame` calls, against 0 at true rest
+                    // (`legendIdleFrameCost.fabric.native.real.integration.test.tsx`).
+                    //
+                    // Gating it on a moved content height was tried and reverted: an open settle
+                    // window is ALSO the fact `handleLegendScroll` reads (`heldIntentSettleInFlight`)
+                    // to tell a renderer/layout offset rollback from a reader detach, so closing
+                    // these windows made a bare touch plus content growth release the tail hold
+                    // ('does not let a bare native touch reuse recent drag evidence for a later
+                    // layout detach', legendListRenderer.test.tsx). Cheapening this poll requires
+                    // giving that classifier its own liveness fact first; it is not a free change.
                     emitSynthesizedContentSize();
                     requestHeldIntentSettle();
                     props.onCommitLayoutEffect?.();
