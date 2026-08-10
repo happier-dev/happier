@@ -92,6 +92,57 @@ describe('useSessionReferenceTarget', () => {
         }
     });
 
+    /**
+     * The renderable map is NOT a superset of `sessions`. `replaceSessionListRenderables`
+     * evicts every previously-known row inside the refreshed page's activity range that the
+     * page omitted, and it does not touch `sessions` — so a session the viewer has hydrated
+     * survives in `sessions` after its renderable is gone. Archiving reaches exactly that
+     * state: `/v2/sessions` filters `archivedAt: null` server-side
+     * (`registerSessionListingRoutes.ts`), so the next list refresh omits the row while the
+     * session stays openable at its route. Presence must not read as "gone" there.
+     */
+    it('reports a hydrated session the refreshed list page no longer covers as present', async () => {
+        const previousState = storage.getState();
+        try {
+            const metadata = { name: 'Archived QA session', path: '/Users/dev/projects/app' };
+            storage.setState((state) => ({
+                ...state,
+                sessions: {
+                    archived: {
+                        id: 'archived',
+                        seq: 1,
+                        createdAt: 1,
+                        updatedAt: 2_000,
+                        active: false,
+                        activeAt: 1,
+                        metadataVersion: 1,
+                        agentStateVersion: 1,
+                        metadata,
+                        agentState: null,
+                        thinking: false,
+                        thinkingAt: 0,
+                        presence: 1,
+                        archivedAt: 2_000,
+                    },
+                } as unknown as typeof state.sessions,
+                sessionListRenderables: {},
+                sessionListViewDataByServerId: {},
+            }));
+
+            const hook = await renderHook(() => useSessionReferenceTarget('archived'), {
+                flushOptions: { cycles: 1, turns: 4 },
+            });
+
+            expect(storage.getState().sessionListRenderables.archived).toBeUndefined();
+            expect(hook.getCurrent().present).toBe(true);
+            expect(hook.getCurrent().metadata).toBe(metadata);
+
+            await hook.unmount();
+        } finally {
+            storage.setState(previousState);
+        }
+    });
+
     it('reports a session this viewer no longer has as absent', async () => {
         const previousState = storage.getState();
         try {
