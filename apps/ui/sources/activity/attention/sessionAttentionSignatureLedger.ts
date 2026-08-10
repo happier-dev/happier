@@ -265,6 +265,13 @@ export function createSessionRuntimeFreshnessLedger(): SessionRuntimeFreshnessLe
                     ?? readNumber(session.pendingRequestObservedAt)
                     ?? transcriptPendingRequestObservedAt;
                 const probe = probeFreshness([
+                    // `activeAt` is one of the in-progress runtime signals
+                    // `deriveSessionRuntimePresentationState` reads, so its
+                    // freshness boundary belongs here too: a session that stops
+                    // heartbeating changes no store value, and without this
+                    // boundary its attention would stay latched at the value it
+                    // held while it was still live.
+                    session.activeAt,
                     session.thinkingAt,
                     session.latestTurnStatusObservedAt,
                     session.meaningfulActivityAt,
@@ -351,6 +358,7 @@ export function createRenderableRuntimeFreshnessLedger(): RenderableRuntimeFresh
                     continue;
                 }
                 const probe = probeFreshness([
+                    renderable.activeAt,
                     renderable.thinkingAt,
                     renderable.latestTurnStatusObservedAt,
                     renderable.meaningfulActivityAt,
