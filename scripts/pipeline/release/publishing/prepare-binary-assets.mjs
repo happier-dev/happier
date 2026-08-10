@@ -8,6 +8,7 @@ import { parseArgs } from 'node:util';
 
 import { normalizePublicReleaseChannel } from '../lib/public-release-rings.mjs';
 import { parseArtifactFilename } from '../lib/manifests.mjs';
+import { writeChecksumsFile } from '../lib/release-files.mjs';
 import { resolveArtifactVerifyExecution, resolveArtifactVerifyTarget } from './artifact-verify-target.mjs';
 import { getBinaryPublishProductSpec } from './product-specs.mjs';
 import { finalizeServerRuntimeCandidate } from './server-runtime-candidate.mjs';
@@ -94,17 +95,9 @@ export async function finalizePreparedBinaryArtifacts(params) {
   const version = String(params.version ?? '').trim();
   if (!version) throw new Error('prepared binary artifacts require a version');
 
-  let targets = params.targets;
-  let writeChecksums = params.writeChecksums;
-  let signFile = params.signFile;
-  if (!targets || !writeChecksums || !signFile) {
-    const binaryRelease = await import('../lib/binary-release.mjs');
-    targets ??= params.productSpec.id === 'server'
-      ? binaryRelease.SERVER_TARGETS
-      : binaryRelease.CLI_STACK_TARGETS;
-    writeChecksums ??= binaryRelease.writeChecksumsFile;
-    signFile ??= binaryRelease.maybeSignFile;
-  }
+  const targets = params.targets ?? params.productSpec.artifactTargets;
+  const writeChecksums = params.writeChecksums ?? writeChecksumsFile;
+  const signFile = params.signFile ?? maybeSignFile;
 
   const expectedArtifacts = targets.map((target) => ({
     ...target,

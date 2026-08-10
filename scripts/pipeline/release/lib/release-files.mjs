@@ -1,7 +1,8 @@
 // @ts-check
 
 import { createHash } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 
 export async function fileSha256(path) {
@@ -20,4 +21,15 @@ export async function fileSha256(path) {
     }
   }
   // unreachable: loop always returns or throws
+}
+
+export async function writeChecksumsFile({ product, version, artifacts, outDir }) {
+  const checksumsPath = join(outDir, `checksums-${product}-v${version}.txt`);
+  const lines = [];
+  for (const artifact of artifacts) {
+    const hash = await fileSha256(artifact.path);
+    lines.push(`${hash}  ${artifact.name}`);
+  }
+  await writeFile(checksumsPath, `${lines.join('\n')}\n`, 'utf-8');
+  return checksumsPath;
 }

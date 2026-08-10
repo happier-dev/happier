@@ -133,6 +133,9 @@ test('authorized server finalizer control scripts load without installed workspa
       "  if (specifier.startsWith('@happier-dev/')) {",
       "    throw new Error(`workspace dependency imported in credentialed finalizer: ${specifier}`);",
       "  }",
+      "  if (specifier.includes('ensureCliCommonDistModule.mjs')) {",
+      "    throw new Error(`build-only CLI Common loader imported in credentialed finalizer: ${specifier}`);",
+      "  }",
       "  return nextResolve(specifier, context);",
       "}",
       '',
@@ -167,12 +170,77 @@ test('authorized server finalizer control scripts load without installed workspa
       const output = `${result.stdout ?? ''}\n${result.stderr ?? ''}`;
       assert.doesNotMatch(
         output,
-        /workspace dependency imported in credentialed finalizer/,
+        /(workspace dependency|build-only CLI Common loader) imported in credentialed finalizer/,
         `${script.path} imported a workspace package before the finalizer could validate trusted artifacts`,
       );
-      assert.notEqual(result.status, 0, `${script.path} unexpectedly completed without its required inputs`);
-      assert.match(output, script.expectedFailure);
+      if (script.expectedFailure) {
+        assert.notEqual(result.status, 0, `${script.path} unexpectedly completed without its required inputs`);
+        assert.match(output, script.expectedFailure);
+      } else {
+        assert.equal(result.status, 0, output);
+      }
     }
+  } finally {
+    rmSync(fixtureDir, { recursive: true, force: true });
+  }
+});
+
+test('authorized prepared-artifact finalization does not load build-only CLI Common code', () => {
+  const fixtureDir = mkdtempSync(join(tmpdir(), 'happier-server-finalizer-matrix-'));
+  const artifactsDir = join(fixtureDir, 'artifacts');
+  const loaderPath = join(fixtureDir, 'reject-build-dependencies.mjs');
+  const runnerPath = join(fixtureDir, 'run-finalizer.mjs');
+  const version = '0.2.10-dev.53';
+  fs.mkdirSync(artifactsDir);
+  for (const [os, arch] of [
+    ['linux', 'x64'],
+    ['linux', 'arm64'],
+    ['darwin', 'x64'],
+    ['darwin', 'arm64'],
+    ['windows', 'x64'],
+  ]) {
+    writeFileSync(join(artifactsDir, `happier-server-v${version}-${os}-${arch}.tar.gz`), `${os}-${arch}\n`);
+  }
+  writeFileSync(join(artifactsDir, 'darwin-arm64.server.json'), '{}\n');
+  writeFileSync(join(artifactsDir, 'darwin-x64.server.json'), '{}\n');
+  writeFileSync(
+    loaderPath,
+    [
+      "export async function resolve(specifier, context, nextResolve) {",
+      "  if (specifier.startsWith('@happier-dev/')) {",
+      "    throw new Error(`workspace dependency imported in credentialed finalizer: ${specifier}`);",
+      "  }",
+      "  if (specifier.includes('ensureCliCommonDistModule.mjs')) {",
+      "    throw new Error(`build-only CLI Common loader imported in credentialed finalizer: ${specifier}`);",
+      "  }",
+      "  return nextResolve(specifier, context);",
+      "}",
+      '',
+    ].join('\n'),
+  );
+  writeFileSync(
+    runnerPath,
+    [
+      `import { finalizePreparedBinaryArtifacts } from ${JSON.stringify(new URL('../pipeline/release/publishing/prepare-binary-assets.mjs', import.meta.url).href)};`,
+      `import { getBinaryPublishProductSpec } from ${JSON.stringify(new URL('../pipeline/release/publishing/product-specs.mjs', import.meta.url).href)};`,
+      'await finalizePreparedBinaryArtifacts({',
+      `  artifactsDir: ${JSON.stringify(artifactsDir)},`,
+      "  productSpec: getBinaryPublishProductSpec('server'),",
+      "  channel: 'dev',",
+      `  version: ${JSON.stringify(version)},`,
+      "  signFile: async ({ path }) => `${path}.minisig`,",
+      '});',
+      '',
+    ].join('\n'),
+  );
+
+  try {
+    const result = spawnSync(
+      process.execPath,
+      ['--experimental-loader', loaderPath, runnerPath],
+      { cwd: repoRoot, env: process.env, encoding: 'utf8' },
+    );
+    assert.equal(result.status, 0, result.stderr || result.stdout);
   } finally {
     rmSync(fixtureDir, { recursive: true, force: true });
   }
