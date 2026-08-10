@@ -32,8 +32,9 @@ const PRESERVED_CODESIGN_METADATA = [
 ].join(',');
 const DEFAULT_CODESIGN_ATTEMPTS = 4;
 const DEFAULT_CODESIGN_RETRY_DELAY_MS = 15_000;
-const DEFAULT_GATEKEEPER_ATTEMPTS = 5;
+const DEFAULT_GATEKEEPER_ATTEMPTS = 10;
 const DEFAULT_GATEKEEPER_RETRY_DELAY_MS = 15_000;
+const DEFAULT_GATEKEEPER_MAX_RETRY_DELAY_MS = 120_000;
 
 function isDeveloperIdApplicationSigningSelector(value) {
   const selector = String(value ?? '').trim();
@@ -362,6 +363,7 @@ export function runGatekeeperAssessment(
   {
     attempts = DEFAULT_GATEKEEPER_ATTEMPTS,
     retryDelayMs = DEFAULT_GATEKEEPER_RETRY_DELAY_MS,
+    maxRetryDelayMs = DEFAULT_GATEKEEPER_MAX_RETRY_DELAY_MS,
     runCommand = run,
     sleep = sleepSync,
     logger = console,
@@ -385,7 +387,7 @@ export function runGatekeeperAssessment(
         throw error;
       }
       const nextAttempt = attempt + 1;
-      const delayMs = retryDelayMs * (2 ** (attempt - 1));
+      const delayMs = Math.min(retryDelayMs * (2 ** (attempt - 1)), maxRetryDelayMs);
       logger.warn?.(
         `[release] accepted notarization ticket is not visible to Gatekeeper yet; `
         + `retrying spctl (${nextAttempt}/${attempts})`,

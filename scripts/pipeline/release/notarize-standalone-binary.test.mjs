@@ -231,6 +231,29 @@ test('Gatekeeper assessment retries only transient online-ticket propagation fai
   );
 });
 
+test('Gatekeeper assessment keeps a bounded fifteen-minute window for accepted ticket propagation', () => {
+  const command = ['spctl', ['--assess', '--type', 'execute', '/tmp/happier']];
+  const retryDelays = [];
+  let attempts = 0;
+  const ticketPropagationError = new Error('spctl rejected the payload');
+  ticketPropagationError.stderr = 'source=Unnotarized Developer ID\n';
+
+  assert.equal(
+    runGatekeeperAssessment(command, {
+      runCommand: () => {
+        attempts += 1;
+        if (attempts < 10) throw ticketPropagationError;
+      },
+      sleep: (delayMs) => retryDelays.push(delayMs),
+      logger: { warn: () => {} },
+    }),
+    true,
+  );
+  assert.equal(attempts, 10);
+  assert.deepEqual(retryDelays, [15_000, 30_000, 60_000, 120_000, 120_000, 120_000, 120_000, 120_000, 120_000]);
+  assert.equal(retryDelays.reduce((total, delayMs) => total + delayMs, 0), 13 * 60_000 + 45_000);
+});
+
 test('codesign retries only Apple timestamp service availability failures', () => {
   const command = ['codesign', ['--timestamp', '/tmp/happier']];
   const retryDelays = [];
