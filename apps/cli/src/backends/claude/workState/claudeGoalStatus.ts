@@ -409,7 +409,7 @@ export function createClaudeGoalStatusWorkStateTracker(params: Readonly<{
       // provider's authoritative totals — which WIN, already mapped onto the item — and a genuinely
       // new/changed active goal starts its own run. resetUsageAccumulator() below runs after the
       // no-change early return so unchanged re-derivations do not drop an in-progress accumulator.)
-      const signature = `${item.status} ${item.title} ${item.vendorRef ?? ''}`;
+      const signature = `${item.status}\u0000${item.title}\u0000${item.vendorRef ?? ''}`;
       if (signature === latestItemSignature) return null;
       latestItemSignature = signature;
       // The per-run accumulator restarts on any goal-state change. A terminal goal_status ends the
