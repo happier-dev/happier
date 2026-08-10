@@ -102,6 +102,48 @@ describe('StatusPill', () => {
         expect(flat.letterSpacing).toBe(0);
     });
 
+    it('paints a pill-chrome label with the on-tint ink while the dot keeps the glyph foreground', async () => {
+        const { StatusPill } = await import('./StatusPill');
+        const { lightTheme } = await import('@/theme');
+        const state = lightTheme.colors.state.success;
+
+        const screen = await renderScreen(<StatusPill variant="success" label="Online" testID="status-on-tint" />);
+        const label = flattenStyle(screen.findByTestId('status-on-tint:label')?.props.style);
+        const dot = flattenStyle(screen.findByTestId('status-on-tint:dot')?.props.style);
+
+        // Guard the assertion below against a theme where the two roles happen to coincide.
+        expect(state.onTint).not.toBe(state.foreground);
+        expect(label.color).toBe(state.onTint);
+        expect(dot.backgroundColor).toBe(state.foreground);
+    });
+
+    it('keeps the glyph foreground for plain chrome, where no tint sits behind the label', async () => {
+        const { StatusPill } = await import('./StatusPill');
+        const { lightTheme } = await import('@/theme');
+        const state = lightTheme.colors.state.success;
+
+        const screen = await renderScreen(
+            <StatusPill variant="success" label="online" chrome="plain" testID="status-plain" />,
+        );
+        const label = flattenStyle(screen.findByTestId('status-plain:label')?.props.style);
+
+        expect(state.onTint).not.toBe(state.foreground);
+        expect(label.color).toBe(state.foreground);
+    });
+
+    it('lets an explicit foreground color override both ink roles', async () => {
+        const { StatusPill } = await import('./StatusPill');
+
+        const screen = await renderScreen(
+            <StatusPill variant="success" label="Online" foregroundColor="#123456" testID="status-override" />,
+        );
+        const label = flattenStyle(screen.findByTestId('status-override:label')?.props.style);
+        const dot = flattenStyle(screen.findByTestId('status-override:dot')?.props.style);
+
+        expect(label.color).toBe('#123456');
+        expect(dot.backgroundColor).toBe('#123456');
+    });
+
     it('replaces the dot with a leading element and truncates constrained labels', async () => {
         const { StatusPill } = await import('./StatusPill');
 
