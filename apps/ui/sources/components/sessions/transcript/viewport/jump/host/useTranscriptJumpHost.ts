@@ -23,6 +23,7 @@ import type {
     PendingJumpSeqViewportPromotion,
     PromotedJumpSeqViewportProtection,
     ChatTranscriptListItem,
+    TranscriptForkMessageMetadataById,
     TranscriptViewportChangeState,
 } from '@/components/sessions/transcript/chatListTypes';
 import {
@@ -107,7 +108,30 @@ type ExplicitJumpTakeoverEffects = ReturnType<TranscriptLifecycleHost['planExpli
 const TRANSCRIPT_WEB_NON_PROGRAMMATIC_SCROLL_SUSTAIN_FRAMES = 2;
 const TRANSCRIPT_SCROLL_JUMP_TO_BOTTOM_REVEAL_VIEWPORT_RATIO_MAX = 4;
 
+/**
+ * `seq` numbers a position within ONE session. A forked transcript renders a concatenation of
+ * segments — read-only ancestor context above this session's own rows — and each segment counts
+ * from its own origin, so two rows in the same list can carry the same seq while sitting hours
+ * apart, and an ancestor's numbering can run far above or below this one (observed live:
+ * ancestor max seq 417_565 against a fork's 15_038).
+ *
+ * The target window is a seq RANGE over this session's history, so membership of that range is
+ * only meaningful for rows this session numbered. Rows carried in from an ancestor are simply
+ * not on this axis, and saying so here is what lets every other consumer — window slicing, gap
+ * detection, loaded-range checks — treat a fork exactly like an ordinary transcript.
+ */
+function isMessageOnSessionSeqAxis(
+    messageId: string,
+    sessionId: string,
+    forkMessageMetadataById: TranscriptForkMessageMetadataById | null | undefined,
+): boolean {
+    if (!forkMessageMetadataById) return true;
+    const originSessionId = forkMessageMetadataById[messageId]?.originSessionId;
+    return originSessionId === undefined || originSessionId === sessionId;
+}
+
 export function useTranscriptJumpWindowFacts(params: Readonly<{
+    forkMessageMetadataById?: TranscriptForkMessageMetadataById | null;
     getMessageById(messageId: string): Message | null | undefined;
     messagesById: Readonly<Record<string, Message>>;
     sessionId: string;
@@ -117,15 +141,20 @@ export function useTranscriptJumpWindowFacts(params: Readonly<{
     resolveTargetWindowItemSeq(item: ChatTranscriptListItem): number | null;
     sessionTargetWindowState: ReturnType<typeof sync.getSessionTargetWindowState>;
 }> {
+    const forkMessageMetadataById = params.forkMessageMetadataById ?? null;
+    const sessionId = params.sessionId;
     const resolveTargetWindowItemSeq = React.useCallback((item: ChatTranscriptListItem): number | null => {
+        const descriptor = forkMessageMetadataById ? resolveTranscriptViewportAnchorDescriptor(item) : null;
+        if (descriptor?.messageId && !isMessageOnSessionSeqAxis(descriptor.messageId, sessionId, forkMessageMetadataById)) {
+            return null;
+        }
         const directSeq = (item as { seq?: unknown }).seq;
         if (typeof directSeq === 'number' && Number.isFinite(directSeq)) return Math.trunc(directSeq);
-        const descriptor = resolveTranscriptViewportAnchorDescriptor(item);
-        const messageId = descriptor?.messageId;
+        const messageId = (descriptor ?? resolveTranscriptViewportAnchorDescriptor(item))?.messageId;
         if (!messageId) return null;
         const seq = params.getMessageById(messageId)?.seq;
         return typeof seq === 'number' && Number.isFinite(seq) ? Math.trunc(seq) : null;
-    }, [params.getMessageById]);
+    }, [forkMessageMetadataById, params.getMessageById, sessionId]);
     const subscribeSessionTargetWindowState = React.useCallback(
         (listener: () => void) => sync.subscribeSessionTargetWindowState(params.sessionId, listener),
         [params.sessionId],
@@ -141,12 +170,16 @@ export function useTranscriptJumpWindowFacts(params: Readonly<{
     );
     const loadedTranscriptSeqSet = React.useMemo(() => {
         const seqs = new Set<number>();
-        for (const message of Object.values(params.messagesById)) {
+        for (const [messageId, message] of Object.entries(params.messagesById)) {
+            // An ancestor row's seq is a position in the ancestor's history. Admitting it here
+            // would claim this session has loaded a seq it may never own, which is exactly the
+            // claim gap detection and range checks act on.
+            if (!isMessageOnSessionSeqAxis(messageId, sessionId, forkMessageMetadataById)) continue;
             const seq = (message as { seq?: unknown } | undefined)?.seq;
             if (typeof seq === 'number' && Number.isFinite(seq)) seqs.add(Math.trunc(seq));
         }
         return seqs;
-    }, [params.messagesById]);
+    }, [forkMessageMetadataById, params.messagesById, sessionId]);
     const isSeqLoaded = React.useCallback((seq: number): boolean => {
         if (loadedTranscriptSeqSet.has(seq)) return true;
         return sessionTargetWindowState.isWindowMode
@@ -1069,7 +1102,13 @@ export function useTranscriptJumpHost(deps: TranscriptJumpHostDeps): TranscriptJ
         try {
             const result = await executeTranscriptTargetWindowJump({
                 align: options?.align,
-                canRenderTargetWindow: options?.preferTargetWindow === true && !forkedTranscriptEnabled,
+                // A forked transcript is not a lesser transcript: its own segment is an
+                // ordinary session numbered in an ordinary seq range, and the window loader
+                // is session-and-seq scoped, so it can serve one exactly as it serves any
+                // other. What a fork does change is that the RENDERED item list concatenates
+                // segments from several sessions — so the window's seq axis is defined by
+                // `resolveTargetWindowItemSeq`, which places only this session's rows on it.
+                canRenderTargetWindow: options?.preferTargetWindow === true,
                 forceTargetWindow: options?.preferTargetWindow === true,
                 isCurrentOperation,
                 isTargetAligned: platformOS === 'web'

@@ -194,6 +194,7 @@ export function useTranscriptItemsPipeline(deps: TranscriptItemsPipelineDeps) {
     ]);
 
     const jumpWindowFacts = useTranscriptJumpWindowFacts({
+        forkMessageMetadataById,
         getMessageById: getTurnMessageById,
         messagesById,
         sessionId,
