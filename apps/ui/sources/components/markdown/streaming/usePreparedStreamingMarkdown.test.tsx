@@ -193,6 +193,88 @@ describe('usePreparedStreamingMarkdown', () => {
         expect(hook.getCurrent()).toBe(belowPrepared);
     });
 
+    it('keeps the streamed tail when streaming resumes after a settle interlude', async () => {
+        vi.useFakeTimers();
+        const { usePreparedStreamingMarkdown } = await import('./usePreparedStreamingMarkdown');
+        // A message that streamed past the async threshold, then settled into the static
+        // render path (upstream paused), then resumed. The pre-threshold sync repair is an
+        // ancestor of the current markdown but is thousands of characters behind it.
+        const belowThreshold = 'x'.repeat(STREAMING_MARKDOWN_ASYNC_REPAIR_MIN_CHARS - 32);
+        const tail = ` TAIL-TOKEN ${'y'.repeat(240)}`;
+        const aboveThreshold = `${belowThreshold}${tail}`;
+        const repairedAboveThreshold = `${aboveThreshold}**`;
+
+        const hook = await renderHook(
+            ({ markdown, mode }) => usePreparedStreamingMarkdown({ markdown, mode }),
+            { initialProps: { markdown: belowThreshold, mode: 'streaming' as 'streaming' | 'static' } },
+        );
+
+        expect(hook.getCurrent()).toBe(belowThreshold);
+
+        await hook.rerender({ markdown: aboveThreshold, mode: 'streaming' });
+        await flushHookEffects({
+            cycles: 1,
+            turns: 1,
+            advanceTimersMs: STREAMING_MARKDOWN_ASYNC_REPAIR_DEBOUNCE_MS,
+        });
+        repairState.pending[0]?.resolve(repairedAboveThreshold);
+        await flushHookEffects();
+
+        expect(hook.getCurrent()).toBe(repairedAboveThreshold);
+
+        // The stream settles: the caller swaps to the static render path.
+        await hook.rerender({ markdown: aboveThreshold, mode: 'static' });
+        await flushHookEffects();
+        expect(hook.getCurrent()).toBe(aboveThreshold);
+
+        // Upstream resumes with the same text. Nothing about the document changed, so the
+        // rendered markdown must not lose text that is already on screen.
+        await hook.rerender({ markdown: aboveThreshold, mode: 'streaming' });
+
+        expect(hook.getCurrent()).toBe(repairedAboveThreshold);
+    });
+
+    it('keeps text the static interlude already painted when streaming resumes', async () => {
+        vi.useFakeTimers();
+        const { usePreparedStreamingMarkdown } = await import('./usePreparedStreamingMarkdown');
+        // The repaired document lags the stream by one debounce plus one repair, by design.
+        // When upstream pauses, the caller swaps to the static path, which paints the FULL
+        // current text — including the tail that no repair has covered yet. The next chunk
+        // swaps back to streaming, and the repaired ancestor must not un-paint that tail.
+        const body = 'x'.repeat(STREAMING_MARKDOWN_ASYNC_REPAIR_MIN_CHARS);
+        const repairedBody = `${body}**`;
+        const settledText = `${body} TAIL-TOKEN ${'y'.repeat(240)}`;
+
+        const hook = await renderHook(
+            ({ markdown, mode }) => usePreparedStreamingMarkdown({ markdown, mode }),
+            { initialProps: { markdown: body, mode: 'streaming' as 'streaming' | 'static' } },
+        );
+
+        await flushHookEffects({
+            cycles: 1,
+            turns: 1,
+            advanceTimersMs: STREAMING_MARKDOWN_ASYNC_REPAIR_DEBOUNCE_MS,
+        });
+        repairState.pending[0]?.resolve(repairedBody);
+        await flushHookEffects();
+        expect(hook.getCurrent()).toBe(repairedBody);
+
+        // The tail arrives; its repair has not landed when upstream goes quiet.
+        await hook.rerender({ markdown: settledText, mode: 'streaming' });
+        expect(hook.getCurrent()).toBe(repairedBody);
+
+        // Settle: the static path paints the whole message, tail included.
+        await hook.rerender({ markdown: settledText, mode: 'static' });
+        await flushHookEffects();
+        expect(hook.getCurrent()).toBe(settledText);
+
+        // Upstream resumes. The tail is already on screen and must stay there.
+        await hook.rerender({ markdown: settledText, mode: 'streaming' });
+
+        expect(hook.getCurrent()).toContain('TAIL-TOKEN');
+        expect(hook.getCurrent()).toBe(settledText);
+    });
+
     it('coalesces rapid large streaming markdown repairs to the latest payload', async () => {
         vi.useFakeTimers();
         const { usePreparedStreamingMarkdown } = await import('./usePreparedStreamingMarkdown');

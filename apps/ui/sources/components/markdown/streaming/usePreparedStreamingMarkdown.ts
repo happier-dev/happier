@@ -28,6 +28,13 @@ function shouldUseAsyncStreamingRepair(markdown: string): boolean {
  * `[the docs](https://exa`) on every chunk. While a newer chunk is still being repaired the hook
  * therefore keeps returning the newest repaired ancestor of the current markdown, and the repair is
  * scheduled so that it always lands rather than being cancelled by the next chunk.
+ *
+ * "Newest" is the load-bearing word: an ancestor is not automatically a safe answer, and every
+ * render path that paints a document is a writer of it. The static path — which the caller swaps
+ * to whenever upstream goes quiet — paints the FULL current text, tail included, so it must
+ * record what it painted. Otherwise resuming the stream answers from a repaired ancestor and
+ * un-paints the tail the settle just showed, which reads as the message reverting to an earlier
+ * state and resizes the row under the transcript.
  */
 export function usePreparedStreamingMarkdown(params: Readonly<{
     markdown: string;
@@ -35,22 +42,43 @@ export function usePreparedStreamingMarkdown(params: Readonly<{
 }>): string {
     const markdown = typeof params.markdown === 'string' ? params.markdown : '';
     const useAsyncRepair = params.mode === 'streaming' && shouldUseAsyncStreamingRepair(markdown);
-    const [preparedState, setPreparedState] = React.useState<PreparedStreamingMarkdownState | null>(null);
+    const [, repaintPreparedMarkdown] = React.useReducer((generation: number) => generation + 1, 0);
     const pendingMarkdownRef = React.useRef<string | null>(null);
     const repairedSourceRef = React.useRef<string | null>(null);
     const repairTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
     const repairInFlightRef = React.useRef(false);
-    const lastSyncPreparedRef = React.useRef<PreparedStreamingMarkdownState | null>(null);
+    const newestPreparedRef = React.useRef<PreparedStreamingMarkdownState | null>(null);
+
+    // Single record of the newest document this hook has already answered with. Every writer —
+    // the sync repair, the static path, and a landing async repair — publishes through here, so
+    // "which document is newest" is decided once instead of by each reader's precedence rules.
+    // The held record survives only while it stays a strict descendant of the incoming one; a
+    // rewritten (non-append) document is not comparable and yields to the newer write.
+    const recordNewestPrepared = React.useCallback((next: PreparedStreamingMarkdownState) => {
+        const current = newestPreparedRef.current;
+        const currentIsNewer =
+            current != null &&
+            current.sourceMarkdown.length >= next.sourceMarkdown.length &&
+            current.sourceMarkdown.startsWith(next.sourceMarkdown);
+        if (currentIsNewer) return current;
+        newestPreparedRef.current = next;
+        return next;
+    }, []);
 
     const syncPreparedMarkdown = React.useMemo(() => {
-        if (params.mode !== 'streaming') return markdown;
+        if (params.mode !== 'streaming') {
+            // The static path paints the whole current text. Recording it is what stops a later
+            // resume from answering with a repaired ancestor and dropping the painted tail.
+            recordNewestPrepared({ sourceMarkdown: markdown, preparedMarkdown: markdown });
+            return markdown;
+        }
         if (useAsyncRepair) return null;
         const preparedMarkdown = preprocessStreamingMarkdown(markdown);
-        // Caches the newest synchronously repaired document so growing past the async threshold
+        // Records the newest synchronously repaired document so growing past the async threshold
         // mid-stream does not paint one raw frame before the first async repair lands.
-        lastSyncPreparedRef.current = { sourceMarkdown: markdown, preparedMarkdown };
+        recordNewestPrepared({ sourceMarkdown: markdown, preparedMarkdown });
         return preparedMarkdown;
-    }, [markdown, params.mode, useAsyncRepair]);
+    }, [markdown, params.mode, recordNewestPrepared, useAsyncRepair]);
 
     const scheduleAsyncRepair = React.useCallback(function scheduleAsyncRepair() {
         if (repairTimeoutRef.current != null || repairInFlightRef.current) return;
@@ -63,7 +91,11 @@ export function usePreparedStreamingMarkdown(params: Readonly<{
             const finishRepair = (preparedMarkdown: string) => {
                 if (pendingMarkdownRef.current == null) return;
                 repairedSourceRef.current = requestedMarkdown;
-                setPreparedState({ sourceMarkdown: requestedMarkdown, preparedMarkdown });
+                // A repair that was already in flight when the stream paused resolves after the
+                // pause, so the applied source is ordered by the record rather than assumed from
+                // the scheduling: an older repair must never replace a newer document.
+                recordNewestPrepared({ sourceMarkdown: requestedMarkdown, preparedMarkdown });
+                repaintPreparedMarkdown();
                 if (pendingMarkdownRef.current !== requestedMarkdown) scheduleAsyncRepair();
             };
 
@@ -79,17 +111,20 @@ export function usePreparedStreamingMarkdown(params: Readonly<{
                 },
             );
         }, STREAMING_MARKDOWN_ASYNC_REPAIR_DEBOUNCE_MS);
-    }, []);
+    }, [recordNewestPrepared, repaintPreparedMarkdown]);
 
     React.useEffect(() => {
         if (!useAsyncRepair) {
+            // Only the scheduling is stood down. The repaired document itself is kept: it is
+            // read exclusively while the async path owns rendering, and a stream that settles
+            // (static interlude) and then resumes must resume from the newest repair rather
+            // than from the pre-threshold sync cache below, which is thousands of characters
+            // behind and would visibly restore an earlier state of the message.
             pendingMarkdownRef.current = null;
-            repairedSourceRef.current = null;
             if (repairTimeoutRef.current != null) {
                 clearTimeout(repairTimeoutRef.current);
                 repairTimeoutRef.current = null;
             }
-            setPreparedState((current) => current == null ? current : null);
             return;
         }
 
@@ -108,14 +143,9 @@ export function usePreparedStreamingMarkdown(params: Readonly<{
     }, []);
 
     if (syncPreparedMarkdown != null) return syncPreparedMarkdown;
-    if (preparedState != null) {
-        return markdown.startsWith(preparedState.sourceMarkdown)
-            ? preparedState.preparedMarkdown
-            : markdown;
-    }
-    const lastSyncPrepared = lastSyncPreparedRef.current;
-    if (lastSyncPrepared != null && markdown.startsWith(lastSyncPrepared.sourceMarkdown)) {
-        return lastSyncPrepared.preparedMarkdown;
+    const newestPrepared = newestPreparedRef.current;
+    if (newestPrepared != null && markdown.startsWith(newestPrepared.sourceMarkdown)) {
+        return newestPrepared.preparedMarkdown;
     }
     return markdown;
 }
