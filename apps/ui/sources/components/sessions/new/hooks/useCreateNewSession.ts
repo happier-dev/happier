@@ -29,6 +29,7 @@ import { resolveEffectiveWindowsRemoteSessionLaunchMode } from '@/sync/domains/s
 import { getAgentCore, type AgentId } from '@/agents/catalog/catalog';
 import { buildSpawnEnvironmentVariablesFromUiState, buildSpawnSessionExtrasFromUiState, getAgentResumeExperimentsFromSettings, getNewSessionPreflightIssues } from '@/agents/catalog/catalog';
 import { transformProfileToEnvironmentVars } from '@/components/sessions/new/modules/profileHelpers';
+import type { NewSessionPromptStore } from '@/components/sessions/new/hooks/screenModel/newSessionPromptStore';
 import type { UseMachineEnvPresenceResult } from '@/hooks/machine/useMachineEnvPresence';
 import { getMachineCapabilitiesSnapshot } from '@/hooks/server/useMachineCapabilitiesCache';
 import type { PermissionMode, ModelMode } from '@/sync/domains/permissions/permissionTypes';
@@ -204,7 +205,11 @@ export function useCreateNewSession(params: Readonly<{
     acpSessionModeId?: string | null;
     sessionConfigOptionOverrides?: AcpConfigOptionOverridesV1 | null;
 
-    sessionPrompt: string;
+    /**
+     * Live composer text handle. Read at submit time rather than taken as a render
+     * dependency, so typing does not re-run the new-session screen model.
+     */
+    promptStore: NewSessionPromptStore;
     setSessionPrompt?: (prompt: string) => void;
     resumeSessionId: string;
     agentNewSessionOptions?: Record<string, unknown> | null;
@@ -347,7 +352,7 @@ export function useCreateNewSession(params: Readonly<{
 
             const sessionPromptText = typeof opts?.inputTextOverride === 'string'
                 ? opts.inputTextOverride
-                : current.sessionPrompt;
+                : current.promptStore.getPrompt();
             const shouldSendInitialMessage = (opts?.initialMessage ?? 'send') !== 'skip';
             const shouldPrepareInitialMessage = shouldSendInitialMessage && sessionPromptText.trim();
             const resolvedInitialMessage = shouldPrepareInitialMessage
@@ -614,8 +619,13 @@ export function useCreateNewSession(params: Readonly<{
                 return;
             }
 
+            // A retryable attempt may only be reused for the same text. The launch-intent
+            // signature deliberately excludes the live composer text (it is no longer a render
+            // input), so the text comparison that used to happen through the signature happens
+            // here, at the only place the previous attempt's identity is actually reused.
             const retryableLaunchAttempt = launchAttemptRef.current?.status === 'failed_retryable'
                 && isNewSessionLaunchAttemptInScope(launchAttemptRef.current, launchScopeKey)
+                && launchAttemptRef.current.prompt.prompt === normalizedSessionPrompt
                 ? launchAttemptRef.current
                 : null;
             let launchAttempt = retryableLaunchAttempt ?? createNewSessionLaunchAttempt({

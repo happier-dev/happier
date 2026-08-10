@@ -7,6 +7,7 @@ import type { Settings } from '@/sync/domains/settings/settings';
 import type { UseMachineEnvPresenceResult } from '@/hooks/machine/useMachineEnvPresence';
 import { renderScreen } from '@/dev/testkit';
 import { installNewSessionScreenModelCommonModuleMocks } from './newSessionScreenModelTestHelpers';
+import { createNewSessionPromptStore } from '@/components/sessions/new/hooks/screenModel/newSessionPromptStore';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -258,7 +259,7 @@ describe('useCreateNewSession configured ACP backend spawning', () => {
                 },
                 permissionMode: 'default' as PermissionMode,
                 modelMode: 'default' as ModelMode,
-                sessionPrompt: '',
+                promptStore: createNewSessionPromptStore(''),
                 resumeSessionId: '',
                 agentNewSessionOptions: null,
                 machineEnvPresence,
@@ -324,7 +325,7 @@ describe('useCreateNewSession configured ACP backend spawning', () => {
                 },
                 permissionMode: 'default' as PermissionMode,
                 modelMode: 'default' as ModelMode,
-                sessionPrompt: '',
+                promptStore: createNewSessionPromptStore(''),
                 resumeSessionId: '',
                 agentNewSessionOptions: null,
                 machineEnvPresence,
@@ -388,7 +389,7 @@ describe('useCreateNewSession configured ACP backend spawning', () => {
                 },
                 permissionMode: 'default' as PermissionMode,
                 modelMode: 'default' as ModelMode,
-                sessionPrompt: '',
+                promptStore: createNewSessionPromptStore(''),
                 resumeSessionId: '',
                 agentNewSessionOptions: null,
                 machineEnvPresence,
@@ -453,7 +454,7 @@ describe('useCreateNewSession configured ACP backend spawning', () => {
                 },
                 permissionMode: 'default' as PermissionMode,
                 modelMode: 'default' as ModelMode,
-                sessionPrompt: '',
+                promptStore: createNewSessionPromptStore(''),
                 resumeSessionId: '',
                 agentNewSessionOptions: null,
                 machineEnvPresence,
@@ -520,7 +521,7 @@ describe('useCreateNewSession configured ACP backend spawning', () => {
                 },
                 permissionMode: 'default' as PermissionMode,
                 modelMode: 'default' as ModelMode,
-                sessionPrompt: '',
+                promptStore: createNewSessionPromptStore(''),
                 resumeSessionId: '',
                 agentNewSessionOptions: null,
                 machineEnvPresence,
@@ -620,7 +621,7 @@ describe('useCreateNewSession configured ACP backend spawning', () => {
                 backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
                 permissionMode: 'default' as PermissionMode,
                 modelMode: 'default' as ModelMode,
-                sessionPrompt: 'Review the repo',
+                promptStore: createNewSessionPromptStore('Review the repo'),
                 resumeSessionId: '',
                 agentNewSessionOptions: { experimentalCodexAcp: false },
                 machineEnvPresence,

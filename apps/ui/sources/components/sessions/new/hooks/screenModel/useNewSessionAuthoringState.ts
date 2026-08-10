@@ -20,6 +20,8 @@ import type { Settings } from '@/sync/domains/settings/settings';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import type { MachineSpawnReadiness } from '@/sync/domains/machines/identity/resolveMachineSpawnReadiness';
 
+import type { NewSessionPromptStore } from './newSessionPromptStore';
+
 type PersistedDraft = ReturnType<typeof buildPersistedNewSessionDraftFromAuthoringDraft>;
 type BuildResolvedInputs = Parameters<typeof buildLiveNewSessionAuthoringDraftFromResolvedInputs>[0];
 type BuildPersistedInputs = Parameters<typeof buildPersistedNewSessionDraftFromAuthoringDraft>[0];
@@ -32,7 +34,7 @@ export function useNewSessionAuthoringState(params: Readonly<{
     selectedMachineSpawnReadiness?: MachineSpawnReadiness | null;
     selectedPath: string;
     checkoutCreationDraft: NewSessionCheckoutCreationDraft | null;
-    sessionPrompt: string;
+    promptStore: NewSessionPromptStore;
     agentType: AgentId;
     backendTarget: BackendTargetRefV1 | null;
     transcriptStorage: BuildResolvedInputs['transcriptStorage'];
@@ -72,13 +74,18 @@ export function useNewSessionAuthoringState(params: Readonly<{
     const draftPersistenceEnabledRef = React.useRef(true);
     const draftPersistenceGenerationRef = React.useRef(0);
 
-    const shouldOmitLiveDisplayText = params.sessionPrompt.length > WEB_TEXTAREA_AUTOSIZE_VALUE_LENGTH_LIMIT;
-
-    const buildCurrentAuthoringDraft = React.useCallback((effectiveAutomationDraft: NewSessionAutomationDraft) => buildLiveNewSessionAuthoringDraftFromResolvedInputs({
+    // The live composer text is read from its store at build time instead of being a render
+    // dependency: typing must not rebuild the authoring draft, but every build (render-time
+    // or imperative, e.g. persist/submit) must see the current text.
+    const promptStore = params.promptStore;
+    const buildCurrentAuthoringDraft = React.useCallback((effectiveAutomationDraft: NewSessionAutomationDraft) => {
+        const sessionPrompt = promptStore.getPrompt();
+        const shouldOmitLiveDisplayText = sessionPrompt.length > WEB_TEXTAREA_AUTOSIZE_VALUE_LENGTH_LIMIT;
+        return buildLiveNewSessionAuthoringDraftFromResolvedInputs({
         directory: params.selectedPath,
         checkoutCreationDraft: params.checkoutCreationDraft,
-        prompt: params.sessionPrompt,
-        ...(shouldOmitLiveDisplayText ? {} : { displayText: params.sessionPrompt }),
+        prompt: sessionPrompt,
+        ...(shouldOmitLiveDisplayText ? {} : { displayText: sessionPrompt }),
         agentId: params.agentType,
         backendTarget: params.backendTarget,
         transcriptStorage: params.transcriptStorage ?? null,
@@ -102,7 +109,8 @@ export function useNewSessionAuthoringState(params: Readonly<{
         acpSessionModeId: params.acpSessionModeId ?? null,
         sessionConfigOptionOverrides: params.sessionConfigOptionOverrides,
         automation: effectiveAutomationDraft.enabled ? effectiveAutomationDraft : null,
-    }), [
+        });
+    }, [
         params.acpSessionModeId,
         params.agentNewSessionOptions,
         params.agentType,
@@ -117,9 +125,8 @@ export function useNewSessionAuthoringState(params: Readonly<{
         params.selectedPath,
         params.selectedProfileId,
         params.sessionConfigOptionOverrides,
-        params.sessionPrompt,
         params.settings,
-        shouldOmitLiveDisplayText,
+        promptStore,
         params.transcriptStorage,
         params.useProfiles,
     ]);
@@ -149,8 +156,10 @@ export function useNewSessionAuthoringState(params: Readonly<{
     const canCreate = authoringContext.canSubmit;
 
     const buildCurrentPersistedDraft = React.useCallback(() => {
+        // Rebuild from the live composer text rather than the last-rendered draft: the model
+        // no longer re-renders per keystroke, so `currentAuthoringDraft` can lag the input.
         const draft = buildPersistedNewSessionDraftFromAuthoringDraft({
-            draft: currentAuthoringDraft,
+            draft: buildCurrentAuthoringDraft(effectiveAutomationDraft),
             machineId: params.selectedMachineId,
             entryIntent: params.automationRequestedByRoute ? 'automation' : 'session',
             selectedSecretId: params.selectedSecretId,
@@ -166,7 +175,8 @@ export function useNewSessionAuthoringState(params: Readonly<{
             : '';
         return launchUserAttemptId ? { ...draft, launchUserAttemptId } : draft;
     }, [
-        currentAuthoringDraft,
+        buildCurrentAuthoringDraft,
+        effectiveAutomationDraft,
         params.agentNewSessionOptionStateByAgentId,
         params.automationRequestedByRoute,
         params.getSessionOnlySecretValueEncByProfileIdByEnvVarName,

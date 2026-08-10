@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { useNewSessionWizardProps } from './useNewSessionWizardProps';
 import { installNewSessionScreenModelCommonModuleMocks } from './newSessionScreenModelTestHelpers';
 import { renderScreen } from '@/dev/testkit';
+import { createNewSessionPromptStore } from '@/components/sessions/new/hooks/screenModel/newSessionPromptStore';
 
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -22,6 +23,7 @@ describe('useNewSessionWizardProps', () => {
 
         function Probe({ agentLabel }: Readonly<{ agentLabel: string }>) {
             observed = useNewSessionWizardProps({
+                enabled: true,
                 theme: {},
                 styles: {},
                 safeAreaBottom: 0,
@@ -86,7 +88,7 @@ describe('useNewSessionWizardProps', () => {
                 usePathPickerSearch: false,
                 favoriteDirectories: [],
                 setFavoriteDirectories: () => {},
-                sessionPrompt: '',
+                promptStore: createNewSessionPromptStore(''),
                 setSessionPrompt: () => {},
                 handleCreateSession: () => {},
                 canCreate: false,
@@ -103,12 +105,12 @@ describe('useNewSessionWizardProps', () => {
         let tree: renderer.ReactTestRenderer | null = null;
         tree = (await renderScreen(React.createElement(Probe, { agentLabel: 'Preset A' }))).tree;
 
-        expect((observed as ReturnType<typeof useNewSessionWizardProps> | null)?.agent.agentLabel).toBe('Preset A');
+        expect((observed as ReturnType<typeof useNewSessionWizardProps> | null)?.wizardSections?.agent.agentLabel).toBe('Preset A');
 
         act(() => {
             tree?.update(React.createElement(Probe, { agentLabel: 'Preset B' }));
         });
 
-        expect((observed as ReturnType<typeof useNewSessionWizardProps> | null)?.agent.agentLabel).toBe('Preset B');
+        expect((observed as ReturnType<typeof useNewSessionWizardProps> | null)?.wizardSections?.agent.agentLabel).toBe('Preset B');
     });
 });

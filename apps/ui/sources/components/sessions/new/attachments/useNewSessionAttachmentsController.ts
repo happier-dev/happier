@@ -34,6 +34,7 @@ import {
     writeNewSessionAttachmentDrafts,
 } from './newSessionAttachmentDraftStore';
 import { resolveNewSessionReviewCommentsScope } from './resolveNewSessionReviewCommentsScope';
+import type { NewSessionPromptStore } from '@/components/sessions/new/hooks/screenModel/newSessionPromptStore';
 
 type NewSessionAgentInputSendOptions = AgentInputSendOptions;
 
@@ -42,7 +43,7 @@ type HandleCreateSession = (opts?: HandleCreateSessionOptions) => void;
 export function useNewSessionAttachmentsController(params: Readonly<{
     flowId?: string | null;
     isCreating: boolean;
-    sessionPrompt: string;
+    promptStore: NewSessionPromptStore;
     handleCreateSession: HandleCreateSession;
     selectedProfileId: string | null;
     targetServerId?: string | null;
@@ -218,7 +219,7 @@ export function useNewSessionAttachmentsController(params: Readonly<{
     ]);
 
     const handleSend = React.useCallback((options?: NewSessionAgentInputSendOptions) => {
-        const promptText = options?.inputTextOverride ?? String(params.sessionPrompt ?? '');
+        const promptText = options?.inputTextOverride ?? params.promptStore.getPrompt();
         const submit = (opts?: HandleCreateSessionOptions) => {
             blurActiveElementOnWeb();
             deferOnWeb(() => {
@@ -350,7 +351,7 @@ export function useNewSessionAttachmentsController(params: Readonly<{
         includedReviewCommentDrafts,
         params.handleCreateSession,
         params.selectedProfileId,
-        params.sessionPrompt,
+        params.promptStore,
         params.targetServerId,
     ]);
 

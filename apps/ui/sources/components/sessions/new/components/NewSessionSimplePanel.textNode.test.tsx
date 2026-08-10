@@ -3,6 +3,7 @@ import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { collectUnexpectedRawTextNodes, invokeTestInstanceHandler, renderScreen, standardCleanup } from '@/dev/testkit';
 import { installNewSessionComponentsCommonModuleMocks } from './newSessionComponentsTestHelpers';
+import { createNewSessionPromptStore } from '@/components/sessions/new/hooks/screenModel/newSessionPromptStore';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -322,7 +323,7 @@ describe('NewSessionSimplePanel', () => {
                 newSessionTopPadding={20}
                 newSessionSidePadding={16}
                 newSessionBottomPadding={8}
-                sessionPrompt="hello"
+                promptStore={createNewSessionPromptStore('hello')}
                 setSessionPrompt={() => {}}
                 handleCreateSession={() => {}}
                 canCreate={true}
@@ -372,7 +373,7 @@ describe('NewSessionSimplePanel', () => {
                 newSessionSidePadding={123}
                 newSessionBottomPadding={8}
                 containerStyle={{ flex: 1 }}
-                sessionPrompt="hello"
+                promptStore={createNewSessionPromptStore('hello')}
                 setSessionPrompt={() => {}}
                 handleCreateSession={() => {}}
                 canCreate={true}
@@ -421,7 +422,7 @@ describe('NewSessionSimplePanel', () => {
                 newSessionSidePadding={16}
                 newSessionBottomPadding={8}
                 containerStyle={{}}
-                sessionPrompt="hello"
+                promptStore={createNewSessionPromptStore('hello')}
                 setSessionPrompt={() => {}}
                 handleCreateSession={() => {}}
                 canCreate={true}
@@ -472,7 +473,7 @@ describe('NewSessionSimplePanel', () => {
                 newSessionSidePadding={0}
                 newSessionBottomPadding={0}
                 containerStyle={{}}
-                sessionPrompt=""
+                promptStore={createNewSessionPromptStore('')}
                 setSessionPrompt={() => {}}
                 handleCreateSession={() => {}}
                 canCreate={true}
@@ -517,7 +518,7 @@ describe('NewSessionSimplePanel', () => {
                 newSessionSidePadding={0}
                 newSessionBottomPadding={0}
                 containerStyle={{}}
-                sessionPrompt=""
+                promptStore={createNewSessionPromptStore('')}
                 setSessionPrompt={() => {}}
                 handleCreateSession={() => {}}
                 canCreate={true}
@@ -560,7 +561,7 @@ describe('NewSessionSimplePanel', () => {
                 newSessionSidePadding={0}
                 newSessionBottomPadding={0}
                 containerStyle={{}}
-                sessionPrompt=""
+                promptStore={createNewSessionPromptStore('')}
                 setSessionPrompt={() => {}}
                 handleCreateSession={() => {}}
                 canCreate={true}
@@ -603,7 +604,7 @@ describe('NewSessionSimplePanel', () => {
                 newSessionSidePadding={0}
                 newSessionBottomPadding={0}
                 containerStyle={{}}
-                sessionPrompt=""
+                promptStore={createNewSessionPromptStore('')}
                 setSessionPrompt={() => {}}
                 handleCreateSession={() => {}}
                 canCreate={true}
@@ -653,7 +654,7 @@ describe('NewSessionSimplePanel', () => {
                 newSessionSidePadding={0}
                 newSessionBottomPadding={0}
                 containerStyle={{}}
-                sessionPrompt="hello"
+                promptStore={createNewSessionPromptStore('hello')}
                 setSessionPrompt={() => {}}
                 handleCreateSession={handleCreateSession}
                 canCreate={true}
@@ -711,7 +712,7 @@ describe('NewSessionSimplePanel', () => {
                     newSessionSidePadding={0}
                     newSessionBottomPadding={0}
                     containerStyle={{}}
-                    sessionPrompt="hello"
+                    promptStore={createNewSessionPromptStore('hello')}
                     setSessionPrompt={() => {}}
                     handleCreateSession={handleCreateSession}
                     canCreate={true}

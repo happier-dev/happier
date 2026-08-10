@@ -14,6 +14,7 @@ import { buildExecutionRunActionDraftInputForUi } from '@/sync/domains/actions/b
 import type { AgentId } from '@/agents/catalog/catalog';
 import type { AgentInputExtraActionChip } from '@/components/sessions/agentInput/agentInputContracts';
 import type { HandleCreateSessionOptions } from '@/components/sessions/new/hooks/useCreateNewSession';
+import type { NewSessionPromptStore } from '@/components/sessions/new/hooks/screenModel/newSessionPromptStore';
 import type { ScmWorkingSnapshot, Machine } from '@/sync/domains/state/storageTypes';
 import { storage } from '@/sync/domains/state/storage';
 import type { NewSessionCheckoutChipModel } from '@/components/sessions/new/modules/newSessionCheckoutChipModel';
@@ -91,7 +92,7 @@ export function useNewSessionAgentInputPresentation(params: Readonly<{
     pendingGitWorktreeSourceKindRef: React.MutableRefObject<'current' | 'local' | 'remote'>;
     shouldReconcileInitialHydratedCheckoutCreationDraftRef: React.MutableRefObject<boolean>;
     router: Router;
-    sessionPrompt: string;
+    promptStore: NewSessionPromptStore;
     setSessionPrompt: React.Dispatch<React.SetStateAction<string>>;
     handleCreateSession: (opts?: HandleCreateSessionOptions) => void;
     backendTarget: BackendTargetRefV1;
@@ -162,17 +163,15 @@ export function useNewSessionAgentInputPresentation(params: Readonly<{
         params.theme.colors.state.danger.foreground,
     ]);
 
-    const sessionPromptRef = React.useRef('');
-    sessionPromptRef.current = String(params.sessionPrompt ?? '');
     const handleAutomationSettingsChange = React.useCallback((next: AutomationSettingsValue) => {
         params.setAutomationDraft(sanitizeNewSessionAutomationDraft(next));
     }, [params.setAutomationDraft]);
 
     const handleAppendLinkedPath = React.useCallback((path: string) => {
-        const base = sessionPromptRef.current;
+        const base = params.promptStore.getPrompt();
         const spacer = base.length === 0 || base.endsWith(' ') || base.endsWith('\n') ? '' : ' ';
         params.setSessionPrompt(`${base}${spacer}@${path} `);
-    }, [params.setSessionPrompt]);
+    }, [params.promptStore, params.setSessionPrompt]);
 
     const linkFileChip = React.useMemo<AgentInputExtraActionChip>(() => {
         return createNewSessionLinkedFilesActionChip({
@@ -210,7 +209,7 @@ export function useNewSessionAgentInputPresentation(params: Readonly<{
     });
 
     const handleActionShortcutPress = React.useCallback((actionId: ActionId) => {
-        const instructions = String(params.sessionPrompt ?? '');
+        const instructions = params.promptStore.getPrompt();
         params.handleCreateSession({
             initialMessage: 'skip',
             afterCreated: async ({ sessionId }) => {
@@ -227,7 +226,7 @@ export function useNewSessionAgentInputPresentation(params: Readonly<{
                 });
             },
         });
-    }, [params.agentType, params.backendTarget, params.handleCreateSession, params.sessionPrompt]);
+    }, [params.agentType, params.backendTarget, params.handleCreateSession, params.promptStore]);
 
     const agentInputExtraActionChips = useNewSessionAgentInputExtraActionChips({
         agentId: params.agentType,

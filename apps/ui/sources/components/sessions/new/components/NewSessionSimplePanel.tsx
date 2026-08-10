@@ -10,6 +10,10 @@ import type { HandleCreateSessionOptions } from '../hooks/useCreateNewSession';
 import { useNewSessionAttachmentsController } from '@/components/sessions/new/attachments/useNewSessionAttachmentsController';
 import { isMobileLayoutWidth } from '@/components/sessions/layout/isMobileLayoutWidth';
 import {
+    useNewSessionPromptValue,
+    type NewSessionPromptStore,
+} from '@/components/sessions/new/hooks/screenModel/newSessionPromptStore';
+import {
     ComposerKeyboardScaffold,
     useComposerAvailablePanelHeight,
 } from '@/components/sessions/keyboardAvoidance';
@@ -26,7 +30,7 @@ export type NewSessionSimplePanelProps = Readonly<{
     newSessionBottomPadding: number;
     shouldBottomAnchor?: boolean;
     containerStyle: ViewStyle;
-    sessionPrompt: string;
+    promptStore: NewSessionPromptStore;
     setSessionPrompt: (v: string) => void;
     handleCreateSession: (opts?: HandleCreateSessionOptions) => void;
     canCreate: boolean;
@@ -89,7 +93,7 @@ export const NewSessionSimplePanel = React.memo(function NewSessionSimplePanel(p
     const attachmentsController = useNewSessionAttachmentsController({
         flowId: props.attachmentFlowId,
         isCreating: props.isCreating,
-        sessionPrompt: props.sessionPrompt,
+        promptStore: props.promptStore,
         handleCreateSession: props.handleCreateSession,
         selectedProfileId: props.selectedProfileId,
         targetServerId: props.targetServerId,
@@ -181,6 +185,9 @@ function NewSessionSimplePanelComposer({
     // size from the settled value on its first frame. AgentInput owns its own chrome
     // reservation, so pass the host panel height through unchanged.
     const maxPanelHeight = useComposerAvailablePanelHeight();
+    // RENDER CHURN: the composer input is the only thing that re-renders per keystroke.
+    // Everything above it (panel, keyboard scaffold, screen model) stays put.
+    const sessionPrompt = useNewSessionPromptValue(props.promptStore);
 
     return (
         <View
@@ -195,7 +202,7 @@ function NewSessionSimplePanelComposer({
                     style={{ width: '100%', alignSelf: 'center' }}
                 >
                     <AgentInput
-                        value={props.sessionPrompt}
+                        value={sessionPrompt}
                         onChangeText={props.setSessionPrompt}
                         onSend={attachmentsController.handleSend}
                         isSendDisabled={!props.canCreate}

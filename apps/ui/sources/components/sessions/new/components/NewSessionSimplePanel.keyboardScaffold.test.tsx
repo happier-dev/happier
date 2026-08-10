@@ -11,6 +11,7 @@ import {
 } from '@/dev/testkit';
 
 import { installNewSessionComponentsCommonModuleMocks } from './newSessionComponentsTestHelpers';
+import { createNewSessionPromptStore } from '@/components/sessions/new/hooks/screenModel/newSessionPromptStore';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -174,7 +175,7 @@ describe('NewSessionSimplePanel keyboard scaffold integration', () => {
                     newSessionBottomPadding={12}
                     shouldBottomAnchor
                     containerStyle={{}}
-                    sessionPrompt=""
+                    promptStore={createNewSessionPromptStore('')}
                     setSessionPrompt={() => {}}
                     handleCreateSession={() => {}}
                     canCreate
@@ -231,7 +232,7 @@ describe('NewSessionSimplePanel keyboard scaffold integration', () => {
             newSessionBottomPadding: 12,
             shouldBottomAnchor: true,
             containerStyle: {},
-            sessionPrompt: '',
+            promptStore: createNewSessionPromptStore(''),
             setSessionPrompt: () => {},
             handleCreateSession: () => {},
             canCreate: true,

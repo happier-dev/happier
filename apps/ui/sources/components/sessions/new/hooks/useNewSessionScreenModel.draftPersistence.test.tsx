@@ -715,7 +715,7 @@ describe('useNewSessionScreenModel (draft hydration — core)', () => {
             model = nextModel;
         });
 
-        expect(model?.simpleProps?.sessionPrompt).toBe('Persisted prompt');
+        expect(model?.simpleProps?.promptStore.getPrompt()).toBe('Persisted prompt');
         expect(model?.simpleProps?.agentType).toBe('codex');
         expect(model?.simpleProps?.permissionMode).toBe('acceptEdits');
         expect(model?.simpleProps?.selectedPath).toBe('/repo/from-session');
@@ -745,7 +745,7 @@ describe('useNewSessionScreenModel (draft hydration — core)', () => {
             model = nextModel;
         });
 
-        expect(model?.simpleProps?.sessionPrompt).toBe('Old persisted prompt');
+        expect(model?.simpleProps?.promptStore.getPrompt()).toBe('Old persisted prompt');
         expect(model?.simpleProps?.resumeSessionId).toBe('sess_old');
         expect(useCreateNewSessionArgsRef.current).toEqual(expect.objectContaining({
             authoringDraft: expect.objectContaining({
@@ -767,7 +767,7 @@ describe('useNewSessionScreenModel (draft hydration — core)', () => {
             if (typeof cleanup === 'function') cleanup();
         }
 
-        expect(model?.simpleProps?.sessionPrompt).toBe('Focused draft prompt');
+        expect(model?.simpleProps?.promptStore.getPrompt()).toBe('Focused draft prompt');
         expect(model?.simpleProps?.resumeSessionId).toBe('sess_new');
         expect(useCreateNewSessionArgsRef.current).toEqual(expect.objectContaining({
             authoringDraft: expect.objectContaining({

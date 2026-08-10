@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { installNewSessionComponentsCommonModuleMocks } from './newSessionComponentsTestHelpers';
+import { createNewSessionPromptStore } from '@/components/sessions/new/hooks/screenModel/newSessionPromptStore';
 
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -235,7 +236,7 @@ describe('NewSessionWizard submit deferral', () => {
                         setFavoriteDirectories: () => {},
                     } as any}
                     footer={{
-                        sessionPrompt: 'hello',
+                        promptStore: createNewSessionPromptStore('hello'),
                         setSessionPrompt: () => {},
                         handleCreateSession,
                         canCreate: true,

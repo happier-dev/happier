@@ -4,6 +4,7 @@ import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { collectUnexpectedRawTextNodes, renderScreen } from '@/dev/testkit';
 import { installNewSessionComponentsCommonModuleMocks, resetNewSessionComponentsCommonModuleMocks } from './newSessionComponentsTestHelpers';
+import { createNewSessionPromptStore } from '@/components/sessions/new/hooks/screenModel/newSessionPromptStore';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -296,7 +297,7 @@ describe('NewSessionWizard', () => {
                 setFavoriteDirectories: () => {},
             } as any}
             footer={{
-                sessionPrompt: '',
+                promptStore: createNewSessionPromptStore(''),
                 setSessionPrompt: () => {},
                 handleCreateSession: () => {},
                 canCreate: false,
@@ -411,7 +412,7 @@ describe('NewSessionWizard', () => {
                     setFavoriteDirectories: () => {},
                 } as any}
                 footer={{
-                    sessionPrompt: '',
+                    promptStore: createNewSessionPromptStore(''),
                     setSessionPrompt: () => {},
                     handleCreateSession: () => {},
                     canCreate: true,
@@ -536,7 +537,7 @@ describe('NewSessionWizard', () => {
                 setFavoriteDirectories: () => {},
             } as any}
             footer={{
-                sessionPrompt: '',
+                promptStore: createNewSessionPromptStore(''),
                 setSessionPrompt: () => {},
                 handleCreateSession: () => {},
                 canCreate: false,
@@ -650,7 +651,7 @@ describe('NewSessionWizard', () => {
                 setFavoriteDirectories: () => {},
             } as any}
             footer={{
-                sessionPrompt: '',
+                promptStore: createNewSessionPromptStore(''),
                 setSessionPrompt: () => {},
                 handleCreateSession: () => {},
                 canCreate: true,
@@ -767,7 +768,7 @@ describe('NewSessionWizard', () => {
                 setFavoriteDirectories: () => {},
             } as any}
             footer={{
-                sessionPrompt: '',
+                promptStore: createNewSessionPromptStore(''),
                 setSessionPrompt: () => {},
                 handleCreateSession: () => {},
                 canCreate: false,
@@ -913,7 +914,7 @@ describe('NewSessionWizard', () => {
                 setFavoriteDirectories: () => {},
             } as any}
             footer={{
-                sessionPrompt: '',
+                promptStore: createNewSessionPromptStore(''),
                 setSessionPrompt: () => {},
                 handleCreateSession: () => {},
                 canCreate: false,
@@ -1033,7 +1034,7 @@ describe('NewSessionWizard', () => {
                     setFavoriteDirectories: () => {},
                 } as any}
                 footer={{
-                    sessionPrompt: '',
+                    promptStore: createNewSessionPromptStore(''),
                     setSessionPrompt: () => {},
                     handleCreateSession: () => {},
                     canCreate: true,
@@ -1168,7 +1169,7 @@ describe('NewSessionWizard', () => {
                                 setFavoriteDirectories: () => {},
                             } as any}
                             footer={{
-                                sessionPrompt: '',
+                                promptStore: createNewSessionPromptStore(''),
                                 setSessionPrompt: () => {},
                                 handleCreateSession: () => {},
                                 canCreate: true,
@@ -1320,7 +1321,7 @@ describe('NewSessionWizard', () => {
                             setFavoriteDirectories: () => {},
                         } as any}
                         footer={{
-                            sessionPrompt: '',
+                            promptStore: createNewSessionPromptStore(''),
                             setSessionPrompt: () => {},
                             handleCreateSession: () => {},
                             canCreate: false,
@@ -1478,7 +1479,7 @@ describe('NewSessionWizard', () => {
                         setFavoriteDirectories: () => {},
                     } as any}
                     footer={{
-                        sessionPrompt: '',
+                        promptStore: createNewSessionPromptStore(''),
                         setSessionPrompt: () => {},
                         handleCreateSession: () => {},
                         canCreate: false,
@@ -1628,7 +1629,7 @@ describe('NewSessionWizard', () => {
                         setFavoriteDirectories: () => {},
                     } as any}
                     footer={{
-                        sessionPrompt: '',
+                        promptStore: createNewSessionPromptStore(''),
                         setSessionPrompt: () => {},
                         handleCreateSession: () => {},
                         canCreate: false,
@@ -1763,7 +1764,7 @@ describe('NewSessionWizard', () => {
                 setFavoriteDirectories: () => {},
             } as any}
             footer={{
-                sessionPrompt: '',
+                promptStore: createNewSessionPromptStore(''),
                 setSessionPrompt: () => {},
                 handleCreateSession: () => {},
                 canCreate: false,
@@ -1914,7 +1915,7 @@ describe('NewSessionWizard', () => {
                         setFavoriteDirectories: () => {},
                     } as any}
                     footer={{
-                        sessionPrompt: '',
+                        promptStore: createNewSessionPromptStore(''),
                         setSessionPrompt: () => {},
                         handleCreateSession: () => {},
                         canCreate: false,
@@ -2056,7 +2057,7 @@ describe('NewSessionWizard', () => {
                         setFavoriteDirectories: () => {},
                     } as any}
                     footer={{
-                        sessionPrompt: '',
+                        promptStore: createNewSessionPromptStore(''),
                         setSessionPrompt: () => {},
                         handleCreateSession: () => {},
                         canCreate: false,
@@ -2167,7 +2168,7 @@ describe('NewSessionWizard', () => {
                         setFavoriteDirectories: () => {},
                     } as any}
                     footer={{
-                        sessionPrompt: '',
+                        promptStore: createNewSessionPromptStore(''),
                         setSessionPrompt: () => {},
                         handleCreateSession: () => {},
                         canCreate: false,

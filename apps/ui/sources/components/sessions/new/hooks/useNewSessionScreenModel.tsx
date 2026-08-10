@@ -912,7 +912,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
     //
 
     const {
-        sessionPrompt,
+        promptStore,
         setSessionPrompt,
         automationDraft,
         setAutomationDraft,
@@ -1649,7 +1649,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         selectedMachineSpawnReadiness,
         selectedPath,
         checkoutCreationDraft,
-        sessionPrompt,
+        promptStore,
         agentType,
         backendTarget,
         transcriptStorage,
@@ -1692,11 +1692,20 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         delete nextDraft.launchUserAttemptId;
         persistDraftIfEnabled(nextDraft);
     }, [buildCurrentPersistedDraft, persistDraftIfEnabled]);
-    const launchIntentSignature = React.useMemo(() => JSON.stringify({
-        draft: currentAuthoringDraft,
-        machineId: selectedMachineId,
-        targetServerId: targetServerId ?? null,
-    }), [currentAuthoringDraft, selectedMachineId, targetServerId]);
+    // The signature covers everything about the launch intent EXCEPT the live composer text:
+    // the text is no longer a render input, so including it here would make the signature
+    // change at arbitrary render boundaries instead of at the keystroke. Text changes are
+    // handled by the two places that consume the signature's text meaning — the retryable
+    // launch attempt (compared against its own recorded prompt in `useCreateNewSession`) and
+    // the persisted user-attempt id (invalidated by the store subscription below).
+    const launchIntentSignature = React.useMemo(() => {
+        const { prompt: _prompt, displayText: _displayText, ...launchIntentWithoutText } = currentAuthoringDraft;
+        return JSON.stringify({
+            draft: launchIntentWithoutText,
+            machineId: selectedMachineId,
+            targetServerId: targetServerId ?? null,
+        });
+    }, [currentAuthoringDraft, selectedMachineId, targetServerId]);
     const previousLaunchIntentSignatureRef = React.useRef(launchIntentSignature);
     React.useEffect(() => {
         if (previousLaunchIntentSignatureRef.current === launchIntentSignature) return;
@@ -1705,6 +1714,22 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
             onLaunchUserAttemptIdChange(null);
         }
     }, [launchIntentSignature, launchUserAttemptId, onLaunchUserAttemptIdChange]);
+
+    // Editing the prompt invalidates a persisted user-attempt id exactly as a launch-intent
+    // change does — without rendering this hook while the user types.
+    const launchUserAttemptIdRef = React.useRef(launchUserAttemptId);
+    launchUserAttemptIdRef.current = launchUserAttemptId;
+    const onLaunchUserAttemptIdChangeRef = React.useRef(onLaunchUserAttemptIdChange);
+    onLaunchUserAttemptIdChangeRef.current = onLaunchUserAttemptIdChange;
+    React.useEffect(() => promptStore.subscribe(() => {
+        if (!launchUserAttemptIdRef.current) return;
+        onLaunchUserAttemptIdChangeRef.current(null);
+    }), [promptStore]);
+
+    const draftTextSource = React.useMemo(() => ({
+        getLength: () => promptStore.getPrompt().length,
+        subscribe: promptStore.subscribe,
+    }), [promptStore]);
 
     const { handleCreateSession } = useCreateNewSession({
         router,
@@ -1727,7 +1752,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         modelMode,
         acpSessionModeId,
         sessionConfigOptionOverrides,
-        sessionPrompt,
+        promptStore,
         setSessionPrompt,
         automationEditId,
         resumeSessionId,
@@ -1775,7 +1800,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         pendingGitWorktreeSourceKindRef,
         shouldReconcileInitialHydratedCheckoutCreationDraftRef,
         router,
-        sessionPrompt,
+        promptStore,
         setSessionPrompt,
         handleCreateSession,
         backendTarget,
@@ -1810,7 +1835,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         persistDraftIfEnabled,
         draftPersistenceEnabled,
         draftPersistenceGenerationRef,
-        draftTextLength: sessionPrompt.length,
+        draftText: draftTextSource,
         draftChangeKey: launchIntentSignature,
     });
 
@@ -1831,14 +1856,10 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
     }), [acpConfigOptionsProbeState.onRefresh, acpConfigOptionsProbeState.phase]);
 
     const {
-        layout: wizardLayoutProps,
-        sectionPresentation: wizardSectionPresentation,
-        useColumnLayout: wizardUseColumnLayout,
         profiles: wizardProfilesProps,
-        agent: wizardAgentProps,
-        machine: wizardMachineProps,
-        footer: wizardFooterProps,
+        wizardSections,
     } = useNewSessionWizardProps({
+        enabled: useEnhancedSessionWizard,
         theme,
         styles,
         safeAreaTop: safeArea.top,
@@ -1928,7 +1949,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         favoriteDirectories,
         setFavoriteDirectories,
 
-        sessionPrompt,
+        promptStore,
         setSessionPrompt,
         handleCreateSession,
         canCreate,
@@ -1973,7 +1994,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         newSessionBottomPadding: simpleNewSessionBottomPadding,
         shouldBottomAnchor,
         containerStyle: styles.container as any,
-        sessionPrompt,
+        promptStore,
         setSessionPrompt,
         handleCreateSession,
         canCreate,
@@ -2028,12 +2049,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         simplePanelProps,
         checkoutCreationDraft,
         setCheckoutCreationDraft,
-        wizardLayoutProps,
-        wizardSectionPresentation,
-        wizardUseColumnLayout,
         wizardProfilesProps,
-        wizardAgentProps,
-        wizardMachineProps,
-        wizardFooterProps,
+        wizardSections,
     });
 }

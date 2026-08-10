@@ -12,6 +12,10 @@ import type { DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMe
 import { MachineSelector } from '@/components/sessions/new/components/MachineSelector';
 import { PathSelectionList } from '@/components/sessions/new/components/PathSelectionList';
 import {
+    useNewSessionPromptValue,
+    type NewSessionPromptStore,
+} from '@/components/sessions/new/hooks/screenModel/newSessionPromptStore';
+import {
     resolveDirectoryFavoriteComparisonKey,
     toggleHomeAwareDirectoryFavorite,
 } from '@/components/sessions/new/hooks/favoriteDirectoriesToggle';
@@ -157,7 +161,7 @@ export interface NewSessionWizardMachineProps {
 }
 
 export interface NewSessionWizardFooterProps {
-    sessionPrompt: string;
+    promptStore: NewSessionPromptStore;
     setSessionPrompt: (v: string) => void;
     handleCreateSession: (opts?: HandleCreateSessionOptions) => void;
     canCreate: boolean;
@@ -291,7 +295,7 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
     } = useNewSessionAttachmentsController({
         flowId: props.footer.attachmentFlowId,
         isCreating: props.footer.isCreating,
-        sessionPrompt: props.footer.sessionPrompt,
+        promptStore: props.footer.promptStore,
         handleCreateSession: props.footer.handleCreateSession,
         selectedProfileId: props.profiles.selectedProfileId,
         targetServerId: props.machine.serverId,
@@ -396,7 +400,7 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
     }, [selectedMachine]);
 
     const {
-        sessionPrompt,
+        promptStore,
         setSessionPrompt,
         canCreate,
         isCreating,
@@ -407,6 +411,9 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
         resumeIsChecking,
         inputMaxHeight,
     } = props.footer;
+    // The wizard variant still re-renders on each keystroke (its composer is rendered deep
+    // inside this component). The screen model above it no longer does.
+    const sessionPrompt = useNewSessionPromptValue(promptStore);
 
     const machineDisplayName = selectedMachine?.metadata?.displayName || selectedMachine?.metadata?.host;
     const { sharedProfilesListProps, profilePopover } = React.useMemo(() => {

@@ -9,6 +9,7 @@ import { profileDefaults } from '@/sync/domains/profiles/profile';
 import type { UseMachineEnvPresenceResult } from '@/hooks/machine/useMachineEnvPresence';
 import { renderScreen } from '@/dev/testkit';
 import { installNewSessionScreenModelCommonModuleMocks } from './newSessionScreenModelTestHelpers';
+import { createNewSessionPromptStore } from '@/components/sessions/new/hooks/screenModel/newSessionPromptStore';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -247,7 +248,7 @@ describe('useCreateNewSession (ACP mode seeding)', () => {
         permissionMode: 'default' as PermissionMode,
         modelMode: 'default' as ModelMode,
         acpSessionModeId: 'plan',
-        sessionPrompt: 'hello',
+        promptStore: createNewSessionPromptStore('hello'),
         resumeSessionId: '',
         agentNewSessionOptions: null,
         machineEnvPresence,
@@ -311,7 +312,7 @@ describe('useCreateNewSession (ACP mode seeding)', () => {
         permissionMode: 'default' as PermissionMode,
         modelMode: 'default' as ModelMode,
         acpSessionModeId: 'plan',
-        sessionPrompt: 'hello',
+        promptStore: createNewSessionPromptStore('hello'),
         resumeSessionId: '',
         agentNewSessionOptions: null,
         machineEnvPresence,
@@ -372,7 +373,7 @@ describe('useCreateNewSession (ACP mode seeding)', () => {
         permissionMode: 'default' as PermissionMode,
         modelMode: 'default' as ModelMode,
         acpSessionModeId: 'plan',
-        sessionPrompt: 'hello',
+        promptStore: createNewSessionPromptStore('hello'),
         resumeSessionId: '',
         agentNewSessionOptions: null,
         machineEnvPresence,
@@ -440,7 +441,7 @@ describe('useCreateNewSession (ACP mode seeding)', () => {
             speed: { updatedAt: 123, value: 'fast' },
           },
         },
-        sessionPrompt: 'hello',
+        promptStore: createNewSessionPromptStore('hello'),
         resumeSessionId: '',
         agentNewSessionOptions: null,
         machineEnvPresence,
@@ -512,7 +513,7 @@ describe('useCreateNewSession (ACP mode seeding)', () => {
         permissionMode: 'default' as PermissionMode,
         modelMode: 'default' as ModelMode,
         acpSessionModeId: null,
-        sessionPrompt: 'hello',
+        promptStore: createNewSessionPromptStore('hello'),
         resumeSessionId: '',
         agentNewSessionOptions: null,
         machineEnvPresence,
@@ -602,7 +603,7 @@ describe('useCreateNewSession (ACP mode seeding)', () => {
         permissionMode: 'default' as PermissionMode,
         modelMode: 'default' as ModelMode,
         acpSessionModeId: null,
-        sessionPrompt: '/qa-check this is a UI QA check',
+        promptStore: createNewSessionPromptStore('/qa-check this is a UI QA check'),
         resumeSessionId: '',
         agentNewSessionOptions: null,
         machineEnvPresence,
@@ -701,7 +702,7 @@ describe('useCreateNewSession (ACP mode seeding)', () => {
         permissionMode: 'default' as PermissionMode,
         modelMode: 'default' as ModelMode,
         acpSessionModeId: null,
-        sessionPrompt: '/qa-check this is a UI QA check',
+        promptStore: createNewSessionPromptStore('/qa-check this is a UI QA check'),
         setSessionPrompt,
         resumeSessionId: '',
         agentNewSessionOptions: null,

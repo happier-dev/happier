@@ -6,6 +6,7 @@ import { renderHook } from '@/dev/testkit';
 
 import type { NewSessionSimplePanelProps } from '../components/NewSessionSimplePanel';
 import { useNewSessionSimplePanelProps } from './useNewSessionSimplePanelProps';
+import { createNewSessionPromptStore } from '@/components/sessions/new/hooks/screenModel/newSessionPromptStore';
 
 function createPanelProps(
     overrides: Partial<NewSessionSimplePanelProps> = {},
@@ -20,7 +21,7 @@ function createPanelProps(
         newSessionSidePadding: 0,
         newSessionBottomPadding: 0,
         containerStyle: {},
-        sessionPrompt: '',
+        promptStore: createNewSessionPromptStore(''),
         setSessionPrompt: vi.fn(),
         handleCreateSession: vi.fn(),
         canCreate: true,

@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { renderHook, renderScreen, flushHookEffects } from '@/dev/testkit';
 import { createExpoRouterMock } from '@/dev/testkit/mocks/router';
 import type { Router } from 'expo-router';
+import { createNewSessionPromptStore } from '@/components/sessions/new/hooks/screenModel/newSessionPromptStore';
 
 vi.mock('@/text', async () => {
     const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
@@ -95,7 +96,7 @@ describe('useNewSessionAgentInputPresentation', () => {
             pendingGitWorktreeSourceKindRef: { current: 'current' },
             shouldReconcileInitialHydratedCheckoutCreationDraftRef: { current: false },
             router,
-            sessionPrompt: '',
+            promptStore: createNewSessionPromptStore(''),
             setSessionPrompt: vi.fn(),
             handleCreateSession: vi.fn(),
             backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
@@ -191,7 +192,7 @@ describe('useNewSessionAgentInputPresentation', () => {
             pendingGitWorktreeSourceKindRef: { current: 'current' },
             shouldReconcileInitialHydratedCheckoutCreationDraftRef: { current: false },
             router,
-            sessionPrompt: 'hello',
+            promptStore: createNewSessionPromptStore('hello'),
             setSessionPrompt,
             handleCreateSession: vi.fn(),
             backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
@@ -291,9 +292,9 @@ describe('useNewSessionAgentInputPresentation', () => {
             reload: vi.fn<Router['reload']>(),
             prefetch: vi.fn<Router['prefetch']>(),
         } as unknown as Router;
-        let sessionPrompt = '';
+        const promptStore = createNewSessionPromptStore('');
         const setSessionPrompt = vi.fn((next: string | ((previous: string) => string)) => {
-            sessionPrompt = typeof next === 'function' ? next(sessionPrompt) : next;
+            promptStore.setPrompt(next);
         });
 
         const renderPresentation = () => useNewSessionAgentInputPresentation({
@@ -335,7 +336,7 @@ describe('useNewSessionAgentInputPresentation', () => {
             pendingGitWorktreeSourceKindRef: { current: 'current' },
             shouldReconcileInitialHydratedCheckoutCreationDraftRef: { current: false },
             router,
-            sessionPrompt,
+            promptStore,
             setSessionPrompt,
             handleCreateSession: vi.fn(),
             backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
@@ -364,7 +365,7 @@ describe('useNewSessionAgentInputPresentation', () => {
         });
         const firstChips = hook.getCurrent().agentInputExtraActionChips;
 
-        sessionPrompt = 'hello';
+        promptStore.setPrompt('hello');
         await hook.rerender();
 
         expect(hook.getCurrent().agentInputExtraActionChips).toBe(firstChips);
@@ -384,7 +385,7 @@ describe('useNewSessionAgentInputPresentation', () => {
         const { onPickPath } = contentNode.props as { onPickPath: (path: string) => void };
         onPickPath('/repo/file.ts');
 
-        expect(sessionPrompt).toBe('hello @file.ts ');
+        expect(promptStore.getPrompt()).toBe('hello @file.ts ');
     });
 
     it('keeps connection status online while exact spawn readiness is unknown for an online machine', async () => {
@@ -450,7 +451,7 @@ describe('useNewSessionAgentInputPresentation', () => {
             pendingGitWorktreeSourceKindRef: { current: 'current' },
             shouldReconcileInitialHydratedCheckoutCreationDraftRef: { current: false },
             router,
-            sessionPrompt: '',
+            promptStore: createNewSessionPromptStore(''),
             setSessionPrompt: vi.fn(),
             handleCreateSession: vi.fn(),
             backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
@@ -545,7 +546,7 @@ describe('useNewSessionAgentInputPresentation', () => {
             pendingGitWorktreeSourceKindRef: { current: 'current' },
             shouldReconcileInitialHydratedCheckoutCreationDraftRef: { current: false },
             router,
-            sessionPrompt: '',
+            promptStore: createNewSessionPromptStore(''),
             setSessionPrompt: vi.fn(),
             handleCreateSession: vi.fn(),
             backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
@@ -642,7 +643,7 @@ describe('useNewSessionAgentInputPresentation', () => {
             pendingGitWorktreeSourceKindRef: { current: 'current' },
             shouldReconcileInitialHydratedCheckoutCreationDraftRef: { current: false },
             router,
-            sessionPrompt: '',
+            promptStore: createNewSessionPromptStore(''),
             setSessionPrompt: vi.fn(),
             handleCreateSession: vi.fn(),
             backendTarget: { kind: 'builtInAgent', agentId: 'claude' },

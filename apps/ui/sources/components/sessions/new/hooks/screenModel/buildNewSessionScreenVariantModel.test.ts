@@ -15,13 +15,15 @@ describe('buildNewSessionScreenVariantModel', () => {
             simplePanelProps: {},
             checkoutCreationDraft: null,
             setCheckoutCreationDraft: () => {},
-            wizardLayoutProps: {},
-            wizardSectionPresentation: sectionPresentation,
-            wizardUseColumnLayout: true,
             wizardProfilesProps: {},
-            wizardAgentProps: {},
-            wizardMachineProps: {},
-            wizardFooterProps: {},
+            wizardSections: {
+                layout: {},
+                sectionPresentation,
+                useColumnLayout: true,
+                agent: {},
+                machine: {},
+                footer: {},
+            },
         } as any);
 
         expect(model.variant).toBe('wizard');

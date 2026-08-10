@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
 import { renderScreen } from '@/dev/testkit';
 import { installNewSessionComponentsCommonModuleMocks } from './newSessionComponentsTestHelpers';
+import { createNewSessionPromptStore } from '@/components/sessions/new/hooks/screenModel/newSessionPromptStore';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -238,7 +239,7 @@ describe('NewSessionWizard (attachments.uploads)', () => {
                         setFavoriteDirectories: () => {},
                     },
                     footer: {
-                        sessionPrompt: '',
+                        promptStore: createNewSessionPromptStore(''),
                         setSessionPrompt: () => {},
                         handleCreateSession: () => {},
                         canCreate: true,
@@ -355,7 +356,7 @@ describe('NewSessionWizard (attachments.uploads)', () => {
                 setFavoriteDirectories: () => {},
             },
             footer: {
-                sessionPrompt: '',
+                promptStore: createNewSessionPromptStore(''),
                 setSessionPrompt: () => {},
                 handleCreateSession: () => {},
                 canCreate: true,
@@ -502,7 +503,7 @@ describe('NewSessionWizard (attachments.uploads)', () => {
                         setFavoriteDirectories: () => {},
                     },
                     footer: {
-                        sessionPrompt: '',
+                        promptStore: createNewSessionPromptStore(''),
                         setSessionPrompt: () => {},
                         handleCreateSession: () => {},
                         canCreate: false,
@@ -613,7 +614,7 @@ describe('NewSessionWizard (attachments.uploads)', () => {
                         setFavoriteDirectories: () => {},
                     },
                     footer: {
-                        sessionPrompt: '',
+                        promptStore: createNewSessionPromptStore(''),
                         setSessionPrompt: () => {},
                         handleCreateSession: () => {},
                         canCreate: true,
@@ -763,7 +764,7 @@ describe('NewSessionWizard (attachments.uploads)', () => {
                         setFavoriteDirectories: () => {},
                     },
                     footer: {
-                        sessionPrompt: 'Investigate this bug',
+                        promptStore: createNewSessionPromptStore('Investigate this bug'),
                         setSessionPrompt: () => {},
                         handleCreateSession,
                         canCreate: true,

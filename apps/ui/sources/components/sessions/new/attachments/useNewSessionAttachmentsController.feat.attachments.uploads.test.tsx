@@ -11,8 +11,21 @@ import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScop
 import type { followUpSpawnedSessionWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/followUpSpawnedSession';
 import type { ReviewCommentDraft } from '@/sync/domains/input/reviewComments/reviewCommentTypes';
 import type { NewSessionLaunchAttempt } from '@/components/sessions/new/modules/newSessionLaunchAttempt';
+import { createNewSessionPromptStore } from '@/components/sessions/new/hooks/screenModel/newSessionPromptStore';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+
+/** The canonical `mentions[]` envelope shape a composer hands to its host (EU-5). */
+const STRUCTURED_INPUT_ENVELOPE = {
+    v: 1,
+    mentions: [{
+        kind: 'happier.session',
+        ref: 'session:peer',
+        token: '@session:peer-abc123',
+        start: 4,
+        end: 24,
+    }],
+} as const;
 
 const uploadAttachmentDraftsToSessionSpy = vi.hoisted(() => vi.fn());
 const formatAttachmentsBlockSpy = vi.hoisted(() => vi.fn(() => '[attachments block]'));
@@ -203,7 +216,7 @@ describe('useNewSessionAttachmentsController (attachments.uploads)', () => {
         const hook = await renderHook(() => useNewSessionAttachmentsController({
             flowId: 'flow-live-text',
             isCreating: false,
-            sessionPrompt: '',
+            promptStore: createNewSessionPromptStore(''),
             handleCreateSession,
             selectedProfileId: null,
             targetServerId: 'server-a',
@@ -219,6 +232,95 @@ describe('useNewSessionAttachmentsController (attachments.uploads)', () => {
         await hook.unmount();
     });
 
+    // This controller is the ONLY thing between the composer and the first turn, so it is where
+    // the composer's `mentions[]` envelope is dropped or carried. It was dropped once already:
+    // an `@session` reference composed on the new-session screen reached the agent as bare text.
+    // The downstream test in `useCreateNewSession` cannot see that — it is handed the envelope
+    // directly, so it stays green while this hop loses it.
+    it('carries the composer structured-input envelope into a plain send', async () => {
+        const { useNewSessionAttachmentsController } = await import('./useNewSessionAttachmentsController');
+        const handleCreateSession = vi.fn();
+        const hook = await renderHook(() => useNewSessionAttachmentsController({
+            flowId: 'flow-envelope-plain',
+            isCreating: false,
+            promptStore: createNewSessionPromptStore('see @session:peer-abc123'),
+            handleCreateSession,
+            selectedProfileId: null,
+            targetServerId: 'server-a',
+            baseActionChips: [],
+        }));
+
+        await act(async () => {
+            hook.getCurrent().handleSend({ structuredInputMetaOverrides: { happierStructuredInputV1: STRUCTURED_INPUT_ENVELOPE } });
+            await flushHookEffects({ cycles: 1, turns: 1 });
+        });
+
+        expect(handleCreateSession).toHaveBeenCalledWith({
+            structuredInputMetaOverrides: { happierStructuredInputV1: STRUCTURED_INPUT_ENVELOPE },
+        });
+        await hook.unmount();
+    });
+
+    it('merges the composer structured-input envelope with the attachments envelope', async () => {
+        const { useNewSessionAttachmentsController } = await import('./useNewSessionAttachmentsController');
+        uploadAttachmentDraftsToSessionSpy.mockResolvedValue({
+            uploaded: [{
+                name: 'note.txt',
+                path: '.happier/uploads/note.txt',
+                mimeType: 'text/plain',
+                sizeBytes: 12,
+                sha256: 'sha-note',
+            }],
+        });
+        const handleCreateSession = vi.fn();
+        const hook = await renderHook(() => useNewSessionAttachmentsController({
+            flowId: 'flow-envelope-attachments',
+            isCreating: false,
+            promptStore: createNewSessionPromptStore('see @session:peer-abc123'),
+            handleCreateSession,
+            selectedProfileId: null,
+            targetServerId: 'server-a',
+            baseActionChips: [],
+        }));
+
+        await act(async () => {
+            hook.getCurrent().addPickedAttachments([{
+                kind: 'native',
+                uri: 'file:///tmp/note.txt',
+                name: 'note.txt',
+                sizeBytes: 12,
+                mimeType: 'text/plain',
+            }]);
+            await flushHookEffects({ cycles: 1, turns: 1 });
+        });
+
+        await act(async () => {
+            hook.getCurrent().handleSend({ structuredInputMetaOverrides: { happierStructuredInputV1: STRUCTURED_INPUT_ENVELOPE } });
+            await flushHookEffects({ cycles: 1, turns: 1 });
+        });
+
+        const afterCreated = handleCreateSession.mock.calls[0]?.[0]?.afterCreated;
+        expect(typeof afterCreated).toBe('function');
+
+        await act(async () => {
+            await afterCreated({
+                sessionId: 'session-envelope',
+                effectiveSpawnServerId: 'server-a',
+                launchAttempt: createTestLaunchAttempt('launch-envelope-message-id'),
+            });
+        });
+
+        // One envelope per message: the attachments payload and the composer's mentions coexist,
+        // neither replacing the other.
+        expect(followUpSpawnedSessionWithServerScopeSpy).toHaveBeenCalledWith(expect.objectContaining({
+            metaOverrides: expect.objectContaining({
+                happier: expect.objectContaining({ kind: 'attachments.v1' }),
+                happierStructuredInputV1: STRUCTURED_INPUT_ENVELOPE,
+            }),
+        }));
+        await hook.unmount();
+    });
+
     it('restores attachment drafts when the new-session flow remounts with the same flow id', async () => {
         const { useNewSessionAttachmentsController } = await import('./useNewSessionAttachmentsController');
         const handleCreateSession = vi.fn();
@@ -226,7 +328,7 @@ describe('useNewSessionAttachmentsController (attachments.uploads)', () => {
         const first = await renderHook(() => useNewSessionAttachmentsController({
             flowId: 'flow-1',
             isCreating: false,
-            sessionPrompt: '',
+            promptStore: createNewSessionPromptStore(''),
             handleCreateSession,
             selectedProfileId: null,
             targetServerId: 'server-a',
@@ -256,7 +358,7 @@ describe('useNewSessionAttachmentsController (attachments.uploads)', () => {
         const second = await renderHook(() => useNewSessionAttachmentsController({
             flowId: 'flow-1',
             isCreating: false,
-            sessionPrompt: '',
+            promptStore: createNewSessionPromptStore(''),
             handleCreateSession,
             selectedProfileId: null,
             targetServerId: 'server-a',
@@ -276,7 +378,7 @@ describe('useNewSessionAttachmentsController (attachments.uploads)', () => {
         const first = await renderHook(() => useNewSessionAttachmentsController({
             flowId: 'flow-feature-loading',
             isCreating: false,
-            sessionPrompt: '',
+            promptStore: createNewSessionPromptStore(''),
             handleCreateSession,
             selectedProfileId: null,
             targetServerId: 'server-a',
@@ -302,7 +404,7 @@ describe('useNewSessionAttachmentsController (attachments.uploads)', () => {
         const disabled = await renderHook(() => useNewSessionAttachmentsController({
             flowId: 'flow-feature-loading',
             isCreating: false,
-            sessionPrompt: '',
+            promptStore: createNewSessionPromptStore(''),
             handleCreateSession,
             selectedProfileId: null,
             targetServerId: 'server-a',
@@ -325,7 +427,7 @@ describe('useNewSessionAttachmentsController (attachments.uploads)', () => {
             const hook = await renderHook(() => useNewSessionAttachmentsController({
                 flowId: 'flow-pick-once',
                 isCreating: false,
-                sessionPrompt: '',
+                promptStore: createNewSessionPromptStore(''),
                 handleCreateSession,
                 selectedProfileId: null,
                 targetServerId: 'server-a',
@@ -381,7 +483,7 @@ describe('useNewSessionAttachmentsController (attachments.uploads)', () => {
         const hook = await renderHook(() => useNewSessionAttachmentsController({
             flowId: 'flow-success',
             isCreating: false,
-            sessionPrompt: 'Investigate this bug',
+            promptStore: createNewSessionPromptStore('Investigate this bug'),
             handleCreateSession,
             selectedProfileId: 'profile-work',
             targetServerId: 'server-b',
@@ -456,7 +558,7 @@ describe('useNewSessionAttachmentsController (attachments.uploads)', () => {
         const remounted = await renderHook(() => useNewSessionAttachmentsController({
             flowId: 'flow-success',
             isCreating: false,
-            sessionPrompt: 'Investigate this bug',
+            promptStore: createNewSessionPromptStore('Investigate this bug'),
             handleCreateSession,
             selectedProfileId: 'profile-work',
             targetServerId: 'server-b',
@@ -486,7 +588,7 @@ describe('useNewSessionAttachmentsController (attachments.uploads)', () => {
         const hook = await renderHook(() => useNewSessionAttachmentsController({
             flowId: 'flow-retry-message-id',
             isCreating: false,
-            sessionPrompt: 'Investigate this bug',
+            promptStore: createNewSessionPromptStore('Investigate this bug'),
             handleCreateSession,
             selectedProfileId: 'profile-work',
             targetServerId: 'server-b',
@@ -579,7 +681,7 @@ describe('useNewSessionAttachmentsController (attachments.uploads)', () => {
         const hook = await renderHook(() => useNewSessionAttachmentsController({
             flowId: 'flow-retry-uploaded-draft',
             isCreating: false,
-            sessionPrompt: 'Investigate this bug',
+            promptStore: createNewSessionPromptStore('Investigate this bug'),
             handleCreateSession,
             selectedProfileId: 'profile-work',
             targetServerId: 'server-b',
@@ -654,7 +756,7 @@ describe('useNewSessionAttachmentsController (attachments.uploads)', () => {
         const hook = await renderHook(() => useNewSessionAttachmentsController({
             flowId: 'flow-retry-upload-failure',
             isCreating: false,
-            sessionPrompt: 'Investigate this bug',
+            promptStore: createNewSessionPromptStore('Investigate this bug'),
             handleCreateSession,
             selectedProfileId: 'profile-work',
             targetServerId: 'server-b',
@@ -753,7 +855,7 @@ describe('useNewSessionAttachmentsController (attachments.uploads)', () => {
         const hook = await renderHook(() => useNewSessionAttachmentsController({
             flowId: 'flow-review-comments',
             isCreating: false,
-            sessionPrompt: 'Focus on correctness',
+            promptStore: createNewSessionPromptStore('Focus on correctness'),
             handleCreateSession,
             selectedProfileId: 'profile-work',
             selectedMachineId: 'machine-1',
@@ -849,7 +951,7 @@ describe('useNewSessionAttachmentsController (attachments.uploads)', () => {
         const params = {
             flowId: 'flow-review-comments-home-relative',
             isCreating: false,
-            sessionPrompt: '',
+            promptStore: createNewSessionPromptStore(''),
             handleCreateSession,
             selectedProfileId: 'profile-work',
             selectedMachineId: 'machine-1',
@@ -928,7 +1030,7 @@ describe('useNewSessionAttachmentsController (attachments.uploads)', () => {
         const hook = await renderHook(() => useNewSessionAttachmentsController({
             flowId: 'flow-review-comments-attachments',
             isCreating: false,
-            sessionPrompt: 'Focus on correctness',
+            promptStore: createNewSessionPromptStore('Focus on correctness'),
             handleCreateSession,
             selectedProfileId: 'profile-work',
             selectedMachineId: 'machine-1',

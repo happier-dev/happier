@@ -6,6 +6,7 @@ import { DEFAULT_NEW_SESSION_AUTOMATION_DRAFT } from '@/sync/domains/automations
 import { settingsDefaults } from '@/sync/domains/settings/settings';
 
 import { useNewSessionAuthoringState } from './useNewSessionAuthoringState';
+import { createNewSessionPromptStore } from '@/components/sessions/new/hooks/screenModel/newSessionPromptStore';
 
 const buildNewSessionAuthoringContextMock = vi.hoisted(() => vi.fn());
 const buildLiveNewSessionAuthoringDraftFromResolvedInputsMock = vi.hoisted(() => vi.fn((params: Record<string, unknown>) => ({
@@ -68,7 +69,7 @@ describe('useNewSessionAuthoringState', () => {
             selectedMachine: null,
             selectedPath: '/repo',
             checkoutCreationDraft: null,
-            sessionPrompt: '',
+            promptStore: createNewSessionPromptStore(''),
             agentType: 'claude',
             backendTarget: null,
             transcriptStorage: null,
@@ -117,7 +118,7 @@ describe('useNewSessionAuthoringState', () => {
             selectedMachine: null,
             selectedPath: '/repo',
             checkoutCreationDraft: null,
-            sessionPrompt: prompt,
+            promptStore: createNewSessionPromptStore(prompt),
             agentType: 'claude',
             backendTarget: null,
             transcriptStorage: null,

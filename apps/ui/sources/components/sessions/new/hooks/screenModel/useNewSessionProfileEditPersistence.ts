@@ -6,7 +6,10 @@ import type { Href, Router } from 'expo-router';
 
 import type { AIBackendProfile } from '@/sync/domains/profiles/profileCompatibility';
 import type { NewSessionDraft } from '@/sync/domains/state/persistence';
-import { useNewSessionDraftAutoPersist } from '@/components/sessions/new/hooks/useNewSessionDraftAutoPersist';
+import {
+    useNewSessionDraftAutoPersist,
+    type NewSessionDraftTextSource,
+} from '@/components/sessions/new/hooks/useNewSessionDraftAutoPersist';
 
 export function useNewSessionProfileEditPersistence(params: Readonly<{
     router: Router;
@@ -15,7 +18,7 @@ export function useNewSessionProfileEditPersistence(params: Readonly<{
     persistDraftIfEnabled: (draft: NewSessionDraft) => void;
     draftPersistenceEnabled: boolean;
     draftPersistenceGenerationRef: React.MutableRefObject<number>;
-    draftTextLength?: number;
+    draftText?: NewSessionDraftTextSource;
     draftChangeKey: string;
 }>): Readonly<{
     openProfileEdit: (args: Readonly<{ profileId?: string; cloneFromProfileId?: string }>) => void;
@@ -69,7 +72,7 @@ export function useNewSessionProfileEditPersistence(params: Readonly<{
     useNewSessionDraftAutoPersist({
         persistDraftNow,
         persistenceEnabled: params.draftPersistenceEnabled,
-        draftTextLength: params.draftTextLength,
+        draftText: params.draftText,
         draftChangeKey: params.draftChangeKey,
         focused: isFocused,
     });

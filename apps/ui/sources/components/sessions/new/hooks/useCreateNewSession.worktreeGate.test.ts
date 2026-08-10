@@ -7,6 +7,7 @@ import { settingsDefaults as testSettingsDefaults } from '@/sync/domains/setting
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { renderScreen } from '@/dev/testkit';
 import { installNewSessionScreenModelCommonModuleMocks } from './newSessionScreenModelTestHelpers';
+import { createNewSessionPromptStore } from '@/components/sessions/new/hooks/screenModel/newSessionPromptStore';
 
 
 const materializeNewSessionCheckoutMock = vi.hoisted(() => vi.fn(async (params?: unknown) => {
@@ -393,7 +394,7 @@ describe('useCreateNewSession (worktree gating)', () => {
             agentType: 'codex' as const,
             permissionMode: 'default' as const,
             modelMode: 'auto' as const,
-            sessionPrompt: 'hi',
+            promptStore: createNewSessionPromptStore('hi'),
             resumeSessionId: '',
             agentNewSessionOptions: null,
             // Test fixture: only the fields used by useCreateNewSession are provided.
@@ -449,7 +450,7 @@ describe('useCreateNewSession (worktree gating)', () => {
             agentType: 'codex' as const,
             permissionMode: 'default' as const,
             modelMode: 'auto' as const,
-            sessionPrompt: 'hi',
+            promptStore: createNewSessionPromptStore('hi'),
             resumeSessionId: '',
             agentNewSessionOptions: null,
             machineEnvPresence: {
@@ -527,7 +528,7 @@ describe('useCreateNewSession (worktree gating)', () => {
             agentType: 'codex' as const,
             permissionMode: 'default' as const,
             modelMode: 'auto' as const,
-            sessionPrompt: 'hi',
+            promptStore: createNewSessionPromptStore('hi'),
             resumeSessionId: '',
             agentNewSessionOptions: null,
             machineEnvPresence: {
@@ -610,7 +611,7 @@ describe('useCreateNewSession (worktree gating)', () => {
             agentType: 'codex' as const,
             permissionMode: 'default' as const,
             modelMode: 'auto' as const,
-            sessionPrompt: 'hi',
+            promptStore: createNewSessionPromptStore('hi'),
             resumeSessionId: '',
             agentNewSessionOptions: null,
             machineEnvPresence: {
@@ -677,7 +678,7 @@ describe('useCreateNewSession (worktree gating)', () => {
             agentType: 'codex' as const,
             permissionMode: 'default' as const,
             modelMode: 'auto' as const,
-            sessionPrompt: 'Ship the scoped follow-up fix',
+            promptStore: createNewSessionPromptStore('Ship the scoped follow-up fix'),
             resumeSessionId: '',
             agentNewSessionOptions: null,
             machineEnvPresence: {
@@ -739,7 +740,7 @@ describe('useCreateNewSession (worktree gating)', () => {
             agentType: 'codex' as const,
             permissionMode: 'default' as const,
             modelMode: 'auto' as const,
-            sessionPrompt: 'Ship the scoped follow-up fix',
+            promptStore: createNewSessionPromptStore('Ship the scoped follow-up fix'),
             resumeSessionId: '',
             agentNewSessionOptions: null,
             machineEnvPresence: {
@@ -805,7 +806,7 @@ describe('useCreateNewSession (worktree gating)', () => {
             agentType: 'codex' as const,
             permissionMode: 'default' as const,
             modelMode: 'auto' as const,
-            sessionPrompt: 'Ship the scoped follow-up fix',
+            promptStore: createNewSessionPromptStore('Ship the scoped follow-up fix'),
             resumeSessionId: '',
             agentNewSessionOptions: null,
             machineEnvPresence: {
@@ -868,7 +869,7 @@ describe('useCreateNewSession (worktree gating)', () => {
             agentType: 'codex' as const,
             permissionMode: 'default' as const,
             modelMode: 'auto' as const,
-            sessionPrompt: '',
+            promptStore: createNewSessionPromptStore(''),
             resumeSessionId: '',
             agentNewSessionOptions: null,
             machineEnvPresence: {
@@ -939,7 +940,7 @@ describe('useCreateNewSession (worktree gating)', () => {
             agentType: 'codex' as const,
             permissionMode: 'default' as const,
             modelMode: 'auto' as const,
-            sessionPrompt: '',
+            promptStore: createNewSessionPromptStore(''),
             resumeSessionId: '',
             agentNewSessionOptions: null,
             machineEnvPresence: {
@@ -1008,7 +1009,7 @@ describe('useCreateNewSession (worktree gating)', () => {
             agentType: 'codex' as const,
             permissionMode: 'default' as const,
             modelMode: 'auto' as const,
-            sessionPrompt: '',
+            promptStore: createNewSessionPromptStore(''),
             resumeSessionId: '',
             agentNewSessionOptions: null,
             machineEnvPresence: {
@@ -1078,7 +1079,7 @@ describe('useCreateNewSession (worktree gating)', () => {
             agentType: 'codex' as const,
             permissionMode: 'default' as const,
             modelMode: 'auto' as const,
-            sessionPrompt: '',
+            promptStore: createNewSessionPromptStore(''),
             resumeSessionId: '',
             agentNewSessionOptions: null,
             machineEnvPresence: {
@@ -1155,7 +1156,7 @@ describe('useCreateNewSession (worktree gating)', () => {
             agentType: 'codex' as const,
             permissionMode: 'default' as const,
             modelMode: 'auto' as const,
-            sessionPrompt: '',
+            promptStore: createNewSessionPromptStore(''),
             resumeSessionId: '',
             agentNewSessionOptions: null,
             machineEnvPresence: {
@@ -1214,7 +1215,7 @@ describe('useCreateNewSession (worktree gating)', () => {
             agentType: 'codex' as const,
             permissionMode: 'default' as const,
             modelMode: 'auto' as const,
-            sessionPrompt: '',
+            promptStore: createNewSessionPromptStore(''),
             resumeSessionId: '',
             agentNewSessionOptions: null,
             machineEnvPresence: {
@@ -1283,7 +1284,7 @@ describe('useCreateNewSession (worktree gating)', () => {
             agentType: 'codex' as const,
             permissionMode: 'default' as const,
             modelMode: 'auto' as const,
-            sessionPrompt: '',
+            promptStore: createNewSessionPromptStore(''),
             resumeSessionId: '',
             agentNewSessionOptions: null,
             machineEnvPresence: {
@@ -1357,7 +1358,7 @@ describe('useCreateNewSession (worktree gating)', () => {
             agentType: 'codex' as const,
             permissionMode: 'default' as const,
             modelMode: 'auto' as const,
-            sessionPrompt: 'Investigate this bug',
+            promptStore: createNewSessionPromptStore('Investigate this bug'),
             resumeSessionId: '',
             agentNewSessionOptions: null,
             machineEnvPresence: {
@@ -1442,7 +1443,7 @@ describe('useCreateNewSession (worktree gating)', () => {
             agentType: 'codex' as const,
             permissionMode: 'default' as const,
             modelMode: 'auto' as const,
-            sessionPrompt: 'Recover this first message',
+            promptStore: createNewSessionPromptStore('Recover this first message'),
             resumeSessionId: '',
             agentNewSessionOptions: null,
             machineEnvPresence: {
@@ -1528,7 +1529,7 @@ describe('useCreateNewSession (worktree gating)', () => {
             agentType: 'codex' as const,
             permissionMode: 'default' as const,
             modelMode: 'auto' as const,
-            sessionPrompt: 'Recover this first message',
+            promptStore: createNewSessionPromptStore('Recover this first message'),
             resumeSessionId: '',
             agentNewSessionOptions: null,
             machineEnvPresence: {
@@ -1628,7 +1629,7 @@ describe('useCreateNewSession (worktree gating)', () => {
             agentType: 'codex' as const,
             permissionMode: 'default' as const,
             modelMode: 'auto' as const,
-            sessionPrompt: 'Investigate this bug',
+            promptStore: createNewSessionPromptStore('Investigate this bug'),
             resumeSessionId: '',
             agentNewSessionOptions: null,
             machineEnvPresence: {
