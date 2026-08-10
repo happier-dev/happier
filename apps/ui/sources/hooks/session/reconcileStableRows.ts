@@ -1,3 +1,5 @@
+import * as React from 'react';
+
 /**
  * Keep object identity for rows that did not change.
  *
@@ -88,4 +90,21 @@ export function reconcileStableRows<Row>(
     }
 
     return changed ? reconciled : previous;
+}
+
+/**
+ * `reconcileStableRows` across renders, holding the previous result in a ref.
+ *
+ * It lives with the reconciler rather than beside each derivation because every roster in this
+ * corridor needs the same three lines, and a private copy per hook is how two of them end up with
+ * different notions of "unchanged". Written during render on purpose: the reconciled array must be
+ * the one this render returns, not one an effect installs a frame later.
+ */
+export function useReconciledStableRows<Row>(
+    rows: readonly Row[],
+    readKey: (row: Row) => string,
+): readonly Row[] {
+    const ref = React.useRef<readonly Row[]>(rows);
+    ref.current = reconcileStableRows(ref.current, rows, readKey);
+    return ref.current;
 }

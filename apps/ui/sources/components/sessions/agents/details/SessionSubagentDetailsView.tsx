@@ -8,8 +8,12 @@ import { createExecutionRunDeliveryActionChip } from '@/components/sessions/agen
 import { SessionParticipantComposer } from '@/components/sessions/participants/composer/SessionParticipantComposer';
 import { Text } from '@/components/ui/text/Text';
 import { useSessionSubagents } from '@/hooks/session/useSessionSubagents';
-import { useMessage, useResolvedSessionMessageRouteId, useSession } from '@/sync/domains/state/storage';
-import { useSessionMessages } from '@/sync/store/hooks';
+import {
+    useMessage,
+    useResolvedSessionMessageRouteId,
+    useSession,
+    useSessionSubagentSourceMessages,
+} from '@/sync/domains/state/storage';
 import { t } from '@/text';
 import { deriveTranscriptInteractionFromSession } from '@/utils/sessions/deriveTranscriptInteraction';
 
@@ -41,11 +45,14 @@ export const SessionSubagentDetailsView = React.memo((props: Readonly<{
 }>) => {
     const styles = stylesheet;
     const session = useSession(props.sessionId);
-    const { messages } = useSessionMessages(props.sessionId);
+    // P-2: the subagent-source projection rather than the full transcript. This view needs the
+    // roster only to find one subagent by id, and the full array made every streamed token
+    // re-derive it.
+    const subagentSourceMessages = useSessionSubagentSourceMessages(props.sessionId);
     const { subagents } = useSessionSubagents({
         sessionId: props.sessionId,
         session,
-        messages,
+        messages: subagentSourceMessages,
     });
 
     const subagent = React.useMemo(() => {

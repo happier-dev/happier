@@ -15,7 +15,7 @@ import type { SessionParticipantTarget } from '@/sync/domains/session/participan
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { useDirectSessionRuntime, type UseDirectSessionRuntimeResult } from '@/components/sessions/model/useDirectSessionRuntime';
-import { reconcileStableRows } from './reconcileStableRows';
+import { useReconciledStableRows } from './reconcileStableRows';
 import { useSessionRunningExecutionRuns } from './useSessionRunningExecutionRuns';
 
 const sessionSubagentToolMessageSignatureCache = new WeakMap<Message, string>();
@@ -128,20 +128,6 @@ function useStableValueBySignature<T>(value: T, signature: string): T {
         ref.current = { signature, value };
     }
     return ref.current.value;
-}
-
-/**
- * Derived rosters are rebuilt in full on every transcript tick. Reconciling them by key keeps the
- * object identity of rows that did not change, which is what makes a memoized row real — and costs
- * a short-circuiting structural compare instead of serialising the whole array.
- */
-function useReconciledStableRows<Row>(
-    rows: readonly Row[],
-    readKey: (row: Row) => string,
-): readonly Row[] {
-    const ref = React.useRef<readonly Row[]>(rows);
-    ref.current = reconcileStableRows(ref.current, rows, readKey);
-    return ref.current;
 }
 
 function readSubagentKey(subagent: SessionSubagent): string {
