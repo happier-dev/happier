@@ -33,6 +33,8 @@ import {
 import { usePetSpritesheetSource } from '@/components/pets/render/usePetSpritesheetSource';
 import { useSelectedPetPackage } from '@/components/pets/source/useSelectedPetPackage';
 import type { SelectedPetPackageSource } from '@/components/pets/source/resolveSelectedPetPackage';
+import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
+import { useRuntimeActive } from '@/hooks/runtime/useRuntimeActive';
 import { useLocalSetting } from '@/sync/domains/state/storage';
 import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
 import { useApplyLocalSettings } from '@/sync/store/settingsWriters';
@@ -128,6 +130,12 @@ function PetAppShellCompanionRuntime(props: Readonly<{
     );
     const { dismissedTrayItemKeys, dismissTrayItem } = usePetCompanionTrayDismissals();
     const activity = usePetCompanionActivityModel({ dismissedTrayItemKeys });
+    // The companion animates for a user who is watching it. The native mount has
+    // always resolved both facts before driving a frame; the web mount resolved
+    // neither, so its frame ticker and ambient chain ran at full cadence behind a
+    // hidden tab and straight through a reduced-motion preference.
+    const reducedMotion = useReducedMotionPreference();
+    const runtimeActive = useRuntimeActive();
     const [trayOpen, setTrayOpen] = React.useState(false);
     const trayItemCount = activity.trayItems.length;
     const applyLocalSettings = useApplyLocalSettings();
@@ -173,6 +181,8 @@ function PetAppShellCompanionRuntime(props: Readonly<{
         >
             <PetCompanionSurface
                 state={drag.dragState ?? activity.state}
+                reducedMotion={reducedMotion}
+                active={runtimeActive}
                 stateStyle={[
                     hasTrayItems ? styles.petExpanded : styles.petCompact,
                     {

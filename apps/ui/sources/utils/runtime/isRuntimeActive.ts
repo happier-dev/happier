@@ -47,6 +47,46 @@ function readDocument(): (Document & {
 }
 
 /**
+ * Notifies when the runtime's active/inactive state may have changed: the app
+ * moved between foreground and background, or (on web) the document was hidden
+ * or shown.
+ *
+ * This is the single owner of "what counts as a lifecycle transition" that
+ * `isRuntimeActive` reads. Every gated worker subscribes here instead of
+ * attaching its own `AppState` / `visibilitychange` listeners, so a new poller
+ * cannot silently ship without a lifecycle gate for want of somewhere to hang
+ * one. The listener is called on every transition signal, including ones that
+ * leave the state unchanged; a caller that needs edge semantics compares
+ * `isRuntimeActive()` itself.
+ */
+export function subscribeToRuntimeActiveChange(listener: () => void): () => void {
+    const detach: Array<() => void> = [];
+
+    const doc = readDocument();
+    if (typeof doc?.addEventListener === 'function' && typeof doc.removeEventListener === 'function') {
+        doc.addEventListener('visibilitychange', listener);
+        detach.push(() => {
+            doc.removeEventListener?.('visibilitychange', listener);
+        });
+    }
+
+    try {
+        const subscription = AppState.addEventListener?.('change', listener);
+        if (subscription && typeof subscription.remove === 'function') {
+            detach.push(() => subscription.remove());
+        }
+    } catch {
+        // ignore
+    }
+
+    return () => {
+        for (const stop of detach.splice(0)) {
+            stop();
+        }
+    };
+}
+
+/**
  * Runs an interval only while the runtime is active. If regular ticks were
  * skipped while inactive, the callback runs once immediately when the runtime
  * returns to active and the interval is overdue.
@@ -74,31 +114,12 @@ export function startRuntimeActiveGatedInterval(
     };
 
     const interval = setInterval(runNow, delayMs);
-
-    const detach: Array<() => void> = [];
-    const doc = readDocument();
-    if (typeof doc?.addEventListener === 'function' && typeof doc.removeEventListener === 'function') {
-        doc.addEventListener('visibilitychange', runIfOverdue);
-        detach.push(() => {
-            doc.removeEventListener?.('visibilitychange', runIfOverdue);
-        });
-    }
-
-    try {
-        const subscription = AppState.addEventListener?.('change', runIfOverdue);
-        if (subscription && typeof subscription.remove === 'function') {
-            detach.push(() => subscription.remove());
-        }
-    } catch {
-        // ignore
-    }
+    const detachLifecycle = subscribeToRuntimeActiveChange(runIfOverdue);
 
     return () => {
         if (stopped) return;
         stopped = true;
         clearInterval(interval);
-        for (const stop of detach.splice(0)) {
-            stop();
-        }
+        detachLifecycle();
     };
 }

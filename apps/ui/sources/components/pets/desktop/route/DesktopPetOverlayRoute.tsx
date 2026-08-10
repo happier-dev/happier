@@ -30,6 +30,8 @@ import {
 import { PetCompanionSurface } from '@/components/pets/render/PetCompanionSurface';
 import { usePetSpritesheetSourceResult } from '@/components/pets/render/usePetSpritesheetSource';
 import { useSelectedPetPackage } from '@/components/pets/source/useSelectedPetPackage';
+import { useRuntimeActive } from '@/hooks/runtime/useRuntimeActive';
+import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 import { useLocalSettings } from '@/sync/domains/state/storage';
 import { t } from '@/text';
 import { fireAndForget } from '@/utils/system/fireAndForget';
@@ -302,6 +304,8 @@ function DesktopPetOverlayRouteContent(props: DesktopPetOverlayRouteContentProps
     const selectedPetPackage = useSelectedPetPackage();
     const localSettings = useLocalSettings();
     const activity = props.activity;
+    const reducedMotion = useReducedMotionPreference();
+    const runtimeActive = useRuntimeActive();
     const [trayOpen, setTrayOpen] = React.useState(false);
     const [nativeHoveredSessionId, setNativeHoveredSessionId] = React.useState<string | null>(null);
     const trayItemCount = activity.trayItems.length;
@@ -488,6 +492,8 @@ function DesktopPetOverlayRouteContent(props: DesktopPetOverlayRouteContentProps
             {petVisible ? (
                 <PetCompanionSurface
                     state={drag.dragState ?? activity.state}
+                    reducedMotion={reducedMotion}
+                    active={runtimeActive}
                     stateStyle={mascotStyle}
                     hitboxTestID="desktop-pet-overlay-hitbox"
                     spriteTestID="desktop-pet-overlay-sprite"

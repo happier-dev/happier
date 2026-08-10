@@ -75,7 +75,7 @@ import { useSessionExecutionRunsSupported } from '@/hooks/server/useSessionExecu
 import { buildScopedSessionRouteHref } from '@/hooks/session/sessionRouteServerScope';
 import { useWarmRepositoryDirectoryCacheOnSessionOpen } from '@/hooks/session/files/useWarmRepositoryDirectoryCacheOnSessionOpen';
 import { Modal } from '@/modal';
-import { scmStatusSync } from '@/scm/scmStatusSync';
+import { useScmSessionAutoRefresh } from '@/scm/refresh/useScmSessionAutoRefresh';
 import { continueSessionWithReplay, sessionAbort, resumeSession } from '@/sync/ops';
 import { storage, useActiveServerAccountScope, useEndpointConnectivity, useIsDataReady, useLaunchSelectionMachines, useLocalSetting, useOpenApprovalArtifactsForSession, useProfile, useRealtimeStatus, useSessionAutomationsEnabledCount, useSessionConnectedServiceAccountSwitchEvents, useSessionMessages, useSessionOrganizationProjection, useSessionPendingMessages, useSessionSubagentSourceMessages, useSessionTranscriptIds, useSessionUsage, useSessionVisibleReadSeq, useSetting, useSettingMutable, useSettings, useSyncError, useWorkspaceReviewCommentsDrafts } from '@/sync/domains/state/storage';
 import { canContinueSessionWithFreshSpawn, canResumeSessionWithOptions } from '@/agents/runtime/resumeCapabilities';
@@ -3576,17 +3576,7 @@ function SessionViewLoaded({
         },
     });
 
-    React.useEffect(() => {
-        if (!sessionId) return;
-        // Screen-scoped SCM refresh: keep the status badge reasonably up-to-date without noisy polling.
-        scmStatusSync.invalidateFromAutoRefresh(sessionId);
-        const interval = setInterval(() => {
-            scmStatusSync.invalidateFromAutoRefresh(sessionId);
-        }, scmSessionAutoRefreshIntervalMs);
-        return () => {
-            clearInterval(interval);
-        };
-    }, [scmSessionAutoRefreshIntervalMs, sessionId]);
+    useScmSessionAutoRefresh({ sessionId, intervalMs: scmSessionAutoRefreshIntervalMs });
 
     const actionExecutor = React.useMemo(
         () => createDefaultActionExecutor({
