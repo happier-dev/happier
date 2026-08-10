@@ -461,6 +461,23 @@ describe("session publisher presence on SQLite", () => {
             .resolves.toEqual({ status: "already_inactive" });
     });
 
+    it("reports unavailable machine control when the session is not bound to that machine", async () => {
+        const seeded = await seed();
+        await db.accessKey.deleteMany({
+            where: {
+                accountId: seeded.binding.accountId,
+                machineId: seeded.binding.machineId,
+                sessionId: seeded.binding.sessionId,
+            },
+        });
+
+        const presence = createSessionPublisherPresence();
+        await expect(presence.captureExplicitMachineStop({ binding: seeded.binding })).resolves.toEqual({
+            status: "rejected",
+            reason: "machine_control_unavailable",
+        });
+    });
+
     it("keeps explicit-stop authority when the same publisher heartbeats before stop proof arrives", async () => {
         const seeded = await seed();
         let now = new Date(seeded.fence.getTime() + 10);

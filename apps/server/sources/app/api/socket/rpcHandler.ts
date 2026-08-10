@@ -433,8 +433,12 @@ export function rpcHandler(
                         },
                     });
                     if (explicitMachineStopCapture.status === "rejected") {
-                        callback?.(explicitMachineStopCapture.reason === "unauthorized"
-                            ? buildForbiddenRpcResponse()
+                        callback?.(explicitMachineStopCapture.reason === "machine_control_unavailable"
+                            ? {
+                                ok: false,
+                                error: RPC_ERROR_MESSAGES.SESSION_MACHINE_CONTROL_UNAVAILABLE,
+                                errorCode: RPC_ERROR_CODES.SESSION_MACHINE_CONTROL_UNAVAILABLE,
+                            }
                             : {
                                 ok: false,
                                 error: "Session stop target unavailable",

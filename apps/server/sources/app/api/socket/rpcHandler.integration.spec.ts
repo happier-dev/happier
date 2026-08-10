@@ -382,6 +382,55 @@ describe("rpcHandler", () => {
     expect(finalizeExplicitMachineStop).toHaveBeenCalledWith({ target: capturedTarget });
   });
 
+  it("returns typed machine-control unavailability when the authorized session lacks the exact machine binding", async () => {
+    vi.resetModules();
+    dbMockFns.machineFindFirst.mockResolvedValue({
+      id: "machine-1",
+      revokedAt: null,
+      replacedByMachineId: null,
+    });
+    dbMockFns.sessionFindUnique.mockResolvedValue({
+      accountId: "user-1",
+      active: true,
+      lastActiveAt: new Date(1_000),
+    });
+    const { rpcHandler } = await import("./rpcHandler");
+    const method = `machine-1:${RPC_METHODS.STOP_SESSION}`;
+    const targetEmitWithAck = vi.fn();
+    const targetSocket = createFakeSocket({
+      id: "daemon-socket",
+      data: { clientType: "machine-scoped", machineId: "machine-1" },
+      timeout: vi.fn(() => ({ emitWithAck: targetEmitWithAck })) as any,
+    });
+    const callerSocket = createFakeSocket({ id: "caller-socket" });
+
+    rpcHandler("user-1", callerSocket as any, new Map<string, any>([[method, targetSocket]]) as any, new Map<string, any>() as any, {
+      io: {} as any,
+      redisRegistry: { enabled: false },
+      sessionPublisherPresence: {
+        captureExplicitMachineStop: vi.fn().mockResolvedValue({
+          status: "rejected",
+          reason: "machine_control_unavailable",
+        }),
+        finalizeExplicitMachineStop: vi.fn(),
+      } as any,
+    });
+
+    const callback = vi.fn();
+    await getSocketHandler(callerSocket, SOCKET_RPC_EVENTS.CALL)({
+      method,
+      params: "opaque-e2ee-params",
+      authorization: { kind: "session.write", sessionId: "sess_1" },
+    }, callback);
+
+    expect(callback).toHaveBeenCalledWith({
+      ok: false,
+      error: "Session machine control unavailable",
+      errorCode: "RPC_SESSION_MACHINE_CONTROL_UNAVAILABLE",
+    });
+    expect(targetEmitWithAck).not.toHaveBeenCalled();
+  });
+
   it("finalizes an encrypted machine stop from authenticated transport proof", async () => {
     vi.resetModules();
     dbMockFns.machineFindFirst.mockResolvedValue({

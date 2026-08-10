@@ -66,7 +66,7 @@ export interface ExplicitMachineStopTarget {
 export type CaptureExplicitMachineStopResult =
     | { status: "captured"; target: ExplicitMachineStopTarget }
     | { status: "already_inactive" }
-    | { status: "rejected"; reason: "not_found" | "unauthorized" | "archived" };
+    | { status: "rejected"; reason: "not_found" | "machine_control_unavailable" | "archived" };
 export type CurrentPublisherResult =
     | {
         status: "current";
@@ -349,7 +349,7 @@ export function createSessionPublisherPresence(options: Readonly<{ now?: () => D
         });
         if (!session) return { status: "rejected", reason: "not_found" };
         if (!await hasCurrentSessionScopedMachineAccessInTx({ tx, ...params.binding })) {
-            return { status: "rejected", reason: "unauthorized" };
+            return { status: "rejected", reason: "machine_control_unavailable" };
         }
         if (session.archivedAt !== null) return { status: "rejected", reason: "archived" };
         if (!session.active) return { status: "already_inactive" };
