@@ -23,13 +23,13 @@ function createProbe() {
         setValue = setStateValue;
         React.useEffect(() => {
             log.push('passive:mount');
-            return () => log.push('passive:cleanup');
+            return () => { log.push('passive:cleanup'); };
         }, []);
         React.useLayoutEffect(() => {
             log.push('layout:mount');
-            return () => log.push('layout:cleanup');
+            return () => { log.push('layout:cleanup'); };
         }, []);
-        return <probe value={value} />;
+        return React.createElement('probe', { value });
     };
 
     const handle: ProbeHandle = {
