@@ -52,7 +52,10 @@ export const ThemeProfilePreviewPane = React.memo(function ThemeProfilePreviewPa
                                 testID="settings-theme-profile-preview-status"
                                 variant="success"
                                 label={t('settingsAppearance.themeProfiles.previewStatus')}
-                                foregroundColor={previewTheme.colors.state.success.foreground}
+                                // The pill reads the ambient theme, so the preview restates the
+                                // draft theme's own roles: on-tint ink for the label, foreground
+                                // for the dot — exactly what `StatusPill` resolves at runtime.
+                                foregroundColor={previewTheme.colors.state.success.onTint}
                                 dotColor={previewTheme.colors.state.success.foreground}
                                 style={{
                                     backgroundColor: previewTheme.colors.state.success.background,

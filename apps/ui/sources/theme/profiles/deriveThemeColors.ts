@@ -40,6 +40,44 @@ const deriveStatusColor = (sourceColor: string, baseSourceColor: string, current
     return sourceColor;
 };
 
+type ThemeStateColors = Theme['colors']['state'];
+type ThemeStateVariant = keyof ThemeStateColors;
+
+/**
+ * `state.<variant>.onTint` is the ink for text sitting on that variant's tint. A profile that
+ * re-tunes the state hue or its tint without supplying an on-tint ink would otherwise keep the
+ * canonical ink and paint a label from a palette the profile no longer uses, so the ink falls
+ * back to the profile's own foreground — the pre-`onTint` behaviour, and the same rule
+ * `status.*` already follows. An explicit `onTint` override always wins.
+ */
+const deriveStateOnTint = (state: ThemeStateColors[ThemeStateVariant], baseState: ThemeStateColors[ThemeStateVariant]): string => {
+    if (state.onTint !== baseState.onTint) {
+        return state.onTint;
+    }
+
+    if (state.foreground === baseState.foreground && state.background === baseState.background) {
+        return state.onTint;
+    }
+
+    return state.foreground;
+};
+
+const deriveStateColors = (theme: Theme, baseTheme: Theme): ThemeStateColors => {
+    const withOnTint = (variant: ThemeStateVariant) => ({
+        ...theme.colors.state[variant],
+        onTint: deriveStateOnTint(theme.colors.state[variant], baseTheme.colors.state[variant]),
+    });
+
+    return {
+        success: withOnTint('success'),
+        warning: withOnTint('warning'),
+        danger: withOnTint('danger'),
+        info: withOnTint('info'),
+        neutral: withOnTint('neutral'),
+        active: withOnTint('active'),
+    };
+};
+
 const deriveFeedCardBackground = (theme: Theme, baseTheme: Theme): string => {
     if (theme.colors.feed.card.background !== baseTheme.colors.feed.card.background) {
         return theme.colors.feed.card.background;
@@ -71,6 +109,7 @@ export const deriveThemeColors = (theme: Theme, baseTheme: Theme): Theme => ({
             ...theme.colors.segmentedControl,
             activeGradient: deriveSegmentedControlActiveGradient(theme, baseTheme),
         },
+        state: deriveStateColors(theme, baseTheme),
         feed: {
             ...theme.colors.feed,
             card: {

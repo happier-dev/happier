@@ -97,9 +97,12 @@ export function StatusPill(props: StatusPillProps): React.ReactElement {
     const styles = stylesheet;
     const state = theme.colors.state[props.variant];
     const chrome = props.chrome ?? 'pill';
-    const foregroundColor = props.foregroundColor ?? state.foreground;
+    // Pill chrome puts the label on `state.background`, where the glyph hue does not clear AA;
+    // `onTint` is the ink for exactly that surface. Plain chrome has no tint behind the text, so
+    // it keeps the foreground. The dot is a glyph, not text, and stays on the foreground either way.
+    const labelColor = props.foregroundColor ?? (chrome === 'pill' ? state.onTint : state.foreground);
     const labelVariantStyle = props.labelVariant === 'phrase' ? styles.phraseLabel : null;
-    const dotColor = props.dotColor ?? foregroundColor;
+    const dotColor = props.dotColor ?? props.foregroundColor ?? state.foreground;
 
     return (
         <View
@@ -130,7 +133,7 @@ export function StatusPill(props: StatusPillProps): React.ReactElement {
             {props.count !== undefined ? (
                 <Text
                     testID={props.testID ? `${props.testID}:count` : undefined}
-                    style={[styles.label, labelVariantStyle, Typography.tabular(), { color: foregroundColor }]}
+                    style={[styles.label, labelVariantStyle, Typography.tabular(), { color: labelColor }]}
                 >
                     {props.count}
                 </Text>
@@ -139,7 +142,7 @@ export function StatusPill(props: StatusPillProps): React.ReactElement {
                 testID={props.testID ? `${props.testID}:label` : undefined}
                 numberOfLines={props.labelNumberOfLines}
                 ellipsizeMode={props.labelNumberOfLines === undefined ? undefined : 'tail'}
-                style={[styles.label, labelVariantStyle, { color: foregroundColor }, props.labelNumberOfLines === undefined ? null : { flexShrink: 1 }]}
+                style={[styles.label, labelVariantStyle, { color: labelColor }, props.labelNumberOfLines === undefined ? null : { flexShrink: 1 }]}
             >
                 {props.label}
             </Text>

@@ -51,6 +51,13 @@ const textOnCanvasAndSurface = [
 
 const stateContrast = (backgroundTokenId: string) => [{ tokenId: backgroundTokenId, minRatio: 4.5 }] as const;
 
+/**
+ * `state.<variant>.onTint` is the ink for text rendered ON the matching state tint; the sibling
+ * `foreground` stays the glyph/icon/border tint on ordinary surfaces. One rule decides which:
+ * text on `state.X.background` uses `state.X.onTint`, everything else uses `state.X.foreground`.
+ */
+const stateOnTintDescription = (variant: string) => `Text color for labels rendered on the ${variant} state tint; glyphs, icons and borders keep the ${variant} foreground.`;
+
 const defineEditableThemeColorToken = <TDefinition extends EditableThemeColorTokenDefinitionInput>(definition: TDefinition) => definition;
 
 export const EDITABLE_THEME_COLOR_TOKEN_DEFINITIONS = [
@@ -64,6 +71,7 @@ export const EDITABLE_THEME_COLOR_TOKEN_DEFINITIONS = [
     defineEditableThemeColorToken({ id: 'surface.ripple', path: ['surface', 'ripple'], group: 'surface', label: 'Ripple overlay', description: 'Android and web ripple/touch feedback color for surface interactions.', valueKind: 'color' }),
     defineEditableThemeColorToken({ id: 'surface.sectionTint', path: ['surface', 'sectionTint'], group: 'surface', label: 'Section tint', description: 'Barely-there baked opacity tint for grouped item sections that need a hair of separation from the base surface without reading as a recessed inset.', valueKind: 'color' }),
     defineEditableThemeColorToken({ id: 'border.default', path: ['border', 'default'], group: 'border', label: 'Default border', description: 'Standard separators and divider lines.', valueKind: 'color' }),
+    defineEditableThemeColorToken({ id: 'border.subtle', path: ['border', 'subtle'], group: 'border', label: 'Subtle border', description: 'Low-emphasis hairlines for lightweight controls and content boundaries.', valueKind: 'color' }),
     defineEditableThemeColorToken({ id: 'border.surface', path: ['border', 'surface'], group: 'border', label: 'Surface border', description: 'Outer stroke for cards, popovers, dropdowns, composer panels, and other bounded surfaces.', valueKind: 'color' }),
     defineEditableThemeColorToken({ id: 'border.strong', path: ['border', 'strong'], group: 'border', label: 'Strong border', description: 'Higher-emphasis outline for elevated or focused surface boundaries.', valueKind: 'color' }),
     defineEditableThemeColorToken({ id: 'border.modal', path: ['border', 'modal'], group: 'border', label: 'Modal border', description: 'Border color for modal card and dialog chrome surfaces.', valueKind: 'color' }),
@@ -80,21 +88,27 @@ export const EDITABLE_THEME_COLOR_TOKEN_DEFINITIONS = [
     defineEditableThemeColorToken({ id: 'text.disabled', path: ['text', 'disabled'], group: 'text', label: 'Disabled text', description: 'Foreground for disabled text and disabled low-emphasis controls.', valueKind: 'color' }),
 
     defineEditableThemeColorToken({ id: 'state.success.foreground', path: ['state', 'success', 'foreground'], group: 'state', label: 'Success foreground', description: 'Success icons, labels, and action indicators.', valueKind: 'color', contrastPairs: stateContrast('state.success.background') }),
+    defineEditableThemeColorToken({ id: 'state.success.onTint', path: ['state', 'success', 'onTint'], group: 'state', label: 'Success on-tint text', description: stateOnTintDescription('success'), valueKind: 'color', contrastPairs: stateContrast('state.success.background') }),
     defineEditableThemeColorToken({ id: 'state.success.background', path: ['state', 'success', 'background'], group: 'state', label: 'Success background', description: 'Background for success badges, notices, and pills.', valueKind: 'color' }),
     defineEditableThemeColorToken({ id: 'state.success.border', path: ['state', 'success', 'border'], group: 'state', label: 'Success border', description: 'Border for success badges, notices, and selected success affordances.', valueKind: 'color' }),
     defineEditableThemeColorToken({ id: 'state.warning.foreground', path: ['state', 'warning', 'foreground'], group: 'state', label: 'Warning foreground', description: 'Warning icons, labels, and caution indicators.', valueKind: 'color', contrastPairs: stateContrast('state.warning.background') }),
+    defineEditableThemeColorToken({ id: 'state.warning.onTint', path: ['state', 'warning', 'onTint'], group: 'state', label: 'Warning on-tint text', description: stateOnTintDescription('warning'), valueKind: 'color', contrastPairs: stateContrast('state.warning.background') }),
     defineEditableThemeColorToken({ id: 'state.warning.background', path: ['state', 'warning', 'background'], group: 'state', label: 'Warning background', description: 'Background for warning badges, notices, and pills.', valueKind: 'color' }),
     defineEditableThemeColorToken({ id: 'state.warning.border', path: ['state', 'warning', 'border'], group: 'state', label: 'Warning border', description: 'Border for warning badges, notices, and caution affordances.', valueKind: 'color' }),
     defineEditableThemeColorToken({ id: 'state.danger.foreground', path: ['state', 'danger', 'foreground'], group: 'state', label: 'Danger foreground', description: 'Danger, destructive, error, and delete icons or labels.', valueKind: 'color', contrastPairs: stateContrast('state.danger.background') }),
+    defineEditableThemeColorToken({ id: 'state.danger.onTint', path: ['state', 'danger', 'onTint'], group: 'state', label: 'Danger on-tint text', description: stateOnTintDescription('danger'), valueKind: 'color', contrastPairs: stateContrast('state.danger.background') }),
     defineEditableThemeColorToken({ id: 'state.danger.background', path: ['state', 'danger', 'background'], group: 'state', label: 'Danger background', description: 'Background for danger badges, error notices, and destructive state pills.', valueKind: 'color' }),
     defineEditableThemeColorToken({ id: 'state.danger.border', path: ['state', 'danger', 'border'], group: 'state', label: 'Danger border', description: 'Border for danger badges, error notices, and destructive state affordances.', valueKind: 'color' }),
     defineEditableThemeColorToken({ id: 'state.info.foreground', path: ['state', 'info', 'foreground'], group: 'state', label: 'Info foreground', description: 'Informational icons, labels, and neutral guidance accents.', valueKind: 'color', contrastPairs: stateContrast('state.info.background') }),
+    defineEditableThemeColorToken({ id: 'state.info.onTint', path: ['state', 'info', 'onTint'], group: 'state', label: 'Info on-tint text', description: stateOnTintDescription('info'), valueKind: 'color', contrastPairs: stateContrast('state.info.background') }),
     defineEditableThemeColorToken({ id: 'state.info.background', path: ['state', 'info', 'background'], group: 'state', label: 'Info background', description: 'Background for informational badges, notices, and pills.', valueKind: 'color' }),
     defineEditableThemeColorToken({ id: 'state.info.border', path: ['state', 'info', 'border'], group: 'state', label: 'Info border', description: 'Border for informational badges, notices, and active info affordances.', valueKind: 'color' }),
     defineEditableThemeColorToken({ id: 'state.neutral.foreground', path: ['state', 'neutral', 'foreground'], group: 'state', label: 'Neutral foreground', description: 'Neutral status foreground and migrated gray warning-style indicators.', valueKind: 'color', contrastPairs: stateContrast('state.neutral.background') }),
+    defineEditableThemeColorToken({ id: 'state.neutral.onTint', path: ['state', 'neutral', 'onTint'], group: 'state', label: 'Neutral on-tint text', description: stateOnTintDescription('neutral'), valueKind: 'color', contrastPairs: stateContrast('state.neutral.background') }),
     defineEditableThemeColorToken({ id: 'state.neutral.background', path: ['state', 'neutral', 'background'], group: 'state', label: 'Neutral background', description: 'Background for neutral badges, notices, and inactive status pills.', valueKind: 'color' }),
     defineEditableThemeColorToken({ id: 'state.neutral.border', path: ['state', 'neutral', 'border'], group: 'state', label: 'Neutral border', description: 'Border for neutral badges, notices, and inactive status affordances.', valueKind: 'color' }),
     defineEditableThemeColorToken({ id: 'state.active.foreground', path: ['state', 'active', 'foreground'], group: 'state', label: 'Active foreground', description: 'Foreground for active chips, toolbar pills, segmented choices, and active controls.', valueKind: 'color', contrastPairs: stateContrast('state.active.background') }),
+    defineEditableThemeColorToken({ id: 'state.active.onTint', path: ['state', 'active', 'onTint'], group: 'state', label: 'Active on-tint text', description: stateOnTintDescription('active'), valueKind: 'color', contrastPairs: stateContrast('state.active.background') }),
     defineEditableThemeColorToken({ id: 'state.active.background', path: ['state', 'active', 'background'], group: 'state', label: 'Active background', description: 'Background for active chips, toolbar pills, segmented choices, and active controls.', valueKind: 'color' }),
     defineEditableThemeColorToken({ id: 'state.active.border', path: ['state', 'active', 'border'], group: 'state', label: 'Active border', description: 'Border for active chips, toolbar pills, segmented choices, and active controls.', valueKind: 'color' }),
 
@@ -206,7 +220,7 @@ const desktopPetOverlayTokenClassifications = [
     reason: 'Feature-specific desktop pet bubble palette; not part of the V1 public theme profile surface.',
 } as const));
 
-const shadowLevelTokenClassifications = [1, 2, 3, 4, 5].flatMap((level) => [
+const shadowLevelTokenClassifications = [1, 2, 3, 4, 5, 6].flatMap((level) => [
     {
         path: ['shadowLevels', String(level), 'boxShadow'],
         status: 'internal',
