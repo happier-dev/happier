@@ -2,8 +2,8 @@
 
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { createReadStream } from 'node:fs';
-import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { closeSync, createReadStream, openSync } from 'node:fs';
+import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
@@ -87,21 +87,26 @@ function isExplicitHttpNotFound(error) {
 /**
  * @param {string} cmd
  * @param {string[]} args
+ * @param {string} destination
  * @param {{ env?: Record<string, string>; dryRun?: boolean; cwd?: string }} [opts]
  */
-function runBuffer(cmd, args, opts = {}) {
+function runToFile(cmd, args, destination, opts = {}) {
   const printable = `${cmd} ${args.map((arg) => (arg.includes(' ') ? JSON.stringify(arg) : arg)).join(' ')}`;
   if (opts.dryRun) {
     console.log(`[dry-run] ${printable}`);
-    return Buffer.alloc(0);
+    return;
   }
-  return execFileSync(cmd, args, {
-    cwd: opts.cwd ?? process.cwd(),
-    env: { ...process.env, ...(opts.env ?? {}) },
-    encoding: 'buffer',
-    stdio: ['ignore', 'pipe', 'pipe'],
-    timeout: 10 * 60_000,
-  });
+  const output = openSync(destination, 'w');
+  try {
+    execFileSync(cmd, args, {
+      cwd: opts.cwd ?? process.cwd(),
+      env: { ...process.env, ...(opts.env ?? {}) },
+      stdio: ['ignore', output, 'pipe'],
+      timeout: 10 * 60_000,
+    });
+  } finally {
+    closeSync(output);
+  }
 }
 
 function commandFailureOutput(error) {
@@ -384,13 +389,12 @@ async function downloadReleaseAssetsById({ repo, releaseId, destination, env, dr
     if (separator <= 0) fail(`Invalid release asset row: ${line}`);
     const assetId = line.slice(0, separator);
     const name = line.slice(separator + 1);
-    const bytes = runBuffer('gh', [
+    runToFile('gh', [
       'api',
       `repos/${repo}/releases/assets/${assetId}`,
       '-H',
       'Accept: application/octet-stream',
-    ], { env, dryRun });
-    if (!dryRun) await writeFile(join(destination, name), bytes);
+    ], join(destination, name), { env, dryRun });
   }
 }
 

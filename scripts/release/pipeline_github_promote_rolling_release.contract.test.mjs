@@ -401,6 +401,31 @@ test('rolling promotion sends release assets to the exact GitHub upload API host
   }
 });
 
+test('rolling promotion audits release assets without buffering their bytes in the child process', () => {
+  const testFixture = fixture();
+  try {
+    const largeMetadata = Buffer.alloc(2 * 1024 * 1024, 'x');
+    writeFileSync(join(testFixture.root, 'source', 'large-release-metadata.json'), largeMetadata);
+
+    const result = spawnSync(process.execPath, args(), {
+      cwd: repoRoot,
+      env: {
+        ...process.env,
+        PATH: `${testFixture.bin}:${process.env.PATH ?? ''}`,
+      },
+      encoding: 'utf8',
+    });
+
+    assert.equal(result.status, 0, String(result.stderr));
+    assert.deepEqual(
+      readFileSync(join(testFixture.staging, 'large-release-metadata.json')),
+      largeMetadata,
+    );
+  } finally {
+    rmSync(testFixture.root, { recursive: true, force: true });
+  }
+});
+
 test('existing rolling replacement stages privately, restores after publish failure, and exposes only audited bytes', () => {
   const testFixture = fixture();
   try {
