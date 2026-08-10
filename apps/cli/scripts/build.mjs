@@ -9,9 +9,7 @@ import { finalizeDist, normalizeCliBuildVersion, readCliDistBuildManifestFingerp
 import { withOptionalCliSharedDepsBuildLock } from './optionalWorkspaceBundleLock.mjs';
 import { main as rmDist } from './rmDist.mjs';
 import { collectPkgrollInputPaths, runPkgrollBuild } from './runPkgrollBuild.mjs';
-import { upsertMaxOldSpaceSize } from './withNodeHeapLimit.mjs';
-
-const CLI_BUILD_MAX_OLD_SPACE_SIZE_MB = 8_192;
+import { DEFAULT_CLI_NODE_HEAP_MB, upsertMaxOldSpaceSize } from './withNodeHeapLimit.mjs';
 
 function resolveBuildOutput(env = process.env) {
   const raw = String(env?.HAPPIER_CLI_BUILD_OUTPUT_DIR ?? '').trim();
@@ -151,7 +149,7 @@ async function buildCliDistUnlocked(options = {}) {
     ...inheritedEnv,
     NODE_OPTIONS: upsertMaxOldSpaceSize(
       inheritedEnv.NODE_OPTIONS,
-      CLI_BUILD_MAX_OLD_SPACE_SIZE_MB,
+      DEFAULT_CLI_NODE_HEAP_MB,
     ),
   };
   const { outputDir, builderOwned: builderOwnsOutput } = resolveBuildOutput(env);
