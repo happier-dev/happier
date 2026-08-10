@@ -18,6 +18,10 @@ import type {
     TranscriptItemHeightRowState,
     TranscriptItemHeightValiditySignature,
 } from './transcriptItemHeightCache';
+// The reconciler is the single owner of which row states are still GROWING; this module consumes
+// that set rather than re-listing it, so a future state cannot diverge between the reservation
+// policy and the size-version key.
+import { TRANSCRIPT_GROWING_ROW_STATES } from './transcriptMeasurementReconciler';
 
 const TRANSCRIPT_COLLAPSED_TOOL_GROUP_SIGNATURE_PREVIEW_COUNT = 15;
 
@@ -121,9 +125,19 @@ export function buildTranscriptRowShellSignature(params: Readonly<{
 
     if (item.kind === 'message') {
         const message = params.getMessageById(item.messageId);
+        const rowState = resolveMessageRowState({
+            activeThinkingMessageId: params.activeThinkingMessageId,
+            isLatestCommittedActivity: item.messageId === params.latestCommittedActivityKey,
+            message,
+            sessionActive: params.sessionActive,
+        });
         return {
             ...base,
-            structuralKey: buildMessageShellStructuralKey(item.messageId, message, params.getMessageRevisionById(item.messageId)),
+            // R2: a row that is still growing keeps its own measurement across the writes that grow
+            // it — see `buildGrowingMessageShellStructuralKey`.
+            structuralKey: TRANSCRIPT_GROWING_ROW_STATES.has(rowState)
+                ? buildGrowingMessageShellStructuralKey(item.messageId)
+                : buildMessageShellStructuralKey(item.messageId, message, params.getMessageRevisionById(item.messageId)),
             expansionKey: [
                 'tools:none',
                 buildThinkingExpansionKey({
@@ -132,12 +146,7 @@ export function buildTranscriptRowShellSignature(params: Readonly<{
                     resolveThinkingExpanded: params.resolveThinkingExpanded,
                 }),
             ].join('|'),
-            rowState: resolveMessageRowState({
-                activeThinkingMessageId: params.activeThinkingMessageId,
-                isLatestCommittedActivity: item.messageId === params.latestCommittedActivityKey,
-                message,
-                sessionActive: params.sessionActive,
-            }),
+            rowState,
         };
     }
 
@@ -514,6 +523,45 @@ function buildMessageShellStructuralKey(
         return `${messageId}:r${Math.trunc(revision)}`;
     }
     return buildStableJsonSignature(message);
+}
+
+/**
+ * R2 (2026-08-10) — the structural key of a row that is STILL GROWING carries identity only.
+ *
+ * `ChatListInternal` wires the vendored Legend `getItemSizeVersion` to
+ * `buildTranscriptItemHeightSignatureKey(...)`, and `validateItemSizeVersion` answers a moved
+ * version by deleting the row's `sizesKnown` AND `sizes` entries. Because
+ * {@link buildMessageShellStructuralKey} is revision-keyed and the store bumps a message's revision
+ * on EVERY write, a streaming reply's own measured height was deleted on every chunk and the list
+ * was re-positioned from `getEstimatedItemSize` for the whole time the user was watching it — the
+ * reported down-then-up excursion. Tuning that estimate was treating the symptom; the discard is
+ * the defect.
+ *
+ * A growing row does not need the version to re-measure: a MOUNTED Legend container carries a live
+ * `onLayout` (`processContainerLayout` -> `updateItemSizes`) and, on the New Architecture, an
+ * unconditional `useLayoutEffect` that re-schedules its own layout on every commit
+ * (`@legendapp/list` 3.3.3 `useContainerMeasurement`). The version's real job is the row that
+ * CANNOT re-measure itself — one scrolled out of the render window, with no container and no
+ * onLayout — and every such change is still keyed: `kind`, `expansionKey`, `widthBucket`,
+ * `fontScaleKey`, `groupingMode`, `forkContextKey` and `rowState` are all separate members of the
+ * signature, so a collapse, a kind flip, a resize and the streaming -> stable finalize each still
+ * move the version. Only the per-write revision of a row that is growing on screen is dropped.
+ *
+ * This is scoped to {@link TRANSCRIPT_GROWING_ROW_STATES} because those are exactly the states in
+ * which `structuralKey` has no other live consumer: `isFloorShapeValid` returns before comparing it
+ * for a growing floor, `isStructuralSignatureDelta` skips its `structuralKey` clause when either
+ * side is growing, `hasStructuralDelta` never reads it, and the exact-height LRU cache is written
+ * and read only for `stable` rows (`isTranscriptItemHeightSignatureStable`). Deleting the revision
+ * here therefore removes the discard and nothing else.
+ *
+ * `tool-progress` is deliberately NOT included even though a running tool also grows: the reconciler
+ * classifies it as SHRINK-CAPABLE (a `permission_pending` -> `running` collapse keeps that same row
+ * state, so no other signature member moves) and its measured height genuinely must be dropped when
+ * the row shrinks offscreen. Extending this rule to it needs its own evidence, not a symmetry
+ * argument.
+ */
+function buildGrowingMessageShellStructuralKey(messageId: string): string {
+    return `${messageId}:growing`;
 }
 
 function buildTurnShellStructuralKey(params: Readonly<{

@@ -195,7 +195,11 @@ describe('W-1 · an offscreen shape change must not displace the anchored row', 
         row: ScrollModelRow,
     ): number {
         const estimate = estimateTranscriptRowHeightFromCache({ reconciler, signature: row.signature })
-            ?? estimateTranscriptRowHeightFromContent({ getMessageById: () => null, item: row.item, toolCallsGroupChromeVariant: 'feed_background' });
+            ?? estimateTranscriptRowHeightFromContent({
+                getMessageById: () => null,
+                item: row.item,
+                toolCallsGroupChromeVariant: 'feed_background',
+            });
         return estimate ?? NATURAL_ROW_HEIGHT_PX;
     }
 

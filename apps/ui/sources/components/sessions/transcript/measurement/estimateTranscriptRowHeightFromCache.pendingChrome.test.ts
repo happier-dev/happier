@@ -5,16 +5,18 @@ import type { DiscardedPendingMessage, PendingMessage } from '@/sync/domains/sta
 import { estimateTranscriptRowHeightFromContent } from './estimateTranscriptRowHeightFromCache';
 import type { TranscriptRowShellItem } from './transcriptRowShellSignature';
 
-/** Measured on native (iOS simulator, rAF sampler on the mounted LegendList fiber, 2026-07-30). */
-const MEASURED_ONE_SHORT_PENDING_MESSAGE_PX = 68.625;
+/** Measured baseline plus the 20px stable action-row reserve added below pending content. */
+const ONE_SHORT_PENDING_MESSAGE_WITH_ACTION_RESERVE_PX = 68.625 + 20;
 /** `transcriptPendingQueueMaxHeightPx` account default: the block's own painted bound. */
 const PENDING_QUEUE_SCROLL_CAP_PX = 80;
 const PENDING_QUEUE_HEADER_PX = 14.625;
 const PENDING_QUEUE_HEADER_WITH_SUBTITLE_PX = 31;
 /** `contentContainerStyle.paddingTop` + (`userMessageBubble` paddingVertical ×2 + wrapper paddingBottom). */
-const PENDING_QUEUE_ONE_MESSAGE_CHROME_PX = 6 + 24;
+const PENDING_QUEUE_ONE_MESSAGE_CHROME_PX = 6 + 44;
 /** `transcriptMarkdownTextStyle.lineHeight` — the typography the committed bubble also paints. */
 const TRANSCRIPT_MARKDOWN_LINE_PX = 24;
+/** `ESTIMATE_CHARS_PER_LINE` — the estimator's flat, width-blind wrap. */
+const ESTIMATE_CHARS_PER_LINE = 72;
 
 function pendingMessage(overrides: Partial<PendingMessage> = {}): PendingMessage {
     return {
@@ -63,7 +65,7 @@ function estimatePendingQueue(
 describe('pending-queue estimate is chrome-aware', () => {
     it('matches the measured painted height of a single short queued message', () => {
         expect(estimatePendingQueue([pendingMessage({ text: 'ok' })]))
-            .toBeCloseTo(MEASURED_ONE_SHORT_PENDING_MESSAGE_PX, 1);
+            .toBeCloseTo(ONE_SHORT_PENDING_MESSAGE_WITH_ACTION_RESERVE_PX, 1);
     });
 
     it('never exceeds the block header plus its own scroll cap, however long the QUEUE is', () => {
@@ -94,7 +96,7 @@ describe('pending-queue estimate is chrome-aware', () => {
         // 600 chars ⇒ ceil(600/72) = 9 rendered lines.
         const natural = PENDING_QUEUE_HEADER_PX
             + PENDING_QUEUE_ONE_MESSAGE_CHROME_PX
-            + 9 * TRANSCRIPT_MARKDOWN_LINE_PX;
+            + Math.ceil(600 / ESTIMATE_CHARS_PER_LINE) * TRANSCRIPT_MARKDOWN_LINE_PX;
 
         expect(natural).toBeGreaterThan(PENDING_QUEUE_HEADER_PX + PENDING_QUEUE_SCROLL_CAP_PX);
         expect(estimatePendingQueue([pendingMessage({ text: 'x'.repeat(600) })])).toBeCloseTo(natural, 1);

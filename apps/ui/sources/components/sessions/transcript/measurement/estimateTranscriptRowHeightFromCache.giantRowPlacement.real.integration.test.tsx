@@ -94,9 +94,12 @@ async function flushLegendWork(): Promise<void> {
 }
 
 /**
- * What this owner really estimates for the live capture's row A: ~992 wrapped lines of markdown at
- * the estimator's own 72-chars-per-line flow. Driving the probes from the real estimator (not a
- * literal) is what makes them fail when the ceiling is reinstated.
+ * What this owner really estimates for the live capture's row A: ~910 wrapped lines of markdown at
+ * the estimator's own 72-chars-per-line flow (F1, 2026-08-10 — re-derived from 992 when the
+ * per-line term became the row's real 24px `transcriptMarkdownTextStyle.lineHeight`; the capture
+ * recorded a painted height, never a character count, so this count is a fixture). Driving the
+ * probes from the real estimator (not a literal) is what makes them fail when the ceiling is
+ * reinstated.
  */
 function estimateGiantMarkdownRowPx(): number {
     const message: Message = {
@@ -104,7 +107,7 @@ function estimateGiantMarkdownRowPx(): number {
         id: 'm1',
         localId: null,
         createdAt: 1,
-        text: 'x'.repeat(72 * 992),
+        text: 'x'.repeat(72 * 910),
     } as Message;
     const estimate = estimateTranscriptRowHeightFromContent({
         toolCallsGroupChromeVariant: 'feed_background',
