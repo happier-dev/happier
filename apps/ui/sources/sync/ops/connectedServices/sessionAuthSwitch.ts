@@ -6,6 +6,8 @@ import { prepareAccountSettingsForDaemonSpawnIfNeeded } from '@/sync/ops/account
 export const SESSION_CONNECTED_SERVICE_AUTH_SWITCH_MACHINE_RPC_METHOD =
     RPC_METHODS.DAEMON_SESSION_CONNECTED_SERVICE_AUTH_SWITCH;
 
+const SESSION_CONNECTED_SERVICE_AUTH_SWITCH_MACHINE_RPC_TIMEOUT_MS = 120_000;
+
 export type SessionConnectedServiceAuthSwitchStatus =
     | 'hot_applied'
     | 'metadata_updated'
@@ -99,6 +101,7 @@ export async function setSessionConnectedServiceAuthBinding(params: Readonly<{
         machineId: params.machineId,
         serverId: params.serverId ?? null,
         method: SESSION_CONNECTED_SERVICE_AUTH_SWITCH_MACHINE_RPC_METHOD,
+        timeoutMs: SESSION_CONNECTED_SERVICE_AUTH_SWITCH_MACHINE_RPC_TIMEOUT_MS,
         payload: {
             sessionId: params.sessionId,
             agentId: params.agentId,

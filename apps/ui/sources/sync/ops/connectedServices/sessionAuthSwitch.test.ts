@@ -76,6 +76,7 @@ describe('setSessionConnectedServiceAuthBinding', () => {
             machineId: 'machine-1',
             serverId: 'server-1',
             method: SESSION_CONNECTED_SERVICE_AUTH_SWITCH_MACHINE_RPC_METHOD,
+            timeoutMs: 120_000,
             payload: {
                 sessionId: 'session-1',
                 agentId: 'claude',

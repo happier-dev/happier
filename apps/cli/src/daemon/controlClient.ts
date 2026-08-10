@@ -449,6 +449,20 @@ export async function notifyDaemonSessionStarted(
   }, options);
 }
 
+const DAEMON_SESSION_CONNECTED_SERVICE_AUTH_SWITCH_TIMEOUT_ENV_KEY =
+  'HAPPIER_DAEMON_SESSION_CONNECTED_SERVICE_AUTH_SWITCH_HTTP_TIMEOUT_MS';
+const DEFAULT_DAEMON_SESSION_CONNECTED_SERVICE_AUTH_SWITCH_TIMEOUT_MS = 120_000;
+
+export function resolveDaemonSessionConnectedServiceAuthSwitchTimeoutMs(
+  env: NodeJS.ProcessEnv = process.env,
+): number {
+  return resolvePositiveIntValue(
+    env[DAEMON_SESSION_CONNECTED_SERVICE_AUTH_SWITCH_TIMEOUT_ENV_KEY],
+    DEFAULT_DAEMON_SESSION_CONNECTED_SERVICE_AUTH_SWITCH_TIMEOUT_MS,
+    { min: 1_000, max: 300_000 },
+  );
+}
+
 export async function requestDaemonSessionConnectedServiceAuthSwitch(
   body: Readonly<{
     sessionId: string;
@@ -473,7 +487,10 @@ export async function requestDaemonSessionConnectedServiceAuthSwitch(
     ...(body.expectedGroupGenerationByServiceId === undefined
       ? {}
       : { expectedGroupGenerationByServiceId: body.expectedGroupGenerationByServiceId }),
-  }, options);
+  }, {
+    timeoutMs: resolveDaemonSessionConnectedServiceAuthSwitchTimeoutMs(),
+    ...options,
+  });
   if (result?.error) {
     throw new Error(String(result.error));
   }
