@@ -7,6 +7,7 @@ import {
 } from '../connect/connectedServiceSchemas.js';
 import { SessionUsageLimitRecoveryOperationResultV1Schema } from '../sessionControl/sessionUsageLimitRecoveryOperationResultV1.js';
 import { SessionUsageLimitRecoveryResumePromptModeV1Schema } from '../sessionMetadata/sessionUsageLimitRecoveryV1.js';
+import { LEGACY_SKILL_CATALOG_ORIGINS_V1 } from './skillCatalogItemIdentityV1.js';
 import { SessionWorkStateStatusV1Schema, SessionWorkStateV1Schema } from './sessionWorkStateV1.js';
 
 type MetadataRecord = Record<string, unknown>;
@@ -508,16 +509,13 @@ export const SessionVendorPluginCatalogListResponseV1Schema = z.preprocess(
 );
 export type SessionVendorPluginCatalogListResponseV1 = z.infer<typeof SessionVendorPluginCatalogListResponseV1Schema>;
 
+// The legacy arm derives from the identity owner's fold table rather than re-listing it:
+// two independent declarations of the same origin vocabulary can drift, and an origin the
+// wire accepts but the identity resolver cannot fold produces a reference that never
+// resolves. `derived`/`fallback` are accepted for historical payloads and carry no identity.
 const SessionSkillCatalogOriginV1Schema = z.union([
   z.enum(['vendor', 'happier', 'derived', 'fallback']),
-  z.enum([
-    'codex_native',
-    'opencode_native',
-    'claude_native',
-    'pi_native',
-    'happier_projected',
-    'text_fallback_only',
-  ]),
+  z.enum(LEGACY_SKILL_CATALOG_ORIGINS_V1),
 ]);
 
 export const SessionSkillCatalogItemV1Schema = z

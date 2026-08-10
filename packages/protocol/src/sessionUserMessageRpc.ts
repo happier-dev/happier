@@ -1,7 +1,17 @@
 import { z } from 'zod';
+import {
+  MentionRefV1Schema,
+  admitMentionRefsV1ForText,
+  sanitizeMentionRefsV1,
+  type MentionRefV1,
+} from './mentionRefV1.js';
 import { PendingLocalIdSchema } from './sessionMessages/pendingLocalId.js';
 
 export const SESSION_ATTACHMENT_UPLOAD_STRUCTURED_INPUT_PROVENANCE_KIND = 'sessionAttachmentUpload';
+
+export const HAPPIER_STRUCTURED_INPUT_METADATA_KEY_V1 = 'happierStructuredInputV1';
+export const HAPPIER_VENDOR_PLUGIN_MENTIONS_METADATA_KEY = 'happierVendorPluginMentions';
+export const HAPPIER_SKILL_MENTIONS_METADATA_KEY = 'happierSkillMentions';
 
 type MetadataRecord = Record<string, unknown>;
 
@@ -124,6 +134,12 @@ function sanitizeStructuredAttachments(
 
 export const HappierStructuredInputV1EnvelopeSchema = z.object({
   v: z.literal(1).default(1),
+  /**
+   * The open, additive reference list (R-4). It carries every composer reference kind, so a
+   * new kind never needs a new per-kind array and never needs an envelope version bump.
+   * Readers apply D-4 precedence through `readStructuredInputMentionSourcesV1`.
+   */
+  mentions: z.array(MentionRefV1Schema).optional(),
   vendorPluginMentions: z.array(z.record(z.string(), z.unknown())).optional(),
   skillMentions: z.array(z.record(z.string(), z.unknown())).optional(),
   imageInputs: z.array(z.record(z.string(), z.unknown())).optional(),
@@ -138,6 +154,7 @@ export function sanitizeHappierStructuredInputV1(
   const envelope = asRecord(value);
   if (!envelope) return null;
 
+  const mentions = sanitizeMentionRefsV1(envelope.mentions);
   const vendorPluginMentions = asRecordArray(envelope.vendorPluginMentions);
   const skillMentions = asRecordArray(envelope.skillMentions);
   const imageInputs = sanitizeStructuredAttachments(envelope.imageInputs, options);
@@ -146,6 +163,11 @@ export function sanitizeHappierStructuredInputV1(
     ...envelope,
     v: 1,
   };
+  if (mentions.length > 0) {
+    sanitized.mentions = mentions;
+  } else {
+    delete sanitized.mentions;
+  }
   if (vendorPluginMentions.length > 0) {
     sanitized.vendorPluginMentions = vendorPluginMentions;
   } else {
@@ -169,14 +191,141 @@ export function sanitizeHappierStructuredInputV1(
   return HappierStructuredInputV1EnvelopeSchema.parse(sanitized);
 }
 
+/**
+ * The envelope array and the meta-root alias are two historical write shapes for the same
+ * mention. Folding them used to be a bare `.concat()`, so a message carrying both sent the
+ * mention to the provider twice (SB-5). Identity is the whole record: a mention repeated at
+ * two composer positions carries identical provider context and must still yield one item
+ * (D-26).
+ */
+function dedupeMentionRecords(records: readonly MetadataRecord[]): MetadataRecord[] {
+  const deduped: MetadataRecord[] = [];
+  const seen = new Set<string>();
+  for (const record of records) {
+    const key = JSON.stringify(Object.entries(record).sort(([left], [right]) => left.localeCompare(right)));
+    if (seen.has(key)) continue;
+    seen.add(key);
+    deduped.push(record);
+  }
+  return deduped;
+}
+
+/**
+ * Which reference source a consumer must enumerate (D-4). This is the single owner of the
+ * precedence rule: a reader finding `mentions` uses it and ignores the legacy per-kind
+ * arrays and the meta-root aliases entirely; legacy is read only when `mentions` is absent.
+ *
+ * It deliberately does NOT mutate the envelope. The envelope keeps both shapes so a
+ * dual-written message still reads correctly on an older build; only the decision about
+ * what to enumerate is centralized, which is what removes the duplicate provider items the
+ * per-consumer `.concat()` produced (SB-5).
+ */
+export type StructuredInputMentionSourcesV1 = Readonly<{
+  mentions: readonly MentionRefV1[];
+  vendorPluginMentions: readonly MetadataRecord[];
+  skillMentions: readonly MetadataRecord[];
+}>;
+
+export function readStructuredInputMentionSourcesV1(
+  envelope: HappierStructuredInputV1Envelope | null | undefined,
+): StructuredInputMentionSourcesV1 {
+  const mentions = envelope?.mentions ?? [];
+  if (mentions.length > 0) {
+    return { mentions, vendorPluginMentions: [], skillMentions: [] };
+  }
+  return {
+    mentions: [],
+    vendorPluginMentions: asRecordArray(envelope?.vendorPluginMentions),
+    skillMentions: asRecordArray(envelope?.skillMentions),
+  };
+}
+
+/**
+ * The canonical meta reader (SB-9). Before this existed every consumer re-read
+ * `meta.happierStructuredInputV1` itself and concatenated the meta-root aliases without
+ * dedupe. `../dev` consolidated this at `readHappierStructuredInputV1FromMeta`; this is the
+ * same reader by intent, over remote-dev's envelope shape (which keeps `imageInputs` and
+ * `attachments` as separate keys).
+ */
+export function readHappierStructuredInputV1FromMeta(
+  value: unknown,
+  options: Readonly<{ allowedLocalImagePaths?: ReadonlySet<string> }> = {},
+): HappierStructuredInputV1Envelope | null {
+  const metadata = asRecord(value);
+  if (!metadata) return null;
+
+  const structuredInput = sanitizeHappierStructuredInputV1(
+    metadata[HAPPIER_STRUCTURED_INPUT_METADATA_KEY_V1],
+    options,
+  );
+  // The meta-root aliases are a legacy write shape, folded into the envelope here — but only
+  // when the envelope carries no `mentions`. With `mentions` present they are ignored
+  // entirely (D-4), which is what stops a dual-written message from reaching a provider twice.
+  const mentions = structuredInput?.mentions ?? [];
+  const aliasVendorPluginMentions = mentions.length === 0
+    ? asRecordArray(metadata[HAPPIER_VENDOR_PLUGIN_MENTIONS_METADATA_KEY])
+    : [];
+  const aliasSkillMentions = mentions.length === 0
+    ? asRecordArray(metadata[HAPPIER_SKILL_MENTIONS_METADATA_KEY])
+    : [];
+  if (!structuredInput) {
+    if (aliasVendorPluginMentions.length === 0 && aliasSkillMentions.length === 0) return null;
+    return HappierStructuredInputV1EnvelopeSchema.parse({
+      v: 1,
+      ...(aliasVendorPluginMentions.length > 0 ? { vendorPluginMentions: aliasVendorPluginMentions } : {}),
+      ...(aliasSkillMentions.length > 0 ? { skillMentions: aliasSkillMentions } : {}),
+    });
+  }
+  if (aliasVendorPluginMentions.length === 0 && aliasSkillMentions.length === 0) return structuredInput;
+
+  const merged: MetadataRecord = { ...structuredInput };
+  const vendorPluginMentions = dedupeMentionRecords([
+    ...asRecordArray(structuredInput.vendorPluginMentions),
+    ...aliasVendorPluginMentions,
+  ]);
+  const skillMentions = dedupeMentionRecords([
+    ...asRecordArray(structuredInput.skillMentions),
+    ...aliasSkillMentions,
+  ]);
+  if (vendorPluginMentions.length > 0) merged.vendorPluginMentions = vendorPluginMentions;
+  if (skillMentions.length > 0) merged.skillMentions = skillMentions;
+  return HappierStructuredInputV1EnvelopeSchema.parse(merged);
+}
+
+export function admitStructuredInputMentionsForText(
+  envelope: HappierStructuredInputV1Envelope,
+  text: string,
+): HappierStructuredInputV1Envelope {
+  const mentions = envelope.mentions ?? [];
+  if (mentions.length === 0) return envelope;
+  const admitted = admitMentionRefsV1ForText(text, mentions);
+  if (admitted.length === mentions.length) return envelope;
+  const next: MetadataRecord = { ...envelope };
+  if (admitted.length > 0) {
+    next.mentions = admitted;
+  } else {
+    delete next.mentions;
+  }
+  return HappierStructuredInputV1EnvelopeSchema.parse(next);
+}
+
+/**
+ * `text` is the composed admission input. The envelope sanitizer parses metadata
+ * independently of the message it accompanies, so the half of the range contract that needs
+ * the text — `text.slice(start, end) === token` — can only be enforced where both are in
+ * hand. Pass it at the request boundary; a reference that does not describe its own token in
+ * the submitted text is rejected there, and its siblings are admitted (INV-4).
+ */
 export function sanitizeSessionUserMessageSendMeta(
   value: MetadataRecord,
-  options: Readonly<{ allowedLocalImagePaths?: ReadonlySet<string> }> = {},
+  options: Readonly<{ allowedLocalImagePaths?: ReadonlySet<string>; text?: string }> = {},
 ): MetadataRecord {
   const meta: MetadataRecord = { ...value };
   const structuredInput = sanitizeHappierStructuredInputV1(meta.happierStructuredInputV1, options);
   if (structuredInput) {
-    meta.happierStructuredInputV1 = structuredInput;
+    meta.happierStructuredInputV1 = typeof options.text === 'string'
+      ? admitStructuredInputMentionsForText(structuredInput, options.text)
+      : structuredInput;
   } else if (Object.prototype.hasOwnProperty.call(meta, 'happierStructuredInputV1')) {
     delete meta.happierStructuredInputV1;
   }

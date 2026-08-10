@@ -25,6 +25,11 @@ export {
   buildVendorSessionWorkStateItemId,
 } from './sessionWorkStateItemIds.js';
 export { boundSessionWorkStateItemsV1 } from './sessionWorkStateBounds.js';
+export {
+  resolveSkillCatalogItemIdentityV1,
+  type SkillCatalogItemIdentityV1,
+  type SkillCatalogOriginV1,
+} from './skillCatalogItemIdentityV1.js';
 export { mergeSessionWorkStateMetadataV1, mergeSessionWorkStateV1 } from './sessionWorkStateMerge.js';
 export { resolveSessionWorkStatePrimaryItemId } from './sessionWorkStatePrimary.js';
 export {

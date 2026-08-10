@@ -157,6 +157,9 @@ export {
   type SessionWorkStateV1,
   type SessionWorkStateWriteItemV1,
   type SessionWorkStateWriteSnapshotV1,
+  resolveSkillCatalogItemIdentityV1,
+  type SkillCatalogItemIdentityV1,
+  type SkillCatalogOriginV1,
 } from './sessionWorkState/index.js';
 
 export {
@@ -2050,19 +2053,43 @@ export {
 } from './voiceActions.js';
 
 export {
+  HAPPIER_SKILL_MENTIONS_METADATA_KEY,
+  HAPPIER_STRUCTURED_INPUT_METADATA_KEY_V1,
+  HAPPIER_VENDOR_PLUGIN_MENTIONS_METADATA_KEY,
   HappierStructuredInputV1EnvelopeSchema,
   SESSION_ATTACHMENT_UPLOAD_STRUCTURED_INPUT_PROVENANCE_KIND,
   SessionUserMessageSendMetaSchema,
   SessionUserMessageSendRequestSchema,
   SessionUserMessageSendResponseSchema,
+  admitStructuredInputMentionsForText,
   readAttachmentEnvelopeLocalImagePaths,
+  readHappierStructuredInputV1FromMeta,
+  readStructuredInputMentionSourcesV1,
   sanitizeHappierStructuredInputV1,
   sanitizeSessionUserMessageSendMeta,
   type HappierStructuredInputV1Envelope,
   type SessionUserMessageSendMeta,
   type SessionUserMessageSendRequest,
   type SessionUserMessageSendResponse,
+  type StructuredInputMentionSourcesV1,
 } from './sessionUserMessageRpc.js';
+
+export {
+  MENTION_BOUNDS,
+  MENTION_KIND_V1,
+  MENTION_REF_SCHEME_V1,
+  MentionRefV1Schema,
+  admitMentionRefsV1ForText,
+  buildMentionRefForKindV1,
+  buildMentionRefV1,
+  decodeMentionRefComponent,
+  encodeMentionRefComponent,
+  parseMentionRefV1,
+  readMentionRefOpaqueForKindV1,
+  sanitizeMentionRefsV1,
+  type BuiltInMentionKindV1,
+  type MentionRefV1,
+} from './mentionRefV1.js';
 
 export {
   ExecutionRunIntentSchema,
