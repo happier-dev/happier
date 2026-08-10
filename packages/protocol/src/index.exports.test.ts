@@ -256,6 +256,17 @@ describe('protocol package root exports', () => {
         expect(typeof (protocol as any).SessionWorkStateGetResponseV1Schema?.safeParse).toBe('function');
     });
 
+    it('exports the agent-activity vocabulary and its boundary adapters', () => {
+        expect(protocol.AGENT_ACTIVITY_STATUSES_V1).toContain('timedOut');
+        expect(protocol.AGENT_ACTIVITY_TONES_V1).toContain('attention');
+        expect(protocol.AGENT_ACTIVITY_KINDS_V1).toEqual(['workflow_run', 'workflow_agent']);
+        expect(protocol.resolveAgentActivityTone('waiting')).toBe('attention');
+        expect(protocol.fromExecutionRunStatus('timeout')).toBe('timedOut');
+        expect(protocol.fromWorkflowRunStatus('stopped')).toBe('cancelled');
+        expect(protocol.fromWorkflowAgentStatus('pending')).toBe('queued');
+        expect(protocol.fromSubagentStatus('terminated')).toBe('cancelled');
+    });
+
     it('exports connected-service settings schemas without the undeployed Codex-specific setting', () => {
         expect(typeof (protocol as any).ConnectedServicesDefaultAuthByAgentIdV1Schema?.safeParse).toBe('function');
         expect(typeof (protocol as any).ConnectedServicesProviderStateSharingSettingsV1Schema?.safeParse).toBe('function');

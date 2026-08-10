@@ -197,6 +197,26 @@ export {
   type SessionWorkflowRunStatusV1,
 } from './sessionWorkflowActivity/index.js';
 
+export {
+  AGENT_ACTIVITY_KINDS_V1,
+  AGENT_ACTIVITY_STATUSES_V1,
+  AGENT_ACTIVITY_TONES_V1,
+  AgentActivityKindV1Schema,
+  AgentActivityStatusV1Schema,
+  AgentActivityToneV1Schema,
+  SESSION_SUBAGENT_STATUS_SOURCES_V1,
+  SessionSubagentStatusSourceV1Schema,
+  fromExecutionRunStatus,
+  fromSubagentStatus,
+  fromWorkflowAgentStatus,
+  fromWorkflowRunStatus,
+  resolveAgentActivityTone,
+  type AgentActivityKindV1,
+  type AgentActivityStatusV1,
+  type AgentActivityToneV1,
+  type SessionSubagentStatusSourceV1,
+} from './sessionAgentActivity/index.js';
+
 export * from './sessionRuntimeActivity/index.js';
 export * from './sessionRuntimeActivity/projection.js';
 export * from './sessionRuntimeActivity/admission.js';
