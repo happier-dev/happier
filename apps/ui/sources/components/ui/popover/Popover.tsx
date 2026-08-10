@@ -992,6 +992,26 @@ export function Popover(props: PopoverWithBackdrop | PopoverWithoutBackdrop) {
 
     const fixedPositionOnWeb = (Platform.OS === 'web' ? ('fixed' as any) : 'absolute') as ViewStyle['position'];
 
+    /**
+     * Single owner of "how tall is the coordinate space this popover lays out in".
+     *
+     * On native with an overlay portal, both the content container and the backdrop are children of
+     * `OverlayPortalHost`'s `absoluteFill` inside the screen-local portal root, and `anchorRectState`
+     * is portal-relative (see `resolvePortalRelativeAnchorRect`). Anything derived from that anchor
+     * must be measured against the portal root's height, not the window's — on an iOS
+     * `containedModal` the two differ by the presentation inset plus the nav header.
+     *
+     * Every consumer (placement pinning here, the above-anchor dismiss frame in `backdrop.tsx`)
+     * reads this value so the two can never disagree again.
+     */
+    const portalSpaceHeight = React.useMemo(() => {
+        if (Platform.OS === 'web' || !shouldPortalNative) return windowHeight;
+        const nativePortalHeight = portalTarget?.layout?.height;
+        return typeof nativePortalHeight === 'number' && nativePortalHeight > 0
+            ? nativePortalHeight
+            : windowHeight;
+    }, [portalTarget?.layout?.height, shouldPortalNative, windowHeight]);
+
     const placementStyle: ViewStyle = (() => {
         // On web, optional: render as a viewport-fixed overlay so it can escape any overflow:hidden ancestors.
         // This is especially important for headers/sidebars which often clip overflow.
@@ -1083,18 +1103,11 @@ export function Popover(props: PopoverWithBackdrop | PopoverWithoutBackdrop) {
                         position === 'absolute'
                             ? (anchorRectState.y - webPortalOffsetY)
                             : anchorRectState.y;
-                    const portalHeight = (() => {
-                        if (Platform.OS !== 'web') {
-                            const nativePortalHeight = portalTarget?.layout?.height;
-                            return (typeof nativePortalHeight === 'number' && nativePortalHeight > 0)
-                                ? nativePortalHeight
-                                : windowHeight;
-                        }
-
-                        return position === 'absolute'
+                    const portalHeight = Platform.OS !== 'web'
+                        ? portalSpaceHeight
+                        : (position === 'absolute'
                             ? (webPortalTargetRect?.height ?? windowHeight)
-                            : windowHeight;
-                    })();
+                            : windowHeight);
                     const boundaryBottomInPortalSpace =
                         position === 'absolute'
                             ? boundaryRect.y + boundaryRect.height - webPortalOffsetY
@@ -1375,6 +1388,7 @@ export function Popover(props: PopoverWithBackdrop | PopoverWithoutBackdrop) {
                 anchorRect={anchorRectState}
                 windowWidth={windowWidth}
                 windowHeight={windowHeight}
+                portalSpaceHeight={portalSpaceHeight}
                 webPortalOffsetX={webPortalOffsetX}
                 webPortalOffsetY={webPortalOffsetY}
             />
@@ -1409,6 +1423,24 @@ export function Popover(props: PopoverWithBackdrop | PopoverWithoutBackdrop) {
                         }
                         return prev;
                     });
+
+                    // Measurement recovery.
+                    //
+                    // `recompute` retries on a fixed budget of animation frames. That budget encodes a
+                    // *time* assumption ("layout settles within ~6 frames") which does not hold when the
+                    // popover opens inside a freshly-presented contained modal, or while the JS thread is
+                    // saturated. When it expires with no valid geometry, `anchorRectState` stays null,
+                    // `portalOpacity` stays 0 and the popover is mounted but invisible and untappable —
+                    // permanently, because nothing else re-runs `recompute` unless one of its inputs
+                    // (window size, keyboard inset, portal-root layout, caps) happens to change.
+                    //
+                    // This layout event IS the platform reporting that the popover subtree now has
+                    // geometry, so it re-arms measurement. It is self-terminating rather than a retry
+                    // loop: it only fires while no anchor rect has ever been measured, and an unchanged
+                    // layout emits no further events.
+                    if (!anchorRectState) {
+                        void recompute();
+                    }
                 }}
             >
                 {Platform.OS === 'web' && shouldPortalWeb ? (

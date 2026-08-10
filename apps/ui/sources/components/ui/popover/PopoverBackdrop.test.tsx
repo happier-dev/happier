@@ -55,6 +55,7 @@ describe('PopoverBackdrop', () => {
                 anchorRect={{ x: 20, y: 560, width: 120, height: 40 }}
                 windowWidth={390}
                 windowHeight={844}
+                portalSpaceHeight={844}
                 webPortalOffsetX={0}
                 webPortalOffsetY={0}
             />,

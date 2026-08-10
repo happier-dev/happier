@@ -29,6 +29,12 @@ export function PopoverBackdrop(props: Readonly<{
     anchorRect: PopoverWindowRect | null;
     windowWidth: number;
     windowHeight: number;
+    /**
+     * Height of the coordinate space this backdrop lays out in — resolved by `Popover` (the single
+     * owner). Equals `windowHeight` except on native overlay portals, where both this layer and
+     * `anchorRect` live inside the screen-local portal root.
+     */
+    portalSpaceHeight: number;
     webPortalOffsetX: number;
     webPortalOffsetY: number;
 }>) {
@@ -80,7 +86,7 @@ export function PopoverBackdrop(props: Readonly<{
                             portalOpacity: props.portalOpacity,
                             portalZ: props.shouldPortal ? props.portalZ : 999,
                             webPortalOffsetY: props.webPortalOffsetY,
-                            windowHeight: props.windowHeight,
+                            portalSpaceHeight: props.portalSpaceHeight,
                         }),
                         props.backdropStyle,
                     ]}
@@ -136,7 +142,7 @@ function createBackdropPressableFrameStyle(params: Readonly<{
     portalOpacity: number;
     portalZ: number;
     webPortalOffsetY: number;
-    windowHeight: number;
+    portalSpaceHeight: number;
 }>): ViewStyle {
     const baseFrame: ViewStyle = {
         position: params.fixedPositionOnWeb,
@@ -156,7 +162,9 @@ function createBackdropPressableFrameStyle(params: Readonly<{
         params.shouldPortalWeb && params.portalPositionOnWeb === 'absolute'
             ? params.anchorRect.y - params.webPortalOffsetY
             : params.anchorRect.y;
-    const bottom = Math.max(0, Math.floor(params.windowHeight - Math.max(0, anchorY)));
+    // `anchorY` and this frame are both expressed in the space `portalSpaceHeight` describes:
+    // window space everywhere except native overlay portals, where it is the portal root's height.
+    const bottom = Math.max(0, Math.floor(params.portalSpaceHeight - Math.max(0, anchorY)));
 
     return {
         ...baseFrame,
