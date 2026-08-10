@@ -30,7 +30,7 @@ test('tests workflow exposes thin release-validation continuity/update jobs thro
 
   assert.match(
     raw,
-    /cli-update-continuity:[\s\S]*?node scripts\/pipeline\/run\.mjs release-validate \\\n[\s\S]*?--suite cli-update \\\n[\s\S]*?--platform linux \\\n[\s\S]*?--from-source published-channel \\\n[\s\S]*?--from-ref "\$\{CLI_UPDATE_FROM_CHANNEL\}" \\\n[\s\S]*?--to-source local-build \\\n[\s\S]*?--to-ref "\."/,
+    /cli-update-continuity:[\s\S]*?CLI_UPDATE_TO_SOURCE:[\s\S]*?inputs\.cli_update_to_source[\s\S]*?CLI_UPDATE_TO_REF:[\s\S]*?inputs\.cli_update_to_ref[\s\S]*?--to-source "\$\{CLI_UPDATE_TO_SOURCE\}" \\\n[\s\S]*?--to-ref "\$\{CLI_UPDATE_TO_REF\}"/,
     'tests workflow should run cli-update continuity through the unified release-validation runner',
   );
   assert.doesNotMatch(

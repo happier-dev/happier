@@ -255,6 +255,8 @@ jobs:
       publish_cli: ${{ steps.bump_plan.outputs.publish_cli }}
       publish_stack: ${{ steps.bump_plan.outputs.publish_stack }}
       publish_server: ${{ steps.bump_plan.outputs.publish_server }}
+      publish_server_runtime_needed: ${{ inputs.force_deploy == true || steps.bump_plan.outputs.publish_server == 'true' || steps.plan.outputs.changed_ui == 'true' || steps.plan.outputs.changed_server == 'true' || steps.plan.outputs.changed_shared == 'true' }}
+      publish_cli_binaries_needed: ${{ inputs.force_deploy == true || steps.bump_plan.outputs.publish_cli == 'true' || steps.plan.outputs.changed_cli == 'true' || steps.plan.outputs.changed_shared == 'true' }}
       validation_profile: ${{ needs.resolve_validation_profile.outputs.profile }}
       checks_profile: ${{ needs.resolve_validation_profile.outputs.checks_profile }}
       release_source_ref: ${{ steps.plan_refs.outputs.source_ref }}
@@ -567,6 +569,79 @@ jobs:
             --versioned-server-changed "${VERSIONED_SERVER_CHANGED}" \
             --github-output "$GITHUB_OUTPUT"
 
+  mysql_db_contract:
+    name: Server DB Contract (MySQL 8)
+    needs: [plan]
+    if: ${{ needs.plan.outputs.publish_server_runtime_needed == 'true' }}
+    uses: ./.github/workflows/extended-db-tests.yml
+    with:
+      run_e2e_postgres: false
+      run_e2e_mysql: false
+      run_db_contract_postgres: false
+      run_db_contract_mysql: true
+
+  platform_service_validation:
+    name: Platform service validation
+    needs: [plan]
+    if: ${{ needs.plan.outputs.checks_profile == 'full' && (needs.plan.outputs.publish_server_runtime_needed == 'true' || needs.plan.outputs.publish_cli_binaries_needed == 'true') }}
+    uses: ./.github/workflows/tests.yml
+    with:
+      run_ui_e2e: false
+      run_wsrepl_lima: false
+      run_mobile_e2e_android: false
+      run_mobile_e2e_ios: false
+      run_ui: false
+      run_server: false
+      run_server_db_contract: false
+      run_cli: false
+      run_stack: false
+      run_typecheck: false
+      run_cli_daemon_e2e: false
+      run_e2e_core: false
+      run_e2e_core_slow: false
+      run_providers: false
+      run_stress: false
+      run_release_contracts: false
+      run_installers_smoke: false
+      run_binary_smoke: false
+      run_cli_update_continuity: false
+      run_daemon_continuity: false
+      run_session_continuity: false
+      run_release_assets_docker: false
+      run_self_host_systemd: true
+      run_self_host_launchd: true
+      run_self_host_schtasks: true
+      run_self_host_daemon: true
+
+  release_admission:
+    name: Admit release mutation and publication
+    needs: [plan, mysql_db_contract, platform_service_validation]
+    if: ${{ always() && needs.plan.result == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Enforce stable and risk-selected publication admission
+        env:
+          CHECKS_PROFILE: ${{ needs.plan.outputs.checks_profile }}
+          DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
+          PUBLISH_SERVER_RUNTIME_NEEDED: ${{ needs.plan.outputs.publish_server_runtime_needed }}
+          PUBLISH_CLI_BINARIES_NEEDED: ${{ needs.plan.outputs.publish_cli_binaries_needed }}
+          MYSQL_GATE_RESULT: ${{ needs.mysql_db_contract.result }}
+          PLATFORM_GATE_RESULT: ${{ needs.platform_service_validation.result }}
+        run: |
+          set -euo pipefail
+          if [ "$DEPLOY_ENVIRONMENT" = "production" ] && [ "$CHECKS_PROFILE" != "full" ]; then
+            echo "production releases require checks_profile=full" >&2
+            exit 1
+          fi
+          if [ "$PUBLISH_SERVER_RUNTIME_NEEDED" = "true" ] && [ "$MYSQL_GATE_RESULT" != "success" ]; then
+            echo "server runtime publication requires a successful MySQL gate" >&2
+            exit 1
+          fi
+          if [ "$CHECKS_PROFILE" = "full" ] && ( [ "$PUBLISH_SERVER_RUNTIME_NEEDED" = "true" ] || [ "$PUBLISH_CLI_BINARIES_NEEDED" = "true" ] ) && [ "$PLATFORM_GATE_RESULT" != "success" ]; then
+            echo "server or CLI publication requires successful platform gates" >&2
+            exit 1
+          fi
+
   admit_release_notes:
     name: Admit exact candidate release notes
     if: always() && needs.plan.result == 'success' && inputs.dry_run != true
@@ -710,8 +785,8 @@ jobs:
             --github-output "$GITHUB_OUTPUT"
 
   promote_main:
-    if: always() && needs.plan.result == 'success' && needs.admit_release_notes.result == 'success' && inputs.dry_run != true && inputs.environment == 'production'
-    needs: [plan, admit_release_notes]
+    if: always() && needs.plan.result == 'success' && needs.release_admission.result == 'success' && needs.admit_release_notes.result == 'success' && inputs.dry_run != true && inputs.environment == 'production'
+    needs: [plan, release_admission, admit_release_notes]
     uses: ./.github/workflows/promote-branch.yml
     secrets: inherit
     with:
@@ -729,8 +804,8 @@ jobs:
         }}
 
   promote_preview:
-    if: always() && needs.plan.result == 'success' && needs.admit_release_notes.result == 'success' && inputs.dry_run != true && inputs.environment == 'preview'
-    needs: [plan, admit_release_notes]
+    if: always() && needs.plan.result == 'success' && needs.release_admission.result == 'success' && needs.admit_release_notes.result == 'success' && inputs.dry_run != true && inputs.environment == 'preview'
+    needs: [plan, release_admission, admit_release_notes]
     uses: ./.github/workflows/promote-branch.yml
     secrets: inherit
     with:
@@ -867,7 +942,7 @@ jobs:
       run_tests: false
 
   publish_server_runtime:
-    if: always() && needs.plan.result == 'success' && needs.prepare_release_candidate.result == 'success' && inputs.dry_run != true && (needs.plan.outputs.publish_server == 'true' || inputs.force_deploy == true || needs.plan.outputs.changed_ui == 'true' || needs.plan.outputs.changed_server == 'true' || needs.plan.outputs.changed_shared == 'true') && ((inputs.environment == 'production' && needs.promote_main.result == 'success') || (inputs.environment == 'preview' && needs.promote_preview.result == 'success'))
+    if: always() && needs.plan.result == 'success' && needs.prepare_release_candidate.result == 'success' && inputs.dry_run != true && needs.plan.outputs.publish_server_runtime_needed == 'true' && ((inputs.environment == 'production' && needs.promote_main.result == 'success') || (inputs.environment == 'preview' && needs.promote_preview.result == 'success'))
     needs: [plan, promote_preview, promote_main, prepare_release_candidate]
     permissions:
       contents: write
@@ -897,7 +972,7 @@ jobs:
       publish_rolling: false
 
   publish_cli_binaries:
-    if: always() && needs.plan.result == 'success' && needs.prepare_release_candidate.result == 'success' && inputs.dry_run != true && (inputs.force_deploy == true || needs.plan.outputs.publish_cli == 'true' || needs.plan.outputs.changed_cli == 'true' || needs.plan.outputs.changed_shared == 'true') && ((inputs.environment == 'production' && needs.promote_main.result == 'success') || (inputs.environment == 'preview' && needs.promote_preview.result == 'success'))
+    if: always() && needs.plan.result == 'success' && needs.prepare_release_candidate.result == 'success' && inputs.dry_run != true && needs.plan.outputs.publish_cli_binaries_needed == 'true' && ((inputs.environment == 'production' && needs.promote_main.result == 'success') || (inputs.environment == 'preview' && needs.promote_preview.result == 'success'))
     needs: [plan, promote_preview, promote_main, prepare_release_candidate]
     permissions:
       contents: write
@@ -1070,15 +1145,26 @@ jobs:
 
   release_verify:
     name: Release Verification (release-verify.yml)
-    needs: [plan, prepare_release_candidate, publish_hstack_binaries, promote_hstack_binaries, promote_cli_binaries, promote_server_runtime, promote_ui_web, publish_docker, publish_npm]
-    if: ${{ always() && needs.plan.outputs.checks_profile == 'full' && inputs.dry_run != true && needs.plan.result == 'success' && (needs.promote_hstack_binaries.result == 'success' || needs.promote_hstack_binaries.result == 'skipped') && (needs.promote_cli_binaries.result == 'success' || needs.promote_cli_binaries.result == 'skipped') && (needs.promote_server_runtime.result == 'success' || needs.promote_server_runtime.result == 'skipped') && (needs.promote_ui_web.result == 'success' || needs.promote_ui_web.result == 'skipped') && (needs.publish_docker.result == 'success' || needs.publish_docker.result == 'skipped') && (needs.publish_npm.result == 'success' || needs.publish_npm.result == 'skipped') }}
+    needs: [plan, prepare_release_candidate, deploy_server, publish_hstack_binaries, promote_hstack_binaries, promote_cli_binaries, promote_server_runtime, promote_ui_web, publish_docker, publish_npm]
+    if: ${{ always() && inputs.dry_run != true && needs.plan.result == 'success' && (needs.deploy_server.result == 'success' || needs.deploy_server.result == 'skipped') && (needs.promote_hstack_binaries.result == 'success' || needs.promote_hstack_binaries.result == 'skipped') && (needs.promote_cli_binaries.result == 'success' || needs.promote_cli_binaries.result == 'skipped') && (needs.promote_server_runtime.result == 'success' || needs.promote_server_runtime.result == 'skipped') && (needs.promote_ui_web.result == 'success' || needs.promote_ui_web.result == 'skipped') && (needs.publish_docker.result == 'success' || needs.publish_docker.result == 'skipped') && (needs.publish_npm.result == 'success' || needs.publish_npm.result == 'skipped') }}
     uses: ./.github/workflows/release-verify.yml
     with:
       channel: ${{ inputs.environment == 'production' && 'production' || 'preview' }}
       candidate_source_sha: ${{ needs.prepare_release_candidate.outputs.source_sha }}
       candidate_stack_version: ${{ needs.publish_hstack_binaries.outputs.version }}
       verify_stack_release: ${{ needs.promote_hstack_binaries.result == 'success' }}
-      validation_profile: ${{ needs.plan.outputs.validation_profile }}
+      verify_deploy_server: ${{ needs.deploy_server.result == 'success' }}
+      server_api_version_url: ${{ inputs.environment == 'production' && vars.HAPPIER_SERVER_API_PRODUCTION_VERSION_URL || vars.HAPPIER_SERVER_API_PREVIEW_VERSION_URL }}
+      run_installers_smoke: false
+      run_binary_smoke: false
+      run_cli_update_continuity: false
+      run_daemon_continuity: false
+      run_session_continuity: false
+      run_release_assets_docker: false
+      run_self_host_systemd: false
+      run_self_host_launchd: false
+      run_self_host_schtasks: false
+      run_self_host_daemon: false
 
   release_status:
     name: Summarize release status
@@ -1172,7 +1258,6 @@ jobs:
             && normalizeResult(process.env.CANDIDATE_VERIFY_RESULT) === 'success'
             && (isTrue(process.env.PUBLISH_CLI) || isTrue(process.env.PUBLISH_HSTACK) || isTrue(process.env.PUBLISH_SERVER));
           requested['release-verification'] = candidateReleaseRequested
-            && process.env.VALIDATION_PROFILE === 'stable'
             && normalizeResult(process.env.CANDIDATE_VERIFY_RESULT) === 'success'
             && [process.env.PROMOTE_HSTACK_RESULT, process.env.PROMOTE_CLI_RESULT, process.env.PROMOTE_SERVER_RESULT, process.env.PROMOTE_UI_WEB_RESULT, process.env.DOCKER_RESULT, process.env.NPM_RESULT]
               .map(normalizeResult)

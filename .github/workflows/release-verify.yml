@@ -99,6 +99,14 @@ on:
         required: false
         default: ''
         type: string
+      server_api_version_url:
+        required: false
+        default: ''
+        type: string
+      verify_deploy_server:
+        required: false
+        default: false
+        type: boolean
       verify_stack_release:
         required: false
         default: false
@@ -253,6 +261,18 @@ jobs:
           verify_artifacts "$CANDIDATE_SERVER_VERSION" "$candidates_dir/server" happier-server
           verify_artifacts "$CANDIDATE_UI_WEB_VERSION" "$candidates_dir/ui-web" happier-ui-web
 
+      - name: Verify loaded server API revision
+        if: ${{ inputs.verify_deploy_server }}
+        env:
+          SERVER_API_VERSION_URL: ${{ inputs.server_api_version_url }}
+          CANDIDATE_SOURCE_SHA: ${{ inputs.candidate_source_sha }}
+        run: |
+          set -euo pipefail
+          test -n "$SERVER_API_VERSION_URL"
+          node "$GITHUB_WORKSPACE/.release-control/scripts/pipeline/release/verify-loaded-release-revision.mjs" \
+            --url "$SERVER_API_VERSION_URL" \
+            --expected-source-sha "$CANDIDATE_SOURCE_SHA"
+
   resolve_validation_profile:
     name: Resolve bounded validation profile
     runs-on: ubuntu-latest
@@ -367,9 +387,13 @@ jobs:
       installers_ref: ${{ inputs.candidate_cli_version != '' && format('cli-v{0}', inputs.candidate_cli_version) || '' }}
       run_binary_smoke: ${{ fromJSON(needs.resolve_validation_profile.outputs.run_binary_smoke) }}
       run_cli_update_continuity: ${{ fromJSON(needs.resolve_validation_profile.outputs.run_cli_update_continuity) }}
+      cli_update_to_source: ${{ inputs.candidate_cli_version != '' && 'published-tag' || 'local-build' }}
+      cli_update_to_ref: ${{ inputs.candidate_cli_version != '' && format('cli-v{0}', inputs.candidate_cli_version) || '.' }}
       run_daemon_continuity: ${{ fromJSON(needs.resolve_validation_profile.outputs.run_daemon_continuity) }}
       run_session_continuity: ${{ fromJSON(needs.resolve_validation_profile.outputs.run_session_continuity) }}
       run_release_assets_docker: ${{ fromJSON(needs.resolve_validation_profile.outputs.run_release_assets_docker) }}
+      relay_upgrade_to_source: ${{ inputs.candidate_server_version != '' && 'published-tag' || 'local-build' }}
+      relay_upgrade_to_ref: ${{ inputs.candidate_server_version != '' && format('server-v{0}', inputs.candidate_server_version) || '.' }}
       run_self_host_systemd: ${{ fromJSON(needs.resolve_validation_profile.outputs.run_self_host_systemd) }}
       run_self_host_launchd: ${{ fromJSON(needs.resolve_validation_profile.outputs.run_self_host_launchd) }}
       run_self_host_schtasks: ${{ fromJSON(needs.resolve_validation_profile.outputs.run_self_host_schtasks) }}

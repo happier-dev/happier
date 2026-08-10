@@ -85,7 +85,11 @@ export const RELEASE_VALIDATION_SUITES = [
     supportsDirectSource: true,
     supportsUpdateSources: true,
     supportedDirectSourceKinds: ['local-build', 'published-channel'],
-    supportedUpdateSourceKinds: ['published-channel', 'local-build'],
+    supportedUpdateSourceKinds: ['published-channel', 'published-tag', 'local-build'],
+    supportedUpdateSourcePairs: [
+      { from: 'published-channel', to: 'local-build' },
+      { from: 'published-channel', to: 'published-tag' },
+    ],
     executorId: 'docker-release-assets',
   },
   {
@@ -122,6 +126,7 @@ export const RELEASE_VALIDATION_SUITES = [
 ];
 
 export const RELEASE_VALIDATION_SUITE_IDS = RELEASE_VALIDATION_SUITES.map((suite) => suite.id);
+export const RELEASE_VALIDATION_PROFILE_IDS = RELEASE_VALIDATION_PROFILES.map((profile) => profile.id);
 
 /**
  * @param {string} raw
@@ -130,6 +135,15 @@ export const RELEASE_VALIDATION_SUITE_IDS = RELEASE_VALIDATION_SUITES.map((suite
 export function resolveReleaseValidationSuite(raw) {
   const id = String(raw ?? '').trim();
   return RELEASE_VALIDATION_SUITES.find((suite) => suite.id === id) ?? null;
+}
+
+/**
+ * @param {string} raw
+ * @returns {ReleaseValidationProfileDefinition | null}
+ */
+export function resolveReleaseValidationProfile(raw) {
+  const id = String(raw ?? '').trim();
+  return RELEASE_VALIDATION_PROFILES.find((profile) => profile.id === id) ?? null;
 }
 
 /**

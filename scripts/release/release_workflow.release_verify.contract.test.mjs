@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import YAML from 'yaml';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, '..', '..');
@@ -44,8 +45,8 @@ test('release workflow verifies immutable candidates before promoting preview or
   );
   assert.match(
     raw,
-    /release_verify:[\s\S]*?needs:\s*\[plan, prepare_release_candidate, publish_hstack_binaries, promote_hstack_binaries, promote_cli_binaries, promote_server_runtime, promote_ui_web, publish_docker, publish_npm\][\s\S]*?uses:\s*\.\/\.github\/workflows\/release-verify\.yml/,
-    'full checks should verify the promoted projections after candidate verification and promotion',
+    /release_verify:[\s\S]*?needs:\s*\[plan, prepare_release_candidate, deploy_server, publish_hstack_binaries, promote_hstack_binaries, promote_cli_binaries, promote_server_runtime, promote_ui_web, publish_docker, publish_npm\][\s\S]*?uses:\s*\.\/\.github\/workflows\/release-verify\.yml/,
+    'post-promotion checks should verify selected release surfaces after candidate verification and promotion',
   );
   assert.match(
     raw,
@@ -59,6 +60,36 @@ test('release workflow verifies immutable candidates before promoting preview or
   );
 });
 
+test('post-promotion verification receives the selected server runtime probe URL', async () => {
+  const workflow = YAML.parse(await readFile(join(repoRoot, '.github', 'workflows', 'release.yml'), 'utf8'));
+  assert.ok(workflow.jobs.release_verify.needs.includes('deploy_server'));
+  assert.equal(workflow.jobs.release_verify.with.verify_deploy_server, "${{ needs.deploy_server.result == 'success' }}");
+  assert.equal(
+    workflow.jobs.release_verify.with.server_api_version_url,
+    "${{ inputs.environment == 'production' && vars.HAPPIER_SERVER_API_PRODUCTION_VERSION_URL || vars.HAPPIER_SERVER_API_PREVIEW_VERSION_URL }}",
+  );
+  assert.equal(workflow.jobs.release_verify.with.validation_profile, undefined);
+  for (const suite of [
+    'run_installers_smoke',
+    'run_binary_smoke',
+    'run_cli_update_continuity',
+    'run_daemon_continuity',
+    'run_session_continuity',
+    'run_release_assets_docker',
+    'run_self_host_systemd',
+    'run_self_host_launchd',
+    'run_self_host_schtasks',
+    'run_self_host_daemon',
+  ]) {
+    assert.equal(workflow.jobs.release_verify.with[suite], false, `${suite} should not rerun after promotion`);
+  }
+  assert.doesNotMatch(
+    String(workflow.jobs.release_verify.if),
+    /checks_profile == 'full'/,
+    'post-promotion verification must run for preview and stable releases',
+  );
+});
+
 test('release workflow admits exact candidate notes before branch promotion and rechecks the promoted candidate', async () => {
   const raw = await readFile(join(repoRoot, '.github', 'workflows', 'release.yml'), 'utf8');
   const notesAdmission = raw.slice(raw.indexOf('\n  admit_release_notes:'), raw.indexOf('\n  promote_main:'));
@@ -66,12 +97,12 @@ test('release workflow admits exact candidate notes before branch promotion and 
   assert.match(notesAdmission, /admit_release_notes:[\s\S]*?needs:\s*\[plan\][\s\S]*?resolve-authorized-release-source\.mjs[\s\S]*?Project approved release notes from exact candidate[\s\S]*?project-release-notes\.mjs/);
   assert.match(
     raw,
-    /promote_main:[\s\S]*?needs:\s*\[plan, admit_release_notes\][\s\S]*?source_sha:\s*\$\{\{\s*needs\.admit_release_notes\.outputs\.source_sha\s*\}\}/,
+    /promote_main:[\s\S]*?needs:\s*\[plan, release_admission, admit_release_notes\][\s\S]*?source_sha:\s*\$\{\{\s*needs\.admit_release_notes\.outputs\.source_sha\s*\}\}/,
     'production branch promotion must wait for approved notes and use that exact admitted source',
   );
   assert.match(
     raw,
-    /promote_preview:[\s\S]*?needs:\s*\[plan, admit_release_notes\][\s\S]*?source_sha:\s*\$\{\{\s*needs\.admit_release_notes\.outputs\.source_sha\s*\}\}/,
+    /promote_preview:[\s\S]*?needs:\s*\[plan, release_admission, admit_release_notes\][\s\S]*?source_sha:\s*\$\{\{\s*needs\.admit_release_notes\.outputs\.source_sha\s*\}\}/,
     'preview branch promotion must wait for approved notes and use that exact admitted source',
   );
   assert.match(
@@ -113,7 +144,7 @@ test('release workflow derives validation, notes, and terminal status from the e
     'one exact candidate checkout must project both publication note variants',
   );
   assert.match(candidateVerification, /validation_profile:\s*\$\{\{\s*needs\.plan\.outputs\.validation_profile\s*\}\}/);
-  assert.match(raw, /release_verify:[\s\S]*?needs\.plan\.outputs\.checks_profile == 'full'/);
+  assert.doesNotMatch(raw, /release_verify:[\s\S]*?needs\.plan\.outputs\.checks_profile == 'full'/);
   assert.doesNotMatch(candidateVerification, /run_(?:installers_smoke|binary_smoke|cli_update_continuity|daemon_continuity|session_continuity):/);
 
   for (const job of [
@@ -143,8 +174,79 @@ test('release workflow derives validation, notes, and terminal status from the e
   assert.doesNotMatch(raw, /supported_old_relay_compatibility/);
   assert.match(releaseStatus, /VALIDATION_PROFILE:\s*\$\{\{\s*needs\.plan\.outputs\.validation_profile\s*\}\}/);
   assert.match(releaseStatus, /PUBLISH_CLI:\s*\$\{\{\s*needs\.plan\.outputs\.publish_cli\s*\}\}/);
+  assert.match(releaseStatus, /requested\['release-verification'\] = candidateReleaseRequested\s*\n\s*&& normalizeResult\(process\.env\.CANDIDATE_VERIFY_RESULT\) === 'success'/);
+  assert.doesNotMatch(
+    releaseStatus,
+    /requested\['release-verification'\][\s\S]*?VALIDATION_PROFILE === 'stable'/,
+    'preview and stable releases both execute post-promotion verification',
+  );
   assert.match(releaseStatus, /requestedSurfaces: definitions\.map\(\(\{ id, evidence \}\) => \(\{ id, requested: Boolean\(requested\[id\]\), required: true, evidence \}\)\)/);
   assert.match(releaseStatus, /summarize-release-status\.mjs/);
   assert.match(releaseStatus, /GITHUB_STEP_SUMMARY/);
   assert.match(releaseStatus, /actions\/upload-artifact@[\s\S]*?name:\s*happier-release-status/);
+});
+
+test('server releases admit the focused MySQL contract and stable platform evidence before branch mutation', async () => {
+  const [releaseRaw, extendedDbRaw] = await Promise.all([
+    readFile(join(repoRoot, '.github', 'workflows', 'release.yml'), 'utf8'),
+    readFile(join(repoRoot, '.github', 'workflows', 'extended-db-tests.yml'), 'utf8'),
+  ]);
+  const release = YAML.parse(releaseRaw);
+  const extendedDb = YAML.parse(extendedDbRaw);
+  const mysqlGate = release.jobs.mysql_db_contract;
+  const platformGate = release.jobs.platform_service_validation;
+  const admission = release.jobs.release_admission;
+
+  assert.equal(mysqlGate.uses, './.github/workflows/extended-db-tests.yml');
+  assert.match(mysqlGate.if, /needs\.plan\.outputs\.publish_server_runtime_needed == 'true'/);
+  assert.doesNotMatch(mysqlGate.if, /checks_profile/);
+  assert.deepEqual(mysqlGate.with, {
+    run_e2e_postgres: false,
+    run_e2e_mysql: false,
+    run_db_contract_postgres: false,
+    run_db_contract_mysql: true,
+  });
+
+  assert.equal(platformGate.uses, './.github/workflows/tests.yml');
+  assert.match(platformGate.if, /needs\.plan\.outputs\.checks_profile == 'full'/);
+  assert.equal(platformGate.with.run_self_host_systemd, true);
+  assert.equal(platformGate.with.run_self_host_launchd, true);
+  assert.equal(platformGate.with.run_self_host_schtasks, true);
+  assert.equal(platformGate.with.run_self_host_daemon, true);
+
+  assert.deepEqual(admission.needs, ['plan', 'mysql_db_contract', 'platform_service_validation']);
+  const admissionScript = admission.steps.map((step) => step.run ?? '').join('\n');
+  assert.match(admissionScript, /production releases require checks_profile=full/);
+  assert.match(admissionScript, /server runtime publication requires a successful MySQL gate/);
+  assert.match(admissionScript, /server or CLI publication requires successful platform gates/);
+
+  for (const jobName of ['promote_preview', 'promote_main']) {
+    assert.ok(release.jobs[jobName].needs.includes('release_admission'));
+    assert.match(String(release.jobs[jobName].if), /needs\.release_admission\.result == 'success'/);
+  }
+
+  for (const [inputName, jobName] of [
+    ['run_e2e_postgres', 'e2e-postgres'],
+    ['run_e2e_mysql', 'e2e-mysql'],
+    ['run_db_contract_postgres', 'db-contract-postgres'],
+    ['run_db_contract_mysql', 'db-contract-mysql'],
+  ]) {
+    assert.equal(extendedDb.on.workflow_call.inputs[inputName].default, true);
+    assert.match(extendedDb.jobs[jobName].if, new RegExp(`github\\.event_name != 'workflow_call' \\|\\| inputs\\.${inputName}`));
+  }
+  assert.equal(extendedDb.jobs['db-contract-mysql'].services.mysql.image, 'mysql:8.0');
+});
+
+test('remote release uses one publication decision for publishers and their admission gates', async () => {
+  const workflow = YAML.parse(await readFile(join(repoRoot, '.github', 'workflows', 'release.yml'), 'utf8'));
+  const outputs = workflow.jobs.plan.outputs;
+
+  assert.match(outputs.publish_server_runtime_needed, /inputs\.force_deploy == true/);
+  assert.match(outputs.publish_server_runtime_needed, /steps\.plan\.outputs\.changed_server == 'true'/);
+  assert.match(outputs.publish_cli_binaries_needed, /inputs\.force_deploy == true/);
+  assert.match(outputs.publish_cli_binaries_needed, /steps\.plan\.outputs\.changed_cli == 'true'/);
+  assert.match(workflow.jobs.publish_server_runtime.if, /needs\.plan\.outputs\.publish_server_runtime_needed == 'true'/);
+  assert.match(workflow.jobs.publish_cli_binaries.if, /needs\.plan\.outputs\.publish_cli_binaries_needed == 'true'/);
+  assert.doesNotMatch(JSON.stringify(workflow.jobs.mysql_db_contract), /deploy_targets/);
+  assert.doesNotMatch(JSON.stringify(workflow.jobs.platform_service_validation), /deploy_targets/);
 });

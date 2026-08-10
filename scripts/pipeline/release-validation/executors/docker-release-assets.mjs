@@ -194,7 +194,19 @@ function createPublishedChannelPlan(channel) {
 /**
  * @param {RelayUpgradeChannel} fromChannel
  */
-function createRelayUpgradePlan(fromChannel) {
+function resolveImmutableServerCandidate(raw) {
+  const match = /^server-v(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)$/u.exec(String(raw ?? '').trim());
+  if (!match) {
+    throw new Error('docker-release-assets immutable relay targets must use server-v<version>');
+  }
+  return { tag: match[0], version: match[1] };
+}
+
+/**
+ * @param {RelayUpgradeChannel} fromChannel
+ * @param {{ tag: string; version: string } | null} [immutableCandidate]
+ */
+function createRelayUpgradePlan(fromChannel, immutableCandidate = null) {
   return {
     mode: 'local',
     monorepo: 'local',
@@ -207,6 +219,10 @@ function createRelayUpgradePlan(fromChannel) {
     withRelayUpgrade: true,
     relayUpgradeFromChannel: fromChannel,
     relayUpgradeDb: 'both',
+    ...(immutableCandidate ? {
+      relayUpgradeToServerTag: immutableCandidate.tag,
+      relayUpgradeToServerVersion: immutableCandidate.version,
+    } : {}),
     args: withArgs([
       '--mode=local',
       '--monorepo=local',
@@ -217,6 +233,10 @@ function createRelayUpgradePlan(fromChannel) {
       '--with-relay-upgrade',
       `--relay-upgrade-from-channel=${fromChannel}`,
       '--relay-upgrade-db=both',
+      ...(immutableCandidate ? [
+        `--relay-upgrade-to-server-tag=${immutableCandidate.tag}`,
+        `--relay-upgrade-to-server-version=${immutableCandidate.version}`,
+      ] : []),
     ]),
   };
 }
@@ -260,8 +280,8 @@ export function resolveDockerReleaseAssetsPlan({ platform, source, update, optio
     throw new Error('docker-release-assets requires either --source/--ref or --from-source/--from-ref with --to-source/--to-ref');
   }
 
-  if (update.from.kind !== 'published-channel' || update.to.kind !== 'local-build') {
-    throw new Error('docker-release-assets updates currently support only published-channel -> local-build relay upgrades');
+  if (update.from.kind !== 'published-channel' || !['local-build', 'published-tag'].includes(update.to.kind)) {
+    throw new Error('docker-release-assets updates support published-channel -> local-build|published-tag relay upgrades');
   }
 
   const fromChannel = resolvePublicChannel(update.from.ref);
@@ -270,7 +290,10 @@ export function resolveDockerReleaseAssetsPlan({ platform, source, update, optio
     throw new Error('docker-release-assets relay upgrade currently supports only stable|preview source channels');
   }
 
-  return createRelayUpgradePlan(relayUpgradeChannel);
+  const immutableCandidate = update.to.kind === 'published-tag'
+    ? resolveImmutableServerCandidate(update.to.ref)
+    : null;
+  return createRelayUpgradePlan(relayUpgradeChannel, immutableCandidate);
 }
 
 /**

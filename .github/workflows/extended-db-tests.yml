@@ -2,6 +2,24 @@ name: CI — Extended DB Matrix
 
 on:
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      run_e2e_postgres:
+        required: false
+        default: true
+        type: boolean
+      run_e2e_mysql:
+        required: false
+        default: true
+        type: boolean
+      run_db_contract_postgres:
+        required: false
+        default: true
+        type: boolean
+      run_db_contract_mysql:
+        required: false
+        default: true
+        type: boolean
   schedule:
     # Nightly (UTC)
     - cron: "0 4 * * *"
@@ -12,6 +30,7 @@ concurrency:
 
 jobs:
   e2e-postgres:
+    if: ${{ github.event_name != 'workflow_call' || inputs.run_e2e_postgres }}
     name: Core E2E (Postgres)
     runs-on: ubuntu-22.04
     timeout-minutes: 120
@@ -83,6 +102,7 @@ jobs:
           path: .project/logs/e2e
 
   e2e-mysql:
+    if: ${{ github.event_name != 'workflow_call' || inputs.run_e2e_mysql }}
     name: Core E2E (MySQL)
     runs-on: ubuntu-22.04
     timeout-minutes: 120
@@ -153,6 +173,7 @@ jobs:
           path: .project/logs/e2e
 
   db-contract-postgres:
+    if: ${{ github.event_name != 'workflow_call' || inputs.run_db_contract_postgres }}
     name: DB Contract (Postgres)
     runs-on: ubuntu-latest
     timeout-minutes: 120
@@ -206,6 +227,7 @@ jobs:
         run: yarn --cwd apps/server test:db-contract
 
   db-contract-mysql:
+    if: ${{ github.event_name != 'workflow_call' || inputs.run_db_contract_mysql }}
     name: DB Contract (MySQL)
     runs-on: ubuntu-latest
     timeout-minutes: 120

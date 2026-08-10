@@ -594,7 +594,7 @@ function runPublishServerRuntime({ repoRoot, env, args, dryRun }) {
 }
 
 /**
- * @param {{ repoRoot: string; env: Record<string, string>; args: string[]; dryRun: boolean; skipExecOnDryRun?: boolean }} opts
+ * @param {{ repoRoot: string; env?: Record<string, string>; args: string[]; dryRun: boolean; skipExecOnDryRun?: boolean }} opts
  */
 function runReleaseValidate({ repoRoot, env, args, dryRun, skipExecOnDryRun = false }) {
   const scriptPath = path.join(repoRoot, 'scripts', 'pipeline', 'release-validation', 'validate-release.mjs');
@@ -2005,6 +2005,18 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
     } = splitWrappedReleaseArgs(rest);
     const keychainAccount = keychainAccountRaw.trim() || undefined;
 
+    // Validation dry-runs are deterministic source planning. Execute the
+    // target-owned planner directly and do not load release credentials merely
+    // to describe a profile or suite command.
+    if (dryRun) {
+      runReleaseValidate({
+        repoRoot,
+        args: [...passthrough, '--dry-run'],
+        dryRun: false,
+      });
+      return;
+    }
+
     const { env, sources } = loadPipelineEnv({ repoRoot });
     const { env: mergedEnv, usedKeychain } = loadSecrets({
       baseEnv: env,
@@ -2019,17 +2031,6 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
     }
     if (usedKeychain) {
       console.log(`[pipeline] loaded secrets from Keychain service '${keychainService}'`);
-    }
-
-    if (dryRun) {
-      runReleaseValidate({
-        repoRoot,
-        env: mergedEnv,
-        args: [...passthrough, '--dry-run'],
-        dryRun: true,
-        skipExecOnDryRun: true,
-      });
-      return;
     }
 
     runReleaseValidate({

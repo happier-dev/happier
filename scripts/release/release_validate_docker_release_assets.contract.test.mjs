@@ -116,6 +116,20 @@ test('docker release-assets plans published preview to local-build relay upgrade
   });
 });
 
+test('docker release-assets plans published stable to immutable server candidate upgrades', () => {
+  const plan = resolveDockerReleaseAssetsPlan({
+    platform: 'linux',
+    source: null,
+    update: {
+      from: { kind: 'published-channel', ref: 'stable' },
+      to: { kind: 'published-tag', ref: 'server-v0.2.11' },
+    },
+  });
+  assert.equal(plan.relayUpgradeFromChannel, 'stable');
+  assert.equal(plan.relayUpgradeToServerTag, 'server-v0.2.11');
+  assert.equal(plan.relayUpgradeToServerVersion, '0.2.11');
+});
+
 test('docker release-assets rejects non-linux platforms', () => {
   assert.throws(
     () =>

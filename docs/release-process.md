@@ -47,6 +47,11 @@ and three profiles:
   certification before it is considered complete. It is never a normal-release
   dispatch.
 
+The workflow derives source-check depth from the selected public profile; a
+caller cannot select a second checks profile. Every exact server candidate also
+runs the focused real MySQL 8 contract. The broader cross-platform service
+matrix remains part of the full stable gate rather than every preview.
+
 The slow test lane contains two pinned server-v0.2.1 regressions for pending
 queue and first-prompt behavior. They are exact tests, not a general
 compatibility verdict. The release agent selects them when the actual diff can
@@ -186,6 +191,16 @@ Configuration (recommended as GitHub *Environment* secrets/vars for `production`
   - `HAPPIER_SERVER_API_DEPLOY_WEBHOOKS`
   - `HAPPIER_SERVER_WORKER_DEPLOY_WEBHOOKS`
   - `HAPPIER_CLI_DEPLOY_WEBHOOKS`
+
+Repository variables used for exact hosted-server completion proof:
+
+- `HAPPIER_SERVER_API_PREVIEW_VERSION_URL`
+- `HAPPIER_SERVER_API_PRODUCTION_VERSION_URL`
+
+Each value must be the public `https://.../v1/version` endpoint for that
+environment. A selected server deployment fails release verification unless
+the endpoint reports the exact candidate `source_sha`; webhook acceptance alone
+is not deployment completion.
 
 The `HAPPIER_*_DEPLOY_WEBHOOKS` values can be either:
 - webhook IDs (recommended), which will be called as `${DEPLOY_WEBHOOK_URL}/{id}`

@@ -286,12 +286,15 @@ RUN yarn workspace @happier-dev/server build
 
 FROM node:${NODE_VERSION} AS server
 WORKDIR /repo
+ARG SENTRY_RELEASE=""
 RUN apt-get update \
     && apt-get install -y --no-install-recommends -o APT::Keep-Downloaded-Packages=false python3 ffmpeg curl \
     && rm -rf /var/lib/apt/lists/*
 ENV NODE_ENV=production
 ENV PORT=3005
 ENV RUN_MIGRATIONS=1
+ENV SENTRY_RELEASE=$SENTRY_RELEASE
+ENV HAPPIER_RELEASE_SOURCE_SHA=$SENTRY_RELEASE
 COPY --from=server-builder --chown=node:node /repo/node_modules /repo/node_modules
 COPY --from=server-builder --chown=node:node /repo/packages/agents /repo/packages/agents
 COPY --from=server-builder --chown=node:node /repo/packages/cli-common /repo/packages/cli-common
@@ -379,6 +382,7 @@ RUN useradd -m -s /bin/bash happier \
 COPY --from=relay-artifacts --chown=happier:happier /opt/happier/server /opt/happier/server
 ARG SENTRY_RELEASE=""
 ENV SENTRY_RELEASE=$SENTRY_RELEASE
+ENV HAPPIER_RELEASE_SOURCE_SHA=$SENTRY_RELEASE
 ARG SENTRY_SERVER_CENTRAL_DSN=""
 ENV HAPPIER_SENTRY_CENTRAL_DSN=$SENTRY_SERVER_CENTRAL_DSN
 ENV HAPPIER_SENTRY_USE_CENTRAL_DSN=1

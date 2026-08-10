@@ -22,13 +22,15 @@ docker_images_db=""
 with_relay_upgrade=""
 relay_upgrade_from_channel=""
 relay_upgrade_db=""
+relay_upgrade_to_server_tag=""
+relay_upgrade_to_server_version=""
 show_help="0"
 docker_retry_attempts="${HAPPIER_RELEASE_ASSETS_DOCKER_RETRY_ATTEMPTS:-4}"
 docker_retry_sleep_seconds="${HAPPIER_RELEASE_ASSETS_DOCKER_RETRY_SLEEP_SECONDS:-5}"
 
 usage() {
   cat <<EOF
-Usage: $0 [--mode=npm|local] [--stack-spec <spec>] [--cli-spec <spec>] [--cli-install=global|npx] [--monorepo=github|local] [--timeout-s <seconds>] [--with-remote-daemon|--no-remote-daemon] [--with-remote-server|--no-remote-server] [--remote-server-db=postgres|sqlite] [--remote-installer=shim|official] [--remote-auth-mode=reuse-cli|bootstrap] [--with-docker-images|--no-docker-images] [--docker-channel=preview|stable] [--docker-images-db=sqlite|postgres|both] [--with-relay-upgrade|--no-relay-upgrade] [--relay-upgrade-from-channel=preview|stable] [--relay-upgrade-db=sqlite|postgres|both] [--keep]
+Usage: $0 [--mode=npm|local] [--stack-spec <spec>] [--cli-spec <spec>] [--cli-install=global|npx] [--monorepo=github|local] [--timeout-s <seconds>] [--with-remote-daemon|--no-remote-daemon] [--with-remote-server|--no-remote-server] [--remote-server-db=postgres|sqlite] [--remote-installer=shim|official] [--remote-auth-mode=reuse-cli|bootstrap] [--with-docker-images|--no-docker-images] [--docker-channel=preview|stable] [--docker-images-db=sqlite|postgres|both] [--with-relay-upgrade|--no-relay-upgrade] [--relay-upgrade-from-channel=preview|stable] [--relay-upgrade-db=sqlite|postgres|both] [--relay-upgrade-to-server-tag=server-v<version>] [--relay-upgrade-to-server-version=<version>] [--keep]
 
 Examples:
   $0
@@ -66,6 +68,8 @@ for arg in "$@"; do
     --no-relay-upgrade) with_relay_upgrade="0" ;;
     --relay-upgrade-from-channel=*) relay_upgrade_from_channel="${arg#*=}" ;;
     --relay-upgrade-db=*) relay_upgrade_db="${arg#*=}" ;;
+    --relay-upgrade-to-server-tag=*) relay_upgrade_to_server_tag="${arg#*=}" ;;
+    --relay-upgrade-to-server-version=*) relay_upgrade_to_server_version="${arg#*=}" ;;
     --keep) keep="1" ;;
     -h|--help) show_help="1" ;;
     *) echo "Unknown arg: $arg" >&2; usage; exit 2 ;;
@@ -183,6 +187,17 @@ fi
 if [[ "$relay_upgrade_db" != "sqlite" && "$relay_upgrade_db" != "postgres" && "$relay_upgrade_db" != "both" ]]; then
   echo "Invalid --relay-upgrade-db=$relay_upgrade_db (expected sqlite|postgres|both)" >&2
   exit 2
+fi
+
+if [[ -n "$relay_upgrade_to_server_tag" || -n "$relay_upgrade_to_server_version" ]]; then
+  if [[ -z "$relay_upgrade_to_server_tag" || -z "$relay_upgrade_to_server_version" ]]; then
+    echo "Relay upgrade target tag and version must be provided together" >&2
+    exit 2
+  fi
+  if [[ "$relay_upgrade_to_server_tag" != "server-v${relay_upgrade_to_server_version}" ]]; then
+    echo "Relay upgrade target tag must equal server-v<version>" >&2
+    exit 2
+  fi
 fi
 
 if [[ "$show_help" == "1" ]]; then
@@ -667,7 +682,11 @@ run_relay_upgrade_smoke() {
 
   from_image="happierdev/relay-server:${relay_upgrade_from_channel}"
   devbox_image="happierdev/dev-box:${relay_upgrade_from_channel}"
-  echo "[npm-e2e-smoke] relay-server upgrade smoke: from=$from_image to=local-build" >&2
+  upgrade_target="local-build"
+  if [[ -n "$relay_upgrade_to_server_tag" ]]; then
+    upgrade_target="$relay_upgrade_to_server_tag"
+  fi
+  echo "[npm-e2e-smoke] relay-server upgrade smoke: from=$from_image to=$upgrade_target" >&2
 
   if ! docker pull "$from_image" >/dev/null 2>&1; then
     echo "[npm-e2e-smoke] missing relay-server image on dockerhub: $from_image" >&2
@@ -687,13 +706,22 @@ run_relay_upgrade_smoke() {
   to_image="happierdev/relay-server:local-upgrade-${short_sha}"
 
   if ! docker image inspect "$to_image" >/dev/null 2>&1; then
-    echo "[npm-e2e-smoke] building local relay-server image for upgrade: $to_image" >&2
-    docker build \
-      --target relay-server-local-source \
-      --tag "$to_image" \
-      --build-arg "HAPPIER_EMBEDDED_POLICY_ENV=preview" \
-      "$repo_root" \
-      >/dev/null
+    echo "[npm-e2e-smoke] building relay-server upgrade image: $to_image ($upgrade_target)" >&2
+    build_args=(
+      --tag "$to_image"
+      --build-arg "HAPPIER_EMBEDDED_POLICY_ENV=preview"
+    )
+    if [[ -n "$relay_upgrade_to_server_tag" ]]; then
+      build_args+=(
+        --target relay-server
+        --build-arg "HAPPIER_RELAY_SERVER_RELEASE_TAG=$relay_upgrade_to_server_tag"
+        --build-arg "HAPPIER_RELAY_SERVER_VERSION=$relay_upgrade_to_server_version"
+        --build-arg "SENTRY_RELEASE=$sha"
+      )
+    else
+      build_args+=(--target relay-server-local-source)
+    fi
+    docker build "${build_args[@]}" "$repo_root" >/dev/null
   fi
 
   db_cases=()

@@ -9,6 +9,8 @@ import {
   normalizePublicReleaseChannel,
 } from '../release/lib/public-release-rings.mjs';
 import {
+  RELEASE_VALIDATION_PROFILE_IDS,
+  resolveReleaseValidationProfile,
   resolveReleaseValidationSourceKind,
   resolveReleaseValidationSuite,
 } from './registry.mjs';
@@ -142,6 +144,7 @@ async function main() {
   const { values } = parseArgs({
     options: {
       suite: { type: 'string' },
+      profile: { type: 'string', default: '' },
       platform: { type: 'string', default: '' },
       source: { type: 'string', default: '' },
       ref: { type: 'string', default: '' },
@@ -165,6 +168,49 @@ async function main() {
   });
 
   const suiteId = String(values.suite ?? '').trim();
+  const profileId = String(values.profile ?? '').trim();
+  if (profileId) {
+    if (suiteId) {
+      fail('use either --profile or --suite, not both');
+    }
+    const hasSuiteSpecificInput = [
+      values.platform,
+      values.source,
+      values.ref,
+      values['from-source'],
+      values['from-ref'],
+      values['to-source'],
+      values['to-ref'],
+      values.product,
+      values.version,
+      values['release-channel'],
+      values.mode,
+      values.monorepo,
+      values.checksums,
+      values['public-key'],
+    ].some((value) => String(value ?? '').trim().length > 0)
+      || values['with-relay-upgrade'] === true
+      || values['no-relay-upgrade'] === true
+      || values['skip-smoke'] === true;
+    if (hasSuiteSpecificInput) {
+      fail('--profile does not accept suite-specific inputs; dispatch each listed suite with its required source inputs');
+    }
+    const profile = resolveReleaseValidationProfile(profileId);
+    if (!profile) {
+      fail(`--profile must be one of ${JSON.stringify(RELEASE_VALIDATION_PROFILE_IDS)} (got: ${profileId})`);
+    }
+    if (values['dry-run'] !== true) {
+      fail('--profile currently supports --dry-run only; dispatch each automatic suite with its required source inputs');
+    }
+    process.stdout.write(`${JSON.stringify({
+      ok: true,
+      dryRun: true,
+      profile: profile.id,
+      dispatch: 'suite-specific',
+      automaticSuiteIds: profile.automaticSuiteIds,
+    })}\n`);
+    return;
+  }
   const suite = resolveReleaseValidationSuite(suiteId);
   if (!suite) {
     fail(`--suite must be one of ${JSON.stringify([

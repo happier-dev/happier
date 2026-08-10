@@ -121,6 +121,14 @@ on:
         required: false
         default: false
         type: boolean
+      cli_update_to_source:
+        required: false
+        default: local-build
+        type: string
+      cli_update_to_ref:
+        required: false
+        default: '.'
+        type: string
       run_daemon_continuity:
         required: false
         default: false
@@ -133,6 +141,14 @@ on:
         required: false
         default: false
         type: boolean
+      relay_upgrade_to_source:
+        required: false
+        default: local-build
+        type: string
+      relay_upgrade_to_ref:
+        required: false
+        default: '.'
+        type: string
       run_self_host_systemd:
         required: false
         default: false
@@ -949,6 +965,8 @@ jobs:
     timeout-minutes: 120
     env:
       CLI_UPDATE_FROM_CHANNEL: ${{ inputs.installers_channel }}
+      CLI_UPDATE_TO_SOURCE: ${{ inputs.cli_update_to_source }}
+      CLI_UPDATE_TO_REF: ${{ inputs.cli_update_to_ref }}
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -981,8 +999,8 @@ jobs:
             --platform linux \
             --from-source published-channel \
             --from-ref "${CLI_UPDATE_FROM_CHANNEL}" \
-            --to-source local-build \
-            --to-ref "."
+            --to-source "${CLI_UPDATE_TO_SOURCE}" \
+            --to-ref "${CLI_UPDATE_TO_REF}"
 
       - name: Upload CLI update continuity artifacts (on failure)
         if: failure()
@@ -1132,6 +1150,8 @@ jobs:
       - name: Run unified Docker release-assets validation
         env:
           INSTALLERS_CHANNEL: ${{ inputs.installers_channel }}
+          RELAY_UPGRADE_TO_SOURCE: ${{ inputs.relay_upgrade_to_source }}
+          RELAY_UPGRADE_TO_REF: ${{ inputs.relay_upgrade_to_ref }}
         run: |
           set -euo pipefail
           node scripts/pipeline/run.mjs release-validate \
@@ -1139,8 +1159,8 @@ jobs:
             --platform linux \
             --from-source published-channel \
             --from-ref "${INSTALLERS_CHANNEL}" \
-            --to-source local-build \
-            --to-ref "."
+            --to-source "${RELAY_UPGRADE_TO_SOURCE}" \
+            --to-ref "${RELAY_UPGRADE_TO_REF}"
 
   self-host-systemd-e2e:
     if: ${{ (github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call') && inputs.run_self_host_systemd }}

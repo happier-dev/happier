@@ -139,6 +139,21 @@ test('npm-e2e-smoke run.sh documents docker image smoke flags', () => {
   assert.match(res.stdout ?? '', /--docker-images-db=/);
 });
 
+test('release-assets-e2e documents and validates an exact immutable relay upgrade target', () => {
+  const help = spawnSync('bash', [runScript, '--help'], { encoding: 'utf8' });
+  assert.equal(help.status, 0);
+  assert.match(help.stdout ?? '', /--relay-upgrade-to-server-tag=/);
+  assert.match(help.stdout ?? '', /--relay-upgrade-to-server-version=/);
+
+  const incomplete = spawnSync('bash', [
+    runScript,
+    '--relay-upgrade-to-server-tag=server-v0.2.11',
+    '--help',
+  ], { encoding: 'utf8' });
+  assert.equal(incomplete.status, 2);
+  assert.match(incomplete.stderr ?? '', /tag and version must be provided together/i);
+});
+
 test('npm-e2e-smoke includes dockerhub compose and references published images', () => {
   const composePath = join(here, 'compose.dockerhub.yml');
   assert.ok(fs.existsSync(composePath));

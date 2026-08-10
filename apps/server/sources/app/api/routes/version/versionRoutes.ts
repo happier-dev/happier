@@ -29,11 +29,16 @@ export function versionRoutes(app: Fastify) {
             response: {
                 200: z.object({
                     ok: z.literal(true),
+                    source_sha: z.string().regex(/^[a-f0-9]{40}$/).optional(),
                 }),
             },
         },
     }, async () => {
-        return { ok: true as const };
+        const sourceSha = String(process.env.HAPPIER_RELEASE_SOURCE_SHA ?? '').trim();
+        return {
+            ok: true as const,
+            ...(/^[a-f0-9]{40}$/.test(sourceSha) ? { source_sha: sourceSha } : {}),
+        };
     });
 
     app.post('/v1/version', {

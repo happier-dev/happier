@@ -20,9 +20,18 @@ test("relay-server stage bakes SENTRY_RELEASE into runtime env", () => {
 
   assert.match(section, /\bARG SENTRY_RELEASE\b/);
   assert.match(section, /\bENV SENTRY_RELEASE=\$SENTRY_RELEASE\b/);
+  assert.match(section, /\bENV HAPPIER_RELEASE_SOURCE_SHA=\$SENTRY_RELEASE\b/);
   assert.match(section, /\bARG SENTRY_SERVER_CENTRAL_DSN\b/);
   assert.match(section, /\bENV HAPPIER_SENTRY_CENTRAL_DSN=\$SENTRY_SERVER_CENTRAL_DSN\b/);
   assert.match(section, /\bENV HAPPIER_SENTRY_USE_CENTRAL_DSN=1\b/);
+});
+
+test("hosted server stage exposes the exact build source revision", () => {
+  const raw = fs.readFileSync(path.join(repoRoot, "Dockerfile"), "utf8");
+  const section = extractStageSection(raw, "FROM node:${NODE_VERSION} AS server");
+
+  assert.match(section, /\bARG SENTRY_RELEASE\b/);
+  assert.match(section, /\bENV HAPPIER_RELEASE_SOURCE_SHA=\$SENTRY_RELEASE\b/);
 });
 
 test("relay-server target is artifact based and keeps the self-host runtime contract", () => {
