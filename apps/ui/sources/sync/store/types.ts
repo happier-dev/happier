@@ -76,6 +76,13 @@ export interface SessionsDomainSlice {
     sessions: Record<string, Session>;
     sessionLocalStateScope: ServerAccountScope | null;
     sessionListRenderables: Record<string, SessionListRenderableSession>;
+    /**
+     * Ids this viewer has watched be deleted. Neither session map can answer "does this session
+     * exist" — both are list-scoped caches that an ordinary refresh evicts from — so anything
+     * holding a durable pointer to a session reads this rather than inferring gone-ness from a
+     * cache miss. Written only by `deleteSession`. See `SessionsDomain` for the full note.
+     */
+    deletedSessionIds: Record<string, true>;
     sessionListRenderableDelta: SessionListRenderableDelta;
     sessionListViewData: SessionListViewItem[] | null;
     sessionListViewDataByServerId: Record<string, SessionListViewItem[] | null>;
