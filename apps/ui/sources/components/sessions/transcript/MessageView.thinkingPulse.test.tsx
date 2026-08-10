@@ -110,7 +110,7 @@ vi.mock('@/utils/sessions/discardedCommittedMessages', () => ({ isCommittedMessa
 vi.mock('@/utils/url/sessionFileDeepLink', () => ({ buildSessionFileDeepLink: () => '' }));
 vi.mock('@/utils/system/fireAndForget', () => ({ fireAndForget: (p: any) => p }));
 vi.mock('@/components/sessions/linkedFiles/extractWorkspaceFileMentions', () => ({ extractWorkspaceFileMentions: () => [] }));
-vi.mock('@/components/sessions/linkedFiles/LinkedWorkspaceFilesRow', () => ({ LinkedWorkspaceFilesRow: () => React.createElement('LinkedWorkspaceFilesRow') }));
+vi.mock('@/components/sessions/transcript/references/StructuredReferencesRow', () => ({ StructuredReferencesRow: () => React.createElement('StructuredReferencesRow') }));
 
 vi.mock('@/components/sessions/transcript/motion/TranscriptMotionContext', () => ({
     useTranscriptMotion: () => ({

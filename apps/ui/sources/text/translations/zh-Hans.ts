@@ -6009,6 +6009,13 @@ export const zhHans: TranslationStructure = {
   },
 
   agentInput: {
+    suggestionGroups: {
+      files: '文件',
+      plugins: '插件',
+      sessions: '会话',
+      skills: '技能',
+      commands: '命令',
+    },
     nonSteerableSend: {
       title: '智能体正忙',
       modeChangeMessage: '权限模式更改无法应用到正在进行的回合。',
@@ -9469,6 +9476,8 @@ settingsSession: {
   },
 
   message: {
+    sessionReferenceUnavailable: "会话不可用",
+    sessionReferenceOpen: ({ name }: { name: string }) => `打开会话 ${name}`,
     switchedToMode: ({ mode }: { mode: string }) => `已切换到 ${mode} 模式`,
     discarded: "已丢弃",
     recoveredHistory: "已恢复的历史记录",

@@ -86,6 +86,10 @@ export function createStorageModuleStub<TOverrides extends object>(overrides: TO
         orderEntriesByScopeKey: {},
         labelsByLabelKey: {},
     } satisfies NonNullable<ReturnType<StorageModule['useSessionOrganizationProjection']>>;
+    const sessionReferenceTarget = {
+        present: false,
+        metadata: null,
+    } satisfies ReturnType<StorageModule['useSessionReferenceTarget']>;
     const sessionTranscriptIds = [] as string[];
     const sessionMessagesById = {} as ReturnType<StorageModule['useSessionMessagesById']>;
     const messagesByRefs = [] as ReturnType<StorageModule['useMessagesByRefs']>;
@@ -181,6 +185,7 @@ export function createStorageModuleStub<TOverrides extends object>(overrides: TO
         useProjectForSession: () => null,
         useSessionForkSupportSource: () => null,
         useSessionInteractionSource: () => null,
+        useSessionReferenceTarget: () => sessionReferenceTarget,
         useSessionChatFooterState: () => null,
         useSessionWorkspacePath: () => null,
         useSessionLastMobileSurface: () => null,

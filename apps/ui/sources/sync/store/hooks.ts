@@ -189,6 +189,52 @@ export function useSession(id: string): Session | null {
   return getStorage()(useShallow((state) => state.sessions[id] ?? null));
 }
 
+export type SessionReferenceTarget = Readonly<{
+  present: boolean;
+  metadata: SessionListRenderableSession['metadata'] | null;
+}>;
+
+/**
+ * The exact projection a transcript session reference consumes. A reference's identity is the
+ * session id, so only two things can change what it renders: whether that session is still
+ * present for this viewer, and the metadata its title is derived from. Turn-lifecycle churn
+ * (thinking, agentState, seq, presence, updatedAt) changes neither, so a reference chip must
+ * not re-render for it.
+ *
+ * **Presence is answered from `sessionListRenderables`, never from `sessions`.** Those two maps
+ * answer different questions and only one of them is a presence answer:
+ *
+ * - `sessionListRenderables` holds one entry per session this viewer knows about. Every ingestion
+ *   path writes it for every row — the list snapshot builds a renderable for the whole page
+ *   (`sessionSnapshot.ts` `applySessionListRenderables`), the warm cache restores them before any
+ *   fetch, and `applySessions` derives one for every full record it applies. `deleteSession`
+ *   removes the entry. It is therefore a strict superset of `sessions`, and it is the same store
+ *   the `@session` picker's candidate list is derived from — so a session the picker offers is
+ *   present here by construction.
+ * - `sessions` holds the *hydrated full records*. Hydration is deliberately bounded: shipped
+ *   tuning is `sessionListEagerHydrationCount: 4` with `sessionListBackgroundHydrationMaxRows: 0`
+ *   (`sync/runtime/syncTuning.ts`), so every row past the required/route/active/eager set is
+ *   counted `skippedBackground` and never hydrated. Absence here means "not hydrated yet", which
+ *   is the normal state for nearly every session — it is not evidence that the session is gone.
+ *
+ * Reading `sessions` for this question is what made a session the picker had just offered render
+ * as an inert "Unavailable session" in the transcript of the same client (reproduced live: the
+ * chip flipped to pressable after merely visiting the referenced session, which route-hydrates it,
+ * without the session itself changing).
+ *
+ * `present: false` covers deleted, never-synced and not-visible-to-this-viewer alike — all
+ * three must render inert rather than as a link that goes nowhere.
+ */
+export function useSessionReferenceTarget(sessionId: string): SessionReferenceTarget {
+  return getStorage()(
+    useShallow((state) => {
+      const renderable = state.sessionListRenderables[sessionId];
+      if (!renderable) return { present: false, metadata: null };
+      return { present: true, metadata: renderable.metadata ?? null };
+    }),
+  );
+}
+
 const sessionForkSupportSourceCache = new Map<string, Readonly<{
   signature: string;
   value: SessionForkSupportSource;

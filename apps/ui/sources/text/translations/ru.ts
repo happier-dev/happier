@@ -6218,6 +6218,13 @@ export const ru: TranslationStructure = {
       },
 
     agentInput: {
+        suggestionGroups: {
+            files: 'Файлы',
+            plugins: 'Плагины',
+            sessions: 'Сессии',
+            skills: 'Навыки',
+            commands: 'Команды',
+        },
         nonSteerableSend: {
             title: 'Агент занят',
             modeChangeMessage: 'Изменение режима разрешений нельзя применить к выполняющемуся ходу.',
@@ -9742,6 +9749,8 @@ settingsSession: {
   },
 
   message: {
+    sessionReferenceUnavailable: "Сессия недоступна",
+    sessionReferenceOpen: ({ name }: { name: string }) => `Открыть сессию ${name}`,
     switchedToMode: ({ mode }: { mode: string }) =>
       `Переключено в режим ${mode}`,
     discarded: "Отброшено",

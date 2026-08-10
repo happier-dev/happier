@@ -23,8 +23,8 @@ import { usePathname, useRouter } from 'expo-router';
 import { buildSessionFileDeepLink } from '@/utils/url/sessionFileDeepLink';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { Text } from '@/components/ui/text/Text';
-import { extractWorkspaceFileMentions } from '@/components/sessions/linkedFiles/extractWorkspaceFileMentions';
-import { LinkedWorkspaceFilesRow } from '@/components/sessions/linkedFiles/LinkedWorkspaceFilesRow';
+import { useMessageStructuredReferences } from '@/components/sessions/transcript/references/messageStructuredReferences';
+import { StructuredReferencesRow } from '@/components/sessions/transcript/references/StructuredReferencesRow';
 import { useTranscriptMotion } from '@/components/sessions/transcript/motion/TranscriptMotionContext';
 import { ThinkingTimelineRow } from '@/components/sessions/transcript/thinking/ThinkingTimelineRow';
 import { TranscriptEventRow } from '@/components/sessions/transcript/events/TranscriptEventRow';
@@ -571,10 +571,10 @@ function UserTextBlock(props: {
   }, [attachmentsMeta, isVoiceAgentTurn, props.message.displayText, props.message.text, unsupportedContentText]);
   const renderedMarkdownText = markdownText ?? props.message.displayText ?? props.message.text;
 
-  const linkedWorkspaceFiles = React.useMemo(
-    () => extractWorkspaceFileMentions(renderedMarkdownText),
-    [renderedMarkdownText],
-  );
+  const structuredReferences = useMessageStructuredReferences({
+    meta: props.message.meta,
+    text: renderedMarkdownText,
+  });
 
   const handleOptionPress = React.useCallback((option: Option) => {
     fireAndForget((async () => {
@@ -856,10 +856,10 @@ function UserTextBlock(props: {
                   onOpenPath={props.canOpenFiles ? handleOpenAttachmentPath : undefined}
                 />
               ) : null}
-              {linkedWorkspaceFiles.length > 0 ? (
-                <LinkedWorkspaceFilesRow
+              {structuredReferences.length > 0 ? (
+                <StructuredReferencesRow
                   sessionId={props.sessionId}
-                  paths={linkedWorkspaceFiles}
+                  references={structuredReferences}
                   fileOpenEnabled={props.canOpenFiles}
                 />
               ) : null}
@@ -1238,10 +1238,11 @@ function AgentTextBlock(props: {
         'aria-atomic': false,
       }
     : null;
-  const linkedWorkspaceFiles = React.useMemo(() => {
-    if (shouldRenderStreamingPlain) return [];
-    return extractWorkspaceFileMentions(markdown);
-  }, [markdown, shouldRenderStreamingPlain]);
+  const structuredReferences = useMessageStructuredReferences({
+    meta: props.message.meta,
+    text: markdown,
+    enabled: !shouldRenderStreamingPlain,
+  });
 
   return (
     <Pressable
@@ -1365,10 +1366,10 @@ function AgentTextBlock(props: {
             )
           )
         )}
-        {linkedWorkspaceFiles.length > 0 && !isStructuredOnly ? (
-          <LinkedWorkspaceFilesRow
+        {structuredReferences.length > 0 && !isStructuredOnly ? (
+          <StructuredReferencesRow
             sessionId={props.sessionId}
-            paths={linkedWorkspaceFiles}
+            references={structuredReferences}
             fileOpenEnabled={props.canOpenFiles}
           />
         ) : null}

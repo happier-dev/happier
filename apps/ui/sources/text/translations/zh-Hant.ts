@@ -5174,6 +5174,13 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
     },
 
     agentInput: {
+        suggestionGroups: {
+            files: '檔案',
+            plugins: '外掛',
+            sessions: '工作階段',
+            skills: '技能',
+            commands: '命令',
+        },
         nonSteerableSend: {
             title: '代理程式忙碌中',
             modeChangeMessage: '權限模式變更無法套用到進行中的回合。',
@@ -7843,6 +7850,8 @@ settingsSession: {
     },
 
     message: {
+        sessionReferenceUnavailable: '無法使用的工作階段',
+        sessionReferenceOpen: ({ name }: { name: string }) => `開啟工作階段 ${name}`,
         switchedToMode: ({ mode }: { mode: string }) => `已切換到 ${mode} 模式`,
         recoveredHistory: '已復原的歷史記錄',
         unknownEvent: '未知事件',

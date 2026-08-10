@@ -6484,6 +6484,13 @@ localTailscale: {
   },
 
   agentInput: {
+    suggestionGroups: {
+      files: 'ファイル',
+      plugins: 'プラグイン',
+      sessions: 'セッション',
+      skills: 'スキル',
+      commands: 'コマンド',
+    },
     nonSteerableSend: {
       title: 'エージェントは処理中です',
       modeChangeMessage: '権限モードの変更は実行中のターンには適用できません。',
@@ -10071,6 +10078,8 @@ settingsSession: {
   },
 
   message: {
+    sessionReferenceUnavailable: "利用できないセッション",
+    sessionReferenceOpen: ({ name }: { name: string }) => `セッション ${name} を開く`,
     switchedToMode: ({ mode }: { mode: string }) =>
       `${mode}モードに切り替えました`,
     discarded: "破棄済み",

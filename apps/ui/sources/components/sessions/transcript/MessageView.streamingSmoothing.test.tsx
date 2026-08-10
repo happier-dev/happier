@@ -129,8 +129,8 @@ vi.mock('@/components/sessions/linkedFiles/extractWorkspaceFileMentions', () => 
         return [];
     },
 }));
-vi.mock('@/components/sessions/linkedFiles/LinkedWorkspaceFilesRow', () => ({
-    LinkedWorkspaceFilesRow: () => React.createElement('LinkedWorkspaceFilesRow'),
+vi.mock('@/components/sessions/transcript/references/StructuredReferencesRow', () => ({
+    StructuredReferencesRow: () => React.createElement('StructuredReferencesRow'),
 }));
 vi.mock('@/components/sessions/transcript/motion/TranscriptMotionContext', () => ({
     useTranscriptMotion: () => ({ config: captured.transcriptMotionConfig }),

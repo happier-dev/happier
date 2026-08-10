@@ -6232,6 +6232,13 @@ export const pl: TranslationStructure = {
   },
 
   agentInput: {
+    suggestionGroups: {
+      files: 'Pliki',
+      plugins: 'Wtyczki',
+      sessions: 'Sesje',
+      skills: 'Umiejętności',
+      commands: 'Polecenia',
+    },
     nonSteerableSend: {
       title: 'Agent jest zajęty',
       modeChangeMessage: 'Zmiany trybu uprawnień nie można zastosować do trwającej tury.',
@@ -9844,6 +9851,8 @@ settingsSession: {
   },
 
   message: {
+    sessionReferenceUnavailable: "Sesja niedostępna",
+    sessionReferenceOpen: ({ name }: { name: string }) => `Otwórz sesję ${name}`,
     switchedToMode: ({ mode }: { mode: string }) =>
       `Przełączono na tryb ${mode}`,
     discarded: "Odrzucono",

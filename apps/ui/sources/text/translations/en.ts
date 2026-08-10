@@ -5827,6 +5827,15 @@ export const en = {
     },
 
     agentInput: {
+        // Section headers for the composer suggestion picker. One per suggestion
+        // kind; the registry maps kind -> key, mirroring markdown.slash.groups.*.
+        suggestionGroups: {
+            files: 'Files',
+            plugins: 'Plugins',
+            sessions: 'Sessions',
+            skills: 'Skills',
+            commands: 'Commands',
+        },
         nonSteerableSend: {
             title: 'Agent is busy',
             modeChangeMessage: 'Changing the permission mode can\'t be applied to the running turn.',
@@ -9165,6 +9174,8 @@ settingsSession: {
     },
 
     message: {
+        sessionReferenceUnavailable: 'Unavailable session',
+        sessionReferenceOpen: ({ name }: { name: string }) => `Open session ${name}`,
         switchedToMode: ({ mode }: { mode: string }) => `Switched to ${mode} mode`,
         discarded: 'Discarded',
         recoveredHistory: 'Recovered history',

@@ -6218,6 +6218,13 @@ export const es: TranslationStructure = {
   },
 
   agentInput: {
+    suggestionGroups: {
+      files: 'Archivos',
+      plugins: 'Complementos',
+      sessions: 'Sesiones',
+      skills: 'Habilidades',
+      commands: 'Comandos',
+    },
     nonSteerableSend: {
       title: 'El agente está ocupado',
       modeChangeMessage: 'El cambio de modo de permisos no puede aplicarse al turno en curso.',
@@ -9858,6 +9865,8 @@ settingsSession: {
   },
 
   message: {
+    sessionReferenceUnavailable: "Sesión no disponible",
+    sessionReferenceOpen: ({ name }: { name: string }) => `Abrir la sesión ${name}`,
     switchedToMode: ({ mode }: { mode: string }) => `Cambiado al modo ${mode}`,
     discarded: "Descartado",
     recoveredHistory: "Historial recuperado",

@@ -5846,6 +5846,13 @@ deps: {
     },
 
     agentInput: {
+        suggestionGroups: {
+            files: 'Fitxers',
+            plugins: 'Connectors',
+            sessions: 'Sessions',
+            skills: 'Habilitats',
+            commands: 'Ordres',
+        },
         nonSteerableSend: {
             title: 'L\'agent està ocupat',
             modeChangeMessage: 'El canvi de mode de permisos no es pot aplicar al torn en curs.',
@@ -9121,6 +9128,8 @@ settingsSession: {
     },
 
     message: {
+        sessionReferenceUnavailable: 'Sessió no disponible',
+        sessionReferenceOpen: ({ name }: { name: string }) => `Obre la sessió ${name}`,
         switchedToMode: ({ mode }: { mode: string }) => `S'ha canviat al mode ${mode}`,
         discarded: 'Descartat',
         recoveredHistory: 'Historial recuperat',
