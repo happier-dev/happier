@@ -187,3 +187,75 @@ test('compute-deploy-plan respects force-deploy when deploy branch is missing', 
   assert.equal(parsed.deploy_server.commits_behind, 0);
   assert.equal(parsed.deploy_server.relevant_changes, false);
 });
+
+test('compute-deploy-plan uses an admitted exact source SHA instead of re-resolving a moving source branch', async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'happier-deploy-plan-exact-source-'));
+  const origin = path.join(dir, 'origin.git');
+  const work = path.join(dir, 'work');
+
+  git(dir, ['init', '--bare', origin]);
+  git(dir, ['clone', origin, work]);
+  git(work, ['config', 'user.email', 'ci@example.com']);
+  git(work, ['config', 'user.name', 'CI']);
+
+  writeFile(work, 'README.md', 'base\n');
+  git(work, ['add', '.']);
+  git(work, ['commit', '-m', 'base']);
+  git(work, ['branch', '-M', 'main']);
+  git(work, ['push', '-u', 'origin', 'main']);
+
+  git(work, ['checkout', '-b', 'dev']);
+  writeFile(work, 'apps/server/sources/app.ts', 'console.log("candidate server");\n');
+  git(work, ['add', '.']);
+  git(work, ['commit', '-m', 'candidate']);
+  const candidateSha = git(work, ['rev-parse', 'HEAD']);
+  git(work, ['push', '-u', 'origin', 'dev']);
+
+  for (const ref of ['deploy/production/server', 'deploy/production/ui', 'deploy/production/docs', 'deploy/production/website']) {
+    git(work, ['checkout', 'main']);
+    git(work, ['checkout', '-b', ref]);
+    git(work, ['push', '-u', 'origin', ref]);
+  }
+
+  const runner = path.join(dir, 'runner');
+  git(dir, ['clone', origin, runner]);
+
+  git(work, ['checkout', 'dev']);
+  writeFile(work, 'apps/docs/after-candidate.md', 'must not affect admitted candidate\n');
+  git(work, ['add', '.']);
+  git(work, ['commit', '-m', 'advance dev after admission']);
+  git(work, ['push', 'origin', 'dev']);
+
+  const out = execFileSync(
+    process.execPath,
+    [
+      resolve(repoRoot, 'scripts', 'pipeline', 'release', 'compute-deploy-plan.mjs'),
+      '--deploy-environment',
+      'production',
+      '--source-ref',
+      candidateSha,
+      '--force-deploy',
+      'false',
+      '--deploy-ui',
+      'false',
+      '--deploy-server',
+      'true',
+      '--deploy-website',
+      'false',
+      '--deploy-docs',
+      'true',
+    ],
+    {
+      cwd: runner,
+      env: { ...process.env },
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      timeout: 30_000,
+    },
+  );
+
+  const parsed = JSON.parse(out);
+  assert.equal(parsed.source_sha, candidateSha);
+  assert.equal(parsed.deploy_server.needed, true, 'candidate server change must remain deploy-relevant');
+  assert.equal(parsed.deploy_docs.needed, false, 'later mutable dev changes must not affect the admitted candidate plan');
+});

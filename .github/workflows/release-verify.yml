@@ -45,6 +45,11 @@ on:
         required: true
         default: true
         type: boolean
+      run_release_assets_docker:
+        description: "Verify — Relay upgrade (published channel -> exact candidate, SQLite + Postgres)"
+        required: true
+        default: true
+        type: boolean
       run_self_host_systemd:
         description: "Verify — Real self-host systemd E2E (linux)"
         required: true
@@ -115,6 +120,10 @@ on:
         default: true
         type: boolean
       run_session_continuity:
+        required: false
+        default: true
+        type: boolean
+      run_release_assets_docker:
         required: false
         default: true
         type: boolean
@@ -255,6 +264,7 @@ jobs:
       run_cli_update_continuity: ${{ steps.profile.outputs.run_cli_update_continuity }}
       run_daemon_continuity: ${{ steps.profile.outputs.run_daemon_continuity }}
       run_session_continuity: ${{ steps.profile.outputs.run_session_continuity }}
+      run_release_assets_docker: ${{ steps.profile.outputs.run_release_assets_docker }}
       run_self_host_systemd: ${{ steps.profile.outputs.run_self_host_systemd }}
       run_self_host_launchd: ${{ steps.profile.outputs.run_self_host_launchd }}
       run_self_host_schtasks: ${{ steps.profile.outputs.run_self_host_schtasks }}
@@ -281,13 +291,18 @@ jobs:
           LEGACY_RUN_CLI_UPDATE_CONTINUITY: ${{ inputs.run_cli_update_continuity }}
           LEGACY_RUN_DAEMON_CONTINUITY: ${{ inputs.run_daemon_continuity }}
           LEGACY_RUN_SESSION_CONTINUITY: ${{ inputs.run_session_continuity }}
+          LEGACY_RUN_RELEASE_ASSETS_DOCKER: ${{ inputs.run_release_assets_docker }}
           LEGACY_RUN_SELF_HOST_SYSTEMD: ${{ inputs.run_self_host_systemd }}
           LEGACY_RUN_SELF_HOST_LAUNCHD: ${{ inputs.run_self_host_launchd }}
           LEGACY_RUN_SELF_HOST_SCHTASKS: ${{ inputs.run_self_host_schtasks }}
           LEGACY_RUN_SELF_HOST_DAEMON: ${{ inputs.run_self_host_daemon }}
+          CANDIDATE_CLI_VERSION: ${{ inputs.candidate_cli_version }}
+          CANDIDATE_SERVER_VERSION: ${{ inputs.candidate_server_version }}
+          RELEASE_CHANNEL: ${{ inputs.channel }}
         run: |
           set -euo pipefail
           node "$GITHUB_WORKSPACE/.release-control/scripts/pipeline/run.mjs" release-contract | node --input-type=module -e '
+            import { pathToFileURL } from "node:url";
             let raw = "";
             for await (const chunk of process.stdin) raw += chunk;
             const legacy = Object.fromEntries(Object.entries({
@@ -296,6 +311,7 @@ jobs:
               run_cli_update_continuity: process.env.LEGACY_RUN_CLI_UPDATE_CONTINUITY,
               run_daemon_continuity: process.env.LEGACY_RUN_DAEMON_CONTINUITY,
               run_session_continuity: process.env.LEGACY_RUN_SESSION_CONTINUITY,
+              run_release_assets_docker: process.env.LEGACY_RUN_RELEASE_ASSETS_DOCKER,
               run_self_host_systemd: process.env.LEGACY_RUN_SELF_HOST_SYSTEMD,
               run_self_host_launchd: process.env.LEGACY_RUN_SELF_HOST_LAUNCHD,
               run_self_host_schtasks: process.env.LEGACY_RUN_SELF_HOST_SCHTASKS,
@@ -306,15 +322,19 @@ jobs:
               const contract = JSON.parse(raw);
               const profile = contract.validationProfiles?.find((entry) => entry.id === process.env.VALIDATION_PROFILE);
               if (contract.kind !== "happier.public-release-contract.v1" || contract.schemaVersion !== 1 || !profile?.normalRelease) throw new Error(`Unsupported normal release validation profile: ${process.env.VALIDATION_PROFILE}`);
-              const automatic = new Set(profile.automaticSuiteIds);
-              const allowed = new Set(["artifact-verify", "binary-smoke", "cli-update", "daemon-continuity", "session-continuity"]);
-              if (!automatic.has("artifact-verify") || [...automatic].some((id) => !allowed.has(id))) throw new Error(`Profile ${profile.id} contains an unsupported automatic suite`);
+              const hasCliCandidate = Boolean(process.env.CANDIDATE_CLI_VERSION);
+              const hasServerCandidate = Boolean(process.env.CANDIDATE_SERVER_VERSION);
+              const hasPublishedRelayPredecessor = process.env.RELEASE_CHANNEL === "preview" || process.env.RELEASE_CHANNEL === "production";
+              const registry = await import(pathToFileURL(`${process.cwd()}/.release-control/scripts/pipeline/release-validation/registry.mjs`).href);
+              const execution = registry.resolveAutomaticReleaseValidationExecution(profile.id, { hasCliCandidate, hasServerCandidate, hasPublishedRelayPredecessor });
+              const selected = new Set(execution.selectedSuiteIds);
               outputs = {
                 run_installers_smoke: "false",
-                run_binary_smoke: String(automatic.has("binary-smoke")),
-                run_cli_update_continuity: String(automatic.has("cli-update")),
-                run_daemon_continuity: String(automatic.has("daemon-continuity")),
-                run_session_continuity: String(automatic.has("session-continuity")),
+                run_binary_smoke: String(selected.has("binary-smoke")),
+                run_cli_update_continuity: String(selected.has("cli-update")),
+                run_daemon_continuity: "false",
+                run_session_continuity: String(selected.has("session-continuity")),
+                run_release_assets_docker: String(selected.has("docker-release-assets")),
                 run_self_host_systemd: "false",
                 run_self_host_launchd: "false",
                 run_self_host_schtasks: "false",
@@ -335,20 +355,22 @@ jobs:
       run_cli: false
       run_stack: false
       run_typecheck: false
+      checkout_sha: ${{ inputs.candidate_source_sha }}
       run_cli_daemon_e2e: false
       run_e2e_core: false
       run_server_db_contract: false
       run_providers: false
       run_release_contracts: false
-      run_installers_smoke: ${{ needs.resolve_validation_profile.outputs.run_installers_smoke }}
+      run_installers_smoke: ${{ fromJSON(needs.resolve_validation_profile.outputs.run_installers_smoke) }}
       installers_channel: ${{ inputs.channel == 'production' && 'stable' || inputs.channel == 'dev' && 'dev' || 'preview' }}
       installers_source: ${{ inputs.candidate_cli_version != '' && 'published-tag' || 'published-channel' }}
       installers_ref: ${{ inputs.candidate_cli_version != '' && format('cli-v{0}', inputs.candidate_cli_version) || '' }}
-      run_binary_smoke: ${{ needs.resolve_validation_profile.outputs.run_binary_smoke }}
-      run_cli_update_continuity: ${{ needs.resolve_validation_profile.outputs.run_cli_update_continuity }}
-      run_daemon_continuity: ${{ needs.resolve_validation_profile.outputs.run_daemon_continuity }}
-      run_session_continuity: ${{ needs.resolve_validation_profile.outputs.run_session_continuity }}
-      run_self_host_systemd: ${{ needs.resolve_validation_profile.outputs.run_self_host_systemd }}
-      run_self_host_launchd: ${{ needs.resolve_validation_profile.outputs.run_self_host_launchd }}
-      run_self_host_schtasks: ${{ needs.resolve_validation_profile.outputs.run_self_host_schtasks }}
-      run_self_host_daemon: ${{ needs.resolve_validation_profile.outputs.run_self_host_daemon }}
+      run_binary_smoke: ${{ fromJSON(needs.resolve_validation_profile.outputs.run_binary_smoke) }}
+      run_cli_update_continuity: ${{ fromJSON(needs.resolve_validation_profile.outputs.run_cli_update_continuity) }}
+      run_daemon_continuity: ${{ fromJSON(needs.resolve_validation_profile.outputs.run_daemon_continuity) }}
+      run_session_continuity: ${{ fromJSON(needs.resolve_validation_profile.outputs.run_session_continuity) }}
+      run_release_assets_docker: ${{ fromJSON(needs.resolve_validation_profile.outputs.run_release_assets_docker) }}
+      run_self_host_systemd: ${{ fromJSON(needs.resolve_validation_profile.outputs.run_self_host_systemd) }}
+      run_self_host_launchd: ${{ fromJSON(needs.resolve_validation_profile.outputs.run_self_host_launchd) }}
+      run_self_host_schtasks: ${{ fromJSON(needs.resolve_validation_profile.outputs.run_self_host_schtasks) }}
+      run_self_host_daemon: ${{ fromJSON(needs.resolve_validation_profile.outputs.run_self_host_daemon) }}

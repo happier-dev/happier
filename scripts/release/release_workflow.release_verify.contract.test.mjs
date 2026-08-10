@@ -27,24 +27,24 @@ test('release workflow verifies immutable candidates before promoting preview or
   );
   assert.match(
     raw,
-    /verify_release_candidates:[\s\S]*?needs:\s*\[plan, bind_server_source, supported_old_relay_compatibility, publish_cli_binaries, publish_hstack_binaries, publish_server_runtime, publish_ui_web\][\s\S]*?candidate_source_sha:\s*\$\{\{\s*needs\.bind_server_source\.outputs\.authorized_sha\s*\}\}[\s\S]*?candidate_cli_version:\s*\$\{\{\s*needs\.publish_cli_binaries\.outputs\.version\s*\}\}[\s\S]*?candidate_stack_version:\s*\$\{\{\s*needs\.publish_hstack_binaries\.outputs\.version\s*\}\}[\s\S]*?candidate_server_version:\s*\$\{\{\s*needs\.publish_server_runtime\.outputs\.version\s*\}\}[\s\S]*?candidate_ui_web_version:\s*\$\{\{\s*needs\.publish_ui_web\.outputs\.version\s*\}\}/,
+    /verify_release_candidates:[\s\S]*?needs:\s*\[plan, prepare_release_candidate, publish_cli_binaries, publish_hstack_binaries, publish_server_runtime, publish_ui_web\][\s\S]*?candidate_source_sha:\s*\$\{\{\s*needs\.prepare_release_candidate\.outputs\.source_sha\s*\}\}[\s\S]*?candidate_cli_version:\s*\$\{\{\s*needs\.publish_cli_binaries\.outputs\.version\s*\}\}[\s\S]*?candidate_stack_version:\s*\$\{\{\s*needs\.publish_hstack_binaries\.outputs\.version\s*\}\}[\s\S]*?candidate_server_version:\s*\$\{\{\s*needs\.publish_server_runtime\.outputs\.version\s*\}\}[\s\S]*?candidate_ui_web_version:\s*\$\{\{\s*needs\.publish_ui_web\.outputs\.version\s*\}\}/,
     'the verifier must consume the exact source and immutable versions emitted by the candidate jobs',
   );
   assert.match(
     raw,
-    /promote_server_runtime:[\s\S]*?needs:\s*\[bind_server_source, verify_release_candidates, publish_server_runtime\][\s\S]*?retry_version:\s*\$\{\{\s*needs\.publish_server_runtime\.outputs\.version\s*\}\}/,
+    /promote_server_runtime:[\s\S]*?needs:\s*\[prepare_release_candidate, verify_release_candidates, publish_server_runtime\][\s\S]*?retry_version:\s*\$\{\{\s*needs\.publish_server_runtime\.outputs\.version\s*\}\}/,
   );
   assert.match(
     raw,
-    /promote_ui_web:[\s\S]*?needs:\s*\[bind_server_source, verify_release_candidates, publish_ui_web, promote_server_runtime\][\s\S]*?retry_version:\s*\$\{\{\s*needs\.publish_ui_web\.outputs\.version\s*\}\}/,
+    /promote_ui_web:[\s\S]*?needs:\s*\[prepare_release_candidate, verify_release_candidates, publish_ui_web, promote_server_runtime\][\s\S]*?retry_version:\s*\$\{\{\s*needs\.publish_ui_web\.outputs\.version\s*\}\}/,
   );
   assert.match(
     raw,
-    /promote_cli_binaries:[\s\S]*?needs:\s*\[bind_server_source, verify_release_candidates, publish_cli_binaries, promote_ui_web\][\s\S]*?retry_version:\s*\$\{\{\s*needs\.publish_cli_binaries\.outputs\.version\s*\}\}/,
+    /promote_cli_binaries:[\s\S]*?needs:\s*\[prepare_release_candidate, verify_release_candidates, publish_cli_binaries, promote_ui_web\][\s\S]*?retry_version:\s*\$\{\{\s*needs\.publish_cli_binaries\.outputs\.version\s*\}\}/,
   );
   assert.match(
     raw,
-    /release_verify:[\s\S]*?needs:\s*\[plan, bind_server_source, publish_hstack_binaries, promote_hstack_binaries, promote_cli_binaries, promote_server_runtime, promote_ui_web, publish_docker, publish_npm\][\s\S]*?uses:\s*\.\/\.github\/workflows\/release-verify\.yml/,
+    /release_verify:[\s\S]*?needs:\s*\[plan, prepare_release_candidate, publish_hstack_binaries, promote_hstack_binaries, promote_cli_binaries, promote_server_runtime, promote_ui_web, publish_docker, publish_npm\][\s\S]*?uses:\s*\.\/\.github\/workflows\/release-verify\.yml/,
     'full checks should verify the promoted projections after candidate verification and promotion',
   );
   assert.match(
@@ -54,9 +54,42 @@ test('release workflow verifies immutable candidates before promoting preview or
   );
   assert.match(
     raw,
-    /sync_dev:[\s\S]*?needs\.release_verify\.result == 'success'[\s\S]*?needs:\s*\[plan, promote_main, bind_server_source, release_verify\]/,
+    /sync_dev:[\s\S]*?needs\.release_verify\.result == 'success'[\s\S]*?needs:\s*\[plan, promote_main, prepare_release_candidate, release_verify\]/,
     'release.yml must gate the final production sync on release verification succeeding',
   );
+});
+
+test('release workflow admits exact candidate notes before branch promotion and rechecks the promoted candidate', async () => {
+  const raw = await readFile(join(repoRoot, '.github', 'workflows', 'release.yml'), 'utf8');
+  const notesAdmission = raw.slice(raw.indexOf('\n  admit_release_notes:'), raw.indexOf('\n  promote_main:'));
+
+  assert.match(notesAdmission, /admit_release_notes:[\s\S]*?needs:\s*\[plan\][\s\S]*?resolve-authorized-release-source\.mjs[\s\S]*?Project approved release notes from exact candidate[\s\S]*?project-release-notes\.mjs/);
+  assert.match(
+    raw,
+    /promote_main:[\s\S]*?needs:\s*\[plan, admit_release_notes\][\s\S]*?source_sha:\s*\$\{\{\s*needs\.admit_release_notes\.outputs\.source_sha\s*\}\}/,
+    'production branch promotion must wait for approved notes and use that exact admitted source',
+  );
+  assert.match(
+    raw,
+    /promote_preview:[\s\S]*?needs:\s*\[plan, admit_release_notes\][\s\S]*?source_sha:\s*\$\{\{\s*needs\.admit_release_notes\.outputs\.source_sha\s*\}\}/,
+    'preview branch promotion must wait for approved notes and use that exact admitted source',
+  );
+  assert.match(
+    raw,
+    /prepare_release_candidate:[\s\S]*?needs:\s*\[plan, promote_preview, promote_main\][\s\S]*?SOURCE_REF:\s*\$\{\{\s*inputs\.environment == 'production' && 'main' \|\| 'preview'\s*\}\}[\s\S]*?resolve-authorized-release-source\.mjs/,
+    'post-promotion candidate binding must still prove the promoted target points at the admitted SHA',
+  );
+});
+
+test('release deploy planning compares deploy branches against the exact prepared candidate', async () => {
+  const raw = await readFile(join(repoRoot, '.github', 'workflows', 'release.yml'), 'utf8');
+  const deployPlan = raw.slice(raw.indexOf('\n  deploy_plan:'), raw.indexOf('\n  promote_main:'));
+
+  assert.match(deployPlan, /needs:\s*\[plan, promote_preview, promote_main, prepare_release_candidate\]/);
+  assert.match(deployPlan, /ref:\s*\$\{\{\s*needs\.prepare_release_candidate\.outputs\.source_sha\s*\}\}/);
+  assert.match(deployPlan, /SOURCE_SHA:\s*\$\{\{\s*needs\.prepare_release_candidate\.outputs\.source_sha\s*\}\}/);
+  assert.match(deployPlan, /--source-ref "\$\{SOURCE_SHA\}"/);
+  assert.doesNotMatch(deployPlan, /SOURCE_REF:\s*\$\{\{\s*inputs\.environment == 'production' && 'main' \|\| 'preview'\s*\}\}/);
 });
 
 test('release workflow derives validation, notes, and terminal status from the exact bound candidate', async () => {
@@ -76,7 +109,7 @@ test('release workflow derives validation, notes, and terminal status from the e
   assert.doesNotMatch(raw, /inputs\.checks_profile/, 'no release path may accept a caller-selected checks profile');
   assert.match(
     raw,
-    /bind_server_source:[\s\S]*?release_notes_github_markdown:[\s\S]*?release_notes_expo_message:[\s\S]*?path:\s*release-source[\s\S]*?ref:\s*\$\{\{\s*steps\.source\.outputs\.authorized_sha\s*\}\}[\s\S]*?project-release-notes\.mjs/,
+    /prepare_release_candidate:[\s\S]*?source_sha:[\s\S]*?release_notes_github_markdown:[\s\S]*?release_notes_expo_message:[\s\S]*?path:\s*release-source[\s\S]*?ref:\s*\$\{\{\s*steps\.source\.outputs\.authorized_sha\s*\}\}[\s\S]*?project-release-notes\.mjs/,
     'one exact candidate checkout must project both publication note variants',
   );
   assert.match(candidateVerification, /validation_profile:\s*\$\{\{\s*needs\.plan\.outputs\.validation_profile\s*\}\}/);
@@ -96,22 +129,21 @@ test('release workflow derives validation, notes, and terminal status from the e
   ]) {
     assert.match(
       raw,
-      new RegExp(job + ':[\\s\\S]*?release_message:\\s*\\$\\{\\{\\s*needs\\.bind_server_source\\.outputs\\.release_notes_github_markdown\\s*\\}\\}'),
+      new RegExp(job + ':[\\s\\S]*?release_message:\\s*\\$\\{\\{\\s*needs\\.prepare_release_candidate\\.outputs\\.release_notes_github_markdown\\s*\\}\\}'),
       job + ' must consume the canonical GitHub note projection',
     );
   }
 
   assert.match(
     raw,
-    /deploy_ui:[\s\S]*?expo_update_message:\s*\$\{\{\s*needs\.bind_server_source\.outputs\.release_notes_expo_message\s*\}\}/,
+    /deploy_ui:[\s\S]*?expo_update_message:\s*\$\{\{\s*needs\.prepare_release_candidate\.outputs\.release_notes_expo_message\s*\}\}/,
     'Expo metadata must use the bounded plain-text projection',
   );
   assert.match(releaseStatus, /if:\s*\$\{\{\s*always\(\)\s*\}\}/);
-  assert.match(releaseStatus, /needs:\s*\[[^\]]*supported_old_relay_compatibility[^\]]*publish_hstack_binaries[^\]]*promote_hstack_binaries[^\]]*\]/);
+  assert.doesNotMatch(raw, /supported_old_relay_compatibility/);
   assert.match(releaseStatus, /VALIDATION_PROFILE:\s*\$\{\{\s*needs\.plan\.outputs\.validation_profile\s*\}\}/);
   assert.match(releaseStatus, /PUBLISH_CLI:\s*\$\{\{\s*needs\.plan\.outputs\.publish_cli\s*\}\}/);
-  assert.match(releaseStatus, /'supported-old-relay-compatibility': candidateReleaseRequested && process\.env\.VALIDATION_PROFILE === 'stable'/);
-  assert.match(releaseStatus, /requestedSurfaces: ids\.map\(\(\[id\]\) => \(\{ id, requested: requested\[id\], required: true \}\)\)/);
+  assert.match(releaseStatus, /requestedSurfaces: definitions\.map\(\(\{ id, evidence \}\) => \(\{ id, requested: Boolean\(requested\[id\]\), required: true, evidence \}\)\)/);
   assert.match(releaseStatus, /summarize-release-status\.mjs/);
   assert.match(releaseStatus, /GITHUB_STEP_SUMMARY/);
   assert.match(releaseStatus, /actions\/upload-artifact@[\s\S]*?name:\s*happier-release-status/);

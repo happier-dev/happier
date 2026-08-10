@@ -98,8 +98,8 @@ test('publish-docker supports workflow_call and is wired from release workflow',
     'UI web artifacts should publish when relay Docker needs a fresh embedded UI bundle',
   );
   assert.match(release, /uses:\s+\.\/\.github\/workflows\/publish-docker\.yml/);
-  assert.match(release, /publish_docker:[\s\S]*?needs:\s*\[plan, promote_preview, promote_main, bind_server_source, verify_release_candidates, publish_cli_binaries, publish_server_runtime, promote_cli_binaries, promote_server_runtime, promote_ui_web\]/);
-  assert.match(release, /authorized_sha:\s*\${{\s*needs\.bind_server_source\.outputs\.authorized_sha\s*}}/);
+  assert.match(release, /publish_docker:[\s\S]*?needs:\s*\[plan, promote_preview, promote_main, prepare_release_candidate, verify_release_candidates, publish_cli_binaries, publish_server_runtime, promote_cli_binaries, promote_server_runtime, promote_ui_web\]/);
+  assert.match(release, /authorized_sha:\s*\${{\s*needs\.prepare_release_candidate\.outputs\.source_sha\s*}}/);
   assert.match(release, /server_version:\s*\${{\s*needs\.publish_server_runtime\.outputs\.version\s*}}/);
   assert.match(release, /cli_version:\s*\${{\s*needs\.publish_cli_binaries\.outputs\.version\s*}}/);
   assert.match(release, /publish_docker:[\s\S]*?needs\.promote_cli_binaries\.result == 'success' \|\| needs\.promote_cli_binaries\.result == 'skipped'/);

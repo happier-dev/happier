@@ -70,7 +70,7 @@ Good parallel candidates include unit tests, typecheck, release contracts, docs/
 
 ### Phase 3: Continuity And Installer Validation
 
-Validate upgrade and continuity paths from current preview to the local candidate. Cover CLI update, daemon continuity, session continuity, Linux/macOS/Windows installer smoke, binary smoke where supported, artifact verification where supported, and manual server-upgrade coverage because `server-upgrade` is registered but has no executor.
+Validate the concrete upgrade and continuity paths affected by the candidate. Cover CLI update, daemon continuity, session continuity, Linux/macOS/Windows installer smoke, binary smoke where supported, and artifact verification where supported. When relay code, configuration, persistence, or migrations changed, define an exact released-relay-to-candidate scenario with its source version, database/provider, state, and expected invariants; do not treat a generic `server-upgrade` label as evidence.
 
 ### Phase 4: Manual Cross-OS QA
 

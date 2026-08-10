@@ -30,8 +30,7 @@ function projectValidationProfile(profile) {
     normalRelease: profile.normalRelease,
     checksProfile: profile.checksProfile,
     automaticSuiteIds: [...profile.automaticSuiteIds],
-    compatibilityDirections: profile.compatibilityDirections.map((direction) => ({ ...direction })),
-    manualChecks: [...profile.manualChecks],
+    ...(profile.manualEntrypoint ? { manualEntrypoint: profile.manualEntrypoint } : {}),
   };
 }
 

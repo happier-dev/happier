@@ -58,6 +58,8 @@ const TAURI_RELEASE_ENVIRONMENT_CHOICES = formatPublicReleaseChannelChoices({
 });
 const ANDROID_RELEASE_STATUS_CHOICES = ['profile', 'completed', 'draft', 'halted', 'inProgress'];
 const FULL_GIT_SHA = /^[a-f0-9]{40}$/;
+const RELEASE_OPERATION_ID = /^rel_[A-Za-z0-9_-]{8,80}$/;
+const RELEASE_NOTES_ID = /^[a-z0-9][a-z0-9._-]*$/;
 
 /**
  * @param {unknown} value
@@ -4258,6 +4260,9 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
               'release-profile': { type: 'string', default: '' },
               'source-sha': { type: 'string', default: '' },
               'workflow-control-sha': { type: 'string', default: '' },
+              'operation-id': { type: 'string', default: '' },
+              'release-notes-id': { type: 'string', default: '' },
+              'qualified-v4-activation-approval': { type: 'string', default: 'false' },
               'allow-dirty': { type: 'string', default: 'false' },
               'dry-run': { type: 'boolean', default: false },
               json: { type: 'boolean', default: false },
@@ -4310,11 +4315,20 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
           }
 
           const dryRun = values['dry-run'] === true;
-          const json = values.json === true;
+          const jsonOutput = values.json === true;
           const forceDeploy = parseBoolString(values['force-deploy'], '--force-deploy');
           const bumpPreset = String(values.bump ?? '').trim() || 'none';
           const authorizedPromotionSourceSha = String(values['source-sha'] ?? '').trim().toLowerCase();
           const workflowControlSha = String(values['workflow-control-sha'] ?? '').trim();
+          const operationId = String(values['operation-id'] ?? '').trim();
+          const releaseNotesId = String(values['release-notes-id'] ?? '').trim();
+          const qualifiedV4ActivationApproval = parseBoolString(
+            values['qualified-v4-activation-approval'],
+            '--qualified-v4-activation-approval',
+          );
+          if (qualifiedV4ActivationApproval) {
+            fail('--qualified-v4-activation-approval is not supported by this release line because it has no Qualified V4 activation path.');
+          }
           const promotionSourceBranch = resolveReleasePromotionSourceBranch(action);
 
           const uiExpoAction = String(values['ui-expo-action'] ?? '').trim() || 'none';
@@ -4326,8 +4340,14 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
           if (bumpPreset !== 'none') {
             fail(MATERIALIZED_RELEASE_BUMP_ADMISSION_MESSAGE);
           }
-          if (json && !dryRun) {
-            fail('--json is only available with --dry-run.');
+          if (jsonOutput && !dryRun) {
+            fail('--json is supported only with --dry-run.');
+          }
+          if (jsonOutput && !operationId) {
+            fail('--operation-id is required with --dry-run --json.');
+          }
+          if (operationId && !RELEASE_OPERATION_ID.test(operationId)) {
+            fail('--operation-id must match rel_ followed by 8-80 ASCII letters, digits, underscores, or hyphens.');
           }
           if (authorizedPromotionSourceSha && !FULL_GIT_SHA.test(authorizedPromotionSourceSha)) {
             fail('--source-sha must be a full 40-character commit SHA when provided.');
@@ -4335,8 +4355,11 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
           if (workflowControlSha && !FULL_GIT_SHA.test(workflowControlSha)) {
             fail('--workflow-control-sha must be a full 40-character lowercase Git commit SHA.');
           }
-          if (!dryRun && !authorizedPromotionSourceSha) {
-            fail('--source-sha is required for a hosted release dispatch.');
+          if ((deployEnvironment !== 'dev' || jsonOutput) && !releaseNotesId) {
+            fail('--release-notes-id is required for normal preview/production release dispatch.');
+          }
+          if (releaseNotesId && !RELEASE_NOTES_ID.test(releaseNotesId)) {
+            fail('--release-notes-id must contain only lowercase letters, digits, dots, underscores, or hyphens.');
           }
           if (!['none', 'ota', 'native', 'native_submit'].includes(uiExpoAction)) {
             fail(`--ui-expo-action must be one of: none, ota, native, native_submit (got: ${uiExpoAction})`);
@@ -4356,11 +4379,39 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
           }
           const allowDirty = parseBoolString(values['allow-dirty'], '--allow-dirty');
           if (!dryRun) assertCleanWorktree({ cwd: repoRoot, allowDirty });
-          assertNoStagedChanges({ cwd: repoRoot, allowDirty, dryRun });
+
+          const resolvePromotionSource = () =>
+            resolveAuthorizedReleaseSource({
+              repoRoot,
+              remoteUrl: 'origin',
+              sourceRef: `refs/heads/${promotionSourceBranch}`,
+              authorizedSha: authorizedPromotionSourceSha,
+            });
+
+          if (jsonOutput) {
+            const authorizedPromotionSource = await resolvePromotionSource();
+            process.stdout.write(
+              `${JSON.stringify({
+                kind: 'happier.release-dispatch-plan.v3',
+                schemaVersion: 3,
+                sourceBranch: promotionSourceBranch,
+                authorizedPromotionSourceSha: authorizedPromotionSource.sha,
+                effectiveDeployTargets: deployTargets,
+                validationProfile: releaseProfile.id,
+                operationId,
+                releaseNotesId,
+                approvals: { qualifiedV4Activation: qualifiedV4ActivationApproval },
+              })}\n`,
+            );
+            return;
+          }
 
           if (!dryRun) {
             if (deployEnvironment === 'dev') {
               fail('Privileged dev publication is hosted by nightly-dev.yml; the local release command does not publish dev directly.');
+            }
+            if (!authorizedPromotionSourceSha) {
+              fail('--source-sha is required for a hosted release dispatch.');
             }
             const currentBranch = execFileSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], {
               cwd: repoRoot,
@@ -4372,12 +4423,7 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
             if (!/(^|\/)(dev|upstream-dev)$/.test(currentBranch)) {
               fail(`Local release dispatch expects branch 'dev' or '*\\/upstream-dev' (current: ${currentBranch}).`);
             }
-            const authorizedPromotionSource = await resolveAuthorizedReleaseSource({
-              repoRoot,
-              remoteUrl: 'origin',
-              sourceRef: `refs/heads/${promotionSourceBranch}`,
-              authorizedSha: authorizedPromotionSourceSha,
-            });
+            const authorizedPromotionSource = await resolvePromotionSource();
             const workflowArgs = [
               'workflow', 'run', 'release.yml',
               '--repo', repository,
@@ -4391,7 +4437,10 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
               '-f', `desktop_mode=${desktopMode}`,
               '-f', `bump=${bumpPreset}`,
               '-f', `authorized_promotion_source_sha=${authorizedPromotionSource.sha}`,
+              '-f', `release_notes_id=${releaseNotesId}`,
+              '-f', `qualified_v4_activation_approval=${qualifiedV4ActivationApproval}`,
               ...(workflowControlSha ? ['-f', `workflow_control_sha=${workflowControlSha}`] : []),
+              ...(operationId ? ['-f', `hmaint_operation_id=${operationId}`] : []),
               '-f', `confirm=${action}`,
             ];
             execFileSync('gh', workflowArgs, {
@@ -4402,24 +4451,6 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
               timeout: 30_000,
             });
             console.log(`[pipeline] dispatched hosted release workflow for ${deployEnvironment} (release profile=${releaseProfile.id}); privileged release writes run only in GitHub Actions.`);
-            return;
-          }
-
-          if (json) {
-            const authorizedPromotionSource = await resolveAuthorizedReleaseSource({
-              repoRoot,
-              remoteUrl: 'origin',
-              sourceRef: `refs/heads/${promotionSourceBranch}`,
-              authorizedSha: authorizedPromotionSourceSha,
-            });
-            process.stdout.write(
-              `${JSON.stringify({
-                kind: 'happier.release-dispatch-plan.v1',
-                schemaVersion: 1,
-                sourceBranch: promotionSourceBranch,
-                authorizedPromotionSourceSha: authorizedPromotionSource.sha,
-              })}\n`,
-            );
             return;
           }
 
@@ -4457,12 +4488,7 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
               fail(`Local release expects to run from branch 'dev' or '*\\/upstream-dev' (current: ${currentBranch}).`);
             }
 
-          const authorizedPromotionSource = await resolveAuthorizedReleaseSource({
-            repoRoot,
-            remoteUrl: 'origin',
-            sourceRef: `refs/heads/${promotionSourceBranch}`,
-            authorizedSha: authorizedPromotionSourceSha,
-          });
+          const authorizedPromotionSource = await resolvePromotionSource();
           const mainSha = remotePlanningRefs.branches.main;
           const planHeadSha = authorizedPromotionSource.sha;
 

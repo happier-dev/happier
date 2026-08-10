@@ -15,7 +15,7 @@ export const COMMAND_HELP_ORCHESTRATORS = {
   release: {
     summary: 'Orchestrate a full dev/preview/production release (recommended entrypoint).',
     usage:
-      'node scripts/pipeline/run.mjs release --confirm <action> --repository <owner/repo> [--deploy-environment dev|preview|production] [--deploy-targets <csv>] [--source-sha <sha>] [--workflow-control-sha <sha>] [--dry-run] [--json]',
+      'node scripts/pipeline/run.mjs release --confirm <action> --repository <owner/repo> [--deploy-environment dev|preview|production] [--deploy-targets <csv>] [--source-sha <sha>] [--workflow-control-sha <sha>] [--operation-id <id>] [--release-notes-id <id>] [--qualified-v4-activation-approval <bool>] [--dry-run] [--json]',
     options: [
       '--confirm <action>                Required safety confirmation.',
       '--repository <owner/repo>         Required; e.g. happier-dev/happier.',
@@ -28,6 +28,9 @@ export const COMMAND_HELP_ORCHESTRATORS = {
       '--release-profile <profile>       integrated|stable|deep (default: integrated for dev/preview, stable for production; deep is manual-only).',
       '--source-sha <sha>                Required for non-dry hosted dispatch; exact source commit to promote.',
       '--workflow-control-sha <sha>      Optional dispatcher-observed dev SHA for hosted workflow-control fencing.',
+      '--operation-id <id>               Optional conductor correlation ID; required for --dry-run --json.',
+      '--release-notes-id <id>           Required approved release-note entry for preview/production dispatches.',
+      '--qualified-v4-activation-approval <bool>  Separate explicit approval for irreversible Qualified V4 activation (default: false).',
       '--allow-dirty <bool>              true|false (default: false).',
       '--dry-run                          Print release facts and hosted inputs without mutating.',
       '--json                            With --dry-run, emit the exact promotion-source dispatch plan as JSON.',
@@ -38,13 +41,14 @@ export const COMMAND_HELP_ORCHESTRATORS = {
       'Final release dispatches require an exact source SHA and never create a post-admission version-bump commit.',
       'When supplied by hmaint, workflow-control SHA must equal the hosted workflow SHA before actor authorization or mutation.',
       'The local dispatcher resolves integrated/stable through the public release contract; deep is never a normal release dispatch.',
+      'Preview and production use one approved canonical release-note entry; automatic nightlies use generic unattended copy.',
       'Refuses to publish from a dirty worktree by default (use --allow-dirty true when intentional).',
       'Use --dry-run first; once green, re-run without --dry-run to dispatch.',
     ],
     examples: [
       'node scripts/pipeline/run.mjs release --confirm "release dev to dev" --repository happier-dev/happier --deploy-environment dev --dry-run',
-      'node scripts/pipeline/run.mjs release --confirm "release dev to preview" --repository happier-dev/happier --deploy-environment preview --dry-run',
-      'node scripts/pipeline/run.mjs release --confirm "release dev to preview" --repository happier-dev/happier --deploy-environment preview --source-sha <40-character-sha>',
+      'node scripts/pipeline/run.mjs release --confirm "release dev to preview" --repository happier-dev/happier --deploy-environment preview --operation-id <operation-id> --release-notes-id <release-id> --dry-run --json',
+      'node scripts/pipeline/run.mjs release --confirm "release dev to preview" --repository happier-dev/happier --deploy-environment preview --release-notes-id <release-id> --source-sha <40-character-sha>',
     ],
   },
 

@@ -23,10 +23,18 @@ test('release-verify resolves public validation profiles centrally while retaini
   assert.match(String(workflow.jobs.resolve_validation_profile.steps?.at(-1)?.run ?? ''), /release-contract/);
   assert.ok(workflow.jobs.verify.needs.includes('resolve_validation_profile'));
 
+  const verifyBlock = raw.slice(raw.indexOf('\n  verify:'));
+  assert.equal(
+    (verifyBlock.match(/^    if:/gm) ?? []).length,
+    1,
+    'the nested reusable verification job must have exactly one condition key',
+  );
+
   for (const inputName of [
     'run_cli_update_continuity',
     'run_daemon_continuity',
     'run_session_continuity',
+    'run_release_assets_docker',
   ]) {
     assert.match(
       raw,
@@ -38,12 +46,43 @@ test('release-verify resolves public validation profiles centrally while retaini
       new RegExp(`${inputName}:\\n\\s+required: false\\n\\s+default: true\\n\\s+type: boolean`),
       `release-verify workflow_call should expose ${inputName}`,
     );
+  }
+
+  for (const inputName of [
+    'run_installers_smoke',
+    'run_binary_smoke',
+    'run_cli_update_continuity',
+    'run_daemon_continuity',
+    'run_session_continuity',
+    'run_release_assets_docker',
+    'run_self_host_systemd',
+    'run_self_host_launchd',
+    'run_self_host_schtasks',
+    'run_self_host_daemon',
+  ]) {
     assert.equal(
       workflow.jobs.verify.with?.[inputName],
-      '${{ needs.resolve_validation_profile.outputs.' + inputName + ' }}',
-      `release-verify should forward resolver-owned ${inputName} into tests.yml`,
+      '${{ fromJSON(needs.resolve_validation_profile.outputs.' + inputName + ') }}',
+      `release-verify should convert resolver-owned ${inputName} to a boolean before calling tests.yml`,
     );
   }
+
+  const resolver = workflow.jobs.resolve_validation_profile.steps.find((step) => step.id === 'profile');
+  assert.equal(resolver.env.CANDIDATE_CLI_VERSION, '${{ inputs.candidate_cli_version }}');
+  assert.equal(resolver.env.CANDIDATE_SERVER_VERSION, '${{ inputs.candidate_server_version }}');
+  assert.equal(resolver.env.RELEASE_CHANNEL, '${{ inputs.channel }}');
+  assert.match(resolver.run, /const hasCliCandidate = Boolean\(process\.env\.CANDIDATE_CLI_VERSION\)/);
+  assert.match(resolver.run, /const hasServerCandidate = Boolean\(process\.env\.CANDIDATE_SERVER_VERSION\)/);
+  assert.match(resolver.run, /run_cli_update_continuity: String\(selected\.has\("cli-update"\)\)/);
+  assert.match(resolver.run, /run_session_continuity: String\(selected\.has\("session-continuity"\)\)/);
+  assert.match(resolver.run, /const hasPublishedRelayPredecessor = process\.env\.RELEASE_CHANNEL === "preview" \|\| process\.env\.RELEASE_CHANNEL === "production"/);
+  assert.match(resolver.run, /run_release_assets_docker: String\(selected\.has\("docker-release-assets"\)\)/);
+
+  assert.equal(
+    workflow.jobs.verify.with.checkout_sha,
+    '${{ inputs.candidate_source_sha }}',
+    'every automatic source-built suite must run against the exact candidate checkout',
+  );
 });
 
 test('release-verify workflow supports dev channel and maps installer channel per release lane', async () => {

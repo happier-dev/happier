@@ -7,9 +7,12 @@ import { parseArgs } from 'node:util';
 import { pathToFileURL } from 'node:url';
 
 const RESULT_VALUES = new Set(['success', 'accepted', 'pending', 'failed', 'skipped']);
-const TOP_LEVEL_KEYS = new Set(['run', 'channel', 'sourceSha', 'requestedSurfaces', 'surfaces']);
-const REQUESTED_SURFACE_KEYS = new Set(['id', 'requested', 'required']);
+const TOP_LEVEL_KEYS = new Set(['operationId', 'run', 'channel', 'sourceSha', 'requestedSurfaces', 'surfaces']);
+const REQUESTED_SURFACE_KEYS = new Set(['id', 'requested', 'required', 'evidence']);
 const OBSERVED_SURFACE_KEYS = new Set(['id', 'result', 'identity', 'recoveryHint']);
+const RUN_KEYS = new Set(['id', 'url', 'name']);
+const SURFACE_EVIDENCE_VALUES = new Set(['verified', 'accepted']);
+const OPERATION_ID_PATTERN = /^rel_[A-Za-z0-9_-]{8,80}$/u;
 
 const MAX_METADATA_DEPTH = 6;
 const MAX_METADATA_KEYS = 32;
@@ -45,15 +48,53 @@ function requireNonEmptyString(value, label) {
   return value;
 }
 
-/** @param {unknown} value */
-function normalizeRun(value) {
-  if (typeof value === 'number') {
-    if (!Number.isSafeInteger(value) || value < 1) {
-      throw new Error('[release] run must be a positive safe integer or a non-empty identifier');
-    }
-    return value;
+/** @param {unknown} value @param {string} label */
+function requireTrimmedString(value, label) {
+  if (typeof value !== 'string' || value.length === 0 || value.trim() !== value) {
+    throw new Error(`[release] ${label} must be a non-empty trimmed string`);
   }
-  return requireNonEmptyString(value, 'run');
+  return value;
+}
+
+/** @param {unknown} value */
+function normalizeOperationId(value) {
+  if (value === undefined) return undefined;
+  const operationId = requireNonEmptyString(value, 'operationId');
+  if (!OPERATION_ID_PATTERN.test(operationId)) {
+    throw new Error('[release] operationId must match rel_<8-80 URL-safe characters>');
+  }
+  return operationId;
+}
+
+/** @param {unknown} value @param {string | undefined} operationId */
+function normalizeRun(value, operationId) {
+  if (!isRecord(value)) throw new Error('[release] run must be a GitHub Actions run object');
+  rejectUnknownKeys(value, RUN_KEYS, 'run');
+  if (!Number.isSafeInteger(value.id) || value.id < 1) {
+    throw new Error('[release] run.id must be a positive safe integer');
+  }
+  const url = requireNonEmptyString(value.url, 'run.url');
+  let parsedUrl;
+  try {
+    parsedUrl = new URL(url);
+  } catch {
+    throw new Error('[release] run.url must be an HTTPS GitHub Actions run URL');
+  }
+  if (
+    parsedUrl.protocol !== 'https:'
+    || parsedUrl.hostname !== 'github.com'
+    || parsedUrl.search
+    || parsedUrl.hash
+    || !new RegExp(`^/[^/]+/[^/]+/actions/runs/${value.id}$`, 'u').test(parsedUrl.pathname)
+  ) {
+    throw new Error('[release] run.url must identify run.id on github.com');
+  }
+  const name = requireTrimmedString(value.name, 'run.name');
+  if (name.length > 512) throw new Error('[release] run.name exceeds the bounded length');
+  if (operationId && !name.includes(operationId)) {
+    throw new Error('[release] run.name must contain operationId when an operation is supplied');
+  }
+  return { id: value.id, url, name };
 }
 
 /**
@@ -121,7 +162,7 @@ function normalizeSurfaceId(value, label) {
 }
 
 /**
- * @typedef {{ id: string; requested: boolean; required: boolean }} RequestedSurface
+ * @typedef {{ id: string; requested: boolean; required: boolean; evidence: 'verified' | 'accepted' }} RequestedSurface
  * @typedef {{ id: string; result: 'success'|'accepted'|'pending'|'failed'|'skipped'; identity?: unknown; recoveryHint?: unknown }} ObservedSurface
  */
 
@@ -145,12 +186,20 @@ function parseRequestedSurfaces(value) {
     if (typeof entry.required !== 'boolean') {
       throw new Error(`[release] requestedSurfaces[${index}].required must be boolean`);
     }
+    if (typeof entry.evidence !== 'string' || !SURFACE_EVIDENCE_VALUES.has(entry.evidence)) {
+      throw new Error(`[release] requestedSurfaces[${index}].evidence must be verified or accepted`);
+    }
     const requested = entry.requested === undefined ? true : entry.requested;
     if (typeof requested !== 'boolean') {
       throw new Error(`[release] requestedSurfaces[${index}].requested must be boolean`);
     }
     ids.add(id);
-    surfaces.push({ id, requested, required: entry.required });
+    surfaces.push({
+      id,
+      requested,
+      required: entry.required,
+      evidence: /** @type {'verified' | 'accepted'} */ (entry.evidence),
+    });
   }
   return surfaces;
 }
@@ -199,10 +248,11 @@ function parseObservedSurfaces(value, declaredIds) {
   return surfaces;
 }
 
-/** @param {ObservedSurface | undefined} observed */
-function hasExactVerification(observed) {
-  return observed !== undefined
-    && observed.result === 'success'
+/** @param {RequestedSurface} requested @param {ObservedSurface | undefined} observed */
+function hasRequiredEvidence(requested, observed) {
+  if (observed === undefined) return false;
+  if (requested.evidence === 'accepted') return observed.result === 'accepted';
+  return observed.result === 'success'
     && isRecord(observed.identity)
     && observed.identity.verified === true;
 }
@@ -211,7 +261,9 @@ function hasExactVerification(observed) {
 function deriveSurfaceState(requested, observed) {
   if (!requested.requested) return 'not_requested';
   if (observed === undefined) return requested.required ? 'failed' : 'partial';
-  if (hasExactVerification(observed)) return 'complete';
+  if (hasRequiredEvidence(requested, observed)) {
+    return requested.evidence === 'accepted' ? 'published' : 'complete';
+  }
   if (observed.result === 'failed') return 'failed';
   if (observed.result === 'skipped') return requested.required ? 'failed' : 'partial';
   return 'partial';
@@ -222,8 +274,9 @@ function deriveSurfaceState(requested, observed) {
  * @param {Map<string, ObservedSurface>} observedSurfaces
  */
 function projectSurfaces(requestedSurfaces, observedSurfaces) {
-  let hasRequiredFailure = false;
+  let hasSelectedFailure = false;
   let hasPartial = false;
+  let hasPublished = false;
   const surfaces = requestedSurfaces.map((requested) => {
     const observed = observedSurfaces.get(requested.id);
     const state = deriveSurfaceState(requested, observed);
@@ -232,6 +285,7 @@ function projectSurfaces(requestedSurfaces, observedSurfaces) {
       id: requested.id,
       requested: requested.requested,
       required: requested.required,
+      evidence: requested.evidence,
       state,
     };
     if (requested.requested && observed !== undefined) {
@@ -243,8 +297,11 @@ function projectSurfaces(requestedSurfaces, observedSurfaces) {
         projected.recoveryHint = cloneBoundedMetadata(observed.recoveryHint, `surfaces.${requested.id}.recoveryHint`);
       }
     }
-    if (requested.requested && requested.required && state === 'failed') {
-      hasRequiredFailure = true;
+    if (requested.requested && state === 'failed') {
+      hasSelectedFailure = true;
+    }
+    if (requested.requested && state === 'published') {
+      hasPublished = true;
     }
     if (requested.requested && (state === 'partial' || (!requested.required && state === 'failed'))) {
       hasPartial = true;
@@ -253,7 +310,7 @@ function projectSurfaces(requestedSurfaces, observedSurfaces) {
   });
   return {
     surfaces,
-    terminal: hasRequiredFailure ? 'failed' : hasPartial ? 'partial' : 'complete',
+    terminal: hasSelectedFailure ? 'failed' : hasPartial ? 'partial' : hasPublished ? 'published' : 'complete',
   };
 }
 
@@ -267,7 +324,8 @@ function projectSurfaces(requestedSurfaces, observedSurfaces) {
 export function summarizeReleaseStatus(value) {
   if (!isRecord(value)) throw new Error('[release] input must be a JSON object');
   rejectUnknownKeys(value, TOP_LEVEL_KEYS, 'input');
-  const run = normalizeRun(value.run);
+  const operationId = normalizeOperationId(value.operationId);
+  const run = normalizeRun(value.run, operationId);
   const channel = requireNonEmptyString(value.channel, 'channel');
   const sourceSha = requireNonEmptyString(value.sourceSha, 'sourceSha');
   const requestedSurfaces = parseRequestedSurfaces(value.requestedSurfaces);
@@ -278,6 +336,7 @@ export function summarizeReleaseStatus(value) {
   return {
     schemaVersion: 1,
     kind: 'happier.release-status.v1',
+    ...(operationId ? { operationId } : {}),
     run,
     channel,
     sourceSha,

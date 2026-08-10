@@ -112,7 +112,7 @@ export const COMMAND_HELP_RELEASE_INTERNALS = {
       '--keychain-service <name>         Wrapper flag (default: happier/pipeline).',
       '--keychain-account <name>         Wrapper flag.',
       '--dry-run                         Wrapper flag.',
-      '--suite <suite>                   Script flag; installers-smoke|binary-smoke|artifact-verify|docker-release-assets|cli-update|server-upgrade|daemon-continuity|session-continuity.',
+      '--suite <suite>                   Script flag; installers-smoke|binary-smoke|artifact-verify|docker-release-assets|cli-update|daemon-continuity|session-continuity.',
       '--platform <linux|darwin|win32>   Script flag; defaults to the current runner platform.',
       '--source <kind>                   Script flag; suite-dependent source kind.',
       '--ref <value>                     Script flag paired with --source.',
@@ -134,7 +134,7 @@ export const COMMAND_HELP_RELEASE_INTERNALS = {
     bullets: [
       'Executable suites: installers-smoke (published-channel|published-tag|local-build with --release-channel), binary-smoke (local-build on linux), artifact-verify (local-build or --product/--version).',
       'docker-release-assets (local-build|published-channel; published-channel -> local-build upgrade); cli-update (published-channel|published-tag -> published-channel|published-tag|local-build|local-pack).',
-      'daemon-continuity (local-build); session-continuity (local-build); server-upgrade (dry-run planning only).',
+      'daemon-continuity (local-build); session-continuity (local-build).',
       'Global source kinds are published-channel|published-tag|local-build|local-pack|git-ref-build, but each suite accepts only the kinds documented above.',
     ],
     examples: [
@@ -365,10 +365,10 @@ export const COMMAND_HELP_RELEASE_INTERNALS = {
   'release-compute-deploy-plan': {
     summary: 'Compute whether deploy branches need updating for each hosted component (advanced helper).',
     usage:
-      'node scripts/pipeline/run.mjs release-compute-deploy-plan --deploy-environment <preview|production> --source-ref <ref> --force-deploy <bool> --deploy-ui <bool> --deploy-server <bool> --deploy-website <bool> --deploy-docs <bool>',
+      'node scripts/pipeline/run.mjs release-compute-deploy-plan --deploy-environment <preview|production> --source-ref <ref-or-sha> --force-deploy <bool> --deploy-ui <bool> --deploy-server <bool> --deploy-website <bool> --deploy-docs <bool>',
     options: [
       '--deploy-environment <env>        Script flag (required).',
-      '--source-ref <ref>                Script flag (required).',
+      '--source-ref <ref-or-sha>         Script flag (required); accepts an exact admitted commit SHA.',
       '--force-deploy <bool>             Script flag.',
       '--deploy-ui <bool>                Script flag.',
       '--deploy-server <bool>            Script flag.',
@@ -383,7 +383,7 @@ export const COMMAND_HELP_RELEASE_INTERNALS = {
     ],
     bullets: ['Used internally to decide whether to promote deploy branches.'],
     examples: [
-      'node scripts/pipeline/run.mjs release-compute-deploy-plan --deploy-environment preview --source-ref preview --force-deploy false --deploy-ui true --deploy-server true --deploy-website true --deploy-docs true',
+      'node scripts/pipeline/run.mjs release-compute-deploy-plan --deploy-environment preview --source-ref <40-character-sha> --force-deploy false --deploy-ui true --deploy-server true --deploy-website true --deploy-docs true',
     ],
   },
 

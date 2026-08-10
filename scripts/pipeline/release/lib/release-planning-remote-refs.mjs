@@ -42,12 +42,17 @@ function hasCommitObject(cwd, objectId) {
  *   remote?: string;
  *   branchNames: string[];
  *   optionalBranchNames?: string[];
+ *   objectIds?: string[];
  *   tagPrefixes: string[];
  * }} opts
  */
 export function resolveRemoteReleasePlanningRefs(opts) {
   const remote = String(opts.remote ?? 'origin').trim();
   if (!remote) throw new Error('remote is required');
+  const objectIds = [...new Set((opts.objectIds ?? []).map((objectId) => String(objectId).trim()).filter(Boolean))];
+  for (const objectId of objectIds) {
+    if (!OBJECT_ID_PATTERN.test(objectId)) throw new Error(`Invalid immutable object ID: ${objectId}`);
+  }
   const branchNames = [...new Set(opts.branchNames.map((name) => String(name).trim()).filter(Boolean))];
   const optionalBranchNames = [
     ...new Set((opts.optionalBranchNames ?? []).map((name) => String(name).trim()).filter(Boolean)),
@@ -98,7 +103,7 @@ export function resolveRemoteReleasePlanningRefs(opts) {
     tags[tag] = peeledTags[tag] ?? objectId;
   }
 
-  const requiredObjects = [...new Set([...Object.values(branches), ...Object.values(tags)])];
+  const requiredObjects = [...new Set([...Object.values(branches), ...Object.values(tags), ...objectIds])];
   const missingObjects = requiredObjects.filter((objectId) => !hasCommitObject(opts.repoRoot, objectId));
   for (let index = 0; index < missingObjects.length; index += 64) {
     runGit(opts.repoRoot, ['fetch', '--no-tags', remote, ...missingObjects.slice(index, index + 64)]);

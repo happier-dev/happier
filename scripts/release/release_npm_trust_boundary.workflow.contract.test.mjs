@@ -45,6 +45,21 @@ test('npm candidate packing is permission-minimized and secret-free', async () =
   assert.match(JSON.stringify(candidate), /node scripts\/pipeline\/run\.mjs npm-release/);
 });
 
+test('an authorized npm candidate is checked out by exact SHA and rechecked against its canonical branch before packing', async () => {
+  const workflow = await loadWorkflow();
+  const candidate = workflow.jobs?.release;
+  assert.equal(workflow.on?.workflow_call?.inputs?.authorized_sha?.default, '');
+  const steps = candidate.steps ?? [];
+  const checkoutIndex = steps.findIndex((step) => step.name === 'Checkout source ref');
+  const verificationIndex = steps.findIndex((step) => step.name === 'Verify authorized source remains canonical');
+  assert.ok(checkoutIndex >= 0);
+  assert.ok(verificationIndex > checkoutIndex, 'canonical branch recheck must run after exact-SHA checkout');
+  const verification = String(steps[verificationIndex]?.run ?? '');
+  assert.match(verification, /git rev-parse HEAD/);
+  assert.match(verification, /git ls-remote origin "refs\/heads\/\$CANONICAL_REF"/);
+  assert.match(verification, /no longer resolves to authorized_sha/);
+});
+
 test('every npm credential-bearing job executes workflow-SHA control and only publishes opaque tarballs', async () => {
   const workflow = await loadWorkflow();
   assertTrustedControlCheckout(workflow.jobs?.release_actor_guard, 'release_actor_guard');

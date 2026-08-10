@@ -28,8 +28,7 @@ jobs:
       contents: read
     outputs:
       source_sha: ${{ steps.identity.outputs.source_sha }}
-      release_notes_github_markdown: ${{ steps.release_notes.outputs.github_markdown }}
-      release_notes_expo_message: ${{ steps.release_notes.outputs.expo_message }}
+      release_message: ${{ steps.identity.outputs.release_message }}
     steps:
       - name: Checkout requested nightly source
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -37,10 +36,6 @@ jobs:
           ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.source_ref || 'dev' }}
           fetch-depth: 1
           persist-credentials: false
-      - name: Setup Node
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
-        with:
-          node-version: 22.x
       - name: Bind exact nightly source SHA
         id: identity
         run: |
@@ -48,33 +43,7 @@ jobs:
           source_sha="$(git rev-parse HEAD)"
           test "$(printf '%s' "$source_sha" | wc -c | tr -d ' ')" = "40"
           echo "source_sha=$source_sha" >> "$GITHUB_OUTPUT"
-      - name: Project approved release notes from exact nightly candidate
-        id: release_notes
-        run: |
-          set -euo pipefail
-          version="$(node -p "require('./apps/ui/package.json').version")"
-          VERSION="$version" node scripts/pipeline/release/release-notes/project-release-notes.mjs \
-            --version "$version" \
-            --changelog "$GITHUB_WORKSPACE/apps/ui/CHANGELOG.md" | \
-            VERSION="$version" node --input-type=module -e '
-              import { appendFileSync } from "node:fs";
-              import { createHash } from "node:crypto";
-              let raw = "";
-              for await (const chunk of process.stdin) raw += chunk;
-              const bundle = JSON.parse(raw);
-              if (bundle.kind !== "happier.release-notes.projection.v1" || bundle.schemaVersion !== 1 || bundle.version !== process.env.VERSION) {
-                throw new Error("Invalid exact-candidate release-notes projection");
-              }
-              const values = {
-                github_markdown: bundle.projections?.github?.markdown,
-                expo_message: bundle.projections?.expo?.message,
-              };
-              for (const [key, value] of Object.entries(values)) {
-                if (typeof value !== "string") throw new Error(`Missing ${key} projection`);
-                const delimiter = `RELEASE_NOTES_${createHash("sha256").update(`${key}:${value}`).digest("hex")}`;
-                appendFileSync(process.env.GITHUB_OUTPUT, `${key}<<${delimiter}\n${value}\n${delimiter}\n`);
-              }
-            '
+          echo "release_message=Automated nightly dev release." >> "$GITHUB_OUTPUT"
 
   cli:
     name: CLI immutable candidate (dev)
@@ -86,7 +55,7 @@ jobs:
       source_ref: ${{ needs.prepare_release_candidate.outputs.source_sha }}
       publish_rolling: false
       allow_stable: false
-      release_message: ${{ needs.prepare_release_candidate.outputs.release_notes_github_markdown }}
+      release_message: ${{ needs.prepare_release_candidate.outputs.release_message }}
 
   hstack:
     name: HStack immutable candidate (dev)
@@ -98,7 +67,7 @@ jobs:
       source_ref: ${{ needs.prepare_release_candidate.outputs.source_sha }}
       publish_rolling: false
       allow_stable: false
-      release_message: ${{ needs.prepare_release_candidate.outputs.release_notes_github_markdown }}
+      release_message: ${{ needs.prepare_release_candidate.outputs.release_message }}
 
   server_runtime:
     name: Server immutable candidate (dev)
@@ -111,7 +80,7 @@ jobs:
       authorized_sha: ${{ needs.prepare_release_candidate.outputs.source_sha }}
       publish_rolling: false
       allow_stable: false
-      release_message: ${{ needs.prepare_release_candidate.outputs.release_notes_github_markdown }}
+      release_message: ${{ needs.prepare_release_candidate.outputs.release_message }}
 
   ui_web:
     name: UI web immutable candidate (dev)
@@ -123,7 +92,7 @@ jobs:
       source_ref: ${{ needs.prepare_release_candidate.outputs.source_sha }}
       publish_rolling: false
       allow_stable: false
-      release_message: ${{ needs.prepare_release_candidate.outputs.release_notes_github_markdown }}
+      release_message: ${{ needs.prepare_release_candidate.outputs.release_message }}
 
   release_verify:
     name: Verify exact immutable nightly candidates
@@ -152,7 +121,7 @@ jobs:
       channel: dev
       retry_version: ${{ needs.server_runtime.outputs.version }}
       allow_stable: false
-      release_message: ${{ needs.prepare_release_candidate.outputs.release_notes_github_markdown }}
+      release_message: ${{ needs.prepare_release_candidate.outputs.release_message }}
 
   promote_hstack:
     name: Promote verified HStack candidate
@@ -163,7 +132,7 @@ jobs:
       channel: dev
       retry_version: ${{ needs.hstack.outputs.version }}
       allow_stable: false
-      release_message: ${{ needs.prepare_release_candidate.outputs.release_notes_github_markdown }}
+      release_message: ${{ needs.prepare_release_candidate.outputs.release_message }}
 
   promote_cli:
     name: Promote verified CLI candidate
@@ -174,7 +143,7 @@ jobs:
       channel: dev
       retry_version: ${{ needs.cli.outputs.version }}
       allow_stable: false
-      release_message: ${{ needs.prepare_release_candidate.outputs.release_notes_github_markdown }}
+      release_message: ${{ needs.prepare_release_candidate.outputs.release_message }}
 
   promote_ui_web:
     name: Promote verified UI web candidate
@@ -185,7 +154,7 @@ jobs:
       channel: dev
       retry_version: ${{ needs.ui_web.outputs.version }}
       allow_stable: false
-      release_message: ${{ needs.prepare_release_candidate.outputs.release_notes_github_markdown }}
+      release_message: ${{ needs.prepare_release_candidate.outputs.release_message }}
 
   ui_mobile:
     name: UI mobile (dev)
@@ -198,7 +167,7 @@ jobs:
       publish_android_apk: true
       submit_ios_testflight: true
       eas_builder: eas_local
-      release_message: ${{ needs.prepare_release_candidate.outputs.release_notes_expo_message }}
+      release_message: ${{ needs.prepare_release_candidate.outputs.release_message }}
 
   ui_desktop:
     name: UI desktop (Tauri) (dev)
@@ -209,7 +178,7 @@ jobs:
       environment: dev
       source_ref: ${{ needs.prepare_release_candidate.outputs.source_sha }}
       publish_release: true
-      release_message: ${{ needs.prepare_release_candidate.outputs.release_notes_github_markdown }}
+      release_message: ${{ needs.prepare_release_candidate.outputs.release_message }}
 
   docker:
     name: Docker images (dev)
@@ -260,69 +229,102 @@ jobs:
           done
 
   release_status:
-    name: Summarize nightly release status
+    name: Project terminal nightly release status
     if: ${{ always() }}
     needs: [prepare_release_candidate, cli, hstack, server_runtime, ui_web, release_verify, promote_server, promote_hstack, promote_cli, promote_ui_web, ui_mobile, ui_desktop, docker, verify_promoted]
     runs-on: ubuntu-latest
     permissions:
       contents: read
     steps:
-      - name: Checkout trusted release status projector
+      - name: Checkout trusted workflow control bytes
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           repository: ${{ job.workflow_repository }}
           ref: ${{ job.workflow_sha }}
+          path: .release-control
+          fetch-depth: 1
           persist-credentials: false
+
       - name: Setup Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 22.x
-      - name: Project terminal release status
+
+      - name: Project nightly release status facts
         env:
-          SOURCE_SHA: ${{ needs.prepare_release_candidate.outputs.source_sha }}
-          CLI_RESULT: ${{ needs.cli.result }}
-          HSTACK_RESULT: ${{ needs.hstack.result }}
-          SERVER_RESULT: ${{ needs.server_runtime.result }}
-          UI_WEB_RESULT: ${{ needs.ui_web.result }}
-          VERIFY_RESULT: ${{ needs.release_verify.result }}
-          PROMOTE_SERVER_RESULT: ${{ needs.promote_server.result }}
-          PROMOTE_HSTACK_RESULT: ${{ needs.promote_hstack.result }}
-          PROMOTE_CLI_RESULT: ${{ needs.promote_cli.result }}
-          PROMOTE_UI_WEB_RESULT: ${{ needs.promote_ui_web.result }}
-          UI_MOBILE_RESULT: ${{ needs.ui_mobile.result }}
-          UI_DESKTOP_RESULT: ${{ needs.ui_desktop.result }}
+          RELEASE_RUN: ${{ github.run_id }}
+          RELEASE_RUN_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          RELEASE_RUN_NAME: NIGHTLY — Dev Releases
+          SOURCE_SHA: ${{ needs.prepare_release_candidate.outputs.source_sha || github.sha }}
+          CANDIDATE_RESULT: ${{ needs.prepare_release_candidate.result }}
+          IMMUTABLE_VERIFICATION_RESULT: ${{ needs.release_verify.result }}
+          CLI_RESULT: ${{ needs.promote_cli.result }}
+          STACK_RESULT: ${{ needs.promote_hstack.result }}
+          SERVER_RESULT: ${{ needs.promote_server.result }}
+          UI_WEB_RESULT: ${{ needs.promote_ui_web.result }}
+          MOBILE_RESULT: ${{ needs.ui_mobile.result }}
+          DESKTOP_RESULT: ${{ needs.ui_desktop.result }}
           DOCKER_RESULT: ${{ needs.docker.result }}
-          VERIFY_PROMOTED_RESULT: ${{ needs.verify_promoted.result }}
+          POST_PROMOTION_RESULT: ${{ needs.verify_promoted.result }}
         run: |
           set -euo pipefail
           node --input-type=module <<'NODE' > "$RUNNER_TEMP/release-status-input.json"
-          import { writeFileSync } from 'node:fs';
-          const ids = [
-            ['cli', 'CLI_RESULT'], ['hstack', 'HSTACK_RESULT'], ['server', 'SERVER_RESULT'], ['ui-web', 'UI_WEB_RESULT'],
-            ['candidate-verification', 'VERIFY_RESULT'], ['promote-server', 'PROMOTE_SERVER_RESULT'],
-            ['promote-hstack', 'PROMOTE_HSTACK_RESULT'], ['promote-cli', 'PROMOTE_CLI_RESULT'],
-            ['promote-ui-web', 'PROMOTE_UI_WEB_RESULT'], ['ui-mobile', 'UI_MOBILE_RESULT'],
-            ['ui-desktop', 'UI_DESKTOP_RESULT'], ['docker', 'DOCKER_RESULT'], ['rolling-verification', 'VERIFY_PROMOTED_RESULT'],
+          const result = (name) => ['success', 'skipped'].includes(process.env[name]) ? process.env[name] : 'failed';
+          const sourceSha = process.env.SOURCE_SHA;
+          const item = (id, required, evidence, name, verified, recoveryHint) => ({
+            id,
+            requested: true,
+            required,
+            evidence,
+            result: evidence === 'accepted' && result(name) === 'success' ? 'accepted' : result(name),
+            identity: { sourceSha, verified },
+            recoveryHint,
+          });
+          const promotedVerified = (name) => result(name) === 'success' && result('POST_PROMOTION_RESULT') === 'success';
+          const observed = [
+            item('candidate', true, 'verified', 'CANDIDATE_RESULT', result('CANDIDATE_RESULT') === 'success', { job: 'prepare_release_candidate' }),
+            item('immutable_candidate_verification', true, 'verified', 'IMMUTABLE_VERIFICATION_RESULT', result('IMMUTABLE_VERIFICATION_RESULT') === 'success', { job: 'release_verify' }),
+            item('cli_rolling_release', false, 'verified', 'CLI_RESULT', promotedVerified('CLI_RESULT'), { job: 'promote_cli' }),
+            item('hstack_rolling_release', false, 'verified', 'STACK_RESULT', promotedVerified('STACK_RESULT'), { job: 'promote_hstack' }),
+            item('server_rolling_release', false, 'verified', 'SERVER_RESULT', promotedVerified('SERVER_RESULT'), { job: 'promote_server' }),
+            item('ui_web_rolling_release', false, 'verified', 'UI_WEB_RESULT', promotedVerified('UI_WEB_RESULT'), { job: 'promote_ui_web' }),
+            item('ui_mobile', false, 'accepted', 'MOBILE_RESULT', false, { job: 'ui_mobile' }),
+            item('ui_desktop', false, 'accepted', 'DESKTOP_RESULT', false, { job: 'ui_desktop' }),
+            item('docker', false, 'accepted', 'DOCKER_RESULT', false, { job: 'docker' }),
+            item('post_promotion_identity', false, 'verified', 'POST_PROMOTION_RESULT', result('POST_PROMOTION_RESULT') === 'success', { job: 'verify_promoted' }),
           ];
-          const normalizeResult = (value) => value === 'success' ? 'success' : value === 'skipped' ? 'skipped' : 'failed';
-          const input = {
-            run: process.env.GITHUB_RUN_ID,
+          process.stdout.write(`${JSON.stringify({
+            run: { id: Number(process.env.RELEASE_RUN), url: process.env.RELEASE_RUN_URL, name: process.env.RELEASE_RUN_NAME },
             channel: 'dev',
-            sourceSha: process.env.SOURCE_SHA || 'unavailable',
-            requestedSurfaces: ids.map(([id]) => ({ id, requested: true, required: true })),
-            surfaces: ids.map(([id, envName]) => {
-              const result = normalizeResult(process.env[envName]);
-              return { id, result, ...(result === 'success' ? { identity: { verified: true } } : {}) };
-            }),
-          };
-          writeFileSync('/dev/stdout', `${JSON.stringify(input)}\n`);
+            sourceSha,
+            requestedSurfaces: observed.map(({ id, requested, required, evidence }) => ({ id, requested, required, evidence })),
+            surfaces: observed.map(({ id, result: surfaceResult, identity, recoveryHint }) => ({ id, result: surfaceResult, identity, recoveryHint })),
+          })}\n`);
           NODE
-          node scripts/pipeline/release/summarize-release-status.mjs \
+          node "$GITHUB_WORKSPACE/.release-control/scripts/pipeline/release/summarize-release-status.mjs" \
             --input "$RUNNER_TEMP/release-status-input.json" \
             --out "$RUNNER_TEMP/release-status.json"
-          {
-            echo '## Nightly release status'
-            echo '```json'
-            cat "$RUNNER_TEMP/release-status.json"
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Write nightly release status summary
+        run: |
+          node --input-type=module <<'NODE' >> "$GITHUB_STEP_SUMMARY"
+          import { readFile } from 'node:fs/promises';
+          const status = JSON.parse(await readFile(`${process.env.RUNNER_TEMP}/release-status.json`, 'utf8'));
+          console.log('## Nightly release status');
+          console.log(`Channel: \`${status.channel}\`  \nSource: \`${status.sourceSha}\`  \nTerminal: **${status.terminal}**`);
+          console.log('\n| Surface | State | Result | Exact identity |\n| --- | --- | --- | --- |');
+          for (const surface of status.surfaces) {
+            console.log(`| ${surface.id} | ${surface.state} | ${surface.result ?? '-'} | ${surface.identity?.verified === true ? 'yes' : 'no'} |`);
+          }
+          console.log('\n<details><summary>Exact status JSON</summary>\n');
+          console.log('```json');
+          console.log(JSON.stringify(status, null, 2));
+          console.log('```\n</details>');
+          NODE
+
+      - name: Upload nightly release status artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: happier-release-status
+          path: ${{ runner.temp }}/release-status.json
+          if-no-files-found: error

@@ -16,7 +16,7 @@ async function loadFile(rel) {
   return readFile(join(repoRoot, rel), 'utf8');
 }
 
-test('release workflow only promotes a materialized source on production and routes source_ref by environment', async () => {
+test('release workflow only promotes and publishes the exact prepared candidate source', async () => {
   const raw = await loadWorkflow('release.yml');
 
   // If CI gate fails, checks is skipped; downstream must not treat that as OK to promote/deploy.
@@ -36,8 +36,8 @@ test('release workflow only promotes a materialized source on production and rou
   assert.match(raw, /if \[ "\$env_name" = "preview" \]; then[\s\S]*?if \[ "\$confirm" != "release dev to preview" \]; then/);
   assert.doesNotMatch(raw, /\[ "\$confirm" != "release dev to preview" \] && \[ "\$confirm" != "release dev to main" \]/);
 
-  assert.match(raw, /source_ref:\s*\$\{\{ inputs\.environment == 'production' && 'main' \|\| 'preview' \}\}/);
-  assert.match(raw, /publish_npm:[\s\S]*?source_ref:\s*\$\{\{ inputs\.environment == 'production' && 'main' \|\| 'preview' \}\}/);
+  assert.match(raw, /source_ref:\s*\$\{\{ needs\.prepare_release_candidate\.outputs\.source_sha \}\}/);
+  assert.match(raw, /publish_npm:[\s\S]*?source_ref:\s*\$\{\{ needs\.prepare_release_candidate\.outputs\.source_sha \}\}/);
   assert.match(raw, /deploy_ui:[\s\S]*?bump:\s*none/);
   assert.match(
     raw,
@@ -72,8 +72,8 @@ test('release workflow publishes server runner only when explicitly requested', 
   );
   assert.match(
     raw,
-    /publish_server_runtime:[\s\S]*?source_ref:\s*\$\{\{\s*inputs\.environment == 'production' && 'main' \|\| 'preview'\s*\}\}/,
-    'server runtime publishing should build from main for production and preview for preview releases',
+    /publish_server_runtime:[\s\S]*?source_ref:\s*\$\{\{\s*needs\.prepare_release_candidate\.outputs\.source_sha\s*\}\}/,
+    'server runtime publishing should build from the exact prepared candidate',
   );
   assert.match(
     raw,
@@ -120,7 +120,7 @@ test('release workflow fans a versioned Stack target through immutable publicati
 
   assert.equal(publisher?.uses, './.github/workflows/publish-hstack-binaries.yml');
   assert.match(String(publisher?.if ?? ''), /needs\.plan\.outputs\.publish_stack == 'true'/);
-  assert.match(String(publisher?.with?.authorized_sha ?? ''), /needs\.bind_server_source\.outputs\.authorized_sha/);
+  assert.match(String(publisher?.with?.authorized_sha ?? ''), /needs\.prepare_release_candidate\.outputs\.source_sha/);
   assert.equal(publisher?.with?.publish_rolling, false);
 
   assert.ok(candidateVerifier?.needs?.includes('publish_hstack_binaries'));
@@ -160,8 +160,8 @@ test('release workflow can publish self-host UI web bundle via a dedicated workf
   );
   assert.match(
     raw,
-    /publish_ui_web:[\s\S]*?source_ref:\s*\$\{\{\s*inputs\.environment == 'production' && 'main' \|\| 'preview'\s*\}\}/,
-    'ui web bundle publishing should build from main for production and preview for preview releases',
+    /publish_ui_web:[\s\S]*?source_ref:\s*\$\{\{\s*needs\.prepare_release_candidate\.outputs\.source_sha\s*\}\}/,
+    'ui web bundle publishing should build from the exact prepared candidate',
   );
   assert.match(
     raw,
@@ -179,8 +179,8 @@ test('release workflow routes docker publishing through stable for production an
   );
   assert.match(
     raw,
-    /publish_docker:[\s\S]*?source_ref:\s*\$\{\{\s*inputs\.environment == 'production' && 'main' \|\| 'preview'\s*\}\}/,
-    'docker publishing should build from main for production and preview for preview releases',
+    /publish_docker:[\s\S]*?source_ref:\s*\$\{\{\s*needs\.prepare_release_candidate\.outputs\.source_sha\s*\}\}/,
+    'docker publishing should build from the exact prepared candidate',
   );
 });
 
@@ -376,7 +376,7 @@ test('release workflow passes exact-candidate Expo notes down to promote-ui', as
   const workflow = parse(raw);
   assert.equal(workflow?.on?.workflow_dispatch?.inputs?.release_message, undefined, 'release.yml must not accept operator-authored release notes');
   assert.match(raw, /deploy_ui:[\s\S]*?uses:\s*\.\/\.github\/workflows\/promote-ui\.yml/);
-  assert.match(raw, /expo_update_message:\s*\$\{\{\s*needs\.bind_server_source\.outputs\.release_notes_expo_message\s*\}\}/);
+  assert.match(raw, /expo_update_message:\s*\$\{\{\s*needs\.prepare_release_candidate\.outputs\.release_notes_expo_message\s*\}\}/);
 });
 
 test('local release planning resolves remote identities without changing local refs', async () => {

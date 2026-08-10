@@ -8,15 +8,22 @@ import { summarizeReleaseStatus } from './summarize-release-status.mjs';
 const SCRIPT_PATH = fileURLToPath(new URL('./summarize-release-status.mjs', import.meta.url));
 
 const SOURCE_SHA = 'a'.repeat(40);
+const OPERATION_ID = 'rel_candidate_20260809';
+const RUN = {
+  id: 42,
+  url: 'https://github.com/happier-dev/happier/actions/runs/42',
+  name: `RELEASE — Publish (${OPERATION_ID})`,
+};
 
 function input(overrides = {}) {
   return {
-    run: 42,
+    operationId: OPERATION_ID,
+    run: RUN,
     channel: 'stable',
     sourceSha: SOURCE_SHA,
     requestedSurfaces: [
-      { id: 'npm', required: true },
-      { id: 'deploy', required: true },
+      { id: 'npm', required: true, evidence: 'verified' },
+      { id: 'deploy', required: true, evidence: 'verified' },
     ],
     surfaces: [
       {
@@ -38,7 +45,8 @@ test('all requested required surfaces with exact owner verification are complete
   assert.deepEqual(summarizeReleaseStatus(input()), {
     schemaVersion: 1,
     kind: 'happier.release-status.v1',
-    run: 42,
+    operationId: OPERATION_ID,
+    run: RUN,
     channel: 'stable',
     sourceSha: SOURCE_SHA,
     surfaces: [
@@ -46,6 +54,7 @@ test('all requested required surfaces with exact owner verification are complete
         id: 'npm',
         requested: true,
         required: true,
+        evidence: 'verified',
         state: 'complete',
         result: 'success',
         identity: { digest: 'sha512:npm', verified: true, version: '1.2.3' },
@@ -54,6 +63,7 @@ test('all requested required surfaces with exact owner verification are complete
         id: 'deploy',
         requested: true,
         required: true,
+        evidence: 'verified',
         state: 'complete',
         result: 'success',
         identity: { revision: SOURCE_SHA, verified: true },
@@ -89,18 +99,19 @@ test('summary JSON is deterministic for equivalent observation order and metadat
   assert.equal(JSON.stringify(first), JSON.stringify(second));
 });
 
-test('accepted or unverified outcomes are partial even when a recovery hint is present', () => {
+test('accepted owner outcomes remain published rather than being called complete', () => {
   const result = summarizeReleaseStatus(input({
-    requestedSurfaces: [{ id: 'mobile', required: true }],
+    requestedSurfaces: [{ id: 'mobile', required: true, evidence: 'accepted' }],
     surfaces: [{
       id: 'mobile',
       result: 'accepted',
-      identity: { verified: true, buildId: 'eas-123' },
+      identity: { verified: false, buildId: 'eas-123' },
       recoveryHint: { workflow: 'publish-mobile', inputs: { retry: 'eas-123' } },
     }],
   }));
-  assert.equal(result.surfaces[0].state, 'partial');
-  assert.equal(result.terminal, 'partial');
+  assert.equal(result.surfaces[0].evidence, 'accepted');
+  assert.equal(result.surfaces[0].state, 'published');
+  assert.equal(result.terminal, 'published');
   assert.deepEqual(result.surfaces[0].recoveryHint, {
     inputs: { retry: 'eas-123' },
     workflow: 'publish-mobile',
@@ -109,7 +120,7 @@ test('accepted or unverified outcomes are partial even when a recovery hint is p
 
 test('failed required surface is terminally failed', () => {
   const result = summarizeReleaseStatus(input({
-    requestedSurfaces: [{ id: 'docker', required: true }],
+    requestedSurfaces: [{ id: 'docker', required: true, evidence: 'verified' }],
     surfaces: [{
       id: 'docker',
       result: 'failed',
@@ -120,6 +131,7 @@ test('failed required surface is terminally failed', () => {
     id: 'docker',
     requested: true,
     required: true,
+    evidence: 'verified',
     state: 'failed',
     result: 'failed',
     recoveryHint: { inputs: { sha: SOURCE_SHA }, workflow: 'publish-docker' },
@@ -127,15 +139,24 @@ test('failed required surface is terminally failed', () => {
   assert.equal(result.terminal, 'failed');
 });
 
+test('a selected surface failure is terminal even when its release plan marks it optional', () => {
+  const result = summarizeReleaseStatus(input({
+    requestedSurfaces: [{ id: 'deploy_docs', required: false, evidence: 'accepted' }],
+    surfaces: [{ id: 'deploy_docs', result: 'failed', recoveryHint: { job: 'deploy_docs' } }],
+  }));
+  assert.equal(result.surfaces[0].state, 'failed');
+  assert.equal(result.terminal, 'failed');
+});
+
 test('missing or skipped optional surfaces are partial, while an explicitly unrequested surface is not_requested', () => {
   const result = summarizeReleaseStatus({
-    run: 'nightly-7',
+    run: { ...RUN, name: 'Nightly release' },
     channel: 'dev',
     sourceSha: SOURCE_SHA,
     requestedSurfaces: [
-      { id: 'npm', required: true },
-      { id: 'mobile', required: false },
-      { id: 'desktop', requested: false, required: true },
+      { id: 'npm', required: true, evidence: 'verified' },
+      { id: 'mobile', required: false, evidence: 'accepted' },
+      { id: 'desktop', requested: false, required: true, evidence: 'verified' },
     ],
     surfaces: [
       { id: 'npm', result: 'success', identity: { verified: true } },
@@ -154,9 +175,9 @@ test('missing or skipped optional surfaces are partial, while an explicitly unre
 test('intentionally unrequested skipped and failed observations do not make an otherwise complete release terminally fail', () => {
   const result = summarizeReleaseStatus(input({
     requestedSurfaces: [
-      { id: 'candidate-verification', required: true },
-      { id: 'npm', requested: false, required: true },
-      { id: 'release-verification', requested: false, required: true },
+      { id: 'candidate-verification', required: true, evidence: 'verified' },
+      { id: 'npm', requested: false, required: true, evidence: 'verified' },
+      { id: 'release-verification', requested: false, required: true, evidence: 'verified' },
     ],
     surfaces: [
       { id: 'candidate-verification', result: 'success', identity: { verified: true } },
@@ -189,6 +210,31 @@ test('input and observations use the explicit result enum', () => {
   assert.throws(() => summarizeReleaseStatus(input({
     surfaces: [{ id: 'npm', result: 'green', identity: { verified: true } }],
   })), /result/);
+});
+
+test('status requires a declared evidence level and does not treat acceptance as verification', () => {
+  assert.throws(() => summarizeReleaseStatus(input({
+    requestedSurfaces: [{ id: 'npm', required: true }],
+  })), /evidence/);
+
+  const result = summarizeReleaseStatus(input({
+    requestedSurfaces: [{ id: 'deploy', required: true, evidence: 'verified' }],
+    surfaces: [{ id: 'deploy', result: 'accepted', identity: { verified: false } }],
+  }));
+  assert.equal(result.surfaces[0].state, 'partial');
+  assert.equal(result.terminal, 'partial');
+});
+
+test('status binds a conductor operation to the exact GitHub run identity', () => {
+  assert.throws(() => summarizeReleaseStatus(input({
+    operationId: 'release-42',
+  })), /operationId/);
+  assert.throws(() => summarizeReleaseStatus(input({
+    run: { ...RUN, name: 'RELEASE — Publish' },
+  })), /operationId/);
+  assert.throws(() => summarizeReleaseStatus(input({
+    run: { ...RUN, url: 'https://github.com/happier-dev/happier/actions/runs/43' },
+  })), /run/);
 });
 
 test('CLI reads stdin and writes JSON-only stdout', () => {

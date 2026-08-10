@@ -48,15 +48,14 @@ directions rather than imposing a fleet wait or a global cutover:
   coexistence makes that direction reachable.
 
 The last direction is conditional, not an excuse to add dual writers or a
-permanent fallback. The public release contract exposes these directions for
-the `integrated`, `stable`, and manual `deep` profiles. `integrated` keeps its
-automatic evidence bounded to artifact verification, binary smoke, and session
-continuity, while `supported-old-relay-compatibility` remains named manual
-evidence. `stable` adds CLI-update and daemon-continuity evidence and runs the
-same pinned old-relay gate against the exact bound candidate before immutable
-candidate verification. Installer and Docker validation are risk-selected for
-the affected surface rather than fleet-wide automatic gates; deep certification
-owns cross-OS, provider, mobile, and comprehensive review.
+permanent fallback. The release agent derives the affected, reachable
+directions from the actual diff and supported released baselines. Scripts prove
+only named behaviors against exact artifacts; they do not issue a general
+compatibility verdict. The named Docker relay-upgrade scenario is selected
+automatically only when the release contains an exact server candidate and a
+supported published relay predecessor. Installer and broader Docker validation
+remain risk-selected; deep certification owns cross-OS, provider, mobile, and
+comprehensive review.
 Product seams still own the actual compatibility implementation.
 
 - New readers accept supported old shapes; new writes use the canonical current shape.
@@ -68,6 +67,21 @@ Product seams still own the actual compatibility implementation.
 - For an incompatible transition, prefer prepare/expand → activate/migrate → contract when mixed-version coexistence or rollback is an approved requirement. Do not assume that old clients must read new writes merely because the server is self-hosted.
 
 Before adding dual writers, parallel persisted formats, rollout modes, operator flags, socket-drain protocols, or a mandatory client floor, compare their lifetime cost with the actual user behavior required. If preserving old-client/new-server behavior for a major change would require substantial machinery, stop and obtain an explicit developer/product decision among: operation-scoped degradation, a documented client update requirement, or the heavier compatibility transition. An agent must not silently choose either forced upgrades or heavy compatibility machinery. This exception is for genuinely incompatible, high-cost transitions; routine server changes must remain compatible and must not manufacture client-update requirements.
+
+### Self-hosted relay release checks
+
+For stable releases, prioritize candidate UI, CLI, and daemon core flows against
+the supported older self-hosted relay. Check the bounded reverse direction only
+for core usability affected by the changed seam. Check released persisted state
+against candidate readers/migrations, and candidate writers against old readers
+only when rollback or coexistence makes that direction reachable.
+
+The registry may automatically select the exact `docker-release-assets`
+published-channel to candidate upgrade when a server candidate and supported
+published predecessor both exist. That proves one named SQLite/Postgres relay
+upgrade; it is not a generic compatibility verdict. Release orchestration never
+waits for client adoption, self-hosted relay upgrades, daemon drain, migration
+cohorts, or a global cutover.
 
 ## Proportionate matrix
 

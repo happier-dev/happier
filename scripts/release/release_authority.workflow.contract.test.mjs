@@ -38,24 +38,24 @@ function renderConcurrencyGroup(template, { repository, channel, ref }) {
     .replaceAll('${{ github.ref }}', ref);
 }
 
-test('the full hosted release binds one server SHA and publishes runtime before deploying that exact SHA', () => {
+test('the full hosted release binds one exact candidate SHA and publishes runtime before deploying that exact SHA', () => {
   const release = workflow('release.yml');
-  const bind = release.jobs.bind_server_source;
-  assert.ok(bind, 'release workflow must bind the post-promotion server source once');
-  assert.ok(bind.outputs.authorized_sha);
+  const candidate = release.jobs.prepare_release_candidate;
+  assert.ok(candidate, 'release workflow must bind the post-promotion candidate source once');
+  assert.ok(candidate.outputs.source_sha);
 
   const publisher = release.jobs.publish_server_runtime;
   const deploy = release.jobs.deploy_server;
-  assert.ok(needs(publisher).includes('bind_server_source'));
-  assert.ok(needs(deploy).includes('bind_server_source'));
+  assert.ok(needs(publisher).includes('prepare_release_candidate'));
+  assert.ok(needs(deploy).includes('prepare_release_candidate'));
   assert.ok(needs(deploy).includes('promote_server_runtime'));
   assert.equal(
     publisher.with.authorized_sha,
-    '${{ needs.bind_server_source.outputs.authorized_sha }}',
+    '${{ needs.prepare_release_candidate.outputs.source_sha }}',
   );
   assert.equal(
     deploy.with.source_ref,
-    '${{ needs.bind_server_source.outputs.authorized_sha }}',
+    '${{ needs.prepare_release_candidate.outputs.source_sha }}',
   );
 });
 
@@ -82,7 +82,6 @@ test('previously broad release-path tokens use the minimum current-repository co
     ['promote-website.yml/promote/Create GitHub App token', 'write'],
     ['promote-docs.yml/promote/Create GitHub App token', 'write'],
     ['publish-docker.yml/publish/Create GitHub App token', 'read'],
-    ['build-ui-mobile-local.yml/release_notes_assets/Create GitHub App token', 'read'],
     ['build-ui-mobile-local.yml/build_android/Create GitHub App token (APK publishing)', 'write'],
     ['publish-ui-mobile-dev.yml/publish/Create GitHub App token', 'read'],
     ['publish-ui-mobile-dev.yml/ios_cloud/Create GitHub App token', 'read'],

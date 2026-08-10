@@ -1129,6 +1129,19 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ inputs.checkout_sha != '' && inputs.checkout_sha || github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Verify exact requested checkout
+        env:
+          CHECKOUT_SHA: ${{ inputs.checkout_sha }}
+        run: |
+          set -euo pipefail
+          if [ -n "$CHECKOUT_SHA" ]; then
+            test "$(git rev-parse HEAD)" = "$CHECKOUT_SHA"
+          fi
 
       - name: Setup Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
@@ -1156,12 +1169,17 @@ jobs:
           args: --frozen-lockfile --ignore-engines
 
       - name: Run unified Docker release-assets validation
+        env:
+          INSTALLERS_CHANNEL: ${{ inputs.installers_channel }}
         run: |
+          set -euo pipefail
           node scripts/pipeline/run.mjs release-validate \
             --suite docker-release-assets \
             --platform linux \
-            --source local-build \
-            --ref "."
+            --from-source published-channel \
+            --from-ref "${INSTALLERS_CHANNEL}" \
+            --to-source local-build \
+            --to-ref "."
 
   self-host-systemd-e2e:
     if: ${{ (github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call') && inputs.run_self_host_systemd }}

@@ -72,7 +72,7 @@ Answer in place. Do not append stale answers below.
    A: Default no; validation only unless human approves.
 3. Q: Should stress run?
    A: Default no; run only if daemon/session concurrency risks surface.
-4. Q: Is any server-upgrade manual scenario deferred because the registered `server-upgrade` suite has no executor?
+4. Q: Did relay code, configuration, persistence, or migrations change, and if so what exact released-relay-to-candidate scenario is required?
    A: TODO
 
 ## Pre-Mortem

@@ -69,8 +69,7 @@ test('release workflow resolves the public profile internally before CI and plan
   assert.equal(parsed.jobs.ci.if, "${{ needs.resolve_validation_profile.result == 'success' }}");
   assert.equal(parsed.jobs.ci.with.run_e2e_core, "${{ needs.resolve_validation_profile.outputs.checks_profile == 'full' }}");
   assert.equal(parsed.jobs.ci.with.run_e2e_core_slow, undefined);
-  assert.equal(parsed.jobs.supported_old_relay_compatibility.with.checkout_sha, '${{ needs.bind_server_source.outputs.authorized_sha }}');
-  assert.match(parsed.jobs.supported_old_relay_compatibility.if, /needs\.plan\.outputs\.validation_profile == 'stable'/);
+  assert.equal(parsed.jobs.supported_old_relay_compatibility, undefined);
   assert.ok(parsed.jobs.plan.needs.includes('resolve_validation_profile'));
   assert.equal(parsed.jobs.plan.outputs.validation_profile, '${{ needs.resolve_validation_profile.outputs.profile }}');
   assert.equal(parsed.jobs.plan.outputs.checks_profile, '${{ needs.resolve_validation_profile.outputs.checks_profile }}');

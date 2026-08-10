@@ -133,7 +133,6 @@ Known suites:
 - `artifact-verify`
 - `docker-release-assets`
 - `cli-update`
-- `server-upgrade` registered but no executor; cover manually
 - `daemon-continuity`
 - `session-continuity`
 

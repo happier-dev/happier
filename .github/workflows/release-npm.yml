@@ -15,6 +15,11 @@ on:
         required: true
         default: auto
         type: string
+      authorized_sha:
+        description: "Caller-bound exact source SHA; optional for direct manual release"
+        required: false
+        default: ""
+        type: string
       run_tests:
         description: "Checks — Run publish checks/tests before publishing"
         required: true
@@ -58,6 +63,10 @@ on:
         description: "Promotion — Source ref to release from (auto: preview→preview, production→main)"
         required: false
         default: auto
+        type: string
+      authorized_sha:
+        required: false
+        default: ""
         type: string
       run_tests:
         description: "Checks — Run publish checks/tests before publishing"
@@ -161,6 +170,7 @@ jobs:
       - name: Validate inputs
         env:
           INPUT_CHANNEL: ${{ inputs.channel }}
+          INPUT_AUTHORIZED_SHA: ${{ inputs.authorized_sha }}
           INPUT_NPM_TAG: ${{ inputs.npm_tag }}
           INPUT_PUBLISH_CLI: ${{ inputs.publish_cli }}
           INPUT_PUBLISH_STACK: ${{ inputs.publish_stack }}
@@ -179,12 +189,17 @@ jobs:
             echo "npm_tag must be '${expected_tag}' for channel='${INPUT_CHANNEL}' (got '${INPUT_NPM_TAG}')." >&2
             exit 1
           fi
+          if [ -n "$INPUT_AUTHORIZED_SHA" ] && ! [[ "$INPUT_AUTHORIZED_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "authorized_sha must be a full lowercase 40-character commit SHA when supplied." >&2
+            exit 1
+          fi
 
       - name: Resolve source ref
         id: resolve_source
         env:
           INPUT_CHANNEL: ${{ inputs.channel }}
           INPUT_SOURCE_REF: ${{ inputs.source_ref }}
+          INPUT_AUTHORIZED_SHA: ${{ inputs.authorized_sha }}
         run: |
           set -euo pipefail
           channel="${INPUT_CHANNEL}"
@@ -197,16 +212,22 @@ jobs:
             fi
           fi
 
-          if [ "$channel" = "preview" ] && [ "$src" != "preview" ]; then
-            echo "Preview releases must run from preview (got source_ref='${src}')." >&2
-            exit 1
+          canonical_ref="preview"
+          if [ "$channel" = "production" ]; then
+            canonical_ref="main"
           fi
-          if [ "$channel" = "production" ] && [ "$src" != "main" ]; then
-            echo "Production releases must run from main (got source_ref='${src}')." >&2
+
+          if [ -n "$INPUT_AUTHORIZED_SHA" ]; then
+            src="$INPUT_AUTHORIZED_SHA"
+          elif [ "$src" != "$canonical_ref" ]; then
+            echo "${channel} releases must run from $canonical_ref unless authorized_sha binds an exact source (got source_ref='$src')." >&2
             exit 1
           fi
 
-          echo "ref=$src" >> "$GITHUB_OUTPUT"
+          {
+            echo "ref=$src"
+            echo "canonical_ref=$canonical_ref"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Enforce trusted refs for manual dispatch
         run: |
@@ -228,6 +249,25 @@ jobs:
           ref: ${{ steps.resolve_source.outputs.ref }}
           fetch-depth: 0
           persist-credentials: false
+
+      - name: Verify authorized source remains canonical
+        env:
+          AUTHORIZED_SHA: ${{ inputs.authorized_sha }}
+          CANONICAL_REF: ${{ steps.resolve_source.outputs.canonical_ref }}
+        run: |
+          set -euo pipefail
+          if [ -z "$AUTHORIZED_SHA" ]; then
+            exit 0
+          fi
+          if [ "$(git rev-parse HEAD)" != "$AUTHORIZED_SHA" ]; then
+            echo "Checked out source does not match authorized_sha." >&2
+            exit 1
+          fi
+          current_sha="$(git ls-remote origin "refs/heads/$CANONICAL_REF" | awk 'NR == 1 { print $1 }')"
+          if [ "$current_sha" != "$AUTHORIZED_SHA" ]; then
+            echo "Canonical source branch '$CANONICAL_REF' no longer resolves to authorized_sha." >&2
+            exit 1
+          fi
 
       - name: Setup Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020

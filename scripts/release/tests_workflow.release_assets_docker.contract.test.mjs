@@ -18,7 +18,13 @@ test('tests workflow exposes a thin docker release-assets job through release-va
 
   assert.match(
     raw,
-    /release-assets-docker:[\s\S]*?node scripts\/pipeline\/run\.mjs release-validate \\\n[\s\S]*?--suite docker-release-assets \\\n[\s\S]*?--platform linux \\\n[\s\S]*?--source local-build \\\n[\s\S]*?--ref "\."/,
-    'release-assets-docker job should call the unified release-validation runner against the local-build Docker suite',
+    /release-assets-docker:[\s\S]*?ref: \$\{\{ inputs\.checkout_sha != '' && inputs\.checkout_sha \|\| github\.sha \}\}/,
+    'release-assets-docker should check out the exact candidate SHA',
+  );
+  assert.match(raw, /release-assets-docker:[\s\S]*?test "\$\(git rev-parse HEAD\)" = "\$CHECKOUT_SHA"/);
+  assert.match(
+    raw,
+    /release-assets-docker:[\s\S]*?--suite docker-release-assets \\\n[\s\S]*?--platform linux \\\n[\s\S]*?--from-source published-channel \\\n[\s\S]*?--from-ref "\$\{INSTALLERS_CHANNEL\}" \\\n[\s\S]*?--to-source local-build \\\n[\s\S]*?--to-ref "\."/,
+    'release-assets-docker should upgrade the selected published predecessor to the exact candidate checkout',
   );
 });

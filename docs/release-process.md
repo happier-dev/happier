@@ -31,26 +31,29 @@ node scripts/pipeline/run.mjs release-contract
 It names the canonical versioned release targets, executable validation suites,
 and three profiles:
 
-- `integrated` is the complete but bounded normal-release profile. Its
-  automatic suite membership is `artifact-verify`, `binary-smoke`, and
-  `session-continuity`; its required named compatibility evidence is
-  `supported-old-relay-compatibility`, selected manually.
-- `stable` includes `integrated` evidence plus automatic `cli-update` and
-  `daemon-continuity`, plus the candidate-bound automatic
-  `supported-old-relay-compatibility` proof; `agent-diff-sanity` remains
-  stable-only manual evidence.
+- `integrated` and `stable` expose the same eligible automatic suite catalog.
+  The registry's candidate-applicability owner selects only suites the exact
+  release can exercise: artifact verification and CLI upgrade for a CLI
+  candidate; binary smoke for CLI or server candidates; session continuity for
+  a server candidate; and the named Docker relay upgrade only when a supported
+  published relay predecessor exists.
+- `stable` additionally selects the full source-check profile and requires the
+  private release agent to review preview candidate equivalence and soak,
+  breaking changes, reachable version-skew directions, persistence, and
+  accidental lockstep requirements.
 - `deep` is manual comprehensive certification. It has no automatic suite
   membership, owns risk-selected installer and Docker checks when those
   surfaces change, and covers cross-OS, provider, mobile, and full
   certification before it is considered complete. It is never a normal-release
   dispatch.
 
-`supported-old-relay-compatibility` names the existing pinned server-v0.2.1
-compatibility gate. Stable releases run it after the exact candidate SHA is
-bound and before immutable candidate verification; integrated releases retain
-it as named manual evidence. It does not add Docker or fleet orchestration.
-`installers-smoke` and `docker-release-assets` are not routine automatic
-release gates: select them only when their installer or Docker surface changed.
+The slow test lane contains two pinned server-v0.2.1 regressions for pending
+queue and first-prompt behavior. They are exact tests, not a general
+compatibility verdict. The release agent selects them when the actual diff can
+affect those seams and reports precisely what they prove.
+Broader installer, platform, provider, mobile, and historical-version checks
+remain risk-selected deep certification. No suite name emits a general
+compatibility verdict.
 
 The contract is public so callers can select and verify the right evidence;
 the operating procedure is private. Resolve it for an absolute checkout with:
@@ -61,7 +64,8 @@ hmaint release bootstrap --repo <absolute checkout> --json
 
 Use the returned private skill rather than copying a private release policy
 into this repository. A human go-ahead is required before any non-dry release
-dispatch. That go-ahead must name the selected profile and the exact SHA of the
+dispatch. Qualified V4 activation is not implemented in this release line; its
+separate approval input must remain false. That go-ahead must name the selected profile and the exact SHA of the
 candidate whose evidence was reviewed. Do not substitute a branch name or a
 moving channel pointer for the exact SHA.
 
@@ -81,7 +85,7 @@ When you want to publish/deploy a new preview build:
 1. Run **RELEASE — Publish (preview + production)** with:
    - `environment=preview`
    - `confirm=release dev to preview`
-2. The workflow runs the configured checks, optionally bumps versions (commit on `dev`), then promotes `dev` → `preview` (fast-forward).
+2. The workflow runs the configured checks against already materialized release-note/version source, then promotes `dev` → `preview` (fast-forward).
 3. Deploy/publish steps for the preview environment build from `preview` (not `dev`).
 
 ### Production release (preview → main)

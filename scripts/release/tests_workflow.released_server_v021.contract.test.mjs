@@ -11,7 +11,7 @@ function workflow(name) {
   return YAML.parse(readFileSync(resolve(repoRoot, '.github/workflows', name), 'utf8'));
 }
 
-test('the registered Ubuntu slow gate prepares and runs both exact server-v0.2.1 directions as required', () => {
+test('the Ubuntu slow gate prepares and runs the two exact server-v0.2.1 regression scenarios', () => {
   const testsWorkflow = workflow('tests.yml');
   const job = testsWorkflow.jobs['e2e-core-slow'];
   assert.equal(job['runs-on'], 'ubuntu-22.04');
@@ -74,41 +74,12 @@ test('the exact server-v0.2.1 gate accepts an optional immutable candidate check
   }
 });
 
-test('stable releases run the registered exact server-v0.2.1 gate against the bound candidate before immutable candidate verification', () => {
+test('normal release orchestration does not present the two exact regressions as a general compatibility verdict', () => {
   const releaseWorkflow = workflow('release.yml');
-  const compatibility = releaseWorkflow.jobs.supported_old_relay_compatibility;
   const candidateVerification = releaseWorkflow.jobs.verify_release_candidates;
 
   assert.ok(releaseWorkflow.jobs.ci.needs.includes('resolve_validation_profile'));
   assert.equal(releaseWorkflow.jobs.ci.with.run_e2e_core_slow, undefined);
-  assert.deepEqual(compatibility.needs, ['plan', 'bind_server_source']);
-  assert.match(
-    compatibility.if,
-    /needs\.plan\.outputs\.validation_profile == 'stable'/,
-    'the canonical public profile must select the candidate-bound compatibility proof',
-  );
-  assert.equal(compatibility.uses, './.github/workflows/tests.yml');
-  assert.equal(compatibility.with.run_e2e_core_slow, true);
-  assert.equal(compatibility.with.checkout_sha, '${{ needs.bind_server_source.outputs.authorized_sha }}');
-  for (const inputName of [
-    'run_ui',
-    'run_server',
-    'run_cli',
-    'run_stack',
-    'run_typecheck',
-    'run_cli_daemon_e2e',
-    'run_e2e_core',
-    'run_server_db_contract',
-    'run_installers_smoke',
-    'run_binary_smoke',
-  ]) {
-    assert.equal(compatibility.with[inputName], false, `${inputName} must stay outside the pinned compatibility gate`);
-  }
-
-  assert.ok(candidateVerification.needs.includes('supported_old_relay_compatibility'));
-  assert.match(
-    candidateVerification.if,
-    /needs\.plan\.outputs\.validation_profile != 'stable' \|\| needs\.supported_old_relay_compatibility\.result == 'success'/,
-    'stable candidate verification must not run until the candidate-bound old-relay proof succeeds',
-  );
+  assert.equal(releaseWorkflow.jobs.supported_old_relay_compatibility, undefined);
+  assert.ok(!candidateVerification.needs.includes('supported_old_relay_compatibility'));
 });

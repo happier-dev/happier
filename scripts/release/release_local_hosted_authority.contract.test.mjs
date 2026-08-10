@@ -58,6 +58,7 @@ exit 0
         '--source-sha', AUTHORIZED_DEV_SHA,
         '--workflow-control-sha', AUTHORIZED_DEV_SHA,
         '--release-profile', 'stable',
+        '--release-notes-id', '2026-08-09.1',
         '--allow-dirty', 'true',
       ],
       {
@@ -83,6 +84,55 @@ exit 0
     assert.match(output, /release profile=stable/);
     assert.match(output, /hosted release workflow/i);
     assert.doesNotMatch(commands, /publish-server-runtime|promote-deploy-branch|release upload/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('an explicit allow-dirty release dispatch does not reject staged local work', () => {
+  const root = mkdtempSync(join(tmpdir(), 'hosted-release-allow-dirty-'));
+  const bin = join(root, 'bin');
+  const log = join(root, 'commands.log');
+  mkdirSync(bin);
+  writeFileSync(log, '');
+  executable(
+    join(bin, 'git'),
+    `#!/bin/sh
+set -eu
+echo "git $*" >> ${JSON.stringify(log)}
+if [ "$1" = "diff" ] && [ "$2" = "--cached" ]; then exit 1; fi
+if [ "$1" = "rev-parse" ] && [ "$2" = "--abbrev-ref" ]; then printf 'dev\\n'; exit 0; fi
+if [ "$1" = "rev-parse" ] && [ "$2" = "FETCH_HEAD" ]; then printf '${AUTHORIZED_DEV_SHA}\\n'; exit 0; fi
+if [ "$1" = "fetch" ]; then exit 0; fi
+if [ "$1" = "ls-remote" ] && [ "$3" = "refs/heads/dev" ]; then printf '${AUTHORIZED_DEV_SHA}\\trefs/heads/dev\\n'; exit 0; fi
+echo "unexpected git call: $*" >&2
+exit 2
+`,
+  );
+  executable(join(bin, 'gh'), `#!/bin/sh\nset -eu\necho "gh $*" >> ${JSON.stringify(log)}\n`);
+
+  try {
+    const result = spawnSync(
+      process.execPath,
+      [
+        'scripts/pipeline/run.mjs',
+        'release',
+        '--confirm', 'release dev to preview',
+        '--repository', 'happier-dev/happier',
+        '--deploy-environment', 'preview',
+        '--deploy-targets', 'server',
+        '--source-sha', AUTHORIZED_DEV_SHA,
+        '--release-notes-id', '2026-08-09.1',
+        '--allow-dirty', 'true',
+      ],
+      {
+        cwd: repoRoot,
+        env: { ...process.env, PATH: `${bin}:${process.env.PATH ?? ''}` },
+        encoding: 'utf8',
+      },
+    );
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(readFileSync(log, 'utf8'), /gh workflow run release\.yml/);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

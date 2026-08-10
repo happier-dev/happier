@@ -1,23 +1,20 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-
-import { buildReleaseNotesBundle } from '../pipeline/release/release-notes/project-release-notes.mjs';
+import { summarizeReleaseStatus } from '../pipeline/release/summarize-release-status.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, '..', '..');
 
-test('nightly-dev current UI version has an exact publishable changelog section', async () => {
-  const uiPackage = JSON.parse(await readFile(join(repoRoot, 'apps', 'ui', 'package.json'), 'utf8'));
-  const changelog = await readFile(join(repoRoot, 'apps', 'ui', 'CHANGELOG.md'), 'utf8');
-
-  const bundle = buildReleaseNotesBundle(changelog, uiPackage.version);
-
-  assert.equal(bundle.version, uiPackage.version);
-  assert.ok(bundle.projections.github.markdown.trim());
-  assert.ok(bundle.projections.expo.message.trim());
+test('nightly-dev uses generic unattended copy instead of requiring a human-approved release-note entry', async () => {
+  const raw = await readFile(join(repoRoot, '.github', 'workflows', 'nightly-dev.yml'), 'utf8');
+  assert.match(raw, /prepare_release_candidate:[\s\S]*?release_message: \$\{\{ steps\.identity\.outputs\.release_message \}\}/);
+  assert.match(raw, /echo "release_message=Automated nightly dev release\."/);
+  assert.doesNotMatch(raw, /project-release-notes\.mjs/);
+  assert.doesNotMatch(raw, /release_notes_github_markdown|release_notes_expo_message/);
 });
 
 test('nightly-dev verifies exact immutable candidates before promoting rolling references', async () => {
@@ -59,14 +56,8 @@ test('nightly-dev verifies exact immutable candidates before promoting rolling r
   );
 });
 
-test('nightly-dev projects one exact candidate note bundle and terminal status', async () => {
+test('nightly-dev propagates generic unattended copy and terminal status', async () => {
   const raw = await readFile(join(repoRoot, '.github', 'workflows', 'nightly-dev.yml'), 'utf8');
-
-  assert.match(
-    raw,
-    /prepare_release_candidate:[\s\S]*?release_notes_github_markdown:[\s\S]*?release_notes_expo_message:[\s\S]*?project-release-notes\.mjs/,
-    'the exact nightly checkout must produce both note projections',
-  );
 
   for (const job of [
     'cli',
@@ -80,24 +71,77 @@ test('nightly-dev projects one exact candidate note bundle and terminal status',
   ]) {
     assert.match(
       raw,
-      new RegExp(job + ':[\\s\\S]*?needs:\\s*\\[[^\\]]*prepare_release_candidate[^\\]]*\\][\\s\\S]*?release_message:\\s*\\$\\{\\{\\s*needs\\.prepare_release_candidate\\.outputs\\.release_notes_github_markdown\\s*\\}\\}'),
-      job + ' must consume the exact candidate GitHub note projection',
+      new RegExp(job + ':[\\s\\S]*?needs:\\s*\\[[^\\]]*prepare_release_candidate[^\\]]*\\][\\s\\S]*?release_message:\\s*\\$\\{\\{\\s*needs\\.prepare_release_candidate\\.outputs\\.release_message\\s*\\}\\}'),
+      job + ' must consume the generic unattended nightly copy',
     );
   }
 
   assert.match(
     raw,
-    /ui_mobile:[\s\S]*?release_message:\s*\$\{\{\s*needs\.prepare_release_candidate\.outputs\.release_notes_expo_message\s*\}\}/,
-    'mobile OTA metadata must use the bounded Expo note projection',
+    /ui_mobile:[\s\S]*?release_message:\s*\$\{\{\s*needs\.prepare_release_candidate\.outputs\.release_message\s*\}\}/,
+    'mobile nightly metadata must use generic unattended copy',
   );
   assert.match(
     raw,
-    /ui_desktop:[\s\S]*?release_message:\s*\$\{\{\s*needs\.prepare_release_candidate\.outputs\.release_notes_github_markdown\s*\}\}/,
-    'desktop publication must receive the same approved GitHub note projection',
+    /ui_desktop:[\s\S]*?release_message:\s*\$\{\{\s*needs\.prepare_release_candidate\.outputs\.release_message\s*\}\}/,
+    'desktop nightly publication must receive generic unattended copy',
   );
   assert.match(
     raw,
     /release_status:[\s\S]*?if:\s*\$\{\{\s*always\(\)\s*\}\}[\s\S]*?needs:\s*\[[^\]]*hstack[^\]]*promote_hstack[^\]]*\][\s\S]*?summarize-release-status\.mjs[\s\S]*?GITHUB_STEP_SUMMARY/,
     'nightly terminal status must include the HStack candidate and promotion outcomes',
   );
+});
+
+test('nightly status producer emits the strict summarizer input contract', async () => {
+  const raw = await readFile(join(repoRoot, '.github', 'workflows', 'nightly-dev.yml'), 'utf8');
+  const marker = "node --input-type=module <<'NODE' > \"$RUNNER_TEMP/release-status-input.json\"\n";
+  const start = raw.indexOf(marker);
+  const end = raw.indexOf('\n          NODE', start);
+  assert.ok(start >= 0 && end > start, 'nightly status producer must keep an executable JSON-input heredoc');
+
+  const producer = raw.slice(start + marker.length, end);
+  assert.match(producer, /process\.stdout\.write/, 'nightly status producer must write the strict input directly to stdout');
+  const sourceSha = 'a'.repeat(40);
+  const output = execFileSync(process.execPath, ['--input-type=module'], {
+    input: producer,
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      GITHUB_RUN_ID: '12345',
+      RELEASE_RUN: '12345',
+      RELEASE_RUN_URL: 'https://github.com/happier-dev/happier/actions/runs/12345',
+      RELEASE_RUN_NAME: 'NIGHTLY — Dev Releases',
+      SOURCE_SHA: sourceSha,
+      CANDIDATE_RESULT: 'success',
+      IMMUTABLE_VERIFICATION_RESULT: 'success',
+      CLI_RESULT: 'success',
+      STACK_RESULT: 'success',
+      SERVER_RESULT: 'success',
+      UI_WEB_RESULT: 'success',
+      MOBILE_RESULT: 'success',
+      DESKTOP_RESULT: 'success',
+      DOCKER_RESULT: 'success',
+      POST_PROMOTION_RESULT: 'success',
+      VERIFY_RESULT: 'success',
+      PROMOTE_SERVER_RESULT: 'success',
+      PROMOTE_HSTACK_RESULT: 'success',
+      PROMOTE_CLI_RESULT: 'success',
+      PROMOTE_UI_WEB_RESULT: 'success',
+      UI_MOBILE_RESULT: 'success',
+      UI_DESKTOP_RESULT: 'success',
+      VERIFY_PROMOTED_RESULT: 'success',
+    },
+    stdio: ['pipe', 'pipe', 'pipe'],
+  });
+  const input = JSON.parse(output);
+  const summary = summarizeReleaseStatus(input);
+
+  assert.deepEqual(summary.run, {
+    id: 12345,
+    url: 'https://github.com/happier-dev/happier/actions/runs/12345',
+    name: 'NIGHTLY — Dev Releases',
+  });
+  assert.equal(summary.terminal, 'published');
+  assert.ok(summary.surfaces.every((surface) => surface.evidence === 'verified' || surface.evidence === 'accepted'));
 });

@@ -14,29 +14,6 @@ const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, '..', '..');
 const pipelineCli = resolve(repoRoot, 'scripts', 'pipeline', 'run.mjs');
 
-const expectedCompatibilityDirections = [
-  {
-    id: 'candidate-clients-cli-daemon-to-supported-older-stable-relay',
-    required: true,
-    reason: 'Self-hosted deployments may independently upgrade candidate clients, CLI, and daemons against a supported older stable relay.',
-  },
-  {
-    id: 'bounded-older-client-daemon-to-candidate-relay-core-flows',
-    required: true,
-    reason: 'Self-hosted deployments must preserve bounded core flows for supported older clients and daemons against a candidate relay.',
-  },
-  {
-    id: 'persisted-old-writer-state-to-candidate-readers',
-    required: true,
-    reason: 'Candidate readers must accept persisted state written by supported older versions.',
-  },
-  {
-    id: 'candidate-writer-to-older-reader-on-rollback-or-coexistence',
-    required: false,
-    reason: 'This direction becomes required only when supported rollback or coexistence makes a candidate write visible to an older reader.',
-  },
-];
-
 function readPublicReleaseContract() {
   return JSON.parse(
     execFileSync(process.execPath, [pipelineCli, 'release-contract'], {
@@ -82,9 +59,14 @@ test('release-contract exposes canonical release targets and suite capabilities 
 
 test('release-contract profiles distinguish bounded normal release validation from manual deep certification', () => {
   const contract = readPublicReleaseContract();
-  const integratedAutomaticSuiteIds = ['artifact-verify', 'binary-smoke', 'session-continuity'];
-  const stableAutomaticSuiteIds = [...integratedAutomaticSuiteIds, 'cli-update', 'daemon-continuity', 'supported-old-relay-compatibility'];
-  const supportedOlderRelayCompatibilityCheck = 'supported-old-relay-compatibility';
+  const integratedAutomaticSuiteIds = [
+    'artifact-verify',
+    'binary-smoke',
+    'session-continuity',
+    'cli-update',
+    'docker-release-assets',
+  ];
+  const stableAutomaticSuiteIds = [...integratedAutomaticSuiteIds];
 
   assert.deepEqual(contract.validationProfiles, [
     {
@@ -92,32 +74,19 @@ test('release-contract profiles distinguish bounded normal release validation fr
       normalRelease: true,
       checksProfile: 'fast',
       automaticSuiteIds: integratedAutomaticSuiteIds,
-      compatibilityDirections: expectedCompatibilityDirections,
-      manualChecks: [supportedOlderRelayCompatibilityCheck],
     },
     {
       id: 'stable',
       normalRelease: true,
       checksProfile: 'full',
       automaticSuiteIds: stableAutomaticSuiteIds,
-      compatibilityDirections: expectedCompatibilityDirections,
-      manualChecks: ['agent-diff-sanity'],
     },
     {
       id: 'deep',
       normalRelease: false,
       checksProfile: null,
       automaticSuiteIds: [],
-      compatibilityDirections: expectedCompatibilityDirections,
-      manualChecks: [
-        'review-integrated-and-stable-evidence',
-        'installers-smoke-when-installer-surfaces-change',
-        'docker-release-assets-when-docker-surface-changes',
-        'cross-os-certification',
-        'provider-certification',
-        'mobile-certification',
-        'manual-comprehensive-certification',
-      ],
+      manualEntrypoint: 'skills/happier-release-validation/SKILL.md',
     },
   ]);
   assert.deepEqual(releaseValidationRegistry.RELEASE_VALIDATION_PROFILES, contract.validationProfiles);

@@ -173,7 +173,6 @@ async function main() {
       'artifact-verify',
       'docker-release-assets',
       'cli-update',
-      'server-upgrade',
       'daemon-continuity',
       'session-continuity',
     ])} (got: ${suiteId || '<empty>'})`);
