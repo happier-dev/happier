@@ -388,7 +388,7 @@ export async function publishBinaryReleaseMain(options = {}) {
     '--target-sha', targetSha,
     '--prerelease', prerelease,
     '--rolling-tag', 'false',
-    '--generate-notes', 'true',
+    '--generate-notes', 'false',
     '--notes', versionNotes,
     '--assets-dir', path.relative(repoRoot, artifactsDir),
     '--clobber', 'false',

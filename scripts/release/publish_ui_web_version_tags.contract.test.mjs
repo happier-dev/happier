@@ -45,7 +45,7 @@ for (const { channel, rollingTag, versionSuffix } of [
     assert.match(out, new RegExp(`promote-rolling-release\\.mjs[^\\n]*--rolling-tag\\s+${rollingTag}\\b`));
     assert.match(out, /--tag\s+ui-web-v/);
     assert.match(out, new RegExp(`ui-web-v[^\\s"]*${versionSuffix.replace('.', '\\.')}[^\\s"]*`));
-    assert.match(out, /--tag\s+ui-web-v[^\s"]+[^\n]*--generate-notes\s+true\b/);
+    assert.match(out, /--tag\s+ui-web-v[^\s"]+[^\n]*--generate-notes\s+false\b/);
     assert.match(out, /promote-rolling-release\.mjs[^\n]*--repo\s+example\/fork\b/);
     assert.doesNotMatch(out, /-preview\.0\.1\b/, 'local preview ui-web version must be non-trivial to avoid collisions');
   });

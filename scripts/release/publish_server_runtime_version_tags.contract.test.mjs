@@ -54,7 +54,7 @@ for (const { channel, rollingTag, versionSuffix } of [
     assert.match(out, new RegExp(`promote-rolling-release\\.mjs[^\\n]*--rolling-tag\\s+${rollingTag}\\b`));
     assert.match(out, /--tag\s+server-v/);
     assert.match(out, new RegExp(`server-v[^\\s"]*${versionSuffix.replace('.', '\\.')}[^\\s"]*`));
-    assert.match(out, /--tag\s+server-v[^\s"]+[^\n]*--generate-notes\s+true\b/);
+    assert.match(out, /--tag\s+server-v[^\s"]+[^\n]*--generate-notes\s+false\b/);
     assert.ok(
       out.search(/--tag\s+server-v/) < out.search(new RegExp(`--rolling-tag\\s+${rollingTag}\\b`)),
       'immutable version publication must complete before mutating the rolling release',

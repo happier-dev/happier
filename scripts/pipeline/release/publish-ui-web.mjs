@@ -397,7 +397,7 @@ async function main() {
       '--rolling-tag',
       'false',
       '--generate-notes',
-      'true',
+      'false',
       '--notes',
       versionNotes,
       '--assets-dir',
