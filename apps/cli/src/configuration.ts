@@ -1185,8 +1185,10 @@ function resolveServerSelection(params: Readonly<{
         }
       }
     }
+    // An explicit runtime scope owns machine identity. A URL-matching persisted profile may supply
+    // endpoint metadata, but must not silently replace that identity with a sibling profile id.
     const activeServerId = sanitizeServerIdForFilesystem(
-      persistedMatch?.id ?? (params.envActiveServerId ?? deriveServerIdFromUrl(envCanonicalServerUrl)),
+      params.envActiveServerId ?? persistedMatch?.id ?? deriveServerIdFromUrl(envCanonicalServerUrl),
       'cloud',
     );
     return { activeServerId, serverUrl: envCanonicalServerUrl, apiServerUrl: envApiServerUrl, webappUrl };
