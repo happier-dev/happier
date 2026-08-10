@@ -64,4 +64,13 @@ describe('runPi', () => {
     });
   });
 
+  it('uses the native Pi tool catalog as the unrestricted permission queue key', async () => {
+    await runPi({ credentials });
+
+    const config = runStandardAcpProviderMock.mock.calls[0]?.[1];
+    expect(config.resolvePermissionModeQueueKey('default')).toBe('native');
+    expect(config.resolvePermissionModeQueueKey('yolo')).toBe('native');
+    expect(config.resolvePermissionModeQueueKey('read-only')).toBe('read,grep,find,ls');
+  });
+
 });

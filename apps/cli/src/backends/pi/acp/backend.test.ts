@@ -4,7 +4,7 @@ import { dirname } from 'node:path';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { writeExecutableShimSync } from '@/testkit/fs/executableShim';
 import { createTempDirSync, removeTempDirSync } from '@/testkit/fs/tempDir';
-import { buildPiToolsForPermissionMode, createPiBackend } from './backend';
+import { buildPiRpcArgs, buildPiToolsForPermissionMode, createPiBackend } from './backend';
 import { HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY } from '@/daemon/connectedServices/connectedServiceChildEnvironment';
 import {
   PI_BROKER_SELECTIONS_ENV,
@@ -162,12 +162,35 @@ describe('buildPiToolsForPermissionMode', () => {
   it.each([
     { mode: 'plan', expected: ['read', 'grep', 'find', 'ls'] },
     { mode: 'read-only', expected: ['read', 'grep', 'find', 'ls'] },
-    { mode: 'default', expected: ['read', 'bash', 'edit', 'write', 'grep', 'find', 'ls'] },
+    { mode: 'default', expected: null },
     { mode: 'safe-yolo', expected: ['read', 'edit', 'write', 'grep', 'find', 'ls'] },
     { mode: 'acceptEdits', expected: ['read', 'edit', 'write', 'grep', 'find', 'ls'] },
-    { mode: 'yolo', expected: ['read', 'bash', 'edit', 'write', 'grep', 'find', 'ls'] },
-    { mode: 'bypassPermissions', expected: ['read', 'bash', 'edit', 'write', 'grep', 'find', 'ls'] },
+    { mode: 'yolo', expected: null },
+    { mode: 'bypassPermissions', expected: null },
   ] as const)('maps $mode to tools list', ({ mode, expected }) => {
     expect(buildPiToolsForPermissionMode(mode)).toEqual(expected);
+  });
+});
+
+describe('buildPiRpcArgs', () => {
+  it.each([undefined, 'default', 'yolo', 'bypassPermissions'] as const)(
+    'leaves the native Pi tool catalog unrestricted for permission mode %s',
+    (permissionMode) => {
+      expect(buildPiRpcArgs({ permissionMode })).toEqual(['--mode', 'rpc']);
+    },
+  );
+
+  it.each([
+    { mode: 'read-only', tools: 'read,grep,find,ls' },
+    { mode: 'plan', tools: 'read,grep,find,ls' },
+    { mode: 'safe-yolo', tools: 'read,edit,write,grep,find,ls' },
+    { mode: 'acceptEdits', tools: 'read,edit,write,grep,find,ls' },
+  ] as const)('keeps the explicit tool restriction for $mode', ({ mode, tools }) => {
+    expect(buildPiRpcArgs({ permissionMode: mode })).toEqual([
+      '--mode',
+      'rpc',
+      '--tools',
+      tools,
+    ]);
   });
 });
