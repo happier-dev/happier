@@ -64,6 +64,8 @@ const SOURCE_CASES = [
       running: 'running',
       succeeded: 'succeeded',
       failed: 'failed',
+      // Distinct from `failed`: raise the budget vs read the error.
+      timedOut: 'timedOut',
       cancelled: 'cancelled',
       // PLAN §4.2: `terminated` folds into `cancelled` rather than growing the vocabulary.
       terminated: 'cancelled',
@@ -127,6 +129,7 @@ describe('agent-activity status adapters', () => {
       'running',
       'succeeded',
       'failed',
+      'timedOut',
       'cancelled',
       'terminated',
       'unknown',

@@ -11,14 +11,17 @@ import type { AgentActivityStatusV1 } from '../agentActivityStatusV1.js';
  * `apps/ui`, so this schema is the boundary mirror the adapter is typed against — it does not take
  * ownership away from the UI type and must stay in step with it.
  *
- * The lock is the call site: a UI caller passes a `SessionSubagentStatus` straight into
- * `fromSubagentStatus`, so a member added upstream fails to compile against this parameter type
- * rather than degrading to `unknown`.
+ * The lock has two halves: a UI caller passing a `SessionSubagentStatus` straight into
+ * `fromSubagentStatus` fails to compile when the mirror is missing a member, and
+ * `sessionSubagentStatusProtocolParity.test.ts` in `apps/ui` asserts set equality so a member added
+ * here without a UI counterpart (or vice versa) fails loudly instead of drifting. That test lives
+ * on the UI side because only that side can see both vocabularies.
  */
 export const SESSION_SUBAGENT_STATUS_SOURCES_V1 = [
   'running',
   'succeeded',
   'failed',
+  'timedOut',
   'cancelled',
   'terminated',
   'unknown',
@@ -39,6 +42,9 @@ export function fromSubagentStatus(status: SessionSubagentStatusSourceV1): Agent
       return 'succeeded';
     case 'failed':
       return 'failed';
+    case 'timedOut':
+      // Kept distinct from `failed`: the recovery is to raise the budget, not to read an error.
+      return 'timedOut';
     case 'cancelled':
     case 'terminated':
       // `terminated` is a stop, not an error; it collapses into `cancelled` by design.
