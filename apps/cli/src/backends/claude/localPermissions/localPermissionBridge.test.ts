@@ -54,6 +54,35 @@ describe('ClaudeLocalPermissionBridge', () => {
     expect(client.agentState.requests.other_owner_question).toBeDefined();
   });
 
+  it('leaves a source-owned opaque claimed request outstanding through activation and disposal', async () => {
+    const { session, client } = createPermissionHandlerSessionStub('session-claimed-replacement-cleanup');
+    const opaqueClaim = { malformed: ['future', { owner: true }] };
+    client.updateAgentState((current) => ({
+      ...current,
+      requests: {
+        claimed_claude_question: {
+          tool: 'AskUserQuestion',
+          kind: 'user_action',
+          arguments: { questions: [{ question: 'Reserved by newer runtime' }] },
+          createdAt: 1,
+          source: CLAUDE_LOCAL_PERMISSION_BRIDGE_REQUEST_SOURCE,
+          permissionResponseClaimV1: opaqueClaim,
+        },
+      },
+    }));
+
+    const bridge = new ClaudeLocalPermissionBridge(session);
+    bridge.activate();
+    await vi.advanceTimersByTimeAsync(0);
+    bridge.dispose();
+    await vi.advanceTimersByTimeAsync(0);
+
+    const retained = client.agentState.requests.claimed_claude_question as Record<string, unknown>;
+    expect(Object.prototype.hasOwnProperty.call(retained, 'permissionResponseClaimV1')).toBe(true);
+    expect(retained.permissionResponseClaimV1).toBe(opaqueClaim);
+    expect(client.agentState.completedRequests.claimed_claude_question).toBeUndefined();
+  });
+
   it('times out non-interactive requests by default when no UI response arrives', async () => {
     const { session, client } = createPermissionHandlerSessionStub('session-default-timeout');
     const bridge = new ClaudeLocalPermissionBridge(session);
@@ -701,7 +730,7 @@ describe('ClaudeLocalPermissionBridge', () => {
     const second = bridge.handlePermissionHook({
       hook_event_name: 'PermissionRequest',
       tool_name: 'Bash',
-      tool_input: { command: 'unset BAR; find src -maxdepth 1' },
+      tool_input: { command: 'find src -maxdepth 1' },
       tool_use_id: 'toolu_allowlist_2',
     });
 

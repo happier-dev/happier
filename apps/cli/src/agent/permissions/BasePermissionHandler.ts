@@ -182,6 +182,7 @@ export abstract class BasePermissionHandler {
         // If we were mid-permission when the session reference swapped (offline reconnect),
         // republish still-pending items into the new agentState and re-attempt push notifications.
         for (const [id, pending] of this.pendingRequests.entries()) {
+            if (this.requestCoordinator.isRequestClaimed(id)) continue;
             if (!this.requestStore.hasOutstandingRequest(id)) {
                 this.requestStore.publishRequest({
                     requestId: id,
@@ -415,6 +416,10 @@ export abstract class BasePermissionHandler {
                 if (structuredAnswers) result.answers = structuredAnswers;
 
                 const requestSource = { toolName: context.toolName, input: context.toolInput };
+                if (this.requestCoordinator.isRequestClaimed(response.id)) {
+                    return;
+                }
+
                 this.applyPermissionResponseSideEffects({
                     response,
                     result,
@@ -452,6 +457,7 @@ export abstract class BasePermissionHandler {
     private autoApproveNowAllowedPendingRequests(excludePermissionId: string): void {
         for (const [permissionId, pending] of this.pendingRequests.entries()) {
             if (permissionId === excludePermissionId) continue;
+            if (this.requestCoordinator.isRequestClaimed(permissionId)) continue;
             if (resolveAgentRequestKind(pending.toolName) !== 'permission') continue;
             if (!this.isAllowedForSession(pending.toolName, pending.input)) continue;
 
@@ -466,12 +472,19 @@ export abstract class BasePermissionHandler {
         return isToolAllowedForSession(this.allowedToolIdentifiers, toolName, input);
     }
 
+    protected isPermissionRequestClaimed(requestId: string): boolean {
+        return this.requestCoordinator.isRequestClaimed(requestId);
+    }
+
     protected recordAutoDecision(
         toolCallId: string,
         toolName: string,
         input: unknown,
         decision: PermissionResult['decision']
     ): void {
+        if (this.isPermissionRequestClaimed(toolCallId)) {
+            throw new Error(`Permission request ${toolCallId} is reserved by a newer runtime`);
+        }
         const allowedTools = decision === 'approved_for_session'
             ? [makeToolIdentifier(toolName, input)]
             : undefined;
@@ -486,6 +499,9 @@ export abstract class BasePermissionHandler {
     }
 
     protected requestPermissionDecision(toolCallId: string, toolName: string, input: unknown): Promise<PermissionResult> {
+        if (this.isPermissionRequestClaimed(toolCallId)) {
+            return Promise.reject(new Error(`Permission request ${toolCallId} is reserved by a newer runtime`));
+        }
         const normalizedInput = normalizeAskUserQuestionInputForPublication(toolName, input);
         const hasExistingContext = this.requestCoordinator.getResponseContext(toolCallId) !== null;
         if (!hasExistingContext) {
@@ -522,6 +538,7 @@ export abstract class BasePermissionHandler {
      * Add a pending request to the agent state.
      */
     protected addPendingRequestToState(toolCallId: string, toolName: string, input: unknown): void {
+        if (this.isPermissionRequestClaimed(toolCallId)) return;
         this.recordPermissionRequestTrace(toolCallId, toolName, input);
         this.requestStore.publishRequest({
             requestId: toolCallId,
@@ -555,6 +572,7 @@ export abstract class BasePermissionHandler {
         result: PermissionResult,
         completedRequest?: PermissionRequestCoordinatorCompletedRequest,
     ): void {
+        if (this.isPermissionRequestClaimed(requestId)) return;
         const pending = this.pendingRequests.get(requestId);
         const context = this.requestCoordinator.getResponseContext(requestId);
         if (!context) {

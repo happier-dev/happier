@@ -86,7 +86,7 @@ describe('PermissionHandler (allowlist seeding from updatedPermissions)', () => 
     );
     const p2 = handler.handleToolCall(
       'Bash',
-      { command: 'unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN; rm -rf /tmp/b' },
+      { command: 'rm -rf /tmp/b' },
       defaultMode,
       { signal: controller.signal, toolUseId: 'req2' } as any,
     );
@@ -136,7 +136,7 @@ describe('PermissionHandler (allowlist seeding from updatedPermissions)', () => 
     });
     await expect(withTimeout(p2, 200)).resolves.toEqual({
       behavior: 'allow',
-      updatedInput: { command: 'unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN; rm -rf /tmp/b' },
+      updatedInput: { command: 'rm -rf /tmp/b' },
     });
 
     expect(Object.keys(client.agentState.requests)).toEqual([]);

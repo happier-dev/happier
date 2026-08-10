@@ -135,13 +135,13 @@ describe('PermissionHandler (updatedPermissions response allowlist)', () => {
       ],
     });
 
-    handler.onMessage(shellToolUseMessage('toolu_2', 'Execute', 'unset BAR; pwd'));
+    handler.onMessage(shellToolUseMessage('toolu_2', 'Execute', 'pwd'));
 
     const controller2 = new AbortController();
-    const p2 = handler.handleToolCall('Execute', { command: 'unset BAR; pwd' }, defaultMode, { signal: controller2.signal });
+    const p2 = handler.handleToolCall('Execute', { command: 'pwd' }, defaultMode, { signal: controller2.signal });
 
     expect((client.agentState as any).requests?.toolu_2).toBeUndefined();
-    await expect(p2).resolves.toEqual({ behavior: 'allow', updatedInput: { command: 'unset BAR; pwd' } });
+    await expect(p2).resolves.toEqual({ behavior: 'allow', updatedInput: { command: 'pwd' } });
   });
 
   it('treats updatedPermissions toolName case-insensitively for shell tools', async () => {
@@ -183,13 +183,13 @@ describe('PermissionHandler (updatedPermissions response allowlist)', () => {
       ],
     });
 
-    handler.onMessage(bashToolUseMessage('toolu_2', 'unset BAR; pwd'));
+    handler.onMessage(bashToolUseMessage('toolu_2', 'pwd'));
 
     const controller2 = new AbortController();
-    const p2 = handler.handleToolCall('Bash', { command: 'unset BAR; pwd' }, defaultMode, { signal: controller2.signal });
+    const p2 = handler.handleToolCall('Bash', { command: 'pwd' }, defaultMode, { signal: controller2.signal });
 
     expect((client.agentState as any).requests?.toolu_2).toBeUndefined();
-    await expect(p2).resolves.toEqual({ behavior: 'allow', updatedInput: { command: 'unset BAR; pwd' } });
+    await expect(p2).resolves.toEqual({ behavior: 'allow', updatedInput: { command: 'pwd' } });
   });
 
   it('suppresses prompts when Bash commands are represented as argv arrays', async () => {
@@ -231,13 +231,13 @@ describe('PermissionHandler (updatedPermissions response allowlist)', () => {
       ],
     });
 
-    handler.onMessage(bashToolUseMessageArgv('toolu_2', ['bash', '-lc', 'unset BAR; find src']));
+    handler.onMessage(bashToolUseMessageArgv('toolu_2', ['bash', '-lc', 'find src']));
 
     const controller2 = new AbortController();
-    const p2 = handler.handleToolCall('Bash', { command: ['bash', '-lc', 'unset BAR; find src'] }, defaultMode, { signal: controller2.signal });
+    const p2 = handler.handleToolCall('Bash', { command: ['bash', '-lc', 'find src'] }, defaultMode, { signal: controller2.signal });
 
     expect((client.agentState as any).requests?.toolu_2).toBeUndefined();
-    await expect(p2).resolves.toEqual({ behavior: 'allow', updatedInput: { command: ['bash', '-lc', 'unset BAR; find src'] } });
+    await expect(p2).resolves.toEqual({ behavior: 'allow', updatedInput: { command: ['bash', '-lc', 'find src'] } });
   });
 
   it('does not apply allowlist side-effects from denied permission responses', async () => {

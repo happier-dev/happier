@@ -274,6 +274,11 @@ export class ClaudeUnifiedDialogChoiceBroker {
       },
       cancelAllRequests: (params) => { void this.cancelAllSourceOwnedRequests(params.reason); },
       hasOutstandingRequest: (requestId) => this.readSourceOwnedOutstandingRequest(requestId) !== null,
+      isOutstandingRequestClaimed: (requestId) => {
+        const rawRequest = this.session.client.getAgentStateSnapshot?.()?.requests?.[requestId] ?? null;
+        return isClaudeUnifiedTerminalDialogChoiceAgentStateRequest(rawRequest)
+          && this.requestStore.isOutstandingRequestClaimed(requestId);
+      },
       readOutstandingRequest: (requestId) => this.readSourceOwnedOutstandingRequest(requestId),
     };
   }
@@ -338,6 +343,7 @@ export class ClaudeUnifiedDialogChoiceBroker {
   }
 
   private async completeSourceOwnedCancellation(requestId: string, reason: string): Promise<void> {
+    if (this.isSourceOwnedRequestClaimed(requestId)) return;
     const outstanding = this.readSourceOwnedOutstandingRequest(requestId);
     this.permissionCoordinator.cancelRequest(requestId, reason);
     await this.trackSourceCompletion(
@@ -370,6 +376,12 @@ export class ClaudeUnifiedDialogChoiceBroker {
       if (!isClaudeUnifiedTerminalDialogChoiceAgentStateRequest(request)) continue;
       await this.completeSourceOwnedCancellation(requestId, reason);
     }
+  }
+
+  private isSourceOwnedRequestClaimed(requestId: string): boolean {
+    const rawRequest = this.session.client.getAgentStateSnapshot?.()?.requests?.[requestId] ?? null;
+    return isClaudeUnifiedTerminalDialogChoiceAgentStateRequest(rawRequest)
+      && this.requestStore.isOutstandingRequestClaimed(requestId);
   }
 
   private trackSourceCompletion(requestId: string, completion: Promise<void>): Promise<void> {

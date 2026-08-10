@@ -122,6 +122,9 @@ export class ProviderEnforcedPermissionHandler extends BasePermissionHandler {
   }
 
   getImmediateDecision(toolCallId: string, toolName: string, input: unknown): PermissionResult | null {
+    if (this.isPermissionRequestClaimed(toolCallId)) {
+      return null;
+    }
     if (shouldDenyAgentSessionTitleToolCall({
       settings: this.getAccountSettingsSnapshot(),
       toolName,
@@ -145,6 +148,9 @@ export class ProviderEnforcedPermissionHandler extends BasePermissionHandler {
   }
 
   async handleToolCall(toolCallId: string, toolName: string, input: unknown): Promise<PermissionResult> {
+    if (this.isPermissionRequestClaimed(toolCallId)) {
+      return await this.requestPermissionDecision(toolCallId, toolName, input);
+    }
     const immediateDecision = this.getImmediateDecision(toolCallId, toolName, input);
     if (immediateDecision) {
       this.recordAutoDecision(toolCallId, toolName, input, immediateDecision.decision);

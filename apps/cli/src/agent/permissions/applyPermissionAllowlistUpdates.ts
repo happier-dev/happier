@@ -71,6 +71,7 @@ export function seedAllowlistFromCompletedRequests(allowedIdentifiers: Set<strin
   for (const value of Object.values(rec)) {
     const entry = asRecord(value);
     if (!entry) continue;
+    if (Object.prototype.hasOwnProperty.call(entry, 'remoteMediationSettlementId')) continue;
     if (entry.status !== 'approved') continue;
 
     applyUpdatedPermissionsToAllowlist(allowedIdentifiers, entry.updatedPermissions);

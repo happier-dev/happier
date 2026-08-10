@@ -256,4 +256,28 @@ describe('ClaudeUnifiedDialogChoiceBroker lifecycle', () => {
       reason: 'claude_unified_dialog_choice_no_live_waiter',
     });
   });
+
+  it('leaves a claimed source-owned dialog request outstanding on disposal', async () => {
+    const { session, client } = createPermissionHandlerSessionStub('dialog-broker-claimed-dispose');
+    const opaqueClaim = { malformed: { future: true } };
+    client.agentState.requests.claimed = {
+      tool: 'AskUserQuestion',
+      kind: 'user_action',
+      source: CLAUDE_UNIFIED_TERMINAL_DIALOG_CHOICE_REQUEST_SOURCE,
+      arguments: {
+        happierDialog: { kind: 'recognized', dialogId: 'effort_change' },
+        questions: [{ options: [{ choice: 'confirm', label: 'Switch model' }] }],
+      },
+      createdAt: 1,
+      permissionResponseClaimV1: opaqueClaim,
+    };
+
+    const broker = new ClaudeUnifiedDialogChoiceBroker(session);
+    await broker.dispose();
+
+    const retained = client.agentState.requests.claimed as Record<string, unknown>;
+    expect(Object.prototype.hasOwnProperty.call(retained, 'permissionResponseClaimV1')).toBe(true);
+    expect(retained.permissionResponseClaimV1).toBe(opaqueClaim);
+    expect(client.agentState.completedRequests.claimed).toBeUndefined();
+  });
 });

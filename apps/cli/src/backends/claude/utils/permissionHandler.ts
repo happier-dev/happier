@@ -29,7 +29,11 @@ import { resolveAgentRequestKind } from '@/agent/permissions/requestKind';
 import { isToolAllowedForSession } from '@/agent/permissions/permissionToolIdentifier';
 import { shouldSuppressProviderPermissionForHappierApproval } from '@/agent/tools/happierTools/resolveHappierActionForMcpToolName';
 import { applyAllowedToolsToAllowlist, applyUpdatedPermissionsToAllowlist, seedAllowlistFromCompletedRequests } from '@/agent/permissions/applyPermissionAllowlistUpdates';
-import { AgentStateRequestStore, type AgentStateOutstandingRequest } from '@/agent/permissions/agentStateRequestStore';
+import {
+    AgentStateRequestStore,
+    hasPermissionResponseClaimV1,
+    type AgentStateOutstandingRequest,
+} from '@/agent/permissions/agentStateRequestStore';
 import {
     createPermissionRequestCoordinator,
     type PermissionRequestCoordinator,
@@ -368,6 +372,11 @@ export class PermissionHandler {
             completeRequest: (params) => this.agentStateRequestStore.completeRequest(params),
             cancelAllRequests: (params) => this.cancelRemoteOutstandingRequests(params.reason),
             hasOutstandingRequest: (requestId) => this.readOutstandingRemoteRequest(requestId) !== null,
+            isOutstandingRequestClaimed: (requestId) => {
+                const rawRequest = (this.session.client as any).getAgentStateSnapshot?.()?.requests?.[requestId] ?? null;
+                return !isRequestOwnedOutsideRemotePermissionHandler(rawRequest)
+                    && this.agentStateRequestStore.isOutstandingRequestClaimed(requestId);
+            },
             readOutstandingRequest: (requestId) => this.readOutstandingRemoteRequest(requestId),
         };
     }
@@ -395,6 +404,7 @@ export class PermissionHandler {
 
                 for (const [id, request] of Object.entries(requests)) {
                     if (isRequestOwnedOutsideRemotePermissionHandler(request)) continue;
+                    if (hasPermissionResponseClaimV1(request)) continue;
                     delete requests[id];
                     const completedEntry = { ...(request && typeof request === 'object' ? request : {}) } as Record<string, unknown>;
                     completedEntry.completedAt = now;
@@ -464,6 +474,13 @@ export class PermissionHandler {
             answersCount: message.answers ? Object.keys(message.answers).length : 0,
         });
 
+        const completion = this.buildPermissionCompletion(message, context);
+
+        if (!this.permissionCoordinator.completeResponse({ context, completion })) {
+            logger.debug('[Claude] Permission response did not complete an outstanding request');
+            return;
+        }
+
         if (this.isToolTraceEnabled()) {
             recordToolTraceEvent({
                 direction: 'inbound',
@@ -484,10 +501,8 @@ export class PermissionHandler {
             });
         }
 
-        // Store the response with timestamp
+        // Store the response with timestamp only after the canonical coordinator completed it.
         this.responses.set(id, { ...message, receivedAt: Date.now() });
-
-        const completion = this.buildPermissionCompletion(message, context);
 
         this.pendingRequestMetadata.delete(id);
         this.applyPermissionResponseSideEffects({
@@ -496,7 +511,6 @@ export class PermissionHandler {
             sourceLocalId: context.sourceLocalId,
         });
 
-        this.permissionCoordinator.completeResponse({ context, completion });
     }
     
     /**
@@ -638,6 +652,14 @@ export class PermissionHandler {
         },
     ): Promise<PermissionResult> => {
         const rewrittenInput = this.rewriteToolInput(toolName, input);
+        const providedToolUseId = readNonBlankOpaqueIdentifier(options?.toolUseId) ?? '';
+        const claimedToolUseId = providedToolUseId || this.findUnusedToolCallId(toolName, input);
+        if (claimedToolUseId && this.agentStateRequestStore.isOutstandingRequestClaimed(claimedToolUseId)) {
+            return this.handlePermissionRequest(claimedToolUseId, toolName, rewrittenInput, options.signal, {
+                suggestions: options.suggestions,
+                sourceLocalId: mode?.localId ?? null,
+            });
+        }
 
         // Check if tool is explicitly allowed
         if (this.isToolExplicitlyAllowed(toolName, rewrittenInput)) {
@@ -690,7 +712,6 @@ export class PermissionHandler {
         // Approval flow
         //
 
-        const providedToolUseId = readNonBlankOpaqueIdentifier(options?.toolUseId) ?? '';
         let toolCallId = providedToolUseId.length > 0 ? providedToolUseId : this.resolveToolCallId(toolName, input);
         if (!toolCallId) { // What if we got permission before tool call
             await delay(1000);
@@ -839,16 +860,23 @@ export class PermissionHandler {
      * Resolves tool call ID based on tool name and input
      */
     private resolveToolCallId(name: string, args: any): string | null {
-        // Search in reverse (most recent first)
+        const toolCall = this.findUnusedToolCall(name, args);
+        if (!toolCall) return null;
+        toolCall.used = true;
+        return toolCall.id;
+    }
+
+    private findUnusedToolCallId(name: string, args: unknown): string | null {
+        return this.findUnusedToolCall(name, args)?.id ?? null;
+    }
+
+    private findUnusedToolCall(name: string, args: unknown): (typeof this.toolCalls)[number] | null {
+        // Search in reverse (most recent first) without consuming the record.
         for (let i = this.toolCalls.length - 1; i >= 0; i--) {
             const call = this.toolCalls[i];
             if (call.name === name && isDeepStrictEqual(call.input, args)) {
-                if (call.used) {
-                    return null;
-                }
-                // Found unused match - mark as used and return
-                call.used = true;
-                return call.id;
+                if (!call.used) return call;
+                return null;
             }
         }
 

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
+import type { AgentState } from '@/api/types';
 import { FakePermissionSession } from '@/testkit/backends/permissionHandler';
 import { GeminiPermissionHandler } from './permissionHandler';
 
@@ -85,6 +86,32 @@ describe('GeminiPermissionHandler', () => {
     expect(session.snapshot().completedRequests?.['tool-change_title-1']).toEqual(
       expect.objectContaining({ tool: 'mcp__happier__change_title', status: 'approved', decision: 'approved' }),
     );
+  });
+
+  it('refuses claimed IDs before Gemini-specific always-auto approval', async () => {
+    const session = new FakePermissionSession();
+    const opaqueClaim = { malformed: { future: true } };
+    const claimedRequest: NonNullable<AgentState['requests']>[string] & Record<'permissionResponseClaimV1', unknown> = {
+      tool: 'change_title',
+      arguments: { title: 'reserved' },
+      createdAt: 1,
+      permissionResponseClaimV1: opaqueClaim,
+    };
+    session.updateAgentState((current) => ({
+      ...current,
+      requests: {
+        ...current.requests,
+        claimed: claimedRequest,
+      },
+    }));
+    const handler = new GeminiPermissionHandler(session.asApiSessionClient());
+
+    await expect(handler.handleToolCall('claimed', 'change_title', { title: 'reserved' })).rejects.toThrow(/reserved/i);
+
+    const retained = session.snapshot().requests?.claimed as Record<string, unknown>;
+    expect(Object.prototype.hasOwnProperty.call(retained, 'permissionResponseClaimV1')).toBe(true);
+    expect(retained.permissionResponseClaimV1).toBe(opaqueClaim);
+    expect(session.snapshot().completedRequests?.claimed).toBeUndefined();
   });
 
   it('auto-approves canonical change_title even when toolCallId is generic', async () => {

@@ -93,6 +93,9 @@ export class CodexLikePermissionHandler extends BasePermissionHandler {
   }
 
   private resolveDecisionForToolCall(toolCallId: string, toolName: string, input: unknown): PermissionResult | null {
+    if (this.isPermissionRequestClaimed(toolCallId)) {
+      return null;
+    }
     if (resolveAgentRequestKind(toolName) === 'user_action') {
       return null;
     }
@@ -203,6 +206,9 @@ export class CodexLikePermissionHandler extends BasePermissionHandler {
     // Metadata updates can arrive mid-turn (e.g. UI toggles "read-only" while a tool request is in flight).
     // Sync on each tool call so the decision reflects the latest persisted intent without requiring a user message.
     this.syncPermissionModeFromMetadataSnapshotIfNewer();
+    if (this.isPermissionRequestClaimed(toolCallId)) {
+      return await this.requestPermissionDecision(toolCallId, toolName, input);
+    }
     logger.debug(`${this.getLogPrefix()} handleToolCall`, {
       toolCallId,
       toolName,

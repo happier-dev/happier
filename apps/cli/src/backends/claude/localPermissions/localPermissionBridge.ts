@@ -6,7 +6,7 @@ import { open as openFile } from 'node:fs/promises';
 import { basename } from 'node:path';
 import { clonePlainObjectToNullProto, cloneStringKeyedRecordToNullProto } from '@/api/session/agentStateRecords';
 import { resolveAgentRequestKind } from '@/agent/permissions/requestKind';
-import { AgentStateRequestStore } from '@/agent/permissions/agentStateRequestStore';
+import { AgentStateRequestStore, hasPermissionResponseClaimV1 } from '@/agent/permissions/agentStateRequestStore';
 import { createPermissionRequestCoordinator } from '@/agent/permissions/permissionRequestCoordinator';
 import type { PermissionRequestCoordinatorStore } from '@/agent/permissions/permissionRequestCoordinator';
 
@@ -225,6 +225,10 @@ export class ClaudeLocalPermissionBridge {
         const existing = this.pendingRequests.get(requestId);
         const hookEventName = existing?.hookEventName ?? readPermissionHookEventName(data);
         const createdAt = existing?.createdAt ?? Date.now();
+
+        if (this.requestStore.isOutstandingRequestClaimed(requestId)) {
+            throw new Error(`Permission request ${requestId} is reserved by a newer runtime`);
+        }
 
         // If we already have an allowlist rule for this tool call, respond immediately without surfacing a prompt.
         // This mirrors Claude Code's "don't ask again" behavior, but is enforced by Happier for reliability.
@@ -490,9 +494,14 @@ export class ClaudeLocalPermissionBridge {
                 this.requestStore.completeRequest(params);
             },
             cancelAllRequests: (params) => {
-        this.cancelLocalOutstandingRequests(params.reason);
+                this.cancelLocalOutstandingRequests(params.reason);
             },
             hasOutstandingRequest: (requestId) => this.readLocalOutstandingRequest(requestId) !== null,
+            isOutstandingRequestClaimed: (requestId) => {
+                const rawRequest = this.session.client.getAgentStateSnapshot?.()?.requests?.[requestId] ?? null;
+                return isClaudeLocalPermissionBridgeAgentStateRequest(rawRequest)
+                    && this.requestStore.isOutstandingRequestClaimed(requestId);
+            },
             readOutstandingRequest: (requestId) => this.readLocalOutstandingRequest(requestId),
         };
     }
@@ -1080,6 +1089,7 @@ export class ClaudeLocalPermissionBridge {
         updatedPermissions?: unknown;
         hookResponse: PermissionHookResponse;
     }): void {
+        if (this.requestStore.isOutstandingRequestClaimed(params.requestId)) return;
         const handledByCoordinator = this.permissionCoordinator.handleResponse({
             requestId: params.requestId,
             buildCompletion: () => ({
@@ -1125,6 +1135,7 @@ export class ClaudeLocalPermissionBridge {
 
                 for (const [id, request] of Object.entries(requests)) {
                     if (!isClaudeLocalPermissionBridgeAgentStateRequest(request)) continue;
+                    if (hasPermissionResponseClaimV1(request)) continue;
                     delete requests[id];
                     const completedEntry = clonePlainObjectToNullProto(request) ?? Object.create(null);
                     completedEntry.completedAt = now;

@@ -27,6 +27,9 @@ export class GeminiPermissionHandler extends CodexLikePermissionHandler {
   }
 
   async handleToolCall(toolCallId: string, toolName: string, input: unknown): Promise<PermissionResult> {
+    if (this.isPermissionRequestClaimed(toolCallId)) {
+      return await this.requestPermissionDecision(toolCallId, toolName, input);
+    }
     const lowerName = toolName.toLowerCase();
     const isAlwaysAutoApprove =
       isChangeTitleToolNameAlias(toolName) ||

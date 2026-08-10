@@ -143,6 +143,7 @@ function createCoordinatedPermissionHandler(): Readonly<{
       outstanding.delete(requestId);
     },
     hasOutstandingRequest: (requestId) => outstanding.has(requestId),
+    isOutstandingRequestClaimed: () => false,
     readOutstandingRequest: (requestId) => {
       const request = outstanding.get(requestId);
       return request
