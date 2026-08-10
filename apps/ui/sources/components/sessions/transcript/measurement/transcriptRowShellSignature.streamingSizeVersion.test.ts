@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { AgentTextMessage, Message } from '@/sync/domains/messages/messageTypes';
 
+import type { TranscriptItemHeightValiditySignature } from './transcriptItemHeightCache';
 import { buildTranscriptItemHeightSignatureKey } from './transcriptItemHeightCache';
 import {
     buildTranscriptRowShellSignature,
@@ -41,21 +42,42 @@ function agentText(overrides: Partial<AgentTextMessage> = {}): Message {
     } as Message;
 }
 
+function userText(text: string): Message {
+    return {
+        kind: 'user-text',
+        id: STREAMED_MESSAGE_ID,
+        localId: null,
+        createdAt: 1,
+        text,
+    } as Message;
+}
+
+function agentEvent(mode: string): Message {
+    return {
+        kind: 'agent-event',
+        id: STREAMED_MESSAGE_ID,
+        createdAt: 1,
+        event: { type: 'switch', mode },
+    } as unknown as Message;
+}
+
 function messageRow(): TranscriptRowShellItem {
     return { kind: 'message', id: 'i1', messageId: STREAMED_MESSAGE_ID } as TranscriptRowShellItem;
 }
 
-function sizeVersionFor(params: Readonly<{
+type SizeVersionParams = Readonly<{
     activeThinkingMessageId?: string | null;
     message?: Message;
     revision: number;
-    /** `sessionActive && isLatestCommittedActivity` is what makes the tail row `streaming`. */
+    /** `sessionActive && isLatestCommittedActivity` is what makes the tail row live. */
     isLatestCommittedActivity?: boolean;
     sessionActive?: boolean;
     thinkingExpanded?: boolean;
     widthBucket?: string;
-}>): string {
-    const signature = buildTranscriptRowShellSignature({
+}>;
+
+function signatureFor(params: SizeVersionParams): TranscriptItemHeightValiditySignature {
+    return buildTranscriptRowShellSignature({
         activeThinkingMessageId: params.activeThinkingMessageId ?? null,
         expandedToolCallsAnchorMessageIds: new Set<string>(),
         forkMessageMetadataById: null,
@@ -69,7 +91,10 @@ function sizeVersionFor(params: Readonly<{
         widthBucket: params.widthBucket ?? 'w:400',
         fontScaleKey: 'fs:1',
     });
-    return buildTranscriptItemHeightSignatureKey(signature);
+}
+
+function sizeVersionFor(params: SizeVersionParams): string {
+    return buildTranscriptItemHeightSignatureKey(signatureFor(params));
 }
 
 describe('R2 · a streaming row keeps its measured size across the writes that grow it', () => {
@@ -168,5 +193,50 @@ describe('R2 · a streaming row keeps its measured size across the writes that g
 
             expect(wide).not.toBe(narrow);
         });
+    });
+});
+
+/**
+ * P2 (2026-08-10) · the exemption above is scoped to rows whose body ARRIVES INCREMENTALLY.
+ *
+ * `sessionActive && isLatestCommittedActivity` is a LIVENESS test, not a growth test: it is true for
+ * a just-sent user message (whole at birth) and for a mode-switch event, neither of which ever grows.
+ * R2 removed the revision from the size version for whatever that predicate returned, which for
+ * those rows removed the LAST remaining invalidation of a content REWRITE — and a rewrite that
+ * arrives while the row is scrolled out of the render window has no `onLayout` to correct it, so the
+ * row keeps a size it no longer paints. That is the failure these cases prevent.
+ *
+ * They and the append cases above are mutually discriminating: reverting R2 (fold the revision for
+ * every row) fails the append cases; keeping R2's liveness scope (fold it for every live tail row)
+ * fails these; a `user-text` blocklist instead of an `agent-text` allowlist fails the event case.
+ */
+describe('P2 · only a row whose body arrives incrementally keeps its size across writes', () => {
+    it('moves when a just-sent USER row at the live tail is rewritten', () => {
+        // The store bumps a message's revision on EVERY write of its id, user rows included
+        // (`sync/store/domains/messages.ts`: `messageRevisionsById[id] += 1`), and a user row is
+        // rewritten by local-id reconciliation and by `displayText` resolution.
+        const sent = sizeVersionFor({ message: userText('run the tests'), revision: 1 });
+        const rewritten = sizeVersionFor({ message: userText('run the tests on device'), revision: 2 });
+
+        expect(rewritten).not.toBe(sent);
+    });
+
+    it('moves when an agent-event row at the live tail is rewritten', () => {
+        // Kills a `user-text` blocklist: an agent-event row is equally incapable of growing.
+        const before = sizeVersionFor({ message: agentEvent('plan'), revision: 1 });
+        const after = sizeVersionFor({ message: agentEvent('accept-edits'), revision: 2 });
+
+        expect(after).not.toBe(before);
+    });
+
+    it('classifies a live USER tail row as stable, so its floor and estimate stay shrink-capable', () => {
+        // The fix belongs to `resolveMessageRowState`, the single owner of the growth
+        // classification: `TRANSCRIPT_GROWING_ROW_STATES` also gates the reconciler's monotonic
+        // floor (carried ACROSS content shapes) and makes `estimateTranscriptRowHeightFromCache`
+        // refuse to serve the row's real last measurement. Repairing only the structural key would
+        // leave a non-growing row holding a cross-shape floor and estimating from the flat content
+        // model — so this case fails for a consumer-local fix and passes only for the owner-level one.
+        expect(signatureFor({ message: userText('hi'), revision: 1 }).rowState).toBe('stable');
+        expect(signatureFor({ message: agentText({ text: 'partial' }), revision: 1 }).rowState).toBe('streaming');
     });
 });

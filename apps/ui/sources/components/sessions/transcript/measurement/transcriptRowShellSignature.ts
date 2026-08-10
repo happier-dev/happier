@@ -133,8 +133,9 @@ export function buildTranscriptRowShellSignature(params: Readonly<{
         });
         return {
             ...base,
-            // R2: a row that is still growing keeps its own measurement across the writes that grow
-            // it — see `buildGrowingMessageShellStructuralKey`.
+            // R2: a row classified GROWING keeps its own measurement across the writes that grow it
+            // — see `buildGrowingMessageShellStructuralKey`. P2 scoped that classification to the
+            // rows that can actually grow; `resolveMessageRowState` owns the decision.
             structuralKey: TRANSCRIPT_GROWING_ROW_STATES.has(rowState)
                 ? buildGrowingMessageShellStructuralKey(item.messageId)
                 : buildMessageShellStructuralKey(item.messageId, message, params.getMessageRevisionById(item.messageId)),
@@ -526,7 +527,16 @@ function buildMessageShellStructuralKey(
 }
 
 /**
- * R2 (2026-08-10) — the structural key of a row that is STILL GROWING carries identity only.
+ * R2 (2026-08-10) — the structural key of a row classified GROWING carries identity only.
+ *
+ * P2 (2026-08-10) narrowed what "growing" means. `resolveMessageRowState` decides it, and it is a
+ * LIVENESS test intersected with the one message kind whose body arrives incrementally
+ * (`agent-text`) — it is NOT a proof that this particular row is still receiving content. A finished
+ * agent reply that is still the tail of an active session stays growing-classified until the next
+ * message commits, because no per-row growth signal exists to intersect with (see that function).
+ * The consequence to hold in mind when reading the guarantee below: the revision is dropped for that
+ * finished tail row too, so a REWRITE of it while it is unmounted keeps a stale size until it
+ * remounts. Everything else here is unchanged.
  *
  * `ChatListInternal` wires the vendored Legend `getItemSizeVersion` to
  * `buildTranscriptItemHeightSignatureKey(...)`, and `validateItemSizeVersion` answers a moved
@@ -694,7 +704,26 @@ function resolveMessageRowState(params: Readonly<{
         }
     }
     if (params.sessionActive && params.isLatestCommittedActivity) {
-        return message.kind === 'tool-call' ? 'tool-progress' : 'streaming';
+        if (message.kind === 'tool-call') return 'tool-progress';
+        // P2 (2026-08-10) — `sessionActive && isLatestCommittedActivity` is a LIVENESS test, so it
+        // must be intersected with the one thing that actually grows. Only an agent reply's body
+        // ARRIVES INCREMENTALLY: a `user-text` row is whole at birth (the composer submits it in one
+        // piece) and an `agent-event` row is a discrete record. Classifying those as growing gave
+        // them a monotonic floor carried ACROSS content shapes, made
+        // `estimateTranscriptRowHeightFromCache` refuse to serve their real last measurement, and —
+        // after R2 dropped the per-write revision from a growing row's structural key — removed the
+        // last invalidation of a content REWRITE, which for an unmounted row (no container, no
+        // onLayout) strands a size the row no longer paints.
+        //
+        // This is an ALLOWLIST because there is no per-row growth signal to intersect with instead:
+        // no message carries a streaming flag (`messageTypes.ts`), and the session-level
+        // `session.thinking` toggles between chunks — `thinkingGraceUntil` exists precisely to
+        // debounce that flicker for the indicator — so gating on it would delete a genuinely growing
+        // row's measurement on every flicker, which is the R2 defect returning. An agent reply that
+        // has FINISHED but is still the tail of an active session therefore stays growing-classified
+        // until the next message commits; that residual is stated in
+        // `.project/reviews/2026-08-10-port-gap-and-predicate/P2-predicate.md`.
+        return message.kind === 'agent-text' ? 'streaming' : 'stable';
     }
     return 'stable';
 }
