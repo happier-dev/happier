@@ -3,8 +3,7 @@ import * as React from 'react';
 import type { UseDirectSessionRuntimeResult } from '@/components/sessions/model/useDirectSessionRuntime';
 import { useSessionSubagents } from '@/hooks/session/useSessionSubagents';
 import { deriveSessionSubagentCounts } from '@/sync/domains/session/subagents/deriveSessionSubagentCounts';
-import { useSession } from '@/sync/domains/state/storage';
-import { useSessionSubagentSourceMessages } from '@/sync/store/hooks';
+import { useSession, useSessionSubagentSourceMessages } from '@/sync/domains/state/storage';
 
 /**
  * A session's live subagent counts, for a surface that shows *how many* without showing the roster.
