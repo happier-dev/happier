@@ -2,9 +2,11 @@ import * as React from 'react';
 import { Platform } from 'react-native';
 
 import { CommandMenu, type CommandMenuProps } from '@/components/ui/commandMenu';
-import { useAgentInputPopoverLayout } from '@/components/sessions/agentInput/selection/useAgentInputPopoverLayout';
+import {
+    AGENT_INPUT_POPOVER_EDGE_PADDING,
+    useAgentInputPopoverLayout,
+} from '@/components/sessions/agentInput/selection/useAgentInputPopoverLayout';
 
-const AGENT_INPUT_COMMAND_MENU_EDGE_PADDING = { horizontal: 16 } as const;
 const AGENT_INPUT_COMMAND_MENU_CONTAINER_STYLE = { paddingHorizontal: 0 } as const;
 const AGENT_INPUT_COMMAND_MENU_WEB_BACKDROP = {
     style: { backgroundColor: 'transparent' },
@@ -29,12 +31,15 @@ function resolveBackdrop(props: CommandMenuProps): CommandMenuProps['backdrop'] 
     );
 }
 
+// A closed CommandMenu renders nothing, so it cannot run the layout hook (and
+// does not need the responsive value). It still passes the owner's default so
+// this file never declares a second edge-padding value of its own.
 function ClosedAgentInputCommandMenu(props: CommandMenuProps) {
     return (
         <CommandMenu
             {...props}
             boundaryRef={resolveBoundaryRef(props)}
-            edgePadding={props.edgePadding ?? AGENT_INPUT_COMMAND_MENU_EDGE_PADDING}
+            edgePadding={props.edgePadding ?? AGENT_INPUT_POPOVER_EDGE_PADDING}
             backdrop={resolveBackdrop(props)}
             consumeOutsidePointerDown={props.consumeOutsidePointerDown ?? false}
             containerStyle={props.containerStyle ?? AGENT_INPUT_COMMAND_MENU_CONTAINER_STYLE}
@@ -56,7 +61,7 @@ function OpenAgentInputCommandMenu(props: CommandMenuProps) {
             gap={props.gap ?? popoverLayout.gap}
             boundaryRef={resolveBoundaryRef(props)}
             keyboardBottomInset={props.keyboardBottomInset ?? popoverLayout.keyboardBottomInset}
-            edgePadding={props.edgePadding ?? AGENT_INPUT_COMMAND_MENU_EDGE_PADDING}
+            edgePadding={props.edgePadding ?? popoverLayout.edgePadding}
             backdrop={resolveBackdrop(props)}
             consumeOutsidePointerDown={props.consumeOutsidePointerDown ?? false}
             containerStyle={props.containerStyle ?? AGENT_INPUT_COMMAND_MENU_CONTAINER_STYLE}

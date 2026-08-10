@@ -39,7 +39,7 @@ export function AgentInputSelectionPopover(props: AgentInputSelectionPopoverProp
             gap={popoverLayout.gap}
             maxHeightCap={popoverLayout.maxHeightCap}
             maxWidthCap={props.maxWidthCap}
-            edgePadding={{ horizontal: 16 }}
+            edgePadding={popoverLayout.edgePadding}
             closeOnAnchorPress={false}
             // IMPORTANT:
             // Do not force portaling to `document.body`. In Expo Router web modals, Radix focus/pointer

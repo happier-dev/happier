@@ -2,7 +2,10 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
-import { createMockComposerKeyboardLayout } from '@/dev/testkit/mocks/keyboardAvoidance';
+import {
+    createMockComposerKeyboardLayout,
+    setMockComposerKeyboardLiveHeight,
+} from '@/dev/testkit/mocks/keyboardAvoidance';
 import { ComposerKeyboardProvider } from '@/components/sessions/keyboardAvoidance/ComposerKeyboardContext';
 
 let mockKeyboardHeight = 0;
@@ -176,6 +179,116 @@ describe('AgentInputSelectionPopover (native placement)', () => {
 
         expect(retainKeyboardLift).toHaveBeenCalledTimes(1);
         expect(release).not.toHaveBeenCalled();
+    });
+
+    /**
+     * `useKeyboardHeight` reports 0 at `keyboardWillHide` — the START of the
+     * dismissal animation — and the composer scaffold's live height follows the
+     * same animation down to 0. The popover must not read that transient zero as
+     * "the keyboard is gone": doing so snaps its inset/cap back in one commit AND
+     * releases `retainKeyboardLift`, whose release path zeroes the composer lift
+     * outright when the last keyboard event was a hide. The previous test only
+     * drops the passive RN source; this one drops BOTH, which is what a real
+     * dismissal does.
+     */
+    it('keeps the keyboard-safe geometry and the retained lift when every keyboard source reads zero mid-dismissal', async () => {
+        mockKeyboardHeight = 320;
+        const release = vi.fn();
+        const retainKeyboardLift = vi.fn(() => release);
+        const layout = {
+            ...createMockComposerKeyboardLayout({
+                keyboardHeightForInset: 320,
+                keyboardHeightLive: 320,
+            }),
+            retainKeyboardLift,
+        };
+        const { AgentInputSelectionPopover } = await import('./AgentInputSelectionPopover');
+        const anchorRef = { current: { nodeType: 'View' } } as any;
+
+        const renderPopover = (open: boolean) => (
+            <ComposerKeyboardProvider layout={layout}>
+                <AgentInputSelectionPopover
+                    open={open}
+                    anchorRef={anchorRef}
+                    maxHeightCap={420}
+                    onRequestClose={() => {}}
+                >
+                    {() => <React.Fragment />}
+                </AgentInputSelectionPopover>
+            </ComposerKeyboardProvider>
+        );
+        const screen = await renderScreen(renderPopover(true));
+
+        expect(retainKeyboardLift).toHaveBeenCalledTimes(1);
+        expect(capturedPopoverProps.current?.keyboardBottomInset).toBe(320);
+        // floor((1080 - 320) * 0.5) = 380, below the requested 420 cap.
+        expect(capturedPopoverProps.current?.maxHeightCap).toBe(380);
+
+        // The dismissal begins: the RN keyboard event fires and the scaffold's
+        // live height animates through zero while the popover is still open.
+        mockKeyboardHeight = 0;
+        await screen.update(renderPopover(true));
+        act(() => {
+            setMockComposerKeyboardLiveHeight(layout, 0);
+        });
+
+        expect(release).not.toHaveBeenCalled();
+        expect(retainKeyboardLift).toHaveBeenCalledTimes(1);
+        expect(capturedPopoverProps.current?.keyboardBottomInset).toBe(320);
+        expect(capturedPopoverProps.current?.maxHeightCap).toBe(380);
+    });
+
+    it('drops the retained keyboard geometry once the popover closes', async () => {
+        mockKeyboardHeight = 320;
+        const release = vi.fn();
+        const retainKeyboardLift = vi.fn(() => release);
+        const layout = {
+            ...createMockComposerKeyboardLayout({
+                keyboardHeightForInset: 320,
+                keyboardHeightLive: 320,
+            }),
+            retainKeyboardLift,
+        };
+        const { AgentInputSelectionPopover } = await import('./AgentInputSelectionPopover');
+        const anchorRef = { current: { nodeType: 'View' } } as any;
+
+        const renderPopover = (open: boolean) => (
+            <ComposerKeyboardProvider layout={layout}>
+                <AgentInputSelectionPopover
+                    open={open}
+                    anchorRef={anchorRef}
+                    maxHeightCap={420}
+                    onRequestClose={() => {}}
+                >
+                    {() => <React.Fragment />}
+                </AgentInputSelectionPopover>
+            </ComposerKeyboardProvider>
+        );
+        const screen = await renderScreen(renderPopover(true));
+        expect(capturedPopoverProps.current?.keyboardBottomInset).toBe(320);
+
+        mockKeyboardHeight = 0;
+        act(() => {
+            setMockComposerKeyboardLiveHeight(layout, 0);
+        });
+        await screen.update(renderPopover(false));
+
+        expect(release).toHaveBeenCalledTimes(1);
+        expect(capturedPopoverProps.current?.keyboardBottomInset).toBe(0);
+        expect(capturedPopoverProps.current?.maxHeightCap).toBe(420);
+    });
+
+    it('sources the popover edge padding from the shared agent-input layout owner', async () => {
+        const { AgentInputSelectionPopover } = await import('./AgentInputSelectionPopover');
+        const anchorRef = { current: { nodeType: 'View' } } as any;
+
+        await renderScreen(
+            <AgentInputSelectionPopover open anchorRef={anchorRef} onRequestClose={() => {}}>
+                {() => <React.Fragment />}
+            </AgentInputSelectionPopover>,
+        );
+
+        expect(capturedPopoverProps.current?.edgePadding).toEqual({ horizontal: 16 });
     });
 
     it('uses the scaffold keyboard-height subscription without reading shared values during render', async () => {
