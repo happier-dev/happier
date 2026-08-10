@@ -39,6 +39,8 @@ import { useServerFeaturesSnapshotForServerId } from '@/sync/domains/features/fe
 import { resolvePendingInputServerWireMode } from '@/sync/engine/pending/pendingInputServerWireContract';
 import { resolvePreferredServerIdForSessionId } from '@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId';
 import { Icon, type IconName } from '@/components/ui/icons/Icon';
+import { useTemporaryCopyFeedback } from '@/components/ui/copy/useTemporaryCopyFeedback';
+import { setClipboardStringSafe } from '@/utils/ui/clipboard';
 import {
     isPendingDeliveryProviderEffectPossibleV1,
     parsePendingDeliveryStatusV1,
@@ -336,6 +338,7 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
     const [scrollViewportHeightPx, setScrollViewportHeightPx] = React.useState<number | null>(null);
     const [scrollOffsetY, setScrollOffsetY] = React.useState<number | null>(null);
     const [materializingLocalIdMap, setMaterializingLocalIdMap] = React.useState<Record<string, true>>({});
+    const copyFeedback = useTemporaryCopyFeedback();
     const deliveryActionInFlightRef = React.useRef<Record<string, true>>({});
     const removeActionInFlightRef = React.useRef<Record<string, true>>({});
     const terminalComposerClear = useTerminalComposerClearAction(props.sessionId);
@@ -369,6 +372,24 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
     const togglePendingQueueExpanded = React.useCallback(() => {
         setIsPendingQueueExpanded((value) => !value);
     }, []);
+
+    const handleCopyPendingMessage = React.useCallback(async (
+        message: PendingMessage | DiscardedPendingMessage,
+        feedbackKey: string,
+    ) => {
+        const text = getPendingText(message).trim();
+        if (!text) return;
+        try {
+            const copied = await setClipboardStringSafe(text);
+            if (!copied) {
+                Modal.alert(t('common.error'), t('items.failedToCopyToClipboard'));
+                return;
+            }
+            copyFeedback.markCopied(feedbackKey);
+        } catch {
+            Modal.alert(t('common.error'), t('items.failedToCopyToClipboard'));
+        }
+    }, [copyFeedback]);
 
     const handleEdit = React.useCallback(async (message: PendingMessage) => {
         await props.onEditPendingMessage?.({
@@ -735,6 +756,14 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
 
         const menuItems = (() => {
             const items: DropdownMenuItem[] = [];
+            if (text) {
+                items.push({
+                    id: 'copy',
+                    testID: `pendingMessages.menu.copy:${message.id}`,
+                    title: t('common.copy'),
+                    icon: <Icon name="copy" size={16} color={theme.colors.text.secondary} />,
+                });
+            }
             if (isCancellationState) {
                 items.push({ id: 'remove', title: t('common.remove'), icon: <Icon name="trash" size={16} color={theme.colors.text.secondary} />, disabled: deliveryActionBusy });
             } else if (isSendFailed) {
@@ -811,6 +840,7 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
                 items={menuItems}
                 onSelect={async (itemId) => {
                     setOpenMenuKey(null);
+                    if (itemId === 'copy') await handleCopyPendingMessage(message, menuKey);
                     if (itemId === 'continueWaiting') return;
                     if (itemId === 'edit') await handleEdit(message);
                     if (itemId === 'remove') {
@@ -1001,6 +1031,15 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
                                 pointerEvents="auto"
                                 style={styles.messageActionContainer}
                             >
+                                {text ? (
+                                    <IconAction
+                                        testID={`pendingMessages.copy:${message.id}`}
+                                        accessibilityLabel={t('common.copy')}
+                                        icon={copyFeedback.isCopied(menuKey) ? 'check' : 'copy'}
+                                        onPress={() => handleCopyPendingMessage(message, menuKey)}
+                                        tone={copyFeedback.isCopied(menuKey) ? 'success' : 'default'}
+                                    />
+                                ) : null}
                                 {canReorderPendingMessages ? (
                                     renderDragHandle({
                                         children: (
@@ -1118,6 +1157,8 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
         collapseThresholdChars,
         collapsedLines,
         expandedMessageIds,
+        copyFeedback,
+        handleCopyPendingMessage,
         handleEdit,
         handleDismissDelivery,
         handleInterruptAndRun,
@@ -1155,6 +1196,12 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
         const menuAnchor = menuPressAnchor?.menuKey === menuKey ? menuPressAnchor.anchor : undefined;
 
         const menuItems: DropdownMenuItem[] = [
+            ...(text ? [{
+                id: 'copy',
+                testID: `pendingMessages.discarded.menu.copy:${message.id}`,
+                title: t('common.copy'),
+                icon: <Icon name="copy" size={16} color={theme.colors.text.secondary} />,
+            } as const] : []),
             { id: 'requeue', title: t('session.pendingMessages.actions.requeue'), icon: <Icon name="arrow-elbow-up-left" size={16} color={theme.colors.text.secondary} /> },
             { id: 'remove', title: t('common.remove'), icon: <Icon name="trash" size={16} color={theme.colors.text.secondary} /> },
             ...(canSteerNow ? [{ id: 'steerNow', title: t('session.pendingMessages.actions.steerNow'), icon: <Icon name="navigation-arrow" size={16} color={theme.colors.text.secondary} /> } as const] : []),
@@ -1178,6 +1225,7 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
                 items={menuItems}
                 onSelect={async (itemId) => {
                     setOpenMenuKey(null);
+                    if (itemId === 'copy') await handleCopyPendingMessage(message, menuKey);
                     if (itemId === 'requeue') await handleRequeueDiscarded(message.id);
                     if (itemId === 'remove') await handleRemoveDiscarded(message.id);
                     if (itemId === 'steerNow') await handleSteerDiscardedNow(message);
@@ -1239,6 +1287,15 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
                                 pointerEvents="auto"
                                 style={styles.messageActionContainer}
                             >
+                                {text ? (
+                                    <IconAction
+                                        testID={`pendingMessages.discarded.copy:${message.id}`}
+                                        accessibilityLabel={t('common.copy')}
+                                        icon={copyFeedback.isCopied(menuKey) ? 'check' : 'copy'}
+                                        onPress={() => handleCopyPendingMessage(message, menuKey)}
+                                        tone={copyFeedback.isCopied(menuKey) ? 'success' : 'default'}
+                                    />
+                                ) : null}
                                 <IconAction
                                     testID={`pendingMessages.discarded.requeue:${message.id}`}
                                     accessibilityLabel={t('session.pendingMessages.actions.requeue')}
@@ -1275,6 +1332,8 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
     }, [
         canSteerNow,
         collapsedLines,
+        copyFeedback,
+        handleCopyPendingMessage,
         hoveredMessageId,
         handleRequeueDiscarded,
         handleRemoveDiscarded,
@@ -1479,12 +1538,16 @@ function IconAction(props: {
     onPress: () => void;
     accessibilityLabel: string;
     testID?: string;
-    tone?: 'default' | 'destructive';
+    tone?: 'default' | 'destructive' | 'success';
     disabled?: boolean;
 }) {
     const { theme } = useUnistyles();
     const isDestructive = props.tone === 'destructive';
-    const tint = isDestructive ? theme.colors.state.danger.foreground : theme.colors.text.secondary;
+    const tint = isDestructive
+        ? theme.colors.state.danger.foreground
+        : props.tone === 'success'
+            ? theme.colors.state.success.foreground
+            : theme.colors.text.secondary;
     return (
         <Pressable
             testID={props.testID}

@@ -43,6 +43,7 @@ const modalPrompt = vi.fn();
 const reorderPendingMessages = vi.fn();
 const actionExecute = vi.fn();
 const resolvePreferredServerIdForSessionId = vi.fn();
+const setClipboardStringSafe = vi.hoisted(() => vi.fn(async (_value: string) => true));
 
 let sessionValue: any = null;
 let settingValues: Record<string, unknown> = {};
@@ -148,6 +149,10 @@ vi.mock('@/sync/ops/actions/defaultActionExecutor', () => ({
 
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId', () => ({
     resolvePreferredServerIdForSessionId: (...args: unknown[]) => resolvePreferredServerIdForSessionId(...args),
+}));
+
+vi.mock('@/utils/ui/clipboard', () => ({
+    setClipboardStringSafe: (value: string) => setClipboardStringSafe(value),
 }));
 
 vi.mock('@/sync/domains/features/featureDecisionRuntime', async (importOriginal) => {
@@ -258,6 +263,8 @@ describe('PendingMessagesTranscriptBlock', () => {
         actionExecute.mockReset();
         actionExecute.mockResolvedValue({ ok: true, result: { ok: true, status: 'cleared' } });
         resolvePreferredServerIdForSessionId.mockReset();
+        setClipboardStringSafe.mockReset();
+        setClipboardStringSafe.mockResolvedValue(true);
         sessionValue = null;
         settingValues = {};
     });
@@ -1300,7 +1307,35 @@ describe('PendingMessagesTranscriptBlock', () => {
         const overlay = screen.findByTestId('pendingMessages.actionsOverlay:p1');
         expect(overlay).toBeTruthy();
         expect(overlay!.props.pointerEvents).toBe('auto');
+        expect(screen.findByTestId('pendingMessages.copy:p1')).toBeTruthy();
         expect(screen.findByTestId('pendingMessages.remove:p1')).toBeTruthy();
+    });
+
+    it('copies the visible pending-message text', async () => {
+        const PendingMessagesTranscriptBlock = await loadPendingMessagesTranscriptBlock();
+        const screen = await renderScreen(React.createElement(PendingMessagesTranscriptBlock, {
+            sessionId: 's1',
+            pendingMessages: [{ id: 'p1', text: 'raw text', displayText: 'visible text', createdAt: 0, updatedAt: 0, localId: 'p1', rawRecord: {} }],
+            discardedMessages: [],
+        }));
+
+        await screen.pressByTestIdAsync('pendingMessages.copy:p1');
+
+        expect(setClipboardStringSafe).toHaveBeenCalledWith('visible text');
+    });
+
+    it('reports clipboard failures without showing copied feedback', async () => {
+        setClipboardStringSafe.mockResolvedValueOnce(false);
+        const PendingMessagesTranscriptBlock = await loadPendingMessagesTranscriptBlock();
+        const screen = await renderScreen(React.createElement(PendingMessagesTranscriptBlock, {
+            sessionId: 's1',
+            pendingMessages: [{ id: 'p1', text: 'hello', displayText: undefined, createdAt: 0, updatedAt: 0, localId: 'p1', rawRecord: {} }],
+            discardedMessages: [],
+        }));
+
+        await screen.pressByTestIdAsync('pendingMessages.copy:p1');
+
+        expect(modalAlert).toHaveBeenCalledWith(t('common.error'), t('items.failedToCopyToClipboard'));
     });
 
     it('anchors a pending-message menu to the visible press point', async () => {
@@ -1327,6 +1362,9 @@ describe('PendingMessagesTranscriptBlock', () => {
         });
         expect(menu?.props.placement).toBe('auto-vertical');
         expect(menu?.props.matchTriggerWidth).toBe(false);
+
+        await screen.pressByTestIdAsync('pendingMessages.menu.copy:p1');
+        expect(setClipboardStringSafe).toHaveBeenCalledWith('x'.repeat(600));
     });
 
     it('offers steer-now while a steer-capable session is thinking and does not abort the turn', async () => {
@@ -2426,7 +2464,23 @@ describe('PendingMessagesTranscriptBlock', () => {
         const overlay = screen.findByTestId('pendingMessages.discarded.actionsOverlay:d1');
         expect(overlay).toBeTruthy();
         expect(overlay!.props.pointerEvents).toBe('auto');
+        expect(screen.findByTestId('pendingMessages.discarded.copy:d1')).toBeTruthy();
         expect(screen.findByTestId('pendingMessages.discarded.remove:d1')).toBeTruthy();
+    });
+
+    it('copies discarded pending-message text', async () => {
+        const PendingMessagesTranscriptBlock = await loadPendingMessagesTranscriptBlock();
+        const screen = await renderScreen(React.createElement(PendingMessagesTranscriptBlock, {
+            sessionId: 's1',
+            pendingMessages: [],
+            discardedMessages: [
+                { id: 'd1', text: 'discarded raw', displayText: 'discarded visible', createdAt: 0, updatedAt: 0, discardedAt: 1, discardedReason: 'manual', localId: 'd1', rawRecord: {} },
+            ],
+        }));
+
+        await screen.pressByTestIdAsync('pendingMessages.discarded.copy:d1');
+
+        expect(setClipboardStringSafe).toHaveBeenCalledWith('discarded visible');
     });
 
     it('anchors a discarded-message menu to the visible press point', async () => {
@@ -2455,6 +2509,9 @@ describe('PendingMessagesTranscriptBlock', () => {
         });
         expect(menu?.props.placement).toBe('auto-vertical');
         expect(menu?.props.matchTriggerWidth).toBe(false);
+
+        await screen.pressByTestIdAsync('pendingMessages.discarded.menu.copy:d1');
+        expect(setClipboardStringSafe).toHaveBeenCalledWith('x'.repeat(600));
     });
 
     it('renders system-discarded tombstones with their reason and a remove action', async () => {
