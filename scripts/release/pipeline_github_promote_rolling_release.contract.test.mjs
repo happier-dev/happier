@@ -529,7 +529,11 @@ test('rolling promotion keeps repeated GitHub upload connection retries bounded'
       encoding: 'utf8',
     });
 
-    assert.notEqual(result.status, 0);
+    assert.equal(
+      result.status,
+      75,
+      'exhausted upload connectivity retries must request a fresh-runner retry without masking other failures',
+    );
     const uploadCalls = readFileSync(testFixture.log, 'utf8')
       .split('\n')
       .filter((line) => line.includes('uploads.github.com'));

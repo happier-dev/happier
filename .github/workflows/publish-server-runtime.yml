@@ -435,6 +435,64 @@ jobs:
     environment: release-shared
     permissions:
       contents: read
+    outputs:
+      requires_fresh_runner_retry: ${{ steps.promote.outputs.requires_fresh_runner_retry }}
+    steps:
+      - name: Checkout called workflow control bytes only
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22.x
+      - name: Install minisign only from trusted control bytes
+        uses: ./.github/actions/bootstrap-minisign
+      - name: Create narrowly scoped publish token
+        id: app_token
+        uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547
+        with:
+          app-id: ${{ secrets.RELEASE_BOT_APP_ID }}
+          private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
+          owner: ${{ needs.release_actor_guard.outputs.repository_owner }}
+          repositories: ${{ needs.release_actor_guard.outputs.repository_name }}
+          permission-contents: write
+      - name: Re-promote exact verified immutable release bytes
+        id: promote
+        env:
+          GH_TOKEN: ${{ steps.app_token.outputs.token }}
+          GH_REPO: ${{ job.workflow_repository }}
+          AUTHORIZED_SHA: ${{ needs.release_actor_guard.outputs.authorized_sha }}
+          VERSION: ${{ needs.release_actor_guard.outputs.version }}
+          BASE_VERSION: ${{ needs.release_actor_guard.outputs.base_version }}
+          CHANNEL: ${{ inputs.channel }}
+          ALLOW_STABLE: ${{ inputs.allow_stable }}
+          RELEASE_MESSAGE: ${{ inputs.release_message }}
+        run: |
+          set +e
+          node scripts/pipeline/release/publish-server-runtime.mjs \
+            --phase promote-rolling --authorized-sha "$AUTHORIZED_SHA" --version "$VERSION" \
+            --base-version "$BASE_VERSION" --channel "$CHANNEL" --allow-stable "$ALLOW_STABLE" \
+            --release-message "$RELEASE_MESSAGE" --run-contracts false --check-installers false
+          status=$?
+          set -e
+          if [ "$status" -eq 75 ]; then
+            echo "requires_fresh_runner_retry=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "requires_fresh_runner_retry=false" >> "$GITHUB_OUTPUT"
+          exit "$status"
+
+  promote_existing_fresh_runner_retry:
+    name: Re-promote exact immutable version on a fresh runner
+    needs: [trusted_ref_guard, release_actor_guard, promote_existing]
+    if: ${{ inputs.retry_version != '' && needs.promote_existing.outputs.requires_fresh_runner_retry == 'true' }}
+    runs-on: ubuntu-latest
+    environment: release-shared
+    permissions:
+      contents: read
     steps:
       - name: Checkout called workflow control bytes only
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262

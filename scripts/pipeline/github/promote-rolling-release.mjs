@@ -12,6 +12,17 @@ const FULL_SHA = /^[a-f0-9]{40}$/;
 const DEFAULT_UPLOAD_ATTEMPTS = 8;
 const DEFAULT_UPLOAD_RETRY_DELAY_MS = 5_000;
 const DEFAULT_UPLOAD_MAX_RETRY_DELAY_MS = 60_000;
+const TRANSIENT_UPLOAD_CONNECTIVITY_EXHAUSTED_EXIT_CODE = 75;
+
+class TransientUploadConnectivityExhaustedError extends Error {
+  constructor(name, cause) {
+    super(
+      `GitHub asset upload connectivity retries exhausted for ${name}.\n${commandFailureOutput(cause)}`,
+      { cause },
+    );
+    this.name = 'TransientUploadConnectivityExhaustedError';
+  }
+}
 
 function fail(message) {
   throw new Error(message);
@@ -282,8 +293,11 @@ function uploadReleaseAssetWithRetry({
     const transientConnectionFailure = /error connecting to (?:api\.)?uploads\.github\.com/iu.test(
       commandFailureOutput(uploadError),
     );
-    if (!transientConnectionFailure || attempt >= attempts) {
+    if (!transientConnectionFailure) {
       throw uploadError;
+    }
+    if (attempt >= attempts) {
+      throw new TransientUploadConnectivityExhaustedError(name, uploadError);
     }
     const nextAttempt = attempt + 1;
     const delayMs = Math.min(retryDelayMs * (2 ** (attempt - 1)), maxRetryDelayMs);
@@ -690,5 +704,9 @@ async function main() {
 
 main().catch((error) => {
   console.error(error instanceof Error ? error.message : String(error));
-  process.exit(1);
+  process.exit(
+    error instanceof TransientUploadConnectivityExhaustedError
+      ? TRANSIENT_UPLOAD_CONNECTIVITY_EXHAUSTED_EXIT_CODE
+      : 1,
+  );
 });
