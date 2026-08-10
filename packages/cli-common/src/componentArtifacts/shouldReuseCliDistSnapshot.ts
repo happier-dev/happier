@@ -1,5 +1,5 @@
-import { readdir, stat } from 'node:fs/promises';
-import { join } from 'node:path';
+import { readFile, readdir, stat } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
 
 async function findNewestInputMtimeMs(path: string): Promise<number> {
     let pathStat;
@@ -27,12 +27,26 @@ async function findNewestInputMtimeMs(path: string): Promise<number> {
 export async function shouldReuseCliDistSnapshot(params: Readonly<{
     distEntrypointPath: string;
     inputPaths: readonly string[];
+    expectedBuildVersion?: string;
 }>): Promise<boolean> {
     let distEntrypointStat;
     try {
         distEntrypointStat = await stat(params.distEntrypointPath);
     } catch {
         return false;
+    }
+
+    const expectedBuildVersion = String(params.expectedBuildVersion ?? '').trim();
+    if (expectedBuildVersion) {
+        try {
+            const manifest = JSON.parse(await readFile(
+                join(dirname(params.distEntrypointPath), '.build-manifest.json'),
+                'utf8',
+            )) as { buildVersion?: unknown };
+            if (manifest.buildVersion !== expectedBuildVersion) return false;
+        } catch {
+            return false;
+        }
     }
 
     const distEntrypointMtimeMs = distEntrypointStat.mtimeMs;

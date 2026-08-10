@@ -151,6 +151,48 @@ describe('buildCliDist', () => {
     }
   });
 
+  it('embeds an explicit release version only in the immutable build generation', async () => {
+    const packageRoot = createTempDirSync('happier-cli-build-release-version-');
+    try {
+      writeRuntimeManifest(packageRoot);
+      const sourceManifestPath = join(packageRoot, 'package.json');
+      const sourceManifest = JSON.parse(readFileSync(sourceManifestPath, 'utf8')) as Record<string, unknown>;
+      writeFileSync(sourceManifestPath, JSON.stringify({ ...sourceManifest, version: '0.2.10' }), 'utf8');
+      mkdirSync(join(packageRoot, 'src'), { recursive: true });
+      writeFileSync(join(packageRoot, 'tsconfig.json'), '{}\n', 'utf8');
+      writeFileSync(join(packageRoot, 'tsconfig.build.json'), '{}\n', 'utf8');
+      writeFileSync(join(packageRoot, 'src', 'index.ts'), 'export const runtime = true;\n', 'utf8');
+
+      let bundledVersion = '';
+      let finalizedBuildVersion = '';
+      await buildCliDist({
+        packageRoot,
+        repoRoot: packageRoot,
+        skipLock: true,
+        env: {
+          ...process.env,
+          HAPPIER_CLI_BUILD_VERSION: '0.2.10-dev.61',
+        },
+        rmDistImpl: async () => {},
+        resolveTypeScriptCliPathImpl: () => '/repo/node_modules/@typescript/native/bin/tsc',
+        runTypecheckImpl: () => {},
+        runPkgrollBuildImpl: ({ packageJsonPath }: { packageJsonPath: string }) => {
+          bundledVersion = JSON.parse(readFileSync(packageJsonPath, 'utf8')).version;
+        },
+        resolveDistRuntimeEntrypointsImpl: () => [],
+        finalizeDistImpl: ({ buildVersion }: { buildVersion?: string }) => {
+          finalizedBuildVersion = buildVersion ?? '';
+        },
+      });
+
+      expect(bundledVersion).toBe('0.2.10-dev.61');
+      expect(finalizedBuildVersion).toBe('0.2.10-dev.61');
+      expect(JSON.parse(readFileSync(sourceManifestPath, 'utf8')).version).toBe('0.2.10');
+    } finally {
+      rmSync(packageRoot, { recursive: true, force: true });
+    }
+  });
+
   it('rejects an unimportable staged runtime before the CLI owner atomically replaces dist', async () => {
     const packageRoot = createTempDirSync('happier-cli-build-runtime-probe-');
     try {

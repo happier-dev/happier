@@ -11,6 +11,7 @@ export const CLI_DIST_BUILD_MANIFEST_TOOL_VERSION = cliDistBuildManifest.CLI_DIS
 export const readCliDistBuildManifest = cliDistBuildManifest.readCliDistBuildManifest;
 export const readCliDistClosure = cliDistBuildManifest.readCliDistClosure;
 export const buildCliDistManifest = cliDistBuildManifest.buildCliDistManifest;
+export const normalizeCliBuildVersion = cliDistBuildManifest.normalizeCliBuildVersion;
 
 export function readCliDistBuildManifestFingerprint(distDir) {
   return cliDistBuildManifest.readRecordedCliDistBuildManifestFingerprint(distDir);

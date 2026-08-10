@@ -10,6 +10,7 @@ interface CliDistBuildManifest {
   readonly fileCount: number;
   readonly toolVersion: string;
   readonly inputFingerprint?: string;
+  readonly buildVersion?: string;
   readonly runtimeAsset?: CliRuntimeAssetBuildManifestEntry;
 }
 
@@ -18,6 +19,7 @@ interface CliDistBuildManifestOptions {
   readonly maxFiles?: number;
   readonly builtAt?: string;
   readonly inputFingerprint?: string;
+  readonly buildVersion?: string;
 }
 
 interface CliDistIntegrityResult {
@@ -50,6 +52,7 @@ declare const cliDistBuildManifest: {
   readonly CLI_DIST_BUILD_MANIFEST_TOOL_VERSION: string;
   buildCliDistManifest(entrypoint: string, options?: CliDistBuildManifestOptions): CliDistBuildManifest;
   extractRelativeModuleSpecifiers(source: string): readonly string[];
+  normalizeCliBuildVersion(value: unknown): string;
   readCliDistBuildManifest(entrypoint: string, options?: CliDistBuildManifestOptions): CliDistIntegrityResult;
   readCliDistClosure(entrypoint: string, options?: CliDistBuildManifestOptions): Readonly<{
     ok: boolean;
@@ -89,4 +92,3 @@ declare const cliDistBuildManifest: {
 };
 
 export = cliDistBuildManifest;
-

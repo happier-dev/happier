@@ -1,11 +1,11 @@
 import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync, realpathSync } from 'node:fs';
-import { cp, mkdtemp, readdir, rm } from 'node:fs/promises';
+import { cp, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { resolveTypeScriptCliPath } from '../../../scripts/workspaces/typescriptCommand.mjs';
-import { finalizeDist, readCliDistBuildManifestFingerprint } from './finalizeDist.mjs';
+import { finalizeDist, normalizeCliBuildVersion, readCliDistBuildManifestFingerprint } from './finalizeDist.mjs';
 import { withOptionalCliSharedDepsBuildLock } from './optionalWorkspaceBundleLock.mjs';
 import { main as rmDist } from './rmDist.mjs';
 import { collectPkgrollInputPaths, runPkgrollBuild } from './runPkgrollBuild.mjs';
@@ -14,6 +14,10 @@ function resolveBuildOutput(env = process.env) {
   const raw = String(env?.HAPPIER_CLI_BUILD_OUTPUT_DIR ?? '').trim();
   if (raw) return { outputDir: raw, builderOwned: false };
   return { outputDir: `dist.staging.${process.pid}`, builderOwned: true };
+}
+
+function resolveCliBuildVersion(env = process.env) {
+  return normalizeCliBuildVersion(env?.HAPPIER_CLI_BUILD_VERSION);
 }
 
 async function reclaimAbandonedCliBuildDirs(packageRoot, activeOutputDir) {
@@ -29,7 +33,7 @@ async function reclaimAbandonedCliBuildDirs(packageRoot, activeOutputDir) {
     .map((entryPath) => rm(entryPath, { recursive: true, force: true })));
 }
 
-async function createImmutableBuildSource({ packageRoot }) {
+async function createImmutableBuildSource({ packageRoot, buildVersion = '' }) {
   if (!existsSync(join(packageRoot, 'src'))) {
     return {
       packageRoot,
@@ -46,6 +50,11 @@ async function createImmutableBuildSource({ packageRoot }) {
       const sourcePath = join(packageRoot, relativePath);
       if (!existsSync(sourcePath)) continue;
       await cp(sourcePath, join(snapshotRoot, relativePath), { recursive: true });
+    }
+    if (buildVersion) {
+      const packageJsonPath = join(snapshotRoot, 'package.json');
+      const packageJson = JSON.parse(readFileSync(packageJsonPath, 'utf8'));
+      await writeFile(packageJsonPath, `${JSON.stringify({ ...packageJson, version: buildVersion }, null, 2)}\n`, 'utf8');
     }
   } catch (error) {
     await rm(snapshotRoot, { recursive: true, force: true }).catch(() => {});
@@ -136,6 +145,10 @@ async function buildCliDistUnlocked(options = {}) {
     ...(options.env ?? {}),
   };
   const { outputDir, builderOwned: builderOwnsOutput } = resolveBuildOutput(env);
+  const buildVersion = resolveCliBuildVersion(env);
+  if (buildVersion && !builderOwnsOutput) {
+    throw new Error('[cli-build] HAPPIER_CLI_BUILD_VERSION requires the builder-owned immutable source generation');
+  }
   env.HAPPIER_CLI_BUILD_OUTPUT_DIR = outputDir;
   const expectedCurrentFingerprint = readCliDistBuildManifestFingerprint(join(packageRoot, 'dist'));
   const rmDistImpl = options.rmDistImpl ?? rmDist;
@@ -149,6 +162,7 @@ async function buildCliDistUnlocked(options = {}) {
   const immutableSource = builderOwnsOutput
     ? await (options.createImmutableBuildSourceImpl ?? createImmutableBuildSource)({
         packageRoot,
+        buildVersion,
       })
     : {
         packageRoot,
@@ -187,6 +201,7 @@ async function buildCliDistUnlocked(options = {}) {
       packageRoot,
       stagingDir: resolvedOutputDir,
       expectedCurrentFingerprint,
+      ...(buildVersion ? { buildVersion } : {}),
     });
     return {
       outputDir: resolve(packageRoot, 'dist'),

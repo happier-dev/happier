@@ -63,4 +63,33 @@ describe('shouldReuseCliDistSnapshot', () => {
             ],
         })).resolves.toBe(true);
     });
+
+    it('requires an exact recorded build version when release packaging requests one', async () => {
+        const rootDir = await createTempDir();
+        const timestamp = new Date('2026-04-13T18:05:00.000Z');
+        const distDir = join(rootDir, 'apps', 'cli', 'dist');
+        const distEntrypointPath = join(distDir, 'index.mjs');
+        await writeTimedFile(distEntrypointPath, 'export default "cli";\n', timestamp);
+        await writeFile(
+            join(distDir, '.build-manifest.json'),
+            JSON.stringify({ buildVersion: '0.2.10' }),
+            'utf8',
+        );
+
+        await expect(shouldReuseCliDistSnapshot({
+            distEntrypointPath,
+            inputPaths: [],
+            expectedBuildVersion: '0.2.10-dev.61',
+        })).resolves.toBe(false);
+        await writeFile(
+            join(distDir, '.build-manifest.json'),
+            JSON.stringify({ buildVersion: '0.2.10-dev.61' }),
+            'utf8',
+        );
+        await expect(shouldReuseCliDistSnapshot({
+            distEntrypointPath,
+            inputPaths: [],
+            expectedBuildVersion: '0.2.10-dev.61',
+        })).resolves.toBe(true);
+    });
 });

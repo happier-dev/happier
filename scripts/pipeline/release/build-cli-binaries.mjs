@@ -81,6 +81,7 @@ async function main() {
       payloadDir: stageDir,
       target,
       externals,
+      releaseVersion: version,
     });
     const artifact = await packagePreparedTargetBinary({
       product: 'happier',

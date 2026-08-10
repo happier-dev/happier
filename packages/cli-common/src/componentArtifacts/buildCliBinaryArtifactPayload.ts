@@ -177,6 +177,7 @@ export async function buildCliBinaryArtifactPayload({
   payloadDir,
   target = resolveCurrentBinaryTarget({ availableTargets: CLI_BINARY_TARGETS }),
   externals = [],
+  releaseVersion = '',
   runCommand = execOrThrow,
   commandProbe = commandExists,
   compileBinary = compileBunBinary,
@@ -186,6 +187,7 @@ export async function buildCliBinaryArtifactPayload({
   payloadDir: string;
   target?: BinaryTarget;
   externals?: string[];
+  releaseVersion?: string;
   runCommand?: RunCommand;
   commandProbe?: (cmd: string) => boolean;
   compileBinary?: typeof compileBunBinary;
@@ -235,6 +237,7 @@ export async function buildCliBinaryArtifactPayload({
       // Rebuilding `apps/cli` is expensive and can disrupt long-running processes in dev checkouts.
       if (await shouldReuseCliDistSnapshot({
         distEntrypointPath: entrypoint,
+        expectedBuildVersion: releaseVersion,
         inputPaths: [
           join(cliDir, 'src'),
           join(cliDir, 'package.json'),
@@ -250,7 +253,10 @@ export async function buildCliBinaryArtifactPayload({
         }
 
         try {
-          await runCommandWithHeldDistLock(yarn.cmd, [...yarn.args, '--cwd', 'apps/cli', 'build'], { cwd: repoRoot });
+          await runCommandWithHeldDistLock(yarn.cmd, [...yarn.args, '--cwd', 'apps/cli', 'build'], {
+            cwd: repoRoot,
+            ...(releaseVersion ? { env: { HAPPIER_CLI_BUILD_VERSION: releaseVersion } } : {}),
+          });
           await ensureFileExists(entrypoint);
           if (hadDistBeforeBuild) {
             await rm(distBackupDir, { recursive: true, force: true });

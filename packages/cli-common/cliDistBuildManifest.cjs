@@ -8,6 +8,15 @@ const CLI_DIST_BUILD_MANIFEST = '.build-manifest.json';
 const CLI_DIST_BUILD_MANIFEST_TOOL_VERSION = '2';
 const DEFAULT_MAX_FILES = 5_000;
 
+function normalizeCliBuildVersion(value) {
+  const buildVersion = String(value ?? '').trim();
+  if (!buildVersion) return '';
+  if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?(?:\+[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?$/.test(buildVersion)) {
+    throw new Error(`[cli-dist-manifest] invalid build version: ${buildVersion}`);
+  }
+  return buildVersion;
+}
+
 function computeStringCommentSpans(source) {
   const text = String(source ?? '');
   const spans = [];
@@ -323,6 +332,7 @@ function buildCliDistManifest(entrypoint, options = {}) {
   if (inputFingerprint && !/^[a-f0-9]{64}$/.test(inputFingerprint)) {
     throw new Error(`[cli-dist-manifest] invalid_input_fingerprint: ${entrypoint}`);
   }
+  const buildVersion = normalizeCliBuildVersion(options.buildVersion);
 
   return {
     fingerprint: closure.fingerprint,
@@ -330,6 +340,7 @@ function buildCliDistManifest(entrypoint, options = {}) {
     fileCount: closure.fileCount,
     toolVersion: CLI_DIST_BUILD_MANIFEST_TOOL_VERSION,
     ...(inputFingerprint ? { inputFingerprint } : {}),
+    ...(buildVersion ? { buildVersion } : {}),
   };
 }
 
@@ -386,6 +397,11 @@ function readCliDistBuildManifest(entrypoint, options = {}) {
   const recordedInputFingerprint = String(manifest?.inputFingerprint ?? '').trim().toLowerCase();
   if (recordedInputFingerprint && !/^[a-f0-9]{64}$/.test(recordedInputFingerprint)) {
     return invalidManifestResult('invalid_build_manifest_input_fingerprint', manifestPath);
+  }
+  try {
+    normalizeCliBuildVersion(manifest?.buildVersion);
+  } catch {
+    return invalidManifestResult('invalid_build_manifest_build_version', manifestPath);
   }
 
   const recordedFileCount = Number(manifest?.fileCount);
@@ -680,6 +696,7 @@ module.exports = {
   CLI_DIST_BUILD_MANIFEST_TOOL_VERSION,
   buildCliDistManifest,
   extractRelativeModuleSpecifiers,
+  normalizeCliBuildVersion,
   readCliDistBuildManifest,
   readCliDistClosure,
   readCliDistClosureFingerprint,
@@ -689,4 +706,3 @@ module.exports = {
   writeCliRuntimeAssetBuildManifest,
   writeCliDistBuildManifest,
 };
-
