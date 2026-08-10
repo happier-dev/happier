@@ -12,6 +12,10 @@ export type PendingDeliveryStatusV1 =
 
 export type PendingDeliveryResolvedReasonV1 = 'provider_accepted' | 'materialized' | 'manual_handled';
 
+export const PENDING_DELIVERY_HIDDEN_DISCARDED_REASONS_V1 = ['resent_as_new'] as const;
+
+const pendingDeliveryHiddenDiscardedReasonsV1 = new Set<string>(PENDING_DELIVERY_HIDDEN_DISCARDED_REASONS_V1);
+
 export type PendingDeliveryStatusTransitionTargetV1 =
   | PendingDeliveryStatusV1
   | Readonly<{
@@ -125,6 +129,11 @@ export function isPendingDeliveryProviderEffectPossibleV1(status: PendingDeliver
   return status.reason === 'ambiguous_terminal_delivery'
     || status.reason === 'delivery_outcome_uncertain'
     || status.reason === 'unknown';
+}
+
+export function shouldExposePendingDeliveryInDiscardedHistoryV1(status: PendingDeliveryStatusV1): boolean {
+  return status.status === 'discarded'
+    && !pendingDeliveryHiddenDiscardedReasonsV1.has(status.reason ?? '');
 }
 
 export function isPendingDeliveryStatusTransitionAllowedV1(

@@ -109,6 +109,42 @@ describe('pendingQueueV2 decrypt mapping', () => {
         expect(messages[0]?.text).toBe('ok');
     });
 
+    it('hides a send-as-new idempotency tombstone returned by an older server', async () => {
+        const sessionId = 's_send_as_new_compat';
+        const encryption = await createPendingQueueEncryption({ sessionId });
+
+        await fetchAndApplyPendingMessagesV2({
+            sessionId,
+            encryption,
+            request: async () => Response.json({
+                pending: [
+                    {
+                        localId: 'replacement',
+                        content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'send once' } } },
+                        status: 'queued',
+                        position: 1,
+                        createdAt: 2,
+                        updatedAt: 2,
+                    },
+                    {
+                        localId: 'original',
+                        content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'send once' } } },
+                        status: 'discarded',
+                        discardedReason: 'resent_as_new',
+                        position: 0,
+                        createdAt: 1,
+                        updatedAt: 2,
+                        discardedAt: 2,
+                    },
+                ],
+            }),
+        });
+
+        const pendingState = storage.getState().sessionPending[sessionId];
+        expect(pendingState?.messages.map((message) => message.localId)).toEqual(['replacement']);
+        expect(pendingState?.discarded).toEqual([]);
+    });
+
     it('retains an explicit malformed requested action as blocked unsupported work', async () => {
         const sessionId = 's_malformed_pending_action';
         const encryption = await createPendingQueueEncryption({ sessionId });

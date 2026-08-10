@@ -768,9 +768,11 @@ export {
 export {
   isPendingDeliveryProviderEffectPossibleV1,
   isPendingDeliveryStatusTransitionAllowedV1,
+  PENDING_DELIVERY_HIDDEN_DISCARDED_REASONS_V1,
   normalizePendingDeliveryStatusV1,
   parsePendingDeliveryStatusV1,
   pendingDeliveryStatusV1ToPersistedFields,
+  shouldExposePendingDeliveryInDiscardedHistoryV1,
   type PendingDeliveryDetailV1,
   type PendingDeliveryResolvedReasonV1,
   type PendingDeliveryStatusPersistedFieldsV1,

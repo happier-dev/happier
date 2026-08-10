@@ -5,6 +5,7 @@ import {
   isPendingDeliveryStatusTransitionAllowedV1,
   normalizePendingDeliveryStatusV1,
   parsePendingDeliveryStatusV1,
+  shouldExposePendingDeliveryInDiscardedHistoryV1,
   pendingDeliveryStatusV1ToPersistedFields,
   type PendingDeliveryStatusTransitionTargetV1,
   type PendingDeliveryStatusV1,
@@ -125,6 +126,19 @@ describe('pending delivery status v1 contract', () => {
     'classifies %# provider-effect possibility',
     (status, possible) => {
       expect(isPendingDeliveryProviderEffectPossibleV1(status)).toBe(possible);
+    },
+  );
+
+  it.each([
+    [{ status: 'discarded', reason: 'resent_as_new' }, false],
+    [{ status: 'discarded', reason: 'dismissed_uncertain' }, true],
+    [{ status: 'discarded', reason: 'user_discarded' }, true],
+    [{ status: 'discarded', reason: null }, true],
+    [{ status: 'queued' }, false],
+  ] satisfies readonly (readonly [PendingDeliveryStatusV1, boolean])[])(
+    'classifies %# discarded-history visibility',
+    (status, visible) => {
+      expect(shouldExposePendingDeliveryInDiscardedHistoryV1(status)).toBe(visible);
     },
   );
 

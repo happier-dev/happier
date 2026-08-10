@@ -36,6 +36,7 @@ import { isTransientConnectivityError } from '@/sync/runtime/connectivity/transi
 import {
     normalizePendingDeliveryBlockedReason,
     parsePendingDeliveryStatusV1,
+    shouldExposePendingDeliveryInDiscardedHistoryV1,
     PendingRequestedActionV1Schema,
     readPendingLocalId,
     SessionStoredMessageContentSchema,
@@ -1569,7 +1570,13 @@ export async function fetchAndApplyPendingMessagesV2(params: {
         .filter((r) => r.status !== 'discarded')
         .sort((a, b) => a.position - b.position || a.createdAt - b.createdAt || a.localId.localeCompare(b.localId));
     const discarded = rows
-        .filter((r) => r.status === 'discarded')
+        // `resent_as_new` is retained by older servers only as the idempotency/evidence owner for
+        // the replacement operation. It is not discarded user work and must not become a duplicate
+        // recovery row while this client can still meet that predecessor server shape.
+        .filter((r) => r.status === 'discarded' && shouldExposePendingDeliveryInDiscardedHistoryV1({
+            status: 'discarded',
+            reason: r.discardedReason,
+        }))
         .sort((a, b) => (a.discardedAt ?? a.updatedAt) - (b.discardedAt ?? b.updatedAt));
 
     const pendingMessages: PendingMessage[] = [];

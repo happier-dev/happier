@@ -15,6 +15,7 @@ import {
     isStoredContentKindAllowedForSessionByStoragePolicy,
     isPendingDeliveryProviderEffectPossibleV1,
     isPendingDeliveryStatusTransitionAllowedV1,
+    PENDING_DELIVERY_HIDDEN_DISCARDED_REASONS_V1,
     normalizePendingDeliveryBlockedReason,
     normalizePendingDeliveryStatusV1,
     pendingDeliveryStatusV1ToPersistedFields,
@@ -218,7 +219,14 @@ export async function listPendingMessages(params: {
                 select,
             }),
             db.sessionPendingMessage.findMany({
-                where: { sessionId, status: "discarded" },
+                where: {
+                    sessionId,
+                    status: "discarded",
+                    OR: [
+                        { discardedReason: null },
+                        { discardedReason: { notIn: [...PENDING_DELIVERY_HIDDEN_DISCARDED_REASONS_V1] } },
+                    ],
+                },
                 orderBy: [{ updatedAt: "desc" }, { createdAt: "desc" }],
                 select,
             }),

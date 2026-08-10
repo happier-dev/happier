@@ -2584,6 +2584,14 @@ describe("pendingMessageService (shared sessions)", () => {
             content: { t: "encrypted", c: "cipher-provider-delivery-resent" },
             requestedAction: { v: 1, kind: "enqueue" },
         });
+        await expect(listPendingMessages({
+            actorUserId: owner.id,
+            sessionId: session.id,
+            includeDiscarded: true,
+        })).resolves.toMatchObject({
+            ok: true,
+            pending: [expect.objectContaining({ localId: replacement.localId, status: "queued" })],
+        });
         await expect(sendPendingDeliveryAsNew({ actorUserId: owner.id, sessionId: session.id, localId }))
             .resolves.toMatchObject({ ok: true, didWrite: false, pendingCount: 1 });
         await db.sessionPendingMessage.update({
