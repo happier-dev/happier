@@ -64,6 +64,61 @@ test('server runtime publisher exposes separate unsigned candidate build and aut
   assert.match(wrapperSource, /publishing\/publish-binary-release\.mjs/);
 });
 
+test('server runtime publisher preserves exhausted rolling-upload connectivity for the workflow retry boundary', () => {
+  const fixtureDir = mkdtempSync(join(tmpdir(), 'happier-server-promotion-exit-'));
+  const binDir = join(fixtureDir, 'bin');
+  const loaderPath = join(fixtureDir, 'exit-promoter-tempfail.mjs');
+  fs.mkdirSync(binDir);
+  const minisignPath = join(binDir, 'minisign');
+  writeFileSync(minisignPath, '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+  fs.chmodSync(minisignPath, 0o755);
+  writeFileSync(
+    loaderPath,
+    [
+      "if (String(process.argv[1] ?? '').endsWith('/promote-rolling-release.mjs')) {",
+      '  process.exit(75);',
+      '}',
+      '',
+    ].join('\n'),
+  );
+
+  try {
+    const result = spawnSync(
+      process.execPath,
+      [
+        resolve(repoRoot, 'scripts', 'pipeline', 'release', 'publish-server-runtime.mjs'),
+        '--phase', 'promote-rolling',
+        '--authorized-sha', '0123456789abcdef0123456789abcdef01234567',
+        '--version', '1.2.3-preview.4',
+        '--base-version', '1.2.3',
+        '--channel', 'preview',
+        '--allow-stable', 'false',
+        '--release-message', 'test release',
+        '--run-contracts', 'false',
+        '--check-installers', 'false',
+      ],
+      {
+        cwd: repoRoot,
+        env: {
+          ...process.env,
+          PATH: `${binDir}:${process.env.PATH ?? ''}`,
+          NODE_OPTIONS: `${process.env.NODE_OPTIONS ?? ''} --import=${loaderPath}`.trim(),
+          GH_REPO: 'test/test',
+          HAPPIER_RELEASE_PUBLISHED_VERSIONS_JSON: JSON.stringify({
+            github: { server: ['server-v1.2.3-preview.4'] },
+            npm: {},
+          }),
+        },
+        encoding: 'utf8',
+      },
+    );
+
+    assert.equal(result.status, 75, result.stderr || result.stdout);
+  } finally {
+    rmSync(fixtureDir, { recursive: true, force: true });
+  }
+});
+
 test('server runtime version allocation runs before workspace dependencies are installed', () => {
   const fixtureDir = mkdtempSync(join(tmpdir(), 'happier-server-release-preinstall-'));
   const loaderPath = join(fixtureDir, 'reject-workspace-imports.mjs');
