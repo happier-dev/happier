@@ -29,7 +29,7 @@ test('promote-ui keeps workflow_dispatch inputs under GitHub limit with compact 
     'bump',
     'deploy_web',
     'expo_action',
-    'expo_update_message',
+    'release_notes_id',
     'desktop_mode',
   ]) {
     assert.ok(inputs[key], `expected compact manual input ${key}`);

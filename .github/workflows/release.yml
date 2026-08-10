@@ -850,7 +850,6 @@ jobs:
       android_release_status: draft
       desktop_mode: ${{ inputs.desktop_mode }}
       run_tests: false
-      expo_update_message: ${{ needs.prepare_release_candidate.outputs.release_notes_expo_message }}
       release_notes_id: ${{ inputs.release_notes_id }}
 
   deploy_server:

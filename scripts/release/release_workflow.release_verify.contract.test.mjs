@@ -134,10 +134,10 @@ test('release workflow derives validation, notes, and terminal status from the e
     );
   }
 
-  assert.match(
+  assert.doesNotMatch(
     raw,
-    /deploy_ui:[\s\S]*?expo_update_message:\s*\$\{\{\s*needs\.prepare_release_candidate\.outputs\.release_notes_expo_message\s*\}\}/,
-    'Expo metadata must use the bounded plain-text projection',
+    /deploy_ui:[\s\S]*?expo_update_message:/,
+    'promote-ui must derive Expo metadata from the exact approved release ID instead of accepting a second note input',
   );
   assert.match(releaseStatus, /if:\s*\$\{\{\s*always\(\)\s*\}\}/);
   assert.doesNotMatch(raw, /supported_old_relay_compatibility/);

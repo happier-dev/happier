@@ -55,11 +55,6 @@ on:
           - ota
           - native
           - native_submit
-      expo_update_message:
-        description: "Deploy (Expo) — Optional EAS update message (ota); defaults to a generated message when unset"
-        required: false
-        default: ""
-        type: string
       release_notes_id:
         description: "Release notes — Exact approved project release ID"
         required: true
@@ -113,11 +108,6 @@ on:
         description: "Deploy (Expo) — Action (requires EXPO_TOKEN secret)"
         required: false
         default: none
-        type: string
-      expo_update_message:
-        description: "Deploy (Expo) — Optional EAS update message (ota); defaults to a generated message when unset"
-        required: false
-        default: ""
         type: string
       release_notes_id:
         description: "Release notes — Exact approved project release ID"
@@ -532,7 +522,7 @@ jobs:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
           DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
           RELEASE_SHA: ${{ needs.apply_bump.outputs.release_sha }}
-          UPDATE_MESSAGE: ${{ inputs.expo_update_message }}
+          UPDATE_MESSAGE: ${{ needs.promote.outputs.release_notes_expo_message }}
         run: |
           node scripts/pipeline/expo/ota-update.mjs \
             --phase publish --environment "$DEPLOY_ENVIRONMENT" --platform android \
@@ -544,7 +534,7 @@ jobs:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
           DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
           RELEASE_SHA: ${{ needs.apply_bump.outputs.release_sha }}
-          UPDATE_MESSAGE: ${{ inputs.expo_update_message }}
+          UPDATE_MESSAGE: ${{ needs.promote.outputs.release_notes_expo_message }}
         run: |
           node scripts/pipeline/expo/ota-update.mjs \
             --phase publish --environment "$DEPLOY_ENVIRONMENT" --platform ios \

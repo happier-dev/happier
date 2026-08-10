@@ -371,12 +371,12 @@ test('promote-ui prepares OTA bytes without secrets and publishes the exact boun
   assert.match(script, /--input-dir/);
 });
 
-test('release workflow passes exact-candidate Expo notes down to promote-ui', async () => {
+test('release workflow lets promote-ui derive exact-candidate Expo notes from the approved release ID', async () => {
   const raw = await loadWorkflow('release.yml');
   const workflow = parse(raw);
   assert.equal(workflow?.on?.workflow_dispatch?.inputs?.release_message, undefined, 'release.yml must not accept operator-authored release notes');
   assert.match(raw, /deploy_ui:[\s\S]*?uses:\s*\.\/\.github\/workflows\/promote-ui\.yml/);
-  assert.match(raw, /expo_update_message:\s*\$\{\{\s*needs\.prepare_release_candidate\.outputs\.release_notes_expo_message\s*\}\}/);
+  assert.doesNotMatch(raw, /deploy_ui:[\s\S]*?expo_update_message:/);
 });
 
 test('local release planning resolves remote identities without changing local refs', async () => {
