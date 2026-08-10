@@ -29,7 +29,7 @@ import {
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 
 import { SlideTransitionFrame } from './SlideTransitionFrame';
-import { slideTransitionTokens, type SlideTransitionPreset } from './slideTransitionTokens';
+import { resolveSlideTransitionSpring, type SlideTransitionPreset } from './slideTransitionTokens';
 import type { StoryDeckSlideTransitionProps } from './_types';
 
 const DEFAULT_GESTURE_THRESHOLD_RATIO = 0.4;
@@ -70,7 +70,7 @@ export const StoryDeckSlideTransition = React.forwardRef<
     const resolvedPreset: SlideTransitionPreset = props.preset ?? 'soft';
     const resolvedBlur = props.blur ?? true;
     const thresholdRatio = props.gestureThresholdRatio ?? DEFAULT_GESTURE_THRESHOLD_RATIO;
-    const presetTokens = slideTransitionTokens[resolvedPreset];
+    const spring = resolveSlideTransitionSpring(resolvedPreset, { reducedMotion: effectiveReducedMotion });
 
     const progress = useSharedValue(0);
     const pageWidth = useSharedValue(FALLBACK_PAGE_WIDTH);
@@ -200,7 +200,7 @@ export const StoryDeckSlideTransition = React.forwardRef<
                     isInFlightSV.value = true;
                 }
 
-                progress.value = withSpring(target, presetTokens.spring, (finished) => {
+                progress.value = withSpring(target, spring, (finished) => {
                     'worklet';
                     if (!finished) return;
                     // Do NOT reset progress.value here. The reset belongs to the
@@ -219,7 +219,7 @@ export const StoryDeckSlideTransition = React.forwardRef<
         thresholdRatioSV,
         isInFlightSV,
         progress,
-        presetTokens.spring,
+        spring,
         safeCommitNext,
         safeCommitPrevious,
     ]);
@@ -240,7 +240,7 @@ export const StoryDeckSlideTransition = React.forwardRef<
                 return;
             }
             isInFlightSV.value = true;
-            progress.value = withSpring(-1, presetTokens.spring, (finished) => {
+            progress.value = withSpring(-1, spring, (finished) => {
                 'worklet';
                 if (!finished) return;
                 runOnJS(safeCommitNext)();
@@ -254,7 +254,7 @@ export const StoryDeckSlideTransition = React.forwardRef<
                 return;
             }
             isInFlightSV.value = true;
-            progress.value = withSpring(+1, presetTokens.spring, (finished) => {
+            progress.value = withSpring(+1, spring, (finished) => {
                 'worklet';
                 if (!finished) return;
                 runOnJS(safeCommitPrevious)();
@@ -268,7 +268,7 @@ export const StoryDeckSlideTransition = React.forwardRef<
         safeCommitPrevious,
         isInFlightSV,
         progress,
-        presetTokens.spring,
+        spring,
     ]);
 
     const previousNode = props.activeIndex > 0

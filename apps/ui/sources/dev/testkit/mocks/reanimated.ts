@@ -25,6 +25,63 @@ function assertEasingIsWorkletLike(easing: ReanimatedTimingConfig['easing']): vo
     );
 }
 
+/**
+ * What a layout/entering animation builder was configured to do.
+ *
+ * The real builders are opaque objects consumed on the UI thread, so a node test can never observe
+ * the motion itself. What it CAN observe is the configuration a component chose — which spring,
+ * and whether one was attached at all — and that is exactly the decision a component owns. The
+ * mock records the chain instead of running it.
+ */
+export type ReanimatedLayoutAnimationMock = Readonly<{
+    presetName: string;
+    /**
+     * The real builders store the chosen animation FUNCTION here; the mock stores a marker, which
+     * is the one field whose shape deliberately differs. Everything else uses Reanimated's own
+     * `…V` field names so an assertion reads the same property the library would.
+     */
+    type?: 'spring';
+    stiffnessV?: number;
+    dampingV?: number;
+    massV?: number;
+    durationV?: number;
+    delayV?: number;
+    reduceMotionV?: string;
+}>;
+
+/**
+ * A chainable stand-in for `LinearTransition` / `FadeIn` and friends.
+ *
+ * Each modifier returns a NEW recorder, mirroring the real builders closely enough that a shared
+ * module-scope constant cannot be mutated by a later caller.
+ */
+function createLayoutAnimationBuilderMock(presetName: string) {
+    type Builder = ReanimatedLayoutAnimationMock & {
+        springify: (duration?: number) => Builder;
+        stiffness: (value: number) => Builder;
+        damping: (value: number) => Builder;
+        mass: (value: number) => Builder;
+        duration: (value: number) => Builder;
+        delay: (value: number) => Builder;
+        reduceMotion: (value: string) => Builder;
+        build: () => () => Record<string, unknown>;
+    };
+
+    const make = (record: ReanimatedLayoutAnimationMock): Builder => Object.freeze({
+        ...record,
+        springify: (): Builder => make({ ...record, type: 'spring' }),
+        stiffness: (value: number): Builder => make({ ...record, stiffnessV: value }),
+        damping: (value: number): Builder => make({ ...record, dampingV: value }),
+        mass: (value: number): Builder => make({ ...record, massV: value }),
+        duration: (value: number): Builder => make({ ...record, durationV: value }),
+        delay: (value: number): Builder => make({ ...record, delayV: value }),
+        reduceMotion: (value: string): Builder => make({ ...record, reduceMotionV: value }),
+        build: () => () => ({ initialValues: {}, animations: {} }),
+    }) as Builder;
+
+    return make({ presetName });
+}
+
 export function createReanimatedModuleMock() {
     const Animated = {
         View: 'Animated.View',
@@ -108,11 +165,25 @@ export function createReanimatedModuleMock() {
         inOut: (fn?: (t: number) => number) => fn ?? identityEasing,
     } as const;
 
+    // Mirrors the real `ReduceMotion` string enum. Production code stamps this value on every
+    // spring config (see `components/ui/motion/motionSprings.ts`), so a mock without it turns a
+    // policy assertion into a `TypeError` at module scope.
+    const ReduceMotion = {
+        System: 'system',
+        Always: 'always',
+        Never: 'never',
+    } as const;
+
     return {
         __esModule: true,
         default: Animated,
         ...Animated,
         Easing,
+        // Layout-animation builders. `AgentActivityList` reads these at module scope, so a module
+        // without them is not a missing assertion but an import-time crash.
+        FadeIn: createLayoutAnimationBuilderMock('FadeIn'),
+        LinearTransition: createLayoutAnimationBuilderMock('LinearTransition'),
+        ReduceMotion,
         interpolate,
         interpolateColor,
         cancelAnimation: () => {},
@@ -131,6 +202,7 @@ export function createReanimatedModuleMock() {
         useAnimatedStyle: <T,>(factory: () => T): T => factory(),
         useDerivedValue,
         useSharedValue,
+        withDelay: <T,>(_delayMs: number, animation: T): T => animation,
         withRepeat: <T,>(value: T): T => value,
         withSpring: <T,>(value: T): T => value,
         withTiming: <T,>(value: T, config?: ReanimatedTimingConfig): T => {

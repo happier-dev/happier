@@ -4,6 +4,7 @@ import { afterAll, afterEach, beforeEach, vi } from 'vitest';
 import { installVitestRnShim } from './vitestRnShim';
 import { resetRuntimeFetch } from '@/utils/system/runtimeFetch';
 import { SHADOW_LEVELS } from '@/shadowElevation';
+import { buildLightStateColors, LIGHT_STATE_INFO_FOREGROUND } from '@/theme/tokens/stateColors';
 import { standardCleanup } from './testkit/cleanup/standardCleanup';
 import { createReanimatedModuleMock } from './testkit/mocks/reanimated';
 import { resetReactNativeMmkvStub } from './reactNativeMmkvStub';
@@ -617,17 +618,14 @@ vi.mock('react-native-unistyles', () => {
                 indigo: '#5856D6',
                 purple: '#AF52DE',
             },
-            // `onTint` mirrors `theme/index.ts`: the ink for text sitting on the matching tint,
-            // while `foreground` stays the glyph tint. Components read both, so a mock missing
-            // one of them renders an undefined color instead of failing loudly.
-            state: {
-                success: { foreground: '#34C759', onTint: '#1A7030', background: 'rgba(52, 199, 89, 0.12)', border: '#34C759' },
-                warning: { foreground: '#FF9500', onTint: '#B25000', background: '#FFF8F0', border: '#FF9500' },
-                danger: { foreground: '#FF3B30', onTint: '#D70015', background: '#FFF0F0', border: '#FF3B30' },
-                info: { foreground: '#5856D6', onTint: '#454FB4', background: 'rgba(0, 122, 255, 0.10)', border: '#007AFF' },
-                neutral: { foreground: '#8E8E93', onTint: '#6C6C70', background: '#F2F2F7', border: '#D1D1D6' },
-                active: { foreground: '#007AFF', onTint: '#0A5AC8', background: 'rgba(0, 122, 255, 0.10)', border: 'rgba(0, 122, 255, 0.40)' },
-            },
+            // The one block that is NOT restated: components read `state.*` heavily and this
+            // program keeps adding roles to it, so a hand-copied value silently renders a colour
+            // the app never paints — or `undefined`, which looks like "no colour" and passes.
+            // `theme/tokens/stateColors.ts` imports nothing, so it is safe here where the real
+            // theme is not. `reactNativeStub`'s `Platform.select` resolves `default` first, so the
+            // test theme takes the same info hue the real theme resolves under Vitest;
+            // `vitestSetupThemeParity.test.ts` fails the moment those two disagree.
+            state: buildLightStateColors(LIGHT_STATE_INFO_FOREGROUND.default),
             background: { canvas: '#F5F5F5' },
             surface: {
                 base: '#ffffff',
@@ -645,6 +643,7 @@ vi.mock('react-native-unistyles', () => {
                 strong: '#d6d6d6',
                 modal: 'rgba(0, 0, 0, 0.1)',
             },
+            focus: { ring: '#0059B3' },
             glass: {
                 border: 'rgba(255, 255, 255, 0.92)',
                 innerShadow: 'inset 0px 8px 14px -10px rgba(0, 0, 0, 0.036)',

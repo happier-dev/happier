@@ -35,7 +35,7 @@ import {
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 
 import { SlideTransitionFrame } from './SlideTransitionFrame';
-import { slideTransitionTokens, type SlideTransitionPreset } from './slideTransitionTokens';
+import { resolveSlideTransitionSpring, type SlideTransitionPreset } from './slideTransitionTokens';
 import type { SlideTransitionDirection, SlideTransitionSwitchProps } from './_types';
 
 type InFlightTarget = Readonly<{
@@ -49,7 +49,7 @@ export function SlideTransitionSwitch(props: SlideTransitionSwitchProps): React.
     const effectiveReducedMotion = props.reducedMotion ?? preferredReducedMotion;
     const resolvedPreset: SlideTransitionPreset = props.preset ?? 'compact';
     const resolvedBlur = props.blur ?? false;
-    const presetTokens = slideTransitionTokens[resolvedPreset];
+    const spring = resolveSlideTransitionSpring(resolvedPreset, { reducedMotion: effectiveReducedMotion });
 
     const [displayedChildren, setDisplayedChildren] = React.useState<React.ReactNode>(props.children);
     const [displayedKey, setDisplayedKey] = React.useState<string | number>(props.contentKey);
@@ -160,7 +160,7 @@ export function SlideTransitionSwitch(props: SlideTransitionSwitchProps): React.
             direction: props.direction,
         };
         const target = props.direction === 'forward' ? -1 : +1;
-        progress.value = withSpring(target, presetTokens.spring, (finished) => {
+        progress.value = withSpring(target, spring, (finished) => {
             'worklet';
             if (!finished) return;
             // React nodes live in inFlightTargetRef; the JS callback reads them there.
@@ -179,7 +179,7 @@ export function SlideTransitionSwitch(props: SlideTransitionSwitchProps): React.
         effectiveReducedMotion,
         commitDisplayed,
         commitInFlightTarget,
-        presetTokens.spring,
+        spring,
         progress,
     ]);
 

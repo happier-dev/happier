@@ -10,18 +10,10 @@ vi.mock('react-native-gesture-handler', async () => {
     return createGestureHandlerMock();
 });
 
-vi.mock('react-native-reanimated', () => ({
-    default: { View: (props: any) => React.createElement('Animated.View', props) },
-    Easing: {
-        bezier: () => () => 0,
-        linear: () => 0,
-    },
-    useSharedValue: (init: any) => ({ value: init }),
-    useAnimatedStyle: (fn: () => any) => fn(),
-    useAnimatedReaction: () => undefined,
-    withSpring: (value: any) => value,
-    withTiming: (value: any) => value,
-}));
+// No local `react-native-reanimated` mock: `dev/vitestSetup.ts` already installs the canonical
+// `createReanimatedModuleMock()`, which is a superset of the seven exports this file used to
+// restate. The partial copy overrode it, so the first production module to read an export it
+// omitted — the spring vocabulary's `ReduceMotion` — failed the whole file at collection.
 
 vi.mock('react-native-worklets', () => ({
     scheduleOnRN: (fn: (...args: any[]) => void, ...args: any[]) => fn(...args),

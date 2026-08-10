@@ -1,4 +1,4 @@
-import { type WithSpringConfig } from 'react-native-reanimated';
+import { createSpringConfigResolver, type SpringPhysics } from './motionSprings';
 
 /**
  * Tuning tokens for the unified slide transition primitives
@@ -16,6 +16,12 @@ import { type WithSpringConfig } from 'react-native-reanimated';
  *     frequent stepping.
  *
  * Constants are tuned in Phase 1A.11 visual QA against the reference screenshots.
+ *
+ * These two are the app's only springs outside the role vocabulary in `motionSprings.ts`, kept
+ * because their numbers are a tuned visual signature rather than a role. What they do NOT keep is
+ * their own reduced-motion behaviour: the spring is reachable only through
+ * `resolveSlideTransitionSpring`, which stamps the policy through the same owner every other
+ * spring uses.
  */
 export type SlideTransitionPreset = 'soft' | 'compact';
 
@@ -26,8 +32,6 @@ export type SlideTransitionPresetTokens = Readonly<{
     maxBlurPx: number;
     /** Multiplier applied when mapping web blurPx → native BlurView intensity (capped at 100). */
     nativeBlurIntensityScale: number;
-    /** Spring config for adapters (`SlideTransitionSwitch`, `StoryDeckSlideTransition`). */
-    spring: WithSpringConfig;
 }>;
 
 export const slideTransitionTokens: Readonly<Record<SlideTransitionPreset, SlideTransitionPresetTokens>> = {
@@ -35,12 +39,37 @@ export const slideTransitionTokens: Readonly<Record<SlideTransitionPreset, Slide
         translatePx: 32,
         maxBlurPx: 12,
         nativeBlurIntensityScale: 3,
-        spring: { damping: 18, stiffness: 140, mass: 0.9 },
     },
     compact: {
         translatePx: 16,
         maxBlurPx: 6,
         nativeBlurIntensityScale: 3,
-        spring: { damping: 24, stiffness: 220, mass: 0.7 },
     },
 } as const;
+
+const SLIDE_TRANSITION_SPRING_PHYSICS = {
+    soft: { stiffness: 140, damping: 18, mass: 0.9 },
+    compact: { stiffness: 220, damping: 24, mass: 0.7 },
+} as const satisfies Record<SlideTransitionPreset, SpringPhysics>;
+
+// A slide is travel across the screen — the textbook case reduced motion asks to remove. Both
+// presets therefore land instantly, exactly like every vestibular role in `motionSprings.ts`.
+const SLIDE_TRANSITION_REDUCED_MOTION_FALLBACKS = {
+    soft: 'instant',
+    compact: 'instant',
+} as const;
+
+/**
+ * The slide spring for a preset, already carrying its reduced-motion policy.
+ *
+ * Built by the shared resolver factory rather than assembled here, so these two presets cannot
+ * develop their own answer to freezing, config identity, or what reduced motion means.
+ *
+ * `reducedMotion` is the caller's EFFECTIVE state (`props.reducedMotion ?? the preference store`),
+ * never the raw device setting: both adapters already honour that override on every branch they
+ * own, and the library default (`ReduceMotion.System`) ignored it.
+ */
+export const resolveSlideTransitionSpring = createSpringConfigResolver(
+    SLIDE_TRANSITION_SPRING_PHYSICS,
+    SLIDE_TRANSITION_REDUCED_MOTION_FALLBACKS,
+);

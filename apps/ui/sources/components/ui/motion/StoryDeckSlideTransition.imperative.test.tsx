@@ -46,6 +46,9 @@ vi.mock('react-native-reanimated', async () => {
         __esModule: true,
         default: Animated,
         ...Animated,
+        // The slide springs carry an explicit reduced-motion policy (`slideTransitionTokens`
+        // -> `motionSprings.resolveReduceMotionPolicy`), so the enum has to exist on the mock.
+        ReduceMotion: { System: 'system', Always: 'always', Never: 'never' },
         cancelAnimation,
         runOnJS,
         useAnimatedProps,
