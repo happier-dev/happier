@@ -147,10 +147,7 @@ jobs:
           cache: yarn
           cache-dependency-path: yarn.lock
       - name: Enable Corepack (Yarn)
-        run: |
-          set -euo pipefail
-          corepack enable
-          corepack prepare yarn@1.22.22 --activate
+        uses: ./.github/actions/enable-corepack-yarn
       - name: Install candidate preparation dependencies
         env:
           YARN_PRODUCTION: "false"
@@ -209,10 +206,7 @@ jobs:
           cache: yarn
           cache-dependency-path: yarn.lock
       - name: Enable Corepack (Yarn)
-        run: |
-          set -euo pipefail
-          corepack enable
-          corepack prepare yarn@1.22.22 --activate
+        uses: ./.github/actions/enable-corepack-yarn
       - name: Install trusted OTA publisher dependencies
         env:
           YARN_PRODUCTION: "false"
@@ -281,10 +275,7 @@ jobs:
           cache-dependency-path: yarn.lock
 
       - name: Enable Corepack (Yarn)
-        run: |
-          set -euo pipefail
-          corepack enable
-          corepack prepare yarn@1.22.22 --activate
+        uses: ./.github/actions/enable-corepack-yarn
 
       - name: Install dependencies
         env:
@@ -396,10 +387,7 @@ jobs:
           cache-dependency-path: yarn.lock
 
       - name: Enable Corepack (Yarn)
-        run: |
-          set -euo pipefail
-          corepack enable
-          corepack prepare yarn@1.22.22 --activate
+        uses: ./.github/actions/enable-corepack-yarn
 
       - name: Install dependencies
         env:
@@ -471,10 +459,7 @@ jobs:
           cache-dependency-path: yarn.lock
 
       - name: Enable Corepack (Yarn)
-        run: |
-          set -euo pipefail
-          corepack enable
-          corepack prepare yarn@1.22.22 --activate
+        uses: ./.github/actions/enable-corepack-yarn
 
       - name: Install dependencies
         env:

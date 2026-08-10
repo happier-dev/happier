@@ -45,11 +45,32 @@ test('release workflows pin Yarn via Corepack (avoid runner drift)', async () =>
     'promote-server.yml',
     'promote-website.yml',
     'promote-docs.yml',
-    'build-tauri.yml',
   ];
 
   for (const file of files) {
     const raw = await readFile(join(workflowsDir, file), 'utf8');
     assert.match(raw, expected, `${file} should pin Yarn via corepack prepare yarn@1.22.22`);
   }
+});
+
+test('nightly release workflows use the retrying Corepack Yarn owner', async () => {
+  const actionUse = 'uses: ./.github/actions/enable-corepack-yarn';
+  const files = [
+    'publish-cli-binaries.yml',
+    'publish-hstack-binaries.yml',
+    'publish-server-runtime.yml',
+    'publish-ui-web.yml',
+    'publish-ui-mobile-dev.yml',
+    'build-tauri.yml',
+    'publish-docker.yml',
+  ];
+
+  for (const file of files) {
+    const raw = await readFile(join(workflowsDir, file), 'utf8');
+    assert.ok(raw.includes(actionUse), `${file} should use the retrying Corepack Yarn action`);
+    assert.doesNotMatch(raw, /corepack prepare yarn@1\.22\.22 --activate/, `${file} should not bypass the retry owner`);
+  }
+
+  const action = await readFile(join(repoRoot, '.github', 'actions', 'enable-corepack-yarn', 'action.yml'), 'utf8');
+  assert.match(action, /bash scripts\/ci\/corepack-prepare-yarn-with-retry\.sh/);
 });

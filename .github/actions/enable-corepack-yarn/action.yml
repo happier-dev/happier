@@ -1,0 +1,9 @@
+name: Enable Corepack Yarn
+description: Enable Corepack and prepare the repository-pinned Yarn version with bounded retry
+
+runs:
+  using: composite
+  steps:
+    - name: Enable Corepack and prepare Yarn with retry
+      shell: bash
+      run: bash scripts/ci/corepack-prepare-yarn-with-retry.sh
