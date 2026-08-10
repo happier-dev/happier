@@ -5223,6 +5223,42 @@ export const es: TranslationStructure = {
             cardTo: ({ label }: { label: string }) => `A: ${label}`,
             unsupportedAttachmentsOrReviewComments: 'Enviar a un destinatario aún no admite adjuntos ni comentarios de revisión.',
           },
+          // Agent-activity row vocabulary. Status is rendered as a translated word, never as a raw
+          // enum, so colour is never the only carrier of an abnormal state.
+          agentActivity: {
+            untitled: "Agente sin nombre",
+            menuTitle: "Acciones del agente",
+            row: {
+              a11yLabel: ({ title, status }: { title: string; status: string }) => `${title}, ${status}`,
+            },
+            status: {
+              queued: "En cola",
+              starting: "Iniciando",
+              running: "En ejecución",
+              waiting: "Te necesita",
+              blocked: "Bloqueado",
+              succeeded: "Completado",
+              failed: "Ha fallado",
+              timedOut: "Tiempo agotado",
+              cancelled: "Cancelado",
+              unknown: "Desconocido",
+            },
+            time: {
+              hoursMinutes: ({ hours, minutes }: { hours: number; minutes: string }) => `${hours} h ${minutes} min`,
+              elapsedA11y: ({ duration }: { duration: string }) => `En ejecución desde hace ${duration}`,
+              totalA11y: ({ duration }: { duration: string }) => `Tardó ${duration}`,
+            },
+            action: {
+              openFull: "Abrir vista completa",
+              openAdvanced: "Detalles avanzados",
+              send: "Enviar mensaje",
+              stop: "Detener",
+              delete: "Eliminar",
+              deleteConfirmTitle: "¿Eliminar este agente?",
+              deleteConfirmMessage: ({ title }: { title: string }) => `${title} se eliminará de esta sesión.`,
+              deleteConfirmAction: "Eliminar",
+            },
+          },
           subagents: {
             messages: {
               teamLabel: ({ teamId }: { teamId: string }) => `Team: ${teamId}`,

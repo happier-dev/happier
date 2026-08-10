@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { Pressable, View } from 'react-native';
-import type { GestureResponderEvent, StyleProp, ViewStyle } from 'react-native';
+import type { GestureResponderEvent, PressableProps, StyleProp, ViewStyle } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
 /**
@@ -29,6 +29,15 @@ export type IconActionProps = Readonly<{
     /** Required: a glyph alone is not an accessible name, and it doubles as the web tooltip. */
     accessibilityLabel: string;
     size?: IconActionSize;
+    /**
+     * Extends the touch target beyond the painted box.
+     *
+     * The `sm` box is 28pt, below the 44pt floor, which is fine in a desktop header and not fine on
+     * a phone row. A caller that needs the floor asks for it here — `hitSlop={8}` takes 28 to 44 —
+     * instead of growing the visible chrome or re-implementing the control locally, which is how a
+     * corridor ends up with four hand-rolled 30x30 icon buttons.
+     */
+    hitSlop?: PressableProps['hitSlop'];
     disabled?: boolean;
     /** Renders the resting fill as if hovered — for a control that is toggled on. */
     active?: boolean;
@@ -81,6 +90,7 @@ export const IconAction = React.memo((props: IconActionProps) => {
         <Pressable
             testID={props.testID}
             onPress={props.disabled ? undefined : props.onPress}
+            hitSlop={props.hitSlop}
             disabled={props.disabled}
             accessibilityRole="button"
             accessibilityLabel={props.accessibilityLabel}

@@ -5343,6 +5343,42 @@ export const pt: TranslationStructure = {
           cardTo: ({ label }: { label: string }) => `Para: ${label}`,
           unsupportedAttachmentsOrReviewComments: 'Enviar para um destinatário ainda não suporta anexos nem comentários de revisão.',
         },
+        // Agent-activity row vocabulary. Status is rendered as a translated word, never as a raw
+        // enum, so colour is never the only carrier of an abnormal state.
+        agentActivity: {
+          untitled: "Agente sem nome",
+          menuTitle: "Ações do agente",
+          row: {
+            a11yLabel: ({ title, status }: { title: string; status: string }) => `${title}, ${status}`,
+          },
+          status: {
+            queued: "Na fila",
+            starting: "Iniciando",
+            running: "Em execução",
+            waiting: "Precisa de você",
+            blocked: "Bloqueado",
+            succeeded: "Concluído",
+            failed: "Falhou",
+            timedOut: "Tempo esgotado",
+            cancelled: "Cancelado",
+            unknown: "Desconhecido",
+          },
+          time: {
+            hoursMinutes: ({ hours, minutes }: { hours: number; minutes: string }) => `${hours} h ${minutes} min`,
+            elapsedA11y: ({ duration }: { duration: string }) => `Em execução há ${duration}`,
+            totalA11y: ({ duration }: { duration: string }) => `Levou ${duration}`,
+          },
+          action: {
+            openFull: "Abrir visão completa",
+            openAdvanced: "Detalhes avançados",
+            send: "Enviar mensagem",
+            stop: "Parar",
+            delete: "Excluir",
+            deleteConfirmTitle: "Excluir este agente?",
+            deleteConfirmMessage: ({ title }: { title: string }) => `${title} será removido desta sessão.`,
+            deleteConfirmAction: "Excluir",
+          },
+        },
         subagents: {
           messages: {
             teamLabel: ({ teamId }: { teamId: string }) => `Team: ${teamId}`,

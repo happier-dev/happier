@@ -5493,6 +5493,42 @@ localTailscale: {
           cardTo: ({ label }: { label: string }) => `宛先: ${label}`,
           unsupportedAttachmentsOrReviewComments: '宛先指定での送信は現在、添付ファイルやレビューコメントに対応していません。',
         },
+        // Agent-activity row vocabulary. Status is rendered as a translated word, never as a raw
+        // enum, so colour is never the only carrier of an abnormal state.
+        agentActivity: {
+          untitled: "名称未設定のエージェント",
+          menuTitle: "エージェントの操作",
+          row: {
+            a11yLabel: ({ title, status }: { title: string; status: string }) => `${title}、${status}`,
+          },
+          status: {
+            queued: "キュー待ち",
+            starting: "起動中",
+            running: "実行中",
+            waiting: "対応が必要",
+            blocked: "ブロック中",
+            succeeded: "完了",
+            failed: "失敗",
+            timedOut: "タイムアウト",
+            cancelled: "キャンセル済み",
+            unknown: "不明",
+          },
+          time: {
+            hoursMinutes: ({ hours, minutes }: { hours: number; minutes: string }) => `${hours}時間${minutes}分`,
+            elapsedA11y: ({ duration }: { duration: string }) => `${duration} 実行中`,
+            totalA11y: ({ duration }: { duration: string }) => `所要時間 ${duration}`,
+          },
+          action: {
+            openFull: "全体ビューを開く",
+            openAdvanced: "詳細情報",
+            send: "メッセージを送信",
+            stop: "停止",
+            delete: "削除",
+            deleteConfirmTitle: "このエージェントを削除しますか？",
+            deleteConfirmMessage: ({ title }: { title: string }) => `${title} をこのセッションから削除します。`,
+            deleteConfirmAction: "削除",
+          },
+        },
         subagents: {
           messages: {
             teamLabel: ({ teamId }: { teamId: string }) => `Team: ${teamId}`,

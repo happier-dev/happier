@@ -4517,6 +4517,42 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
                 cardTo: ({ label }: { label: string }) => `傳送給：${label}`,
                 unsupportedAttachmentsOrReviewComments: '傳送給指定對象目前不支援附件或審查評論。',
             },
+            // Agent-activity row vocabulary. Status is rendered as a translated word, never as a raw
+            // enum, so colour is never the only carrier of an abnormal state.
+            agentActivity: {
+                untitled: "未命名代理",
+                menuTitle: "代理操作",
+                row: {
+                    a11yLabel: ({ title, status }: { title: string; status: string }) => `${title}，${status}`,
+                },
+                status: {
+                    queued: "排隊中",
+                    starting: "啟動中",
+                    running: "執行中",
+                    waiting: "需要你處理",
+                    blocked: "已阻擋",
+                    succeeded: "已完成",
+                    failed: "已失敗",
+                    timedOut: "已逾時",
+                    cancelled: "已取消",
+                    unknown: "未知",
+                },
+                time: {
+                    hoursMinutes: ({ hours, minutes }: { hours: number; minutes: string }) => `${hours} 小時 ${minutes} 分`,
+                    elapsedA11y: ({ duration }: { duration: string }) => `已執行 ${duration}`,
+                    totalA11y: ({ duration }: { duration: string }) => `耗時 ${duration}`,
+                },
+                action: {
+                    openFull: "開啟完整檢視",
+                    openAdvanced: "進階詳細資料",
+                    send: "傳送訊息",
+                    stop: "停止",
+                    delete: "刪除",
+                    deleteConfirmTitle: "要刪除這個代理嗎？",
+                    deleteConfirmMessage: ({ title }: { title: string }) => `${title} 將從這個工作階段中移除。`,
+                    deleteConfirmAction: "刪除",
+                },
+            },
             subagents: {
                 messages: {
                     teamLabel: ({ teamId }: { teamId: string }) => `團隊：${teamId}`,

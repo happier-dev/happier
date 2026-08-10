@@ -5698,6 +5698,42 @@ export const ru: TranslationStructure = {
           cardTo: ({ label }: { label: string }) => `Кому: ${label}`,
           unsupportedAttachmentsOrReviewComments: 'Отправка получателю пока не поддерживает вложения или комментарии ревью.',
         },
+        // Agent-activity row vocabulary. Status is rendered as a translated word, never as a raw
+        // enum, so colour is never the only carrier of an abnormal state.
+        agentActivity: {
+          untitled: "Агент без имени",
+          menuTitle: "Действия агента",
+          row: {
+            a11yLabel: ({ title, status }: { title: string; status: string }) => `${title}, ${status}`,
+          },
+          status: {
+            queued: "В очереди",
+            starting: "Запускается",
+            running: "Выполняется",
+            waiting: "Ждёт вас",
+            blocked: "Заблокирован",
+            succeeded: "Завершён",
+            failed: "Ошибка",
+            timedOut: "Тайм-аут",
+            cancelled: "Отменён",
+            unknown: "Неизвестно",
+          },
+          time: {
+            hoursMinutes: ({ hours, minutes }: { hours: number; minutes: string }) => `${hours} ч ${minutes} мин`,
+            elapsedA11y: ({ duration }: { duration: string }) => `Выполняется ${duration}`,
+            totalA11y: ({ duration }: { duration: string }) => `Заняло ${duration}`,
+          },
+          action: {
+            openFull: "Открыть полный вид",
+            openAdvanced: "Расширенные сведения",
+            send: "Отправить сообщение",
+            stop: "Остановить",
+            delete: "Удалить",
+            deleteConfirmTitle: "Удалить этого агента?",
+            deleteConfirmMessage: ({ title }: { title: string }) => `${title} будет удалён из этой сессии.`,
+            deleteConfirmAction: "Удалить",
+          },
+        },
         subagents: {
           messages: {
             teamLabel: ({ teamId }: { teamId: string }) => `Команда: ${teamId}`,

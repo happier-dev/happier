@@ -4871,6 +4871,42 @@ export const en = {
             cardTo: ({ label }: { label: string }) => `To: ${label}`,
             unsupportedAttachmentsOrReviewComments: 'Sending to a recipient currently doesn’t support attachments or review comments.',
         },
+        // Agent-activity row vocabulary. Status is rendered as a translated word, never as a raw
+        // enum, so colour is never the only carrier of an abnormal state.
+        agentActivity: {
+            untitled: 'Unnamed agent',
+            menuTitle: 'Agent actions',
+            row: {
+                a11yLabel: ({ title, status }: { title: string; status: string }) => `${title}, ${status}`,
+            },
+            status: {
+                queued: 'Queued',
+                starting: 'Starting',
+                running: 'Running',
+                waiting: 'Needs you',
+                blocked: 'Blocked',
+                succeeded: 'Succeeded',
+                failed: 'Failed',
+                timedOut: 'Timed out',
+                cancelled: 'Cancelled',
+                unknown: 'Unknown',
+            },
+            time: {
+                hoursMinutes: ({ hours, minutes }: { hours: number; minutes: string }) => `${hours}h ${minutes}m`,
+                elapsedA11y: ({ duration }: { duration: string }) => `Running for ${duration}`,
+                totalA11y: ({ duration }: { duration: string }) => `Took ${duration}`,
+            },
+            action: {
+                openFull: 'Open full view',
+                openAdvanced: 'Advanced details',
+                send: 'Send message',
+                stop: 'Stop',
+                delete: 'Delete',
+                deleteConfirmTitle: 'Delete this agent?',
+                deleteConfirmMessage: ({ title }: { title: string }) => `${title} will be removed from this session.`,
+                deleteConfirmAction: 'Delete',
+            },
+        },
         subagents: {
             messages: {
                 teamLabel: ({ teamId }: { teamId: string }) => `Team: ${teamId}`,

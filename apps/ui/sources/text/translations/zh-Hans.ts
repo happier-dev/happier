@@ -5040,6 +5040,42 @@ export const zhHans: TranslationStructure = {
         cardTo: ({ label }: { label: string }) => `发送给：${label}`,
         unsupportedAttachmentsOrReviewComments: '发送给指定对象目前不支持附件或评审评论。',
       },
+      // Agent-activity row vocabulary. Status is rendered as a translated word, never as a raw
+      // enum, so colour is never the only carrier of an abnormal state.
+      agentActivity: {
+        untitled: "未命名代理",
+        menuTitle: "代理操作",
+        row: {
+          a11yLabel: ({ title, status }: { title: string; status: string }) => `${title}，${status}`,
+        },
+        status: {
+          queued: "排队中",
+          starting: "启动中",
+          running: "运行中",
+          waiting: "需要你处理",
+          blocked: "已阻塞",
+          succeeded: "已完成",
+          failed: "已失败",
+          timedOut: "已超时",
+          cancelled: "已取消",
+          unknown: "未知",
+        },
+        time: {
+          hoursMinutes: ({ hours, minutes }: { hours: number; minutes: string }) => `${hours} 小时 ${minutes} 分`,
+          elapsedA11y: ({ duration }: { duration: string }) => `已运行 ${duration}`,
+          totalA11y: ({ duration }: { duration: string }) => `用时 ${duration}`,
+        },
+        action: {
+          openFull: "打开完整视图",
+          openAdvanced: "高级详情",
+          send: "发送消息",
+          stop: "停止",
+          delete: "删除",
+          deleteConfirmTitle: "要删除此代理吗？",
+          deleteConfirmMessage: ({ title }: { title: string }) => `${title} 将从此会话中移除。`,
+          deleteConfirmAction: "删除",
+        },
+      },
       subagents: {
         messages: {
           teamLabel: ({ teamId }: { teamId: string }) => `Team: ${teamId}`,

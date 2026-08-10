@@ -4889,6 +4889,42 @@ deps: {
                     cardTo: ({ label }: { label: string }) => `A: ${label}`,
                     unsupportedAttachmentsOrReviewComments: 'L’enviament a un destinatari encara no admet adjunts ni comentaris de revisió.',
                 },
+                // Agent-activity row vocabulary. Status is rendered as a translated word, never as a raw
+                // enum, so colour is never the only carrier of an abnormal state.
+                agentActivity: {
+                    untitled: "Agent sense nom",
+                    menuTitle: "Accions de l’agent",
+                    row: {
+                        a11yLabel: ({ title, status }: { title: string; status: string }) => `${title}, ${status}`,
+                    },
+                    status: {
+                        queued: "A la cua",
+                        starting: "Iniciant",
+                        running: "En execució",
+                        waiting: "Et necessita",
+                        blocked: "Bloquejat",
+                        succeeded: "Completat",
+                        failed: "Ha fallat",
+                        timedOut: "Temps esgotat",
+                        cancelled: "Cancel·lat",
+                        unknown: "Desconegut",
+                    },
+                    time: {
+                        hoursMinutes: ({ hours, minutes }: { hours: number; minutes: string }) => `${hours} h ${minutes} min`,
+                        elapsedA11y: ({ duration }: { duration: string }) => `En execució des de fa ${duration}`,
+                        totalA11y: ({ duration }: { duration: string }) => `Ha trigat ${duration}`,
+                    },
+                    action: {
+                        openFull: "Obre la vista completa",
+                        openAdvanced: "Detalls avançats",
+                        send: "Envia un missatge",
+                        stop: "Atura",
+                        delete: "Suprimeix",
+                        deleteConfirmTitle: "Vols suprimir aquest agent?",
+                        deleteConfirmMessage: ({ title }: { title: string }) => `${title} s’eliminarà d’aquesta sessió.`,
+                        deleteConfirmAction: "Suprimeix",
+                    },
+                },
                 subagents: {
                     messages: {
                         teamLabel: ({ teamId }: { teamId: string }) => `Equip: ${teamId}`,

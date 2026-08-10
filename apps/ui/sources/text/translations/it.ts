@@ -5565,6 +5565,42 @@ export const it: TranslationStructure = {
             cardTo: ({ label }: { label: string }) => `A: ${label}`,
             unsupportedAttachmentsOrReviewComments: 'L’invio a un destinatario non supporta ancora allegati o commenti di revisione.',
           },
+          // Agent-activity row vocabulary. Status is rendered as a translated word, never as a raw
+          // enum, so colour is never the only carrier of an abnormal state.
+          agentActivity: {
+            untitled: "Agente senza nome",
+            menuTitle: "Azioni dell’agente",
+            row: {
+              a11yLabel: ({ title, status }: { title: string; status: string }) => `${title}, ${status}`,
+            },
+            status: {
+              queued: "In coda",
+              starting: "Avvio in corso",
+              running: "In esecuzione",
+              waiting: "Ha bisogno di te",
+              blocked: "Bloccato",
+              succeeded: "Completato",
+              failed: "Non riuscito",
+              timedOut: "Tempo scaduto",
+              cancelled: "Annullato",
+              unknown: "Sconosciuto",
+            },
+            time: {
+              hoursMinutes: ({ hours, minutes }: { hours: number; minutes: string }) => `${hours} h ${minutes} min`,
+              elapsedA11y: ({ duration }: { duration: string }) => `In esecuzione da ${duration}`,
+              totalA11y: ({ duration }: { duration: string }) => `Durata ${duration}`,
+            },
+            action: {
+              openFull: "Apri vista completa",
+              openAdvanced: "Dettagli avanzati",
+              send: "Invia messaggio",
+              stop: "Interrompi",
+              delete: "Elimina",
+              deleteConfirmTitle: "Eliminare questo agente?",
+              deleteConfirmMessage: ({ title }: { title: string }) => `${title} verrà rimosso da questa sessione.`,
+              deleteConfirmAction: "Elimina",
+            },
+          },
           subagents: {
             messages: {
               teamLabel: ({ teamId }: { teamId: string }) => `Squadra: ${teamId}`,
