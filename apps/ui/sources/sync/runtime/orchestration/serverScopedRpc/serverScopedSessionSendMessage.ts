@@ -91,6 +91,7 @@ export function createServerScopedSessionSendMessage(deps?: Partial<ServerScoped
     metaOverrides?: Record<string, unknown> | null;
     profileId?: string | null;
     localId?: string | null;
+    requestedAction?: import('@happier-dev/protocol').PendingRequestedActionV1;
     providerDeliveryIntent?: 'immediate' | 'first_turn' | null;
   }>) => Promise<ServerScopedSessionSendMessageResult>;
 }> {
@@ -123,6 +124,7 @@ export function createServerScopedSessionSendMessage(deps?: Partial<ServerScoped
     metaOverrides?: Record<string, unknown> | null;
     profileId?: string | null;
     localId?: string | null;
+    requestedAction?: import('@happier-dev/protocol').PendingRequestedActionV1;
     providerDeliveryIntent?: 'immediate' | 'first_turn' | null;
   }>): Promise<ServerScopedSessionSendMessageResult> => {
     const sessionId = normalizeId(args.sessionId);
@@ -141,11 +143,11 @@ export function createServerScopedSessionSendMessage(deps?: Partial<ServerScoped
     const timeoutMs = typeof args.timeoutMs === 'number' && args.timeoutMs > 0 ? args.timeoutMs : 30_000;
     const context = await d.resolveContext({ serverId: args.serverId, timeoutMs });
     const session = d.getSession(sessionId);
-    const requestedAction = selectSessionPendingRequestedAction({
-      session,
-      firstTurn: args.providerDeliveryIntent === 'first_turn',
-      timingOverride: args.providerDeliveryIntent === 'immediate' ? 'send_now' : undefined,
-    });
+    const requestedAction = args.requestedAction ?? selectSessionPendingRequestedAction({
+        session,
+        firstTurn: args.providerDeliveryIntent === 'first_turn',
+        timingOverride: args.providerDeliveryIntent === 'immediate' ? 'send_now' : undefined,
+      });
 
     const completeProviderRequiredDelivery = async (result: Readonly<{
       localId: string;

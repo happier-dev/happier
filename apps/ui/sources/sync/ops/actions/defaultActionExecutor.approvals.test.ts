@@ -367,6 +367,7 @@ describe('createDefaultActionExecutor approvals', () => {
         expect(sendSessionMessageWithServerScope).toHaveBeenCalledWith({
             sessionId: 's1',
             message: 'hello',
+            requestedAction: { v: 1, kind: 'steer_if_active' },
             serverId: undefined,
         });
     });

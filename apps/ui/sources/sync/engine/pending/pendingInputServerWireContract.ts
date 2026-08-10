@@ -20,7 +20,7 @@ export function resolvePendingInputServerWireMode(
     if (snapshot.status !== 'ready') return 'indeterminate';
 
     const pendingInputVersion =
-        snapshot.features.capabilities.session.pendingInput?.protocolVersion;
+        snapshot.features.capabilities.session?.pendingInput?.protocolVersion;
     if (
         typeof pendingInputVersion === 'number'
         && pendingInputVersion >= PENDING_INPUT_PROTOCOL_VERSION_V1

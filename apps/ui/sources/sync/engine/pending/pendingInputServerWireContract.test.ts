@@ -52,6 +52,19 @@ describe('Pending input server HTTP wire contract', () => {
             .toBe('released_server_v0_2_1');
     });
 
+    it('fails closed when a ready feature snapshot omits session capabilities', () => {
+        const features = currentFeatures();
+        const snapshot = ready({
+            ...features,
+            capabilities: {
+                ...features.capabilities,
+                session: undefined,
+            },
+        } as unknown as FeaturesResponse);
+
+        expect(resolvePendingInputServerWireMode(snapshot)).toBe('indeterminate');
+    });
+
     it.each([
         { status: 'unsupported' as const, reason: 'endpoint_missing' as const },
         { status: 'unsupported' as const, reason: 'invalid_payload' as const },

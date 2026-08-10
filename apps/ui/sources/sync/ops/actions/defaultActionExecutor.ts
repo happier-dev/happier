@@ -236,8 +236,8 @@ export function createDefaultActionExecutor(opts?: Readonly<{
       return await listAgentModelsForVoiceTool({ agentId, machineId, limit, backendTargetKey });
     },
 
-    sessionSendMessage: async ({ sessionId, message, serverId }) =>
-      await sendSessionMessageWithServerScope({ sessionId, message, serverId }),
+    sessionSendMessage: async ({ sessionId, message, requestedAction, serverId }) =>
+      await sendSessionMessageWithServerScope({ sessionId, message, requestedAction, serverId }),
 
     sessionTitleSet: async ({ sessionId, title, serverId }) => {
       const sid = String(sessionId ?? '').trim();

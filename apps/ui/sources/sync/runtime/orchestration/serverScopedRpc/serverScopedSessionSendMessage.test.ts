@@ -90,6 +90,9 @@ function currentPendingInputFeatures() {
         compatibility: {
           pendingInput: { currentPendingInputProtocolVersion: 1 },
         },
+        session: {
+          pendingInput: { protocolVersion: 1 },
+        },
       },
       features: {
         sharing: {
@@ -268,6 +271,25 @@ describe('sendSessionMessageWithServerScope', () => {
       'Later prompt',
       { source: 'rpc', profileId: 'profile-1' },
       { localId: 'later-local', requestedAction: { v: 1, kind: 'enqueue' } },
+    );
+  });
+
+  it('preserves an explicit settings-aware steering action from the action executor', async () => {
+    const harness = createHarness();
+
+    await harness.sendSessionMessageWithServerScope({
+      sessionId: 's1',
+      message: 'steer when configured',
+      localId: 'settings-aware-local',
+      requestedAction: { v: 1, kind: 'steer_if_active' },
+    });
+
+    expect(harness.enqueuePendingMessageActive).toHaveBeenCalledWith(
+      's1',
+      'steer when configured',
+      undefined,
+      undefined,
+      { localId: 'settings-aware-local', requestedAction: { v: 1, kind: 'steer_if_active' } },
     );
   });
 
