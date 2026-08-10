@@ -88,6 +88,48 @@ test('yarn-install-with-retry retries transient registry failures and clears the
   );
 });
 
+test('yarn-install-with-retry retries aggregate network-unreachable failures', () => {
+  const root = createFakeYarnWorkspace({
+    installBody: `  count_file="\${FAKE_YARN_INSTALL_COUNT_FILE:?}"
+  count=0
+  if [ -f "$count_file" ]; then
+    count="$(cat "$count_file")"
+  fi
+  count=$((count + 1))
+  printf '%s' "$count" > "$count_file"
+  if [ "$count" -eq 1 ]; then
+    echo 'error AggregateError [ENETUNREACH]:' >&2
+    exit 1
+  fi
+  exit 0`,
+  });
+  const stateFile = path.join(root, 'state.log');
+  const installCountFile = path.join(root, 'install-count.txt');
+
+  const res = spawnSync('bash', [scriptPath, '--frozen-lockfile'], {
+    cwd: repoRoot,
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      PATH: `${path.join(root, 'bin')}:${process.env.PATH ?? ''}`,
+      FAKE_YARN_STATE_FILE: stateFile,
+      FAKE_YARN_INSTALL_COUNT_FILE: installCountFile,
+      YARN_INSTALL_RETRY_SLEEP_SECONDS: '0',
+    },
+  });
+
+  assert.equal(res.status, 0, `expected network-unreachable failure to retry, stderr:\n${res.stderr}`);
+  assert.deepEqual(
+    readFileSync(stateFile, 'utf8').trim().split('\n').filter(Boolean),
+    [
+      'config set registry https://registry.npmjs.org/',
+      'install --frozen-lockfile',
+      'cache clean',
+      'install --frozen-lockfile',
+    ],
+  );
+});
+
 test('yarn-install-with-retry does not retry non-transient failures', () => {
   const root = createFakeYarnWorkspace({
     installBody: `  echo 'error Command failed with exit code 1.' >&2

@@ -11,7 +11,7 @@ is_transient_yarn_error() {
     # Retry only when the failure is very likely transient (registry/network throttling).
     # Do not retry on lockfile/schema/package errors.
     grep -Eq 'Request failed "(5[0-9]{2}|429)' "$log_path" && return 0
-    grep -Eq 'EAI_AGAIN|ENOTFOUND|ECONNRESET|ECONNREFUSED|ETIMEDOUT|ESOCKETTIMEDOUT|socket hang up' "$log_path" && return 0
+    grep -Eq 'EAI_AGAIN|ENOTFOUND|ENETUNREACH|EHOSTUNREACH|ECONNRESET|ECONNREFUSED|ETIMEDOUT|ESOCKETTIMEDOUT|socket hang up' "$log_path" && return 0
     grep -Eq 'trouble with your network connection' "$log_path" && return 0
     return 1
 }
