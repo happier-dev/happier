@@ -5,13 +5,6 @@ import type { ToolCall } from '@/sync/domains/messages/messageTypes';
 import type { SessionSubagentStatus } from '../types';
 
 /**
- * The execution-run status vocabulary is owned by the protocol schema, never re-declared here:
- * a new member flows in without a lockstep edit, and the mappings below stop compiling until it
- * has an explicit presentation meaning.
- */
-const EXECUTION_RUN_STATUSES: ReadonlySet<string> = new Set<string>(ExecutionRunStatusSchema.options);
-
-/**
  * Wire spellings written by older CLI lines for the same terminal outcomes. Explicit and closed:
  * an unrecognised word is *not* a status, it falls through to the tool-call lifecycle below.
  */
@@ -53,11 +46,17 @@ function readExecutionRunResultRecord(result: unknown): Record<string, unknown> 
     return null;
 }
 
+/**
+ * The status vocabulary is owned by the protocol schema, never re-declared here: a new member is
+ * accepted without a lockstep edit, and the mappings below stop compiling until it is given an
+ * explicit presentation meaning.
+ */
 export function readExecutionRunResultStatus(result: unknown): ExecutionRunStatus | null {
     const status = readExecutionRunResultRecord(result)?.status;
     if (typeof status !== 'string') return null;
     const normalized = status.trim().toLowerCase();
-    if (EXECUTION_RUN_STATUSES.has(normalized)) return normalized as ExecutionRunStatus;
+    const parsed = ExecutionRunStatusSchema.safeParse(normalized);
+    if (parsed.success) return parsed.data;
     return LEGACY_EXECUTION_RUN_STATUS_ALIASES[normalized] ?? null;
 }
 
