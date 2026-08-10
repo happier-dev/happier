@@ -11,6 +11,11 @@ import { installSessionFilesViewCommonModuleMocks } from './sessionFilesViewsTes
 
 const clearCacheSpy = vi.fn();
 const clearRepositoryDirectoryCacheSpy = vi.fn();
+const fileSuggestionScope = {
+    machineId: 'm1',
+    path: '/repo',
+    serverId: 'server-1',
+};
 let latestTransferOptions: any = null;
 
 installSessionFilesViewCommonModuleMocks({
@@ -95,8 +100,12 @@ vi.mock('@/scm/scmStatusSync', () => ({
 }));
 
 vi.mock('@/sync/domains/input/suggestionFile', () => ({
-    fileSearchCache: { clearCache: (sessionId: string) => clearCacheSpy(sessionId) },
+    fileSearchCache: { clearCache: (scope: unknown) => clearCacheSpy(scope) },
     searchFiles: vi.fn(async () => []),
+}));
+
+vi.mock('@/sync/ops/resolveSessionFileSuggestionScope', () => ({
+    resolveSessionFileSuggestionScope: () => fileSuggestionScope,
 }));
 
 vi.mock('@/sync/domains/input/repositoryDirectory', () => ({
@@ -246,7 +255,7 @@ describe('SessionRepositoryTreeBrowserView (toolbar)', () => {
             screen.pressByTestId('repository-tree-refresh');
         });
 
-        expect(clearCacheSpy).toHaveBeenCalledWith('s1');
+        expect(clearCacheSpy).toHaveBeenCalledWith(fileSuggestionScope);
         expect(clearRepositoryDirectoryCacheSpy).toHaveBeenCalledWith({ sessionId: 's1' });
         expect(mountCount.current).toBe(2);
         expect(reloadCount.current).toBe(3);
@@ -266,7 +275,7 @@ describe('SessionRepositoryTreeBrowserView (toolbar)', () => {
             latestTransferOptions.onAfterUploadSuccess();
         });
 
-        expect(clearCacheSpy).toHaveBeenCalledWith('s1');
+        expect(clearCacheSpy).toHaveBeenCalledWith(fileSuggestionScope);
         expect(clearRepositoryDirectoryCacheSpy).toHaveBeenCalledWith({ sessionId: 's1' });
         expect(screen.findAllByTestId('repository-tree-list')).toHaveLength(1);
         expect(reloadCount.current).toBe(2);

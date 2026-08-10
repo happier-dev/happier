@@ -76,9 +76,18 @@ vi.mock('@/components/sessions/files/content/RepositoryTreeList', () => ({
 }));
 
 const searchFilesSpy = vi.fn();
+const fileSuggestionScope = {
+    machineId: 'm1',
+    path: '/repo',
+    serverId: 'server-1',
+};
 vi.mock('@/sync/domains/input/suggestionFile', () => ({
     searchFiles: (...args: any[]) => searchFilesSpy(...args),
     fileSearchCache: { clearCache: vi.fn() },
+}));
+
+vi.mock('@/sync/ops/resolveSessionFileSuggestionScope', () => ({
+    resolveSessionFileSuggestionScope: () => fileSuggestionScope,
 }));
 
 let searchResultsListProps: any[] = [];
@@ -305,7 +314,7 @@ describe('SessionRepositoryTreeBrowserView', () => {
 
         await screen.pressByTestIdAsync('search-results:src/api.ts');
 
-        expect(searchFilesSpy).toHaveBeenCalled();
+        expect(searchFilesSpy).toHaveBeenCalledWith(fileSuggestionScope, 'api', { limit: 200 });
         expect(onOpenFile).toHaveBeenCalledWith('src/api.ts');
     });
 

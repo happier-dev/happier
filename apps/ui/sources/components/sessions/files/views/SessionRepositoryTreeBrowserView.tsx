@@ -16,6 +16,7 @@ import { useSessionMachineReachability } from '@/components/sessions/model/useSe
 import { useSessionFileUploadAvailability } from '@/components/sessions/files/useSessionFileUploadAvailability';
 import type { FileItem } from '@/sync/domains/input/suggestionFile';
 import { fileSearchCache, searchFiles } from '@/sync/domains/input/suggestionFile';
+import { resolveSessionFileSuggestionScope } from '@/sync/ops/resolveSessionFileSuggestionScope';
 import { clearCachedRepositoryDirectoryEntries } from '@/sync/domains/input/repositoryDirectory';
 import { storage, useSessionProjectScmSnapshot, useSessionRepositoryTreeExpandedPaths } from '@/sync/domains/state/storage';
 import { t } from '@/text';
@@ -175,7 +176,11 @@ export const SessionRepositoryTreeBrowserView = React.memo((props: SessionReposi
         const handle = setTimeout(() => {
             void (async () => {
                 try {
-                    const results = await searchFiles(props.sessionId, q, { limit: 200 });
+                    // Same addressing as the composer's `@` picker: the search is scoped by the
+                    // session's MACHINE and FOLDER, so both surfaces share one index for a
+                    // workspace instead of building one per session.
+                    const scope = resolveSessionFileSuggestionScope(props.sessionId);
+                    const results = scope ? await searchFiles(scope, q, { limit: 200 }) : [];
                     if (cancelled) return;
                     setSearchResults(results);
                 } finally {
@@ -201,7 +206,8 @@ export const SessionRepositoryTreeBrowserView = React.memo((props: SessionReposi
     }, [shouldShowSearchResults, showChangedOnly]);
 
     const refresh = React.useCallback(() => {
-        fileSearchCache.clearCache(props.sessionId);
+        const scope = resolveSessionFileSuggestionScope(props.sessionId);
+        if (scope) fileSearchCache.clearCache(scope);
         clearCachedRepositoryDirectoryEntries({ sessionId: props.sessionId });
         scmStatusSync.invalidateFromUser(props.sessionId);
         setTreeReloadNonce((n) => n + 1);

@@ -1,12 +1,33 @@
 /**
- * Suggestion file search functionality using ripgrep for fast file discovery
- * Provides fuzzy search capabilities with in-memory caching for autocomplete suggestions
+ * File-suggestion search: fuzzy file discovery over a machine folder, with an in-memory index.
+ *
+ * **Addressed by machine + folder, never by session (see `fileSuggestionScope.ts`).** The
+ * transport is the machine-scoped `ripgrep` RPC with an explicit `cwd`. That is the same
+ * handler the session scope reaches — `registerSessionHandlers` is registered on BOTH handler
+ * managers (`api/session/sessionClient.ts` with the session folder, `api/apiMachine.ts` with
+ * the daemon's working directory), so those handlers are working-directory-scoped, not
+ * session-scoped. Passing `cwd` explicitly is what makes the machine route equivalent, and it
+ * is mandatory: without it the daemon would search its own working directory (HOME).
+ *
+ * Going through the machine also removes a live defect rather than only moving code. Session
+ * RPC needs a running session runner, so `@`-file search returned nothing for every inactive
+ * session and could not be offered at all before a session existed.
  */
 
 import Fuse from 'fuse.js';
-import { sessionRpcWithPreferredSessionScope } from '@/sync/runtime/orchestration/serverScopedRpc/sessionRpcWithPreferredSessionScope';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+
+import { log } from '@/log';
 import { registerSuggestionFileSearchCacheClearer } from '@/sync/domains/input/suggestionFileCacheInvalidation';
+import {
+    fileSuggestionScopeKey,
+    resolveFileSuggestionScopeChildPath,
+    type FileSuggestionScope,
+} from '@/sync/domains/input/fileSuggestionScope';
+import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
 import { AsyncLock } from '@/utils/system/lock';
+
+export type { FileSuggestionScope } from '@/sync/domains/input/fileSuggestionScope';
 
 export interface FileItem {
     fileName: string;
@@ -20,19 +41,19 @@ interface SearchOptions {
     threshold?: number;
 }
 
-interface SessionCache {
+interface ScopeCache {
     files: FileItem[];
     fuse: Fuse<FileItem> | null;
     lastRefresh: number;
     refreshLock: AsyncLock;
 }
 
-type SessionRipgrepLikeResponse = {
+type RipgrepLikeResponse = {
     success?: boolean;
     stdout?: string;
 };
 
-type SessionListDirectoryLikeResponse = {
+type ListDirectoryLikeResponse = {
     success?: boolean;
     entries?: Array<{
         name?: string;
@@ -40,49 +61,56 @@ type SessionListDirectoryLikeResponse = {
     }>;
 };
 
-type SessionRipgrepRequest = Readonly<{
+type MachineRipgrepRequest = Readonly<{
     args: string[];
-    cwd?: string;
+    cwd: string;
 }>;
 
-type SessionListDirectoryRequest = Readonly<{
+type MachineListDirectoryRequest = Readonly<{
     path: string;
 }>;
 
 const FILE_INDEX_FALLBACK_LIMIT = 5000;
 
-async function sessionRipgrep(
-    sessionId: string,
+async function machineRipgrep(
+    scope: FileSuggestionScope,
     args: string[],
-    cwd?: string,
-): Promise<SessionRipgrepLikeResponse | null> {
+): Promise<RipgrepLikeResponse | null> {
     try {
-        return await sessionRpcWithPreferredSessionScope<SessionRipgrepLikeResponse, SessionRipgrepRequest>({
-            sessionId,
-            method: 'ripgrep',
-            payload: {
-                args,
-                ...(cwd === undefined ? {} : { cwd }),
-            },
+        return await machineRpcWithServerScope<RipgrepLikeResponse, MachineRipgrepRequest>({
+            machineId: scope.machineId,
+            serverId: scope.serverId,
+            method: RPC_METHODS.RIPGREP,
+            payload: { args, cwd: scope.path },
         });
-    } catch {
+    } catch (error) {
+        log.log(`[file-suggestions] ripgrep failed for ${scope.machineId}:${scope.path}: ${describeError(error)}`);
         return null;
     }
 }
 
-async function sessionListDirectory(
-    sessionId: string,
-    path: string,
-): Promise<SessionListDirectoryLikeResponse | null> {
+async function machineListDirectory(
+    scope: FileSuggestionScope,
+    relativePath: string,
+): Promise<ListDirectoryLikeResponse | null> {
     try {
-        return await sessionRpcWithPreferredSessionScope<SessionListDirectoryLikeResponse, SessionListDirectoryRequest>({
-            sessionId,
-            method: 'listDirectory',
-            payload: { path },
+        return await machineRpcWithServerScope<ListDirectoryLikeResponse, MachineListDirectoryRequest>({
+            machineId: scope.machineId,
+            serverId: scope.serverId,
+            method: RPC_METHODS.LIST_DIRECTORY,
+            // Absolute, always. The daemon rejects an empty path outright ("Path is
+            // required") before it ever consults its default directory, which is what made
+            // this whole fallback unreachable while it was addressed session-relatively.
+            payload: { path: resolveFileSuggestionScopeChildPath(scope, relativePath) },
         });
-    } catch {
+    } catch (error) {
+        log.log(`[file-suggestions] listDirectory failed for ${scope.machineId}:${scope.path}: ${describeError(error)}`);
         return null;
     }
+}
+
+function describeError(error: unknown): string {
+    return error instanceof Error ? error.message : String(error);
 }
 
 function shouldSkipFallbackPath(name: string): boolean {
@@ -101,10 +129,11 @@ function escapeRipgrepGlob(input: string): string {
 }
 
 class FileSearchCache {
-    private sessions = new Map<string, SessionCache>();
+    private scopes = new Map<string, ScopeCache>();
 
-    private getOrCreateSessionCache(sessionId: string): SessionCache {
-        let cache = this.sessions.get(sessionId);
+    private getOrCreateScopeCache(scope: FileSuggestionScope): ScopeCache {
+        const key = fileSuggestionScopeKey(scope);
+        let cache = this.scopes.get(key);
         if (!cache) {
             cache = {
                 files: [],
@@ -112,12 +141,12 @@ class FileSearchCache {
                 lastRefresh: 0,
                 refreshLock: new AsyncLock()
             };
-            this.sessions.set(sessionId, cache);
+            this.scopes.set(key, cache);
         }
         return cache;
     }
 
-    private initializeFuse(cache: SessionCache) {
+    private initializeFuse(cache: ScopeCache) {
         if (cache.files.length === 0) {
             cache.fuse = null;
             return;
@@ -184,17 +213,8 @@ class FileSearchCache {
         return files;
     }
 
-    private async buildFileItemsFromRipgrep(sessionId: string): Promise<FileItem[] | null> {
-        let response: SessionRipgrepLikeResponse | null = null;
-        try {
-            response = await sessionRipgrep(
-                sessionId,
-                ['--files', '--follow'],
-                undefined
-            ) as SessionRipgrepLikeResponse | null;
-        } catch {
-            return null;
-        }
+    private async buildFileItemsFromRipgrep(scope: FileSuggestionScope): Promise<FileItem[] | null> {
+        const response = await machineRipgrep(scope, ['--files', '--follow']);
 
         if (!response || response.success !== true || typeof response.stdout !== 'string') {
             return null;
@@ -207,7 +227,7 @@ class FileSearchCache {
         return this.buildFileItemsFromPaths(filePaths);
     }
 
-    private async buildFileItemsFromRipgrepGlob(sessionId: string, query: string, limit: number): Promise<FileItem[] | null> {
+    private async buildFileItemsFromRipgrepGlob(scope: FileSuggestionScope, query: string, limit: number): Promise<FileItem[] | null> {
         const trimmed = query.trim();
         if (!trimmed) return null;
 
@@ -215,16 +235,7 @@ class FileSearchCache {
         const needle = escapeRipgrepGlob(trimmed).replace(/\s+/g, '*');
         const pattern = `*${needle}*`;
 
-        let response: SessionRipgrepLikeResponse | null = null;
-        try {
-            response = await sessionRipgrep(
-                sessionId,
-                ['--files', '--follow', '--hidden', '--iglob', pattern],
-                undefined
-            ) as SessionRipgrepLikeResponse | null;
-        } catch {
-            return null;
-        }
+        const response = await machineRipgrep(scope, ['--files', '--follow', '--hidden', '--iglob', pattern]);
 
         if (!response || response.success !== true || typeof response.stdout !== 'string') {
             return null;
@@ -240,14 +251,16 @@ class FileSearchCache {
         return this.buildFileItemsFromPaths(filePaths);
     }
 
-    private async buildFileItemsFromDirectoryFallback(sessionId: string): Promise<FileItem[] | null> {
+    private async buildFileItemsFromDirectoryFallback(scope: FileSuggestionScope): Promise<FileItem[] | null> {
         const files: FileItem[] = [];
+        // Bookkeeping stays RELATIVE to the scope root — that is what the composer inserts as
+        // a token and what ripgrep `--files` produces — while each request is made absolute.
         const queue: string[] = [''];
         const visited = new Set<string>(['']);
 
         while (queue.length > 0 && files.length < FILE_INDEX_FALLBACK_LIMIT) {
             const directoryPath = queue.shift()!;
-            const response = await sessionListDirectory(sessionId, directoryPath) as SessionListDirectoryLikeResponse | null;
+            const response = await machineListDirectory(scope, directoryPath);
             if (!response || response.success !== true || !Array.isArray(response.entries)) {
                 continue;
             }
@@ -301,15 +314,15 @@ class FileSearchCache {
         return files;
     }
 
-    private async ensureCacheValid(sessionId: string): Promise<void> {
-        const cache = this.getOrCreateSessionCache(sessionId);
+    private async ensureCacheValid(scope: FileSuggestionScope): Promise<void> {
+        const cache = this.getOrCreateScopeCache(scope);
         // Cache is now invalidated explicitly by git snapshot updates.
-        // Only refresh when we have no index yet for this session.
+        // Only refresh when we have no index yet for this scope.
         if (cache.files.length > 0) {
             return; // Cache is still valid
         }
 
-        // Use lock to prevent concurrent refreshes for this session
+        // Use lock to prevent concurrent refreshes for this scope
         await cache.refreshLock.inLock(async () => {
             // Double-check after acquiring lock
             const currentTime = Date.now();
@@ -317,8 +330,8 @@ class FileSearchCache {
                 return;
             }
 
-            const filesFromRipgrep = await this.buildFileItemsFromRipgrep(sessionId);
-            const files = filesFromRipgrep ?? await this.buildFileItemsFromDirectoryFallback(sessionId);
+            const filesFromRipgrep = await this.buildFileItemsFromRipgrep(scope);
+            const files = filesFromRipgrep ?? await this.buildFileItemsFromDirectoryFallback(scope);
             if (!files || files.length === 0) {
                 return;
             }
@@ -329,9 +342,9 @@ class FileSearchCache {
         });
     }
 
-    async search(sessionId: string, query: string, options: SearchOptions = {}): Promise<FileItem[]> {
-        await this.ensureCacheValid(sessionId);
-        const cache = this.getOrCreateSessionCache(sessionId);
+    async search(scope: FileSuggestionScope, query: string, options: SearchOptions = {}): Promise<FileItem[]> {
+        await this.ensureCacheValid(scope);
+        const cache = this.getOrCreateScopeCache(scope);
 
         if (!cache.fuse || cache.files.length === 0) {
             return [];
@@ -357,7 +370,7 @@ class FileSearchCache {
 
         // If the initial index is incomplete (e.g., truncated transport), try a targeted glob request.
         // This keeps UX predictable for exact-ish filename queries without having to ship a full file index.
-        const globItems = await this.buildFileItemsFromRipgrepGlob(sessionId, query, limit);
+        const globItems = await this.buildFileItemsFromRipgrepGlob(scope, query, limit);
         if (!globItems || globItems.length === 0) {
             return [];
         }
@@ -379,29 +392,34 @@ class FileSearchCache {
         return globItems.slice(0, limit);
     }
 
-    getAllFiles(sessionId: string): FileItem[] {
-        const cache = this.sessions.get(sessionId);
+    getAllFiles(scope: FileSuggestionScope): FileItem[] {
+        const cache = this.scopes.get(fileSuggestionScopeKey(scope));
         return cache ? [...cache.files] : [];
     }
 
-    clearCache(sessionId?: string): void {
-        if (sessionId) {
-            this.sessions.delete(sessionId);
-        } else {
-            this.sessions.clear();
-        }
+    /**
+     * Drops one workspace's index. Clearing "everything" is a separate, explicitly named
+     * operation: a single optional parameter meaning *either* "one scope" *or* "all scopes"
+     * turns a scope that failed to resolve into a silent full cache wipe.
+     */
+    clearCache(scope: FileSuggestionScope): void {
+        this.scopes.delete(fileSuggestionScopeKey(scope));
+    }
+
+    clearAll(): void {
+        this.scopes.clear();
     }
 }
 
 // Export singleton instance
 export const fileSearchCache = new FileSearchCache();
-registerSuggestionFileSearchCacheClearer((sessionId) => fileSearchCache.clearCache(sessionId));
+registerSuggestionFileSearchCacheClearer((scope) => fileSearchCache.clearCache(scope));
 
 // Main export: search files with fuzzy matching
 export async function searchFiles(
-    sessionId: string,
+    scope: FileSuggestionScope,
     query: string,
     options: SearchOptions = {}
 ): Promise<FileItem[]> {
-    return fileSearchCache.search(sessionId, query, options);
+    return fileSearchCache.search(scope, query, options);
 }

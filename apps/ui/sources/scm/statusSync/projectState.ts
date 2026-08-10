@@ -4,6 +4,7 @@ import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
 import { resolveProjectMachineScopeId } from '@/sync/runtime/orchestration/projectManager';
 import { readSessionWorkspaceContext } from '@/sync/domains/session/readSessionWorkspaceContext';
 import { clearSuggestionFileSearchCache } from '@/sync/domains/input/suggestionFileCacheInvalidation';
+import { resolveSessionFileSuggestionScope } from '@/sync/ops/resolveSessionFileSuggestionScope';
 
 import { isSessionPathWithinRepoRoot } from '../sync/paths';
 
@@ -92,9 +93,14 @@ export async function clearSearchCacheForProject(
     projectKey: string
 ): Promise<void> {
     for (const [sessionId, key] of sessionToProjectKey.entries()) {
-        if (key === projectKey) {
-            clearSuggestionFileSearchCache(sessionId);
-        }
+        if (key !== projectKey) continue;
+        // The file index is keyed by machine + folder, so invalidate the FOLDER this session
+        // sits in. Sessions sharing that folder share one index and are all refreshed by this
+        // single clear; a session whose machine target cannot be resolved addresses no index
+        // and must clear nothing rather than fall back to wiping every workspace's cache.
+        const scope = resolveSessionFileSuggestionScope(sessionId);
+        if (!scope) continue;
+        clearSuggestionFileSearchCache(scope);
     }
 }
 

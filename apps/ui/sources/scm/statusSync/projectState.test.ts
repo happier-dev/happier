@@ -7,6 +7,7 @@ import { buildSnapshotSignature, clearSearchCacheForProject, getRepoScopeSession
 
 const getStateMock = vi.hoisted(() => vi.fn());
 const clearSuggestionFileSearchCacheMock = vi.hoisted(() => vi.fn());
+const resolveSessionFileSuggestionScopeMock = vi.hoisted(() => vi.fn());
 
 vi.mock('@/sync/domains/state/storage', async () => {
     const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
@@ -22,7 +23,11 @@ vi.mock('@/sync/domains/input/suggestionFile', () => {
 });
 
 vi.mock('@/sync/domains/input/suggestionFileCacheInvalidation', () => ({
-    clearSuggestionFileSearchCache: (sessionId: string) => clearSuggestionFileSearchCacheMock(sessionId),
+    clearSuggestionFileSearchCache: (scope: unknown) => clearSuggestionFileSearchCacheMock(scope),
+}));
+
+vi.mock('@/sync/ops/resolveSessionFileSuggestionScope', () => ({
+    resolveSessionFileSuggestionScope: (sessionId: string) => resolveSessionFileSuggestionScopeMock(sessionId),
 }));
 
 function snapshot(defaultBranch?: string | null): ScmWorkingSnapshot {
@@ -146,6 +151,11 @@ describe('buildSnapshotSignature', () => {
 describe('clearSearchCacheForProject', () => {
   it('clears matching session caches without loading the full file-search module', async () => {
     clearSuggestionFileSearchCacheMock.mockClear();
+    resolveSessionFileSuggestionScopeMock.mockImplementation((sessionId: string) => ({
+      machineId: `machine-${sessionId}`,
+      path: `/work/${sessionId}`,
+      serverId: 'server-1',
+    }));
 
     await clearSearchCacheForProject(new Map([
       ['s1', 'project-a'],
@@ -154,8 +164,25 @@ describe('clearSearchCacheForProject', () => {
     ]), 'project-a');
 
     expect(clearSuggestionFileSearchCacheMock).toHaveBeenCalledTimes(2);
-    expect(clearSuggestionFileSearchCacheMock).toHaveBeenNthCalledWith(1, 's1');
-    expect(clearSuggestionFileSearchCacheMock).toHaveBeenNthCalledWith(2, 's3');
+    expect(clearSuggestionFileSearchCacheMock).toHaveBeenNthCalledWith(1, {
+      machineId: 'machine-s1',
+      path: '/work/s1',
+      serverId: 'server-1',
+    });
+    expect(clearSuggestionFileSearchCacheMock).toHaveBeenNthCalledWith(2, {
+      machineId: 'machine-s3',
+      path: '/work/s3',
+      serverId: 'server-1',
+    });
+  });
+
+  it('does not clear an unrelated cache when a matching session has no machine scope', async () => {
+    clearSuggestionFileSearchCacheMock.mockClear();
+    resolveSessionFileSuggestionScopeMock.mockReturnValue(null);
+
+    await clearSearchCacheForProject(new Map([['s1', 'project-a']]), 'project-a');
+
+    expect(clearSuggestionFileSearchCacheMock).not.toHaveBeenCalled();
   });
 });
 
