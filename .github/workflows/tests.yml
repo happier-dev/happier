@@ -219,9 +219,7 @@ jobs:
 
       - name: Enable Corepack
         if: github.event_name == 'workflow_call' || steps.changes.outputs.ui_e2e == 'true'
-        run: |
-          corepack enable
-          corepack prepare yarn@1.22.22 --activate
+        uses: ./.github/actions/enable-corepack-yarn
 
       - name: Install dependencies
         if: github.event_name == 'workflow_call' || steps.changes.outputs.ui_e2e == 'true'
@@ -288,9 +286,7 @@ jobs:
           cache-dependency-path: yarn.lock
 
       - name: Enable Corepack
-        run: |
-          corepack enable
-          corepack prepare yarn@1.22.22 --activate
+        uses: ./.github/actions/enable-corepack-yarn
 
       - name: Install dependencies
         env:
@@ -334,9 +330,7 @@ jobs:
           cache-dependency-path: yarn.lock
 
       - name: Enable Corepack
-        run: |
-          corepack enable
-          corepack prepare yarn@1.22.22 --activate
+        uses: ./.github/actions/enable-corepack-yarn
 
       - name: Install dependencies
         env:
@@ -383,9 +377,7 @@ jobs:
           cache-dependency-path: yarn.lock
 
       - name: Enable Corepack
-        run: |
-          corepack enable
-          corepack prepare yarn@1.22.22 --activate
+        uses: ./.github/actions/enable-corepack-yarn
 
       - name: Install dependencies
         env:
@@ -437,9 +429,7 @@ jobs:
           node-version: 22.x
 
       - name: Enable Corepack
-        run: |
-          corepack enable
-          corepack prepare yarn@1.22.22 --activate
+        uses: ./.github/actions/enable-corepack-yarn
 
       - name: Install Sapling
         run: |
@@ -489,9 +479,7 @@ jobs:
           node-version: 22.x
 
       - name: Enable Corepack
-        run: |
-          corepack enable
-          corepack prepare yarn@1.22.22 --activate
+        uses: ./.github/actions/enable-corepack-yarn
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
@@ -541,9 +529,7 @@ jobs:
           node-version: 22.x
 
       - name: Enable Corepack
-        run: |
-          corepack enable
-          corepack prepare yarn@1.22.22 --activate
+        uses: ./.github/actions/enable-corepack-yarn
 
       - name: Install dependencies
         env:
@@ -597,9 +583,7 @@ jobs:
           node-version: 22.x
 
       - name: Enable Corepack
-        run: |
-          corepack enable
-          corepack prepare yarn@1.22.22 --activate
+        uses: ./.github/actions/enable-corepack-yarn
 
       - name: Install dependencies
         env:
@@ -653,9 +637,7 @@ jobs:
           node-version: 22.x
 
       - name: Enable Corepack
-        run: |
-          corepack enable
-          corepack prepare yarn@1.22.22 --activate
+        uses: ./.github/actions/enable-corepack-yarn
 
       - name: Install system dependencies
         run: |
@@ -730,9 +712,7 @@ jobs:
           cache-dependency-path: yarn.lock
 
       - name: Enable Corepack
-        run: |
-          corepack enable
-          corepack prepare yarn@1.22.22 --activate
+        uses: ./.github/actions/enable-corepack-yarn
 
       - name: Install dependencies
         env:
@@ -765,9 +745,7 @@ jobs:
           cache-dependency-path: yarn.lock
 
       - name: Enable Corepack
-        run: |
-          corepack enable
-          corepack prepare yarn@1.22.22 --activate
+        uses: ./.github/actions/enable-corepack-yarn
 
       - name: Install dependencies
         env:
@@ -808,9 +786,7 @@ jobs:
           bun-version: 1.3.5
 
       - name: Enable Corepack
-        run: |
-          corepack enable
-          corepack prepare yarn@1.22.22 --activate
+        uses: ./.github/actions/enable-corepack-yarn
 
       - name: Install dependencies
         env:
@@ -857,9 +833,7 @@ jobs:
           bun-version: 1.3.5
 
       - name: Enable Corepack
-        run: |
-          corepack enable
-          corepack prepare yarn@1.22.22 --activate
+        uses: ./.github/actions/enable-corepack-yarn
 
       - name: Install dependencies
         env:
@@ -906,10 +880,7 @@ jobs:
           bun-version: 1.3.5
 
       - name: Enable Corepack
-        shell: pwsh
-        run: |
-          corepack enable
-          corepack prepare yarn@1.22.22 --activate
+        uses: ./.github/actions/enable-corepack-yarn
 
       - name: Install dependencies
         env:
@@ -953,9 +924,7 @@ jobs:
           bun-version: 1.3.5
 
       - name: Enable Corepack
-        run: |
-          corepack enable
-          corepack prepare yarn@1.22.22 --activate
+        uses: ./.github/actions/enable-corepack-yarn
 
       - name: Install dependencies
         env:
@@ -992,9 +961,7 @@ jobs:
           cache-dependency-path: yarn.lock
 
       - name: Enable Corepack
-        run: |
-          corepack enable
-          corepack prepare yarn@1.22.22 --activate
+        uses: ./.github/actions/enable-corepack-yarn
 
       - name: Install dependencies
         env:
@@ -1042,9 +1009,7 @@ jobs:
           cache-dependency-path: yarn.lock
 
       - name: Enable Corepack
-        run: |
-          corepack enable
-          corepack prepare yarn@1.22.22 --activate
+        uses: ./.github/actions/enable-corepack-yarn
 
       - name: Install dependencies
         env:
@@ -1090,9 +1055,7 @@ jobs:
           cache-dependency-path: yarn.lock
 
       - name: Enable Corepack
-        run: |
-          corepack enable
-          corepack prepare yarn@1.22.22 --activate
+        uses: ./.github/actions/enable-corepack-yarn
 
       - name: Install dependencies
         env:
@@ -1143,9 +1106,7 @@ jobs:
           bun-version: 1.3.5
 
       - name: Enable Corepack
-        run: |
-          corepack enable
-          corepack prepare yarn@1.22.22 --activate
+        uses: ./.github/actions/enable-corepack-yarn
 
       - name: Install dependencies
         env:
@@ -1185,9 +1146,7 @@ jobs:
           bun-version: 1.3.5
 
       - name: Enable Corepack
-        run: |
-          corepack enable
-          corepack prepare yarn@1.22.22 --activate
+        uses: ./.github/actions/enable-corepack-yarn
 
       - name: Install dependencies
         env:
@@ -1224,9 +1183,7 @@ jobs:
           bun-version: 1.3.5
 
       - name: Enable Corepack
-        run: |
-          corepack enable
-          corepack prepare yarn@1.22.22 --activate
+        uses: ./.github/actions/enable-corepack-yarn
 
       - name: Install dependencies
         env:
@@ -1263,9 +1220,7 @@ jobs:
           bun-version: 1.3.5
 
       - name: Enable Corepack
-        run: |
-          corepack enable
-          corepack prepare yarn@1.22.22 --activate
+        uses: ./.github/actions/enable-corepack-yarn
 
       - name: Install dependencies
         env:
@@ -1304,9 +1259,7 @@ jobs:
           bun-version: 1.3.5
 
       - name: Enable Corepack
-        run: |
-          corepack enable
-          corepack prepare yarn@1.22.22 --activate
+        uses: ./.github/actions/enable-corepack-yarn
 
       - name: Install dependencies
         env:
@@ -1336,9 +1289,7 @@ jobs:
           cache-dependency-path: yarn.lock
 
       - name: Enable Corepack
-        run: |
-          corepack enable
-          corepack prepare yarn@1.22.22 --activate
+        uses: ./.github/actions/enable-corepack-yarn
 
       - name: Install dependencies
         env:
@@ -1397,9 +1348,7 @@ jobs:
           node-version: 22.x
 
       - name: Enable Corepack
-        run: |
-          corepack enable
-          corepack prepare yarn@1.22.22 --activate
+        uses: ./.github/actions/enable-corepack-yarn
 
       - name: Install system dependencies
         run: |
@@ -1621,9 +1570,7 @@ jobs:
           node-version: 22.x
 
       - name: Enable Corepack
-        run: |
-          corepack enable
-          corepack prepare yarn@1.22.22 --activate
+        uses: ./.github/actions/enable-corepack-yarn
 
       - name: Install Sapling
         run: |
@@ -1693,9 +1640,7 @@ jobs:
           node-version: 22.x
 
       - name: Enable Corepack
-        run: |
-          corepack enable
-          corepack prepare yarn@1.22.22 --activate
+        uses: ./.github/actions/enable-corepack-yarn
 
       - name: Install Sapling
         run: |
@@ -1812,9 +1757,7 @@ jobs:
           cache-dependency-path: yarn.lock
 
       - name: Enable Corepack
-        run: |
-          corepack enable
-          corepack prepare yarn@1.22.22 --activate
+        uses: ./.github/actions/enable-corepack-yarn
 
       - name: Install dependencies
         env:
@@ -1978,9 +1921,7 @@ jobs:
           cache-dependency-path: yarn.lock
 
       - name: Enable Corepack
-        run: |
-          corepack enable
-          corepack prepare yarn@1.22.22 --activate
+        uses: ./.github/actions/enable-corepack-yarn
 
       - name: Install dependencies
         env:

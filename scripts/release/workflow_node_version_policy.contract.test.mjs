@@ -63,6 +63,7 @@ test('nightly release workflows use the retrying Corepack Yarn owner', async () 
     'publish-ui-mobile-dev.yml',
     'build-tauri.yml',
     'publish-docker.yml',
+    'tests.yml',
   ];
 
   for (const file of files) {
