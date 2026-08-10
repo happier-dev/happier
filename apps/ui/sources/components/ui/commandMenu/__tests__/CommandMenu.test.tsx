@@ -126,4 +126,23 @@ describe('CommandMenu', () => {
         // SelectionList has testID cmd-menu:list
         expect(screen.findByTestId('cmd-menu:list')).toBeTruthy();
     });
+
+    // A press must commit the row the pointer landed on, never the row the
+    // keyboard happens to highlight. Driven through the real SelectionList row
+    // so the whole activation path (row press -> activateSelectionListRow ->
+    // id->index resolution) is exercised, not just the mapper.
+    it('commits the pressed row rather than the highlighted one', async () => {
+        const onSelect = vi.fn();
+        const screen = await renderScreen(
+            <CommandMenu {...defaultProps({ onSelect, selectedIndex: 0 })} />,
+        );
+
+        screen.pressByTestId('cmd-menu:list:command-menu-root:option:bullet');
+
+        expect(onSelect).toHaveBeenCalledTimes(1);
+        expect(onSelect).toHaveBeenCalledWith(
+            expect.objectContaining({ id: 'bullet', label: 'Bullet list' }),
+            2,
+        );
+    });
 });
