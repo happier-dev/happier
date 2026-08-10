@@ -274,6 +274,14 @@ function isFreshQuotaSnapshot(
   quotaFreshnessMs: number,
 ): snapshot is ConnectedServiceAuthGroupQuotaSnapshot {
   if (!snapshot) return false;
+  return isQuotaSnapshotWithinFreshnessWindow(snapshot, nowMs, quotaFreshnessMs);
+}
+
+function isQuotaSnapshotWithinFreshnessWindow(
+  snapshot: ConnectedServiceAuthGroupQuotaSnapshot,
+  nowMs: number,
+  quotaFreshnessMs: number,
+): boolean {
   return nowMs - snapshot.capturedAtMs <= quotaFreshnessMs;
 }
 
@@ -451,15 +459,36 @@ export function resolveConnectedServiceAuthGroupSoftSwitchSourceEvidence(input: 
   const threshold = resolveSoftSwitchRemainingPercent(input.policy);
   if (threshold === null) return { status: 'unknown', reason: 'missing_soft_switch_threshold' };
   const state = input.memberStatesByProfileId.get(activeProfileId) ?? null;
-  const quotaSnapshot = isFreshQuotaSnapshot(state?.quotaSnapshot, input.nowMs, input.quotaFreshnessMs)
-    ? state?.quotaSnapshot ?? null
-    : null;
+  const quotaSnapshot = state?.quotaSnapshot ?? null;
   if (!quotaSnapshot) return { status: 'unknown', reason: 'missing_fresh_quota_snapshot' };
   const remainingPercent = resolveLeastLimitedScore(quotaSnapshot);
   if (remainingPercent === null) return { status: 'unknown', reason: 'missing_remaining_percent' };
+  const fresh = isQuotaSnapshotWithinFreshnessWindow(
+    quotaSnapshot,
+    input.nowMs,
+    input.quotaFreshnessMs,
+  );
+  if (!fresh) {
+    // Source and candidate evidence are intentionally asymmetric. A measured low source remains a
+    // safe reason to leave that source until its exact quota window resets; a candidate must still
+    // be fresh before we move work onto it. Unknown or elapsed reset boundaries fail closed.
+    const effectiveMeterId = quotaSnapshot.effectiveMeterId?.trim() ?? '';
+    const effectiveMeter = effectiveMeterId
+      ? quotaSnapshot.meters?.find((meter) => meter.meterId === effectiveMeterId) ?? null
+      : null;
+    const resetAtMs = numberOrNull(effectiveMeter?.resetAtMs);
+    if (
+      remainingPercent > threshold
+      || resetAtMs === null
+      || resetAtMs <= input.nowMs
+    ) {
+      return { status: 'unknown', reason: 'missing_fresh_quota_snapshot' };
+    }
+  }
   if (remainingPercent <= threshold) {
     return { status: 'at_or_below_threshold', remainingPercent, thresholdPercent: threshold };
   }
+  if (!fresh) return { status: 'unknown', reason: 'missing_fresh_quota_snapshot' };
   // Preemptive: the current snapshot is above the threshold, but the projected next-window remaining
   // (current burn rate × horizon) crosses it. Fire the soft-switch BEFORE the turn burns through —
   // reusing the SAME threshold semantics, not a new knob.

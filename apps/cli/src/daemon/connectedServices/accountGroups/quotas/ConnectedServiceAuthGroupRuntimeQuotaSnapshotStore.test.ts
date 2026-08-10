@@ -566,6 +566,77 @@ describe('ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore', () => {
     })).toMatchObject({ status: 'above_threshold', remainingPercent: 40 });
   });
 
+  it('keeps stale low source evidence actionable only until its known quota reset boundary', () => {
+    const memberStatesByProfileId = new Map([[
+      'active',
+      {
+        quotaSnapshot: {
+          capturedAtMs: 1_000,
+          effectiveMeterId: 'weekly',
+          effectiveRemainingPercent: 5,
+          meters: [{
+            meterId: 'weekly',
+            limitCategory: 'usage_limit' as const,
+            remainingPct: 5,
+            resetAtMs: 20_000,
+            providerLimitId: 'weekly',
+          }],
+        },
+      },
+    ]]);
+    const input = {
+      activeProfileId: 'active',
+      policy: {
+        ...DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1,
+        softSwitchRemainingPercent: 15,
+      },
+      memberStatesByProfileId,
+      quotaFreshnessMs: 1_000,
+    } as const;
+
+    expect(resolveConnectedServiceAuthGroupSoftSwitchSourceEvidence({
+      ...input,
+      nowMs: 10_000,
+    })).toEqual({
+      status: 'at_or_below_threshold',
+      remainingPercent: 5,
+      thresholdPercent: 15,
+    });
+    expect(resolveConnectedServiceAuthGroupSoftSwitchSourceEvidence({
+      ...input,
+      nowMs: 20_000,
+    })).toEqual({ status: 'unknown', reason: 'missing_fresh_quota_snapshot' });
+  });
+
+  it('does not extend stale low source evidence when the effective quota reset is unknown', () => {
+    expect(resolveConnectedServiceAuthGroupSoftSwitchSourceEvidence({
+      activeProfileId: 'active',
+      policy: {
+        ...DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1,
+        softSwitchRemainingPercent: 15,
+      },
+      memberStatesByProfileId: new Map([[
+        'active',
+        {
+          quotaSnapshot: {
+            capturedAtMs: 1_000,
+            effectiveMeterId: 'weekly',
+            effectiveRemainingPercent: 5,
+            meters: [{
+              meterId: 'weekly',
+              limitCategory: 'usage_limit' as const,
+              remainingPct: 5,
+              resetAtMs: null,
+              providerLimitId: 'weekly',
+            }],
+          },
+        },
+      ]]),
+      nowMs: 10_000,
+      quotaFreshnessMs: 1_000,
+    })).toEqual({ status: 'unknown', reason: 'missing_fresh_quota_snapshot' });
+  });
+
   it('does not preemptively switch a slow-burning active member whose projection stays above threshold', () => {
     const store = new ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore();
     // Slow burn: 60% -> 58% across 30s.
