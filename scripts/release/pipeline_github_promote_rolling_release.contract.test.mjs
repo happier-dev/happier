@@ -375,6 +375,32 @@ test('rolling promotion dry-run shows private staging and whole-release backup c
   assert.doesNotMatch(output, /releases\/assets\//);
 });
 
+test('rolling promotion sends release assets to the exact GitHub upload API host', () => {
+  const testFixture = fixture();
+  try {
+    const result = spawnSync(process.execPath, args(), {
+      cwd: repoRoot,
+      env: {
+        ...process.env,
+        PATH: `${testFixture.bin}:${process.env.PATH ?? ''}`,
+      },
+      encoding: 'utf8',
+    });
+
+    assert.equal(result.status, 0, String(result.stderr));
+    const uploadCalls = readFileSync(testFixture.log, 'utf8')
+      .split('\n')
+      .filter((line) => line.includes('releases/77/assets'));
+    assert.equal(uploadCalls.length, 3);
+    for (const call of uploadCalls) {
+      assert.match(call, /gh api -X POST https:\/\/uploads\.github\.com\/repos\/test\/test\/releases\/77\/assets\?name=/);
+      assert.doesNotMatch(call, /--hostname uploads\.github\.com/);
+    }
+  } finally {
+    rmSync(testFixture.root, { recursive: true, force: true });
+  }
+});
+
 test('existing rolling replacement stages privately, restores after publish failure, and exposes only audited bytes', () => {
   const testFixture = fixture();
   try {

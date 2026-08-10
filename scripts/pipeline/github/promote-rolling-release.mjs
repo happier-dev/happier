@@ -275,8 +275,8 @@ function uploadReleaseAssetWithRetry({
     let uploadError = null;
     try {
       run('gh', [
-        'api', '--hostname', 'uploads.github.com', '-X', 'POST',
-        `repos/${repo}/releases/${releaseId}/assets?name=${encodeURIComponent(name)}`,
+        'api', '-X', 'POST',
+        `https://uploads.github.com/repos/${repo}/releases/${releaseId}/assets?name=${encodeURIComponent(name)}`,
         '-H', 'Content-Type: application/octet-stream',
         '--input', sourcePath,
         '--silent',
