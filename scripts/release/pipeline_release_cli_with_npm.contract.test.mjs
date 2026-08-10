@@ -27,6 +27,8 @@ test('pipeline CLI release dry-run reports hosted inputs and bump facts without 
         'true',
         '--repository',
         'happier-dev/happier',
+        '--release-notes-id',
+        'test-release',
         '--dry-run',
       ],
       {
