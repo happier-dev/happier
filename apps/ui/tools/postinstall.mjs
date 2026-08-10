@@ -8,6 +8,10 @@ import { createFilteredPatchDir } from './postinstall/filteredPatchDirectory.mjs
 import { runCommandBestEffort, runCommandOrExit } from './postinstall/runCommand.mjs';
 import { verifyNativePatchCompilation } from './postinstall/verifyNativePatchCompilation.mjs';
 import {
+    formatVendoredLegendPatchFailure,
+    verifyVendoredLegendPatchMarkers,
+} from './postinstall/verifyVendoredLegendPatchMarkers.mjs';
+import {
     formatVendoredReanimatedPatchFailure,
     verifyVendoredReanimatedPatchMarkers,
 } from './postinstall/verifyVendoredReanimatedPatchMarkers.mjs';
@@ -150,6 +154,38 @@ if (wants('verify-vendored-reanimated-patch')) {
         // so a patched root copy does not vindicate an unpatched app-local one.
         if (result.status === 'failed') {
             failureReports.push(`${packageDir}\n${formatVendoredReanimatedPatchFailure(result)}`);
+        }
+    }
+
+    if (failureReports.length > 0) {
+        console.error(`\n${failureReports.join('\n\n')}\n`);
+        process.exit(1);
+    }
+}
+
+// Same failure mode as the reanimated guard above, and the reason this one exists at all: patch-package
+// regenerates silently and can drop hunks without a non-zero exit. Until now this check ran only inside
+// `yarn test`, so an install-time hunk drop stayed invisible for a ~27-minute suite — long enough to
+// build and ship a client from it.
+if (wants('verify-vendored-legend-patch')) {
+    const legendPackageDirs = [
+        path.resolve(repoRootNodeModulesDir, '@legendapp', 'list'),
+        path.resolve(expoAppNodeModulesDir, '@legendapp', 'list'),
+    ];
+
+    const failureReports = [];
+    for (const packageDir of legendPackageDirs) {
+        const result = verifyVendoredLegendPatchMarkers({ packageDir });
+        // Every installed copy must carry the markers: Metro and the native build resolve independently,
+        // so a patched root copy does not vindicate an unpatched app-local one.
+        //
+        // Fail on anything that is not explicitly OK or a legitimate skip, rather than matching a
+        // status name. This guard reports 'missing' where its reanimated sibling reports 'failed', and
+        // an `=== 'failed'` check copied across from that sibling passes a dropped marker silently —
+        // measured, not hypothetical. Allow-listing the safe outcomes also fails closed if a future
+        // status is added.
+        if (result.status !== 'ok' && result.status !== 'skipped') {
+            failureReports.push(`${packageDir}\n${formatVendoredLegendPatchFailure(result)}`);
         }
     }
 
