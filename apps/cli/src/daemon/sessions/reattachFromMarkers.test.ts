@@ -559,6 +559,7 @@ describe('reattachTrackedSessionsFromMarkers', () => {
       reattachedFromDiskMarker: true,
     }));
     expect(result.connectedServiceRestartIntents).toEqual([]);
+    expect(result.recoveredLiveSessionIds).toEqual(['session-live-restart']);
     expect(clearSessionMarkerConnectedServiceRestartIntent).toHaveBeenCalledWith(24680);
     expect(removeSessionMarker).not.toHaveBeenCalledWith(24680);
   });
@@ -800,6 +801,7 @@ describe('reattachTrackedSessionsFromMarkers', () => {
     }));
     expect(result).toEqual({
       orphanedDeadDaemonSessions: [],
+      recoveredLiveSessionIds: ['session-live-terminal-restart'],
       connectedServiceRestartIntents: [],
     });
     expect(removeSessionMarker).not.toHaveBeenCalledWith(24684);
@@ -1797,6 +1799,7 @@ describe('reattachTrackedSessionsFromMarkers', () => {
     }));
     expect(result).toEqual({
       orphanedDeadDaemonSessions: [],
+      recoveredLiveSessionIds: ['session-123'],
       connectedServiceRestartIntents: [],
     });
   });
@@ -1860,6 +1863,7 @@ describe('reattachTrackedSessionsFromMarkers', () => {
     }));
     expect(result).toEqual({
       orphanedDeadDaemonSessions: [],
+      recoveredLiveSessionIds: ['session-123'],
       connectedServiceRestartIntents: [],
     });
   });
@@ -1932,6 +1936,7 @@ describe('reattachTrackedSessionsFromMarkers', () => {
     }));
     expect(result).toEqual({
       orphanedDeadDaemonSessions: [],
+      recoveredLiveSessionIds: ['session-opencode-live-owner'],
       connectedServiceRestartIntents: [],
     });
   });

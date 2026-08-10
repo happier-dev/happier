@@ -1,5 +1,9 @@
 import type { TrackedSession } from '@/daemon/types';
-import { ConnectedServiceIdSchema, type ConnectedServiceBindingsV1, type ConnectedServiceId } from '@happier-dev/protocol';
+import {
+  ConnectedServiceIdSchema,
+  type ConnectedServiceBindingsV1,
+  type ConnectedServiceId,
+} from '@happier-dev/protocol';
 import type {
   ConnectedServiceCredentialRefreshResult,
   ConnectedServiceRuntimeAuthCredentialRefreshResult,
@@ -68,6 +72,14 @@ type RuntimeAuthSwitchContinuation = (input: Readonly<{
     generation: number;
   }>;
 }>) => Promise<void> | void;
+
+type RuntimeAuthSupersedingGenerationSettlement = (input: Readonly<{
+  sessionId: string;
+  serviceId: ConnectedServiceId;
+  groupId: string;
+  fromProfileId: string | null;
+  result: Extract<ConnectedServiceAuthGroupSwitchResult, Readonly<{ status: 'superseded_after_apply' }>>;
+}>) => Promise<void>;
 
 type RuntimeAuthRecoverySuccessObserver = (input: Readonly<{
   sessionId: string;
@@ -667,11 +679,15 @@ function doesRuntimeGroupSwitchProveUsableReplacement(
 
 function resolveRuntimeGroupSwitchContinuationContext(
   result: ConnectedServiceAuthGroupSwitchResult,
+  supersedingGenerationSettled = false,
 ): Readonly<{
   action: 'hot_applied' | 'restart_requested';
   activeProfileId: string | null;
   generation: number;
 }> | null {
+  if (result.status === 'superseded_after_apply' && supersedingGenerationSettled) {
+    return { action: 'hot_applied', activeProfileId: result.activeProfileId, generation: result.generation };
+  }
   if (result.status === 'observed_generation') {
     return { action: 'hot_applied', activeProfileId: result.activeProfileId, generation: result.generation };
   }
@@ -694,10 +710,14 @@ async function maybeContinueAfterRuntimeGroupSwitch(input: Readonly<{
   sessionId: string;
   selection: Extract<RuntimeRecoverySelection, Readonly<{ kind: 'group' }>>;
   result: ConnectedServiceAuthGroupSwitchResult;
+  supersedingGenerationSettled?: boolean;
   continueAfterRuntimeAuthSwitch?: RuntimeAuthSwitchContinuation | null;
 }>): Promise<void> {
   if (!input.continueAfterRuntimeAuthSwitch) return;
-  const continuationContext = resolveRuntimeGroupSwitchContinuationContext(input.result);
+  const continuationContext = resolveRuntimeGroupSwitchContinuationContext(
+    input.result,
+    input.supersedingGenerationSettled === true,
+  );
   if (!continuationContext) return;
   const { action } = continuationContext;
   const activeProfileId = normalizeSessionId(continuationContext.activeProfileId);
@@ -850,6 +870,7 @@ async function maybeRefreshCredentialBeforeRuntimeRecovery(input: Readonly<{
     sessionId: input.sessionId,
     serviceId: serviceId.data,
     profileId,
+    credentialRevision: input.classification.credentialRevision ?? null,
     reason: input.classification.kind,
   };
   if (input.switchAttemptTracker?.hasFreshSuccessfulCredentialRefreshAttempt?.(attempt)) {
@@ -960,6 +981,7 @@ export async function handleConnectedServiceRuntimeAuthFailureForSession(input: 
   credentialRefreshService?: RuntimeCredentialRefreshService | null;
   restartSession?: ((tracked: TrackedSession) => Promise<void> | void) | null;
   continueAfterRuntimeAuthSwitch?: RuntimeAuthSwitchContinuation | null;
+  settleSupersedingRuntimeGroupGeneration?: RuntimeAuthSupersedingGenerationSettlement | null;
   emitSessionEvent?: (sessionId: string, event: unknown) => void;
   onRuntimeAuthRecoverySuccess?: RuntimeAuthRecoverySuccessObserver | null;
   onRuntimeAuthRestartFailure?: RuntimeAuthRestartFailureObserver | null;
@@ -1193,6 +1215,20 @@ export async function handleConnectedServiceRuntimeAuthFailureForSession(input: 
       failedCredentialRevision: classification.credentialRevision ?? null,
       switchAttemptTracker: input.switchAttemptTracker ?? null,
     });
+    let supersedingGenerationSettled = false;
+    if (
+      result.result.status === 'superseded_after_apply'
+      && input.settleSupersedingRuntimeGroupGeneration
+    ) {
+      await input.settleSupersedingRuntimeGroupGeneration({
+        sessionId: input.sessionId,
+        serviceId: selection.serviceId as ConnectedServiceId,
+        groupId: selection.groupId,
+        fromProfileId: normalizeNullableProfileId(classification.profileId),
+        result: result.result,
+      });
+      supersedingGenerationSettled = true;
+    }
     await notifyRuntimeGroupSwitchRecoverySuccess({
       onRuntimeAuthRecoverySuccess: input.onRuntimeAuthRecoverySuccess ?? null,
       sessionId: input.sessionId,
@@ -1237,6 +1273,7 @@ export async function handleConnectedServiceRuntimeAuthFailureForSession(input: 
       sessionId: input.sessionId,
       selection,
       result: result.result,
+      supersedingGenerationSettled,
       continueAfterRuntimeAuthSwitch: input.continueAfterRuntimeAuthSwitch ?? null,
     });
   }

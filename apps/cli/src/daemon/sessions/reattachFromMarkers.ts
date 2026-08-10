@@ -356,6 +356,8 @@ type OrphanedDeadDaemonSession = Readonly<{
 
 export type ReattachTrackedSessionsFromMarkersResult = Readonly<{
   orphanedDeadDaemonSessions: ReadonlyArray<OrphanedDeadDaemonSession>;
+  /** Live session runners recovered into this daemon and requiring control binding to its final machine id. */
+  recoveredLiveSessionIds?: ReadonlyArray<string>;
   disconnectedTerminalHostCandidates?: ReadonlyArray<DisconnectedTerminalHostCandidate>;
   /** Sessions whose persisted terminal topology exists but cannot be safely reconstructed. */
   unresolvedTerminalHostSessionIds?: ReadonlyArray<string>;
@@ -377,6 +379,9 @@ function buildReattachResult(params: Readonly<{
   );
   return {
     orphanedDeadDaemonSessions,
+    ...(params.recoveredLiveSessionIds.size > 0
+      ? { recoveredLiveSessionIds: Array.from(params.recoveredLiveSessionIds).sort() }
+      : {}),
     ...(params.disconnectedTerminalHostCandidates?.length
       ? { disconnectedTerminalHostCandidates: params.disconnectedTerminalHostCandidates }
       : {}),

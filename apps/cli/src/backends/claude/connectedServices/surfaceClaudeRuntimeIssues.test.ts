@@ -92,6 +92,7 @@ function installClaudeSelectionEnv(): string | undefined {
     activeProfileId: 'claude-main',
     fallbackProfileId: 'claude-backup',
     generation: 4,
+    credentialRevision: 'csr_7123456789ABCDEFGHJKMNPQRS',
   }]);
   return previous;
 }
@@ -389,6 +390,15 @@ describe('surfaceClaudeRuntimeIssues runtime-auth projection', () => {
         issue: expect.objectContaining({ source: 'auth_error' }),
       }));
       expect(mockNotifyDaemonConnectedServiceRuntimeAuthFailure).toHaveBeenCalled();
+      expect(mockNotifyDaemonConnectedServiceRuntimeAuthFailure).toHaveBeenCalledWith(expect.objectContaining({
+        classification: expect.objectContaining({
+          serviceId: 'claude-subscription',
+          profileId: 'claude-main',
+          groupId: 'team-pool',
+          groupGeneration: 4,
+          credentialRevision: 'csr_7123456789ABCDEFGHJKMNPQRS',
+        }),
+      }), expect.objectContaining({ timeoutMs: 120_000 }));
     } finally {
       restoreClaudeSelectionEnv(previousSelectionEnv);
     }

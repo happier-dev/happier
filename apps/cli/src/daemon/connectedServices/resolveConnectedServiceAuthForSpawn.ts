@@ -83,6 +83,7 @@ type ConnectedServiceAuthGroupPreTurnSwitchCoordinator = Readonly<{
     serviceId: string;
     groupId: string;
     reason: 'usage_limit' | 'soft_threshold' | 'auth_expired' | 'account_changed' | 'refresh_failed';
+    observedProfileId?: string | null;
   }>): Promise<Readonly<{
     status: string;
     activeProfileId?: string | null;
@@ -575,6 +576,7 @@ async function maybeSelectGroupActiveProfileForSpawn(params: Readonly<{
       serviceId: params.serviceId,
       groupId: params.groupId,
       reason: switchReason,
+      observedProfileId: state.activeProfileId,
     });
     const authoritative = await resolveAuthoritativeGroupAfterSpawnSwitchResult({
       group: params.group,
@@ -607,6 +609,7 @@ async function maybeSelectGroupActiveProfileForSpawn(params: Readonly<{
     serviceId: params.serviceId,
     groupId: params.groupId,
     reason: switchReason,
+    observedProfileId: state.activeProfileId,
   });
   const authoritative = await resolveAuthoritativeGroupAfterSpawnSwitchResult({
     group: params.group,

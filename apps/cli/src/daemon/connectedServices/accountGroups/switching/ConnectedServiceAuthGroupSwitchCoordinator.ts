@@ -817,7 +817,6 @@ export class ConnectedServiceAuthGroupSwitchCoordinator {
         const failedProfileId = normalizeProfileId(input.observedProfileId);
         if (
           !(error instanceof ConnectedServiceAuthGroupSwitchLeaseExpiredError)
-          || trigger !== 'classified_failure'
           || !failedProfileId
         ) {
           throw error;

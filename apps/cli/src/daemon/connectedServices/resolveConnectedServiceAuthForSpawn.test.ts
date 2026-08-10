@@ -2916,6 +2916,7 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
       serviceId: 'openai-codex',
       groupId: 'main',
       reason: 'usage_limit',
+      observedProfileId: 'primary',
     });
     expect(updateConnectedServiceAuthGroupActiveProfile).not.toHaveBeenCalled();
     expect(connectedServiceAuth).not.toBeNull();
@@ -3088,6 +3089,7 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
       serviceId: 'openai-codex',
       groupId: 'main',
       reason: 'usage_limit',
+      observedProfileId: 'primary',
     });
     expect(getConnectedServiceAuthGroup).toHaveBeenCalledTimes(2);
     expect(connectedServiceAuth?.connectedServicesBindings.bindingsByServiceId['openai-codex']).toEqual({
@@ -3976,7 +3978,9 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
       expect(getConnectedServiceCredentialSealed).not.toHaveBeenCalled();
       return;
     }
-    expect(getConnectedServiceAuthGroup).toHaveBeenCalledTimes(mode === 'post_cas_failure' ? 3 : 2);
+    // Resolution re-reads ambiguous switch outcomes, then materialization performs one final
+    // authoritative currentness check before writing the selected credential.
+    expect(getConnectedServiceAuthGroup).toHaveBeenCalledTimes(mode === 'post_cas_failure' ? 4 : 3);
     expect(connectedServiceAuth).not.toBeNull();
     const credential = await readClaudeCodeNativeCredential(connectedServiceAuth!.env.CLAUDE_CONFIG_DIR!);
     expect(credential).toMatchObject({

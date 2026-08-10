@@ -9,6 +9,7 @@ import { AGENT_IDS, resolveAgentIdFromSessionMetadata } from '@happier-dev/agent
 import { ApiClient, isMachineContentPublicKeyMismatchError } from '@/api/api';
 import { serializeAxiosErrorForLog } from '@/api/client/serializeAxiosErrorForLog';
 import { ensureMachineRegistered } from '@/api/machine/ensureMachineRegistered';
+import { ensureSessionMachineAccessKeyBinding } from '@/api/session/ensureSessionMachineAccessKeyBinding';
 import { isRpcMethodNotAvailableError } from '@happier-dev/protocol/rpcErrors';
 import { callSessionRpc } from '@/session/transport/rpc/sessionRpc';
 import { resolveSessionTransportContext } from '@/session/services/resolveSessionTransportContext';
@@ -1143,11 +1144,18 @@ type ContinueAfterRuntimeAuthSwitch = (input: Readonly<{
   switchReason?: ConnectedServiceSessionAuthSwitchReason;
 }>) => Promise<void>;
 
+type ReconcileCurrentRuntimeAuthTarget = (input: Readonly<{
+  sessionId: string;
+  serviceId: ConnectedServiceId;
+  groupId: string;
+}>) => Promise<boolean>;
+
 export async function continueAfterSupersededRuntimeAuthFailure(input: Readonly<{
   result: unknown;
   sessionId: string;
   interruptedOriginId?: string | null;
   continueAfterRuntimeAuthSwitch: ContinueAfterRuntimeAuthSwitch;
+  reconcileCurrentRuntimeAuthTarget?: ReconcileCurrentRuntimeAuthTarget;
 }>): Promise<boolean> {
   if (
     !input.result
@@ -1163,7 +1171,25 @@ export async function continueAfterSupersededRuntimeAuthFailure(input: Readonly<
     return false;
   }
   const interruptedOriginId = input.interruptedOriginId?.trim() ?? '';
-  if (input.result.reason === 'source_tuple_mismatch' && interruptedOriginId) {
+  let currentTargetSettled = false;
+  if (
+    input.reconcileCurrentRuntimeAuthTarget
+    && 'serviceId' in input.result
+    && 'groupId' in input.result
+    && typeof input.result.serviceId === 'string'
+    && typeof input.result.groupId === 'string'
+  ) {
+    const serviceId = ConnectedServiceIdSchema.safeParse(input.result.serviceId);
+    const groupId = input.result.groupId.trim();
+    if (serviceId.success && groupId) {
+      currentTargetSettled = await input.reconcileCurrentRuntimeAuthTarget({
+        sessionId: input.sessionId,
+        serviceId: serviceId.data,
+        groupId,
+      });
+    }
+  }
+  if (currentTargetSettled && interruptedOriginId) {
     await input.continueAfterRuntimeAuthSwitch({
       sessionId: input.sessionId,
       attemptId: interruptedOriginId,
@@ -1171,6 +1197,53 @@ export async function continueAfterSupersededRuntimeAuthFailure(input: Readonly<
     });
   }
   return true;
+}
+
+export async function settleSupersedingRuntimeAuthGenerationForSource(input: Readonly<{
+  recovery: unknown;
+  serviceId: ConnectedServiceId;
+  groupId: string;
+  sessionId: string;
+  fromProfileId: string | null;
+  consumeCommittedAuthGroupGeneration: (
+    consumeInput: Parameters<ConnectedServiceAuthGroupGenerationConsumer['consume']>[0],
+  ) => Promise<Pick<Awaited<ReturnType<ConnectedServiceAuthGroupGenerationConsumer['consume']>>, 'outcome'>>;
+}>): Promise<void> {
+  const resolved = resolveCommittedGenerationFromRuntimeAuthRecovery({
+    serviceId: input.serviceId,
+    groupId: input.groupId,
+    recovery: input.recovery,
+    provenance: 'runtime_failure',
+  });
+  if (!resolved?.sourceRequiresConvergence) {
+    throw Object.assign(
+      new Error('connected_service_runtime_auth_superseding_generation_target_unavailable'),
+      {
+        code: 'connected_service_runtime_auth_superseding_generation_target_unavailable',
+        retryable: true,
+      },
+    );
+  }
+  const consumption = await input.consumeCommittedAuthGroupGeneration({
+    committedGeneration: resolved.committedGeneration,
+    switchReason: 'automatic_runtime_failure',
+    sessions: [{
+      sessionId: input.sessionId,
+      activity: 'live',
+      fromProfileId: input.fromProfileId,
+    }],
+    executionAuthority: 'runtime_recovery',
+  });
+  if (consumption.outcome !== 'adopted_current') {
+    throw Object.assign(
+      new Error('connected_service_runtime_auth_superseding_generation_not_acknowledged'),
+      {
+        code: 'connected_service_runtime_auth_superseding_generation_not_acknowledged',
+        retryable: true,
+        outcome: consumption.outcome,
+      },
+    );
+  }
 }
 
 const PREVIOUS_RUNNER_RETIRED_RESPAWN_TERMINAL_REASONS = new Set<SessionRunnerRespawnTerminalReason>([
@@ -2513,6 +2586,47 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
 
         logger.debug('[DAEMON RUN] Running startup session reattach scan');
         const startupReattachResult = await reattachTrackedSessionsFromMarkers({ pidToTrackedSession, credentials });
+        const pendingSessionMachineAccessBindingIds = new Set(startupReattachResult.recoveredLiveSessionIds ?? []);
+        let sessionMachineAccessBindingReconcileInFlight: Promise<void> | null = null;
+        const reconcileSessionMachineAccessBindings = async (): Promise<void> => {
+          if (!apiMachineForSessions || pendingSessionMachineAccessBindingIds.size === 0) return;
+          if (sessionMachineAccessBindingReconcileInFlight) {
+            await sessionMachineAccessBindingReconcileInFlight;
+            if (!apiMachineForSessions || pendingSessionMachineAccessBindingIds.size === 0) return;
+          }
+
+          sessionMachineAccessBindingReconcileInFlight = (async () => {
+            const liveSessionIds = new Set(
+              getCurrentChildren()
+                .map((tracked) => tracked.happySessionId?.trim())
+                .filter((sessionId): sessionId is string => Boolean(sessionId)),
+            );
+            for (const sessionId of pendingSessionMachineAccessBindingIds) {
+              if (!liveSessionIds.has(sessionId)) {
+                pendingSessionMachineAccessBindingIds.delete(sessionId);
+                continue;
+              }
+              try {
+                await ensureSessionMachineAccessKeyBinding({
+                  serverUrl: configuration.apiServerUrl,
+                  token: credentials.token,
+                  sessionId,
+                  machineId,
+                });
+                pendingSessionMachineAccessBindingIds.delete(sessionId);
+              } catch (error) {
+                logger.warn('[DAEMON RUN] Failed to reconcile recovered session machine control; will retry on reconnect', {
+                  sessionId,
+                  machineId,
+                  error: serializeAxiosErrorForLog(error),
+                });
+              }
+            }
+          })().finally(() => {
+            sessionMachineAccessBindingReconcileInFlight = null;
+          });
+          await sessionMachineAccessBindingReconcileInFlight;
+        };
         const orphanedDeadDaemonSessions = [...startupReattachResult.orphanedDeadDaemonSessions];
         const disconnectedTerminalHostCandidates = [...(startupReattachResult.disconnectedTerminalHostCandidates ?? [])];
         const unresolvedTerminalHostSessionIds = new Set(startupReattachResult.unresolvedTerminalHostSessionIds ?? []);
@@ -2971,6 +3085,8 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
                     pidToTrackedSession,
                     credentials,
                   });
+                  pendingSessionMachineAccessBindingIds.add(normalizedExistingSessionId);
+                  await reconcileSessionMachineAccessBindings();
                   // Best-effort: wake the live runner's pending queue so a queued message is
                   // delivered promptly on resume. The RESULT is intentionally advisory only.
                   //
@@ -5672,6 +5788,7 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
             sessionId: input.sessionId,
             serviceId: ConnectedServiceIdSchema.parse(input.classification.serviceId),
           });
+          let supersedingSourceConverged = false;
           const result = await handleConnectedServiceRuntimeAuthFailureForSession({
             getChildren: getCurrentChildren,
             switchCoordinator,
@@ -5757,6 +5874,24 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
               }
               await continueAfterRuntimeAuthSwitch(continuationInput);
             },
+            settleSupersedingRuntimeGroupGeneration: async (settlementInput) => {
+              const consumer = connectedServiceAuthGroupGenerationConsumer;
+              if (!consumer) {
+                throw Object.assign(
+                  new Error('connected_service_generation_consumer_unavailable'),
+                  { code: 'connected_service_generation_consumer_unavailable', retryable: true },
+                );
+              }
+              await settleSupersedingRuntimeAuthGenerationForSource({
+                recovery: { status: 'switch_attempted', result: settlementInput.result },
+                serviceId: settlementInput.serviceId,
+                groupId: settlementInput.groupId,
+                sessionId: settlementInput.sessionId,
+                fromProfileId: settlementInput.fromProfileId,
+                consumeCommittedAuthGroupGeneration: async (consumeInput) => await consumer.consume(consumeInput),
+              });
+              supersedingSourceConverged = true;
+            },
             emitSessionEvent: (sessionId, event) => {
               // Runtime-auth recovery switch — surface transcript event + notification through the
               // single choke point (reason-aware suppression owned by the committer/dispatcher).
@@ -5833,6 +5968,40 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
             sessionId: input.sessionId,
             interruptedOriginId,
             continueAfterRuntimeAuthSwitch,
+            reconcileCurrentRuntimeAuthTarget: async ({ sessionId, serviceId, groupId }) => {
+              const target = connectedServiceRuntimeRegistry.getBySessionId(sessionId);
+              if (!target) return false;
+              const registration: ConnectedServiceRuntimeTargetRegistration = {
+                key: { kind: 'session', pid: target.pid },
+                target,
+              };
+              if (
+                !connectedServiceRuntimeRegistry.isCurrentTargetRegistration(registration)
+                || !target.activeBindings.some((binding) => (
+                  binding.serviceId === serviceId && binding.groupId === groupId
+                ))
+              ) return false;
+              await enqueueConnectedServiceRuntimeTargetRegistrationReconciliation(registration, true);
+              const currentTarget = connectedServiceRuntimeRegistry.getBySessionId(sessionId);
+              if (!currentTarget) return false;
+              const snapshot = latestConnectedServiceProjectionSnapshot;
+              const group = snapshot?.groups.find((candidate) => (
+                candidate.serviceId === serviceId && candidate.groupId === groupId
+              )) ?? null;
+              if (!group?.activeProfileId) return false;
+              const credentialBoundary = snapshot?.resolveCredentialBoundary(serviceId, group.activeProfileId);
+              if (credentialBoundary?.status !== 'present') return false;
+              return currentTarget.activeBindings.some((binding) => (
+                binding.serviceId === serviceId
+                && binding.groupId === groupId
+                && binding.profileId === group.activeProfileId
+                && binding.generation === group.generation
+                && (
+                  credentialBoundary.credentialRevision === null
+                  || binding.credentialRevision === credentialBoundary.credentialRevision
+                )
+              ));
+            },
           })) {
             return result;
           }
@@ -5863,7 +6032,8 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
                   sourceProviderAccountId: input.classification.sourceProviderAccountId ?? null,
                   sourceAccountLabel: input.classification.sourceAccountLabel ?? null,
                   committedGeneration: committedRecovery?.committedGeneration ?? null,
-                  sourceRequiresConvergence: committedRecovery?.sourceRequiresConvergence ?? false,
+                  sourceRequiresConvergence:
+                    (committedRecovery?.sourceRequiresConvergence ?? false) && !supersedingSourceConverged,
                 });
               } catch (error) {
                 logger.debug('[DAEMON RUN] Failed to fan out connected-service runtime usage-limit exhaustion (non-fatal)', error);
@@ -7733,6 +7903,7 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
                 });
             apiMachine = connectedApiMachine;
             apiMachineForSessions = connectedApiMachine;
+            await reconcileSessionMachineAccessBindings();
 
             // Set RPC handlers
             if (diagnosticSubsystemGates.disableAutomationWorker) {
@@ -8049,6 +8220,8 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
                 takeover: takeoverRequested,
                 onConnect: async () => {
                   if (shutdownInitiated) return;
+
+                  await reconcileSessionMachineAccessBindings();
 
                   // FIX-1a (incident Jun-11 H-A): keep the account-settings snapshot fresh on
                   // (re)connect. Cheap no-op when a scope-matching snapshot is already active;

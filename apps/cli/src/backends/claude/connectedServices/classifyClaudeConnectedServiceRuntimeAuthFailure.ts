@@ -1,4 +1,5 @@
 import type { ConnectedServiceRuntimeFailureClassification } from '@/daemon/connectedServices/runtimeAuth/types';
+import { ConnectedServiceCredentialRevisionV1Schema } from '@happier-dev/protocol';
 import {
     resolveClaudeUsageLimitResetTiming,
     type NormalizedProviderUsageLimitDetailsV1,
@@ -26,6 +27,11 @@ function readNonNegativeInteger(value: unknown): number | null {
 function readSelectionGroupGeneration(selection: Record<string, unknown> | null, groupId: string | null): number | null {
     if (!selection || !groupId || readString(selection.groupId) !== groupId) return null;
     return readNonNegativeInteger(selection.groupGeneration ?? selection.generation);
+}
+
+function readSelectionCredentialRevision(selection: Record<string, unknown> | null) {
+    const parsed = ConnectedServiceCredentialRevisionV1Schema.safeParse(selection?.credentialRevision);
+    return parsed.success ? parsed.data : null;
 }
 
 function readClaudeConnectedServiceId(value: unknown): 'anthropic' | 'claude-subscription' {
@@ -92,6 +98,7 @@ function classifyClaudeAuthFailure(params: Readonly<{
     const selection = readRecord(params.selection);
     const groupId = readString(selection?.groupId);
     const groupGeneration = readSelectionGroupGeneration(selection, groupId);
+    const credentialRevision = readSelectionCredentialRevision(selection);
     return {
         kind: 'auth_expired',
         limitCategory: 'auth_invalid',
@@ -99,6 +106,7 @@ function classifyClaudeAuthFailure(params: Readonly<{
         profileId: readString(selection?.activeProfileId ?? selection?.profileId),
         groupId,
         ...(groupGeneration !== null ? { groupGeneration } : {}),
+        ...(credentialRevision !== null ? { credentialRevision } : {}),
         resetsAtMs: null,
         retryAfterMs: null,
         quotaScope: 'account',
@@ -145,6 +153,7 @@ export function classifyClaudeConnectedServiceRuntimeAuthFailure(params: Readonl
             : null;
     const groupId = readString(selection?.groupId);
     const groupGeneration = readSelectionGroupGeneration(selection, groupId);
+    const credentialRevision = readSelectionCredentialRevision(selection);
     return {
         kind,
         limitCategory,
@@ -152,6 +161,7 @@ export function classifyClaudeConnectedServiceRuntimeAuthFailure(params: Readonl
         profileId: readString(selection?.activeProfileId ?? selection?.profileId),
         groupId,
         ...(groupGeneration !== null ? { groupGeneration } : {}),
+        ...(credentialRevision !== null ? { credentialRevision } : {}),
         resetsAtMs: params.details.resetAtMs ?? fallbackTiming?.resetAtMs ?? null,
         retryAfterMs: params.details.retryAfterMs ?? fallbackTiming?.retryAfterMs ?? null,
         quotaScope: params.details.quotaScope,

@@ -172,6 +172,54 @@ describe('ConnectedServiceAuthGroupSwitchCoordinator', () => {
     }
   });
 
+  it('adopts authoritative switched truth when a proactive lease waiter expires after the peer commit', async () => {
+    vi.useFakeTimers();
+    try {
+      const leases = new InMemoryConnectedServiceAuthGroupSwitchLeaseRegistry({ leaseTimeoutMs: 10 });
+      const owner = leases.acquire({ serviceId: 'openai-codex', groupId: 'main' });
+      if (owner.kind !== 'owner') throw new Error('owner expected');
+      let current = state('primary', 1);
+      const applyGeneration = vi.fn(async () => ({ mode: 'hot_apply' as const }));
+      const coordinator = new ConnectedServiceAuthGroupSwitchCoordinator({
+        leases,
+        nowMs: () => 1_000,
+        quotaFreshnessMs: 60_000,
+        loadState: async () => current,
+        commitSwitch: async () => {
+          throw new Error('lease loser must not commit');
+        },
+        applyGeneration,
+      });
+
+      const recovery = coordinator.switchBeforeTurn({
+        sessionId: 'respawning-session',
+        serviceId: 'openai-codex',
+        groupId: 'main',
+        reason: 'soft_threshold',
+        observedProfileId: 'primary',
+      });
+      current = state('backup', 2);
+      await vi.advanceTimersByTimeAsync(10);
+
+      await expect(recovery).resolves.toMatchObject({
+        status: 'observed_generation',
+        activeProfileId: 'backup',
+        generation: 2,
+      });
+      expect(applyGeneration).toHaveBeenCalledWith(expect.objectContaining({
+        sessionId: 'respawning-session',
+        serviceId: 'openai-codex',
+        groupId: 'main',
+        activeProfileId: 'backup',
+        generation: 2,
+        fromProfileId: 'primary',
+      }));
+      owner.finish();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('does not switch when automatic switching is disabled by group policy', async () => {
     let didCommit = false;
     const coordinator = new ConnectedServiceAuthGroupSwitchCoordinator({

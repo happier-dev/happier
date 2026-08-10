@@ -200,6 +200,7 @@ const sessionRunnerActivityBoundaryMocks = vi.hoisted(() => ({
   readProcessRunState: vi.fn<ReadProcessRunState>(async () => 'dead'),
   readSessionRunnerLockStatus: vi.fn<ReadSessionRunnerLockStatus>(async () => ({ ok: false, reason: 'not_found' })),
 }));
+const ensureSessionMachineAccessKeyBindingMock = vi.hoisted(() => vi.fn(async () => {}));
 const harness = vi.hoisted(() => {
   let resolveShutdown: ((value: { source: ShutdownSource; errorMessage?: string }) => void) | null = null;
   let requestShutdownRef: ((source: ShutdownSource, errorMessage?: string) => void) | null = null;
@@ -344,6 +345,10 @@ vi.mock('@/api/machine/ensureMachineRegistered', () => ({
     didRotateMachineId: false,
     machine: createRegisteredMachine(machineId),
   })),
+}));
+
+vi.mock('@/api/session/ensureSessionMachineAccessKeyBinding', () => ({
+  ensureSessionMachineAccessKeyBinding: ensureSessionMachineAccessKeyBindingMock,
 }));
 
 vi.mock('@/ui/logger', () => ({
@@ -900,6 +905,8 @@ describe('startDaemon spawn resume wiring (integration)', () => {
     sessionRunnerActivityBoundaryMocks.readProcessRunState.mockResolvedValue('dead');
     sessionRunnerActivityBoundaryMocks.readSessionRunnerLockStatus.mockReset();
     sessionRunnerActivityBoundaryMocks.readSessionRunnerLockStatus.mockResolvedValue({ ok: false, reason: 'not_found' });
+    ensureSessionMachineAccessKeyBindingMock.mockReset();
+    ensureSessionMachineAccessKeyBindingMock.mockResolvedValue(undefined);
     pendingMaterializationRpcMocks.callSessionRpc.mockImplementation(async (params) =>
       params.method.endsWith('wakeCapability.v1.get')
         ? { ok: true, capability: 'pending_queue_wake_v1', protocolVersion: 1, method: 'session.pendingQueue.wake.v1' }
@@ -924,6 +931,60 @@ describe('startDaemon spawn resume wiring (integration)', () => {
     delete process.env.HAPPIER_DAEMON_SESSION_RESPAWN_ENABLED;
     delete process.env.HAPPIER_DAEMON_STOP_SESSION_WAIT_FOR_EXIT_MS;
     delete process.env.HAPPIER_DAEMON_STOP_SESSION_WAIT_FOR_EXIT_POLL_INTERVAL_MS;
+  });
+
+  it('binds startup-reattached live sessions to the daemon final machine identity', async () => {
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
+    const refreshEnvOriginal = process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED;
+    process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED = 'false';
+    let run: Promise<void> | null = null;
+
+    try {
+      const reattachModule = await import('./sessions/reattachFromMarkers');
+      vi.mocked(reattachModule.reattachTrackedSessionsFromMarkers).mockImplementation(async ({ pidToTrackedSession }) => {
+        pidToTrackedSession.set(7788, {
+          pid: 7788,
+          startedBy: 'daemon',
+          happySessionId: 'session-reattached-control',
+          reattachedFromDiskMarker: true,
+        });
+        return {
+          orphanedDeadDaemonSessions: [],
+          recoveredLiveSessionIds: ['session-reattached-control'],
+          connectedServiceRestartIntents: [],
+        };
+      });
+
+      const { startDaemon } = await import('./startDaemon');
+      run = startDaemon();
+
+      await vi.waitFor(() => expect(ensureSessionMachineAccessKeyBindingMock).toHaveBeenCalledWith({
+        serverUrl: expect.any(String),
+        token: 'token-daemon',
+        sessionId: 'session-reattached-control',
+        machineId: 'machine-1',
+      }));
+
+      harness.requestShutdown('happier-cli');
+      await run;
+      run = null;
+    } finally {
+      if (run) {
+        harness.requestShutdown('happier-cli');
+        await run.catch(() => {});
+      }
+      const reattachModule = await import('./sessions/reattachFromMarkers');
+      vi.mocked(reattachModule.reattachTrackedSessionsFromMarkers).mockImplementation(async () => ({
+        orphanedDeadDaemonSessions: [],
+        connectedServiceRestartIntents: [],
+      }));
+      if (refreshEnvOriginal === undefined) {
+        delete process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED;
+      } else {
+        process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED = refreshEnvOriginal;
+      }
+      exitSpy.mockRestore();
+    }
   });
 
   it('activates one exact inactive Pending row after the UI disappears, coalesces a duplicate, and does not restart an active neighbor', async () => {

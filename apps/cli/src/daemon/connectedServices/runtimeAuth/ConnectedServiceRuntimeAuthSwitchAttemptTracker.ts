@@ -10,6 +10,7 @@ type CredentialRefreshAttemptKeyInput = Readonly<{
   sessionId: string;
   serviceId: string;
   profileId: string;
+  credentialRevision?: string | null;
   reason: string;
 }>;
 
@@ -35,7 +36,10 @@ function failureEdgeKeyFor(input: SwitchAttemptKeyInput): string {
 }
 
 function credentialRefreshKeyFor(input: CredentialRefreshAttemptKeyInput): string {
-  return `${normalizeString(input.sessionId)}\0${normalizeString(input.serviceId)}\0${normalizeString(input.profileId)}\0${normalizeString(input.reason)}`;
+  const credentialRevision = typeof input.credentialRevision === 'string'
+    ? normalizeString(input.credentialRevision)
+    : '';
+  return `${normalizeString(input.sessionId)}\0${normalizeString(input.serviceId)}\0${normalizeString(input.profileId)}\0${credentialRevision}\0${normalizeString(input.reason)}`;
 }
 
 function normalizeSwitches(value: number): number {
