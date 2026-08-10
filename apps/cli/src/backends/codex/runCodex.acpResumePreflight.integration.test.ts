@@ -2405,6 +2405,9 @@ describe('runCodex CodexACP resume behavior', () => {
     const { runCodex } = await import('./runCodex');
     const outcome = await runCodex({
       credentials: { token: 'test' } as Credentials,
+      accountSettingsContext: {
+        settings: { sessionBusySteerSendPolicy: 'server_pending' },
+      },
       startedBy: 'terminal',
       startingMode: 'remote',
       codexBackendMode: 'appServer',

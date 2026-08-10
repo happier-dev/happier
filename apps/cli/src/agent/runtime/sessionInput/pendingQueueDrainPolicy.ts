@@ -30,23 +30,13 @@ export function resolveSessionPendingQueueMaxPopPerWake(
     : PENDING_QUEUE_ONE_AT_A_TIME_MAX_POP_PER_WAKE;
 }
 
-export function resolveSessionPendingForegroundSteerability(
-  settings: Readonly<Record<string, unknown>> | null | undefined,
-): PendingForegroundSteerability {
-  return settings?.sessionBusySteerSendPolicy === 'server_pending'
-    ? 'unsteerable'
-    : 'steerable';
-}
-
 export function resolveRuntimeAwarePendingForegroundSteerability(params: Readonly<{
-  configuredSteerability: PendingForegroundSteerability;
   hasActiveProviderTurn: boolean;
   canSteerPrompt: boolean;
 }>): PendingForegroundSteerability {
-  if (params.configuredSteerability !== 'steerable') return params.configuredSteerability;
   return params.hasActiveProviderTurn && !params.canSteerPrompt
     ? 'unsteerable'
-    : params.configuredSteerability;
+    : 'steerable';
 }
 
 export type PendingQueueRuntimeActivityProjection = SessionRuntimeActivityProjectionBoundary;

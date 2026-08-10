@@ -20,7 +20,6 @@ import { createRuntimeOverrideSynchronizers } from '@/agent/runtime/createRuntim
 import { createPermissionModeQueueState } from '@/agent/runtime/createPermissionModeQueueState';
 import {
   resolveRuntimeAwarePendingForegroundSteerability,
-  resolveSessionPendingForegroundSteerability,
   resolveSessionPendingQueueDeliveryTiming,
   resolveSessionPendingQueueMaxPopPerWake,
 } from '@/agent/runtime/sessionInput/pendingQueueDrainPolicy';
@@ -468,7 +467,6 @@ export async function runStandardAcpProvider(
     resolveActiveTurnSteerability: () => {
       const runtime = runtimeForInFlightSteer;
       return resolveRuntimeAwarePendingForegroundSteerability({
-        configuredSteerability: resolveSessionPendingForegroundSteerability(accountSettings),
         hasActiveProviderTurn: runtime?.isTurnInFlight?.() === true,
         canSteerPrompt: runtime?.supportsInFlightSteer?.() === true && typeof runtime.steerPrompt === 'function',
       });

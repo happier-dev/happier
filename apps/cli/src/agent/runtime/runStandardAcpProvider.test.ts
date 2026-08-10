@@ -639,6 +639,9 @@ describe('runStandardAcpProvider', () => {
 
   it('resolves pending foreground steerability from the current runtime turn and steer capability', async () => {
     const harness = createHarness();
+    harness.opts.accountSettingsContext = {
+      settings: { sessionBusySteerSendPolicy: 'server_pending' },
+    } as any;
     let turnInFlight = true;
     let steerSupported = false;
     const runtime = {

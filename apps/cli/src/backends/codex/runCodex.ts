@@ -50,7 +50,6 @@ import {
 import type { SessionProviderInputConsumer } from '@/agent/runtime/sessionInput/types';
 import {
     resolveRuntimeAwarePendingForegroundSteerability,
-    resolveSessionPendingForegroundSteerability,
     resolveSessionPendingQueueDeliveryTiming,
     resolveSessionPendingQueueMaxPopPerWake,
 } from '@/agent/runtime/sessionInput/pendingQueueDrainPolicy';
@@ -962,9 +961,6 @@ export async function runCodex(opts: {
         listVendorPlugins: async () => await getCodexRemoteRuntime()?.listVendorPlugins?.(),
     });
     const resolvePendingForegroundSteerability = () => {
-        const configuredSteerability = resolveSessionPendingForegroundSteerability(
-            opts.accountSettingsContext?.settings ?? null,
-        );
         const runtime = getCodexRemoteRuntime();
         const hasActiveProviderTurn = runtime
             ? (runtime.hasActiveProviderTurn?.() ?? runtime.isTurnInFlight())
@@ -973,7 +969,6 @@ export async function runCodex(opts: {
             ? (runtime.canSteerPrompt?.() ?? runtime.isTurnInFlight())
             : false;
         return resolveRuntimeAwarePendingForegroundSteerability({
-            configuredSteerability,
             hasActiveProviderTurn,
             canSteerPrompt,
         });

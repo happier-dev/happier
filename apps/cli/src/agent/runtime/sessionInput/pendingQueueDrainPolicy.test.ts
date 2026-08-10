@@ -2,9 +2,26 @@ import { describe, expect, it } from 'vitest';
 
 import {
   resolvePendingRuntimeActivityDeferredReason,
+  resolveRuntimeAwarePendingForegroundSteerability,
   runtimeIdleForPendingDrain,
   shouldDeferPendingQueueDrainForRuntimeActivity,
 } from './pendingQueueDrainPolicy';
+
+describe('pending queue foreground steerability', () => {
+  it('uses live provider capability instead of the account send-timing preference', () => {
+    expect(resolveRuntimeAwarePendingForegroundSteerability({
+      hasActiveProviderTurn: true,
+      canSteerPrompt: true,
+    })).toBe('steerable');
+  });
+
+  it('fails closed while the active provider turn cannot actually be steered', () => {
+    expect(resolveRuntimeAwarePendingForegroundSteerability({
+      hasActiveProviderTurn: true,
+      canSteerPrompt: false,
+    })).toBe('unsteerable');
+  });
+});
 
 describe('pending queue Runtime Activity admission', () => {
   it('allows only a complete idle target projection', () => {
