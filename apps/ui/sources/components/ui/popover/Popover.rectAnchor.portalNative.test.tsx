@@ -192,3 +192,62 @@ describe('Popover rect-anchor (portal native)', () => {
         expectVisualTop(style, 318);
     });
 });
+
+describe('Popover above-anchor backdrop (portal native)', () => {
+    it('sizes the dismiss backdrop in portal space so the band above the anchor is fully covered', async () => {
+        const { Popover } = await import('./Popover');
+        const { OverlayPortalProvider, OverlayPortalHost } = await import('./OverlayPortal');
+        const { PopoverPortalTargetContextProvider } = await import('./PopoverPortalTarget');
+
+        // Window is 1000x800; the portal root is a contained-modal subtree of height 600 at y=200.
+        const portalRootNode = {
+            measureInWindow: (cb: any) => cb(0, 200, 1000, 600),
+            measure: (cb: any) => cb(0, 0, 1000, 600, 0, 200),
+        } as any;
+
+        const portalTarget = {
+            rootRef: { current: portalRootNode },
+            layout: { width: 1000, height: 600 },
+        } as const;
+
+        const screen = await renderScreen(
+            <PopoverPortalTargetContextProvider value={portalTarget}>
+                <OverlayPortalProvider>
+                    <Popover
+                        open
+                        anchor={{
+                            kind: 'rect',
+                            // Window-relative chip rect => portal-relative y = 600 - 200 = 400.
+                            rect: { left: 50, top: 600, width: 120, height: 40 },
+                        }}
+                        portal={{ native: true }}
+                        placement="top"
+                        gap={0}
+                        maxHeightCap={200}
+                        backdrop={{ blockOutsidePointerEvents: 'above-anchor' }}
+                        onRequestClose={() => {}}
+                    >
+                        {() => React.createElement('PopoverChild')}
+                    </Popover>
+                    <OverlayPortalHost />
+                </OverlayPortalProvider>
+            </PopoverPortalTargetContextProvider>,
+        );
+
+        await act(async () => {
+            await flushHookEffects({ cycles: 1, turns: 6 });
+        });
+
+        const pressables = screen.tree.root.findAllByType('Pressable' as never);
+        expect(pressables.length).toBe(1);
+        const style = flattenStyle(pressables[0]?.props?.style);
+
+        // The Pressable lays out inside the portal host (height 600), and the anchor rect it is
+        // given is portal-relative (y=400). Its bottom inset must therefore be measured against the
+        // portal height, not the window height: 600 - 400 = 200. Using windowHeight yields 400,
+        // which pushes the pressable's bottom edge 200px ABOVE the anchor and leaves an unblocked
+        // band directly above the chip.
+        expect(style.top).toBe(0);
+        expect(style.bottom).toBe(200);
+    });
+});
