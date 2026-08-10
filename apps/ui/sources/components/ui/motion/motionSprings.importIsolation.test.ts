@@ -18,11 +18,21 @@ import { describe, expect, it, vi } from 'vitest';
  */
 vi.mock('react-native-reanimated', () => ({}));
 
-describe('spring vocabulary import isolation', () => {
-    it('imports and serves its physics without reading a Reanimated runtime value', async () => {
+describe('motion import isolation', () => {
+    it('imports the spring vocabulary and serves its physics without reading a Reanimated runtime value', async () => {
         const { MOTION_SPRING_ROLES, describeMotionSpring } = await import('./motionSprings');
 
         expect(MOTION_SPRING_ROLES).toContain('press');
         expect(describeMotionSpring('press').dampingRatio).toBeCloseTo(1, 6);
+    });
+
+    it('imports the whole motion barrel, which is what non-animating consumers actually reach', async () => {
+        // The barrel is the surface every consumer imports, and adding `StatusTransition` to it
+        // pulled `reanimatedMotionTokens` — and its module-scope `Easing.bezier(...)` — into every
+        // one of them. The contract is the barrel's, not any single module's.
+        const motion = await import('./index');
+
+        expect(motion.resolveMotionSpring).toBeTypeOf('function');
+        expect(motion.motionTokens.durationMs).toBeDefined();
     });
 });
