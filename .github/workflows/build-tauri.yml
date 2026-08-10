@@ -340,46 +340,7 @@ jobs:
 
       - name: Install Linux system dependencies (Tauri)
         if: runner.os == 'Linux'
-        run: |
-          set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            build-essential \
-            pkg-config \
-            libssl-dev \
-            libgtk-3-dev \
-            libwebkit2gtk-4.1-dev \
-            libayatana-appindicator3-dev \
-            librsvg2-dev \
-            desktop-file-utils \
-            gstreamer1.0-tools \
-            gstreamer1.0-plugins-base \
-            squashfs-tools \
-            patchelf
-
-          # linuxdeploy is distributed as an AppImage. On newer runners, missing FUSE libraries can break
-          # AppImage execution (even when APPIMAGE_EXTRACT_AND_RUN is set for some tools).
-          fuse_pkg=""
-          if apt-cache show libfuse2 >/dev/null 2>&1; then
-            fuse_pkg="libfuse2"
-          elif apt-cache show libfuse2t64 >/dev/null 2>&1; then
-            fuse_pkg="libfuse2t64"
-          fi
-          if [ -n "${fuse_pkg}" ]; then
-            sudo apt-get install -y --no-install-recommends "${fuse_pkg}"
-          fi
-
-          # Some linuxdeploy AppImage runtimes still rely on fusermount being present. Install fuse utilities
-          # opportunistically (distro-dependent).
-          fuse_utils=""
-          if apt-cache show fuse >/dev/null 2>&1; then
-            fuse_utils="fuse"
-          elif apt-cache show fuse3 >/dev/null 2>&1; then
-            fuse_utils="fuse3"
-          fi
-          if [ -n "${fuse_utils}" ]; then
-            sudo apt-get install -y --no-install-recommends "${fuse_utils}"
-          fi
+        uses: ./.github/actions/install-tauri-linux-dependencies
 
       - name: Build desktop candidate binary
         env:
@@ -496,13 +457,9 @@ jobs:
         with:
           targets: ${{ matrix.tauri_target }}
 
-      - name: Install Linux bundling dependencies
+      - name: Install Linux system dependencies (Tauri)
         if: runner.os == 'Linux'
-        run: |
-          set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            desktop-file-utils gstreamer1.0-tools gstreamer1.0-plugins-base squashfs-tools patchelf
+        uses: ./.github/actions/install-tauri-linux-dependencies
 
       - name: Download desktop candidate
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093

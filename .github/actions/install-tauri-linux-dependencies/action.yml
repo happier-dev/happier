@@ -1,0 +1,46 @@
+name: Install Tauri Linux dependencies
+description: Install the canonical native and packaging dependencies required by Tauri Linux bundling
+
+runs:
+  using: composite
+  steps:
+    - name: Install native and packaging dependencies
+      shell: bash
+      run: |
+        set -euo pipefail
+        sudo apt-get update
+        sudo apt-get install -y --no-install-recommends \
+          build-essential \
+          pkg-config \
+          libssl-dev \
+          libgtk-3-dev \
+          libwebkit2gtk-4.1-dev \
+          libayatana-appindicator3-dev \
+          librsvg2-dev \
+          desktop-file-utils \
+          gstreamer1.0-tools \
+          gstreamer1.0-plugins-base \
+          squashfs-tools \
+          patchelf
+
+        # linuxdeploy is distributed as an AppImage. Some runner images need
+        # FUSE libraries or utilities even when extraction mode is available.
+        fuse_pkg=""
+        if apt-cache show libfuse2 >/dev/null 2>&1; then
+          fuse_pkg="libfuse2"
+        elif apt-cache show libfuse2t64 >/dev/null 2>&1; then
+          fuse_pkg="libfuse2t64"
+        fi
+        if [ -n "${fuse_pkg}" ]; then
+          sudo apt-get install -y --no-install-recommends "${fuse_pkg}"
+        fi
+
+        fuse_utils=""
+        if apt-cache show fuse >/dev/null 2>&1; then
+          fuse_utils="fuse"
+        elif apt-cache show fuse3 >/dev/null 2>&1; then
+          fuse_utils="fuse3"
+        fi
+        if [ -n "${fuse_utils}" ]; then
+          sudo apt-get install -y --no-install-recommends "${fuse_utils}"
+        fi
