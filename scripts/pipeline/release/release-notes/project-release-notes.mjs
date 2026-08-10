@@ -8,27 +8,32 @@ import { fileURLToPath } from 'node:url';
 const REPO_ROOT = resolve(fileURLToPath(new URL('../../../../', import.meta.url)));
 const DEFAULT_CHANGELOG_PATH = resolve(REPO_ROOT, 'apps/ui/CHANGELOG.md');
 
-export const RELEASE_NOTES_BUNDLE_KIND = 'happier.release-notes.projection.v1';
+export const RELEASE_NOTES_BUNDLE_KIND = 'happier.release-notes.projection.v2';
 
 /**
  * Public text limits for channels that do not accept the complete Markdown
  * section. GitHub and the rolling release retain the source Markdown verbatim.
  */
-export const PLAIN_TEXT_MAX_LENGTHS = Object.freeze({
+export const APPROVED_PROJECTION_MAX_LENGTHS = Object.freeze({
   expo: 1_024,
   appStore: 4_000,
   playStore: 500,
   storyDeck: 280,
 });
 
+const APPROVED_PROJECTION_MARKER = '<!-- happier-release-note-projections:v1';
+const SOURCE_SHA_PATTERN = /^[0-9a-f]{40}$/u;
+const COMPONENT_ID_PATTERN = /^[a-z][a-z0-9_-]*$/u;
+const PROJECT_RELEASE_ID_PATTERN = /^[a-z0-9][a-z0-9._-]*$/u;
+
 function escapeRegExp(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-function normalizeVersion(version) {
-  const normalized = String(version ?? '').trim();
+function normalizeRequiredValue(value, label) {
+  const normalized = String(value ?? '').trim();
   if (!normalized) {
-    throw new Error('--version is required');
+    throw new Error(`${label} is required`);
   }
   return normalized;
 }
@@ -38,14 +43,15 @@ function trimSectionMarkdown(markdown) {
 }
 
 /**
- * Find exactly one public changelog section. A release section ends only at
- * the next version heading, so level-two headings within the release remain
+ * Find exactly one public project-release section. Historic Version headings
+ * still delimit the current section during the one-way changelog migration;
+ * they are not selectable owners. Level-two headings within a section remain
  * part of the approved Markdown source.
  */
-export function parseReleaseNoteSection(changelog, version) {
-  const normalizedVersion = normalizeVersion(version);
+export function parseReleaseNoteSection(changelog, releaseId) {
+  const normalizedReleaseId = normalizeRequiredValue(releaseId, '--release-id');
   const lines = String(changelog ?? '').replace(/\r\n?/g, '\n').split('\n');
-  const headerPattern = new RegExp(`^## Version ${escapeRegExp(normalizedVersion)} - (\\d{4}-\\d{2}-\\d{2})$`);
+  const headerPattern = new RegExp(`^## Release ${escapeRegExp(normalizedReleaseId)} - (\\d{4}-\\d{2}-\\d{2})$`);
   const matches = [];
 
   for (let index = 0; index < lines.length; index += 1) {
@@ -56,19 +62,19 @@ export function parseReleaseNoteSection(changelog, version) {
   }
 
   if (matches.length === 0) {
-    throw new Error(`No exact changelog section found for version ${normalizedVersion}`);
+    throw new Error(`No exact changelog section found for release ${normalizedReleaseId}`);
   }
   if (matches.length > 1) {
-    throw new Error(`Changelog version ${normalizedVersion} must appear exactly once; found ${matches.length}`);
+    throw new Error(`Changelog release ${normalizedReleaseId} must appear exactly once; found ${matches.length}`);
   }
 
   const [{ index: startIndex, date }] = matches;
   const endIndex = lines.findIndex(
-    (line, index) => index > startIndex && /^## Version .+ - \d{4}-\d{2}-\d{2}$/.test(line),
+    (line, index) => index > startIndex && /^## (?:Release|Version) .+ - \d{4}-\d{2}-\d{2}$/.test(line),
   );
   const markdown = trimSectionMarkdown(lines.slice(startIndex + 1, endIndex === -1 ? undefined : endIndex).join('\n'));
 
-  return { version: normalizedVersion, date, markdown };
+  return { releaseId: normalizedReleaseId, date, markdown };
 }
 
 function stripMarkdownLine(line) {
@@ -85,42 +91,149 @@ function stripMarkdownLine(line) {
     .trim();
 }
 
-/**
- * Extract readable public text without trying to become a second Markdown
- * renderer. Preserve source Markdown separately for destinations that support it.
- */
-export function extractPlainText(markdown) {
-  return String(markdown ?? '')
+function hasMeaningfulPublicMarkdown(markdown) {
+  const visibleText = String(markdown ?? '')
+    .replace(/<!--([\s\S]*?)-->/g, '')
     .replace(/\r\n?/g, '\n')
     .split('\n')
     .map(stripMarkdownLine)
     .filter(Boolean)
-    .join('\n');
+    .join(' ');
+  return /[\p{L}\p{N}]/u.test(visibleText);
 }
 
-function truncatePlainText(value, maxLength) {
-  if (value.length <= maxLength) {
-    return value;
+function requireExactObject(value, expectedKeys, label) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error(`${label} must be an object`);
   }
-  return `${value.slice(0, maxLength - 1).trimEnd()}…`;
+  const keys = Object.keys(value).sort((a, b) => a.localeCompare(b));
+  const expected = [...expectedKeys].sort((a, b) => a.localeCompare(b));
+  if (keys.length !== expected.length || keys.some((key, index) => key !== expected[index])) {
+    throw new Error(`${label} must contain exactly ${expected.join(', ')}`);
+  }
 }
 
-export function buildReleaseNotesBundle(changelog, version) {
-  const section = parseReleaseNoteSection(changelog, version);
-  const plainText = extractPlainText(section.markdown);
+function requireAllowedObject(value, requiredKeys, allowedKeys, label) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error(`${label} must be an object`);
+  }
+  const keys = Object.keys(value);
+  const unknown = keys.find((key) => !allowedKeys.includes(key));
+  if (unknown) throw new Error(`${label} contains unsupported projection: ${unknown}`);
+  const missing = requiredKeys.find((key) => !Object.hasOwn(value, key));
+  if (missing) throw new Error(`${label} requires ${missing}`);
+}
+
+function validateApprovedProjection(value, label, maxLength) {
+  if (typeof value !== 'string' || value.trim().length === 0) {
+    throw new Error(`${label} must be a non-empty string`);
+  }
+  if (value.length > maxLength) {
+    throw new Error(`${label} must be at most ${maxLength} characters`);
+  }
+  return value;
+}
+
+/**
+ * The bounded channel text is intentionally authored in the same changelog
+ * section as the canonical public narrative. The comment is stripped before
+ * Markdown publication so it cannot become a second public text source.
+ */
+function parseApprovedProjections(markdown) {
+  const normalized = String(markdown ?? '').replace(/\r\n?/g, '\n');
+  const markerPattern = new RegExp(`^${escapeRegExp(APPROVED_PROJECTION_MARKER)}\\n([\\s\\S]*?)\\n-->\\n*`);
+  const match = normalized.match(markerPattern);
+  if (!match) {
+    throw new Error('Missing approved bounded projections at the start of the exact changelog section');
+  }
+
+  let parsed;
+  try {
+    parsed = JSON.parse(match[1]);
+  } catch {
+    throw new Error('Approved bounded projections must contain valid JSON');
+  }
+
+  requireAllowedObject(parsed, ['expo'], ['expo', 'appStore', 'playStore', 'storyDeck'], 'Approved bounded projections');
+  requireExactObject(parsed.expo, ['message'], 'expo projection');
+  if (parsed.appStore !== undefined) requireExactObject(parsed.appStore, ['whatsNew'], 'appStore projection');
+  if (parsed.playStore !== undefined) requireExactObject(parsed.playStore, ['whatsNew'], 'playStore projection');
+  if (parsed.storyDeck !== undefined) requireExactObject(parsed.storyDeck, ['summary'], 'storyDeck projection');
+
+  const publicMarkdown = trimSectionMarkdown(normalized.slice(match[0].length));
+  if (!hasMeaningfulPublicMarkdown(publicMarkdown)) {
+    throw new Error('Exact changelog section must contain meaningful public Markdown after approved bounded projections');
+  }
 
   return {
-    schemaVersion: 1,
-    kind: RELEASE_NOTES_BUNDLE_KIND,
-    version: section.version,
-    date: section.date,
+    markdown: publicMarkdown,
     projections: {
-      github: { markdown: section.markdown },
-      rollingRelease: { markdown: section.markdown },
-      expo: { message: truncatePlainText(plainText, PLAIN_TEXT_MAX_LENGTHS.expo) },
-      appStore: { whatsNew: truncatePlainText(plainText, PLAIN_TEXT_MAX_LENGTHS.appStore) },
-      playStore: { whatsNew: truncatePlainText(plainText, PLAIN_TEXT_MAX_LENGTHS.playStore) },
-      storyDeck: { authoringHints: truncatePlainText(plainText, PLAIN_TEXT_MAX_LENGTHS.storyDeck) },
+      expo: { message: validateApprovedProjection(parsed.expo.message, 'expo.message', APPROVED_PROJECTION_MAX_LENGTHS.expo) },
+      ...(parsed.appStore === undefined ? {} : {
+        appStore: { whatsNew: validateApprovedProjection(parsed.appStore.whatsNew, 'appStore.whatsNew', APPROVED_PROJECTION_MAX_LENGTHS.appStore) },
+      }),
+      ...(parsed.playStore === undefined ? {} : {
+        playStore: { whatsNew: validateApprovedProjection(parsed.playStore.whatsNew, 'playStore.whatsNew', APPROVED_PROJECTION_MAX_LENGTHS.playStore) },
+      }),
+      ...(parsed.storyDeck === undefined ? {} : {
+        storyDeck: { summary: validateApprovedProjection(parsed.storyDeck.summary, 'storyDeck.summary', APPROVED_PROJECTION_MAX_LENGTHS.storyDeck) },
+      }),
+    },
+  };
+}
+
+function normalizeReleaseInput(input) {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) {
+    throw new Error('release input is required');
+  }
+  const releaseId = normalizeRequiredValue(input.releaseId, '--release-id');
+  if (!PROJECT_RELEASE_ID_PATTERN.test(releaseId)) {
+    throw new Error('releaseId must contain only lowercase letters, digits, dots, underscores, or hyphens');
+  }
+  const sourceSha = String(input.sourceSha ?? '').trim();
+  if (!SOURCE_SHA_PATTERN.test(sourceSha)) {
+    throw new Error('sourceSha must be a full lowercase Git SHA');
+  }
+  const componentVersions = input.componentVersions;
+  if (!componentVersions || typeof componentVersions !== 'object' || Array.isArray(componentVersions)) {
+    throw new Error('componentVersions must be an object');
+  }
+  const normalizedComponents = Object.fromEntries(
+    Object.entries(componentVersions)
+      .map(([id, version]) => [String(id).trim(), normalizeRequiredValue(version, 'component version')])
+      .sort(([left], [right]) => left.localeCompare(right)),
+  );
+  if (Object.keys(normalizedComponents).length === 0) {
+    throw new Error('componentVersions must not be empty');
+  }
+  for (const id of Object.keys(normalizedComponents)) {
+    if (!COMPONENT_ID_PATTERN.test(id)) {
+      throw new Error(`Invalid component version id: ${id}`);
+    }
+  }
+  return { releaseId, sourceSha, componentVersions: normalizedComponents };
+}
+
+export function buildReleaseNotesBundle(changelog, input) {
+  const release = normalizeReleaseInput(input);
+  const section = parseReleaseNoteSection(changelog, release.releaseId);
+  const approved = parseApprovedProjections(section.markdown);
+
+  return {
+    schemaVersion: 2,
+    kind: RELEASE_NOTES_BUNDLE_KIND,
+    release: {
+      id: release.releaseId,
+      sourceSha: release.sourceSha,
+      components: release.componentVersions,
+    },
+    changelog: {
+      date: section.date,
+    },
+    projections: {
+      github: { markdown: approved.markdown },
+      rollingRelease: { markdown: approved.markdown },
+      ...approved.projections,
     },
   };
 }
@@ -139,7 +252,8 @@ function readFlagValue(argv, index, flag) {
 
 export function parseProjectionArgs(argv) {
   const values = new Map();
-  const supportedFlags = new Set(['version', 'changelog', 'out']);
+  const componentVersions = new Map();
+  const supportedFlags = new Set(['release-id', 'source-sha', 'component-version', 'changelog', 'out']);
 
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
@@ -152,7 +266,7 @@ export function parseProjectionArgs(argv) {
     if (!supportedFlags.has(flagName)) {
       throw new Error(`Unsupported flag: --${flagName}`);
     }
-    if (values.has(flagName)) {
+    if (flagName !== 'component-version' && values.has(flagName)) {
       throw new Error(`Duplicate flag: --${flagName}`);
     }
 
@@ -162,23 +276,40 @@ export function parseProjectionArgs(argv) {
     if (!value) {
       throw new Error(`--${flagName} requires a value`);
     }
-    values.set(flagName, value);
+    if (flagName === 'component-version') {
+      const equals = value.indexOf('=');
+      const id = value.slice(0, equals).trim();
+      const version = value.slice(equals + 1).trim();
+      if (equals === -1 || !COMPONENT_ID_PATTERN.test(id) || !version) {
+        throw new Error('--component-version requires <component>=<version>');
+      }
+      if (componentVersions.has(id)) {
+        throw new Error(`Duplicate component version: ${id}`);
+      }
+      componentVersions.set(id, version);
+    } else {
+      values.set(flagName, value);
+    }
     if (equalsIndex === -1) {
       index += 1;
     }
   }
 
   return {
-    version: normalizeVersion(values.get('version')),
+    release: normalizeReleaseInput({
+      releaseId: values.get('release-id'),
+      sourceSha: values.get('source-sha'),
+      componentVersions: Object.fromEntries(componentVersions),
+    }),
     changelogPath: values.get('changelog') ? resolve(values.get('changelog')) : DEFAULT_CHANGELOG_PATH,
     outPath: values.get('out') ? resolve(values.get('out')) : null,
   };
 }
 
 export async function main(argv = process.argv.slice(2)) {
-  const { version, changelogPath, outPath } = parseProjectionArgs(argv);
+  const { release, changelogPath, outPath } = parseProjectionArgs(argv);
   const changelog = await readFile(changelogPath, 'utf8');
-  const rendered = renderReleaseNotesBundle(buildReleaseNotesBundle(changelog, version));
+  const rendered = renderReleaseNotesBundle(buildReleaseNotesBundle(changelog, release));
 
   if (outPath) {
     await mkdir(dirname(outPath), { recursive: true });

@@ -60,6 +60,10 @@ on:
         required: false
         default: ""
         type: string
+      release_notes_id:
+        description: "Release notes — Exact approved project release ID"
+        required: true
+        type: string
       desktop_mode:
         description: "Deploy (Desktop) — Desktop bundle mode"
         required: true
@@ -114,6 +118,10 @@ on:
         description: "Deploy (Expo) — Optional EAS update message (ota); defaults to a generated message when unset"
         required: false
         default: ""
+        type: string
+      release_notes_id:
+        description: "Release notes — Exact approved project release ID"
+        required: true
         type: string
       desktop_mode:
         description: "Deploy (Desktop) — Desktop bundle mode"
@@ -376,19 +384,25 @@ jobs:
         run: node scripts/pipeline/release/release-notes/build-release-notes-assets.mjs --out-dir "$RUNNER_TEMP/release-notes-assets"
       - name: Project approved release notes from exact candidate
         id: release_notes
+        env:
+          RELEASE_NOTES_ID: ${{ inputs.release_notes_id }}
+          RELEASE_SHA: ${{ needs.apply_bump.outputs.release_sha }}
         run: |
           set -euo pipefail
-          version="$(node -p "require('./apps/ui/package.json').version")"
-          VERSION="$version" node scripts/pipeline/release/release-notes/project-release-notes.mjs \
-            --version "$version" \
+          UI_VERSION="$(node -p "require('./apps/ui/package.json').version")"
+          export UI_VERSION
+          node scripts/pipeline/release/release-notes/project-release-notes.mjs \
+            --release-id "$RELEASE_NOTES_ID" \
+            --source-sha "$RELEASE_SHA" \
+            --component-version "ui=$UI_VERSION" \
             --changelog "$GITHUB_WORKSPACE/apps/ui/CHANGELOG.md" | \
-            VERSION="$version" node --input-type=module -e '
+            node --input-type=module -e '
               import { appendFileSync } from "node:fs";
               import { createHash } from "node:crypto";
               let raw = "";
               for await (const chunk of process.stdin) raw += chunk;
               const bundle = JSON.parse(raw);
-              if (bundle.kind !== "happier.release-notes.projection.v1" || bundle.schemaVersion !== 1 || bundle.version !== process.env.VERSION) {
+              if (bundle.kind !== "happier.release-notes.projection.v2" || bundle.schemaVersion !== 2 || bundle.release?.id !== process.env.RELEASE_NOTES_ID || bundle.release?.sourceSha !== process.env.RELEASE_SHA || JSON.stringify(bundle.release?.components) !== JSON.stringify({ ui: process.env.UI_VERSION })) {
                 throw new Error("Invalid exact-candidate release-notes projection");
               }
               const values = {
@@ -609,6 +623,7 @@ jobs:
       action: ${{ inputs.expo_action == 'native_submit' && 'build_and_submit' || 'build_only' }}
       publish_apk_release: "false"
       release_message: ${{ needs.promote.outputs.release_notes_expo_message }}
+      release_notes_id: ${{ inputs.release_notes_id }}
 
   mobile_apk_release:
     name: Mobile APK release (local runner)
@@ -626,6 +641,7 @@ jobs:
       action: build_only
       publish_apk_release: "true"
       release_message: ${{ needs.promote.outputs.release_notes_github_markdown }}
+      release_notes_id: ${{ inputs.release_notes_id }}
 
   desktop:
     name: Desktop bundles (Tauri)
@@ -640,3 +656,4 @@ jobs:
       source_ref: ${{ needs.promote.outputs.release_sha }}
       publish_release: ${{ inputs.desktop_mode == 'build_and_publish' }}
       release_message: ${{ needs.promote.outputs.release_notes_github_markdown }}
+      release_notes_id: ${{ inputs.release_notes_id }}

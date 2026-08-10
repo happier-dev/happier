@@ -73,6 +73,11 @@ on:
         required: false
         default: ""
         type: string
+      release_notes_id:
+        description: "Release notes — Exact approved project release ID for immutable retry projection"
+        required: false
+        default: ""
+        type: string
   workflow_call:
     inputs:
       source_ref:
@@ -103,6 +108,10 @@ on:
         default: ""
         type: string
       release_message:
+        required: false
+        default: ""
+        type: string
+      release_notes_id:
         required: false
         default: ""
         type: string
@@ -198,89 +207,6 @@ jobs:
             echo "Set the repository secret APPLE_API_PRIVATE_KEY, or run via workflow_call from a trusted workflow that provides it." >&2
             exit 1
           fi
-
-  release_notes_assets:
-    name: Release notes assets
-    if: ${{ inputs.retry_version == '' }}
-    needs: [release_actor_guard]
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    environment: release-shared
-    steps:
-      - name: Create GitHub App token
-        id: app_token
-        uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547
-        with:
-          app-id: ${{ secrets.RELEASE_BOT_APP_ID }}
-          private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
-          owner: ${{ github.repository_owner }}
-          repositories: ${{ github.event.repository.name }}
-          permission-contents: read
-
-      - name: Checkout
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-        with:
-          ref: ${{ inputs.source_ref != '' && inputs.source_ref || github.sha }}
-          fetch-depth: 0
-          token: ${{ steps.app_token.outputs.token }}
-          persist-credentials: false
-
-      - name: Setup Node
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
-        with:
-          node-version: 22.x
-          cache: yarn
-          cache-dependency-path: yarn.lock
-
-      - name: Enable Corepack (Yarn)
-        run: |
-          set -euo pipefail
-          corepack enable
-          corepack prepare yarn@1.22.22 --activate
-
-      - name: Install dependencies
-        env:
-          YARN_PRODUCTION: "false"
-          npm_config_production: "false"
-          HAPPIER_INSTALL_SCOPE: "ui,protocol,agents,cli-common,release-runtime,transfers,connection-supervisor,audio-stream-native,sherpa-native"
-          HAPPIER_UI_VENDOR_WEB_ASSETS: "0"
-          HAPPIER_EMBEDDED_POLICY_ENV: ${{ (inputs.environment == 'production' && 'production') || ((inputs.environment == 'dev' || inputs.environment == 'preview' || inputs.environment == 'internalpreview') && 'preview') || '' }}
-        uses: ./.github/actions/install-yarn-dependencies
-        with:
-          args: --frozen-lockfile --ignore-engines
-
-      - name: Generate release notes manifest
-        run: |
-          set -euo pipefail
-          yarn --cwd apps/ui tsx sources/scripts/parseReleaseNotes.ts
-
-      - name: Build release notes assets
-        run: |
-          set -euo pipefail
-          node scripts/pipeline/release/release-notes/build-release-notes-assets.mjs \
-            --out-dir "dist/release-notes-assets"
-
-      - name: Create release notes assets GitHub App token
-        id: release_notes_assets_token
-        uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547
-        with:
-          app-id: ${{ secrets.RELEASE_BOT_APP_ID }}
-          private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
-          owner: ${{ github.repository_owner }}
-          repositories: happier-assets
-          permission-contents: write
-
-      - name: Publish release notes assets
-        env:
-          GH_TOKEN: ${{ steps.release_notes_assets_token.outputs.token }}
-          GH_REPO: happier-dev/happier-assets
-        run: |
-          set -euo pipefail
-          node scripts/pipeline/release/release-notes/publish-release-notes-assets.mjs \
-            --in-dir "dist/release-notes-assets" \
-            --repo "happier-dev/happier-assets" \
-            --tag "release-notes"
 
   build_android:
     name: Build (android)
@@ -544,18 +470,26 @@ jobs:
         id: release_notes
         env:
           RETRY_VERSION: ${{ inputs.retry_version }}
+          RELEASE_NOTES_ID: ${{ inputs.release_notes_id }}
+          AUTHORIZED_SHA: ${{ steps.source.outputs.authorized_sha }}
         run: |
           set -euo pipefail
-          VERSION="$RETRY_VERSION" node scripts/pipeline/release/release-notes/project-release-notes.mjs \
-            --version "$RETRY_VERSION" \
+          if [ -z "$RELEASE_NOTES_ID" ]; then
+            echo "release_notes_id is required when retry_version reprojects an immutable APK release." >&2
+            exit 1
+          fi
+          node scripts/pipeline/release/release-notes/project-release-notes.mjs \
+            --release-id "$RELEASE_NOTES_ID" \
+            --source-sha "$AUTHORIZED_SHA" \
+            --component-version "ui=$RETRY_VERSION" \
             --changelog "$GITHUB_WORKSPACE/candidate/apps/ui/CHANGELOG.md" | \
-            VERSION="$RETRY_VERSION" node --input-type=module -e '
+            node --input-type=module -e '
               import { appendFileSync } from "node:fs";
               import { createHash } from "node:crypto";
               let raw = "";
               for await (const chunk of process.stdin) raw += chunk;
               const bundle = JSON.parse(raw);
-              if (bundle.kind !== "happier.release-notes.projection.v1" || bundle.schemaVersion !== 1 || bundle.version !== process.env.VERSION) {
+              if (bundle.kind !== "happier.release-notes.projection.v2" || bundle.schemaVersion !== 2 || bundle.release?.id !== process.env.RELEASE_NOTES_ID || bundle.release?.sourceSha !== process.env.AUTHORIZED_SHA || JSON.stringify(bundle.release?.components) !== JSON.stringify({ ui: process.env.RETRY_VERSION })) {
                 throw new Error("Invalid exact-candidate release-notes projection");
               }
               const value = bundle.projections?.github?.markdown;

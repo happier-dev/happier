@@ -3,6 +3,15 @@
 Curated, slide-based release notes shown in the in-app **Story Deck** surface.
 Distinct from `CHANGELOG.md`, which remains the long-form history view.
 
+## Canonical public source and bounded channels
+
+The exact public release narrative and bounded text consumed by a selected
+release are authored in the matching `apps/ui/CHANGELOG.md` project-release
+section. Expo is currently required. `appStore`, `playStore`, and `storyDeck`
+are optional and should be authored only when the current release path consumes
+them. The deterministic projector validates present text and never truncates or
+rewrites it.
+
 ## Authoring a release
 
 1. Create a JSON file under `releases/<releaseId>.json`. The release id should

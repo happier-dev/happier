@@ -36,6 +36,11 @@ on:
         required: false
         default: ""
         type: string
+      release_notes_id:
+        description: "Release notes — Exact approved project release ID when projecting candidate notes"
+        required: false
+        default: ""
+        type: string
   workflow_call:
     inputs:
       environment:
@@ -53,6 +58,10 @@ on:
         default: ""
         type: string
       release_message:
+        required: false
+        default: ""
+        type: string
+      release_notes_id:
         required: false
         default: ""
         type: string
@@ -143,6 +152,8 @@ jobs:
           SOURCE_REF: ${{ inputs.source_ref }}
           RELEASE_ENVIRONMENT: ${{ inputs.environment }}
           RETRY_VERSION: ${{ inputs.retry_version }}
+          RELEASE_MESSAGE: ${{ inputs.release_message }}
+          RELEASE_NOTES_ID: ${{ inputs.release_notes_id }}
         run: |
           set -euo pipefail
           source_sha="$(git rev-parse HEAD)"
@@ -167,23 +178,34 @@ jobs:
               exit 1
             fi
           fi
-          VERSION="${ui_version}" node scripts/pipeline/release/release-notes/project-release-notes.mjs \
-            --version "${ui_version}" \
-            --changelog "$GITHUB_WORKSPACE/apps/ui/CHANGELOG.md" | \
-            VERSION="${ui_version}" node --input-type=module -e '
-              import { appendFileSync } from "node:fs";
-              import { createHash } from "node:crypto";
-              let raw = "";
-              for await (const chunk of process.stdin) raw += chunk;
-              const bundle = JSON.parse(raw);
-              if (bundle.kind !== "happier.release-notes.projection.v1" || bundle.schemaVersion !== 1 || bundle.version !== process.env.VERSION) {
-                throw new Error("Invalid exact-candidate release-notes projection");
-              }
-              const value = bundle.projections?.github?.markdown;
-              if (typeof value !== "string") throw new Error("Missing github_markdown projection");
-              const delimiter = `RELEASE_NOTES_${createHash("sha256").update(`github_markdown:${value}`).digest("hex")}`;
-              appendFileSync(process.env.GITHUB_OUTPUT, `release_notes_github_markdown<<${delimiter}\\n${value}\\n${delimiter}\\n`);
-            '
+          if [ -z "$RELEASE_MESSAGE" ]; then
+            if [ -z "$RELEASE_NOTES_ID" ]; then
+              echo "release_notes_id is required when release_message is empty." >&2
+              exit 1
+            fi
+            UI_VERSION="$ui_version"
+            SOURCE_SHA="$source_sha"
+            export UI_VERSION SOURCE_SHA
+            node scripts/pipeline/release/release-notes/project-release-notes.mjs \
+              --release-id "$RELEASE_NOTES_ID" \
+              --source-sha "$source_sha" \
+              --component-version "ui=$UI_VERSION" \
+              --changelog "$GITHUB_WORKSPACE/apps/ui/CHANGELOG.md" | \
+              node --input-type=module -e '
+                import { appendFileSync } from "node:fs";
+                import { createHash } from "node:crypto";
+                let raw = "";
+                for await (const chunk of process.stdin) raw += chunk;
+                const bundle = JSON.parse(raw);
+                if (bundle.kind !== "happier.release-notes.projection.v2" || bundle.schemaVersion !== 2 || bundle.release?.id !== process.env.RELEASE_NOTES_ID || bundle.release?.sourceSha !== process.env.SOURCE_SHA || JSON.stringify(bundle.release?.components) !== JSON.stringify({ ui: process.env.UI_VERSION })) {
+                  throw new Error("Invalid exact-candidate release-notes projection");
+                }
+                const value = bundle.projections?.github?.markdown;
+                if (typeof value !== "string") throw new Error("Missing github_markdown projection");
+                const delimiter = `RELEASE_NOTES_${createHash("sha256").update(`github_markdown:${value}`).digest("hex")}`;
+                appendFileSync(process.env.GITHUB_OUTPUT, `release_notes_github_markdown<<${delimiter}\n${value}\n${delimiter}\n`);
+              '
+          fi
           case "${RELEASE_ENVIRONMENT}" in
             preview|dev)
               if [[ ! "${GITHUB_RUN_NUMBER}" =~ ^[0-9]+$ ]]; then

@@ -111,6 +111,14 @@ test('build-tauri uses approved candidate notes instead of generated GitHub note
   assert.match(raw, /publish_stable_release:[\s\S]*?generate_notes:\s*false/);
   assert.match(raw, /publish_stable_release:[\s\S]*?notes:\s*\$\{\{\s*needs\.resolve_source\.outputs\.release_notes_github_markdown\s*\}\}/);
   assert.match(raw, /promote-rolling-release\.mjs[\s\S]*?RELEASE_MESSAGE/);
+  assert.equal(
+    raw.includes('appendFileSync(process.env.GITHUB_OUTPUT, `release_notes_github_markdown<<${delimiter}\\n${value}\\n${delimiter}\\n`);'),
+    true,
+  );
+  assert.equal(
+    raw.includes('appendFileSync(process.env.GITHUB_OUTPUT, `release_notes_github_markdown<<${delimiter}\\\\n${value}\\\\n${delimiter}\\\\n`);'),
+    false,
+  );
 });
 
 test('build-tauri can reproject an exact immutable production version without running a new build', async () => {
