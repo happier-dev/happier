@@ -398,4 +398,62 @@ describe('SessionActionDraftCard', () => {
 
     expect(updateSessionActionDraftInput).toHaveBeenCalledWith('s1', 'd1', { engines: { coderabbit: { configFiles: ['a.yml', 'b.yml'] } } });
   });
+
+  /**
+   * F-P3 (2026-08-10) — this is the invariant `buildActionDraftPresentationKey` depends on when it
+   * leaves `draft.status` OUT of the transcript row's structural key. Status currently reaches only
+   * `editable`, `disabled` and `opacity`, none of which moves a box; if that ever stops being true,
+   * this test fails first and the key must grow a height-bearing descriptor.
+   *
+   * The comparison strips exactly the three non-height-bearing channels and keeps everything that
+   * can move the card: node structure, text content, and every layout style field.
+   */
+  it('paints byte-identical in-flow chrome for every draft status', async () => {
+    const { SessionActionDraftCard } = await import('./SessionActionDraftCard');
+
+    const heightBearingShape = (node: any): any => {
+      if (node === null || node === undefined || typeof node === 'boolean') return null;
+      if (typeof node === 'string' || typeof node === 'number') return String(node);
+      if (Array.isArray(node)) return node.map(heightBearingShape);
+
+      const style = Array.isArray(node.props?.style)
+        ? Object.assign({}, ...node.props.style.filter(Boolean))
+        : (node.props?.style ?? null);
+      const layoutStyle = style
+        ? Object.fromEntries(
+          Object.entries(style)
+            // `opacity` is the one status-driven style, and it cannot change a layout.
+            .filter(([key, value]) => key !== 'opacity' && typeof value !== 'function')
+            .sort(([a], [b]) => (a < b ? -1 : 1)),
+        )
+        : null;
+
+      return {
+        type: node.type,
+        // `editable` / `disabled` are the other two status-driven props; both are interaction-only.
+        multiline: node.props?.multiline ?? null,
+        numberOfLines: node.props?.numberOfLines ?? null,
+        style: layoutStyle,
+        children: (node.children ?? []).map(heightBearingShape),
+      };
+    };
+
+    const shapeForStatus = async (status: string) => {
+      const draft = {
+        id: 'd1',
+        sessionId: 's1',
+        actionId: 'subagents.delegate.start',
+        createdAt: 1,
+        status,
+        input: { backendTargetKeys: ['agent:claude'], instructions: 'Delegate this.' },
+      };
+      const screen = await renderScreen(React.createElement(SessionActionDraftCard, { sessionId: 's1', draft: draft as any }));
+      return JSON.stringify(heightBearingShape(screen.tree.toJSON()));
+    };
+
+    const editing = await shapeForStatus('editing');
+    for (const status of ['running', 'succeeded', 'failed', 'cancelled'] as const) {
+      expect(await shapeForStatus(status), status).toBe(editing);
+    }
+  });
 });

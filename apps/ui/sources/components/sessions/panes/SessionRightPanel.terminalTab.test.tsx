@@ -39,9 +39,16 @@ vi.mock('@/components/ui/text/Text', () => ({
     Text: (props: any) => React.createElement('Text', props, props.children),
 }));
 
-vi.mock('@/constants/Typography', () => ({
-    Typography: { default: () => ({}) },
-}));
+// Partial, not a two-key stub: the panel now mounts the shared agent-activity roster, whose
+// section heading reaches `Typography.eyebrow`, and a stub that omits one family throws at module
+// scope inside a `StyleSheet.create` — a failure that reads as a panel regression and is not one.
+vi.mock('@/constants/Typography', async (importOriginal) => {
+    const original = await importOriginal<typeof import('@/constants/Typography')>();
+    return {
+        ...original,
+        Typography: { ...original.Typography, default: () => ({}) },
+    };
+});
 
 vi.mock('@/utils/platform/deferOnWeb', () => ({
     deferOnWeb: (fn: any) => fn(),

@@ -1478,10 +1478,14 @@ describe('deriveAutoRecipientFromFocusedToolTranscript', () => {
     });
 
     it('returns execution_run recipient for focused SubAgentRun when focused sidechain messages show running', () => {
+        // The producible interrupted shape is `state: 'error'` with the synthetic placeholder result
+        // (`reducer/helpers/applyToolResultUpdateToReducerMessage.ts:18-24`,
+        // `subagentSyntheticInterruption.ts:50-53`): no outcome was ever written, so the run's state
+        // is ambiguous and sidechain liveness may still recover it.
         const focused = createToolMessage({
             id: 'm-focused',
             name: 'SubAgentRun',
-            state: 'completed',
+            state: 'error',
             input: { runId: 'run_sidechain_1' },
             result: { error: 'Request interrupted' },
         });
@@ -1500,6 +1504,30 @@ describe('deriveAutoRecipientFromFocusedToolTranscript', () => {
         });
         expect(auto?.kind).toBe('execution_run');
         expect((auto as any)?.runId).toBe('run_sidechain_1');
+    });
+
+    it('returns null for a finished SubAgentRun even when a focused sidechain tool still looks running', () => {
+        const focused = createToolMessage({
+            id: 'm-focused',
+            name: 'SubAgentRun',
+            state: 'completed',
+            input: { runId: 'run_sidechain_2' },
+            result: { status: 'succeeded' },
+        });
+        const focusedRunningChild = createToolMessage({
+            id: 'm-child',
+            name: 'Task',
+            state: 'running',
+            input: {},
+            result: { status: 'running' },
+        });
+        const auto = deriveAutoRecipientFromFocusedToolTranscript({
+            session: { metadata: { flavor: 'claude' } } as any,
+            tool: focused.tool,
+            messages: [focused],
+            focusedMessages: [focusedRunningChild],
+        });
+        expect(auto).toBeNull();
     });
 
     it('returns null for focused SubAgentRun when run was explicitly stopped via tool call', () => {

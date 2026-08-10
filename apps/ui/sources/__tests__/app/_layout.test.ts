@@ -89,7 +89,10 @@ function stubFeatureFetch() {
     );
 }
 
-vi.mock('react-native-reanimated', () => ({}));
+// No local `react-native-reanimated` mock: `dev/vitestSetup.ts` already installs the canonical
+// `createReanimatedModuleMock()` for every suite. An empty local mock overrode it and silently
+// removed every export, so the first production module to read one at import time — the spring
+// vocabulary's `ReduceMotion` — failed the whole file at collection rather than at an assertion.
 
 vi.mock('socket.io-client', () => {
     const socket = {
