@@ -59,13 +59,30 @@ function listMergedTags(head, prefix) {
     .filter(Boolean);
 }
 
-function isAncestor(baseRef, head) {
-  const result = spawnSync('git', ['merge-base', '--is-ancestor', baseRef, head], { encoding: 'utf8' });
-  if (result.error) throw result.error;
-  if (result.status === 0) return true;
-  if (result.status === 1) return false;
-  const err = String(result.stderr || result.stdout || '').trim();
-  throw new Error(`git merge-base --is-ancestor ${baseRef} ${head} failed: ${err}`);
+function createRemoteReachabilityIndex(head) {
+  const graph = new Map();
+  for (const line of runGit(['rev-list', '--parents', head]).split('\n')) {
+    const [commit, ...parents] = line.trim().split(/\s+/);
+    if (commit) graph.set(commit, parents);
+  }
+  const distanceCache = new Map();
+  return {
+    distanceFromHead(commit) {
+      if (!graph.has(commit)) return null;
+      if (distanceCache.has(commit)) return distanceCache.get(commit);
+      const reachable = new Set();
+      const pending = [commit];
+      while (pending.length > 0) {
+        const current = pending.pop();
+        if (!current || reachable.has(current) || !graph.has(current)) continue;
+        reachable.add(current);
+        pending.push(...graph.get(current));
+      }
+      const distance = graph.size - reachable.size;
+      distanceCache.set(commit, distance);
+      return distance;
+    },
+  };
 }
 
 function listTrackedPaths() {
@@ -82,25 +99,23 @@ function listChangedPathsSince(baseRef, head) {
     .filter(Boolean);
 }
 
-function resolveBaselineTag({ environment, head, prefix, remoteTagRefs }) {
+function resolveBaselineTag({ environment, head, prefix, remoteTagRefs, remoteReachability }) {
   const allowedChannels = allowedChannelsForEnvironment(environment);
-  const candidates =
-    remoteTagRefs === null
-      ? listMergedTags(head, prefix).map((tag) => ({ tag, ref: tag }))
-      : Object.entries(remoteTagRefs)
-          .filter(([tag]) => tag.startsWith(prefix))
-          .map(([tag, ref]) => ({ tag, ref }))
-          .filter(({ ref }) => isAncestor(ref, head));
+  const candidates = remoteTagRefs === null
+    ? listMergedTags(head, prefix).map((tag) => ({ tag, ref: tag, distance: null }))
+    : Object.entries(remoteTagRefs)
+        .filter(([tag]) => tag.startsWith(prefix))
+        .map(([tag, ref]) => ({ tag, ref, distance: remoteReachability.distanceFromHead(ref) }))
+        .filter(({ distance }) => distance !== null);
   /** @type {{ tag: string; ref: string; distance: number } | null} */
   let best = null;
 
-  for (const { tag, ref } of candidates) {
+  for (const { tag, ref, distance: knownDistance } of candidates) {
     const channel = parseTagChannel(tag, prefix);
     if (channel === null || !allowedChannels.has(channel)) continue;
-    const tagCommit = runGit(['rev-list', '-n', '1', ref]).trim();
+    const tagCommit = remoteTagRefs === null ? runGit(['rev-list', '-n', '1', ref]).trim() : ref;
     if (!tagCommit) continue;
-    const distanceRaw = runGit(['rev-list', '--count', `${tagCommit}..${head}`]).trim();
-    const distance = Number(distanceRaw);
+    const distance = knownDistance ?? Number(runGit(['rev-list', '--count', `${tagCommit}..${head}`]).trim());
     if (!Number.isFinite(distance) || distance < 0) continue;
     if (best === null || distance < best.distance) {
       best = { tag, ref: tagCommit, distance };
@@ -138,6 +153,7 @@ function main() {
 
   /** @type {Record<string, string>} */
   const outputs = {};
+  const remoteReachability = remoteTagRefs === null ? null : createRemoteReachabilityIndex(head);
 
   for (const [key, definition] of Object.entries(versionedComponents)) {
     const baseline = resolveBaselineTag({
@@ -145,6 +161,7 @@ function main() {
       head,
       prefix: definition.baselineTagPrefix,
       remoteTagRefs,
+      remoteReachability,
     });
     const paths = baseline ? listChangedPathsSince(baseline.ref, head) : listTrackedPaths();
     const classified = classifyChangedPaths(paths);
