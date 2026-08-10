@@ -359,6 +359,8 @@ export function buildTranscriptRowShellSignature(params: Readonly<{
     }
 
     if (item.kind === 'action-draft') {
+        // F-P3 (2026-08-10): same rule as the pending row above — HEIGHT-bearing presentation only.
+        // See `buildActionDraftPresentationKey` for why `status` is deliberately absent.
         return {
             ...base,
             structuralKey: buildActionDraftPresentationKey(item.draft),
@@ -436,9 +438,30 @@ function buildDiscardedPendingMessagePresentationKey(message: DiscardedPendingMe
 }
 
 /**
- * A draft row paints its action form, so the row's height moves with the draft's status and with
- * how much text its inputs hold. The input VALUES are not serialized (arbitrary payload, and the
- * form is actively typed into); their total extent is, so a shrink still re-seeds the floor.
+ * A draft row paints its action form, so the row's height moves with which fields that form paints
+ * and with how much text its inputs hold. The input VALUES are not serialized (arbitrary payload,
+ * and the form is actively typed into); their total extent is, so a shrink still re-seeds the floor.
+ *
+ * F-P3 (2026-08-10): `draft.status` is DELIBERATELY absent, for the same reason `visualState.kind`
+ * left the pending row's key. `SessionActionDraftCard` reads `props.draft.status` in exactly three
+ * places — `ActionInputFields.editable` (forwarded only to `TextInput.editable` and
+ * `Pressable.disabled`), the cancel button's `disabled`, and both buttons' `opacity`. None of them
+ * adds, removes, or reflows a box, so `editing -> running` on every action start moved this key with
+ * the painted card byte-identical, and every move deleted the row's measured size (Legend
+ * `validateItemSizeVersion`) and its reservation (`resetReservationForStructuralChange`).
+ *
+ * `draft.error` STAYS: it gates a real in-flow `<Text>` line, and it is what a failed start actually
+ * writes (`setStatus('editing', message)`), so the growth direction still invalidates. It is keyed as
+ * a presence bit rather than a length because the card's own `error` is
+ * `validationError ?? draft.error` — the card-local validation string is not in the projection at
+ * all, so this key can never be the authority on the notice's line count. The row's own `onLayout` is,
+ * exactly as it is for the pending row's runtime-derived notices. Do not buy that back by lifting
+ * component-local state into the transcript item.
+ *
+ * The invariant this key depends on is pinned at the owner by
+ * `SessionActionDraftCard.test.tsx#paints byte-identical in-flow chrome for every draft status`: if
+ * a status ever starts changing what the card paints, that test fails and this key must grow a
+ * height-bearing descriptor rather than the status itself.
  */
 function buildActionDraftPresentationKey(draft: SessionActionDraft): string {
     let inputKeyCount = 0;
@@ -451,7 +474,6 @@ function buildActionDraftPresentationKey(draft: SessionActionDraft): string {
     return [
         draft.id,
         draft.actionId,
-        draft.status,
         draft.error ? 'error' : '',
         `${inputKeyCount}k${inputTextLength}`,
     ].join(':');
