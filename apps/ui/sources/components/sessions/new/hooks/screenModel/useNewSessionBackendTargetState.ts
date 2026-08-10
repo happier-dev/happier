@@ -92,17 +92,28 @@ export function useNewSessionBackendTargetState(params: Readonly<{
         params.tempBackendTarget,
         params.tempAgentType,
     ]);
-    const [backendTarget, setBackendTarget] = React.useState<BackendTargetRefV1>(() => initialBackendTarget);
+    const [backendTarget, setBackendTargetState] = React.useState<BackendTargetRefV1>(() => initialBackendTarget);
+    // TOO EARLY: only a real user selection persists the "last used" target. Resolving an
+    // initial target on mount (route param, temp handoff, persisted draft) used to write
+    // settings from a mount effect, which costs a settings round-trip on every such open.
+    // The launch path already persists `lastUsedAgent`/`lastUsedBackendTarget` when a session
+    // is actually created (`useCreateNewSession`), so nothing is lost by waiting.
+    const hasUserSelectedBackendTargetRef = React.useRef(false);
+    const setBackendTarget = React.useCallback<React.Dispatch<React.SetStateAction<BackendTargetRefV1>>>((next) => {
+        hasUserSelectedBackendTargetRef.current = true;
+        setBackendTargetState(next);
+    }, []);
 
     React.useEffect(() => {
         const matched = findEntryByTarget(params.entries, backendTarget);
         if (matched) return;
-        setBackendTarget(initialBackendTarget);
+        setBackendTargetState(initialBackendTarget);
     }, [backendTarget, initialBackendTarget, params.entries]);
 
     const builtInAgentId = React.useMemo(() => resolveBuiltInAgentIdForBackendTarget(backendTarget), [backendTarget]);
 
     React.useEffect(() => {
+        if (!hasUserSelectedBackendTargetRef.current) return;
         const currentLastUsedBackendTarget = BackendTargetRefSchema.safeParse(params.lastUsedBackendTarget);
         const currentLastUsedBackendTargetKey = currentLastUsedBackendTarget.success
             ? buildBackendTargetKey(currentLastUsedBackendTarget.data)

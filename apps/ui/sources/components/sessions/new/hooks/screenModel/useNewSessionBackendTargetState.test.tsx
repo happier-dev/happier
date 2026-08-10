@@ -90,6 +90,24 @@ describe('useNewSessionBackendTargetState', () => {
         });
     });
 
+    it('does not persist a mount-resolved target before the user selects one', async () => {
+        function Probe() {
+            useNewSessionBackendTargetState({
+                entries,
+                lastUsedAgent: 'claude',
+                lastUsedBackendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+                routeBackendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
+            } as any);
+            return null;
+        }
+
+        await renderScreen(React.createElement(Probe));
+
+        // Opening the screen is not "using" a backend: the launch path persists the last-used
+        // target when a session is actually created.
+        expect(applySettingsMock).not.toHaveBeenCalled();
+    });
+
     it('prefers an explicit route configured ACP backend target over last-used built-in defaults', async () => {
         let observed: ReturnType<typeof useNewSessionBackendTargetState> | null = null;
 
