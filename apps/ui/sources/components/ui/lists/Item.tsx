@@ -14,6 +14,9 @@ import {
     WEB_START_ELLIPSIS_CONTENT_TEXT_STYLE,
 } from '@/components/ui/text/webStartEllipsisTextStyles';
 import { useResolvedItemDensity } from '@/components/ui/lists/useResolvedItemDensity';
+import { FocusRing, WEB_FOCUS_OUTLINE_RESET } from '@/components/ui/interaction/FocusRing';
+import { useIsKeyboardModality } from '@/components/ui/interaction/inputModalityStore';
+import { usePressFeedback } from '@/components/ui/interaction/usePressFeedback';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { CopiedPill } from '@/components/ui/copy/CopiedPill';
 import { useTemporaryCopyFeedback } from '@/components/ui/copy/useTemporaryCopyFeedback';
@@ -295,7 +298,6 @@ export const Item = React.memo<ItemProps>((props) => {
     const isIOS = Platform.OS === 'ios';
     const isAndroid = Platform.OS === 'android';
     const isWeb = Platform.OS === 'web';
-    const hoverBackgroundColor = theme.colors.surface.pressed;
     const copyFeedback = useTemporaryCopyFeedback();
     
     const {
@@ -538,6 +540,31 @@ export const Item = React.memo<ItemProps>((props) => {
         if (disabled || loading) setIsHovered(false);
     }, [disabled, loading]);
 
+    // Press/hover/selection fills come from the shared mechanism so a row and a control cannot
+    // drift apart, and so nothing here can reach for `opacity` to signal a press.
+    const pressFeedback = usePressFeedback({
+        tone: 'row',
+        disabled: disabled || loading,
+        selected: showSelectedBackground,
+    });
+
+    // React Native has no `:focus-visible`, so the ring is gated on keyboard modality — otherwise
+    // it would flash on every tap.
+    const [isFocused, setIsFocused] = React.useState(false);
+    const isKeyboardModality = useIsKeyboardModality();
+    const handleFocus = React.useCallback(() => setIsFocused(true), []);
+    const handleBlur = React.useCallback(() => setIsFocused(false), []);
+    const focusRingCornerRadii = React.useMemo(() => getItemGroupRowCornerRadii({
+        hasBackground: true,
+        position: rowPosition,
+        radius: groupCornerRadius,
+    }), [groupCornerRadius, rowPosition]);
+    // `Item` is imported by 165 modules, and `FocusRing` runs a Reanimated animated style — an
+    // always-mounted one would cost a shared value per row app-wide for a ring native can never
+    // show (RN surfaces no keypress, so the modality never leaves `pointer` there). `isFocused`
+    // keeps it mounted while it fades out after the user drops back to the pointer.
+    const isFocusRingMounted = isKeyboardModality || isFocused;
+
     const dividerNode = showDivider ? (
         <View
             style={[
@@ -731,13 +758,9 @@ export const Item = React.memo<ItemProps>((props) => {
     ]);
 
     const resolveInteractiveRowStyle = React.useCallback((pressed: boolean) => {
-        const backgroundColor = (() => {
-            if (pressed && isIOS && !isWeb) return theme.colors.surface.pressedOverlay;
-            if (showSelectedBackground) return theme.colors.surface.selected;
-            // Web-only hover affordance for interactive rows (no hover when disabled).
-            if (isWeb && isHovered && !disabled && !loading) return hoverBackgroundColor;
-            return 'transparent';
-        })();
+        // `isHovered` is only ever set on web (the hover handlers are wired there only).
+        const backgroundColor = pressFeedback.resolveBackgroundColor({ pressed, hovered: isHovered })
+            ?? 'transparent';
 
         const roundedCornersStyle = getItemGroupRowCornerRadii({
             hasBackground: backgroundColor !== 'transparent',
@@ -746,24 +769,25 @@ export const Item = React.memo<ItemProps>((props) => {
         });
 
         return [
+            // `opacity` here is the DISABLED treatment only. Press never lowers it — a pressed row
+            // keeps its content at full strength and moves the fill behind it instead.
             { backgroundColor, opacity: disabled ? 0.5 : 1 },
             isWeb && (disabled || loading) ? ({ cursor: 'not-allowed' } as any) : null,
+            // The platform's own focus outline is replaced by `FocusRing` below, which is
+            // theme-driven, contrast-verified, and only appears for keyboard traversal.
+            isWeb ? WEB_FOCUS_OUTLINE_RESET : null,
             roundedCornersStyle,
             pressableStyle,
         ];
     }, [
         disabled,
         groupCornerRadius,
-        hoverBackgroundColor,
         isHovered,
-        isIOS,
         isWeb,
         loading,
+        pressFeedback,
         pressableStyle,
         rowPosition,
-        showSelectedBackground,
-        theme.colors.surface.pressedOverlay,
-        theme.colors.surface.selected,
     ]);
 
     if (isInteractive) {
@@ -785,6 +809,8 @@ export const Item = React.memo<ItemProps>((props) => {
                     onDoublePress();
                 } : undefined}
                 onPressIn={handlePressIn}
+                onFocus={handleFocus}
+                onBlur={handleBlur}
                 onHoverIn={isWeb && !disabled && !loading ? () => setIsHovered(true) : undefined}
                 onHoverOut={isWeb ? () => setIsHovered(false) : undefined}
                 onMouseDownCapture={isWeb ? (onMouseDownCapture as any) : undefined}
@@ -809,6 +835,17 @@ export const Item = React.memo<ItemProps>((props) => {
                 } : undefined}
             >
                 {content}
+                {isFocusRingMounted ? (
+                    <FocusRing
+                        testID={testID === undefined ? undefined : `${testID}-focus-ring`}
+                        visible={isFocused && isKeyboardModality && !disabled && !loading}
+                        // Inside the row bounds: a grouped list clips, so an outside ring would be
+                        // cut off at the group edge exactly where the first and last rows need it
+                        // most.
+                        placement="inside"
+                        cornerRadii={focusRingCornerRadii}
+                    />
+                ) : null}
             </Pressable>
         );
     }

@@ -7,6 +7,11 @@ import {
     buildLightShadowLevels,
     buildShadowPopoverArrowBoxShadow,
 } from '../shadowElevation';
+import {
+    buildLightStateColors,
+    darkStateColors,
+    LIGHT_STATE_INFO_FOREGROUND,
+} from './tokens/stateColors';
 import { createVerticalGradient } from './verticalGradient';
 
 // The opt-in glass composer is a large surface, so its top inner-shadow reads a
@@ -72,51 +77,15 @@ export const lightTheme = {
             indigo: Platform.select({ ios: '#5856D6', default: '#5C6BC0' }),
             purple: Platform.select({ ios: '#AF52DE', default: '#9C27B0' }),
         },
-        // `foreground` tints glyphs, icons, borders and action indicators on ordinary surfaces.
-        // `onTint` is the ONLY correct colour for text sitting on the matching `background` tint:
-        // the brand hues are chosen for glyph legibility and measure 2.01–4.27:1 as text on their
-        // own tint here. Ratios are computed against the tint composited over every surface token
-        // the app can paint behind it; `themeContrast.test.ts` is the arbiter.
-        state: {
-            success: {
-                foreground: '#34C759',
-                onTint: '#1A7030',   // 4.97:1 worst case (over surface.elevated); 5.60 on surface.base
-                background: 'rgba(52, 199, 89, 0.12)',
-                border: '#34C759',
-            },
-            warning: {
-                foreground: '#FF9500',
-                onTint: '#B25000',   // 4.93:1 — opaque tint, surface-invariant
-                background: '#FFF8F0',
-                border: '#FF9500',
-            },
-            danger: {
-                foreground: '#FF3B30',
-                onTint: '#D70015',   // 4.86:1 — opaque tint, surface-invariant
-                background: '#FFF0F0',
-                border: '#FF3B30',
-            },
-            info: {
-                foreground: Platform.select({ ios: '#5856D6', default: '#5C6BC0' }),
-                // One indigo for both platforms: the ink role has no platform-native counterpart
-                // the way the glyph tint does. 5.38:1 worst case (over surface.elevated).
-                onTint: '#454FB4',
-                background: 'rgba(0, 122, 255, 0.10)',
-                border: '#007AFF',
-            },
-            neutral: {
-                foreground: '#8E8E93',
-                onTint: '#6C6C70',   // = text.secondary; 4.69:1 — opaque tint, surface-invariant
-                background: '#F2F2F7',
-                border: '#D1D1D6',
-            },
-            active: {
-                foreground: '#007AFF',
-                onTint: '#0A5AC8',   // 4.93:1 worst case (over surface.elevated); 5.58 on surface.base
-                background: 'rgba(0, 122, 255, 0.10)',
-                border: 'rgba(0, 122, 255, 0.40)',
-            },
-        },
+        // The `state.*` palette is owned by `theme/tokens/stateColors.ts` so the Vitest theme mock
+        // consumes the same bytes instead of restating them (see that module for why it cannot
+        // import this one). `foreground` tints glyphs, icons, borders and action indicators;
+        // `onTint` is the ONLY correct colour for text sitting on the matching `background` tint.
+        // `themeContrast.test.ts` is the arbiter of every recorded ratio.
+        state: buildLightStateColors(Platform.select({
+            ios: LIGHT_STATE_INFO_FOREGROUND.ios,
+            default: LIGHT_STATE_INFO_FOREGROUND.default,
+        })),
         background: {
             canvas: '#F5F5F5',
         },
@@ -132,6 +101,15 @@ export const lightTheme = {
             // solid inset) so it reads a hair off the base surface; a runtime opacity
             // transform would be a silent no-op once web var-ifies the token.
             sectionTint: 'rgba(0,0,0,0.012)',
+        },
+        // The keyboard focus indicator. Deliberately its own hue rather than an alias of
+        // `state.active` or `accent.blue`: the ring's promise is >=3:1 against every surface the
+        // app can put behind it (WCAG 2.2 SC 1.4.11 / 2.4.11), and an accent that gets re-tuned
+        // for brand reasons cannot carry that promise. #0059B3 measures 6.82:1 on white down to
+        // 4.69:1 on `border.strong`, which is the binding case. `focusRingContrast.test.ts` is the
+        // arbiter.
+        focus: {
+            ring: '#0059B3',
         },
         border: {
             default: Platform.select({ ios: '#eaeaea', default: '#eaeaea' }),
@@ -414,51 +392,8 @@ export const darkTheme = {
             indigo: '#8EA3FF',
             purple: '#C0A7FF',
         },
-        // See the light theme for the `foreground` vs `onTint` split. Four of the six dark hues
-        // already clear AA as text on their own tint, so `onTint` aliases them rather than
-        // inventing a second value; only `neutral` and `danger` needed their own ink.
-        state: {
-            success: {
-                foreground: '#66DC7E',
-                onTint: '#66DC7E',   // aliases foreground — 6.05:1 worst case
-                background: 'rgba(102, 220, 126, 0.15)',
-                border: '#66DC7E',
-            },
-            warning: {
-                foreground: '#E0B65A',
-                onTint: '#E0B65A',   // aliases foreground — 5.53:1 worst case
-                background: 'rgba(224, 182, 90, 0.15)',
-                border: '#E0B65A',
-            },
-            danger: {
-                foreground: '#EE6E6C',
-                // A hair lighter than the glyph tint: the foreground reads 4.88:1 on surface.base
-                // but drops to 4.24/3.92 once the tint sits on surface.selected/surface.pressed.
-                onTint: '#F18583',   // 4.66:1 worst case
-                background: 'rgba(238, 110, 108, 0.15)',
-                border: '#EE6E6C',
-            },
-            info: {
-                foreground: '#9EB9FF',
-                onTint: '#9EB9FF',   // aliases foreground — 5.60:1 worst case
-                background: 'rgba(158, 185, 255, 0.14)',
-                border: '#9EB9FF',
-            },
-            neutral: {
-                foreground: '#8A817C',
-                // The muted foreground reads 4.08:1 on this opaque tint; `composer.chipTint` is
-                // the palette's next step up and clears AA without adding a new grey.
-                onTint: '#A79D97',   // 5.86:1 — opaque tint, surface-invariant
-                background: '#2A2222',
-                border: '#302727',
-            },
-            active: {
-                foreground: '#9EB9FF',
-                onTint: '#9EB9FF',   // aliases foreground — 5.85:1 worst case
-                background: 'rgba(158, 185, 255, 0.12)',
-                border: 'rgba(158, 185, 255, 0.50)',
-            },
-        },
+        // See `theme/tokens/stateColors.ts` for the `foreground` vs `onTint` split and the ratios.
+        state: darkStateColors,
         background: {
             canvas: '#131111',
         },
@@ -471,6 +406,11 @@ export const darkTheme = {
             selected: '#292121',
             pressedOverlay: 'rgba(255,255,255,0.036)',
             sectionTint: 'rgba(255,255,255,0.014)',
+        },
+        // See the light theme for why this is a dedicated hue. #A9C2FF measures 10.07:1 on
+        // `surface.base` down to 6.20:1 on `border.strong` over `surface.pressed`.
+        focus: {
+            ring: '#A9C2FF',
         },
         border: {
             default: 'rgba(255,255,255,0.050)',

@@ -27,9 +27,13 @@ type WebActivitySpinnerStyle = ViewStyle & {
 export type ActivitySpinnerProps = Omit<ActivityIndicatorProps, 'size'> & {
     size?: ActivityIndicatorProps['size'] | number;
     /**
-     * Keep the web spinner visible but stop the continuous CSS transform animation.
-     * Used for mounted offscreen list rows so overscan content does not force a
-     * browser frame on every refresh tick.
+     * Keep the spinner visible but stop it turning.
+     *
+     * Used wherever ambient motion must pause without the mark disappearing: a mounted offscreen
+     * list row, an entry that has stopped reporting. Honoured on every platform — web drops the CSS
+     * animation, native stops the `ActivityIndicator` while overriding `hidesWhenStopped` so the
+     * ring stays on screen. A paused spinner still says "this is the running state"; a missing one
+     * says the work ended.
      */
     animationEnabled?: boolean;
 };
@@ -60,7 +64,7 @@ function resolveSpinnerBorderWidth(size: number): number {
  * Every status slot that pairs a spinner with a glyph derives the spinner from the glyph size here.
  * Before this existed, four of them each guessed separately and all four disagreed.
  */
-const ICON_CIRCLE_INK_RATIO = 0.8;
+export const ICON_CIRCLE_INK_RATIO = 0.8;
 
 export function iconMatchedSpinnerSize(iconSize: number): number {
     return Math.round(iconSize * ICON_CIRCLE_INK_RATIO);
@@ -71,7 +75,17 @@ export function ActivitySpinner(props: ActivitySpinnerProps) {
     const resolvedColor = props.color ?? theme.colors.text.secondary;
 
     if (Platform.OS !== 'web') {
-        return <NativeActivityIndicator {...props} color={resolvedColor} />;
+        const { animationEnabled: nativeAnimationEnabled = true, ...nativeProps } = props;
+        return (
+            <NativeActivityIndicator
+                {...nativeProps}
+                color={resolvedColor}
+                // Only when the caller asked for a pause. A caller that set `animating={false}`
+                // itself keeps the default `hidesWhenStopped`, because hiding a stopped spinner is
+                // a legitimate thing to want and is not this flag's business.
+                {...(nativeAnimationEnabled ? null : { animating: false, hidesWhenStopped: false })}
+            />
+        );
     }
 
     const {

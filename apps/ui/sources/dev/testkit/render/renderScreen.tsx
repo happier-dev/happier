@@ -31,6 +31,19 @@ function findAllByTestId(root: ReactTestInstance, testID: string): ReactTestInst
     return root.findAll((node) => node.props?.testID === testID);
 }
 
+/**
+ * The same query restricted to HOST instances — the nodes that actually painted.
+ *
+ * `findAllByTestId` walks composites too, so a component that forwards `testID` and then renders
+ * `null` still matches. That makes `expect(findAllByTestId(id)).toHaveLength(0)` pass for the wrong
+ * reason (or, as happened here, fail while the component is correctly rendering nothing), and it
+ * makes `findByTestId(...).props.style` read the composite's unresolved `style` PROP rather than
+ * the style the host resolved. Use these when the assertion is about what was rendered.
+ */
+function findAllHostsByTestId(root: ReactTestInstance, testID: string): ReactTestInstance[] {
+    return root.findAll((node) => typeof node.type === 'string' && node.props?.testID === testID);
+}
+
 function resolvePreferredTestIdMatch(root: ReactTestInstance, testID: string): ReactTestInstance | null {
     const matches = findAllByTestId(root, testID);
     if (matches.length === 0) {
@@ -191,6 +204,8 @@ type RenderScreenQueryHelpers = Readonly<{
     find: (predicate: (node: ReactTestInstance) => boolean) => ReactTestInstance;
     findByTestId: (testID: string) => ReactTestInstance | null;
     findAllByTestId: (testID: string) => ReactTestInstance[];
+    findHostByTestId: (testID: string) => ReactTestInstance | null;
+    findAllHostsByTestId: (testID: string) => ReactTestInstance[];
     findAll: (predicate: (node: ReactTestInstance) => boolean) => ReactTestInstance[];
     getTextContent: () => string;
     pressByTestId: (testID: string) => void;
@@ -262,6 +277,8 @@ export async function renderScreen(
         find: (predicate) => getRoot().find(predicate),
         findByTestId: (testID) => resolvePreferredTestIdMatch(getRoot(), testID),
         findAllByTestId: (testID) => findAllByTestId(getRoot(), testID),
+        findHostByTestId: (testID) => findAllHostsByTestId(getRoot(), testID).at(-1) ?? null,
+        findAllHostsByTestId: (testID) => findAllHostsByTestId(getRoot(), testID),
         findAll: (predicate) => getRoot().findAll(predicate),
         getTextContent: () => {
             const parts: string[] = [];
@@ -316,6 +333,8 @@ export async function renderScreen(
         find: helpers.find,
         findByTestId: helpers.findByTestId,
         findAllByTestId: helpers.findAllByTestId,
+        findHostByTestId: helpers.findHostByTestId,
+        findAllHostsByTestId: helpers.findAllHostsByTestId,
         findAll: helpers.findAll,
         getTextContent: helpers.getTextContent,
         pressByTestId: helpers.pressByTestId,

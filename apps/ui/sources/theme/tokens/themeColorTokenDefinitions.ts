@@ -52,6 +52,16 @@ const textOnCanvasAndSurface = [
 const stateContrast = (backgroundTokenId: string) => [{ tokenId: backgroundTokenId, minRatio: 4.5 }] as const;
 
 /**
+ * WCAG 2.2 SC 1.4.11 / 2.4.11: a focus indicator needs 3:1 against everything adjacent to it, not
+ * the 4.5:1 that text needs. `surface.base` and `border.strong` are the two extremes the ring is
+ * drawn over; `components/ui/interaction/focusRingContrast.test.ts` checks the full surface table.
+ */
+const focusIndicatorContrast = [
+    { tokenId: 'surface.base', minRatio: 3 },
+    { tokenId: 'border.strong', minRatio: 3 },
+] as const;
+
+/**
  * `state.<variant>.onTint` is the ink for text rendered ON the matching state tint; the sibling
  * `foreground` stays the glyph/icon/border tint on ordinary surfaces. One rule decides which:
  * text on `state.X.background` uses `state.X.onTint`, everything else uses `state.X.foreground`.
@@ -144,6 +154,7 @@ export const EDITABLE_THEME_COLOR_TOKEN_DEFINITIONS = [
     defineEditableThemeColorToken({ id: 'control.permissionButton.selected.background', path: ['permissionButton', 'selected', 'background'], group: 'control', label: 'Selected permission background', description: 'Selected permission button background.', valueKind: 'color' }),
     defineEditableThemeColorToken({ id: 'control.permissionButton.selected.border', path: ['permissionButton', 'selected', 'border'], group: 'control', label: 'Selected permission border', description: 'Selected permission button border.', valueKind: 'color' }),
     defineEditableThemeColorToken({ id: 'control.permissionButton.selected.foreground', path: ['permissionButton', 'selected', 'text'], group: 'control', label: 'Selected permission foreground', description: 'Selected permission button text and icon color.', valueKind: 'color' }),
+    defineEditableThemeColorToken({ id: 'focus.ring', path: ['focus', 'ring'], group: 'control', label: 'Focus ring', description: 'Keyboard focus indicator drawn around pressable rows and controls. Sits in the control group because it is a control state, not a border style; it must stay readable against every surface behind it.', valueKind: 'color', contrastPairs: focusIndicatorContrast }),
     defineEditableThemeColorToken({ id: 'composer.chipTint', path: ['composer', 'chipTint'], group: 'composer', label: 'Composer chip tint', description: 'Foreground for composer chips, pills, and their low-emphasis action labels.', valueKind: 'color' }),
 
     defineEditableThemeColorToken({ id: 'message.user.background', path: ['message', 'user', 'background'], group: 'message', label: 'User message background', description: 'Background for user-authored transcript messages.', valueKind: 'color' }),

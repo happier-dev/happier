@@ -1,7 +1,9 @@
 import * as React from 'react';
-import { Pressable, View } from 'react-native';
+import { View } from 'react-native';
 import type { GestureResponderEvent, PressableProps, StyleProp, ViewStyle } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
+
+import { PressableSurface } from '@/components/ui/interaction/PressableSurface';
 
 /**
  * The canonical icon-only action.
@@ -17,6 +19,10 @@ import { StyleSheet } from 'react-native-unistyles';
  *
  * Before this existed every header re-implemented the same 34x34 bordered square locally, which is
  * why the pattern spread. New icon-only actions belong here, not in a local stylesheet.
+ *
+ * The press/hover fills and the focus ring live in {@link PressableSurface}; this component keeps
+ * only its box. The fills are unchanged by that move — it exists so the "tint the surface, never
+ * dim the content" rule has one owner instead of one copy per control.
  */
 
 export type IconActionSize = 'sm' | 'md' | 'lg';
@@ -45,13 +51,16 @@ export type IconActionProps = Readonly<{
     style?: StyleProp<ViewStyle>;
 }>;
 
-const stylesheet = StyleSheet.create((theme) => ({
+// 8px keeps the hover fill on the shared radius scale, so it nests correctly inside an
+// 8px-padded header without the corners disagreeing. `lg` grows the corner with the box so the
+// curvature stays proportional instead of looking tighter than its neighbours'.
+const ICON_ACTION_RADIUS_PX = { sm: 8, md: 8, lg: 12 } as const;
+
+const stylesheet = StyleSheet.create(() => ({
     base: {
         alignItems: 'center',
         justifyContent: 'center',
-        // 8px keeps the hover fill on the shared radius scale, so it nests correctly inside an
-        // 8px-padded header without the corners disagreeing.
-        borderRadius: 8,
+        borderRadius: ICON_ACTION_RADIUS_PX.md,
     },
     sm: {
         width: 28,
@@ -61,23 +70,15 @@ const stylesheet = StyleSheet.create((theme) => ({
         width: 34,
         height: 34,
     },
-    // Sized to sit in a row with a 38pt primary action; the corner grows with the box so the
-    // curvature stays proportional instead of looking tighter than its neighbours'.
+    // Sized to sit in a row with a 38pt primary action.
     lg: {
         width: 38,
         height: 38,
-        borderRadius: 12,
-    },
-    hovered: {
-        backgroundColor: theme.colors.surface.pressed,
-    },
-    pressed: {
-        backgroundColor: theme.colors.surface.selected,
-    },
-    active: {
-        backgroundColor: theme.colors.surface.pressed,
+        borderRadius: ICON_ACTION_RADIUS_PX.lg,
     },
     disabled: {
+        // Not the press idiom: WCAG exempts an inactive control from contrast minimums, and a
+        // disabled affordance is supposed to recede. Press feedback never touches opacity.
         opacity: 0.4,
     },
 }));
@@ -87,28 +88,24 @@ export const IconAction = React.memo((props: IconActionProps) => {
     const size = props.size ?? 'md';
 
     return (
-        <Pressable
+        <PressableSurface
             testID={props.testID}
-            onPress={props.disabled ? undefined : props.onPress}
+            onPress={props.onPress}
             hitSlop={props.hitSlop}
             disabled={props.disabled}
-            accessibilityRole="button"
+            active={props.active}
             accessibilityLabel={props.accessibilityLabel}
-            accessibilityState={{ disabled: Boolean(props.disabled) }}
-            // Native tooltip on web; a no-op elsewhere.
-            {...({ title: props.accessibilityLabel } as object)}
-            style={({ hovered, pressed }: { hovered?: boolean; pressed?: boolean }) => [
+            webTooltip={props.accessibilityLabel}
+            focusRingRadius={ICON_ACTION_RADIUS_PX[size]}
+            style={[
                 styles.base,
                 size === 'sm' ? styles.sm : size === 'lg' ? styles.lg : styles.md,
-                props.active ? styles.active : null,
-                hovered && !props.disabled ? styles.hovered : null,
-                pressed && !props.disabled ? styles.pressed : null,
                 props.disabled ? styles.disabled : null,
-                props.style,
             ]}
+            styleOverride={props.style}
         >
             <View pointerEvents="none">{props.children}</View>
-        </Pressable>
+        </PressableSurface>
     );
 });
 

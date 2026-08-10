@@ -1,8 +1,9 @@
 import * as React from 'react';
-import { Pressable, View } from 'react-native';
+import { View } from 'react-native';
 import type { GestureResponderEvent, StyleProp, ViewStyle } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
+import { PressableSurface } from '@/components/ui/interaction/PressableSurface';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 
@@ -20,6 +21,10 @@ import { Typography } from '@/constants/Typography';
  * on the identical numbers (h30 / r10 / bw1 / px10 / gap6 / 14px glyph / 12px semiBold label) by
  * copy, and a fourth had drifted to a full capsule, so the same action read as a different species
  * depending on which surface you were looking at.
+ *
+ * Press/hover fills and the keyboard focus ring come from {@link PressableSurface}. The fills are
+ * the same ones this component declared locally before; they moved so that "tint the surface,
+ * never dim the content" has one owner rather than a copy per control.
  */
 
 /**
@@ -49,6 +54,10 @@ export type ToolbarButtonProps = Readonly<{
     style?: StyleProp<ViewStyle>;
 }>;
 
+// 8, not 10 and not a capsule: on the shared radius scale, and a small rounded rect among the
+// rectangular surfaces it sits on rather than a pill of its own kind.
+const TOOLBAR_BUTTON_RADIUS_PX = 8;
+
 const stylesheet = StyleSheet.create((theme) => ({
     base: {
         flexDirection: 'row',
@@ -57,9 +66,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         gap: 6,
         minHeight: 30,
         paddingHorizontal: 10,
-        // 8, not 10 and not a capsule: on the shared radius scale, and a small rounded rect among
-        // the rectangular surfaces it sits on rather than a pill of its own kind.
-        borderRadius: 8,
+        borderRadius: TOOLBAR_BUTTON_RADIUS_PX,
         borderWidth: StyleSheet.hairlineWidth,
         borderColor: theme.colors.border.subtle,
         backgroundColor: theme.colors.surface.base,
@@ -77,16 +84,9 @@ const stylesheet = StyleSheet.create((theme) => ({
     dangerLabel: {
         color: theme.colors.state.danger.foreground,
     },
-    hovered: {
-        backgroundColor: theme.colors.surface.pressed,
-    },
-    pressed: {
-        backgroundColor: theme.colors.surface.selected,
-    },
-    active: {
-        backgroundColor: theme.colors.surface.pressed,
-    },
     disabled: {
+        // Not the press idiom: WCAG exempts an inactive control from contrast minimums. Press
+        // feedback tints the surface and never touches the label's opacity.
         opacity: 0.45,
     },
     label: {
@@ -104,23 +104,20 @@ export const ToolbarButton = React.memo((props: ToolbarButtonProps) => {
     const isPrimary = tone === 'primary';
 
     return (
-        <Pressable
+        <PressableSurface
             testID={props.testID}
-            onPress={props.disabled ? undefined : props.onPress}
+            onPress={props.onPress}
             disabled={props.disabled}
-            accessibilityRole="button"
+            active={props.active}
             accessibilityLabel={props.accessibilityLabel ?? props.label}
-            accessibilityState={{ disabled: Boolean(props.disabled) }}
-            style={({ hovered, pressed }: { hovered?: boolean; pressed?: boolean }) => [
+            focusRingRadius={TOOLBAR_BUTTON_RADIUS_PX}
+            style={[
                 styles.base,
                 props.size === 'md' ? styles.md : null,
                 isPrimary ? styles.primary : null,
-                props.active ? styles.active : null,
-                hovered && !props.disabled ? styles.hovered : null,
-                pressed && !props.disabled ? styles.pressed : null,
                 props.disabled ? styles.disabled : null,
-                props.style,
             ]}
+            styleOverride={props.style}
         >
             {props.icon ? <View pointerEvents="none">{props.icon}</View> : null}
             <Text
@@ -135,7 +132,7 @@ export const ToolbarButton = React.memo((props: ToolbarButtonProps) => {
                 {props.label}
             </Text>
             {props.trailing ? <View pointerEvents="none">{props.trailing}</View> : null}
-        </Pressable>
+        </PressableSurface>
     );
 });
 

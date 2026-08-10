@@ -4,6 +4,11 @@ import { darkTheme, lightTheme } from '@/theme';
 import { resolveThemeProfile } from '@/theme/profiles/resolveThemeProfile';
 import type { ThemeProfileV1 } from '@/theme/profiles/themeProfileTypes';
 import {
+    compositeThemeColorOver,
+    parseThemeColor,
+    themeContrastRatio,
+} from '@/theme/themeContrastMath';
+import {
     getEditableThemeColorTokenDefinition,
     resolveThemeColorTokenBaseValue,
 } from '@/theme/tokens/themeColorTokenDefinitions';
@@ -39,61 +44,6 @@ const THEMES = [
     ['dark', darkTheme],
 ] as const;
 
-type Rgba = Readonly<{ r: number; g: number; b: number; a: number }>;
-
-function parseColor(value: string): Rgba {
-    const normalized = value.trim();
-    const hex = /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.exec(normalized);
-    if (hex) {
-        const raw = hex[1] ?? '';
-        const expanded = raw.length === 3 ? raw.split('').map((part) => `${part}${part}`).join('') : raw;
-        return {
-            r: Number.parseInt(expanded.slice(0, 2), 16),
-            g: Number.parseInt(expanded.slice(2, 4), 16),
-            b: Number.parseInt(expanded.slice(4, 6), 16),
-            a: 1,
-        };
-    }
-
-    const rgb = /^rgba?\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)\s*(?:,\s*([\d.]+)\s*)?\)$/.exec(normalized);
-    if (!rgb) {
-        throw new Error(`Unsupported color value for a contrast pairing: ${value}`);
-    }
-
-    return {
-        r: Number(rgb[1]),
-        g: Number(rgb[2]),
-        b: Number(rgb[3]),
-        a: rgb[4] === undefined ? 1 : Number(rgb[4]),
-    };
-}
-
-function compositeOver(source: Rgba, backdrop: Rgba): Rgba {
-    return {
-        r: source.a * source.r + (1 - source.a) * backdrop.r,
-        g: source.a * source.g + (1 - source.a) * backdrop.g,
-        b: source.a * source.b + (1 - source.a) * backdrop.b,
-        a: 1,
-    };
-}
-
-/** WCAG 2.x relative luminance. */
-function relativeLuminance(color: Rgba): number {
-    const channel = (value: number): number => {
-        const normalized = value / 255;
-        return normalized <= 0.03928 ? normalized / 12.92 : ((normalized + 0.055) / 1.055) ** 2.4;
-    };
-    return 0.2126 * channel(color.r) + 0.7152 * channel(color.g) + 0.0722 * channel(color.b);
-}
-
-function contrastRatio(left: Rgba, right: Rgba): number {
-    const leftLuminance = relativeLuminance(left);
-    const rightLuminance = relativeLuminance(right);
-    const lighter = Math.max(leftLuminance, rightLuminance);
-    const darker = Math.min(leftLuminance, rightLuminance);
-    return (lighter + 0.05) / (darker + 0.05);
-}
-
 function readToken(theme: typeof lightTheme, tokenId: string): string {
     const value = resolveThemeColorTokenBaseValue(theme, tokenId);
     if (value === undefined) {
@@ -106,12 +56,12 @@ describe('state tint contrast (R-1)', () => {
     for (const [themeName, theme] of THEMES) {
         for (const variant of STATE_VARIANTS) {
             it(`${themeName}: state.${variant}.onTint reads at AA on state.${variant}.background`, () => {
-                const ink = parseColor(readToken(theme, `state.${variant}.onTint`));
-                const tint = parseColor(readToken(theme, `state.${variant}.background`));
+                const ink = parseThemeColor(readToken(theme, `state.${variant}.onTint`));
+                const tint = parseThemeColor(readToken(theme, `state.${variant}.background`));
 
                 for (const surfaceTokenId of COMPOSITE_SURFACE_TOKEN_IDS) {
-                    const surface = parseColor(readToken(theme, surfaceTokenId));
-                    const ratio = contrastRatio(ink, compositeOver(tint, surface));
+                    const surface = parseThemeColor(readToken(theme, surfaceTokenId));
+                    const ratio = themeContrastRatio(ink, compositeThemeColorOver(tint, surface));
 
                     expect(
                         Number(ratio.toFixed(2)),
