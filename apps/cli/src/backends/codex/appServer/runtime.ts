@@ -73,7 +73,10 @@ import {
     isCodexAppServerJsonLineTooLargeError,
     type DisposableCodexAppServerClient,
 } from './client/createCodexAppServerClient';
-import { readCodexAppServerResumeRecoveryTimeoutMs } from './client/codexAppServerRpcTimeout';
+import {
+    readCodexAppServerResumeRecoveryTimeoutMs,
+    readCodexAppServerRpcTimeoutMs,
+} from './client/codexAppServerRpcTimeout';
 import {
     createCodexAppServerStreamEventBridge,
     type CodexAppServerStreamUpdate,
@@ -777,7 +780,7 @@ async function requestCodexTurnInterruptWithStartupRetry(params: Readonly<{
     client: DisposableCodexAppServerClient;
     threadId: string;
     turnId: string;
-    waitForProviderTerminal: () => Promise<boolean>;
+    waitForProviderTerminal: (waitKind: 'startup_gap' | 'ambiguous_request') => Promise<boolean>;
 }>): Promise<'requested' | 'providerTerminal'> {
     const startedAtMs = Date.now();
     for (;;) {
@@ -788,8 +791,11 @@ async function requestCodexTurnInterruptWithStartupRetry(params: Readonly<{
             });
             return 'requested';
         } catch (error) {
-            if (!isNoActiveTurnToInterruptError(error)) throw error;
-            if (await params.waitForProviderTerminal()) return 'providerTerminal';
+            const startupGap = isNoActiveTurnToInterruptError(error);
+            if (await params.waitForProviderTerminal(startupGap ? 'startup_gap' : 'ambiguous_request')) {
+                return 'providerTerminal';
+            }
+            if (!startupGap) throw error;
             if (Date.now() - startedAtMs >= CODEX_APP_SERVER_CANCEL_STARTUP_RETRY_WINDOW_MS) {
                 throw error;
             }
@@ -4392,9 +4398,11 @@ export function createCodexAppServerRuntime(params: Readonly<{
                 client,
                 threadId: activeTurn.threadId,
                 turnId: interruptTurnId,
-                waitForProviderTerminal: async () => await waitForPromiseSettlementWithin(
+                waitForProviderTerminal: async (waitKind) => await waitForPromiseSettlementWithin(
                     activeTurn.promise,
-                    CODEX_APP_SERVER_CANCEL_STARTUP_RETRY_INTERVAL_MS,
+                    waitKind === 'startup_gap'
+                        ? CODEX_APP_SERVER_CANCEL_STARTUP_RETRY_INTERVAL_MS
+                        : readCodexAppServerRpcTimeoutMs(runtimeEnv),
                 ),
             });
             if (interrupt === 'providerTerminal') return;

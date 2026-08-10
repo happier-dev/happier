@@ -141,6 +141,8 @@ async function writeFakeCodexAppServerScript(params: Readonly<{
         message: string;
     }>;
     rejectFirstInterruptAsNoActiveTurn?: boolean;
+    interruptTerminalWithoutResponse?: boolean;
+    interruptTerminalDelayMs?: number;
     rejectSteerAsNoActiveTurn?: boolean;
     rejectPermissionsProfile?: boolean;
     rejectGoalMethods?: boolean;
@@ -1474,6 +1476,12 @@ async function writeFakeCodexAppServerScript(params: Readonly<{
         '            continue;',
         '        }',
         '        const turnId = msg.params?.turnId ?? null;',
+        `        if (${JSON.stringify(params.interruptTerminalWithoutResponse === true)}) {`,
+        '            setTimeout(() => {',
+        '                process.stdout.write(JSON.stringify({ method: "turn/interrupted", params: { threadId: msg.params?.threadId ?? null, turn: turnId ? { id: turnId } : undefined } }) + "\\n");',
+        `            }, ${JSON.stringify(params.interruptTerminalDelayMs ?? 5)});`,
+        '            continue;',
+        '        }',
         '        process.stdout.write(JSON.stringify({ id: msg.id, result: { ok: true } }) + "\\n");',
         '        setTimeout(() => {',
         '            process.stdout.write(JSON.stringify({ method: "turn/interrupted", params: { threadId: msg.params?.threadId ?? null, turn: turnId ? { id: turnId } : undefined } }) + "\\n");',
@@ -1564,6 +1572,8 @@ describe('createCodexAppServerRuntime', () => {
                 message: string;
             }>;
             rejectFirstInterruptAsNoActiveTurn?: boolean;
+            interruptTerminalWithoutResponse?: boolean;
+            interruptTerminalDelayMs?: number;
             rejectSteerAsNoActiveTurn?: boolean;
             rejectPermissionsProfile?: boolean;
             rejectGoalMethods?: boolean;
@@ -1618,6 +1628,8 @@ describe('createCodexAppServerRuntime', () => {
             requestLogPath,
             rollbackError: options.rollbackError,
             rejectFirstInterruptAsNoActiveTurn: options.rejectFirstInterruptAsNoActiveTurn,
+            interruptTerminalWithoutResponse: options.interruptTerminalWithoutResponse,
+            interruptTerminalDelayMs: options.interruptTerminalDelayMs,
             rejectSteerAsNoActiveTurn: options.rejectSteerAsNoActiveTurn,
             rejectPermissionsProfile: options.rejectPermissionsProfile,
             rejectGoalMethods: options.rejectGoalMethods,
@@ -3578,6 +3590,37 @@ describe('createCodexAppServerRuntime', () => {
                 params: expect.objectContaining({ threadId: 'thread-started', turnId: 'turn-cancel-no-active' }),
             }),
         ]);
+    });
+
+    it('accepts exact provider terminal proof when the interrupt response times out', async () => {
+        const { root } = await createRuntimeFixture('happier-codex-app-server-runtime-interrupt-timeout-after-terminal-', {
+            interruptTerminalWithoutResponse: true,
+            interruptTerminalDelayMs: 400,
+            omitTurnCompletedForPrompt: 'cancel-after-provider-terminal',
+            rpcTimeoutMs: 250,
+        });
+
+        const cancelTurn = vi.fn(async () => {});
+        const runtime = createCodexAppServerRuntime({
+            directory: root,
+            onThinkingChange: vi.fn(),
+            session: {
+                updateMetadata: vi.fn(),
+                sessionTurnLifecycle: createSessionTurnLifecycleTestDouble({ cancelTurn }),
+            } as any,
+        });
+
+        await runtime.startOrLoad({});
+        const sendPromptPromise = runtime.sendPrompt('cancel-after-provider-terminal');
+        await waitForCondition(() => runtime.isTurnInFlight(), {
+            timeoutMs: 1_000,
+            intervalMs: 10,
+            label: 'Codex app-server turn to enter in-flight state',
+        });
+
+        await expect(runtime.cancel()).resolves.toBeUndefined();
+        await sendPromptPromise;
+        expect(runtime.isTurnInFlight()).toBe(false);
     });
 
     it('keeps a Codex turn in flight until the terminal interrupted notification arrives', async () => {
