@@ -38,6 +38,7 @@ const reactiveStorageHarness = vi.hoisted(() => {
 });
 
 const rowRenderProps = vi.hoisted(() => [] as any[]);
+const rowLifecycleEvents = vi.hoisted(() => [] as string[]);
 
 installSessionShellCommonModuleMocks({
     storage: async (importOriginal) => {
@@ -75,6 +76,13 @@ vi.mock('@/hooks/session/sessionListRuntimeClock', () => ({
 vi.mock('./SessionListRow', () => ({
     SessionListRow: (props: any) => {
         rowRenderProps.push(props);
+        const sessionId = String(props.session?.id ?? 'unknown');
+        React.useEffect(() => {
+            rowLifecycleEvents.push(`mount:${sessionId}`);
+            return () => {
+                rowLifecycleEvents.push(`unmount:${sessionId}`);
+            };
+        }, [sessionId]);
         return React.createElement('SessionListRow', {
             ...props,
             testID: `session-list-row-boundary:${String(props.session?.id ?? 'unknown')}`,
@@ -183,6 +191,7 @@ function createBoundaryProps() {
 describe('SessionListRowModelBoundary', () => {
     beforeEach(() => {
         rowRenderProps.length = 0;
+        rowLifecycleEvents.length = 0;
         reactiveStorageHarness.reset({
             activeServerId: 'server_a',
             sessions: {
@@ -244,6 +253,37 @@ describe('SessionListRowModelBoundary', () => {
         expect(updatedRow?.props.rowModel.session.thinking).toBe(true);
         expect(updatedRow?.props.rowModel.status.state).toBe('thinking');
         expect(rowRenderProps.length).toBeGreaterThan(renderCountBeforeScopedUpdate);
+    });
+
+    it('keeps the row subtree mounted when the row leaves the row-store subscription set', async () => {
+        const { SessionListRowModelBoundary } = await import('./SessionListRowModelBoundary');
+        const boundaryProps = createBoundaryProps();
+        let setSubscriptionEnabled: ((enabled: boolean) => void) | null = null;
+
+        function SubscriptionToggleHarness() {
+            const [rowStoreSubscriptionEnabled, setEnabled] = React.useState(true);
+            setSubscriptionEnabled = setEnabled;
+            return (
+                <SessionListRowModelBoundary
+                    {...boundaryProps}
+                    rowStoreSubscriptionEnabled={rowStoreSubscriptionEnabled}
+                />
+            );
+        }
+
+        await renderScreen(<SubscriptionToggleHarness />);
+
+        expect(rowLifecycleEvents).toEqual(['mount:sess_a']);
+        expect(reactiveStorageHarness.listenerCount()).toBe(1);
+
+        await act(async () => {
+            setSubscriptionEnabled?.(false);
+        });
+
+        // The row left the subscription set: the store listener must be gone,
+        // but the mounted row subtree must survive (no remount).
+        expect(reactiveStorageHarness.listenerCount()).toBe(0);
+        expect(rowLifecycleEvents).toEqual(['mount:sess_a']);
     });
 
     it('does not subscribe to row-store updates when the row is outside the subscription set', async () => {

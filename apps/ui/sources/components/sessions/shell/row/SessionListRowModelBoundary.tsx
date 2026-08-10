@@ -82,33 +82,54 @@ export type SessionListRowModelBoundaryProps = Readonly<{
     viewableSessionRowKeys: ReadonlySet<string> | null;
 }>;
 
+function subscribeToNoRowStoreUpdates(): () => void {
+    return () => undefined;
+}
+
+function readEmptyRowStoreState(): SessionListRowStoreState {
+    return EMPTY_SESSION_LIST_ROW_STORE_STATE;
+}
+
+// The subscription set changes constantly (every viewability change while
+// scrolling, and every row at once when the surface goes data-inactive behind a
+// modal). Selecting between a subscribed and an unsubscribed COMPONENT would
+// change the element type at this position, so React would unmount and remount
+// the whole row subtree — hundreds of views per screenful — on each of those
+// transitions. The subscription is therefore switched inside one component:
+// when it is disabled the store is never subscribed (no listener at all) and the
+// snapshot is a frozen constant, so the row keeps its mounted subtree.
+function useSessionListRowStoreState(input: Readonly<{
+    activeServerId?: string | null;
+    enabled: boolean;
+    serverId?: string | null;
+    sessionId: string;
+}>): SessionListRowStoreState {
+    const { activeServerId, enabled, serverId, sessionId } = input;
+    const readRowStoreState = React.useMemo(() => {
+        if (!enabled) return readEmptyRowStoreState;
+        const selector = createSessionListRowStoreStateSelector(
+            [{ sessionId, serverId: serverId ?? null }],
+            activeServerId,
+        );
+        return () => selector(storage.getState());
+    }, [activeServerId, enabled, serverId, sessionId]);
+
+    return React.useSyncExternalStore(
+        enabled ? storage.subscribe : subscribeToNoRowStoreUpdates,
+        readRowStoreState,
+        readRowStoreState,
+    );
+}
+
 export const SessionListRowModelBoundary = React.memo(function SessionListRowModelBoundary(
     props: SessionListRowModelBoundaryProps,
 ) {
-    if (!props.rowStoreSubscriptionEnabled) {
-        return (
-            <SessionListRowModelBoundaryContent
-                {...props}
-                rowStoreState={EMPTY_SESSION_LIST_ROW_STORE_STATE}
-            />
-        );
-    }
-
-    return <SubscribedSessionListRowModelBoundary {...props} />;
-});
-
-const SubscribedSessionListRowModelBoundary = React.memo(function SubscribedSessionListRowModelBoundary(
-    props: SessionListRowModelBoundaryProps,
-) {
-    const rowStoreScope = React.useMemo(() => [{
+    const liveRowStoreState = useSessionListRowStoreState({
+        activeServerId: props.activeServerId,
+        enabled: props.rowStoreSubscriptionEnabled,
+        serverId: props.item.serverId,
         sessionId: props.item.session.id,
-        serverId: props.item.serverId ?? null,
-    }], [props.item.serverId, props.item.session.id]);
-    const rowStoreStateSelector = React.useMemo(
-        () => createSessionListRowStoreStateSelector(rowStoreScope, props.activeServerId),
-        [props.activeServerId, rowStoreScope],
-    );
-    const liveRowStoreState = storage(rowStoreStateSelector);
+    });
     const frozenRowStoreStateRef = React.useRef<SessionListRowStoreState>(EMPTY_SESSION_LIST_ROW_STORE_STATE);
     if (props.dataActive) {
         frozenRowStoreStateRef.current = liveRowStoreState;
