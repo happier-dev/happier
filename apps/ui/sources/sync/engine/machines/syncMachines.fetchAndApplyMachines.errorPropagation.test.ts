@@ -27,7 +27,7 @@ describe('fetchAndApplyMachines error propagation', () => {
             fetchAndApplyMachines({
                 credentials,
                 encryption: {
-                    decryptEncryptionKey: vi.fn(async () => null),
+                    decryptEncryptionKeys: vi.fn(async (values: readonly string[]) => values.map(() => null)),
                     initializeMachines: vi.fn(async () => {}),
                     getMachineEncryption: vi.fn(() => null),
                 },
@@ -50,7 +50,7 @@ describe('fetchAndApplyMachines error propagation', () => {
         await fetchAndApplyMachines({
             credentials,
             encryption: {
-                decryptEncryptionKey: vi.fn(async () => null),
+                decryptEncryptionKeys: vi.fn(async (values: readonly string[]) => values.map(() => null)),
                 initializeMachines: vi.fn(async () => {}),
                 getMachineEncryption: vi.fn(() => null),
             },
@@ -92,7 +92,7 @@ describe('fetchAndApplyMachines error propagation', () => {
         await fetchAndApplyMachines({
             credentials,
             encryption: {
-                decryptEncryptionKey: vi.fn(async () => null),
+                decryptEncryptionKeys: vi.fn(async (values: readonly string[]) => values.map(() => null)),
                 initializeMachines: vi.fn(async () => {
                     throw new Error('Failed to initialize machines');
                 }),

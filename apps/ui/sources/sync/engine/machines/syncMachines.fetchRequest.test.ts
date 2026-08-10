@@ -31,7 +31,9 @@ function jsonResponse(body: unknown, status = 200): Response {
 }
 
 function createEncryptionHarness() {
-    const decryptEncryptionKey = vi.fn(async (): Promise<Uint8Array | null> => new Uint8Array([1, 2, 3]));
+    const decryptEncryptionKeys = vi.fn(
+        async (values: readonly string[]): Promise<Array<Uint8Array | null>> => values.map(() => new Uint8Array([1, 2, 3])),
+    );
     const initialized = new Set<string>();
     const initializeMachines = vi.fn(async (machineKeys: Map<string, Uint8Array | null>) => {
         for (const machineId of machineKeys.keys()) {
@@ -44,7 +46,7 @@ function createEncryptionHarness() {
         return { decrypted: value };
     });
     return {
-        decryptEncryptionKey,
+        decryptEncryptionKeys,
         initializeMachines,
         decryptMetadata,
         decryptDaemonState,
@@ -614,7 +616,7 @@ describe('fetchAndApplyMachines request override', () => {
         );
 
         const encryption = createEncryptionHarness();
-        encryption.decryptEncryptionKey.mockResolvedValueOnce(null);
+        encryption.decryptEncryptionKeys.mockResolvedValueOnce([null]);
 
         const machineDataKeys = new Map<string, Uint8Array>();
         const applied: unknown[][] = [];
@@ -661,7 +663,7 @@ describe('fetchAndApplyMachines request override', () => {
         );
 
         const encryption = createEncryptionHarness();
-        encryption.decryptEncryptionKey.mockResolvedValue(null);
+        encryption.decryptEncryptionKeys.mockImplementation(async (values: readonly string[]) => values.map(() => null));
 
         const machineDataKeys = new Map<string, Uint8Array>();
 

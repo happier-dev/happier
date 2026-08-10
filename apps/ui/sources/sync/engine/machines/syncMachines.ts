@@ -13,7 +13,7 @@ type MachineEncryption = {
 };
 
 type SyncEncryption = {
-    decryptEncryptionKey: (value: string) => Promise<Uint8Array | null>;
+    decryptEncryptionKeys: (values: readonly string[]) => Promise<Array<Uint8Array | null>>;
     initializeMachines: (machineKeysMap: Map<string, Uint8Array | null>) => Promise<void>;
     getMachineEncryption: (machineId: string) => MachineEncryption | null;
 };
@@ -301,31 +301,46 @@ export async function fetchAndApplyMachines(params: {
         return;
     }
 
-    // First, collect and decrypt encryption keys for all machines
+    // First, collect and decrypt encryption keys for all machines.
+    //
+    // One batched open, not one call per machine. `decryptEncryptionKeys` is the
+    // canonical owner of the native-crypto-worker routing decision, and it sizes that
+    // decision on the whole batch: a lone wrapped data-key envelope is ~505 bridge
+    // bytes, under the default `minPayloadBytes` (512), so a per-machine call is forced
+    // onto the JS reference path (a curve25519 open, plus a second one whenever the
+    // account key is stored as a seed) no matter how healthy the native worker is.
+    // Batching also lets the JS reference path release the thread between chunks.
     const machineKeysMap = new Map<string, Uint8Array | null>();
-    const keyResults = await runTasksWithLimit(
-        machines.map((machine) => async () => {
-            if (!machine.dataEncryptionKey) {
-                return { machineId: machine.id, decryptedKey: null as Uint8Array | null, hasEnvelope: false };
-            }
-            try {
-                const decryptedKey = await encryption.decryptEncryptionKey(machine.dataEncryptionKey);
-                return { machineId: machine.id, decryptedKey, hasEnvelope: true };
-            } catch {
-                return { machineId: machine.id, decryptedKey: null as Uint8Array | null, hasEnvelope: true };
-            }
-        }),
-        concurrencyLimit,
-    );
-    for (const result of keyResults) {
-        if (!result.decryptedKey && result.hasEnvelope) {
-            warnMachineDataEncryptionKeyDecryptFailureOnce(encryption, result.machineId);
-            machineKeysMap.set(result.machineId, null);
+    const envelopeMachineIds: string[] = [];
+    const envelopes: string[] = [];
+    for (const machine of machines) {
+        if (typeof machine.dataEncryptionKey !== 'string' || machine.dataEncryptionKey.length === 0) continue;
+        envelopeMachineIds.push(machine.id);
+        envelopes.push(machine.dataEncryptionKey);
+    }
+    let decryptedKeys: Array<Uint8Array | null> = [];
+    if (envelopes.length > 0) {
+        try {
+            decryptedKeys = await encryption.decryptEncryptionKeys(envelopes);
+        } catch {
+            decryptedKeys = envelopes.map(() => null);
+        }
+    }
+    const decryptedKeyByMachineId = new Map<string, Uint8Array | null>();
+    for (let index = 0; index < envelopeMachineIds.length; index += 1) {
+        decryptedKeyByMachineId.set(envelopeMachineIds[index]!, decryptedKeys[index] ?? null);
+    }
+    for (const machine of machines) {
+        const hasEnvelope = decryptedKeyByMachineId.has(machine.id);
+        const decryptedKey = hasEnvelope ? decryptedKeyByMachineId.get(machine.id) ?? null : null;
+        if (!decryptedKey && hasEnvelope) {
+            warnMachineDataEncryptionKeyDecryptFailureOnce(encryption, machine.id);
+            machineKeysMap.set(machine.id, null);
             continue;
         }
-        machineKeysMap.set(result.machineId, result.decryptedKey);
-        if (result.decryptedKey) {
-            machineDataKeys.set(result.machineId, result.decryptedKey);
+        machineKeysMap.set(machine.id, decryptedKey);
+        if (decryptedKey) {
+            machineDataKeys.set(machine.id, decryptedKey);
         }
     }
 
