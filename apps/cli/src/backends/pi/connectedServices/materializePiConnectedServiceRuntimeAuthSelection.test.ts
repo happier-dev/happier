@@ -47,6 +47,7 @@ describe('materializePiConnectedServiceRuntimeAuthSelection', () => {
         activeProfileId: 'profile-new',
         fallbackProfileId: 'profile-old',
         generation: 12,
+        credentialRevision: null,
         record: { profileId: 'profile-new' },
       },
     });

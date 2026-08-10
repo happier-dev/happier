@@ -1,4 +1,7 @@
-import type { AccountSettings } from '@happier-dev/protocol';
+import type {
+  AccountSettings,
+  ConnectedServiceCredentialRevisionV1,
+} from '@happier-dev/protocol';
 
 import type { ApiClient } from '@/api/api';
 import type { Credentials } from '@/persistence';
@@ -13,6 +16,7 @@ export type ConnectedServiceRuntimeAuthSelectionBase = Readonly<{
   activeProfileId?: string;
   fallbackProfileId?: string;
   generation?: number;
+  credentialRevision: ConnectedServiceCredentialRevisionV1 | null;
   record: unknown;
 }>;
 

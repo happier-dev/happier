@@ -8,6 +8,7 @@ import {
   accountSettingsParse,
   buildConnectedServiceCredentialRecord,
   type ConnectedServiceBindingsV1,
+  type ConnectedServiceCredentialRecordV1,
 } from '@happier-dev/protocol';
 
 import type { ApiClient } from '@/api/api';
@@ -26,6 +27,30 @@ const mockFetchSessionByIdCompat = vi.hoisted(() => vi.fn(async (): Promise<unkn
 vi.mock('@/session/transport/http/sessionsHttp', () => ({
   fetchSessionByIdCompat: mockFetchSessionByIdCompat,
 }));
+
+const CURRENT_CREDENTIAL_REVISION = 'csr_7123456789ABCDEFGHJKMNPQRS' as const;
+
+function currentGroupApi(input: Readonly<{
+  record: ConnectedServiceCredentialRecordV1;
+  activeProfileId: string;
+  generation: number;
+}>): ApiClient {
+  return {
+    getAccountEncryptionMode: vi.fn(async () => 'plain' as const),
+    getConnectedServiceCredentialPlain: vi.fn(async () => ({
+      content: { t: 'plain' as const, v: input.record },
+      revisionSemantics: 'revisioned' as const,
+      credentialRevision: CURRENT_CREDENTIAL_REVISION,
+    })),
+    getConnectedServiceCredentialSealed: vi.fn(async () => null),
+    getConnectedServiceAuthGroup: vi.fn(async () => ({
+      serviceId: 'claude-subscription' as const,
+      groupId: 'work',
+      activeProfileId: input.activeProfileId,
+      generation: input.generation,
+    })),
+  } as unknown as ApiClient;
+}
 
 describe('materializeClaudeConnectedServiceRuntimeAuthSelection', () => {
   const originalPlatformDescriptor = Object.getOwnPropertyDescriptor(process, 'platform');
@@ -181,7 +206,7 @@ describe('materializeClaudeConnectedServiceRuntimeAuthSelection', () => {
         token: 'token',
         encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
       } satisfies Credentials,
-      api: {} as ApiClient,
+      api: currentGroupApi({ record, activeProfileId: 'backup', generation: 3 }),
       activeServerDir,
       input: {
         mode: 'apply',
@@ -220,6 +245,7 @@ describe('materializeClaudeConnectedServiceRuntimeAuthSelection', () => {
         activeProfileId: 'backup',
         fallbackProfileId: 'fallback',
         generation: 3,
+        credentialRevision: CURRENT_CREDENTIAL_REVISION,
         record,
       },
       processEnv: { HOME: homeDir, CLAUDE_CONFIG_DIR: sourceClaudeConfigDir },
@@ -350,7 +376,7 @@ describe('materializeClaudeConnectedServiceRuntimeAuthSelection', () => {
         token: 'token',
         encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
       } satisfies Credentials,
-      api: {} as ApiClient,
+      api: currentGroupApi({ record, activeProfileId: 'backup', generation: 4 }),
       activeServerDir,
       input: {
         mode: 'apply',
@@ -389,6 +415,7 @@ describe('materializeClaudeConnectedServiceRuntimeAuthSelection', () => {
         activeProfileId: 'backup',
         fallbackProfileId: 'fallback',
         generation: 4,
+        credentialRevision: CURRENT_CREDENTIAL_REVISION,
         record,
       },
       processEnv: { HOME: homeDir, CLAUDE_CONFIG_DIR: sourceClaudeConfigDir },
@@ -532,7 +559,7 @@ describe('materializeClaudeConnectedServiceRuntimeAuthSelection', () => {
         token: 'token',
         encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
       } satisfies Credentials,
-      api: {} as ApiClient,
+      api: currentGroupApi({ record, activeProfileId: 'backup', generation: 4 }),
       activeServerDir,
       input,
       baseSelection: {
@@ -543,6 +570,7 @@ describe('materializeClaudeConnectedServiceRuntimeAuthSelection', () => {
         activeProfileId: 'backup',
         fallbackProfileId: 'fallback',
         generation: 4,
+        credentialRevision: CURRENT_CREDENTIAL_REVISION,
         record,
       },
       processEnv: { HOME: homeDir, CLAUDE_CONFIG_DIR: sourceClaudeConfigDir },
@@ -626,7 +654,7 @@ describe('materializeClaudeConnectedServiceRuntimeAuthSelection', () => {
         token: 'token',
         encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
       } satisfies Credentials,
-      api: {} as ApiClient,
+      api: currentGroupApi({ record, activeProfileId: 'setup', generation: 5 }),
       activeServerDir,
       input: {
         mode: 'preflight',
@@ -665,6 +693,7 @@ describe('materializeClaudeConnectedServiceRuntimeAuthSelection', () => {
         activeProfileId: 'setup',
         fallbackProfileId: 'fallback',
         generation: 5,
+        credentialRevision: CURRENT_CREDENTIAL_REVISION,
         record,
       },
       processEnv: { HOME: homeDir },
@@ -757,7 +786,7 @@ describe('materializeClaudeConnectedServiceRuntimeAuthSelection', () => {
         token: 'token',
         encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
       } satisfies Credentials,
-      api: {} as ApiClient,
+      api: currentGroupApi({ record, activeProfileId: 'backup', generation: 3 }),
       activeServerDir,
       input: {
         mode: 'apply',
@@ -796,6 +825,7 @@ describe('materializeClaudeConnectedServiceRuntimeAuthSelection', () => {
         activeProfileId: 'backup',
         fallbackProfileId: 'fallback',
         generation: 3,
+        credentialRevision: CURRENT_CREDENTIAL_REVISION,
         record,
       },
       accountSettings: accountSettingsParse({
@@ -912,7 +942,7 @@ describe('materializeClaudeConnectedServiceRuntimeAuthSelection', () => {
         token: 'token',
         encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
       } satisfies Credentials,
-      api: {} as ApiClient,
+      api: currentGroupApi({ record, activeProfileId: 'backup', generation: 3 }),
       activeServerDir,
       input: {
         mode: 'apply',
@@ -951,6 +981,7 @@ describe('materializeClaudeConnectedServiceRuntimeAuthSelection', () => {
         activeProfileId: 'backup',
         fallbackProfileId: 'fallback',
         generation: 3,
+        credentialRevision: CURRENT_CREDENTIAL_REVISION,
         record,
       },
       accountSettings: accountSettingsParse({
@@ -1077,7 +1108,7 @@ describe('materializeClaudeConnectedServiceRuntimeAuthSelection', () => {
           token: 'token',
           encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
         } satisfies Credentials,
-        api: {} as ApiClient,
+        api: currentGroupApi({ record, activeProfileId: 'backup', generation: 3 }),
         activeServerDir,
         input: {
         mode: 'apply',
@@ -1116,6 +1147,7 @@ describe('materializeClaudeConnectedServiceRuntimeAuthSelection', () => {
           activeProfileId: 'backup',
           fallbackProfileId: 'fallback',
           generation: 3,
+          credentialRevision: CURRENT_CREDENTIAL_REVISION,
           record,
         },
         processEnv: { HOME: homeDir, CLAUDE_CONFIG_DIR: sourceClaudeConfigDir },

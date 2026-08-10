@@ -65,6 +65,7 @@ describe('materializeCodexConnectedServiceRuntimeAuthSelection', () => {
       activeProfileId: 'target',
       fallbackProfileId: 'old',
       generation: 8,
+      credentialRevision: null,
       record: credential,
     } as const;
 

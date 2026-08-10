@@ -183,9 +183,7 @@ export const materializeClaudeConnectedServiceRuntimeAuthSelection: ConnectedSer
     ...(typeof params.baseSelection.activeProfileId === 'string' ? { activeProfileId: params.baseSelection.activeProfileId } : {}),
     ...(typeof params.baseSelection.fallbackProfileId === 'string' ? { fallbackProfileId: params.baseSelection.fallbackProfileId } : {}),
     ...(typeof params.baseSelection.generation === 'number' ? { generation: params.baseSelection.generation } : {}),
-    ...(params.input.expectedCredentialRevision
-      ? { credentialRevision: params.input.expectedCredentialRevision }
-      : {}),
+    credentialRevision: params.baseSelection.credentialRevision,
   });
   const sharedGroupRuntimeAuthSelection = buildPreflightRuntimeAuthSelection({
     activeServerDir,

@@ -100,6 +100,7 @@ describe('materializeOpenCodeConnectedServiceRuntimeAuthSelection', () => {
         serviceId: 'openai-codex',
         binding: { source: 'connected', selection: 'profile', profileId: 'next-profile' },
         profileId: 'next-profile',
+        credentialRevision: null,
         record: { profileId: 'next-profile' },
       },
       processEnv: {
@@ -159,6 +160,7 @@ describe('materializeOpenCodeConnectedServiceRuntimeAuthSelection', () => {
         activeProfileId: 'profile-new',
         fallbackProfileId: 'profile-old',
         generation: 12,
+        credentialRevision: null,
         record: { profileId: 'profile-new' },
       },
       processEnv: {

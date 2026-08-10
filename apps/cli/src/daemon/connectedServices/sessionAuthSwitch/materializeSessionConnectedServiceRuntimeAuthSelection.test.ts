@@ -581,6 +581,7 @@ describe('materializeSessionConnectedServiceRuntimeAuthSelection', () => {
   });
 
   it('refreshes the active member source and shared group config dir when refreshing the same active profile', async () => {
+    const credentialRevision = 'csr_6123456789ABCDEFGHJKMNPQRS' as const;
     const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-claude-session-runtime-selection-refresh-'));
     const activeMemberConfigDir = join(
       activeServerDir,
@@ -639,8 +640,18 @@ describe('materializeSessionConnectedServiceRuntimeAuthSelection', () => {
     });
     const api = {
       getAccountEncryptionMode: vi.fn(async () => 'plain' as const),
-      getConnectedServiceCredentialPlain: vi.fn(async () => ({ content: { t: 'plain' as const, v: record } })),
+      getConnectedServiceCredentialPlain: vi.fn(async () => ({
+        content: { t: 'plain' as const, v: record },
+        revisionSemantics: 'revisioned' as const,
+        credentialRevision,
+      })),
       getConnectedServiceCredentialSealed: vi.fn(async () => null),
+      getConnectedServiceAuthGroup: vi.fn(async () => ({
+        serviceId: 'claude-subscription' as const,
+        groupId: 'work',
+        activeProfileId: 'primary',
+        generation: 8,
+      })),
     };
     const credentials: Credentials = {
       token: 'token',
@@ -740,6 +751,7 @@ describe('materializeSessionConnectedServiceRuntimeAuthSelection', () => {
 
   it('uses Claude catalog runtime selection materializer for group switches', async () => {
     const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-claude-session-runtime-selection-server-'));
+    const credentialRevision = 'csr_7123456789ABCDEFGHJKMNPQRS' as const;
     const record = buildConnectedServiceCredentialRecord({
       now: 1_000,
       serviceId: 'claude-subscription',
@@ -758,8 +770,18 @@ describe('materializeSessionConnectedServiceRuntimeAuthSelection', () => {
     });
     const api = {
       getAccountEncryptionMode: vi.fn(async () => 'plain' as const),
-      getConnectedServiceCredentialPlain: vi.fn(async () => ({ content: { t: 'plain' as const, v: record } })),
+      getConnectedServiceCredentialPlain: vi.fn(async () => ({
+        content: { t: 'plain' as const, v: record },
+        revisionSemantics: 'revisioned' as const,
+        credentialRevision,
+      })),
       getConnectedServiceCredentialSealed: vi.fn(async () => null),
+      getConnectedServiceAuthGroup: vi.fn(async () => ({
+        serviceId: 'claude-subscription' as const,
+        groupId: 'work',
+        activeProfileId: 'backup',
+        generation: 9,
+      })),
     };
     const credentials: Credentials = {
       token: 'token',
@@ -838,6 +860,7 @@ describe('materializeSessionConnectedServiceRuntimeAuthSelection', () => {
     });
 
     const materializedEnv = (result as { targetMaterializedEnv?: Record<string, string> }).targetMaterializedEnv;
+    expect(result).toMatchObject({ credentialRevision });
     expect(materializedEnv).toEqual({
       CLAUDE_CONFIG_DIR: join(
         activeServerDir,
