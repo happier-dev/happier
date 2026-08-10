@@ -9,11 +9,28 @@ import { join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 
 const FULL_SHA = /^[a-f0-9]{40}$/;
-const DEFAULT_UPLOAD_ATTEMPTS = 4;
+const DEFAULT_UPLOAD_ATTEMPTS = 8;
 const DEFAULT_UPLOAD_RETRY_DELAY_MS = 5_000;
+const DEFAULT_UPLOAD_MAX_RETRY_DELAY_MS = 60_000;
 
 function fail(message) {
   throw new Error(message);
+}
+
+function readPositiveIntegerEnv(name, defaultValue) {
+  const raw = process.env[name];
+  if (raw === undefined || raw === '') return defaultValue;
+  const value = Number(raw);
+  if (!Number.isSafeInteger(value) || value < 1) fail(`${name} must be a positive integer.`);
+  return value;
+}
+
+function readNonNegativeIntegerEnv(name, defaultValue) {
+  const raw = process.env[name];
+  if (raw === undefined || raw === '') return defaultValue;
+  const value = Number(raw);
+  if (!Number.isSafeInteger(value) || value < 0) fail(`${name} must be a non-negative integer.`);
+  return value;
 }
 
 function parseBool(value, name) {
@@ -232,8 +249,15 @@ function uploadReleaseAssetWithRetry({
   name,
   sourcePath,
   env,
-  attempts = DEFAULT_UPLOAD_ATTEMPTS,
-  retryDelayMs = DEFAULT_UPLOAD_RETRY_DELAY_MS,
+  attempts = readPositiveIntegerEnv('HAPPIER_PIPELINE_GH_ROLLING_UPLOAD_ATTEMPTS', DEFAULT_UPLOAD_ATTEMPTS),
+  retryDelayMs = readNonNegativeIntegerEnv(
+    'HAPPIER_PIPELINE_GH_ROLLING_UPLOAD_RETRY_DELAY_MS',
+    DEFAULT_UPLOAD_RETRY_DELAY_MS,
+  ),
+  maxRetryDelayMs = readNonNegativeIntegerEnv(
+    'HAPPIER_PIPELINE_GH_ROLLING_UPLOAD_MAX_RETRY_DELAY_MS',
+    DEFAULT_UPLOAD_MAX_RETRY_DELAY_MS,
+  ),
   sleep = sleepSync,
 }) {
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
@@ -262,7 +286,7 @@ function uploadReleaseAssetWithRetry({
       throw uploadError;
     }
     const nextAttempt = attempt + 1;
-    const delayMs = retryDelayMs * (2 ** (attempt - 1));
+    const delayMs = Math.min(retryDelayMs * (2 ** (attempt - 1)), maxRetryDelayMs);
     console.warn(
       `[pipeline] GitHub asset upload connection failed; retrying ${name} `
       + `(${nextAttempt}/${attempts})`,
