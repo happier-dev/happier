@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
-import { resolveCodexQueuedPromptWithReplaySeed } from './resolveCodexQueuedPromptWithReplaySeed';
+import { resolveCodexQueuedPromptForDispatch } from './resolveCodexQueuedPromptForDispatch';
 
-describe('resolveCodexQueuedPromptWithReplaySeed', () => {
+describe('resolveCodexQueuedPromptForDispatch', () => {
   it('prefixes replaySeedV1 and consumes it (refreshing metadata once on first use)', async () => {
     const calls: string[] = [];
     let metadata: any = {};
@@ -26,7 +26,7 @@ describe('resolveCodexQueuedPromptWithReplaySeed', () => {
       },
     };
 
-    const res = await resolveCodexQueuedPromptWithReplaySeed({
+    const res = await resolveCodexQueuedPromptForDispatch({
       sessionClient: session,
       text: 'hello',
       localId: 'local-1',

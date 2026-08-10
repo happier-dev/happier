@@ -1224,6 +1224,44 @@ describe('registerSessionHandlers session controls', () => {
     }
   });
 
+  it('admits composer references against the submitted text at the request boundary', async () => {
+    // The protocol sanitizer parses metadata independently of the message it accompanies, so
+    // the `text.slice(start, end) === token` half of the range contract can only be enforced
+    // where both are in hand — this handler. Without the text the whole check is inert, so the
+    // wiring itself is the contract being asserted here, not just the protocol helper.
+    const { handlers, registrar } = createRegistrar();
+    const handleUserMessage = vi.fn(async () => ({ handled: false as const }));
+
+    registerSessionHandlers(registrar, process.cwd(), {
+      enqueueSessionUserMessage: vi.fn(async () => {}),
+      sessionRuntimeControls: {
+        handleUserMessage,
+      },
+    });
+
+    await expect(handlers.get(SESSION_RPC_METHODS.SESSION_USER_MESSAGE_SEND)?.({
+      text: 'see @src/a.ts and @src/b.ts',
+      meta: {
+        happierStructuredInputV1: {
+          v: 1,
+          mentions: [
+            { kind: 'happier.file', ref: 'file:src/a.ts', token: '@src/a.ts', start: 4, end: 13 },
+            // Stale range: the token at [18, 27) is `@src/b.ts`, not `@src/z.ts`.
+            { kind: 'happier.file', ref: 'file:src/z.ts', token: '@src/z.ts', start: 18, end: 27 },
+          ],
+        },
+      },
+    })).resolves.toEqual({ ok: true });
+
+    expect(handleUserMessage).toHaveBeenCalledWith(expect.objectContaining({
+      meta: expect.objectContaining({
+        happierStructuredInputV1: expect.objectContaining({
+          mentions: [expect.objectContaining({ ref: 'file:src/a.ts' })],
+        }),
+      }),
+    }));
+  });
+
   it('drops forged upload-shaped local image metadata before runtime message controls', async () => {
     const { handlers, registrar } = createRegistrar();
     const handleUserMessage = vi.fn(async () => ({ handled: false as const }));

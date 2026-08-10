@@ -2,7 +2,7 @@ import type { AgentState, Metadata, PermissionMode, UserMessage } from '@/api/ty
 
 import { pushMessageToQueueWithSpecialCommands, type SpecialCommandQueue } from '@/agent/runtime/queueSpecialCommands';
 import { resolveAppendSystemPromptModeOverride } from '@/agent/runtime/permission/appendSystemPromptField';
-import { resolveProviderPromptWithReplaySeed } from '@/agent/runtime/replaySeed/replaySeedV1';
+import { resolveProviderPromptForDispatch } from '@/agent/runtime/prompt/resolveProviderPromptForDispatch';
 import { isNonSteerablePromptPayload } from '@/cli/parsers/specialCommands';
 
 import { resolvePermissionModeUpdatedAtFromMessage } from './permissionModeCanonical';
@@ -226,7 +226,14 @@ export function registerPermissionModeMessageQueueBinding(opts: {
           if (typeof session.getMetadataSnapshot === 'function') {
             try {
               if (!isCurrentBinding(session, messageBindingGeneration)) return;
-              const seedResolution = await resolveProviderPromptWithReplaySeed({
+              // ACP steer carries no metadata to the PROVIDER, so the resolved meta below is
+              // discarded — but the message's own metadata is still handed in, because the
+              // session-reference projection is TEXT and must be identical on send and steer
+              // (D-21). No catalog readers are supplied, so this costs no RPC and cannot
+              // reject: skill/vendor provider context is a meta projection no ACP backend
+              // reads. It routes through the one prompt-finalization owner (D-21a) rather
+              // than calling the replay seed directly.
+              const seedResolution = await resolveProviderPromptForDispatch({
                 session: {
                   getMetadataSnapshot: () =>
                     isCurrentBinding(session, messageBindingGeneration) ? session.getMetadataSnapshot?.() : {},
@@ -252,6 +259,7 @@ export function registerPermissionModeMessageQueueBinding(opts: {
                 localId: deliveryIdentity.localId,
                 nowMs: Date.now(),
                 refreshMetadataBeforeRead: !didReplaySeedBootstrapForSteer,
+                ...(message.meta ? { meta: message.meta } : {}),
               });
               if (!isCurrentBinding(session, messageBindingGeneration)) return;
               didReplaySeedBootstrapForSteer = true;

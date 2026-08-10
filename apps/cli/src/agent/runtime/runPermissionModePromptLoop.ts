@@ -11,9 +11,7 @@ import { waitForNextPermissionModeMessage } from '@/agent/runtime/waitForNextPer
 import type { SessionProviderInputConsumer } from '@/agent/runtime/sessionInput/types';
 import type { MessageBuffer } from '@/ui/ink/messageBuffer';
 import type { PermissionModeQueuedPrompt } from '@/agent/runtime/permission/permissionModeQueuedPrompt';
-import {
-  resolveProviderPromptWithReplaySeed,
-} from '@/agent/runtime/replaySeed/replaySeedV1';
+import { resolveProviderPromptForDispatch } from '@/agent/runtime/prompt/resolveProviderPromptForDispatch';
 import { normalizePendingDeliveryLocalIds } from '@/agent/runtime/session/pendingDelivery/undeliverableProviderPrompt';
 import { isAbortLikeError } from '@/agent/executionRuns/runtime/turnDelivery';
 import { configuration } from '@/configuration';
@@ -31,6 +29,9 @@ type PromptRuntime = {
   drainPendingAfterStartOrLoad?: () => Promise<void>;
   sendPrompt: (message: string) => Promise<void>;
   sendPromptWithMeta?: (params: ProviderPromptWithMeta) => Promise<void>;
+  // Read at dispatch to reconstruct provider context for composer references (INV-9).
+  listVendorPlugins?: () => Promise<unknown>;
+  listSkills?: () => Promise<unknown>;
   compactContext?: (command: string) => Promise<void>;
   failTurn?: (error: unknown) => void | boolean | Promise<void | boolean>;
   flushTurn: () => void | Promise<void>;
@@ -459,14 +460,24 @@ export async function runPermissionModePromptLoop(opts: {
       }
 
       const nowMs = Date.now();
-      const seedResolution = await resolveProviderPromptWithReplaySeed({
+      const seedResolution = await resolveProviderPromptForDispatch({
         session: opts.session,
         userText: message.message.text,
         allowSeed: special.type === null,
         localId,
         nowMs,
         refreshMetadataBeforeRead: false,
+        meta: message.message.meta,
+        catalogs: {
+          ...(typeof opts.runtime.listSkills === 'function'
+            ? { listSkills: () => opts.runtime.listSkills!() }
+            : {}),
+          ...(typeof opts.runtime.listVendorPlugins === 'function'
+            ? { listVendorPlugins: () => opts.runtime.listVendorPlugins!() }
+            : {}),
+        },
       });
+      const dispatchMeta = seedResolution.meta;
       if (opts.shouldExit()) {
         shouldSendReady = false;
         break;
@@ -506,7 +517,7 @@ export async function runPermissionModePromptLoop(opts: {
           await opts.runtime.sendPromptWithMeta({
             text: providerPrompt,
             localId,
-            ...(message.message.meta ? { meta: message.message.meta } : {}),
+            ...(dispatchMeta ? { meta: dispatchMeta as Record<string, unknown> } : {}),
             onProviderPromptAccepted: confirmProviderAccepted,
           });
           confirmProviderAccepted();

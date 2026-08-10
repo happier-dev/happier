@@ -118,9 +118,13 @@ vi.mock('@/session/transport/rpc/sessionRpc', () => ({
 
 import { createCliActionExecutor } from './createCliActionExecutor';
 import {
+  MENTION_KIND_V1,
   accountSettingsParse,
+  buildMentionRefForKindV1,
   deriveBoxPublicKeyFromSeed,
   encodeBase64,
+  getActionSpec,
+  readMentionRefOpaqueForKindV1,
   sealEncryptedDataKeyEnvelopeV1,
 } from '@happier-dev/protocol';
 import { createPendingFirstInput } from '@/daemon/spawn/pendingFirstInput';
@@ -1853,6 +1857,40 @@ describe('createCliActionExecutor', () => {
       message: 'Hello',
       wait: false,
       timeoutMs: 10_000,
+    }));
+  });
+
+  it('delivers a composer session reference to the referenced session from a session agent (D-21)', async () => {
+    // The deterministic half of EU-7's completion gate. A real-model run *choosing* to call the
+    // tool is product QA, not this: a model may validly decline. What must be provable is that
+    // the id the reference carries is reachable and lands on that session, under the policy the
+    // reference block tells the agent about.
+    const referencedSessionId = readMentionRefOpaqueForKindV1(
+      MENTION_KIND_V1.session,
+      buildMentionRefForKindV1(MENTION_KIND_V1.session, 'sess-referenced'),
+    );
+    expect(referencedSessionId).toBe('sess-referenced');
+
+    const spec = getActionSpec('session.message.send');
+    expect(spec.surfaces.session_agent).toBe(true);
+    expect(spec.bindings?.mcpToolName).toBe('session_message_send');
+
+    allowSessionAgentActions('session.message.send');
+    const executor = createPlainExecutor();
+    sendSessionMessage.mockResolvedValue({
+      ok: true, sessionId: 'sess-referenced', localId: 'local-9', waited: false,
+    });
+
+    const result = await executor.execute(
+      'session.message.send',
+      { sessionId: referencedSessionId!, message: 'Ping from the referencing session' },
+      { surface: 'session_agent', defaultSessionId: 'sess-1' },
+    );
+
+    expect(result).toMatchObject({ ok: true });
+    expect(sendSessionMessage).toHaveBeenCalledWith(expect.objectContaining({
+      idOrPrefix: 'sess-referenced',
+      message: 'Ping from the referencing session',
     }));
   });
 

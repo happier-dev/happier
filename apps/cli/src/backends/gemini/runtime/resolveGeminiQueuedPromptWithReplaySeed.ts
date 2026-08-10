@@ -1,4 +1,4 @@
-import { resolveProviderPromptWithReplaySeed } from '@/agent/runtime/replaySeed/replaySeedV1';
+import { resolveProviderPromptForDispatch } from '@/agent/runtime/prompt/resolveProviderPromptForDispatch';
 
 export async function resolveGeminiQueuedPromptWithReplaySeed(params: Readonly<{
   sessionClient: {
@@ -11,7 +11,9 @@ export async function resolveGeminiQueuedPromptWithReplaySeed(params: Readonly<{
   replaySeedAllowed: boolean;
   didBootstrap: boolean;
 }>): Promise<{ text: string; didBootstrap: boolean }> {
-  const resolution = await resolveProviderPromptWithReplaySeed({
+  // Gemini has no structured-input consumer, but prompt finalization has exactly one owner
+  // (D-21a): no second module may turn a queued message into a provider prompt.
+  const resolution = await resolveProviderPromptForDispatch({
     session: params.sessionClient,
     userText: params.text,
     allowSeed: params.replaySeedAllowed,

@@ -183,6 +183,51 @@ describe('turnInput', () => {
         ]);
     });
 
+    it('emits exactly one item per reference when an envelope carries both shapes (D-4)', () => {
+        // A dual-written envelope repeats each reference in `mentions[]` and in the legacy
+        // per-kind array, and the meta-root alias repeats it a third time. Before the
+        // canonical reader the concatenation forwarded every copy.
+        expect(buildCodexAppServerTurnInput({
+            text: 'Use @notion and $docs',
+            metadata: {
+                happierStructuredInputV1: {
+                    mentions: [
+                        {
+                            kind: 'happier.vendorPlugin',
+                            ref: 'vendorPlugin:plugin://notion@openai-curated',
+                            token: '@notion',
+                            start: 4,
+                            end: 11,
+                        },
+                        { kind: 'happier.skill', ref: 'skill:vendor:codex:docs', token: '$docs', start: 16, end: 21 },
+                    ],
+                    vendorPluginMentions: [
+                        { vendorPluginRef: 'plugin://notion@openai-curated', label: 'Notion' },
+                    ],
+                    skillMentions: [{ name: 'docs', path: '/skills/docs/SKILL.md' }],
+                },
+                happierSkillMentions: [{ name: 'docs', path: '/skills/docs/SKILL.md' }],
+            },
+        })).toEqual([{ type: 'text', text: 'Use @notion and $docs' }]);
+    });
+
+    it('does not duplicate a mention repeated in the envelope and the meta-root alias', () => {
+        // SB-5: the alias fold used to be a bare `.concat()` with no dedupe, so a message
+        // carrying both historical shapes reached Codex twice.
+        expect(buildCodexAppServerTurnInput({
+            text: 'Use $docs',
+            metadata: {
+                happierStructuredInputV1: {
+                    skillMentions: [{ name: 'docs', path: '/skills/docs/SKILL.md' }],
+                },
+                happierSkillMentions: [{ name: 'docs', path: '/skills/docs/SKILL.md' }],
+            },
+        })).toEqual([
+            { type: 'text', text: 'Use $docs' },
+            { type: 'skill', name: 'docs', path: '/skills/docs/SKILL.md' },
+        ]);
+    });
+
     it('keeps non-image attachments out of structured app-server image input', () => {
         expect(buildCodexAppServerTurnInput({
             text: 'see attachment',

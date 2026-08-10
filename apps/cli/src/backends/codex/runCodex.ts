@@ -131,7 +131,8 @@ import {
 } from './runtime/mcpMessageHandler';
 import { createCodexRequestUserInputBridge } from './runtime/codexRequestUserInputBridge';
 import { runCodexLocalModePass } from './runtime/localModePass';
-import { resolveCodexQueuedPromptWithReplaySeed } from './runtime/resolveCodexQueuedPromptWithReplaySeed';
+import { resolveCodexQueuedPromptForDispatch } from './runtime/resolveCodexQueuedPromptForDispatch';
+import type { StructuredInputCatalogReaders } from '@/agent/runtime/prompt/resolveStructuredInputProviderContext';
 import { cleanupCodexRunResources } from './runtime/cleanupRunResources';
 import { resolveTerminationArchiveDecision } from '@/agent/runtime/terminationArchivePolicy';
 import {
@@ -951,6 +952,15 @@ export async function runCodex(opts: {
     const getCodexRemoteRuntime = (): CodexRemoteRuntime | null => {
         return codexAcpRuntime ?? codexAppServerRuntime;
     };
+    /**
+     * The live session catalogs the send-time resolver reads to reconstruct provider context
+     * (INV-9). They are read lazily per dispatch — the resolver calls them only when the
+     * message actually carries composer references, so an ordinary message costs no RPC.
+     */
+    const codexDispatchCatalogReaders = (): StructuredInputCatalogReaders => ({
+        listSkills: async () => await getCodexRemoteRuntime()?.listSkills?.(),
+        listVendorPlugins: async () => await getCodexRemoteRuntime()?.listVendorPlugins?.(),
+    });
     const resolvePendingForegroundSteerability = () => {
         const configuredSteerability = resolveSessionPendingForegroundSteerability(
             opts.accountSettingsContext?.settings ?? null,
@@ -1092,6 +1102,7 @@ export async function runCodex(opts: {
             messageBuffer.addMessage(text, 'user');
             await (async () => {
                 let providerPromptText = text;
+                let providerPromptMetadata: unknown = message.meta;
                 let permissionHandlerApplyGenerationForSteer: number | null = null;
                 const resolvedMode: EnhancedMode = {
                     ...enhancedMode,
@@ -1104,15 +1115,18 @@ export async function runCodex(opts: {
                         return;
                     }
                     const localIds = normalizeProviderPromptLocalIds([message.localId ?? null]);
-                    const replaySeedResolution = await resolveCodexQueuedPromptWithReplaySeed({
+                    const dispatchResolution = await resolveCodexQueuedPromptForDispatch({
                         sessionClient: session,
                         text,
                         localId: message.localId ?? null,
                         replaySeedAllowed: special.type === null,
                         didBootstrap: didReplaySeedBootstrap,
+                        metadata: message.meta,
+                        catalogs: codexDispatchCatalogReaders(),
                     });
-                    didReplaySeedBootstrap = replaySeedResolution.didBootstrap;
-                    providerPromptText = replaySeedResolution.text;
+                    didReplaySeedBootstrap = dispatchResolution.didBootstrap;
+                    providerPromptText = dispatchResolution.text;
+                    providerPromptMetadata = dispatchResolution.metadata;
                     permissionHandlerApplyGenerationForSteer = didChangePermissionMode
                         ? applyPermissionModeToActiveCodexPermissionHandler({
                             permissionMode: resolvedMode.permissionMode,
@@ -1122,7 +1136,7 @@ export async function runCodex(opts: {
                     await dispatchProviderInputOrThrow(async () => {
                         await runtime.steerPrompt(providerPromptText, {
                             ...providerPromptIdentityOption(localIds),
-                            metadata: message.meta,
+                            metadata: providerPromptMetadata,
                             userMessageSeq,
                         });
                     });
@@ -2323,20 +2337,27 @@ export async function runCodex(opts: {
                 const startSeqExclusive = session.getLastObservedMessageSeq();
                 const turnToken = session.beginTurnAssistantTextSnapshot({ startSeqExclusive });
                 readyTurnContext = { turnToken, startSeqExclusive };
-                let resolvedProviderPromptText: string | null = null;
-                const resolveProviderPromptText = async (): Promise<string> => {
-                    if (resolvedProviderPromptText !== null) return resolvedProviderPromptText;
-                    const replaySeedResolution = await resolveCodexQueuedPromptWithReplaySeed({
+                let resolvedProviderDispatch: Readonly<{ text: string; metadata: unknown }> | null = null;
+                // Prompt finalization runs once per queued message and owns BOTH the provider
+                // prompt text and the dispatch metadata: every Codex send/steer below reads
+                // `metadata` from here, never from `message.mode.promptMetadata` directly, so
+                // composer references cannot reach `turnInput.ts` unresolved (R-10).
+                const resolveProviderDispatch = async (): Promise<Readonly<{ text: string; metadata: unknown }>> => {
+                    if (resolvedProviderDispatch !== null) return resolvedProviderDispatch;
+                    const dispatchResolution = await resolveCodexQueuedPromptForDispatch({
                         sessionClient: session,
                         text: message.message,
                         localId,
                         replaySeedAllowed: specialCommand.type === null && !message.mode.providerPromptAlreadyResolved,
                         didBootstrap: didReplaySeedBootstrap,
+                        metadata: message.mode.promptMetadata,
+                        catalogs: codexDispatchCatalogReaders(),
                     });
-                    didReplaySeedBootstrap = replaySeedResolution.didBootstrap;
-                    resolvedProviderPromptText = replaySeedResolution.text;
-                    return resolvedProviderPromptText;
+                    didReplaySeedBootstrap = dispatchResolution.didBootstrap;
+                    resolvedProviderDispatch = { text: dispatchResolution.text, metadata: dispatchResolution.metadata };
+                    return resolvedProviderDispatch;
                 };
+                const resolveProviderPromptText = async (): Promise<string> => (await resolveProviderDispatch()).text;
 
                 if (useCodexAcp || useCodexAppServer) {
                     shouldBlockProviderDeliveryOnTurnFailure = localIds.length > 0;
@@ -2351,13 +2372,13 @@ export async function runCodex(opts: {
                         if (shouldLogAcpDebug) {
                             logger.debug('[CodexAppServer] steerPrompt begin for queued message while turn is in flight');
                         }
-                        const providerPromptText = await resolveProviderPromptText();
+                        const providerDispatch = await resolveProviderDispatch();
                         try {
                             didAttemptProviderSend = true;
                             await dispatchProviderInputOrThrow(async () => {
-                                await codexRuntime.steerPrompt(providerPromptText, {
+                                await codexRuntime.steerPrompt(providerDispatch.text, {
                                     ...providerPromptIdentityOption(localIds),
-                                    metadata: message.mode.promptMetadata,
+                                    metadata: providerDispatch.metadata,
                                     userMessageSeq: message.maxUserMessageSeq ?? null,
                                 });
                             });
@@ -2562,9 +2583,9 @@ export async function runCodex(opts: {
                             resolveAppendSystemPromptBaseOverride(message.mode),
                         )
                         : undefined;
-                    const providerPromptText = await resolveProviderPromptText();
+                    const providerDispatch = await resolveProviderDispatch();
                     const promptForProvider = buildCodexAcpPromptForFreshSession({
-                        prompt: providerPromptText,
+                        prompt: providerDispatch.text,
                         startedFreshSession: startedFreshSessionForTurn,
                         systemPromptText,
                     });
@@ -2577,7 +2598,7 @@ export async function runCodex(opts: {
                         : message.mode.model ?? null;
                     const promptOptions = {
                         ...providerPromptIdentityOption(localIds),
-                        metadata: message.mode.promptMetadata,
+                        metadata: providerDispatch.metadata,
                         userMessageSeq: message.maxUserMessageSeq ?? null,
                         appliedModelId: appliedModelIdForPrompt,
                     };
@@ -2587,8 +2608,8 @@ export async function runCodex(opts: {
                                 await codexRuntime.sendPromptWithMeta({
                                     text: promptForProvider,
                                     localId,
-                                    meta: typeof message.mode.promptMetadata === 'object' && message.mode.promptMetadata !== null
-                                        ? message.mode.promptMetadata as Record<string, unknown>
+                                    meta: typeof providerDispatch.metadata === 'object' && providerDispatch.metadata !== null
+                                        ? providerDispatch.metadata as Record<string, unknown>
                                         : undefined,
                                     onProviderPromptAccepted: () => {
                                         confirmProviderAcceptedPrompt(message, appliedModelIdForPrompt);

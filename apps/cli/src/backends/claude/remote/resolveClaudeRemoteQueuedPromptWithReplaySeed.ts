@@ -1,4 +1,4 @@
-import { resolveProviderPromptWithReplaySeed } from '@/agent/runtime/replaySeed/replaySeedV1';
+import { resolveProviderPromptForDispatch } from '@/agent/runtime/prompt/resolveProviderPromptForDispatch';
 import type { EnhancedMode } from '@/backends/claude/loop';
 
 export async function resolveClaudeRemoteQueuedPromptWithReplaySeed(params: Readonly<{
@@ -13,7 +13,9 @@ export async function resolveClaudeRemoteQueuedPromptWithReplaySeed(params: Read
   }>;
   didBootstrap: boolean;
 }>): Promise<{ message: string; didBootstrap: boolean }> {
-  const resolution = await resolveProviderPromptWithReplaySeed({
+  // Claude has no structured-input consumer, but prompt finalization has exactly one owner
+  // (D-21a): no second module may turn a queued message into a provider prompt.
+  const resolution = await resolveProviderPromptForDispatch({
     session: params.sessionClient,
     userText: params.batch.message,
     allowSeed: params.batch.mode.replaySeedAllowed !== false,

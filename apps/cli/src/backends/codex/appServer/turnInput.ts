@@ -1,4 +1,8 @@
-import { sanitizeSessionUserMessageSendMeta } from '@happier-dev/protocol';
+import {
+    readHappierStructuredInputV1FromMeta,
+    readStructuredInputMentionSourcesV1,
+    type HappierStructuredInputV1Envelope,
+} from '@happier-dev/protocol';
 
 type MetadataRecord = Record<string, unknown>;
 
@@ -23,10 +27,6 @@ function readString(value: unknown): string | null {
     return trimmed.length > 0 ? trimmed : null;
 }
 
-function readStructuredEnvelope(metadata: MetadataRecord | null): MetadataRecord | null {
-    return asRecord(metadata?.happierStructuredInputV1);
-}
-
 function normalizeAttachmentPath(value: unknown): string | null {
     const path = readString(value);
     return path ? path.replace(/[\\]+/g, '/') : null;
@@ -45,18 +45,7 @@ function collectTrustedLocalImagePaths(
     return trusted.size > 0 ? trusted : undefined;
 }
 
-function readVendorPluginMentions(metadata: MetadataRecord | null): MetadataRecord[] {
-    const envelope = readStructuredEnvelope(metadata);
-    return asRecordArray(envelope?.vendorPluginMentions).concat(asRecordArray(metadata?.happierVendorPluginMentions));
-}
-
-function readSkillMentions(metadata: MetadataRecord | null): MetadataRecord[] {
-    const envelope = readStructuredEnvelope(metadata);
-    return asRecordArray(envelope?.skillMentions).concat(asRecordArray(metadata?.happierSkillMentions));
-}
-
-function readAttachmentInputs(metadata: MetadataRecord | null): CodexAppServerTurnInputItem[] {
-    const envelope = readStructuredEnvelope(metadata);
+function readAttachmentInputs(envelope: HappierStructuredInputV1Envelope | null): CodexAppServerTurnInputItem[] {
     const attachments = asRecordArray(envelope?.imageInputs).concat(asRecordArray(envelope?.attachments));
     const items: CodexAppServerTurnInputItem[] = [];
     for (const attachment of attachments) {
@@ -85,14 +74,21 @@ export function buildCodexAppServerTurnInput(params: Readonly<{
 }>): CodexAppServerTurnInputItem[] {
     const metadataRecord = asRecord(params.metadata);
     const trustedLocalImagePaths = collectTrustedLocalImagePaths(metadataRecord, params.trustedLocalImagePaths);
-    const metadata = metadataRecord
-        ? sanitizeSessionUserMessageSendMeta(metadataRecord, {
+    // The canonical meta reader owns envelope sanitization and the meta-root alias fold
+    // (SB-9). It replaces this module's own re-read plus the `.concat()` that had no dedupe.
+    const envelope = metadataRecord
+        ? readHappierStructuredInputV1FromMeta(metadataRecord, {
             allowedLocalImagePaths: trustedLocalImagePaths,
         })
         : null;
+    // D-4: `mentions[]` is the authoritative reference enumeration when present, so a
+    // dual-written envelope can never produce a second turn item for the same reference.
+    // The host resolver reconstructs provider context into the per-kind arrays before
+    // dispatch (D-3/INV-9); an unresolved `mentions[]` contributes no native item here.
+    const mentionSources = readStructuredInputMentionSourcesV1(envelope);
     const input: CodexAppServerTurnInputItem[] = [{ type: 'text', text: params.text }];
 
-    for (const mention of readVendorPluginMentions(metadata)) {
+    for (const mention of mentionSources.vendorPluginMentions) {
         const path = readString(mention.vendorPluginRef ?? mention.mentionPath ?? mention.path);
         if (!path) continue;
         input.push({
@@ -102,13 +98,13 @@ export function buildCodexAppServerTurnInput(params: Readonly<{
         });
     }
 
-    for (const skill of readSkillMentions(metadata)) {
+    for (const skill of mentionSources.skillMentions) {
         const path = readString(skill.path);
         const name = readString(skill.name ?? skill.displayName);
         if (!path || !name) continue;
         input.push({ type: 'skill', name, path });
     }
 
-    input.push(...readAttachmentInputs(metadata));
+    input.push(...readAttachmentInputs(envelope));
     return input;
 }

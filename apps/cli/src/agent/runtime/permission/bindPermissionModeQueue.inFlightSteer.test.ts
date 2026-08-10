@@ -375,6 +375,52 @@ describe('registerPermissionModeMessageQueueBinding (in-flight steer)', () => {
     expect(finalMeta?.replaySeedV1?.appliedToLocalId).toBe('local-1');
   });
 
+  it('carries the session-reference block on the steered text, not only on send (D-21)', async () => {
+    // The seam, not the block: this path hands `message.meta` to the prompt-finalization owner.
+    // Without that, `@session` would work on send and silently vanish on an in-flight steer —
+    // the exact asymmetry D-21's "identically on send and steer" exists to forbid.
+    const { session, emitUserMessage } = createSessionHarness();
+    const { queue, spyPush } = createQueue();
+    const steerText = vi.fn(async (_text: string) => {});
+
+    registerPermissionModeMessageQueueBinding({
+      session: session as any,
+      queue,
+      getCurrentPermissionMode: () => 'default',
+      setCurrentPermissionMode: () => {},
+      inFlightSteer: {
+        isTurnInFlight: () => true,
+        supportsInFlightSteer: () => true,
+        steerText,
+      },
+    } as any);
+
+    emitUserMessage({
+      content: { text: 'compare with @session:peer-abc123' },
+      localId: 'local-1',
+      meta: {
+        happierStructuredInputV1: {
+          v: 1,
+          mentions: [{
+            kind: 'happier.session',
+            ref: 'session:sess-referenced',
+            token: '@session:peer-abc123',
+            start: 13,
+            end: 33,
+          }],
+        },
+      },
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    const steered = steerText.mock.calls[0]?.[0] as unknown as string;
+    expect(steered).toContain('compare with @session:peer-abc123');
+    expect(steered).toContain('<happier_session_reference>');
+    expect(steered).toContain('sess-referenced');
+    expect(spyPush).not.toHaveBeenCalled();
+  });
+
   it('falls back to queueing when steering fails', async () => {
     const { session, emitUserMessage } = createSessionHarness();
     const { queue, spyPush } = createQueue();
@@ -520,13 +566,20 @@ describe('registerPermissionModeMessageQueueBinding (in-flight steer)', () => {
     emitUserMessage({ content: { text: 'first' }, meta: {} });
     emitUserMessage({ content: { text: 'second' }, meta: {} });
 
-    // Allow the async steer tasks to start.
-    await Promise.resolve();
+    // Drain the microtask queue rather than counting a fixed number of ticks: prompt
+    // finalization sits between the emit and `steerText`, so a tick budget silently
+    // measures ZERO steers in flight and would pass even if serialization were removed.
+    await waitForSteerWork();
+    // The first steer is parked on `firstGate`, so a serialized implementation has
+    // exactly one in flight and the second has not started.
+    expect(maxInFlight).toBe(1);
+    expect(steerText).toHaveBeenCalledTimes(1);
 
     resolveFirstGate();
-    await Promise.resolve();
-    await Promise.resolve();
+    await waitForSteerWork();
+    await waitForSteerWork();
 
+    expect(steerText).toHaveBeenCalledTimes(2);
     expect(maxInFlight).toBe(1);
     expect(spyPush).not.toHaveBeenCalled();
   });

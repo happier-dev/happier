@@ -69,8 +69,11 @@ export function registerSessionUserMessageSendHandler(
       cwd: opts.workingDirectory,
       metadata: rawMetaRecord,
     });
+    // `text` composes the range half of the mention contract with admission: a reference
+    // whose range does not describe its own token in the submitted text is rejected here.
     const meta = sanitizeSessionUserMessageSendMeta(rawMetaRecord, {
       allowedLocalImagePaths,
+      text: parsed.data.text,
     });
     const suppliedLocalId = parsed.data.localId;
     const localId = suppliedLocalId === undefined
