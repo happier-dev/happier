@@ -156,6 +156,24 @@ describe('generateHookPluginDir', () => {
     expect(parsed.hooks?.PermissionDenied).toBeUndefined();
   });
 
+  it('builds Windows lifecycle and permission hook commands as PowerShell invocations', () => {
+    const pluginDir = generateHookPluginDir(43123, {
+      enableLocalPermissionBridge: true,
+      permissionHookSecret: 'windows-hook-secret',
+      platform: 'win32',
+    });
+
+    expect(pluginDir).toBeTruthy();
+    createdPluginDirs.push(pluginDir!);
+    const parsed = JSON.parse(readFileSync(join(pluginDir!, 'hooks', 'hooks.json'), 'utf8')) as any;
+    for (const hookName of ['SessionStart', 'UserPromptSubmit', 'Stop', 'PermissionRequest', 'PreToolUse']) {
+      const command = parsed.hooks?.[hookName]?.[0]?.hooks?.[0]?.command as string;
+      expect(command).toMatch(/^&\s+'[^']+'\s+'[^']+'\s+'43123'/);
+      expect(command).toContain(`'${hookName}'`);
+      expect(command).toContain("'--secret-file'");
+    }
+  });
+
   it('writes the Claude plugin manifest required for --plugin-dir loading', () => {
     const pluginDir = generateHookPluginDir(43132);
     expect(pluginDir).toBeTruthy();

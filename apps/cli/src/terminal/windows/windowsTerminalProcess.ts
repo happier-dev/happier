@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
 
 import { isAllowedExactEnvKey } from '@/utils/env/isAllowedExactEnvKey';
+import { toPowerShellStringLiteral } from '@/utils/powerShellCommand';
 
 type PowerShellInvocation = {
   command: string;
@@ -18,14 +19,6 @@ const WINDOWS_TERMINAL_HOST_ENV_KEYS = new Set([
   'PATHEXT',
   'ComSpec',
 ]);
-
-function escapePowerShellSingleQuoted(value: string): string {
-  return value.replaceAll("'", "''");
-}
-
-function toPowerShellStringLiteral(value: string): string {
-  return `'${escapePowerShellSingleQuoted(value)}'`;
-}
 
 function quoteWindowsProcessArgument(value: string): string {
   if (value.length > 0 && !/[\s"]/.test(value)) return value;

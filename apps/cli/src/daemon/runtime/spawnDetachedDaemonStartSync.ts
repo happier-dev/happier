@@ -4,18 +4,11 @@ import { randomUUID } from 'node:crypto';
 import { getReleaseRingCatalogEntry } from '@happier-dev/release-runtime/releaseRings';
 import { configuration } from '@/configuration';
 import type { DaemonStartupSource } from '@/daemon/ownership/daemonOwnershipMetadata';
+import { toPowerShellStringLiteral } from '@/utils/powerShellCommand';
 import {
   parsePowerShellStartProcessPid,
 } from '@/daemon/platform/windows/visibleConsoleSpawn';
 import { resolveDaemonLaunchSpec } from './resolveDaemonLaunchSpec';
-
-function escapePowerShellSingleQuoted(value: string): string {
-  return value.replaceAll("'", "''");
-}
-
-function toPowerShellStringLiteral(value: string): string {
-  return `'${escapePowerShellSingleQuoted(value)}'`;
-}
 
 function shouldForwardDetachedDaemonEnvKey(key: string): boolean {
   const normalized = String(key ?? '').trim();

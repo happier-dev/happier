@@ -1,16 +1,9 @@
+import { toPowerShellStringLiteral } from '@/utils/powerShellCommand';
+
 type PowerShellInvocation = {
   command: string;
   args: string[];
 };
-
-function escapePowerShellSingleQuoted(value: string): string {
-  // In single-quoted PowerShell strings, literal single-quote is represented by two single-quotes.
-  return value.replaceAll("'", "''");
-}
-
-function toPowerShellStringLiteral(value: string): string {
-  return `'${escapePowerShellSingleQuoted(value)}'`;
-}
 
 export function buildPowerShellStartProcessInvocation(params: {
   filePath: string;

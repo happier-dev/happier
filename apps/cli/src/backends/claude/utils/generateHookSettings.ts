@@ -36,6 +36,7 @@ import { isBun } from '@/utils/runtime';
 import { resolveCliRuntimeAssetPath } from '@/runtime/assets/resolveCliRuntimeAssetPath';
 import { resolveReleaseRingScopedBasename } from '@/cli/runtime/publicReleaseChannel';
 import { writeJsonAtomicSync } from '@/utils/fs/writeJsonAtomicSync';
+import { buildPowerShellCommand } from '@/utils/powerShellCommand';
 import { resolveClaudePermissionHookTimeoutSeconds } from './permissionHookTimeout';
 
 export { DEFAULT_PERMISSION_HOOK_TIMEOUT_SECONDS } from './permissionHookTimeout';
@@ -63,6 +64,8 @@ export interface GenerateHookSettingsOptions {
      * false success.
      */
     permissionHookTimeoutSeconds?: number;
+    /** Testable shell-dialect boundary; production defaults to the current platform. */
+    platform?: NodeJS.Platform;
 }
 
 type ClaudeSettingsOverlay = Readonly<{
@@ -188,12 +191,22 @@ function writeHookPluginConfiguration(params: Readonly<{
     nodeExecutable: string;
     enableLocalPermissionBridge: boolean;
     permissionHookTimeoutSeconds?: number;
+    platform: NodeJS.Platform;
 }>): void {
     const { sessionForwarderScript, permissionForwarderScript } = materializeHookRuntimeAssets(params.pluginDir);
     const secretFile = join(params.pluginDir, 'permission-hook-secret');
-    const secretPart = existsSync(secretFile) ? ` --secret-file ${JSON.stringify(secretFile)}` : '';
+    const buildForwarderCommand = (scriptPath: string, hookEventName: string): string => {
+        const secretFileExists = existsSync(secretFile);
+        if (params.platform === 'win32') {
+            const args = [params.nodeExecutable, scriptPath, String(params.port), hookEventName];
+            if (secretFileExists) args.push('--secret-file', secretFile);
+            return buildPowerShellCommand(args);
+        }
+        const secretPart = secretFileExists ? ` --secret-file ${JSON.stringify(secretFile)}` : '';
+        return `${JSON.stringify(params.nodeExecutable)} ${JSON.stringify(scriptPath)} ${params.port} ${JSON.stringify(hookEventName)}${secretPart}`;
+    };
     const buildSessionHookCommand = (hookEventName: string): string =>
-        `${JSON.stringify(params.nodeExecutable)} ${JSON.stringify(sessionForwarderScript)} ${params.port} ${JSON.stringify(hookEventName)}${secretPart}`;
+        buildForwarderCommand(sessionForwarderScript, hookEventName);
     const buildSessionHook = (hookEventName: string): unknown[] => [{
         matcher: '',
         hooks: [{ type: 'command', command: buildSessionHookCommand(hookEventName) }],
@@ -211,7 +224,7 @@ function writeHookPluginConfiguration(params: Readonly<{
 
     if (params.enableLocalPermissionBridge) {
         const buildPermissionCommand = (hookEventName: 'PermissionRequest' | 'PreToolUse'): string =>
-            `${JSON.stringify(params.nodeExecutable)} ${JSON.stringify(permissionForwarderScript)} ${params.port} ${JSON.stringify(hookEventName)}${secretPart}`;
+            buildForwarderCommand(permissionForwarderScript, hookEventName);
         const timeout = resolveClaudePermissionHookTimeoutSeconds({
             ...(params.permissionHookTimeoutSeconds === undefined
                 ? {}
@@ -243,8 +256,7 @@ function writeHookPluginConfiguration(params: Readonly<{
         if (
             registration?.matcher !== ''
             || hook?.type !== 'command'
-            || typeof hook.command !== 'string'
-            || !hook.command.includes(JSON.stringify(hookName))
+            || hook.command !== buildSessionHookCommand(hookName)
         ) {
             throw new Error(`Claude runtime activity hook configuration is missing ${hookName}`);
         }
@@ -388,6 +400,7 @@ export function generateHookPluginDir(port: number, options: GenerateHookSetting
         ...(options.permissionHookTimeoutSeconds === undefined
             ? {}
             : { permissionHookTimeoutSeconds: options.permissionHookTimeoutSeconds }),
+        platform: options.platform ?? process.platform,
     });
     logger.debug(`[generateHookSettings] Created hook plugin dir: ${pluginDir}`);
 
