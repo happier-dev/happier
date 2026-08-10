@@ -166,6 +166,7 @@ describe('machineSpawnNewSession error mapping', () => {
       timeoutMs: expect.any(Number),
     });
     expect(call.timeoutMs).toBe(readSpawnSessionRpcTimeoutMsFromEnv());
+    expect(call.timeoutMs).toBe(5 * 60_000);
   });
 
   it('prepares account settings and includes the returned version hint before spawning', async () => {

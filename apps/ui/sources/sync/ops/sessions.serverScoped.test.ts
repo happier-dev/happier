@@ -1,6 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol';
 
+import {
+    readForkSessionRpcTimeoutMsFromEnv,
+    readSpawnSessionRpcTimeoutMsFromEnv,
+} from '../domains/session/spawn/spawnSessionRpcTimeout';
+
 const machineRpcWithServerScopeMock = vi.hoisted(() => vi.fn());
 const readMachineTargetForSessionMock = vi.hoisted(() => vi.fn());
 const prepareAccountSettingsForDaemonSpawnMock = vi.hoisted(() => vi.fn(async () => ({})));
@@ -333,8 +338,7 @@ describe('sessions ops server-scoped routing', () => {
         expect(result.type).toBe('success');
         expect(machineRpcWithServerScopeMock).toHaveBeenCalledTimes(1);
         const call = machineRpcWithServerScopeMock.mock.calls[0]?.[0] as any;
-        expect(call).toMatchObject({ timeoutMs: expect.any(Number) });
-        expect(call.timeoutMs).toBeGreaterThanOrEqual(90_000);
+        expect(call).toMatchObject({ timeoutMs: readSpawnSessionRpcTimeoutMsFromEnv() });
     });
 
     it('forwards preferScopedMachineRpc for resumeSession when requested', async () => {
@@ -466,6 +470,7 @@ describe('sessions ops server-scoped routing', () => {
             machineId: 'machine-1',
             method: 'session.fork',
             serverId: 'server-b',
+            timeoutMs: readForkSessionRpcTimeoutMsFromEnv(),
             payload: expect.objectContaining({ replaySummaryRunner, replayMaxSeedChars: 55_000 }),
         }));
     });

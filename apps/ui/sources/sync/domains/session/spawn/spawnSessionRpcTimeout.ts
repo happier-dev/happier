@@ -1,11 +1,11 @@
-const DEFAULT_SPAWN_SESSION_RPC_TIMEOUT_MS = 90_000;
+const DEFAULT_SPAWN_SESSION_RPC_TIMEOUT_MS = 5 * 60_000;
 const MAX_SPAWN_SESSION_RPC_TIMEOUT_MS = 10 * 60_000;
 
 // Fork blocks on the provider-side fork (vendor thread/fork RPC) PLUS an
-// accept-then-async spawn resolution (90s default on the daemon). The RPC ack
+// accept-then-async spawn resolution. The RPC acknowledgement
 // budget must exceed that total, otherwise a slow-but-healthy fork triggers
 // timeout-driven transport retries.
-const DEFAULT_FORK_SESSION_RPC_TIMEOUT_MS = 150_000;
+const DEFAULT_FORK_SESSION_RPC_TIMEOUT_MS = 6 * 60_000;
 
 function readBoundedTimeoutMsFromEnv(raw: string, fallback: number): number {
     const trimmed = raw.trim();
@@ -30,4 +30,3 @@ export function readForkSessionRpcTimeoutMsFromEnv(): number {
         DEFAULT_FORK_SESSION_RPC_TIMEOUT_MS,
     );
 }
-
