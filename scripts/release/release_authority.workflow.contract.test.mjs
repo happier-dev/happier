@@ -202,12 +202,35 @@ test('server runtime publisher exposes a hosted same-version rolling recovery pa
   assert.equal(parsed.jobs.build_candidate.if, "${{ inputs.retry_version == '' }}");
   assert.equal(parsed.jobs.finalize_publish.if, "${{ inputs.retry_version == '' }}");
   assert.equal(parsed.jobs.promote_existing.if, "${{ inputs.retry_version != '' }}");
+  assert.equal(
+    parsed.jobs.promote_existing.outputs.requires_fresh_runner_retry,
+    '${{ steps.promote.outputs.requires_fresh_runner_retry }}',
+  );
   const bindSource = parsed.jobs.release_actor_guard.steps.find((step) => step.id === 'source');
   assert.equal(bindSource.env.RETRY_VERSION, '${{ inputs.retry_version }}');
   assert.match(bindSource.run, /SOURCE_REF="refs\/tags\/server-v\$RETRY_VERSION"/);
   assert.doesNotMatch(bindSource.run, /steps\.channel_meta\.outputs\.source_ref.*RETRY_VERSION/s);
+  const firstPromotion = parsed.jobs.promote_existing.steps.at(-1);
+  assert.equal(firstPromotion.id, 'promote');
   assert.match(
-    parsed.jobs.promote_existing.steps.at(-1).run,
+    firstPromotion.run,
+    /--phase promote-rolling[\s\S]*--authorized-sha "\$AUTHORIZED_SHA"[\s\S]*--version "\$VERSION"/,
+  );
+  assert.match(firstPromotion.run, /if \[ "\$status" -eq 75 \]/);
+  assert.match(firstPromotion.run, /requires_fresh_runner_retry=true/);
+  assert.match(firstPromotion.run, /exit "\$status"/);
+
+  const freshRunnerRetry = parsed.jobs.promote_existing_fresh_runner_retry;
+  assert.deepEqual(
+    freshRunnerRetry.needs,
+    ['trusted_ref_guard', 'release_actor_guard', 'promote_existing'],
+  );
+  assert.equal(
+    freshRunnerRetry.if,
+    "${{ inputs.retry_version != '' && needs.promote_existing.outputs.requires_fresh_runner_retry == 'true' }}",
+  );
+  assert.match(
+    freshRunnerRetry.steps.at(-1).run,
     /--phase promote-rolling[\s\S]*--authorized-sha "\$AUTHORIZED_SHA"[\s\S]*--version "\$VERSION"/,
   );
 });
