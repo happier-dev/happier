@@ -2,7 +2,7 @@ import * as React from 'react';
 import { Platform, View, ViewStyle, StyleProp, TextStyle } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 
-import { Popover, type PopoverPlacement } from '@/components/ui/popover';
+import { Popover, type PopoverAnchor, type PopoverPlacement } from '@/components/ui/popover';
 import { FloatingOverlay, type FloatingOverlayArrow } from '@/components/ui/overlays/FloatingOverlay';
 import { t } from '@/text';
 import type { SelectableRowVariant } from '@/components/ui/lists/SelectableRow';
@@ -146,6 +146,11 @@ export type DropdownMenuProps = Readonly<{
      * Useful for context menus that open from right-click/long-press on a row.
      */
     popoverAnchorRef?: React.RefObject<any> | null;
+    /**
+     * Optional measured anchor supplied directly to Popover. Rect anchors are useful for menus
+     * opened from a press inside a much larger or partially clipped trigger.
+     */
+    popoverAnchor?: PopoverAnchor;
     /**
      * Web-only: controls where the popover portal is mounted.
      * Defaults to Popover's behavior (which prefers the modal portal target when inside a modal).
@@ -484,6 +489,7 @@ export function DropdownMenu(props: DropdownMenuProps) {
                 <Popover
                     open={props.open}
                     anchorRef={resolvedAnchorRef}
+                    anchor={props.popoverAnchor}
                     placement={props.placement ?? 'auto-vertical'}
                     gap={props.gap ?? 0}
                     maxHeightCap={props.maxHeightCap ?? 320}
