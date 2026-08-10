@@ -24,6 +24,10 @@ import {
     resolveFileSuggestionScopeChildPath,
     type FileSuggestionScope,
 } from '@/sync/domains/input/fileSuggestionScope';
+// The focused machine-ripgrep op, not the `sync/ops` barrel: `machineRipgrep` is already the
+// canonical owner of this RPC (the machine path browser is its other consumer), so the search
+// asks it rather than re-implementing the request shape and response normalization here.
+import { machineRipgrep as machineRipgrepOp } from '@/sync/ops/machineRipgrep';
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
 import { AsyncLock } from '@/utils/system/lock';
 
@@ -61,11 +65,6 @@ type ListDirectoryLikeResponse = {
     }>;
 };
 
-type MachineRipgrepRequest = Readonly<{
-    args: string[];
-    cwd: string;
-}>;
-
 type MachineListDirectoryRequest = Readonly<{
     path: string;
 }>;
@@ -76,17 +75,14 @@ async function machineRipgrep(
     scope: FileSuggestionScope,
     args: string[],
 ): Promise<RipgrepLikeResponse | null> {
-    try {
-        return await machineRpcWithServerScope<RipgrepLikeResponse, MachineRipgrepRequest>({
-            machineId: scope.machineId,
-            serverId: scope.serverId,
-            method: RPC_METHODS.RIPGREP,
-            payload: { args, cwd: scope.path },
-        });
-    } catch (error) {
-        log.log(`[file-suggestions] ripgrep failed for ${scope.machineId}:${scope.path}: ${describeError(error)}`);
+    const response = await machineRipgrepOp(scope.machineId, args, scope.path, {
+        serverId: scope.serverId ?? null,
+    });
+    if (response.success !== true) {
+        log.log(`[file-suggestions] ripgrep failed for ${scope.machineId}:${scope.path}: ${response.error ?? 'unsuccessful response'}`);
         return null;
     }
+    return response;
 }
 
 async function machineListDirectory(
