@@ -8,7 +8,7 @@ import { useSessionSubagents } from '@/hooks/session/useSessionSubagents';
 import { useSession } from '@/sync/domains/state/storage';
 import { useSetting } from '@/sync/domains/state/storage';
 import { resolveTranscriptToolCallsCollapsedPreviewCount } from '@/sync/domains/settings/transcriptToolCallsCollapsedPreviewCount';
-import { useSessionMessages, useSessionMessagesReducerState } from '@/sync/store/hooks';
+import { useSessionMessages, useSessionMessagesReducerSnapshot } from '@/sync/store/hooks';
 import { deriveSessionActiveSubagents } from '@/sync/domains/session/subagents/deriveSessionActiveSubagents';
 import { deriveSessionRecentSubagents } from '@/sync/domains/session/subagents/deriveSessionRecentSubagents';
 import { deriveSessionSubagentActivityPreview } from '@/sync/domains/session/subagents/deriveSessionSubagentActivityPreview';
@@ -79,7 +79,7 @@ export const SessionRightPanelAgentsView = React.memo((props: Readonly<{ session
     const pane = useAppPaneScope(props.scopeId);
     const session = useSession(props.sessionId);
     const { messages } = useSessionMessages(props.sessionId);
-    const reducerState = useSessionMessagesReducerState(props.sessionId);
+    const { reducerState, reducerVersion } = useSessionMessagesReducerSnapshot(props.sessionId);
     const collapsedPreviewCountSetting = useSetting('transcriptToolCallsCollapsedPreviewCount');
     const { subagents } = useSessionSubagents({
         sessionId: props.sessionId,
@@ -120,7 +120,7 @@ export const SessionRightPanelAgentsView = React.memo((props: Readonly<{ session
             previews.set(subagent.id, fallback);
         }
         return previews;
-    }, [previewSidechainIdSet, reducerState, sidechainHydrationStatus.bySidechainId, subagents]);
+    }, [previewSidechainIdSet, reducerState, reducerVersion, sidechainHydrationStatus.bySidechainId, subagents]);
     const pendingPermissionById = React.useMemo(() => {
         const pending = new Map<string, boolean>();
         for (const subagent of subagents) {
@@ -134,7 +134,7 @@ export const SessionRightPanelAgentsView = React.memo((props: Readonly<{ session
             pending.set(subagent.id, true);
         }
         return pending;
-    }, [messages, reducerState, subagents]);
+    }, [messages, reducerState, reducerVersion, subagents]);
     const openFull = React.useCallback((subagent: SessionSubagent) => {
         const route = resolveSessionSubagentFullRoute({
             sessionId: props.sessionId,

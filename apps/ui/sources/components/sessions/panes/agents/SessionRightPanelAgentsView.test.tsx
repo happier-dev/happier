@@ -150,7 +150,7 @@ vi.mock('@/components/sessions/model/useSessionMachineReachability', () => ({
 
 vi.mock('@/sync/store/hooks', () => ({
     useSessionMessages: () => ({ messages: [] }),
-    useSessionMessagesReducerState: () => reducerStateState,
+    useSessionMessagesReducerSnapshot: () => ({ reducerState: reducerStateState, reducerVersion: 0 }),
 }));
 
 const subagents: readonly SessionSubagent[] = [

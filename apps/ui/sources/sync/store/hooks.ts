@@ -849,8 +849,8 @@ export function useSessionInteractionSource(sessionId: string): SessionInteracti
   );
 }
 
-export function useSessionMessagesReducerState(sessionId: string) {
-  const snapshot = getStorage()(
+export function useSessionMessagesReducerSnapshot(sessionId: string) {
+  return getStorage()(
     useShallow((state) => {
       const session = state.sessionMessages[sessionId];
       return {
@@ -859,8 +859,10 @@ export function useSessionMessagesReducerState(sessionId: string) {
       };
     })
   );
+}
 
-  return snapshot.reducerState;
+export function useSessionMessagesReducerState(sessionId: string) {
+  return useSessionMessagesReducerSnapshot(sessionId).reducerState;
 }
 
 export function useSessionLatestThinkingMessageId(sessionId: string): string | null {
