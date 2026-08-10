@@ -176,10 +176,6 @@ vi.mock('@/components/sessions/sourceControl/status', () => ({
     useHasMeaningfulScmStatus: () => false,
 }));
 
-vi.mock('@/components/autocomplete/useActiveWord', () => ({
-    useActiveWord: () => ({ activeWord: null, setActiveWord: () => {} }),
-}));
-
 vi.mock('@/components/autocomplete/useActiveSuggestions', () => ({
     useActiveSuggestions: () => [[], null, () => {}, () => {}],
 }));
@@ -263,6 +259,7 @@ vi.mock('@/components/ui/layout/layout', () => ({
 }));
 
 vi.mock('@/constants/Typography', () => ({
+    FontWeights: { regular: '400' },
     Typography: {
         default: () => ({}),
         mono: () => ({}),
@@ -337,7 +334,7 @@ describe('AgentInput (permission requests)', () => {
             onChangeText: () => {},
             sessionId: 's1',
             onSend: () => {},
-            autocompletePrefixes: [],
+            autocompleteKinds: [],
             autocompleteSuggestions: async () => [],
             permissionRequests: [
                 { id: 'req1', tool: 'Bash', arguments: { command: 'ls' }, createdAt: 123 },
@@ -356,7 +353,7 @@ describe('AgentInput (permission requests)', () => {
             onChangeText: () => {},
             sessionId: 's1',
             onSend: () => {},
-            autocompletePrefixes: [],
+            autocompleteKinds: [],
             autocompleteSuggestions: async () => [],
             permissionRequests: [
                 { id: 'req1', tool: 'Bash', arguments: { command: 'ls' }, createdAt: 123 },
@@ -376,7 +373,7 @@ describe('AgentInput (permission requests)', () => {
             onChangeText: () => {},
             sessionId: 's1',
             onSend: () => {},
-            autocompletePrefixes: [],
+            autocompleteKinds: [],
             autocompleteSuggestions: async () => [],
             permissionRequests: [
                 { id: 'req1', tool: 'Bash', arguments: { command: 'ls' }, createdAt: 123 },
@@ -399,7 +396,7 @@ describe('AgentInput (permission requests)', () => {
             onChangeText: () => {},
             sessionId: 's1',
             onSend: () => {},
-            autocompletePrefixes: [],
+            autocompleteKinds: [],
             autocompleteSuggestions: async () => [],
             maxPanelHeight: 90,
             permissionRequests: [

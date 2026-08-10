@@ -163,9 +163,8 @@ export interface NewSessionWizardFooterProps {
     canCreate: boolean;
     isCreating: boolean;
     submitAccessibilityLabel?: React.ComponentProps<typeof AgentInput>['submitAccessibilityLabel'];
-    emptyAutocompletePrefixes: React.ComponentProps<typeof AgentInput>['autocompletePrefixes'];
+    emptyAutocompleteKinds: React.ComponentProps<typeof AgentInput>['autocompleteKinds'];
     emptyAutocompleteSuggestions: React.ComponentProps<typeof AgentInput>['autocompleteSuggestions'];
-    onAutocompleteSuggestionSelect?: React.ComponentProps<typeof AgentInput>['onAutocompleteSuggestionSelect'];
     connectionStatus?: React.ComponentProps<typeof AgentInput>['connectionStatus'];
     machinePopover?: React.ComponentProps<typeof AgentInput>['machinePopover'];
     pathPopover?: React.ComponentProps<typeof AgentInput>['pathPopover'];
@@ -401,7 +400,7 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
         setSessionPrompt,
         canCreate,
         isCreating,
-        emptyAutocompletePrefixes,
+        emptyAutocompleteKinds,
         emptyAutocompleteSuggestions,
         connectionStatus,
         resumeSessionId,
@@ -565,9 +564,8 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
                                         isSending={isCreating}
                                         submitAccessibilityLabel={props.footer.submitAccessibilityLabel}
                                         placeholder={t('session.inputPlaceholder')}
-                                        autocompletePrefixes={emptyAutocompletePrefixes}
+                                        autocompleteKinds={emptyAutocompleteKinds}
                                         autocompleteSuggestions={emptyAutocompleteSuggestions}
-                                        onAutocompleteSuggestionSelect={props.footer.onAutocompleteSuggestionSelect}
                                         extraActionChips={extraActionChips}
                                         attachments={agentInputAttachments}
                                         onAttachmentsAdded={attachmentsUploadsEnabled ? addWebFiles : undefined}

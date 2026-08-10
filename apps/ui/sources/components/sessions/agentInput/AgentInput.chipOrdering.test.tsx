@@ -126,10 +126,6 @@ vi.mock('@/components/ui/status/StatusDot', () => ({
     StatusDot: () => null,
 }));
 
-vi.mock('@/components/autocomplete/useActiveWord', () => ({
-    useActiveWord: () => ({ word: '', start: 0, end: 0 }),
-}));
-
 vi.mock('@/components/autocomplete/useActiveSuggestions', () => ({
     useActiveSuggestions: () => [[], 0, () => {}, () => {}],
 }));
@@ -193,7 +189,7 @@ describe('AgentInput (chip ordering)', () => {
                     placeholder: 'placeholder',
                     onChangeText: () => {},
                     onSend: () => {},
-                    autocompletePrefixes: [],
+                    autocompleteKinds: [],
                     autocompleteSuggestions: async () => [],
                     onPermissionClick: () => {},
                     agentType: 'codex',
@@ -244,7 +240,7 @@ describe('AgentInput (chip ordering)', () => {
                     placeholder: 'placeholder',
                     onChangeText: () => {},
                     onSend: () => {},
-                    autocompletePrefixes: [],
+                    autocompleteKinds: [],
                     autocompleteSuggestions: async () => [],
                     onMachineClick: () => {},
                     machineName: 'Local dev machine',
@@ -292,7 +288,7 @@ describe('AgentInput (chip ordering)', () => {
                     placeholder: 'placeholder',
                     onChangeText: () => {},
                     onSend: () => {},
-                    autocompletePrefixes: [],
+                    autocompleteKinds: [],
                     autocompleteSuggestions: async () => [],
                     onPermissionClick: () => {},
                     extraActionChips: [

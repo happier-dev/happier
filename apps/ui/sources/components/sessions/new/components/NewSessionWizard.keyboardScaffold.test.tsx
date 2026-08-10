@@ -328,7 +328,7 @@ function buildWizardProps(): NewSessionWizardTestProps {
             handleCreateSession: () => {},
             canCreate: true,
             isCreating: false,
-            emptyAutocompletePrefixes: [],
+            emptyAutocompleteKinds: [],
             emptyAutocompleteSuggestions: async () => [],
             agentInputExtraActionChips: [],
             submitAccessibilityLabel: 'Create',

@@ -175,10 +175,6 @@ vi.mock('@/components/ui/status/StatusDot', () => ({
     StatusDot: () => null,
 }));
 
-vi.mock('@/components/autocomplete/useActiveWord', () => ({
-    useActiveWord: () => ({ word: '', start: 0, end: 0 }),
-}));
-
 vi.mock('@/components/autocomplete/useActiveSuggestions', () => ({
     useActiveSuggestions: useActiveSuggestionsMock,
 }));
@@ -252,14 +248,14 @@ describe('AgentInput (send button accessibility)', () => {
             placeholder="Type"
             onChangeText={() => {}}
             onSend={() => {}}
-            autocompletePrefixes={['@']}
+            autocompleteKinds={['file']}
             autocompleteSuggestions={autocompleteSuggestions}
         />);
 
         expect(useActiveSuggestionsMock).toHaveBeenLastCalledWith(
             null,
             autocompleteSuggestions,
-            expect.objectContaining({ clampSelection: true, wrapAround: true }),
+            expect.objectContaining({ wrapAround: true }),
         );
 
         const input = screen.root.findByType('MultiTextInput' as any);
@@ -270,7 +266,7 @@ describe('AgentInput (send button accessibility)', () => {
         expect(useActiveSuggestionsMock).toHaveBeenLastCalledWith(
             '@src',
             autocompleteSuggestions,
-            expect.objectContaining({ clampSelection: true, wrapAround: true }),
+            expect.objectContaining({ wrapAround: true }),
         );
 
         await act(async () => {
@@ -280,7 +276,7 @@ describe('AgentInput (send button accessibility)', () => {
         expect(useActiveSuggestionsMock).toHaveBeenLastCalledWith(
             '@/src',
             autocompleteSuggestions,
-            expect.objectContaining({ clampSelection: true, wrapAround: true }),
+            expect.objectContaining({ wrapAround: true }),
         );
 
         await act(async () => {
@@ -291,7 +287,7 @@ describe('AgentInput (send button accessibility)', () => {
         expect(useActiveSuggestionsMock).toHaveBeenLastCalledWith(
             '@/src',
             autocompleteSuggestions,
-            expect.objectContaining({ clampSelection: true, wrapAround: true }),
+            expect.objectContaining({ wrapAround: true }),
         );
 
         await screen.unmount();
@@ -309,7 +305,7 @@ describe('AgentInput (send button accessibility)', () => {
                     onSend={() => {}}
                     onMicPress={() => {}}
                     isMicActive={false}
-                    autocompletePrefixes={[]}
+                    autocompleteKinds={[]}
                     autocompleteSuggestions={async () => []}
                 />);
 
@@ -339,7 +335,7 @@ describe('AgentInput (send button accessibility)', () => {
                     onSend={() => {}}
                     onAbort={() => {}}
                     showAbortButton={true}
-                    autocompletePrefixes={[]}
+                    autocompleteKinds={[]}
                     autocompleteSuggestions={async () => []}
                 />);
 
@@ -371,7 +367,7 @@ describe('AgentInput (send button accessibility)', () => {
                     onSend={onSend}
                     onAbort={onAbort}
                     showAbortButton={true}
-                    autocompletePrefixes={[]}
+                    autocompleteKinds={[]}
                     autocompleteSuggestions={async () => []}
                 />);
 
@@ -397,7 +393,7 @@ describe('AgentInput (send button accessibility)', () => {
                     placeholder="Type"
                     onChangeText={() => {}}
                     onSend={() => {}}
-                    autocompletePrefixes={[]}
+                    autocompleteKinds={[]}
                     autocompleteSuggestions={async () => []}
                 />);
 
@@ -418,7 +414,7 @@ describe('AgentInput (send button accessibility)', () => {
                     onChangeText={() => {}}
                     onSend={() => {}}
                     submitAccessibilityLabel="automations.create.createButtonTitle"
-                    autocompletePrefixes={[]}
+                    autocompleteKinds={[]}
                     autocompleteSuggestions={async () => []}
                 />);
 
@@ -438,7 +434,7 @@ describe('AgentInput (send button accessibility)', () => {
                     placeholder="Type"
                     onChangeText={() => {}}
                     onSend={() => {}}
-                    autocompletePrefixes={[]}
+                    autocompleteKinds={[]}
                     autocompleteSuggestions={async () => []}
                 />);
 
@@ -460,7 +456,7 @@ describe('AgentInput (send button accessibility)', () => {
                     onChangeText={() => {}}
                     onSend={onSend}
                     hasSendableAttachments={true}
-                    autocompletePrefixes={[]}
+                    autocompleteKinds={[]}
                     autocompleteSuggestions={async () => []}
                 />);
 
@@ -486,7 +482,7 @@ describe('AgentInput (send button accessibility)', () => {
                     placeholder="Type"
                     onChangeText={() => {}}
                     onSend={firstOnSend}
-                    autocompletePrefixes={[]}
+                    autocompleteKinds={[]}
                     autocompleteSuggestions={async () => []}
                 />);
 
@@ -497,7 +493,7 @@ describe('AgentInput (send button accessibility)', () => {
                 placeholder="Type"
                 onChangeText={() => {}}
                 onSend={secondOnSend}
-                autocompletePrefixes={[]}
+                autocompleteKinds={[]}
                 autocompleteSuggestions={async () => []}
             />,
         );
@@ -518,7 +514,7 @@ describe('AgentInput (send button accessibility)', () => {
                     placeholder="Type"
                     onChangeText={() => {}}
                     onSend={() => {}}
-                    autocompletePrefixes={[]}
+                    autocompleteKinds={[]}
                     autocompleteSuggestions={async () => []}
                 />);
 
@@ -539,7 +535,7 @@ describe('AgentInput (send button accessibility)', () => {
                     placeholder="Type"
                     onChangeText={() => {}}
                     onSend={() => {}}
-                    autocompletePrefixes={[]}
+                    autocompleteKinds={[]}
                     autocompleteSuggestions={async () => []}
                 />);
 
@@ -562,7 +558,7 @@ describe('AgentInput (send button accessibility)', () => {
                     onSend={() => {}}
                     onMicPress={() => {}}
                     isMicActive={false}
-                    autocompletePrefixes={[]}
+                    autocompleteKinds={[]}
                     autocompleteSuggestions={async () => []}
                 />);
 
@@ -589,7 +585,7 @@ describe('AgentInput (send button accessibility)', () => {
                     onSend={() => {}}
                     onMicPress={() => {}}
                     isMicActive={true}
-                    autocompletePrefixes={[]}
+                    autocompleteKinds={[]}
                     autocompleteSuggestions={async () => []}
                 />);
 
@@ -618,7 +614,7 @@ describe('AgentInput (send button accessibility)', () => {
             placeholder="Type"
             onChangeText={onChangeText}
             onSend={onSend}
-            autocompletePrefixes={[]}
+            autocompleteKinds={[]}
             autocompleteSuggestions={async () => []}
         />);
 
@@ -643,7 +639,7 @@ describe('AgentInput (send button accessibility)', () => {
             onChangeText={onChangeText}
             onSend={onSend}
             hasSendableAttachments={true}
-            autocompletePrefixes={[]}
+            autocompleteKinds={[]}
             autocompleteSuggestions={async () => []}
         />);
 
@@ -664,7 +660,7 @@ describe('AgentInput (send button accessibility)', () => {
             placeholder="Type"
             onChangeText={() => {}}
             onSend={() => {}}
-            autocompletePrefixes={[]}
+            autocompleteKinds={[]}
             autocompleteSuggestions={async () => []}
         />);
 
@@ -683,7 +679,7 @@ describe('AgentInput (send button accessibility)', () => {
                     placeholder="Type"
                     onChangeText={() => {}}
                     onSend={() => {}}
-                    autocompletePrefixes={[]}
+                    autocompleteKinds={[]}
                     autocompleteSuggestions={async () => []}
                     machineName="Machine"
                     currentPath="/tmp/project"

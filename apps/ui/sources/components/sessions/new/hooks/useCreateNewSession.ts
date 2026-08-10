@@ -85,6 +85,7 @@ import { materializeNewSessionCheckout } from '@/components/sessions/new/modules
 import { rollbackNewSessionArtifacts } from '@/components/sessions/new/modules/rollbackNewSessionArtifacts';
 import { resolveConnectedServiceSwitchUnavailablePresentation } from '@/components/sessions/new/modules/connectedServiceSwitchUnavailable';
 import { followUpSpawnedSessionWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/followUpSpawnedSession';
+import { mergeMessageMetaOverrides } from '@/components/sessions/agentInput/structuredInputMentions';
 import {
     buildAutomationTemplateFromSessionAuthoringDraft,
     buildNewSessionAuthoringDraftFromResolvedInputs,
@@ -117,6 +118,18 @@ export type CreatedSessionFollowUpContext = Readonly<{
 export type HandleCreateSessionOptions = Readonly<{
     initialMessage?: 'send' | 'skip';
     inputTextOverride?: string;
+    /**
+     * The composer's structured-input envelope for the first turn (`mentions[]` and the legacy
+     * projection of it). This hook owns the first turn, so it is the only place that envelope
+     * can reach the message: without it an `@session` reference composed before the session
+     * existed would arrive as bare text with no envelope entry, which INV-5 renders as nothing.
+     *
+     * Ranges are validated against the SUBMITTED text at the request boundary
+     * (`sanitizeSessionUserMessageSendMeta`), element-wise, so a first turn this hook rewrites
+     * — a `/template` expansion, a `/goal` — drops the references that no longer describe their
+     * own token and keeps the rest (INV-4). That decision has one owner and is not repeated here.
+     */
+    structuredInputMetaOverrides?: Record<string, unknown>;
     afterCreated?: (context: CreatedSessionFollowUpContext) => void | Promise<void>;
     /**
      * D2: relaunch under the newly-selected connected-service account WITHOUT resume continuity, after
@@ -800,7 +813,7 @@ export function useCreateNewSession(params: Readonly<{
                         targetServerId: resolvedTargetServerId,
                         initialMessageText,
                         messageLocalId: launchAttempt.firstTurnLocalId,
-                        metaOverrides: (() => {
+                        metaOverrides: mergeMessageMetaOverrides((() => {
                             const agentCore = getAgentCore(current.agentType);
                             if (
                                 agentCore.model.supportsSelection
@@ -814,7 +827,7 @@ export function useCreateNewSession(params: Readonly<{
                             }
 
                             return null;
-                        })(),
+                        })(), opts?.structuredInputMetaOverrides) ?? null,
                         profileId: profilesActive ? (current.selectedProfileId ?? '') : null,
                     });
 

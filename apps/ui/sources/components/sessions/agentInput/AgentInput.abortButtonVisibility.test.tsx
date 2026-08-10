@@ -8,7 +8,9 @@ import { installAgentInputCommonModuleMocks } from './agentInputTestHelpers';
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const autocompleteMockState = vi.hoisted(() => ({
-    suggestions: [] as Array<{ key: string; text: string; component: React.ElementType }>,
+    // `kind` is the registry lookup the row mapper resolves its section header and
+    // icon from; every suggestion carries one.
+    suggestions: [] as Array<{ kind: string; key: string; text: string; component: React.ElementType }>,
     selected: 0,
 }));
 
@@ -151,10 +153,6 @@ vi.mock('@/components/ui/status/StatusDot', () => ({
     StatusDot: () => null,
 }));
 
-vi.mock('@/components/autocomplete/useActiveWord', () => ({
-    useActiveWord: () => ({ word: '', start: 0, end: 0 }),
-}));
-
 vi.mock('@/components/autocomplete/useActiveSuggestions', () => ({
     useActiveSuggestions: () => [autocompleteMockState.suggestions, autocompleteMockState.selected, () => {}, () => {}],
 }));
@@ -242,7 +240,7 @@ describe('AgentInput (abort button visibility)', () => {
                     onSend={() => {}}
                     onAbort={vi.fn()}
                     showAbortButton={false}
-                    autocompletePrefixes={[]}
+                    autocompleteKinds={[]}
                     autocompleteSuggestions={async () => []}
                 />);
 
@@ -258,7 +256,7 @@ describe('AgentInput (abort button visibility)', () => {
                     onSend={() => {}}
                     onAbort={vi.fn()}
                     showAbortButton={true}
-                    autocompletePrefixes={[]}
+                    autocompleteKinds={[]}
                     autocompleteSuggestions={async () => []}
                 />);
 
@@ -275,7 +273,7 @@ describe('AgentInput (abort button visibility)', () => {
                     onSend={() => {}}
                     onAbort={onAbort}
                     showAbortButton={true}
-                    autocompletePrefixes={[]}
+                    autocompleteKinds={[]}
                     autocompleteSuggestions={async () => []}
                 />);
         const input = findMultiTextInput(screen);
@@ -291,6 +289,7 @@ describe('AgentInput (abort button visibility)', () => {
 
     it('selects visible autocomplete suggestion before plain Enter can send', async () => {
         autocompleteMockState.suggestions = [{
+            kind: 'file',
             key: 'path',
             text: '@/components',
             component: () => null,
@@ -303,7 +302,7 @@ describe('AgentInput (abort button visibility)', () => {
                     onChangeText={() => {}}
                     onSend={onSend}
                     showAbortButton={false}
-                    autocompletePrefixes={['@']}
+                    autocompleteKinds={['file']}
                     autocompleteSuggestions={async () => []}
                 />);
         const input = findMultiTextInput(screen);
@@ -319,6 +318,7 @@ describe('AgentInput (abort button visibility)', () => {
 
     it('confirms abort with Shift+Escape when autocomplete suggestions are visible', async () => {
         autocompleteMockState.suggestions = [{
+            kind: 'file',
             key: 'path',
             text: '@/components',
             component: () => null,
@@ -332,7 +332,7 @@ describe('AgentInput (abort button visibility)', () => {
                     onSend={() => {}}
                     onAbort={onAbort}
                     showAbortButton={true}
-                    autocompletePrefixes={['@']}
+                    autocompleteKinds={['file']}
                     autocompleteSuggestions={async () => []}
                 />);
         const input = findMultiTextInput(screen);
@@ -359,7 +359,7 @@ describe('AgentInput (abort button visibility)', () => {
                     onSend={() => {}}
                     onAbort={onAbort}
                     showAbortButton={true}
-                    autocompletePrefixes={[]}
+                    autocompleteKinds={[]}
                     autocompleteSuggestions={async () => []}
                 />);
         const input = findMultiTextInput(screen);
@@ -388,7 +388,7 @@ describe('AgentInput (abort button visibility)', () => {
                     onSend={() => {}}
                     onAbort={onAbort}
                     showAbortButton={true}
-                    autocompletePrefixes={[]}
+                    autocompleteKinds={[]}
                     autocompleteSuggestions={async () => []}
                 />);
         const input = findMultiTextInput(screen);

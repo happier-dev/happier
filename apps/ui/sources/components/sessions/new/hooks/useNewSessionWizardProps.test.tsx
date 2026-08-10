@@ -91,7 +91,7 @@ describe('useNewSessionWizardProps', () => {
                 handleCreateSession: () => {},
                 canCreate: false,
                 isCreating: false,
-                emptyAutocompletePrefixes: [],
+                emptyAutocompleteKinds: [],
                 emptyAutocompleteSuggestions: vi.fn(),
                 resumeSessionId: '',
                 isResumeSupportChecking: false,

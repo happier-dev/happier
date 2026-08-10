@@ -25,7 +25,7 @@ function createPanelProps(
         handleCreateSession: vi.fn(),
         canCreate: true,
         isCreating: false,
-        emptyAutocompletePrefixes: [],
+        emptyAutocompleteKinds: [],
         emptyAutocompleteSuggestions: async () => [],
         agentType: 'codex',
         handleAgentClick: vi.fn(),

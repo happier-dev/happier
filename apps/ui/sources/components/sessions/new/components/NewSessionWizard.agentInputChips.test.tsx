@@ -249,7 +249,7 @@ function buildProps() {
             handleCreateSession: () => {},
             canCreate: true,
             isCreating: false,
-            emptyAutocompletePrefixes: [],
+            emptyAutocompleteKinds: [],
             emptyAutocompleteSuggestions: async () => [],
             agentInputExtraActionChips: [],
         } as any,

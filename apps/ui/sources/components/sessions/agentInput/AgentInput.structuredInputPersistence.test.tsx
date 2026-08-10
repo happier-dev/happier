@@ -20,6 +20,7 @@ type MockMultiTextInputProps = Readonly<{
 
 const autocompleteMockState = vi.hoisted(() => ({
     suggestions: [] as Array<{
+        kind: 'skill' | 'slashCommand';
         key: string;
         text: string;
         label?: string;
@@ -250,10 +251,6 @@ vi.mock('@/components/sessions/sourceControl/status', () => ({
     useHasMeaningfulScmStatus: () => false,
 }));
 
-vi.mock('@/components/autocomplete/useActiveWord', () => ({
-    useActiveWord: () => null,
-}));
-
 vi.mock('@/components/autocomplete/useActiveSuggestions', () => ({
     useActiveSuggestions: (query: string | null) => {
         autocompleteMockState.lastQuery = query;
@@ -319,7 +316,7 @@ describe('AgentInput structured input persistence', () => {
             onChangeText: () => {},
             placeholder: 'p',
             onSend: () => {},
-            autocompletePrefixes: [],
+            autocompleteKinds: [],
             autocompleteSuggestions: async () => [],
             sessionId: 'session-a',
             metadata: null,
@@ -335,7 +332,7 @@ describe('AgentInput structured input persistence', () => {
                 onChangeText: () => {},
                 placeholder: 'p',
                 onSend: () => {},
-                autocompletePrefixes: [],
+                autocompleteKinds: [],
                 autocompleteSuggestions: async () => [],
                 sessionId: 'session-a',
                 metadata: null,
@@ -352,6 +349,7 @@ describe('AgentInput structured input persistence', () => {
 
     it('sends selected structured mention metadata before controlled props rerender', async () => {
         autocompleteMockState.suggestions = [{
+            kind: 'skill',
             key: 'skill-review',
             text: '$review',
             label: 'Review',
@@ -371,7 +369,7 @@ describe('AgentInput structured input persistence', () => {
             onChangeText,
             placeholder: 'p',
             onSend,
-            autocompletePrefixes: ['$'],
+            autocompleteKinds: ['skill'],
             autocompleteSuggestions: async () => autocompleteMockState.suggestions,
             sessionId: 'session-a',
             metadata: null,
@@ -417,6 +415,7 @@ describe('AgentInput structured input persistence', () => {
 
     it('keeps autocomplete available for large live input text without pushing the full text into render state', async () => {
         autocompleteMockState.suggestions = [{
+            kind: 'slashCommand',
             key: 'slash-run',
             text: '/run',
             label: 'Run',
@@ -433,7 +432,7 @@ describe('AgentInput structured input persistence', () => {
             onChangeText,
             placeholder: 'p',
             onSend,
-            autocompletePrefixes: ['/'],
+            autocompleteKinds: ['slashCommand'],
             autocompleteSuggestions: async () => autocompleteMockState.suggestions,
             sessionId: 'session-a',
             metadata: null,
@@ -478,7 +477,7 @@ describe('AgentInput structured input persistence', () => {
             onChangeText,
             placeholder: 'p',
             onSend,
-            autocompletePrefixes: [],
+            autocompleteKinds: [],
             autocompleteSuggestions: async () => [],
             sessionId: 'session-a',
             metadata: null,
@@ -512,7 +511,7 @@ describe('AgentInput structured input persistence', () => {
             onChangeText,
             placeholder: 'p',
             onSend,
-            autocompletePrefixes: [],
+            autocompleteKinds: [],
             autocompleteSuggestions: async () => [],
             sessionId,
             metadata: null,

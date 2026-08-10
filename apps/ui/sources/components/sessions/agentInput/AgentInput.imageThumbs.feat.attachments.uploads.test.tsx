@@ -157,7 +157,7 @@ describe('AgentInput (image attachment thumbnails)', () => {
             placeholder: 'placeholder',
             onChangeText: () => { },
             onSend: () => { },
-            autocompletePrefixes: [],
+            autocompleteKinds: [],
             autocompleteSuggestions: async () => [],
             attachments,
             hasSendableAttachments: true,

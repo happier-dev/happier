@@ -5,6 +5,7 @@ import { createReviewCommentsActionChip } from '@/components/sessions/agentInput
 import { createAttachmentActionChip } from '@/components/sessions/agentInput/sessionActions/createAttachmentActionChip';
 import type { AgentInputExtraActionChip } from '@/components/sessions/agentInput/agentInputContracts';
 import type { AgentInputSendOptions } from '@/components/sessions/agentInput/agentInputSendOptions';
+import { mergeMessageMetaOverrides } from '@/components/sessions/agentInput/structuredInputMentions';
 import type { AttachmentDraft } from '@/components/sessions/attachments/attachmentDraftModel';
 import { openAttachmentFilePickerFiles, openAttachmentFilePickerImages } from '@/components/sessions/attachments/attachmentFilePickerActions';
 import { attachRecoverableAttachmentDrafts } from '@/components/sessions/attachments/recoverableAttachmentDrafts';
@@ -225,9 +226,20 @@ export function useNewSessionAttachmentsController(params: Readonly<{
             });
         };
 
+        // The composer's `mentions[]` envelope. Both branches below have to carry it: this
+        // controller is the only thing between the composer and the first turn, so dropping it
+        // here is what made an `@session` reference composed on this screen reach the agent as
+        // bare text.
+        const structuredInputMetaOverrides = options?.structuredInputMetaOverrides;
+
         const hasAttachments = attachmentsUploadsEnabled && draftsSnapshotRef.current.length > 0;
         if (!hasAttachments && !hasReviewCommentDrafts) {
-            submit(options?.inputTextOverride ? { inputTextOverride: options.inputTextOverride } : undefined);
+            submit(options?.inputTextOverride || structuredInputMetaOverrides
+                ? {
+                    ...(options?.inputTextOverride ? { inputTextOverride: options.inputTextOverride } : {}),
+                    ...(structuredInputMetaOverrides ? { structuredInputMetaOverrides } : {}),
+                }
+                : undefined);
             return;
         }
 
@@ -278,6 +290,13 @@ export function useNewSessionAttachmentsController(params: Readonly<{
                         })
                         : [];
 
+                    // One envelope per message: `mergeMessageMetaOverrides` folds the composer's
+                    // `mentions[]` into the attachments envelope instead of one replacing the other.
+                    const outboundMetaOverrides = mergeMessageMetaOverrides(
+                        attachmentsMetaOverrides,
+                        structuredInputMetaOverrides,
+                    );
+
                     outbound = hasReviewCommentDrafts
                         ? buildReviewCommentsOutboundMessage({
                             sessionId,
@@ -286,12 +305,12 @@ export function useNewSessionAttachmentsController(params: Readonly<{
                                 ? (trimmed.length > 0 ? `${trimmed}\n\n${attachmentsBlock}` : attachmentsBlock)
                                 : trimmed,
                             displayTextSuffix: attachmentsBlock || null,
-                            metaOverrides: attachmentsMetaOverrides,
+                            metaOverrides: outboundMetaOverrides,
                         })
                         : {
                             text: trimmed.length > 0 ? `${trimmed}\n\n${attachmentsBlock}` : attachmentsBlock,
                             displayText: trimmed || undefined,
-                            metaOverrides: attachmentsMetaOverrides,
+                            metaOverrides: outboundMetaOverrides,
                         };
 
                     await followUpSpawnedSessionWithServerScope({

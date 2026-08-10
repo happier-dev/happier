@@ -32,11 +32,12 @@ import { readSessionModelsState } from '@/sync/domains/sessionControl/readSessio
 import { hapticsLight, hapticsError } from '@/components/ui/theme/haptics';
 import { type ShakeInstance } from '@/components/ui/feedback/Shaker';
 import { StatusDot } from '@/components/ui/status/StatusDot';
-import { useActiveSuggestions } from '@/components/autocomplete/useActiveSuggestions';
+import { useActiveSuggestions, type ActiveSuggestionsHandler } from '@/components/autocomplete/useActiveSuggestions';
 import { TextInputState, MultiTextInputHandle } from '@/components/ui/forms/MultiTextInput';
 import { applySuggestion } from '@/components/autocomplete/applySuggestion';
 import { findActiveWord, type ActiveWord } from '@/components/autocomplete/findActiveWord';
-import type { AutocompleteSuggestion } from '@/components/autocomplete/autocompleteTypes';
+import { resolveComposerSuggestionKind } from '@/components/autocomplete/composerSuggestionKinds';
+import type { ComposerSuggestionKindId } from '@/components/autocomplete/composerSuggestionGrammar';
 import { type ModelPickerProbeState } from '@/components/model/ModelPickerOverlay';
 import type { OptionPickerProbeState } from '@/components/sessions/pickers/OptionPickerOverlay';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -207,17 +208,6 @@ const AGENT_INPUT_TEST_IDS = {
     connectionStatusText: 'agent-input-connection-status-text',
 } as const;
 
-export type AgentInputAutocompleteSelectionResult =
-    | Readonly<{ handled: false }>
-    | Readonly<{ handled: true; text: string; cursorPosition: number }>;
-
-export type AgentInputAutocompleteSelectionHandler = (args: Readonly<{
-    suggestion: AutocompleteSuggestion;
-    inputText: string;
-    selection: Readonly<{ start: number; end: number }>;
-    activeWord: ActiveWord | null;
-}>) => AgentInputAutocompleteSelectionResult | Promise<AgentInputAutocompleteSelectionResult>;
-
 function normalizeLayoutHeightPx(height: number): number {
     return Number.isFinite(height) ? Math.max(0, Math.trunc(height)) : 0;
 }
@@ -335,9 +325,10 @@ interface AgentInputProps {
     statusBadges?: ReadonlyArray<AgentInputStatusBadgeDescriptor>;
     activeStatusBadgeKey?: string | null;
     onActiveStatusBadgeKeyChange?: (key: string | null) => void;
-    autocompletePrefixes: string[];
-    autocompleteSuggestions: (query: string) => Promise<AutocompleteSuggestion[]>;
-    onAutocompleteSuggestionSelect?: AgentInputAutocompleteSelectionHandler;
+    /** Eligible suggestion kinds for this composer host. Trigger characters follow from the kinds (INV-1). */
+    autocompleteKinds: readonly ComposerSuggestionKindId[];
+    /** Receives an abort signal for the query it is resolving; a superseded query is never applied (D-15). */
+    autocompleteSuggestions: ActiveSuggestionsHandler;
     usageData?: {
         inputTokens: number;
         outputTokens: number;
@@ -1380,7 +1371,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
     const inputStateRef = React.useRef<TextInputState>(initialInputState);
     const [inputSelection, setInputSelection] = React.useState<TextInputState['selection']>(initialInputState.selection);
     const [activeWordState, setActiveWordState] = React.useState<ActiveWord | undefined>(() => (
-        findActiveWord(initialInputState.text, initialInputState.selection, props.autocompletePrefixes)
+        findActiveWord(initialInputState.text, initialInputState.selection, props.autocompleteKinds)
     ));
     const [hasAutocompleteTextInteraction, setHasAutocompleteTextInteraction] = React.useState(false);
     const lastControlledValueRef = React.useRef(props.value);
@@ -1476,11 +1467,11 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
     ), [messageHistory]);
 
     const updateActiveWordState = React.useCallback((state: TextInputState) => {
-        const nextActiveWord = findActiveWord(state.text, state.selection, props.autocompletePrefixes);
+        const nextActiveWord = findActiveWord(state.text, state.selection, props.autocompleteKinds);
         setActiveWordState((currentActiveWord) => (
             areActiveWordsEqual(currentActiveWord, nextActiveWord) ? currentActiveWord : nextActiveWord
         ));
-    }, [props.autocompletePrefixes]);
+    }, [props.autocompleteKinds]);
 
     const updateInputSelectionState = React.useCallback((selection: TextInputState['selection']) => {
         setInputSelection((currentSelection) => (
@@ -1500,6 +1491,16 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
             historyAppliedInputStateRef.current = null;
             messageHistory.pause(newState.text);
         }
+        // SB-7 — the two mention reconcilers are DELIBERATELY separate; do not unify them.
+        //
+        // Here we own a LIVE EDIT and therefore know the selection the edit replaced, so
+        // `reconcileStructuredInputMentionsWithTextChange` can resolve the changed span exactly
+        // (an edit that inserts the same characters it deleted is otherwise ambiguous).
+        //
+        // The other two call sites reconcile a PROGRAMMATIC text swap (a controlled-value change
+        // and a session-scope change) where no such selection exists — one of them must even read
+        // the live text via `inputRef.current.getText()` because `inputStateRef` may not describe
+        // it — so they use the diff-based `reconcileStructuredInputMentionsWithText`.
         updateStructuredInputMentions((current) => reconcileStructuredInputMentionsWithTextChange({
             previousText,
             nextText: newState.text,
@@ -1741,7 +1742,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         const focusedActiveWord = findActiveWord(
             inputStateRef.current.text,
             inputStateRef.current.selection,
-            props.autocompletePrefixes,
+            props.autocompleteKinds,
         );
         if (focusedActiveWord) {
             setActiveWordState((currentActiveWord) => (
@@ -1750,7 +1751,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
             setHasAutocompleteTextInteraction(true);
         }
         messageHistory.warmup();
-    }, [composerKeyboardLayoutForFocus, messageHistory, props.autocompletePrefixes]);
+    }, [composerKeyboardLayoutForFocus, messageHistory, props.autocompleteKinds]);
 
     const handleComposerBlur = React.useCallback(() => {
         flushDeferredParentTextSync();
@@ -1794,9 +1795,8 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
 
     const activeWord = activeWordState?.activeWord ?? null;
     const activeSuggestionQuery = isInputFocused && hasAutocompleteTextInteraction && !props.disabled ? activeWord : null;
-    // Using default options: clampSelection=true, autoSelectFirst=true, wrapAround=true
-    // To customize: useActiveSuggestions(activeWord, props.autocompleteSuggestions, { clampSelection: false, wrapAround: false })
-    const [suggestions, selected, moveUp, moveDown] = useActiveSuggestions(activeSuggestionQuery, props.autocompleteSuggestions, { clampSelection: true, wrapAround: true });
+    // Selection follows candidate identity, not an index (INV-6) — the hook owns that.
+    const [suggestions, selected, moveUp, moveDown] = useActiveSuggestions(activeSuggestionQuery, props.autocompleteSuggestions, { wrapAround: true });
 
     // Handle suggestion selection
     const handleSuggestionSelect = React.useCallback((index: number) => {
@@ -1804,7 +1804,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
 
         const suggestion = suggestions[index];
         const currentInputState = inputStateRef.current;
-        const activeWordForSelection = findActiveWord(currentInputState.text, currentInputState.selection, props.autocompletePrefixes);
+        const activeWordForSelection = findActiveWord(currentInputState.text, currentInputState.selection, props.autocompleteKinds);
         const insertionStart = activeWordForSelection?.offset ?? currentInputState.selection.start;
 
         const applyResolvedSelection = (result: Readonly<{ text: string; cursorPosition: number }>) => {
@@ -1819,7 +1819,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                 currentInputState.text,
                 currentInputState.selection,
                 suggestion.text,
-                props.autocompletePrefixes,
+                props.autocompleteKinds,
                 true
             );
             applyResolvedSelection(result);
@@ -1833,20 +1833,25 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
             }
         };
 
-        const override = props.onAutocompleteSuggestionSelect?.({
-            suggestion,
-            inputText: currentInputState.text,
-            selection: currentInputState.selection,
-            activeWord: activeWordForSelection ?? null,
-        });
-
-        if (override) {
-            void Promise.resolve(override).then((result) => {
+        // A kind whose selection is not "replace the token with a string" owns that
+        // rewrite itself (D-20). This used to be a host prop implemented identically
+        // in SessionView and useNewSessionScreenModel.
+        const applySelection = resolveComposerSuggestionKind(suggestion.kind).applySelection;
+        if (applySelection) {
+            void applySelection({
+                suggestion,
+                inputText: currentInputState.text,
+                selection: currentInputState.selection,
+                activeWord: activeWordForSelection ?? null,
+            }).then((result) => {
                 if (result.handled) {
                     applyResolvedSelection(result);
                 } else {
                     applyDefaultSelection();
                 }
+            }).catch((e: unknown) => {
+                Modal.alert(t('common.error'), e instanceof Error ? e.message : t('errors.failedToSendMessage'));
+            }).finally(() => {
                 hapticsLight();
             });
             return;
@@ -1854,7 +1859,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
 
         applyDefaultSelection();
         hapticsLight();
-    }, [suggestions, props.autocompletePrefixes, props.onAutocompleteSuggestionSelect, updateStructuredInputMentions]);
+    }, [suggestions, props.autocompleteKinds, updateStructuredInputMentions]);
 
     // --- Command Menu adapter ---
     // Bridges existing autocomplete state into the CommandMenu primitive shape.

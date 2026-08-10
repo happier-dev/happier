@@ -1,8 +1,9 @@
 import React from 'react';
 
 import { getAgentCore } from '@/agents/catalog/catalog';
-import { getSuggestions } from '@/components/autocomplete/suggestions';
+import type { ComposerSuggestionKindId } from '@/components/autocomplete/composerSuggestionKinds';
 import { AgentInput } from '@/components/sessions/agentInput';
+import { resolveSessionComposerSuggestions } from '@/components/sessions/agentInput/sessionComposerSuggestions';
 import type { AgentInputExtraActionChip } from '@/components/sessions/agentInput/agentInputContracts';
 import { resolveSessionComposerStateFromAuthoringContext } from '@/components/sessions/authoring/context/resolveSessionComposerStateFromAuthoringContext';
 import type { SessionAuthoringDraft } from '@/components/sessions/authoring/draft/sessionAuthoringDraft';
@@ -15,6 +16,9 @@ import type { ExistingSessionAutomationAuthoringContext } from '@/components/ses
 import { Modal } from '@/modal';
 import { nowServerMs } from '@/sync/runtime/time';
 import { t } from '@/text';
+
+// R-9: automation composers offer file/plugin references and slash commands only. No $ skills.
+const AUTOMATION_COMPOSER_SUGGESTION_KINDS: readonly ComposerSuggestionKindId[] = ['file', 'vendorPlugin', 'slashCommand'];
 
 export function ExistingSessionAutomationComposer(props: Readonly<{
     context: ExistingSessionAutomationAuthoringContext;
@@ -38,8 +42,11 @@ export function ExistingSessionAutomationComposer(props: Readonly<{
             isSendDisabled={props.isSubmitDisabled}
             submitAccessibilityLabel={props.submitAccessibilityLabel}
             placeholder={t('automations.edit.messagePlaceholder')}
-            autocompletePrefixes={['@', '/']}
-            autocompleteSuggestions={(query) => getSuggestions(props.context.session.id, query)}
+            autocompleteKinds={AUTOMATION_COMPOSER_SUGGESTION_KINDS}
+            autocompleteSuggestions={(query, signal) => resolveSessionComposerSuggestions(props.context.session.id, query, {
+                kinds: AUTOMATION_COMPOSER_SUGGESTION_KINDS,
+                signal,
+            })}
             sessionId={props.context.session.id}
             metadata={props.context.session.metadata}
             agentType={composerState.agentId}

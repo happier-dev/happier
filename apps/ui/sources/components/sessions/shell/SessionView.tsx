@@ -1,7 +1,7 @@
 import Color from 'color';
 
 import { AgentContentView } from '@/components/sessions/transcript/AgentContentView';
-import { AgentInput, type AgentInputAutocompleteSelectionHandler, type AgentInputSendOptions } from '@/components/sessions/agentInput';
+import { AgentInput, type AgentInputSendOptions } from '@/components/sessions/agentInput';
 import { COMPOSER_CONTENT_HORIZONTAL_INSET } from '@/components/sessions/agentInput/composerContentInset';
 import {
     computeExistingSessionComposerInputMaxHeight,
@@ -35,7 +35,8 @@ import {
 import {
     resolveConnectedServiceDisplayName,
 } from '@/components/settings/connectedServices/model/resolveConnectedServiceDisplayName';
-import { getSuggestions } from '@/components/autocomplete/suggestions';
+import type { ComposerSuggestionKindId } from '@/components/autocomplete/composerSuggestionKinds';
+import { resolveSessionComposerSuggestions } from '@/components/sessions/agentInput/sessionComposerSuggestions';
 import { ChatHeaderView } from '@/components/sessions/transcript/ChatHeaderView';
 import { SessionHeaderActionMenu } from '@/components/sessions/actions/SessionHeaderActionMenu';
 import { SESSION_HEADER_ICON_SIZE_PX } from '@/components/sessions/actions/sessionHeaderIconMetrics';
@@ -111,7 +112,6 @@ import { buildReviewCommentsOutboundMessage } from '@/sync/domains/input/reviewC
 import { resolveSessionComposerSend } from '@/sync/domains/input/slashCommands/resolveSessionComposerSend';
 import { expandPromptTemplateInvocation } from '@/sync/domains/input/slashCommands/expandPromptTemplateInvocation';
 import { resolvePromptInvocationComposerSendAction } from '@/sync/domains/input/slashCommands/promptInvocationBehavior';
-import { resolvePromptInvocationAutocompleteSelection } from '@/sync/domains/input/slashCommands/promptInvocationSuggestion';
 import {
     clearSessionDraftValue,
     clearSessionDraftValues,
@@ -382,7 +382,15 @@ import {
 } from '@/hooks/server/connectedServices/connectedServiceQuotaSnapshotStore';
 
 const sessionSubmitPort = createSyncBackedSubmitPort(sync);
-const SESSION_COMPOSER_AUTOCOMPLETE_PREFIXES: string[] = ['@', '/', '$'];
+const SESSION_COMPOSER_SUGGESTION_KINDS: readonly ComposerSuggestionKindId[] = [
+    'file',
+    'vendorPlugin',
+    // Only the session composer offers `session`: it is the one host with a real session, and
+    // a reference is same-server only (D-8), which is a fact only this host has.
+    'session',
+    'skill',
+    'slashCommand',
+];
 const MAX_USAGE_LIMIT_RECOVERY_READY_TIMER_MS = 2_147_483_647;
 
 function isConnectedServiceBoundProviderUsageDisplaySource(
@@ -4459,22 +4467,15 @@ function SessionViewLoaded({
     const handleAgentInputAbort = React.useCallback(() => {
         return sessionAbort(sessionId);
     }, [sessionId]);
-    const handleAutocompleteSuggestions = React.useCallback((query: string) => getSuggestions(sessionId, query), [sessionId]);
-    const handleAutocompleteSuggestionSelect = React.useCallback<AgentInputAutocompleteSelectionHandler>(
-        async (args) => {
-            try {
-                return await resolvePromptInvocationAutocompleteSelection({
-                    promptInvocation: args.suggestion.promptInvocation,
-                    inputText: args.inputText,
-                    selection: args.selection,
-                    activeWord: args.activeWord,
-                });
-            } catch (e) {
-                Modal.alert(t('common.error'), e instanceof Error ? e.message : t('errors.failedToSendMessage'));
-                return { handled: true as const, text: args.inputText, cursorPosition: args.selection.start };
-            }
-        },
-        [],
+    const handleAutocompleteSuggestions = React.useCallback(
+        // Resolved per query, not per render: the machine target is imperative store state,
+        // and a session that becomes reachable mid-composition must not need a rerender to
+        // start offering files.
+        (query: string, signal: AbortSignal) => resolveSessionComposerSuggestions(sessionId, query, {
+            kinds: SESSION_COMPOSER_SUGGESTION_KINDS,
+            signal,
+        }),
+        [sessionId],
     );
     const handleAgentInputSend = useStableAgentInputOnSend((sendOptions) => {
         if (!hasWriteAccess) {
@@ -5224,9 +5225,8 @@ function SessionViewLoaded({
                 inactiveStatusText={inactiveStatusText}
                 onFileViewerPress={handleAgentInputFileViewerPress}
                 // Autocomplete configuration
-                autocompletePrefixes={SESSION_COMPOSER_AUTOCOMPLETE_PREFIXES}
+                autocompleteKinds={SESSION_COMPOSER_SUGGESTION_KINDS}
                 autocompleteSuggestions={handleAutocompleteSuggestions}
-                onAutocompleteSuggestionSelect={handleAutocompleteSuggestionSelect}
                 disabled={isReadOnly}
                 alwaysShowContextSize={alwaysShowContextSize}
                 extraActionChips={agentInputExtraActionChips}

@@ -573,6 +573,91 @@ describe('useCreateNewSession permission seeding', () => {
         }));
     });
 
+    it('carries the composer structured-input envelope into the first turn, merged with the model seed', async () => {
+        // The new-session composer builds `mentions[]` exactly like the session composer, but its
+        // first turn is sent by this hook rather than by `SessionView`. Without this the envelope
+        // is silently dropped and an `@session` reference reaches the agent as bare text.
+        const {
+            useCreateNewSession,
+            followUpSpawnedSessionWithServerScopeSpy,
+            machineSpawnNewSessionSpy,
+        } = await setupUseCreateNewSessionHarness();
+
+        machineSpawnNewSessionSpy.mockResolvedValueOnce({ type: 'success', sessionId: 'sess_target' });
+
+        let handleCreateSession: null | ((options?: unknown) => Promise<void>) = null;
+        const settings = { experiments: false } as unknown as Settings;
+        const machineEnvPresence: UseMachineEnvPresenceResult = {
+            isPreviewEnvSupported: false,
+            isLoading: false,
+            meta: {},
+            refreshedAt: null,
+            refresh: () => {},
+        };
+
+        function Test() {
+            const hook = useCreateNewSession({
+                launchIntentSignature: 'test-launch-intent',
+                router: { push: vi.fn(), replace: vi.fn() },
+                selectedMachineId: 'm1',
+                selectedPath: '/tmp',
+                selectedMachine: { metadata: {} },
+                setIsCreating: vi.fn(),
+                setIsResumeSupportChecking: vi.fn(),
+                settings,
+                useProfiles: false,
+                selectedProfileId: null,
+                profileMap: new Map(),
+                recentMachinePaths: [],
+                agentType: 'opencode' as any,
+                permissionMode: 'default' as PermissionMode,
+                modelMode: 'gpt' as any,
+                sessionPrompt: 'see @session:peer-abc123',
+                resumeSessionId: '',
+                agentNewSessionOptions: null,
+                machineEnvPresence,
+                secrets: [],
+                secretBindingsByProfileId: {},
+                selectedSecretIdByProfileIdByEnvVarName: {},
+                sessionOnlySecretValueByProfileIdByEnvVarName: {},
+                selectedMachineCapabilities: null,
+                targetServerId: 'server-a',
+                allowedTargetServerIds: ['server-a'],
+            });
+
+            handleCreateSession = hook.handleCreateSession as (options?: unknown) => Promise<void>;
+            return React.createElement('View');
+        }
+
+        await renderScreen(React.createElement(Test));
+
+        const envelope = {
+            v: 1,
+            mentions: [{
+                kind: 'happier.session',
+                ref: 'session:peer',
+                token: '@session:peer-abc123',
+                start: 4,
+                end: 24,
+            }],
+        };
+
+        await act(async () => {
+            await handleCreateSession?.({
+                structuredInputMetaOverrides: { happierStructuredInputV1: envelope },
+            });
+        });
+
+        expect(followUpSpawnedSessionWithServerScopeSpy).toHaveBeenCalledWith(expect.objectContaining({
+            sessionId: 'sess_target',
+            initialMessageText: 'see @session:peer-abc123',
+            metaOverrides: {
+                model: 'gpt',
+                happierStructuredInputV1: envelope,
+            },
+        }));
+    });
+
     it('sets a created session goal from a /goal initial prompt without sending the objective text', async () => {
         const {
             useCreateNewSession,

@@ -57,7 +57,6 @@ import {
     resolveNextSelectableBackendEntryForNewSession,
 } from '@/components/sessions/new/modules/newSessionAgentSelection';
 import type { AgentInputChipPickerOption } from '@/components/sessions/agentInput/components/AgentInputChipPickerTypes';
-import type { AgentInputAutocompleteSelectionHandler } from '@/components/sessions/agentInput';
 import type { OptionPickerProbeState } from '@/components/sessions/pickers/OptionPickerOverlay';
 import { useAutomationsSupport } from '@/hooks/server/useAutomationsSupport';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
@@ -109,7 +108,6 @@ import { NewSessionMachineSelectionContent } from '@/components/sessions/new/com
 import { NewSessionResumeSelectionContent } from '@/components/sessions/new/components/NewSessionResumeSelectionContent';
 import type { AgentInputContentPopoverConfig } from '@/components/sessions/agentInput/components/AgentInputContentPopover';
 import { deferAgentInputPopoverClose } from '@/components/sessions/agentInput/selection/deferAgentInputPopoverClose';
-import { resolvePromptInvocationAutocompleteSelection } from '@/sync/domains/input/slashCommands/promptInvocationSuggestion';
 import { useServerScopedMachineOptions } from '@/components/sessions/new/hooks/machines/useServerScopedMachineOptions';
 import { useActiveServerAccountScope, useProfile as useAccountProfile } from '@/sync/store/hooks';
 import { openDirectSessionsResumeIdPickerModal } from '@/components/sessions/directSessions/browse/openDirectSessionsResumeIdPickerModal';
@@ -119,12 +117,27 @@ import { readRememberedEngineSelection } from '@/sync/domains/sessionAuthoring/r
 import {
     useDeferredRememberedEngineSelection,
 } from '@/components/sessions/new/hooks/screenModel/useDeferredRememberedEngineSelection';
-import { getCommandSuggestions } from '@/components/autocomplete/commandSuggestions';
+import { getSuggestions } from '@/components/autocomplete/suggestions';
+import type { ComposerSuggestionKindId } from '@/components/autocomplete/composerSuggestionKinds';
+import { resolveNewSessionFileSuggestionScope } from '@/components/sessions/new/modules/resolveNewSessionFileSuggestionScope';
 
 
 // Configuration constants
 const RECENT_PATHS_DEFAULT_VISIBLE = 5;
-const NEW_SESSION_COMMAND_SUGGESTION_SESSION_ID = '__new_session__';
+// R-9: plugins and skills are session metadata published after spawn, so this host cannot offer
+// them — there is no session to read a catalog from.
+//
+// `file` IS offered, because files are not session state: a file search is scoped by machine and
+// folder, and this host has both (the user picks them before composing). It resolves through the
+// same registry path an existing session's composer uses, with no host-specific branch. Until a
+// machine and directory are chosen the `workspace` scope is null and the kind contributes nothing.
+//
+// `session` is different, and is offered here: the session list is an ACCOUNT/SERVER-level
+// projection, not session-scoped state, so the only thing this host lacks is the session that
+// would have named its server. It names that server directly instead (`targetServerId`, the
+// server this new session will spawn on), which keeps D-8's same-server rule exact rather than
+// approximate. The reference itself stays relative (`session:<id>`) and carries no server.
+const NEW_SESSION_COMPOSER_SUGGESTION_KINDS: readonly ComposerSuggestionKindId[] = ['file', 'session', 'slashCommand'];
 const styles = newSessionScreenStyles;
 
 function buildNewSessionPopoverSignature(value: unknown): string {
@@ -535,27 +548,6 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         }
         setSelectedProfileId(null);
     }, [profileMap, resolvedBackendEntries, selectedProfileId, settings.profileEnabledById, useProfiles]);
-    // New-session autocomplete is limited to provider-independent slash commands.
-    // Provider-discovered commands are session metadata published after spawn.
-    const emptyAutocompletePrefixes = React.useMemo(() => ['/'], []);
-    const emptyAutocompleteSuggestions = React.useCallback(async (query: string) => {
-        if (!query.startsWith('/')) return [];
-        return getCommandSuggestions(NEW_SESSION_COMMAND_SUGGESTION_SESSION_ID, query);
-    }, []);
-    const handleAutocompleteSuggestionSelect = React.useCallback<AgentInputAutocompleteSelectionHandler>(async (args) => {
-        try {
-            return await resolvePromptInvocationAutocompleteSelection({
-                promptInvocation: args.suggestion.promptInvocation,
-                inputText: args.inputText,
-                selection: args.selection,
-                activeWord: args.activeWord,
-            });
-        } catch (e) {
-            Modal.alert(t('common.error'), e instanceof Error ? e.message : t('errors.failedToSendMessage'));
-            return { handled: true, text: args.inputText, cursorPosition: args.selection.start };
-        }
-    }, []);
-
     const effectiveMachineIdParam = React.useMemo(() => {
         const normalizedMachineIdParam = normalizeOptionalParam(machineIdParam);
         const raw = typeof normalizedMachineIdParam === 'string' ? normalizedMachineIdParam.trim() : '';
@@ -719,6 +711,9 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         persistedPath: hydratedPersistedAuthoringDraft?.directory ?? null,
         cacheScopeKey: capabilityServerId,
     });
+
+    const emptyAutocompleteKinds = NEW_SESSION_COMPOSER_SUGGESTION_KINDS;
+
     const getBestPathForMachineRef = React.useRef(getBestPathForMachine);
     React.useEffect(() => {
         getBestPathForMachineRef.current = getBestPathForMachine;
@@ -752,6 +747,28 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         if (!selectedMachineId) return null;
         return machines.find(m => m.id === selectedMachineId) ?? null;
     }, [selectedMachineId, machines]);
+    const selectedMachineHomeDir = selectedMachine?.metadata?.homeDir ?? null;
+    // Routed through the registry like every other composer host: the eligible-kind
+    // subset is the only thing that decides which triggers resolve here (INV-1),
+    // and a hand-rolled `startsWith('/')` would be a second decision-maker.
+    const emptyAutocompleteSuggestions = React.useCallback(
+        (query: string, signal: AbortSignal) => getSuggestions(null, query, {
+            kinds: NEW_SESSION_COMPOSER_SUGGESTION_KINDS,
+            // There is genuinely no session yet, so say so rather than passing a fake id. The
+            // spawn target is the only correct scope for `@session` here (D-8).
+            serverId: targetServerId,
+            // The machine and folder the user has chosen for the session about to be spawned:
+            // the same addressing an existing session resolves for itself.
+            workspace: resolveNewSessionFileSuggestionScope({
+                targetServerId,
+                selectedMachineId,
+                selectedMachineHomeDir,
+                selectedPath,
+            }),
+            signal,
+        }),
+        [selectedMachineId, selectedMachineHomeDir, selectedPath, targetServerId],
+    );
     const {
         cliAvailability,
         selectedMachineCapabilities,
@@ -1917,9 +1934,8 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         canCreate,
         isCreating,
         submitAccessibilityLabel,
-        emptyAutocompletePrefixes,
+        emptyAutocompleteKinds,
         emptyAutocompleteSuggestions,
-        onAutocompleteSuggestionSelect: handleAutocompleteSuggestionSelect,
         connectionStatus,
         machinePopover,
         resumeSessionId,
@@ -1963,9 +1979,8 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         canCreate,
         isCreating,
         submitAccessibilityLabel,
-        emptyAutocompletePrefixes,
+        emptyAutocompleteKinds,
         emptyAutocompleteSuggestions,
-        onAutocompleteSuggestionSelect: handleAutocompleteSuggestionSelect,
         sessionPromptInputMaxHeight,
         agentType,
         agentLabel,

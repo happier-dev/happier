@@ -739,11 +739,11 @@ describe('useNewSessionScreenModel (installables)', () => {
         expect(model?.variant).toBe('simple');
     });
 
-    it('enables slash autocomplete for provider-independent new-session commands', async () => {
+    it('enables workspace and slash suggestions before a session exists', async () => {
         const hook = await renderNewSessionScreenModel();
         const model = hook.getCurrent();
 
-        expect(model?.simpleProps?.emptyAutocompletePrefixes).toEqual(['/']);
+        expect(model?.simpleProps?.emptyAutocompleteKinds).toEqual(['file', 'session', 'slashCommand']);
         const suggestions = await model?.simpleProps?.emptyAutocompleteSuggestions('/go');
         expect(suggestions?.some((suggestion: { text?: string }) => suggestion.text === '/goal')).toBe(true);
     });

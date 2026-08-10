@@ -225,10 +225,6 @@ vi.mock('@/components/ui/status/StatusDot', () => ({
   StatusDot: () => null,
 }));
 
-vi.mock('@/components/autocomplete/useActiveWord', () => ({
-  useActiveWord: () => ({ word: '', start: 0, end: 0 }),
-}));
-
 vi.mock('@/components/autocomplete/useActiveSuggestions', () => ({
   useActiveSuggestions: () => [[], -1, mocks.suggestionMoveUp, mocks.suggestionMoveDown],
 }));
@@ -301,7 +297,7 @@ describe('AgentInput (history navigation)', () => {
           onChangeText={mocks.onChangeText}
           placeholder="p"
           onSend={mocks.onSend}
-          autocompletePrefixes={[]}
+          autocompleteKinds={[]}
           autocompleteSuggestions={async () => []}
           isSendDisabled={false}
           disabled={false}
@@ -324,7 +320,7 @@ describe('AgentInput (history navigation)', () => {
           onChangeText={mocks.onChangeText}
           placeholder="p"
           onSend={mocks.onSend}
-          autocompletePrefixes={[]}
+          autocompleteKinds={[]}
           autocompleteSuggestions={async () => []}
           isSendDisabled={false}
           disabled={false}
@@ -345,7 +341,7 @@ describe('AgentInput (history navigation)', () => {
         onChangeText={mocks.onChangeText}
         placeholder="p"
         onSend={mocks.onSend}
-        autocompletePrefixes={[]}
+        autocompleteKinds={[]}
         autocompleteSuggestions={async () => []}
         isSendDisabled={false}
         disabled={false}
@@ -375,7 +371,7 @@ describe('AgentInput (history navigation)', () => {
         onChangeText={mocks.onChangeText}
         placeholder="p"
         onSend={mocks.onSend}
-        autocompletePrefixes={[]}
+        autocompleteKinds={[]}
         autocompleteSuggestions={async () => []}
         isSendDisabled={false}
         disabled={false}
@@ -411,7 +407,7 @@ describe('AgentInput (history navigation)', () => {
         onChangeText={mocks.onChangeText}
         placeholder="p"
         onSend={mocks.onSend}
-        autocompletePrefixes={[]}
+        autocompleteKinds={[]}
         autocompleteSuggestions={async () => []}
         isSendDisabled={false}
         disabled={false}
@@ -457,7 +453,7 @@ describe('AgentInput (history navigation)', () => {
         onChangeText={mocks.onChangeText}
         placeholder="p"
         onSend={mocks.onSend}
-        autocompletePrefixes={[]}
+        autocompleteKinds={[]}
         autocompleteSuggestions={async () => []}
         isSendDisabled={false}
         disabled={false}
@@ -493,7 +489,7 @@ describe('AgentInput (history navigation)', () => {
           onChangeText={mocks.onChangeText}
           placeholder="p"
           onSend={mocks.onSend}
-          autocompletePrefixes={[]}
+          autocompleteKinds={[]}
           autocompleteSuggestions={async () => []}
           isSendDisabled={true}
           disabled={false}
@@ -521,7 +517,7 @@ describe('AgentInput (history navigation)', () => {
         onChangeText={mocks.onChangeText}
         placeholder="p"
         onSend={mocks.onSend}
-        autocompletePrefixes={[]}
+        autocompleteKinds={[]}
         autocompleteSuggestions={async () => []}
         isSendDisabled={false}
         disabled={false}
@@ -556,7 +552,7 @@ describe('AgentInput (history navigation)', () => {
         onChangeText={mocks.onChangeText}
         placeholder="p"
         onSend={mocks.onSend}
-        autocompletePrefixes={[]}
+        autocompleteKinds={[]}
         autocompleteSuggestions={async () => []}
         isSendDisabled={false}
         disabled={false}
@@ -594,7 +590,7 @@ describe('AgentInput (history navigation)', () => {
         onChangeText={mocks.onChangeText}
         placeholder="p"
         onSend={mocks.onSend}
-        autocompletePrefixes={[]}
+        autocompleteKinds={[]}
         autocompleteSuggestions={async () => []}
         isSendDisabled={false}
         disabled={false}
@@ -644,7 +640,7 @@ describe('AgentInput (history navigation)', () => {
         onChangeText={mocks.onChangeText}
         placeholder="p"
         onSend={mocks.onSend}
-        autocompletePrefixes={[]}
+        autocompleteKinds={[]}
         autocompleteSuggestions={async () => []}
         isSendDisabled={false}
         disabled={false}
@@ -680,7 +676,7 @@ describe('AgentInput (history navigation)', () => {
         onChangeText={mocks.onChangeText}
         placeholder="p"
         onSend={mocks.onSend}
-        autocompletePrefixes={[]}
+        autocompleteKinds={[]}
         autocompleteSuggestions={async () => []}
         isSendDisabled={false}
         disabled={false}
@@ -716,7 +712,7 @@ describe('AgentInput (history navigation)', () => {
         onChangeText={mocks.onChangeText}
         placeholder="p"
         onSend={mocks.onSend}
-        autocompletePrefixes={[]}
+        autocompleteKinds={[]}
         autocompleteSuggestions={async () => []}
         isSendDisabled={false}
         disabled={false}
@@ -747,7 +743,7 @@ describe('AgentInput (history navigation)', () => {
         onChangeText={mocks.onChangeText}
         placeholder="p"
         onSend={mocks.onSend}
-        autocompletePrefixes={[]}
+        autocompleteKinds={[]}
         autocompleteSuggestions={async () => []}
         isSendDisabled={false}
         disabled={false}
@@ -776,7 +772,7 @@ describe('AgentInput (history navigation)', () => {
           onChangeText={mocks.onChangeText}
           placeholder="p"
           onSend={mocks.onSend}
-          autocompletePrefixes={[]}
+          autocompleteKinds={[]}
           autocompleteSuggestions={async () => []}
           sessionId="s1"
           metadata={null}
@@ -809,7 +805,7 @@ describe('AgentInput (history navigation)', () => {
           onChangeText={mocks.onChangeText}
           placeholder="p"
           onSend={mocks.onSend}
-          autocompletePrefixes={[]}
+          autocompleteKinds={[]}
           autocompleteSuggestions={async () => []}
           sessionId="s1"
           metadata={null}
@@ -845,7 +841,7 @@ describe('AgentInput (history navigation)', () => {
           onChangeText={mocks.onChangeText}
           placeholder="p"
           onSend={mocks.onSend}
-          autocompletePrefixes={[]}
+          autocompleteKinds={[]}
           autocompleteSuggestions={async () => []}
           sessionId="s1"
           metadata={null}
@@ -881,7 +877,7 @@ describe('AgentInput (history navigation)', () => {
           onChangeText={mocks.onChangeText}
           placeholder="p"
           onSend={mocks.onSend}
-          autocompletePrefixes={[]}
+          autocompleteKinds={[]}
           autocompleteSuggestions={async () => []}
           sessionId="s1"
           metadata={null}
@@ -900,7 +896,7 @@ describe('AgentInput (history navigation)', () => {
           onChangeText={mocks.onChangeText}
           placeholder="p"
           onSend={mocks.onSend}
-          autocompletePrefixes={[]}
+          autocompleteKinds={[]}
           autocompleteSuggestions={async () => []}
           sessionId="s1"
           metadata={null}
@@ -927,7 +923,7 @@ describe('AgentInput (history navigation)', () => {
           onChangeText={mocks.onChangeText}
           placeholder="p"
           onSend={mocks.onSend}
-          autocompletePrefixes={[]}
+          autocompleteKinds={[]}
           autocompleteSuggestions={async () => []}
           sessionId="s1"
           metadata={null}
@@ -952,7 +948,7 @@ describe('AgentInput (history navigation)', () => {
           onChangeText={mocks.onChangeText}
           placeholder="p"
           onSend={mocks.onSend}
-          autocompletePrefixes={[]}
+          autocompleteKinds={[]}
           autocompleteSuggestions={async () => []}
           disabled={false}
           showAbortButton={false}
@@ -987,7 +983,7 @@ describe('AgentInput (history navigation)', () => {
           onChangeText={mocks.onChangeText}
           placeholder="p"
           onSend={mocks.onSend}
-          autocompletePrefixes={[]}
+          autocompleteKinds={[]}
           autocompleteSuggestions={async () => []}
           disabled={false}
           showAbortButton={false}
@@ -1019,7 +1015,7 @@ describe('AgentInput (history navigation)', () => {
           onChangeText={mocks.onChangeText}
           placeholder="p"
           onSend={mocks.onSend}
-          autocompletePrefixes={[]}
+          autocompleteKinds={[]}
           autocompleteSuggestions={async () => []}
           sessionId="s1"
           metadata={null}
@@ -1052,7 +1048,7 @@ describe('AgentInput (history navigation)', () => {
           onChangeText={mocks.onChangeText}
           placeholder="p"
           onSend={mocks.onSend}
-          autocompletePrefixes={[]}
+          autocompleteKinds={[]}
           autocompleteSuggestions={async () => []}
           sessionId="s1"
           metadata={null}
@@ -1085,7 +1081,7 @@ describe('AgentInput (history navigation)', () => {
           onChangeText={mocks.onChangeText}
           placeholder="p"
           onSend={mocks.onSend}
-          autocompletePrefixes={[]}
+          autocompleteKinds={[]}
           autocompleteSuggestions={async () => []}
           sessionId="s1"
           metadata={null}
@@ -1117,7 +1113,7 @@ describe('AgentInput (history navigation)', () => {
           onChangeText={mocks.onChangeText}
           placeholder="p"
           onSend={mocks.onSend}
-          autocompletePrefixes={[]}
+          autocompleteKinds={[]}
           autocompleteSuggestions={async () => []}
           sessionId="s1"
           metadata={null}
@@ -1155,7 +1151,7 @@ describe('AgentInput (history navigation)', () => {
           onChangeText={mocks.onChangeText}
           placeholder="p"
           onSend={mocks.onSend}
-          autocompletePrefixes={[]}
+          autocompleteKinds={[]}
           autocompleteSuggestions={async () => []}
           sessionId="s1"
           metadata={null}
@@ -1191,7 +1187,7 @@ describe('AgentInput (history navigation)', () => {
           onChangeText={mocks.onChangeText}
           placeholder="p"
           onSend={mocks.onSend}
-          autocompletePrefixes={[]}
+          autocompleteKinds={[]}
           autocompleteSuggestions={async () => []}
           sessionId="s1"
           metadata={null}
@@ -1218,7 +1214,7 @@ describe('AgentInput (history navigation)', () => {
           onChangeText={mocks.onChangeText}
           placeholder="p"
           onSend={mocks.onSend}
-          autocompletePrefixes={[]}
+          autocompleteKinds={[]}
           autocompleteSuggestions={async () => []}
           sessionId="s1"
           metadata={null}

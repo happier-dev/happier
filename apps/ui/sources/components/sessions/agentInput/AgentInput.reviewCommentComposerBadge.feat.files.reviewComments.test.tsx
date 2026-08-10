@@ -187,7 +187,7 @@ describe('AgentInput review comment composer badge', () => {
                 placeholder="placeholder"
                 onChangeText={() => {}}
                 onSend={() => {}}
-                autocompletePrefixes={[]}
+                autocompleteKinds={[]}
                 autocompleteSuggestions={async () => []}
                 extraActionChips={[reviewCommentsChip]}
             />,
@@ -243,7 +243,7 @@ describe('AgentInput review comment composer badge', () => {
                 placeholder="placeholder"
                 onChangeText={() => {}}
                 onSend={() => {}}
-                autocompletePrefixes={[]}
+                autocompleteKinds={[]}
                 autocompleteSuggestions={async () => []}
                 extraActionChips={[reviewCommentsChip]}
             />,

@@ -188,10 +188,6 @@ vi.mock('@/components/model/ModelPickerOverlay', () => ({
     ModelPickerOverlay: () => null,
 }));
 
-vi.mock('@/components/autocomplete/useActiveWord', () => ({
-    useActiveWord: () => ({ word: '', start: 0, end: 0 }),
-}));
-
 vi.mock('@/components/autocomplete/useActiveSuggestions', () => ({
     useActiveSuggestions: () => [[], 0, () => {}, () => {}],
 }));
@@ -331,7 +327,7 @@ describe('NewSessionSimplePanel', () => {
                 handleCreateSession={() => {}}
                 canCreate={true}
                 isCreating={false}
-                emptyAutocompletePrefixes={[]}
+                emptyAutocompleteKinds={[]}
                 emptyAutocompleteSuggestions={async () => []}
                 sessionPromptInputMaxHeight={200}
                 agentInputExtraActionChips={[]}
@@ -381,7 +377,7 @@ describe('NewSessionSimplePanel', () => {
                 handleCreateSession={() => {}}
                 canCreate={true}
                 isCreating={false}
-                emptyAutocompletePrefixes={[]}
+                emptyAutocompleteKinds={[]}
                 emptyAutocompleteSuggestions={async () => []}
                 sessionPromptInputMaxHeight={200}
                 agentInputExtraActionChips={[]}
@@ -430,7 +426,7 @@ describe('NewSessionSimplePanel', () => {
                 handleCreateSession={() => {}}
                 canCreate={true}
                 isCreating={false}
-                emptyAutocompletePrefixes={[]}
+                emptyAutocompleteKinds={[]}
                 emptyAutocompleteSuggestions={async () => []}
                 sessionPromptInputMaxHeight={200}
                 agentInputExtraActionChips={[]}
@@ -481,7 +477,7 @@ describe('NewSessionSimplePanel', () => {
                 handleCreateSession={() => {}}
                 canCreate={true}
                 isCreating={false}
-                emptyAutocompletePrefixes={[]}
+                emptyAutocompleteKinds={[]}
                 emptyAutocompleteSuggestions={async () => []}
                 sessionPromptInputMaxHeight={200}
                 agentInputExtraActionChips={[]}
@@ -526,7 +522,7 @@ describe('NewSessionSimplePanel', () => {
                 handleCreateSession={() => {}}
                 canCreate={true}
                 isCreating={false}
-                emptyAutocompletePrefixes={[]}
+                emptyAutocompleteKinds={[]}
                 emptyAutocompleteSuggestions={async () => []}
                 sessionPromptInputMaxHeight={200}
                 agentInputExtraActionChips={[]}
@@ -569,7 +565,7 @@ describe('NewSessionSimplePanel', () => {
                 handleCreateSession={() => {}}
                 canCreate={true}
                 isCreating={false}
-                emptyAutocompletePrefixes={[]}
+                emptyAutocompleteKinds={[]}
                 emptyAutocompleteSuggestions={async () => []}
                 sessionPromptInputMaxHeight={200}
                 agentInputExtraActionChips={[]}
@@ -612,7 +608,7 @@ describe('NewSessionSimplePanel', () => {
                 handleCreateSession={() => {}}
                 canCreate={true}
                 isCreating={false}
-                emptyAutocompletePrefixes={[]}
+                emptyAutocompleteKinds={[]}
                 emptyAutocompleteSuggestions={async () => []}
                 sessionPromptInputMaxHeight={200}
                 agentInputExtraActionChips={[]}
@@ -662,7 +658,7 @@ describe('NewSessionSimplePanel', () => {
                 handleCreateSession={handleCreateSession}
                 canCreate={true}
                 isCreating={false}
-                emptyAutocompletePrefixes={[]}
+                emptyAutocompleteKinds={[]}
                 emptyAutocompleteSuggestions={async () => []}
                 sessionPromptInputMaxHeight={200}
                 agentInputExtraActionChips={[]}
@@ -720,7 +716,7 @@ describe('NewSessionSimplePanel', () => {
                     handleCreateSession={handleCreateSession}
                     canCreate={true}
                     isCreating={false}
-                    emptyAutocompletePrefixes={[]}
+                    emptyAutocompleteKinds={[]}
                     emptyAutocompleteSuggestions={async () => []}
                     sessionPromptInputMaxHeight={200}
                     agentInputExtraActionChips={[]}

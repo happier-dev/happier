@@ -1,8 +1,9 @@
 import type { ParticipantRecipientV1 } from '@happier-dev/protocol';
 import * as React from 'react';
 
-import { getSuggestions } from '@/components/autocomplete/suggestions';
+import type { ComposerSuggestionKindId } from '@/components/autocomplete/composerSuggestionKinds';
 import { AgentInput } from '@/components/sessions/agentInput';
+import { resolveSessionComposerSuggestions } from '@/components/sessions/agentInput/sessionComposerSuggestions';
 import type { AgentInputExtraActionChip } from '@/components/sessions/agentInput/agentInputContracts';
 import { Modal } from '@/modal';
 import { resolveParticipantRoutedSend } from '@/sync/domains/input/participants/resolveParticipantRoutedSend';
@@ -12,6 +13,9 @@ import { t } from '@/text';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 
 type ExecutionRunDelivery = 'prompt' | 'steer_if_supported' | 'interrupt';
+
+// R-9: participant composers offer file/plugin references and slash commands only. No $ skills.
+const PARTICIPANT_COMPOSER_SUGGESTION_KINDS: readonly ComposerSuggestionKindId[] = ['file', 'vendorPlugin', 'slashCommand'];
 
 export const SessionParticipantComposer = React.memo((props: Readonly<{
     sessionId: string;
@@ -84,8 +88,11 @@ export const SessionParticipantComposer = React.memo((props: Readonly<{
                     }
                 })(), { tag: 'SessionParticipantComposer.sendMessage' });
             }}
-            autocompletePrefixes={['@', '/']}
-            autocompleteSuggestions={(query) => getSuggestions(props.sessionId, query)}
+            autocompleteKinds={PARTICIPANT_COMPOSER_SUGGESTION_KINDS}
+            autocompleteSuggestions={(query, signal) => resolveSessionComposerSuggestions(props.sessionId, query, {
+                kinds: PARTICIPANT_COMPOSER_SUGGESTION_KINDS,
+                signal,
+            })}
             isSendDisabled={!props.canSendMessages}
             disabled={!props.canSendMessages}
             extraActionChips={props.extraActionChips}

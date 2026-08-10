@@ -179,7 +179,7 @@ describe('NewSessionSimplePanel keyboard scaffold integration', () => {
                     handleCreateSession={() => {}}
                     canCreate
                     isCreating={false}
-                    emptyAutocompletePrefixes={[]}
+                    emptyAutocompleteKinds={[]}
                     emptyAutocompleteSuggestions={async () => []}
                     sessionPromptInputMaxHeight={200}
                     agentType="codex"
@@ -236,7 +236,7 @@ describe('NewSessionSimplePanel keyboard scaffold integration', () => {
             handleCreateSession: () => {},
             canCreate: true,
             isCreating: false,
-            emptyAutocompletePrefixes: [],
+            emptyAutocompleteKinds: [],
             emptyAutocompleteSuggestions: async () => [],
             sessionPromptInputMaxHeight: 200,
             agentType: 'codex',

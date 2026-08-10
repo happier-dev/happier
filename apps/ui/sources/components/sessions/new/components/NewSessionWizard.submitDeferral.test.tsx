@@ -240,7 +240,7 @@ describe('NewSessionWizard submit deferral', () => {
                         handleCreateSession,
                         canCreate: true,
                         isCreating: false,
-                        emptyAutocompletePrefixes: [],
+                        emptyAutocompleteKinds: [],
                         emptyAutocompleteSuggestions: async () => [],
                         agentInputExtraActionChips: [],
                     }}

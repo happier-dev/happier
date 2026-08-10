@@ -1,3 +1,5 @@
+import type { ComposerSuggestionKindId } from '@/components/autocomplete/composerSuggestionKinds';
+import type { ActiveSuggestionsHandler } from '@/components/autocomplete/useActiveSuggestions';
 import * as React from 'react';
 
 import type { AgentId } from '@/agents/catalog/catalog';
@@ -138,9 +140,8 @@ export function useNewSessionWizardProps(params: Readonly<{
     canCreate: boolean;
     isCreating: boolean;
     submitAccessibilityLabel?: NewSessionWizardFooterProps['submitAccessibilityLabel'];
-    emptyAutocompletePrefixes: any;
-    emptyAutocompleteSuggestions: any;
-    onAutocompleteSuggestionSelect?: NewSessionWizardFooterProps['onAutocompleteSuggestionSelect'];
+    emptyAutocompleteKinds: readonly ComposerSuggestionKindId[];
+    emptyAutocompleteSuggestions: ActiveSuggestionsHandler;
     connectionStatus?: any;
     machinePopover?: NewSessionWizardFooterProps['machinePopover'];
     pathPopover?: NewSessionWizardFooterProps['pathPopover'];
@@ -449,9 +450,8 @@ export function useNewSessionWizardProps(params: Readonly<{
             canCreate: params.canCreate,
             isCreating: params.isCreating,
             submitAccessibilityLabel: params.submitAccessibilityLabel,
-            emptyAutocompletePrefixes: params.emptyAutocompletePrefixes,
+            emptyAutocompleteKinds: params.emptyAutocompleteKinds,
             emptyAutocompleteSuggestions: params.emptyAutocompleteSuggestions,
-            onAutocompleteSuggestionSelect: params.onAutocompleteSuggestionSelect,
             connectionStatus: params.connectionStatus,
             machinePopover: params.machinePopover,
             pathPopover: params.pathPopover,
@@ -471,9 +471,8 @@ export function useNewSessionWizardProps(params: Readonly<{
         params.attachmentFlowId,
         params.canCreate,
         params.connectionStatus,
-        params.emptyAutocompletePrefixes,
+        params.emptyAutocompleteKinds,
         params.emptyAutocompleteSuggestions,
-        params.onAutocompleteSuggestionSelect,
         params.handleCreateSession,
         params.isCreating,
         params.isResumeSupportChecking,
