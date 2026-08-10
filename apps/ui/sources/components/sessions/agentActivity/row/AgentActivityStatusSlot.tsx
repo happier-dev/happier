@@ -4,8 +4,14 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 
-import { ActivitySpinner, iconMatchedSpinnerSize } from '@/components/ui/feedback/ActivitySpinner';
+import {
+    ActivitySpinner,
+    ICON_CIRCLE_INK_RATIO,
+    iconMatchedSpinnerSize,
+} from '@/components/ui/feedback/ActivitySpinner';
 import { Icon, type IconName } from '@/components/ui/icons/Icon';
+import { resolveMotionPresentation } from '@/components/ui/motion/reducedMotionTable';
+import { StatusTransition } from '@/components/ui/motion/StatusTransition';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 
 import {
@@ -65,7 +71,23 @@ export const AgentActivityStatusSlot = React.memo((props: AgentActivityStatusSlo
     const reducedMotion = useReducedMotionPreference();
     const size = props.size ?? AGENT_STATUS_GLYPH_PX.comfortable;
     const { ink } = resolveAgentActivityToneStyle(resolveAgentActivityTone(props.status), theme);
-    const spins = props.status === 'running' && !reducedMotion;
+    // Through the shared reduced-motion table, not a local `!reducedMotion`: the substitution below
+    // is one row of a mapping that also governs the settle, the row entrance and the clock, and a
+    // private conditional here is how one of those ends up disagreeing with the rest.
+    const spins = props.status === 'running'
+        && resolveMotionPresentation('spinner', reducedMotion) === 'animate';
+
+    const mark = spins ? (
+        <ActivitySpinner
+            // A glyph draws its circle inset in its em box; a spinner's diameter IS its box.
+            // Matching the raw numbers is the exact bug `iconMatchedSpinnerSize` exists for.
+            size={iconMatchedSpinnerSize(size)}
+            color={ink}
+            animationEnabled={props.animationEnabled}
+        />
+    ) : (
+        <Icon name={STATUS_GLYPHS[props.status]} size={size} color={ink} />
+    );
 
     return (
         <View
@@ -75,17 +97,28 @@ export const AgentActivityStatusSlot = React.memo((props: AgentActivityStatusSlo
             // not a name.
             accessibilityLabel={resolveAgentActivityStatusWord(props.status)}
         >
-            {spins ? (
-                <ActivitySpinner
-                    // A glyph draws its circle inset in its em box; a spinner's diameter IS its box.
-                    // Matching the raw numbers is the exact bug `iconMatchedSpinnerSize` exists for.
-                    size={iconMatchedSpinnerSize(size)}
-                    color={ink}
-                    animationEnabled={props.animationEnabled}
-                />
-            ) : (
-                <Icon name={STATUS_GLYPHS[props.status]} size={size} color={ink} />
-            )}
+            {/*
+              * The settle. Keyed on the status, so the mark resolves into the next one instead of
+              * cutting — the one moment in this pane a person is actually watching. The box is
+              * declared at the glyph size, so a 16px spinner becoming a 20px glyph cannot resize
+              * anything: `fromScale` starts the incoming mark at the spinner's matched ink and lets
+              * the size correction itself be the growth.
+              *
+              * The transition takes rendered children and knows nothing about statuses or glyphs.
+              * `STATUS_GLYPHS` above stays the only glyph table; a primitive that knew glyph names
+              * would be a second one.
+              */}
+            <StatusTransition
+                transitionKey={props.status}
+                size={size}
+                fromScale={ICON_CIRCLE_INK_RATIO}
+                // Passed rather than re-read, so the mark and its motion cannot disagree about the
+                // preference on the frame it changes.
+                reducedMotion={reducedMotion}
+                testID={props.testID ? `${props.testID}:mark` : undefined}
+            >
+                {mark}
+            </StatusTransition>
         </View>
     );
 });

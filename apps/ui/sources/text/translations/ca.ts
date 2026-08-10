@@ -4897,6 +4897,10 @@ deps: {
                     row: {
                         a11yLabel: ({ title, status }: { title: string; status: string }) => `${title}, ${status}`,
                     },
+                    staleness: {
+                        quiet: "Sense actualitzacions recents",
+                        stale: ({ minutes }: { minutes: number }) => `Sense actualitzacions des de fa ${minutes} min`,
+                    },
                     status: {
                         queued: "A la cua",
                         starting: "Iniciant",
@@ -4910,6 +4914,7 @@ deps: {
                         unknown: "Desconegut",
                     },
                     time: {
+                        staleA11y: ({ duration }: { duration: string }) => `${duration} transcorreguts, sense actualitzacions recents`,
                         hoursMinutes: ({ hours, minutes }: { hours: number; minutes: string }) => `${hours} h ${minutes} min`,
                         elapsedA11y: ({ duration }: { duration: string }) => `En execució des de fa ${duration}`,
                         totalA11y: ({ duration }: { duration: string }) => `Ha trigat ${duration}`,
@@ -4923,6 +4928,26 @@ deps: {
                         deleteConfirmTitle: "Vols suprimir aquest agent?",
                         deleteConfirmMessage: ({ title }: { title: string }) => `${title} s’eliminarà d’aquesta sessió.`,
                         deleteConfirmAction: "Suprimeix",
+                        deleteTeam: "Suprimeix l'equip",
+                        deleteTeamConfirmTitle: "Vols suprimir aquest equip?",
+                        deleteTeamConfirmMessage: "Tots els companys d'aquest equip s'aturaran. Aquesta acció no es pot desfer.",
+                        deleteTeamConfirmAction: "Suprimeix l'equip",
+                    },
+                    section: {
+                        needsYou: "Et necessiten",
+                        working: "En curs",
+                        finished: "Finalitzats",
+                    },
+                    list: {
+                        showAllFinished: ({ count }: { count: number }) => `Mostra’ls tots (${count})`,
+                        refreshing: "S’està actualitzant…",
+                        offline: "Sense connexió: es mostra la darrera actualització.",
+                    },
+                    empty: {
+                        firstUseTitle: "Els teus agents apareixeran aquí",
+                        firstUseSubtitle: "Inicia’n un i podràs seguir què fa, quant ha trigat i el moment en què et necessita.",
+                        firstUseAction: "Inicia un agent",
+                        idle: "Ara mateix no hi ha cap agent en execució.",
                     },
                 },
                 subagents: {

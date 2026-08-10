@@ -5501,6 +5501,10 @@ localTailscale: {
           row: {
             a11yLabel: ({ title, status }: { title: string; status: string }) => `${title}、${status}`,
           },
+          staleness: {
+            quiet: "最近の更新なし",
+            stale: ({ minutes }: { minutes: number }) => `${minutes}分間更新なし`,
+          },
           status: {
             queued: "キュー待ち",
             starting: "起動中",
@@ -5514,6 +5518,7 @@ localTailscale: {
             unknown: "不明",
           },
           time: {
+            staleA11y: ({ duration }: { duration: string }) => `経過 ${duration}、最近の更新なし`,
             hoursMinutes: ({ hours, minutes }: { hours: number; minutes: string }) => `${hours}時間${minutes}分`,
             elapsedA11y: ({ duration }: { duration: string }) => `${duration} 実行中`,
             totalA11y: ({ duration }: { duration: string }) => `所要時間 ${duration}`,
@@ -5527,6 +5532,26 @@ localTailscale: {
             deleteConfirmTitle: "このエージェントを削除しますか？",
             deleteConfirmMessage: ({ title }: { title: string }) => `${title} をこのセッションから削除します。`,
             deleteConfirmAction: "削除",
+            deleteTeam: "チームを削除",
+            deleteTeamConfirmTitle: "このチームを削除しますか？",
+            deleteTeamConfirmMessage: "このチームのメンバーはすべて停止します。この操作は取り消せません。",
+            deleteTeamConfirmAction: "チームを削除",
+          },
+          section: {
+            needsYou: "対応が必要",
+            working: "実行中",
+            finished: "完了",
+          },
+          list: {
+            showAllFinished: ({ count }: { count: number }) => `すべて表示（${count}）`,
+            refreshing: "更新中…",
+            offline: "オフラインです。最後に取得した状態を表示しています。",
+          },
+          empty: {
+            firstUseTitle: "エージェントはここに表示されます",
+            firstUseSubtitle: "起動すると、何をしているか、どれくらいかかっているか、いつ対応が必要かを追えます。",
+            firstUseAction: "エージェントを起動",
+            idle: "現在実行中のエージェントはありません。",
           },
         },
         subagents: {

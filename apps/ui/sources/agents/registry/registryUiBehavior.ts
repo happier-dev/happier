@@ -226,10 +226,6 @@ export type AgentUiBehavior = Readonly<{
             session: Session;
             subagents: readonly SessionSubagent[];
         }) => readonly ReactNode[];
-        createTeammateLauncherDetailsTab?: (ctx: {
-            session: Session;
-            teamId: string;
-        }) => DetailsTab | null;
         renderDetailsTab?: (ctx: {
             sessionId: string;
             scopeId: string;

@@ -54,6 +54,18 @@ describe('resolveAgentActivityMetaLine', () => {
         expect(line).not.toContain('\n');
     });
 
+    it('puts the silence note ahead of the detail it casts doubt on', () => {
+        // The line is tail-truncated, so ordering is the whole decision: a reader who sees only its
+        // first half must see the caveat rather than a preview that may be ten minutes old.
+        expect(resolveAgentActivityMetaLine(entry({ status: 'running', metaDetail: 'Reading logs' }), 'quiet'))
+            .toBe('No recent update · Reading logs');
+        expect(resolveAgentActivityMetaLine(entry({ status: 'running', metaDetail: 'Reading logs' }), 'stale'))
+            .toBe('No update in 10 min · Reading logs');
+        // And it is the only thing staleness adds — the status word still leads.
+        expect(resolveAgentActivityMetaLine(entry({ status: 'starting' }), 'stale'))
+            .toBe(`${resolveAgentActivityStatusWord('starting')} · No update in 10 min`);
+    });
+
     it('shows a running row its detail without a redundant "Running" prefix', () => {
         expect(resolveAgentActivityMetaLine(entry({ status: 'running', metaDetail: 'Reading logs' })))
             .toBe('Reading logs');

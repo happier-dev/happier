@@ -29,6 +29,7 @@ const ACTION_ICONS = {
     send: 'paper-plane-tilt',
     stop: 'stop',
     delete: 'trash',
+    delete_team: 'users',
 } as const satisfies Record<AgentActivityRowActionId, IconName>;
 
 const ACTION_LABEL_KEYS = {
@@ -37,17 +38,55 @@ const ACTION_LABEL_KEYS = {
     send: 'session.agentActivity.action.send',
     stop: 'session.agentActivity.action.stop',
     delete: 'session.agentActivity.action.delete',
+    delete_team: 'session.agentActivity.action.deleteTeam',
 } as const satisfies Record<AgentActivityRowActionId, string>;
 
 /**
- * Danger styling, and — for `delete` only — a confirmation.
+ * Danger styling, and — for the two irreversible actions only — a confirmation.
  *
  * Stopping a run is the user's own stop and is recoverable by launching again, so it confirms
- * nothing; deleting a teammate is not, so it always does. Sharing one style between a constructive
- * and a destructive action is defect A10.
+ * nothing; deleting is not, so it always does. Sharing one style between a constructive and a
+ * destructive action is defect A10.
  */
-const DESTRUCTIVE_ACTIONS: ReadonlySet<AgentActivityRowActionId> = new Set(['stop', 'delete']);
-const CONFIRMED_ACTIONS: ReadonlySet<AgentActivityRowActionId> = new Set(['delete']);
+const DESTRUCTIVE_ACTIONS: ReadonlySet<AgentActivityRowActionId> = new Set([
+    'stop',
+    'delete',
+    'delete_team',
+]);
+
+/**
+ * Confirmation copy per action, because the two destructive actions destroy different things.
+ *
+ * Deleting a teammate names the row; deleting a team cannot, since the row is one member of it —
+ * so its message states the blast radius instead of a name. One confirmation owner, two truths, and
+ * no action can acquire a confirmation without copy that says what it removes.
+ */
+type AgentActivityConfirmation = Readonly<{
+    title: string;
+    message: string;
+    confirmText: string;
+}>;
+
+function resolveConfirmation(
+    actionId: AgentActivityRowActionId,
+    rowTitle: string,
+): AgentActivityConfirmation | null {
+    if (actionId === 'delete') {
+        return {
+            title: t('session.agentActivity.action.deleteConfirmTitle'),
+            message: t('session.agentActivity.action.deleteConfirmMessage', { title: rowTitle }),
+            confirmText: t('session.agentActivity.action.deleteConfirmAction'),
+        };
+    }
+    if (actionId === 'delete_team') {
+        return {
+            title: t('session.agentActivity.action.deleteTeamConfirmTitle'),
+            message: t('session.agentActivity.action.deleteTeamConfirmMessage'),
+            confirmText: t('session.agentActivity.action.deleteTeamConfirmAction'),
+        };
+    }
+    return null;
+}
 
 /** 28pt box + 8pt slop = the 44pt touch target, without a 44pt glyph. */
 const OVERFLOW_HIT_SLOP = 8;
@@ -67,19 +106,16 @@ export const AgentActivityRowOverflow = React.memo((props: AgentActivityRowOverf
     const { entryId, onAction, title } = props;
 
     const runAction = React.useCallback((actionId: AgentActivityRowActionId) => {
-        if (!CONFIRMED_ACTIONS.has(actionId)) {
+        const confirmation = resolveConfirmation(actionId, title);
+        if (!confirmation) {
             onAction(entryId, actionId);
             return;
         }
         void (async () => {
-            const confirmed = await Modal.confirm(
-                t('session.agentActivity.action.deleteConfirmTitle'),
-                t('session.agentActivity.action.deleteConfirmMessage', { title }),
-                {
-                    confirmText: t('session.agentActivity.action.deleteConfirmAction'),
-                    destructive: true,
-                },
-            );
+            const confirmed = await Modal.confirm(confirmation.title, confirmation.message, {
+                confirmText: confirmation.confirmText,
+                destructive: true,
+            });
             if (confirmed) onAction(entryId, actionId);
         })();
     }, [entryId, onAction, title]);

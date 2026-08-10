@@ -5573,6 +5573,10 @@ export const it: TranslationStructure = {
             row: {
               a11yLabel: ({ title, status }: { title: string; status: string }) => `${title}, ${status}`,
             },
+            staleness: {
+              quiet: "Nessun aggiornamento recente",
+              stale: ({ minutes }: { minutes: number }) => `Nessun aggiornamento da ${minutes} min`,
+            },
             status: {
               queued: "In coda",
               starting: "Avvio in corso",
@@ -5586,6 +5590,7 @@ export const it: TranslationStructure = {
               unknown: "Sconosciuto",
             },
             time: {
+              staleA11y: ({ duration }: { duration: string }) => `${duration} trascorsi, nessun aggiornamento recente`,
               hoursMinutes: ({ hours, minutes }: { hours: number; minutes: string }) => `${hours} h ${minutes} min`,
               elapsedA11y: ({ duration }: { duration: string }) => `In esecuzione da ${duration}`,
               totalA11y: ({ duration }: { duration: string }) => `Durata ${duration}`,
@@ -5599,6 +5604,26 @@ export const it: TranslationStructure = {
               deleteConfirmTitle: "Eliminare questo agente?",
               deleteConfirmMessage: ({ title }: { title: string }) => `${title} verrà rimosso da questa sessione.`,
               deleteConfirmAction: "Elimina",
+              deleteTeam: "Elimina team",
+              deleteTeamConfirmTitle: "Eliminare questo team?",
+              deleteTeamConfirmMessage: "Tutti i compagni di questo team verranno arrestati. L'operazione non è reversibile.",
+              deleteTeamConfirmAction: "Elimina team",
+            },
+            section: {
+              needsYou: "Ha bisogno di te",
+              working: "In corso",
+              finished: "Completati",
+            },
+            list: {
+              showAllFinished: ({ count }: { count: number }) => `Mostra tutti (${count})`,
+              refreshing: "Aggiornamento…",
+              offline: "Offline: viene mostrato l’ultimo aggiornamento.",
+            },
+            empty: {
+              firstUseTitle: "I tuoi agenti compariranno qui",
+              firstUseSubtitle: "Avviane uno e potrai seguire cosa sta facendo, quanto ha impiegato e il momento in cui ha bisogno di te.",
+              firstUseAction: "Avvia un agente",
+              idle: "Al momento non c’è nessun agente in esecuzione.",
             },
           },
           subagents: {

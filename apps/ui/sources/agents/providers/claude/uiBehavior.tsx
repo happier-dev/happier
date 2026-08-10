@@ -83,7 +83,6 @@ export const CLAUDE_UI_BEHAVIOR_OVERRIDE: AgentUiBehavior = {
                 />,
             ];
         },
-        createTeammateLauncherDetailsTab: ({ teamId }) => createClaudeSubagentLauncherDetailsTab('member', teamId),
         renderDetailsTab: ({ sessionId, tab }) => {
             if (!isClaudeSubagentLauncherResource(tab.resource)) return null;
             return (

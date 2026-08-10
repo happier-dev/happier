@@ -5048,6 +5048,10 @@ export const zhHans: TranslationStructure = {
         row: {
           a11yLabel: ({ title, status }: { title: string; status: string }) => `${title}，${status}`,
         },
+        staleness: {
+          quiet: "近期无更新",
+          stale: ({ minutes }: { minutes: number }) => `${minutes} 分钟无更新`,
+        },
         status: {
           queued: "排队中",
           starting: "启动中",
@@ -5061,6 +5065,7 @@ export const zhHans: TranslationStructure = {
           unknown: "未知",
         },
         time: {
+          staleA11y: ({ duration }: { duration: string }) => `已用时 ${duration}，近期无更新`,
           hoursMinutes: ({ hours, minutes }: { hours: number; minutes: string }) => `${hours} 小时 ${minutes} 分`,
           elapsedA11y: ({ duration }: { duration: string }) => `已运行 ${duration}`,
           totalA11y: ({ duration }: { duration: string }) => `用时 ${duration}`,
@@ -5074,6 +5079,26 @@ export const zhHans: TranslationStructure = {
           deleteConfirmTitle: "要删除此代理吗？",
           deleteConfirmMessage: ({ title }: { title: string }) => `${title} 将从此会话中移除。`,
           deleteConfirmAction: "删除",
+          deleteTeam: "删除团队",
+          deleteTeamConfirmTitle: "要删除此团队吗？",
+          deleteTeamConfirmMessage: "此团队的所有成员都将停止。此操作无法撤销。",
+          deleteTeamConfirmAction: "删除团队",
+        },
+        section: {
+          needsYou: "需要你处理",
+          working: "进行中",
+          finished: "已完成",
+        },
+        list: {
+          showAllFinished: ({ count }: { count: number }) => `查看全部（${count}）`,
+          refreshing: "正在刷新…",
+          offline: "已离线：显示最后一次更新。",
+        },
+        empty: {
+          firstUseTitle: "你的代理会显示在这里",
+          firstUseSubtitle: "启动一个，就能看到它在做什么、用了多久，以及什么时候需要你。",
+          firstUseAction: "启动代理",
+          idle: "当前没有正在运行的代理。",
         },
       },
       subagents: {

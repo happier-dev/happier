@@ -5706,6 +5706,10 @@ export const ru: TranslationStructure = {
           row: {
             a11yLabel: ({ title, status }: { title: string; status: string }) => `${title}, ${status}`,
           },
+          staleness: {
+            quiet: "Нет недавних обновлений",
+            stale: ({ minutes }: { minutes: number }) => `Нет обновлений ${minutes} мин`,
+          },
           status: {
             queued: "В очереди",
             starting: "Запускается",
@@ -5719,6 +5723,7 @@ export const ru: TranslationStructure = {
             unknown: "Неизвестно",
           },
           time: {
+            staleA11y: ({ duration }: { duration: string }) => `Прошло ${duration}, нет недавних обновлений`,
             hoursMinutes: ({ hours, minutes }: { hours: number; minutes: string }) => `${hours} ч ${minutes} мин`,
             elapsedA11y: ({ duration }: { duration: string }) => `Выполняется ${duration}`,
             totalA11y: ({ duration }: { duration: string }) => `Заняло ${duration}`,
@@ -5732,6 +5737,26 @@ export const ru: TranslationStructure = {
             deleteConfirmTitle: "Удалить этого агента?",
             deleteConfirmMessage: ({ title }: { title: string }) => `${title} будет удалён из этой сессии.`,
             deleteConfirmAction: "Удалить",
+            deleteTeam: "Удалить команду",
+            deleteTeamConfirmTitle: "Удалить эту команду?",
+            deleteTeamConfirmMessage: "Все участники этой команды будут остановлены. Отменить это действие нельзя.",
+            deleteTeamConfirmAction: "Удалить команду",
+          },
+          section: {
+            needsYou: "Ждут вас",
+            working: "В работе",
+            finished: "Завершённые",
+          },
+          list: {
+            showAllFinished: ({ count }: { count: number }) => `Показать все (${count})`,
+            refreshing: "Обновление…",
+            offline: "Нет связи — показано последнее обновление.",
+          },
+          empty: {
+            firstUseTitle: "Здесь появятся ваши агенты",
+            firstUseSubtitle: "Запустите одного — и увидите, что он делает, сколько это заняло и когда ему нужна ваша помощь.",
+            firstUseAction: "Запустить агента",
+            idle: "Сейчас нет запущенных агентов.",
           },
         },
         subagents: {

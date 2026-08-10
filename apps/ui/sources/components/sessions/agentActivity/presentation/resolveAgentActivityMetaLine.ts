@@ -1,6 +1,10 @@
 import type { AgentActivityStatusV1 } from '@happier-dev/protocol';
 
 import type { AgentActivityRowEntry } from '../agentActivityRowEntry';
+import {
+    resolveAgentActivityStalenessNote,
+    type AgentActivityStaleness,
+} from './agentActivityStaleness';
 import { resolveAgentActivityStatusWord } from './agentActivityToneStyle';
 import { collapseToSingleLine } from './collapseToSingleLine';
 
@@ -23,12 +27,24 @@ const META_SEPARATOR = ' · ';
  * provider, backend, intent, native type, model, agent id, duration) is either already visible
  * elsewhere on the row or belongs in the detail view the row opens.
  */
-export function resolveAgentActivityMetaLine(entry: AgentActivityRowEntry): string | null {
+export function resolveAgentActivityMetaLine(
+    entry: AgentActivityRowEntry,
+    /**
+     * How long this entry has been silent (4.10). It contributes a word to the line and nothing
+     * else — it never changes the status, the glyph or the section.
+     */
+    staleness: AgentActivityStaleness = 'fresh',
+): string | null {
     const statusWord = SELF_EVIDENT_STATUSES.has(entry.status)
         ? null
         : resolveAgentActivityStatusWord(entry.status);
     const detail = collapseToSingleLine(entry.metaDetail);
 
-    if (statusWord && detail) return `${statusWord}${META_SEPARATOR}${detail}`;
-    return statusWord ?? detail ?? null;
+    // The silence note goes before the detail, because the line is tail-truncated and the detail is
+    // by definition the thing we are no longer sure is current. A reader who sees only the first
+    // half must see the caveat, not the stale preview it applies to.
+    const parts = [statusWord, resolveAgentActivityStalenessNote(staleness), detail]
+        .filter((part): part is string => part != null && part.length > 0);
+
+    return parts.length > 0 ? parts.join(META_SEPARATOR) : null;
 }

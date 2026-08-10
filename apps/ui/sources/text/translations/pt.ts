@@ -5351,6 +5351,10 @@ export const pt: TranslationStructure = {
           row: {
             a11yLabel: ({ title, status }: { title: string; status: string }) => `${title}, ${status}`,
           },
+          staleness: {
+            quiet: "Sem atualizações recentes",
+            stale: ({ minutes }: { minutes: number }) => `Sem atualizações há ${minutes} min`,
+          },
           status: {
             queued: "Na fila",
             starting: "Iniciando",
@@ -5364,6 +5368,7 @@ export const pt: TranslationStructure = {
             unknown: "Desconhecido",
           },
           time: {
+            staleA11y: ({ duration }: { duration: string }) => `${duration} decorridos, sem atualizações recentes`,
             hoursMinutes: ({ hours, minutes }: { hours: number; minutes: string }) => `${hours} h ${minutes} min`,
             elapsedA11y: ({ duration }: { duration: string }) => `Em execução há ${duration}`,
             totalA11y: ({ duration }: { duration: string }) => `Levou ${duration}`,
@@ -5377,6 +5382,26 @@ export const pt: TranslationStructure = {
             deleteConfirmTitle: "Excluir este agente?",
             deleteConfirmMessage: ({ title }: { title: string }) => `${title} será removido desta sessão.`,
             deleteConfirmAction: "Excluir",
+            deleteTeam: "Excluir equipe",
+            deleteTeamConfirmTitle: "Excluir esta equipe?",
+            deleteTeamConfirmMessage: "Todos os colegas desta equipe serão encerrados. Não é possível desfazer.",
+            deleteTeamConfirmAction: "Excluir equipe",
+          },
+          section: {
+            needsYou: "Precisa de você",
+            working: "Em andamento",
+            finished: "Concluídos",
+          },
+          list: {
+            showAllFinished: ({ count }: { count: number }) => `Ver todos (${count})`,
+            refreshing: "Atualizando…",
+            offline: "Off-line: mostrando a última atualização.",
+          },
+          empty: {
+            firstUseTitle: "Seus agentes vão aparecer aqui",
+            firstUseSubtitle: "Inicie um e acompanhe o que ele está fazendo, quanto tempo levou e o momento em que precisa de você.",
+            firstUseAction: "Iniciar um agente",
+            idle: "Nenhum agente em execução no momento.",
           },
         },
         subagents: {

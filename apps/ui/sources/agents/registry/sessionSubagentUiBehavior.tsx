@@ -30,26 +30,6 @@ export function hasSessionSubagentLaunchCards(session: Session | null): boolean 
     return typeof behavior?.sessionSubagents?.renderLaunchCards === 'function';
 }
 
-export function createSessionTeammateLauncherDetailsTab(params: Readonly<{
-    session: Session | null;
-    teamId: string;
-}>): DetailsTab | null {
-    if (!params.session) return null;
-    const behavior = resolveAgentUiBehaviorFromFlavor(params.session.metadata?.flavor);
-    const createTab = behavior?.sessionSubagents?.createTeammateLauncherDetailsTab;
-    if (!createTab) return null;
-    return createTab({
-        session: params.session,
-        teamId: params.teamId,
-    });
-}
-
-export function hasSessionTeammateLauncher(session: Session | null): boolean {
-    if (!session) return false;
-    const behavior = resolveAgentUiBehaviorFromFlavor(session.metadata?.flavor);
-    return typeof behavior?.sessionSubagents?.createTeammateLauncherDetailsTab === 'function';
-}
-
 export function renderProviderSessionDetailsTab(params: Readonly<{
     sessionId: string;
     scopeId: string;

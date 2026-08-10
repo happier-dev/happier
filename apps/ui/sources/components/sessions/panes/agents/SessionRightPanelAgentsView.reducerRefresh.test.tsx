@@ -2,6 +2,8 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { clearSessionTranscriptDerivedCachesForSession } from '@/sync/runtime/sessionTranscriptDerivedCaches';
+
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 vi.mock('react-native', async () => {
@@ -90,10 +92,12 @@ let fixture: ReturnType<typeof import('@/dev/testkit')['makeSessionAgentActivity
 let previousStorageState: ReturnType<(typeof storage)['getState']> | null = null;
 
 const SUBAGENT_KEY = 'alpha';
+const SESSION_ID = 's1';
+const ROSTER_TEST_ID = 'session-agents-roster';
 
 function seedFixture() {
     fixture = testkit.makeSessionAgentActivityFixture({
-        sessionId: 's1',
+        sessionId: SESSION_ID,
         subagents: [{
             key: SUBAGENT_KEY,
             title: 'Audit the auth flow',
@@ -156,18 +160,21 @@ describe('SessionRightPanelAgentsView reducer refresh', () => {
     afterEach(() => {
         testkit.standardCleanup();
         if (previousStorageState) storage.setState(previousStorageState);
+        // Each test reseeds the same session id with a fresh transcript, which is the production
+        // "transcript memory released and rebuilt" case; without going through the release seam the
+        // subagent-source LRU would serve the previous test's messages at the same source version.
+        clearSessionTranscriptDerivedCachesForSession(SESSION_ID);
     });
 
     it('refreshes the activity preview when the reducer sidechain mutates in place', async () => {
-        const subagentId = testkit.agentActivityFixtureSubagentId(SUBAGENT_KEY);
         const screen = await testkit.renderScreen(
             <SessionRightPanelAgentsView sessionId={fixture.sessionId} scopeId="session:s1" />,
         );
         await testkit.flushHookEffects();
 
-        expect(
-            screen.findByTestId(`session-subagent-activity:${subagentId}`)?.props.children,
-        ).toContain('Reading src/auth/session.ts');
+        // The preview is the row's one meta line now, so it is read off the rendered text rather
+        // than a dedicated node — which is also the thing a reader actually sees.
+        expect(screen.getTextContent()).toContain('Reading src/auth/session.ts');
 
         await appendSidechainMessage({
             id: `${testkit.agentActivityFixtureSidechainId(SUBAGENT_KEY)}_activity_2`,
@@ -175,19 +182,23 @@ describe('SessionRightPanelAgentsView reducer refresh', () => {
             text: 'Editing src/auth/token.ts',
         });
 
-        expect(
-            screen.findByTestId(`session-subagent-activity:${subagentId}`)?.props.children,
-        ).toContain('Editing src/auth/token.ts');
+        expect(screen.getTextContent()).toContain('Editing src/auth/token.ts');
+        expect(screen.getTextContent()).not.toContain('Reading src/auth/session.ts');
     }, 120_000);
 
     it('surfaces a permission that arrives on an already-rendered sidechain', async () => {
         const subagentId = testkit.agentActivityFixtureSubagentId(SUBAGENT_KEY);
+        const statusTestId = `${ROSTER_TEST_ID}:row:${subagentId}:status`;
         const screen = await testkit.renderScreen(
             <SessionRightPanelAgentsView sessionId={fixture.sessionId} scopeId="session:s1" />,
         );
         await testkit.flushHookEffects();
 
-        expect(screen.findByTestId(`session-subagent-permission-blocked:${subagentId}`)).toBeNull();
+        // A blocked agent is no longer a badge beside the status — it IS the status (`waiting`),
+        // which is what puts the row in NEEDS YOU and tints the attention rail.
+        expect(screen.findByTestId(statusTestId)?.props.accessibilityLabel)
+            .toBe('session.agentActivity.status.running');
+        expect(screen.findByTestId(`${ROSTER_TEST_ID}:section:needsYou`)).toBeNull();
 
         await appendSidechainMessage({
             id: `${testkit.agentActivityFixtureSidechainId(SUBAGENT_KEY)}_permission`,
@@ -195,6 +206,8 @@ describe('SessionRightPanelAgentsView reducer refresh', () => {
             permissionStatus: 'pending',
         });
 
-        expect(screen.findByTestId(`session-subagent-permission-blocked:${subagentId}`)).toBeTruthy();
+        expect(screen.findByTestId(statusTestId)?.props.accessibilityLabel)
+            .toBe('session.agentActivity.status.waiting');
+        expect(screen.findByTestId(`${ROSTER_TEST_ID}:section:needsYou`)).toBeTruthy();
     }, 120_000);
 });

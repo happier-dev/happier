@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { StyleSheet } from 'react-native-unistyles';
 
+import { resolveElapsedTickCadence } from '@/components/ui/motion/reducedMotionTable';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { useNowMs } from '@/hooks/time/useNowMs';
@@ -21,17 +22,27 @@ import { AGENT_TIME_SLOT_MIN_PX } from './agentRowMetrics';
  * 2. **A terminal entry does not subscribe at all.** `endedAtMs` is what stops the clock, and it
  *    stops it by choosing a component that never calls the hook — not by ignoring its value. A
  *    FINISHED section of 24 rows therefore costs zero clock subscribers.
+ *
+ * The cadence is not decided here either: `resolveElapsedTickCadence()` hands the shared clock both
+ * intervals, and the clock applies the reduced-motion one. The elapsed tick is the program's one
+ * *essential* motion exception (4.8) — with the spinner substituted out under reduced motion, an
+ * advancing number is the only remaining evidence that a running agent is running — so it is slowed
+ * to a minute rather than stopped, and paid for by the clock's own pause gates.
  */
-
-/** One second live; a minute under reduced motion, which is the calmest honest cadence for `m:ss`. */
-const LIVE_TICK_MS = 1_000;
-const REDUCED_MOTION_TICK_MS = 60_000;
 
 export type AgentActivityTimeSlotProps = Readonly<{
     /** Epoch ms. Absent means no elapsed time is knowable, so the column renders nothing. */
     startedAtMs?: number | null;
     /** Epoch ms. Present means the work is over and the value is a fixed total. */
     endedAtMs?: number | null;
+    /**
+     * Epoch ms at which a still-running entry stops counting because it has gone silent (4.10).
+     *
+     * The clock clamps itself to this rather than being told "you are stale now": the note that
+     * says so is recomputed every 30 s, and a clock that waited for it would count past the
+     * threshold and then jump backwards.
+     */
+    freezeAtMs?: number | null;
     testID?: string;
 }>;
 
@@ -51,18 +62,38 @@ export function AgentActivityTimeSlot(props: AgentActivityTimeSlotProps) {
         );
     }
 
-    return <LiveElapsedText testID={props.testID} startedAtMs={startedAtMs} />;
+    return (
+        <LiveElapsedText
+            testID={props.testID}
+            startedAtMs={startedAtMs}
+            freezeAtMs={readTimestamp(props.freezeAtMs)}
+        />
+    );
 }
 
-function LiveElapsedText(props: Readonly<{ startedAtMs: number; testID?: string }>) {
-    const nowMs = useNowMs(LIVE_TICK_MS, { reducedMotionIntervalMs: REDUCED_MOTION_TICK_MS });
-    const elapsed = formatElapsedDuration(nowMs - props.startedAtMs);
+function LiveElapsedText(props: Readonly<{
+    startedAtMs: number;
+    freezeAtMs: number | null;
+    testID?: string;
+}>) {
+    const cadence = resolveElapsedTickCadence();
+    const nowMs = useNowMs(cadence.intervalMs, {
+        reducedMotionIntervalMs: cadence.reducedMotionIntervalMs,
+    });
+
+    const { freezeAtMs } = props;
+    const frozen = freezeAtMs != null && nowMs >= freezeAtMs;
+    const elapsed = formatElapsedDuration((frozen ? freezeAtMs : nowMs) - props.startedAtMs);
 
     return (
         <ElapsedText
             testID={props.testID}
             value={elapsed}
-            accessibilityLabel={t('session.agentActivity.time.elapsedA11y', { duration: elapsed })}
+            // A frozen value announced as "Running for 10:00" would be the clock lying with its
+            // own label. The number stays; the claim about it changes.
+            accessibilityLabel={frozen
+                ? t('session.agentActivity.time.staleA11y', { duration: elapsed })
+                : t('session.agentActivity.time.elapsedA11y', { duration: elapsed })}
         />
     );
 }

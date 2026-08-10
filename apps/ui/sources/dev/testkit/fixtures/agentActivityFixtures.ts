@@ -1,3 +1,9 @@
+import type { AgentActivityStatusV1 } from '@happier-dev/protocol';
+
+import {
+    AGENT_ACTIVITY_ROW_NO_ACTIONS,
+    type AgentActivityRowEntry,
+} from '@/components/sessions/agentActivity/agentActivityRowEntry';
 import type { Message, ToolCall, ToolCallMessage } from '@/sync/domains/messages/messageTypes';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { createReducer, type ReducerMessage, type ReducerState } from '@/sync/reducer/reducer';
@@ -12,9 +18,74 @@ import { createSessionMessagesFixture, createToolCallMessageFixture } from './tr
  *
  * These build the exact shapes the production derivation accepts — `deriveSessionSubagents`
  * (transcript tool calls) and `deriveSessionSubagentActivityPreview` /
- * `deriveSessionSubagentHasPendingPermission` (reducer sidechains) — so an agent-surface test
+ * `deriveSessionSubagentPendingPermissionIds` (reducer sidechains) — so an agent-surface test
  * observes real derivation rather than a hand-shaped roster.
+ *
+ * Reseeding one session id with a different roster inside a file also needs
+ * `clearSessionTranscriptDerivedCachesForSession(sessionId)`: every fixture ships
+ * `subagentSourceVersion: 1`, and `useSessionSubagentSourceMessages` caches per session on exactly
+ * that version, so the second seed would otherwise be served the first one's messages.
  */
+
+/**
+ * The presentation-side counterpart to the session fixtures below: one unit of agent work as the
+ * row and the list consume it.
+ *
+ * It exists because the two halves of the agent-activity stack are tested at different seams. The
+ * session fixtures feed the *derivation* (`deriveSessionSubagents` and friends) so a surface test
+ * observes real derivation instead of a hand-shaped roster. The row and the list sit downstream of
+ * a merge (`deriveAgentActivityEntries`) that does not exist yet, so their tests state the entry
+ * directly — and they should state it through one shared builder rather than each re-deriving the
+ * required shape, which is how two subtly different notions of "an entry" get started.
+ *
+ * `makeAgentActivityRosterFixture` deliberately keeps entry identity stable across calls with the
+ * same input, because referential stability is the property the rows are memoized on (INV-4).
+ */
+export function makeAgentActivityRowEntryFixture(
+    overrides: Partial<AgentActivityRowEntry> & Pick<AgentActivityRowEntry, 'id'>,
+): AgentActivityRowEntry {
+    return {
+        status: 'running',
+        title: overrides.id,
+        actions: AGENT_ACTIVITY_ROW_NO_ACTIONS,
+        ...overrides,
+    };
+}
+
+/**
+ * A roster of `count` entries, cycling through `statuses` and starting one second apart.
+ *
+ * Sized rosters (0, 1, 3, 40) are the interesting cases for partitioning, ordering and the finished
+ * cap, and writing them out by hand hides the one variable that matters in a wall of literals.
+ */
+export function makeAgentActivityRosterFixture(params: Readonly<{
+    count: number;
+    statuses?: readonly AgentActivityStatusV1[];
+    startedAtMs?: number;
+    idPrefix?: string;
+}>): readonly AgentActivityRowEntry[] {
+    const statuses = params.statuses ?? (['running'] as const);
+    const startedAtMs = params.startedAtMs ?? 1_000;
+    const idPrefix = params.idPrefix ?? 'entry';
+
+    return Array.from({ length: params.count }, (_, index) => {
+        const status = statuses[index % statuses.length]!;
+        const started = startedAtMs + (index * 1_000);
+        return makeAgentActivityRowEntryFixture({
+            id: `${idPrefix}-${index}`,
+            status,
+            startedAtMs: started,
+            ...(isTerminalFixtureStatus(status) ? { endedAtMs: started + 500 } : {}),
+        });
+    });
+}
+
+function isTerminalFixtureStatus(status: AgentActivityStatusV1): boolean {
+    return status === 'succeeded'
+        || status === 'failed'
+        || status === 'timedOut'
+        || status === 'cancelled';
+}
 
 export type AgentActivityFixtureStatus = 'running' | 'succeeded' | 'failed' | 'unknown';
 
@@ -33,7 +104,7 @@ export type AgentActivityFixtureSubagent = Readonly<{
     status?: AgentActivityFixtureStatus;
     /** Latest sidechain line, surfaced by `deriveSessionSubagentActivityPreview`. */
     activity?: string;
-    /** Emits a pending sidechain permission for `deriveSessionSubagentHasPendingPermission`. */
+    /** Emits a pending sidechain permission for `deriveSessionSubagentPendingPermissionIds`. */
     pendingPermission?: boolean;
     createdAt?: number;
 }>;

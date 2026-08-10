@@ -1,6 +1,8 @@
+import type { AgentActivityStatusV1 } from '@happier-dev/protocol';
 import { AGENT_ACTIVITY_STATUSES_V1 } from '@happier-dev/protocol';
 import * as React from 'react';
-import { describe, expect, it, vi } from 'vitest';
+import { act } from 'react-test-renderer';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
 import { lightTheme } from '@/theme';
@@ -43,6 +45,36 @@ function findIcons(screen: Awaited<ReturnType<typeof renderScreen>>): IconLike[]
 
 function findSpinners(screen: Awaited<ReturnType<typeof renderScreen>>) {
     return screen.tree.root.findAll((node) => node.props?.accessibilityRole === 'progressbar');
+}
+
+function flattenStyle(style: unknown): Record<string, unknown> {
+    if (Array.isArray(style)) {
+        return style.reduce<Record<string, unknown>>(
+            (accumulator, entry) => ({ ...accumulator, ...flattenStyle(entry) }),
+            {},
+        );
+    }
+    if (style && typeof style === 'object') return style as Record<string, unknown>;
+    return {};
+}
+
+const SLOT_PX = 20;
+
+async function renderSwappableSlot(status: AgentActivityStatusV1) {
+    const { AgentActivityStatusSlot } = await import('./AgentActivityStatusSlot');
+    const screen = await renderScreen(
+        <AgentActivityStatusSlot status={status} size={SLOT_PX} testID="slot" />,
+    );
+    return {
+        screen,
+        async swapTo(next: AgentActivityStatusV1): Promise<void> {
+            await act(async () => {
+                screen.tree.update(
+                    <AgentActivityStatusSlot status={next} size={SLOT_PX} testID="slot" />,
+                );
+            });
+        },
+    };
 }
 
 describe('AgentActivityStatusSlot', () => {
@@ -128,5 +160,76 @@ describe('AgentActivityStatusSlot', () => {
         expect(findIcons(cancelled)[0].color).toBe(lightTheme.colors.state.neutral.foreground);
         expect(findIcons(cancelled)[0].color).not.toBe(lightTheme.colors.state.danger.foreground);
         await cancelled.unmount();
+    });
+});
+
+/**
+ * The settle: a spinner becoming a tick without the row moving.
+ *
+ * These assert the wiring, not the primitive — `StatusTransition.test.tsx` owns the curves and the
+ * two-layer contract. What can only be checked here is that the slot actually routes its mark
+ * through that primitive, hands it the fixed box, and keeps its single glyph table.
+ */
+describe('AgentActivityStatusSlot settle', () => {
+    beforeEach(() => {
+        preferenceRef.reducedMotion = false;
+        vi.useFakeTimers();
+    });
+
+    afterEach(() => {
+        vi.useRealTimers();
+    });
+
+    it('cross-fades the outgoing mark into the incoming one instead of cutting between them', async () => {
+        const { screen, swapTo } = await renderSwappableSlot('running');
+        expect(findSpinners(screen)).toHaveLength(1);
+
+        await swapTo('succeeded');
+
+        // Both marks are on screen at once. A cut would leave only the tick on the very frame the
+        // run ended — and that frame is the whole "did it just work?" moment this animation serves.
+        expect(findSpinners(screen)).toHaveLength(1);
+        expect(findIcons(screen).map((icon) => String(icon.name))).toContain('check-circle');
+    });
+
+    it('holds the mark box at a fixed square, which is what keeps the row still', async () => {
+        const { screen, swapTo } = await renderSwappableSlot('running');
+        const running = flattenStyle(screen.findHostByTestId('slot:mark')?.props.style);
+        expect(running.width).toBe(SLOT_PX);
+        expect(running.height).toBe(SLOT_PX);
+
+        await swapTo('succeeded');
+
+        // A 16px spinner turning into a 20px glyph inside a content-sized box is a size jump at the
+        // exact moment the eye is on it. The box is declared, so the swap cannot resize anything.
+        const settled = flattenStyle(screen.findHostByTestId('slot:mark')?.props.style);
+        expect(settled.width).toBe(SLOT_PX);
+        expect(settled.height).toBe(SLOT_PX);
+    });
+
+    it('retires the outgoing mark once the settle has landed, leaving one', async () => {
+        const { STATUS_TRANSITION_TIMELINE } = await import('@/components/ui/motion/StatusTransition');
+        const { screen, swapTo } = await renderSwappableSlot('running');
+        await swapTo('succeeded');
+        expect(findSpinners(screen)).toHaveLength(1);
+
+        await act(async () => {
+            vi.advanceTimersByTime(STATUS_TRANSITION_TIMELINE.totalMs);
+        });
+
+        expect(findSpinners(screen)).toHaveLength(0);
+        expect(findIcons(screen)).toHaveLength(1);
+    });
+
+    it('swaps the mark immediately under reduced motion, with nothing left behind', async () => {
+        preferenceRef.reducedMotion = true;
+        const { screen, swapTo } = await renderSwappableSlot('running');
+        expect(findIcons(screen).map((icon) => String(icon.name))).toEqual(['circle-half']);
+
+        await swapTo('succeeded');
+
+        // The mark still changes — only its travel is removed. Two glyphs here would mean the
+        // cross-fade ran anyway and a person who asked for less motion got a fade instead.
+        expect(findIcons(screen).map((icon) => String(icon.name))).toEqual(['check-circle']);
     });
 });

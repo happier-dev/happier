@@ -13,6 +13,10 @@ import { t } from '@/text';
 
 import type { AgentActivityRowActionId, AgentActivityRowEntry } from '../agentActivityRowEntry';
 import {
+    resolveAgentActivityElapsedFreezeAtMs,
+    type AgentActivityStaleness,
+} from '../presentation/agentActivityStaleness';
+import {
     resolveAgentActivityStatusWord,
     resolveAgentActivityToneStyle,
 } from '../presentation/agentActivityToneStyle';
@@ -84,6 +88,15 @@ export type AgentActivityRowProps = Readonly<{
     density?: 'comfortable' | 'cozy' | 'compact' | 'tight';
     /** Threaded to the status spinner so an offscreen row stops animating. */
     animationEnabled?: boolean;
+    /**
+     * How long this entry has been silent (4.10), resolved by the host from the shared clock.
+     *
+     * A prop rather than a subscription: the row is memoized so a ticking roster costs one text
+     * node per second, and a clock in here would re-render every row instead. It is presentation
+     * only — it adds a word, tints that word, and stops the elapsed value. It never changes the
+     * status, and a silent entry never becomes a finished one (4.9.3).
+     */
+    staleness?: AgentActivityStaleness;
     /** Set by `ItemGroup` when this row is inside one. */
     showDivider?: boolean;
     testID?: string;
@@ -95,10 +108,18 @@ export const AgentActivityRow = React.memo((props: AgentActivityRowProps) => {
     const { entry, onAction, onPress, testID } = props;
     const { status } = entry;
 
+    const staleness = props.staleness ?? 'fresh';
     const toneStyle = resolveAgentActivityToneStyle(resolveAgentActivityTone(status), theme);
     const title = resolveAgentActivityTitle(entry);
-    const metaLine = resolveAgentActivityMetaLine(entry);
-    const metaInk = TONE_INKED_META.has(status) ? toneStyle.ink : undefined;
+    const metaLine = resolveAgentActivityMetaLine(entry, staleness);
+    // Stale takes the attention ink — through the same tone binding as every other status, never a
+    // direct `theme.colors.state.*` read — because the line now leads with a caveat a person may
+    // need to act on. Quiet deliberately does not: it keeps the ordinary secondary ink, which IS
+    // the neutral tone 4.10 asks for, and reaching for `state.neutral.foreground` instead would put
+    // a 2.98:1 grey on a line that carries meaning.
+    const metaInk = staleness === 'stale'
+        ? resolveAgentActivityToneStyle('attention', theme).ink
+        : (TONE_INKED_META.has(status) ? toneStyle.ink : undefined);
     const metaPlacement = props.metaPlacement ?? 'below';
 
     const isInteractive = onPress != null;
@@ -118,7 +139,10 @@ export const AgentActivityRow = React.memo((props: AgentActivityRowProps) => {
         <AgentActivityStatusSlot
             status={status}
             size={AGENT_STATUS_GLYPH_PX[density]}
-            animationEnabled={props.animationEnabled}
+            // A stale row stops claiming liveness with everything it has, not just its clock: a
+            // spinner turning next to a frozen number reads as a broken clock rather than as an
+            // agent that has gone quiet.
+            animationEnabled={staleness === 'stale' ? false : props.animationEnabled}
             testID={testID ? `${testID}:status` : undefined}
         />
     );
@@ -128,6 +152,9 @@ export const AgentActivityRow = React.memo((props: AgentActivityRowProps) => {
             <AgentActivityTimeSlot
                 startedAtMs={entry.startedAtMs}
                 endedAtMs={entry.endedAtMs}
+                // Derived here, from the same silence rule the note uses, so the clock stops on the
+                // threshold instead of waiting for the host's slower recomputation.
+                freezeAtMs={resolveAgentActivityElapsedFreezeAtMs(entry)}
                 testID={testID ? `${testID}:elapsed` : undefined}
             />
             {hasOverflow ? (

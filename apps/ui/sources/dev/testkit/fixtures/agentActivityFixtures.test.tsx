@@ -94,6 +94,8 @@ vi.mock('@/components/sessions/model/useDirectSessionRuntime', () => ({
     }),
 }));
 
+const ROSTER_TEST_ID = 'session-agents-roster';
+
 const fixture = makeSessionAgentActivityFixture({
     sessionId: 's1',
     subagents: [
@@ -150,25 +152,26 @@ describe('agent activity testkit fixtures', () => {
 
         // Derivation, not a hand-shaped roster: the rows exist because `deriveSessionSubagents`
         // recognised the fixture's transcript tool calls.
-        expect(screen.findByTestId(`session-subagent-row:${agentActivityFixtureSubagentId('alpha')}`)).toBeTruthy();
-        expect(screen.findByTestId(`session-subagent-row:${agentActivityFixtureSubagentId('gamma')}`)).toBeTruthy();
-        expect(screen.findByTestId(`session-subagent-row:${executionRunFixtureSubagentId('run_11111111')}`)).toBeTruthy();
+        expect(screen.findByTestId(`${ROSTER_TEST_ID}:row:${agentActivityFixtureSubagentId('alpha')}`)).toBeTruthy();
+        expect(screen.findByTestId(`${ROSTER_TEST_ID}:row:${agentActivityFixtureSubagentId('gamma')}`)).toBeTruthy();
+        expect(screen.findByTestId(`${ROSTER_TEST_ID}:row:${executionRunFixtureSubagentId('run_11111111')}`)).toBeTruthy();
 
-        // The live activity preview comes from the fixture's reducer sidechain entries.
-        expect(
-            screen.findByTestId(`session-subagent-activity:${agentActivityFixtureSubagentId('alpha')}`)?.props.children,
-        ).toContain('Reading src/auth/session.ts');
-        expect(
-            screen.findByTestId(`session-subagent-activity:${agentActivityFixtureSubagentId('beta')}`)?.props.children,
-        ).toContain('Writing migration plan');
+        // The live activity preview comes from the fixture's reducer sidechain entries and lands in
+        // the row's single meta line.
+        expect(screen.getTextContent()).toContain('Reading src/auth/session.ts');
+        expect(screen.getTextContent()).toContain('Writing migration plan');
 
-        // Assorted states are reachable, including the attention-carrying pending permission.
+        // Assorted states are reachable, including the attention-carrying pending permission —
+        // which is a status now (`waiting`), not a badge beside one.
         expect(
-            screen.findByTestId(`session-subagent-permission-blocked:${agentActivityFixtureSubagentId('alpha')}`),
-        ).toBeTruthy();
+            screen.findByTestId(`${ROSTER_TEST_ID}:row:${agentActivityFixtureSubagentId('alpha')}:status`)?.props.accessibilityLabel,
+        ).toBe('session.agentActivity.status.waiting');
         expect(
-            screen.findByTestId(`session-subagent-permission-blocked:${agentActivityFixtureSubagentId('beta')}`),
-        ).toBeNull();
+            screen.findByTestId(`${ROSTER_TEST_ID}:row:${agentActivityFixtureSubagentId('beta')}:status`)?.props.accessibilityLabel,
+        ).toBe('session.agentActivity.status.running');
+        expect(
+            screen.findByTestId(`${ROSTER_TEST_ID}:row:${agentActivityFixtureSubagentId('delta')}:status`)?.props.accessibilityLabel,
+        ).toBe('session.agentActivity.status.failed');
     }, 120_000);
 
     it('lets the canonical storage stub express live session state', () => {

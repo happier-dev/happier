@@ -19,7 +19,7 @@ import { TranscriptCollapsible } from '@/components/sessions/transcript/motion/T
 import { buildToolHeaderModel } from '@/components/tools/shell/presentation/buildToolHeaderModel';
 import { resolveToolStatusIndicatorKind } from '@/components/tools/shell/presentation/resolveToolStatusIndicatorKind';
 import { resolveToolErrorSummary } from '@/components/tools/shell/presentation/resolveToolErrorSummary';
-import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
+import { ActivitySpinner, iconMatchedSpinnerSize } from '@/components/ui/feedback/ActivitySpinner';
 import {
     resolveToolViewDetailLevelDefaultForChromeMode,
     resolveToolViewExpandedDetailLevelDefaultForChromeMode,
@@ -49,6 +49,12 @@ import type { ToolRowPinAction } from '@/components/sessions/transcript/toolCall
 import { Icon } from '@/components/ui/icons/Icon';
 
 const TOOL_VIEW_HIGHLIGHT_RADIUS = 12;
+
+/**
+ * Ink size of the card's status mark. The running spinner derives its diameter from this through
+ * `iconMatchedSpinnerSize`, so the mark cannot appear to change size as a tool settles.
+ */
+const TOOL_VIEW_STATUS_GLYPH_PX = 20;
 
 interface ToolViewProps {
     metadata: Metadata | null;
@@ -257,22 +263,32 @@ export const ToolView = React.memo<ToolViewProps>((props) => {
 
     const statusKind = resolveToolStatusIndicatorKind(toolForRendering);
     if (statusKind === 'permission_blocked') {
-        statusIcon = <Icon name="minus-circle" size={20} color={theme.colors.text.secondary} />;
+        statusIcon = <Icon name="minus-circle" size={TOOL_VIEW_STATUS_GLYPH_PX} color={theme.colors.text.secondary} />;
     } else if (statusKind === 'permission_pending') {
-        statusIcon = <Icon name="lock" size={20} color={theme.colors.state.neutral.foreground} />;
+        statusIcon = <Icon name="lock" size={TOOL_VIEW_STATUS_GLYPH_PX} color={theme.colors.state.neutral.foreground} />;
     } else if (isToolUseError) {
-        statusIcon = <Icon name="minus-circle" size={20} color={theme.colors.text.secondary} />;
+        statusIcon = <Icon name="minus-circle" size={TOOL_VIEW_STATUS_GLYPH_PX} color={theme.colors.text.secondary} />;
         hideDefaultError = true;
         minimal = true;
     } else {
         switch (statusKind) {
             case 'running':
                 if (!noStatus) {
-                    statusIcon = <ActivitySpinner size="small" color={theme.colors.text.secondary} style={{ transform: [{ scaleX: 0.8 }, { scaleY: 0.8 }] }} />;
+                    // Matched to the 20px glyphs this slot swaps to, through the one helper that
+                    // owns the ratio. The hand-rolled `size="small"` plus a 0.8 transform was the
+                    // same arithmetic done privately: it scaled the drawing but not the layout box,
+                    // so the mark still reserved 20px and the correction could drift from the
+                    // helper the moment either number changed.
+                    statusIcon = (
+                        <ActivitySpinner
+                            size={iconMatchedSpinnerSize(TOOL_VIEW_STATUS_GLYPH_PX)}
+                            color={theme.colors.text.secondary}
+                        />
+                    );
                 }
                 break;
             case 'error':
-                statusIcon = <Icon name="warning-circle" size={20} color={theme.colors.state.danger.foreground} />;
+                statusIcon = <Icon name="warning-circle" size={TOOL_VIEW_STATUS_GLYPH_PX} color={theme.colors.state.danger.foreground} />;
                 break;
             case 'completed':
             case 'none':

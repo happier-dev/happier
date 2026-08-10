@@ -2,6 +2,7 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import type { AgentActivityRowActionId } from '@/components/sessions/agentActivity/agentActivityRowEntry';
 import type { SessionSubagent } from '@/sync/domains/session/subagents/types';
 import { createDeferred, flushHookEffects, renderScreen } from '@/dev/testkit';
 import { installSessionDetailsPanelCommonModuleMocks } from '../sessionDetailsPanelTestHelpers';
@@ -10,6 +11,7 @@ import { installSessionDetailsPanelCommonModuleMocks } from '../sessionDetailsPa
 
 const openDetailsTabSpy = vi.fn();
 const routerPushSpy = vi.hoisted(() => vi.fn());
+const submitMessageSpy = vi.hoisted(() => vi.fn(async () => undefined));
 const ensureSidechainMessagesLoadedSpy = vi.hoisted(() =>
     vi.fn<(sessionId: string, sidechainId: string) => Promise<'loaded' | 'not_ready' | 'in_flight'>>(
         async () => 'loaded',
@@ -141,6 +143,7 @@ vi.mock('@/sync/sync', () => ({
             sidechainDemandHydrationConcurrencyLimit: 2,
         }),
         sendMessage: vi.fn(async () => undefined),
+        submitMessage: submitMessageSpy,
     },
 }));
 
@@ -148,10 +151,43 @@ vi.mock('@/components/sessions/model/useSessionMachineReachability', () => ({
     useSessionMachineReachability: () => sessionMachineReachabilityState,
 }));
 
-vi.mock('@/sync/store/hooks', () => ({
-    useSessionMessages: () => ({ messages: [] }),
-    useSessionMessagesReducerSnapshot: () => ({ reducerState: reducerStateState, reducerVersion: 0 }),
+// Partial, not wholesale: the pane's row reaches `useLocalSetting('uiItemDensity')` through
+// `useResolvedItemDensity`, and a two-export stub of this module makes every row throw.
+vi.mock('@/sync/store/hooks', async (importOriginal) => {
+    const original = await importOriginal<typeof import('@/sync/store/hooks')>();
+    return {
+        ...original,
+        useSessionMessages: () => ({ messages: [], isLoaded: true }),
+        useSessionSubagentSourceMessages: () => [],
+        useSessionMessagesReducerSnapshot: () => ({ reducerState: reducerStateState, reducerVersion: 0 }),
+        useSessionMessagesReducerState: () => reducerStateState,
+    };
+});
+
+vi.mock('@/sync/ops/sessionExecutionRuns', () => ({
+    sessionExecutionRunList: vi.fn(async () => ({ ok: true, runs: [] })),
+    sessionExecutionRunStop: vi.fn(async () => ({ ok: true })),
 }));
+
+const ROSTER_TEST_ID = 'session-agents-roster';
+
+/**
+ * The pane's action routing, read off the one list callback it installs.
+ *
+ * The affordance itself is a popover the overflow owns and tests separately; what belongs to the
+ * pane is where each action id goes, so that is what this reaches. There is exactly one handler for
+ * the whole roster by design (INV-4), which is also why this cannot accidentally pick a per-row
+ * closure.
+ */
+function readRosterActionHandler(
+    screen: Awaited<ReturnType<typeof renderScreen>>,
+): (entryId: string, actionId: AgentActivityRowActionId) => void {
+    const list = screen
+        .findAllByTestId(ROSTER_TEST_ID)
+        .find((node) => typeof node.props?.onAction === 'function');
+    if (!list) throw new Error('expected the agents pane to render one agent-activity list');
+    return list.props.onAction as (entryId: string, actionId: AgentActivityRowActionId) => void;
+}
 
 const subagents: readonly SessionSubagent[] = [
     {
@@ -251,19 +287,18 @@ describe('SessionRightPanelAgentsView', () => {
         directSessionRuntimeState.status = null;
     });
 
-    it('renders active and recent sections and opens preview/full routes from agent rows', async () => {
+    it('renders the roster through the one agent-activity row and opens a preview on row press', async () => {
         const screen = await renderScreen(<SessionRightPanelAgentsView sessionId="s1" scopeId="session:s1" />);
 
-        expect(screen.findByTestId('session-agents-section-active')).toBeTruthy();
-        expect(screen.findByTestId('session-agents-section-recent')).toBeTruthy();
         expect(screen.findByTestId('session-rightpanel-agents-scroll')).toBeTruthy();
-        expect(screen.findByTestId('session-agents-section-count:session-agents-section-active')).toBeTruthy();
-        expect(screen.findByTestId('session-agents-section-count:session-agents-section-recent')).toBeTruthy();
-        expect(screen.findByTestId('session-subagent-row:agent_team_member:team-1:alpha')).toBeTruthy();
-        expect(screen.findByTestId('session-subagent-row:execution_run:run_1')).toBeTruthy();
+        expect(screen.findByTestId(`${ROSTER_TEST_ID}:row:agent_team_member:team-1:alpha`)).toBeTruthy();
+        expect(screen.findByTestId(`${ROSTER_TEST_ID}:row:execution_run:run_1`)).toBeTruthy();
+        // 9.4 trap 1: the hand-rolled row and its group chrome must not still be live beside it.
+        expect(screen.findByTestId('session-subagent-row:agent_team_member:team-1:alpha')).toBeNull();
+        expect(screen.findByTestId('session-agents-section-active')).toBeNull();
 
         await act(async () => {
-            screen.pressByTestId('session-subagent-row:agent_team_member:team-1:alpha');
+            screen.pressByTestId(`${ROSTER_TEST_ID}:row:agent_team_member:team-1:alpha`);
         });
         expect(openDetailsTabSpy).toHaveBeenCalledWith(
             expect.objectContaining({
@@ -275,11 +310,52 @@ describe('SessionRightPanelAgentsView', () => {
             }),
             { intent: 'preview' },
         );
-        await screen.pressByTestIdAsync('session-subagent-open-full:execution_run:run_1');
+    });
+
+    it('opens execution-run rows into the shared subagent transcript details pane', async () => {
+        const screen = await renderScreen(<SessionRightPanelAgentsView sessionId="s1" scopeId="session:s1" />);
+
+        await act(async () => {
+            screen.pressByTestId(`${ROSTER_TEST_ID}:row:execution_run:run_1`);
+        });
+
+        expect(openDetailsTabSpy).toHaveBeenCalledWith(
+            expect.objectContaining({
+                key: 'subagent:execution_run:run_1',
+                kind: 'subagent',
+                title: 'Code review',
+                resource: { kind: 'subagent', subagentId: 'execution_run:run_1' },
+            }),
+            { intent: 'preview' },
+        );
+    });
+
+    it('routes every roster action to its owner, including the team delete the group header used to carry', async () => {
+        const screen = await renderScreen(<SessionRightPanelAgentsView sessionId="s1" scopeId="session:s1" />);
+        const runAction = readRosterActionHandler(screen);
+
+        await act(async () => {
+            runAction('execution_run:run_1', 'open_full');
+        });
         expect(routerPushSpy).toHaveBeenCalledWith('/session/s1/message/tool-msg-2');
 
-        await screen.pressByTestIdAsync('session-subagent-open-advanced:execution_run:run_1');
+        await act(async () => {
+            runAction('execution_run:run_1', 'open_advanced');
+        });
         expect(routerPushSpy).toHaveBeenCalledWith('/session/s1/runs/run_1');
+
+        // The deleted group header was the only way to remove a team. `delete_team` is its
+        // replacement, so it has to reach the same protocol envelope.
+        await act(async () => {
+            runAction('agent_team_member:team-1:alpha', 'delete_team');
+        });
+        expect(submitMessageSpy).toHaveBeenCalledWith(
+            's1',
+            expect.any(String),
+            expect.any(String),
+            { happier: { kind: 'subagent_command.v1', payload: { kind: 'agent_team_delete', teamId: 'team-1' } } },
+            expect.objectContaining({ callerSurface: 'subagent_control' }),
+        );
     });
 
     it('keeps launch actions collapsed by default when the session already has agents and expands them on demand', async () => {
@@ -312,21 +388,17 @@ describe('SessionRightPanelAgentsView', () => {
         expect(routerPushSpy).not.toHaveBeenCalled();
     });
 
-    it('uses a minimal outer launch section shell and uppercase 14px section headings', async () => {
+    it('uses a minimal outer launch section shell', async () => {
         const screen = await renderScreen(<SessionRightPanelAgentsView sessionId="s1" scopeId="session:s1" />);
 
         const launchSection = screen.findByTestId('session-subagents-launch-section');
         const launchSectionTitle = screen.findByTestId('session-subagents-launch-section-title');
-        const activeSection = screen.findByTestId('session-agents-section-active');
-        const recentSection = screen.findByTestId('session-agents-section-recent');
 
         expect(launchSection).toBeTruthy();
         expect(launchSectionTitle).toBeTruthy();
-        expect(activeSection).toBeTruthy();
-        expect(recentSection).toBeTruthy();
 
-        if (!launchSection || !launchSectionTitle || !activeSection || !recentSection) {
-            throw new Error('expected session subagent section nodes');
+        if (!launchSection || !launchSectionTitle) {
+            throw new Error('expected session subagent launch section nodes');
         }
 
         expect(launchSection.props.style).toMatchObject({
@@ -339,14 +411,6 @@ describe('SessionRightPanelAgentsView', () => {
         expect(launchSection.props.style.paddingVertical).toBeUndefined();
 
         expect(launchSectionTitle.findAllByType('Text')[0].props.style).toMatchObject({
-            fontSize: 14,
-            textTransform: 'uppercase',
-        });
-        expect(activeSection.findAllByType('Text')[0].props.style).toMatchObject({
-            fontSize: 14,
-            textTransform: 'uppercase',
-        });
-        expect(recentSection.findAllByType('Text')[0].props.style).toMatchObject({
             fontSize: 14,
             textTransform: 'uppercase',
         });
@@ -368,24 +432,6 @@ describe('SessionRightPanelAgentsView', () => {
         } as SessionSubagent);
 
         expect(tab.title).toBe('Review Subagent');
-    });
-
-    it('opens execution-run rows into the shared subagent transcript details pane', async () => {
-        const screen = await renderScreen(<SessionRightPanelAgentsView sessionId="s1" scopeId="session:s1" />);
-
-        await act(async () => {
-            screen.pressByTestId('session-subagent-row:execution_run:run_1');
-        });
-
-        expect(openDetailsTabSpy).toHaveBeenCalledWith(
-            expect.objectContaining({
-                key: 'subagent:execution_run:run_1',
-                kind: 'subagent',
-                title: 'Code review',
-                resource: { kind: 'subagent', subagentId: 'execution_run:run_1' },
-            }),
-            { intent: 'preview' },
-        );
     });
 
     it('renders compact Claude launch actions and opens launcher previews in the details pane', async () => {
@@ -425,36 +471,6 @@ describe('SessionRightPanelAgentsView', () => {
             }),
             { intent: 'preview' },
         );
-
-        await act(async () => {
-            screen.pressByTestId('session-subagent-team-add:team-1');
-        });
-        expect(openDetailsTabSpy).toHaveBeenCalledWith(
-            expect.objectContaining({
-                key: 'claude-subagent-launcher:member:team-1',
-                kind: 'claudeSubagentLauncher',
-                resource: {
-                    kind: 'claudeSubagentLauncher',
-                    mode: 'member',
-                    initialTeamId: 'team-1',
-                },
-            }),
-            { intent: 'preview' },
-        );
-    });
-
-    it('renders the latest loaded sidechain activity preview for subagent rows', async () => {
-        const screen = await renderScreen(<SessionRightPanelAgentsView sessionId="s1" scopeId="session:s1" />);
-
-        expect(screen.findByTestId('session-subagent-activity:agent_team_member:team-1:alpha')?.props.children).toContain(
-            'Alpha is validating the auth flow now.',
-        );
-    });
-
-    it('marks subagent rows that are blocked waiting for permission', async () => {
-        const screen = await renderScreen(<SessionRightPanelAgentsView sessionId="s1" scopeId="session:s1" />);
-
-        expect(screen.findByTestId('session-subagent-permission-blocked:agent_team_member:team-1:alpha')).toBeTruthy();
     });
 
     it('self-loads only bounded right-panel preview sidechains via the real hook + sync spy when the reducer starts empty', async () => {
@@ -517,9 +533,8 @@ describe('SessionRightPanelAgentsView', () => {
         await flushHookEffects();
 
         expect(ensureSidechainMessagesLoadedSpy).toHaveBeenCalledWith('s1', 'toolu_1');
-        const activity = screen.findByTestId('session-subagent-activity:agent_team_member:team-1:alpha');
-        expect(activity).toBeTruthy();
-        expect(activity?.props.children).toContain('common.loading');
+        // The honest placeholder now lands in the row's single meta line.
+        expect(screen.getTextContent()).toContain('common.loading');
 
         await act(async () => {
             request.resolve('loaded');

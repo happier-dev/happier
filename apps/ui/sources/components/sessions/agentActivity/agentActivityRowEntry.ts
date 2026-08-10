@@ -38,6 +38,17 @@ export type AgentActivityRowEntry = Readonly<{
     /** Start of the work, in epoch ms. Absent means no elapsed time is knowable, so none is shown. */
     startedAtMs?: number | null;
     /**
+     * The last moment we have EVIDENCE of this entry doing something, in epoch ms.
+     *
+     * Not "when the producer last rebuilt the entry", and specifically not
+     * `SessionSubagent.timestamps.updatedAtMs`, which for a live sidechain subagent is the
+     * launching tool message's `createdAt` and never advances. It feeds the quiet/stale notes
+     * (4.10), so an instant that does not move would mark every healthy long-running agent stale.
+     *
+     * Absent means "we have not looked", and nothing is claimed — never "nothing happened".
+     */
+    updatedAtMs?: number | null;
+    /**
      * Terminal instant, in epoch ms. Its presence is what stops the clock: a finished agent shows a
      * fixed total, and only a live one subscribes to the shared tick.
      */
@@ -58,13 +69,18 @@ export type AgentActivityRowEntry = Readonly<{
  * stable, which memoization depends on.
  *
  * Row press is "open" and is not in this list — an action here is an overflow item.
+ *
+ * `delete` and `delete_team` are separate because they destroy different things: one teammate
+ * versus the whole team it belongs to. Folding them into one id would make the confirmation copy
+ * lie about the blast radius, which is the one thing a destructive confirmation exists to state.
  */
 export type AgentActivityRowActionId =
     | 'open_full'
     | 'open_advanced'
     | 'send'
     | 'stop'
-    | 'delete';
+    | 'delete'
+    | 'delete_team';
 
 /** Shared empty action list, so a producer of read-only rows allocates no arrays at all. */
 export const AGENT_ACTIVITY_ROW_NO_ACTIONS: readonly AgentActivityRowActionId[] = Object.freeze([]);

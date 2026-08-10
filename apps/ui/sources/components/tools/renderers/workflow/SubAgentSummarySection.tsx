@@ -1,8 +1,8 @@
 import * as React from 'react';
-import { View, Platform, Pressable } from 'react-native';
+import { View, Pressable } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useRouter } from 'expo-router';
-import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
+import { ActivitySpinner, iconMatchedSpinnerSize } from '@/components/ui/feedback/ActivitySpinner';
 
 import type { Message, ToolCall } from '@/sync/domains/messages/messageTypes';
 import type { Metadata } from '@/sync/domains/state/storageTypes';
@@ -14,6 +14,13 @@ import { buildToolCallMessageRouteId } from '@/sync/domains/messages/messageRout
 import { navigateWithBlurOnWeb } from '@/utils/platform/navigateWithBlurOnWeb';
 import { Icon } from '@/components/ui/icons/Icon';
 
+
+/**
+ * Ink size of a summary row's status mark. The running spinner derives its diameter from this
+ * through `iconMatchedSpinnerSize`, so a tool settling from running to done does not appear to
+ * change size.
+ */
+const SUB_AGENT_SUMMARY_STATUS_GLYPH_PX = 16;
 
 type TaskOperation = 'run' | 'create' | 'list' | 'update' | 'unknown';
 
@@ -213,13 +220,20 @@ export const SubAgentSummarySection = React.memo<{
                     <Text style={styles.toolTitle}>{item.title}</Text>
                     <View style={styles.statusContainer}>
                         {item.state === 'running' && (
-                            <ActivitySpinner size={Platform.OS === 'ios' ? 'small' : 14} color={theme.colors.state.neutral.foreground} />
+                            <ActivitySpinner
+                                // Matched to the 16px outcome glyphs beside it, through the one
+                                // helper that owns the ratio. The platform fork it replaces guessed
+                                // twice and disagreed with itself: 20px on iOS, 14px everywhere
+                                // else, against a 16px glyph on both.
+                                size={iconMatchedSpinnerSize(SUB_AGENT_SUMMARY_STATUS_GLYPH_PX)}
+                                color={theme.colors.state.neutral.foreground}
+                            />
                         )}
                         {item.state === 'completed' && (
-                            <Icon name="check-circle" size={16} color={theme.colors.state.success.foreground} />
+                            <Icon name="check-circle" size={SUB_AGENT_SUMMARY_STATUS_GLYPH_PX} color={theme.colors.state.success.foreground} />
                         )}
                         {item.state === 'error' && (
-                            <Icon name="x-circle" size={16} color={theme.colors.state.danger.foreground} />
+                            <Icon name="x-circle" size={SUB_AGENT_SUMMARY_STATUS_GLYPH_PX} color={theme.colors.state.danger.foreground} />
                         )}
                     </View>
                 </View>

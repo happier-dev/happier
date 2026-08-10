@@ -4525,6 +4525,10 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
                 row: {
                     a11yLabel: ({ title, status }: { title: string; status: string }) => `${title}，${status}`,
                 },
+                staleness: {
+                    quiet: "近期無更新",
+                    stale: ({ minutes }: { minutes: number }) => `${minutes} 分鐘無更新`,
+                },
                 status: {
                     queued: "排隊中",
                     starting: "啟動中",
@@ -4538,6 +4542,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
                     unknown: "未知",
                 },
                 time: {
+                    staleA11y: ({ duration }: { duration: string }) => `已用時 ${duration}，近期無更新`,
                     hoursMinutes: ({ hours, minutes }: { hours: number; minutes: string }) => `${hours} 小時 ${minutes} 分`,
                     elapsedA11y: ({ duration }: { duration: string }) => `已執行 ${duration}`,
                     totalA11y: ({ duration }: { duration: string }) => `耗時 ${duration}`,
@@ -4551,6 +4556,26 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
                     deleteConfirmTitle: "要刪除這個代理嗎？",
                     deleteConfirmMessage: ({ title }: { title: string }) => `${title} 將從這個工作階段中移除。`,
                     deleteConfirmAction: "刪除",
+                    deleteTeam: "刪除團隊",
+                    deleteTeamConfirmTitle: "要刪除這個團隊嗎？",
+                    deleteTeamConfirmMessage: "這個團隊的所有成員都會停止。此操作無法復原。",
+                    deleteTeamConfirmAction: "刪除團隊",
+                },
+                section: {
+                    needsYou: "需要你處理",
+                    working: "進行中",
+                    finished: "已完成",
+                },
+                list: {
+                    showAllFinished: ({ count }: { count: number }) => `查看全部（${count}）`,
+                    refreshing: "正在重新整理…",
+                    offline: "已離線：顯示最後一次更新。",
+                },
+                empty: {
+                    firstUseTitle: "你的代理會顯示在這裡",
+                    firstUseSubtitle: "啟動一個，就能看到它在做什麼、花了多久，以及什麼時候需要你。",
+                    firstUseAction: "啟動代理",
+                    idle: "目前沒有正在執行的代理。",
                 },
             },
             subagents: {

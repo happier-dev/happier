@@ -4879,6 +4879,10 @@ export const en = {
             row: {
                 a11yLabel: ({ title, status }: { title: string; status: string }) => `${title}, ${status}`,
             },
+            staleness: {
+                quiet: 'No recent update',
+                stale: ({ minutes }: { minutes: number }) => `No update in ${minutes} min`,
+            },
             status: {
                 queued: 'Queued',
                 starting: 'Starting',
@@ -4892,6 +4896,7 @@ export const en = {
                 unknown: 'Unknown',
             },
             time: {
+                staleA11y: ({ duration }: { duration: string }) => `${duration} elapsed, no recent update`,
                 hoursMinutes: ({ hours, minutes }: { hours: number; minutes: string }) => `${hours}h ${minutes}m`,
                 elapsedA11y: ({ duration }: { duration: string }) => `Running for ${duration}`,
                 totalA11y: ({ duration }: { duration: string }) => `Took ${duration}`,
@@ -4905,6 +4910,26 @@ export const en = {
                 deleteConfirmTitle: 'Delete this agent?',
                 deleteConfirmMessage: ({ title }: { title: string }) => `${title} will be removed from this session.`,
                 deleteConfirmAction: 'Delete',
+                deleteTeam: 'Delete team',
+                deleteTeamConfirmTitle: 'Delete this team?',
+                deleteTeamConfirmMessage: 'Every teammate in this team is shut down. This cannot be undone.',
+                deleteTeamConfirmAction: 'Delete team',
+            },
+            section: {
+                needsYou: 'Needs you',
+                working: 'Working',
+                finished: 'Finished',
+            },
+            list: {
+                showAllFinished: ({ count }: { count: number }) => `Show all ${count}`,
+                refreshing: 'Refreshing…',
+                offline: 'Offline — showing the last update.',
+            },
+            empty: {
+                firstUseTitle: 'Your agents will show up here',
+                firstUseSubtitle: 'Launch one and you can follow what it’s doing, how long it has taken, and the moment it needs you.',
+                firstUseAction: 'Launch an agent',
+                idle: 'No agents running right now.',
             },
         },
         subagents: {

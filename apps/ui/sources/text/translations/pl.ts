@@ -5252,6 +5252,10 @@ export const pl: TranslationStructure = {
           row: {
             a11yLabel: ({ title, status }: { title: string; status: string }) => `${title}, ${status}`,
           },
+          staleness: {
+            quiet: "Brak niedawnych aktualizacji",
+            stale: ({ minutes }: { minutes: number }) => `Brak aktualizacji od ${minutes} min`,
+          },
           status: {
             queued: "W kolejce",
             starting: "Uruchamianie",
@@ -5265,6 +5269,7 @@ export const pl: TranslationStructure = {
             unknown: "Nieznany",
           },
           time: {
+            staleA11y: ({ duration }: { duration: string }) => `Upłynęło ${duration}, brak niedawnych aktualizacji`,
             hoursMinutes: ({ hours, minutes }: { hours: number; minutes: string }) => `${hours} godz. ${minutes} min`,
             elapsedA11y: ({ duration }: { duration: string }) => `Działa od ${duration}`,
             totalA11y: ({ duration }: { duration: string }) => `Czas: ${duration}`,
@@ -5278,6 +5283,26 @@ export const pl: TranslationStructure = {
             deleteConfirmTitle: "Usunąć tego agenta?",
             deleteConfirmMessage: ({ title }: { title: string }) => `${title} zostanie usunięty z tej sesji.`,
             deleteConfirmAction: "Usuń",
+            deleteTeam: "Usuń zespół",
+            deleteTeamConfirmTitle: "Usunąć ten zespół?",
+            deleteTeamConfirmMessage: "Wszyscy członkowie tego zespołu zostaną zatrzymani. Tej operacji nie można cofnąć.",
+            deleteTeamConfirmAction: "Usuń zespół",
+          },
+          section: {
+            needsYou: "Czeka na Ciebie",
+            working: "W trakcie",
+            finished: "Zakończone",
+          },
+          list: {
+            showAllFinished: ({ count }: { count: number }) => `Pokaż wszystkie (${count})`,
+            refreshing: "Odświeżanie…",
+            offline: "Offline — pokazujemy ostatnią aktualizację.",
+          },
+          empty: {
+            firstUseTitle: "Twoi agenci pojawią się tutaj",
+            firstUseSubtitle: "Uruchom jednego, a zobaczysz, co robi, ile to trwa i kiedy potrzebuje Ciebie.",
+            firstUseAction: "Uruchom agenta",
+            idle: "W tej chwili nie działa żaden agent.",
           },
         },
         subagents: {
