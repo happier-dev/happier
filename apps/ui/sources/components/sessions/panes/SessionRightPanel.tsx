@@ -261,6 +261,17 @@ const RightTabSurface = React.memo((props: Readonly<{
     // byte-identical also keeps its Suspense boundaries where they are today.
     const suspendInactive = props.inactiveRetention === 'suspended' && Platform.OS !== 'web';
 
+    // `opacity: 0` hides a surface from eyes, not from VoiceOver or TalkBack: without this an
+    // inactive native tab keeps offering its whole subtree to the screen-reader cursor, so swiping
+    // through the Git tab walks into Files, Agents and the terminal. Web's `display:'none'` already
+    // does this, and the sibling git sub-tab surface already carries the same pair.
+    const inactiveA11yProps = Platform.OS === 'web' || active
+        ? null
+        : {
+            accessibilityElementsHidden: true,
+            importantForAccessibility: 'no-hide-descendants' as const,
+        };
+
     return (
         <View
             testID={props.testID}
@@ -272,6 +283,7 @@ const RightTabSurface = React.memo((props: Readonly<{
                     display: Platform.OS === 'web' ? (active ? 'flex' : 'none') : 'flex',
                 },
             ]}
+            {...(inactiveA11yProps ?? {})}
         >
             {suspendInactive
                 ? <FrozenSubtree frozen={!active}>{props.children}</FrozenSubtree>

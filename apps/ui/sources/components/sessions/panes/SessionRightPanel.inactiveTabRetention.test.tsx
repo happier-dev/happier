@@ -123,6 +123,13 @@ function readProbeProps(screen: Awaited<ReturnType<typeof renderScreen>>) {
     return nodes.length > 0 ? nodes[0]!.props : null;
 }
 
+/** The surface test id sits on both the `RightTabSurface` element and the `View` it renders. */
+function findAgentsSurfaceHost(screen: Awaited<ReturnType<typeof renderScreen>>) {
+    return screen
+        .findAllByTestId('session-rightpanel-surface-agents')
+        .find((node) => typeof node.type === 'string') ?? null;
+}
+
 describe('SessionRightPanel (inactive tab retention)', () => {
     beforeEach(() => {
         platform.os = 'ios';
@@ -173,6 +180,21 @@ describe('SessionRightPanel (inactive tab retention)', () => {
         expect(restored!.sessionValue).toBe(2);
     });
 
+    it('takes an inactive native surface out of the screen-reader cursor', async () => {
+        const { SessionRightPanel } = await import('./SessionRightPanel');
+        const screen = await renderScreen(<SessionRightPanel sessionId="s1" scopeId="session:s1" />);
+
+        await screen.pressByTestIdAsync('session-rightpanel-tab:agents');
+        const active = findAgentsSurfaceHost(screen);
+        expect(active).not.toBeNull();
+        expect(active!.props.accessibilityElementsHidden).toBeUndefined();
+
+        await screen.pressByTestIdAsync('session-rightpanel-tab:git');
+        const inactive = findAgentsSurfaceHost(screen);
+        expect(inactive!.props.accessibilityElementsHidden).toBe(true);
+        expect(inactive!.props.importantForAccessibility).toBe('no-hide-descendants');
+    });
+
     it('leaves web behaviour unchanged: an inactive surface keeps rendering off session updates', async () => {
         platform.os = 'web';
         const { SessionRightPanel } = await import('./SessionRightPanel');
@@ -186,5 +208,9 @@ describe('SessionRightPanel (inactive tab retention)', () => {
 
         expect(agentsProbe.renders).toBeGreaterThan(rendersWhenDeactivated);
         expect(readProbeProps(screen)!.sessionValue).toBe(1);
+        // Web hides an inactive surface with `display:'none'`, which already removes it from the
+        // accessibility tree; the native-only props must not leak onto it.
+        const inactiveOnWeb = findAgentsSurfaceHost(screen);
+        expect(inactiveOnWeb!.props.accessibilityElementsHidden).toBeUndefined();
     });
 });
