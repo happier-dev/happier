@@ -10,6 +10,7 @@ import { openConnectedServiceQuotaViewSnapshot } from '@/sync/domains/connectedS
 import { connectedServiceProfileKey } from '@/sync/domains/connectedServices/connectedServiceProfilePreferences';
 import { connectedServiceQuotaRecoveryCreditConsume } from '@/sync/ops/connectedServiceQuotaRecoveryCredits';
 import { sanitizeEndpointErrorMessage } from '@/sync/runtime/connectivity/sanitizeEndpointErrorMessage';
+import { isRuntimeActive, subscribeToRuntimeActiveChange } from '@/utils/runtime/isRuntimeActive';
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import type { CredentialScopedAccountMode } from './useCredentialScopedAccountModeResolver';
 import type {
@@ -169,12 +170,37 @@ function computeNextFetchAtMs(snapshot: ConnectedServiceQuotaSnapshotV1 | null):
         : QUOTA_SNAPSHOT_MISS_RETRY_MS);
 }
 
+/**
+ * Quota polling is a network round trip per open session. It exists to keep a
+ * meter the user is looking at honest, so it stops while the app is backgrounded
+ * or the tab is hidden instead of waking the radio every 30 s behind a locked
+ * screen, and resumes the moment the runtime is active again — immediately when
+ * the cadence went overdue while away, so a returning user never reads a meter
+ * that quietly went stale.
+ */
+let runtimeActiveResumeDetach: (() => void) | null = null;
+
+function ensureRuntimeActiveResumeWatcher(): void {
+    if (runtimeActiveResumeDetach) return;
+    runtimeActiveResumeDetach = subscribeToRuntimeActiveChange(() => {
+        if (!isRuntimeActive()) return;
+        for (const key of [...entries.keys()]) {
+            schedulePolling(key);
+        }
+    });
+}
+
 function schedulePolling(key: string): void {
     const entry = entries.get(key);
     if (!entry) return;
     clearPollTimer(entry);
     if (entry.pollRetainCount <= 0 || entry.loadPromise || entry.refreshPromise) return;
     if (!entry.pollContext || !isScopeActive(entry.pollContext.credentialScope)) return;
+    if (!isRuntimeActive()) {
+        ensureRuntimeActiveResumeWatcher();
+        return;
+    }
+    ensureRuntimeActiveResumeWatcher();
 
     const delayMs = Math.max(0, entry.nextFetchAtMs - Date.now());
     entry.pollTimer = setTimeout(() => {
@@ -183,6 +209,10 @@ function schedulePolling(key: string): void {
         if (!latest || latest.pollRetainCount <= 0 || latest.loadPromise || latest.refreshPromise) return;
         const ctx = latest.pollContext;
         if (!ctx || !isScopeActive(ctx.credentialScope)) return;
+        if (!isRuntimeActive()) {
+            ensureRuntimeActiveResumeWatcher();
+            return;
+        }
         latest.loadAttempted = true;
         void runLoad(key, ctx);
     }, delayMs);
@@ -392,4 +422,6 @@ export function __resetConnectedServiceQuotaSnapshotStore(): void {
     entries.clear();
     listenersByKey.clear();
     activeCredentialScope = '';
+    runtimeActiveResumeDetach?.();
+    runtimeActiveResumeDetach = null;
 }
