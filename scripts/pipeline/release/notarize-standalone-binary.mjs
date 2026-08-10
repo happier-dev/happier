@@ -12,11 +12,11 @@ import { parseArgs } from 'node:util';
 import cliDistBuildManifest from '../../../packages/cli-common/cliDistBuildManifest.cjs';
 import { createNodeArchive, extractNodeArchive } from './node-archive.mjs';
 
-const THIN_MACH_O_MAGICS = new Set([
-  'feedface',
-  'cefaedfe',
-  'feedfacf',
-  'cffaedfe',
+const THIN_MACH_O_MAGICS = new Map([
+  ['feedface', { littleEndian: false }],
+  ['cefaedfe', { littleEndian: true }],
+  ['feedfacf', { littleEndian: false }],
+  ['cffaedfe', { littleEndian: true }],
 ]);
 const FAT_MACH_O_MAGICS = new Map([
   ['cafebabe', { littleEndian: false, is64Bit: false }],
@@ -30,6 +30,10 @@ const PRESERVED_CODESIGN_METADATA = [
   'launch-constraints',
   'library-constraints',
 ].join(',');
+const DEFAULT_CODESIGN_ATTEMPTS = 4;
+const DEFAULT_CODESIGN_RETRY_DELAY_MS = 15_000;
+const DEFAULT_GATEKEEPER_ATTEMPTS = 5;
+const DEFAULT_GATEKEEPER_RETRY_DELAY_MS = 15_000;
 
 function isDeveloperIdApplicationSigningSelector(value) {
   const selector = String(value ?? '').trim();
@@ -48,20 +52,33 @@ function fileSha256(filePath) {
   return createHash('sha256').update(fs.readFileSync(filePath)).digest('hex');
 }
 
-function isMachOFile(filePath) {
+function readThinMachOFileType(descriptor, offset, endExclusive) {
+  if (offset + 16 > endExclusive) return null;
+  const header = Buffer.allocUnsafe(16);
+  if (fs.readSync(descriptor, header, 0, header.length, offset) !== header.length) {
+    return null;
+  }
+  const thinFormat = THIN_MACH_O_MAGICS.get(header.subarray(0, 4).toString('hex'));
+  if (!thinFormat) return null;
+  return thinFormat.littleEndian ? header.readUInt32LE(12) : header.readUInt32BE(12);
+}
+
+function readMachOFileTypes(filePath) {
   const descriptor = fs.openSync(filePath, 'r');
   try {
     const header = Buffer.allocUnsafe(8);
     if (fs.readSync(descriptor, header, 0, header.length, 0) !== header.length) {
-      return false;
+      return null;
     }
     const magic = header.subarray(0, 4).toString('hex');
+    const fileSize = fs.fstatSync(descriptor).size;
     if (THIN_MACH_O_MAGICS.has(magic)) {
-      return true;
+      const fileType = readThinMachOFileType(descriptor, 0, fileSize);
+      return fileType === null ? null : [fileType];
     }
     const fatFormat = FAT_MACH_O_MAGICS.get(magic);
     if (!fatFormat) {
-      return false;
+      return null;
     }
 
     const readUInt32 = fatFormat.littleEndian
@@ -72,18 +89,18 @@ function isMachOFile(filePath) {
       : (buffer, offset) => buffer.readBigUInt64BE(offset);
     const architectureCount = readUInt32(header, 4);
     if (architectureCount < 1 || architectureCount > 32) {
-      return false;
+      return null;
     }
     const architectureSize = fatFormat.is64Bit ? 32 : 20;
     const tableSize = 8 + architectureCount * architectureSize;
-    const fileSize = fs.fstatSync(descriptor).size;
     if (tableSize > fileSize) {
-      return false;
+      return null;
     }
     const table = Buffer.allocUnsafe(architectureCount * architectureSize);
     if (fs.readSync(descriptor, table, 0, table.length, 8) !== table.length) {
-      return false;
+      return null;
     }
+    const fileTypes = [];
     for (let index = 0; index < architectureCount; index += 1) {
       const entryOffset = index * architectureSize;
       const rawOffset = fatFormat.is64Bit
@@ -93,14 +110,21 @@ function isMachOFile(filePath) {
         ? readBigUInt64(table, entryOffset + 16)
         : BigInt(readUInt32(table, entryOffset + 12));
       if (
-        rawSize < 1n
+        rawSize < 16n
         || rawOffset < BigInt(tableSize)
         || rawOffset + rawSize > BigInt(fileSize)
       ) {
-        return false;
+        return null;
       }
+      const fileType = readThinMachOFileType(
+        descriptor,
+        Number(rawOffset),
+        Number(rawOffset + rawSize),
+      );
+      if (fileType === null) return null;
+      fileTypes.push(fileType);
     }
-    return true;
+    return fileTypes;
   } finally {
     fs.closeSync(descriptor);
   }
@@ -143,12 +167,18 @@ export function listDarwinPayloadMachOCode(rawPayloadPath) {
     throw new Error(`[release] Darwin payload does not exist: ${payloadPath}`);
   }
   return walkPayloadEntries(payloadPath)
-    .filter((entry) => entry.type === 'file' && isMachOFile(entry.path))
-    .map((entry) => ({
-      path: entry.path,
-      relativePath: entry.relativePath,
-      executable: (entry.info.mode & 0o111) !== 0,
-    }))
+    .filter((entry) => entry.type === 'file')
+    .map((entry) => ({ entry, fileTypes: readMachOFileTypes(entry.path) }))
+    .filter(({ fileTypes }) => fileTypes !== null)
+    .map(({ entry, fileTypes }) => {
+      const executable = (entry.info.mode & 0o111) !== 0;
+      return {
+        path: entry.path,
+        relativePath: entry.relativePath,
+        executable,
+        gatekeeperAssessable: executable && fileTypes.every((fileType) => fileType === 2),
+      };
+    })
     .sort((left, right) => {
       const depthDelta = right.relativePath.split('/').length - left.relativePath.split('/').length;
       return depthDelta || comparePaths(left.relativePath, right.relativePath);
@@ -248,7 +278,7 @@ export function resolveDarwinPayloadNotarizationCommands({
       ['notarytool', 'log', submissionId, logPath, ...authArgs],
     ],
     assess: machOCode
-      .filter((entry) => entry.executable)
+      .filter((entry) => entry.gatekeeperAssessable)
       .map((entry) => [
         'spctl',
         ['--assess', '--type', 'execute', '--verbose=4', entry.path],
@@ -283,6 +313,87 @@ function run([command, args], options = {}) {
     stdio: options.capture ? ['ignore', 'pipe', 'pipe'] : 'inherit',
     timeout: options.timeoutMs ?? 10 * 60_000,
   });
+}
+
+function commandFailureOutput(error) {
+  return [error?.message, error?.stdout, error?.stderr]
+    .map((value) => Buffer.isBuffer(value) ? value.toString('utf8') : String(value ?? ''))
+    .join('\n');
+}
+
+function sleepSync(ms) {
+  if (!Number.isFinite(ms) || ms <= 0) return;
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, Math.trunc(ms));
+}
+
+export function runCodesignWithRetry(
+  command,
+  {
+    attempts = DEFAULT_CODESIGN_ATTEMPTS,
+    retryDelayMs = DEFAULT_CODESIGN_RETRY_DELAY_MS,
+    runCommand = run,
+    sleep = sleepSync,
+    logger = console,
+  } = {},
+) {
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      return runCommand(command);
+    } catch (error) {
+      const timestampServiceUnavailable = /timestamp service is not available/iu.test(
+        commandFailureOutput(error),
+      );
+      if (!timestampServiceUnavailable || attempt >= attempts) {
+        throw error;
+      }
+      const nextAttempt = attempt + 1;
+      const delayMs = retryDelayMs * (2 ** (attempt - 1));
+      logger.warn?.(
+        `[release] Apple timestamp service is unavailable; retrying codesign (${nextAttempt}/${attempts})`,
+      );
+      sleep(delayMs);
+    }
+  }
+  throw new Error('[release] codesign retry loop exhausted unexpectedly');
+}
+
+export function runGatekeeperAssessment(
+  command,
+  {
+    attempts = DEFAULT_GATEKEEPER_ATTEMPTS,
+    retryDelayMs = DEFAULT_GATEKEEPER_RETRY_DELAY_MS,
+    runCommand = run,
+    sleep = sleepSync,
+    logger = console,
+  } = {},
+) {
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      runCommand(command, { capture: true });
+      return true;
+    } catch (error) {
+      const failureOutput = commandFailureOutput(error);
+      if (/does not seem to be an app/iu.test(failureOutput)) {
+        logger.warn?.(
+          '[release] spctl cannot assess this raw command-line Mach-O as an app; '
+          + 'accepted notarization and strict code-signature verification remain authoritative.',
+        );
+        return false;
+      }
+      const onlineTicketPending = /source\s*=\s*Unnotarized Developer ID/iu.test(failureOutput);
+      if (!onlineTicketPending || attempt >= attempts) {
+        throw error;
+      }
+      const nextAttempt = attempt + 1;
+      const delayMs = retryDelayMs * (2 ** (attempt - 1));
+      logger.warn?.(
+        `[release] accepted notarization ticket is not visible to Gatekeeper yet; `
+        + `retrying spctl (${nextAttempt}/${attempts})`,
+      );
+      sleep(delayMs);
+    }
+  }
+  throw new Error('[release] Gatekeeper assessment retry loop exhausted unexpectedly');
 }
 
 export function repairAdHocDarwinPayloadSignatures(
@@ -325,7 +436,7 @@ export function verifyDarwinPayloadNotarizationEvidence({
     'codesign',
     ['--verify', '--strict=all', '--verbose=2', entryPath],
   ]),
-  assessCode = (entryPath) => run([
+  assessCode = (entryPath) => runGatekeeperAssessment([
     'spctl',
     ['--assess', '--type', 'execute', '--verbose=4', entryPath],
   ]),
@@ -372,10 +483,15 @@ export function verifyDarwinPayloadNotarizationEvidence({
 
   const snapshot = snapshotDarwinPayload(payloadPath);
   assertMatchingPayloadSnapshot(evidence, snapshot);
+  const gatekeeperAssessablePaths = new Set(
+    listDarwinPayloadMachOCode(payloadPath)
+      .filter((entry) => entry.gatekeeperAssessable)
+      .map((entry) => entry.relativePath),
+  );
   for (const entry of snapshot.machO) {
     const entryPath = path.join(payloadPath, ...entry.path.split('/'));
     verifyCode(entryPath);
-    if (entry.executable) {
+    if (gatekeeperAssessablePaths.has(entry.path)) {
       assessCode(entryPath);
     }
   }
@@ -633,7 +749,7 @@ export function notarizeDarwinPayload({
       submissionId: 'PENDING',
       logPath,
     });
-    provisional.codesign.forEach((command) => runCommand(command));
+    provisional.codesign.forEach((command) => runCodesignWithRetry(command, { runCommand, logger }));
     provisional.verify.forEach((command) => runCommand(command));
     finalizePayloadBeforeSnapshot();
     const signedSnapshot = snapshotDarwinPayload(payloadPath);
@@ -658,7 +774,7 @@ export function notarizeDarwinPayload({
     if (status !== 'Accepted') {
       throw new Error(`[release] Apple notarization was not accepted (${status}); log: ${logFileName}`);
     }
-    commands.assess.forEach((command) => runCommand(command));
+    commands.assess.forEach((command) => runGatekeeperAssessment(command, { runCommand, logger }));
     assertMatchingPayloadSnapshot(signedSnapshot, snapshotDarwinPayload(payloadPath));
 
     const evidence = {
