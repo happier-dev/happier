@@ -243,6 +243,7 @@ function runPkgrollBuildStage(options = {}) {
     manifestWritten = true;
     result = spawn(nodeExecutable, pkgrollArgs, {
       cwd: physicalStagingDir,
+      env,
       stdio: ['ignore', 'inherit', 'inherit'],
       timeout: timeoutMs,
     });
