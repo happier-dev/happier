@@ -617,13 +617,16 @@ vi.mock('react-native-unistyles', () => {
                 indigo: '#5856D6',
                 purple: '#AF52DE',
             },
+            // `onTint` mirrors `theme/index.ts`: the ink for text sitting on the matching tint,
+            // while `foreground` stays the glyph tint. Components read both, so a mock missing
+            // one of them renders an undefined color instead of failing loudly.
             state: {
-                success: { foreground: '#34C759', background: 'rgba(52, 199, 89, 0.12)', border: '#34C759' },
-                warning: { foreground: '#FF9500', background: '#FFF8F0', border: '#FF9500' },
-                danger: { foreground: '#FF3B30', background: '#FFF0F0', border: '#FF3B30' },
-                info: { foreground: '#5856D6', background: 'rgba(0, 122, 255, 0.10)', border: '#007AFF' },
-                neutral: { foreground: '#8E8E93', background: '#F2F2F7', border: '#D1D1D6' },
-                active: { foreground: '#007AFF', background: 'rgba(0, 122, 255, 0.10)', border: 'rgba(0, 122, 255, 0.40)' },
+                success: { foreground: '#34C759', onTint: '#1A7030', background: 'rgba(52, 199, 89, 0.12)', border: '#34C759' },
+                warning: { foreground: '#FF9500', onTint: '#B25000', background: '#FFF8F0', border: '#FF9500' },
+                danger: { foreground: '#FF3B30', onTint: '#D70015', background: '#FFF0F0', border: '#FF3B30' },
+                info: { foreground: '#5856D6', onTint: '#454FB4', background: 'rgba(0, 122, 255, 0.10)', border: '#007AFF' },
+                neutral: { foreground: '#8E8E93', onTint: '#6C6C70', background: '#F2F2F7', border: '#D1D1D6' },
+                active: { foreground: '#007AFF', onTint: '#0A5AC8', background: 'rgba(0, 122, 255, 0.10)', border: 'rgba(0, 122, 255, 0.40)' },
             },
             background: { canvas: '#F5F5F5' },
             surface: {
