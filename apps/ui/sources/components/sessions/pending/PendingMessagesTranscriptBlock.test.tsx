@@ -4,6 +4,11 @@ import { act } from 'react-test-renderer';
 import { createDeferred, invokeTestInstanceHandler, renderScreen } from '@/dev/testkit';
 import type { PendingMessage } from '@/sync/domains/state/storageTypes';
 import { t } from '@/text';
+import {
+    getPendingMessageVisualState,
+    resolvePendingMessageHeightBearingChrome,
+    type PendingMessageHeightBearingChrome,
+} from './pendingMessageVisualState';
 import { installPendingMessagesCommonModuleMocks } from './pendingMessagesTestHelpers';
 
 
@@ -552,6 +557,85 @@ describe('PendingMessagesTranscriptBlock', () => {
         expect(screen.findByTestId('pendingMessages.row:p1')).toBeTruthy();
         expect(screen.findByTestId('pendingMessages.blockedDeliveryNotice:p1')).toBeTruthy();
         expect(screen.findByTestId('pendingMessages.unknownDeliveryStatus:p1')).toBeTruthy();
+    });
+
+    /**
+     * F-P2 (2026-08-10): `resolvePendingMessageHeightBearingChrome` is what the transcript
+     * measurement layer keys the pending row's SIZE VERSION on, and it is only sound while it names
+     * the same in-flow notice this block actually paints. Asserted from BOTH ends here: the
+     * descriptor's answer, and the notice that appears in the tree.
+     */
+    it('paints exactly the in-flow notice its height-bearing chrome descriptor names', async () => {
+        const PendingMessagesTranscriptBlock = await loadPendingMessagesTranscriptBlock();
+        const row = (overrides: Partial<PendingMessage>): PendingMessage => ({
+            id: 'p1',
+            text: 'hello',
+            displayText: undefined,
+            createdAt: 0,
+            updatedAt: 0,
+            localId: 'p1',
+            source: 'server_pending',
+            rawRecord: {},
+            ...overrides,
+        } as PendingMessage);
+
+        const cases: readonly Readonly<{
+            chrome: PendingMessageHeightBearingChrome;
+            messages: readonly PendingMessage[];
+            noticeTestId: string | null;
+        }>[] = [
+            { chrome: 'none', messages: [row({ pendingDeliveryStatus: 'server_queued' })], noticeTestId: null },
+            { chrome: 'none', messages: [row({ pendingDeliveryStatus: 'server_delivering' })], noticeTestId: null },
+            { chrome: 'none', messages: [row({ source: 'local_outbound' })], noticeTestId: null },
+            {
+                chrome: 'blocked-notice',
+                messages: [row({ pendingDeliveryStatus: 'blocked', pendingDeliveryBlockedReason: 'payload_too_large' })],
+                noticeTestId: 'pendingMessages.blockedDeliveryNotice:p1',
+            },
+            {
+                chrome: 'blocked-notice',
+                messages: [row({ pendingDeliveryStatus: 'blocked', pendingDeliveryBlockedReason: 'ambiguous_terminal_delivery' })],
+                noticeTestId: 'pendingMessages.blockedDeliveryNotice:p1',
+            },
+            {
+                chrome: 'retry-notice',
+                messages: [row({ source: 'local_outbound', sendState: 'failed' })],
+                noticeTestId: 'pendingMessages.sendFailedNotice:p1',
+            },
+            {
+                // A sibling holding provider custody is what makes p1 wait, and the wait is in flow.
+                chrome: 'wait-notice',
+                messages: [
+                    row({ id: 'p0', localId: 'p0', pendingDeliveryStatus: 'server_delivering' }),
+                    row({ pendingDeliveryStatus: 'server_queued' }),
+                ],
+                noticeTestId: 'pendingMessages.queuedReason:waiting_for_predecessor:p1',
+            },
+        ];
+
+        for (const { chrome, messages, noticeTestId } of cases) {
+            sessionValue = { active: true, presence: 'online', agentStateVersion: 1, runtimeActivityState: 'idle' };
+            const subject = messages[messages.length - 1]!;
+            const hasProviderDeliveryInFlight = messages.some((m) => m.pendingDeliveryStatus === 'server_delivering');
+            expect(resolvePendingMessageHeightBearingChrome(
+                getPendingMessageVisualState(subject, { hasProviderDeliveryInFlight }),
+            ), `descriptor for ${JSON.stringify(subject.pendingDeliveryStatus ?? subject.sendState ?? subject.source)}`)
+                .toBe(chrome);
+
+            const screen = await renderScreen(React.createElement(PendingMessagesTranscriptBlock, {
+                sessionId: 's1',
+                pendingMessages: [...messages],
+                discardedMessages: [],
+            }));
+
+            const painted = [
+                'pendingMessages.blockedDeliveryNotice:p1',
+                'pendingMessages.sendFailedNotice:p1',
+                'pendingMessages.queuedReason:waiting_for_predecessor:p1',
+            ].filter((testId) => screen.findByTestId(testId) !== null);
+
+            expect(painted, `painted notices for ${chrome}`).toEqual(noticeTestId ? [noticeTestId] : []);
+        }
     });
 
     it('marks blocked pending delivery handled without replaying the row', async () => {

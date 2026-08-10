@@ -8,6 +8,7 @@ import {
 import {
     getPendingMessageVisualState,
     isPendingMessageProviderDeliveryInFlight,
+    resolvePendingMessageHeightBearingChrome,
 } from '@/components/sessions/pending/pendingMessageVisualState';
 import { resolveToolStatusIndicatorKind } from '@/components/tools/shell/presentation/resolveToolStatusIndicatorKind';
 import type { Message } from '@/sync/domains/messages/messageTypes';
@@ -307,13 +308,27 @@ export function buildTranscriptRowShellSignature(params: Readonly<{
     // This is the same rule message rows already follow (`buildMessageShellStructuralKey`:
     // "Never serialize the message itself"); these shapes never got it.
     if (item.kind === 'pending-queue') {
-        // Height-bearing presentation only. `getPendingMessageVisualState` is the canonical owner of
-        // the chip/notice a row paints, so its answer is consumed rather than re-derived. Its
-        // session-runtime inputs (`sessionRuntime`, FIFO predecessor) and the block's own local
-        // `materializingLocalIds` are NOT available here — those flip `queued` ↔ `queued_behind_turn`
-        // without changing the record, and for that the row's own `onLayout` stays the measurement
-        // authority. What matters is that the key still moves on every change of the queue's
-        // COMPOSITION (ids, order, count) and of each message's text extent, which is what
+        // F-P2 (2026-08-10): HEIGHT-bearing presentation only, not visible-state. The J/D2 fix above
+        // stopped serializing the record and keyed on `getPendingMessageVisualState(...).kind`
+        // instead — but that kind is a STATUS, and the chrome it selects splits in two: the status
+        // chip is `position: 'absolute'` (`pendingAffordanceChip`) and cannot move the row at all,
+        // while three states paint a real in-flow notice. So a plain send
+        // (`saving → send_unconfirmed → queued → delivering`) moved this key two or three times with
+        // the painted box byte-identical, and every one of those moves deleted the row's measured
+        // size (Legend `validateItemSizeVersion`) and its reservation
+        // (`resetReservationForStructuralChange`). `resolvePendingMessageHeightBearingChrome` is the
+        // owner's own answer to "which in-flow notice does this row paint", the same rule F-P1 states
+        // for grouped tool rows; the block renders from that descriptor, so key and paint cannot
+        // drift. `deliveryBlockedPresentation.labelKey` stays because it decides the notice's own
+        // copy, hence its line count.
+        //
+        // The session-runtime inputs (`sessionRuntime`, FIFO predecessor) and the block's own local
+        // `materializingLocalIds` are still NOT available here — those flip `queued` ↔
+        // `queued_behind_turn` without changing the record, and for that the row's own `onLayout`
+        // stays the measurement authority. `hasProviderDeliveryInFlight` IS available and is folded
+        // in, because a sibling taking provider custody genuinely adds the wait notice to its
+        // neighbours. What matters otherwise is that the key still moves on every change of the
+        // queue's COMPOSITION (ids, order, count) and of each message's text extent, which is what
         // `isStructuralSignatureDelta` needs to re-seed the floor when the queue drains.
         // KNOWN RESIDUAL: if a runtime-derived wait notice DISAPPEARS while the same queue stays put,
         // the reservation floor keeps that row's taller measured height (a forcing `minHeight`) until
@@ -404,7 +419,7 @@ function buildPendingMessagePresentationKey(
     return [
         message.id,
         message.localId ?? '',
-        visualState.kind,
+        resolvePendingMessageHeightBearingChrome(visualState),
         visualState.deliveryBlockedPresentation?.labelKey ?? '',
         buildPendingTextPresentationKey(message),
     ].join(':');

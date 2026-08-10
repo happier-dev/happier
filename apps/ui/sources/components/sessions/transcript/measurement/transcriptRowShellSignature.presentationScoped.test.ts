@@ -88,6 +88,26 @@ describe('pending row signatures are presentation-scoped', () => {
         expect(wrapped.structuralKey).not.toBe(flat.structuralKey);
     });
 
+    /**
+     * F-P2 (2026-08-10): delivery status selects the row's status CHIP, and that chip is
+     * `position: 'absolute'` (`PendingMessagesTranscriptBlock` `pendingAffordanceChip`), so it can
+     * never move the row's height. A plain send walks `saving → send_unconfirmed → queued →
+     * delivering` and paints a byte-identical box at every step, so the size version must hold.
+     */
+    it('holds the key across a delivery-status walk that paints an identical box', () => {
+        const walk = [
+            pendingMessage(),
+            pendingMessage({ deliveryStatus: 'queued', sendState: 'unconfirmed' }),
+            pendingMessage({ deliveryStatus: 'accepted' }),
+            pendingMessage({ source: 'server_pending', deliveryStatus: 'queued', pendingDeliveryStatus: 'server_queued' }),
+            pendingMessage({ source: 'server_pending', deliveryStatus: 'queued', pendingDeliveryStatus: 'server_delivering' }),
+            pendingMessage({ source: 'server_pending', deliveryStatus: 'queued', pendingDeliveryStatus: 'external_handoff' }),
+            pendingMessage({ pendingOutboxOperation: 'cancel' }),
+        ].map((message) => signatureFor(pendingQueueItem([message])).structuralKey);
+
+        expect(new Set(walk).size).toBe(1);
+    });
+
     it('moves when the row switches to a state that paints extra chrome', () => {
         const queued = signatureFor(pendingQueueItem([pendingMessage({ source: 'server_pending' })]));
         const blocked = signatureFor(pendingQueueItem([pendingMessage({
@@ -95,8 +115,37 @@ describe('pending row signatures are presentation-scoped', () => {
             pendingDeliveryStatus: 'blocked',
             pendingDeliveryBlockedReason: 'terminal_composer_draft',
         })]));
+        // +36px in-flow notice AND an inline retry Pressable.
+        const sendFailed = signatureFor(pendingQueueItem([pendingMessage({ sendState: 'failed' })]));
+        // Same notice box, different copy — hence a different line count at narrow widths.
+        const blockedOtherReason = signatureFor(pendingQueueItem([pendingMessage({
+            source: 'server_pending',
+            pendingDeliveryStatus: 'blocked',
+            pendingDeliveryBlockedReason: 'payload_too_large',
+        })]));
 
         expect(blocked.structuralKey).not.toBe(queued.structuralKey);
+        expect(sendFailed.structuralKey).not.toBe(queued.structuralKey);
+        expect(blockedOtherReason.structuralKey).not.toBe(blocked.structuralKey);
+    });
+
+    /**
+     * The one delivery fold that is legitimate: when a sibling enters provider delivery, every other
+     * queued row resolves to `queued_behind_turn` and gains a real in-flow wait notice. The
+     * delivering row's own chrome is unchanged (chip only), so this key move is carried entirely by
+     * the rows that actually grew.
+     */
+    it('moves when a sibling entering provider delivery adds the wait notice to its neighbours', () => {
+        const idle = signatureFor(pendingQueueItem([
+            pendingMessage({ id: 'p1', localId: 'l1', source: 'server_pending', pendingDeliveryStatus: 'server_queued' }),
+            pendingMessage({ id: 'p2', localId: 'l2', source: 'server_pending', pendingDeliveryStatus: 'server_queued' }),
+        ]));
+        const delivering = signatureFor(pendingQueueItem([
+            pendingMessage({ id: 'p1', localId: 'l1', source: 'server_pending', pendingDeliveryStatus: 'server_delivering' }),
+            pendingMessage({ id: 'p2', localId: 'l2', source: 'server_pending', pendingDeliveryStatus: 'server_queued' }),
+        ]));
+
+        expect(delivering.structuralKey).not.toBe(idle.structuralKey);
     });
 
     it('sizes discarded rows by their own presentation, not by a record serialization', () => {

@@ -54,6 +54,50 @@ export type PendingMessageVisualState = Readonly<{
     queuedBehindTurn?: PendingMessageQueuedBehindTurnPresentation;
 }>;
 
+/**
+ * The IN-FLOW chrome a pending row paints for its current delivery state — i.e. the only part of its
+ * delivery presentation that can change the row's HEIGHT.
+ *
+ * F-P2 (2026-08-10). The status chip (`PendingMessagesTranscriptBlock` `pendingAffordanceChip`) is
+ * `position: 'absolute'`, so every state that only swaps the chip's icon/spinner/label paints a
+ * byte-identical box; exactly three states additionally paint an in-flow notice. This matters
+ * because `ChatListInternal` wires Legend's vendored `getItemSizeVersion` to
+ * `transcriptRowShellSignature`, and `validateItemSizeVersion` DELETES `sizesKnown` + `sizes`
+ * whenever that version moves: keying the pending row on `visualState.kind` threw away its measured
+ * height two or three times per send while the painted box never changed.
+ *
+ * The block SELECTS its notice from this descriptor, so there is one decision-maker rather than a
+ * mapping restated in the renderer, the size key and the estimator. Counterpart of
+ * `groupedToolCallRowPaintDependsOnGroupExpansion` for the pending row.
+ */
+export type PendingMessageHeightBearingChrome =
+    /** Chip only — absolutely positioned, cannot move the row. */
+    | 'none'
+    /** `blockedDeliveryNotice`: blocked / delivery_uncertain. */
+    | 'blocked-notice'
+    /** `blockedDeliveryNotice` + inline retry `Pressable`: send_failed. */
+    | 'retry-notice'
+    /** `queuedReasonNotice`: queued_behind_turn. */
+    | 'wait-notice';
+
+export function resolvePendingMessageHeightBearingChrome(
+    visualState: PendingMessageVisualState,
+): PendingMessageHeightBearingChrome {
+    // Read off the presentation the block itself renders the notice from, not off a list of kinds,
+    // so a state that starts carrying a blocked presentation cannot drop out of the size version.
+    if (visualState.deliveryBlockedPresentation !== undefined) {
+        return 'blocked-notice';
+    }
+    switch (visualState.kind) {
+        case 'send_failed':
+            return 'retry-notice';
+        case 'queued_behind_turn':
+            return 'wait-notice';
+        default:
+            return 'none';
+    }
+}
+
 const blockedReasonLabelKeys = {
     terminal_composer_draft: 'session.pendingMessages.deliveryBlockedReasons.terminalComposerDraft',
     runtime_config_blocked: 'session.pendingMessages.deliveryBlockedReasons.runtimeConfigBlocked',

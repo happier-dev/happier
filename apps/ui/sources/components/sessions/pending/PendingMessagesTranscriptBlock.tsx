@@ -26,6 +26,7 @@ import { deriveSessionRuntimePresentationState } from '@/sync/domains/session/at
 import {
     getPendingMessageVisualState,
     isPendingMessageProviderDeliveryInFlight,
+    resolvePendingMessageHeightBearingChrome,
     type PendingMessageVisualState,
 } from './pendingMessageVisualState';
 import { shouldClipPendingQueueContent } from './pendingQueueContentClipping';
@@ -716,6 +717,12 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
             || deliveryVisualState.kind === 'delivering';
         const canRemoveDelivery = usesDeliveryResolutionActions && !providerEffectPossible;
         const isSendFailed = deliveryVisualState.kind === 'send_failed';
+        // F-P2: the ONE in-flow notice this row paints. Selected from the visual-state owner's own
+        // descriptor rather than from three inline kind checks, because
+        // `transcriptRowShellSignature` keys the row's Legend size version on exactly this answer —
+        // a notice the key cannot see is a stale reservation, and a key move with no notice is a
+        // discarded measurement.
+        const heightBearingChrome = resolvePendingMessageHeightBearingChrome(deliveryVisualState);
         const isCancellationState = deliveryVisualState.kind === 'cancelling' || deliveryVisualState.kind === 'cancel_failed';
         const hasDurableOutboxOperation = message.pendingOutboxOperation === 'enqueue' || message.pendingOutboxOperation === 'cancel';
         const queuedBehindTurnMinutes =
@@ -950,7 +957,7 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
                             </Text>
                         </View>
 
-                        {blockedDeliveryLabel ? (
+                        {heightBearingChrome === 'blocked-notice' && blockedDeliveryLabel ? (
                             <View
                                 testID={`pendingMessages.blockedDeliveryNotice:${message.id}`}
                                 style={[
@@ -971,7 +978,7 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
                             </View>
                         ) : null}
 
-                        {isSendFailed ? (
+                        {heightBearingChrome === 'retry-notice' ? (
                             <View
                                 testID={`pendingMessages.sendFailedNotice:${message.id}`}
                                 style={[
@@ -1010,7 +1017,7 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
                             </View>
                         ) : null}
 
-                        {deliveryVisualState.kind === 'queued_behind_turn' ? (
+                        {heightBearingChrome === 'wait-notice' ? (
                             <View
                                 testID={`pendingMessages.queuedReason:${deliveryVisualState.queuedBehindTurn?.reason ?? 'waiting_for_foreground_turn'}:${message.id}`}
                                 style={styles.queuedReasonNotice}
