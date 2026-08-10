@@ -100,9 +100,13 @@ export function useDirectSessionRuntime(params: UseDirectSessionRuntimeParams): 
     const generationRef = React.useRef(0);
     const previousServerIdRef = React.useRef<string | undefined>(undefined);
     const activeServerId = normalizeServerId(activeServerSnapshot.serverId);
+    // A disabled runtime resolves nothing. Every other branch below already short-circuits on
+    // `enabled`, but this one used to reach into the session/server cache on every render of every
+    // caller that had already been handed a runtime by its parent — work whose result is then thrown
+    // away, and a global store read that a caller with no direct session has no reason to make.
     const sessionServerId = React.useMemo(
-        () => resolvePreferredServerIdForSessionId(params.sessionId) ?? activeServerId,
-        [activeServerId, params.sessionId],
+        () => (enabled ? resolvePreferredServerIdForSessionId(params.sessionId) ?? activeServerId : undefined),
+        [activeServerId, enabled, params.sessionId],
     );
 
     React.useEffect(() => {

@@ -75,6 +75,21 @@ describe('useDirectSessionRuntime', () => {
     vi.clearAllMocks();
   });
 
+  it('does not resolve session server ownership while the runtime hook is disabled', async () => {
+    const { useDirectSessionRuntime } = await import('./useDirectSessionRuntime');
+    const hook = await renderHook(() => useDirectSessionRuntime({
+      sessionId: 'disabled-direct-runtime',
+      metadata: null,
+      enabled: false,
+    }));
+
+    expect(resolvePreferredServerIdForSessionIdSpy).not.toHaveBeenCalled();
+    expect(hook.getCurrent().directSessionLink).toBeNull();
+    expect(hook.getCurrent().status).toBeNull();
+
+    await hook.unmount();
+  });
+
   it('does not emit an unhandled rejection when status fails before transcript refresh completes', async () => {
     const unhandled: unknown[] = [];
     const onUnhandledRejection = (reason: unknown) => {
