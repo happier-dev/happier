@@ -273,6 +273,7 @@ export function refreshRetainedClaudeHookPlugin(params: Readonly<{
         port: params.port,
         nodeExecutable: resolveNodeExecutable(),
         enableLocalPermissionBridge: true,
+        platform: process.platform,
         ...(params.permissionHookTimeoutSeconds === undefined
             ? {}
             : { permissionHookTimeoutSeconds: params.permissionHookTimeoutSeconds }),
