@@ -167,6 +167,58 @@ describe('sessionStopWithServerScope', () => {
     });
   });
 
+  it('falls back to the live runner when the server reports missing exact machine control', async () => {
+    mockStorageState.sessions = {
+      'sid-missing-machine-control': {
+        active: true,
+        metadata: { machineId: 'machine-1', path: '/repo' },
+      },
+    };
+    mockStorageState.machines = {
+      'machine-1': { id: 'machine-1', active: true, activeAt: Date.now() },
+    };
+    mockMachineRpcWithServerScope.mockRejectedValue(Object.assign(
+      new Error('Session machine control unavailable'),
+      { rpcErrorCode: 'RPC_SESSION_MACHINE_CONTROL_UNAVAILABLE' },
+    ));
+    mockSessionRpcWithServerScope.mockResolvedValue({ success: true, message: 'Killing happier process' });
+
+    await expect(sessionStopWithServerScope('sid-missing-machine-control', { serverId: 'server-a' })).resolves.toEqual({
+      success: false,
+      message: 'Stop requested; waiting for the session to become inactive',
+      code: 'session_stop_requested',
+      recovery: 'wait_for_inactive',
+    });
+    expect(mockSessionRpcWithServerScope).toHaveBeenCalledWith({
+      method: 'killSession',
+      payload: {},
+      serverId: 'server-a',
+      sessionId: 'sid-missing-machine-control',
+    });
+  });
+
+  it('does not fall back through a genuine forbidden machine response', async () => {
+    mockStorageState.sessions = {
+      'sid-forbidden-machine-control': {
+        active: true,
+        metadata: { machineId: 'machine-1', path: '/repo' },
+      },
+    };
+    mockStorageState.machines = {
+      'machine-1': { id: 'machine-1', active: true, activeAt: Date.now() },
+    };
+    mockMachineRpcWithServerScope.mockRejectedValue(Object.assign(new Error('Forbidden'), {
+      rpcErrorCode: RPC_ERROR_CODES.FORBIDDEN,
+    }));
+
+    await expect(sessionStopWithServerScope('sid-forbidden-machine-control', { serverId: 'server-a' })).resolves.toEqual({
+      success: false,
+      message: 'Forbidden',
+      code: 'session_stop_failed',
+    });
+    expect(mockSessionRpcWithServerScope).not.toHaveBeenCalled();
+  });
+
   it('falls back to session kill RPC when daemon machine stop returns a method-not-found envelope', async () => {
     mockStorageState.sessions = {
       'sid-old-daemon-envelope': {

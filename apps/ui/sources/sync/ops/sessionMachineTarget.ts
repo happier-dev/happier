@@ -1,5 +1,9 @@
 import { isSameMachineLocality, resolveSessionWorkspaceRootForMachine } from '@happier-dev/protocol';
-import { isRpcMethodNotAvailableError, isRpcMethodNotFoundError, type RpcErrorCarrier } from '@happier-dev/protocol/rpcErrors';
+import {
+  isRpcMethodNotAvailableError,
+  isRpcMethodNotFoundError,
+  type RpcErrorCarrier,
+} from '@happier-dev/protocol/rpcErrors';
 import { resolveSessionMachineRpcTarget } from '@/sync/domains/session/resolveSessionReachableMachineId';
 import { resolveSessionDisplayTarget } from '@/sync/domains/machines/identity/resolveSessionMachineTargets';
 import { storage } from '@/sync/domains/state/storage';
@@ -446,7 +450,8 @@ export function shouldFallbackFromMachineRpc(error: unknown): boolean {
           ? (error as { message: string }).message
           : undefined,
     };
-    return isRpcMethodNotAvailableError(rpcError) || isRpcMethodNotFoundError(rpcError);
+    return isRpcMethodNotAvailableError(rpcError)
+      || isRpcMethodNotFoundError(rpcError);
   }
 
   return false;

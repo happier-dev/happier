@@ -7,7 +7,7 @@ import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverSc
 import { sessionRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionRpc';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { StopSessionResultSchema, type StopSessionResult } from '@happier-dev/protocol';
-import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
+import { isRpcSessionMachineControlUnavailableError, readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 import { readMachineControlTargetForSession, shouldFallbackFromMachineRpc } from './sessionMachineTarget';
 
 type SessionKillRequest = Record<string, never>;
@@ -161,7 +161,7 @@ export async function stopSessionViaDaemonMachineRpc(params: Readonly<{
     } catch (error) {
         const message = unknownErrorMessage(error);
         const errorCode = readRpcErrorCode(error);
-        if (shouldFallbackFromMachineRpc(error)) {
+        if (shouldFallbackFromMachineRpc(error) || isRpcSessionMachineControlUnavailableError(error)) {
             return {
                 type: 'fallback',
                 reason: 'control_unavailable',
