@@ -30,6 +30,10 @@ maintainer authority:
 hmaint release bootstrap --repo <absolute checkout> --json
 ```
 
+Read and follow the returned private skill for general release preparation or
+approval. This repository skill remains the target-owned deep-certification
+entrypoint only.
+
 If `hmaint` is unavailable, stop and obtain the approved maintainer-tool
 installation; do not substitute a copied release workflow or arbitrary shell
 commands.
