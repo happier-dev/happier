@@ -9,6 +9,8 @@ import { join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 
 const FULL_SHA = /^[a-f0-9]{40}$/;
+const DEFAULT_UPLOAD_ATTEMPTS = 4;
+const DEFAULT_UPLOAD_RETRY_DELAY_MS = 5_000;
 
 function fail(message) {
   throw new Error(message);
@@ -72,6 +74,19 @@ function runBuffer(cmd, args, opts = {}) {
     stdio: ['ignore', 'pipe', 'pipe'],
     timeout: 10 * 60_000,
   });
+}
+
+function commandFailureOutput(error) {
+  if (!error || typeof error !== 'object') return String(error ?? '');
+  const commandError = /** @type {{ message?: unknown; stdout?: unknown; stderr?: unknown }} */ (error);
+  return [commandError.message, commandError.stdout, commandError.stderr]
+    .map((value) => Buffer.isBuffer(value) ? value.toString('utf8') : String(value ?? ''))
+    .join('\n');
+}
+
+function sleepSync(ms) {
+  if (!Number.isFinite(ms) || ms <= 0) return;
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, Math.trunc(ms));
 }
 
 async function fileSha256(filePath) {
@@ -209,6 +224,52 @@ function readReleaseAssetRows({ repo, releaseId, env, dryRun }) {
     if (separator <= 0) fail(`Invalid release asset row: ${line}`);
     return { id: line.slice(0, separator), name: line.slice(separator + 1) };
   });
+}
+
+function uploadReleaseAssetWithRetry({
+  repo,
+  releaseId,
+  name,
+  sourcePath,
+  env,
+  attempts = DEFAULT_UPLOAD_ATTEMPTS,
+  retryDelayMs = DEFAULT_UPLOAD_RETRY_DELAY_MS,
+  sleep = sleepSync,
+}) {
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    let uploadError = null;
+    try {
+      run('gh', [
+        'api', '--hostname', 'uploads.github.com', '-X', 'POST',
+        `repos/${repo}/releases/${releaseId}/assets?name=${encodeURIComponent(name)}`,
+        '-H', 'Content-Type: application/octet-stream',
+        '--input', sourcePath,
+        '--silent',
+      ], { env });
+    } catch (error) {
+      uploadError = error;
+    }
+    const uploaded = readReleaseAssetRows({ repo, releaseId, env, dryRun: false })
+      .some((entry) => entry.name === name);
+    if (uploaded) return;
+    if (!uploadError) {
+      fail(`GitHub did not upload staging asset ${name}.`);
+    }
+    const transientConnectionFailure = /error connecting to (?:api\.)?uploads\.github\.com/iu.test(
+      commandFailureOutput(uploadError),
+    );
+    if (!transientConnectionFailure || attempt >= attempts) {
+      throw uploadError;
+    }
+    const nextAttempt = attempt + 1;
+    const delayMs = retryDelayMs * (2 ** (attempt - 1));
+    console.warn(
+      `[pipeline] GitHub asset upload connection failed; retrying ${name} `
+      + `(${nextAttempt}/${attempts})`,
+    );
+    sleep(delayMs);
+  }
+  fail(`GitHub asset upload retry loop exhausted unexpectedly for ${name}.`);
 }
 
 function runMutationAndConfirm({ args, env, dryRun, confirm, failureMessage }) {
@@ -427,8 +488,9 @@ async function main() {
     let draftReleaseId = findDraftReleaseId({ repo, tag: stagingTag, env: ghEnv, dryRun });
     if (!draftReleaseId && !dryRun) {
       let createError = null;
+      let createOutput = '';
       try {
-        run('gh', [
+        createOutput = run('gh', [
           'api', '-X', 'POST', `repos/${repo}/releases`,
           '-f', `tag_name=${stagingTag}`,
           '-f', `target_commitish=${targetSha}`,
@@ -440,7 +502,16 @@ async function main() {
       } catch (error) {
         createError = error;
       }
-      draftReleaseId = findDraftReleaseId({ repo, tag: stagingTag, env: ghEnv, dryRun: false });
+      if (createOutput.trim()) {
+        const createdDraft = parseRelease(createOutput, `new staging release ${stagingTag}`);
+        if (!createdDraft?.id || createdDraft.tagName !== stagingTag || createdDraft.draft !== true) {
+          fail(`GitHub returned an invalid staging draft release for ${stagingTag}.`);
+        }
+        draftReleaseId = createdDraft.id;
+      }
+      if (!draftReleaseId) {
+        draftReleaseId = findDraftReleaseId({ repo, tag: stagingTag, env: ghEnv, dryRun: false });
+      }
       if (!draftReleaseId) {
         if (createError) throw createError;
         fail(`GitHub did not create staging draft release ${stagingTag}.`);
@@ -462,24 +533,13 @@ async function main() {
     if (!dryRun) {
       const { names } = await assertSignedBundle(sourceDir);
       for (const name of names) {
-        let uploadError = null;
-        try {
-          run('gh', [
-            'api', '--hostname', 'uploads.github.com', '-X', 'POST',
-            `repos/${repo}/releases/${draftReleaseId}/assets?name=${encodeURIComponent(name)}`,
-            '-H', 'Content-Type: application/octet-stream',
-            '--input', join(sourceDir, name),
-            '--silent',
-          ], { env: ghEnv });
-        } catch (error) {
-          uploadError = error;
-        }
-        const uploaded = readReleaseAssetRows({ repo, releaseId: draftReleaseId, env: ghEnv, dryRun: false })
-          .some((entry) => entry.name === name);
-        if (!uploaded) {
-          if (uploadError) throw uploadError;
-          fail(`GitHub did not upload staging asset ${name}.`);
-        }
+        uploadReleaseAssetWithRetry({
+          repo,
+          releaseId: draftReleaseId,
+          name,
+          sourcePath: join(sourceDir, name),
+          env: ghEnv,
+        });
       }
     } else {
       console.log(`[dry-run] upload every verified asset from ${sourceTag} to staging release ${stagingTag}`);
