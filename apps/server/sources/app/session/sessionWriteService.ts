@@ -975,6 +975,7 @@ export async function createSessionMessage(
                     data: {
                         ...(shouldBackfillRole ? { messageRole: resolvedRole } : {}),
                         ...(shouldAdvanceSourceUpdatedAt ? { sourceUpdatedAt } : {}),
+                        rowRevision: { increment: 1 },
                     },
                     select: SESSION_MESSAGE_WRITE_SELECT,
                 });
@@ -990,6 +991,7 @@ export async function createSessionMessage(
                 sidechainId,
                 messageRole: resolvedRole,
                 ...(sourceUpdatedAt ? { sourceUpdatedAt } : {}),
+                rowRevision: { increment: 1 },
             },
             select: SESSION_MESSAGE_WRITE_SELECT,
         });

@@ -42,6 +42,8 @@ const supersededMigrationIds = [
     "20260724160000_drop_machine_supervisor_authority",
 ] as const;
 
+const sessionMessageRowRevisionMigrationId = "20260810190000_add_session_message_row_revision";
+
 async function exists(path: string): Promise<boolean> {
     return await access(path).then(() => true, () => false);
 }
@@ -89,6 +91,13 @@ describe("unreleased migration contraction", () => {
         const sql = await migrationSql(providerRoot, "20260630162000_add_provider_account_usage_records");
         expect(sql).toContain("csus_account_service_profile_idx");
         expect(sql).not.toContain("ConnectedServiceUsageSource_accountId_serviceId_profileId_key");
+    });
+
+    it.each(providerRoots)("adds a private SessionMessage row revision with a zero default for %s", async (providerRoot) => {
+        const sql = await migrationSql(providerRoot, sessionMessageRowRevisionMigrationId);
+        expect(sql).toMatch(/\browRevision\b/);
+        expect(sql).toMatch(/\bBIGINT\b/i);
+        expect(sql).toMatch(/\bDEFAULT\s+0\b/i);
     });
 
     it("does not retain local checksum aliases in the SQLite migration owner", async () => {
@@ -167,6 +176,10 @@ describe("unreleased migration contraction", () => {
                 "prisma/sqlite/migrations",
                 "20260701123000_add_session_runtime_activity_projection",
             ));
+            db.exec(await migrationSql(
+                "prisma/sqlite/migrations",
+                sessionMessageRowRevisionMigrationId,
+            ));
 
             expect(db.prepare(`
                 SELECT "active", "pendingBlockedCount", "runtimeActivityState",
@@ -192,12 +205,13 @@ describe("unreleased migration contraction", () => {
                 providerAction: null,
             });
             expect(db.prepare(`
-                SELECT "sourceCreatedAt", "sourceUpdatedAt",
+                SELECT "sourceCreatedAt", "sourceUpdatedAt", "rowRevision",
                     "transcriptObservationProvenance", "deliveryResolution"
                 FROM "SessionMessage" WHERE "id" = 'message-1'
             `).get()).toEqual({
                 sourceCreatedAt: null,
                 sourceUpdatedAt: null,
+                rowRevision: 0,
                 transcriptObservationProvenance: null,
                 deliveryResolution: null,
             });

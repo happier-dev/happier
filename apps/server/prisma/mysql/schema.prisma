@@ -634,6 +634,8 @@ model SessionMessage {
     transcriptObservationProvenance Json?
     /// Minimal manual pending-delivery resolution retained after the Pending row is deleted.
     deliveryResolution Json?
+    /// Private row currentness revision; every canonical in-place mutation increments it atomically.
+    rowRevision BigInt @default(0)
     createdAt DateTime @default(now())
     updatedAt DateTime @updatedAt
 

@@ -1063,7 +1063,10 @@ async function commitResolvedPendingDelivery(
     if (params.deliveryResolution) {
         await tx.sessionMessage.update({
             where: { sessionId_localId: { sessionId: params.sessionId, localId: params.localId } },
-            data: { deliveryResolution: params.deliveryResolution },
+            data: {
+                deliveryResolution: params.deliveryResolution,
+                rowRevision: { increment: 1 },
+            },
         });
     }
     const committedMessage: PendingTranscriptMessage = params.deliveryResolution

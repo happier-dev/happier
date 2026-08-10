@@ -61,6 +61,36 @@ describe("db portability contract", () => {
         expect(reread.feedSeq).toBe(feedSeq);
     });
 
+    it("defaults and atomically increments private SessionMessage row revisions", async () => {
+        const account = await db.account.create({
+            data: { publicKey: uniq("contract-message-revision-pubkey") },
+            select: { id: true },
+        });
+        const session = await db.session.create({
+            data: {
+                accountId: account.id,
+                tag: uniq("contract-message-revision-session"),
+                metadata: "{}",
+            },
+            select: { id: true },
+        });
+        const message = await db.sessionMessage.create({
+            data: {
+                sessionId: session.id,
+                seq: 1,
+                content: { t: "encrypted", c: "contract-message-revision" },
+            },
+            select: { id: true, rowRevision: true },
+        });
+        expect(message.rowRevision).toBe(0n);
+
+        await expect(db.sessionMessage.update({
+            where: { id: message.id },
+            data: { rowRevision: { increment: 1 } },
+            select: { rowRevision: true },
+        })).resolves.toEqual({ rowRevision: 1n });
+    });
+
     it("round-trips Json fields", async () => {
         const account = await db.account.create({
             data: { publicKey: uniq("contract-json-pubkey") },

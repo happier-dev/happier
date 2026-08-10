@@ -86,6 +86,7 @@ export async function createSessionMessageFromPending(tx: Tx, params: {
                 where: { id: existing.id },
                 data: {
                     ...(needsRoleUpdate ? { messageRole } : {}),
+                    rowRevision: { increment: 1 },
                 },
                 select: { id: true, seq: true, localId: true, messageRole: true, content: true, deliveryResolution: true, createdAt: true, updatedAt: true },
             })

@@ -2647,12 +2647,13 @@ describe("pendingMessageService (shared sessions)", () => {
 
         await expect(db.sessionMessage.findUniqueOrThrow({
             where: { sessionId_localId: { sessionId: session.id, localId } },
-            select: { deliveryResolution: true },
+            select: { deliveryResolution: true, rowRevision: true },
         })).resolves.toEqual({
             deliveryResolution: {
                 v: 1,
                 kind: "manual_handled",
             },
+            rowRevision: 1n,
         });
         await expect(resolveAcceptedPendingDelivery({
             actorUserId: owner.id,

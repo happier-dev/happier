@@ -323,7 +323,7 @@ describe("sessionWriteService", () => {
             expect(currentTx.sessionMessage.update).toHaveBeenCalledOnce();
             expect(currentTx.sessionMessage.update).toHaveBeenCalledWith(expect.objectContaining({
                 where: { id: "m1" },
-                data: { sourceUpdatedAt: new Date(300) },
+                data: { sourceUpdatedAt: new Date(300), rowRevision: { increment: 1 } },
             }));
             expect(staleDifferentContent).toEqual({ ok: false, error: "invalid-params" });
             expect(markAccountChanged).not.toHaveBeenCalled();
@@ -417,7 +417,12 @@ describe("sessionWriteService", () => {
             expect(currentTx.sessionMessage.update).toHaveBeenCalledWith(
                 expect.objectContaining({
                     where: { id: "m1" },
-                    data: { content: { t: "encrypted", c: "next" }, sidechainId: null, messageRole: null },
+                    data: {
+                        content: { t: "encrypted", c: "next" },
+                        sidechainId: null,
+                        messageRole: null,
+                        rowRevision: { increment: 1 },
+                    },
                 }),
             );
         });
@@ -1368,7 +1373,7 @@ describe("sessionWriteService", () => {
             expect(currentTx.sessionMessage.update).toHaveBeenCalledOnce();
             expect(currentTx.sessionMessage.update).toHaveBeenCalledWith(expect.objectContaining({
                 where: { id: "mExisting" },
-                data: { sourceUpdatedAt: new Date(300) },
+                data: { sourceUpdatedAt: new Date(300), rowRevision: { increment: 1 } },
             }));
             expect(staleDifferentContent).toEqual({ ok: false, error: "invalid-params" });
             expect(currentTx.sessionMessage.create).toHaveBeenCalledTimes(2);
@@ -1501,7 +1506,12 @@ describe("sessionWriteService", () => {
             expect(currentTx.sessionMessage.update).toHaveBeenCalledWith(
                 expect.objectContaining({
                     where: { id: "mExisting" },
-                    data: { content: { t: "encrypted", c: "next" }, sidechainId: null, messageRole: null },
+                    data: {
+                        content: { t: "encrypted", c: "next" },
+                        sidechainId: null,
+                        messageRole: null,
+                        rowRevision: { increment: 1 },
+                    },
                 }),
             );
         });
