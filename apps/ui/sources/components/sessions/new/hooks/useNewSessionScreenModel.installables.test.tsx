@@ -168,12 +168,16 @@ const machineCapabilitiesResultsState = vi.hoisted(() => ({
 const storageState = vi.hoisted(() => ({
     workspaceLocations: {} as Record<string, unknown>,
     workspaceCheckouts: {} as Record<string, unknown>,
+    // The `@session` picker's real source. Seeded per test so the host's server scoping is
+    // observable through the production projection instead of a stubbed resolver.
+    sessionListViewDataByServerId: {} as Record<string, unknown[]>,
 }));
 
 const getMockStorageState = vi.hoisted(() => () => ({
     settings: settingsRuntimeState.current ?? testSettingsDefaults,
     workspaceLocations: storageState.workspaceLocations,
     workspaceCheckouts: storageState.workspaceCheckouts,
+    sessionListViewDataByServerId: storageState.sessionListViewDataByServerId,
     createSessionActionDraft: createSessionActionDraftMock,
 }));
 
@@ -369,6 +373,21 @@ const machineCapabilitiesCacheRefreshMock = vi.hoisted(() => vi.fn());
 vi.mock('@/sync/ops', () => ({
     machineCapabilitiesInvoke,
 }));
+
+// The one genuine boundary the file search crosses. Mocked here (and nowhere above it) so the
+// real registry, dispatcher, scope resolver and file index all run, and the assertion below can
+// see the machine and folder this host actually addresses.
+const machineRpcWithServerScopeMock = vi.hoisted(() => vi.fn(async (_params: unknown) => ({} as unknown)));
+
+vi.mock(
+    '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc',
+    async (importOriginal) => {
+        const { installServerScopedMachineRpcModuleMock } = await import('@/dev/testkit/mocks/serverScopedRpc');
+        return installServerScopedMachineRpcModuleMock({
+            machineRpcWithServerScope: (params: unknown) => machineRpcWithServerScopeMock(params) as never,
+        })(importOriginal);
+    },
+);
 
 vi.mock('@/hooks/server/useDaemonScopedMachineCapabilitiesCache', () => ({
     useDaemonScopedMachineCapabilitiesCache: () => ({
@@ -746,6 +765,40 @@ describe('useNewSessionScreenModel (installables)', () => {
         expect(model?.simpleProps?.emptyAutocompleteKinds).toEqual(['file', 'session', 'slashCommand']);
         const suggestions = await model?.simpleProps?.emptyAutocompleteSuggestions('/go');
         expect(suggestions?.some((suggestion: { text?: string }) => suggestion.text === '/goal')).toBe(true);
+    });
+
+    it('scopes the `@session` picker to the server this session will spawn on', async () => {
+        // The kind being eligible is not the same fact as the host declaring its spawn target.
+        // Without `serverId: targetServerId` the resolver has no server to scope to, so `@session`
+        // silently offers nothing here — which is the whole affordance, and the assertion above
+        // (an `emptyAutocompleteKinds` array plus a `/` query) cannot see it.
+        const listed = (serverId: string, ids: readonly string[]) => ids.map((id) => ({
+            type: 'session',
+            serverId,
+            session: {
+                id,
+                active: true,
+                updatedAt: 10,
+                metadata: { name: `Session ${id}`, path: '/repo' },
+            },
+        }));
+        storageState.sessionListViewDataByServerId = {
+            // `s1` is the mocked `targetServerId`; `s_active` is the active server, deliberately
+            // different, so scoping to the wrong one is observable.
+            s1: listed('s1', ['peer']),
+            s_active: listed('s_active', ['elsewhere']),
+        };
+
+        try {
+            const hook = await renderNewSessionScreenModel();
+            const model = hook.getCurrent();
+
+            const suggestions = await model?.simpleProps?.emptyAutocompleteSuggestions('@session:');
+
+            expect(suggestions?.map((suggestion: { key?: string }) => suggestion.key)).toEqual(['session-peer']);
+        } finally {
+            storageState.sessionListViewDataByServerId = {};
+        }
     });
 
     it('does not change hook order when the enhanced wizard flag toggles after mount', async () => {
@@ -1836,6 +1889,42 @@ describe('useNewSessionScreenModel (installables)', () => {
                 popoverAnchorRef: { current: null },
             }));
         expect(updatedChipScreen.getTextContent()).toContain('windowsRemoteSessionLaunchMode.shortHidden');
+    });
+
+    /**
+     * The new-session composer is the only host that still hands `getSuggestions` a workspace of
+     * its own, because it is the only one with no session to resolve it from. `workspace` is
+     * optional there (a host with no folder yet legitimately passes `null`), so the whole
+     * capability the user asked for — files in the composer *before* a session exists — hung on
+     * one forgettable argument that nothing observed: replacing it with `workspace: null` left
+     * 127 tests across 9 files green.
+     *
+     * This asserts the addressing, not just the presence of rows: the picked machine and the
+     * picked folder have to reach ripgrep as an explicit `cwd`, because without one the daemon
+     * searches its OWN working directory and would offer files from a tree the user never chose.
+     */
+    it('addresses the file search at the machine and folder the user picked', async () => {
+        machineRpcWithServerScopeMock.mockReset();
+        machineRpcWithServerScopeMock.mockResolvedValue({ success: true, stdout: 'README.md\nsrc/index.ts\n' });
+        const { fileSearchCache } = await import('@/sync/domains/input/suggestionFile');
+        fileSearchCache.clearAll();
+
+        try {
+            const hook = await renderNewSessionScreenModel();
+            const model = hook.getCurrent();
+
+            const suggestions = await model?.simpleProps?.emptyAutocompleteSuggestions('@REA');
+            expect(suggestions?.some((suggestion: { text?: string }) => suggestion.text === '@README.md')).toBe(true);
+
+            const ripgrep = machineRpcWithServerScopeMock.mock.calls
+                .map(([params]) => params as { machineId: string; method: string; payload: { cwd?: string } })
+                .filter((params) => params.method === 'ripgrep');
+            expect(ripgrep).toHaveLength(1);
+            expect(ripgrep[0]?.machineId).toBe('machine-1');
+            expect(ripgrep[0]?.payload.cwd).toBe('/repo');
+        } finally {
+            fileSearchCache.clearAll();
+        }
     });
 
 });
