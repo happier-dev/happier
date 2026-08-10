@@ -135,6 +135,57 @@ describe('useSessionRunningExecutionRuns shared session poll', () => {
         expect(sessionExecutionRunListSpy).toHaveBeenCalledTimes(1);
     });
 
+    it('does not share runs between sessions', async () => {
+        sessionExecutionRunListSpy.mockReset();
+        sessionExecutionRunListSpy.mockImplementation(async (sessionId: string) => ({
+            runs: [{ runId: `run_for_${sessionId}`, status: 'running' }],
+        }));
+
+        const first = await mountSubscribers(['shellA'], 's1');
+        const second = await mountSubscribers(['shellB'], 's2');
+
+        expect((observedRuns.get('shellA') as any[]).map((run) => run.runId)).toEqual(['run_for_s1']);
+        expect((observedRuns.get('shellB') as any[]).map((run) => run.runId)).toEqual(['run_for_s2']);
+        expect(sessionExecutionRunListSpy).toHaveBeenCalledTimes(2);
+
+        await flushHookEffects({ cycles: 1, turns: 2, advanceTimersMs: 5_000 });
+        expect(sessionExecutionRunListSpy).toHaveBeenCalledTimes(4);
+
+        await first.unmount();
+        await second.unmount();
+    });
+
+    it('keeps the object identity of a run a poll did not change', async () => {
+        sessionExecutionRunListSpy.mockReset();
+        sessionExecutionRunListSpy
+            .mockResolvedValueOnce({
+                runs: [
+                    { runId: 'run_1', status: 'running', turnInFlight: false },
+                    { runId: 'run_2', status: 'running', turnInFlight: false },
+                ],
+            })
+            .mockResolvedValue({
+                runs: [
+                    { runId: 'run_1', status: 'running', turnInFlight: false },
+                    { runId: 'run_2', status: 'running', turnInFlight: true },
+                ],
+            });
+
+        const mounted = await mountSubscribers(['shell']);
+        const before = observedRuns.get('shell') as readonly any[];
+        expect(before.map((run) => run.runId)).toEqual(['run_1', 'run_2']);
+
+        await flushHookEffects({ cycles: 1, turns: 2, advanceTimersMs: 5_000 });
+
+        const after = observedRuns.get('shell') as readonly any[];
+        expect(after).not.toBe(before);
+        expect(after[0]).toBe(before[0]);
+        expect(after[1]).not.toBe(before[1]);
+        expect(after[1].turnInFlight).toBe(true);
+
+        await mounted.unmount();
+    });
+
     it('refreshes once for every surface when execution-run activity is observed', async () => {
         const mounted = await mountSubscribers(['shell', 'agentsPane', 'messageDetails']);
         expect(sessionExecutionRunListSpy).toHaveBeenCalledTimes(1);
