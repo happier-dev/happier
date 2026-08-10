@@ -269,6 +269,38 @@ test('build-tauri Linux jobs free unused hosted-runner disk before dependency in
   assert.match(runScript, /df -h \//, 'cleanup should report available root filesystem space');
 });
 
+test('Tauri build and trusted finalizer share the complete Linux bundling dependency owner', async () => {
+  const workflow = parse(await readFile(workflowPath, 'utf8'));
+  const actionPath = './.github/actions/install-tauri-linux-dependencies';
+
+  for (const jobName of ['build', 'finalize']) {
+    const steps = workflow?.jobs?.[jobName]?.steps;
+    assert.ok(Array.isArray(steps), `build-tauri workflow should define jobs.${jobName}.steps`);
+    const installStep = steps.find((step) => step?.uses === actionPath);
+    assert.ok(installStep, `${jobName} should use the canonical Tauri Linux dependency action`);
+    assert.equal(installStep.if, "runner.os == 'Linux'");
+  }
+
+  const action = parse(await readFile(new URL('../../.github/actions/install-tauri-linux-dependencies/action.yml', import.meta.url), 'utf8'));
+  const installScript = String(action?.runs?.steps?.[0]?.run ?? '');
+  for (const packageName of [
+    'build-essential',
+    'pkg-config',
+    'libssl-dev',
+    'libgtk-3-dev',
+    'libwebkit2gtk-4.1-dev',
+    'libayatana-appindicator3-dev',
+    'librsvg2-dev',
+    'desktop-file-utils',
+    'gstreamer1.0-tools',
+    'gstreamer1.0-plugins-base',
+    'squashfs-tools',
+    'patchelf',
+  ]) {
+    assert.match(installScript, new RegExp(`(^|\\s)${packageName.replaceAll('.', '\\.')}(\\s|\\\\|$)`), `canonical action should install ${packageName}`);
+  }
+});
+
 test('build-tauri workflow sets Happier Cloud as explicit default server for desktop release builds', async () => {
   const workflow = await readFile(workflowPath, 'utf8');
   const parsed = parse(workflow);
