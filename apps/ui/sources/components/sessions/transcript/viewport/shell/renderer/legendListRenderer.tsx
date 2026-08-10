@@ -57,6 +57,8 @@ import type {
 } from './types';
 
 const LEGEND_LIST_STYLE = { flex: 1, minHeight: 0 } as const;
+// Compile-time constant: only its identity churned, and it is read on every Legend render.
+const LEGEND_MAINTAIN_VISIBLE_CONTENT_POSITION = { data: true, size: true } as const;
 // Last-resort scalar, NOT a calibrated row height. Legend resolves a row size as
 // measured -> getEstimatedItemSize (the app's measurement runtime, wired below) ->
 // per-type average -> this scalar, so it only reaches rows none of those can answer.
@@ -2905,7 +2907,7 @@ function LegendListTranscriptRendererInner<TItem>(
             }
             : false,
         maintainScrollAtEndThreshold: props.frame.rendererOptions.continuousFollow.endThresholdRatio,
-        maintainVisibleContentPosition: { data: true, size: true },
+        maintainVisibleContentPosition: LEGEND_MAINTAIN_VISIBLE_CONTENT_POSITION,
         onEndReached: props.onEndReached,
         onEndReachedThreshold: props.onEndReachedThreshold,
         onItemSizeChanged: handleLegendItemSizeChanged,

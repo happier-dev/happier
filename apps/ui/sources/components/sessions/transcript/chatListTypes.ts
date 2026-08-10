@@ -15,6 +15,19 @@ import type { TranscriptEventEmphasisByMessageId } from '@/components/sessions/t
 
 export type ChatTranscriptListItem = TranscriptRowShellItem;
 
+/**
+ * Which session each rendered row came from, for a transcript that concatenates a fork's
+ * read-only ancestor context with its own rows. `null` for an ordinary transcript, where every
+ * row belongs to the session being viewed.
+ *
+ * This is what makes a per-session fact — above all `seq`, which counts from each session's own
+ * origin — answerable for a row in a mixed list.
+ */
+export type TranscriptForkMessageMetadataById = Readonly<Record<string, {
+    originSessionId: string;
+    isReadOnlyContext: boolean;
+}>>;
+
 export type ChatListBottomNotice = {
     title: string;
     body: string;
@@ -77,7 +90,7 @@ export type ChatListInternalProps = Readonly<{
     onToggleMessagePin: (pin: PersistedSessionMessagePinV1) => void;
     messagesById: Readonly<Record<string, Message>>;
     eventEmphasisByMessageId: TranscriptEventEmphasisByMessageId;
-    forkMessageMetadataById: Readonly<Record<string, { originSessionId: string; isReadOnlyContext: boolean }>> | null;
+    forkMessageMetadataById: TranscriptForkMessageMetadataById | null;
     committedMessagesCount: number;
     latestCommittedActivityKey: string | null;
     activeThinkingMessageId: string | null;
