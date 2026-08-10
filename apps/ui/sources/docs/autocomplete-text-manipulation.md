@@ -1,5 +1,11 @@
 # Autocomplete Text Manipulation Documentation
 
+> **This is an external reference note, not a description of Happier's implementation.** Happier's
+> canonical owners are `sources/components/autocomplete/composerSuggestionGrammar.ts` (per-trigger
+> token grammar), `composerSuggestionKinds.ts` (trigger to kind mapping) and `findActiveWord.ts`
+> (detection). Do not infer Happier behaviour from the Openland code below — in particular, Happier
+> tokens continue through `.` and `/` and support quoted spans, which the code below does not.
+
 Based on analysis of the Openland Apps repository, this document explains how text manipulation works for autocomplete functionality in both web and mobile implementations.
 
 ## Core Algorithm: findActiveWord

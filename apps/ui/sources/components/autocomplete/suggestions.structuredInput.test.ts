@@ -1,10 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { FileItem } from '@/sync/domains/input/suggestionFile';
+import type { GetSuggestionsOptions } from './suggestions';
 const sessionRpcWithServerScopeMock = vi.hoisted(() => vi.fn());
 const machineRpcWithServerScopeMock = vi.hoisted(() => vi.fn());
 const resolvePreferredServerIdForSessionIdMock = vi.hoisted(() => vi.fn((_sessionId: string) => 'server-a'));
 const searchFilesMock = vi.hoisted(() => vi.fn(async (): Promise<FileItem[]> => []));
-const suggestionFileModuleImportCount = vi.hoisted(() => ({ value: 0 }));
+const WORKSPACE = { machineId: 'machine-a', path: '/repo', serverId: 'server-a' } as const;
 const storageStateMock = vi.hoisted(() => ({
     sessions: {
         s1: {
@@ -37,12 +38,9 @@ vi.mock('@/sync/domains/state/storage', async () => {
     })();
 });
 
-vi.mock('@/sync/domains/input/suggestionFile', () => {
-    suggestionFileModuleImportCount.value += 1;
-    return {
-        searchFiles: searchFilesMock,
-    };
-});
+vi.mock('@/sync/domains/input/suggestionFile', () => ({
+    searchFiles: searchFilesMock,
+}));
 
 vi.mock('@/sync/domains/input/suggestionCommands', () => ({
     searchCommands: vi.fn(async () => [
@@ -70,6 +68,11 @@ vi.mock(
         })(importOriginal);
     },
 );
+
+async function getSuggestionsForSession(query: string, options?: GetSuggestionsOptions) {
+    const { getSuggestions } = await import('./suggestions');
+    return await getSuggestions('s1', query, { workspace: WORKSPACE, ...options });
+}
 
 vi.mock(
     '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc',
@@ -111,37 +114,44 @@ describe('structured input autocomplete suggestions', () => {
         };
     });
 
-    it('loads file search only for file mention queries', async () => {
-        vi.resetModules();
-        suggestionFileModuleImportCount.value = 0;
-
+    // Scoping is about which kinds a trigger RESOLVES, not about when their modules
+    // load: the registry imports its dependencies eagerly on purpose, because on
+    // native a deferred first-party import never completes in a dev client
+    // (`composerSuggestionKinds.moduleLoad.native.test.ts` owns that contract).
+    it('searches files for mention queries only, never for other triggers', async () => {
         const { getCommandSuggestions } = await import('./commandSuggestions');
         const { getSuggestions } = await import('./suggestions');
 
-        expect(suggestionFileModuleImportCount.value).toBe(0);
-
         await getCommandSuggestions('s1', '/go');
-        await getSuggestions('s1', '$rev', {
-            skills: [{ name: 'review' }],
-        });
-        await getSuggestions('s1', '@gmail', {
-            vendorPlugins: [
-                {
-                    name: 'gmail',
-                    displayName: 'Gmail',
-                    vendorPluginRef: 'plugin://gmail@openai-curated',
-                    installed: true,
-                    enabled: true,
-                },
-            ],
+        await getSuggestionsForSession('$rev', {
+            catalogs: { skills: [{ name: 'review' }] },
         });
 
-        expect(suggestionFileModuleImportCount.value).toBe(0);
+        // A trigger the file kind does not serve never reaches the file search.
+        expect(searchFilesMock).not.toHaveBeenCalled();
 
-        await getSuggestions('s1', '@/src');
+        // INV-2: a matching plugin no longer suppresses files, so a bare-word `@`
+        // query resolves BOTH kinds. Trigger scoping was never allowed to be a
+        // kind-suppression mechanism.
+        await getSuggestionsForSession('@gmail', {
+            catalogs: {
+                vendorPlugins: [
+                    {
+                        name: 'gmail',
+                        displayName: 'Gmail',
+                        vendorPluginRef: 'plugin://gmail@openai-curated',
+                        installed: true,
+                        enabled: true,
+                    },
+                ],
+            },
+        });
 
-        expect(suggestionFileModuleImportCount.value).toBe(1);
-        expect(searchFilesMock).toHaveBeenCalledWith('s1', '/src', { limit: 12 });
+        expect(searchFilesMock).toHaveBeenCalledWith(WORKSPACE, 'gmail', { limit: 12 });
+
+        await getSuggestionsForSession('@/src');
+
+        expect(searchFilesMock).toHaveBeenCalledWith(WORKSPACE, '/src', { limit: 12 });
     });
 
     it('uses a taller row height for slash commands with descriptions', async () => {
@@ -179,19 +189,21 @@ describe('structured input autocomplete suggestions', () => {
     it('returns vendor plugin suggestions from explicit plugin namespace queries', async () => {
         const { getSuggestions } = await import('./suggestions');
 
-        const suggestions = await getSuggestions('s1', '@plugin:gmail', {
-            vendorPlugins: [
-                {
-                    name: 'gmail',
-                    displayName: 'Gmail',
-                    description: 'Mail and calendar',
-                    vendorPluginRef: 'plugin://gmail@openai-curated',
-                    marketplace: 'openai-curated',
-                    installed: true,
-                    enabled: true,
-                },
-            ],
-        } as never);
+        const suggestions = await getSuggestionsForSession('@plugin:gmail', {
+            catalogs: {
+                vendorPlugins: [
+                    {
+                        name: 'gmail',
+                        displayName: 'Gmail',
+                        description: 'Mail and calendar',
+                        vendorPluginRef: 'plugin://gmail@openai-curated',
+                        marketplace: 'openai-curated',
+                        installed: true,
+                        enabled: true,
+                    },
+                ],
+            },
+        });
 
         expect(suggestions).toHaveLength(1);
         expect(suggestions[0]).toMatchObject({
@@ -230,7 +242,7 @@ describe('structured input autocomplete suggestions', () => {
             '@/components/sessions/agentInput/structuredInputMentions'
         );
 
-        const suggestions = await getSuggestions('s1', '@plugin:gmail');
+        const suggestions = await getSuggestionsForSession('@plugin:gmail');
         const mention = suggestions[0]
             ? createStructuredInputMentionFromSuggestion({ suggestion: suggestions[0], start: 0 })
             : null;
@@ -296,10 +308,10 @@ describe('structured input autocomplete suggestions', () => {
             });
         const { getSuggestions } = await import('./suggestions');
 
-        await expect(getSuggestions('s1', '@plugin:gmail')).resolves.toEqual([]);
+        await expect(getSuggestionsForSession('@plugin:gmail')).resolves.toEqual([]);
         expect(storageStateMock.applySessions).not.toHaveBeenCalled();
 
-        await expect(getSuggestions('s1', '@plugin:gmail')).resolves.toEqual([
+        await expect(getSuggestionsForSession('@plugin:gmail')).resolves.toEqual([
             expect.objectContaining({
                 structuredInput: expect.objectContaining({
                     kind: 'vendorPlugin',
@@ -310,35 +322,40 @@ describe('structured input autocomplete suggestions', () => {
         expect(sessionRpcWithServerScopeMock).toHaveBeenCalledTimes(2);
     });
 
-    it('keeps path-like at queries file-first', async () => {
+    it('keeps path-like at queries file-first without suppressing a matching plugin', async () => {
+        // INV-2 / SB-2: the predecessor answered "is this query path-like?" and used
+        // the answer to discard the whole plugin kind. Files still lead the list —
+        // that is section order, not suppression.
         const { getSuggestions } = await import('./suggestions');
 
-        const suggestions = await getSuggestions('s1', '@/src', {
-            files: [
-                {
-                    fileName: 'index.ts',
-                    filePath: 'src/',
-                    fullPath: 'src/index.ts',
-                    fileType: 'file',
-                },
-            ],
-            vendorPlugins: [
-                {
-                    name: 'src',
-                    displayName: 'Source Plugin',
-                    vendorPluginRef: 'plugin://src@openai-curated',
-                    installed: true,
-                    enabled: true,
-                },
-            ],
-        } as never);
-
-        expect(suggestions).toHaveLength(1);
-        expect(suggestions[0]).toMatchObject({
-            key: 'file-src/index.ts',
-            text: '@src/index.ts',
+        const suggestions = await getSuggestionsForSession('@src/', {
+            catalogs: {
+                files: [
+                    {
+                        fileName: 'index.ts',
+                        filePath: 'src/',
+                        fullPath: 'src/index.ts',
+                        fileType: 'file',
+                    },
+                ],
+                vendorPlugins: [
+                    {
+                        name: 'src/formatter',
+                        displayName: 'Source Formatter',
+                        vendorPluginRef: 'plugin://src@openai-curated',
+                        installed: true,
+                        enabled: true,
+                    },
+                ],
+            },
         });
+
+        expect(suggestions.map((suggestion) => suggestion.key)).toEqual([
+            'file-src/index.ts',
+            'vendor-plugin-plugin://src@openai-curated',
+        ]);
         expect(suggestions[0]?.structuredInput).toBeUndefined();
+        expect(suggestions[1]?.structuredInput).toMatchObject({ kind: 'vendorPlugin' });
     });
 
     it('falls back to file suggestions for plain at queries when no vendor plugin matches', async () => {
@@ -361,7 +378,7 @@ describe('structured input autocomplete suggestions', () => {
         ]);
         const { getSuggestions } = await import('./suggestions');
 
-        const suggestions = await getSuggestions('s1', '@REA');
+        const suggestions = await getSuggestionsForSession('@REA');
 
         expect(sessionRpcWithServerScopeMock).toHaveBeenCalledWith({
             sessionId: 's1',
@@ -369,7 +386,7 @@ describe('structured input autocomplete suggestions', () => {
             method: 'session.vendorPluginCatalog.list',
             payload: { cwd: '/repo' },
         });
-        expect(searchFilesMock).toHaveBeenCalledWith('s1', 'REA', { limit: 12 });
+        expect(searchFilesMock).toHaveBeenCalledWith(WORKSPACE, 'REA', { limit: 12 });
         expect(suggestions).toEqual([
             expect.objectContaining({
                 key: 'file-README.md',
@@ -404,12 +421,13 @@ describe('structured input autocomplete suggestions', () => {
             '@/components/sessions/agentInput/structuredInputMentions'
         );
 
-        const suggestions = await getSuggestions('s1', '$rev');
+        const suggestions = await getSuggestionsForSession('$rev');
         const mention = suggestions[0]
             ? createStructuredInputMentionFromSuggestion({ suggestion: suggestions[0], start: 0 })
             : null;
         const fileMention = createStructuredInputMentionFromSuggestion({
             suggestion: {
+                kind: 'file',
                 key: 'file-src/index.ts',
                 text: '@src/index.ts',
             },
@@ -507,7 +525,7 @@ describe('structured input autocomplete suggestions', () => {
         });
         const { getSuggestions } = await import('./suggestions');
 
-        await expect(getSuggestions('s1', '@plugin:gmail')).resolves.toEqual([
+        await expect(getSuggestionsForSession('@plugin:gmail')).resolves.toEqual([
             expect.objectContaining({
                 structuredInput: expect.objectContaining({
                     kind: 'vendorPlugin',
@@ -515,7 +533,7 @@ describe('structured input autocomplete suggestions', () => {
                 }),
             }),
         ]);
-        await expect(getSuggestions('s1', '$rev')).resolves.toEqual([
+        await expect(getSuggestionsForSession('$rev')).resolves.toEqual([
             expect.objectContaining({
                 structuredInput: expect.objectContaining({
                     kind: 'skill',
@@ -543,18 +561,20 @@ describe('structured input autocomplete suggestions', () => {
     it('returns skill suggestions for dollar queries', async () => {
         const { getSuggestions } = await import('./suggestions');
 
-        const suggestions = await getSuggestions('s1', '$rev', {
-            skills: [
-                {
-                    name: 'review',
-                    displayName: 'Review',
-                    description: 'Review code',
-                    path: '/skills/review/SKILL.md',
-                    enabled: true,
-                    projectionKind: 'codex_native',
-                },
-            ],
-        } as never);
+        const suggestions = await getSuggestionsForSession('$rev', {
+            catalogs: {
+                skills: [
+                    {
+                        name: 'review',
+                        displayName: 'Review',
+                        description: 'Review code',
+                        path: '/skills/review/SKILL.md',
+                        enabled: true,
+                        projectionKind: 'codex_native',
+                    },
+                ],
+            },
+        });
 
         expect(suggestions).toHaveLength(1);
         expect(suggestions[0]).toMatchObject({

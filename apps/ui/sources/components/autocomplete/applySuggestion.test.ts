@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { applySuggestion } from './applySuggestion';
+import type { ComposerSuggestionKindId } from './composerSuggestionKinds';
+
+const ALL_KINDS: readonly ComposerSuggestionKindId[] = ['file', 'vendorPlugin', 'skill', 'slashCommand'];
 
 type Selection = Parameters<typeof applySuggestion>[1];
 
@@ -9,7 +12,7 @@ type ApplySuggestionCase = {
     selection: Selection;
     suggestion: string;
     expected: { text: string; cursorPosition: number };
-    prefixes?: string[];
+    kinds?: readonly ComposerSuggestionKindId[];
     addSpace?: boolean;
 };
 
@@ -18,7 +21,7 @@ function assertApplySuggestionCase(testCase: ApplySuggestionCase) {
         testCase.content,
         testCase.selection,
         testCase.suggestion,
-        testCase.prefixes,
+        testCase.kinds ?? ALL_KINDS,
         testCase.addSpace,
     );
     expect(result).toEqual(testCase.expected);
@@ -34,11 +37,11 @@ describe('applySuggestion', () => {
             expected: { text: 'Hello @john_smith ', cursorPosition: 18 },
         },
         {
-            name: 'replaces emoji at end',
-            content: 'I feel :hap',
+            name: 'replaces skill at end',
+            content: 'I feel $hap',
             selection: { start: 11, end: 11 },
-            suggestion: ':happy:',
-            expected: { text: 'I feel :happy: ', cursorPosition: 15 },
+            suggestion: '$happy',
+            expected: { text: 'I feel $happy ', cursorPosition: 14 },
         },
         {
             name: 'replaces command at end',
@@ -83,7 +86,6 @@ describe('applySuggestion', () => {
             content: 'Hello @user',
             selection: { start: 11, end: 11 },
             suggestion: '@john_smith',
-            prefixes: ['@', ':', '/'],
             addSpace: false,
             expected: { text: 'Hello @john_smith', cursorPosition: 17 },
         },
@@ -126,12 +128,40 @@ describe('applySuggestion', () => {
             expected: { text: 'Hi @alice , meet @user2', cursorPosition: 10 },
         },
         {
-            name: 'supports custom prefix list',
+            name: 'honours the host eligible-kind subset',
             content: 'Use $var',
             selection: { start: 8, end: 8 },
             suggestion: '$variable',
-            prefixes: ['$'],
+            kinds: ['skill'],
             expected: { text: 'Use $variable ', cursorPosition: 14 },
+        },
+        {
+            name: 'replaces a dotted path token whole',
+            content: 'open @src/fo',
+            selection: { start: 12, end: 12 },
+            suggestion: '@src/foo.ts',
+            expected: { text: 'open @src/foo.ts ', cursorPosition: 17 },
+        },
+        {
+            name: 'replaces the whole token when the cursor sits after a dot',
+            content: 'open @src/foo.t here',
+            selection: { start: 15, end: 15 },
+            suggestion: '@src/foo.ts',
+            expected: { text: 'open @src/foo.ts here', cursorPosition: 16 },
+        },
+        {
+            name: 'inserts a quoted token for a path containing a space',
+            content: 'open @my',
+            selection: { start: 8, end: 8 },
+            suggestion: '@"my file.ts"',
+            expected: { text: 'open @"my file.ts" ', cursorPosition: 19 },
+        },
+        {
+            name: 'replaces an existing quoted token whole',
+            content: 'open @"my fi" here',
+            selection: { start: 12, end: 12 },
+            suggestion: '@"my file.ts"',
+            expected: { text: 'open @"my file.ts" here', cursorPosition: 18 },
         },
         {
             name: 'stops replacement before punctuation characters',

@@ -170,10 +170,13 @@ const COMMAND_DESCRIPTIONS: Record<string, string> = {
     // Add more descriptions as needed
 };
 
-// Get commands from session metadata
-function getCommandsFromSession(sessionId: string): CommandItem[] {
+// Get commands from session metadata.
+// `sessionId` is null before a session exists (the new-session composer): built-in, action and
+// default commands are all still available, and only the session-published ones are absent —
+// which is the truth, not a degraded case.
+function getCommandsFromSession(sessionId: string | null): CommandItem[] {
     const state = storage.getState();
-    const session = state.sessions?.[sessionId];
+    const session = sessionId ? state.sessions?.[sessionId] : undefined;
     // Built-in core slash commands (e.g. /happier-diagnose) are always available
     // and cannot be shadowed by user templates or session-provided commands.
     const commands: CommandItem[] = [
@@ -226,7 +229,7 @@ function getCommandsFromSession(sessionId: string): CommandItem[] {
 
 // Main export: search commands with fuzzy matching
 export async function searchCommands(
-    sessionId: string,
+    sessionId: string | null,
     query: string,
     options: SearchOptions = {}
 ): Promise<CommandItem[]> {
@@ -261,6 +264,6 @@ export async function searchCommands(
 }
 
 // Get all available commands for a session
-export function getAllCommands(sessionId: string): CommandItem[] {
+export function getAllCommands(sessionId: string | null): CommandItem[] {
     return getCommandsFromSession(sessionId);
 }

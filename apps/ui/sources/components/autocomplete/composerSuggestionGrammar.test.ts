@@ -1,0 +1,121 @@
+import { describe, expect, it } from 'vitest';
+import {
+    formatComposerSuggestionToken,
+    isComposerTokenBoundaryChar,
+    parseComposerSuggestionQuery,
+    parseComposerTokenEnd,
+} from './composerSuggestionGrammar';
+import { findActiveWord } from './findActiveWord';
+import type { ComposerSuggestionKindId } from './composerSuggestionKinds';
+
+const ALL_KINDS: readonly ComposerSuggestionKindId[] = ['file', 'vendorPlugin', 'skill', 'slashCommand'];
+
+describe('parseComposerSuggestionQuery', () => {
+    it.each([
+        { activeWord: '@user', expected: 'user' },
+        { activeWord: '$smile', expected: 'smile' },
+        { activeWord: '/help', expected: 'help' },
+        { activeWord: '@', expected: '' },
+        { activeWord: '$', expected: '' },
+        { activeWord: '/', expected: '' },
+        { activeWord: '@README.md', expected: 'README.md' },
+        { activeWord: '@plugin:acme/formatter', expected: 'plugin:acme/formatter' },
+    ])('reads "$activeWord" as "$expected"', ({ activeWord, expected }) => {
+        expect(parseComposerSuggestionQuery(activeWord)?.query).toBe(expected);
+    });
+
+    it('unquotes a quoted span so the search term excludes the quotes', () => {
+        expect(parseComposerSuggestionQuery('@"my file.ts"')?.query).toBe('my file.ts');
+    });
+
+    it('unquotes a still-open quoted span', () => {
+        expect(parseComposerSuggestionQuery('@"my fi')?.query).toBe('my fi');
+    });
+
+    it('reads an escaped quote inside a span as a single quote', () => {
+        expect(parseComposerSuggestionQuery('@"a""b.ts"')?.query).toBe('a"b.ts');
+    });
+
+    it('does not unquote for a trigger without quoting', () => {
+        expect(parseComposerSuggestionQuery('$"skill"')?.query).toBe('"skill"');
+    });
+
+    it('returns null when the text does not start with a trigger', () => {
+        expect(parseComposerSuggestionQuery('plain')).toBeNull();
+        expect(parseComposerSuggestionQuery('')).toBeNull();
+    });
+});
+
+describe('formatComposerSuggestionToken', () => {
+    it.each([
+        { value: 'README.md', expected: '@README.md' },
+        { value: 'src/foo.ts', expected: '@src/foo.ts' },
+        { value: 'C:\\repo\\App.tsx', expected: '@C:\\repo\\App.tsx' },
+        { value: 'plugin:acme/formatter', expected: '@plugin:acme/formatter' },
+    ])('leaves "$value" unquoted', ({ value, expected }) => {
+        expect(formatComposerSuggestionToken('@', value)).toBe(expected);
+    });
+
+    it.each([
+        { value: 'my file.ts', expected: '@"my file.ts"' },
+        { value: 'docs/my notes (draft).md', expected: '@"docs/my notes (draft).md"' },
+        { value: 'weird,name.ts', expected: '@"weird,name.ts"' },
+        { value: 'a"b.ts', expected: '@"a""b.ts"' },
+    ])('quotes "$value"', ({ value, expected }) => {
+        expect(formatComposerSuggestionToken('@', value)).toBe(expected);
+    });
+
+    it('never quotes for a trigger without quoting', () => {
+        expect(formatComposerSuggestionToken('/', 'h.review')).toBe('/h.review');
+        expect(formatComposerSuggestionToken('$', 'review')).toBe('$review');
+    });
+});
+
+describe('token round-trip (INV-3)', () => {
+    it.each([
+        'README.md',
+        'src/foo.ts',
+        'my file.ts',
+        'docs/my notes (draft).md',
+        'weird,name.ts',
+        'a"b.ts',
+        'plugin:acme/formatter',
+        'C:\\repo\\App.tsx',
+        'notes-🙂.md',
+    ])('a formatted token for "%s" re-parses to the same value and span', (value) => {
+        const token = formatComposerSuggestionToken('@', value);
+        const content = `open ${token} here`;
+        const cursor = 5 + token.length;
+
+        const active = findActiveWord(content, { start: cursor, end: cursor }, ALL_KINDS);
+
+        expect(active?.offset).toBe(5);
+        expect(active?.endOffset).toBe(5 + token.length);
+        expect(active?.word).toBe(token);
+        expect(parseComposerSuggestionQuery(active!.word)?.query).toBe(value);
+    });
+});
+
+describe('parseComposerTokenEnd', () => {
+    it('never scans past the supplied bound', () => {
+        const content = `@${'a'.repeat(100)}`;
+        expect(parseComposerTokenEnd(content, 0, 10)).toBe(10);
+    });
+
+    it('returns the trigger index + 1 for an immediately delimited token', () => {
+        expect(parseComposerTokenEnd('@ rest', 0, 6)).toBe(1);
+    });
+});
+
+describe('isComposerTokenBoundaryChar', () => {
+    it.each([' ', '\t', '\n', '\u00A0', ',', ';', '(', ')', '[', ']', '{', '}', '<', '>', '!', '?', '"', ''])(
+        'treats %j as a boundary',
+        (char) => {
+            expect(isComposerTokenBoundaryChar(char)).toBe(true);
+        },
+    );
+
+    it.each(['.', '/', '\\', ':', '-', '_', '~', '#', 'a', '0', "'"])('treats %j as part of a token', (char) => {
+        expect(isComposerTokenBoundaryChar(char)).toBe(false);
+    });
+});

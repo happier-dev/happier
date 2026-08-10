@@ -59,6 +59,13 @@ type ComposerStructuredInputMention =
         description?: string;
         origin?: string;
         projectionKind?: string;
+    }>
+    // INV-4: a mention whose kind this build does not know is carried through inert.
+    | Readonly<{
+        kind: string;
+        tokenText: string;
+        start: number;
+        end: number;
     }>;
 
 type SessionDraftValueByFieldId = Readonly<{
@@ -303,6 +310,101 @@ describe('session draft-value store', () => {
         draftValues.flushSessionDraftValues(scopeA);
 
         expect(writesByKey.get(scopedKey)).toBe(1);
+    });
+
+    it('keeps the surviving draft mentions when one persisted element is malformed (D-14)', async () => {
+        const persistence = await importPersistence();
+        const good = { kind: 'skill' as const, tokenText: '$review', start: 0, end: 7, name: 'review' };
+        persistence.savePersistedSessionDraftValues({
+            sessionA: {
+                'structuredInput.mentions': {
+                    v: 1,
+                    lastEditedAt: 100,
+                    // The second element has no `name`, so the skill arm rejects it.
+                    value: [good, { kind: 'skill', tokenText: '$broken', start: 8, end: 15 }],
+                },
+            },
+        }, scopeA);
+
+        const draftValues = await importStore();
+
+        expect(draftValues.readSessionDraftValue(scopeA, 'sessionA', 'structuredInput.mentions')).toEqual([good]);
+    });
+
+    it('preserves a mention of an unknown kind through load, re-save and read (INV-4)', async () => {
+        const persistence = await importPersistence();
+        const unknown = { kind: 'happier.session', tokenText: '@session:abc', start: 0, end: 12 };
+        persistence.savePersistedSessionDraftValues({
+            sessionA: {
+                'structuredInput.mentions': { v: 1, lastEditedAt: 100, value: [unknown] },
+            },
+        }, scopeA);
+
+        const draftValues = await importStore();
+        // The locally declared store module types reads as `unknown`; the round trip is the
+        // point of this test, so the loaded value is written back rather than a fresh literal.
+        const loaded = draftValues.readSessionDraftValue(scopeA, 'sessionA', 'structuredInput.mentions') as
+            readonly ComposerStructuredInputMention[] | undefined;
+        expect(loaded).toEqual([unknown]);
+
+        draftValues.writeSessionDraftValue(scopeA, 'sessionA', 'structuredInput.mentions', loaded ?? [], { now: 200 });
+        draftValues.invalidateSessionDraftValuesCache(scopeA);
+
+        expect(draftValues.readSessionDraftValue(scopeA, 'sessionA', 'structuredInput.mentions')).toEqual([unknown]);
+    });
+
+    it('keeps the skill identity tuple across a draft round trip, so the same draft sends the same reference', async () => {
+        // `z.object` strips undeclared keys, so a field the persisted schema forgets is lost
+        // silently on restore. These four are exactly what `resolveSkillCatalogItemIdentityV1`
+        // derives a `happier.skill` reference from — losing any of them makes the same composer
+        // content send a DIFFERENT envelope after an app restart. `path` is deliberately not in
+        // that tuple: it is provider context, re-resolved at send time.
+        const skill = {
+            kind: 'skill' as const,
+            tokenText: '$review',
+            start: 0,
+            end: 7,
+            id: 'vendor:codex:review',
+            name: 'review',
+            path: '/w/.codex/skills/review/SKILL.md',
+            origin: 'codex_native',
+            backendId: 'codex',
+            projectionRef: 'projected-review',
+            agentId: 'agent-1',
+        };
+        const persistence = await importPersistence();
+        persistence.savePersistedSessionDraftValues({
+            sessionA: { 'structuredInput.mentions': { v: 1, lastEditedAt: 100, value: [skill] } },
+        }, scopeA);
+
+        const draftValues = await importStore();
+        const loaded = draftValues.readSessionDraftValue(scopeA, 'sessionA', 'structuredInput.mentions') as
+            readonly ComposerStructuredInputMention[] | undefined;
+        expect(loaded).toEqual([skill]);
+
+        draftValues.writeSessionDraftValue(scopeA, 'sessionA', 'structuredInput.mentions', loaded ?? [], { now: 200 });
+        draftValues.invalidateSessionDraftValuesCache(scopeA);
+
+        expect(draftValues.readSessionDraftValue(scopeA, 'sessionA', 'structuredInput.mentions')).toEqual([skill]);
+    });
+
+    it('round-trips a session mention (EU-7)', async () => {
+        const session = {
+            kind: 'session' as const,
+            tokenText: '@session:fix-startup-v4a0a7',
+            start: 0,
+            end: 27,
+            sessionId: 'cmslj08960ku1tmhrd0v4a0a7',
+            label: 'Fix Detached Dev Stack Startup',
+        };
+        const persistence = await importPersistence();
+        persistence.savePersistedSessionDraftValues({
+            sessionA: { 'structuredInput.mentions': { v: 1, lastEditedAt: 100, value: [session] } },
+        }, scopeA);
+
+        const draftValues = await importStore();
+
+        expect(draftValues.readSessionDraftValue(scopeA, 'sessionA', 'structuredInput.mentions')).toEqual([session]);
     });
 
     it('reloads scoped values after cache invalidation without leaking another scope', async () => {

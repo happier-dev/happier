@@ -10,8 +10,8 @@ type HookArgs = Parameters<typeof useAgentInputCommandMenu>[0];
 function buildDefaultArgs(overrides?: Partial<HookArgs>): HookArgs {
     return {
         suggestions: [
-            { key: 'cmd-goal', text: '/goal', label: 'goal', description: 'Set a goal', rowHeight: 52 },
-            { key: 'cmd-help', text: '/help', label: 'help', description: 'Show help' },
+            { kind: 'slashCommand', key: 'cmd-goal', text: '/goal', label: 'goal', description: 'Set a goal', rowHeight: 52 },
+            { kind: 'slashCommand', key: 'cmd-help', text: '/help', label: 'help', description: 'Show help' },
         ],
         selected: 0,
         activeWord: '/g',

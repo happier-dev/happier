@@ -47,6 +47,7 @@ describe('command autocomplete suggestions', () => {
         expect(suggestions).toEqual([
             {
                 key: 'cmd-goal',
+                kind: 'slashCommand',
                 text: '/goal',
                 label: '/goal',
                 description: 'Set or inspect the session goal',
@@ -54,6 +55,7 @@ describe('command autocomplete suggestions', () => {
             },
             {
                 key: 'cmd-qa',
+                kind: 'slashCommand',
                 text: '/qa',
                 label: '/qa',
                 description: 'QA prompt',
