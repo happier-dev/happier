@@ -82,6 +82,7 @@ import {
   agentTextLooksLikeExecutionRunSignal,
   shouldIncludeSubagentSourceMessage,
 } from '../domains/session/subagents/subagentSourceMessageDetection';
+import { readExecutionRunResultStatus } from '../domains/session/subagents/executionRuns/executionRunSubagentStatus';
 import {
   compareTranscriptMessagesOldestFirst,
   normalizeTranscriptSeq,
@@ -431,31 +432,6 @@ function buildExecutionRunSignalTextSignature(text: string): string {
   });
 }
 
-function readSubagentSourceResultStatus(value: unknown, depth = 0): string | null {
-  if (depth > 5 || value == null) return null;
-  if (typeof value === 'string') {
-    const directMatch = value.match(/\bstatus\s*:\s*"?([a-z_]+)"?/i);
-    return directMatch ? String(directMatch[1]).trim().toLowerCase() : null;
-  }
-  if (Array.isArray(value)) {
-    for (const item of value) {
-      const status = readSubagentSourceResultStatus(item, depth + 1);
-      if (status) return status;
-    }
-    return null;
-  }
-  if (typeof value === 'object') {
-    const record = value as Record<string, unknown>;
-    const directStatus = typeof record.status === 'string' ? String(record.status).trim().toLowerCase() : '';
-    if (directStatus) return directStatus;
-    for (const item of Object.values(record)) {
-      const status = readSubagentSourceResultStatus(item, depth + 1);
-      if (status) return status;
-    }
-  }
-  return null;
-}
-
 function appendSubagentSourceMessageSignature(parts: string[], message: Message): void {
   const cached = sessionSubagentSourceMessageSignatureCache.get(message);
   if (cached !== undefined) {
@@ -492,8 +468,13 @@ function appendSubagentSourceMessageSignature(parts: string[], message: Message)
     description: tool?.description ?? null,
     permissionStatus: tool?.permission?.status ?? null,
     input: tool?.input ?? null,
+    // A still-running run streams its result, so the signature carries only the field the roster
+    // derivation actually reads — the structured status the execution-run manager wrote — through
+    // that derivation's own owner. Reading it any other way (a regex over the payload's prose, a
+    // walk for any nested key named `status`) is D-3: a subagent that *writes about* a status
+    // would change the signature and hand every consumer a fresh array to re-derive.
     result: tool?.state === 'running'
-      ? { status: readSubagentSourceResultStatus(tool?.result) }
+      ? { status: readExecutionRunResultStatus(tool?.result) }
       : tool?.result ?? null,
   }));
   const signature = messageParts.join('\u0001');
@@ -849,18 +830,37 @@ export function useSessionInteractionSource(sessionId: string): SessionInteracti
   );
 }
 
+/**
+ * The session's reducer state together with the revision counter that is its only change signal.
+ *
+ * `sessionMessages[sessionId].reducerState` is mutated in place for streaming performance: every
+ * commit re-publishes the same object and bumps `reducerVersion`
+ * (`sync/store/domains/messages.ts`). Its identity therefore never changes, and a `useMemo` keyed
+ * on the state alone can never recompute — which is exactly how the Agents pane's activity preview
+ * became unrefreshable. Derivations must list `reducerVersion` in their dependencies;
+ * `useResolvedSessionMessageRouteId` below shows the same shape over `messagesVersion`.
+ *
+ * Both values come from one subscription so the reducer state never has to be cloned to signal a
+ * change: cloning would break the referential stability transcript rows memoize on.
+ */
 export function useSessionMessagesReducerSnapshot(sessionId: string) {
   return getStorage()(
     useShallow((state) => {
       const session = state.sessionMessages[sessionId];
       return {
         reducerState: session?.reducerState ?? null,
-        reducerVersion: (session as any)?.reducerVersion ?? 0,
+        reducerVersion: session?.reducerVersion ?? 0,
       };
     })
   );
 }
 
+/**
+ * Reducer state only, for consumers that read it during render and so need no change signal.
+ * A consumer that memoizes over it must also key on one: {@link useSessionMessagesReducerSnapshot}
+ * when the derivation depends on reducer-only state such as sidechains or permissions,
+ * {@link useSessionMessagesVersion} when it only follows committed transcript messages.
+ */
 export function useSessionMessagesReducerState(sessionId: string) {
   return useSessionMessagesReducerSnapshot(sessionId).reducerState;
 }

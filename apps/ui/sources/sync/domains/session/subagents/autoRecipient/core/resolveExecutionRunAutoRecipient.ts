@@ -1,59 +1,32 @@
 import { readExecutionRunIdFromToolPayload } from '@/sync/domains/session/participants/deriveExecutionRunPollingRefreshKey';
 import type { Message } from '@/sync/domains/messages/messageTypes';
 
+import {
+    deriveTranscriptExecutionRunStatus,
+    isTerminalSubagentStatus,
+} from '../../executionRuns/executionRunSubagentStatus';
 import { findMatchingSessionSubagentForTool } from '../../findMatchingSessionSubagentForTool';
 import type { SessionSubagentAutoRecipientResolver } from '../types';
 
-function normalizeEmbeddedJsonString(value: string): string {
-    return value.replaceAll('\\"', '"');
-}
+/**
+ * Liveness phrases an agent writes about work it launched. They are the last resort, and they are
+ * unreachable once any structured evidence says the run finished: this resolver decides where the
+ * user's *next message* is addressed, so a subagent narrating "status: running" must never be able
+ * to re-open routing to a run that is already terminal.
+ */
+const RUNNING_PROSE_PHRASES = [
+    '<status>running</status>',
+    'command running in background',
+    'background task is already running',
+] as const;
 
-function safeParseObjectFromString(value: string): Record<string, unknown> | null {
-    const trimmed = value.trim();
-    if (!trimmed.startsWith('{') || !trimmed.endsWith('}')) return null;
-    try {
-        const parsed = JSON.parse(trimmed) as unknown;
-        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed as Record<string, unknown>;
-    } catch {
-        // Ignore malformed embedded JSON.
-    }
-    return null;
-}
+const RUNNING_PROSE_PATTERN = /\bstatus\b[^a-z0-9]+running\b/;
 
-function readResultStatus(value: unknown): string | null {
-    if (value == null) return null;
-    if (typeof value === 'string') {
-        const normalized = normalizeEmbeddedJsonString(value);
-        const parsed = safeParseObjectFromString(normalized);
-        if (parsed) return readResultStatus(parsed);
-        const directMatch = normalized.match(/\bstatus\s*:\s*"?([a-z_]+)"?/i);
-        return directMatch ? String(directMatch[1]).trim().toLowerCase() : null;
-    }
-    if (Array.isArray(value)) {
-        for (const item of value) {
-            const itemStatus = readResultStatus(item);
-            if (itemStatus) return itemStatus;
-        }
-        return null;
-    }
-    if (typeof value === 'object') {
-        const record = value as Record<string, unknown>;
-        const status = typeof record.status === 'string' ? String(record.status).trim().toLowerCase() : '';
-        if (status) return status;
-        for (const item of Object.values(record)) {
-            const itemStatus = readResultStatus(item);
-            if (itemStatus) return itemStatus;
-        }
-    }
-    return null;
-}
-
-function deriveFocusedExecutionRunSignal(tool: { state: string; result?: unknown }): 'running' | 'unknown' | 'terminal' {
-    const resultStatus = readResultStatus(tool.result);
-    if (tool.state === 'running' || resultStatus === 'running') return 'running';
-    if (tool.state === 'completed') return 'terminal';
-    if (tool.state === 'error' && resultStatus && resultStatus !== 'running') return 'terminal';
-    return 'unknown';
+function messageTextContainsRunningProse(message: Message): boolean {
+    const raw = (message as { text?: unknown }).text;
+    const text = typeof raw === 'string' ? raw.toLowerCase() : '';
+    if (!text) return false;
+    return RUNNING_PROSE_PHRASES.some((phrase) => text.includes(phrase)) || RUNNING_PROSE_PATTERN.test(text);
 }
 
 function focusedMessagesContainRunningExecutionSignal(messages: readonly Message[] | undefined): boolean {
@@ -62,16 +35,11 @@ function focusedMessagesContainRunningExecutionSignal(messages: readonly Message
     for (const message of messages) {
         if (!message) continue;
         if (message.kind === 'tool-call') {
-            if (deriveFocusedExecutionRunSignal(message.tool) === 'running') return true;
+            if (deriveTranscriptExecutionRunStatus(message.tool) === 'running') return true;
             continue;
         }
         if (message.kind !== 'agent-text') continue;
-        const text = typeof (message as { text?: unknown }).text === 'string' ? String((message as { text: string }).text).toLowerCase() : '';
-        if (!text) continue;
-        if (text.includes('<status>running</status>')) return true;
-        if (text.includes('command running in background')) return true;
-        if (text.includes('background task is already running')) return true;
-        if (/\bstatus\b[^a-z0-9]+running\b/.test(text)) return true;
+        if (messageTextContainsRunningProse(message)) return true;
     }
 
     return false;
@@ -84,11 +52,11 @@ export const resolveExecutionRunAutoRecipient: SessionSubagentAutoRecipientResol
     if (!runId) return null;
 
     const matchingSubagent = findMatchingSessionSubagentForTool(context);
-    if (
-        matchingSubagent?.kind === 'execution_run'
-        && matchingSubagent.runRef?.runId === runId
-        && matchingSubagent.status === 'cancelled'
-    ) {
+    const focusedRunSubagent = matchingSubagent?.kind === 'execution_run' && matchingSubagent.runRef?.runId === runId
+        ? matchingSubagent
+        : null;
+
+    if (focusedRunSubagent?.status === 'cancelled') {
         return null;
     }
 
@@ -96,10 +64,21 @@ export const resolveExecutionRunAutoRecipient: SessionSubagentAutoRecipientResol
         return null;
     }
 
-    if (deriveFocusedExecutionRunSignal(context.tool) === 'running') {
+    // Status comes from the structured payload the execution-run manager writes, read through the
+    // one owner of that vocabulary — never from a regex over the result or a walk into nested
+    // values, both of which let a subagent's own words decide the parent's routing.
+    const focusedRunStatus = deriveTranscriptExecutionRunStatus(context.tool);
+    if (focusedRunStatus === 'running') {
         return { kind: 'execution_run', runId };
     }
-    if (focusedMessagesContainRunningExecutionSignal(context.focusedMessages)) {
+
+    // Terminal authority, strongest first: the derived roster status (which already merges the live
+    // run registry with the transcript) then the focused tool's own outcome.
+    const hasTerminalEvidence = focusedRunSubagent
+        ? isTerminalSubagentStatus(focusedRunSubagent.status)
+        : isTerminalSubagentStatus(focusedRunStatus);
+
+    if (!hasTerminalEvidence && focusedMessagesContainRunningExecutionSignal(context.focusedMessages)) {
         return { kind: 'execution_run', runId };
     }
 
