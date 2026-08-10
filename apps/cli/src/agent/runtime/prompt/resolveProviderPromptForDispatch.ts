@@ -1,3 +1,9 @@
+import {
+    HAPPIER_STRUCTURED_INPUT_METADATA_KEY_V1,
+    MENTION_BOUNDS,
+    sanitizeMentionRefsV1,
+} from '@happier-dev/protocol';
+
 import { resolveProviderPromptWithReplaySeed } from '@/agent/runtime/replaySeed/replaySeedV1';
 import {
     resolveStructuredInputProviderContextInMeta,
@@ -23,6 +29,49 @@ export type ProviderPromptDispatchSession = Readonly<{
     refreshSessionSnapshotFromServerBestEffort?: (opts?: { reason: 'connect' | 'waitForMetadataUpdate' }) => Promise<void>;
     ensureMetadataSnapshot?: (opts?: { timeoutMs?: number; abortSignal?: AbortSignal }) => Promise<unknown>;
 }>;
+
+/**
+ * D-27: the total resolved reference context in one message is bounded, and exceeding it
+ * rejects the send rather than silently truncating references the user selected.
+ *
+ * `maxReferenceBlockChars` bounds the session text block on its own — inside that block the
+ * overflow policy is to drop trailing entries and SAY SO, which is bounded and visible.
+ * `maxResolvedContextChars` is the cross-kind total, so a message cannot assemble an unbounded
+ * provider context out of several individually-bounded kinds.
+ */
+export class ResolvedMentionContextTooLargeError extends Error {
+    readonly code = 'mention_resolved_context_too_large';
+    readonly totalChars: number;
+    readonly maxChars: number;
+
+    constructor(totalChars: number, maxChars: number) {
+        super(
+            `Resolved composer reference context is ${totalChars} characters, over the ${maxChars} `
+            + 'character limit for one message. Remove some references and send again.',
+        );
+        this.name = 'ResolvedMentionContextTooLargeError';
+        this.totalChars = totalChars;
+        this.maxChars = maxChars;
+    }
+}
+
+function readResolvedContextChars(meta: unknown, key: 'skillMentions' | 'vendorPluginMentions'): number {
+    if (!meta || typeof meta !== 'object' || Array.isArray(meta)) return 0;
+    const envelope = (meta as Record<string, unknown>)[HAPPIER_STRUCTURED_INPUT_METADATA_KEY_V1];
+    if (!envelope || typeof envelope !== 'object' || Array.isArray(envelope)) return 0;
+    const records = (envelope as Record<string, unknown>)[key];
+    if (!Array.isArray(records) || records.length === 0) return 0;
+    // The serialized records are exactly what the provider adapters read, so their length is the
+    // context this message spends — not an approximation of it.
+    return JSON.stringify(records).length;
+}
+
+function countInboundReferences(meta: unknown): number {
+    if (!meta || typeof meta !== 'object' || Array.isArray(meta)) return 0;
+    const envelope = (meta as Record<string, unknown>)[HAPPIER_STRUCTURED_INPUT_METADATA_KEY_V1];
+    if (!envelope || typeof envelope !== 'object' || Array.isArray(envelope)) return 0;
+    return sanitizeMentionRefsV1((envelope as Record<string, unknown>).mentions).length;
+}
 
 export type ResolvedProviderPromptForDispatch = Readonly<{
     providerPrompt: string;
@@ -60,6 +109,22 @@ export async function resolveProviderPromptForDispatch(params: Readonly<{
             );
         },
     });
+
+    // D-27's total bound, checked here because this is the only place both projections of the
+    // resolved context exist. It runs BEFORE the seed for the same reason resolution does: a
+    // send rejected by the bound must not have burned the replay seed on its way out.
+    //
+    // Only a message that actually carried references is measured. A legacy envelope's per-kind
+    // arrays are provider context this resolver never produced, and bounding them here would
+    // reject sends that have nothing to do with composer references.
+    if (countInboundReferences(params.meta) > 0) {
+        const totalChars = (sessionReferenceBlock?.length ?? 0)
+            + readResolvedContextChars(meta, 'skillMentions')
+            + readResolvedContextChars(meta, 'vendorPluginMentions');
+        if (totalChars > MENTION_BOUNDS.maxResolvedContextChars) {
+            throw new ResolvedMentionContextTooLargeError(totalChars, MENTION_BOUNDS.maxResolvedContextChars);
+        }
+    }
 
     const seedResolution = await resolveProviderPromptWithReplaySeed({
         session: params.session,
