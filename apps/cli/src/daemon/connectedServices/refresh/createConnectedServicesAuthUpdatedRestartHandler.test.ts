@@ -142,6 +142,28 @@ describe('createConnectedServicesAuthUpdatedRestartHandler', () => {
     expect(requestRestartSignal).not.toHaveBeenCalled();
   });
 
+  it('schedules a turn-deferred credential restart without holding refresh propagation open', async () => {
+    const tracked = createTrackedSession({ pid: 1, sessionId: 's1' });
+    const restartRequestedPids = new Set<number>();
+    const requestRestartSignal = vi.fn(() => new Promise<Readonly<{ signaled: boolean }>>(() => {}));
+    const handler = createConnectedServicesAuthUpdatedRestartHandler({
+      restartRequestedPids,
+      pidToTrackedSession: new Map([[1, tracked]]),
+      resolveLifecycleDescriptor: async (agentId) => createLifecycleDescriptor(agentId, 'restart_required'),
+      resolveProcessGroupPid: (session) => session.pid,
+      requestRestartSignal,
+      restartSignalDelayMs: 250,
+    } satisfies RestartHandlerParams);
+
+    await expect(handler({
+      binding: { serviceId: 'claude-subscription', profileId: 'work' },
+      affectedTargets: [{ pid: 1, agentId: 'claude' }],
+    })).resolves.toBeUndefined();
+
+    expect(requestRestartSignal).toHaveBeenCalledOnce();
+    expect(restartRequestedPids.has(1)).toBe(true);
+  });
+
   it('rejects credential deletion acknowledgement when canonical stop reports incomplete termination', async () => {
     const tracked = createTrackedSession({ pid: 1, sessionId: 's1' });
     const requestRestartSignal = vi.fn(async (_params: RestartSignalParams) => ({ signaled: true }));

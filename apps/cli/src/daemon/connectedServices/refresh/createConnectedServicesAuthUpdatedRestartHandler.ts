@@ -238,15 +238,19 @@ export function createConnectedServicesAuthUpdatedRestartHandler(params: Readonl
         continue;
       }
 
+      const bindingGroupMetadata = resolveConnectedServiceBindingGroupMetadata({
+        tracked,
+        binding: event.binding,
+      });
+      // The gated restart owner may intentionally remain pending until a safe turn boundary.
+      // Scheduling that existing owner is sufficient; refresh/reconnect distribution must not
+      // retain credential-rotation custody while waiting for future conversational activity.
+      // Reserve while the canonical request itself is pending so a later refresh cannot schedule a
+      // duplicate restart. A resolved no-signal/cancelled request releases the reservation below.
+      params.restartRequestedPids.add(target.pid);
+      let restartRequest: Promise<Readonly<{ signaled: boolean }>>;
       try {
-        const bindingGroupMetadata = resolveConnectedServiceBindingGroupMetadata({
-          tracked,
-          binding: event.binding,
-        });
-        // K5:gated_restart credential refresh / reconnect routes through the gated
-        // restart primitive (deferral + spawn-time reachability) via the wired
-        // requestRestartSignal adapter; no raw mid-turn SIGTERM.
-        const { signaled } = await params.requestRestartSignal({
+        restartRequest = params.requestRestartSignal({
           pid: target.pid,
           tracked,
           sessionId: tracked.happySessionId ?? null,
@@ -276,16 +280,19 @@ export function createConnectedServicesAuthUpdatedRestartHandler(params: Readonl
             params.onRestartSignalFailure?.(error, target);
           },
         });
-        // Reserve the pid ONLY when a signal was actually emitted. A gated restart that resolves
-        // without signalling (e.g. superseded by a newer switch / switch_cancelled) must not leave a
-        // reservation behind, or later refresh restarts for this pid would be suppressed until exit.
-        if (signaled) {
-          params.restartRequestedPids.add(target.pid);
-        }
       } catch (error) {
         params.restartRequestedPids.delete(target.pid);
         params.onRestartSignalFailure?.(error, target);
+        continue;
       }
+      void restartRequest.then(({ signaled }) => {
+        // A gated restart that resolves without signalling (e.g. superseded by a newer switch /
+        // switch_cancelled) must not leave a reservation behind.
+        if (!signaled) params.restartRequestedPids.delete(target.pid);
+      }).catch((error) => {
+        params.restartRequestedPids.delete(target.pid);
+        params.onRestartSignalFailure?.(error, target);
+      });
     }
   };
 }

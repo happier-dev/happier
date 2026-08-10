@@ -9,8 +9,9 @@ type Timer = ReturnType<typeof setTimeout>;
 
 const DEFAULT_DRAIN_DELAY_MS = 2_000;
 const DEFAULT_RETRY_DELAY_MS = 10_000;
+const DEFAULT_MAX_RETRY_DELAY_MS = 60_000;
 const DEFAULT_DRAIN_LIMIT = 8;
-const DEFAULT_MAX_AUTOMATIC_ATTEMPTS = 3;
+const DEFAULT_MAX_AUTOMATIC_ATTEMPTS = 8;
 
 let scheduledTimer: Timer | null = null;
 let drainInFlight = false;
@@ -102,9 +103,13 @@ async function drainOnce(input: DrainScheduleInput, automaticAttempt: number): P
   }
 
   if (shouldRetry && automaticAttempt < readMaxAutomaticAttempts(input.maxAutomaticAttempts)) {
+    const retryDelayMs = readDelayMs(input.retryDelayMs, DEFAULT_RETRY_DELAY_MS);
     scheduleDrain({
       ...input,
-      delayMs: readDelayMs(input.retryDelayMs, DEFAULT_RETRY_DELAY_MS),
+      delayMs: Math.min(
+        retryDelayMs * (2 ** Math.max(0, automaticAttempt - 1)),
+        DEFAULT_MAX_RETRY_DELAY_MS,
+      ),
     }, automaticAttempt + 1);
   }
 }
