@@ -332,7 +332,7 @@ export const MobileBottomChromeHost = React.memo(function MobileBottomChromeHost
         const animation = Animated.timing(progress, {
             toValue: 1,
             duration: motionTokens.durationMs.base,
-            easing: motionTokens.easing.emphasized,
+            easing: motionTokens.easing.standard,
             useNativeDriver: Platform.OS !== 'web',
         });
         activeAnimationRef.current = animation;

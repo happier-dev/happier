@@ -1023,7 +1023,7 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
                                 style={styles.queuedReasonNotice}
                             >
                                 <Icon name="clock" size={14} color={theme.colors.text.secondary} />
-                                <Text style={[styles.blockedDeliveryNoticeText, { color: theme.colors.text.secondary }]}>
+                                <Text style={[styles.queuedReasonNoticeText, { color: theme.colors.text.secondary }]}>
                                     {getPendingQueuedReasonNotice(deliveryVisualState, queuedBehindTurnMinutes)}
                                 </Text>
                             </View>
@@ -1714,6 +1714,11 @@ const styles = StyleSheet.create(() => ({
         fontSize: 11,
         lineHeight: 14,
         ...Typography.default('semiBold'),
+    },
+    queuedReasonNoticeText: {
+        fontSize: 11,
+        lineHeight: 14,
+        ...Typography.default(),
     },
     userMessageWrapper: {
         maxWidth: '100%',
