@@ -89,6 +89,44 @@ describe('permission RPC routing', () => {
     expect(result).toEqual({ behavior: 'allow', updatedInput: { command: 'npm --version' } });
   });
 
+  it('refuses a claimed remote tool-use ID before bypass-permissions can auto-allow it', async () => {
+    const { session, client } = createPermissionHandlerSessionStub('claimed-remote-auto-allow');
+    const opaqueClaim = { malformed: { newerRuntime: true } };
+    client.updateAgentState((state) => ({
+      ...state,
+      requests: {
+        ...state.requests,
+        toolu_1: {
+          tool: 'Bash',
+          kind: 'permission',
+          arguments: { command: 'npm --version' },
+          createdAt: 1,
+          permissionResponseClaimV1: opaqueClaim,
+        },
+      },
+    }));
+
+    const { PermissionHandler } = await import('./permissionHandler');
+    const handler = new PermissionHandler(session);
+    handler.onMessage(bashToolUseMessage());
+
+    await expect(handler.handleToolCall('Bash', { command: 'npm --version' }, {
+      permissionMode: 'bypassPermissions',
+    } as EnhancedMode, {
+      signal: new AbortController().signal,
+    })).rejects.toThrow(/reserved/i);
+
+    const retained = client.getAgentStateSnapshot().requests.toolu_1 as Record<string, unknown>;
+    expect(Object.prototype.hasOwnProperty.call(retained, 'permissionResponseClaimV1')).toBe(true);
+    expect(retained.permissionResponseClaimV1).toBe(opaqueClaim);
+    expect(client.getAgentStateSnapshot().completedRequests.toolu_1).toBeUndefined();
+    handler.dispose();
+    expect(client.getAgentStateSnapshot().requests.toolu_1).toEqual(expect.objectContaining({
+      permissionResponseClaimV1: opaqueClaim,
+    }));
+    expect(client.getAgentStateSnapshot().completedRequests.toolu_1).toBeUndefined();
+  });
+
   it('returns an unhandled result for stale permission ids', async () => {
     const { session, client } = createPermissionHandlerSessionStub('s1');
 

@@ -38,7 +38,7 @@ function hasOwnProperty(value: unknown, key: string): value is Record<string, un
         && Object.prototype.hasOwnProperty.call(value, key);
 }
 
-export function hasPermissionResponseClaimV1(value: unknown): boolean {
+export function hasPermissionResponseClaimV1(value: unknown): value is Record<typeof PERMISSION_RESPONSE_CLAIM_V1, unknown> {
     return hasOwnProperty(value, PERMISSION_RESPONSE_CLAIM_V1);
 }
 
