@@ -617,6 +617,7 @@ export function SelectionList(props: SelectionListProps): React.ReactElement {
             focusedOptionId={focusedOptionId}
             scrollTargetOptionId={props.activeScrollOptionId ?? focusedOptionId ?? props.selectedOptionId ?? null}
             listboxId={listboxId}
+            accessibilityLabel={props.listAccessibilityLabel}
             onSelect={props.onSelect}
             onPushStep={handlePushStep}
             showsVerticalScrollIndicator={props.showsVerticalScrollIndicator === true}
@@ -638,6 +639,7 @@ export function SelectionList(props: SelectionListProps): React.ReactElement {
             plan={renderPlan}
             focusedOptionId={focusedOptionId}
             listboxId={listboxId}
+            accessibilityLabel={props.listAccessibilityLabel}
             onSelect={props.onSelect}
             onPushStep={handlePushStep}
             showsVerticalScrollIndicator={props.showsVerticalScrollIndicator === true}

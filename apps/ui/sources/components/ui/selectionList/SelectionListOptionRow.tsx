@@ -99,6 +99,7 @@ export function PlanOptionRow(props: Readonly<{
                     rightElement={renderSelectionListAccessory(props.option.rightAccessory)}
                     selected={props.isSelected || props.isFocused}
                     disabled={props.option.disabled === true}
+                    loading={props.option.loading === true}
                     showChevron={Boolean(props.option.openStep)}
                     keepChevronWithRightElement={props.option.keepChevronWithAccessory === true}
                     webRole="presentation"
@@ -135,6 +136,7 @@ export function PlanOptionRow(props: Readonly<{
             onPress={handlePress}
             selected={selectedOrFocused}
             disabled={props.option.disabled === true}
+            loading={props.option.loading === true}
             showChevron={Boolean(props.option.openStep)}
             keepChevronWithRightElement={props.option.keepChevronWithAccessory === true}
             // On web the wrapper claims `role="option"`. The inner Item's

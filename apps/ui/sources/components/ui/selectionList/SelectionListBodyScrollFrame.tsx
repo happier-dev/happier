@@ -25,8 +25,7 @@ import { useScrollEdgeFades } from '@/components/ui/scroll/useScrollEdgeFades';
 import { useScrollRectIntoViewRegistry } from '@/components/ui/scroll/useScrollRectIntoView';
 import { SELECTION_LIST_KEYBOARD_SCROLL_MARGIN_PX } from './_constants';
 import { SelectionListScrollIntoViewContext } from './SelectionListScrollIntoViewContext';
-
-type ListboxAriaProps = Readonly<{ id: string; role: 'listbox' }>;
+import type { SelectionListListboxAriaProps } from './_types';
 
 const styles = StyleSheet.create(() => ({
     body: {
@@ -70,7 +69,7 @@ export function SelectionListBodyScrollFrame(props: Readonly<{
     fadeHostTestId: string;
     fadeTopTestId: string;
     fadeBottomTestId: string;
-    listboxAria: ListboxAriaProps;
+    listboxAria: SelectionListListboxAriaProps;
     scrollTargetOptionId: string | null;
     showsVerticalScrollIndicator: boolean;
     children: React.ReactNode;

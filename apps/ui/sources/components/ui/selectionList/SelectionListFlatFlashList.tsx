@@ -38,9 +38,14 @@ import {
 } from './selectionListVirtualizationPolicy';
 import { selectionListTestId } from './_shared';
 import type { SectionRenderPlan } from './SelectionListRenderPlan';
-import type { SelectionListAccessory, SelectionListOption, SelectionListStep } from './_types';
+import type {
+    SelectionListAccessory,
+    SelectionListListboxAriaProps,
+    SelectionListOption,
+    SelectionListStep,
+} from './_types';
 
-type ListboxAriaProps = Readonly<{ id: string; role: 'listbox' }>;
+
 
 const styles = StyleSheet.create(() => ({
     body: {
@@ -346,7 +351,7 @@ function renderFlatFlashListRow(
  */
 export function SelectionListBodyFlatFlashList(props: Readonly<{
     rootTestID: string | undefined;
-    listboxAria: ListboxAriaProps | null;
+    listboxAria: SelectionListListboxAriaProps | null;
     plan: ReadonlyArray<SectionRenderPlan>;
     stepId: string;
     selectedOptionId: string | null;

@@ -164,6 +164,7 @@ export function SelectionListVirtualizedSection(
                     onPress={handlePress}
                     selected={isSelected || isFocused}
                     disabled={option.disabled === true}
+                    loading={option.loading === true}
                     showChevron={Boolean(option.openStep)}
                     // On web the wrapper claims `role="option"`; the inner
                     // Item's default `accessibilityRole='button'` would shadow

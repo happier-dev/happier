@@ -102,6 +102,14 @@ type SelectionListOptionBase = Readonly<{
     autocompleteValue?: string;
     /** Disable the row entirely. */
     disabled?: boolean;
+    /**
+     * Show the canonical row-level pending affordance (`Item`'s spinner) while
+     * retaining the row's identity and position. Use for a row whose activation
+     * starts async work; a skeleton or a removed row would move every sibling
+     * and destroy the focused/selected identity. A pending row is not
+     * activatable.
+     */
+    loading?: boolean;
 }>;
 
 /**
@@ -405,9 +413,30 @@ export type SelectionListQuickActionShortcut = Readonly<{
     optionId: string;
 }>;
 
+/**
+ * ARIA identity published on whichever host currently owns the body's scroll
+ * container (`SelectionListBodyScrollFrame`, the flat FlashList, or the plain
+ * body `View`). `SelectionListBody` is the single producer; the hosts only
+ * spread it. Declared here so the three hosts cannot drift apart on what the
+ * listbox node carries.
+ */
+export type SelectionListListboxAriaProps = Readonly<{
+    id: string;
+    role: 'listbox';
+    accessibilityLabel?: string;
+    'aria-label'?: string;
+}>;
+
 export type SelectionListProps = Readonly<{
     /** Root step. Pushes accumulate above this. */
     rootStep: SelectionListStep;
+    /**
+     * Accessible name for the owned listbox. A sectioned surface (suggestions,
+     * pickers) is otherwise announced as an unnamed list box, leaving the
+     * section titles without the context they belong to. Blank values are
+     * ignored so the host never publishes an empty accessible name.
+     */
+    listAccessibilityLabel?: string;
     /** Currently-selected option id (rendered with selected style). Optional. */
     selectedOptionId?: string | null;
     /**
