@@ -434,27 +434,6 @@ jobs:
           repositories: ${{ github.event.repository.name }}
           permission-contents: write
 
-      - name: Create release-notes assets token
-        id: release_notes_assets_token
-        uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547
-        with:
-          app-id: ${{ secrets.RELEASE_BOT_APP_ID }}
-          private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
-          owner: ${{ github.repository_owner }}
-          repositories: happier-assets
-          permission-contents: write
-
-      - name: Publish release notes assets
-        env:
-          GH_TOKEN: ${{ steps.release_notes_assets_token.outputs.token }}
-          GH_REPO: happier-dev/happier-assets
-        run: |
-          set -euo pipefail
-          node scripts/pipeline/release/release-notes/publish-release-notes-assets.mjs \
-            --in-dir "dist/release-notes-assets" \
-            --repo "happier-dev/happier-assets" \
-            --tag "release-notes"
-
       - name: Publish UI web bundle (pipeline)
         id: publish
         env:
