@@ -125,8 +125,8 @@ test('Docker publishing installs and builds its release-runtime dependency', asy
   const publishDocker = await loadWorkflow('publish-docker.yml');
   assert.match(
     publishDocker,
-    /Enable Corepack \(Yarn\)[\s\S]*?corepack prepare yarn@1\.22\.22 --activate/,
-    'publish-docker should pin the repository Yarn runtime before installing dependencies',
+    /Enable Corepack \(Yarn\)\s+uses:\s+\.\/\.github\/actions\/enable-corepack-yarn/,
+    'publish-docker should use the retrying owner for the pinned repository Yarn runtime',
   );
   assert.match(
     publishDocker,

@@ -256,9 +256,7 @@ jobs:
           node-version: 22.x
 
       - name: Enable Corepack (Yarn)
-        run: |
-          corepack enable
-          corepack prepare yarn@1.22.22 --activate
+        uses: ./.github/actions/enable-corepack-yarn
 
       - name: Install trusted publisher dependencies
         env:

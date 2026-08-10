@@ -285,9 +285,7 @@ jobs:
           bun-version: 1.3.5
 
       - name: Enable Corepack (Yarn)
-        run: |
-          corepack enable
-          corepack prepare yarn@1.22.22 --activate
+        uses: ./.github/actions/enable-corepack-yarn
 
       - name: Free Linux runner disk space
         if: runner.os == 'Linux'
@@ -438,9 +436,7 @@ jobs:
           bun-version: 1.3.5
 
       - name: Enable Corepack (Yarn)
-        run: |
-          corepack enable
-          corepack prepare yarn@1.22.22 --activate
+        uses: ./.github/actions/enable-corepack-yarn
 
       - name: Install trusted finalizer dependencies
         env:
