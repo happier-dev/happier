@@ -1,4 +1,7 @@
-import { getPendingMessageVisualState } from '@/components/sessions/pending/pendingMessageVisualState';
+import {
+    getPendingMessageVisualState,
+    resolvePendingMessageHeightBearingChrome,
+} from '@/components/sessions/pending/pendingMessageVisualState';
 import { shouldClipPendingQueueContent } from '@/components/sessions/pending/pendingQueueContentClipping';
 import { transcriptMarkdownTextStyle } from '@/components/sessions/transcript/transcriptMarkdownTypography';
 import type { Message } from '@/sync/domains/messages/messageTypes';
@@ -253,11 +256,23 @@ function estimatePendingQueueRowPx(item: Extract<TranscriptRowShellItem, { kind:
         // runtime into a pure size estimate to model a notice onLayout corrects in the same commit
         // buys a mechanism, not a fix.
         const visualState = getPendingMessageVisualState(pendingMessage);
-        if (visualState.kind === 'send_failed') {
-            scrollContentPx += PENDING_QUEUE_MESSAGE_RETRY_NOTICE_PX;
-        } else if (visualState.kind === 'blocked' || visualState.kind === 'delivery_uncertain') {
-            scrollContentPx += PENDING_QUEUE_MESSAGE_NOTICE_PX;
-            if (visualState.deliveryBlockedReason === 'terminal_composer_draft') hasTerminalDraftNotice = true;
+        // F-P2: switched over the owner's height-bearing descriptor — the very thing
+        // `transcriptRowShellSignature` keys the row's size version on — so the estimate and the key
+        // can never disagree about which in-flow notice exists.
+        switch (resolvePendingMessageHeightBearingChrome(visualState)) {
+            case 'retry-notice':
+                scrollContentPx += PENDING_QUEUE_MESSAGE_RETRY_NOTICE_PX;
+                break;
+            case 'blocked-notice':
+                scrollContentPx += PENDING_QUEUE_MESSAGE_NOTICE_PX;
+                if (visualState.deliveryBlockedReason === 'terminal_composer_draft') hasTerminalDraftNotice = true;
+                break;
+            case 'wait-notice':
+                // Unreachable from here: this call passes no `sessionRuntime`, which is the RESIDUAL
+                // stated above rather than engineered around.
+                break;
+            case 'none':
+                break;
         }
     }
     if (item.discardedMessages.length > 0) {

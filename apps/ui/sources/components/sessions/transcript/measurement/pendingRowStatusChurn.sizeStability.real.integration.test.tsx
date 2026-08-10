@@ -123,13 +123,13 @@ const SEND_STATUS_WALK: readonly Readonly<{ name: string; message: PendingMessag
     },
 ];
 
-/** The row grows a real in-flow `blockedDeliveryNotice` here, so the stale size MUST be dropped. */
-const GAINS_IN_FLOW_NOTICE = pendingMessage({
-    source: 'server_pending',
-    deliveryStatus: 'queued',
-    pendingDeliveryStatus: 'blocked',
-    pendingDeliveryBlockedReason: 'terminal_composer_draft',
-});
+/**
+ * The row grows a real in-flow notice here (+36px send-failed notice with an inline retry
+ * `Pressable`), so the stale size MUST be dropped. Chosen over the blocked notice because it carries
+ * no `deliveryBlockedPresentation`: a key that simply dropped delivery state would still hold here,
+ * so this is the shape that refutes it end to end.
+ */
+const GAINS_IN_FLOW_NOTICE = pendingMessage({ sendState: 'failed' });
 
 const mountCounts = new Map<string, number>();
 const unmountCounts = new Map<string, number>();

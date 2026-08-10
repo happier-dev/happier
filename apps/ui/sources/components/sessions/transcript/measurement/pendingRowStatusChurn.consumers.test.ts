@@ -92,8 +92,19 @@ const SAME_HEIGHT_SEND_LIFECYCLE: readonly Readonly<{ name: string; message: Pen
     },
 ];
 
-/** The row grows a real in-flow notice here: every consumer must still be invalidated. */
+/**
+ * The row grows a real in-flow notice here: every consumer must still be invalidated. Deliberately
+ * the SEND-FAILED notice (+36px, notice plus an inline retry `Pressable`), because it is the growth
+ * that carries NO `deliveryBlockedPresentation` — so a key that simply dropped delivery state would
+ * hold here, and this case is what refutes it.
+ */
 const GAINS_IN_FLOW_NOTICE = {
+    from: base(),
+    to: base({ sendState: 'failed' }),
+} as const;
+
+/** The +26px blocked notice, the other growth direction. */
+const GAINS_BLOCKED_NOTICE = {
     from: base({ source: 'server_pending', deliveryStatus: 'queued', pendingDeliveryStatus: 'server_queued' }),
     to: base({
         source: 'server_pending',
@@ -136,21 +147,24 @@ describe('pending row delivery-status churn — the five size-key consumers', ()
         expect(estimateTranscriptRowHeightFromCache({ reconciler, signature: delivering })).toBe(88);
     });
 
-    it('still destroys the stale reservation when the row gains an in-flow notice', () => {
+    it.each([
+        ['send-failed retry notice', GAINS_IN_FLOW_NOTICE],
+        ['blocked notice', GAINS_BLOCKED_NOTICE],
+    ] as const)('still destroys the stale reservation when the row gains a %s', (_name, step) => {
         const reconciler = createTestTranscriptMeasurementReconciler();
-        const queued = signatureFor(pendingQueueItem([GAINS_IN_FLOW_NOTICE.from]));
-        reconciler.recordMeasuredHeight({ signature: queued, heightPx: 88 });
+        const before = signatureFor(pendingQueueItem([step.from]));
+        reconciler.recordMeasuredHeight({ signature: before, heightPx: 88 });
 
-        const blocked = signatureFor(pendingQueueItem([GAINS_IN_FLOW_NOTICE.to]));
+        const after = signatureFor(pendingQueueItem([step.to]));
 
-        // C1 + C2: a row that is about to paint ~26px taller must not keep the shorter measurement.
-        expect(buildTranscriptItemHeightSignatureKey(blocked))
-            .not.toBe(buildTranscriptItemHeightSignatureKey(queued));
-        expect(isStructuralSignatureDelta(queued, blocked)).toBe(true);
+        // C1 + C2: a row that is about to paint taller must not keep the shorter measurement.
+        expect(buildTranscriptItemHeightSignatureKey(after))
+            .not.toBe(buildTranscriptItemHeightSignatureKey(before));
+        expect(isStructuralSignatureDelta(before, after)).toBe(true);
         // C4: the floor is refused immediately, before the shell effect runs.
-        expect(reconciler.resolveReservation(blocked)).toBeUndefined();
-        reconciler.resetReservationForStructuralChange({ itemId: 'pending-queue', signature: blocked });
-        expect(reconciler.resolveLastMeasuredHeight(blocked)).toBeUndefined();
+        expect(reconciler.resolveReservation(after)).toBeUndefined();
+        reconciler.resetReservationForStructuralChange({ itemId: 'pending-queue', signature: after });
+        expect(reconciler.resolveLastMeasuredHeight(after)).toBeUndefined();
     });
 
     it('cannot see the one runtime-derived status that changes the row height', () => {
