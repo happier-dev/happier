@@ -669,14 +669,17 @@ run_relay_upgrade_smoke() {
   devbox_image="happierdev/dev-box:${relay_upgrade_from_channel}"
   echo "[npm-e2e-smoke] relay-server upgrade smoke: from=$from_image to=local-build" >&2
 
-  if ! docker manifest inspect "$from_image" >/dev/null 2>&1; then
+  if ! docker pull "$from_image" >/dev/null 2>&1; then
     echo "[npm-e2e-smoke] missing relay-server image on dockerhub: $from_image" >&2
     return 1
   fi
-  if ! docker manifest inspect "$devbox_image" >/dev/null 2>&1; then
-    echo "[npm-e2e-smoke] missing dev-box image on dockerhub: $devbox_image" >&2
+  from_image_pinned="$(docker image inspect --format '{{index .RepoDigests 0}}' "$from_image" 2>/dev/null || true)"
+  if [[ -z "$from_image_pinned" ]]; then
+    echo "[npm-e2e-smoke] could not pin predecessor relay image digest: $from_image" >&2
     return 1
   fi
+  echo "[npm-e2e-smoke] relay-server predecessor pinned: $from_image_pinned" >&2
+  from_image="$from_image_pinned"
 
   # Build a local "upgrade target" image from the current checkout.
   sha="$(git -C "$repo_root" rev-parse HEAD 2>/dev/null || echo local)"

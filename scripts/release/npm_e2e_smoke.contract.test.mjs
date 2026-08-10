@@ -396,6 +396,16 @@ test('npm-e2e-smoke local relay upgrade builds the explicit local-source relay i
   );
 });
 
+test('relay upgrade pins the discovered predecessor image before changing persisted state', async () => {
+  const runnerRaw = await readFile(join(smokeDir, 'run.sh'), 'utf8');
+  const upgrade = runnerRaw.slice(runnerRaw.indexOf('run_relay_upgrade_smoke()'));
+
+  assert.match(upgrade, /docker pull "\$from_image"/);
+  assert.match(upgrade, /docker image inspect[\s\S]*?RepoDigests/);
+  assert.match(upgrade, /from_image="\$from_image_pinned"/);
+  assert.doesNotMatch(upgrade, /docker manifest inspect "\$devbox_image"/);
+});
+
 test('npm-e2e-smoke remote server smoke forwards canonical server binary override to hstack remote setup', async () => {
   const remoteServerSmokePath = join(smokeDir, 'bin', 'remote-server-smoke.sh');
   const raw = await readFile(remoteServerSmokePath, 'utf8');
