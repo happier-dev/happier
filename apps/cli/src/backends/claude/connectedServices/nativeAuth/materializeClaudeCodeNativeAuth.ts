@@ -7,7 +7,10 @@ import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 
 import { resolveConfiguredClaudeConfigDir } from '@/backends/claude/utils/resolveConfiguredClaudeConfigDir';
-import type { ConnectedServicesMaterializationDiagnostic } from '@/daemon/connectedServices/materialize/providerMaterializerTypes';
+import {
+  CONNECTED_SERVICE_MATERIALIZATION_REASONS,
+  type ConnectedServicesMaterializationDiagnostic,
+} from '@/daemon/connectedServices/materialize/providerMaterializerTypes';
 import { withConnectedServiceStateSharingDestinationLock } from '@/daemon/connectedServices/stateSharing/connectedServiceStateSharingLock';
 import { logger } from '@/ui/logger';
 import { replaceDirectoryAtomically } from '@/utils/fs/replaceDirectoryAtomically';
@@ -477,7 +480,7 @@ export async function materializeClaudeSubscriptionNativeAuthHome(params: Readon
       providerId: 'claude',
       serviceId: 'claude-subscription',
       severity: 'blocking',
-      reason: 'authoritative_group_target_changed_before_materialization',
+      reason: CONNECTED_SERVICE_MATERIALIZATION_REASONS.authoritativeGroupTargetSuperseded,
     }],
     identityDiagnostic: buildClaudeSubscriptionNativeAuthIdentityDiagnostic({
       record: params.record,

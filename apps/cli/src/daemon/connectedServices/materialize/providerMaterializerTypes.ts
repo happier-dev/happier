@@ -27,6 +27,17 @@ export type ConnectedServicesMaterializationDiagnostic = Readonly<{
   }>;
 }>;
 
+export const CONNECTED_SERVICE_MATERIALIZATION_REASONS = Object.freeze({
+  authoritativeGroupTargetSuperseded: 'authoritative_group_target_changed_before_materialization',
+} as const);
+
+export function isAuthoritativeGroupTargetSupersededMaterializationDiagnostic(
+  diagnostic: ConnectedServicesMaterializationDiagnostic,
+): boolean {
+  return diagnostic.severity === 'blocking'
+    && diagnostic.reason === CONNECTED_SERVICE_MATERIALIZATION_REASONS.authoritativeGroupTargetSuperseded;
+}
+
 export function isBlockingConnectedServicesMaterializationDiagnostic(
   diagnostic: ConnectedServicesMaterializationDiagnostic,
 ): boolean {

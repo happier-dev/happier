@@ -37,7 +37,9 @@ import type {
   ConnectedServiceSessionAuthSwitchReason,
 } from '../runtimeAuth/connectedServiceSessionAuthSwitchCore';
 import {
+  CONNECTED_SERVICE_MATERIALIZATION_REASONS,
   collectBlockingConnectedServicesMaterializationDiagnostics,
+  isAuthoritativeGroupTargetSupersededMaterializationDiagnostic,
   type ConnectedServicesMaterializationDiagnostic,
 } from '../materialize/providerMaterializerTypes';
 import type {
@@ -1291,6 +1293,14 @@ function buildRuntimeAuthMaterializationFailureResult(input: Readonly<{
   });
 }
 
+function isAuthoritativeGroupTargetSupersededMaterializationFailure(
+  result: SessionConnectedServiceAuthSwitchResult,
+): boolean {
+  if (result.ok || result.diagnostics?.failurePhase !== 'materialization') return false;
+  return result.diagnostics.uxDiagnostic?.diagnostics?.reason
+    === CONNECTED_SERVICE_MATERIALIZATION_REASONS.authoritativeGroupTargetSuperseded;
+}
+
 function emitProviderStateSharingDegradedEvents(input: Readonly<{
   tracked: TrackedSession | null;
   emitSessionEvent: (sessionId: string, event: unknown) => void;
@@ -2078,7 +2088,9 @@ export async function switchSessionConnectedServiceAuth(
   const continueAfterRuntimeAuthSwitch = input.executionPolicy?.allowContinuation === false
     ? undefined
     : input.continueAfterRuntimeAuthSwitch;
-  const execute = async (): Promise<SessionConnectedServiceAuthSwitchResult> => {
+  const execute = async (
+    authoritativeGroupTargetRetriesRemaining = 1,
+  ): Promise<SessionConnectedServiceAuthSwitchResult> => {
       const tracked = findTrackedSession(input.getChildren(), input.request.sessionId);
       if (!tracked) {
         const inactive = await input.resolveInactiveSession?.({ sessionId: input.request.sessionId }) ?? null;
@@ -2251,7 +2263,16 @@ export async function switchSessionConnectedServiceAuth(
           expectedCredentialRevisionByServiceId: input.expectedCredentialRevisionByServiceId,
           dryRun: input.dryRun,
         });
-        if (rematerialized) return rematerialized;
+        if (rematerialized) {
+          if (
+            input.dryRun !== true
+            && authoritativeGroupTargetRetriesRemaining > 0
+            && isAuthoritativeGroupTargetSupersededMaterializationFailure(rematerialized)
+          ) {
+            return await execute(authoritativeGroupTargetRetriesRemaining - 1);
+          }
+          return rematerialized;
+        }
         return {
           ok: true,
           action: 'unchanged',
@@ -2313,6 +2334,22 @@ export async function switchSessionConnectedServiceAuth(
           runtimeAuthSelection,
         );
         if (blockingMaterializationDiagnostics.length > 0) {
+          if (
+            input.dryRun !== true
+            && authoritativeGroupTargetRetriesRemaining > 0
+            && changedServiceIds.length === 1
+            && next.selection === 'group'
+            && blockingMaterializationDiagnostics.some(
+              isAuthoritativeGroupTargetSupersededMaterializationDiagnostic,
+            )
+          ) {
+            // The provider rejected this candidate before mutating its shared auth surface because
+            // another writer advanced the group. Re-enter normalization once so every downstream
+            // fact (binding, generation, profile, credential revision, and materialized home) comes
+            // from the same newer server truth. The one-service bound prevents re-running a request
+            // after any sibling service could already have produced an effect.
+            return await execute(authoritativeGroupTargetRetriesRemaining - 1);
+          }
           return buildRuntimeAuthMaterializationFailureResult({
             agentId: trackedAgentId,
             serviceId,

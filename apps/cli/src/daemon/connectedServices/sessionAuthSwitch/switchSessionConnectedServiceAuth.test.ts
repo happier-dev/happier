@@ -1039,6 +1039,155 @@ describe('switchSessionConnectedServiceAuth', () => {
     },
   );
 
+  it('reconsumes current group truth once when materialization reports a pre-effect group supersession', async () => {
+    const previousBindings = claudeSubscriptionBindings('old-subscription');
+    const requestedBindings = claudeSubscriptionGroupBindings({
+      groupId: 'claude',
+      claudeSubscriptionProfileId: 'first-active',
+    });
+    const tracked = trackedSession({
+      spawnOptions: {
+        directory: '/tmp/project',
+        backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+        connectedServices: previousBindings,
+      },
+    });
+    const groups = [
+      group({
+        serviceId: 'claude-subscription',
+        groupId: 'claude',
+        activeProfileId: 'first-active',
+        generation: 337,
+        members: [
+          {
+            v: 1,
+            serviceId: 'claude-subscription',
+            groupId: 'claude',
+            profileId: 'first-active',
+            priority: 100,
+            enabled: true,
+            state: {},
+            createdAt: 1,
+            updatedAt: 1,
+          },
+          {
+            v: 1,
+            serviceId: 'claude-subscription',
+            groupId: 'claude',
+            profileId: 'second-active',
+            priority: 90,
+            enabled: true,
+            state: {},
+            createdAt: 1,
+            updatedAt: 1,
+          },
+        ],
+      }),
+      group({
+        serviceId: 'claude-subscription',
+        groupId: 'claude',
+        activeProfileId: 'second-active',
+        generation: 338,
+        members: [
+          {
+            v: 1,
+            serviceId: 'claude-subscription',
+            groupId: 'claude',
+            profileId: 'first-active',
+            priority: 90,
+            enabled: true,
+            state: {},
+            createdAt: 1,
+            updatedAt: 1,
+          },
+          {
+            v: 1,
+            serviceId: 'claude-subscription',
+            groupId: 'claude',
+            profileId: 'second-active',
+            priority: 100,
+            enabled: true,
+            state: {},
+            createdAt: 1,
+            updatedAt: 1,
+          },
+        ],
+      }),
+    ];
+    const getConnectedServiceAuthGroup = vi.fn(async () => groups.shift() ?? groups[0] ?? null);
+    const materializeRuntimeAuthSelection = vi.fn(async (input) => {
+      if (input.groupMetadata?.generation === 337) {
+        return {
+          materializationDiagnostics: [{
+            code: 'claude_connected_service_generation_superseded',
+            providerId: 'claude' as const,
+            serviceId: 'claude-subscription' as const,
+            severity: 'blocking' as const,
+            reason: 'authoritative_group_target_changed_before_materialization',
+          }],
+        };
+      }
+      return {
+        targetMaterializedEnv: { CLAUDE_CONFIG_DIR: '/tmp/current-group-home' },
+        targetMaterializedRoot: '/tmp/current-group-home',
+      };
+    });
+    const persistSessionBindings = vi.fn(async () => {});
+    const restartSession = vi.fn(async () => {});
+
+    const result = await switchSessionConnectedServiceAuth({
+      core: createCore(),
+      postSwitchVerificationMode: {
+        kind: 'disabled_for_test_only',
+        reason: 'the test isolates pre-effect group supersession convergence',
+      },
+      getChildren: () => [tracked],
+      api: {
+        listConnectedServiceProfiles: async () => ({
+          serviceId: 'claude-subscription',
+          profiles: [
+            { profileId: 'first-active', status: 'connected' },
+            { profileId: 'second-active', status: 'connected' },
+          ],
+        }),
+        getConnectedServiceAuthGroup,
+      },
+      materializeRuntimeAuthSelection,
+      resolveContinuity: async () => ({ mode: 'restart_rematerialize' }),
+      restartSession,
+      hotApply: async () => ({ ok: true }),
+      persistSessionBindings,
+      registerHotApplyTargets: vi.fn(),
+      recoverAfterRuntimeAuthSwitch: async () => ({ ok: true }),
+      continueAfterRuntimeAuthSwitch: async () => {},
+      emitSessionEvent: vi.fn(),
+      request: {
+        sessionId: 'sess_1',
+        agentId: 'claude',
+        bindings: requestedBindings,
+      },
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      action: 'restart_requested',
+      normalizedBindings: {
+        bindingsByServiceId: {
+          'claude-subscription': {
+            source: 'connected',
+            selection: 'group',
+            groupId: 'claude',
+            profileId: 'second-active',
+          },
+        },
+      },
+    });
+    expect(getConnectedServiceAuthGroup).toHaveBeenCalledTimes(2);
+    expect(materializeRuntimeAuthSelection).toHaveBeenCalledTimes(2);
+    expect(persistSessionBindings).toHaveBeenCalledOnce();
+    expect(restartSession).toHaveBeenCalledOnce();
+  });
+
   it('returns metadata-only for reactive runtime switches that require restart rematerialization', async () => {
     const tracked = trackedSession({
       spawnOptions: {
