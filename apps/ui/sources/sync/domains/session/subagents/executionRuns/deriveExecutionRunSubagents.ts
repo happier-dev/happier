@@ -1,12 +1,28 @@
-import type { BackendTargetRefV1, ExecutionRunPublicState } from '@happier-dev/protocol';
+import {
+    ExecutionRunClassSchema,
+    ExecutionRunIntentSchema,
+    ExecutionRunIoModeSchema,
+    ExecutionRunRetentionPolicySchema,
+    type BackendTargetRefV1,
+    type ExecutionRunClass,
+    type ExecutionRunIntent,
+    type ExecutionRunIoMode,
+    type ExecutionRunPublicState,
+    type ExecutionRunRetentionPolicy,
+} from '@happier-dev/protocol';
 
-import type { Message, ToolCall, ToolCallMessage } from '@/sync/domains/messages/messageTypes';
+import type { Message, ToolCallMessage } from '@/sync/domains/messages/messageTypes';
 import { resolveToolTranscriptSidechainId } from '@/components/tools/shell/views/resolveToolTranscriptSidechainId';
 import { canSendMessagesToExecutionRun } from '@/sync/domains/executionRuns/canSendMessagesToExecutionRun';
 import { readExecutionRunIdFromToolPayload } from '@/sync/domains/session/participants/deriveExecutionRunPollingRefreshKey';
 import { toolNameLooksLikeExecutionRunStop } from '@/sync/domains/session/participants/deriveExecutionRunPollingRefreshKey';
 
 import type { SessionSubagent, SessionSubagentActiveExecutionRunState, SessionSubagentStatus } from '../types';
+import {
+    deriveTranscriptExecutionRunStatus,
+    isTerminalSubagentStatus,
+    mapSubagentStatusToExecutionRunStatus,
+} from './executionRunSubagentStatus';
 
 export type TranscriptExecutionRunState = {
     runId: string;
@@ -26,77 +42,6 @@ export type TranscriptExecutionRunState = {
     updatedAtMs?: number;
     finishedAtMs?: number;
 };
-
-const EXECUTION_RUN_INTENTS = new Set(['review', 'plan', 'delegate', 'voice_agent', 'memory_hints']);
-const EXECUTION_RUN_CLASSES = new Set(['bounded', 'long_lived']);
-const EXECUTION_RUN_IO_MODES = new Set(['request_response', 'streaming']);
-const EXECUTION_RUN_STATUSES = new Set(['running', 'succeeded', 'failed', 'cancelled', 'timeout']);
-const EXECUTION_RUN_RETENTION_POLICIES = new Set(['ephemeral', 'resumable']);
-
-function normalizeEmbeddedJsonString(value: string): string {
-    return value.replaceAll('\\"', '"');
-}
-
-function safeParseObjectFromString(value: string): Record<string, unknown> | null {
-    const trimmed = value.trim();
-    if (!trimmed.startsWith('{') || !trimmed.endsWith('}')) return null;
-    try {
-        const parsed = JSON.parse(trimmed) as unknown;
-        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed as Record<string, unknown>;
-    } catch {
-        // Ignore malformed embedded JSON.
-    }
-    return null;
-}
-
-function readResultStatus(value: unknown): string | null {
-    if (value == null) return null;
-    if (typeof value === 'string') {
-        const normalized = normalizeEmbeddedJsonString(value);
-        const parsed = safeParseObjectFromString(normalized);
-        if (parsed) return readResultStatus(parsed);
-        const directMatch = normalized.match(/\bstatus\s*:\s*"?([a-z_]+)"?/i);
-        return directMatch ? String(directMatch[1]).trim().toLowerCase() : null;
-    }
-    if (Array.isArray(value)) {
-        for (const item of value) {
-            const status = readResultStatus(item);
-            if (status) return status;
-        }
-        return null;
-    }
-    if (typeof value === 'object') {
-        const record = value as Record<string, unknown>;
-        const directStatus = typeof record.status === 'string' ? String(record.status).trim().toLowerCase() : '';
-        if (directStatus) return directStatus;
-        for (const item of Object.values(record)) {
-            const status = readResultStatus(item);
-            if (status) return status;
-        }
-    }
-    return null;
-}
-
-function valueHasRequestInterruptedSignal(value: unknown, depth = 0): boolean {
-    if (depth > 5 || value == null) return false;
-    if (typeof value === 'string') return normalizeEmbeddedJsonString(value).toLowerCase().includes('request interrupted');
-    if (Array.isArray(value)) return value.some((item) => valueHasRequestInterruptedSignal(item, depth + 1));
-    if (typeof value === 'object') {
-        return Object.values(value as Record<string, unknown>).some((item) => valueHasRequestInterruptedSignal(item, depth + 1));
-    }
-    return false;
-}
-
-function deriveTranscriptExecutionRunStatus(tool: ToolCall): SessionSubagentStatus {
-    const resultStatus = readResultStatus(tool.result);
-    if (tool.state === 'running' || resultStatus === 'running') return 'running';
-    if (resultStatus === 'succeeded' || resultStatus === 'completed') return 'succeeded';
-    if (resultStatus === 'cancelled' || resultStatus === 'canceled') return 'cancelled';
-    if (resultStatus === 'failed' || resultStatus === 'error') return 'failed';
-    if (tool.state === 'error') return valueHasRequestInterruptedSignal(tool.result) ? 'unknown' : 'failed';
-    if (tool.state === 'completed') return 'succeeded';
-    return 'unknown';
-}
 
 function sortMessagesChronologically(messages: readonly Message[]): readonly Message[] {
     return [...messages]
@@ -275,11 +220,19 @@ export function deriveExecutionRunSubagents(params: Readonly<{
 
     return Array.from(allRunIds.values()).map((runId) => {
         const transcriptState = byRunId.get(runId);
+        // Liveness authority, strongest first: an explicit stop, then the run registry (structured,
+        // live), then the transcript's own terminal evidence, and only then the agent's prose. Prose
+        // may recover a run whose transcript state is ambiguous (an interrupted call), never
+        // resurrect one the transcript already reports as finished.
+        const hasTerminalTranscriptEvidence = transcriptState ? isTerminalSubagentStatus(transcriptState.status) : false;
+        const isLive =
+            runningFromExternal.has(runId)
+            || (runningFromAgentText.has(runId) && !hasTerminalTranscriptEvidence);
         const effectiveStatus: SessionSubagentStatus =
             explicitlyStoppedRunIds.has(runId)
                 ? 'cancelled'
                 : (
-            runningFromExternal.has(runId) || runningFromAgentText.has(runId)
+            isLive
                 ? 'running'
                 : transcriptState?.status ?? 'unknown'
                 );
@@ -408,45 +361,66 @@ export function findTranscriptExecutionRunState(
     return byRunId.get(normalizedRunId) ?? null;
 }
 
-function readValidExecutionRunString(
-    value: string | null | undefined,
-    allowedValues: ReadonlySet<string>,
-): string | null {
+/**
+ * Every execution-run vocabulary below is parsed by its protocol schema rather than re-declared,
+ * so a value added to the contract is accepted here without a lockstep edit.
+ */
+function normalizeEnumInput(value: string | null | undefined): string | null {
     const normalized = typeof value === 'string' ? value.trim() : '';
-    if (!normalized) return null;
-    return allowedValues.has(normalized) ? normalized : null;
+    return normalized.length > 0 ? normalized : null;
+}
+
+function readExecutionRunIntent(value: string | null | undefined): ExecutionRunIntent | null {
+    const parsed = ExecutionRunIntentSchema.safeParse(normalizeEnumInput(value));
+    return parsed.success ? parsed.data : null;
+}
+
+function readExecutionRunClass(value: string | null | undefined): ExecutionRunClass | null {
+    const parsed = ExecutionRunClassSchema.safeParse(normalizeEnumInput(value));
+    return parsed.success ? parsed.data : null;
+}
+
+function readExecutionRunIoMode(value: string | null | undefined): ExecutionRunIoMode | null {
+    const parsed = ExecutionRunIoModeSchema.safeParse(normalizeEnumInput(value));
+    return parsed.success ? parsed.data : null;
+}
+
+function readExecutionRunRetentionPolicy(value: string | null | undefined): ExecutionRunRetentionPolicy | null {
+    const parsed = ExecutionRunRetentionPolicySchema.safeParse(normalizeEnumInput(value));
+    return parsed.success ? parsed.data : null;
 }
 
 export function buildExecutionRunPublicStateFromTranscriptState(
     state: TranscriptExecutionRunState,
 ): ExecutionRunPublicState | null {
-    const intent = readValidExecutionRunString(state.intent ?? null, EXECUTION_RUN_INTENTS);
+    const intent = readExecutionRunIntent(state.intent);
     const backendTarget = state.backendTarget ?? (state.backendId ? { kind: 'builtInAgent', agentId: state.backendId } satisfies BackendTargetRefV1 : null);
-    const runClass = readValidExecutionRunString(state.runClass ?? null, EXECUTION_RUN_CLASSES);
-    const ioMode = readValidExecutionRunString(state.ioMode ?? null, EXECUTION_RUN_IO_MODES)
+    const runClass = readExecutionRunClass(state.runClass);
+    const ioMode = readExecutionRunIoMode(state.ioMode)
         ?? (runClass === 'long_lived' ? 'streaming' : 'request_response');
-    const status = readValidExecutionRunString(state.status ?? null, EXECUTION_RUN_STATUSES);
+    // The transcript state speaks the subagent vocabulary; the public state speaks the wire one,
+    // so the mapping is explicit (and a timed-out run stays timed out instead of being dropped).
+    const status = mapSubagentStatusToExecutionRunStatus(state.status);
     const callId = readOptionalString({ callId: state.toolId }, 'callId') ?? readOptionalString({ callId: state.sidechainId }, 'callId');
     const sidechainId = readOptionalString({ sidechainId: state.sidechainId }, 'sidechainId') ?? callId;
     if (!intent || !backendTarget || !runClass || !ioMode || !status || !callId || !sidechainId) return null;
 
-    const retentionPolicy = readValidExecutionRunString(state.retentionPolicy ?? null, EXECUTION_RUN_RETENTION_POLICIES)
-        ?? readValidExecutionRunString(runClass === 'long_lived' ? 'resumable' : 'ephemeral', EXECUTION_RUN_RETENTION_POLICIES)
-        ?? 'ephemeral';
+    const retentionPolicy = readExecutionRunRetentionPolicy(state.retentionPolicy)
+        ?? (runClass === 'long_lived' ? 'resumable' : 'ephemeral');
     const permissionMode = readOptionalString({ permissionMode: state.permissionMode }, 'permissionMode') ?? 'unknown';
 
     return {
         runId: state.runId,
         callId,
         sidechainId,
-        intent: intent as ExecutionRunPublicState['intent'],
+        intent,
         backendTarget,
         ...(state.displayLabel ? { display: { title: state.displayLabel } } : {}),
         permissionMode,
-        retentionPolicy: retentionPolicy as ExecutionRunPublicState['retentionPolicy'],
-        runClass: runClass as ExecutionRunPublicState['runClass'],
-        ioMode: ioMode as ExecutionRunPublicState['ioMode'],
-        status: status as ExecutionRunPublicState['status'],
+        retentionPolicy,
+        runClass,
+        ioMode,
+        status,
         startedAtMs: state.startedAtMs ?? state.updatedAtMs ?? state.finishedAtMs ?? 0,
         ...(typeof state.finishedAtMs === 'number' ? { finishedAtMs: state.finishedAtMs } : {}),
     };
