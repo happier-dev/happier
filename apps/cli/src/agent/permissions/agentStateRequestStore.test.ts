@@ -130,6 +130,63 @@ describe('AgentStateRequestStore', () => {
         );
     });
 
+    it('preserves an opaque claim through republish and leaves it outstanding across terminal and cancellation paths', async () => {
+        const session = new FakeSession();
+        const store = new AgentStateRequestStore({
+            session,
+            logPrefix: '[Test]',
+        });
+        const opaqueClaim = { unexpected: ['malformed', { payload: true }] };
+        const claimedRequest: NonNullable<AgentState['requests']>[string] & Record<'permissionResponseClaimV1', unknown> = {
+            tool: 'Bash',
+            kind: 'permission',
+            arguments: { command: ['bash', '-lc', 'echo old'] },
+            createdAt: 1,
+            permissionResponseClaimV1: opaqueClaim,
+        };
+        session.agentState.requests!.claimed = claimedRequest;
+
+        store.publishRequest({
+            requestId: 'claimed',
+            toolName: 'Bash',
+            toolInput: { command: ['bash', '-lc', 'echo republished'] },
+            createdAt: 2,
+        });
+        store.publishRequest({
+            requestId: 'unclaimed',
+            toolName: 'Write',
+            toolInput: { path: '/tmp/x', content: 'x' },
+            createdAt: 3,
+        });
+
+        const republished = session.agentState.requests!.claimed as Record<string, unknown>;
+        expect(Object.prototype.hasOwnProperty.call(republished, 'permissionResponseClaimV1')).toBe(true);
+        expect(republished.permissionResponseClaimV1).toBe(opaqueClaim);
+
+        await store.completeRequest({
+            requestId: 'claimed',
+            status: 'approved',
+            decision: 'approved_for_session',
+            allowedTools: ['Bash(*)'],
+        });
+        store.recordCompletedRequest({
+            requestId: 'claimed',
+            toolName: 'Bash',
+            toolInput: { command: ['bash', '-lc', 'echo terminal'] },
+            status: 'approved',
+            decision: 'approved_for_session',
+            allowedTools: ['Bash(*)'],
+        });
+        store.cancelAllRequests({ reason: 'Session ended', decision: 'abort' });
+
+        const retained = session.agentState.requests!.claimed as Record<string, unknown>;
+        expect(Object.prototype.hasOwnProperty.call(retained, 'permissionResponseClaimV1')).toBe(true);
+        expect(retained.permissionResponseClaimV1).toBe(opaqueClaim);
+        expect(session.agentState.completedRequests!.claimed).toBeUndefined();
+        expect(session.agentState.requests!.unclaimed).toBeUndefined();
+        expect(session.agentState.completedRequests!.unclaimed).toMatchObject({ status: 'canceled' });
+    });
+
     it('skips publishing a generated local-bridge request covered by a recent canonical bridge cancellation', () => {
         const session = new FakeSession();
         const question = { questions: [{ question: 'Continue?', options: [{ label: 'Yes' }] }] };

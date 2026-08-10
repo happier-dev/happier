@@ -207,6 +207,46 @@ describe('CodexLikePermissionHandler', () => {
     expect(result.decision).toBe('approved_for_session');
   });
 
+  it('refuses claimed request IDs before yolo or legacy-allowlist auto decisions', async () => {
+    const session = new FakeSession();
+    const input = { path: '/tmp/x', content: 'hi' };
+    const opaqueClaim = { malformed: { future: true } };
+    session.agentState.requests['claimed-yolo'] = {
+      tool: 'Write',
+      arguments: input,
+      createdAt: 1,
+      permissionResponseClaimV1: opaqueClaim,
+    };
+    session.agentState.requests['claimed-allowlist'] = {
+      tool: 'Write',
+      arguments: input,
+      createdAt: 2,
+      permissionResponseClaimV1: opaqueClaim,
+    };
+    session.agentState.completedRequests.seed = {
+      tool: 'Write',
+      arguments: input,
+      createdAt: 0,
+      completedAt: 0,
+      status: 'approved',
+      decision: 'approved_for_session',
+      allowedTools: ['Write'],
+    };
+    const handler = new CodexLikePermissionHandler({ session: session as any, logPrefix: '[Test]' });
+
+    handler.setPermissionMode('yolo');
+    await expect(handler.handleToolCall('claimed-yolo', 'Write', input)).rejects.toThrow(/reserved/i);
+    handler.setPermissionMode('default');
+    await expect(handler.handleToolCall('claimed-allowlist', 'Write', input)).rejects.toThrow(/reserved/i);
+
+    for (const requestId of ['claimed-yolo', 'claimed-allowlist']) {
+      const retained = session.agentState.requests[requestId] as Record<string, unknown>;
+      expect(Object.prototype.hasOwnProperty.call(retained, 'permissionResponseClaimV1')).toBe(true);
+      expect(retained.permissionResponseClaimV1).toBe(opaqueClaim);
+      expect(session.agentState.completedRequests[requestId]).toBeUndefined();
+    }
+  });
+
   it('auto-approves write-like tools in bypassPermissions mode', async () => {
     const session = new FakeSession();
     const handler = new CodexLikePermissionHandler({ session: session as any, logPrefix: '[Test]' });

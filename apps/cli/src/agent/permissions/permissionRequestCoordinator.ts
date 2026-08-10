@@ -64,6 +64,7 @@ export type PermissionRequestCoordinatorStore = Readonly<{
     }>): void;
     cancelAllRequests?(params: Readonly<{ reason: string; decision?: string }>): void;
     hasOutstandingRequest(requestId: string): boolean;
+    isOutstandingRequestClaimed(requestId: string): boolean;
     readOutstandingRequest(requestId: string): AgentStateOutstandingRequest | null;
 }>;
 
@@ -110,6 +111,10 @@ export class PermissionRequestCoordinator<TResult> {
         this.store = params.store;
     }
 
+    isRequestClaimed(requestId: string): boolean {
+        return this.store.isOutstandingRequestClaimed(requestId);
+    }
+
     requestDecision(
         request: PermissionRequestCoordinatorRequest,
         options?: PermissionRequestCoordinatorOptions,
@@ -119,6 +124,10 @@ export class PermissionRequestCoordinator<TResult> {
 
         if (options?.signal?.aborted) {
             return Promise.reject(createPermissionRequestAbortError());
+        }
+
+        if (this.isRequestClaimed(request.requestId)) {
+            return Promise.reject(createPermissionRequestClaimedError(request.requestId));
         }
 
         let entry = this.pendingRequests.get(request.requestId);
@@ -182,6 +191,7 @@ export class PermissionRequestCoordinator<TResult> {
     }
 
     getResponseContext(requestId: string): PermissionRequestCoordinatorContext | null {
+        if (this.isRequestClaimed(requestId)) return null;
         this.pruneDetachedRecords();
 
         const entry = this.pendingRequests.get(requestId);
@@ -220,6 +230,7 @@ export class PermissionRequestCoordinator<TResult> {
      * Persisted agent state and detached records are deliberately insufficient for structured answers.
      */
     getLocallyOwnedLiveResponseContext(requestId: string): PermissionRequestCoordinatorContext | null {
+        if (this.isRequestClaimed(requestId)) return null;
         this.pruneDetachedRecords();
         const entry = this.pendingRequests.get(requestId);
         if (!entry || entry.status !== 'live') return null;
@@ -242,6 +253,7 @@ export class PermissionRequestCoordinator<TResult> {
         requestId: string;
         buildCompletion: (context: PermissionRequestCoordinatorContext) => PermissionRequestCoordinatorCompletion<TResult>;
     }>): boolean {
+        if (this.isRequestClaimed(params.requestId)) return false;
         const context = this.getResponseContext(params.requestId);
         if (!context) return false;
 
@@ -256,6 +268,7 @@ export class PermissionRequestCoordinator<TResult> {
         completion: PermissionRequestCoordinatorCompletion<TResult>;
     }>): boolean {
         const { context, completion } = params;
+        if (this.isRequestClaimed(context.requestId)) return false;
         const entry = this.pendingRequests.get(context.requestId);
         if (entry) {
             this.store.completeRequest({
@@ -304,6 +317,15 @@ export class PermissionRequestCoordinator<TResult> {
         }
         const entry = this.pendingRequests.get(requestId);
         if (!entry) return;
+
+        if (this.isRequestClaimed(requestId)) {
+            entry.status = 'detached';
+            for (const waiter of entry.waiters.values()) {
+                rejectWaiter(waiter, createPermissionRequestAbortError(reason));
+            }
+            entry.waiters.clear();
+            return;
+        }
 
         this.pendingRequests.delete(requestId);
         for (const waiter of entry.waiters.values()) {
@@ -418,4 +440,8 @@ function rejectWaiter<TResult>(waiter: PendingPermissionWaiter<TResult>, error: 
 
 function createPermissionRequestAbortError(reason = 'Permission request aborted'): Error {
     return new Error(reason);
+}
+
+function createPermissionRequestClaimedError(requestId: string): Error {
+    return new Error(`Permission request ${requestId} is reserved by a newer runtime`);
 }

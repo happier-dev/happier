@@ -29,6 +29,19 @@ const PENDING_REQUEST_COVERAGE_OPTIONS = {
     equivalentCompletedReasons: [CLAUDE_LOCAL_PERMISSION_BRIDGE_STOPPED_REASON],
 } as const;
 
+const PERMISSION_RESPONSE_CLAIM_V1 = 'permissionResponseClaimV1';
+
+function hasOwnProperty(value: unknown, key: string): value is Record<string, unknown> {
+    return !!value
+        && typeof value === 'object'
+        && !Array.isArray(value)
+        && Object.prototype.hasOwnProperty.call(value, key);
+}
+
+export function hasPermissionResponseClaimV1(value: unknown): boolean {
+    return hasOwnProperty(value, PERMISSION_RESPONSE_CLAIM_V1);
+}
+
 export type AgentStateOutstandingRequest = Readonly<{
     requestId: string;
     toolName: string;
@@ -79,6 +92,11 @@ export class AgentStateRequestStore {
         return this.readOutstandingRequest(requestId) !== null;
     }
 
+    isOutstandingRequestClaimed(requestId: string): boolean {
+        const entry = this.session.getAgentStateSnapshot?.()?.requests?.[requestId];
+        return hasPermissionResponseClaimV1(entry);
+    }
+
     readOutstandingRequest(requestId: string): AgentStateOutstandingRequest | null {
         const entry = this.session.getAgentStateSnapshot?.()?.requests?.[requestId];
         if (!entry) return null;
@@ -115,11 +133,13 @@ export class AgentStateRequestStore {
         updateState?: (state: AgentState) => AgentState;
     }>): void {
         const normalizedToolInput = normalizeAskUserQuestionInputForPublication(params.toolName, params.toolInput);
+        const wasClaimedBeforePublication = this.isOutstandingRequestClaimed(params.requestId);
         updateAgentStateBestEffort(
             this.session,
             (currentState) => {
                 const requests = cloneStringKeyedRecordToNullProto<AgentStateRequestEntry>(currentState.requests);
                 const completedRequests = cloneStringKeyedRecordToNullProto<AgentStateCompletedEntry>(currentState.completedRequests);
+                const existingRequest = currentState.requests?.[params.requestId];
                 if (params.replaceCompletedRequest) {
                     delete completedRequests[params.requestId];
                 }
@@ -133,6 +153,9 @@ export class AgentStateRequestStore {
                 }
                 if (Array.isArray(params.permissionSuggestions) && params.permissionSuggestions.length > 0) {
                     entry.permissionSuggestions = params.permissionSuggestions;
+                }
+                if (hasPermissionResponseClaimV1(existingRequest)) {
+                    (entry as Record<string, unknown>)[PERMISSION_RESPONSE_CLAIM_V1] = existingRequest[PERMISSION_RESPONSE_CLAIM_V1];
                 }
                 if (isAgentStateRequestCoveredByCompletedRequests({
                     requestId: params.requestId,
@@ -155,14 +178,14 @@ export class AgentStateRequestStore {
             'publish_request',
         );
 
-        if (params.notifyPush !== false) {
-        this.notifyPermissionRequestPushBestEffort({
-            permissionId: params.requestId,
-            toolName: params.toolName,
-            toolInput: normalizedToolInput,
-            createdAtMs: params.createdAt,
-        });
-    }
+        if (params.notifyPush !== false && !wasClaimedBeforePublication) {
+            this.notifyPermissionRequestPushBestEffort({
+                permissionId: params.requestId,
+                toolName: params.toolName,
+                toolInput: normalizedToolInput,
+                createdAtMs: params.createdAt,
+            });
+        }
     }
 
     completeRequest(params: Readonly<{
@@ -177,12 +200,16 @@ export class AgentStateRequestStore {
         fallback?: Readonly<{ toolName: string; toolInput: unknown; createdAt: number; kind?: string; source?: string }> | null;
         updateState?: (state: AgentState) => AgentState;
     }>): Promise<void> {
+        let completedRequest = false;
         const completion = updateAgentStateBestEffort(
             this.session,
             (currentState) => {
                 const requests = cloneStringKeyedRecordToNullProto(currentState.requests);
                 const existing = requests[params.requestId] as unknown;
                 if (!existing && !params.fallback) {
+                    return currentState;
+                }
+                if (hasPermissionResponseClaimV1(existing)) {
                     return currentState;
                 }
                 delete requests[params.requestId];
@@ -254,6 +281,7 @@ export class AgentStateRequestStore {
                     requests,
                     completedRequests,
                 };
+                completedRequest = true;
                 return typeof params.updateState === 'function' ? params.updateState(nextState) : nextState;
             },
             this.logPrefix,
@@ -261,7 +289,9 @@ export class AgentStateRequestStore {
         );
 
         return completion.then(() => {
-            this.markPermissionRequestCompletedBestEffort(params.requestId);
+            if (completedRequest) {
+                this.markPermissionRequestCompletedBestEffort(params.requestId);
+            }
         });
     }
 
@@ -279,9 +309,13 @@ export class AgentStateRequestStore {
         source?: string;
         reason?: string;
     }>): void {
-        updateAgentStateBestEffort(
+        let recordedCompletion = false;
+        void updateAgentStateBestEffort(
             this.session,
             (currentState) => {
+                if (hasPermissionResponseClaimV1(currentState.requests?.[params.requestId])) {
+                    return currentState;
+                }
                 const completedRequests = cloneStringKeyedRecordToNullProto<AgentStateCompletedEntry>(currentState.completedRequests);
                 const entry = Object.create(null) as AgentStateCompletedEntry & { source?: string; reason?: string };
                 entry.tool = params.toolName;
@@ -308,13 +342,16 @@ export class AgentStateRequestStore {
                     }
                 }
                 completedRequests[params.requestId] = entry;
+                recordedCompletion = true;
                 return { ...currentState, completedRequests } satisfies AgentState;
             },
             this.logPrefix,
             'record_completed_request',
-        );
-
-        this.markPermissionRequestCompletedBestEffort(params.requestId);
+        ).then(() => {
+            if (recordedCompletion) {
+                this.markPermissionRequestCompletedBestEffort(params.requestId);
+            }
+        });
     }
 
     cancelAllRequests(params: Readonly<{ reason: string; decision?: string }>): void {
@@ -326,6 +363,7 @@ export class AgentStateRequestStore {
                 const now = Date.now();
 
                 for (const [id, request] of Object.entries(pendingRequests)) {
+                    if (hasPermissionResponseClaimV1(request)) continue;
                     const entry = clonePlainObjectToNullProto(request) ?? Object.create(null);
                     entry.completedAt = now;
                     entry.status = 'canceled';
@@ -334,12 +372,13 @@ export class AgentStateRequestStore {
                         entry.decision = params.decision;
                     }
                     completedRequests[id] = entry as AgentStateCompletedEntry;
+                    delete pendingRequests[id];
                     this.markPermissionRequestCompletedBestEffort(id);
                 }
 
                 return {
                     ...currentState,
-                    requests: Object.create(null),
+                    requests: pendingRequests,
                     completedRequests,
                 };
             },

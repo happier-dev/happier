@@ -94,6 +94,7 @@ describe('PermissionRequestCoordinator', () => {
                 },
                 completeRequest: () => {},
                 hasOutstandingRequest: () => false,
+                isOutstandingRequestClaimed: () => false,
                 readOutstandingRequest: () => null,
             },
         });
@@ -114,6 +115,56 @@ describe('PermissionRequestCoordinator', () => {
         coordinator.cancelRequest(request.requestId, 'test complete');
         await expect(retry).rejects.toThrow('test complete');
     });
+
+    it('fences opaque claims from persisted and already-live coordinator response paths', async () => {
+        const { coordinator, session } = createHarness();
+        const opaqueClaim = { malformed: [true, { unexpected: 'shape' }] };
+
+        const claimedRequest: NonNullable<AgentState['requests']>[string] & Record<'permissionResponseClaimV1', unknown> = {
+            tool: 'Bash',
+            kind: 'permission',
+            arguments: bashRequest.toolInput,
+            createdAt: 1,
+            permissionResponseClaimV1: opaqueClaim,
+        };
+        session.agentState.requests!.persisted = claimedRequest;
+
+        expect(coordinator.getResponseContext('persisted')).toBeNull();
+        await expect(coordinator.requestDecision({ ...bashRequest, requestId: 'persisted' })).rejects.toThrow(/reserved/i);
+        expect(coordinator.handleResponse({
+            requestId: 'persisted',
+            buildCompletion: () => ({
+                result: approve('persisted'),
+                completedRequest: { status: 'approved', decision: 'approved_for_session', allowedTools: ['Bash(*)'] },
+            }),
+        })).toBe(false);
+        expect(session.agentState.completedRequests!.persisted).toBeUndefined();
+
+        const controller = new AbortController();
+        const live = coordinator.requestDecision({ ...bashRequest, requestId: 'live-claim' }, { signal: controller.signal });
+        const staleContext = coordinator.getResponseContext('live-claim');
+        expect(staleContext).not.toBeNull();
+        (session.agentState.requests!['live-claim'] as Record<string, unknown>).permissionResponseClaimV1 = opaqueClaim;
+
+        expect(coordinator.getResponseContext('live-claim')).toBeNull();
+        expect(coordinator.completeResponse({
+            context: staleContext!,
+            completion: {
+                result: approve('live-claim'),
+                completedRequest: { status: 'approved', decision: 'approved_for_session', allowedTools: ['Bash(*)'] },
+            },
+        })).toBe(false);
+
+        controller.abort();
+        await expect(live).rejects.toThrow('Permission request aborted');
+        coordinator.cancelAll('reset after claim');
+
+        const retained = session.agentState.requests!['live-claim'] as Record<string, unknown>;
+        expect(Object.prototype.hasOwnProperty.call(retained, 'permissionResponseClaimV1')).toBe(true);
+        expect(retained.permissionResponseClaimV1).toBe(opaqueClaim);
+        expect(session.agentState.completedRequests!['live-claim']).toBeUndefined();
+    });
+
     it('attaches duplicate request ids to one UI request and resolves every live waiter', async () => {
         const { coordinator, session } = createHarness();
 

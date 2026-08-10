@@ -133,6 +133,53 @@ describe('BasePermissionHandler allowlist', () => {
     );
   });
 
+  it('ignores legacy UI responses for opaque claimed requests before terminal or allowlist effects', async () => {
+    const session = new FakeSession();
+    const input = { command: ['bash', '-lc', 'echo claimed'] };
+    const opaqueClaim = { malformed: ['newer', 'runtime'] };
+    session.agentState.requests.claimed = {
+      tool: 'bash',
+      arguments: input,
+      createdAt: Date.now(),
+      permissionResponseClaimV1: opaqueClaim,
+    };
+    const handler = new TestPermissionHandler(session as any);
+    const rpc = session.rpcHandlerManager.handlers.get('permission');
+
+    await rpc!({
+      id: 'claimed',
+      approved: true,
+      decision: 'approved_for_session',
+      allowedTools: ['bash(echo claimed)'],
+      updatedPermissions: [{ type: 'addRules', behavior: 'allow', rules: ['bash(echo claimed)'] }],
+    });
+
+    const retained = session.agentState.requests.claimed as Record<string, unknown>;
+    expect(Object.prototype.hasOwnProperty.call(retained, 'permissionResponseClaimV1')).toBe(true);
+    expect(retained.permissionResponseClaimV1).toBe(opaqueClaim);
+    expect(session.agentState.completedRequests.claimed).toBeUndefined();
+    expect(handler.isAllowed('bash', input)).toBe(false);
+  });
+
+  it('does not seed legacy allowlists from a remote-mediation completion', () => {
+    const session = new FakeSession();
+    const input = { command: ['bash', '-lc', 'echo mediated'] };
+    session.agentState.completedRequests.mediated = {
+      tool: 'bash',
+      arguments: input,
+      createdAt: 1,
+      completedAt: 2,
+      status: 'approved',
+      decision: 'approved_for_session',
+      remoteMediationSettlementId: { malformed: true },
+      allowedTools: ['bash(echo mediated)'],
+      updatedPermissions: [{ type: 'addRules', behavior: 'allow', rules: ['bash(echo mediated)'] }],
+    };
+
+    const handler = new TestPermissionHandler(session as any);
+    expect(handler.isAllowed('bash', input)).toBe(false);
+  });
+
   it('ignores legacy pending responses that are not correlated with agentState', async () => {
     const session = new FakeSession();
     const input = { command: ['bash', '-lc', 'echo hello'] };
@@ -237,7 +284,7 @@ describe('BasePermissionHandler allowlist', () => {
     const handler = new TestPermissionHandler(session as any);
 
     const input1 = { command: ['bash', '-lc', 'find . -maxdepth 2 -type f | head -n 5'] };
-    const input2 = { command: ['bash', '-lc', 'find . -maxdepth 1 -type f | head -n 5'] };
+    const input2 = { command: ['bash', '-lc', 'find . -maxdepth 1 -type f'] };
     const p1 = handler.request('perm-1', 'Bash', input1);
     const p2 = handler.request('perm-2', 'Bash', input2);
 
@@ -258,6 +305,12 @@ describe('BasePermissionHandler allowlist', () => {
     });
 
     await expect(p1).resolves.toEqual(expect.objectContaining({ decision: 'approved' }));
+
+    expect(session.agentState.completedRequests['perm-1']?.updatedPermissions).toBeTruthy();
+    expect(handler.isAllowed('Bash', input2)).toBe(true);
+    expect(session.agentState.completedRequests['perm-2']).toEqual(
+      expect.objectContaining({ status: 'approved' }),
+    );
 
     const raced = await Promise.race([
       p2.then(() => 'resolved' as const),
