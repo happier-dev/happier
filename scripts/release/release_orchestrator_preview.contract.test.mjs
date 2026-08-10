@@ -288,6 +288,13 @@ test('release-npm derives unique preview prerelease versions from base versions'
 test('final release workflows only consume already-materialized version bumps', async () => {
   const orchestrator = await loadWorkflow('release.yml');
   const releaseNpm = await loadWorkflow('release-npm.yml');
+  const workflow = parse(orchestrator);
+
+  assert.deepEqual(
+    workflow?.on?.workflow_dispatch?.inputs?.bump?.options,
+    ['none'],
+    'manual final release dispatch must not advertise version mutations that the release conductor rejects',
+  );
 
   assert.doesNotMatch(orchestrator, /bump-versions-dev\.mjs/);
   assert.doesNotMatch(orchestrator, /BUMP_STACK:\s*\$\{\{ needs\.plan\.outputs\.bump_stack \}\}/);

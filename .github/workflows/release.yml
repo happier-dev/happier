@@ -61,9 +61,6 @@ on:
         default: none
         options:
           - none
-          - patch
-          - minor
-          - major
       authorized_promotion_source_sha:
         description: "Safety — exact source branch SHA approved for promotion"
         required: false

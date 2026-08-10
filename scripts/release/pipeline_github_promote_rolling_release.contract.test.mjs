@@ -171,6 +171,11 @@ if [ "$1" = "api" ]; then
         echo "check your internet connection or https://githubstatus.com" >&2
         exit 1
       fi
+      if [ "$count" -le "\${HAPPIER_TEST_TRANSIENT_UPLOADS:-0}" ]; then
+        echo "error connecting to api.uploads.github.com" >&2
+        echo "check your internet connection or https://githubstatus.com" >&2
+        exit 1
+      fi
       endpoint=""
       input=""
       while [ "$#" -gt 0 ]; do
@@ -481,6 +486,54 @@ test('rolling promotion retries a transient GitHub asset upload connectivity fai
       .split('\n')
       .filter((line) => line.includes('uploads.github.com'));
     assert.equal(uploadCalls.length, 4, 'the first asset upload should retry exactly once');
+  } finally {
+    rmSync(testFixture.root, { recursive: true, force: true });
+  }
+});
+
+test('rolling promotion outlasts four consecutive GitHub asset upload connection failures', () => {
+  const testFixture = fixture();
+  try {
+    const result = spawnSync(process.execPath, args(), {
+      cwd: repoRoot,
+      env: {
+        ...process.env,
+        PATH: `${testFixture.bin}:${process.env.PATH ?? ''}`,
+        HAPPIER_TEST_TRANSIENT_UPLOADS: '4',
+        HAPPIER_PIPELINE_GH_ROLLING_UPLOAD_RETRY_DELAY_MS: '0',
+      },
+      encoding: 'utf8',
+    });
+
+    assert.equal(result.status, 0, String(result.stderr));
+    const uploadCalls = readFileSync(testFixture.log, 'utf8')
+      .split('\n')
+      .filter((line) => line.includes('uploads.github.com'));
+    assert.equal(uploadCalls.length, 7, 'the first asset should recover on attempt five before the remaining two uploads');
+  } finally {
+    rmSync(testFixture.root, { recursive: true, force: true });
+  }
+});
+
+test('rolling promotion keeps repeated GitHub upload connection retries bounded', () => {
+  const testFixture = fixture();
+  try {
+    const result = spawnSync(process.execPath, args(), {
+      cwd: repoRoot,
+      env: {
+        ...process.env,
+        PATH: `${testFixture.bin}:${process.env.PATH ?? ''}`,
+        HAPPIER_TEST_TRANSIENT_UPLOADS: '99',
+        HAPPIER_PIPELINE_GH_ROLLING_UPLOAD_RETRY_DELAY_MS: '0',
+      },
+      encoding: 'utf8',
+    });
+
+    assert.notEqual(result.status, 0);
+    const uploadCalls = readFileSync(testFixture.log, 'utf8')
+      .split('\n')
+      .filter((line) => line.includes('uploads.github.com'));
+    assert.equal(uploadCalls.length, 8);
   } finally {
     rmSync(testFixture.root, { recursive: true, force: true });
   }
