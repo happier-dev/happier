@@ -54,12 +54,29 @@ const SESSION_MENTION = {
 
 const SKILL_MENTION = { kind: MENTION_KIND_V1.skill, ref: SKILL_REF, token: '$review', start: 27, end: 34 };
 
-function createSession() {
+/**
+ * A session whose metadata carries an UNAPPLIED replay seed, so that
+ * `resolveProviderPromptWithReplaySeed` would really consume it (`updateMetadata`) if it ran.
+ * With an empty snapshot there is no seed to burn, and "the seed was not burned" is true of
+ * every possible implementation.
+ */
+function createSession(opts: Readonly<{ withPendingSeed?: boolean }> = {}) {
     const updateMetadata = vi.fn();
+    const metadata = opts.withPendingSeed
+        ? {
+            replaySeedV1: {
+                v: 1,
+                seedText: 'previously replayed transcript',
+                sourceSessionId: 'sess-source-1',
+                sourceCutoffSeqInclusive: 7,
+                createdAtMs: 500,
+            },
+        }
+        : {};
     return {
         updateMetadata,
         session: {
-            getMetadataSnapshot: () => ({}),
+            getMetadataSnapshot: () => metadata,
             updateMetadata,
         },
     };
@@ -120,7 +137,23 @@ describe('resolveProviderPromptForDispatch — D-27 total resolved-context bound
     });
 
     it('does not burn the replay seed on a rejected send', async () => {
-        const { session, updateMetadata } = createSession();
+        // Positive control FIRST: with the same pending seed, an ADMITTED send consumes it. Without
+        // this, "not called" would also be satisfied by a session that has no seed to burn.
+        const admitted = createSession({ withPendingSeed: true });
+        const admittedResolution = await resolveProviderPromptForDispatch({
+            session: admitted.session,
+            userText: 'do the thing',
+            allowSeed: true,
+            localId: 'local-1',
+            nowMs: 1_000,
+            refreshMetadataBeforeRead: false,
+            meta: metaWith([SKILL_MENTION]),
+            catalogs: skillCatalog('Review a diff'),
+        });
+        expect(admittedResolution.seedApplied).toBe(true);
+        expect(admitted.updateMetadata).toHaveBeenCalledTimes(1);
+
+        const { session, updateMetadata } = createSession({ withPendingSeed: true });
         await expect(resolveProviderPromptForDispatch({
             session,
             userText: 'do the thing',
