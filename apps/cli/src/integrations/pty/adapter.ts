@@ -19,9 +19,15 @@ import type {
 import { buildTerminalControlCapture } from '../terminalHost/controlCapture';
 import { TERMINAL_SHIFT_TAB_SEQUENCE } from '../terminalHost/controlTypes';
 import {
+  createTerminalHostDeadline,
+  remainingTerminalHostDeadlineMs,
+} from '../terminalHost/deadline';
+import {
   runTerminalPromptSubmission,
   type TerminalPromptSubmitVerificationPolicy,
 } from '../terminalHost/promptSubmitVerification';
+import { wrapBracketedPaste } from '@/agent/runtime/terminal/injection/bracketedPaste';
+import { resolveTerminalPromptWriteTimeoutMs } from '@/agent/runtime/terminal/injection/promptWriteTimeout';
 import type { Disposable, PtyProcess, PtyProvider } from '@/integrations/pty/ptyProvider';
 import { createNodePtyProvider } from '@/integrations/pty/ptyProvider';
 import { delay } from '@/utils/time';
@@ -31,6 +37,7 @@ const DEFAULT_COLS = 120;
 const DEFAULT_ROWS = 40;
 const INPUT_STABILITY_DELAY_MS = 50;
 const POST_WRITE_LIVENESS_DELAY_MS = 25;
+const PROMPT_STAGING_POLL_INTERVAL_MS = 25;
 
 type PtyTerminalHostSession = {
   pty: PtyProcess;
@@ -137,6 +144,35 @@ export function createPtyTerminalHostAdapter(params?: Readonly<{
       await Promise.resolve();
     }
     return !session.ended;
+  }
+
+  async function waitForPromptStaging(params: Readonly<{
+    session: PtyTerminalHostSession;
+    promptText: string;
+    deadline: number | undefined;
+  }>): Promise<'staged' | 'timeout' | 'failed'> {
+    if (!promptSubmitVerification) return 'staged';
+    while (!params.session.ended) {
+      try {
+        const isPromptStagedBeforeSubmit = promptSubmitVerification.isPromptStagedBeforeSubmit
+          ?? promptSubmitVerification.isPromptStillPendingAfterSubmit;
+        if (isPromptStagedBeforeSubmit({
+          promptText: params.promptText,
+          screenText: params.session.screen.capture().text,
+        })) {
+          return 'staged';
+        }
+      } catch {
+        return 'failed';
+      }
+      const remainingTimeoutMs = remainingTerminalHostDeadlineMs(params.deadline);
+      if (remainingTimeoutMs === 0) return 'timeout';
+      await delay(Math.min(
+        PROMPT_STAGING_POLL_INTERVAL_MS,
+        remainingTimeoutMs ?? PROMPT_STAGING_POLL_INTERVAL_MS,
+      ));
+    }
+    return 'failed';
   }
 
   async function captureInputState(handle: TerminalHostHandle): Promise<TerminalInputState> {
@@ -319,7 +355,12 @@ export function createPtyTerminalHostAdapter(params?: Readonly<{
           });
         }
       }
-      if (!writeToSession(session, input.text)) {
+      const shouldStagePrompt = promptSubmitVerification?.shouldVerifyAfterSubmit(input.text) === true;
+      const deadline = createTerminalHostDeadline(
+        input.scheduling.timeoutMs ?? resolveTerminalPromptWriteTimeoutMs(input.text),
+      );
+      const textToWrite = input.multiline && shouldStagePrompt ? wrapBracketedPaste(input.text) : input.text;
+      if (!writeToSession(session, textToWrite)) {
         return failedInjectionResult({
           reason: 'host_unreachable',
           phase: 'during_write',
@@ -327,20 +368,29 @@ export function createPtyTerminalHostAdapter(params?: Readonly<{
           recoverable: true,
         });
       }
+      if (shouldStagePrompt) {
+        const staging = await waitForPromptStaging({
+          session,
+          promptText: input.text,
+          deadline,
+        });
+        if (staging !== 'staged') {
+          return failedInjectionResult({
+            reason: staging === 'timeout' ? 'timeout' : 'host_unreachable',
+            phase: 'during_write',
+            duplicateRisk: 'possible',
+            recoverable: true,
+          });
+        }
+      }
       const submission = await runTerminalPromptSubmission({
         promptText: input.text,
-        submitEnter: async () => {
+        submitEnter: async ({ remainingTimeoutMs }) => {
+          if (remainingTimeoutMs === 0) return 'timeout';
           if (!writeToSession(session, '\r')) return 'failed';
           return await waitForPostWriteLiveness(session) ? 'success' : 'failed';
         },
-        ...(promptSubmitVerification?.shouldVerifyAfterSubmit(input.text)
-          ? {
-              verifyAfterSubmit: async ({ promptText }) => promptSubmitVerification.isPromptStillPendingAfterSubmit({
-                promptText,
-                screenText: session.screen.capture().text,
-              }),
-            }
-          : {}),
+        remainingTimeoutMs: () => remainingTerminalHostDeadlineMs(deadline),
       });
       if (!submission.success) {
         return failedInjectionResult({

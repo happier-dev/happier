@@ -109,6 +109,8 @@ function createHarness(params: Readonly<{
     wait: async () => undefined,
     graceMs: 25,
     settleMs: 1,
+    verifyPollIntervalMs: 1,
+    verifyPollTimeoutMs: 8,
     isDialogOwned: params.ownsDialog ?? (() => false),
     ...(params.resumeStartupActive === undefined
       ? {}
@@ -225,6 +227,32 @@ describe('createClaudeUnifiedDialogChoiceScreenProbe', () => {
     });
     await vi.waitFor(() => expect(port.sentLiteral).toEqual([literal]));
     expect(port.sentKeys).toEqual([]);
+    expect(client.getAgentStateSnapshot().requests).toEqual({});
+  });
+
+  it('waits through a delayed terminal redraw after Claude accepts an automatic dialog answer', async () => {
+    const { client, port, probe } = createHarness({
+      captures: [
+        TRUST_FOLDER_DIALOG,
+        TRUST_FOLDER_DIALOG,
+        TRUST_FOLDER_DIALOG,
+        TRUST_FOLDER_DIALOG,
+        TRUST_FOLDER_DIALOG,
+        TRUST_FOLDER_DIALOG,
+        IDLE,
+        IDLE,
+      ],
+      trustPolicy: 'always_trust_happier_workspaces',
+    });
+
+    await expect(probe.probe()).resolves.toEqual({
+      kind: 'automatic_answer_started',
+      dialogId: 'trust_folder',
+    });
+
+    await vi.waitFor(() => expect(port.captureCount()).toBeGreaterThanOrEqual(7));
+    expect(port.sentLiteral).toEqual(['1']);
+    await expect(probe.probe()).resolves.toEqual({ kind: 'not_visible' });
     expect(client.getAgentStateSnapshot().requests).toEqual({});
   });
 
@@ -440,6 +468,8 @@ describe('createClaudeUnifiedDialogChoiceScreenProbe', () => {
       wait: async () => undefined,
       graceMs: 25,
       settleMs: 1,
+      verifyPollIntervalMs: 1,
+      verifyPollTimeoutMs: 8,
       isDialogOwned: () => false,
     });
 

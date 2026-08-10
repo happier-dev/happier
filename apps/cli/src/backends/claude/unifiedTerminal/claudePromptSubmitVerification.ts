@@ -5,7 +5,10 @@ import {
   parseClaudePastedTextMarkerLineCount,
   pastedTextLineCountMatchesPrompt,
 } from './claudePastedTextMarker';
-import { normalizeClaudeUnifiedComposerRenderingText } from './promptIdentity';
+import {
+  isClaudeUnifiedComposerTextExactMatch,
+  isClaudeUnifiedComposerTextMatch,
+} from './promptIdentity';
 import { parseClaudeScreenState } from './tuiControls/screenState';
 
 function normalizeNewlines(value: string): string {
@@ -64,25 +67,43 @@ function isPromptStillPendingAfterSubmit(params: Readonly<{
   return pastedTextLineCountMatchesPrompt({ promptText, pastedLineCount });
 }
 
-function isExactPromptStillInComposerAfterSubmit(params: Readonly<{
+function isPromptStillInComposerAfterSubmit(params: Readonly<{
   promptText: string;
   screenText: string;
 }>): boolean {
-  const promptText = normalizeClaudeUnifiedComposerRenderingText(params.promptText);
-  if (!promptText) return false;
   const state = parseClaudeScreenState(params.screenText);
-  const composerContent = state.composerContent === null
-    ? null
-    : normalizeClaudeUnifiedComposerRenderingText(state.composerContent);
-  return composerContent === promptText;
+  return state.composerContent !== null && isClaudeUnifiedComposerTextMatch({
+    promptText: params.promptText,
+    composerText: state.composerContent,
+  });
+}
+
+function isPromptStagedBeforeSubmit(params: Readonly<{
+  promptText: string;
+  screenText: string;
+}>): boolean {
+  const promptText = normalizeNewlines(params.promptText);
+  const pastedLineCount = readPostSubmitPastedTextLineCount(params.screenText);
+  if (
+    pastedLineCount !== null
+    && pastedTextLineCountMatchesPrompt({ promptText, pastedLineCount })
+  ) {
+    return true;
+  }
+  const state = parseClaudeScreenState(params.screenText);
+  return state.composerContent !== null && isClaudeUnifiedComposerTextExactMatch({
+    promptText,
+    composerText: state.composerContent,
+  });
 }
 
 export function createClaudePromptSubmitVerificationPolicy(): TerminalPromptSubmitVerificationPolicy {
   return {
     shouldVerifyAfterSubmit,
+    isPromptStagedBeforeSubmit,
     isPromptStillPendingAfterSubmit: (params) => (
       isPromptStillPendingAfterSubmit(params)
-      || isExactPromptStillInComposerAfterSubmit(params)
+      || isPromptStillInComposerAfterSubmit(params)
     ),
   };
 }

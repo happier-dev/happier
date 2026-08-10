@@ -49,6 +49,47 @@ describe('createClaudePromptSubmitVerificationPolicy', () => {
     })).toBe(true);
   });
 
+  it('detects a long prompt when the visible composer contains only its wrapped prefix', () => {
+    const policy = createClaudePromptSubmitVerificationPolicy();
+    const words = Array.from({ length: 90 }, (_, index) => `incident-word-${index}`);
+    const prompt = words.join(' ');
+    const visibleWords = words.slice(0, 24);
+
+    expect(visibleWords.join(' ').length).toBeGreaterThanOrEqual(256);
+    expect(policy.isPromptStillPendingAfterSubmit({
+      promptText: prompt,
+      screenText: [
+        '─'.repeat(120),
+        `❯ ${visibleWords.slice(0, 8).join(' ')}`,
+        `  ${visibleWords.slice(8, 16).join(' ')}`,
+        `  ${visibleWords.slice(16).join(' ')}`,
+        '─'.repeat(120),
+      ].join('\n'),
+    })).toBe(true);
+    expect(policy.isPromptStagedBeforeSubmit?.({
+      promptText: prompt,
+      screenText: [
+        '─'.repeat(120),
+        `❯ ${visibleWords.slice(0, 8).join(' ')}`,
+        `  ${visibleWords.slice(8, 16).join(' ')}`,
+        `  ${visibleWords.slice(16).join(' ')}`,
+        '─'.repeat(120),
+      ].join('\n'),
+    })).toBe(false);
+    expect(policy.isPromptStagedBeforeSubmit?.({
+      promptText: prompt,
+      screenText: `❯ ${prompt}`,
+    })).toBe(true);
+    expect(policy.isPromptStillPendingAfterSubmit({
+      promptText: prompt,
+      screenText: `❯ ${visibleWords.slice(0, 8).join(' ')}`,
+    })).toBe(false);
+    expect(policy.isPromptStillPendingAfterSubmit({
+      promptText: prompt,
+      screenText: `❯ ${'unrelated visible composer text '.repeat(12)}`,
+    })).toBe(false);
+  });
+
   it('recognizes a current collapsed pasted prompt after submit with footer rows below it', () => {
     const policy = createClaudePromptSubmitVerificationPolicy();
     const prompt = Array.from({ length: 41 }, (_, index) => `line ${index}`).join('\n');
@@ -61,6 +102,10 @@ describe('createClaudePromptSubmitVerificationPolicy', () => {
         '─'.repeat(20),
         '⏵⏵ auto mode on (shift+tab to cycle)',
       ].join('\n'),
+    })).toBe(true);
+    expect(policy.isPromptStagedBeforeSubmit?.({
+      promptText: prompt,
+      screenText: '❯ [Pasted text #1 +40 lines]',
     })).toBe(true);
   });
 

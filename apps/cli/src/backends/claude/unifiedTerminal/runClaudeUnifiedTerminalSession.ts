@@ -1398,6 +1398,8 @@ export async function runClaudeUnifiedTerminalSession<Mode extends EnhancedMode 
           wait: waitMs,
           graceMs: opts.dialogOwnershipGraceMs ?? DEFAULT_DIALOG_OWNERSHIP_GRACE_MS,
           settleMs: DEFAULT_CLAUDE_TUI_CONTROL_TIMINGS.commandSettleMs,
+          verifyPollIntervalMs: DEFAULT_CLAUDE_TUI_CONTROL_TIMINGS.verifyPollIntervalMs,
+          verifyPollTimeoutMs: DEFAULT_CLAUDE_TUI_CONTROL_TIMINGS.verifyPollTimeoutMs,
           isDialogOwned: (dialogId) => runtimeControlBridge?.ownsDialog(dialogId) === true,
           // resume_choice ownership is scoped to the startup window: the startup resume resolver only
           // runs before readiness. Once startup is observed ready the resolver has stood down, so a

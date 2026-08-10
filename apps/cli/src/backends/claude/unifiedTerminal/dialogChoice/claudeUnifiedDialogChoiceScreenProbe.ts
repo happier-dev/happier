@@ -47,6 +47,8 @@ async function answerClaudeUnifiedDialogChoice(params: Readonly<{
   decision: ClaudeUnifiedDialogChoiceDecision;
   wait: (ms: number) => Promise<void>;
   settleMs: number;
+  verifyPollIntervalMs: number;
+  verifyPollTimeoutMs: number;
   dialog: ClaudeUnifiedVisibleDialog;
 }>): Promise<
   | Readonly<{ kind: 'answered' }>
@@ -73,13 +75,19 @@ async function answerClaudeUnifiedDialogChoice(params: Readonly<{
   const literalFailure = sendResultToFailure(await params.port.sendLiteralText(selected.answer.text));
   if (literalFailure) return { kind: 'failed' };
 
-  await params.wait(params.settleMs);
-  const after = await captureScreenState(params.port);
-  if (after.kind !== 'state') return { kind: 'failed' };
-  const remaining = resolveClaudeUnifiedVisibleDialog(after.state);
-  return remaining && getClaudeUnifiedDialogIdentity(remaining) === getClaudeUnifiedDialogIdentity(params.dialog)
-    ? { kind: 'failed' }
-    : { kind: 'answered' };
+  const verifyPollIntervalMs = Math.max(1, params.verifyPollIntervalMs);
+  const maxVerifyPolls = Math.max(1, Math.ceil(params.verifyPollTimeoutMs / verifyPollIntervalMs));
+  const expectedIdentity = getClaudeUnifiedDialogIdentity(params.dialog);
+  for (let poll = 0; poll < maxVerifyPolls; poll += 1) {
+    await params.wait(poll === 0 ? params.settleMs : verifyPollIntervalMs);
+    const after = await captureScreenState(params.port);
+    if (after.kind !== 'state') return { kind: 'failed' };
+    const remaining = resolveClaudeUnifiedVisibleDialog(after.state);
+    if (!remaining || getClaudeUnifiedDialogIdentity(remaining) !== expectedIdentity) {
+      return { kind: 'answered' };
+    }
+  }
+  return { kind: 'failed' };
 }
 
 export function createClaudeUnifiedDialogChoiceScreenProbe(params: Readonly<{
@@ -88,6 +96,8 @@ export function createClaudeUnifiedDialogChoiceScreenProbe(params: Readonly<{
   wait: (ms: number) => Promise<void>;
   graceMs: number;
   settleMs: number;
+  verifyPollIntervalMs: number;
+  verifyPollTimeoutMs: number;
   isDialogOwned: (dialogId: ClaudeUnifiedDialogId) => boolean;
   /**
    * Whether the startup resume resolver is still active (i.e. the startup window has not yet closed).
@@ -144,6 +154,8 @@ export function createClaudeUnifiedDialogChoiceScreenProbe(params: Readonly<{
           decision,
           wait: params.wait,
           settleMs: params.settleMs,
+          verifyPollIntervalMs: params.verifyPollIntervalMs,
+          verifyPollTimeoutMs: params.verifyPollTimeoutMs,
           dialog,
         });
         if (result.kind === 'not_visible') {

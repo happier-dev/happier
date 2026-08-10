@@ -136,6 +136,8 @@ describe('Claude unified pending-injection dialog routing', () => {
       wait: async () => undefined,
       graceMs: 0,
       settleMs: 0,
+      verifyPollIntervalMs: 1,
+      verifyPollTimeoutMs: 8,
       isDialogOwned: () => false,
     });
     const injectUserPrompt = vi.fn(async () => ({ status: 'injected', at: 1, bytesWritten: 11 } as const));

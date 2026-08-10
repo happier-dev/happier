@@ -1,6 +1,7 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import type { Disposable, PtyExitEvent, PtyProcess, PtyProvider, PtySpawnParams } from '@/integrations/pty/ptyProvider';
+import { wrapBracketedPaste } from '@/agent/runtime/terminal/injection/bracketedPaste';
 import { createClaudePromptSubmitVerificationPolicy } from '@/backends/claude/unifiedTerminal/claudePromptSubmitVerification';
 import { TERMINAL_SHIFT_TAB_SEQUENCE } from '../terminalHost/controlTypes';
 import { createPtyTerminalHostAdapter } from './adapter';
@@ -253,6 +254,112 @@ describe('createPtyTerminalHostAdapter', () => {
     expect(fake.processes[0]?.writes).toEqual([prompt, '\r']);
   });
 
+  it('waits for a multiline prompt to reach the PTY composer before submitting it', async () => {
+    const prompt = 'first line\nsecond line';
+    const fake = createFakeProviderWithProcess(() => new FakePtyProcess((process, data) => {
+      if (data === '\r') {
+        process.emitData('\u001b[2J\u001b[HClaude Code\r\n> ');
+      }
+    }));
+    const adapter = createPtyTerminalHostAdapter({
+      ptyProvider: fake.provider,
+      inputStabilityDelayMs: 0,
+      postWriteLivenessDelayMs: 0,
+      promptSubmitVerification: createClaudePromptSubmitVerificationPolicy(),
+    });
+    const handle = await adapter.createOrAttachHost({
+      sessionName: 'happier-claude-windows',
+      workingDirectory: 'C:\\repo',
+      spawnArgv: ['node.exe'],
+      spawnEnv: {},
+      isolatedEnv: true,
+    });
+
+    const injection = adapter.injectUserPrompt(handle, {
+      text: prompt,
+      multiline: true,
+      origin: { kind: 'ui_pending', nonce: 'n-delayed-paste' },
+      scheduling: { timeoutMs: 500 },
+    });
+
+    await vi.waitFor(() => {
+      expect(fake.processes[0]?.writes).toEqual([wrapBracketedPaste(prompt)]);
+    });
+    fake.processes[0]?.emitData('\u001b[2J\u001b[H> [Pasted text #1 +1 lines]');
+
+    await expect(injection).resolves.toMatchObject({ status: 'injected' });
+    expect(fake.processes[0]?.writes).toEqual([wrapBracketedPaste(prompt), '\r']);
+  });
+
+  it('waits for a single-line prompt to reach the PTY composer before submitting it', async () => {
+    const prompt = 'Reply exactly WINDOWS_QA_READY and then wait for my next message.';
+    const fake = createFakeProviderWithProcess(() => new FakePtyProcess((process, data) => {
+      if (data === '\r') {
+        process.emitData('\u001b[2J\u001b[HClaude Code\r\n> ');
+      }
+    }));
+    const adapter = createPtyTerminalHostAdapter({
+      ptyProvider: fake.provider,
+      inputStabilityDelayMs: 0,
+      postWriteLivenessDelayMs: 0,
+      promptSubmitVerification: createClaudePromptSubmitVerificationPolicy(),
+    });
+    const handle = await adapter.createOrAttachHost({
+      sessionName: 'happier-claude-windows',
+      workingDirectory: 'C:\\repo',
+      spawnArgv: ['node.exe'],
+      spawnEnv: {},
+      isolatedEnv: true,
+    });
+
+    const injection = adapter.injectUserPrompt(handle, {
+      text: prompt,
+      multiline: false,
+      origin: { kind: 'ui_pending', nonce: 'n-delayed-single-line' },
+      scheduling: { timeoutMs: 500 },
+    });
+
+    await vi.waitFor(() => {
+      expect(fake.processes[0]?.writes).toEqual([prompt]);
+    });
+    fake.processes[0]?.emitData(`\u001b[2J\u001b[H> ${prompt}`);
+
+    await expect(injection).resolves.toMatchObject({ status: 'injected' });
+    expect(fake.processes[0]?.writes).toEqual([prompt, '\r']);
+  });
+
+  it('does not submit or report injection when multiline prompt staging times out', async () => {
+    const prompt = 'first line\nsecond line';
+    const fake = createFakeProvider();
+    const adapter = createPtyTerminalHostAdapter({
+      ptyProvider: fake.provider,
+      inputStabilityDelayMs: 0,
+      postWriteLivenessDelayMs: 0,
+      promptSubmitVerification: createClaudePromptSubmitVerificationPolicy(),
+    });
+    const handle = await adapter.createOrAttachHost({
+      sessionName: 'happier-claude-windows',
+      workingDirectory: 'C:\\repo',
+      spawnArgv: ['node.exe'],
+      spawnEnv: {},
+      isolatedEnv: true,
+    });
+
+    await expect(adapter.injectUserPrompt(handle, {
+      text: prompt,
+      multiline: true,
+      origin: { kind: 'ui_pending', nonce: 'n-paste-timeout' },
+      scheduling: { timeoutMs: 10 },
+    })).resolves.toEqual({
+      status: 'failed',
+      reason: 'timeout',
+      phase: 'during_write',
+      duplicateRisk: 'possible',
+      recoverable: true,
+    });
+    expect(fake.processes[0]?.writes).toEqual([wrapBracketedPaste(prompt)]);
+  });
+
   it('reports pane death after the PTY exits', async () => {
     const fake = createFakeProvider();
     const adapter = createPtyTerminalHostAdapter({ ptyProvider: fake.provider });
@@ -314,7 +421,7 @@ describe('createPtyTerminalHostAdapter', () => {
     });
   });
 
-  it('does not report a Windows console prompt as injected when it remains in the composer after Enter retry', async () => {
+  it('does not mistake Claude\'s submitted prompt row for an unsent Windows composer draft', async () => {
     const prompt = 'Reply exactly with WIN-CLAUDE-UNIFIED-CS-AFTERFIX2-FIRST-20260629T1535Z and nothing else.';
     const fake = createFakeProviderWithProcess(() => new FakePtyProcess((process) => {
       process.emitData(`\u001b[2J\u001b[H> ${prompt}`);
@@ -338,14 +445,8 @@ describe('createPtyTerminalHostAdapter', () => {
       multiline: false,
       origin: { kind: 'ui_pending', nonce: 'n-stuck-single-line' },
       scheduling: {},
-    })).resolves.toEqual({
-      status: 'failed',
-      reason: 'host_unreachable',
-      phase: 'after_enter_unknown',
-      duplicateRisk: 'possible',
-      recoverable: true,
-    });
+    })).resolves.toMatchObject({ status: 'injected' });
 
-    expect(fake.processes[0]?.writes).toEqual([prompt, '\r', '\r']);
+    expect(fake.processes[0]?.writes).toEqual([prompt, '\r']);
   });
 });

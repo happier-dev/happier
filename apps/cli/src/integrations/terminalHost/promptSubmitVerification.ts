@@ -2,6 +2,10 @@ const DEFAULT_POST_SUBMIT_SETTLE_MS = 50;
 
 export type TerminalPromptSubmitVerificationPolicy = Readonly<{
   shouldVerifyAfterSubmit(promptText: string): boolean;
+  isPromptStagedBeforeSubmit?(params: Readonly<{
+    promptText: string;
+    screenText: string;
+  }>): boolean;
   isPromptStillPendingAfterSubmit(params: Readonly<{
     promptText: string;
     screenText: string;
