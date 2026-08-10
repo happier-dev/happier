@@ -128,6 +128,23 @@ function applyReachableSessionListRenderablesForState(input: Readonly<{
 export type SessionsDomain = {
     sessions: Record<string, Session>;
     sessionListRenderables: Record<string, SessionListRenderableSession>;
+    /**
+     * Sessions this viewer has positive evidence are gone, keyed by id.
+     *
+     * Neither `sessions` nor `sessionListRenderables` can answer "does this session exist": both
+     * are list-scoped caches. `sessionListRenderables` is evicted for every row a replace-mode
+     * `/v2/sessions` page omits inside its removal window — and that endpoint filters
+     * `archivedAt: null` server-side, so archiving alone empties it. `sessions` holds only the
+     * records this run actually hydrated, and is in practice a *subset* of the renderables
+     * (measured live: `sessions \ renderables` = 0, `renderables \ sessions` = 97), so it cannot
+     * cover an evicted row either.
+     *
+     * `deleteSession` is the one signal that does mean gone: the changes stream feeds it through
+     * `handleDeleteSessionSocketUpdate` when the server reports a deletion. Anything that must
+     * distinguish "deleted" from "not cached" — a durable pointer such as a transcript session
+     * reference — reads this map rather than inferring absence.
+     */
+    deletedSessionIds: Record<string, true>;
     sessionListRenderableDelta: import('./sessionListRenderableCommit').SessionListRenderableDelta;
     sessionsData: (string | Session)[] | null;
     sessionListViewData: SessionListViewItem[] | null;
@@ -586,6 +603,7 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
     return {
         sessions: {},
         sessionListRenderables: {},
+        deletedSessionIds: {},
         sessionListRenderableDelta: {
             revision: 0,
             changedSessionIds: [],
@@ -2184,6 +2202,8 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                 ...state,
                 sessions: remainingSessions,
                 sessionListRenderables: remainingRenderables,
+                // The only durable record that this id is gone rather than merely uncached.
+                deletedSessionIds: { ...state.deletedSessionIds, [sessionId]: true as const },
                 sessionMessages: remainingSessionMessages,
                 sessionScmStatus: remainingScmStatus,
                 sessionRepositoryTreeExpandedPathsBySessionId: remainingTreeState,

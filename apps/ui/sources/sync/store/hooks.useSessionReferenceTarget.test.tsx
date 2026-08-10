@@ -61,7 +61,7 @@ function installSessionListState(renderables: readonly SessionListRenderableSess
 }
 
 describe('useSessionReferenceTarget', () => {
-    it('reports a session the @session picker offers as present, even though it was never hydrated', async () => {
+    it('keeps a session the @session picker offers openable, even though it was never hydrated', async () => {
         const previousState = storage.getState();
         try {
             const current = renderable('current');
@@ -83,7 +83,7 @@ describe('useSessionReferenceTarget', () => {
             });
 
             expect(storage.getState().sessions[referenced.id]).toBeUndefined();
-            expect(hook.getCurrent().present).toBe(true);
+            expect(hook.getCurrent().deleted).toBe(false);
             expect(hook.getCurrent().metadata).toBe(referenced.metadata);
 
             await hook.unmount();
@@ -93,15 +93,14 @@ describe('useSessionReferenceTarget', () => {
     });
 
     /**
-     * The renderable map is NOT a superset of `sessions`. `replaceSessionListRenderables`
-     * evicts every previously-known row inside the refreshed page's activity range that the
-     * page omitted, and it does not touch `sessions` — so a session the viewer has hydrated
-     * survives in `sessions` after its renderable is gone. Archiving reaches exactly that
-     * state: `/v2/sessions` filters `archivedAt: null` server-side
-     * (`registerSessionListingRoutes.ts`), so the next list refresh omits the row while the
-     * session stays openable at its route. Presence must not read as "gone" there.
+     * `replaceSessionListRenderables` evicts every previously-known row inside the refreshed
+     * page's activity range that the page omitted, and it does not touch `sessions` — so a
+     * session the viewer has hydrated survives in `sessions` after its renderable is gone.
+     * Archiving reaches exactly that state: `/v2/sessions` filters `archivedAt: null`
+     * server-side (`registerSessionListingRoutes.ts`), so the next list refresh omits the row
+     * while the session stays openable at its route. Its title must still come from the record.
      */
-    it('reports a hydrated session the refreshed list page no longer covers as present', async () => {
+    it('still reads the title of a hydrated session the refreshed list page no longer covers', async () => {
         const previousState = storage.getState();
         try {
             const metadata = { name: 'Archived QA session', path: '/Users/dev/projects/app' };
@@ -134,7 +133,7 @@ describe('useSessionReferenceTarget', () => {
             });
 
             expect(storage.getState().sessionListRenderables.archived).toBeUndefined();
-            expect(hook.getCurrent().present).toBe(true);
+            expect(hook.getCurrent().deleted).toBe(false);
             expect(hook.getCurrent().metadata).toBe(metadata);
 
             await hook.unmount();
@@ -143,18 +142,31 @@ describe('useSessionReferenceTarget', () => {
         }
     });
 
-    it('reports a session this viewer no longer has as absent', async () => {
+    /**
+     * The distinction the two earlier attempts at this defect collapsed. An id this viewer has
+     * simply never cached is NOT gone — it is uncached, and archiving alone produces that state
+     * because `/v2/sessions` filters archived rows server-side. Only the delete signal the
+     * changes stream feeds to `deleteSession` is evidence of deletion, and the two cases are
+     * asserted here against one store state so they cannot be conflated again.
+     */
+    it('separates a session this viewer never cached from one it watched be deleted', async () => {
         const previousState = storage.getState();
         try {
-            installSessionListState([renderable('current')]);
+            installSessionListState([renderable('current'), renderable('doomed')]);
+            storage.getState().deleteSession('doomed');
 
-            const hook = await renderHook(() => useSessionReferenceTarget('deleted-session'), {
+            const uncached = await renderHook(() => useSessionReferenceTarget('never-seen'), {
                 flushOptions: { cycles: 1, turns: 4 },
             });
+            expect(uncached.getCurrent()).toEqual({ deleted: false, metadata: null });
+            await uncached.unmount();
 
-            expect(hook.getCurrent()).toEqual({ present: false, metadata: null });
-
-            await hook.unmount();
+            const deleted = await renderHook(() => useSessionReferenceTarget('doomed'), {
+                flushOptions: { cycles: 1, turns: 4 },
+            });
+            expect(storage.getState().sessionListRenderables.doomed).toBeUndefined();
+            expect(deleted.getCurrent()).toEqual({ deleted: true, metadata: null });
+            await deleted.unmount();
         } finally {
             storage.setState(previousState);
         }
@@ -174,7 +186,7 @@ describe('useSessionReferenceTarget', () => {
                 flushOptions: { cycles: 1, turns: 4 },
             });
             const initialRenderCount = renderCount;
-            expect(hook.getCurrent().present).toBe(true);
+            expect(hook.getCurrent().metadata).toBe(referenced.metadata);
 
             await act(async () => {
                 storage.setState((state) => ({

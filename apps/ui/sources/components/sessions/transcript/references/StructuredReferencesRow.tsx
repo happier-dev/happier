@@ -101,11 +101,11 @@ const SessionReferenceChip = React.memo((props: Readonly<{
     // session reads correctly without the reference changing — identity is the id, and the
     // label is advisory display only.
     //
-    // `metadata` is `Metadata | null` on a stored session, so "present" does not imply "named":
-    // without the metadata guard `getSessionName` falls through to `t('status.unknown')`, which
-    // is not null and would therefore beat the composed label. A reference that knows what it
-    // pointed at must not degrade to "Unknown" just because metadata has not resolved.
-    const liveTitle = target.present && target.metadata
+    // `metadata` is `Metadata | null` on a stored session, so a cached session is not necessarily
+    // a named one: without this guard `getSessionName` falls through to `t('status.unknown')`,
+    // which is not null and would therefore beat the composed label. A reference that knows what
+    // it pointed at must not degrade to "Unknown" just because metadata has not resolved.
+    const liveTitle = target.metadata
         ? getSessionName({ id: props.sessionId, metadata: target.metadata })
         : null;
     const title = liveTitle ?? props.label;
@@ -116,10 +116,12 @@ const SessionReferenceChip = React.memo((props: Readonly<{
 
     const testID = `transcript-session-reference:${props.sessionId}`;
 
-    // Deleted, never-synced and not-visible-to-this-viewer all land here. An inert chip that
-    // still says what it referred to is the honest presentation; a pressable one would be a
-    // link to nowhere.
-    if (!target.present) {
+    // Only a session this viewer has watched be deleted lands here. An inert chip that still says
+    // what it referred to is the honest presentation for that; a pressable one would be a link to
+    // nowhere. A session merely missing from the list caches — an archived one, or any row the
+    // last refresh did not cover — stays pressable, because it is still openable at its route and
+    // the route answers a genuinely missing id itself.
+    if (target.deleted) {
         const unavailableText = t('message.sessionReferenceUnavailable');
         return (
             <View

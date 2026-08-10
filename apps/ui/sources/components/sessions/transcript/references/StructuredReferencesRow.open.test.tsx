@@ -13,6 +13,7 @@ const flashListCompatMockState = vi.hoisted(() => ({
 }));
 const sessionStoreState = vi.hoisted(() => ({
     sessions: {} as Record<string, { id: string; metadata: unknown } | undefined>,
+    deletedSessionIds: [] as string[],
 }));
 
 vi.mock('@/utils/platform/responsive', () => ({
@@ -55,9 +56,12 @@ vi.hoisted(async () => {
                 },
                 useSessionReferenceTarget: (sessionId: string) => {
                     const session = sessionStoreState.sessions[sessionId];
-                    return session
-                        ? { present: true, metadata: session.metadata }
-                        : { present: false, metadata: null };
+                    // Absence from this stub is a cache miss, which is NOT deletion — the real
+                    // hook answers `deleted` only from `deletedSessionIds`.
+                    return {
+                        deleted: sessionStoreState.deletedSessionIds.includes(sessionId),
+                        metadata: session ? session.metadata : null,
+                    };
                 },
             });
         },
@@ -70,6 +74,7 @@ describe('StructuredReferencesRow', () => {
     beforeEach(() => {
         flashListCompatMockState.mappingKeyCalls = [];
         sessionStoreState.sessions = {};
+        sessionStoreState.deletedSessionIds = [];
         routerPushSpy.mockClear();
     });
 
@@ -196,7 +201,8 @@ describe('StructuredReferencesRow', () => {
         expect(screen.getTextContent()).not.toContain('status.unknown');
     });
 
-    it('renders an unavailable session reference inert instead of as a dead link', async () => {
+    it('renders a deleted session reference inert instead of as a dead link', async () => {
+        sessionStoreState.deletedSessionIds = ['deleted-session'];
         const { StructuredReferencesRow } = await import('./StructuredReferencesRow');
 
         const screen = await renderScreen(

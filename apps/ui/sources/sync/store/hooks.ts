@@ -191,7 +191,11 @@ export function useSession(id: string): Session | null {
 }
 
 export type SessionReferenceTarget = Readonly<{
-  present: boolean;
+  /**
+   * `true` only when this viewer has positive evidence the session is gone. A cache miss is not
+   * evidence: see the note below.
+   */
+  deleted: boolean;
   metadata: SessionListRenderableSession['metadata'] | Session['metadata'] | null;
 }>;
 
@@ -202,46 +206,41 @@ export type SessionReferenceTarget = Readonly<{
  * (thinking, agentState, seq, presence, updatedAt) changes neither, so a reference chip must
  * not re-render for it.
  *
- * **Presence is "this viewer knows this session", and neither store answers it alone.** The two
- * maps hold overlapping but independently-pruned halves of that knowledge:
+ * **A cache miss is not evidence that the session is gone**, which is the whole content of this
+ * hook. Both session maps are list-scoped caches, and neither is a record of what exists:
  *
- * - `sessionListRenderables` holds one entry per session the session list knows about. Every
- *   ingestion path writes it for every row — the list snapshot builds a renderable for the whole
- *   page (`sessionSnapshot.ts` `applySessionListRenderables`), the warm cache restores them before
- *   any fetch, and `applySessions` derives one for every full record it applies. It is the store
- *   the `@session` picker's view data is derived from, so a session the picker offers is present
- *   here by construction.
- * - `sessions` holds the *hydrated full records*. Hydration is deliberately bounded: shipped
- *   tuning is `sessionListEagerHydrationCount: 4` with `sessionListBackgroundHydrationMaxRows: 0`
- *   (`sync/runtime/syncTuning.ts`), so every row past the required/route/active/eager set is
- *   counted `skippedBackground` and never hydrated. Absence here means "not hydrated yet", which
- *   is the normal state for nearly every session — it is not evidence that the session is gone.
+ * - `sessionListRenderables` holds one entry per row the session list currently covers. A
+ *   replace-mode `/v2/sessions` page evicts every previously-known row it omits inside its
+ *   removal window (`replaceSessionListRenderables` → `planSessionListRenderableReplacement`),
+ *   and that endpoint filters `archivedAt: null` **server-side**, so archiving a session is by
+ *   itself enough to empty this map of it.
+ * - `sessions` holds only the full records this run hydrated, which is a deliberately small set
+ *   (`sessionListEagerHydrationCount: 4`, `sessionListBackgroundHydrationMaxRows: 0` in
+ *   `sync/runtime/syncTuning.ts`). Measured on the running app at the moment an archived
+ *   reference broke: `sessions \ sessionListRenderables` was **empty** and
+ *   `sessionListRenderables \ sessions` held 97 rows — `sessions` is in practice a *subset*, so
+ *   it can never rescue a row the renderable eviction removed. That is why answering presence
+ *   from either map, or from their union, produced the same false "Unavailable session" for an
+ *   archived target twice over.
  *
- * Reading `sessions` alone is what made a session the picker had just offered render as an inert
- * "Unavailable session" in the transcript of the same client (reproduced live: the chip flipped to
- * pressable after merely visiting the referenced session, which route-hydrates it, without the
- * session itself changing).
+ * An archived session is fully readable: opening `/session/<id>` from exactly that
+ * both-maps-empty state loads and renders it. So an uncached reference stays pressable, and the
+ * session route — which already answers a genuinely missing id with its own explicit
+ * "Session isn't available" screen — owns the failure the client cannot predict.
  *
- * Reading `sessionListRenderables` alone is wrong in the other direction, because it is *not* a
- * superset: `replaceSessionListRenderables` evicts every previously-known row inside the refreshed
- * page's activity range that the page omitted, and leaves `sessions` untouched. Archiving reaches
- * exactly that state — `/v2/sessions` filters `archivedAt: null` server-side — so the record
- * outlives its renderable while the session stays openable at its route.
- *
- * Only `deleteSession` removes both, which is why the union is the honest presence answer:
- * `present: false` then covers deleted, never-synced and not-visible-to-this-viewer alike — all
- * three must render inert rather than as a link that goes nowhere. Both branches return a *stored*
- * metadata object rather than a projection, so the selection stays referentially stable.
+ * `deleted` therefore comes from `deletedSessionIds`, written only by `deleteSession`, i.e. by
+ * the changes stream reporting an actual deletion. `metadata` is whichever cached copy exists so
+ * a known session still shows its live title; it is always a *stored* object, never a projection,
+ * so the selection stays referentially stable.
  */
 export function useSessionReferenceTarget(sessionId: string): SessionReferenceTarget {
   return getStorage()(
-    useShallow((state) => {
-      const renderable = state.sessionListRenderables[sessionId];
-      if (renderable) return { present: true, metadata: renderable.metadata ?? null };
-      const record = state.sessions[sessionId];
-      if (record) return { present: true, metadata: record.metadata ?? null };
-      return { present: false, metadata: null };
-    }),
+    useShallow((state) => ({
+      deleted: state.deletedSessionIds[sessionId] === true,
+      metadata: state.sessionListRenderables[sessionId]?.metadata
+        ?? state.sessions[sessionId]?.metadata
+        ?? null,
+    })),
   );
 }
 

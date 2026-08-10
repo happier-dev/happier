@@ -97,7 +97,7 @@ export function createStorageModuleStub<TOverrides extends object>(overrides: TO
         labelsByLabelKey: {},
     } satisfies NonNullable<ReturnType<StorageModule['useSessionOrganizationProjection']>>;
     const sessionReferenceTarget = {
-        present: false,
+        deleted: false,
         metadata: null,
     } satisfies ReturnType<StorageModule['useSessionReferenceTarget']>;
     const sessionTranscriptIds = [] as string[];

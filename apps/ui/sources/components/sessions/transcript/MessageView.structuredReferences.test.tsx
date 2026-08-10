@@ -30,7 +30,7 @@ installMessageViewCommonModuleMocks({
                 useSessionMessagesById: () => ({}),
                 useSessionMessagesReducerState: () => ({} as any),
                 useSessionReferenceTarget: (sessionId: string) => (
-                    referenceTargetState.sessions[sessionId] ?? { present: false, metadata: null }
+                    referenceTargetState.sessions[sessionId] ?? { deleted: false, metadata: null }
                 ),
             },
         });
@@ -85,7 +85,7 @@ async function renderMessage(message: any) {
 describe('MessageView structured references', () => {
     beforeEach(() => {
         referenceTargetState.sessions = {
-            sess_42: { present: true, metadata: { name: 'Release prep', path: '/w', host: 'h' } },
+            sess_42: { deleted: false, metadata: { name: 'Release prep', path: '/w', host: 'h' } },
         };
         routerPushSpy.mockClear();
     });
@@ -153,8 +153,10 @@ describe('MessageView structured references', () => {
             && node.props.testID.startsWith('transcript-session-reference:'))).toHaveLength(0);
     });
 
-    it('renders an unavailable referenced session inert rather than as a dead link', async () => {
-        referenceTargetState.sessions = {};
+    it('renders a deleted referenced session inert rather than as a dead link', async () => {
+        // Deletion, not a cache miss: an uncached id stays pressable because it is still openable
+        // at its route (archiving alone empties both session caches).
+        referenceTargetState.sessions = { sess_gone: { deleted: true, metadata: null } };
 
         const screen = await renderMessage({
             kind: 'user-text',
