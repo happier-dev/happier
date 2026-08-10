@@ -243,6 +243,7 @@ export const RPC_ERROR_CODES = {
   METHOD_NOT_AVAILABLE: 'RPC_METHOD_NOT_AVAILABLE',
   METHOD_NOT_FOUND: 'RPC_METHOD_NOT_FOUND',
   FORBIDDEN: 'RPC_FORBIDDEN',
+  SESSION_MACHINE_CONTROL_UNAVAILABLE: 'RPC_SESSION_MACHINE_CONTROL_UNAVAILABLE',
 } as const;
 
 export type RpcErrorCode = (typeof RPC_ERROR_CODES)[keyof typeof RPC_ERROR_CODES];
@@ -251,6 +252,7 @@ export const RPC_ERROR_MESSAGES = {
   METHOD_NOT_AVAILABLE: 'RPC method not available',
   METHOD_NOT_FOUND: 'Method not found',
   FORBIDDEN: 'Forbidden',
+  SESSION_MACHINE_CONTROL_UNAVAILABLE: 'Session machine control unavailable',
 } as const;
 
 // Session-scoped RPC method names (used with `${sessionId}:${method}` over socket RPC).

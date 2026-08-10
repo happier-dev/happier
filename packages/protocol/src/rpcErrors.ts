@@ -99,3 +99,7 @@ export function isRpcMethodNotFoundError(error: unknown): boolean {
   const code = readRpcErrorCode(error);
   return code === RPC_ERROR_CODES.METHOD_NOT_FOUND;
 }
+
+export function isRpcSessionMachineControlUnavailableError(error: unknown): boolean {
+  return readRpcErrorCode(error) === RPC_ERROR_CODES.SESSION_MACHINE_CONTROL_UNAVAILABLE;
+}

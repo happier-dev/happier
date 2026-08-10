@@ -1239,6 +1239,7 @@ export {
   isSocketRpcTargetFailureV1,
   isRpcMethodNotAvailableError,
   isRpcMethodNotFoundError,
+  isRpcSessionMachineControlUnavailableError,
   readRpcErrorCode,
   PUBLIC_RPC_HANDLER_ERROR_CODES,
   PublicRpcHandlerError,
