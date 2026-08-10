@@ -2,6 +2,7 @@ import * as React from 'react';
 import { Platform, Pressable, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
+import { FrozenSubtree } from '@/components/ui/performance/FrozenSubtree';
 
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
@@ -174,6 +175,10 @@ export const SessionRightPanel = React.memo((props: SessionRightPanelProps) => {
                     </RightTabSurface>
                     <RightTabSurface
                         isActive={activeTab === 'agents'}
+                        // The roster subscribes to session state and re-derives the whole agent list
+                        // from it. Left running behind another tab it re-derives on every transcript
+                        // update for the rest of the session's life, so this surface freezes instead.
+                        inactiveRetention="suspended"
                         testID={resolveOptionalSessionScreenTestId(sessionScreenTestIdsEnabled, 'session-rightpanel-surface-agents')}
                     >
                         <React.Suspense fallback={<PaneLoadingFallback color={theme.colors.text.secondary} />}>
@@ -207,7 +212,25 @@ const PaneLoadingFallback = React.memo((props: Readonly<{ color: string }>) => {
     );
 });
 
-const RightTabSurface = React.memo((props: Readonly<{ isActive: boolean; testID?: string; children: React.ReactNode }>) => {
+/**
+ * What an inactive tab is allowed to keep doing.
+ *
+ * `'live'` is the historical behaviour: the surface stays mounted and keeps working off every store
+ * update it subscribes to. That is correct for a surface that owns something running — the embedded
+ * terminal has to stay attached to its session whether or not you are looking at it.
+ *
+ * `'suspended'` keeps the surface mounted but stops it rendering (`FrozenSubtree`). Its state, and
+ * therefore its scroll position and hydrated content, survive; only the work stops. Choose it for a
+ * surface that merely projects session state, where re-deriving behind another tab is pure waste.
+ */
+type RightTabInactiveRetention = 'live' | 'suspended';
+
+const RightTabSurface = React.memo((props: Readonly<{
+    isActive: boolean;
+    inactiveRetention?: RightTabInactiveRetention;
+    testID?: string;
+    children: React.ReactNode;
+}>) => {
     const active = props.isActive;
     const [hasMounted, setHasMounted] = React.useState(active);
 
@@ -216,6 +239,12 @@ const RightTabSurface = React.memo((props: Readonly<{ isActive: boolean; testID?
     }, [active]);
 
     if (!active && !hasMounted) return null;
+
+    // Web already drops an inactive surface out of layout with `display:'none'`; native keeps it in
+    // layout at `opacity:0`, so this is where the retained cost actually lives. Keeping the web path
+    // byte-identical also keeps its Suspense boundaries where they are today.
+    const suspendInactive = props.inactiveRetention === 'suspended' && Platform.OS !== 'web';
+
     return (
         <View
             testID={props.testID}
@@ -228,7 +257,9 @@ const RightTabSurface = React.memo((props: Readonly<{ isActive: boolean; testID?
                 },
             ]}
         >
-            {props.children}
+            {suspendInactive
+                ? <FrozenSubtree frozen={!active}>{props.children}</FrozenSubtree>
+                : props.children}
         </View>
     );
 });
