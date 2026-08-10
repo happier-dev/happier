@@ -51,6 +51,22 @@ function getPendingText(message: PendingMessage | DiscardedPendingMessage): stri
     return String(raw);
 }
 
+async function copyPendingMessageText(message: PendingMessage | DiscardedPendingMessage): Promise<boolean> {
+    const text = getPendingText(message).trim();
+    if (!text) return false;
+    try {
+        const copied = await setClipboardStringSafe(text);
+        if (!copied) {
+            Modal.alert(t('common.error'), t('items.failedToCopyToClipboard'));
+            return false;
+        }
+        return true;
+    } catch {
+        Modal.alert(t('common.error'), t('items.failedToCopyToClipboard'));
+        return false;
+    }
+}
+
 function getPendingMaterializingKey(message: Pick<PendingMessage, 'id' | 'localId'>): string {
     return typeof message.localId === 'string' && message.localId.length > 0 ? message.localId : message.id;
 }
@@ -338,7 +354,6 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
     const [scrollViewportHeightPx, setScrollViewportHeightPx] = React.useState<number | null>(null);
     const [scrollOffsetY, setScrollOffsetY] = React.useState<number | null>(null);
     const [materializingLocalIdMap, setMaterializingLocalIdMap] = React.useState<Record<string, true>>({});
-    const copyFeedback = useTemporaryCopyFeedback();
     const deliveryActionInFlightRef = React.useRef<Record<string, true>>({});
     const removeActionInFlightRef = React.useRef<Record<string, true>>({});
     const terminalComposerClear = useTerminalComposerClearAction(props.sessionId);
@@ -372,24 +387,6 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
     const togglePendingQueueExpanded = React.useCallback(() => {
         setIsPendingQueueExpanded((value) => !value);
     }, []);
-
-    const handleCopyPendingMessage = React.useCallback(async (
-        message: PendingMessage | DiscardedPendingMessage,
-        feedbackKey: string,
-    ) => {
-        const text = getPendingText(message).trim();
-        if (!text) return;
-        try {
-            const copied = await setClipboardStringSafe(text);
-            if (!copied) {
-                Modal.alert(t('common.error'), t('items.failedToCopyToClipboard'));
-                return;
-            }
-            copyFeedback.markCopied(feedbackKey);
-        } catch {
-            Modal.alert(t('common.error'), t('items.failedToCopyToClipboard'));
-        }
-    }, [copyFeedback]);
 
     const handleEdit = React.useCallback(async (message: PendingMessage) => {
         await props.onEditPendingMessage?.({
@@ -840,7 +837,7 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
                 items={menuItems}
                 onSelect={async (itemId) => {
                     setOpenMenuKey(null);
-                    if (itemId === 'copy') await handleCopyPendingMessage(message, menuKey);
+                    if (itemId === 'copy') await copyPendingMessageText(message);
                     if (itemId === 'continueWaiting') return;
                     if (itemId === 'edit') await handleEdit(message);
                     if (itemId === 'remove') {
@@ -1032,12 +1029,9 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
                                 style={styles.messageActionContainer}
                             >
                                 {text ? (
-                                    <IconAction
+                                    <PendingMessageCopyAction
                                         testID={`pendingMessages.copy:${message.id}`}
-                                        accessibilityLabel={t('common.copy')}
-                                        icon={copyFeedback.isCopied(menuKey) ? 'check' : 'copy'}
-                                        onPress={() => handleCopyPendingMessage(message, menuKey)}
-                                        tone={copyFeedback.isCopied(menuKey) ? 'success' : 'default'}
+                                        message={message}
                                     />
                                 ) : null}
                                 {canReorderPendingMessages ? (
@@ -1157,8 +1151,6 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
         collapseThresholdChars,
         collapsedLines,
         expandedMessageIds,
-        copyFeedback,
-        handleCopyPendingMessage,
         handleEdit,
         handleDismissDelivery,
         handleInterruptAndRun,
@@ -1225,7 +1217,7 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
                 items={menuItems}
                 onSelect={async (itemId) => {
                     setOpenMenuKey(null);
-                    if (itemId === 'copy') await handleCopyPendingMessage(message, menuKey);
+                    if (itemId === 'copy') await copyPendingMessageText(message);
                     if (itemId === 'requeue') await handleRequeueDiscarded(message.id);
                     if (itemId === 'remove') await handleRemoveDiscarded(message.id);
                     if (itemId === 'steerNow') await handleSteerDiscardedNow(message);
@@ -1288,12 +1280,9 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
                                 style={styles.messageActionContainer}
                             >
                                 {text ? (
-                                    <IconAction
+                                    <PendingMessageCopyAction
                                         testID={`pendingMessages.discarded.copy:${message.id}`}
-                                        accessibilityLabel={t('common.copy')}
-                                        icon={copyFeedback.isCopied(menuKey) ? 'check' : 'copy'}
-                                        onPress={() => handleCopyPendingMessage(message, menuKey)}
-                                        tone={copyFeedback.isCopied(menuKey) ? 'success' : 'default'}
+                                        message={message}
                                     />
                                 ) : null}
                                 <IconAction
@@ -1332,8 +1321,6 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
     }, [
         canSteerNow,
         collapsedLines,
-        copyFeedback,
-        handleCopyPendingMessage,
         hoveredMessageId,
         handleRequeueDiscarded,
         handleRemoveDiscarded,
@@ -1532,6 +1519,29 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
         </View>
     );
 }
+
+const PendingMessageCopyAction = React.memo(function PendingMessageCopyAction(props: {
+    message: PendingMessage | DiscardedPendingMessage;
+    testID: string;
+}) {
+    const { markCopied, isCopied } = useTemporaryCopyFeedback();
+    const copied = isCopied();
+    const handlePress = React.useCallback(async () => {
+        if (await copyPendingMessageText(props.message)) {
+            markCopied();
+        }
+    }, [markCopied, props.message]);
+
+    return (
+        <IconAction
+            testID={props.testID}
+            accessibilityLabel={t('common.copy')}
+            icon={copied ? 'check' : 'copy'}
+            onPress={handlePress}
+            tone={copied ? 'success' : 'default'}
+        />
+    );
+});
 
 function IconAction(props: {
     icon: IconName;
