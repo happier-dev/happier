@@ -181,6 +181,10 @@ describe('OptionPickerOverlay', () => {
         act(() => {
             screen.changeTextByTestId('model-picker-overlay-custom-input', '  unlisted-model  ');
         });
+        expect(onSubmitCustomValue).not.toHaveBeenCalled();
+        await act(async () => {
+            screen.findByTestId('model-picker-overlay-custom-input')?.props.onBlur?.();
+        });
         expect(onSubmitCustomValue).toHaveBeenCalledWith('unlisted-model');
     });
 
@@ -481,7 +485,7 @@ describe('OptionPickerOverlay', () => {
         expect(screen.getTextContent()).toContain('modelPickerOverlay.loadingModelsA11y');
     });
 
-    it('updates the custom value immediately (no Save button) when entering a custom model', async () => {
+    it('commits a custom value on blur without pushing each keystroke up-tree', async () => {
         const onSubmitCustomValue = vi.fn();
         const onSelect = vi.fn();
         const { OptionPickerOverlay } = await import('./OptionPickerOverlay');
@@ -505,12 +509,219 @@ describe('OptionPickerOverlay', () => {
         await screen.pressByTestIdAsync('model-picker-overlay-custom');
         expect(screen.findByTestId('model-picker-overlay-custom-input')).toBeTruthy();
         await act(async () => {
+            screen.changeTextByTestId('model-picker-overlay-custom-input', 'c');
+        });
+        await act(async () => {
             screen.changeTextByTestId('model-picker-overlay-custom-input', '  custom-model  ');
         });
 
+        expect(onSubmitCustomValue).not.toHaveBeenCalled();
+
         expect(screen.findByTestId('model-picker-overlay-custom-save')).toBeNull();
+        await act(async () => {
+            screen.findByTestId('model-picker-overlay-custom-input')?.props.onBlur?.();
+        });
+
+        expect(onSubmitCustomValue).toHaveBeenCalledTimes(1);
         expect(onSubmitCustomValue).toHaveBeenCalledWith('custom-model');
         expect(onSelect).not.toHaveBeenCalled();
+
+        await screen.unmount();
+        expect(onSubmitCustomValue).toHaveBeenCalledTimes(1);
+    });
+
+    it('commits a pending custom value when the picker unmounts without blur', async () => {
+        const onSubmitCustomValue = vi.fn();
+        const { OptionPickerOverlay } = await import('./OptionPickerOverlay');
+        const screen = await renderScreen(<OptionPickerOverlay
+            title="Model"
+            options={[{ value: 'default', label: 'Default' }]}
+            selectedValue="default"
+            emptyText="empty"
+            canEnterCustomValue
+            onSubmitCustomValue={onSubmitCustomValue}
+            onSelect={() => {}}
+        />);
+
+        await screen.pressByTestIdAsync('model-picker-overlay-custom');
+        await act(async () => {
+            screen.changeTextByTestId('model-picker-overlay-custom-input', 'custom-model');
+        });
+        expect(onSubmitCustomValue).not.toHaveBeenCalled();
+
+        await screen.unmount();
+
+        expect(onSubmitCustomValue).toHaveBeenCalledTimes(1);
+        expect(onSubmitCustomValue).toHaveBeenCalledWith('custom-model');
+    });
+
+    it('does not commit a pending custom draft when a listed option is selected', async () => {
+        const onSubmitCustomValue = vi.fn();
+        const onSelect = vi.fn();
+        const { OptionPickerOverlay } = await import('./OptionPickerOverlay');
+        const screen = await renderScreen(<OptionPickerOverlay
+            title="Model"
+            options={[
+                { value: 'default', label: 'Default' },
+                { value: 'fast', label: 'Fast' },
+            ]}
+            selectedValue="default"
+            emptyText="empty"
+            canEnterCustomValue
+            onSubmitCustomValue={onSubmitCustomValue}
+            onSelect={onSelect}
+        />);
+
+        await screen.pressByTestIdAsync('model-picker-overlay-custom');
+        await act(async () => {
+            screen.changeTextByTestId('model-picker-overlay-custom-input', 'half-typed');
+        });
+
+        const listedOption = screen.findByTestId('model-picker-overlay-option:fast');
+        await act(async () => {
+            listedOption?.props.onPressIn?.();
+            screen.findByTestId('model-picker-overlay-custom-input')?.props.onBlur?.();
+        });
+        await screen.pressByTestIdAsync('model-picker-overlay-option:fast');
+
+        expect(onSelect).toHaveBeenCalledWith('fast');
+        expect(onSubmitCustomValue).not.toHaveBeenCalled();
+    });
+
+    it('abandons the pending draft before a listed-option callback unmounts the picker', async () => {
+        const onSubmitCustomValue = vi.fn();
+        let closePicker = false;
+        let unmountPicker: () => Promise<void> = async () => {};
+        const onSelect = vi.fn(() => {
+            if (closePicker) void unmountPicker();
+        });
+        const { OptionPickerOverlay } = await import('./OptionPickerOverlay');
+        const screen = await renderScreen(<OptionPickerOverlay
+            title="Model"
+            options={[
+                { value: 'default', label: 'Default' },
+                { value: 'fast', label: 'Fast' },
+            ]}
+            selectedValue="default"
+            emptyText="empty"
+            canEnterCustomValue
+            onSubmitCustomValue={onSubmitCustomValue}
+            onSelect={onSelect}
+        />);
+        unmountPicker = screen.unmount;
+
+        await screen.pressByTestIdAsync('model-picker-overlay-custom');
+        await act(async () => {
+            screen.changeTextByTestId('model-picker-overlay-custom-input', 'half-typed');
+        });
+
+        closePicker = true;
+        await screen.pressByTestIdAsync('model-picker-overlay-option:fast');
+
+        expect(onSelect).toHaveBeenCalledWith('fast');
+        expect(onSubmitCustomValue).not.toHaveBeenCalled();
+    });
+
+    it('discards a custom draft after a listed option wins and does not revive it on reopen', async () => {
+        const onSubmitCustomValue = vi.fn();
+        const { OptionPickerOverlay } = await import('./OptionPickerOverlay');
+        const screen = await renderScreen(<OptionPickerOverlay
+            title="Model"
+            options={[
+                { value: 'default', label: 'Default' },
+                { value: 'fast', label: 'Fast' },
+            ]}
+            selectedValue="default"
+            emptyText="empty"
+            canEnterCustomValue
+            onSubmitCustomValue={onSubmitCustomValue}
+            onSelect={() => {}}
+        />);
+
+        await screen.pressByTestIdAsync('model-picker-overlay-custom');
+        await act(async () => {
+            screen.changeTextByTestId('model-picker-overlay-custom-input', 'half-typed');
+        });
+        await screen.pressByTestIdAsync('model-picker-overlay-option:fast');
+        await screen.pressByTestIdAsync('model-picker-overlay-custom');
+
+        expect(screen.findByTestId('model-picker-overlay-custom-input')?.props.value).toBe('');
+        await screen.unmount();
+        expect(onSubmitCustomValue).not.toHaveBeenCalled();
+    });
+
+    it('allows the same custom value to be selected again after a listed option', async () => {
+        const onSubmitCustomValue = vi.fn();
+        const { OptionPickerOverlay } = await import('./OptionPickerOverlay');
+        const screen = await renderScreen(<OptionPickerOverlay
+            title="Model"
+            options={[
+                { value: 'default', label: 'Default' },
+                { value: 'fast', label: 'Fast' },
+            ]}
+            selectedValue="default"
+            emptyText="empty"
+            canEnterCustomValue
+            onSubmitCustomValue={onSubmitCustomValue}
+            onSelect={() => {}}
+        />);
+
+        await screen.pressByTestIdAsync('model-picker-overlay-custom');
+        await act(async () => {
+            screen.changeTextByTestId('model-picker-overlay-custom-input', 'my-model');
+        });
+        await act(async () => {
+            screen.findByTestId('model-picker-overlay-custom-input')?.props.onSubmitEditing?.();
+        });
+        expect(onSubmitCustomValue).toHaveBeenCalledTimes(1);
+
+        await screen.pressByTestIdAsync('model-picker-overlay-option:fast');
+        await screen.pressByTestIdAsync('model-picker-overlay-custom');
+        await act(async () => {
+            screen.changeTextByTestId('model-picker-overlay-custom-input', 'my-model');
+        });
+        await act(async () => {
+            screen.findByTestId('model-picker-overlay-custom-input')?.props.onSubmitEditing?.();
+        });
+
+        expect(onSubmitCustomValue).toHaveBeenCalledTimes(2);
+        expect(onSubmitCustomValue).toHaveBeenLastCalledWith('my-model');
+    });
+
+    it('discards a custom draft when a listed selection arrives from outside the picker', async () => {
+        const onSubmitCustomValue = vi.fn();
+        const { OptionPickerOverlay } = await import('./OptionPickerOverlay');
+        let setSelected: ((value: string) => void) | null = null;
+        function Host() {
+            const [selectedValue, setSelectedValue] = React.useState('default');
+            setSelected = setSelectedValue;
+            return (
+                <OptionPickerOverlay
+                    title="Model"
+                    options={[
+                        { value: 'default', label: 'Default' },
+                        { value: 'fast', label: 'Fast' },
+                    ]}
+                    selectedValue={selectedValue}
+                    emptyText="empty"
+                    canEnterCustomValue
+                    onSubmitCustomValue={onSubmitCustomValue}
+                    onSelect={() => {}}
+                />
+            );
+        }
+        const screen = await renderScreen(<Host />);
+
+        await screen.pressByTestIdAsync('model-picker-overlay-custom');
+        await act(async () => {
+            screen.changeTextByTestId('model-picker-overlay-custom-input', 'half-typed');
+            setSelected?.('fast');
+        });
+        await screen.pressByTestIdAsync('model-picker-overlay-custom');
+
+        expect(screen.findByTestId('model-picker-overlay-custom-input')?.props.value).toBe('');
+        await screen.unmount();
+        expect(onSubmitCustomValue).not.toHaveBeenCalled();
     });
 
     it('keeps the custom editor open across parent rerenders while the selected listed value has not changed yet', async () => {
@@ -639,6 +850,7 @@ describe('OptionPickerOverlay', () => {
 
     it('shows the selected listed option after async options hydrate a previously custom-looking value', async () => {
         const { OptionPickerOverlay } = await import('./OptionPickerOverlay');
+        const onSubmitCustomValue = vi.fn();
 
         const renderOverlay = (options: Array<{ value: string; label: string; description?: string }>) => (
             <OptionPickerOverlay
@@ -650,6 +862,7 @@ describe('OptionPickerOverlay', () => {
                 emptyText="empty"
                 canEnterCustomValue
                 customLabel="Custom model"
+                onSubmitCustomValue={onSubmitCustomValue}
                 onSelect={() => {}}
             />
         );
@@ -669,6 +882,11 @@ describe('OptionPickerOverlay', () => {
 
         expect(Boolean(screen.findByTestId('model-picker-overlay-custom-input'))).toBe(false);
         expect(Boolean(screen.findByTestId('model-picker-overlay-option-selected-indicator:openai-codex/gpt-5.5'))).toBe(true);
+
+        await screen.pressByTestIdAsync('model-picker-overlay-custom');
+        expect(screen.findByTestId('model-picker-overlay-custom-input')?.props.value).toBe('');
+        await screen.unmount();
+        expect(onSubmitCustomValue).not.toHaveBeenCalled();
     });
 
     it('shows a loading indicator when models are being probed', async () => {

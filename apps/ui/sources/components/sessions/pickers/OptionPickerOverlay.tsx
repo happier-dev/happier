@@ -291,6 +291,25 @@ export function OptionPickerOverlay<TValue = string>(props: OptionPickerOverlayP
     const dismissedSelectedCustomValueKeyRef = React.useRef<string | null>(null);
     const lastCommittedCustomValueRef = React.useRef(selectedCustomValue);
     const previousSelectedValueKeyRef = React.useRef(selectedValueKey);
+    const selectionPressPendingRef = React.useRef(false);
+    // A focused TextInput does not emit blur when its enclosing picker unmounts,
+    // so cleanup needs the latest local draft and commit callback.
+    const pendingCustomCommitRef = React.useRef<{
+        visible: boolean;
+        value: string;
+        commit: (raw: string) => void;
+    }>({ visible: false, value: '', commit: () => {} });
+
+    const abandonCustomDraft = React.useCallback(() => {
+        selectionPressPendingRef.current = false;
+        pendingCustomCommitRef.current = {
+            ...pendingCustomCommitRef.current,
+            visible: false,
+            value: '',
+        };
+        lastCommittedCustomValueRef.current = '';
+        setCustomValue('');
+    }, []);
 
     React.useEffect(() => {
         const previousSelectedValueKey = previousSelectedValueKeyRef.current;
@@ -313,12 +332,14 @@ export function OptionPickerOverlay<TValue = string>(props: OptionPickerOverlayP
         if (customEditorOpenReasonRef.current === 'selected-custom') {
             customEditorOpenReasonRef.current = null;
             setCustomEditorVisible(false);
+            abandonCustomDraft();
             return;
         }
         if (customEditorVisible && previousSelectedValueKey === selectedValueKey) return;
         customEditorOpenReasonRef.current = null;
         setCustomEditorVisible(false);
-    }, [customEditorVisible, optionKeys, selectedCustomValue, selectedValueKey]);
+        abandonCustomDraft();
+    }, [abandonCustomDraft, customEditorVisible, optionKeys, selectedCustomValue, selectedValueKey]);
 
     React.useEffect(() => {
         if (customEditorVisible && focusCustomInputOnOpenRef.current) {
@@ -387,6 +408,9 @@ export function OptionPickerOverlay<TValue = string>(props: OptionPickerOverlayP
                     id: valueKey,
                     testID: `${optionTestIDPrefix}:${valueKey}`,
                     label: option.label,
+                    onPressIn: () => {
+                        selectionPressPendingRef.current = true;
+                    },
                     subtitle: option.description,
                     accessibilityLabel: option.accessibilityLabel,
                     disabled: option.disabled,
@@ -448,6 +472,18 @@ export function OptionPickerOverlay<TValue = string>(props: OptionPickerOverlayP
         lastCommittedCustomValueRef.current = normalized;
         props.onSubmitCustomValue?.(normalized);
     }, [props.onSubmitCustomValue]);
+    React.useEffect(() => {
+        pendingCustomCommitRef.current = {
+            visible: customEditorVisible,
+            value: customValue,
+            commit: commitCustomValue,
+        };
+    });
+    React.useEffect(() => () => {
+        const pending = pendingCustomCommitRef.current;
+        if (!pending.visible) return;
+        pending.commit(pending.value);
+    }, []);
     const customEntryHeader = (
         <View style={styles.customEntryHeader}>
             <View style={styles.customEntryTextBlock}>
@@ -532,6 +568,9 @@ export function OptionPickerOverlay<TValue = string>(props: OptionPickerOverlayP
                         if (!option || option.disabled) return;
                         customEditorOpenReasonRef.current = null;
                         dismissedSelectedCustomValueKeyRef.current = null;
+                        // Clear synchronously before the callback: the owner may unmount
+                        // this picker inside onSelect, before passive effects can refresh.
+                        abandonCustomDraft();
                         setCustomEditorVisible(false);
                         props.onSelect(option.value);
                     }}
@@ -571,15 +610,19 @@ export function OptionPickerOverlay<TValue = string>(props: OptionPickerOverlayP
                                 testID="model-picker-overlay-custom-input"
                                 accessibilityLabel={t('modelPickerOverlay.customInputA11y')}
                                 value={customValue}
-                                onChangeText={(next) => {
-                                    setCustomValue(next);
-                                    commitCustomValue(next);
-                                }}
+                                onChangeText={setCustomValue}
                                 placeholder={t('agentInput.model.customPlaceholder')}
                                 placeholderTextColor={theme.colors.input.placeholder}
                                 autoCorrect={false}
                                 autoCapitalize="none"
                                 onSubmitEditing={() => commitCustomValue(customValue)}
+                                onBlur={() => {
+                                    if (selectionPressPendingRef.current) {
+                                        selectionPressPendingRef.current = false;
+                                        return;
+                                    }
+                                    commitCustomValue(customValue);
+                                }}
                                 {...customEditorWebKeyProps}
                                 style={styles.customEditorInput}
                             />
@@ -592,6 +635,7 @@ export function OptionPickerOverlay<TValue = string>(props: OptionPickerOverlayP
                         accessibilityRole="button"
                         accessibilityLabel={props.customLabel ?? t('modelPickerOverlay.customTitle')}
                         onPress={() => {
+                            selectionPressPendingRef.current = false;
                             dismissedSelectedCustomValueKeyRef.current = null;
                             customEditorOpenReasonRef.current = selectedCustomValue.length > 0 ? 'selected-custom' : 'manual';
                             focusCustomInputOnOpenRef.current = true;

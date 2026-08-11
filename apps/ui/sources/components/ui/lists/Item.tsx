@@ -65,6 +65,7 @@ export interface ItemProps {
     onPress?: () => void;
     onDoublePress?: () => void;
     onLongPress?: () => void;
+    onPressIn?: () => void;
     onMouseDownCapture?: (event: unknown) => void;
     onContextMenu?: (event: unknown) => void;
     onHoverIn?: () => void;
@@ -298,6 +299,7 @@ export const Item = React.memo<ItemProps>((props) => {
         onPress,
         onDoublePress,
         onLongPress,
+        onPressIn,
         onMouseDownCapture,
         onContextMenu,
         onHoverIn,
@@ -365,7 +367,8 @@ export const Item = React.memo<ItemProps>((props) => {
     // Handle long press for copy functionality
     const handlePressIn = React.useCallback(() => {
         longPressConsumedRef.current = false;
-    }, []);
+        onPressIn?.();
+    }, [onPressIn]);
     
     const webDoublePressHandledAtMsRef = React.useRef<number>(0);
     const webLastPressAtMsRef = React.useRef<number | null>(null);

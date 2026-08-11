@@ -57,6 +57,12 @@ type SelectionListOptionBase = Readonly<{
     testID?: string;
     label: string;
     /**
+     * Called when pointer activation starts, before a focused input can blur.
+     * Consumers use this only to coordinate interaction ordering; selection
+     * remains owned by SelectionList and is delivered through `onSelect`.
+     */
+    onPressIn?: () => void;
+    /**
      * Optional full-row body. When present, SelectionList still owns row
      * activation, selected/focused styling, a11y ids, and scroll-into-view,
      * while the consumer owns the inner visual content.

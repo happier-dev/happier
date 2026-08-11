@@ -131,6 +131,7 @@ export function PlanOptionRow(props: Readonly<{
     const row = props.option.content !== undefined ? (
         <Pressable
             testID={optionTestId}
+            onPressIn={props.option.onPressIn}
             onPress={handlePress}
             {...(Platform.OS === 'web'
                 ? ({ onKeyDown: (event: any) => {
@@ -167,6 +168,7 @@ export function PlanOptionRow(props: Readonly<{
             icon={props.option.icon}
             rightElement={renderSelectionListAccessory(props.option.rightAccessory)}
             rightElementOutsidePressable={props.option.rightAccessoryOutsidePressable === true}
+            onPressIn={props.option.onPressIn}
             onPress={handlePress}
             selected={props.isSelected}
             focused={props.isFocused}
