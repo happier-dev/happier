@@ -1,7 +1,7 @@
 import * as React from 'react';
 
 import { AgentActivityRow } from '@/components/sessions/agentActivity/row/AgentActivityRow';
-import { resolveAgentActivityEntryFromSubagent } from '@/components/sessions/agentActivity/sources/fromSessionSubagents';
+import { resolveAgentActivityEntryFromSubagent } from '@/components/sessions/agentActivity/entry/fromSubagent';
 import type { SessionSubagent } from '@/sync/domains/session/subagents/types';
 
 /**

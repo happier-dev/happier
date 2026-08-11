@@ -85,6 +85,20 @@ function collectText(value: unknown): string {
 }
 
 /**
+ * The section dividers that actually painted.
+ *
+ * Host-only (`typeof type === 'string'`): the react-native mock forwards `testID` through a
+ * composite of the same name, so a props query would count each divider twice.
+ */
+function paintedDividerTestIds(tree: renderer.ReactTestRenderer | undefined): string[] {
+    return (tree?.root.findAll((node) => (
+        typeof node.type === 'string'
+        && typeof node.props?.testID === 'string'
+        && node.props.testID.startsWith('session-work-state-divider-')
+    )) ?? []).map((node) => String(node.props.testID));
+}
+
+/**
  * Pause/Resume, Complete, and Clear live in the goal header's `⋯` overflow menu (U-5). The menu
  * items (which keep the `session-goal-*-button` testIDs) mount only once the menu is opened, so
  * behavior assertions targeting those ids must open the menu first.
@@ -107,6 +121,7 @@ describe('SessionWorkStatePopover', () => {
         let tree: renderer.ReactTestRenderer | undefined;
         await act(async () => {
             tree = renderer.create(<SessionWorkStatePopover
+                    sessionId="sess_1"
                 open
                 anchorRef={anchorRef}
                 snapshot={{
@@ -139,6 +154,7 @@ describe('SessionWorkStatePopover', () => {
         let tree: renderer.ReactTestRenderer | undefined;
         await act(async () => {
             tree = renderer.create(<SessionWorkStatePopover
+                    sessionId="sess_1"
                 open
                 anchorRef={anchorRef}
                 snapshot={{
@@ -173,6 +189,7 @@ describe('SessionWorkStatePopover', () => {
         let tree: renderer.ReactTestRenderer | undefined;
         await act(async () => {
             tree = renderer.create(<SessionWorkStatePopover
+                    sessionId="sess_1"
                 open
                 anchorRef={anchorRef}
                 snapshot={{
@@ -216,6 +233,7 @@ describe('SessionWorkStatePopover', () => {
         let tree: renderer.ReactTestRenderer | undefined;
         await act(async () => {
             tree = renderer.create(<SessionWorkStatePopover
+                    sessionId="sess_1"
                 open
                 anchorRef={anchorRef}
                 snapshot={{
@@ -260,6 +278,7 @@ describe('SessionWorkStatePopover', () => {
         let tree: renderer.ReactTestRenderer | undefined;
         await act(async () => {
             tree = renderer.create(<SessionWorkStatePopover
+                    sessionId="sess_1"
                 open
                 anchorRef={anchorRef}
                 snapshot={{
@@ -291,6 +310,7 @@ describe('SessionWorkStatePopover', () => {
         let tree: renderer.ReactTestRenderer | undefined;
         await act(async () => {
             tree = renderer.create(<SessionWorkStatePopover
+                    sessionId="sess_1"
                 open
                 anchorRef={anchorRef}
                 snapshot={null}
@@ -310,10 +330,72 @@ describe('SessionWorkStatePopover', () => {
         act(() => tree?.unmount());
     });
 
+    /**
+     * A divider separates two sections that are both there. The live-activity slot renders nothing
+     * for a session with no live work — the majority state of any session with a goal — so it must
+     * not contribute one: a goal alone painted a dangling hairline under it, and a goal with tasks
+     * painted two hairlines with nothing between them.
+     */
+    it('draws a divider only between sections that painted (U-7)', async () => {
+        const anchorRef = { current: null } as React.RefObject<any>;
+        const goalItem = {
+            id: 'goal:codex',
+            kind: 'goal' as const,
+            origin: 'vendor' as const,
+            status: 'active' as const,
+            title: 'Ship goals',
+            updatedAt: 10,
+        };
+
+        let goalOnly: renderer.ReactTestRenderer | undefined;
+        await act(async () => {
+            goalOnly = renderer.create(<SessionWorkStatePopover
+                sessionId="sess_1"
+                open
+                anchorRef={anchorRef}
+                snapshot={{ v: 1, backendId: 'codex', updatedAt: 10, primaryItemId: 'goal:codex', items: [goalItem] }}
+                editableGoal
+                onRequestClose={vi.fn()}
+                onSetGoal={vi.fn()}
+                onClearGoal={vi.fn()}
+            />);
+        });
+        // Goal alone, nothing running: one section, so no divider at all.
+        expect(paintedDividerTestIds(goalOnly)).toEqual([]);
+        act(() => goalOnly?.unmount());
+
+        let goalAndTasks: renderer.ReactTestRenderer | undefined;
+        await act(async () => {
+            goalAndTasks = renderer.create(<SessionWorkStatePopover
+                sessionId="sess_1"
+                open
+                anchorRef={anchorRef}
+                snapshot={{
+                    v: 1,
+                    backendId: 'codex',
+                    updatedAt: 10,
+                    primaryItemId: 'goal:codex',
+                    items: [
+                        goalItem,
+                        { id: 'todo:active', kind: 'todo', origin: 'vendor', status: 'active', title: 'Run focused tests', updatedAt: 9 },
+                    ],
+                }}
+                editableGoal
+                onRequestClose={vi.fn()}
+                onSetGoal={vi.fn()}
+                onClearGoal={vi.fn()}
+            />);
+        });
+        // Goal and tasks, nothing running: exactly one divider, between the two sections that exist.
+        expect(paintedDividerTestIds(goalAndTasks)).toEqual(['session-work-state-divider-tasks']);
+        act(() => goalAndTasks?.unmount());
+    });
+
     it('keeps the AgentInput goal-chip content as the set-first-goal affordance', async () => {
         let tree: renderer.ReactTestRenderer | undefined;
         await act(async () => {
             tree = renderer.create(<SessionWorkStateContent
+                    sessionId="sess_1"
                 snapshot={null}
                 editableGoal
                 requestClose={vi.fn()}
@@ -334,6 +416,7 @@ describe('SessionWorkStatePopover', () => {
         let tree: renderer.ReactTestRenderer | undefined;
         await act(async () => {
             tree = renderer.create(<SessionWorkStateContent
+                    sessionId="sess_1"
                 snapshot={null}
                 editableGoal
                 requestClose={vi.fn()}
@@ -358,6 +441,7 @@ describe('SessionWorkStatePopover', () => {
         let tree: renderer.ReactTestRenderer | undefined;
         await act(async () => {
             tree = renderer.create(<SessionWorkStateContent
+                    sessionId="sess_1"
                 snapshot={null}
                 editableGoal
                 requestClose={requestClose}
@@ -385,6 +469,7 @@ describe('SessionWorkStatePopover', () => {
         let tree: renderer.ReactTestRenderer | undefined;
         await act(async () => {
             tree = renderer.create(<SessionWorkStateContent
+                    sessionId="sess_1"
                 snapshot={null}
                 editableGoal
                 requestClose={requestClose}
@@ -409,6 +494,7 @@ describe('SessionWorkStatePopover', () => {
         let tree: renderer.ReactTestRenderer | undefined;
         await act(async () => {
             tree = renderer.create(<SessionWorkStatePopover
+                    sessionId="sess_1"
                 open
                 anchorRef={anchorRef}
                 snapshot={{
@@ -443,6 +529,7 @@ describe('SessionWorkStatePopover', () => {
         let tree: renderer.ReactTestRenderer | undefined;
         await act(async () => {
             tree = renderer.create(<SessionWorkStatePopover
+                    sessionId="sess_1"
                 open
                 anchorRef={anchorRef}
                 // A snapshot with no goal item, no tasks, and (no workflowActivity prop →) no workflow
@@ -473,6 +560,7 @@ describe('SessionWorkStatePopover', () => {
         let tree: renderer.ReactTestRenderer | undefined;
         await act(async () => {
             tree = renderer.create(<SessionWorkStateContent
+                    sessionId="sess_1"
                 snapshot={{
                     v: 1,
                     backendId: 'claude',
@@ -502,6 +590,7 @@ describe('SessionWorkStatePopover', () => {
         let tree: renderer.ReactTestRenderer | undefined;
         await act(async () => {
             tree = renderer.create(<SessionWorkStatePopover
+                    sessionId="sess_1"
                 open
                 anchorRef={anchorRef}
                 snapshot={{
@@ -536,6 +625,7 @@ describe('SessionWorkStatePopover', () => {
         let tree: renderer.ReactTestRenderer | undefined;
         await act(async () => {
             tree = renderer.create(<SessionWorkStatePopover
+                    sessionId="sess_1"
                 open
                 anchorRef={anchorRef}
                 snapshot={{
@@ -579,6 +669,7 @@ describe('SessionWorkStatePopover', () => {
         let tree: renderer.ReactTestRenderer | undefined;
         await act(async () => {
             tree = renderer.create(<SessionWorkStatePopover
+                    sessionId="sess_1"
                 open
                 anchorRef={anchorRef}
                 snapshot={{
@@ -627,6 +718,7 @@ describe('SessionWorkStatePopover', () => {
         let tree: renderer.ReactTestRenderer | undefined;
         await act(async () => {
             tree = renderer.create(<SessionWorkStatePopover
+                    sessionId="sess_1"
                 open
                 anchorRef={anchorRef}
                 snapshot={{
@@ -681,6 +773,7 @@ describe('SessionWorkStatePopover', () => {
         let tree: renderer.ReactTestRenderer | undefined;
         await act(async () => {
             tree = renderer.create(<SessionWorkStatePopover
+                    sessionId="sess_1"
                 open
                 anchorRef={anchorRef}
                 snapshot={{
@@ -716,6 +809,7 @@ describe('SessionWorkStatePopover', () => {
         let tree: renderer.ReactTestRenderer | undefined;
         await act(async () => {
             tree = renderer.create(<SessionWorkStatePopover
+                    sessionId="sess_1"
                 open
                 anchorRef={anchorRef}
                 snapshot={{
@@ -756,6 +850,7 @@ describe('SessionWorkStatePopover', () => {
         let tree: renderer.ReactTestRenderer | undefined;
         await act(async () => {
             tree = renderer.create(<SessionWorkStatePopover
+                    sessionId="sess_1"
                 open
                 anchorRef={anchorRef}
                 snapshot={{
@@ -797,6 +892,7 @@ describe('SessionWorkStatePopover', () => {
         let tree: renderer.ReactTestRenderer | undefined;
         await act(async () => {
             tree = renderer.create(<SessionWorkStatePopover
+                    sessionId="sess_1"
                 open
                 anchorRef={anchorRef}
                 snapshot={{
@@ -839,6 +935,7 @@ describe('SessionWorkStatePopover', () => {
         let tree: renderer.ReactTestRenderer | undefined;
         await act(async () => {
             tree = renderer.create(<SessionWorkStatePopover
+                    sessionId="sess_1"
                 open
                 anchorRef={anchorRef}
                 snapshot={{
@@ -880,6 +977,7 @@ describe('SessionWorkStatePopover', () => {
         let tree: renderer.ReactTestRenderer | undefined;
         await act(async () => {
             tree = renderer.create(<SessionWorkStatePopover
+                    sessionId="sess_1"
                 open
                 anchorRef={anchorRef}
                 snapshot={{
@@ -923,6 +1021,7 @@ describe('SessionWorkStatePopover', () => {
         let tree: renderer.ReactTestRenderer | undefined;
         await act(async () => {
             tree = renderer.create(<SessionWorkStatePopover
+                    sessionId="sess_1"
                 open
                 anchorRef={anchorRef}
                 snapshot={{
@@ -959,6 +1058,7 @@ describe('SessionWorkStatePopover', () => {
         let tree: renderer.ReactTestRenderer | undefined;
         await act(async () => {
             tree = renderer.create(<SessionWorkStatePopover
+                    sessionId="sess_1"
                 open
                 anchorRef={anchorRef}
                 snapshot={{
@@ -992,6 +1092,7 @@ describe('SessionWorkStatePopover', () => {
         let tree: renderer.ReactTestRenderer | undefined;
         await act(async () => {
             tree = renderer.create(<SessionWorkStatePopover
+                    sessionId="sess_1"
                 open
                 anchorRef={anchorRef}
                 snapshot={{
@@ -1040,6 +1141,7 @@ describe('SessionWorkStatePopover', () => {
         let tree: renderer.ReactTestRenderer | undefined;
         await act(async () => {
             tree = renderer.create(<SessionWorkStatePopover
+                    sessionId="sess_1"
                 open
                 anchorRef={anchorRef}
                 snapshot={{
@@ -1076,6 +1178,7 @@ describe('SessionWorkStatePopover', () => {
         let tree: renderer.ReactTestRenderer | undefined;
         await act(async () => {
             tree = renderer.create(<SessionWorkStatePopover
+                    sessionId="sess_1"
                 open
                 anchorRef={anchorRef}
                 snapshot={{
@@ -1129,6 +1232,7 @@ describe('SessionWorkStatePopover', () => {
         let tree: renderer.ReactTestRenderer | undefined;
         await act(async () => {
             tree = renderer.create(<SessionWorkStatePopover
+                    sessionId="sess_1"
                 open
                 anchorRef={anchorRef}
                 snapshot={activeSnapshot}
@@ -1150,6 +1254,7 @@ describe('SessionWorkStatePopover', () => {
         // The native work-state now reflects the change → confirmation closes the popover.
         await act(async () => {
             tree?.update(<SessionWorkStatePopover
+                    sessionId="sess_1"
                 open
                 anchorRef={anchorRef}
                 snapshot={{
@@ -1195,6 +1300,7 @@ describe('SessionWorkStatePopover', () => {
             let tree: renderer.ReactTestRenderer | undefined;
             await act(async () => {
                 tree = renderer.create(<SessionWorkStatePopover
+                    sessionId="sess_1"
                     open
                     anchorRef={anchorRef}
                     snapshot={activeSnapshot}
@@ -1225,6 +1331,7 @@ describe('SessionWorkStatePopover', () => {
             // Confirmation finally lands → both the pending and the softened note clear, popover closes.
             await act(async () => {
                 tree?.update(<SessionWorkStatePopover
+                    sessionId="sess_1"
                     open
                     anchorRef={anchorRef}
                     snapshot={{
@@ -1258,6 +1365,7 @@ describe('SessionWorkStatePopover', () => {
         let tree: renderer.ReactTestRenderer | undefined;
         await act(async () => {
             tree = renderer.create(<SessionWorkStatePopover
+                    sessionId="sess_1"
                 open
                 anchorRef={anchorRef}
                 snapshot={{

@@ -318,7 +318,7 @@ describe('AgentActivityList migration choreography', () => {
         await screen.unmount();
     });
 
-    it('does not make an agent that starts needing a person wait out the completion dwell', async () => {
+    it('leaves an agent that stops on a permission prompt exactly where it is', async () => {
         const alpha = entry({ id: 'alpha', status: 'running' });
         const roster = [alpha, entry({ id: 'beta', status: 'running', startedAtMs: T0 + 1 })];
         const screen = await renderScreen(<AgentActivityList testID="roster" entries={roster} />);
@@ -330,10 +330,11 @@ describe('AgentActivityList migration choreography', () => {
             />,
         );
 
-        // The dwell is a courtesy owed to work that is over. An escalation is the opposite: the
-        // person is the one being waited on, so it pins at once.
+        // The dwell is a courtesy owed to work that is over, and `waiting` is not over: the row
+        // stays in WORKING in its start order, so nothing moves under the reader at all. There is
+        // no section for it to be pinned to any more.
         expect(layoutSignature(screen)).toBe(
-            'section:needsYou > row:alpha > section:working > row:beta',
+            'section:working > row:alpha > row:beta',
         );
 
         await screen.unmount();

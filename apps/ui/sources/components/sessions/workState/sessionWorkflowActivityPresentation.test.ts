@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import type { SessionWorkflowRunSnapshotV1 } from '@happier-dev/protocol';
+import { buildAgentActivityEntryId, type SessionWorkflowRunSnapshotV1 } from '@happier-dev/protocol';
 import {
     makeSessionWorkflowActivityHeadline,
     makeSessionWorkflowRunHeadline,
@@ -11,20 +11,28 @@ import {
     buildWorkflowActivityRows,
     computeWorkflowPhaseRollup,
     computeWorkflowRunRollup,
-    formatWorkflowAgentFraction,
     groupWorkflowAgentsByPhase,
     readSessionWorkflowActivityHeadlineFromMetadata,
     resolveActiveWorkflowPhasePosition,
-    resolveActiveWorkflowRunHeadlines,
-    resolvePrimaryWorkflowRunHeadline,
     resolveWorkflowMeterTone,
     resolveWorkflowProgressFraction,
-    resolveWorkflowRollupTone,
-    resolveWorkflowRunTone,
 } from './sessionWorkflowActivityPresentation';
 
 const headlineRun = makeSessionWorkflowRunHeadline;
 const headline = makeSessionWorkflowActivityHeadline;
+
+/**
+ * An agent row id, asked of the protocol owner rather than spelled here.
+ *
+ * These tests are about ORDER and GROUPING, not about how an id reads, and a hand-written wire
+ * literal in each of them would make the spelling need a lockstep edit in six places the next time
+ * it moves. The spelling itself is locked once, at the owner
+ * (`packages/protocol/…/agentActivityEntryId.test.ts`), and the producer/consumer agreement is
+ * locked in `sessionWorkflowActivityEntryIdParity.test.ts`.
+ */
+function agentRowId(agentId: string, runId = 'run1'): string {
+    return buildAgentActivityEntryId({ kind: 'workflow_agent', runId, agentId });
+}
 
 describe('readSessionWorkflowActivityHeadlineFromMetadata', () => {
     it('reads a valid headline from metadata.sessionWorkflowActivityHeadlineV1', () => {
@@ -42,33 +50,7 @@ describe('readSessionWorkflowActivityHeadlineFromMetadata', () => {
     });
 });
 
-describe('resolveActiveWorkflowRunHeadlines / resolvePrimaryWorkflowRunHeadline', () => {
-    it('sorts active runs by W1 ordering (blocked before active)', () => {
-        const h = headline([
-            headlineRun({ runId: 'a', status: 'active', updatedAt: 5 }),
-            headlineRun({ runId: 'b', status: 'blocked', updatedAt: 1 }),
-        ]);
-        const active = resolveActiveWorkflowRunHeadlines(h);
-        expect(active.map((r) => r.runId)).toEqual(['b', 'a']);
-        expect(resolvePrimaryWorkflowRunHeadline(h)?.runId).toBe('b');
-    });
 
-    it('returns null primary when there are no active runs', () => {
-        expect(resolvePrimaryWorkflowRunHeadline(null)).toBeNull();
-        expect(resolveActiveWorkflowRunHeadlines(null)).toEqual([]);
-        const terminalOnly = headline([headlineRun({ runId: 'x', status: 'complete' })]);
-        expect(resolvePrimaryWorkflowRunHeadline(terminalOnly)).toBeNull();
-    });
-});
-
-describe('formatWorkflowAgentFraction', () => {
-    it('formats completed/total', () => {
-        expect(formatWorkflowAgentFraction({ completedAgents: 2, totalAgents: 5 })).toBe('2/5');
-    });
-    it('returns null when there are no agents', () => {
-        expect(formatWorkflowAgentFraction({ completedAgents: 0, totalAgents: 0 })).toBeNull();
-    });
-});
 
 function snapshot(over: Partial<SessionWorkflowRunSnapshotV1>): SessionWorkflowRunSnapshotV1 {
     return makeSessionWorkflowRunSnapshot({ runId: 'run1', title: 'Implement', ...over });
@@ -105,7 +87,7 @@ describe('groupWorkflowAgentsByPhase', () => {
         expect(groups.map((g) => g.title)).toEqual(['Research', 'Implementation']);
         expect(groups[0]?.agents.map((a) => a.agentId)).toEqual(['ag1']);
         expect(groups[0]?.rollup.complete).toBe(1);
-        expect(groups[1]?.agents[0]?.rowId).toBe('run1:agent:ag2');
+        expect(groups[1]?.agents[0]?.rowId).toBe(agentRowId('ag2'));
     });
 
     it('returns no groups when there are no phases', () => {
@@ -129,9 +111,9 @@ describe('buildWorkflowActivityRows', () => {
         const rows = buildWorkflowActivityRows(snap);
         expect(rows.map((r) => `${r.kind}:${r.rowId}`)).toEqual([
             'phaseHeader:run1:phase:p1',
-            'agent:run1:agent:ag1',
+            `agent:${agentRowId('ag1')}`,
             'phaseHeader:run1:phase:p2',
-            'agent:run1:agent:ag2',
+            `agent:${agentRowId('ag2')}`,
         ]);
     });
 
@@ -144,7 +126,7 @@ describe('buildWorkflowActivityRows', () => {
         });
         const rows = buildWorkflowActivityRows(snap);
         expect(rows.every((r) => r.kind === 'agent')).toBe(true);
-        expect(rows.map((r) => r.rowId)).toEqual(['run1:agent:a', 'run1:agent:b']);
+        expect(rows.map((r) => r.rowId)).toEqual([agentRowId('a'), agentRowId('b')]);
     });
 
     it('puts unphased agents in an explicit fallback group instead of under the last phase', () => {
@@ -161,10 +143,10 @@ describe('buildWorkflowActivityRows', () => {
         const rows = buildWorkflowActivityRows(snap);
         expect(rows.map((r) => r.rowId)).toEqual([
             'run1:phase:p1',
-            'run1:agent:ag1',
+            agentRowId('ag1'),
             'run1:phase:p2',
             'run1:phase:unassigned',
-            'run1:agent:orphan',
+            agentRowId('orphan'),
         ]);
         expect(rows[3]).toMatchObject({
             kind: 'phaseHeader',
@@ -175,24 +157,19 @@ describe('buildWorkflowActivityRows', () => {
 });
 
 describe('tone + progress helpers', () => {
-    it('run tone: failed/blocked warns, active is active, complete is complete', () => {
-        expect(resolveWorkflowRunTone('failed')).toBe('warning');
-        expect(resolveWorkflowRunTone('blocked')).toBe('warning');
-        expect(resolveWorkflowRunTone('stopped')).toBe('warning');
-        expect(resolveWorkflowRunTone('active')).toBe('active');
-        expect(resolveWorkflowRunTone('complete')).toBe('complete');
-        expect(resolveWorkflowRunTone('cancelled')).toBe('neutral');
-    });
+    // Run status -> tone is NOT owned here. It is `resolveAgentActivityTone(fromWorkflowRunStatus(…))`
+    // in the protocol, consumed by the composer badge (`sessionActivityPresentation.test.ts`) and by
+    // the shared row. A second mapping in this file painted `blocked` as a warning while the row
+    // beside it painted the same run pending, so it was removed rather than re-pinned here.
 
-    it('rollup tone reflects worst-case agent status', () => {
+    it('meter tone reflects worst-case agent status', () => {
         const rollup = (over: Partial<ReturnType<typeof computeWorkflowPhaseRollup>>) => ({
             total: 0, complete: 0, failed: 0, blocked: 0, active: 0, pending: 0, cancelled: 0, unknown: 0, ...over,
         });
-        expect(resolveWorkflowRollupTone(rollup({ total: 2, failed: 1 }))).toBe('warning');
-        expect(resolveWorkflowRollupTone(rollup({ total: 2, active: 1 }))).toBe('active');
-        expect(resolveWorkflowRollupTone(rollup({ total: 2, complete: 2 }))).toBe('complete');
         expect(resolveWorkflowMeterTone(rollup({ total: 2, failed: 1 }))).toBe('danger');
         expect(resolveWorkflowMeterTone(rollup({ total: 2, blocked: 1 }))).toBe('warning');
+        expect(resolveWorkflowMeterTone(rollup({ total: 2, complete: 2 }))).toBe('success');
+        expect(resolveWorkflowMeterTone(rollup({ total: 2 }))).toBe('neutral');
     });
 
     it('progress fraction clamps to 0..1', () => {

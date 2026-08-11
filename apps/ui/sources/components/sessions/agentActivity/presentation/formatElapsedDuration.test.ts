@@ -4,7 +4,7 @@ import { formatElapsedDuration } from './formatElapsedDuration';
 
 /**
  * The one elapsed formatter (C9). Four incompatible ones exist in the corridor today —
- * `formatDurationMs` (ms/s/m·s), `WorkflowAgentRow.formatDuration` (s or m·s),
+ * `formatDurationMs` (ms/s/m·s), the transcript workflow agent row's own duration (s or m·s),
  * `WorkflowActivityView.formatFooter` (s or m·s), `tools.common.elapsedSeconds` (fractional
  * seconds) — so the same 95 seconds reads four ways in one screen.
  *

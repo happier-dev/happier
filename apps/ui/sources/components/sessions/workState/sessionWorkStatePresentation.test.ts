@@ -311,6 +311,59 @@ describe('sessionWorkStatePresentation', () => {
         });
     });
 
+    /**
+     * Fill in the composer status row means exactly one thing: a person is needed. `blocked` and
+     * `paused` qualify — both wait on a human decision. A completed goal does not: nothing is asked
+     * of anybody, and filling it makes the composer announce a success, which is the one thing the
+     * status row must never do (it would fire several times a day and train the fill to mean
+     * nothing). It keeps its success tone; it loses the chrome that demands attention.
+     */
+    it('does not fill a completed goal — fill is reserved for work that needs a person', () => {
+        const presentation = resolveSessionWorkStateStatusBadgePresentation({
+            primaryItem: {
+                id: 'goal:thread-1',
+                kind: 'goal',
+                origin: 'vendor',
+                status: 'complete',
+                title: 'Ship the release',
+                updatedAt: 10,
+            },
+            activeStatusBadgeKey: null,
+            editableGoal: true,
+            translate,
+        });
+
+        expect(presentation).toEqual({
+            itemKind: 'goal',
+            label: 'session.workState.badge.goalComplete:',
+            tone: 'complete',
+            emphasis: 'quiet',
+        });
+    });
+
+    it('still fills a paused goal, which waits on a person to resume it', () => {
+        const presentation = resolveSessionWorkStateStatusBadgePresentation({
+            primaryItem: {
+                id: 'goal:thread-1',
+                kind: 'goal',
+                origin: 'vendor',
+                status: 'paused',
+                title: 'Ship the release',
+                updatedAt: 10,
+            },
+            activeStatusBadgeKey: null,
+            editableGoal: true,
+            translate,
+        });
+
+        expect(presentation).toEqual({
+            itemKind: 'goal',
+            label: 'session.workState.badge.goalPaused:',
+            tone: 'paused',
+            emphasis: 'prominent',
+        });
+    });
+
     it('preserves parentId and progress on work-state items for workflow correlation (W2)', () => {
         const snapshot = readSessionWorkStateFromMetadata({
             sessionWorkStateV1: {

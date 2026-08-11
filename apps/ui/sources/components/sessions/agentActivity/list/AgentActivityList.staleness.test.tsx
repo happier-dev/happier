@@ -134,7 +134,7 @@ describe('AgentActivityList (quiet and stale rows)', () => {
 
         await advanceTo(630_000);
 
-        expect(String(findRowProps(screen).subtitle)).toContain('No update in 10 min');
+        expect(String(findRowProps(screen).subtitle)).toContain('No update for over 10 min');
         // Frozen exactly on the threshold, not at the current 10:30 — and it does not jump
         // backwards to get there, because the clock clamps itself rather than waiting for the note.
         expect(screen.getTextContent()).toContain('10:00');

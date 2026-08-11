@@ -50,11 +50,20 @@ export function useSessionWorkStateGoalController(params: Readonly<{
      */
     goalActionCapabilityFallback?: GoalActionCapabilities | null;
     /**
-     * Optional Active Workflows section (UIW3), rendered between the goal controls and the task list.
-     * Owned by `SessionWorkflowActivitySection`; the goal controller only slots it so it stays focused
-     * on goal editing.
+     * Live agent activity, rendered between the goal controls and the task list, or `null` when
+     * this session has nothing running.
+     *
+     * Owned by `useSessionWorkStateActivitySection` — every kind, from the one unified model — so
+     * the goal controller only slots it and stays focused on goal editing. The key is `activity`
+     * and not `workflow` because it carries subagents and background commands too.
+     *
+     * **`null` means absent, and that is load-bearing.** A section that renders nothing must not
+     * reach this list: a React element is truthy whether or not it paints, so an always-supplied
+     * slot earned a divider and suppressed nothing, which is precisely the pair of defects r4.2
+     * removed. The host decides presence during its own render; there is no "…but it was empty"
+     * correction, because a correction can only arrive after a frame has already been shown.
      */
-    workflowSection?: React.ReactNode;
+    activitySection?: React.ReactNode;
     /**
      * Whether this surface is allowed to show the set-first-goal form when no goal exists yet.
      * The AgentInput goal chip is the creation affordance; the above-composer work-state popover
@@ -221,8 +230,9 @@ export function useSessionWorkStateGoalController(params: Readonly<{
             ),
         });
     }
-    if (params.workflowSection) {
-        mainSections.push({ key: 'workflow', node: params.workflowSection });
+    const hasActivity = params.activitySection != null;
+    if (hasActivity) {
+        mainSections.push({ key: 'activity', node: params.activitySection });
     }
     if (hasTasks) {
         mainSections.push({
@@ -235,9 +245,12 @@ export function useSessionWorkStateGoalController(params: Readonly<{
             ),
         });
     }
-    // U-15: nothing to show (no goal, no workflows, no tasks) renders a muted placeholder instead of
-    // an empty padded box. Transient status rows (pending/slow) do not count as content.
-    const showEmptyPlaceholder = mainSections.length === 0 && !pending && !confirmationSlow;
+    // U-15: nothing to show (no goal, no activity, no tasks) renders a muted placeholder instead of
+    // an empty padded box. Transient status rows (pending/slow) do not count as content. Every term
+    // is known during this render, so the placeholder and the content it contradicts can never be
+    // committed in the same frame.
+    const showEmptyPlaceholder =
+        !renderGoalControls && !hasTasks && !hasActivity && !pending && !confirmationSlow;
 
     const content = (
         <View

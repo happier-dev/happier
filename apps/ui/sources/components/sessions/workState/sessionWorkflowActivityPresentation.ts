@@ -1,7 +1,7 @@
 import {
+    buildAgentActivityEntryId,
     findWorkflowPhaseForAgent,
     SessionWorkflowActivityHeadlineV1Schema,
-    sortActiveWorkflowRunHeadlines,
 } from '@happier-dev/protocol';
 
 import type {
@@ -16,10 +16,6 @@ import type {
     WorkflowPhaseViewModel,
 } from './sessionWorkflowActivityTypes';
 
-/** Workflow status tone shared by the compact badge, popover, and transcript card (themed downstream). */
-export type WorkflowStatusTone = 'active' | 'warning' | 'complete' | 'neutral';
-
-const TERMINAL_RUN_STATUSES = new Set(['complete', 'failed', 'stopped', 'cancelled']);
 const UNASSIGNED_PHASE_ID = 'unassigned';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -63,7 +59,16 @@ function buildAgentRow(
     phase?: SessionWorkflowRunSnapshotV1['phases'][number],
 ): WorkflowAgentRowViewModel {
     return {
-        rowId: `${snapshot.runId}:agent:${agent.id}`,
+        // The agent-activity entry id, from the protocol owner — never a template here. The merge in
+        // `deriveAgentActivityEntries` unions the published headline with locally derived entries BY
+        // ID, so a second spelling of one agent does not fail: it renders that agent twice, with
+        // every schema valid and every test green. This row model reaches that merge through the
+        // work-state popover, so it is one of the two ends that must agree.
+        rowId: buildAgentActivityEntryId({
+            kind: 'workflow_agent',
+            runId: snapshot.runId,
+            agentId: agent.id,
+        }),
         runId: snapshot.runId,
         agentId: agent.id,
         title: agent.title,
@@ -76,6 +81,14 @@ function buildAgentRow(
         ...(typeof agent.timeUsedSeconds === 'number' ? { timeUsedSeconds: agent.timeUsedSeconds } : {}),
         ...(agent.resultPreview ? { resultPreview: agent.resultPreview } : {}),
         ...(agent.summary ? { summary: agent.summary } : {}),
+        // Copied only when the snapshot actually has them (D-8): an absent start must stay absent
+        // rather than borrow `updatedAt`, and an absent finish must not borrow the start.
+        ...(typeof agent.startedAt === 'number' ? { startedAtMs: agent.startedAt } : {}),
+        ...(typeof agent.completedAt === 'number' ? { endedAtMs: agent.completedAt } : {}),
+        // Evidence, not a start and not a finish: it is the only field the silence rule may read,
+        // and it was the one field this projection dropped — which is why run-panel agent rows were
+        // structurally incapable of ever going quiet.
+        ...(typeof agent.updatedAt === 'number' ? { updatedAtMs: agent.updatedAt } : {}),
     };
 }
 
@@ -85,25 +98,14 @@ export function readSessionWorkflowActivityHeadlineFromMetadata(metadata: unknow
     return parsed.success ? parsed.data : null;
 }
 
-export function resolveActiveWorkflowRunHeadlines(
-    headline: SessionWorkflowActivityHeadlineV1 | null,
-): SessionWorkflowRunHeadlineV1[] {
-    if (!headline) return [];
-    return sortActiveWorkflowRunHeadlines(
-        headline.activeRuns.filter((run) => !TERMINAL_RUN_STATUSES.has(run.status)),
-    );
-}
-
-export function resolvePrimaryWorkflowRunHeadline(
-    headline: SessionWorkflowActivityHeadlineV1 | null,
-): SessionWorkflowRunHeadlineV1 | null {
-    return resolveActiveWorkflowRunHeadlines(headline)[0] ?? null;
-}
-
-export function formatWorkflowAgentFraction(run: Pick<SessionWorkflowRunHeadlineV1, 'completedAgents' | 'totalAgents'>): string | null {
-    if (run.totalAgents <= 0) return null;
-    return `${run.completedAgents}/${run.totalAgents}`;
-}
+/**
+ * Which runs a session has, and in what order, is no longer decided here.
+ *
+ * `resolveActiveWorkflowRunHeadlines` / `resolvePrimaryWorkflowRunHeadline` /
+ * `formatWorkflowAgentFraction` were the read side of the second existence model (r4.1). Existence,
+ * status and ordering now come from `sync/domains/session/agentActivity`; this module keeps only
+ * the snapshot-shaped presentation the durable record feeds.
+ */
 
 export function computeWorkflowPhaseRollup(agents: readonly WorkflowAgentRowViewModel[]): WorkflowPhaseRollup {
     return agents.reduce((rollup, agent) => addStatusToRollup(rollup, agent.status), emptyRollup());
@@ -132,12 +134,18 @@ export function groupWorkflowAgentsByPhase(snapshot: SessionWorkflowRunSnapshotV
 export function buildWorkflowActivityRows(snapshot: SessionWorkflowRunSnapshotV1): WorkflowActivityRowViewModel[] {
     const phaseGroups = groupWorkflowAgentsByPhase(snapshot);
     if (phaseGroups.length === 0) {
-        return snapshot.agents.map((agent) => ({
-            kind: 'agent',
-            rowId: `${snapshot.runId}:agent:${agent.id}`,
-            runId: snapshot.runId,
-            agent: buildAgentRow(snapshot, agent),
-        }));
+        // The row id is READ off the agent row rather than minted again: one id per agent, one
+        // place that decides it. The phased branch below already does this, and the two templates
+        // drifting apart is the same failure at a smaller radius.
+        return snapshot.agents.map((agent) => {
+            const row = buildAgentRow(snapshot, agent);
+            return {
+                kind: 'agent',
+                rowId: row.rowId,
+                runId: snapshot.runId,
+                agent: row,
+            };
+        });
     }
 
     const rows: WorkflowActivityRowViewModel[] = [];
@@ -195,24 +203,13 @@ export function buildWorkflowActivityRows(snapshot: SessionWorkflowRunSnapshotV1
     return rows;
 }
 
-/** Run-status tone: failed/blocked warns, active is active, terminal-success is complete. */
-export function resolveWorkflowRunTone(status: SessionWorkflowRunStatusV1): WorkflowStatusTone {
-    if (status === 'failed' || status === 'blocked' || status === 'stopped') return 'warning';
-    if (status === 'active') return 'active';
-    if (status === 'complete') return 'complete';
-    if (status === 'cancelled') return 'neutral';
-    return 'neutral';
-}
-
-/** Phase/run rollup tone: any failed/blocked agent warns, any active agent is active, all-complete is complete. */
-export function resolveWorkflowRollupTone(rollup: WorkflowPhaseRollup): WorkflowStatusTone {
-    if (rollup.failed > 0 || rollup.blocked > 0) return 'warning';
-    if (rollup.active > 0) return 'active';
-    if (rollup.total > 0 && rollup.complete === rollup.total) return 'complete';
-    return 'neutral';
-}
-
-/** Progress meter tone for `MeterBar`: success/warning/danger/neutral from a run-level rollup. */
+/**
+ * Progress meter tone for `MeterBar`: success/warning/danger/neutral from a run-level rollup.
+ *
+ * Not a status->tone owner and not a candidate to be folded into one: its input is an aggregate of
+ * agent counts, not a status, and its output is `MeterBar`'s own variant set. A run whose agents
+ * are all still working has no status of its own to map — it has a bar to fill.
+ */
 export function resolveWorkflowMeterTone(rollup: WorkflowPhaseRollup): 'success' | 'warning' | 'danger' | 'neutral' {
     if (rollup.failed > 0) return 'danger';
     if (rollup.blocked > 0) return 'warning';

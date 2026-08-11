@@ -2,6 +2,7 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { AGENT_ACTIVITY_FINISHED_IN_PANE_LIMIT } from '@/components/sessions/agentActivity/list/agentActivitySectionModel';
 import { clearSessionTranscriptDerivedCachesForSession } from '@/sync/runtime/sessionTranscriptDerivedCaches';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -20,7 +21,7 @@ const STATUS_WORDS: Readonly<Record<string, string>> = {
     'session.agentActivity.status.queued': 'Queued',
     'session.agentActivity.status.starting': 'Starting',
     'session.agentActivity.status.running': 'Running',
-    'session.agentActivity.status.waiting': 'Needs you',
+    'session.agentActivity.status.waiting': 'Awaiting approval',
     'session.agentActivity.status.blocked': 'Blocked',
     'session.agentActivity.status.succeeded': 'Succeeded',
     'session.agentActivity.status.failed': 'Failed',
@@ -199,7 +200,7 @@ describe('SessionRightPanelAgentsView agent-activity roster', () => {
         expect(screen.findByTestId(`session-subagent-row:${runningId}`)).toBeNull();
     }, 120_000);
 
-    it('partitions the roster into the shared sections and pins a permission-blocked agent to NEEDS YOU', async () => {
+    it('partitions the roster into the two shared sections and keeps a permission-blocked agent working', async () => {
         const fixture = testkit.makeSessionAgentActivityFixture({
             sessionId: SESSION_ID,
             subagents: [
@@ -215,14 +216,65 @@ describe('SessionRightPanelAgentsView agent-activity roster', () => {
         );
         await testkit.flushHookEffects();
 
-        expect(screen.findByTestId(`${ROSTER_TEST_ID}:section:needsYou`)).toBeTruthy();
+        expect(screen.findByTestId(`${ROSTER_TEST_ID}:section:needsYou`)).toBeNull();
         expect(screen.findByTestId(`${ROSTER_TEST_ID}:section:working`)).toBeTruthy();
         expect(screen.findByTestId(`${ROSTER_TEST_ID}:section:finished`)).toBeTruthy();
 
+        // The blockage is carried by the row itself — its own glyph and status word — and by
+        // nothing above it. That is the whole of the claim this roster makes about it.
         const blockedId = testkit.agentActivityFixtureSubagentId('alpha');
         expect(
             screen.findByTestId(`${ROSTER_TEST_ID}:row:${blockedId}:status`)?.props.accessibilityLabel,
-        ).toBe('Needs you');
+        ).toBe('Awaiting approval');
+    }, 120_000);
+
+    /**
+     * The pane's FINISHED cap and its "Show all" row shipped unreachable: the cap only applies when
+     * the host supplies somewhere for "show all" to go, and this host supplied nothing — so
+     * `AGENT_ACTIVITY_FINISHED_IN_PANE_LIMIT`, the show-all item and their unit tests were all
+     * certifying code the app could never enter (§4.7).
+     */
+    it('caps FINISHED in the pane and expands the rest in place', async () => {
+        const fixture = testkit.makeSessionAgentActivityFixture({
+            sessionId: SESSION_ID,
+            subagents: [
+                { key: 'live', title: 'Still going', status: 'running' },
+                ...Array.from({ length: 26 }, (_unused, index) => ({
+                    key: `done-${index}`,
+                    title: `Finished ${index}`,
+                    status: 'succeeded' as const,
+                })),
+            ],
+        });
+        seed(fixture);
+
+        const screen = await testkit.renderScreen(
+            <SessionRightPanelAgentsView sessionId={fixture.sessionId} scopeId="session:s1" />,
+        );
+        await testkit.flushHookEffects();
+
+        // Counted rather than named: which rows fall outside the cap is an ordering detail, and
+        // pinning it here would make this a test about the comparator instead of about the cap.
+        const countFinishedRows = () => {
+            const text = screen.getTextContent();
+            return Array.from({ length: 26 }, (_unused, index) => index)
+                .filter((index) => text.includes(`Finished ${index} session.subagents`))
+                .length;
+        };
+
+        const showAll = screen.findByTestId(`${ROSTER_TEST_ID}:show-all:finished`);
+        expect(showAll).toBeTruthy();
+        expect(countFinishedRows()).toBe(AGENT_ACTIVITY_FINISHED_IN_PANE_LIMIT);
+        // The header still states the honest total, so the cap never hides that more exists.
+        expect(screen.getTextContent()).toContain('session.agentActivity.section.finished 26');
+
+        await act(async () => {
+            showAll!.props.onPress?.();
+        });
+        await testkit.flushHookEffects();
+
+        expect(countFinishedRows()).toBe(26);
+        expect(screen.findByTestId(`${ROSTER_TEST_ID}:show-all:finished`)).toBeNull();
     }, 120_000);
 
     it('offers no roster action whose route cannot be resolved (A9)', async () => {
@@ -242,7 +294,7 @@ describe('SessionRightPanelAgentsView agent-activity roster', () => {
         expect(overflow).toBeTruthy();
 
         const { resolveSessionSubagentRowActions } = await import(
-            '@/components/sessions/agentActivity/sources/fromSessionSubagents'
+            '@/components/sessions/agentActivity/entry/fromSubagent'
         );
         const withoutRoute = resolveSessionSubagentRowActions({
             sessionId: 's1',

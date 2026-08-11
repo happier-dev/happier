@@ -129,10 +129,10 @@ installSessionDetailsPanelCommonModuleMocks({
     },
 });
 
-vi.mock('@/components/ui/text/Text', () => ({
-    Text: ({ children, ...props }: any) => React.createElement('Text', props, children),
-    TextInput: (props: any) => React.createElement('TextInput', props),
-}));
+vi.mock('@/components/ui/text/Text', async () => {
+    const { createUiTextModuleMock } = await import('@/dev/testkit/mocks/uiText');
+    return createUiTextModuleMock();
+});
 
 // Drive the REAL `useEnsureSidechainsLoaded` hook against a `sync.ensureSidechainMessagesLoaded` spy
 // so the panel's self-load behavior (not just call-shape) is genuinely exercised.

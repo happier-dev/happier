@@ -21,10 +21,10 @@ import { t } from '@/text';
  * own hydration, not about the agent.
  *
  * **Do not feed this `SessionSubagent.timestamps.updatedAtMs`.** For a live sidechain subagent that
- * field is the launching tool message's `createdAt` and never advances
- * (`deriveSubAgentSidechainSubagents.ts:211-212`), so it equals `startedAtMs` — using it would mark
- * every healthy long-running agent stale at ten minutes. The producer must supply an instant that
- * genuinely moves; the roster uses the newest sidechain message.
+ * field is the launching tool call's own instant and does not advance while the agent works
+ * (`deriveSidechainTimestamps` in `deriveSubAgentSidechainSubagents.ts`), so it equals `startedAtMs`
+ * — using it would mark every healthy long-running agent stale at ten minutes. The producer must
+ * supply an instant that genuinely moves; the roster uses the newest sidechain message.
  */
 
 /** 4.10 / ruling C7. One pair, one owner, every kind. */
@@ -43,13 +43,22 @@ export type AgentActivityStaleness = 'fresh' | 'quiet' | 'stale';
  */
 const PROGRESS_CLAIMING_STATUSES: ReadonlySet<AgentActivityStatusV1> = new Set(['starting', 'running']);
 
-type StalenessInput = Readonly<{
+/**
+ * Everything the silence rule reads, and nothing else.
+ *
+ * Exported and structural on purpose: `AgentActivityRowEntry` satisfies it, and so does a durable
+ * workflow-agent snapshot once its status is mapped — so the run panel resolves its own rows'
+ * silence through THIS owner rather than growing a second notion of quiet.
+ */
+export type AgentActivityStalenessInput = Readonly<{
     status: AgentActivityStatusV1;
     /** Last moment we have evidence of activity, epoch ms. Absent means no claim is made. */
     updatedAtMs?: number | null;
     /** Terminal instant. Present means the work is over and silence means nothing. */
     endedAtMs?: number | null;
 }>;
+
+type StalenessInput = AgentActivityStalenessInput;
 
 function readSilenceStartMs(input: StalenessInput): number | null {
     if (readTimestamp(input.endedAtMs) != null) return null;

@@ -1,7 +1,7 @@
 import { FadeIn, LinearTransition } from 'react-native-reanimated';
 
 import {
-    resolveMotionReducedFallback,
+    resolveMotionPresentation,
     resolveMotionSpring,
     type MotionSpringRole,
 } from '@/components/ui/motion';
@@ -41,21 +41,44 @@ function withRolePhysics(builder: SpringMotionBuilder, role: MotionSpringRole): 
         .mass(config.mass!);
 }
 
-/** A row travelling between sections, and every row that has to make space for it. */
-const REFLOW_LAYOUT = withRolePhysics(LinearTransition.springify(), 'reflow');
+/**
+ * The two builders, built on FIRST USE and then shared for the process.
+ *
+ * `LinearTransition.springify()` is a call into the animation runtime, so building these during
+ * module evaluation would mean that merely IMPORTING this file reaches into that runtime — and
+ * this file is reached from `AgentActivityList`, which sits inside the session shell. Under Vitest
+ * the runtime is a mock, and a suite that narrows it then fails at collection with an error about
+ * an animation it never rendered. Same reason `createSpringConfigResolver` and
+ * `reanimatedMotionTokens` defer their own construction.
+ *
+ * One object each, forever: these go onto every item, so a fresh builder would defeat the rows'
+ * memoization.
+ */
+let springBuilders: Readonly<{ reflow: SpringMotionBuilder; rowEnter: SpringMotionBuilder }> | null = null;
 
-/** A row that has genuinely just arrived in the roster. */
-const ROW_ENTERING = withRolePhysics(FadeIn.springify(), 'rowEnter');
+function resolveSpringBuilders(): Readonly<{ reflow: SpringMotionBuilder; rowEnter: SpringMotionBuilder }> {
+    return (springBuilders ??= Object.freeze({
+        /** A row travelling between sections, and every row that has to make space for it. */
+        reflow: withRolePhysics(LinearTransition.springify(), 'reflow'),
+        /** A row that has genuinely just arrived in the roster. */
+        rowEnter: withRolePhysics(FadeIn.springify(), 'rowEnter'),
+    }));
+}
 
 /**
  * Whether the reduced-motion preference removes each animation.
  *
- * Read from the role table, never decided here, so this list cannot drift away from the rest of
- * the vocabulary: both roles map to `'instant'`, meaning the state change still happens and only
- * the travel is removed.
+ * Asked of `resolveMotionPresentation` — the one owner of "given the preference, what does this
+ * animation do" — and never decided here. Reading the spring table directly instead would make
+ * this a SECOND reader of that policy: it would answer for the spring rather than for the
+ * animation, so a row the table later moved off a spring (or onto a substitute, as `spinner` is)
+ * would keep animating here with nothing failing. `StatusTransition` carried the same shape and
+ * lost it for the same reason.
  */
-const REFLOW_IS_INSTANT_WHEN_REDUCED = resolveMotionReducedFallback('reflow') === 'instant';
-const ROW_ENTER_IS_INSTANT_WHEN_REDUCED = resolveMotionReducedFallback('rowEnter') === 'instant';
+const SECTION_MIGRATION_IS_INSTANT_WHEN_REDUCED =
+    resolveMotionPresentation('sectionMigration', true) === 'settleInstantly';
+const ROW_ENTER_IS_INSTANT_WHEN_REDUCED =
+    resolveMotionPresentation('rowEnter', true) === 'settleInstantly';
 
 export type AgentActivityListMotion = Readonly<{
     /** Passed to every item in the list, so a reflow moves all of them together. */
@@ -64,20 +87,27 @@ export type AgentActivityListMotion = Readonly<{
     entering: SpringMotionBuilder | undefined;
 }>;
 
-const MOTION_FULL: AgentActivityListMotion = Object.freeze({
-    layout: REFLOW_LAYOUT,
-    entering: ROW_ENTERING,
-});
-
 const MOTION_NONE: AgentActivityListMotion = Object.freeze({
     layout: undefined,
     entering: undefined,
 });
 
-const MOTION_REDUCED: AgentActivityListMotion = Object.freeze({
-    layout: REFLOW_IS_INSTANT_WHEN_REDUCED ? undefined : REFLOW_LAYOUT,
-    entering: ROW_ENTER_IS_INSTANT_WHEN_REDUCED ? undefined : ROW_ENTERING,
-});
+let motionFull: AgentActivityListMotion | null = null;
+let motionReduced: AgentActivityListMotion | null = null;
+
+function resolveMotionFull(): AgentActivityListMotion {
+    const builders = resolveSpringBuilders();
+    return (motionFull ??= Object.freeze({ layout: builders.reflow, entering: builders.rowEnter }));
+}
+
+function resolveMotionReduced(): AgentActivityListMotion {
+    // Both animations settle instantly today, so this asks the runtime for nothing at all. The
+    // per-field calls keep that true by construction if one of them ever stops being instant.
+    return (motionReduced ??= Object.freeze({
+        layout: SECTION_MIGRATION_IS_INSTANT_WHEN_REDUCED ? undefined : resolveSpringBuilders().reflow,
+        entering: ROW_ENTER_IS_INSTANT_WHEN_REDUCED ? undefined : resolveSpringBuilders().rowEnter,
+    }));
+}
 
 /**
  * Which animations this render may attach. Returns one of three shared objects, because these go
@@ -91,5 +121,5 @@ export function resolveAgentActivityListMotion(params: Readonly<{
     reducedMotion: boolean;
 }>): AgentActivityListMotion {
     if (!params.animationEnabled) return MOTION_NONE;
-    return params.reducedMotion ? MOTION_REDUCED : MOTION_FULL;
+    return params.reducedMotion ? resolveMotionReduced() : resolveMotionFull();
 }

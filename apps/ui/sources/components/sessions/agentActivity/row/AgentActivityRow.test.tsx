@@ -3,6 +3,7 @@ import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
+import { lightTheme } from '@/theme';
 
 import type { AgentActivityRowEntry } from '../agentActivityRowEntry';
 import { AGENT_ACTIVITY_ROW_NO_ACTIONS } from '../agentActivityRowEntry';
@@ -274,23 +275,50 @@ describe('AgentActivityRow', () => {
         await actionable.unmount();
     });
 
-    it('rails only the status that escalates to a person', async () => {
+    /**
+     * r4.0: the row makes no attention claim. The 2pt rail was the third carrier of "a person is
+     * needed" and it is gone — a permission-blocked agent is now told by its glyph and its status
+     * word, exactly like every other abnormal state.
+     */
+    it('draws no attention rail for any status', async () => {
         const AgentActivityRow = await importRow();
 
-        const waiting = await renderScreen(
-            <AgentActivityRow entry={makeEntry({ status: 'waiting' })} testID="row" />,
-        );
-        const waitingRail = flatten(waiting.findByTestId('row:attention-rail')?.props.style);
-        expect(waitingRail.backgroundColor).not.toBe('transparent');
-        await waiting.unmount();
+        for (const status of ['waiting', 'failed', 'running'] as const) {
+            const screen = await renderScreen(
+                <AgentActivityRow entry={makeEntry({ status })} testID="row" />,
+            );
+            expect(screen.findByTestId('row:attention-rail')).toBeNull();
+            await screen.unmount();
+        }
+    });
 
-        const failed = await renderScreen(
-            <AgentActivityRow entry={makeEntry({ status: 'failed' })} testID="row" />,
+    /**
+     * The counterweight to moving failure out of the composer fill and out of NEEDS YOU.
+     *
+     * Failure stops claiming the ATTENTION channel; it does not get quieter. This row is now the
+     * whole of a failure's visibility, so all three carriers have to survive together: danger ink,
+     * the distinct `x-circle`, and the word — never colour alone (R-12). Weakening any one of them
+     * turns "not attention" into "not visible", which is a different and much worse decision.
+     */
+    it('keeps a failed row obviously a failure — ink, glyph and word, all three', async () => {
+        const AgentActivityRow = await importRow();
+        const screen = await renderScreen(
+            <AgentActivityRow entry={makeEntry({ status: 'failed', metaDetail: 'exit code 2' })} testID="row" />,
         );
-        // Failure is loud enough with a glyph and a word; the rail means "you are the blocker".
-        const failedRail = flatten(failed.findByTestId('row:attention-rail')?.props.style);
-        expect(failedRail.backgroundColor).toBe('transparent');
-        await failed.unmount();
+
+        const item = findItemProps(screen);
+        expect(flatten(item.subtitleStyle).color).toBe(lightTheme.colors.state.danger.foreground);
+        expect(String(item.subtitle)).toContain('Failed');
+        expect(String(item.accessibilityLabel)).toContain('Failed');
+
+        const glyphs = screen.tree.root.findAll((node) => {
+            const nodeProps = node.props as Record<string, unknown> | undefined;
+            return nodeProps?.name === 'x-circle';
+        });
+        expect(glyphs.length).toBeGreaterThan(0);
+        expect(glyphs[0].props.color).toBe(lightTheme.colors.state.danger.foreground);
+
+        await screen.unmount();
     });
 
     it('offers exactly the actions the entry declares, in order, keyed by entry id', async () => {

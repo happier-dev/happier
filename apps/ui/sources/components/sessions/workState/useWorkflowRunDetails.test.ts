@@ -1,6 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { SessionWorkflowRunSnapshotV1 } from '@happier-dev/protocol';
+import {
+    SESSION_AGENT_ACTIVITY_HEADLINE_METADATA_KEY,
+    buildSessionAgentActivityHeadline,
+    type SessionAgentActivityEntryV1,
+    type SessionWorkflowRunSnapshotV1,
+} from '@happier-dev/protocol';
 
 import {
     createDeferred,
@@ -36,7 +41,7 @@ async function renderForToolUseId(params: Readonly<{
     metadata: unknown;
     toolUseId: string | null | undefined;
 }>) {
-    const { useWorkflowRunForToolUseId } = await import('./useSessionWorkflowActivity');
+    const { useWorkflowRunForToolUseId } = await import('./useWorkflowRunDetails');
     return renderHook(
         (props: { metadata: unknown; toolUseId: string | null | undefined }) =>
             useWorkflowRunForToolUseId({ sessionId: 'sess_1', metadata: props.metadata, toolUseId: props.toolUseId }),
@@ -46,17 +51,17 @@ async function renderForToolUseId(params: Readonly<{
 
 async function renderActivity(params: Readonly<{
     metadata: unknown;
-    enabled?: boolean;
+    runIds: readonly string[];
 }>) {
-    const { useSessionWorkflowActivity } = await import('./useSessionWorkflowActivity');
+    const { useWorkflowRunDetails } = await import('./useWorkflowRunDetails');
     return renderHook(
-        (props: { metadata: unknown; enabled?: boolean }) =>
-            useSessionWorkflowActivity({ sessionId: 'sess_1', metadata: props.metadata, enabled: props.enabled }),
+        (props: { metadata: unknown; runIds: readonly string[] }) =>
+            useWorkflowRunDetails({ sessionId: 'sess_1', metadata: props.metadata, runIds: props.runIds }),
         { initialProps: params },
     );
 }
 
-describe('useSessionWorkflowActivity — active workflow refresh continuity', () => {
+describe('useWorkflowRunDetails — active workflow refresh continuity', () => {
     it('keeps the previous loaded snapshot visible while a newer record revision is refetched', async () => {
         const nextFetch = createDeferred<SessionWorkflowRunSnapshotV1 | null>();
         fetchWorkflowRunSnapshot
@@ -65,6 +70,7 @@ describe('useSessionWorkflowActivity — active workflow refresh continuity', ()
 
         const hook = await renderActivity({
             metadata: metadata([headlineRun({ runId: 'run_a', recordRevision: '1', recordUpdatedAt: 1 })]),
+            runIds: ['run_a'],
         });
         expect(hook.getCurrent().runDetailById.get('run_a')).toMatchObject({
             state: 'loaded',
@@ -73,6 +79,7 @@ describe('useSessionWorkflowActivity — active workflow refresh continuity', ()
 
         await hook.rerender({
             metadata: metadata([headlineRun({ runId: 'run_a', recordRevision: '2', recordUpdatedAt: 2 })]),
+            runIds: ['run_a'],
         });
 
         expect(hook.getCurrent().runDetailById.get('run_a')).toMatchObject({
@@ -84,8 +91,111 @@ describe('useSessionWorkflowActivity — active workflow refresh continuity', ()
         nextFetch.resolve(snapshot('run_a', { title: 'Loaded revision 2', recordRevision: '2' }));
         await hook.rerender({
             metadata: metadata([headlineRun({ runId: 'run_a', recordRevision: '2', recordUpdatedAt: 2 })]),
+            runIds: ['run_a'],
         });
         expect(hook.getCurrent().loadedRunsById.get('run_a')?.title).toBe('Loaded revision 2');
+    });
+
+    /**
+     * The demotion's deciding contract: the unified model owns which runs exist, this hook owns
+     * how deep we know them. A run the caller does not list is not hydrated even though the
+     * workflow headline still describes it, and a run the caller DOES list is hydrated even
+     * though no headline names it — the degrade path for a CLI that publishes only the unified
+     * headline, where the old hook would have shown nothing at all.
+     */
+    it('hydrates exactly the runs the unified model asked for, headline or no headline', async () => {
+        const hook = await renderActivity({
+            metadata: metadata([headlineRun({ runId: 'run_a', recordRevision: '1', recordUpdatedAt: 1 })]),
+            runIds: ['run_b'],
+        });
+
+        expect(fetchWorkflowRunSnapshot).toHaveBeenCalledWith({ sessionId: 'sess_1', runId: 'run_b' });
+        expect(fetchWorkflowRunSnapshot).not.toHaveBeenCalledWith({ sessionId: 'sess_1', runId: 'run_a' });
+        expect(hook.getCurrent().runDetailById.has('run_a')).toBe(false);
+        expect(hook.getCurrent().loadedRunsById.get('run_b')?.runId).toBe('run_b');
+        // The headline is still read — as DETAIL, for the pre-load fraction and the fetch key.
+        expect(hook.getCurrent().runHeadlineById.get('run_a')?.runId).toBe('run_a');
+    });
+});
+
+/**
+ * The unified-headline freshness chain (FIX-5).
+ *
+ * The old count-only workflow headline is published by ONE backend's CLI. Every other backend — and
+ * every CLI predating this program — publishes only the unified agent-activity headline, and on that
+ * path this hook had no record pointer at all: it degraded to a per-run constant, so a run hydrated
+ * once and then never refreshed while the panel above it went on looking live. Nothing about that is
+ * observable to a person reading the panel, which is why a LOW-frequency defect is worth a test.
+ */
+function agentActivityMetadata(entries: readonly SessionAgentActivityEntryV1[], updatedAt = 2000): unknown {
+    return {
+        [SESSION_AGENT_ACTIVITY_HEADLINE_METADATA_KEY]: buildSessionAgentActivityHeadline({
+            backendId: 'codex',
+            updatedAt,
+            entries,
+        }),
+    };
+}
+
+function unifiedRunEntry(params: Readonly<{
+    runId: string;
+    updatedAt: number;
+    recordRevision?: string;
+}>): SessionAgentActivityEntryV1 {
+    return {
+        entryId: `workflow_run:${params.runId}`,
+        kind: 'workflow_run',
+        title: `Run ${params.runId}`,
+        status: 'running',
+        updatedAt: params.updatedAt,
+        runId: params.runId,
+        ...(params.recordRevision !== undefined ? { recordRevision: params.recordRevision } : {}),
+    };
+}
+
+describe('useWorkflowRunDetails — freshness on the unified-headline-only path', () => {
+    it('refreshes as the run progresses when its producer publishes no record revision', async () => {
+        const hook = await renderActivity({
+            metadata: agentActivityMetadata([unifiedRunEntry({ runId: 'run_a', updatedAt: 1000 })]),
+            runIds: ['run_a'],
+        });
+        expect(fetchWorkflowRunSnapshot).toHaveBeenCalledTimes(1);
+
+        // New evidence about the run arrived. Without a revision to key on, the entry's evidence
+        // instant is the only freshness signal there is — and a surface that still looks live has
+        // to act on it rather than freeze.
+        await hook.rerender({
+            metadata: agentActivityMetadata([unifiedRunEntry({ runId: 'run_a', updatedAt: 2000 })], 3000),
+            runIds: ['run_a'],
+        });
+        expect(fetchWorkflowRunSnapshot).toHaveBeenCalledTimes(2);
+    });
+
+    it('keys on the published record revision, so display-only churn does not refetch', async () => {
+        const hook = await renderActivity({
+            metadata: agentActivityMetadata([
+                unifiedRunEntry({ runId: 'run_a', updatedAt: 1000, recordRevision: '4' }),
+            ]),
+            runIds: ['run_a'],
+        });
+        expect(fetchWorkflowRunSnapshot).toHaveBeenCalledTimes(1);
+
+        // Evidence advanced but the durable record did not: the cached snapshot is still current.
+        await hook.rerender({
+            metadata: agentActivityMetadata([
+                unifiedRunEntry({ runId: 'run_a', updatedAt: 5000, recordRevision: '4' }),
+            ], 5000),
+            runIds: ['run_a'],
+        });
+        expect(fetchWorkflowRunSnapshot).toHaveBeenCalledTimes(1);
+
+        await hook.rerender({
+            metadata: agentActivityMetadata([
+                unifiedRunEntry({ runId: 'run_a', updatedAt: 6000, recordRevision: '5' }),
+            ], 6000),
+            runIds: ['run_a'],
+        });
+        expect(fetchWorkflowRunSnapshot).toHaveBeenCalledTimes(2);
     });
 });
 
@@ -173,6 +283,31 @@ describe('useWorkflowRunForToolUseId — UIW4 tool-use-id join', () => {
         expect(hook.getCurrent().runHeadline?.runId).toBe('run_done');
         expect(fetchWorkflowRunSnapshot).toHaveBeenCalledWith({ sessionId: 'sess_1', runId: 'run_done' });
         expect(hook.getCurrent().detail).toMatchObject({ state: 'loaded', runId: 'run_done' });
+    });
+
+    /**
+     * The same freeze, in the sibling seam. The transcript card cannot join through the unified
+     * headline — that headline carries no `workflowToolUseId` — so on a unified-only backend it
+     * falls through to the direct-by-id fetch. Keyed by the id alone, an ACTIVE run's card hydrated
+     * once and then showed a stale phase/agent tree for the rest of the run.
+     */
+    it('(g) refreshes the direct-by-id fetch when the unified headline advances that run record', async () => {
+        const hook = await renderForToolUseId({
+            metadata: agentActivityMetadata([
+                unifiedRunEntry({ runId: 'run_a', updatedAt: 1000, recordRevision: '4' }),
+            ]),
+            toolUseId: 'run_a',
+        });
+        expect(fetchWorkflowRunSnapshot).toHaveBeenCalledTimes(1);
+        expect(hook.getCurrent().runHeadline).toBeNull();
+
+        await hook.rerender({
+            metadata: agentActivityMetadata([
+                unifiedRunEntry({ runId: 'run_a', updatedAt: 2000, recordRevision: '5' }),
+            ], 3000),
+            toolUseId: 'run_a',
+        });
+        expect(fetchWorkflowRunSnapshot).toHaveBeenCalledTimes(2);
     });
 
     it('(f) fetches directly by tool-use id when an older completed run is no longer in bounded headline history', async () => {

@@ -8,6 +8,8 @@ import {
     renderScreen,
 } from '@/dev/testkit';
 
+import { Text } from '@/components/ui/text/Text';
+
 import type { AgentActivityRowEntry } from '../agentActivityRowEntry';
 // Imported statically: `vi.mock` is hoisted above it, and pulling the list's module graph in at
 // collection time keeps a heavily-loaded machine's transform cost out of each test's own budget.
@@ -54,7 +56,11 @@ function entry(
 ): AgentActivityRowEntry {
     // The list's tests care about a running clock far more than the model's do, so the shared
     // builder is given a default start time here rather than in the testkit.
-    return makeAgentActivityRowEntryFixture({ startedAtMs: T0, ...overrides });
+    //
+    // `canOpen` defaults to true HERE and nowhere shared: the list offers `onPress` only to an
+    // entry that resolved a target, so a fixture that wants to be pressed has to say so. The
+    // fail-closed default is exercised by its own case below.
+    return makeAgentActivityRowEntryFixture({ startedAtMs: T0, canOpen: true, ...overrides });
 }
 
 async function advance(ms: number) {
@@ -87,7 +93,7 @@ describe('AgentActivityList', () => {
         vi.useRealTimers();
     });
 
-    it('pins what needs a person above the working rows, under named section headers', async () => {
+    it('keeps a permission-blocked row among the working rows, under named section headers', async () => {
         const screen = await renderScreen(
             <AgentActivityList
                 testID="roster"
@@ -99,12 +105,12 @@ describe('AgentActivityList', () => {
             />,
         );
 
-        // One list: a blocked row is already adjacent to the top under a named header, which is why
-        // there is no separate attention banner restating it.
-        expect(rowTitles(screen)).toEqual(['Awaiting approval', 'Sweeping the corridor', 'Wrote the report']);
+        // r4.0: two sections, and neither is an attention claim. A permission-blocked agent is
+        // still in flight, so it sits in WORKING ordered by start like every other live row — it is
+        // its glyph and status word that say it is blocked, not a header above it.
+        expect(rowTitles(screen)).toEqual(['Sweeping the corridor', 'Awaiting approval', 'Wrote the report']);
         const text = screen.getTextContent();
-        expect(text.indexOf('Needs you')).toBeGreaterThanOrEqual(0);
-        expect(text.indexOf('Needs you')).toBeLessThan(text.indexOf('Awaiting approval'));
+        expect(text).not.toContain('Needs you');
         expect(text).toContain('Working');
         expect(text).toContain('Finished');
 
@@ -136,6 +142,37 @@ describe('AgentActivityList', () => {
 
         screen.pressByTestId('roster:row:beta');
         expect(onPress).toHaveBeenCalledWith('beta');
+
+        await screen.unmount();
+    });
+
+    /**
+     * A9, at the largest target on the row. The pane handed `onPress` to every row and resolved the
+     * target inside the handler, so a headline-only entry — no local subagent, no route, nothing to
+     * open — still carried a ripple, a pressed overlay and `role="button"` over a function that
+     * returned silently. The list now offers the press only where a target was established.
+     */
+    it('withholds the press from an entry that resolved no target, even when the host supplied one', async () => {
+        const onPress = vi.fn();
+        const screen = await renderScreen(
+            <AgentActivityList
+                testID="roster"
+                entries={[
+                    entry({ id: 'openable' }),
+                    makeAgentActivityRowEntryFixture({ id: 'headline-only', startedAtMs: T0 + 1 }),
+                ]}
+                onPress={onPress}
+            />,
+        );
+
+        const deadRow = screen.findByTestId('roster:row:headline-only');
+        expect(deadRow).not.toBeNull();
+        expect((deadRow!.props as { onPress?: unknown }).onPress).toBeUndefined();
+        expect((deadRow!.props as { accessibilityRole?: unknown }).accessibilityRole).not.toBe('button');
+
+        // The row beside it is unaffected: the gate is per entry, not a surface-wide switch.
+        screen.pressByTestId('roster:row:openable');
+        expect(onPress).toHaveBeenCalledWith('openable');
 
         await screen.unmount();
     });
@@ -287,6 +324,86 @@ describe('AgentActivityList', () => {
         await uncapped.unmount();
     });
 
+    it('discloses a body in place for a row that has nowhere to navigate to', async () => {
+        // A background command is a headless process: no transcript, no route. Its detail opens
+        // under its own row rather than through a screen that does not exist, and every other row
+        // keeps the host's navigation press.
+        const onPress = vi.fn();
+        const screen = await renderScreen(
+            <AgentActivityList
+                testID="roster"
+                entries={[
+                    entry({ id: 'agent', status: 'running' }),
+                    // `canOpen: false` is what the roster actually derives for a background
+                    // command — `resolveAgentActivityOpenTarget` returns no target for one — and
+                    // stating it here is what makes this the "nowhere to navigate to" case rather
+                    // than a shape the producer cannot emit.
+                    entry({
+                        id: 'background_task:task_1',
+                        title: 'sleep 60',
+                        status: 'running',
+                        canOpen: false,
+                    }),
+                ]}
+                onPress={onPress}
+                renderEntryBody={(entryId) => (
+                    entryId === 'background_task:task_1'
+                        ? <Text testID="task-body">detail</Text>
+                        : null
+                )}
+            />,
+        );
+
+        expect(screen.findByTestId('task-body')).toBeNull();
+        const disclosureRow = screen.findByTestId('roster:row:background_task:task_1');
+        expect(disclosureRow).not.toBeNull();
+        await act(async () => {
+            (disclosureRow!.props as { onPress?: () => void }).onPress?.();
+        });
+        expect(screen.findByTestId('task-body')).not.toBeNull();
+        // The disclosure owns its own press; it must not also fire the host's navigation.
+        expect(onPress).not.toHaveBeenCalled();
+
+        const navigationRow = screen.findByTestId('roster:row:agent');
+        await act(async () => {
+            (navigationRow!.props as { onPress?: () => void }).onPress?.();
+        });
+        expect(onPress).toHaveBeenCalledWith('agent');
+
+        await screen.unmount();
+    });
+
+    it('keeps the press meaning "open" on a row that can both open and disclose', async () => {
+        // The W23 preview gave agent rows a body. A body must not spend the press a row already
+        // had: opening stays one press, and the caret beside it is what discloses.
+        const onPress = vi.fn();
+        const screen = await renderScreen(
+            <AgentActivityList
+                testID="roster"
+                entries={[entry({ id: 'agent', status: 'running', canOpen: true })]}
+                onPress={onPress}
+                renderEntryBody={() => <Text testID="agent-body">preview</Text>}
+            />,
+        );
+
+        const row = screen.findByTestId('roster:row:agent');
+        await act(async () => {
+            (row!.props as { onPress?: () => void }).onPress?.();
+        });
+        expect(onPress).toHaveBeenCalledWith('agent');
+        expect(screen.findByTestId('agent-body')).toBeNull();
+
+        const caret = screen.findByTestId('roster:row:agent:disclosure');
+        expect(caret).not.toBeNull();
+        await act(async () => {
+            (caret!.props as { onPress?: () => void }).onPress?.();
+        });
+        expect(screen.findByTestId('agent-body')).not.toBeNull();
+        expect(onPress).toHaveBeenCalledTimes(1);
+
+        await screen.unmount();
+    });
+
     it('keeps every header and row a sibling in one container, so a row can travel between sections', async () => {
         const screen = await renderScreen(
             <AgentActivityList
@@ -299,11 +416,12 @@ describe('AgentActivityList', () => {
             />,
         );
 
-        // Three headers plus three rows, all children of the list body. A per-section wrapper would
+        // Two headers plus three rows, all children of the list body — `waiting` is live work and
+        // sits under WORKING, so there are two sections, not three. A per-section wrapper would
         // look identical and would remount a row that changes section, so it could never travel.
         const body = screen.findByTestId('roster:body');
         expect(body).not.toBeNull();
-        expect(body!.props.children).toHaveLength(6);
+        expect(body!.props.children).toHaveLength(5);
 
         await screen.unmount();
     });

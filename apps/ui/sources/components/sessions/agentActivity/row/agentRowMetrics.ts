@@ -1,3 +1,4 @@
+import { ITEM_ROW_PADDING_HORIZONTAL } from '@/components/ui/lists/itemDensityMetrics';
 import type { ResolvedItemDensity } from '@/components/ui/lists/useResolvedItemDensity';
 
 /**
@@ -46,14 +47,6 @@ export const AGENT_ROW_MIN_HEIGHT_PX = {
 } as const;
 
 /**
- * The optional 2pt attention rail, drawn only for `waiting`.
- *
- * It is the third non-colour carrier of "a person is needed", after the glyph and the meta word.
- */
-export const AGENT_ATTENTION_RAIL_PX = 2;
-export const AGENT_ATTENTION_RAIL_INSET_PX = 6;
-
-/**
  * What to pass as `Item`'s `dividerInset`, so the hairline starts under the title's first glyph.
  *
  * A rule that starts under the status column reads as a table border; one that starts at the title
@@ -68,3 +61,13 @@ export const AGENT_ATTENTION_RAIL_INSET_PX = 6;
  * would push the rule 15px right of the title, which is the alignment being fixed.
  */
 export const AGENT_ROW_DIVIDER_INSET_PX = 0;
+
+/**
+ * Where a disclosed body's left edge sits, under the row that opened it.
+ *
+ * The roster is pinned compact everywhere (`AGENT_ACTIVITY_SURFACE_DENSITY`), so the body starts on
+ * the same content edge as the row's own text block rather than at a hardcoded `26` — a number that
+ * was copied into two detail components, belonged to the icon geometry of a row that no longer
+ * exists, and over-indented a preview inside a 420pt popover where width is the scarce resource.
+ */
+export const AGENT_ROW_DETAIL_INSET_PX = ITEM_ROW_PADDING_HORIZONTAL.compact;

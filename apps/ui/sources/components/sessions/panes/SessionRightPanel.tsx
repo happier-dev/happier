@@ -15,7 +15,8 @@ import { SessionGitSurface } from '@/components/sessions/panes/surfaces/SessionG
 import { SessionTerminalSurface } from '@/components/sessions/panes/surfaces/SessionTerminalSurface';
 import { SessionTranscriptNavigationPane } from '@/components/sessions/panes/SessionTranscriptNavigationPane';
 import { useSessionFileDetailsOpener } from '@/components/sessions/panes/useSessionFileDetailsOpener';
-import { useSessionSubagentCounts } from '@/hooks/session/useSessionSubagentCounts';
+import { useSessionAgentActivity } from '@/hooks/session/useSessionAgentActivity';
+import type { UseDirectSessionRuntimeResult } from '@/components/sessions/model/useDirectSessionRuntime';
 import { useSessionTerminalAvailability } from '@/components/sessions/terminal/useSessionTerminalAvailability';
 import { t } from '@/text';
 import { resolveOptionalSessionScreenTestId, useSessionScreenTestIdsEnabled } from '../shell/sessionScreenTestIds';
@@ -65,6 +66,12 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
 }));
 
+const COUNT_ONLY_DIRECT_SESSION_RUNTIME: UseDirectSessionRuntimeResult = Object.freeze({
+    directSessionLink: null,
+    status: null,
+    refreshNow: async () => null,
+});
+
 export const SessionRightPanel = React.memo((props: SessionRightPanelProps) => {
     const styles = stylesheet;
     const { theme } = useUnistyles();
@@ -78,9 +85,18 @@ export const SessionRightPanel = React.memo((props: SessionRightPanelProps) => {
     });
     const sessionScreenTestIdsEnabled = useSessionScreenTestIdsEnabled();
     // The Agents tab is the one tab whose contents can change while you are looking at another tab,
-    // so it is the one tab that needs to say so from the bar. The count comes from the session's
-    // subagent owner, not from a second tally.
-    const runningAgentCount = useSessionSubagentCounts(props.sessionId).active;
+    // so it is the one tab that needs to say so from the bar. It reads the SAME activity counts as
+    // the session header's glyph and the composer badge — a tab badge that disagreed with the pane
+    // behind it would be worse than no badge (R-8).
+    const agentActivityCounts = useSessionAgentActivity({
+        sessionId: props.sessionId,
+        // The direct-session runtime is stubbed on purpose. The roster uses it only to decide
+        // whether execution runs are CONTROLLABLE, which is a capability of a row and not of a
+        // count; letting this host create a real one attaches a second sub-second direct-session
+        // poll per session to draw a badge.
+        directSessionRuntime: COUNT_ONLY_DIRECT_SESSION_RUNTIME,
+    }).counts;
+    const runningAgentCount = agentActivityCounts.live;
     const terminalTabAvailable = terminalAvailability.sidebarTabAvailable;
     const closeButtonAtStart = props.presentation === 'screen' && Platform.OS !== 'web';
     const rawActiveTab = (scopeState?.right.activeTabId as RightTabId | null) ?? 'git';

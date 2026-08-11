@@ -58,6 +58,19 @@ export type AgentActivityRowEntry = Readonly<{
      * in the derivation, not in the render.
      */
     actions: readonly AgentActivityRowActionId[];
+    /**
+     * Whether this entry resolves to something a host can actually OPEN, right now.
+     *
+     * The sibling of `actions`, and for the same reason: affordance is data. A headline-only entry
+     * has no local subagent, so it has no route, no details tab and no transcript — and the pane
+     * still gave every one of those rows a ripple, a pressed overlay and `role="button"` attached
+     * to a handler that returned silently (A9, "a control that leads nowhere must not render").
+     *
+     * Read FAIL-CLOSED by the list: an entry that does not say `true` is drawn read-only even when
+     * the host supplied `onPress`. A producer that cannot answer the question must not be able to
+     * ship a dead control by omission.
+     */
+    canOpen?: boolean;
 }>;
 
 /**

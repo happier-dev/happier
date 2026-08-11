@@ -1,12 +1,27 @@
-import React from 'react';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
-
-import { installWorkflowRendererCommonModuleMocks } from './workflowRendererTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-installWorkflowRendererCommonModuleMocks();
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock();
+});
+
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock();
+});
+
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key: string) => key.split('.').pop() ?? key });
+});
+
+vi.mock('@/components/ui/text/Text', async () => {
+    const { createUiTextModuleMock } = await import('@/dev/testkit/mocks/uiText');
+    return createUiTextModuleMock();
+});
 
 function collectText(value: unknown): string {
     if (typeof value === 'string' || typeof value === 'number') return String(value);
@@ -17,15 +32,15 @@ function collectText(value: unknown): string {
 }
 
 async function render(text: string) {
-    const { WorkflowAgentDetail } = await import('./WorkflowAgentDetail');
+    const { AgentActivityResultDetail } = await import('./AgentActivityResultDetail');
     let tree: renderer.ReactTestRenderer | undefined;
     act(() => {
-        tree = renderer.create(<WorkflowAgentDetail text={text} detailTestID="detail" />);
+        tree = renderer.create(<AgentActivityResultDetail text={text} detailTestID="detail" />);
     });
     return tree as renderer.ReactTestRenderer;
 }
 
-describe('WorkflowAgentDetail', () => {
+describe('AgentActivityResultDetail', () => {
     it('pretty-prints JSON payloads instead of dumping the raw source', async () => {
         const tree = await render('{"status":"done","count":2}');
         const body = tree.root.findByProps({ testID: 'detail-body' });

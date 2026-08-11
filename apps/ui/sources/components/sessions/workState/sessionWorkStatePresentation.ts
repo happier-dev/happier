@@ -265,10 +265,21 @@ export function resolveSessionWorkStateBadgeTone(item: SessionWorkStateItem | nu
     return 'neutral';
 }
 
+/**
+ * Whether this item earns FILLED chrome in the composer status row.
+ *
+ * Fill means exactly one thing here: **a person is needed**. `blocked` and `paused` both wait on a
+ * human — one to unblock, one to resume — so they fill. Everything else, live work included, stays
+ * plain, and liveness is carried by the label rather than by chrome.
+ *
+ * A completed goal deliberately does NOT fill. It used to, which made the composer announce a
+ * success several times a day in the same chrome an agent uses to ask for help; a fill that
+ * sometimes means "well done" and sometimes means "you are needed" means neither. The success is
+ * still visible — it keeps its `complete` tone and its label — it just stops demanding attention.
+ */
 export function resolveSessionWorkStateBadgeEmphasis(item: SessionWorkStateItem | null): 'quiet' | 'prominent' {
     if (!item) return 'quiet';
     if (item.status === 'blocked' || item.status === 'paused') return 'prominent';
-    if (item.kind === 'goal' && item.status === 'complete') return 'prominent';
     return 'quiet';
 }
 

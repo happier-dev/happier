@@ -1,10 +1,12 @@
 /**
- * Single owner of workflow agent result/summary normalization (U-9/#11/U-20).
+ * Single owner of agent result/summary normalization (U-9/#11/U-20).
  *
  * Provider-produced agent results arrive as opaque strings: sometimes a JSON payload, sometimes
- * markdown-ish prose, sometimes a huge dump. Both the transcript workflow card and the work-state
- * popover render agent detail through the SAME renderer, so normalization lives here (one owner)
- * instead of being re-derived per surface.
+ * markdown-ish prose, sometimes a huge dump. The transcript workflow card, the work-state popover
+ * and (next) the background-task detail all render that string through the SAME renderer, so
+ * normalization lives here — one owner beside the shared row — instead of being re-derived per
+ * surface. It sits in `agentActivity/` rather than with the workflow renderer for exactly that
+ * reason: the kinds that need it are no longer only workflow agents.
  *
  * Contract: a raw string becomes `{ kind, display, truncated }` — JSON-ish payloads are compactly
  * pretty-printed (2-space), everything else is trimmed text, and the overall length is capped so a

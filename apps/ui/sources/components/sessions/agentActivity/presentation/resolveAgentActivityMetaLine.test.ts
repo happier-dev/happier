@@ -60,10 +60,10 @@ describe('resolveAgentActivityMetaLine', () => {
         expect(resolveAgentActivityMetaLine(entry({ status: 'running', metaDetail: 'Reading logs' }), 'quiet'))
             .toBe('No recent update · Reading logs');
         expect(resolveAgentActivityMetaLine(entry({ status: 'running', metaDetail: 'Reading logs' }), 'stale'))
-            .toBe('No update in 10 min · Reading logs');
+            .toBe('No update for over 10 min · Reading logs');
         // And it is the only thing staleness adds — the status word still leads.
         expect(resolveAgentActivityMetaLine(entry({ status: 'starting' }), 'stale'))
-            .toBe(`${resolveAgentActivityStatusWord('starting')} · No update in 10 min`);
+            .toBe(`${resolveAgentActivityStatusWord('starting')} · No update for over 10 min`);
     });
 
     it('shows a running row its detail without a redundant "Running" prefix', () => {

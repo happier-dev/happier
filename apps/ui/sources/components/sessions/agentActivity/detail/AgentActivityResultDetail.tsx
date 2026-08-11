@@ -5,22 +5,28 @@ import { StyleSheet } from 'react-native-unistyles';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
 
+import { AGENT_ROW_DETAIL_INSET_PX } from '../row/agentRowMetrics';
 import { clampPreviewLines, normalizeResultPreview } from './resultPreview';
 
-export type WorkflowAgentDetailProps = Readonly<{
+export type AgentActivityResultDetailProps = Readonly<{
     text: string;
     detailTestID?: string;
 }>;
 
 /**
- * Focused agent-detail preview shared by workflow rows in the popover and transcript card.
+ * The disclosed body under an agent-activity row: one normalized, bounded result preview.
  *
- * The raw provider payload is normalized here through the single `resultPreview` owner (U-9/#11):
- * JSON-ish payloads become a compact pretty-print, everything else is trimmed text, and the length
- * is capped. The collapsed body is clamped to a small line budget with a local "Show more" expand so
- * a long summary never floods the popover (U-20). No raw markdown/JSON source dumps.
+ * It lives here rather than with the workflow renderer because the row above it is shared and the
+ * detail under it is the same problem for every kind of agent work — a provider hands back an opaque
+ * string that is sometimes JSON, sometimes prose, and sometimes a dump. The single `resultPreview`
+ * owner turns that into a compact pretty-print or trimmed text with a hard character cap; this
+ * component clamps the collapsed body to a small line budget with a local "Show more" so a long
+ * summary never floods a popover. No raw markdown or JSON source dumps.
+ *
+ * A host renders it as a sibling of the row through `AgentActivityDisclosure`; it never becomes part
+ * of the row's own anatomy.
  */
-export const WorkflowAgentDetail = React.memo<WorkflowAgentDetailProps>((props) => {
+export const AgentActivityResultDetail = React.memo<AgentActivityResultDetailProps>((props) => {
     const [expanded, setExpanded] = React.useState(false);
     const normalized = React.useMemo(() => normalizeResultPreview(props.text), [props.text]);
     const clamped = React.useMemo(() => clampPreviewLines(normalized.display), [normalized.display]);
@@ -51,11 +57,11 @@ export const WorkflowAgentDetail = React.memo<WorkflowAgentDetailProps>((props) 
         </View>
     );
 });
-WorkflowAgentDetail.displayName = 'WorkflowAgentDetail';
+AgentActivityResultDetail.displayName = 'AgentActivityResultDetail';
 
 const styles = StyleSheet.create((theme) => ({
     container: {
-        marginLeft: 26,
+        marginLeft: AGENT_ROW_DETAIL_INSET_PX,
         paddingHorizontal: 10,
         paddingVertical: 8,
         borderRadius: 8,

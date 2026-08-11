@@ -4,6 +4,7 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
+import { IconAction } from '@/components/ui/buttons/IconAction';
 import { Icon } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
 import { ITEM_CHEVRON_SIZE } from '@/components/ui/lists/itemDensityMetrics';
@@ -20,14 +21,13 @@ import {
     resolveAgentActivityStatusWord,
     resolveAgentActivityToneStyle,
 } from '../presentation/agentActivityToneStyle';
+import { resolveAgentActivityElapsedStartMs } from '../presentation/resolveAgentActivityElapsedStartMs';
 import { resolveAgentActivityMetaLine } from '../presentation/resolveAgentActivityMetaLine';
 import { resolveAgentActivityTitle } from '../presentation/resolveAgentActivityTitle';
 import { AgentActivityRowOverflow } from './AgentActivityRowOverflow';
 import { AgentActivityStatusSlot } from './AgentActivityStatusSlot';
 import { AgentActivityTimeSlot } from './AgentActivityTimeSlot';
 import {
-    AGENT_ATTENTION_RAIL_INSET_PX,
-    AGENT_ATTENTION_RAIL_PX,
     AGENT_ROW_DIVIDER_INSET_PX,
     AGENT_ROW_MIN_HEIGHT_PX,
     AGENT_STATUS_COLUMN_PX,
@@ -54,9 +54,10 @@ import {
 /**
  * Statuses whose meta line takes the tone ink rather than ordinary secondary text.
  *
- * Only the ones a person may need to act on. Colouring every meta line by tone would turn the
- * densest text in the list into a colour chart and leave nothing for the abnormal states to stand
- * out against.
+ * Only the abnormal ones. Colouring every meta line by tone would turn the densest text in the list
+ * into a colour chart and leave nothing for the abnormal states to stand out against. This is
+ * VISIBILITY, not attention: the ink makes a failed or blocked row scannable, and nothing anywhere
+ * escalates because of it.
  */
 const TONE_INKED_META: ReadonlySet<AgentActivityStatusV1> = new Set([
     'waiting',
@@ -64,6 +65,9 @@ const TONE_INKED_META: ReadonlySet<AgentActivityStatusV1> = new Set([
     'timedOut',
     'cancelled',
 ]);
+
+/** Takes the 28pt `sm` box to the 44pt floor, the same way the overflow beside it does. */
+const DISCLOSURE_HIT_SLOP = 8;
 
 export type AgentActivityRowProps = Readonly<{
     entry: AgentActivityRowEntry;
@@ -77,6 +81,16 @@ export type AgentActivityRowProps = Readonly<{
      * combination was invalid.
      */
     disclosure?: 'collapsed' | 'expanded';
+    /**
+     * Toggles the disclosed body from the CARET, leaving the row press to mean "open".
+     *
+     * Absent means the whole row is the toggle, which is right for a unit of work that has nowhere
+     * else to go (a background command, an orphan workflow sidechain). Present is what lets a row
+     * that *does* have a destination offer both without the two fighting for one gesture: press to
+     * open, caret to glance. The caret is a real target rather than an icon inside a larger press —
+     * the same shape as the overflow button already beside it.
+     */
+    onToggleDisclosure?: () => void;
     /**
      * `'below'` puts the meta line under the title. `'inline'` puts it in the right slot, keeping
      * dense transcript and popover rows to one line.
@@ -150,7 +164,10 @@ export const AgentActivityRow = React.memo((props: AgentActivityRowProps) => {
     const rightElement = (
         <View style={styles.rightCluster}>
             <AgentActivityTimeSlot
-                startedAtMs={entry.startedAtMs}
+                // Not `entry.startedAtMs`: a start alone is only a clock while the work is still
+                // going. Once it is over without a recorded finish, no elapsed value is true and
+                // the column renders nothing rather than a number (D-8).
+                startedAtMs={resolveAgentActivityElapsedStartMs(entry)}
                 endedAtMs={entry.endedAtMs}
                 // Derived here, from the same silence rule the note uses, so the clock stops on the
                 // threshold instead of waiting for the host's slower recomputation.
@@ -167,27 +184,42 @@ export const AgentActivityRow = React.memo((props: AgentActivityRowProps) => {
                 />
             ) : null}
             {props.disclosure != null ? (
-                <Icon
-                    name={props.disclosure === 'expanded' ? 'caret-up' : 'caret-down'}
-                    size={ITEM_CHEVRON_SIZE[density]}
-                    color={theme.colors.text.secondary}
-                />
+                props.onToggleDisclosure ? (
+                    // The canonical icon-only action, exactly as the overflow beside it uses —
+                    // including `stopPropagation`, without which pressing the caret would ALSO fire
+                    // the row press it sits inside and open the agent while expanding it.
+                    <IconAction
+                        size="sm"
+                        hitSlop={DISCLOSURE_HIT_SLOP}
+                        accessibilityLabel={props.disclosure === 'expanded'
+                            ? t('session.agentActivity.row.collapse', { title })
+                            : t('session.agentActivity.row.expand', { title })}
+                        active={props.disclosure === 'expanded'}
+                        onPress={(event) => {
+                            event?.stopPropagation?.();
+                            props.onToggleDisclosure?.();
+                        }}
+                        testID={testID ? `${testID}:disclosure` : undefined}
+                    >
+                        <Icon
+                            name={props.disclosure === 'expanded' ? 'caret-up' : 'caret-down'}
+                            size={ITEM_CHEVRON_SIZE[density]}
+                            color={theme.colors.text.secondary}
+                        />
+                    </IconAction>
+                ) : (
+                    <Icon
+                        name={props.disclosure === 'expanded' ? 'caret-up' : 'caret-down'}
+                        size={ITEM_CHEVRON_SIZE[density]}
+                        color={theme.colors.text.secondary}
+                    />
+                )
             ) : null}
         </View>
     );
 
     return (
         <View style={styles.container}>
-            <View
-                testID={testID ? `${testID}:attention-rail` : undefined}
-                pointerEvents="none"
-                style={[
-                    styles.attentionRail,
-                    // Always mounted, tinted only for `waiting`: a rail that appears and disappears
-                    // would change the tree shape on a status change and remount the row with it.
-                    { backgroundColor: status === 'waiting' ? toneStyle.ink : 'transparent' },
-                ]}
-            />
             <Item
                 testID={testID}
                 leftElement={leftElement}
@@ -233,14 +265,6 @@ AgentActivityRow.displayName = 'AgentActivityRow';
 const styles = StyleSheet.create(() => ({
     container: {
         position: 'relative',
-    },
-    attentionRail: {
-        position: 'absolute',
-        left: 0,
-        top: AGENT_ATTENTION_RAIL_INSET_PX,
-        bottom: AGENT_ATTENTION_RAIL_INSET_PX,
-        width: AGENT_ATTENTION_RAIL_PX,
-        borderRadius: AGENT_ATTENTION_RAIL_PX,
     },
     rightCluster: {
         flexDirection: 'row',

@@ -195,10 +195,11 @@ describe('SessionRightPanelAgentsView reducer refresh', () => {
         await testkit.flushHookEffects();
 
         // A blocked agent is no longer a badge beside the status — it IS the status (`waiting`),
-        // which is what puts the row in NEEDS YOU and tints the attention rail.
+        // and that status word is the entire signal. The row does not move sections and nothing
+        // above it changes.
         expect(screen.findByTestId(statusTestId)?.props.accessibilityLabel)
             .toBe('session.agentActivity.status.running');
-        expect(screen.findByTestId(`${ROSTER_TEST_ID}:section:needsYou`)).toBeNull();
+        expect(screen.findByTestId(`${ROSTER_TEST_ID}:section:working`)).toBeTruthy();
 
         await appendSidechainMessage({
             id: `${testkit.agentActivityFixtureSidechainId(SUBAGENT_KEY)}_permission`,
@@ -208,6 +209,7 @@ describe('SessionRightPanelAgentsView reducer refresh', () => {
 
         expect(screen.findByTestId(statusTestId)?.props.accessibilityLabel)
             .toBe('session.agentActivity.status.waiting');
-        expect(screen.findByTestId(`${ROSTER_TEST_ID}:section:needsYou`)).toBeTruthy();
+        expect(screen.findByTestId(`${ROSTER_TEST_ID}:section:needsYou`)).toBeNull();
+        expect(screen.findByTestId(`${ROSTER_TEST_ID}:section:working`)).toBeTruthy();
     }, 120_000);
 });

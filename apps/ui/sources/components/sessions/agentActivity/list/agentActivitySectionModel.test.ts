@@ -41,10 +41,10 @@ const EXPECTED_SECTION_BY_STATUS: Record<AgentActivityStatusV1, AgentActivitySec
     queued: 'working',
     starting: 'working',
     running: 'working',
-    waiting: 'needsYou',
+    waiting: 'working',
     blocked: 'working',
     succeeded: 'finished',
-    failed: 'needsYou',
+    failed: 'finished',
     timedOut: 'finished',
     cancelled: 'finished',
     unknown: 'finished',
@@ -62,12 +62,17 @@ describe('resolveAgentActivitySectionId', () => {
         }
     });
 
-    it('escalates only the two statuses a person can act on', () => {
-        const escalating = AGENT_ACTIVITY_STATUSES_V1
-            .filter((status) => resolveAgentActivitySectionId(status) === 'needsYou');
-        // `timedOut` is a danger tone but needs no person until they read it; `blocked` waits on a
-        // sibling, not a human. Pinning either would make the section stop meaning anything.
-        expect([...escalating].sort()).toEqual(['failed', 'waiting']);
+    it('escalates nothing: the roster has two sections and neither is an attention claim', () => {
+        // r4.0. The roster reports a WORK STATE. `waiting` is an agent stopped on a permission
+        // prompt — still open work, so it sits under WORKING with its own glyph and status word.
+        // `failed` is terminal, so it sits under FINISHED. Neither gets a section of its own: a
+        // header that says NEEDS YOU spends the roster's one loud device on something the main
+        // agent already handles, and a header that cries wolf stops being read.
+        expect([...AGENT_ACTIVITY_SECTION_IDS]).toEqual(['working', 'finished']);
+        const inProgress = AGENT_ACTIVITY_STATUSES_V1
+            .filter((status) => resolveAgentActivitySectionId(status) === 'working');
+        expect([...inProgress].sort())
+            .toEqual(['blocked', 'queued', 'running', 'starting', 'waiting']);
     });
 });
 
@@ -86,35 +91,57 @@ describe('buildAgentActivitySectionModel', () => {
         expect(model.totalCount).toBe(1);
     });
 
-    it('orders the three sections needsYou, working, finished whatever order the input arrives in', () => {
+    it('orders the two sections working, finished whatever order the input arrives in', () => {
         const model = buildAgentActivitySectionModel({
             entries: [
                 entry({ id: 'done', status: 'succeeded', startedAtMs: T0, endedAtMs: T0 + 10 }),
                 entry({ id: 'live', status: 'running', startedAtMs: T0 }),
-                entry({ id: 'blocked-on-me', status: 'waiting', startedAtMs: T0 }),
+                entry({ id: 'blocked-on-me', status: 'waiting', startedAtMs: T0 - 10 }),
             ],
         });
         expect(model.sections.map((section) => section.id)).toEqual([
             ...AGENT_ACTIVITY_SECTION_IDS,
         ]);
-        expect(idsOf(model.sections[0]!.entries)).toEqual(['blocked-on-me']);
-        expect(idsOf(model.sections[1]!.entries)).toEqual(['live']);
-        expect(idsOf(model.sections[2]!.entries)).toEqual(['done']);
+        expect(idsOf(model.sections[0]!.entries)).toEqual(['blocked-on-me', 'live']);
+        expect(idsOf(model.sections[1]!.entries)).toEqual(['done']);
     });
 
-    it('puts waiting above failed inside NEEDS YOU, then the longest wait first', () => {
+    /**
+     * The deciding guard for the r4.0 deletion: a permission-blocked agent must not vanish when its
+     * section does. It joins WORKING, ordered by start like every other in-flight row — no tier
+     * floating it to the top, which would be the attention claim re-entering through the sort.
+     */
+    it('keeps a permission-blocked agent in WORKING, ordered by start and never floated', () => {
         const model = buildAgentActivitySectionModel({
             entries: [
-                entry({ id: 'failed-old', status: 'failed', startedAtMs: T0 }),
+                entry({ id: 'failed-old', status: 'failed', startedAtMs: T0, endedAtMs: T0 + 10 }),
                 entry({ id: 'waiting-new', status: 'waiting', startedAtMs: T0 + 60_000 }),
-                entry({ id: 'failed-new', status: 'failed', startedAtMs: T0 + 90_000 }),
-                entry({ id: 'waiting-old', status: 'waiting', startedAtMs: T0 }),
+                entry({ id: 'running-old', status: 'running', startedAtMs: T0 }),
             ],
         });
-        // A person can unblock `waiting` right now; `failed` is already over. Within a status the
-        // one that has been waiting longest is the one that most needs a person.
-        expect(idsOf(sectionById(model, 'needsYou')!.entries))
-            .toEqual(['waiting-old', 'waiting-new', 'failed-old', 'failed-new']);
+        expect(idsOf(sectionById(model, 'working')!.entries))
+            .toEqual(['running-old', 'waiting-new']);
+        expect(idsOf(sectionById(model, 'finished')!.entries)).toEqual(['failed-old']);
+        expect(sectionById(model, 'needsYou' as never)).toBeNull();
+    });
+
+    /**
+     * The sort is the second half of the decision. Routing a failure to FINISHED and then floating
+     * it above the successes would smuggle the attention claim straight back in through the
+     * ordering — and it would be a lie about what the section is sorted by. Recency, like every
+     * other terminal state.
+     */
+    it('sorts a failure in FINISHED by recency, with no priority tier above the successes', () => {
+        const model = buildAgentActivitySectionModel({
+            entries: [
+                entry({ id: 'failed-oldest', status: 'failed', startedAtMs: T0, endedAtMs: T0 + 1_000 }),
+                entry({ id: 'succeeded-newest', status: 'succeeded', startedAtMs: T0, endedAtMs: T0 + 3_000 }),
+                entry({ id: 'failed-middle', status: 'failed', startedAtMs: T0, endedAtMs: T0 + 2_000 }),
+            ],
+        });
+
+        expect(idsOf(sectionById(model, 'finished')!.entries))
+            .toEqual(['succeeded-newest', 'failed-middle', 'failed-oldest']);
     });
 
     it('sorts WORKING by start time only, so a status change never moves a row under the reader', () => {
@@ -151,6 +178,59 @@ describe('buildAgentActivitySectionModel', () => {
             ],
         });
         expect(idsOf(sectionById(model, 'finished')!.entries)).toEqual(['newest', 'older', 'no-end']);
+    });
+
+    /**
+     * A headline-only entry carries no terminal instant by design (D-8 forbids inventing one) and
+     * the count-only workflow headline carries no start either — all it has is `updatedAt`, the
+     * instant of the most recent EVIDENCE. Without reading it a just-failed workflow run sorts
+     * below every success from an hour ago, which is the opposite of what FINISHED is sorted by.
+     */
+    it('orders a terminal entry that has only an evidence instant by that instant', () => {
+        const model = buildAgentActivitySectionModel({
+            entries: [
+                entry({ id: 'older', status: 'succeeded', startedAtMs: T0, endedAtMs: T0 + 1_000 }),
+                entry({ id: 'run-just-failed', status: 'failed', updatedAtMs: T0 + 9_000 }),
+                entry({ id: 'oldest', status: 'succeeded', startedAtMs: T0, endedAtMs: T0 + 500 }),
+            ],
+        });
+
+        expect(idsOf(sectionById(model, 'finished')!.entries))
+            .toEqual(['run-just-failed', 'older', 'oldest']);
+    });
+
+    /**
+     * FIX-4: the WORKING header and every count surface must state the same number.
+     *
+     * A host that draws a live run as its own panel takes that run's members out of the list, so
+     * the rows under WORKING are fewer than the live units the badge above the pane counts. The
+     * header states the section's population, not its row count — the same relationship the
+     * FINISHED cap already has — so the reader is never left to compute the difference.
+     */
+    it('adds the units a host folded into its own panels to the WORKING total', () => {
+        const model = buildAgentActivitySectionModel({
+            entries: [
+                entry({ id: 'loose-1', status: 'running', startedAtMs: T0 }),
+                entry({ id: 'loose-2', status: 'running', startedAtMs: T0 + 1 }),
+                entry({ id: 'done', status: 'succeeded', startedAtMs: T0, endedAtMs: T0 + 1 }),
+            ],
+            foldedWorkingCount: 2,
+        });
+        const working = sectionById(model, 'working')!;
+
+        expect(idsOf(working.entries)).toEqual(['loose-1', 'loose-2']);
+        expect(working.totalCount).toBe(4);
+        // Folding is a WORKING-only relationship: only live runs are drawn as panels.
+        expect(sectionById(model, 'finished')!.totalCount).toBe(1);
+    });
+
+    it('leaves the WORKING total alone when the host folded nothing', () => {
+        const model = buildAgentActivitySectionModel({
+            entries: [entry({ id: 'loose-1', status: 'running', startedAtMs: T0 })],
+            foldedWorkingCount: 0,
+        });
+
+        expect(sectionById(model, 'working')!.totalCount).toBe(1);
     });
 
     it('keeps the newest 24 finished rows in the pane and reports what it hid', () => {
@@ -241,10 +321,9 @@ describe('flattenAgentActivitySectionModel', () => {
 
         expect(flattenAgentActivitySectionModel(model).map((item) => `${item.kind}:${item.key}`))
             .toEqual([
-                'header:section:needsYou',
-                'row:needs',
                 'header:section:working',
                 'row:live',
+                'row:needs',
                 'header:section:finished',
                 'row:done',
             ]);

@@ -7,11 +7,10 @@ const SECONDS_PER_HOUR = 60 * SECONDS_PER_MINUTE;
 /**
  * The one elapsed-duration formatter for agent activity (C9).
  *
- * Four incompatible formatters render the same idea today — `formatDurationMs` in the subagent fact
- * pills, `formatDuration` in `WorkflowAgentRow`, the duration branch of `WorkflowActivityView`'s
- * footer, and `tools.common.elapsedSeconds` — so 95 seconds reads as `1m 35s`, `1m 35s`, `1m 35s`
- * and `95.0s` depending on which surface you are looking at. This replaces them; it does not join
- * them.
+ * Four incompatible formatters used to render the same idea — one in the subagent fact pills, one in
+ * the transcript workflow card's agent row, the duration branch of that card's footer, and
+ * `tools.common.elapsedSeconds` — so 95 seconds read as `1m 35s`, `1m 35s`, `1m 35s` and `95.0s`
+ * depending on which surface you were looking at. This replaced them; it did not join them.
  *
  * Two deliberate choices:
  *

@@ -23,12 +23,14 @@ export {
     resolveAgentActivityStaleness,
     resolveAgentActivityStalenessNote,
     type AgentActivityStaleness,
+    type AgentActivityStalenessInput,
 } from './presentation/agentActivityStaleness';
 export {
     useAgentActivityStalenessResolver,
     type AgentActivityStalenessResolver,
 } from './presentation/useAgentActivityStaleness';
 export { formatElapsedDuration } from './presentation/formatElapsedDuration';
+export { resolveAgentActivityElapsedStartMs } from './presentation/resolveAgentActivityElapsedStartMs';
 export { resolveAgentActivityMetaLine } from './presentation/resolveAgentActivityMetaLine';
 export { resolveAgentActivityTitle } from './presentation/resolveAgentActivityTitle';
 export {
@@ -63,11 +65,54 @@ export {
     type AgentActivitySectionModel,
 } from './list/agentActivitySectionModel';
 export {
+    BackgroundTaskDetail,
+    type BackgroundTaskDetailProps,
+} from './background/BackgroundTaskDetail';
+export {
+    AgentActivityResultDetail,
+    type AgentActivityResultDetailProps,
+} from './detail/AgentActivityResultDetail';
+export {
+    RESULT_PREVIEW_MAX_CHARS,
+    RESULT_PREVIEW_MAX_LINES,
+    clampPreviewLines,
+    normalizeResultPreview,
+    type ClampedPreviewLines,
+    type NormalizedResultPreview,
+} from './detail/resultPreview';
+export {
+    isNavigableAgentActivityOpenTarget,
+    resolveAgentActivityOpenTarget,
+    type AgentActivityOpenTarget,
+    type AgentActivityOpenTargetEntry,
+} from './open/resolveAgentActivityOpenTarget';
+export {
+    AGENT_ACTIVITY_PREVIEW_LINE_MAX_CHARS,
+    AGENT_ACTIVITY_PREVIEW_STEP_LIMIT,
+    deriveAgentActivityPreview,
+    type AgentActivityPreviewMessage,
+    type AgentActivityPreviewModel,
+    type AgentActivityPreviewStep,
+} from './preview/deriveAgentActivityPreview';
+export {
+    AgentActivityPreview,
+    type AgentActivityPreviewProps,
+} from './preview/AgentActivityPreview';
+export {
+    useAgentActivitySidechainPreview,
+    type AgentActivitySidechainPreview,
+} from './preview/useAgentActivitySidechainPreview';
+export { resolveAgentActivityEntryFromWorkflowAgent } from './entry/fromWorkflowAgent';
+export {
     resolveAgentActivityEntryFromSubagent,
     resolveSessionSubagentRowActions,
     resolveSessionSubagentTeamId,
     type SessionSubagentEntryParams,
-} from './sources/fromSessionSubagents';
+} from './entry/fromSubagent';
+export {
+    AgentActivityDisclosure,
+    type AgentActivityDisclosureProps,
+} from './row/AgentActivityDisclosure';
 export { AgentActivityRow, type AgentActivityRowProps } from './row/AgentActivityRow';
 export {
     AgentActivityRowOverflow,
@@ -82,14 +127,22 @@ export {
     type AgentActivityTimeSlotProps,
 } from './row/AgentActivityTimeSlot';
 export {
-    AGENT_ATTENTION_RAIL_INSET_PX,
-    AGENT_ATTENTION_RAIL_PX,
+    AGENT_ROW_DETAIL_INSET_PX,
     AGENT_ROW_DIVIDER_INSET_PX,
     AGENT_ROW_MIN_HEIGHT_PX,
     AGENT_STATUS_COLUMN_PX,
     AGENT_STATUS_GLYPH_PX,
     AGENT_TIME_SLOT_MIN_PX,
 } from './row/agentRowMetrics';
+export {
+    AGENT_ACTIVITY_SURFACE_DENSITY,
+    AgentActivitySurface,
+    type AgentActivitySurfaceProps,
+} from './surface/AgentActivitySurface';
+export {
+    useAgentActivitySurfaceModel,
+    type AgentActivitySurfaceModel,
+} from './surface/useAgentActivitySurfaceModel';
 export {
     AgentActivityEmptyState,
     type AgentActivityEmptyStateProps,

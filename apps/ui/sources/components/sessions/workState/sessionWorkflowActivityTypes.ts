@@ -52,6 +52,22 @@ export type WorkflowAgentRowViewModel = Readonly<{
     timeUsedSeconds?: number;
     resultPreview?: string;
     summary?: string;
+    /**
+     * Genuine provider timestamps, in epoch ms, carried through so the shared agent row owns the
+     * duration column. Both are optional at the source and are never back-filled from each other:
+     * borrowing a finish instant for a missing start is D-8, which told every reader that a
+     * sixteen-second run took none.
+     */
+    startedAtMs?: number;
+    endedAtMs?: number;
+    /**
+     * The last moment the producer has evidence of this agent doing something, in epoch ms.
+     *
+     * Carried so a run-panel agent row can take part in the silence rule (4.10) like every other
+     * agent row. Without it the row defaulted to `'fresh'` forever: an agent that had been quiet
+     * for hours kept a turning spinner and a running clock inside an expanded run.
+     */
+    updatedAtMs?: number;
 }>;
 
 /** A phase grouping with its rollup and ordered agent rows. */

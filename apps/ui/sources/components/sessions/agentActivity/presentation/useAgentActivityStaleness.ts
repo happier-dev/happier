@@ -2,8 +2,11 @@ import * as React from 'react';
 
 import { useNowMs } from '@/hooks/time/useNowMs';
 
-import type { AgentActivityRowEntry } from '../agentActivityRowEntry';
-import { resolveAgentActivityStaleness, type AgentActivityStaleness } from './agentActivityStaleness';
+import {
+    resolveAgentActivityStaleness,
+    type AgentActivityStaleness,
+    type AgentActivityStalenessInput,
+} from './agentActivityStaleness';
 
 /**
  * The 90 s / 10 min notes need a clock, and this is where that clock is allowed to live.
@@ -20,15 +23,21 @@ import { resolveAgentActivityStaleness, type AgentActivityStaleness } from './ag
  */
 const STALENESS_CHECK_INTERVAL_MS = 30_000;
 
-export type AgentActivityStalenessResolver = (entry: AgentActivityRowEntry) => AgentActivityStaleness;
+/**
+ * Takes the silence rule's own input rather than a row entry, so the two shapes that need a note —
+ * a merged roster entry and a durable workflow-agent snapshot — reach one clock and one threshold.
+ */
+export type AgentActivityStalenessResolver = (
+    input: AgentActivityStalenessInput,
+) => AgentActivityStaleness;
 
 export function useAgentActivityStalenessResolver(): AgentActivityStalenessResolver {
     const nowMs = useNowMs(STALENESS_CHECK_INTERVAL_MS);
 
-    return React.useCallback((entry: AgentActivityRowEntry) => resolveAgentActivityStaleness({
-        status: entry.status,
-        updatedAtMs: entry.updatedAtMs,
-        endedAtMs: entry.endedAtMs,
+    return React.useCallback((input: AgentActivityStalenessInput) => resolveAgentActivityStaleness({
+        status: input.status,
+        updatedAtMs: input.updatedAtMs,
+        endedAtMs: input.endedAtMs,
         nowMs,
     }), [nowMs]);
 }
