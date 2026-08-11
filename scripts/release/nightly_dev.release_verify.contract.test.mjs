@@ -29,7 +29,7 @@ test('nightly-dev verifies exact immutable candidates before promoting rolling r
   for (const job of ['cli', 'hstack', 'server_runtime', 'ui_web']) {
     assert.match(
       raw,
-      new RegExp(`${job}:[\\s\\S]*?needs:\\s*\\[prepare_release_candidate\\][\\s\\S]*?publish_rolling:\\s*false`),
+      new RegExp(`${job}:[\\s\\S]*?needs:\\s*\\[resolve_resume, prepare_release_candidate\\][\\s\\S]*?publish_rolling:\\s*false`),
       `${job} should publish an immutable candidate without moving its rolling reference`,
     );
   }

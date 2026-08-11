@@ -1,0 +1,143 @@
+name: RELEASE — Resolve resumable candidates
+
+on:
+  workflow_call:
+    inputs:
+      origin_run_id:
+        required: false
+        default: ''
+        type: string
+      expected_workflow:
+        required: true
+        type: string
+      expected_channel:
+        required: true
+        type: string
+      expected_source_sha:
+        required: false
+        default: ''
+        type: string
+    outputs:
+      source_sha:
+        value: ${{ jobs.resolve.outputs.source_sha }}
+      cli_version:
+        value: ${{ jobs.resolve.outputs.cli_version }}
+      stack_version:
+        value: ${{ jobs.resolve.outputs.stack_version }}
+      server_version:
+        value: ${{ jobs.resolve.outputs.server_version }}
+      ui_web_version:
+        value: ${{ jobs.resolve.outputs.ui_web_version }}
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  resolve:
+    name: Bind prior run and reusable immutable candidates
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      source_sha: ${{ steps.resume.outputs.source_sha || steps.empty.outputs.source_sha }}
+      cli_version: ${{ steps.resume.outputs.cli_version || steps.empty.outputs.cli_version }}
+      stack_version: ${{ steps.resume.outputs.stack_version || steps.empty.outputs.stack_version }}
+      server_version: ${{ steps.resume.outputs.server_version || steps.empty.outputs.server_version }}
+      ui_web_version: ${{ steps.resume.outputs.ui_web_version || steps.empty.outputs.ui_web_version }}
+    steps:
+      - name: Checkout trusted resume control bytes
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22.x
+
+      - name: Select a fresh release when no origin run is supplied
+        id: empty
+        if: ${{ inputs.origin_run_id == '' }}
+        run: |
+          {
+            echo 'source_sha='
+            echo 'cli_version='
+            echo 'stack_version='
+            echo 'server_version='
+            echo 'ui_web_version='
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Inspect exact origin run and status artifact
+        id: inspect
+        if: ${{ inputs.origin_run_id != '' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          ORIGIN_RUN_ID: ${{ inputs.origin_run_id }}
+          EXPECTED_WORKFLOW: ${{ inputs.expected_workflow }}
+          EXPECTED_CHANNEL: ${{ inputs.expected_channel }}
+          EXPECTED_SOURCE_SHA: ${{ inputs.expected_source_sha }}
+        run: |
+          set -euo pipefail
+          if ! [[ "$ORIGIN_RUN_ID" =~ ^[1-9][0-9]*$ ]]; then
+            echo 'origin_run_id must be a positive integer.' >&2
+            exit 1
+          fi
+          gh api "repos/${GH_REPO}/actions/runs/${ORIGIN_RUN_ID}" > "$RUNNER_TEMP/resume-run.json"
+          gh api --paginate --slurp \
+            "repos/${GH_REPO}/actions/runs/${ORIGIN_RUN_ID}/artifacts?per_page=100" \
+            > "$RUNNER_TEMP/resume-artifacts.json"
+          node scripts/pipeline/release/resolve-release-resume.mjs \
+            --mode inspect \
+            --origin-run-json "$RUNNER_TEMP/resume-run.json" \
+            --artifacts-json "$RUNNER_TEMP/resume-artifacts.json" \
+            --expected-repository "$GH_REPO" \
+            --expected-workflow "$EXPECTED_WORKFLOW" \
+            --expected-channel "$EXPECTED_CHANNEL" \
+            --expected-source-sha "$EXPECTED_SOURCE_SHA" \
+            --github-output "$GITHUB_OUTPUT"
+
+      - name: Download and verify exact release status bytes
+        if: ${{ inputs.origin_run_id != '' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          STATUS_ARTIFACT_ID: ${{ steps.inspect.outputs.artifact_id }}
+          EXPECTED_DIGEST: ${{ steps.inspect.outputs.artifact_digest }}
+        run: |
+          set -euo pipefail
+          gh api "repos/${GH_REPO}/actions/artifacts/${STATUS_ARTIFACT_ID}/zip" \
+            > "$RUNNER_TEMP/release-status.zip"
+          actual_digest="$(sha256sum "$RUNNER_TEMP/release-status.zip" | cut -d ' ' -f 1)"
+          test "sha256:${actual_digest}" = "${EXPECTED_DIGEST}"
+          mkdir -p "$RUNNER_TEMP/release-status"
+          unzip -q "$RUNNER_TEMP/release-status.zip" -d "$RUNNER_TEMP/release-status"
+          test -f "$RUNNER_TEMP/release-status/release-status.json"
+
+      - name: Resolve verified reusable candidate versions
+        id: resume
+        if: ${{ inputs.origin_run_id != '' }}
+        env:
+          GH_REPO: ${{ github.repository }}
+          EXPECTED_WORKFLOW: ${{ inputs.expected_workflow }}
+          EXPECTED_CHANNEL: ${{ inputs.expected_channel }}
+          EXPECTED_SOURCE_SHA: ${{ inputs.expected_source_sha }}
+          DOWNLOADED_DIGEST: ${{ steps.inspect.outputs.artifact_digest }}
+        run: |
+          set -euo pipefail
+          node scripts/pipeline/release/resolve-release-resume.mjs \
+            --mode resolve \
+            --origin-run-json "$RUNNER_TEMP/resume-run.json" \
+            --artifacts-json "$RUNNER_TEMP/resume-artifacts.json" \
+            --status-json "$RUNNER_TEMP/release-status/release-status.json" \
+            --downloaded-digest "$DOWNLOADED_DIGEST" \
+            --expected-repository "$GH_REPO" \
+            --expected-workflow "$EXPECTED_WORKFLOW" \
+            --expected-channel "$EXPECTED_CHANNEL" \
+            --expected-source-sha "$EXPECTED_SOURCE_SHA" \
+            --github-output "$GITHUB_OUTPUT"

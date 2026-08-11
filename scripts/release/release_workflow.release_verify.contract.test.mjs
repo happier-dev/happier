@@ -49,7 +49,7 @@ test('release workflow verifies immutable candidates before promoting preview or
   );
   assert.match(
     raw,
-    /plan:[\s\S]*?needs:\s*\[release_actor_guard, resolve_validation_profile, ci\][\s\S]*?needs\.resolve_validation_profile\.result == 'success'[\s\S]*?needs\.ci\.result == 'success'/,
+    /plan:[\s\S]*?needs:\s*\[release_actor_guard, resolve_resume, resolve_validation_profile, ci\][\s\S]*?needs\.resolve_resume\.result == 'success'[\s\S]*?needs\.resolve_validation_profile\.result == 'success'[\s\S]*?needs\.ci\.result == 'success'/,
     'release.yml planning must fail closed unless the canonical profile and its pre-release CI gate succeed',
   );
   assert.match(
@@ -111,7 +111,7 @@ test('release workflow derives validation, notes, and terminal status from the e
   assert.match(releaseStatus, /VALIDATION_PROFILE:\s*\$\{\{\s*needs\.plan\.outputs\.validation_profile\s*\}\}/);
   assert.match(releaseStatus, /PUBLISH_CLI:\s*\$\{\{\s*needs\.plan\.outputs\.publish_cli\s*\}\}/);
   assert.match(releaseStatus, /'supported-old-relay-compatibility': candidateReleaseRequested && process\.env\.VALIDATION_PROFILE === 'stable'/);
-  assert.match(releaseStatus, /requestedSurfaces: ids\.map\(\(\[id\]\) => \(\{ id, requested: requested\[id\], required: true \}\)\)/);
+  assert.match(releaseStatus, /requestedSurfaces: definitions\.map\(\(\{ id \}\) => \(\{ id, requested: requested\[id\], required: true \}\)\)/);
   assert.match(releaseStatus, /summarize-release-status\.mjs/);
   assert.match(releaseStatus, /GITHUB_STEP_SUMMARY/);
   assert.match(releaseStatus, /actions\/upload-artifact@[\s\S]*?name:\s*happier-release-status/);

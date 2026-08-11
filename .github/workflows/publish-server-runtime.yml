@@ -31,6 +31,16 @@ on:
         required: false
         default: ''
         type: string
+      resume_version:
+        description: Existing immutable candidate to re-verify and return without rebuilding or promoting
+        required: false
+        default: ''
+        type: string
+      authorized_sha:
+        description: Caller-bound source SHA required for immutable candidate reuse
+        required: false
+        default: ''
+        type: string
       publish_rolling:
         description: Promote the immutable version to the user-consumed rolling channel
         required: true
@@ -47,6 +57,7 @@ on:
       allow_stable: { required: false, default: false, type: boolean }
       release_message: { required: false, default: '', type: string }
       retry_version: { required: false, default: '', type: string }
+      resume_version: { required: false, default: '', type: string }
       publish_rolling: { required: false, default: true, type: boolean }
 
 permissions:
@@ -69,6 +80,8 @@ jobs:
           CALLER_REPOSITORY: ${{ github.repository }}
           WORKFLOW_REPOSITORY: ${{ job.workflow_repository }}
           WORKFLOW_REF: ${{ job.workflow_ref }}
+          RETRY_VERSION: ${{ inputs.retry_version }}
+          RESUME_VERSION: ${{ inputs.resume_version }}
         run: |
           set -euo pipefail
           case "$CHANNEL" in
@@ -76,6 +89,10 @@ jobs:
             *) echo "Noncanonical server-runtime workflow channel: $CHANNEL" >&2; exit 1 ;;
           esac
           test "$CALLER_REPOSITORY" = "$WORKFLOW_REPOSITORY"
+          if [ -n "$RETRY_VERSION" ] && [ -n "$RESUME_VERSION" ]; then
+            echo "retry_version and resume_version are mutually exclusive." >&2
+            exit 1
+          fi
           case "$WORKFLOW_REF" in
             "$WORKFLOW_REPOSITORY/.github/workflows/publish-server-runtime.yml@refs/heads/dev"|\
             "$WORKFLOW_REPOSITORY/.github/workflows/publish-server-runtime.yml@refs/heads/preview"|\
@@ -134,10 +151,11 @@ jobs:
           SOURCE_REF: ${{ steps.channel_meta.outputs.source_ref }}
           AUTHORIZED_SHA: ${{ inputs.authorized_sha }}
           RETRY_VERSION: ${{ inputs.retry_version }}
+          RESUME_VERSION: ${{ inputs.resume_version }}
           ARTIFACT_NAME: server-runtime-candidate-${{ github.run_id }}-${{ github.run_attempt }}
         run: |
-          if [[ -n "$RETRY_VERSION" ]]; then
-            SOURCE_REF="refs/tags/server-v$RETRY_VERSION"
+          if [[ -n "$RETRY_VERSION" || -n "$RESUME_VERSION" ]]; then
+            SOURCE_REF="refs/tags/server-v${RETRY_VERSION:-$RESUME_VERSION}"
           fi
           node scripts/pipeline/github/resolve-authorized-release-source.mjs \
             --source-ref "$SOURCE_REF" --authorized-sha "$AUTHORIZED_SHA" --remote origin --github-output "$GITHUB_OUTPUT"
@@ -159,13 +177,25 @@ jobs:
         id: version
         env:
           GH_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ github.token }}
           GH_REPO: ${{ job.workflow_repository }}
           CHANNEL: ${{ inputs.channel }}
           ALLOW_STABLE: ${{ inputs.allow_stable }}
           BASE_VERSION: ${{ steps.source_version.outputs.base_version }}
           RETRY_VERSION: ${{ inputs.retry_version }}
+          RESUME_VERSION: ${{ inputs.resume_version }}
           AUTHORIZED_SHA: ${{ steps.source.outputs.authorized_sha }}
         run: |
+          if [[ -n "$RESUME_VERSION" ]]; then
+            node scripts/pipeline/release/verify-release-candidate-identity.mjs \
+              --repository "$GH_REPO" \
+              --channel "$CHANNEL" \
+              --candidate-source-sha "$AUTHORIZED_SHA" \
+              --candidate-product server \
+              --candidate-version "$RESUME_VERSION"
+            echo "version=$RESUME_VERSION" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           PHASE=build-candidate
           VERSION_ARGS=()
           if [[ -n "$RETRY_VERSION" ]]; then
@@ -181,7 +211,7 @@ jobs:
   build_candidate:
     name: Build and smoke-test unsigned candidate
     needs: [trusted_ref_guard, release_actor_guard]
-    if: ${{ inputs.retry_version == '' }}
+    if: ${{ inputs.retry_version == '' && inputs.resume_version == '' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -235,7 +265,7 @@ jobs:
   finalize_darwin:
     name: Sign and notarize server (${{ matrix.platform_key }})
     needs: [trusted_ref_guard, release_actor_guard, build_candidate]
-    if: ${{ inputs.retry_version == '' }}
+    if: ${{ inputs.retry_version == '' && inputs.resume_version == '' }}
     runs-on: ${{ matrix.runner }}
     environment: release-shared
     permissions:
@@ -358,7 +388,7 @@ jobs:
   finalize_publish:
     name: Validate, sign, manifest, and publish authorized candidate
     needs: [trusted_ref_guard, release_actor_guard, build_candidate, finalize_darwin]
-    if: ${{ inputs.retry_version == '' }}
+    if: ${{ inputs.retry_version == '' && inputs.resume_version == '' }}
     runs-on: ubuntu-latest
     environment: release-shared
     permissions:
@@ -430,7 +460,7 @@ jobs:
   promote_existing:
     name: Re-promote exact immutable version after interrupted rolling upload
     needs: [trusted_ref_guard, release_actor_guard]
-    if: ${{ inputs.retry_version != '' }}
+    if: ${{ inputs.retry_version != '' && inputs.resume_version == '' }}
     runs-on: ubuntu-latest
     environment: release-shared
     permissions:
@@ -488,7 +518,7 @@ jobs:
   promote_existing_fresh_runner_retry:
     name: Re-promote exact immutable version on a fresh runner
     needs: [trusted_ref_guard, release_actor_guard, promote_existing]
-    if: ${{ inputs.retry_version != '' && needs.promote_existing.outputs.requires_fresh_runner_retry == 'true' }}
+    if: ${{ inputs.retry_version != '' && inputs.resume_version == '' && needs.promote_existing.outputs.requires_fresh_runner_retry == 'true' }}
     runs-on: ubuntu-latest
     environment: release-shared
     permissions:

@@ -32,6 +32,11 @@ on:
         required: false
         default: ""
         type: string
+      resume_version:
+        description: "Existing immutable candidate to re-verify and return without rebuilding or promoting"
+        required: false
+        default: ""
+        type: string
       authorized_sha:
         description: "Caller-bound source SHA"
         required: false
@@ -45,7 +50,7 @@ on:
   workflow_call:
     outputs:
       version:
-        value: ${{ jobs.publish.outputs.version }}
+        value: ${{ jobs.publish.outputs.version || jobs.release_actor_guard.outputs.resume_version }}
     inputs:
       channel:
         required: true
@@ -63,6 +68,10 @@ on:
         default: ""
         type: string
       retry_version:
+        required: false
+        default: ""
+        type: string
+      resume_version:
         required: false
         default: ""
         type: string
@@ -95,6 +104,8 @@ jobs:
           CALLER_REPOSITORY: ${{ github.repository }}
           WORKFLOW_REPOSITORY: ${{ job.workflow_repository }}
           WORKFLOW_REF: ${{ job.workflow_ref }}
+          RETRY_VERSION: ${{ inputs.retry_version }}
+          RESUME_VERSION: ${{ inputs.resume_version }}
         run: |
           set -euo pipefail
           case "$CHANNEL" in
@@ -102,6 +113,10 @@ jobs:
             *) echo "Noncanonical UI-web publisher channel: $CHANNEL" >&2; exit 1 ;;
           esac
           test "$CALLER_REPOSITORY" = "$WORKFLOW_REPOSITORY"
+          if [ -n "$RETRY_VERSION" ] && [ -n "$RESUME_VERSION" ]; then
+            echo "retry_version and resume_version are mutually exclusive." >&2
+            exit 1
+          fi
           case "$WORKFLOW_REF" in
             "$WORKFLOW_REPOSITORY/.github/workflows/publish-ui-web.yml@refs/heads/dev"|\
             "$WORKFLOW_REPOSITORY/.github/workflows/publish-ui-web.yml@refs/heads/preview"|\
@@ -115,6 +130,8 @@ jobs:
     permissions:
       contents: read
     runs-on: ubuntu-latest
+    outputs:
+      resume_version: ${{ steps.resume.outputs.resume_version }}
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -123,15 +140,37 @@ jobs:
           ref: ${{ job.workflow_sha }}
           fetch-depth: 1
           persist-credentials: false
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22.x
       - name: Authorize release actor
         uses: ./.github/actions/release-actor-guard
         with:
           team_slug: release-admins
           app_id: ${{ secrets.RELEASE_BOT_APP_ID }}
           private_key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
+      - name: Re-verify reusable immutable UI-web candidate
+        id: resume
+        if: ${{ inputs.resume_version != '' && inputs.retry_version == '' }}
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          CHANNEL: ${{ inputs.channel }}
+          SOURCE_SHA: ${{ inputs.authorized_sha }}
+          RESUME_VERSION: ${{ inputs.resume_version }}
+        run: |
+          set -euo pipefail
+          node scripts/pipeline/release/verify-release-candidate-identity.mjs \
+            --repository "$REPOSITORY" \
+            --channel "$CHANNEL" \
+            --candidate-source-sha "$SOURCE_SHA" \
+            --candidate-product ui-web \
+            --candidate-version "$RESUME_VERSION"
+          echo "resume_version=$RESUME_VERSION" >> "$GITHUB_OUTPUT"
 
   prepare:
-    if: ${{ inputs.retry_version == '' }}
+    if: ${{ inputs.retry_version == '' && inputs.resume_version == '' }}
     needs: [release_actor_guard]
     runs-on: ubuntu-latest
     permissions:
@@ -249,7 +288,7 @@ jobs:
 
   build_candidate:
     name: Build unsigned UI-web candidate
-    if: ${{ inputs.retry_version == '' }}
+    if: ${{ inputs.retry_version == '' && inputs.resume_version == '' }}
     needs: [prepare]
     runs-on: ubuntu-latest
     permissions: {}
@@ -342,7 +381,7 @@ jobs:
           retention-days: 2
 
   publish:
-    if: ${{ inputs.retry_version == '' }}
+    if: ${{ inputs.retry_version == '' && inputs.resume_version == '' }}
     needs: [prepare, build_candidate]
     runs-on: ubuntu-latest
     environment: release-shared
@@ -482,7 +521,7 @@ jobs:
   promote_existing:
     name: Re-promote exact immutable UI web version after interrupted rolling upload
     needs: [release_actor_guard]
-    if: ${{ inputs.retry_version != '' }}
+    if: ${{ inputs.retry_version != '' && inputs.resume_version == '' }}
     runs-on: ubuntu-latest
     environment: release-shared
     permissions:

@@ -32,7 +32,7 @@ const CANDIDATES = Object.freeze([
  */
 export function validateCandidateVersions(input) {
   const requestedChannel = String(input.channel ?? '');
-  if (!['dev', 'preview', 'production'].includes(requestedChannel)) {
+  if (!['dev', 'preview', 'production', 'stable'].includes(requestedChannel)) {
     throw new Error(`[release] unsupported candidate verification channel: ${requestedChannel || '<empty>'}`);
   }
   const channel = normalizePublicReleaseChannel(requestedChannel);
@@ -124,18 +124,36 @@ export async function main(argv = process.argv.slice(2), environment = process.e
       'candidate-stack-version': { type: 'string', default: '' },
       'candidate-server-version': { type: 'string', default: '' },
       'candidate-ui-web-version': { type: 'string', default: '' },
+      'candidate-product': { type: 'string', default: '' },
+      'candidate-version': { type: 'string', default: '' },
       'api-base-url': { type: 'string', default: 'https://api.github.com' },
     },
     allowPositionals: false,
   });
+  const candidateProduct = String(values['candidate-product'] ?? '');
+  const candidateVersion = String(values['candidate-version'] ?? '');
+  if (Boolean(candidateProduct) !== Boolean(candidateVersion)) {
+    throw new Error('[release] --candidate-product and --candidate-version must be supplied together');
+  }
+  const productKey = candidateProduct === 'hstack' ? 'stack' : candidateProduct;
+  if (productKey && !CANDIDATES.some((candidate) => candidate.key === productKey)) {
+    throw new Error(`[release] unsupported candidate product: ${candidateProduct}`);
+  }
+  const explicitVersions = {
+    cli: String(values['candidate-cli-version'] ?? ''),
+    stack: String(values['candidate-stack-version'] ?? ''),
+    server: String(values['candidate-server-version'] ?? ''),
+    'ui-web': String(values['candidate-ui-web-version'] ?? ''),
+  };
+  if (productKey) {
+    if (Object.values(explicitVersions).some(Boolean)) {
+      throw new Error('[release] generic and product-specific candidate options cannot be combined');
+    }
+    explicitVersions[/** @type {'cli' | 'stack' | 'server' | 'ui-web'} */ (productKey)] = candidateVersion;
+  }
   const validated = validateCandidateVersions({
     channel: String(values.channel ?? ''),
-    versions: {
-      cli: String(values['candidate-cli-version'] ?? ''),
-      stack: String(values['candidate-stack-version'] ?? ''),
-      server: String(values['candidate-server-version'] ?? ''),
-      'ui-web': String(values['candidate-ui-web-version'] ?? ''),
-    },
+    versions: explicitVersions,
   });
   const repository = String(values.repository ?? '').trim();
   const candidateSourceSha = String(values['candidate-source-sha'] ?? '').trim().toLowerCase();

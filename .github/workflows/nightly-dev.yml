@@ -10,6 +10,11 @@ on:
         required: true
         default: dev
         type: string
+      resume_run_id:
+        description: "Completed NIGHTLY run ID whose verified immutable candidates should be reused"
+        required: false
+        default: ''
+        type: string
 
 permissions:
   actions: read
@@ -21,8 +26,17 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  resolve_resume:
+    name: Resolve resumable nightly candidates
+    uses: ./.github/workflows/resolve-release-resume.yml
+    with:
+      origin_run_id: ${{ inputs.resume_run_id }}
+      expected_workflow: .github/workflows/nightly-dev.yml
+      expected_channel: dev
+
   prepare_release_candidate:
     name: Prepare exact nightly candidate
+    needs: [resolve_resume]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -34,7 +48,7 @@ jobs:
       - name: Checkout requested nightly source
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
-          ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.source_ref || 'dev' }}
+          ref: ${{ needs.resolve_resume.outputs.source_sha || (github.event_name == 'workflow_dispatch' && github.event.inputs.source_ref || 'dev') }}
           fetch-depth: 1
           persist-credentials: false
       - name: Setup Node
@@ -78,49 +92,56 @@ jobs:
 
   cli:
     name: CLI immutable candidate (dev)
-    needs: [prepare_release_candidate]
+    needs: [resolve_resume, prepare_release_candidate]
     uses: ./.github/workflows/publish-cli-binaries.yml
     secrets: inherit
     with:
       channel: dev
       source_ref: ${{ needs.prepare_release_candidate.outputs.source_sha }}
+      authorized_sha: ${{ needs.prepare_release_candidate.outputs.source_sha }}
+      resume_version: ${{ needs.resolve_resume.outputs.cli_version }}
       publish_rolling: false
       allow_stable: false
       release_message: ${{ needs.prepare_release_candidate.outputs.release_notes_github_markdown }}
 
   hstack:
     name: HStack immutable candidate (dev)
-    needs: [prepare_release_candidate]
+    needs: [resolve_resume, prepare_release_candidate]
     uses: ./.github/workflows/publish-hstack-binaries.yml
     secrets: inherit
     with:
       channel: dev
       source_ref: ${{ needs.prepare_release_candidate.outputs.source_sha }}
+      authorized_sha: ${{ needs.prepare_release_candidate.outputs.source_sha }}
+      resume_version: ${{ needs.resolve_resume.outputs.stack_version }}
       publish_rolling: false
       allow_stable: false
       release_message: ${{ needs.prepare_release_candidate.outputs.release_notes_github_markdown }}
 
   server_runtime:
     name: Server immutable candidate (dev)
-    needs: [prepare_release_candidate]
+    needs: [resolve_resume, prepare_release_candidate]
     uses: ./.github/workflows/publish-server-runtime.yml
     secrets: inherit
     with:
       channel: dev
       source_ref: ${{ needs.prepare_release_candidate.outputs.source_sha }}
       authorized_sha: ${{ needs.prepare_release_candidate.outputs.source_sha }}
+      resume_version: ${{ needs.resolve_resume.outputs.server_version }}
       publish_rolling: false
       allow_stable: false
       release_message: ${{ needs.prepare_release_candidate.outputs.release_notes_github_markdown }}
 
   ui_web:
     name: UI web immutable candidate (dev)
-    needs: [prepare_release_candidate]
+    needs: [resolve_resume, prepare_release_candidate]
     uses: ./.github/workflows/publish-ui-web.yml
     secrets: inherit
     with:
       channel: dev
       source_ref: ${{ needs.prepare_release_candidate.outputs.source_sha }}
+      authorized_sha: ${{ needs.prepare_release_candidate.outputs.source_sha }}
+      resume_version: ${{ needs.resolve_resume.outputs.ui_web_version }}
       publish_rolling: false
       allow_stable: false
       release_message: ${{ needs.prepare_release_candidate.outputs.release_notes_github_markdown }}
@@ -281,9 +302,13 @@ jobs:
         env:
           SOURCE_SHA: ${{ needs.prepare_release_candidate.outputs.source_sha }}
           CLI_RESULT: ${{ needs.cli.result }}
+          CLI_VERSION: ${{ needs.cli.outputs.version }}
           HSTACK_RESULT: ${{ needs.hstack.result }}
+          HSTACK_VERSION: ${{ needs.hstack.outputs.version }}
           SERVER_RESULT: ${{ needs.server_runtime.result }}
+          SERVER_VERSION: ${{ needs.server_runtime.outputs.version }}
           UI_WEB_RESULT: ${{ needs.ui_web.result }}
+          UI_WEB_VERSION: ${{ needs.ui_web.outputs.version }}
           VERIFY_RESULT: ${{ needs.release_verify.result }}
           PROMOTE_SERVER_RESULT: ${{ needs.promote_server.result }}
           PROMOTE_HSTACK_RESULT: ${{ needs.promote_hstack.result }}
@@ -304,6 +329,12 @@ jobs:
             ['promote-ui-web', 'PROMOTE_UI_WEB_RESULT'], ['ui-mobile', 'UI_MOBILE_RESULT'],
             ['ui-desktop', 'UI_DESKTOP_RESULT'], ['docker', 'DOCKER_RESULT'], ['rolling-verification', 'VERIFY_PROMOTED_RESULT'],
           ];
+          const candidateProducts = new Map([
+            ['cli', ['cli', 'CLI_VERSION']],
+            ['hstack', ['stack', 'HSTACK_VERSION']],
+            ['server', ['server', 'SERVER_VERSION']],
+            ['ui-web', ['ui-web', 'UI_WEB_VERSION']],
+          ]);
           const normalizeResult = (value) => value === 'success' ? 'success' : value === 'skipped' ? 'skipped' : 'failed';
           const input = {
             run: process.env.GITHUB_RUN_ID,
@@ -312,7 +343,19 @@ jobs:
             requestedSurfaces: ids.map(([id]) => ({ id, requested: true, required: true })),
             surfaces: ids.map(([id, envName]) => {
               const result = normalizeResult(process.env[envName]);
-              return { id, result, ...(result === 'success' ? { identity: { verified: true } } : {}) };
+              const candidate = candidateProducts.get(id);
+              const version = candidate ? process.env[candidate[1]] ?? '' : '';
+              const verified = candidate
+                ? result === 'success' && version !== '' && normalizeResult(process.env.VERIFY_RESULT) === 'success'
+                : result === 'success';
+              return {
+                id,
+                result,
+                ...(result === 'success' ? { identity: {
+                  verified,
+                  ...(candidate ? { product: candidate[0], sourceSha: process.env.SOURCE_SHA, version } : {}),
+                } } : {}),
+              };
             }),
           };
           writeFileSync('/dev/stdout', `${JSON.stringify(input)}\n`);
@@ -326,3 +369,11 @@ jobs:
             cat "$RUNNER_TEMP/release-status.json"
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload terminal release status
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: happier-release-status
+          path: ${{ runner.temp }}/release-status.json
+          if-no-files-found: error
+          overwrite: true

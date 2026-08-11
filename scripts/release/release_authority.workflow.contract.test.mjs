@@ -200,16 +200,16 @@ test('server runtime publisher exposes a hosted same-version rolling recovery pa
   assert.ok(parsed.on.workflow_call.inputs.retry_version);
   assert.match(parsed.jobs.release_actor_guard.steps.at(-1).run, /--phase "\$PHASE"/);
   assert.match(parsed.jobs.release_actor_guard.steps.at(-1).run, /--version "\$RETRY_VERSION"/);
-  assert.equal(parsed.jobs.build_candidate.if, "${{ inputs.retry_version == '' }}");
-  assert.equal(parsed.jobs.finalize_publish.if, "${{ inputs.retry_version == '' }}");
-  assert.equal(parsed.jobs.promote_existing.if, "${{ inputs.retry_version != '' }}");
+  assert.equal(parsed.jobs.build_candidate.if, "${{ inputs.retry_version == '' && inputs.resume_version == '' }}");
+  assert.equal(parsed.jobs.finalize_publish.if, "${{ inputs.retry_version == '' && inputs.resume_version == '' }}");
+  assert.equal(parsed.jobs.promote_existing.if, "${{ inputs.retry_version != '' && inputs.resume_version == '' }}");
   assert.equal(
     parsed.jobs.promote_existing.outputs.requires_fresh_runner_retry,
     '${{ steps.promote.outputs.requires_fresh_runner_retry }}',
   );
   const bindSource = parsed.jobs.release_actor_guard.steps.find((step) => step.id === 'source');
   assert.equal(bindSource.env.RETRY_VERSION, '${{ inputs.retry_version }}');
-  assert.match(bindSource.run, /SOURCE_REF="refs\/tags\/server-v\$RETRY_VERSION"/);
+  assert.match(bindSource.run, /SOURCE_REF="refs\/tags\/server-v\$\{RETRY_VERSION:-\$RESUME_VERSION\}"/);
   assert.doesNotMatch(bindSource.run, /steps\.channel_meta\.outputs\.source_ref.*RETRY_VERSION/s);
   const firstPromotion = parsed.jobs.promote_existing.steps.at(-1);
   assert.equal(firstPromotion.id, 'promote');
@@ -228,7 +228,7 @@ test('server runtime publisher exposes a hosted same-version rolling recovery pa
   );
   assert.equal(
     freshRunnerRetry.if,
-    "${{ inputs.retry_version != '' && needs.promote_existing.outputs.requires_fresh_runner_retry == 'true' }}",
+    "${{ inputs.retry_version != '' && inputs.resume_version == '' && needs.promote_existing.outputs.requires_fresh_runner_retry == 'true' }}",
   );
   assert.match(
     freshRunnerRetry.steps.at(-1).run,
@@ -246,17 +246,17 @@ for (const [workflowName, leafScript] of [
     assert.ok(parsed.on.workflow_dispatch.inputs.retry_version);
     assert.ok(parsed.on.workflow_call.inputs.retry_version);
     if (workflowName === 'publish-ui-web.yml') {
-      assert.equal(parsed.jobs.publish.if, "${{ inputs.retry_version == '' }}");
+      assert.equal(parsed.jobs.publish.if, "${{ inputs.retry_version == '' && inputs.resume_version == '' }}");
     } else {
       for (const jobName of ['prepare', 'build_candidate', 'finalize_darwin', 'finalize_publish']) {
         assert.equal(
           parsed.jobs[jobName].if,
-          "${{ inputs.retry_version == '' }}",
+          "${{ inputs.retry_version == '' && inputs.resume_version == '' }}",
           `${workflowName} ${jobName} must be unreachable during rolling recovery`,
         );
       }
     }
-    assert.equal(parsed.jobs.promote_existing.if, "${{ inputs.retry_version != '' }}");
+    assert.equal(parsed.jobs.promote_existing.if, "${{ inputs.retry_version != '' && inputs.resume_version == '' }}");
     const recoverySteps = parsed.jobs.promote_existing.steps;
     const recoveryRun = recoverySteps
       .map((step) => String(step.run ?? ''))

@@ -73,6 +73,11 @@ on:
         required: false
         default: ""
         type: string
+      resume_run_id:
+        description: "Completed RELEASE run ID whose verified immutable candidates should be reused"
+        required: false
+        default: ""
+        type: string
       confirm:
         description: "Confirm — Choose the exact action for this environment"
         required: true
@@ -151,6 +156,16 @@ jobs:
           app_id: ${{ secrets.RELEASE_BOT_APP_ID }}
           private_key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
 
+  resolve_resume:
+    name: Resolve resumable release candidates
+    needs: [release_actor_guard]
+    uses: ./.github/workflows/resolve-release-resume.yml
+    with:
+      origin_run_id: ${{ inputs.resume_run_id }}
+      expected_workflow: .github/workflows/release.yml
+      expected_channel: ${{ inputs.environment == 'production' && 'production' || 'preview' }}
+      expected_source_sha: ${{ inputs.authorized_promotion_source_sha }}
+
   resolve_validation_profile:
     name: Resolve public release validation profile
     needs: [release_actor_guard]
@@ -221,8 +236,8 @@ jobs:
 
   plan:
     name: Release Plan (inputs + changes + bump/publish decisions)
-    needs: [release_actor_guard, resolve_validation_profile, ci]
-    if: ${{ always() && needs.release_actor_guard.result == 'success' && needs.resolve_validation_profile.result == 'success' && needs.ci.result == 'success' }}
+    needs: [release_actor_guard, resolve_resume, resolve_validation_profile, ci]
+    if: ${{ always() && needs.release_actor_guard.result == 'success' && needs.resolve_resume.result == 'success' && needs.resolve_validation_profile.result == 'success' && needs.ci.result == 'success' }}
     permissions:
       contents: read
     runs-on: ubuntu-latest
@@ -731,7 +746,7 @@ jobs:
 
   publish_server_runtime:
     if: always() && needs.plan.result == 'success' && needs.bind_server_source.result == 'success' && inputs.dry_run != true && (needs.plan.outputs.publish_server == 'true' || inputs.force_deploy == true || needs.plan.outputs.changed_ui == 'true' || needs.plan.outputs.changed_server == 'true' || needs.plan.outputs.changed_shared == 'true') && ((inputs.environment == 'production' && needs.promote_main.result == 'success') || (inputs.environment == 'preview' && needs.promote_preview.result == 'success'))
-    needs: [plan, promote_preview, promote_main, bind_server_source]
+    needs: [resolve_resume, plan, promote_preview, promote_main, bind_server_source]
     permissions:
       contents: write
     uses: ./.github/workflows/publish-server-runtime.yml
@@ -740,13 +755,14 @@ jobs:
       channel: ${{ inputs.environment == 'production' && 'stable' || 'preview' }}
       source_ref: ${{ inputs.environment == 'production' && 'main' || 'preview' }}
       authorized_sha: ${{ needs.bind_server_source.outputs.authorized_sha }}
+      resume_version: ${{ needs.resolve_resume.outputs.server_version }}
       allow_stable: ${{ inputs.environment == 'production' }}
       release_message: ${{ needs.bind_server_source.outputs.release_notes_github_markdown }}
       publish_rolling: false
 
   publish_ui_web:
     if: always() && needs.plan.result == 'success' && inputs.dry_run != true && (contains(format(',{0},', inputs.deploy_targets), ',ui,') || inputs.force_deploy == true || needs.plan.outputs.changed_ui == 'true' || needs.plan.outputs.changed_shared == 'true') && ((inputs.environment == 'production' && needs.promote_main.result == 'success') || (inputs.environment == 'preview' && needs.promote_preview.result == 'success'))
-    needs: [plan, promote_preview, promote_main, bind_server_source]
+    needs: [resolve_resume, plan, promote_preview, promote_main, bind_server_source]
     permissions:
       contents: write
     uses: ./.github/workflows/publish-ui-web.yml
@@ -754,13 +770,15 @@ jobs:
     with:
       channel: ${{ inputs.environment == 'production' && 'stable' || 'preview' }}
       source_ref: ${{ inputs.environment == 'production' && 'main' || 'preview' }}
+      authorized_sha: ${{ needs.bind_server_source.outputs.authorized_sha }}
+      resume_version: ${{ needs.resolve_resume.outputs.ui_web_version }}
       allow_stable: ${{ inputs.environment == 'production' }}
       release_message: ${{ needs.bind_server_source.outputs.release_notes_github_markdown }}
       publish_rolling: false
 
   publish_cli_binaries:
     if: always() && needs.plan.result == 'success' && needs.bind_server_source.result == 'success' && inputs.dry_run != true && (inputs.force_deploy == true || needs.plan.outputs.publish_cli == 'true' || needs.plan.outputs.changed_cli == 'true' || needs.plan.outputs.changed_shared == 'true') && ((inputs.environment == 'production' && needs.promote_main.result == 'success') || (inputs.environment == 'preview' && needs.promote_preview.result == 'success'))
-    needs: [plan, promote_preview, promote_main, bind_server_source]
+    needs: [resolve_resume, plan, promote_preview, promote_main, bind_server_source]
     permissions:
       contents: write
     uses: ./.github/workflows/publish-cli-binaries.yml
@@ -769,13 +787,14 @@ jobs:
       channel: ${{ inputs.environment == 'production' && 'stable' || 'preview' }}
       source_ref: ${{ inputs.environment == 'production' && 'main' || 'preview' }}
       authorized_sha: ${{ needs.bind_server_source.outputs.authorized_sha }}
+      resume_version: ${{ needs.resolve_resume.outputs.cli_version }}
       allow_stable: ${{ inputs.environment == 'production' }}
       release_message: ${{ needs.bind_server_source.outputs.release_notes_github_markdown }}
       publish_rolling: false
 
   publish_hstack_binaries:
     if: always() && needs.plan.result == 'success' && needs.bind_server_source.result == 'success' && inputs.dry_run != true && needs.plan.outputs.publish_stack == 'true' && ((inputs.environment == 'production' && needs.promote_main.result == 'success') || (inputs.environment == 'preview' && needs.promote_preview.result == 'success'))
-    needs: [plan, promote_preview, promote_main, bind_server_source]
+    needs: [resolve_resume, plan, promote_preview, promote_main, bind_server_source]
     permissions:
       contents: write
     uses: ./.github/workflows/publish-hstack-binaries.yml
@@ -784,6 +803,7 @@ jobs:
       channel: ${{ inputs.environment == 'production' && 'stable' || 'preview' }}
       source_ref: ${{ inputs.environment == 'production' && 'main' || 'preview' }}
       authorized_sha: ${{ needs.bind_server_source.outputs.authorized_sha }}
+      resume_version: ${{ needs.resolve_resume.outputs.stack_version }}
       allow_stable: ${{ inputs.environment == 'production' }}
       release_message: ${{ needs.bind_server_source.outputs.release_notes_github_markdown }}
       publish_rolling: false
@@ -993,9 +1013,13 @@ jobs:
           SOURCE_SHA: ${{ needs.bind_server_source.outputs.authorized_sha }}
           OLD_RELAY_COMPATIBILITY_RESULT: ${{ needs.supported_old_relay_compatibility.result }}
           CLI_RESULT: ${{ needs.publish_cli_binaries.result }}
+          CLI_VERSION: ${{ needs.publish_cli_binaries.outputs.version }}
           HSTACK_RESULT: ${{ needs.publish_hstack_binaries.result }}
+          HSTACK_VERSION: ${{ needs.publish_hstack_binaries.outputs.version }}
           SERVER_RESULT: ${{ needs.publish_server_runtime.result }}
+          SERVER_VERSION: ${{ needs.publish_server_runtime.outputs.version }}
           UI_WEB_RESULT: ${{ needs.publish_ui_web.result }}
+          UI_WEB_VERSION: ${{ needs.publish_ui_web.outputs.version }}
           CANDIDATE_VERIFY_RESULT: ${{ needs.verify_release_candidates.result }}
           PROMOTE_SERVER_RESULT: ${{ needs.promote_server_runtime.result }}
           PROMOTE_UI_WEB_RESULT: ${{ needs.promote_ui_web.result }}
@@ -1038,21 +1062,39 @@ jobs:
             && [process.env.PROMOTE_HSTACK_RESULT, process.env.PROMOTE_CLI_RESULT, process.env.PROMOTE_SERVER_RESULT, process.env.PROMOTE_UI_WEB_RESULT, process.env.DOCKER_RESULT, process.env.NPM_RESULT]
               .map(normalizeResult)
               .every((result) => result === 'success' || result === 'skipped');
-          const ids = [
-            ['cli', 'CLI_RESULT'], ['hstack', 'HSTACK_RESULT'], ['server', 'SERVER_RESULT'], ['ui-web', 'UI_WEB_RESULT'],
-            ['supported-old-relay-compatibility', 'OLD_RELAY_COMPATIBILITY_RESULT'], ['candidate-verification', 'CANDIDATE_VERIFY_RESULT'],
-            ['promote-server', 'PROMOTE_SERVER_RESULT'], ['promote-ui-web', 'PROMOTE_UI_WEB_RESULT'],
-            ['promote-cli', 'PROMOTE_CLI_RESULT'], ['promote-hstack', 'PROMOTE_HSTACK_RESULT'],
-            ['docker', 'DOCKER_RESULT'], ['npm', 'NPM_RESULT'], ['release-verification', 'RELEASE_VERIFY_RESULT'],
+          const definitions = [
+            { id: 'cli', envName: 'CLI_RESULT', product: 'cli', versionName: 'CLI_VERSION' },
+            { id: 'hstack', envName: 'HSTACK_RESULT', product: 'stack', versionName: 'HSTACK_VERSION' },
+            { id: 'server', envName: 'SERVER_RESULT', product: 'server', versionName: 'SERVER_VERSION' },
+            { id: 'ui-web', envName: 'UI_WEB_RESULT', product: 'ui-web', versionName: 'UI_WEB_VERSION' },
+            { id: 'supported-old-relay-compatibility', envName: 'OLD_RELAY_COMPATIBILITY_RESULT' },
+            { id: 'candidate-verification', envName: 'CANDIDATE_VERIFY_RESULT' },
+            { id: 'promote-server', envName: 'PROMOTE_SERVER_RESULT' },
+            { id: 'promote-ui-web', envName: 'PROMOTE_UI_WEB_RESULT' },
+            { id: 'promote-cli', envName: 'PROMOTE_CLI_RESULT' },
+            { id: 'promote-hstack', envName: 'PROMOTE_HSTACK_RESULT' },
+            { id: 'docker', envName: 'DOCKER_RESULT' },
+            { id: 'npm', envName: 'NPM_RESULT' },
+            { id: 'release-verification', envName: 'RELEASE_VERIFY_RESULT' },
           ];
           const input = {
             run: process.env.GITHUB_RUN_ID,
             channel: process.env.CHANNEL,
             sourceSha: process.env.SOURCE_SHA || 'unavailable',
-            requestedSurfaces: ids.map(([id]) => ({ id, requested: requested[id], required: true })),
-            surfaces: ids.map(([id, envName]) => {
+            requestedSurfaces: definitions.map(({ id }) => ({ id, requested: requested[id], required: true })),
+            surfaces: definitions.map(({ id, envName, product, versionName }) => {
               const result = normalizeResult(process.env[envName]);
-              return { id, result, ...(result === 'success' ? { identity: { verified: true } } : {}) };
+              return {
+                id,
+                result,
+                ...(result === 'success' ? { identity: {
+                  verified: product
+                    ? Boolean(process.env[versionName]) && normalizeResult(process.env.CANDIDATE_VERIFY_RESULT) === 'success'
+                    : true,
+                  sourceSha: process.env.SOURCE_SHA || 'unavailable',
+                  ...(product ? { product, version: process.env[versionName] ?? '' } : {}),
+                } } : {}),
+              };
             }),
           };
           process.stdout.write(`${JSON.stringify(input)}\n`);
@@ -1074,6 +1116,7 @@ jobs:
           name: happier-release-status
           path: ${{ runner.temp }}/release-status.json
           if-no-files-found: error
+          overwrite: true
 
   sync_dev:
     if: ${{ inputs.dry_run != true && inputs.environment == 'production' && (vars.RELEASE_SYNC_DEV_FROM_MAIN == '' || vars.RELEASE_SYNC_DEV_FROM_MAIN == 'true') && needs.release_verify.result == 'success' }}
