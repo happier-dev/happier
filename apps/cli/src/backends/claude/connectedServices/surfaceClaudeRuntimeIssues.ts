@@ -519,7 +519,7 @@ function isSubagentScopedRuntimeAuthEvidence(error: unknown): boolean {
 function containsClaudeOAuthRevocationText(value: unknown, depth = 0): boolean {
     if (depth > 5 || value === null || value === undefined) return false;
     if (typeof value === 'string') {
-        return /\boauth(?: access)? token has been (?:revoked|expired)\b/i.test(value);
+        return /\boauth(?: access)? token (?:has been (?:revoked|expired)|has expired)\b/i.test(value);
     }
     if (Array.isArray(value)) {
         return value.some((entry) => containsClaudeOAuthRevocationText(entry, depth + 1));

@@ -1655,7 +1655,11 @@ describe('PiRpcBackend prompt error handling', () => {
       expect(branches).toContain('turn_failed_event_matched');
 
       const serialized = JSON.stringify(tracePayloads);
-      expect(serialized).toContain('[redacted-provider-token]');
+      // `sk-proj-…` is now removed by the shared scrubber, which covers `sk-` bodies containing
+      // separators, so the marker is its `[REDACTED]`. The Pi-specific marker still applies to the
+      // shorter keys the shared rule does not reach. What this asserts is unchanged: the value was
+      // actively redacted rather than the field being dropped.
+      expect(serialized).toContain('[REDACTED]');
       expect(serialized).not.toContain('sensitive prompt marker');
       expect(serialized).not.toContain('assistant text must not be traced');
       expect(serialized).not.toContain('sk-proj-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');

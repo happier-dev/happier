@@ -215,6 +215,9 @@ const PI_RPC_RATE_LIMIT_STATUS_TEXT_PATTERN =
 const PI_RPC_PROVIDER_TOKEN_PATTERN = /\bsk-[A-Za-z0-9][A-Za-z0-9_-]{12,}\b/gu;
 
 function redactPiDiagnosticText(value: string): string {
+  // Shared scrubber first, Pi's narrower rule second: the shared owner covers `sk-` keys of 20+
+  // body characters (including separators), and this pattern is the local backstop for the shorter
+  // ones it does not reach.
   return redactBugReportSensitiveText(value).replace(PI_RPC_PROVIDER_TOKEN_PATTERN, '[redacted-provider-token]');
 }
 
