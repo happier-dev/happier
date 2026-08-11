@@ -2,6 +2,11 @@ import type { Message, ToolCallMessage } from '@/sync/domains/messages/messageTy
 import { resolveToolTranscriptSidechainId } from '@/components/tools/shell/views/resolveToolTranscriptSidechainId';
 import { buildToolCallMessageRouteId } from '@/sync/domains/messages/messageRouteIds';
 
+import {
+    readToolCallFinishedAtMs,
+    readToolCallObservedAtMs,
+    readToolCallStartedAtMs,
+} from '../toolCallActivityTimestamps';
 import type { SessionSubagent, SessionSubagentNativeRef } from '../types';
 import { resolveSubAgentSidechainProviderLabel } from './resolveSubAgentSidechainProviderLabel';
 import { isGenericSubAgentToolName } from '@happier-dev/protocol/tools/v2';
@@ -24,26 +29,46 @@ function readCompletionOnlyNativeSubagent(toolMessage: ToolCallMessage): Record<
     return nativeSubagent;
 }
 
-const COMPLETION_ONLY_TITLE_MAX_LENGTH = 512;
+const SUBAGENT_TITLE_MAX_LENGTH = 512;
 
-function readCompletionOnlyDisplayTitle(value: unknown): string | null {
+function readBoundedDisplayTitle(value: unknown): string | null {
     const normalized = readNonEmptyString(value);
     if (!normalized) return null;
-    if (normalized.length <= COMPLETION_ONLY_TITLE_MAX_LENGTH) return normalized;
-    return `${normalized.slice(0, COMPLETION_ONLY_TITLE_MAX_LENGTH - 1).trimEnd()}…`;
+    if (normalized.length <= SUBAGENT_TITLE_MAX_LENGTH) return normalized;
+    return `${normalized.slice(0, SUBAGENT_TITLE_MAX_LENGTH - 1).trimEnd()}…`;
 }
 
+/**
+ * The row title, read from the fields producers actually ship.
+ *
+ * Ordering, most to least identifying:
+ *   name / label      generic explicit titles,
+ *   nickname          the human name Codex assigns a spawned agent (rollout `new_agent_nickname`,
+ *                     e.g. "Lovelace") — the only field that tells sibling agents apart,
+ *   description       what this run is doing (Claude `Task`, Cursor native tasks),
+ *   role              Codex's categorical agent role (`new_agent_role`/`agent_type`),
+ *   subagent_type     the same categorical answer from Claude/ACP producers,
+ *   prompt            last resort, and only for a live agent whose prompt is its sole description.
+ *
+ * Every candidate is bounded identically: a title is a row label, so no producer field — least of
+ * all a whole prompt — may arrive at the layout unbounded.
+ */
 function readSubAgentDisplayTitle(
     toolMessage: ToolCallMessage,
     completionOnly: boolean,
 ): string {
     const input = toolMessage.tool.input as Record<string, unknown>;
-    const candidates = [input?.name, input?.label, input?.description];
+    const candidates = [
+        input?.name,
+        input?.label,
+        input?.nickname,
+        input?.description,
+        input?.role,
+        input?.subagent_type,
+    ];
     if (!completionOnly) candidates.push(input?.prompt);
     for (const candidate of candidates) {
-        const title = completionOnly
-            ? readCompletionOnlyDisplayTitle(candidate)
-            : readNonEmptyString(candidate);
+        const title = readBoundedDisplayTitle(candidate);
         if (title) return title;
     }
     return toolMessage.tool.name;
@@ -118,6 +143,24 @@ function deriveCompletionOnlyTimestamps(
         ...(durationMs !== null ? { startedAtMs: Math.max(0, finishedAtMs - durationMs) } : {}),
         updatedAtMs: finishedAtMs,
         finishedAtMs,
+    };
+}
+
+/**
+ * Timestamps for a live sidechain subagent — the launching tool call IS the agent.
+ *
+ * The finish is read from the tool call rather than omitted: without it the row's time slot never
+ * stops counting, so a subagent that succeeded an hour ago keeps advancing a clock that claims it
+ * is still working. When the call recorded no finish, none is claimed (4.9.3).
+ */
+function deriveSidechainTimestamps(toolMessage: ToolCallMessage): SessionSubagent['timestamps'] {
+    const startedAtMs = readToolCallStartedAtMs(toolMessage);
+    const finishedAtMs = readToolCallFinishedAtMs(toolMessage);
+    const updatedAtMs = readToolCallObservedAtMs(toolMessage);
+    return {
+        ...(startedAtMs !== null ? { startedAtMs } : {}),
+        ...(updatedAtMs !== null ? { updatedAtMs } : {}),
+        ...(finishedAtMs !== null ? { finishedAtMs } : {}),
     };
 }
 
@@ -207,10 +250,7 @@ export function deriveSubAgentSidechainSubagents(params: Readonly<{
             },
             timestamps: completionOnlyNativeSubagent
                 ? deriveCompletionOnlyTimestamps(toolMessage, completionOnlyNativeSubagent)
-                : {
-                    startedAtMs: typeof toolMessage.createdAt === 'number' ? toolMessage.createdAt : undefined,
-                    updatedAtMs: typeof toolMessage.createdAt === 'number' ? toolMessage.createdAt : undefined,
-                },
+                : deriveSidechainTimestamps(toolMessage),
         });
     }
 

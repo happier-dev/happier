@@ -22,6 +22,12 @@ type HistoricalClaudeMember = {
     toolMessageRouteId?: string;
     toolId?: string;
     sidechainId?: string;
+    /**
+     * First observation of this teammate. Separate from `updatedAtMs` because they answer different
+     * questions: a start that tracked the latest mention reset the row's elapsed column to zero
+     * every time the team was addressed again (D-8).
+     */
+    startedAtMs?: number;
     updatedAtMs?: number;
     routePriority?: number;
 };
@@ -108,6 +114,7 @@ function deriveHistoricalClaudeMembers(messages: readonly Message[]): Map<string
             toolMessageRouteId: shouldReplaceTranscriptRoute ? toolMessage.id : existing?.toolMessageRouteId,
             toolId: shouldReplaceTranscriptRoute ? (toolId ?? existing?.toolId) : existing?.toolId,
             sidechainId: shouldReplaceTranscriptRoute ? (toolId ?? existing?.sidechainId) : existing?.sidechainId,
+            startedAtMs: existing?.startedAtMs ?? updatedAtMs,
             updatedAtMs: updatedAtMs ?? existing?.updatedAtMs,
             routePriority: Math.max(routePriority, existing?.routePriority ?? 0),
         });
@@ -227,8 +234,13 @@ export function deriveClaudeTeamSubagents(params: Readonly<{
                 canDelete: status === 'running',
                 canOpenAdvancedRun: false,
             },
+            // A teammate is reconstructed from the tool calls that mention it, so its start is the
+            // first of those and there is no finish instant to be had — a `terminated` teammate is
+            // known to be over but not when, and the row source suppresses its elapsed rather than
+            // inventing one.
             timestamps: {
-                ...(member.updatedAtMs ? { startedAtMs: member.updatedAtMs, updatedAtMs: member.updatedAtMs } : {}),
+                ...(member.startedAtMs ? { startedAtMs: member.startedAtMs } : {}),
+                ...(member.updatedAtMs ? { updatedAtMs: member.updatedAtMs } : {}),
             },
         } satisfies SessionSubagent;
     });

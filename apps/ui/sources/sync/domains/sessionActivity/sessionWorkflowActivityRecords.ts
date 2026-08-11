@@ -8,7 +8,8 @@ import {
 } from '@happier-dev/protocol';
 
 import { fetchSessionSystemRecord } from '@/sync/ops/sessionSystemRecords';
-import { sync } from '@/sync/sync';
+
+import { openSessionActivityRecordPayload } from './sessionActivityRecordContent';
 
 /**
  * UI open/read helpers for the durable `activity/workflow_run.v1` session system records (UIW1).
@@ -22,10 +23,6 @@ import { sync } from '@/sync/sync';
 
 type WorkflowActivityRecordContent = SessionSystemRecordContent;
 
-function isEncryptedContent(content: WorkflowActivityRecordContent): content is Extract<WorkflowActivityRecordContent, { t: 'encrypted' }> {
-    return content.t === 'encrypted';
-}
-
 /**
  * Open one `activity/workflow_run.v1` record's content envelope into a validated snapshot. Encrypted
  * content is decrypted through the session encryption context; plain content is read directly.
@@ -35,15 +32,8 @@ export async function openWorkflowRunSystemRecordContent(params: Readonly<{
     sessionId: string;
     content: WorkflowActivityRecordContent;
 }>): Promise<SessionWorkflowRunSnapshotV1 | null> {
-    let rawPayload: unknown;
-    if (isEncryptedContent(params.content)) {
-        const sessionEncryption = sync.encryption.getSessionEncryption(params.sessionId);
-        if (!sessionEncryption) return null;
-        rawPayload = await sessionEncryption.decryptRaw(params.content.c);
-        if (rawPayload === null || rawPayload === undefined) return null;
-    } else {
-        rawPayload = params.content.v;
-    }
+    const rawPayload = await openSessionActivityRecordPayload(params);
+    if (rawPayload === null || rawPayload === undefined) return null;
     const parsed = SessionWorkflowRunSnapshotV1Schema.safeParse(rawPayload);
     return parsed.success ? parsed.data : null;
 }

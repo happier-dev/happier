@@ -5,6 +5,8 @@ import { flushHookEffects, renderHook, standardCleanup } from '@/dev/testkit';
 
 import { useSessionListViewData, useSessionListViewDataByServerId, useSessionRecentPathEntries, useSessions, useSessionsReady } from '@/sync/domains/state/storage';
 import { storage } from '@/sync/domains/state/storageStore';
+import { projectManager } from '@/sync/runtime/orchestration/projectManager';
+import { decodeSessionRecentPathEntry } from '@/utils/sessions/recentPathEntries';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import type { SessionListViewItem } from '@/sync/domains/session/listing/sessionListViewData';
 
@@ -91,38 +93,141 @@ describe('useSessions', () => {
                 presence: 'online',
             };
 
-            storage.setState((state) => ({
-                ...state,
-                isDataReady: true,
-                sessions: { 's-1': session },
-                sessionsData: null,
-            }));
+            storage.setState((state) => ({ ...state, isDataReady: true }));
+            act(() => {
+                storage.getState().applySessions([session]);
+            });
 
             const hook = await renderHook(() => useSessionRecentPathEntries(), {
                 flushOptions: { cycles: 1, turns: 4 },
             });
             const first = hook.getCurrent();
+            // Guard against a vacuous stability assertion: the projection must actually hold the
+            // row before "unchanged" means anything.
+            expect(first).toHaveLength(1);
+            expect(decodeSessionRecentPathEntry(first![0]!)).toEqual({
+                sessionId: 's-1',
+                machineId: 'm-1',
+                path: '/repo',
+                createdAt: 10,
+            });
 
-            storage.setState((state) => ({
-                ...state,
-                sessions: {
-                    's-1': {
-                        ...session,
-                        seq: 2,
-                        updatedAt: 30,
-                        thinkingAt: 30,
-                        metadata: {
-                            ...session.metadata,
-                            path: session.metadata?.path ?? '',
-                            host: session.metadata?.host ?? '',
-                            summaryText: 'streaming token chunk',
-                        },
+            act(() => {
+                storage.getState().applySessions([{
+                    ...session,
+                    seq: 2,
+                    updatedAt: 30,
+                    thinkingAt: 30,
+                    metadata: {
+                        ...session.metadata,
+                        path: session.metadata?.path ?? '',
+                        host: session.metadata?.host ?? '',
+                        summaryText: 'streaming token chunk',
                     },
-                },
-            }));
+                }]);
+            });
             await hook.rerender();
 
             expect(hook.getCurrent()).toBe(first);
+
+            await hook.unmount();
+        } finally {
+            storage.setState(previousState);
+        }
+    });
+
+    it('costs no project resolution per store write while a recent-path consumer is mounted', async () => {
+        const previousState = storage.getState();
+        try {
+            const session: Session = {
+                id: 's-1',
+                seq: 1,
+                createdAt: 10,
+                updatedAt: 20,
+                active: true,
+                activeAt: 20,
+                archivedAt: null,
+                metadata: { path: '/repo', host: 'localhost', machineId: 'm-1' },
+                metadataVersion: 1,
+                agentState: null,
+                agentStateVersion: 0,
+                thinking: false,
+                thinkingAt: 0,
+                presence: 'online',
+            };
+
+            storage.setState((state) => ({ ...state, isDataReady: true }));
+            act(() => {
+                storage.getState().applySessions([session]);
+            });
+
+            const hook = await renderHook(() => useSessionRecentPathEntries(), {
+                flushOptions: { cycles: 1, turns: 4 },
+            });
+            expect(hook.getCurrent()).toHaveLength(1);
+
+            // The projection is derived inside the selector, which zustand runs as its
+            // snapshot-equality check on every publish. Two costs made that untenable before and
+            // both are counted here, because either one returning re-creates the regression:
+            //   - `addSession` is the map-writing half of the store's `getProjectForSession`
+            //     (three `Map.set`s per path-bearing session), so the selector must resolve the
+            //     project key purely instead;
+            //   - `new Map(...)` is what the machine-identity lookup used to build per session to
+            //     index a record the store already keys by id — and what `useShallow` builds, twice
+            //     over the whole entry list, on every publish it guards.
+            const projectWrites = vi.spyOn(projectManager, 'addSession');
+            const NativeMap = globalThis.Map;
+            let mapConstructions = 0;
+            class CountingMap<K, V> extends NativeMap<K, V> {
+                constructor(entries?: Iterable<readonly [K, V]> | null) {
+                    super(entries as never);
+                    mapConstructions += 1;
+                }
+            }
+            const globalWithMap = globalThis as unknown as { Map: MapConstructor };
+            globalWithMap.Map = CountingMap as unknown as MapConstructor;
+            // A publish that leaves the `sessions` record identity alone must not walk it at all,
+            // not merely walk it cheaply. Reading this session's path is the first thing the
+            // projection does, so a re-derivation cannot hide from the trap.
+            const storedSession = storage.getState().sessions['s-1'] as { metadata?: unknown };
+            const storedMetadata = storedSession.metadata as Record<string, unknown>;
+            const untouchedPath = storedMetadata.path;
+            Object.defineProperty(storedMetadata, 'path', {
+                configurable: true,
+                get: () => {
+                    throw new Error('an unrelated store publish must not re-derive recent paths');
+                },
+            });
+            try {
+                const writes = 25;
+                for (let index = 0; index < writes; index += 1) {
+                    act(() => {
+                        storage.setState((state) => ({ ...state, lastSyncAt: 1_000 + index }));
+                    });
+                }
+
+                Object.defineProperty(storedMetadata, 'path', {
+                    configurable: true,
+                    enumerable: true,
+                    writable: true,
+                    value: untouchedPath,
+                });
+
+                // This publish replaces the record, so the full O(sessions) rebuild actually runs
+                // — that is the pass which must also cost nothing, since it is the one that used
+                // to register every session it read.
+                act(() => {
+                    storage.setState((state) => ({ ...state, sessions: { ...state.sessions } }));
+                });
+            } finally {
+                globalWithMap.Map = NativeMap;
+            }
+
+            expect(projectWrites).toHaveBeenCalledTimes(0);
+            expect(mapConstructions).toBe(0);
+            // The rebuild produced the same rows, so consumers must not be re-rendered.
+            expect(hook.getCurrent()).toHaveLength(1);
+            projectWrites.mockRestore();
 
             await hook.unmount();
         } finally {

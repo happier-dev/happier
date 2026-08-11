@@ -172,6 +172,74 @@ describe('resolveSessionSubagentAutoRecipient', () => {
         });
     });
 
+    /**
+     * Liveness and addressability are two different questions, and only one of them was being
+     * asked. `canSendMessagesToExecutionRun` is the single owner of "may a person's message be
+     * routed into this run"; the derived roster consults it (`deriveExecutionRunSubagents` leaves
+     * `recipient` null when it says no), so a `voice_agent` run is correctly unaddressable there
+     * while the auto-recipient happily addressed it from the same transcript. Two owners, one
+     * question, opposite answers — and the composer believed the wrong one.
+     */
+    describe('addressability is decided by the capability owner, not by liveness alone', () => {
+        it('refuses to auto-address a running voice-agent run', async () => {
+            const toolMessage = createToolMessage({
+                id: 'tool-run-voice',
+                name: 'SubAgentRun',
+                state: 'running',
+                input: { runId: 'run_voice_1', intent: 'voice_agent', runClass: 'long_lived' },
+                toolExtras: { id: 'toolu_run_voice' },
+            });
+
+            const recipient = await resolveAutoRecipient({
+                session: { metadata: { flavor: 'codex' } },
+                tool: toolMessage.tool,
+                messages: [toolMessage],
+            });
+
+            expect(recipient).toBeNull();
+        });
+
+        it('refuses to recover an ambiguous voice-agent run from sidechain liveness prose', async () => {
+            const toolMessage = createToolMessage({
+                id: 'tool-run-voice',
+                name: 'SubAgentRun',
+                state: 'error',
+                input: { runId: 'run_voice_2', intent: 'voice_agent', runClass: 'long_lived' },
+                result: 'Request interrupted by user',
+                toolExtras: { id: 'toolu_run_voice_2' },
+            });
+
+            const recipient = await resolveAutoRecipient({
+                session: { metadata: { flavor: 'codex' } },
+                tool: toolMessage.tool,
+                messages: [toolMessage],
+                focusedMessages: [
+                    createAgentTextMessage({ id: 'sidechain-text-1', text: 'Command running in background' }),
+                ],
+            });
+
+            expect(recipient).toBeNull();
+        });
+
+        it('still auto-addresses a running run whose intent is addressable', async () => {
+            const toolMessage = createToolMessage({
+                id: 'tool-run-review',
+                name: 'SubAgentRun',
+                state: 'running',
+                input: { runId: 'run_review_1', intent: 'review', runClass: 'bounded' },
+                toolExtras: { id: 'toolu_run_review' },
+            });
+
+            const recipient = await resolveAutoRecipient({
+                session: { metadata: { flavor: 'codex' } },
+                tool: toolMessage.tool,
+                messages: [toolMessage],
+            });
+
+            expect(recipient).toEqual({ kind: 'execution_run', runId: 'run_review_1' });
+        });
+    });
+
     it('resolves Claude teammate recipients through the Claude descriptor when team identity is inferred from transcript history', async () => {
         const agentMessage = createToolMessage({
             id: 'tool-agent-1',

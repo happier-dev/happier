@@ -139,10 +139,13 @@ export type SessionsDomain = {
      * (measured live: `sessions \ renderables` = 0, `renderables \ sessions` = 97), so it cannot
      * cover an evicted row either.
      *
-     * `deleteSession` is the one signal that does mean gone: the changes stream feeds it through
-     * `handleDeleteSessionSocketUpdate` when the server reports a deletion. Anything that must
-     * distinguish "deleted" from "not cached" — a durable pointer such as a transcript session
-     * reference — reads this map rather than inferring absence.
+     * `deleteSession` is the one signal that does mean gone. Every caller reaches it through
+     * `handleDeleteSessionSocketUpdate`, on exactly three pieces of server evidence: the socket
+     * `delete-session` update, the socket `session-share-revoked` update (the session survives for
+     * its owner but not for this viewer), and an exact session fetch answering `not_found`. Those
+     * are the same grounds the session route states as "deleted, or you may no longer have
+     * access". Anything that must distinguish gone from not-cached — a durable pointer such as a
+     * transcript session reference — reads this map rather than inferring absence.
      */
     deletedSessionIds: Record<string, true>;
     sessionListRenderableDelta: import('./sessionListRenderableCommit').SessionListRenderableDelta;

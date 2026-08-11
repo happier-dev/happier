@@ -18,6 +18,8 @@ import { useDirectSessionRuntime, type UseDirectSessionRuntimeResult } from '@/c
 import { useReconciledStableRows } from './reconcileStableRows';
 import { useSessionRunningExecutionRuns } from './useSessionRunningExecutionRuns';
 
+import { useStableValueBySignature } from '@/hooks/ui/useStableValueBySignature';
+
 const sessionSubagentToolMessageSignatureCache = new WeakMap<Message, string>();
 
 function buildSessionSubagentToolMessageSignature(message: Message): string {
@@ -117,17 +119,6 @@ function useStableMessagesBySignature(
 function buildExecutionRunStateSignature(runs: readonly SessionSubagentActiveExecutionRunState[]): string {
     if (runs.length === 0) return '';
     return runs.map((run) => `${run.runId}\u0000${run.status ?? ''}`).join('\u0001');
-}
-
-function useStableValueBySignature<T>(value: T, signature: string): T {
-    const ref = React.useRef<{ signature: string; value: T }>({
-        signature,
-        value,
-    });
-    if (ref.current.signature !== signature) {
-        ref.current = { signature, value };
-    }
-    return ref.current.value;
 }
 
 function readSubagentKey(subagent: SessionSubagent): string {

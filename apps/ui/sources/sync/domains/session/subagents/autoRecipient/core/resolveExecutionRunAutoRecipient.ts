@@ -1,3 +1,4 @@
+import { canSendMessagesToExecutionRun } from '@/sync/domains/executionRuns/canSendMessagesToExecutionRun';
 import { readExecutionRunIdFromToolPayload } from '@/sync/domains/session/participants/deriveExecutionRunPollingRefreshKey';
 import type { Message } from '@/sync/domains/messages/messageTypes';
 
@@ -6,6 +7,7 @@ import {
     isTerminalSubagentStatus,
 } from '../../executionRuns/executionRunSubagentStatus';
 import { findMatchingSessionSubagentForTool } from '../../findMatchingSessionSubagentForTool';
+import type { SessionSubagent } from '../../types';
 import type { SessionSubagentAutoRecipientResolver } from '../types';
 
 /**
@@ -45,6 +47,34 @@ function focusedMessagesContainRunningExecutionSignal(messages: readonly Message
     return false;
 }
 
+/**
+ * May a person's message be routed into this run *at all*, setting liveness aside?
+ *
+ * Liveness and addressability are separate questions with separate evidence, and conflating them
+ * is what let a `voice_agent` run be auto-addressed here while the derived roster refused it: an
+ * execution-run subagent's `recipient` is null whenever `canSendMessagesToExecutionRun` says no
+ * (`deriveExecutionRunSubagents.ts`), so the two owners answered the same question differently and
+ * the composer believed this one.
+ *
+ * The status handed to the owner is `running` deliberately. Each branch below has already
+ * established liveness from its own evidence — the structured payload, the live registry, or an
+ * ambiguous-not-terminal transcript plus sidechain signal — and re-deriving it from the roster
+ * would overturn that with weaker evidence and break the interrupted-run recovery this resolver
+ * exists for. What the owner decides is the other half: intent and run class.
+ *
+ * Facts come from the roster's `runRef`, which is derived from the same transcript this resolver is
+ * given, so there is no second reader of the tool payload. When the roster has no entry for the run
+ * the facts are unknown, and the owner's documented behaviour for a run whose class never reached
+ * the transcript is to allow it — the same backward compatibility the roster gets.
+ */
+function isExecutionRunAddressable(focusedRunSubagent: SessionSubagent | null): boolean {
+    return canSendMessagesToExecutionRun({
+        status: 'running',
+        intent: focusedRunSubagent?.runRef?.intent ?? null,
+        runClass: focusedRunSubagent?.runRef?.runClass ?? null,
+    });
+}
+
 export const resolveExecutionRunAutoRecipient: SessionSubagentAutoRecipientResolver = (context) => {
     if (context.tool.name !== 'SubAgentRun') return null;
 
@@ -61,6 +91,10 @@ export const resolveExecutionRunAutoRecipient: SessionSubagentAutoRecipientResol
     }
 
     if (context.canControlExecutionRuns === false) {
+        return null;
+    }
+
+    if (!isExecutionRunAddressable(focusedRunSubagent)) {
         return null;
     }
 
