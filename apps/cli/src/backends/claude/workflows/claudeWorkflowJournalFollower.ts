@@ -366,7 +366,13 @@ export function createClaudeWorkflowJournalFollower(params: Readonly<{
         scriptsReadByRunId.delete(paramsForScript.workflowToolUseId);
         return;
       }
-      if (script.trim().length === 0) return;
+      // Same rule as the agent profiles above: a latch may only mean "there is nothing left to
+      // get". A zero-byte read is a file that is not finished being written, not a script with no
+      // content, and a `{scriptPath}` launch declares its phases and agent labels NOWHERE else.
+      if (script.trim().length === 0) {
+        scriptsReadByRunId.delete(paramsForScript.workflowToolUseId);
+        return;
+      }
       params.onJournalValue(createClaudeWorkflowScriptWrapper({
         workflowToolUseId: paramsForScript.workflowToolUseId,
         script,

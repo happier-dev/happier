@@ -80,6 +80,35 @@ describe('createClaudeWorkflowJournalFollower', () => {
     });
   });
 
+  /**
+   * The same "we tried once" trap as the agent profile latch, on the script read.
+   *
+   * A zero-byte read is not a script with no content; it is a file that is not finished being
+   * written. Latching the run id on that observation means the run never gets its phase names or
+   * agent labels, which is the only place a `{scriptPath}` launch declares them.
+   */
+  it('re-reads a workflow script that was still empty on the first look', async () => {
+    await writeFile(scriptPath, '', 'utf8');
+    await writeFile(join(dir, 'journal.jsonl'), '', 'utf8');
+
+    const { values, follower } = collect();
+    follower.observeTranscriptMessage(launchResult({}));
+    await follower.syncAll();
+    expect(values.some((value) => (value as { type?: string }).type === 'happier_workflow_script')).toBe(false);
+
+    await writeFile(scriptPath, "export const meta = { name: 'aau-wave-25' }\n", 'utf8');
+    follower.observeTranscriptMessage(launchResult({}));
+    await follower.syncAll();
+    follower.dispose();
+
+    expect(values).toContainEqual({
+      type: 'happier_workflow_script',
+      workflowToolUseId: 'toolu_wf',
+      script: "export const meta = { name: 'aau-wave-25' }\n",
+      sourceSessionId: 'claude-session-1',
+    });
+  });
+
   it('reads each journal agent’s own transcript and meta so a running agent is not anonymous', async () => {
     await writeFile(join(dir, 'agent-a02d7db3d9261b267.jsonl'), `${JSON.stringify({
       type: 'user',
