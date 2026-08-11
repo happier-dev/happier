@@ -1,42 +1,44 @@
 import { ReduceMotion, type WithSpringConfig } from 'react-native-reanimated';
 
 /**
- * The app's spring vocabulary: seven springs named for the ROLE they play, not for how they feel.
+ * The app's spring vocabulary: springs named for the ROLE they play, not for how they feel.
  *
  * Before this existed there were no general-purpose springs at all — only four durations and one
  * bezier published twice under two names — so every surface that wanted physical motion invented
- * its own numbers. Naming by role is what stops that: a caller asks for `disclosure`, not for
- * "stiffness 400, damping 40", and two surfaces disclosing content therefore move identically.
+ * its own numbers. Naming by role is what stops that: a caller asks for `reflow`, not for
+ * "stiffness 256, damping 32", and two lists re-laying-out therefore move identically.
  *
  * Two properties are deliberate and enforced by `motionSprings.test.ts`:
  *
- * 1. **Five of the seven are exactly critically damped** (zeta = 1). `DESIGN.md` asks for
- *    non-bouncy motion on ordinary state changes; making that a property of the numbers rather
- *    than of anybody's restraint is what keeps it true a year from now. Only `surface` and `nudge`
- *    overshoot, and both do so for a stated reason.
+ * 1. **Every role is exactly critically damped** (zeta = 1). `DESIGN.md` asks for non-bouncy motion
+ *    on ordinary state changes; making that a property of the numbers rather than of anybody's
+ *    restraint is what keeps it true a year from now.
  * 2. **The physics tables are module-private.** A config is only reachable through a resolver, and
  *    every resolver in the app — this one and the two tuned slide presets — is built by
  *    `createSpringConfigResolver`, which is the single place that decides what a spring does under
  *    the reduced-motion preference. A caller that could read a raw config could also decide that
  *    policy locally, and then there would be as many reduced-motion regimes as there are call
  *    sites.
+ *
+ * **Every role listed here has a live consumer, and that is a rule, not an accident.** The
+ * vocabulary shipped with seven roles; four of them (`press`, `disclosure`, `surface`, `nudge`)
+ * reached the end of the program with nothing animating them, and each surface that could have
+ * claimed one declined for a stated reason: press feedback is an instant surface tint
+ * (`usePressFeedback`, and a tint under a finger already there is not travel), the agent-activity
+ * disclosure refuses to animate content mounting inside a height-cached transcript row without a
+ * device capture, the popover's arrival is owned by its host rather than by the section inside it,
+ * and an attention wobble is refused outright by the motion budget. A named role with no consumer
+ * is not a reserved slot — it is a number nobody has ever seen, and the next caller has no way to
+ * tell whether it was tuned or guessed. Re-add one in the SAME change that lands its animation.
  */
 
 export const MOTION_SPRING_ROLES = [
-    /** Press/hover feedback on a touch target. Fast enough to feel like the surface, not a reply. */
-    'press',
     /** A status mark resolving in place — the agent-activity settle. Moves nothing around it. */
     'statusSettle',
     /** A row arriving in a list. */
     'rowEnter',
-    /** Content expanding or collapsing in place. */
-    'disclosure',
     /** A list re-laying-out after rows changed section. The slowest, because it moves the most. */
     'reflow',
-    /** A panel, sheet or popover arriving. The one place a trace of overshoot reads as material. */
-    'surface',
-    /** A deliberate attention wobble. The only spring allowed to look like a spring. */
-    'nudge',
 ] as const;
 
 export type MotionSpringRole = (typeof MOTION_SPRING_ROLES)[number];
@@ -88,30 +90,17 @@ export type MotionSpringProfile = Readonly<{
 export type SpringPhysics = Readonly<{ stiffness: number; damping: number; mass: number }>;
 
 const MOTION_SPRING_PHYSICS = {
-    press: { stiffness: 2500, damping: 100, mass: 1 },
     statusSettle: { stiffness: 900, damping: 60, mass: 1 },
     rowEnter: { stiffness: 625, damping: 50, mass: 1 },
-    disclosure: { stiffness: 400, damping: 40, mass: 1 },
     reflow: { stiffness: 256, damping: 32, mass: 1 },
-    surface: { stiffness: 400, damping: 32, mass: 1 },
-    nudge: { stiffness: 784, damping: 31, mass: 1 },
 } as const satisfies Record<MotionSpringRole, SpringPhysics>;
 
 const MOTION_REDUCED_MOTION_FALLBACKS = {
-    // Not vestibular motion: `press` drives the surface tint under a finger that is already there.
-    // Suppressing it would remove the only acknowledgement a press has, which reduced motion never
-    // asks for.
-    press: 'unchanged',
     // The glyph swap still happens, without the scale-up. This is the documented reduced-motion
     // behaviour of the status settle: an immediate mark change with the elapsed clock still running.
     statusSettle: 'instant',
     rowEnter: 'instant',
-    disclosure: 'instant',
     reflow: 'instant',
-    surface: 'instant',
-    // A nudge is pure attention decoration; its target IS the resting position, so suppressing it
-    // is the whole fallback.
-    nudge: 'instant',
 } as const satisfies Record<MotionSpringRole, MotionReducedMotionFallback>;
 
 /**

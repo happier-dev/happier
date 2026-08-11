@@ -19,37 +19,24 @@ import {
  * whose root is `omega0*t = 6.6384`; for an underdamped one the envelope is `e^(-zeta*omega0*t)`,
  * so `t = ln(100) / (zeta * omega0)`. Overshoot is `exp(-pi*zeta / sqrt(1 - zeta^2))`.
  *
- * These numbers are the contract, not a snapshot: five of seven roles MUST be exactly critically
- * damped, which is what makes "no bounce on ordinary state changes" structural.
+ * These numbers are the contract, not a snapshot: every role MUST be exactly critically damped,
+ * which is what makes "no bounce on ordinary state changes" structural.
  */
 const EXPECTED = {
-    press: { stiffness: 2500, damping: 100, mass: 1, dampingRatio: 1, settleMs: 132.77, overshootRatio: 0 },
     statusSettle: { stiffness: 900, damping: 60, mass: 1, dampingRatio: 1, settleMs: 221.28, overshootRatio: 0 },
     rowEnter: { stiffness: 625, damping: 50, mass: 1, dampingRatio: 1, settleMs: 265.53, overshootRatio: 0 },
-    disclosure: { stiffness: 400, damping: 40, mass: 1, dampingRatio: 1, settleMs: 331.92, overshootRatio: 0 },
     reflow: { stiffness: 256, damping: 32, mass: 1, dampingRatio: 1, settleMs: 414.9, overshootRatio: 0 },
-    surface: { stiffness: 400, damping: 32, mass: 1, dampingRatio: 0.8, settleMs: 287.82, overshootRatio: 0.01516 },
-    nudge: { stiffness: 784, damping: 31, mass: 1, dampingRatio: 0.553571, settleMs: 297.11, overshootRatio: 0.1239 },
 } as const satisfies Record<MotionSpringRole, Readonly<Record<string, number>>>;
 
-const CRITICALLY_DAMPED_ROLES: readonly MotionSpringRole[] = [
-    'press',
-    'statusSettle',
-    'rowEnter',
-    'disclosure',
-    'reflow',
-];
-
 describe('motion spring vocabulary', () => {
-    it('publishes exactly the seven role names, in escalating settle order', () => {
+    it('publishes exactly the roles something animates, in escalating settle order', () => {
+        // Not a snapshot of whatever is in the table: the vocabulary shipped with seven roles and
+        // four of them never gained a consumer, so a reader had no way to tell a tuned number from
+        // a guessed one. A role belongs here only in the same change that lands its animation.
         expect([...MOTION_SPRING_ROLES]).toEqual([
-            'press',
             'statusSettle',
             'rowEnter',
-            'disclosure',
             'reflow',
-            'surface',
-            'nudge',
         ]);
     });
 
@@ -72,13 +59,12 @@ describe('motion spring vocabulary', () => {
         expect(profile.overshootRatio).toBeCloseTo(expected.overshootRatio, 4);
     });
 
-    it('keeps five of the seven exactly critically damped, and the two exceptions named', () => {
-        const critical = MOTION_SPRING_ROLES.filter((role) => describeMotionSpring(role).dampingRatio === 1);
+    it('keeps every role exactly critically damped, with no overshoot', () => {
         const bouncy = MOTION_SPRING_ROLES.filter((role) => describeMotionSpring(role).dampingRatio < 1);
 
-        expect([...critical]).toEqual(CRITICALLY_DAMPED_ROLES);
-        expect([...bouncy]).toEqual(['surface', 'nudge']);
-        for (const role of critical) {
+        expect([...bouncy]).toEqual([]);
+        for (const role of MOTION_SPRING_ROLES) {
+            expect(describeMotionSpring(role).dampingRatio).toBe(1);
             expect(describeMotionSpring(role).overshootRatio).toBe(0);
         }
     });
@@ -98,7 +84,7 @@ describe('motion spring vocabulary', () => {
         // `describeMotionSpring` reports physics for tests, docs and derived timings. It must not
         // also be a back door around the resolver, and the danger is not theoretical: a profile
         // carrying `stiffness`/`damping` is structurally assignable to `WithSpringConfig`, so
-        // `withSpring(1, describeMotionSpring('press'))` would type-check, skip the `reduceMotion`
+        // `withSpring(1, describeMotionSpring('reflow'))` would type-check, skip the `reduceMotion`
         // stamp, AND hand Reanimated a `dampingRatio` alongside a stiffness — the exact
         // duration/dampingRatio mixture the test above declares forbidden.
         for (const role of MOTION_SPRING_ROLES) {
@@ -117,26 +103,23 @@ describe('reduced-motion policy', () => {
         }
     });
 
-    it('maps every role to a fallback, and keeps press feedback alive', () => {
-        expect(resolveMotionReducedFallback('press')).toBe('unchanged');
-        for (const role of MOTION_SPRING_ROLES.filter((candidate) => candidate !== 'press')) {
+    it('maps every role to a fallback', () => {
+        // Every remaining role is vestibular travel, so every one is suppressed. The `'unchanged'`
+        // arm stays reachable in the vocabulary because `createSpringConfigResolver` is generic and
+        // `reducedMotionTable` derives its spring-backed rows through it — a one-value fallback
+        // would turn that derivation into a hand-maintained copy.
+        for (const role of MOTION_SPRING_ROLES) {
             expect(resolveMotionReducedFallback(role)).toBe('instant');
         }
     });
 
     it('suppresses the vestibular roles under reduced motion without touching their physics', () => {
-        for (const role of MOTION_SPRING_ROLES.filter((candidate) => candidate !== 'press')) {
+        for (const role of MOTION_SPRING_ROLES) {
             const reduced = resolveMotionSpring(role, { reducedMotion: true });
             expect(reduced.reduceMotion).toBe(ReduceMotion.Always);
             expect(reduced.stiffness).toBe(EXPECTED[role].stiffness);
             expect(reduced.damping).toBe(EXPECTED[role].damping);
         }
-    });
-
-    it('keeps the press spring animating under reduced motion', () => {
-        // A 133ms tint on direct manipulation is touch acknowledgement, not vestibular motion:
-        // removing it removes the only feedback a press has.
-        expect(resolveMotionSpring('press', { reducedMotion: true }).reduceMotion).toBe(ReduceMotion.Never);
     });
 });
 

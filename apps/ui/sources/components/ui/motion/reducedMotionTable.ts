@@ -64,7 +64,12 @@ type MotionReducedMotionEntry =
     | Readonly<{ springRole: null; reduced: MotionPresentation }>;
 
 const MOTION_REDUCED_MOTION_TABLE = {
-    press: { springRole: 'press' },
+    // Not a spring: press feedback is an instant surface tint (`usePressFeedback`), and there is
+    // deliberately no spring role for it — a tint under a finger that is already there is
+    // acknowledgement, not travel, so there is nothing for reduced motion to remove. The row stays
+    // because the question "what does press feedback do under reduced motion" still has an answer,
+    // and this is the only place allowed to give it.
+    press: { springRole: null, reduced: 'animate' },
     statusSettle: { springRole: 'statusSettle' },
     rowEnter: { springRole: 'rowEnter' },
     // Exit rides the same spring as entry: a list whose rows arrive and leave at different speeds

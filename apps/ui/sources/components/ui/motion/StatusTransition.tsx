@@ -10,7 +10,8 @@ import Animated, {
 
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 
-import { describeMotionSpring, resolveMotionReducedFallback, resolveMotionSpring } from './motionSprings';
+import { describeMotionSpring, resolveMotionSpring } from './motionSprings';
+import { resolveMotionPresentation } from './reducedMotionTable';
 import { reanimatedMotionTokens } from './reanimatedMotionTokens';
 
 /**
@@ -134,9 +135,11 @@ export function StatusTransition(props: StatusTransitionProps): React.ReactEleme
             retireTimerRef.current = null;
         }
 
-        // The fallback is read from the role table rather than decided here, so this component
-        // cannot drift away from the rest of the vocabulary. `statusSettle` maps to `'instant'`.
-        const suppressed = reducedMotion && resolveMotionReducedFallback('statusSettle') === 'instant';
+        // Asked of the corridor's reduced-motion table by the animation's own name, not decided
+        // here and not read from the spring table directly. `statusSettle` is a row in that table;
+        // a component that consulted the spring instead would be a second reader of one policy, and
+        // the row would stop being load-bearing for the animation it describes.
+        const suppressed = resolveMotionPresentation('statusSettle', reducedMotion) === 'settleInstantly';
 
         if (suppressed) {
             // The mark still changes — only its travel is removed. The elapsed clock beside it keeps

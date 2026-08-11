@@ -22,8 +22,8 @@ describe('motion import isolation', () => {
     it('imports the spring vocabulary and serves its physics without reading a Reanimated runtime value', async () => {
         const { MOTION_SPRING_ROLES, describeMotionSpring } = await import('./motionSprings');
 
-        expect(MOTION_SPRING_ROLES).toContain('press');
-        expect(describeMotionSpring('press').dampingRatio).toBeCloseTo(1, 6);
+        expect(MOTION_SPRING_ROLES).toContain('statusSettle');
+        expect(describeMotionSpring('statusSettle').dampingRatio).toBeCloseTo(1, 6);
     });
 
     it('imports the whole motion barrel, which is what non-animating consumers actually reach', async () => {

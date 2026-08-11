@@ -26,39 +26,16 @@ vi.mock('@/components/ui/motion/StepTransitionFrame', () => ({
 // would never fire. The soft-blur drag test needs the callback to fire so the
 // commit handler advances the page; override the mock in this file only.
 vi.mock('react-native-reanimated', async () => {
-    const ReactModule = await import('react');
-    type SharedValue<T> = { value: T };
-    const useSharedValue = <T,>(initial: T): SharedValue<T> => {
-        const ref = ReactModule.useRef<SharedValue<T> | null>(null);
-        if (!ref.current) ref.current = { value: initial };
-        return ref.current;
-    };
-    const useAnimatedStyle = <T,>(factory: () => T): T => factory();
-    const useAnimatedProps = <T,>(factory: () => T): T => factory();
-    const runOnJS = <TArgs extends unknown[], TResult>(fn: (...args: TArgs) => TResult) => fn;
-    const cancelAnimation = () => {};
-    const withSpring = <T,>(value: T, _config?: unknown, callback?: (finished?: boolean) => void) => {
-        if (callback) callback(true);
-        return value;
-    };
-    const withTiming = <T,>(value: T) => value;
-    const Animated = {
-        View: 'Animated.View',
-        ScrollView: 'Animated.ScrollView',
-        Text: 'Animated.Text',
-        createAnimatedComponent: (component: unknown) => component,
-    };
+    const { createReanimatedModuleMock } = await import('@/dev/testkit/mocks/reanimated');
     return {
-        __esModule: true,
-        default: Animated,
-        ...Animated,
-        cancelAnimation,
-        runOnJS,
-        useAnimatedProps,
-        useAnimatedStyle,
-        useSharedValue,
-        withSpring,
-        withTiming,
+        ...createReanimatedModuleMock(),
+        // The ONE deviation this file needs. Everything else comes from the canonical mock, so a
+        // surface the slide transition starts using — `ReduceMotion`, which the tuned slide
+        // presets now stamp on every config — does not have to be restated here to keep working.
+        withSpring: <T,>(value: T, _config?: unknown, callback?: (finished?: boolean) => void) => {
+            if (callback) callback(true);
+            return value;
+        },
     };
 });
 
