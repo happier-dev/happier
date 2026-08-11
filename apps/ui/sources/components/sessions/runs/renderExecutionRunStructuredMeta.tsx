@@ -1,17 +1,6 @@
-import React from 'react';
+import type { ReactElement } from 'react';
 
-import {
-    DelegateOutputV1Schema,
-    PlanOutputV1Schema,
-    ReviewFindingsV1Schema,
-    ReviewFindingsV2Schema,
-    ReviewFollowUpV1Schema,
-} from '@happier-dev/protocol';
-
-import { ReviewFindingsMessageCard } from '@/components/sessions/reviews/messages/ReviewFindingsMessageCard';
-import { ReviewFollowUpMessageCard } from '@/components/sessions/reviews/messages/ReviewFollowUpMessageCard';
-import { PlanOutputMessageCard } from '@/components/sessions/plans/messages/PlanOutputMessageCard';
-import { DelegateOutputMessageCard } from '@/components/sessions/delegations/messages/DelegateOutputMessageCard';
+import { findStructuredMessageRenderer } from '@/components/sessions/transcript/structured/structuredMessageRegistry';
 import type { TranscriptInteraction } from '@/utils/sessions/deriveTranscriptInteraction';
 
 export type ExecutionRunStructuredMetaEnvelope = Readonly<{
@@ -19,61 +8,31 @@ export type ExecutionRunStructuredMetaEnvelope = Readonly<{
     payload: unknown;
 }>;
 
+/**
+ * Render an execution run's structured outcome when the envelope came from the RUN REGISTRY
+ * (`sessionExecutionRunGet(..., { includeStructured: true })`) rather than from a transcript
+ * message's `meta.happier`.
+ *
+ * The kind → schema → card table is deliberately NOT restated here. This module used to carry its
+ * own copy of the review/plan/delegate bindings alongside the transcript's
+ * `STRUCTURED_MESSAGE_REGISTRY`, which meant one concept with two decision-makers: a card added or
+ * corrected in the registry silently did not reach the run surfaces, and the two could disagree
+ * about the same payload. The registry is the single owner; this function is only the
+ * run-registry-shaped way in, for callers that hold an envelope and no message.
+ */
 export function renderExecutionRunStructuredMeta(params: Readonly<{
     meta: ExecutionRunStructuredMetaEnvelope;
     sessionId: string;
     interaction: TranscriptInteraction;
-}>): React.ReactElement | null {
-    const kind = params.meta.kind;
-    const payload = params.meta.payload;
+}>): ReactElement | null {
+    const entry = findStructuredMessageRenderer(params.meta.kind);
+    if (!entry) return null;
 
-    if (kind === 'review_findings.v1') {
-        const parsed = ReviewFindingsV1Schema.safeParse(payload);
-        if (!parsed.success) return null;
-        return (
-            <ReviewFindingsMessageCard
-                payload={parsed.data}
-                sessionId={params.sessionId}
-                canSendMessages={params.interaction.canSendMessages === true}
-            />
-        );
-    }
+    const parsed = entry.schema.safeParse(params.meta.payload);
+    if (!parsed.success) return null;
 
-    if (kind === 'review_findings.v2') {
-        const parsed = ReviewFindingsV2Schema.safeParse(payload);
-        if (!parsed.success) return null;
-        return (
-            <ReviewFindingsMessageCard
-                payload={parsed.data}
-                sessionId={params.sessionId}
-                canSendMessages={params.interaction.canSendMessages === true}
-            />
-        );
-    }
-
-    if (kind === 'review_follow_up.v1') {
-        const parsed = ReviewFollowUpV1Schema.safeParse(payload);
-        if (!parsed.success) return null;
-        return <ReviewFollowUpMessageCard payload={parsed.data} />;
-    }
-
-    if (kind === 'plan_output.v1') {
-        const parsed = PlanOutputV1Schema.safeParse(payload);
-        if (!parsed.success) return null;
-        return (
-            <PlanOutputMessageCard
-                payload={parsed.data}
-                sessionId={params.sessionId}
-                canSendMessages={params.interaction.canSendMessages === true}
-            />
-        );
-    }
-
-    if (kind === 'delegate_output.v1') {
-        const parsed = DelegateOutputV1Schema.safeParse(payload);
-        if (!parsed.success) return null;
-        return <DelegateOutputMessageCard payload={parsed.data} />;
-    }
-
-    return null;
+    return entry.render(parsed.data, {
+        sessionId: params.sessionId,
+        interaction: params.interaction,
+    });
 }

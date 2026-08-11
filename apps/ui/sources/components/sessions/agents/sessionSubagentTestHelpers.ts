@@ -1,4 +1,3 @@
-import * as React from 'react';
 import { vi } from 'vitest';
 
 type SessionSubagentModuleFactory = () => unknown | Promise<unknown>;
@@ -65,10 +64,10 @@ export function installSessionSubagentCommonModuleMocks(
         return createExpoVectorIconsMock();
     });
 
-    vi.mock('@/components/ui/text/Text', () => ({
-        Text: ({ children, ...props }: React.PropsWithChildren<Record<string, unknown>>) =>
-            React.createElement('Text', props, children),
-    }));
+    vi.mock('@/components/ui/text/Text', async () => {
+        const { createUiTextModuleMock } = await import('@/dev/testkit/mocks/uiText');
+        return createUiTextModuleMock();
+    });
 
     vi.mock('@/text', async () => {
         const activeOptions = sessionSubagentModuleState.options;

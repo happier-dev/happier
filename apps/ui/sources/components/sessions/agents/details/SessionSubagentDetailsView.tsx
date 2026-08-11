@@ -6,6 +6,7 @@ import { SessionSubagentTranscriptBody } from '@/components/sessions/agents/deta
 import type { AgentInputExtraActionChip } from '@/components/sessions/agentInput/agentInputContracts';
 import { createExecutionRunDeliveryActionChip } from '@/components/sessions/agentInput/routing/createExecutionRunDeliveryActionChip';
 import { SessionParticipantComposer } from '@/components/sessions/participants/composer/SessionParticipantComposer';
+import { renderStructuredMessage } from '@/components/sessions/transcript/structured/StructuredMessageBlock';
 import { Text } from '@/components/ui/text/Text';
 import { useSessionSubagents } from '@/hooks/session/useSessionSubagents';
 import {
@@ -15,7 +16,12 @@ import {
     useSessionSubagentSourceMessages,
 } from '@/sync/domains/state/storage';
 import { t } from '@/text';
-import { deriveTranscriptInteractionFromSession } from '@/utils/sessions/deriveTranscriptInteraction';
+import {
+    deriveTranscriptInteraction,
+    deriveTranscriptInteractionFromSession,
+} from '@/utils/sessions/deriveTranscriptInteraction';
+
+const FAIL_CLOSED_TRANSCRIPT_INTERACTION = deriveTranscriptInteraction({ kind: 'public' });
 
 const stylesheet = StyleSheet.create((theme) => ({
     container: {
@@ -64,7 +70,7 @@ export const SessionSubagentDetailsView = React.memo((props: Readonly<{
     const message = useMessage(props.sessionId, resolvedMessageId ?? routeMessageId);
     const [executionRunDelivery, setExecutionRunDelivery] = React.useState<'prompt' | 'steer_if_supported' | 'interrupt'>('steer_if_supported');
     const transcriptInteraction = React.useMemo(() => {
-        if (!session) return { canSendMessages: false } as const;
+        if (!session) return FAIL_CLOSED_TRANSCRIPT_INTERACTION;
         return deriveTranscriptInteractionFromSession({
             accessLevel: session.accessLevel,
             canApprovePermissions: session.canApprovePermissions,
@@ -72,6 +78,34 @@ export const SessionSubagentDetailsView = React.memo((props: Readonly<{
             presence: session.presence,
         });
     }, [session]);
+
+    /**
+     * The run's structured outcome (review findings, plan, delegate), rendered by the same cards
+     * the `/runs/[runId]` route shows (S-2).
+     *
+     * It cannot come from the transcript below: `sidechainStreamText.ts` deliberately strips the
+     * trailing result JSON for exactly these intents and routes the outcome to `structuredMeta`
+     * (S-5), so mining the sidechain tail would fight that owner. The CLI publishes the same
+     * envelope twice — into the run registry, and onto the owning tool-call message as
+     * `meta.happier` (`finishExecutionRun`, re-emitted after a triage action so the message stays
+     * current). Reading the message costs no RPC, survives an inactive session, and goes through
+     * `renderStructuredMessage`, the transcript's own registry — no second dispatcher.
+     *
+     * Gated on a tool-call message because that is precisely the branch
+     * `SessionSubagentTranscriptBody` sends to `SessionMessageDetailsView`. When there is no
+     * tool-call message it renders `SessionExecutionRunDetailsView`, which already renders this
+     * card from the run registry, so the two sources are mutually exclusive and the outcome can
+     * never appear twice. A subagent with no structured outcome renders nothing here — the
+     * transcript body alone, exactly as before.
+     */
+    const structuredResult = React.useMemo(() => {
+        if (!message || message.kind !== 'tool-call') return null;
+        return renderStructuredMessage({
+            message,
+            sessionId: props.sessionId,
+            interaction: transcriptInteraction,
+        });
+    }, [message, props.sessionId, transcriptInteraction]);
 
     React.useEffect(() => {
         setExecutionRunDelivery('steer_if_supported');
@@ -99,6 +133,7 @@ export const SessionSubagentDetailsView = React.memo((props: Readonly<{
     return (
         <View style={styles.container}>
             <SessionSubagentOverviewCard subagent={subagent} />
+            {structuredResult}
             <SessionSubagentTranscriptBody
                 sessionId={props.sessionId}
                 scopeId={props.scopeId}

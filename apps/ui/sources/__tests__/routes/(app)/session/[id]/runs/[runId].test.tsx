@@ -440,6 +440,10 @@ describe('Session Run Details Screen', () => {
         const screen = await renderRunDetailsScreen();
         // The structured renderer should render the card, not the raw JSON "structured" debug block.
         expect(screen.getTextContent()).not.toContain('structured');
+        // …and it must be the registry's real card, so the payload's own content is on screen.
+        // Without this the assertion above passes for a renderer that returns null.
+        expect(screen.getTextContent()).toContain('Delegation summary.');
+        expect(screen.getTextContent()).toContain('Deliverable 1');
     });
 
     it('opens the owning tool details when the run sidechain maps to a transcript tool message', async () => {

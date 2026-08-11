@@ -44,7 +44,15 @@ export type StructuredMessageKind =
 
 export type StructuredMessageRendererParams = Readonly<{
     sessionId: string;
-    message: Message;
+    /**
+     * The transcript message the envelope arrived on, when there is one.
+     *
+     * Optional because the same envelopes also reach these renderers from the execution-run
+     * registry (`sessionExecutionRunGet(..., { includeStructured: true })`), where no message
+     * exists. Only the kinds that quote the user's own text need it, and they already render
+     * nothing when there is no text to quote.
+     */
+    message?: Message;
     interaction: TranscriptInteraction;
     onJumpToAnchor?: (target: { filePath: string; source: ReviewCommentSource; anchor: ReviewCommentAnchor }) => void;
 }>;
@@ -65,7 +73,7 @@ function renderUserTextStructuredCard(
     params: StructuredMessageRendererParams,
     renderCard: (messageText: string) => React.ReactElement,
 ): React.ReactElement | null {
-    const messageText = readStructuredUserMessageText(params.message);
+    const messageText = params.message ? readStructuredUserMessageText(params.message) : null;
     if (!messageText) return null;
     return renderCard(messageText);
 }

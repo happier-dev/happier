@@ -109,17 +109,22 @@ describe('resolveMessageStructuredReferences', () => {
     // D-4 precedence itself is pinned where a legacy arm actually exists — the protocol owner
     // (`mentionRefV1.test.ts` over `readStructuredInputMentionSourcesV1`) and the CLI consumers.
     // This projection has no legacy arm, so a precedence assertion here would hold for every
-    // possible implementation. What it CAN violate is reading the envelope raw instead of through
-    // the canonical sanitizing reader, so that is what is pinned.
+    // possible implementation. What it CAN violate is bypassing the canonical META reader and
+    // taking the mentions off raw `meta`, so that is what is pinned.
     it('reads through the canonical sanitizing reader, so a malformed sibling drops alone (INV-4)', () => {
         const references = resolveMessageStructuredReferences({
             meta: {
                 happierStructuredInputV1: {
                     v: 1,
                     mentions: [
-                        // Out-of-order range: rejected element-wise by `sanitizeMentionRefsV1`.
-                        // This projection checks only kind + ref scheme, so a raw
-                        // `meta.happierStructuredInputV1.mentions` read would render it.
+                        // Out-of-order range: rejected element-wise by `sanitizeMentionRefsV1`,
+                        // which runs inside `readHappierStructuredInputV1FromMeta`. This
+                        // projection checks only kind + ref scheme, so bypassing that reader and
+                        // taking `meta.happierStructuredInputV1.mentions` off the RAW meta would
+                        // render it — verified RED. Swapping only
+                        // `readStructuredInputMentionSourcesV1` for `envelope.mentions` is NOT
+                        // caught here and must not be claimed: by that point the envelope is
+                        // already sanitized. D-4 precedence is pinned at the protocol owner.
                         { ...sessionMention('sess_bad', '@session:bad', 0), start: 5, end: 2 },
                         sessionMention('sess_ok', '@session:ok', 13),
                     ],
