@@ -15,6 +15,13 @@ export type ClaudeCodeCredentialHealth = Readonly<{
   missingScopes: readonly string[];
 }>;
 
+export type ClaudeSubscriptionNativeAuthCredentialRecord =
+  ConnectedServiceCredentialRecordV1
+  & Readonly<{
+    serviceId: 'claude-subscription';
+    kind: 'oauth' | 'token';
+  }>;
+
 function isNonBlank(value: string | null | undefined): boolean {
   return typeof value === 'string' && value.trim().length > 0;
 }
@@ -44,4 +51,14 @@ export function classifyClaudeCodeCredentialHealth(
     return { status: 'missing_required_scope', missingScopes };
   }
   return { status: 'ok', missingScopes: [] };
+}
+
+export function isHealthyClaudeSubscriptionNativeAuthCredentialRecord(
+  record: ConnectedServiceCredentialRecordV1,
+): record is ClaudeSubscriptionNativeAuthCredentialRecord {
+  return (
+    record.serviceId === 'claude-subscription'
+    && (record.kind === 'oauth' || record.kind === 'token')
+    && classifyClaudeCodeCredentialHealth(record).status === 'ok'
+  );
 }

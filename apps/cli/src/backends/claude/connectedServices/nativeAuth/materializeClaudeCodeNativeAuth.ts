@@ -45,6 +45,7 @@ import {
   type ClaudeCodeCredentialHealth,
   type ClaudeCodeCredentialHealthStatus,
 } from './claudeCodeCredentialHealth';
+import { readClaudeSubscriptionCredentialIdentity } from './claudeSubscriptionCredentialIdentity';
 
 const CLAUDE_CODE_KEYCHAIN_STALE_SWEEP_DEFER_MS = 30_000;
 
@@ -321,25 +322,6 @@ function alreadyMaterializedClaudeCodeNativeAuthResult(
 
 function hasNonBlankString(value: unknown): boolean {
   return typeof value === 'string' && value.trim().length > 0;
-}
-
-function readClaudeSubscriptionCredentialIdentity(record: ConnectedServiceCredentialRecordV1): Readonly<{
-  providerAccountId: string | null;
-  providerEmail: string | null;
-}> | null {
-  if (record.kind === 'oauth') {
-    return {
-      providerAccountId: record.oauth.providerAccountId,
-      providerEmail: record.oauth.providerEmail,
-    };
-  }
-  if (record.kind === 'token') {
-    return {
-      providerAccountId: record.token.providerAccountId,
-      providerEmail: record.token.providerEmail,
-    };
-  }
-  return null;
 }
 
 function buildClaudeSubscriptionNativeAuthIdentityDiagnostic(params: Readonly<{

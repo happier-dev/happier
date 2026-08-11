@@ -13,6 +13,7 @@ import {
 import { readClaudeCodeMacOsKeychainCredentialWithMetadata } from './claudeCodeMacOsKeychain';
 import {
   CLAUDE_CODE_REQUIRED_OAUTH_SCOPES,
+  CLAUDE_CODE_SETUP_TOKEN_SCOPES,
   parseClaudeCodeCredentialScopes,
 } from './claudeCodeCredentialScopes';
 import {
@@ -236,7 +237,7 @@ export function buildClaudeCodeCredentialPayload(
       payload: {
         claudeAiOauth: {
           accessToken: record.token.token,
-          scopes: [...CLAUDE_CODE_REQUIRED_OAUTH_SCOPES],
+          scopes: [...CLAUDE_CODE_SETUP_TOKEN_SCOPES],
         },
       },
     };

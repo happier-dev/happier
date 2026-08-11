@@ -6,7 +6,7 @@ import {
   resolveClaudeCodeCredentialsFilePath,
 } from './claudeCodeCredentialFile';
 import { readClaudeCodeMacOsKeychainCredential } from './claudeCodeMacOsKeychain';
-import { findMissingClaudeCodeCredentialScopes } from './claudeCodeCredentialScopes';
+import { findMissingClaudeCodeNativeCredentialScopes } from './claudeCodeCredentialScopes';
 import { readClaudeConnectedServiceHomeProvenance } from '../claudeConnectedServiceHomeProvenance';
 
 export type ClaudeCodeNativeAuthVerificationResult = Readonly<{
@@ -50,7 +50,7 @@ export async function verifyClaudeCodeNativeAuth(params: Readonly<{
   if (!parsed.hasAccessToken) {
     return { status: 'missing_access_token', missingScopes: [], credentialPath };
   }
-  const missingScopes = findMissingClaudeCodeCredentialScopes(parsed.scopes);
+  const missingScopes = findMissingClaudeCodeNativeCredentialScopes(parsed.scopes);
   if (missingScopes.length > 0) {
     return { status: 'missing_required_scope', missingScopes, credentialPath };
   }
@@ -83,7 +83,7 @@ export async function verifyClaudeCodeNativeAuth(params: Readonly<{
     if (!keychainParsed.hasAccessToken) {
       return { status: 'missing_access_token', missingScopes: [], credentialPath };
     }
-    const missingKeychainScopes = findMissingClaudeCodeCredentialScopes(keychainParsed.scopes);
+    const missingKeychainScopes = findMissingClaudeCodeNativeCredentialScopes(keychainParsed.scopes);
     if (missingKeychainScopes.length > 0) {
       return {
         status: 'missing_required_scope',

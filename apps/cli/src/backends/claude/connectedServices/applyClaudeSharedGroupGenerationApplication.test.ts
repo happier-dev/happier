@@ -11,6 +11,61 @@ import { CLAUDE_CODE_RECOMMENDED_OAUTH_SCOPE } from './nativeAuth/claudeCodeCred
 import { resolveClaudeConnectedServiceStableConfigDir } from './resolveClaudeConnectedServiceStableAuthDir';
 
 describe('applyClaudeSharedGroupGenerationApplication', () => {
+  it('materializes and proves setup-token credentials through the canonical shared-group application owner', async () => {
+    const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-claude-shared-generation-token-'));
+    const credentialRevision = 'csr_7123456789ABCDEFGHJKMNPQRT' as const;
+    const record = buildConnectedServiceCredentialRecord({
+      now: 1_000,
+      serviceId: 'claude-subscription',
+      profileId: 'setup',
+      kind: 'token',
+      token: {
+        token: 'sk-ant-oat01-shared-placeholder',
+        providerAccountId: null,
+        providerEmail: null,
+      },
+    });
+
+    await expect(applyClaudeSharedGroupGenerationApplication({
+      activeServerDir,
+      serviceId: 'claude-subscription',
+      groupId: 'team',
+      profileId: 'setup',
+      generation: 7,
+      credentialRevision,
+      record,
+      validateCurrentBeforeMutation: async () => ({ current: true }),
+    })).resolves.toMatchObject({
+      status: 'verified',
+      source: 'claude_shared_group_home_provenance',
+      sharedAuthSurfaceId: 'team',
+      credentialRevision,
+    });
+
+    const claudeConfigDir = resolveClaudeConnectedServiceStableConfigDir({
+      activeServerDir,
+      serviceId: 'claude-subscription',
+      fallbackProfileId: 'setup',
+      selection: {
+        kind: 'group',
+        serviceId: 'claude-subscription',
+        groupId: 'team',
+        activeProfileId: 'setup',
+        fallbackProfileId: 'setup',
+        generation: 7,
+        credentialRevision,
+        record,
+        policy: null,
+      },
+    });
+    expect(JSON.parse(await readFile(join(claudeConfigDir!, '.credentials.json'), 'utf8'))).toEqual({
+      claudeAiOauth: {
+        accessToken: 'sk-ant-oat01-shared-placeholder',
+        scopes: ['user:inference'],
+      },
+    });
+  });
+
   it('materializes and proves the exact committed generation on the shared Claude group surface', async () => {
     const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-claude-shared-generation-'));
     const credentialRevision = 'csr_7123456789ABCDEFGHJKMNPQRS' as const;

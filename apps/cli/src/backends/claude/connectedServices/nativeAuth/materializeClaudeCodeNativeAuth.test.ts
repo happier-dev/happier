@@ -271,15 +271,71 @@ describe('materializeClaudeCodeNativeAuth', () => {
     expect(JSON.parse(await readFile(join(claudeConfigDir, '.credentials.json'), 'utf8'))).toEqual({
       claudeAiOauth: {
         accessToken: 'sk-ant-oat01-setup-placeholder',
-        scopes: [
-          'user:inference',
-          'user:profile',
-          'user:sessions:claude_code',
-        ],
+        scopes: ['user:inference'],
       },
     });
     expect(result.env).not.toHaveProperty('CLAUDE_CODE_SETUP_TOKEN');
     expect(result.env).not.toHaveProperty('CLAUDE_CODE_OAUTH_TOKEN');
+  });
+
+  it('clears account-derived Claude caches when a setup-token binding changes', async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), 'happier-claude-native-auth-token-cache-home-'));
+    const sourceClaudeConfigDir = await mkdtemp(join(tmpdir(), 'happier-claude-native-auth-token-cache-source-'));
+    const targetClaudeConfigDir = await mkdtemp(join(tmpdir(), 'happier-claude-native-auth-token-cache-target-'));
+    const buildTokenRecord = (token: string, now: number) => buildConnectedServiceCredentialRecord({
+      now,
+      serviceId: 'claude-subscription',
+      profileId: 'setup',
+      kind: 'token',
+      token: {
+        token,
+        providerAccountId: null,
+        providerEmail: null,
+      },
+    });
+
+    await materializeClaudeSubscriptionNativeAuthHome({
+      record: buildTokenRecord('sk-ant-oat01-first-placeholder', REALISTIC_ISSUED_AT_MS),
+      targetClaudeConfigDir,
+      sourceEnv: { HOME: homeDir, CLAUDE_CONFIG_DIR: sourceClaudeConfigDir },
+      accountSettings: null,
+      sessionDirectory: null,
+      selectionDescriptor: {
+        kind: 'group',
+        serviceId: 'claude-subscription',
+        groupId: 'claude-team',
+        activeProfileId: 'setup',
+        fallbackProfileId: 'setup',
+        generation: 1,
+      },
+    });
+    await writeFile(join(targetClaudeConfigDir, '.claude.json'), JSON.stringify({
+      hasCompletedOnboarding: true,
+      oauthAccount: { emailAddress: 'previous@example.test' },
+      modelAccessCache: ['stale-model'],
+      additionalModelOptionsCache: [{ value: 'stale-model' }],
+      cachedExtraUsageDisabledReason: 'stale-plan',
+    }));
+
+    await materializeClaudeSubscriptionNativeAuthHome({
+      record: buildTokenRecord('sk-ant-oat01-second-placeholder', REALISTIC_ISSUED_AT_MS + 1),
+      targetClaudeConfigDir,
+      sourceEnv: { HOME: homeDir, CLAUDE_CONFIG_DIR: sourceClaudeConfigDir },
+      accountSettings: null,
+      sessionDirectory: null,
+      selectionDescriptor: {
+        kind: 'group',
+        serviceId: 'claude-subscription',
+        groupId: 'claude-team',
+        activeProfileId: 'setup',
+        fallbackProfileId: 'setup',
+        generation: 2,
+      },
+    });
+
+    expect(JSON.parse(await readFile(join(targetClaudeConfigDir, '.claude.json'), 'utf8'))).toEqual({
+      hasCompletedOnboarding: true,
+    });
   });
 
   it('updates an already-provenanced managed Claude home in place instead of replacing the live root', async () => {
