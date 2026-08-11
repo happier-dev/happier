@@ -2,6 +2,7 @@ import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
 import { renderScreen } from '@/dev/testkit';
+import { lightTheme } from '@/theme';
 import { installRestoreRouteCommonModuleMocks, resetRestoreRouteTestState } from './restoreRouteTestHelpers';
 
 
@@ -242,7 +243,7 @@ describe('/restore', () => {
         }
     });
 
-    it('renders the QR image without painting a separate white card behind the unauth shell', async () => {
+    it('renders the QR image on an opaque themed surface so finder rings stay scannable', async () => {
         vi.resetModules();
         const { authQRStart } = await import('@/auth/flows/qrStart');
         const { authQRWait } = await import('@/auth/flows/qrWait');
@@ -258,7 +259,7 @@ describe('/restore', () => {
             await act(async () => {});
 
             const qrCode = screen.findByType('QRCode' as never);
-            expect(qrCode.props.backgroundColor).toBe('transparent');
+            expect(qrCode.props.backgroundColor).toBe(lightTheme.colors.surface.base);
         } finally {
             act(() => {
                 tree?.unmount();
