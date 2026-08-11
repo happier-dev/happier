@@ -330,36 +330,24 @@ export const prepareClaudeQualifiedConnectedAccountLaunch:
 
       let authEnv: Readonly<Record<string, string>>;
       if (useSubscription) {
-        const [environment, files] = await Promise.all([
-          context.services.connectedAccounts.materialize(
-            CLAUDE_SUBSCRIPTION_PURPOSE,
-            { kind: 'environment', keys: ['CLAUDE_CODE_OAUTH_TOKEN'] },
-            { signal: context.signal },
-          ),
-          context.services.connectedAccounts.materialize(
-            CLAUDE_SUBSCRIPTION_PURPOSE,
-            { kind: 'files', fileIds: [CLAUDE_CREDENTIAL_FILE_ID] },
-            { signal: context.signal },
-          ),
-        ]);
-        if (environment.kind !== 'environment' || files.kind !== 'files') {
+        const files = await context.services.connectedAccounts.materialize(
+          CLAUDE_SUBSCRIPTION_PURPOSE,
+          { kind: 'files', fileIds: [CLAUDE_CREDENTIAL_FILE_ID] },
+          { signal: context.signal },
+        );
+        if (files.kind !== 'files') {
           throw new Error('Claude Subscription returned an invalid qualified materialization.');
         }
-        const setupToken = environment.env.CLAUDE_CODE_OAUTH_TOKEN?.trim() ?? '';
         const credentialFile = files.files[CLAUDE_CREDENTIAL_FILE_ID];
-        if (Boolean(setupToken) === Boolean(credentialFile)) {
-          throw new Error('Claude Subscription did not materialize one unambiguous credential mode.');
+        if (!credentialFile) {
+          throw new Error('Claude Subscription did not materialize its native credential file.');
         }
-        if (credentialFile) {
-          await writeFile(
-            join(rootDir, CLAUDE_CREDENTIAL_FILE_ID),
-            credentialFile,
-            { mode: 0o600, flag: 'wx' },
-          );
-          authEnv = Object.freeze({});
-        } else {
-          authEnv = Object.freeze({ CLAUDE_CODE_OAUTH_TOKEN: setupToken });
-        }
+        await writeFile(
+          join(rootDir, CLAUDE_CREDENTIAL_FILE_ID),
+          credentialFile,
+          { mode: 0o600, flag: 'wx' },
+        );
+        authEnv = Object.freeze({});
       } else {
         const environment = await context.services.connectedAccounts.materialize(
           ANTHROPIC_API_KEY_PURPOSE,

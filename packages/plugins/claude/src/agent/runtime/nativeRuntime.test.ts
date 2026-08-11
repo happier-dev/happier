@@ -173,8 +173,15 @@ describe('createClaudeNativeRuntime', () => {
       materialize: vi.fn(async (purpose: string, request: { kind: string }) => {
         if (purpose !== 'model_upstream') throw new Error('Anthropic fallback must not materialize');
         return request.kind === 'environment'
-          ? { kind: 'environment' as const, env: { CLAUDE_CODE_OAUTH_TOKEN: 'setup-token' } }
-          : { kind: 'files' as const, files: {} };
+          ? { kind: 'environment' as const, env: {} }
+          : {
+              kind: 'files' as const,
+              files: {
+                '.credentials.json': new TextEncoder().encode(JSON.stringify({
+                  claudeAiOauth: { accessToken: 'setup-token', scopes: ['user:inference'] },
+                })),
+              },
+            };
       }),
       requestSelection: vi.fn(),
       watch: vi.fn((purpose: string, listener: (event: { kind: 'resync' }) => unknown) => {
@@ -215,14 +222,16 @@ describe('createClaudeNativeRuntime', () => {
     expect(connectedAccounts.materialize).toHaveBeenNthCalledWith(
       1,
       'model_upstream',
-      { kind: 'environment', keys: ['CLAUDE_CODE_OAUTH_TOKEN'] },
+      { kind: 'files', fileIds: ['.credentials.json'] },
       expect.objectContaining({ signal: sessionContext.signal }),
     );
+    expect(connectedAccounts.materialize).toHaveBeenCalledTimes(1);
     expect(openSession.mock.calls[0]?.[0].request.launchEnvironment?.values).toMatchObject({
-      CLAUDE_CODE_OAUTH_TOKEN: 'setup-token',
       KEEP: 'yes',
       CLAUDE_CONFIG_DIR: expect.any(String),
     });
+    expect(openSession.mock.calls[0]?.[0].request.launchEnvironment?.values)
+      .not.toHaveProperty('CLAUDE_CODE_OAUTH_TOKEN');
     expect(openSession.mock.calls[0]?.[0].request.launchEnvironment?.values)
       .not.toHaveProperty('ANTHROPIC_API_KEY');
 

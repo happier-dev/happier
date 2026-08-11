@@ -82,6 +82,32 @@ describe('materializeClaudeCodeNativeAuth', () => {
         }
     });
 
+    it('materializes setup tokens through the same native credential owner', async () => {
+        const claudeConfigDir = await mkdtemp(join(tmpdir(), 'happier-claude-native-auth-setup-token-'));
+        const record = buildConnectedServiceCredentialRecord({
+            now: 1000,
+            serviceId: 'claude-subscription',
+            profileId: 'setup',
+            kind: 'token',
+            token: {
+                token: 'sk-ant-oat01-setup-placeholder',
+                providerAccountId: null,
+                providerEmail: null,
+            },
+        });
+
+        await expect(materializeClaudeCodeNativeAuth({ record, claudeConfigDir })).resolves.toMatchObject({
+            status: 'materialized',
+            env: { CLAUDE_CONFIG_DIR: claudeConfigDir },
+        });
+        expect(JSON.parse(await readFile(join(claudeConfigDir, '.credentials.json'), 'utf8'))).toEqual({
+            claudeAiOauth: {
+                accessToken: 'sk-ant-oat01-setup-placeholder',
+                scopes: ['user:inference'],
+            },
+        });
+    });
+
     it('writes native credentials and returns only CLAUDE_CONFIG_DIR for healthy OAuth records', async () => {
         const claudeConfigDir = await mkdtemp(join(tmpdir(), 'happier-claude-native-auth-test-'));
         const record = buildConnectedServiceCredentialRecord({

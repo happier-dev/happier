@@ -59,6 +59,21 @@ describe('verifyClaudeCodeNativeAuth', () => {
     expect(result.status).toBe('ok');
   });
 
+  it('verifies the inference-only native shape used by setup tokens', async () => {
+    const claudeConfigDir = await mkdtemp(join(tmpdir(), 'happier-claude-verify-setup-token-'));
+    await writeClaudeCodeCredentialsFile({
+      claudeConfigDir,
+      payload: {
+        claudeAiOauth: {
+          accessToken: 'sk-ant-oat01-setup-placeholder',
+          scopes: ['user:inference'],
+        },
+      },
+    });
+    await expect(verifyClaudeCodeNativeAuth({ claudeConfigDir, now: 1_000 }))
+      .resolves.toMatchObject({ status: 'ok' });
+  });
+
   it('rejects a well-formed but expired credential as a usability failure', async () => {
     const claudeConfigDir = await writeCredentials(1_000);
     const result = await verifyClaudeCodeNativeAuth({ claudeConfigDir, now: 2_000 });

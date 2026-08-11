@@ -9,6 +9,7 @@ import {
     type ClaudeCodeCredentialHealth,
 } from './health.js';
 import { parseClaudeCodeCredentialScopes } from './scopes.js';
+import { CLAUDE_CODE_SETUP_TOKEN_SCOPES } from './scopes.js';
 
 export type ClaudeCodeNativeCredentialPayload = Readonly<{
     claudeAiOauth: Readonly<{
@@ -179,9 +180,21 @@ export function buildClaudeCodeCredentialPayload(
     record: ConnectedServiceCredentialRecordV1,
 ): ClaudeCodeCredentialPayloadBuildResult {
     const health = classifyClaudeCodeCredentialHealth(record);
-    if (health.status !== 'ok' || record.kind !== 'oauth') {
+    if (health.status !== 'ok') {
         return { status: 'diagnostic', health };
     }
+    if (record.kind === 'token') {
+        return {
+            status: 'ok',
+            payload: {
+                claudeAiOauth: {
+                    accessToken: record.token.token,
+                    scopes: [...CLAUDE_CODE_SETUP_TOKEN_SCOPES],
+                },
+            },
+        };
+    }
+    if (record.kind !== 'oauth') return { status: 'diagnostic', health };
 
     const raw = readObject(record.oauth.raw);
     const providerCredential = readObject(raw?.claudeAiOauth) ?? readObject(raw?.['claude.ai_oauth']);

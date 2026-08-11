@@ -13,6 +13,30 @@ import {
 } from './credentials.js';
 
 describe('claudeCodeCredentialFile', () => {
+    it('builds inference-only native credentials from Claude setup-token records', () => {
+        const record = buildConnectedServiceCredentialRecord({
+            now: 10,
+            serviceId: 'claude-subscription',
+            profileId: 'setup',
+            kind: 'token',
+            token: {
+                token: 'sk-ant-oat01-setup-placeholder',
+                providerAccountId: null,
+                providerEmail: null,
+            },
+        });
+
+        expect(buildClaudeCodeCredentialPayload(record)).toEqual({
+            status: 'ok',
+            payload: {
+                claudeAiOauth: {
+                    accessToken: 'sk-ant-oat01-setup-placeholder',
+                    scopes: ['user:inference'],
+                },
+            },
+        });
+    });
+
     it('builds access-token-only Claude Code native credentials from scoped OAuth records', () => {
         const record = buildConnectedServiceCredentialRecord({
             now: 10,

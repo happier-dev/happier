@@ -1187,7 +1187,7 @@ describe('materializeConnectedServicesForSpawn', () => {
     })).rejects.toThrow(/anthropic oauth/i);
   });
 
-  it('fails closed for Claude subscription setup-token materialization', async () => {
+  it('materializes Claude subscription setup tokens into the isolated native Claude home', async () => {
     const baseDir = await mkdtemp(join(tmpdir(), 'happier-connected-services-test-'));
     const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-connected-services-server-test-'));
     const sourceClaudeConfigDir = await mkdtemp(join(tmpdir(), 'happier-source-claude-config-test-'));
@@ -1200,7 +1200,7 @@ describe('materializeConnectedServicesForSpawn', () => {
     });
     await writeFile(join(sourceClaudeConfigDir, 'settings.json'), '{"permissions":{"allow":["Bash(*)"]}}\n');
 
-    await expect(materializeConnectedServicesForSpawn({
+    const result = await materializeConnectedServicesForSpawn({
       agentId: 'claude',
       materializationKey: 'session-6a',
       activeServerDir,
@@ -1210,15 +1210,16 @@ describe('materializeConnectedServicesForSpawn', () => {
         ...process.env,
         CLAUDE_CONFIG_DIR: sourceClaudeConfigDir,
       },
-    })).rejects.toMatchObject({
-      code: 'connected_service_materialization_blocked',
-      diagnostics: expect.arrayContaining([
-        expect.objectContaining({
-          code: 'claude_subscription_setup_token_not_supported_for_unified',
-          severity: 'blocking',
-        }),
-      ]),
     });
+    expect(result).not.toBeNull();
+    expect(JSON.parse(await readFile(join(result!.env.CLAUDE_CONFIG_DIR, '.credentials.json'), 'utf8'))).toEqual({
+      claudeAiOauth: {
+        accessToken: 'sk-ant-oat01-123',
+        scopes: ['user:inference'],
+      },
+    });
+    expect(result!.env).not.toHaveProperty('CLAUDE_CODE_OAUTH_TOKEN');
+    expect(result!.env).not.toHaveProperty('CLAUDE_CODE_SETUP_TOKEN');
   });
 
   it('materializes Claude subscription oauth as access-token-only native Claude Code credentials', async () => {

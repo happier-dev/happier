@@ -8,6 +8,10 @@ import {
   CLAUDE_DEFAULT_SUBSCRIPTION_USAGE_URL,
   parseClaudeSubscriptionUsageMeters,
 } from '../agent/auth/services/quota/subscriptionFetcher.js';
+import {
+  CLAUDE_CODE_RECOMMENDED_OAUTH_SCOPES,
+  CLAUDE_CODE_SETUP_TOKEN_SCOPES,
+} from '../agent/auth/services/native/scopes.js';
 
 export const CLAUDE_SUBSCRIPTION_OAUTH_CLIENT_ID =
   '9d1c250a-e61b-44d9-88ed-5944d1962f5e';
@@ -18,13 +22,7 @@ export const CLAUDE_SUBSCRIPTION_OAUTH_TOKEN_URL =
 export const CLAUDE_SUBSCRIPTION_OAUTH_CALLBACK_URL =
   'https://platform.claude.com/oauth/code/callback';
 const CLAUDE_CREDENTIAL_FILE_ID = '.credentials.json';
-const CLAUDE_SCOPES = Object.freeze([
-  'user:inference',
-  'user:profile',
-  'user:sessions:claude_code',
-  'user:mcp_servers',
-  'user:file_upload',
-]);
+const CLAUDE_SCOPES = CLAUDE_CODE_RECOMMENDED_OAUTH_SCOPES;
 const SETUP_TOKEN_KEY = 'setupToken';
 const ACCESS_TOKEN_KEY = 'accessToken';
 const REFRESH_TOKEN_KEY = 'refreshToken';
@@ -244,7 +242,7 @@ async function readHealth(
 ): Promise<PluginConnectedAccountHealthResult> {
   if (authenticationModeId === 'setup-token') {
     return await readCredential(credentials, SETUP_TOKEN_KEY, options)
-      ? { status: 'connected', displayName: 'Claude setup token', scopes: [] }
+      ? { status: 'connected', displayName: 'Claude setup token', scopes: CLAUDE_CODE_SETUP_TOKEN_SCOPES }
       : {
           status: 'unavailable',
           diagnostic: diagnostic(
@@ -316,7 +314,7 @@ const claudeSubscriptionRuntimeDefinition: PluginConnectedAccountRuntime = {
               ? { accountId: context.attempt.account.accountId }
               : {}),
             displayName: 'Claude setup token',
-            scopes: [],
+            scopes: CLAUDE_CODE_SETUP_TOKEN_SCOPES,
           };
         },
       },
@@ -416,14 +414,14 @@ const claudeSubscriptionRuntimeDefinition: PluginConnectedAccountRuntime = {
   },
   async quota(context, options) {
     const authenticationModeId = modeId(context);
-    const tokenKey = authenticationModeId === 'oauth'
-      ? ACCESS_TOKEN_KEY
-      : authenticationModeId === 'setup-token'
-        ? SETUP_TOKEN_KEY
-        : null;
-    if (!tokenKey) throw new Error('Claude connected-account authentication mode is unavailable');
+    if (authenticationModeId === 'setup-token') {
+      return { observedAtMs: Date.now(), limits: [] };
+    }
+    if (authenticationModeId !== 'oauth') {
+      throw new Error('Claude connected-account authentication mode is unavailable');
+    }
     const signal = options?.signal ?? context.signal;
-    const accessToken = await readCredential(context.credentials, tokenKey, options);
+    const accessToken = await readCredential(context.credentials, ACCESS_TOKEN_KEY, options);
     if (!accessToken) {
       throw new Error('Claude OAuth credentials are unavailable');
     }
@@ -472,17 +470,21 @@ const claudeSubscriptionRuntimeDefinition: PluginConnectedAccountRuntime = {
   async materialize(request, context, options) {
     const authenticationModeId = modeId(context);
     if (authenticationModeId === 'setup-token') {
-      if (request.kind === 'files') return { kind: 'files', files: {} };
-      if (request.kind !== 'environment') {
+      if (request.kind === 'environment') return { kind: 'environment', env: {} };
+      if (request.kind !== 'files') {
         throw new Error('Claude setup-token accounts do not support HTTP-header materialization');
       }
       const setupToken = await readCredential(context.credentials, SETUP_TOKEN_KEY, options);
       if (!setupToken) throw new Error('Claude setup-token credentials are unavailable');
-      const env: Record<string, string> = {};
-      if (request.keys.includes('CLAUDE_CODE_OAUTH_TOKEN')) {
-        env.CLAUDE_CODE_OAUTH_TOKEN = setupToken;
-      }
-      return { kind: 'environment', env };
+      const files: Record<string, Uint8Array> = {};
+      if (!request.fileIds.includes(CLAUDE_CREDENTIAL_FILE_ID)) return { kind: 'files', files };
+      files[CLAUDE_CREDENTIAL_FILE_ID] = new TextEncoder().encode(JSON.stringify({
+        claudeAiOauth: {
+          accessToken: setupToken,
+          scopes: CLAUDE_CODE_SETUP_TOKEN_SCOPES,
+        },
+      }));
+      return { kind: 'files', files };
     }
     if (authenticationModeId !== 'oauth') {
       throw new Error('Claude connected-account authentication mode is unavailable');
