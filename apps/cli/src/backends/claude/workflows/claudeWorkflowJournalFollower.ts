@@ -34,13 +34,41 @@ import {
 /** A prompt head is a title source, not a payload: read a bounded prefix, never the whole transcript. */
 const AGENT_TRANSCRIPT_HEAD_MAX_BYTES = 512 * 1024;
 
+/**
+ * What the sidecar directory has said about one agent so far, and which of those answers are FINAL.
+ *
+ * The distinction is the whole point of this record. The directory is written by someone else, in
+ * an order this follower does not control: `agent-<id>.meta.json` can be readable before
+ * `agent-<id>.jsonl` exists, so the first read of a perfectly healthy agent can prove a model and
+ * nothing else. A latch that means "we tried once" turns that ordinary race into a permanent
+ * verdict — the agent keeps its model, never gets its sidechain, and its row is unopenable for the
+ * life of the run, because runs terminalize on restart and the follower does not replay.
+ *
+ * So a fact is latched only when re-reading could not change it. `settled` is not `known`: a model
+ * that is genuinely absent from a readable `meta.json` is settled and undefined, while a
+ * `meta.json` that is not there yet is neither.
+ */
+type WorkflowAgentProfileFacts = {
+  prompt: string | undefined;
+  model: string | undefined;
+  sidechainId: string | undefined;
+  /** The transcript's first record parsed, so the prompt it declares (or declines to) is final. */
+  promptSettled: boolean;
+  /** `meta.json` was readable and parsed, so its model (or its absence) is final. */
+  modelSettled: boolean;
+  /** The importer accepted the file — or there is no importer, so nothing ever will. */
+  sidechainSettled: boolean;
+  /** A read is in flight; a second journal entry must not race a duplicate one against it. */
+  reading: boolean;
+};
+
 type WorkflowJournalEntry = Readonly<{
   workflowToolUseId: string;
   transcriptDir: string;
   sourceSessionId?: string;
   controller: JsonlFollowController;
-  /** Agent ids whose sidecar profile has already been emitted, so one read serves the whole run. */
-  profiledAgentIds: Set<string>;
+  /** Per-agent sidecar facts, so the run re-reads exactly what it has not yet settled. */
+  agentProfiles: Map<string, WorkflowAgentProfileFacts>;
 }>;
 
 export type ClaudeWorkflowJournalFollower = Readonly<{
@@ -133,12 +161,37 @@ function readAgentPromptText(record: Record<string, unknown> | null): string | u
   return parts.length > 0 ? parts.join('\n') : undefined;
 }
 
-async function readAgentModel(metaPath: string): Promise<string | undefined> {
-  const raw = await readFile(metaPath, 'utf8');
-  const parsed: unknown = JSON.parse(raw);
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return undefined;
+/**
+ * The agent's model, and whether the file answered at all.
+ *
+ * Same separation as the transcript head, for the same reason: "this `meta.json` names no model"
+ * is an answer, while "this `meta.json` is not on disk yet" is not one, and collapsing both to
+ * `undefined` is how a not-yet becomes a never.
+ */
+type AgentModelRead =
+  | Readonly<{ settled: true; model: string | undefined }>
+  | Readonly<{ settled: false }>;
+
+/** Whether the importer gave a final answer, and the id it filed the transcript under if it did. */
+type SidecarImportResult =
+  | Readonly<{ settled: true; sidechainId: string | undefined }>
+  | Readonly<{ settled: false }>;
+
+async function readAgentModel(metaPath: string): Promise<AgentModelRead> {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(await readFile(metaPath, 'utf8'));
+  } catch {
+    return { settled: false };
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    return { settled: true, model: undefined };
+  }
   const model = (parsed as Record<string, unknown>).model;
-  return typeof model === 'string' && model.trim().length > 0 ? model.trim() : undefined;
+  return {
+    settled: true,
+    model: typeof model === 'string' && model.trim().length > 0 ? model.trim() : undefined,
+  };
 }
 
 export function createClaudeWorkflowJournalFollower(params: Readonly<{
@@ -169,20 +222,24 @@ export function createClaudeWorkflowJournalFollower(params: Readonly<{
 
   /**
    * Hand one agent's sidecar transcript to the sidechain importer, and report the id it was filed
-   * under — or `undefined` when nothing was imported.
+   * under — or nothing, when nothing was imported.
    *
    * Proof, not intent. The id is returned only after the importer accepted a file we opened, so a
    * row built from it is pressable exactly when there is something to open. An id minted from the
    * ids alone would be equally well-formed and would make an agent with no sidecar press into
    * nothing.
+   *
+   * A REJECTED registration is unsettled, not empty: the importer may simply not be wired yet, and
+   * a later journal entry gets to try again. A composition with no importer at all is settled —
+   * a scanner keeps its naming and loses only the transcripts, and no retry can change that.
    */
   async function importAgentTranscript(
     entry: WorkflowJournalEntry,
     agentId: string,
     filePath: string,
-  ): Promise<string | undefined> {
+  ): Promise<SidecarImportResult> {
     const register = params.registerAgentTranscript;
-    if (!register) return undefined;
+    if (!register) return { settled: true, sidechainId: undefined };
     const sidechainId = buildWorkflowAgentSidechainId({
       workflowToolUseId: entry.workflowToolUseId,
       agentId,
@@ -191,40 +248,89 @@ export function createClaudeWorkflowJournalFollower(params: Readonly<{
       await register({ workflowToolUseId: entry.workflowToolUseId, agentId, sidechainId, filePath });
     } catch (error) {
       logger.debug(`${logPrefix}: could not import the sidecar transcript for ${agentId}`, error);
-      return undefined;
+      return { settled: false };
     }
-    return sidechainId;
+    return { settled: true, sidechainId };
   }
 
+  /**
+   * Read whatever this agent's sidecar directory can still tell us, and republish when it told us
+   * something new.
+   *
+   * Called on every journal entry that names the agent, and cheap after the first one: each fact
+   * stops being re-read the moment re-reading it could not change the answer. The profile is
+   * re-emitted with the ACCUMULATED facts rather than the delta, because the tracker merges them
+   * and a partial second wrapper would read as a correction.
+   */
   function emitAgentProfile(entry: WorkflowJournalEntry, agentId: string): void {
-    if (entry.profiledAgentIds.has(agentId)) return;
-    entry.profiledAgentIds.add(agentId);
+    let facts = entry.agentProfiles.get(agentId);
+    if (!facts) {
+      facts = {
+        prompt: undefined,
+        model: undefined,
+        sidechainId: undefined,
+        promptSettled: false,
+        modelSettled: false,
+        sidechainSettled: false,
+        reading: false,
+      };
+      entry.agentProfiles.set(agentId, facts);
+    }
+    const state = facts;
+    if (state.reading) return;
+    if (state.promptSettled && state.modelSettled && state.sidechainSettled) return;
+    state.reading = true;
     trackSidecarRead((async () => {
-      const base = join(entry.transcriptDir, `agent-${agentId}`);
-      // One bounded head read serves BOTH answers this directory can give about an anonymous agent:
-      // the name its prompt declares, and whether it has a transcript to import at all.
-      const head = await readAgentTranscriptHead(`${base}.jsonl`);
-      if (!head.exists) {
-        logger.debug(`${logPrefix}: no readable agent transcript for ${agentId}`);
+      try {
+        const base = join(entry.transcriptDir, `agent-${agentId}`);
+        let learned = false;
+
+        if (!state.promptSettled || !state.sidechainSettled) {
+          // One bounded head read serves BOTH answers this directory can give about an anonymous
+          // agent: the name its prompt declares, and whether it has a transcript to import at all.
+          const head = await readAgentTranscriptHead(`${base}.jsonl`);
+          if (!head.exists) {
+            logger.debug(`${logPrefix}: no readable agent transcript for ${agentId} yet`);
+          } else {
+            if (!state.promptSettled && head.record !== null) {
+              state.prompt = readAgentPromptText(head.record);
+              state.promptSettled = true;
+              if (state.prompt !== undefined) learned = true;
+            }
+            if (!state.sidechainSettled) {
+              const imported = await importAgentTranscript(entry, agentId, `${base}.jsonl`);
+              if (imported.settled) {
+                state.sidechainId = imported.sidechainId;
+                state.sidechainSettled = true;
+                if (state.sidechainId !== undefined) learned = true;
+              }
+            }
+          }
+        }
+
+        if (!state.modelSettled) {
+          const read = await readAgentModel(`${base}.meta.json`);
+          if (read.settled) {
+            state.model = read.model;
+            state.modelSettled = true;
+            if (state.model !== undefined) learned = true;
+          }
+        }
+
+        // Nothing new was proven about this agent, so there is nothing to say about it yet. The
+        // unsettled facts above are what bring a later journal entry back here.
+        if (!learned) return;
+        params.onJournalValue(createClaudeWorkflowAgentProfileWrapper({
+          workflowToolUseId: entry.workflowToolUseId,
+          agentId,
+          ...(state.prompt !== undefined ? { prompt: state.prompt } : {}),
+          ...(state.model !== undefined ? { model: state.model } : {}),
+          ...(state.sidechainId !== undefined ? { sidechainId: state.sidechainId } : {}),
+          ...(entry.sourceSessionId ? { sourceSessionId: entry.sourceSessionId } : {}),
+        }));
+      } finally {
+        state.reading = false;
       }
-      const prompt = head.exists ? readAgentPromptText(head.record) : undefined;
-      const model = await readAgentModel(`${base}.meta.json`).catch(() => undefined);
-      const sidechainId = head.exists
-        ? await importAgentTranscript(entry, agentId, `${base}.jsonl`)
-        : undefined;
-      if (!prompt && !model && !sidechainId) {
-        // Nothing was proven about this agent; let a later journal entry retry the read.
-        entry.profiledAgentIds.delete(agentId);
-        return;
-      }
-      params.onJournalValue(createClaudeWorkflowAgentProfileWrapper({
-        workflowToolUseId: entry.workflowToolUseId,
-        agentId,
-        ...(prompt !== undefined ? { prompt } : {}),
-        ...(model !== undefined ? { model } : {}),
-        ...(sidechainId !== undefined ? { sidechainId } : {}),
-        ...(entry.sourceSessionId ? { sourceSessionId: entry.sourceSessionId } : {}),
-      }));
     })());
   }
 
@@ -294,7 +400,7 @@ export function createClaudeWorkflowJournalFollower(params: Readonly<{
       transcriptDir: paramsForRun.transcriptDir,
       ...(paramsForRun.sourceSessionId ? { sourceSessionId: paramsForRun.sourceSessionId } : {}),
       controller,
-      profiledAgentIds: new Set<string>(),
+      agentProfiles: new Map<string, WorkflowAgentProfileFacts>(),
     });
 
     const registration = controller.start().catch((error) => {

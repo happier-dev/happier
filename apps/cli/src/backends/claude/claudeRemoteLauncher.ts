@@ -79,6 +79,7 @@ import { resolveSwitchRequestTarget } from '@/agent/localControl/switchRequestTa
 import { ensureSessionInfoBeforeSwitch } from '@/backends/claude/utils/ensureSessionInfoBeforeSwitch';
 import { ClaudeRemoteTaskOutputCollector } from './remote/sidechains/claudeRemoteTaskOutputCollector';
 import { ClaudeRemoteSubagentFileCollector } from './remote/sidechains/claudeRemoteSubagentFileCollector';
+import { createWorkflowAgentTranscriptRegistrar } from './remote/sidechains/createWorkflowAgentTranscriptRegistrar';
 import { resolveClaudeSubagentJsonlPathForRemoteSession } from './remote/sidechains/resolveClaudeSubagentJsonlPathForRemoteSession';
 import { reportSessionToDaemonIfRunning } from '@/agent/runtime/startupSideEffects';
 import { createClaudeRemoteTeamInboxBridge } from './remote/teamInbox/claudeRemoteTeamInboxBridge';
@@ -570,22 +571,17 @@ export async function claudeRemoteLauncher(
     // when no credentials are available yet — the goal / work-state path is unaffected.
     // The sidechain importer is created further down (it needs the message queue), so the workflow
     // source reaches it through this holder rather than the other way round: a workflow run cannot
-    // start before the launcher has finished wiring, so the holder is always set by the time the
-    // journal follower asks for it.
+    // start before the launcher has finished wiring, so the holder is expected to be set by the
+    // time the journal follower asks for it — and the registrar FAILS rather than assuming it.
     let subagentFileCollectorRef: ClaudeRemoteSubagentFileCollector | null = null;
     const workflowActivitySource = await createClaudeWorkflowActivitySourceForSession({
         session,
         logPrefix: '[remote]',
         // Workflow agent transcripts ride the SAME importer as `Task` sub-agent transcripts: one
         // follower budget, one dedupe, one `isSidechain`/`sidechainId` marking rule.
-        registerWorkflowAgentTranscript: async (registration) => {
-            await subagentFileCollectorRef?.registerSidechainFile({
-                sidechainId: registration.sidechainId,
-                agentId: registration.agentId,
-                filePath: registration.filePath,
-                source: 'workflow-agent',
-            });
-        },
+        registerWorkflowAgentTranscript: createWorkflowAgentTranscriptRegistrar({
+            getCollector: () => subagentFileCollectorRef,
+        }),
         getCurrentClaudeSessionId: () => {
             const claudeSessionId = session.client.getMetadataSnapshot?.()?.claudeSessionId;
             return typeof claudeSessionId === 'string' && claudeSessionId.trim().length > 0 ? claudeSessionId.trim() : null;

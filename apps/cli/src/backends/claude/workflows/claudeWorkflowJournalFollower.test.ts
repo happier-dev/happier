@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { appendFile, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -268,7 +268,7 @@ describe('createClaudeWorkflowJournalFollower', () => {
       expect(registered).toEqual([join(dir, 'agent-a1.jsonl')]);
     });
 
-    it('claims no sidechain when the agent has no sidecar transcript to import', async () => {
+    it('claims no sidechain WHILE the agent has no sidecar transcript to import', async () => {
       await writeFile(join(dir, 'agent-ghost.meta.json'), JSON.stringify({ model: 'opus' }), 'utf8');
       await writeFile(join(dir, 'journal.jsonl'), `${JSON.stringify({ type: 'started', key: 'k', agentId: 'ghost' })}\n`, 'utf8');
 
@@ -285,11 +285,116 @@ describe('createClaudeWorkflowJournalFollower', () => {
       follower.dispose();
 
       // The model was proven, so the profile still rides — but nothing was imported, so a row built
-      // from it must not become pressable.
+      // from it must not become pressable. This asserts what is true NOW, not forever: "no
+      // transcript yet" is the same observation as "no transcript ever", and the test below is what
+      // separates them.
       const profiles = values.filter((value) => (value as { type?: string }).type === 'happier_workflow_agent_profile');
       expect(profiles).toHaveLength(1);
       expect(profiles[0]).not.toHaveProperty('sidechainId');
       expect(registered).toEqual([]);
+    });
+
+    /**
+     * The directory is written in an order this follower does not control.
+     *
+     * `agent-<id>.meta.json` can land before `agent-<id>.jsonl` exists, so the first read of a
+     * perfectly healthy agent can prove a model and nothing else. A latch that means "we tried
+     * once" turns that ordinary race into a permanent verdict: the row keeps its model, never gets
+     * its sidechain, and is unopenable for the life of the run — with runs terminalized on restart
+     * and replay excluded from the follower, there is no second chance anywhere else.
+     */
+    it('imports a sidecar transcript that lands AFTER the first journal entry', async () => {
+      await writeFile(join(dir, 'agent-late.meta.json'), JSON.stringify({ model: 'opus' }), 'utf8');
+      await writeFile(join(dir, 'journal.jsonl'), `${JSON.stringify({ type: 'started', key: 'k', agentId: 'late' })}\n`, 'utf8');
+
+      const values: unknown[] = [];
+      const registered: string[] = [];
+      const follower = createClaudeWorkflowJournalFollower({
+        onJournalValue: (value) => values.push(value),
+        watchFile: () => () => {},
+        registerAgentTranscript: (registration) => { registered.push(registration.filePath); },
+      });
+
+      try {
+        follower.observeTranscriptMessage(launchResult({ withScriptPath: false }));
+        await follower.syncAll();
+        expect(registered).toEqual([]);
+
+        await writeFile(join(dir, 'agent-late.jsonl'), `${JSON.stringify({
+          type: 'user',
+          message: { role: 'user', content: '# LANE LATE — arrived second' },
+        })}\n`, 'utf8');
+        await appendFile(join(dir, 'journal.jsonl'), `${JSON.stringify({
+          type: 'result',
+          key: 'k',
+          agentId: 'late',
+          result: {},
+        })}\n`, 'utf8');
+        await follower.syncAll();
+      } finally {
+        follower.dispose();
+      }
+
+      expect(registered).toEqual([join(dir, 'agent-late.jsonl')]);
+      const profiles = values.filter((value) => (value as { type?: string }).type === 'happier_workflow_agent_profile');
+      expect(profiles.at(-1)).toEqual({
+        type: 'happier_workflow_agent_profile',
+        workflowToolUseId: 'toolu_wf',
+        agentId: 'late',
+        prompt: '# LANE LATE — arrived second',
+        model: 'opus',
+        sidechainId: buildWorkflowAgentSidechainId({ workflowToolUseId: 'toolu_wf', agentId: 'late' }),
+        sourceSessionId: 'claude-session-1',
+      });
+    });
+
+    it('withholds the sidechain id when the importer REJECTS the file, and retries it', async () => {
+      await writeFile(join(dir, 'agent-a1.jsonl'), `${JSON.stringify({
+        type: 'user',
+        message: { role: 'user', content: 'LANE A1' },
+      })}\n`, 'utf8');
+      await writeFile(join(dir, 'journal.jsonl'), `${JSON.stringify({ type: 'started', key: 'k', agentId: 'a1' })}\n`, 'utf8');
+
+      const values: unknown[] = [];
+      let accept = false;
+      const registered: string[] = [];
+      const follower = createClaudeWorkflowJournalFollower({
+        onJournalValue: (value) => values.push(value),
+        watchFile: () => () => {},
+        registerAgentTranscript: (registration) => {
+          if (!accept) throw new Error('importer not wired');
+          registered.push(registration.filePath);
+        },
+      });
+
+      try {
+        follower.observeTranscriptMessage(launchResult({ withScriptPath: false }));
+        await follower.syncAll();
+
+        // A rejected registration is not an import. The profile may still name the agent, but it
+        // must not stamp an id that would make the row press into nothing.
+        const beforeProfiles = values.filter((value) => (value as { type?: string }).type === 'happier_workflow_agent_profile');
+        expect(beforeProfiles).toHaveLength(1);
+        expect(beforeProfiles[0]).not.toHaveProperty('sidechainId');
+
+        accept = true;
+        await appendFile(join(dir, 'journal.jsonl'), `${JSON.stringify({
+          type: 'result',
+          key: 'k',
+          agentId: 'a1',
+          result: {},
+        })}\n`, 'utf8');
+        await follower.syncAll();
+      } finally {
+        follower.dispose();
+      }
+
+      expect(registered).toEqual([join(dir, 'agent-a1.jsonl')]);
+      const profiles = values.filter((value) => (value as { type?: string }).type === 'happier_workflow_agent_profile');
+      expect(profiles.at(-1)).toMatchObject({
+        agentId: 'a1',
+        sidechainId: buildWorkflowAgentSidechainId({ workflowToolUseId: 'toolu_wf', agentId: 'a1' }),
+      });
     });
   });
 });
