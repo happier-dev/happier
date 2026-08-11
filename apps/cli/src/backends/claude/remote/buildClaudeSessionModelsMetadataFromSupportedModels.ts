@@ -2,6 +2,8 @@ import type { Metadata } from '@/api/types';
 import { normalizeContextWindowTokens } from '@/backends/modelCapabilities/contextWindowTokens';
 import { readNewestSessionModelsMetadataStateV1 } from '@happier-dev/agents';
 
+import { reconcileClaudeSessionModelsState } from '../sessionModels/reconcileClaudeSessionModelsState';
+
 type SessionModelsState = NonNullable<Metadata['sessionModelsV1']>;
 type SessionModelEntry = SessionModelsState['availableModels'][number];
 type SessionModelOption = NonNullable<SessionModelEntry['modelOptions']>[number];
@@ -247,13 +249,17 @@ export function buildClaudeSessionModelsMetadataFromSupportedModels(params: Read
     const updatedAt = params.nowMs ? params.nowMs() : Date.now();
     const currentModelId = resolveCurrentModelId(params.metadata);
 
-    const state: SessionModelsState = {
+    const state = reconcileClaudeSessionModelsState({
+      metadata: params.metadata,
+      source: 'agent_sdk',
+      incomingState: {
         v: 1,
         provider: 'claude',
         updatedAt,
         currentModelId,
         availableModels,
-    };
+      },
+    });
 
     return {
         sessionModelsV1: state,

@@ -165,7 +165,7 @@ export function resolveModeEffortLevelsForModel(
     return mode.modelEffortLevelsModelId === normalized ? mode.modelEffortLevels : undefined;
 }
 
-export function resolveClaudeEffortForModel(params: Readonly<{
+export function resolveClaudeEffectiveEffortForModel(params: Readonly<{
     modelId: unknown;
     effort: unknown;
     /** Effort tiers the model reported (Anthropic Models API). Required for discovered models. */
@@ -182,6 +182,16 @@ export function resolveClaudeEffortForModel(params: Readonly<{
     if (supportedLevels.length === 0) return null;
 
     const normalized = resolveBestSupportedClaudeEffort(effort, supportedLevels);
+    return normalized;
+}
+
+export function resolveClaudeEffortForModel(params: Readonly<{
+    modelId: unknown;
+    effort: unknown;
+    /** Effort tiers the model reported (Anthropic Models API). Required for discovered models. */
+    supportedLevels?: readonly unknown[];
+}>): ClaudeEffortLevel | null {
+    const normalized = resolveClaudeEffectiveEffortForModel(params);
     if (!normalized) return null;
     const defaultEffort = resolveClaudeDefaultEffortForKnownAliasOrModel(params.modelId);
 

@@ -2,15 +2,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 
-import type { AnthropicModelEntry } from '@/backends/claude/preflight/anthropicModelsFetch';
+import type { AnthropicModelEntry } from './fetchAnthropicModels';
 
 const { fetchAnthropicModelsMock, readClaudeCodeNativeCredentialMock } = vi.hoisted(() => ({
   fetchAnthropicModelsMock: vi.fn<(...args: unknown[]) => Promise<AnthropicModelEntry[] | null>>(),
   readClaudeCodeNativeCredentialMock: vi.fn<(...args: unknown[]) => Promise<unknown>>(),
 }));
 
-vi.mock('@/backends/claude/preflight/anthropicModelsFetch', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@/backends/claude/preflight/anthropicModelsFetch')>();
+vi.mock('./fetchAnthropicModels', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./fetchAnthropicModels')>();
   return { ...actual, fetchAnthropicModels: fetchAnthropicModelsMock };
 });
 
@@ -177,5 +177,57 @@ describe('createClaudeModelEffortLevelsTracker', () => {
 
     // The preflight probe and the session publisher both resolve at session start; one fetch is enough.
     expect(fetchAnthropicModelsMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('joins a startup prewarm for the same model inside the first-turn budget', async () => {
+    let releaseCatalog: ((entries: AnthropicModelEntry[]) => void) | null = null;
+    fetchAnthropicModelsMock.mockImplementation(() => new Promise<AnthropicModelEntry[]>((resolve) => {
+      releaseCatalog = resolve;
+    }));
+    const tracker = createTracker();
+
+    void tracker.refresh('claude-opus-9');
+    const firstTurn = tracker.refreshWithin('claude-opus-9', 1_000);
+    await new Promise((resolve) => { setTimeout(resolve, 0); });
+
+    const release = releaseCatalog as ((entries: AnthropicModelEntry[]) => void) | null;
+    if (!release) throw new Error('expected the startup catalog lookup to be in flight');
+    release([
+      { id: 'claude-opus-9', displayName: 'Opus 9', capabilities: effortCapabilities(['low', 'medium']) },
+    ]);
+    await firstTurn;
+
+    expect(tracker.getLevels()).toEqual(['low', 'medium']);
+    expect(fetchAnthropicModelsMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('retries the same discovered model after an unavailable catalog recovers', async () => {
+    fetchAnthropicModelsMock
+      .mockRejectedValueOnce(new Error('network'))
+      .mockResolvedValueOnce([
+        { id: 'claude-opus-9', displayName: 'Opus 9', capabilities: effortCapabilities(['low', 'high']) },
+      ]);
+    const tracker = createTracker();
+
+    await tracker.refresh('claude-opus-9');
+    await tracker.refresh('claude-opus-9');
+
+    expect(fetchAnthropicModelsMock).toHaveBeenCalledTimes(2);
+    expect(tracker.getLevels()).toEqual(['low', 'high']);
+  });
+
+  it('does not resolve the catalog again after the same model settles successfully', async () => {
+    fetchAnthropicModelsMock.mockResolvedValue([
+      { id: 'claude-opus-9', displayName: 'Opus 9', capabilities: effortCapabilities([]) },
+    ]);
+    const resolveTimeoutMs = vi.fn(() => 1_000);
+    const tracker = createClaudeModelEffortLevelsTracker({ resolveTimeoutMs });
+
+    await tracker.refresh('claude-opus-9');
+    await tracker.refresh('claude-opus-9');
+
+    // An empty supported-tier list is still a successfully settled catalog answer, not a retry signal.
+    expect(resolveTimeoutMs).toHaveBeenCalledTimes(1);
+    expect(tracker.getLevels()).toEqual([]);
   });
 });

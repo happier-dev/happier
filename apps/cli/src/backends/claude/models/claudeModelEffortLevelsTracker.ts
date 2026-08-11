@@ -43,37 +43,61 @@ export function createClaudeModelEffortLevelsTracker(params: Readonly<{
 }>): ClaudeModelEffortLevelsTracker {
   let levels: readonly string[] = [];
   let modelId: string | null = null;
+  let settledModelId: string | null = null;
+  let inFlight: { modelId: string; promise: Promise<void> } | null = null;
 
-  const refresh = async (nextModelId: unknown): Promise<void> => {
+  const refresh = (nextModelId: unknown): Promise<void> => {
     const normalized = typeof nextModelId === 'string' ? nextModelId.trim() : '';
     if (!normalized) {
       // Reset to the CLI default: forget the previous model's tiers rather than leaving them live
       // for whatever is selected next.
       modelId = null;
       levels = [];
-      return;
+      settledModelId = null;
+      inFlight = null;
+      return Promise.resolve();
     }
-    if (normalized === modelId) return;
 
-    // Drop the previous model's tiers at the transition, not when the lookup returns: a spawn
-    // between here and the resolve would otherwise clamp the new model against them.
-    modelId = normalized;
-    levels = [];
+    if (normalized !== modelId) {
+      // Drop the previous model's tiers at the transition, not when the lookup returns: a spawn
+      // between here and the resolve would otherwise clamp the new model against them.
+      modelId = normalized;
+      levels = [];
+      settledModelId = null;
+    }
 
     // Curated models resolve effort from the static table; no catalog lookup needed.
-    if (isCuratedClaudeModelId(normalized)) return;
-
-    try {
-      const models = await resolveClaudeModelCatalog({ timeoutMs: params.resolveTimeoutMs() });
-      // A newer model may have been selected while this lookup was in flight; a late resolve must
-      // not publish the previous model's tiers under the current model.
-      if (modelId !== normalized) return;
-      const model = models.find((candidate) => candidate.id === normalized) ?? null;
-      levels = resolveClaudeEffortLevelsFromModelDescriptor(model);
-    } catch {
-      if (modelId !== normalized) return;
-      levels = [];
+    if (isCuratedClaudeModelId(normalized)) {
+      settledModelId = normalized;
+      inFlight = null;
+      return Promise.resolve();
     }
+
+    // Concurrent same-model callers join the exact resolution rather than treating the selected
+    // model id as proof that its tiers already settled.
+    if (inFlight?.modelId === normalized) return inFlight.promise;
+    if (settledModelId === normalized) return Promise.resolve();
+
+    const resolution = { modelId: normalized, promise: Promise.resolve() };
+    resolution.promise = (async () => {
+      try {
+        const models = await resolveClaudeModelCatalog({ timeoutMs: params.resolveTimeoutMs() });
+        // A newer model may have been selected while this lookup was in flight; a late resolve must
+        // not publish the previous model's tiers under the current model.
+        if (modelId !== normalized) return;
+        const model = models.find((candidate) => candidate.id === normalized) ?? null;
+        levels = resolveClaudeEffortLevelsFromModelDescriptor(model);
+        settledModelId = normalized;
+      } catch {
+        if (modelId !== normalized) return;
+        levels = [];
+        settledModelId = null;
+      } finally {
+        if (inFlight === resolution) inFlight = null;
+      }
+    })();
+    inFlight = resolution;
+    return resolution.promise;
   };
 
   const refreshWithin = async (nextModelId: unknown, waitMs = CLAUDE_MODEL_EFFORT_TIER_WAIT_MS): Promise<void> => {

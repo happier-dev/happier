@@ -9,6 +9,7 @@ import type { Credentials } from '@/persistence';
 import { configuration } from '@/configuration';
 import type { registerRunnerTerminationHandlers as registerRunnerTerminationHandlersFn } from '@/agent/runtime/runnerTerminationHandlers';
 import type { RunnerTerminationEvent, RunnerTerminationOutcome } from '@/agent/runtime/runnerTerminationOutcome';
+import type { AgentModelDescriptor } from '@happier-dev/agents';
 
 type Deferred<T> = { promise: Promise<T>; resolve: (value: T) => void; reject: (error: unknown) => void };
 
@@ -530,6 +531,74 @@ describe('runClaude fast-start', () => {
     if (testError) {
       throw testError;
     }
+  });
+
+  it('does not complete session readiness before the selected model effort catalog settles', async () => {
+    vi.resetModules();
+    const catalogRequested = createDeferred<void>();
+    const catalogResult = createDeferred<readonly AgentModelDescriptor[]>();
+    vi.doMock('@/backends/claude/models/resolveClaudeModelCatalog', async (importOriginal) => {
+      const actual = await importOriginal<typeof import('@/backends/claude/models/resolveClaudeModelCatalog')>();
+      return {
+        ...actual,
+        resolveClaudeModelCatalog: vi.fn(() => {
+          catalogRequested.resolve();
+          return catalogResult.promise;
+        }),
+      };
+    });
+
+    loopEntered = createDeferred<void>();
+    loopStarted = createDeferred<void>();
+    loopExit = createDeferred<number>();
+    lastLoopOpts = null;
+    autoSessionReady = true;
+    awaitAutoSessionReadyCallback = true;
+    initResolved = false;
+    backendInitDelayMs = 0;
+    getOrCreateSessionSpy.mockImplementation(async () => ({ id: 'sess_effort_ready', metadataVersion: 1 }));
+    reportSessionToDaemonIfRunningSpy.mockClear();
+
+    const { runClaude } = await import('./runClaude');
+    let testError: unknown = null;
+    const runPromise = runClaude(createLegacyCredentials(), {
+      startedBy: 'terminal',
+      startingMode: 'remote',
+      model: 'claude-opus-9',
+    }).catch((error) => {
+      testError = error;
+      loopStarted.resolve();
+    });
+
+    try {
+      await waitFor(catalogRequested.promise, loopStartWaitMs);
+      let readinessCompleted = false;
+      void loopStarted.promise.then(() => { readinessCompleted = true; });
+      await Promise.resolve();
+      expect(readinessCompleted).toBe(false);
+      expect(reportSessionToDaemonIfRunningSpy.mock.calls.filter(([params]) => (
+        params.sessionId === 'sess_effort_ready' && params.requireDaemonAck === false
+      )))
+        .toHaveLength(0);
+
+      catalogResult.resolve([{ id: 'claude-opus-9', displayName: 'Opus 9' }]);
+      await waitFor(loopStarted.promise, loopStartWaitMs);
+      if (testError) throw testError;
+      expect(reportSessionToDaemonIfRunningSpy).toHaveBeenCalledWith(expect.objectContaining({
+        sessionId: 'sess_effort_ready',
+        requireDaemonAck: false,
+      }));
+    } finally {
+      catalogResult.resolve([]);
+      loopExit.resolve(0);
+      await runPromise;
+      vi.doUnmock('@/backends/claude/models/resolveClaudeModelCatalog');
+      autoSessionReady = true;
+      awaitAutoSessionReadyCallback = false;
+      getOrCreateSessionSpy.mockImplementation(async () => ({ id: 'sess_1', metadataVersion: 1 }));
+    }
+
+    if (testError) throw testError;
   });
 
   it('installs unavailable group truth before a daemon-started remote Claude producer can dequeue', async () => {

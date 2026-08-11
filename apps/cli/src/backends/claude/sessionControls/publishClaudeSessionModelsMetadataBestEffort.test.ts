@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { Metadata } from '@/api/types';
+import { buildClaudeSessionModelsMetadataFromSupportedModels } from '@/backends/claude/remote/buildClaudeSessionModelsMetadataFromSupportedModels';
 
 import { publishClaudeSessionModelsMetadataBestEffort } from './publishClaudeSessionModelsMetadataBestEffort';
 
@@ -136,5 +137,55 @@ describe('publishClaudeSessionModelsMetadataBestEffort', () => {
         },
       },
     })).resolves.toBeUndefined();
+  });
+
+  it('converges catalog and Agent SDK model publications in either order', async () => {
+    const publishSdkModels = (metadata: Metadata, nowMs: number): Metadata => {
+      const update = buildClaudeSessionModelsMetadataFromSupportedModels({
+        modelsRaw: [
+          { value: 'claude-fable-5', displayName: 'Sparse SDK Fable' },
+          { value: 'claude-sdk-only', displayName: 'SDK Only' },
+        ],
+        metadata,
+        nowMs: () => nowMs,
+      });
+      if (!update) throw new Error('expected Agent SDK model metadata');
+      return { ...metadata, ...update };
+    };
+    const publishCatalogModels = async (metadata: Metadata, nowMs: number): Promise<Metadata> => {
+      const state: { metadata: Metadata } = { metadata };
+      await publishClaudeSessionModelsMetadataBestEffort({
+        cwd: '/',
+        timeoutMs: 250,
+        currentModelId: 'claude-fable-5',
+        nowMs: () => nowMs,
+        probeHelpText: async () => '  --effort <level>  (low, medium, high, max)',
+        session: {
+          ensureMetadataSnapshot: async () => state.metadata,
+          updateMetadata: async (updater) => {
+            state.metadata = updater(state.metadata);
+          },
+        },
+      });
+      return state.metadata;
+    };
+
+    const catalogThenSdk = publishSdkModels(
+      await publishCatalogModels({} as Metadata, 100),
+      200,
+    );
+    const sdkThenCatalog = await publishCatalogModels(
+      publishSdkModels({} as Metadata, 200),
+      100,
+    );
+
+    expect(catalogThenSdk.sessionModelsV1).toEqual(sdkThenCatalog.sessionModelsV1);
+    expect(catalogThenSdk.sessionModelsV1).toEqual(catalogThenSdk.acpSessionModelsV1);
+    expect(sdkThenCatalog.sessionModelsV1).toEqual(sdkThenCatalog.acpSessionModelsV1);
+    expect(catalogThenSdk.sessionModelsV1?.currentModelId).toBe('claude-fable-5');
+    expect(catalogThenSdk.sessionModelsV1?.availableModels.map((model) => model.id))
+      .toContain('claude-sdk-only');
+    expect(catalogThenSdk.sessionModelsV1?.availableModels.find((model) => model.id === 'claude-fable-5')?.modelOptions)
+      .toEqual(expect.arrayContaining([expect.objectContaining({ id: 'reasoning_effort' })]));
   });
 });

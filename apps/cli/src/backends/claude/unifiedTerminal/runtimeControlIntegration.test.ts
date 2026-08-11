@@ -72,6 +72,17 @@ describe('mapEnhancedModeToDesiredRuntimeConfig', () => {
     expect(desired.reasoningEffort).toBeUndefined();
   });
 
+  it('clamps a discovered model effort to the highest evidenced supported tier', () => {
+    const desired = mapEnhancedModeToDesiredRuntimeConfig(mode({
+      model: 'claude-opus-9',
+      reasoningEffort: 'max',
+      modelEffortLevels: ['low', 'medium'],
+      modelEffortLevelsModelId: 'claude-opus-9',
+    }));
+
+    expect(desired.reasoningEffort).toBe('medium');
+  });
+
   it('maps ultracode gated by xhigh capability of the mode model', () => {
     expect(mapEnhancedModeToDesiredRuntimeConfig(mode({ model: 'claude-fable-5', ultracode: true })).ultracode).toBe(true);
     // Requested but not honorable on this model → resolved off.
@@ -416,10 +427,10 @@ describe('createClaudeUnifiedRuntimeControlBridge', () => {
     const bridge = createClaudeUnifiedRuntimeControlBridge({
       controller,
       emitRuntimeConfigOutcome: (event) => events.push(event),
-      startupMode: mode({ reasoningEffort: 'high' }),
+      startupMode: mode({ model: 'sonnet', reasoningEffort: 'high' }),
     });
 
-    const deferred = await bridge.applyBeforePrompt(mode({ reasoningEffort: 'medium' }));
+    const deferred = await bridge.applyBeforePrompt(mode({ model: 'sonnet', reasoningEffort: 'medium' }));
     expect(deferred).toEqual({ promptMayProceed: true, attempted: true });
     expect(port.sentLiteral).toHaveLength(0);
     expect(events).toHaveLength(1);
@@ -429,7 +440,7 @@ describe('createClaudeUnifiedRuntimeControlBridge', () => {
       changes: [expect.objectContaining({ key: 'reasoningEffort', requested: 'medium', reason: 'generating' })],
     });
 
-    const retried = await bridge.applyBeforePrompt(mode({ reasoningEffort: 'medium' }));
+    const retried = await bridge.applyBeforePrompt(mode({ model: 'sonnet', reasoningEffort: 'medium' }));
     expect(retried.promptMayProceed).toBe(true);
     expect(port.sentLiteral).toContain('/effort medium');
   });
@@ -441,10 +452,10 @@ describe('createClaudeUnifiedRuntimeControlBridge', () => {
     const bridge = createClaudeUnifiedRuntimeControlBridge({
       controller,
       emitRuntimeConfigOutcome: (event) => events.push(event),
-      startupMode: mode({ reasoningEffort: 'high' }),
+      startupMode: mode({ model: 'sonnet', reasoningEffort: 'high' }),
     });
 
-    const result = await bridge.applyBeforePrompt(mode({ reasoningEffort: 'medium' }));
+    const result = await bridge.applyBeforePrompt(mode({ model: 'sonnet', reasoningEffort: 'medium' }));
 
     expect(result).toEqual({
       promptMayProceed: true,
@@ -529,14 +540,15 @@ describe('createClaudeUnifiedRuntimeControlBridge', () => {
     const bridge = createClaudeUnifiedRuntimeControlBridge({
       controller,
       emitRuntimeConfigOutcome: () => undefined,
-      startupMode: mode({ permissionMode: 'default', reasoningEffort: 'high' }),
+      startupMode: mode({ model: 'sonnet', permissionMode: 'default', reasoningEffort: 'high' }),
     });
 
-    const deferredAmbient = await bridge.applyBeforePrompt(mode({ reasoningEffort: 'medium' }));
+    const deferredAmbient = await bridge.applyBeforePrompt(mode({ model: 'sonnet', reasoningEffort: 'medium' }));
     expect(deferredAmbient).toEqual({ promptMayProceed: true, attempted: true });
 
     const dependent = await bridge.applyBeforePrompt(mode({
       permissionMode: 'acceptEdits',
+      model: 'sonnet',
       reasoningEffort: 'medium',
     }));
 
@@ -687,21 +699,21 @@ describe('createClaudeUnifiedRuntimeControlBridge', () => {
     const bridge = createClaudeUnifiedRuntimeControlBridge({
       controller,
       emitRuntimeConfigOutcome: (event) => events.push(event),
-      startupMode: mode({ reasoningEffort: 'high' }),
+      startupMode: mode({ model: 'sonnet', reasoningEffort: 'high' }),
     });
 
-    const first = await bridge.applyBeforePrompt(mode({ reasoningEffort: 'medium' }));
+    const first = await bridge.applyBeforePrompt(mode({ model: 'sonnet', reasoningEffort: 'medium' }));
     expect(first.promptMayProceed).toBe(true);
     expect(events).toHaveLength(1);
     expect(events[0]).toMatchObject({ status: 'applied', timing: 'queued_until_safe_window' });
 
     // Identical blocked outcomes: no new transcript events.
-    await bridge.applyBeforePrompt(mode({ reasoningEffort: 'medium' }));
-    await bridge.applyBeforePrompt(mode({ reasoningEffort: 'medium' }));
+    await bridge.applyBeforePrompt(mode({ model: 'sonnet', reasoningEffort: 'medium' }));
+    await bridge.applyBeforePrompt(mode({ model: 'sonnet', reasoningEffort: 'medium' }));
     expect(events).toHaveLength(1);
 
     // Transition (applied in the current window) emits exactly one new event.
-    const resolved = await bridge.applyBeforePrompt(mode({ reasoningEffort: 'medium' }));
+    const resolved = await bridge.applyBeforePrompt(mode({ model: 'sonnet', reasoningEffort: 'medium' }));
     expect(resolved.promptMayProceed).toBe(true);
     expect(events).toHaveLength(2);
     expect(events[1]).toMatchObject({
@@ -719,13 +731,13 @@ describe('createClaudeUnifiedRuntimeControlBridge', () => {
     const bridge = createClaudeUnifiedRuntimeControlBridge({
       controller,
       emitRuntimeConfigOutcome: (event) => events.push(event),
-      startupMode: mode({ reasoningEffort: 'high' }),
+      startupMode: mode({ model: 'sonnet', reasoningEffort: 'high' }),
     });
 
     // Later evidence (UserPromptSubmit metadata) proves the desired effort is already active.
     bridge.reconcileFromPromptSubmitMetadata({ reasoningEffort: 'medium' });
 
-    const result = await bridge.applyBeforePrompt(mode({ reasoningEffort: 'medium' }));
+    const result = await bridge.applyBeforePrompt(mode({ model: 'sonnet', reasoningEffort: 'medium' }));
     expect(result.promptMayProceed).toBe(true);
     expect(port.sentLiteral).toHaveLength(0);
     expect(events).toHaveLength(1);
@@ -736,7 +748,7 @@ describe('createClaudeUnifiedRuntimeControlBridge', () => {
     });
 
     // Converged: the next prompt attempts nothing and emits nothing.
-    const again = await bridge.applyBeforePrompt(mode({ reasoningEffort: 'medium' }));
+    const again = await bridge.applyBeforePrompt(mode({ model: 'sonnet', reasoningEffort: 'medium' }));
     expect(again).toEqual({ promptMayProceed: true, attempted: false });
     expect(events).toHaveLength(1);
   });

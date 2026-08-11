@@ -1,6 +1,7 @@
 import type { Metadata } from '@/api/types';
 import { logger } from '@/ui/logger';
 
+import { reconcileClaudeSessionModelsState } from '../sessionModels/reconcileClaudeSessionModelsState';
 import { probeClaudeHelpText } from './probeClaudeHelpText';
 import { resolveClaudeSessionModelsState } from './resolveClaudeSessionModelsState';
 
@@ -66,11 +67,19 @@ export async function publishClaudeSessionModelsMetadataBestEffort(params: Reado
   );
 
   try {
-    await params.session.updateMetadata((prev) => ({
-      ...(supportsEffort ? prev : withoutEffortDependentOverrides(prev)),
-      sessionModelsV1: state,
-      acpSessionModelsV1: state,
-    }));
+    await params.session.updateMetadata((prev) => {
+      const base = supportsEffort ? prev : withoutEffortDependentOverrides(prev);
+      const reconciled = reconcileClaudeSessionModelsState({
+        metadata: base,
+        incomingState: state,
+        source: 'catalog',
+      });
+      return {
+        ...base,
+        sessionModelsV1: reconciled,
+        acpSessionModelsV1: reconciled,
+      };
+    });
   } catch (error) {
     logger.debug('[claude] Failed to publish session models metadata (non-fatal)', error);
   }

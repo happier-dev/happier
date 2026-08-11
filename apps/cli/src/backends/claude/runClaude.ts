@@ -1274,6 +1274,20 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
             onSessionReady: async (sessionInstance) => {
                 // Store reference for hook server callback
                 currentSession = sessionInstance;
+                const currentModelId =
+                    typeof options.modelId === 'string'
+                        ? options.modelId.trim()
+                        : (typeof options.model === 'string' ? options.model.trim() : '');
+                await modelEffortTracker.refresh(currentModelId);
+                if (!didPublishSessionModelsMetadata) {
+                    didPublishSessionModelsMetadata = true;
+                    void publishClaudeSessionModelsMetadataBestEffort({
+                        cwd: workingDirectory,
+                        timeoutMs: resolveClaudeHelpProbeTimeoutMs(),
+                        currentModelId,
+                        session,
+                    });
+                }
                 const readinessReport = reportSessionToDaemonIfRunning({
                     sessionId: baseSession.id,
                     metadata,
@@ -1284,20 +1298,6 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
                 } else {
                     void readinessReport.catch((error) => {
                         logger.debug('[claude] Daemon session readiness report failed (non-fatal)', error);
-                    });
-                }
-                if (!didPublishSessionModelsMetadata) {
-                    didPublishSessionModelsMetadata = true;
-                    const currentModelId =
-                        typeof options.modelId === 'string'
-                            ? options.modelId.trim()
-                            : (typeof options.model === 'string' ? options.model.trim() : '');
-                    void modelEffortTracker.refresh(currentModelId);
-                    void publishClaudeSessionModelsMetadataBestEffort({
-                        cwd: workingDirectory,
-                        timeoutMs: resolveClaudeHelpProbeTimeoutMs(),
-                        currentModelId,
-                        session,
                     });
                 }
                 if (!localPermissionBridge) {
@@ -2082,21 +2082,13 @@ async function runClaudeLocalFastStart(credentials: Credentials, options: StartO
                         },
                         onSessionReady: async (sessionInstance) => {
                             currentSession = sessionInstance;
-                            const readySessionId = artifacts.deferredSession.sessionId;
-                            const readyMetadata = artifacts.deferredSession.getMetadataSnapshot?.() as Metadata | null | undefined;
-                            if (readySessionId && readyMetadata) {
-                                await reportSessionToDaemonIfRunning({
-                                    sessionId: readySessionId,
-                                    metadata: readyMetadata,
-                                });
-                            }
+                            const currentModelId =
+                                typeof options.modelId === 'string'
+                                    ? options.modelId.trim()
+                                    : (typeof options.model === 'string' ? options.model.trim() : '');
+                            await modelEffortTracker.refresh(currentModelId);
                             if (!didPublishSessionModelsMetadata) {
                                 didPublishSessionModelsMetadata = true;
-                                const currentModelId =
-                                    typeof options.modelId === 'string'
-                                        ? options.modelId.trim()
-                                        : (typeof options.model === 'string' ? options.model.trim() : '');
-                                void modelEffortTracker.refresh(currentModelId);
                                 void publishClaudeSessionModelsMetadataBestEffort({
                                     cwd: workingDirectory,
                                     timeoutMs: resolveClaudeHelpProbeTimeoutMs(),
@@ -2105,6 +2097,14 @@ async function runClaudeLocalFastStart(credentials: Credentials, options: StartO
                                         ensureMetadataSnapshot: (opts: Readonly<{ timeoutMs: number }>) => Promise<unknown>;
                                         updateMetadata: (updater: (prev: Metadata) => Metadata) => Promise<void>;
                                     },
+                                });
+                            }
+                            const readySessionId = artifacts.deferredSession.sessionId;
+                            const readyMetadata = artifacts.deferredSession.getMetadataSnapshot?.() as Metadata | null | undefined;
+                            if (readySessionId && readyMetadata) {
+                                await reportSessionToDaemonIfRunning({
+                                    sessionId: readySessionId,
+                                    metadata: readyMetadata,
                                 });
                             }
                             if (!localPermissionBridge) {
