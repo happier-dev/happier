@@ -282,7 +282,10 @@ describe('materializeClaudeCodeNativeAuth', () => {
     const homeDir = await mkdtemp(join(tmpdir(), 'happier-claude-native-auth-token-cache-home-'));
     const sourceClaudeConfigDir = await mkdtemp(join(tmpdir(), 'happier-claude-native-auth-token-cache-source-'));
     const targetClaudeConfigDir = await mkdtemp(join(tmpdir(), 'happier-claude-native-auth-token-cache-target-'));
-    const buildTokenRecord = (token: string, now: number) => buildConnectedServiceCredentialRecord({
+    const buildTokenRecord = (
+      token: string,
+      now: number,
+    ): ReturnType<typeof buildConnectedServiceCredentialRecord> => buildConnectedServiceCredentialRecord({
       now,
       serviceId: 'claude-subscription',
       profileId: 'setup',
