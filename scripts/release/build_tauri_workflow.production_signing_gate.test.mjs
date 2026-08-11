@@ -225,6 +225,46 @@ test('build-tauri workflow avoids escaped quote JS snippets and captures Apple i
   );
 });
 
+test('build-tauri finalizer generates its ephemeral password without platform UUID utilities', async () => {
+  const parsed = parse(await readFile(workflowPath, 'utf8'));
+  const generateStep = parsed?.jobs?.finalize?.steps?.find(
+    (step) => step?.name === 'Generate ephemeral updater bundle key',
+  );
+  assert.ok(generateStep, 'workflow should generate a temporary updater bundle key');
+
+  const fixtureRoot = fs.mkdtempSync(join(os.tmpdir(), 'happier-tauri-ephemeral-key-'));
+  try {
+    const binDir = join(fixtureRoot, 'bin');
+    fs.mkdirSync(binDir);
+    fs.symlinkSync(process.execPath, join(binDir, 'node'));
+    const fakeYarn = join(binDir, 'yarn');
+    fs.writeFileSync(fakeYarn, '#!/bin/sh\nexit 0\n');
+    fs.chmodSync(fakeYarn, 0o755);
+
+    const githubEnv = join(fixtureRoot, 'github-env');
+    const result = spawnSync('/bin/bash', ['-c', String(generateStep.run ?? '')], {
+      cwd: fixtureRoot,
+      env: {
+        ...process.env,
+        PATH: binDir,
+        RUNNER_TEMP: fixtureRoot,
+        GITHUB_ENV: githubEnv,
+      },
+      encoding: 'utf8',
+    });
+
+    assert.equal(result.status, 0, result.stderr);
+    const emittedEnv = fs.readFileSync(githubEnv, 'utf8');
+    assert.match(emittedEnv, /TAURI_EPHEMERAL_KEY=.*tauri-ephemeral\.key/);
+    assert.match(
+      emittedEnv,
+      /TAURI_EPHEMERAL_PASSWORD=[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/i,
+    );
+  } finally {
+    fs.rmSync(fixtureRoot, { recursive: true, force: true });
+  }
+});
+
 test('build-tauri workflow validates updater pubkey via pipeline script', async () => {
   const workflow = await readFile(workflowPath, 'utf8');
   const parsed = parse(workflow);
