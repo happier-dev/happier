@@ -614,7 +614,7 @@ describe('sessions domain: sessionListViewData rebuild gating', () => {
         }
     });
 
-    it('keeps list rows stable for higher-revision observations with unchanged runtime activity semantics', async () => {
+    it('refreshes the row without rebuilding placement for a higher-revision observation with unchanged runtime activity semantics', async () => {
         vi.useFakeTimers();
         vi.setSystemTime(new Date('2026-07-02T13:30:00.000Z'));
         vi.doMock('../../runtime/orchestration/projectManager', () => ({
@@ -672,15 +672,19 @@ describe('sessions domain: sessionListViewData rebuild gating', () => {
                 } as any,
             ]);
 
+            // A newer observation of the SAME semantics is no longer inert: background activity is
+            // now held only while something still witnesses it, so a fresher observation genuinely
+            // extends the working window. That is the working-signal refresh case below — no
+            // structural rebuild, one row refresh so placement is later evaluated against the fresh
+            // instant instead of demoting at the stale one.
             const next = get().sessionListViewData;
-            expect(next).toBe(initial);
             expect(readSessionListRowIds(next)).toEqual(readSessionListRowIds(initial));
 
             const changedEvent = syncPerformanceTelemetry
                 .snapshot()
                 .events.find((candidate) => candidate.name === 'sync.store.sessions.apply.changed');
             expect(changedEvent?.fields.listRebuild).toBe(0);
-            expect(changedEvent?.fields.listRowRefreshes).toBe(0);
+            expect(changedEvent?.fields.listRowRefreshes).toBe(1);
         } finally {
             syncPerformanceTelemetry.configure({ enabled: false });
             vi.useRealTimers();

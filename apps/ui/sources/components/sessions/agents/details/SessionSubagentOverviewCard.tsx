@@ -42,13 +42,20 @@ export const SessionSubagentOverviewCard = React.memo((props: Readonly<{
     const { reducerState, reducerVersion } = useSessionMessagesReducerSnapshot(props.sessionId);
     const resolveStaleness = useAgentActivityStalenessResolver();
 
-    const entry = React.useMemo(
-        () => resolveAgentActivityEntryFromSubagent({
-            subagent,
-            lastActivityAtMs: deriveSessionSubagentLastActivityAtMs({ subagent, reducerState }),
-        }),
-        // eslint-disable-next-line react-hooks/exhaustive-deps -- reducerState is mutated in place; reducerVersion is its only change signal (D-4)
+    // Two memos rather than one, because they turn over at different rates. The derivation has to
+    // re-run on every transcript commit (the reducer is mutated in place, so `reducerVersion` is its
+    // only change signal — D-4), but the INSTANT it produces only moves when this agent's sidechain
+    // actually says something. Building the entry inside that first memo would mint a new object per
+    // streamed token and defeat `React.memo` on the row for a change no part of it saw (INV-4).
+    const lastActivityAtMs = React.useMemo(
+        () => deriveSessionSubagentLastActivityAtMs({ subagent, reducerState }),
+        // eslint-disable-next-line react-hooks/exhaustive-deps -- see above
         [reducerState, reducerVersion, subagent],
+    );
+
+    const entry = React.useMemo(
+        () => resolveAgentActivityEntryFromSubagent({ subagent, lastActivityAtMs }),
+        [lastActivityAtMs, subagent],
     );
 
     return (
