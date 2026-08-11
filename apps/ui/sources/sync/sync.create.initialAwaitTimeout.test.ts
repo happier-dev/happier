@@ -136,18 +136,10 @@ describe('sync.create initial awaits', () => {
         expect(resolved).toBe(true);
 
         await promise;
+        // Routing is no longer forwarded from here: Encryption resolves it from SyncTuning
+        // at construction, so it reaches every instance instead of only this one. What sync
+        // still owns — and what this pins — is the active account's scope binding.
         expect(configureNativeCryptoWorkerSpy).toHaveBeenCalledWith({
-            routing: {
-                mode: 'auto',
-                maxBatchSize: 32,
-                minBatchSize: 2,
-                minPayloadBytes: 0,
-                timeoutMs: 1234,
-                logFallbacks: true,
-                telemetryEnabled: true,
-                streamingSampleRate: 0.5,
-                capabilityStalenessMs: 60_000,
-            },
             scope: {
                 accountId: 'server-test',
                 serverId: expect.any(String),

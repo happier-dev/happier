@@ -375,11 +375,12 @@ import {
     handleUpdateArtifactSocketUpdate,
     updateArtifactViaApi,
     updateArtifactWithHeaderViaApi,
+    type ArtifactDataKeyCache,
 } from './engine/artifacts/syncArtifacts';
 import { fetchAndApplyFeed, handleNewFeedPostUpdate, handleRelationshipUpdatedSocketUpdate, handleTodoKvBatchUpdate } from './engine/social/syncFeed';
 import { fetchAndApplyFriends } from './engine/social/syncFriends';
 import { fetchAndApplyProfile, handleUpdateAccountSocketUpdate, registerPushTokenIfAvailable } from './engine/account/syncAccount';
-import { buildMachineFromMachineActivityEphemeralUpdate, buildUpdatedMachineFromSocketUpdate, fetchAndApplyMachines } from './engine/machines/syncMachines';
+import { buildMachineFromMachineActivityEphemeralUpdate, buildUpdatedMachineFromSocketUpdate, fetchAndApplyMachines, type MachineDataKeyCacheEntry } from './engine/machines/syncMachines';
 import { fetchAndApplyAutomationRuns, fetchAndApplyAutomations } from './engine/automations/syncAutomations';
 import { fetchAndApplyAccountPets } from './engine/pets/syncAccountPets';
 import { applyTodoSocketUpdates as applyTodoSocketUpdatesEngine, fetchTodos as fetchTodosEngine } from './engine/todos/syncTodos';
@@ -977,8 +978,8 @@ class Sync {
       private deferredForwardLoadingSessions = new Set<string>();
       private sessionDataKeys = new Map<string, Uint8Array>(); // Store session data encryption keys internally
       private sessionDataKeyEnvelopes = new Map<string, string>(); // Track wrapped DEK envelopes so unchanged keys can be reused safely
-      private machineDataKeys = new Map<string, Uint8Array>(); // Store machine data encryption keys internally
-      private artifactDataKeys = new Map<string, Uint8Array>(); // Store artifact data encryption keys internally
+      private machineDataKeys = new Map<string, MachineDataKeyCacheEntry>(); // Unwrapped machine data keys + the envelope each came from, so an unchanged envelope is never re-opened
+      private artifactDataKeys: ArtifactDataKeyCache = new Map(); // Unwrapped artifact data keys + the envelope each came from, so an unchanged envelope is never re-opened
     private readStateV1RepairAttempted = new Set<string>();
     private readStateV1RepairInFlight = new Set<string>();
     private settingsSync: InvalidateSync;
@@ -1491,18 +1492,12 @@ class Sync {
           const serverId = String(getActiveServerSnapshot().serverId ?? '').trim() || null;
           this.attachEncryptionTranscriptCacheRelease(encryption);
           encryption.configureAesBatchConcurrencyLimit(this.syncTuning.encryptionAesBatchConcurrencyLimit);
+          // Routing is NOT set here. It arrives with the instance: Encryption resolves it
+          // from SyncTuning at construction, so every instance — active, server-scoped RPC,
+          // concurrent server — runs the same configured routing. This call owns only the
+          // active account's scope binding. Re-declaring routing here is what made this the
+          // one configured instance and left every other one on the built-in 'off'.
           encryption.configureNativeCryptoWorker({
-              routing: {
-                  mode: this.syncTuning.nativeCryptoWorkerMode,
-                  maxBatchSize: this.syncTuning.nativeCryptoWorkerMaxBatchSize,
-                  minBatchSize: this.syncTuning.nativeCryptoWorkerMinBatchSize,
-                  minPayloadBytes: this.syncTuning.nativeCryptoWorkerMinPayloadBytes,
-                  timeoutMs: this.syncTuning.nativeCryptoWorkerTimeoutMs,
-                  logFallbacks: this.syncTuning.nativeCryptoWorkerLogFallbacks,
-                  telemetryEnabled: this.syncTuning.nativeCryptoWorkerTelemetryEnabled,
-                  streamingSampleRate: this.syncTuning.nativeCryptoWorkerStreamingSampleRate,
-                  capabilityStalenessMs: this.syncTuning.nativeCryptoWorkerCapabilityStalenessMs,
-              },
               scope: {
                   accountId,
                   serverId,

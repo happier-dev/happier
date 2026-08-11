@@ -1,7 +1,7 @@
 import type { ScmWorkingSnapshot, Session } from '@/sync/domains/state/storageTypes';
 import { readSessionWorkspaceContext } from '@/sync/domains/session/readSessionWorkspaceContext';
 import type { SessionRealtimeScmScope } from '@/sync/domains/session/realtime/sessionRealtimeVisibility';
-import { resolveProjectMachineScopeId } from '@/sync/runtime/orchestration/projectManager';
+import { resolveProjectMachineScopeId } from '@/sync/runtime/orchestration/projectKeyIdentity';
 import { isSessionPathWithinRepoRoot } from '@/scm/sync/paths';
 
 type SessionRealtimeScmScopeState = Readonly<{
