@@ -549,6 +549,7 @@ export function useNewSessionAgentPickerControls(rawParams: Readonly<{
         selectedBackendTargetKey: params.selectedBackendEntry?.targetKey ?? params.selectedBackendTargetKey,
         selectedModelId: String(params.modelMode),
     });
+    const effectiveProfileId = params.useProfiles ? params.selectedProfileId : null;
 
     const agentPickerOptions = React.useMemo<ReadonlyArray<AgentInputChipPickerOption> | undefined>(() => {
         if (params.resolvedBackendEntries.length <= 1) {
@@ -602,6 +603,7 @@ export function useNewSessionAgentPickerControls(rawParams: Readonly<{
                     params.selectedMachineId ?? '',
                     entry.targetKey,
                     params.selectedPath ?? '',
+                    effectiveProfileId ?? '',
                     connectedServicesCacheKeyPart,
                 ].join(':'),
                 onSelectImmediate: () => {
@@ -626,6 +628,7 @@ export function useNewSessionAgentPickerControls(rawParams: Readonly<{
                             selectedMachineId={params.selectedMachineId}
                             capabilityServerId={params.capabilityServerId}
                             cwd={params.selectedPath}
+                            profileId={effectiveProfileId}
                             capabilityProbeContext={capabilityProbeContext}
                             connectedServices={detailConnectedServices}
                             refreshProbe={params.refreshProbe}
@@ -691,6 +694,7 @@ export function useNewSessionAgentPickerControls(rawParams: Readonly<{
                     params.capabilityServerId,
                     params.selectedMachineId ?? '',
                     params.selectedPath ?? '',
+                    effectiveProfileId ?? '',
                     favoriteConnectedServicesCacheKeyPart,
                 ].join(':'),
                 preserveFocusOnExternalSelectionChange: true,
@@ -709,6 +713,7 @@ export function useNewSessionAgentPickerControls(rawParams: Readonly<{
                             selectedMachineId={params.selectedMachineId}
                             capabilityServerId={params.capabilityServerId}
                             cwd={params.selectedPath}
+                            profileId={effectiveProfileId}
                             settings={params.settings}
                             connectedServicesByTargetKey={favoriteConnectedServicesByTargetKey}
                             refreshProbe={params.refreshProbe ?? null}
@@ -725,6 +730,7 @@ export function useNewSessionAgentPickerControls(rawParams: Readonly<{
     }, [
         applyEngineSelection,
         compatibleBackendTargetKeys,
+        effectiveProfileId,
         handleSelectFavoriteModel,
         handleSelectFavoriteModelOptionValue,
         handleToggleFavoriteBackendTarget,

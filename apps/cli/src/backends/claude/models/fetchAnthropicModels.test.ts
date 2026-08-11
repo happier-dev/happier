@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { fetchAnthropicModels, parseAnthropicModelsResponse } from './anthropicModelsFetch';
+import { fetchAnthropicModels, parseAnthropicModelsResponse } from './fetchAnthropicModels';
 
 describe('parseAnthropicModelsResponse', () => {
   it('parses entries and maps snake_case fields', () => {
@@ -95,7 +95,7 @@ describe('fetchAnthropicModels', () => {
     expect(String(fetchImpl.mock.calls[0]![0])).toBe('https://api.z.ai/api/anthropic/v1/models?limit=1000');
   });
 
-  it('falls back to the default host when the base url is unusable', async () => {
+  it('does not send credentials anywhere when an explicit base url is unusable', async () => {
     const fetchImpl = vi.fn<(input: unknown, init: { headers: Record<string, string> }) => Promise<Response>>(async () => okResponse());
     await fetchAnthropicModels({
       apiKey: 'sk-ant-key',
@@ -103,7 +103,31 @@ describe('fetchAnthropicModels', () => {
       timeoutMs: 1_000,
       fetchImpl: fetchImpl as unknown as typeof fetch,
     });
-    expect(String(fetchImpl.mock.calls[0]![0])).toBe('https://api.anthropic.com/v1/models?limit=1000');
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('prefers the bearer credential when both legacy inputs are present', async () => {
+    const fetchImpl = vi.fn<(input: unknown, init: { headers: Record<string, string> }) => Promise<Response>>(async () => okResponse());
+    await fetchAnthropicModels({
+      apiKey: 'must-not-leave-process',
+      accessToken: 'gateway-token',
+      baseUrl: 'https://gateway.example/anthropic',
+      timeoutMs: 1_000,
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+    const headers = fetchImpl.mock.calls[0]![1].headers;
+    expect(headers.Authorization).toBe('Bearer gateway-token');
+    expect(headers['x-api-key']).toBeUndefined();
+  });
+
+  it('rejects redirects instead of forwarding credential headers', async () => {
+    const fetchImpl = vi.fn<(input: unknown, init: RequestInit) => Promise<Response>>(async () => okResponse());
+    await fetchAnthropicModels({
+      apiKey: 'sk-ant-key',
+      timeoutMs: 1_000,
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+    expect(fetchImpl.mock.calls[0]![1].redirect).toBe('error');
   });
 
   it('returns null on a non-2xx response', async () => {

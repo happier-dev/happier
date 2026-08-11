@@ -32,6 +32,7 @@ export type NewSessionEngineOptionDetailProps = Readonly<{
     selectedMachineId: string | null;
     capabilityServerId: string;
     cwd?: string | null;
+    profileId?: string | null;
     capabilityProbeContext?: NewSessionCapabilityProbeContext | null;
     connectedServices?: ConnectedServiceBindingsV1 | null;
     /**
@@ -139,6 +140,7 @@ export function NewSessionEngineOptionDetail(props: NewSessionEngineOptionDetail
         selectedMachineId: props.selectedMachineId,
         capabilityServerId: props.capabilityServerId,
         cwd: props.cwd ?? null,
+        profileId: props.profileId ?? null,
         probeContext: props.capabilityProbeContext ?? null,
         connectedServices: props.connectedServices ?? null,
     });

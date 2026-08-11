@@ -53,15 +53,18 @@ export type PreflightModelList = Readonly<{
     supportsFreeform: boolean;
 }>;
 
+type DynamicModelRowInput = Readonly<{
+    id: unknown;
+    name: unknown;
+    description?: unknown;
+    contextWindowTokens?: unknown;
+    extendedContextModelId?: unknown;
+    modelOptions?: unknown;
+}>;
+
 type SessionModelListState = Readonly<{
     provider?: string;
-    availableModels?: Array<{
-        id?: unknown;
-        name?: unknown;
-        description?: unknown;
-        extendedContextModelId?: unknown;
-        modelOptions?: unknown;
-    }>;
+    availableModels?: DynamicModelRowInput[];
 }>;
 
 /**
@@ -82,6 +85,23 @@ function dedupeModelOptionsByValue(options: readonly ModelOption[]): readonly Mo
         if (seen.has(option.value)) return false;
         seen.add(option.value);
         return true;
+    });
+}
+
+function projectDynamicModelRows(rows: readonly DynamicModelRowInput[]): ModelOption[] {
+    return rows.flatMap((row) => {
+        if (!row || typeof row.id !== 'string' || typeof row.name !== 'string') return [];
+        const extendedContextModelId = readExtendedContextModelId(row.extendedContextModelId);
+        const modelOptions = Array.isArray(row.modelOptions) && row.modelOptions.length > 0
+            ? row.modelOptions as readonly SessionConfigOption[]
+            : null;
+        return [{
+            value: String(row.id),
+            label: String(row.name),
+            description: typeof row.description === 'string' ? row.description : '',
+            ...(extendedContextModelId ? { extendedContextModelId } : {}),
+            ...(modelOptions ? { modelOptions } : {}),
+        }];
     });
 }
 
@@ -156,17 +176,7 @@ function supportsDynamicSessionModelList(agentType: AgentType): boolean {
 }
 
 export function getModelOptionsForPreflightModelList(list: PreflightModelList): readonly ModelOption[] {
-    const dynamic = (list.availableModels ?? [])
-        .filter((m) => m && typeof m.id === 'string' && typeof m.name === 'string')
-        .map((m) => ({
-            value: String(m.id),
-            label: String(m.name),
-            description: typeof m.description === 'string' ? m.description : '',
-            ...(readExtendedContextModelId(m.extendedContextModelId)
-                ? { extendedContextModelId: readExtendedContextModelId(m.extendedContextModelId) }
-                : {}),
-            ...(Array.isArray(m.modelOptions) && m.modelOptions.length > 0 ? { modelOptions: m.modelOptions } : {}),
-        }));
+    const dynamic = projectDynamicModelRows(list.availableModels ?? []);
 
     const withDefault: ModelOption[] = [
         { value: 'default', label: getModelLabel('default'), description: '' },
@@ -283,25 +293,7 @@ function resolveModelOptionsForSession(agentType: AgentType, metadata: Metadata 
     if (state && state.provider === agentType && Array.isArray(state.availableModels) && state.availableModels.length > 0) {
         const catalogOptions = getModelOptionsForAgentType(agentType);
 
-        const dynamic = state.availableModels
-            .filter((m) => m && typeof m.id === 'string' && typeof m.name === 'string')
-            .map((m) => {
-                const value = String(m.id);
-                const description = typeof m.description === 'string' ? m.description : '';
-                const modelOptionsRaw = Array.isArray(m.modelOptions) && m.modelOptions.length > 0
-                    ? (m.modelOptions as readonly SessionConfigOption[])
-                    : null;
-
-                return {
-                    value,
-                    label: String(m.name),
-                    description,
-                    ...(readExtendedContextModelId(m.extendedContextModelId)
-                        ? { extendedContextModelId: readExtendedContextModelId(m.extendedContextModelId) }
-                        : {}),
-                    ...(modelOptionsRaw ? { modelOptions: modelOptionsRaw } : {}),
-                };
-            });
+        const dynamic = projectDynamicModelRows(state.availableModels);
 
         return appendSelectedFreeformModelOption({
             options: mergeModelOptionsWithCatalog({

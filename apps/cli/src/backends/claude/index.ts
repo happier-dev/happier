@@ -14,7 +14,6 @@ import { applyClaudeSharedGroupGenerationApplication } from '@/backends/claude/c
 import { claudeSubscriptionQuotaFetcherDescriptor } from '@/backends/claude/connectedServices/quotaFetcher';
 import { claudeDaemonSpawnHooks } from '@/backends/claude/daemon/spawnHooks';
 import { buildClaudeRuntimeLocalHandoffMetadata } from '@/backends/claude/sessionHandoff/runtimeLocalMetadata';
-import { resolveClaudeProbeBindingIdentity } from '@/backends/claude/models/resolveClaudeModelCatalog';
 import type { AgentCatalogEntry } from '../types';
 import type { ConnectedServiceCredentialLifecycleDescriptor } from '@/daemon/connectedServices/credentials/lifecycleTypes';
 
@@ -124,10 +123,7 @@ export const agent = {
       .hasClaudeEndpointDescriptorForSession(params),
   vendorResumeSupport: AGENTS_CORE.claude.resume.vendorResume,
   buildRuntimeLocalHandoffMetadata: buildClaudeRuntimeLocalHandoffMetadata,
-  resolveModelsProbeVariant: ({ connectedServices }) =>
-    // The models probe authenticates as the bound account, so its result is account-specific;
-    // sharing one cache entry would serve one account's model list to another.
-    `claude:${resolveClaudeProbeBindingIdentity(connectedServices)}`,
+  needsAccountSettingsForProbes: true,
   getPreflightSessionControlsProbeAdapter: async () => (await import('@/backends/claude/preflight/claudePreflightModelsProbeAdapter')).claudePreflightModelsProbeAdapter,
   getHeadlessTmuxArgvTransform: async () => (await import('@/backends/claude/startup/headlessTmuxArgs')).ensureClaudeHeadlessTmuxStartingModeArgs,
 } satisfies AgentCatalogEntry;

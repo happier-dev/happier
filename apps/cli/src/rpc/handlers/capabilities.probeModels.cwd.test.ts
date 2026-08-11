@@ -359,7 +359,7 @@ describe('capabilities.invoke(cli.* probeModels)', () => {
     }));
   });
 
-  it('forwards valid connectedServices bindings to probeAgentModelsBestEffort', async () => {
+  it('forwards valid profile and connectedServices context to probeAgentModelsBestEffort', async () => {
     vi.resetModules();
 
     const probeSpy = vi.fn(async (_params: unknown) => ({
@@ -403,12 +403,13 @@ describe('capabilities.invoke(cli.* probeModels)', () => {
     await call(RPC_METHODS.CAPABILITIES_INVOKE, {
       id: 'cli.codex',
       method: 'probeModels',
-      params: { cwd: '/tmp/happier-probe-cwd', connectedServices },
+      params: { cwd: '/tmp/happier-probe-cwd', profileId: '  session-profile  ', connectedServices },
     });
 
     expect(probeSpy).toHaveBeenCalledTimes(1);
     expect(probeSpy).toHaveBeenCalledWith(expect.objectContaining({
       agentId: 'codex',
+      profileId: 'session-profile',
       connectedServices,
     }));
   });

@@ -1,16 +1,30 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { ConnectedServiceCredentialRecordV1 } from '@happier-dev/protocol';
 
 import { createEnvKeyScope } from '@/testkit/env/envScope';
+import type { Credentials } from '@/persistence';
 
-import type { AnthropicModelEntry } from './anthropicModelsFetch';
+import type { AnthropicModelEntry } from '@/backends/claude/models/fetchAnthropicModels';
 
-const { fetchAnthropicModelsMock, readClaudeCodeNativeCredentialMock } = vi.hoisted(() => ({
+const {
+  createConnectedServiceCredentialApiMock,
+  fetchAnthropicModelsMock,
+  getConnectedServiceCredentialPlainMock,
+  readClaudeCodeNativeCredentialMock,
+} = vi.hoisted(() => ({
+  createConnectedServiceCredentialApiMock: vi.fn(),
   fetchAnthropicModelsMock: vi.fn<(...args: unknown[]) => Promise<AnthropicModelEntry[] | null>>(),
+  getConnectedServiceCredentialPlainMock: vi.fn(),
   readClaudeCodeNativeCredentialMock: vi.fn<(...args: unknown[]) => Promise<unknown>>(),
 }));
 
-vi.mock('@/backends/claude/preflight/anthropicModelsFetch', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('./anthropicModelsFetch')>();
+vi.mock('@/api/connectedServices/connectedServiceCredentialApi', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/api/connectedServices/connectedServiceCredentialApi')>();
+  return { ...actual, createConnectedServiceCredentialApi: createConnectedServiceCredentialApiMock };
+});
+
+vi.mock('@/backends/claude/models/fetchAnthropicModels', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/backends/claude/models/fetchAnthropicModels')>();
   return { ...actual, fetchAnthropicModels: fetchAnthropicModelsMock };
 });
 
@@ -30,6 +44,68 @@ const envKeys = [
   'ANTHROPIC_BASE_URL',
 ] as const;
 let envScope = createEnvKeyScope(envKeys);
+const probeCredentials: Credentials = {
+  token: 'account-token',
+  encryption: { type: 'legacy', secret: new Uint8Array(32).fill(5) },
+};
+
+function setConnectedCredentialRecord(record: ConnectedServiceCredentialRecordV1): void {
+  getConnectedServiceCredentialPlainMock.mockResolvedValue({
+    content: { t: 'plain', v: record },
+    revisionSemantics: 'revisioned',
+    credentialRevision: 1,
+  });
+}
+
+function buildConnectedOauthRecord(params: Readonly<{
+  serviceId: 'claude-subscription';
+  profileId: string;
+  accessToken: string;
+}>): ConnectedServiceCredentialRecordV1 {
+  return {
+    v: 1,
+    serviceId: params.serviceId,
+    profileId: params.profileId,
+    kind: 'oauth',
+    oauth: {
+      accessToken: params.accessToken,
+      refreshToken: 'refresh-token',
+      idToken: null,
+      scope: null,
+      tokenType: null,
+      providerAccountId: null,
+      providerEmail: null,
+      raw: null,
+    },
+    token: null,
+    createdAt: 1,
+    updatedAt: 1,
+    expiresAt: Date.now() + 60_000,
+  };
+}
+
+function buildConnectedTokenRecord(params: Readonly<{
+  serviceId: 'anthropic';
+  profileId: string;
+  token: string;
+}>): ConnectedServiceCredentialRecordV1 {
+  return {
+    v: 1,
+    serviceId: params.serviceId,
+    profileId: params.profileId,
+    kind: 'token',
+    oauth: null,
+    token: {
+      token: params.token,
+      providerAccountId: null,
+      providerEmail: null,
+      raw: null,
+    },
+    createdAt: 1,
+    updatedAt: 1,
+    expiresAt: null,
+  };
+}
 
 function fullEffort(): AnthropicModelEntry['capabilities'] {
   return {
@@ -56,6 +132,16 @@ async function runProbe() {
 beforeEach(() => {
   resetClaudeModelCatalogCacheForTests();
   fetchAnthropicModelsMock.mockReset();
+  getConnectedServiceCredentialPlainMock.mockReset();
+  getConnectedServiceCredentialPlainMock.mockResolvedValue(null);
+  createConnectedServiceCredentialApiMock.mockReset();
+  createConnectedServiceCredentialApiMock.mockReturnValue({
+    getAccountEncryptionMode: async () => 'plain',
+    getConnectedServiceCredentialSealed: async () => null,
+    getConnectedServiceCredentialPlain: getConnectedServiceCredentialPlainMock,
+    listConnectedServiceAuthGroups: async () => [],
+    getConnectedServiceAuthGroup: async () => null,
+  });
   readClaudeCodeNativeCredentialMock.mockReset();
   readClaudeCodeNativeCredentialMock.mockResolvedValue(null);
   envScope.restore();
@@ -192,12 +278,12 @@ describe('claudePreflightModelsProbeAdapter', () => {
     }
   });
 
-  it('reads the bound connected account credentials instead of the daemon own config dir', async () => {
-    readClaudeCodeNativeCredentialMock.mockResolvedValue({
-      payload: { claudeAiOauth: { accessToken: 'sk-ant-oat01-profile', scopes: [] } },
-      updatedAtMs: 0,
-      source: 'file',
-    });
+  it('reads the selected connected account credential instead of the daemon own config dir', async () => {
+    setConnectedCredentialRecord(buildConnectedOauthRecord({
+      serviceId: 'claude-subscription',
+      profileId: 'profile-a',
+      accessToken: 'sk-ant-oat01-profile',
+    }));
     fetchAnthropicModelsMock.mockResolvedValue([{ id: 'claude-opus-9', displayName: 'Opus 9' }]);
 
     await claudePreflightModelsProbeAdapter.probeModelsRaw?.({
@@ -205,6 +291,7 @@ describe('claudePreflightModelsProbeAdapter', () => {
       timeoutMs: 1_500,
       backendTarget: undefined,
       accountSettings: null,
+      credentials: probeCredentials,
       connectedServices: {
         v: 1,
         bindingsByServiceId: {
@@ -213,9 +300,10 @@ describe('claudePreflightModelsProbeAdapter', () => {
       },
     });
 
-    const configDir = readClaudeCodeNativeCredentialMock.mock.calls[0]?.[0] as { claudeConfigDir: string };
-    expect(configDir.claudeConfigDir).toContain('connected-services');
-    expect(configDir.claudeConfigDir).toContain('profile-a');
+    expect(fetchAnthropicModelsMock).toHaveBeenCalledWith(expect.objectContaining({
+      accessToken: 'sk-ant-oat01-profile',
+    }));
+    expect(readClaudeCodeNativeCredentialMock).not.toHaveBeenCalled();
   });
 
   it('ignores ambient env auth when the session is bound to a Claude subscription account', async () => {
@@ -224,11 +312,11 @@ describe('claudePreflightModelsProbeAdapter', () => {
     // models while the session runs as another — cached under the bound account's variant key.
     process.env.ANTHROPIC_AUTH_TOKEN = 'ambient-token-other-account';
     process.env.ANTHROPIC_API_KEY = 'sk-ant-ambient';
-    readClaudeCodeNativeCredentialMock.mockResolvedValue({
-      payload: { claudeAiOauth: { accessToken: 'sk-ant-oat01-bound', scopes: [] } },
-      updatedAtMs: 0,
-      source: 'file',
-    });
+    setConnectedCredentialRecord(buildConnectedOauthRecord({
+      serviceId: 'claude-subscription',
+      profileId: 'profile-a',
+      accessToken: 'sk-ant-oat01-bound',
+    }));
     fetchAnthropicModelsMock.mockResolvedValue([{ id: 'claude-opus-9', displayName: 'Opus 9' }]);
 
     await claudePreflightModelsProbeAdapter.probeModelsRaw?.({
@@ -236,6 +324,7 @@ describe('claudePreflightModelsProbeAdapter', () => {
       timeoutMs: 1_500,
       backendTarget: undefined,
       accountSettings: null,
+      credentials: probeCredentials,
       connectedServices: {
         v: 1,
         bindingsByServiceId: {
@@ -254,6 +343,11 @@ describe('claudePreflightModelsProbeAdapter', () => {
   it('keeps ANTHROPIC_API_KEY for a bound anthropic account, matching the spawn allow-list', async () => {
     process.env.ANTHROPIC_API_KEY = 'sk-ant-bound-key';
     process.env.ANTHROPIC_AUTH_TOKEN = 'ambient-token-other-account';
+    setConnectedCredentialRecord(buildConnectedTokenRecord({
+      serviceId: 'anthropic',
+      profileId: 'profile-a',
+      token: 'sk-ant-bound-key',
+    }));
     fetchAnthropicModelsMock.mockResolvedValue([{ id: 'claude-opus-9', displayName: 'Opus 9' }]);
 
     await claudePreflightModelsProbeAdapter.probeModelsRaw?.({
@@ -261,6 +355,7 @@ describe('claudePreflightModelsProbeAdapter', () => {
       timeoutMs: 1_500,
       backendTarget: undefined,
       accountSettings: null,
+      credentials: probeCredentials,
       connectedServices: {
         v: 1,
         bindingsByServiceId: {

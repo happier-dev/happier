@@ -83,6 +83,27 @@ describe('parseSessionModelsMetadataStateV1', () => {
             ],
         })).not.toBeNull();
     });
+
+    it('preserves an extended-context model id and rejects malformed values', () => {
+        const parsed = parseSessionModelsMetadataStateV1({
+            ...base,
+            availableModels: [{
+                id: 'model-a',
+                name: 'Model A',
+                extendedContextModelId: 'model-a[1m]',
+            }],
+        });
+
+        expect(parsed?.availableModels[0]?.extendedContextModelId).toBe('model-a[1m]');
+        expect(parseSessionModelsMetadataStateV1({
+            ...base,
+            availableModels: [{
+                id: 'model-a',
+                name: 'Model A',
+                extendedContextModelId: 1_000_000,
+            }],
+        })).toBeNull();
+    });
 });
 
 describe('readNewestMetadataAliasValue', () => {

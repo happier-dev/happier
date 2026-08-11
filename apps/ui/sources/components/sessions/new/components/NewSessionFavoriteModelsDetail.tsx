@@ -67,6 +67,7 @@ export type NewSessionFavoriteModelsDetailProps = Readonly<{
     selectedMachineId: string | null;
     capabilityServerId: string;
     cwd?: string | null;
+    profileId?: string | null;
     settings: Settings;
     connectedServicesByTargetKey?: Readonly<Record<string, ConnectedServiceBindingsV1 | null | undefined>>;
     refreshProbe?: OptionPickerProbeState | null;
@@ -177,6 +178,7 @@ function FavoriteBackendModelsCollector(props: Readonly<{
     selectedMachineId: string | null;
     capabilityServerId: string;
     cwd?: string | null;
+    profileId?: string | null;
     settings: Settings;
     connectedServices?: ConnectedServiceBindingsV1 | null;
     refreshProbe?: OptionPickerProbeState | null;
@@ -194,6 +196,7 @@ function FavoriteBackendModelsCollector(props: Readonly<{
         selectedMachineId: props.selectedMachineId,
         capabilityServerId: props.capabilityServerId,
         cwd: props.cwd ?? null,
+        profileId: props.profileId ?? null,
         probeContext: capabilityProbeContext,
         connectedServices: props.connectedServices ?? null,
     });
@@ -433,6 +436,7 @@ export function NewSessionFavoriteModelsDetail(props: NewSessionFavoriteModelsDe
                     selectedMachineId={props.selectedMachineId}
                     capabilityServerId={props.capabilityServerId}
                     cwd={props.cwd}
+                    profileId={props.profileId}
                     settings={props.settings}
                     connectedServices={props.connectedServicesByTargetKey?.[entry.targetKey] ?? null}
                     refreshProbe={props.refreshProbe}

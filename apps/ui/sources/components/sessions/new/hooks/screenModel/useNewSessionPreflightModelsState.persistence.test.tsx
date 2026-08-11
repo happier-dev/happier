@@ -12,6 +12,7 @@ import { renderScreen } from '@/dev/testkit';
 type ProbeModelsResult = Readonly<{
   provider?: string;
   source?: 'dynamic' | 'static';
+  cacheable?: boolean;
   availableModels: Array<{
     id: string;
     name: string;
@@ -34,28 +35,30 @@ type ProbeResponse = Readonly<{
   }>;
 }>;
 
-const machineCapabilitiesInvokeMock = vi.fn(async (_machineId: any, _request: any, _options: any): Promise<ProbeResponse> => ({
-  supported: true as const,
-  response: {
-    ok: true as const,
-    result: {
-      availableModels: [{
-        id: 'm1',
-        name: 'Model 1',
-        modelOptions: [{
-          id: 'reasoning_effort',
-          name: 'Thinking',
-          type: 'select',
-          currentValue: 'medium',
-          options: [
-            { value: 'low', name: 'Low' },
-            { value: 'medium', name: 'Medium' },
-          ],
+const { machineCapabilitiesInvokeMock } = vi.hoisted(() => ({
+  machineCapabilitiesInvokeMock: vi.fn(async (_machineId: any, _request: any, _options: any): Promise<ProbeResponse> => ({
+    supported: true as const,
+    response: {
+      ok: true as const,
+      result: {
+        availableModels: [{
+          id: 'm1',
+          name: 'Model 1',
+          modelOptions: [{
+            id: 'reasoning_effort',
+            name: 'Thinking',
+            type: 'select',
+            currentValue: 'medium',
+            options: [
+              { value: 'low', name: 'Low' },
+              { value: 'medium', name: 'Medium' },
+            ],
+          }],
         }],
-      }],
-      supportsFreeform: false,
+        supportsFreeform: false,
+      },
     },
-  },
+  })),
 }));
 
 vi.mock('@/sync/ops/capabilities', () => ({
@@ -186,6 +189,64 @@ describe('useNewSessionPreflightModelsState (persistence)', () => {
         capabilityServerId: 'server-1',
         cwd: '/repo',
       }).preflightModels;
+      return null;
+    }
+
+    let root2!: renderer.ReactTestRenderer;
+    root2 = (await renderScreen(React.createElement(Harness2))).tree;
+    await act(async () => {
+      root2.unmount();
+    });
+
+    expect(machineCapabilitiesInvokeMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not persist dynamic probe results explicitly marked non-cacheable', async () => {
+    vi.resetModules();
+    resetDynamicModelProbeCacheForTests();
+    machineCapabilitiesInvokeMock.mockClear();
+
+    machineCapabilitiesInvokeMock.mockResolvedValue({
+      supported: true as const,
+      response: {
+        ok: true as const,
+        result: {
+          provider: 'claude',
+          source: 'dynamic',
+          cacheable: false,
+          availableModels: [{ id: 'claude-account-model', name: 'Claude Account Model' }],
+          supportsFreeform: false,
+        },
+      },
+    });
+
+    const { useNewSessionPreflightModelsState } = await import('./useNewSessionPreflightModelsState');
+
+    function Harness() {
+      useNewSessionPreflightModelsState({
+        backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+        selectedMachineId: 'machine-1',
+        capabilityServerId: 'server-1',
+        cwd: '/repo',
+      });
+      return null;
+    }
+
+    let root1!: renderer.ReactTestRenderer;
+    root1 = (await renderScreen(React.createElement(Harness))).tree;
+    await act(async () => {
+      root1.unmount();
+    });
+
+    vi.resetModules();
+    const { useNewSessionPreflightModelsState: useNewSessionPreflightModelsState2 } = await import('./useNewSessionPreflightModelsState');
+    function Harness2() {
+      useNewSessionPreflightModelsState2({
+        backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+        selectedMachineId: 'machine-1',
+        capabilityServerId: 'server-1',
+        cwd: '/repo',
+      });
       return null;
     }
 

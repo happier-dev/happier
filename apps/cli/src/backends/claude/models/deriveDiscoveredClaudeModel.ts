@@ -5,7 +5,7 @@ import {
   type AgentModelOption,
 } from '@happier-dev/agents';
 
-import type { AnthropicModelEntry } from './anthropicModelsFetch';
+import type { AnthropicModelEntry } from './fetchAnthropicModels';
 
 const EFFORT_TIER_ORDER = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
 type EffortTier = (typeof EFFORT_TIER_ORDER)[number];

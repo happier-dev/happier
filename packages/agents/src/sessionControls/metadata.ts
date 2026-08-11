@@ -49,6 +49,7 @@ export type SessionModelsMetadataStateV1 = Readonly<{
     id: string;
     name: string;
     description?: string;
+    extendedContextModelId?: string;
     modelOptions?: readonly SessionModelOptionMetadataV1[];
     [key: string]: unknown;
   }>[];
@@ -129,6 +130,10 @@ export function parseSessionModelsMetadataStateV1(raw: unknown): SessionModelsMe
     if (typeof model.id !== 'string' || !model.id.trim()) return null;
     if (typeof model.name !== 'string' || !model.name.trim()) return null;
     if (model.description !== undefined && typeof model.description !== 'string') return null;
+    if (
+      model.extendedContextModelId !== undefined
+      && (typeof model.extendedContextModelId !== 'string' || !model.extendedContextModelId.trim())
+    ) return null;
     if (model.modelOptions !== undefined) {
       if (!Array.isArray(model.modelOptions)) return null;
       for (const rawOption of model.modelOptions) {

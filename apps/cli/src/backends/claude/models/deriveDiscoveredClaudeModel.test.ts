@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import type { AnthropicModelEntry } from './anthropicModelsFetch';
+import type { AnthropicModelEntry } from './fetchAnthropicModels';
 import {
   buildDiscoveredClaudeModelDescriptor,
   deriveClaudeModelOptionsFromCapabilities,

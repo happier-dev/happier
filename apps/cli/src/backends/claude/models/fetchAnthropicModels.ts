@@ -10,15 +10,16 @@ const OAUTH_BETA_HEADER_VALUE = 'oauth-2025-04-20';
  *
  * Anthropic-compatible gateways are configured through `ANTHROPIC_BASE_URL` and may live under a
  * path prefix (`https://api.z.ai/api/anthropic`), so the path is appended rather than replacing it.
- * An unusable value falls back to the default host instead of throwing.
+ * An unusable explicit value returns `null`: credentials must never be silently redirected to
+ * Anthropic when the caller intended to use another origin.
  */
-export function resolveAnthropicModelsUrl(baseUrl?: string | null): string {
+export function resolveAnthropicModelsUrl(baseUrl?: string | null): string | null {
   const raw = typeof baseUrl === 'string' ? baseUrl.trim() : '';
   const candidate = raw.length > 0 ? raw : DEFAULT_ANTHROPIC_BASE_URL;
   try {
     return new URL(MODELS_PATH, candidate.endsWith('/') ? candidate : `${candidate}/`).toString();
   } catch {
-    return `${DEFAULT_ANTHROPIC_BASE_URL}/${MODELS_PATH}`;
+    return null;
   }
 }
 
@@ -122,7 +123,7 @@ export function parseAnthropicModelsResponse(body: unknown): AnthropicModelEntry
 export type FetchAnthropicModelsParams = Readonly<{
   /** OAuth access token (subscription/Claude Code). Sent as `Authorization: Bearer`. */
   accessToken?: string | null;
-  /** Anthropic API key. Sent as `x-api-key`. Takes precedence over `accessToken`. */
+  /** Anthropic API key. Sent as `x-api-key` only when no bearer token is available. */
   apiKey?: string | null;
   /** Anthropic-compatible endpoint root (`ANTHROPIC_BASE_URL`). Defaults to the Anthropic host. */
   baseUrl?: string | null;
@@ -153,20 +154,24 @@ export async function fetchAnthropicModels(
     'anthropic-version': ANTHROPIC_VERSION,
     'User-Agent': resolveClaudeCodeUserAgent(params.userAgent),
   };
-  if (apiKey) {
-    headers['x-api-key'] = apiKey;
-  } else if (accessToken) {
+  if (accessToken) {
     headers['Authorization'] = `Bearer ${accessToken}`;
     headers['anthropic-beta'] = OAUTH_BETA_HEADER_VALUE;
+  } else if (apiKey) {
+    headers['x-api-key'] = apiKey;
   }
+
+  const modelsUrl = resolveAnthropicModelsUrl(params.baseUrl);
+  if (!modelsUrl) return null;
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), Math.max(250, params.timeoutMs));
   try {
-    const response = await fetchImpl(resolveAnthropicModelsUrl(params.baseUrl), {
+    const response = await fetchImpl(modelsUrl, {
       method: 'GET',
       headers,
       signal: controller.signal,
+      redirect: 'error',
     });
     if (!response.ok) return null;
     const body = await response.json().catch(() => null);

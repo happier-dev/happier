@@ -2,15 +2,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 
-import type { AnthropicModelEntry } from '@/backends/claude/preflight/anthropicModelsFetch';
+import type { AnthropicModelEntry } from './fetchAnthropicModels';
 
 const { fetchAnthropicModelsMock, readClaudeCodeNativeCredentialMock } = vi.hoisted(() => ({
   fetchAnthropicModelsMock: vi.fn<(...args: unknown[]) => Promise<AnthropicModelEntry[] | null>>(),
   readClaudeCodeNativeCredentialMock: vi.fn<(...args: unknown[]) => Promise<unknown>>(),
 }));
 
-vi.mock('@/backends/claude/preflight/anthropicModelsFetch', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@/backends/claude/preflight/anthropicModelsFetch')>();
+vi.mock('./fetchAnthropicModels', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./fetchAnthropicModels')>();
   return { ...actual, fetchAnthropicModels: fetchAnthropicModelsMock };
 });
 
@@ -23,6 +23,7 @@ import { buildClaudeEffortCliArgs } from '@/backends/claude/utils/claudeEffort';
 import {
   resolveClaudeEffortLevelsFromModelDescriptor,
   resolveClaudeModelCatalog,
+  resolveClaudeModelCatalogResolution,
   resetClaudeModelCatalogCacheForTests,
 } from './resolveClaudeModelCatalog';
 
@@ -76,7 +77,19 @@ describe('resolveClaudeModelCatalog', () => {
     expect(models.some((m) => m.id === 'claude-fable-5')).toBe(true);
   });
 
-  it('serves a cached catalog instead of refetching, and partitions by connected account', async () => {
+  it('records a successful endpoint response as dynamic even when every id is already curated', async () => {
+    process.env.ANTHROPIC_API_KEY = 'sk-ant-key';
+    fetchAnthropicModelsMock.mockResolvedValue([
+      { id: 'claude-fable-5', displayName: 'Claude Fable 5' },
+    ]);
+
+    const resolution = await resolveClaudeModelCatalogResolution({ timeoutMs: 1_000 });
+
+    expect(resolution.source).toBe('dynamic');
+    expect(resolution.models.some((model) => model.id === 'claude-fable-5')).toBe(true);
+  });
+
+  it('serves a cached catalog and never substitutes ambient auth for a selected account', async () => {
     process.env.ANTHROPIC_API_KEY = 'sk-ant-key';
     fetchAnthropicModelsMock.mockResolvedValue([{ id: 'claude-opus-9', displayName: 'Opus 9' }]);
 
@@ -91,7 +104,7 @@ describe('resolveClaudeModelCatalog', () => {
       updatedAtMs: 0,
       source: 'file',
     });
-    await resolveClaudeModelCatalog({
+    const boundResult = await resolveClaudeModelCatalog({
       timeoutMs: 1_000,
       connectedServices: {
         v: 1,
@@ -100,7 +113,8 @@ describe('resolveClaudeModelCatalog', () => {
         },
       },
     });
-    expect(fetchAnthropicModelsMock).toHaveBeenCalledTimes(2);
+    expect(fetchAnthropicModelsMock).toHaveBeenCalledTimes(1);
+    expect(boundResult.some((model) => model.id === 'claude-opus-9')).toBe(false);
   });
 
   it('refetches when the ambient credential changes', async () => {

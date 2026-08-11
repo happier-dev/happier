@@ -1,7 +1,7 @@
 import type { AgentModelDescriptor } from '@happier-dev/agents';
 
 import type { PreflightSessionControlsProbeAdapter } from '@/capabilities/probes/preflightSessionControlsProbeAdapterTypes';
-import { hasDiscoveredClaudeModels, resolveClaudeModelCatalog } from '@/backends/claude/models/resolveClaudeModelCatalog';
+import { resolveClaudeModelCatalogResolution } from '@/backends/claude/models/resolveClaudeModelCatalog';
 
 function toProbeRawModel(model: AgentModelDescriptor): Record<string, unknown> {
   return {
@@ -22,12 +22,17 @@ function toProbeRawModel(model: AgentModelDescriptor): Record<string, unknown> {
  * effort tiers.
  */
 export const claudePreflightModelsProbeAdapter: PreflightSessionControlsProbeAdapter = {
+  modelProbeCachePolicy: 'provider-owned',
   failureCacheStrategy: 'cooldown',
-  probeModelsRaw: async ({ timeoutMs, connectedServices }) => {
-    const models = await resolveClaudeModelCatalog({ timeoutMs, connectedServices });
-    // Nothing beyond the curated catalog means the probe added nothing: return null so the caller
-    // reports the list as `static` rather than mislabelling the curated catalog as dynamic.
-    if (!hasDiscoveredClaudeModels(models)) return null;
-    return models.map(toProbeRawModel);
+  probeModelsRaw: async ({ timeoutMs, connectedServices, credentials, accountSettings, profileId }) => {
+    const resolution = await resolveClaudeModelCatalogResolution({
+      timeoutMs,
+      connectedServices,
+      credentials,
+      accountSettings,
+      profileId,
+    });
+    if (resolution.source === 'static') return null;
+    return resolution.models.map(toProbeRawModel);
   },
 };
