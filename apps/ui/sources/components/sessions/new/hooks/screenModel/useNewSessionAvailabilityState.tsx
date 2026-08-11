@@ -37,6 +37,8 @@ import { isAgentAuthProbeSafeForBackgroundChecks } from '@happier-dev/agents';
 import type { BackendTargetRefV1 } from '@happier-dev/protocol';
 import { resolveMachineSpawnReadiness } from '@/sync/domains/machines/identity/resolveMachineSpawnReadiness';
 
+import { useStableValueBySignature } from '@/hooks/ui/useStableValueBySignature';
+
 type ProfileAvailability = Readonly<{ available: boolean; reason?: string }>;
 
 const TEMPORARY_CLI_WARNING_GLOBAL_MACHINE_KEY = '__global__';
@@ -51,14 +53,6 @@ function writeTemporaryHiddenCliWarningKey(machineId: string | null | undefined,
     const key = machineId ?? TEMPORARY_CLI_WARNING_GLOBAL_MACHINE_KEY;
     const existing = temporaryHiddenCliWarningKeysByMachineId[key] ?? {};
     temporaryHiddenCliWarningKeysByMachineId[key] = { ...existing, [warningKey]: true };
-}
-
-function useStableValueBySignature<Value>(value: Value, signature: string): Value {
-    const stableRef = React.useRef<Readonly<{ signature: string; value: Value }> | null>(null);
-    if (!stableRef.current || stableRef.current.signature !== signature) {
-        stableRef.current = { signature, value };
-    }
-    return stableRef.current.value;
 }
 
 export function useNewSessionAvailabilityState(params: Readonly<{

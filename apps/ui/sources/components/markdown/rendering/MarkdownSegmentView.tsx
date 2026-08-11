@@ -21,6 +21,13 @@ type MarkdownSegmentViewProps = Readonly<{
     profile: MarkdownRenderingProfile;
     streamingReveal: boolean;
     streamingRevealPreset?: StreamingTextRevealPreset;
+    /**
+     * Whether this renderer splits and wraps source ranges at all — owned by `MarkdownViewRenderer`,
+     * which already uses the same value to decide how the markdown is segmented. It is the wrapper's
+     * identity: the wrapper exists exactly when this is true, and never changes shape or element
+     * type because a live handler, highlight or comment came and went.
+     */
+    sourceRangeInteractionsActive: boolean;
     onPressSourceRange?: (action: MarkdownSourceRangeAction) => void;
     renderAfterSourceRange?: (action: MarkdownSourceRangeAction) => React.ReactNode;
     highlightSourceRange?: MarkdownSourceRange | null;
@@ -64,21 +71,26 @@ export const MarkdownSegmentView = React.memo((props: MarkdownSegmentViewProps) 
         />
     );
 
-    const after = props.renderAfterSourceRange?.(sourceAction) ?? null;
-    if (!props.onPressSourceRange && !after && !highlighted) return content;
+    if (!props.sourceRangeInteractionsActive) return content;
 
+    const after = props.renderAfterSourceRange?.(sourceAction) ?? null;
     const testID = `markdown-source-range-trigger:${props.segment.sourceRange.startLine}-${props.segment.sourceRange.endLine}`;
-    const Wrapper = props.onPressSourceRange ? Pressable : View;
+    // One element type, always. Review-comment mode flips `onPressSourceRange` for every segment of
+    // the open file at once; swapping `Pressable` for `View` on that flip would remount all of them.
+    // A disabled `Pressable` claims no touch responder, so the non-review pass behaves like the
+    // plain container it replaces and selection and link presses inside still reach the content.
+    const pressable = props.onPressSourceRange !== undefined;
     return (
         <View style={styles.sourceRangeContainer}>
-            <Wrapper
+            <Pressable
                 testID={testID}
-                accessibilityRole={props.onPressSourceRange ? 'button' : undefined}
-                onPress={props.onPressSourceRange ? () => props.onPressSourceRange?.(sourceAction) : undefined}
+                accessibilityRole={pressable ? 'button' : undefined}
+                disabled={!pressable}
+                onPress={pressable ? () => props.onPressSourceRange?.(sourceAction) : undefined}
                 style={[styles.sourceRangeTrigger, highlighted ? styles.highlight : null]}
             >
                 {content}
-            </Wrapper>
+            </Pressable>
             {after}
         </View>
     );

@@ -130,6 +130,7 @@ export const MarkdownViewRenderer = React.memo((props: MarkdownViewRendererProps
                         profile={props.profile}
                         streamingReveal={streamingReveal}
                         streamingRevealPreset={props.streamingRevealPreset}
+                        sourceRangeInteractionsActive={sourceRangeInteractionsActive}
                         onPressSourceRange={props.onPressSourceRange}
                         renderAfterSourceRange={props.renderAfterSourceRange}
                         highlightSourceRange={props.highlightSourceRange}

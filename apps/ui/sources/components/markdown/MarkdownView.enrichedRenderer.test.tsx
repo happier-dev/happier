@@ -1,4 +1,5 @@
 import React from 'react';
+import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
@@ -234,6 +235,53 @@ describe('MarkdownView (enriched renderer)', () => {
         expect(onPressSourceRange).toHaveBeenCalledWith({
             sourceRange: { startLine: 1, endLine: 3 },
             markdown,
+        });
+    });
+
+    /**
+     * `FileContentPanel` keeps `renderAfterSourceRange` mounted for the whole file whenever review
+     * comments are enabled, and flips `onPressSourceRange` on and off as the user enters and leaves
+     * review-comment mode. If the segment answered that flip by changing its wrapper element type —
+     * or by dropping the wrapper entirely — React would unmount and remount every rendered segment
+     * of the open file on each toggle, taking its measurements, text selection and reveal state with
+     * it. The wrapper's identity must therefore follow the source-range capability, which is fixed
+     * for a call site, and only its callback and role may change.
+     */
+    it('keeps one wrapper element for every segment when the source-range press handler toggles', async () => {
+        const { MarkdownView } = await import('./MarkdownView');
+        const onPressSourceRange = vi.fn();
+        let enterCommentMode: (() => void) | null = null;
+
+        function ReviewModeHarness(): React.ReactElement {
+            const [commentMode, setCommentMode] = React.useState(false);
+            enterCommentMode = () => setCommentMode(true);
+            return React.createElement(MarkdownView as any, {
+                markdown: '# Title',
+                selectable: true,
+                profile: 'default',
+                renderAfterSourceRange: () => null,
+                highlightSourceRange: null,
+                onPressSourceRange: commentMode ? onPressSourceRange : undefined,
+            });
+        }
+
+        const screen = await renderScreen(<ReviewModeHarness />);
+
+        const inactive = screen.findByProps({ testID: 'markdown-source-range-trigger:1-1' });
+        expect(inactive.props.accessibilityRole).toBeUndefined();
+
+        await act(async () => {
+            enterCommentMode?.();
+        });
+
+        const active = screen.findByProps({ testID: 'markdown-source-range-trigger:1-1' });
+        expect(active.type).toBe(inactive.type);
+        expect(active.props.accessibilityRole).toBe('button');
+
+        active.props.onPress();
+        expect(onPressSourceRange).toHaveBeenCalledWith({
+            sourceRange: { startLine: 1, endLine: 1 },
+            markdown: '# Title',
         });
     });
 

@@ -10,6 +10,8 @@ import { isMachineOnline } from '@/utils/sessions/machineUtils';
 import { useStableRecentPathsForMachine } from '@/utils/sessions/useStableRecentPathsForMachine';
 import { resolveDaemonCapabilitiesCacheKeySalt } from '@/hooks/server/useDaemonScopedMachineCapabilitiesCache';
 
+import { useStableValueBySignature } from '@/hooks/ui/useStableValueBySignature';
+
 type RecentMachinePath = Readonly<{
     machineId: string;
     path: string;
@@ -32,14 +34,6 @@ function buildMachineRefreshItemSignature(machine: Machine): string {
 
 function buildMachineRefreshListSignature(machines: ReadonlyArray<Machine>): string {
     return machines.map(buildMachineRefreshItemSignature).join('\n');
-}
-
-function useStableValueBySignature<Value>(value: Value, signature: string): Value {
-    const stableRef = React.useRef<Readonly<{ signature: string; value: Value }> | null>(null);
-    if (!stableRef.current || stableRef.current.signature !== signature) {
-        stableRef.current = { signature, value };
-    }
-    return stableRef.current.value;
 }
 
 export function useNewSessionMachineRefreshState(params: Readonly<{

@@ -32,6 +32,31 @@ type FilesToolbarProps = {
     showScmToggle?: boolean;
 };
 
+/**
+ * Module scope, not a render-body component: a component minted inside `FilesToolbar` would be a new
+ * type on every SCM status update, remounting the badge each time instead of updating it.
+ */
+function ChangedFilesCountBadge(props: Readonly<{ count: number; theme: FilesToolbarProps['theme'] }>) {
+    if (props.count <= 0) return null;
+    return (
+        <View
+            style={{
+                minWidth: 20,
+                paddingHorizontal: 6,
+                paddingVertical: 2,
+                // The canonical badge shape: background-only, 8px radius.
+                borderRadius: 8,
+                borderWidth: 0,
+                backgroundColor: props.theme.colors.state.neutral.background,
+            }}
+        >
+            <Text style={{ fontSize: 11, color: props.theme.colors.text.secondary, ...Typography.mono('semiBold') }}>
+                {String(props.count)}
+            </Text>
+        </View>
+    );
+}
+
 export function FilesToolbar(props: FilesToolbarProps) {
     const {
         theme,
@@ -52,44 +77,6 @@ export function FilesToolbar(props: FilesToolbarProps) {
         onRefresh,
         showScmToggle = true,
     } = props;
-
-    const Chip = (p: {
-        active: boolean;
-        label: string;
-        icon: React.ReactNode;
-        badge?: React.ReactNode;
-        onPress: () => void;
-    }) => (
-        <ToolbarButton
-            onPress={p.onPress}
-            active={p.active}
-            label={p.label}
-            icon={p.icon}
-            trailing={p.badge}
-            size="md"
-        />
-    );
-
-    const CountBadge = ({ count }: { count: number }) => {
-        if (count <= 0) return null;
-        return (
-            <View
-                style={{
-                    minWidth: 20,
-                    paddingHorizontal: 6,
-                    paddingVertical: 2,
-                    // The canonical badge shape: background-only, 8px radius.
-                    borderRadius: 8,
-                    borderWidth: 0,
-                    backgroundColor: theme.colors.state.neutral.background,
-                }}
-            >
-                <Text style={{ fontSize: 11, color: theme.colors.text.secondary, ...Typography.mono('semiBold') }}>
-                    {String(count)}
-                </Text>
-            </View>
-        );
-    };
 
     return (
         <View
@@ -128,14 +115,16 @@ export function FilesToolbar(props: FilesToolbarProps) {
             </View>
 
             <View style={{ flexDirection: 'row', marginTop: 10, gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-                <Chip
+                <ToolbarButton
+                    size="md"
                     active={!showAllRepositoryFiles}
                     label={t('files.toolbar.changedFiles')}
                     icon={<Icon name="git-diff" size={14} color={theme.colors.text.secondary} />}
-                    badge={!showAllRepositoryFiles ? <CountBadge count={changedFilesCount} /> : undefined}
+                    trailing={!showAllRepositoryFiles ? <ChangedFilesCountBadge count={changedFilesCount} theme={theme} /> : undefined}
                     onPress={onShowChangedFiles}
                 />
-                <Chip
+                <ToolbarButton
+                    size="md"
                     active={showAllRepositoryFiles}
                     label={t('files.toolbar.allRepositoryFiles')}
                     icon={<Icon name="book-bookmark" size={14} color={theme.colors.text.secondary} />}
@@ -152,13 +141,15 @@ export function FilesToolbar(props: FilesToolbarProps) {
                             onChangedFilesViewMode={onChangedFilesViewMode}
                         />
 
-                        <Chip
+                        <ToolbarButton
+                            size="md"
                             active={changedFilesPresentation === 'review'}
                             label={t('files.toolbar.review')}
                             icon={<Icon name="git-diff" size={14} color={theme.colors.text.secondary} />}
                             onPress={() => onChangedFilesPresentationChange('review')}
                         />
-                        <Chip
+                        <ToolbarButton
+                            size="md"
                             active={changedFilesPresentation === 'list'}
                             label={t('files.toolbar.list')}
                             icon={<Icon name="list-bullets" size={14} color={theme.colors.text.secondary} />}
@@ -168,7 +159,8 @@ export function FilesToolbar(props: FilesToolbarProps) {
                 ) : null}
 
                 {showScmToggle ? (
-                    <Chip
+                    <ToolbarButton
+                        size="md"
                         active={scmPanelExpanded}
                         label={t('files.toolbar.scm')}
                         icon={<Icon name="git-branch" size={14} color={theme.colors.text.secondary} />}
@@ -177,7 +169,8 @@ export function FilesToolbar(props: FilesToolbarProps) {
                 ) : null}
 
                 {onRefresh ? (
-                    <Chip
+                    <ToolbarButton
+                        size="md"
                         active={false}
                         label={t('common.refresh')}
                         icon={<Icon name="arrows-clockwise" size={14} color={theme.colors.text.secondary} />}

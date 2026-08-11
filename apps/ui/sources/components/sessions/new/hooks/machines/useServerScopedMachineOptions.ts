@@ -6,6 +6,8 @@ import { useMachineListByServerId, useMachineListStatusByServerId } from '@/sync
 import { isMachineVisibleForLaunchSelection } from '@/sync/domains/machines/identity/filterVisibleMachines';
 import { resolveMachineSpawnReadiness, type MachineSpawnReadiness } from '@/sync/domains/machines/identity/resolveMachineSpawnReadiness';
 
+import { useStableValueBySignature } from '@/hooks/ui/useStableValueBySignature';
+
 export type ServerScopedMachine = Machine & Readonly<{
     serverId: string;
     serverName: string;
@@ -105,14 +107,6 @@ function buildServerProfilesSignature(profilesById: ReadonlyMap<string, ServerPr
         ].join('|'))
         .sort()
         .join('\n');
-}
-
-function useStableValueBySignature<Value>(value: Value, signature: string): Value {
-    const stableRef = React.useRef<Readonly<{ signature: string; value: Value }> | null>(null);
-    if (!stableRef.current || stableRef.current.signature !== signature) {
-        stableRef.current = { signature, value };
-    }
-    return stableRef.current.value;
 }
 
 export function useServerScopedMachineOptions(params: UseServerScopedMachineOptionsParams): ServerScopedMachineGroup[] {

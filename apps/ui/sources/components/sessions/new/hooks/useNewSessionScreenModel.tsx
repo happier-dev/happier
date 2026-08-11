@@ -122,6 +122,8 @@ import type { ComposerSuggestionKindId } from '@/components/autocomplete/compose
 import { resolveNewSessionFileSuggestionScope } from '@/components/sessions/new/modules/resolveNewSessionFileSuggestionScope';
 
 
+import { useStableValueBySignature } from '@/hooks/ui/useStableValueBySignature';
+
 // Configuration constants
 const RECENT_PATHS_DEFAULT_VISIBLE = 5;
 // R-9: plugins and skills are session metadata published after spawn, so this host cannot offer
@@ -146,14 +148,6 @@ function buildNewSessionPopoverSignature(value: unknown): string {
     } catch {
         return 'unserializable';
     }
-}
-
-function useStableValueBySignature<Value>(value: Value, signature: string): Value {
-    const stableRef = React.useRef<Readonly<{ signature: string; value: Value }> | null>(null);
-    if (!stableRef.current || stableRef.current.signature !== signature) {
-        stableRef.current = { signature, value };
-    }
-    return stableRef.current.value;
 }
 
 function buildNewSessionDraftSignature(draft: NewSessionDraft | null): string {

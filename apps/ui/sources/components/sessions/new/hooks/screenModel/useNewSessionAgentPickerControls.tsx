@@ -44,6 +44,8 @@ import {
     readSessionControlValueId,
 } from '@/sync/domains/sessionControl/opaqueIdentifiers';
 
+import { useStableValueBySignature } from '@/hooks/ui/useStableValueBySignature';
+
 type EngineSelection = Readonly<{
     modelId: string;
     sessionModeId: string | null;
@@ -168,14 +170,6 @@ function useShallowStableObject<Value extends object>(value: Value): Value {
         stableRef.current = value;
     }
     return stableRef.current;
-}
-
-function useStableValueBySignature<Value>(value: Value, signature: string): Value {
-    const stableRef = React.useRef<Readonly<{ signature: string; value: Value }> | null>(null);
-    if (!stableRef.current || stableRef.current.signature !== signature) {
-        stableRef.current = { signature, value };
-    }
-    return stableRef.current.value;
 }
 
 function useLatestRef<Value>(value: Value): React.MutableRefObject<Value> {
