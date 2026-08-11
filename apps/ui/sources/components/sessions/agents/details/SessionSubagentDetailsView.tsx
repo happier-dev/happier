@@ -132,7 +132,7 @@ export const SessionSubagentDetailsView = React.memo((props: Readonly<{
 
     return (
         <View style={styles.container}>
-            <SessionSubagentOverviewCard subagent={subagent} />
+            <SessionSubagentOverviewCard sessionId={props.sessionId} subagent={subagent} />
             {structuredResult}
             <SessionSubagentTranscriptBody
                 sessionId={props.sessionId}
