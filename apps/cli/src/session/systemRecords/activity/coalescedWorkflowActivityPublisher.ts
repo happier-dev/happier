@@ -1,5 +1,6 @@
 import type { SessionWorkflowRunSnapshotV1 } from '@happier-dev/protocol';
 
+import { isPermanentRequestError } from '@/api/client/httpStatusError';
 import { createCoalescedScheduler } from '@/utils/coalescedScheduler';
 
 import type { WorkflowActivityObservationLike } from './workflowActivityObservation';
@@ -60,7 +61,11 @@ export function createCoalescedWorkflowActivityPublisher(params: Readonly<{
       });
       scheduleRetry(result.failedRunIds);
     } catch (error) {
-      scheduleRetry(changedRunIds);
+      // A drain-level throw is the headline write (or an unexpected fault), so the run partition
+      // the publisher computes never happened. The SAME rule decides it: a refusal the server will
+      // repeat is dropped rather than re-queued, or this becomes a debounce-interval write loop for
+      // the session's lifetime. New evidence still produces a fresh attempt via `notify`.
+      if (!isPermanentRequestError(error)) scheduleRetry(changedRunIds);
       throw error;
     }
   };

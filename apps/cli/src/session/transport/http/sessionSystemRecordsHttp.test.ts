@@ -216,6 +216,62 @@ describe('sessionControl.sessionSystemRecordsHttp', () => {
     });
   });
 
+  it('carries the rejecting status on every error, so a writer can tell a permanent refusal from a transport blip', async () => {
+    // A server released before a record kind existed answers 400 to every attempt at it. A writer
+    // that cannot read the status has no way to stop, and retries the same rejected bytes forever;
+    // the same is true of a session that has been deleted (404). Both must carry their status.
+    process.env.HAPPIER_SERVER_URL = 'http://server.example.test';
+    vi.resetModules();
+    const { upsertSessionSystemRecord } = await import('./sessionSystemRecordsHttp');
+    const { isPermanentRequestError } = await import('@/api/client/httpStatusError');
+
+    const request = {
+      token: 'token-1',
+      sessionId: 'sess-1',
+      namespace: 'activity',
+      kind: 'background_task.v1',
+      localId: 'activity:background_task:v1:task_1',
+      content: { t: 'plain', v: { v: 1 } },
+    } as const;
+
+    vi.spyOn(axios, 'put').mockResolvedValueOnce({ status: 400, data: { error: 'Invalid parameters' } } as never);
+    const unknownKind = await upsertSessionSystemRecord(request as never).catch((error: unknown) => error);
+    expect(unknownKind).toMatchObject({ response: { status: 400 } });
+    expect(isPermanentRequestError(unknownKind)).toBe(true);
+
+    vi.spyOn(axios, 'put').mockResolvedValueOnce({ status: 404, data: { error: 'Session not found' } } as never);
+    const missingSession = await upsertSessionSystemRecord(request as never).catch((error: unknown) => error);
+    // The stable code stays: callers that branch on it are unaffected by the added status.
+    expect(missingSession).toMatchObject({ code: 'session_not_found', response: { status: 404 } });
+    expect(isPermanentRequestError(missingSession)).toBe(true);
+
+    vi.spyOn(axios, 'put').mockResolvedValueOnce({ status: 503, data: {} } as never);
+    const busy = await upsertSessionSystemRecord(request as never).catch((error: unknown) => error);
+    expect(isPermanentRequestError(busy)).toBe(false);
+
+    // A well-formed 426 is answered by the compatibility check BEFORE any status branch, so it
+    // never becomes an `HttpStatusError`; it carries its status at the top level instead. It is the
+    // most permanent refusal there is - this build must be upgraded - and the irony of the shape is
+    // that a MALFORMED 426 falls through to the status branch and classifies correctly.
+    vi.spyOn(axios, 'put').mockResolvedValueOnce({
+      status: 426,
+      data: {
+        error: 'client-upgrade-required',
+        requirement: { v: 1, clientKind: 'session-runner', minimumAppVersion: '9.0.0', updateUrl: null },
+      },
+    } as never);
+    const upgradeRequired = await upsertSessionSystemRecord(request as never).catch((error: unknown) => error);
+    expect(upgradeRequired).toMatchObject({ name: 'CliClientUpgradeRequiredError', statusCode: 426 });
+    expect(isPermanentRequestError(upgradeRequired)).toBe(true);
+
+    // A 200 whose body this build cannot parse is deterministic for the same reason: the bytes
+    // arrived and were refused here. Statusless, so only an explicit marker separates it from a
+    // dropped socket.
+    vi.spyOn(axios, 'put').mockResolvedValueOnce({ status: 200, data: { record: { nope: true } } } as never);
+    const malformed = await upsertSessionSystemRecord(request as never).catch((error: unknown) => error);
+    expect(isPermanentRequestError(malformed)).toBe(true);
+  });
+
   it('surfaces required compatibility rejection as a typed terminal error', async () => {
     process.env.HAPPIER_SERVER_URL = 'http://server.example.test';
     vi.resetModules();

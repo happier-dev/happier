@@ -556,6 +556,11 @@ export type Metadata = {
   // `activity/workflow_run.v1` system records; full phase/agent detail lives only in those records.
   // Stored key is exactly `sessionWorkflowActivityHeadlineV1` in both repos (plan §3.3).
   sessionWorkflowActivityHeadlineV1?: unknown,
+  // Unified agent-activity headline: the complete roster of agent work as compact entries, so a
+  // cold open does not depend on how much transcript has paginated in (R-3). Published in the SAME
+  // metadata write as the workflow headline above, which it is derived from and does not replace.
+  // Stored key is exactly `sessionAgentActivityHeadlineV1` in both repos (protocol-owned literal).
+  sessionAgentActivityHeadlineV1?: unknown,
   geminiSessionId?: string, // Gemini ACP session ID (opaque)
   opencodeSessionId?: string, // OpenCode ACP session ID (opaque)
   opencodeBackendMode?: 'server' | 'acp',

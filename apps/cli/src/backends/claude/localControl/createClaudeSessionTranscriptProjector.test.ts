@@ -19,8 +19,11 @@ function createWorkflowActivitySourceFake(
   observedRaw: () => readonly unknown[];
   flushCount: () => number;
   disposeCount: () => number;
+  /** Ordered lifecycle calls, so a shutdown finalize can be pinned to happen BEFORE the drain. */
+  lifecycleCalls: () => readonly string[];
 }> {
   const observed: unknown[] = [];
+  const lifecycleCalls: string[] = [];
   let flushCount = 0;
   let disposeCount = 0;
   const source: ClaudeWorkflowActivitySource = {
@@ -30,12 +33,17 @@ function createWorkflowActivitySourceFake(
     getWorkflowOwnedAgentToolUseIds: () => new Set(ownedToolUseIds),
     isWorkflowOwnedProviderTaskId: () => false,
     isWorkflowOwnedTaskReference: () => false,
+    finalizeInterruptedActivityOnShutdown: () => {
+      lifecycleCalls.push('finalize');
+    },
     flush: async () => {
       flushCount += 1;
+      lifecycleCalls.push('flush');
     },
     reconcileStartupInterruptedRuns: async () => {},
     dispose: () => {
       disposeCount += 1;
+      lifecycleCalls.push('dispose');
     },
   };
   return {
@@ -43,6 +51,7 @@ function createWorkflowActivitySourceFake(
     observedRaw: () => observed,
     flushCount: () => flushCount,
     disposeCount: () => disposeCount,
+    lifecycleCalls: () => lifecycleCalls,
   };
 }
 
@@ -651,6 +660,52 @@ describe('createClaudeSessionTranscriptProjector workflow activity wiring (CWF3/
 
     expect(workflow.flushCount()).toBe(1);
     expect(workflow.disposeCount()).toBe(1);
+  });
+
+  // RULING-14: the projector owns BOTH shutdown-sensitive sources, so ONE teardown observation must
+  // resolve both. Before this, only the goal side was finalized here, and every launcher that dies
+  // through the projector (local + unified terminal) left its workflow runs/agents painted live.
+  // Asserting both halves in ONE case is deliberate: the defect was exactly "one half was wired".
+  it('finalizeInterruptedWorkOnShutdown resolves the goal AND the workflow activity from one teardown', () => {
+    const fixture = createSessionFixture();
+    const workflow = createWorkflowActivitySourceFake();
+    const projector = createClaudeSessionTranscriptProjector({
+      session: fixture.session,
+      logPrefix: '[test]',
+      workflowActivitySource: workflow.source,
+    });
+    projector.observeRaw(buildGoalStatusAttachment({ uuid: 'g-1', met: false, condition: 'ship it' }));
+
+    projector.finalizeInterruptedWorkOnShutdown();
+
+    expect(readGoalItem(fixture.getMetadata())).toMatchObject({ statusReason: 'interrupted' });
+    expect(workflow.lifecycleCalls()).toEqual(['finalize']);
+  });
+
+  it('finalizeInterruptedWorkOnShutdown resolves BEFORE the drain, so the resolved state is what gets written', async () => {
+    const fixture = createSessionFixture();
+    const workflow = createWorkflowActivitySourceFake();
+    const projector = createClaudeSessionTranscriptProjector({
+      session: fixture.session,
+      logPrefix: '[test]',
+      workflowActivitySource: workflow.source,
+    });
+
+    projector.finalizeInterruptedWorkOnShutdown();
+    await projector.flushWorkflowActivity();
+    projector.reset();
+
+    expect(workflow.lifecycleCalls()).toEqual(['finalize', 'flush', 'dispose']);
+  });
+
+  it('finalizeInterruptedWorkOnShutdown is a no-op without a workflow source', () => {
+    const fixture = createSessionFixture();
+    const projector = createClaudeSessionTranscriptProjector({
+      session: fixture.session,
+      logPrefix: '[test]',
+    });
+
+    expect(() => projector.finalizeInterruptedWorkOnShutdown()).not.toThrow();
   });
 
   it('is a no-op without a workflow source (goal/work-state path unchanged)', async () => {

@@ -12,7 +12,11 @@ import {
   type SessionSystemRecordPageResponse,
 } from '@happier-dev/protocol';
 
-import { createHttpStatusError, isAuthenticationStatus } from '@/api/client/httpStatusError';
+import {
+  createHttpStatusError,
+  createInvalidResponseShapeError,
+  isAuthenticationStatus,
+} from '@/api/client/httpStatusError';
 import { throwIfCliClientUpgradeRequired } from '@/api/clientCompatibility/cliClientCompatibility';
 import { configuration } from '@/configuration';
 import { resolveServerHttpBaseUrl } from './serverHttpBaseUrl';
@@ -38,7 +42,10 @@ function throwUnexpectedHttpStatusError(status: number, message: string): never 
 function parseOrThrow<T>(schema: { safeParse: (value: unknown) => { success: boolean; data?: T } }, payload: unknown, message: string): T {
   const parsed = schema.safeParse(payload);
   if (!parsed.success || !parsed.data) {
-    throw new Error(message);
+    // The response ARRIVED and this build's schema refused it — a version skew, not a blip. Minting
+    // it as deterministic is what stops a writer from re-sending the same request forever: a plain
+    // statusless Error is indistinguishable from a dropped socket, which must stay retryable.
+    throw createInvalidResponseShapeError(message);
   }
   return parsed.data;
 }
@@ -57,9 +64,10 @@ function handleCommonStatus(status: number, payload: unknown, route: string): vo
     throwAuthenticationStatusError(status);
   }
   if (status === 404) {
-    const err = new Error('Session not found');
-    (err as { code?: string }).code = 'session_not_found';
-    throw err;
+    // Carries the status as well as the stable code: a writer that retries on failure needs to see
+    // that this refusal is permanent, and a statusless error reads as an unclassifiable blip and is
+    // retried forever. Callers branching on `code` are unaffected.
+    throw createHttpStatusError(404, 'Session not found', 'session_not_found');
   }
   if (status !== 200) {
     throwUnexpectedHttpStatusError(status, `Unexpected status from ${route}: ${status}`);

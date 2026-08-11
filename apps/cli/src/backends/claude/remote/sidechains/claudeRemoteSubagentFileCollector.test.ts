@@ -786,3 +786,156 @@ describe('ClaudeRemoteSubagentFileCollector', () => {
     }
   });
 });
+
+/**
+ * Registration by id — the entry point a caller uses when it ALREADY KNOWS the file.
+ *
+ * Every sidechain this collector imports used to be discovered the same way: watch a `Task`/`Agent`
+ * tool use, wait for its result, resolve the agent's JSONL. A workflow agent has no such tool call —
+ * its run has ONE `Workflow` call and many `agent-<id>.jsonl` sidecars — but the journal follower is
+ * already holding the directory those files sit in. These cases prove the handover lands on the SAME
+ * import path (follow, dedupe, mark, emit) rather than a second importer.
+ */
+describe('ClaudeRemoteSubagentFileCollector.registerSidechainFile', () => {
+  it('imports a file handed to it directly, with no tool call anywhere', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'happy-workflow-sidechains-'));
+    const jsonlPath = join(dir, 'agent-a1.jsonl');
+    const sidechainId = 'workflow_agent_sidechain:toolu_wf:a1';
+
+    const promptRoot = {
+      type: 'user',
+      uuid: 'u0',
+      isSidechain: true,
+      agentId: 'a1',
+      message: { role: 'user', content: 'You are lane one. Do the thing.' },
+    };
+    const assistant = {
+      type: 'assistant',
+      uuid: 'a1-msg',
+      isSidechain: true,
+      agentId: 'a1',
+      message: { role: 'assistant', content: [{ type: 'text', text: 'lane one working' }] },
+    };
+    await writeFile(jsonlPath, makeJsonl([promptRoot, assistant]), 'utf8');
+
+    const imported: Array<{ body: RawJSONLines; meta: Record<string, unknown> }> = [];
+    const collector = new ClaudeRemoteSubagentFileCollector({
+      emitImported: (body: RawJSONLines, meta: Record<string, unknown>) => imported.push({ body, meta }),
+      watchFile: () => () => {},
+    });
+
+    try {
+      await collector.registerSidechainFile({
+        sidechainId,
+        agentId: 'a1',
+        filePath: jsonlPath,
+        source: 'workflow-agent',
+      });
+      await collector.syncAll();
+
+      // The prompt is KEPT for a workflow agent. The skip exists because the remote launcher
+      // synthesises a prompt root from the `Task` tool_use; nothing synthesises one here, so
+      // skipping it would drop the only record that says what the agent was asked to do.
+      expect(imported.map((entry) => entry.body.type)).toEqual(['user', 'assistant']);
+      for (const entry of imported) {
+        expect(entry.body.isSidechain).toBe(true);
+        expect(entry.body.sidechainId).toBe(sidechainId);
+        expect(entry.meta).toMatchObject({
+          importedFrom: 'claude-subagent-file',
+          claudeAgentId: 'a1',
+          sidechainId,
+        });
+      }
+    } finally {
+      collector.cleanup();
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps three agents of one run in three disjoint sidechains', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'happy-workflow-sidechains-'));
+    const agentIds = ['a1', 'a2', 'a3'];
+    await Promise.all(agentIds.map((agentId) => writeFile(
+      join(dir, `agent-${agentId}.jsonl`),
+      makeJsonl([{
+        type: 'assistant',
+        uuid: `${agentId}-msg`,
+        isSidechain: true,
+        message: { role: 'assistant', content: [{ type: 'text', text: `work from ${agentId}` }] },
+      }]),
+      'utf8',
+    )));
+
+    const imported: Array<{ body: RawJSONLines; meta: Record<string, unknown> }> = [];
+    const collector = new ClaudeRemoteSubagentFileCollector({
+      emitImported: (body: RawJSONLines, meta: Record<string, unknown>) => imported.push({ body, meta }),
+      watchFile: () => () => {},
+    });
+
+    try {
+      for (const agentId of agentIds) {
+        await collector.registerSidechainFile({
+          sidechainId: `workflow_agent_sidechain:toolu_wf:${agentId}`,
+          agentId,
+          filePath: join(dir, `agent-${agentId}.jsonl`),
+          source: 'workflow-agent',
+        });
+      }
+      await collector.syncAll();
+
+      const bySidechain = new Map<string, string[]>();
+      for (const entry of imported) {
+        const id = String(entry.body.sidechainId);
+        const texts = ((entry.body as any).message?.content ?? []).map((part: any) => part.text);
+        bySidechain.set(id, [...(bySidechain.get(id) ?? []), ...texts]);
+      }
+
+      expect([...bySidechain.keys()].sort()).toEqual([
+        'workflow_agent_sidechain:toolu_wf:a1',
+        'workflow_agent_sidechain:toolu_wf:a2',
+        'workflow_agent_sidechain:toolu_wf:a3',
+      ]);
+      expect(bySidechain.get('workflow_agent_sidechain:toolu_wf:a1')).toEqual(['work from a1']);
+      expect(bySidechain.get('workflow_agent_sidechain:toolu_wf:a2')).toEqual(['work from a2']);
+      expect(bySidechain.get('workflow_agent_sidechain:toolu_wf:a3')).toEqual(['work from a3']);
+    } finally {
+      collector.cleanup();
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('does not re-import when the same file is registered again', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'happy-workflow-sidechains-'));
+    const jsonlPath = join(dir, 'agent-a1.jsonl');
+    await writeFile(jsonlPath, makeJsonl([{
+      type: 'assistant',
+      uuid: 'a1-msg',
+      isSidechain: true,
+      message: { role: 'assistant', content: [{ type: 'text', text: 'once' }] },
+    }]), 'utf8');
+
+    const imported: RawJSONLines[] = [];
+    const collector = new ClaudeRemoteSubagentFileCollector({
+      emitImported: (body: RawJSONLines) => imported.push(body),
+      watchFile: () => () => {},
+    });
+
+    try {
+      const register = () => collector.registerSidechainFile({
+        sidechainId: 'workflow_agent_sidechain:toolu_wf:a1',
+        agentId: 'a1',
+        filePath: jsonlPath,
+        source: 'workflow-agent',
+      });
+      await register();
+      await collector.syncAll();
+      await register();
+      await collector.syncAll();
+
+      expect(imported).toHaveLength(1);
+    } finally {
+      collector.cleanup();
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+});

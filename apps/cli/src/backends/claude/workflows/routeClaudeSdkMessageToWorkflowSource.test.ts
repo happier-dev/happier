@@ -80,14 +80,14 @@ describe('routeClaudeSdkMessageToWorkflowSource', () => {
 
   function setup() {
     const committed: SessionWorkflowRunSnapshotV1[] = [];
-    // commitRecord / writeHeadline are the durable-record + metadata write BOUNDARIES; the source
+    // commitRecord / writeHeadlines are the durable-record + metadata write BOUNDARIES; the source
     // itself (tracker + correlation parser) is real internal logic exercised end-to-end here.
     const source = createClaudeWorkflowActivitySource({
       backendId: 'claude',
       agentId: 'claude',
       getCurrentClaudeSessionId: () => SESSION_ID,
       commitRecord: async (snapshot) => { committed.push(snapshot); },
-      writeHeadline: () => {},
+      writeHeadlines: () => {},
       debounceMs: 300,
     });
     return { committed, source };

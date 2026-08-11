@@ -328,6 +328,33 @@ describe('claudeLocalLauncher', () => {
     expect(order).toEqual(['scanner-installed', 'workflow-armed', 'provider-started']);
   });
 
+  // RULING-14. Returning from `claudeLocal` IS the observation that the provider process is gone, so
+  // every workflow run and agent still live at that moment must be resolved before the drain —
+  // otherwise the roster paints them "Working" forever. Only the remote launcher used to do this.
+  it('resolves live workflow runs and agents when the local provider dies (RULING-14)', async () => {
+    const lifecycle: string[] = [];
+    mockCreateClaudeWorkflowActivitySourceForSession.mockResolvedValueOnce({
+      armStartupReconciliation: vi.fn(),
+      observeTranscriptMessage: vi.fn(),
+      getWorkflowOwnedAgentToolUseIds: vi.fn(() => new Set<string>()),
+      isWorkflowOwnedProviderTaskId: vi.fn(() => false),
+      isWorkflowOwnedTaskReference: vi.fn(() => false),
+      finalizeInterruptedActivityOnShutdown: vi.fn(() => { lifecycle.push('finalize'); }),
+      flush: vi.fn(async () => { lifecycle.push('flush'); }),
+      reconcileStartupInterruptedRuns: vi.fn(async () => {}),
+      dispose: vi.fn(() => { lifecycle.push('dispose'); }),
+    });
+    const { session } = createLocalHarness();
+    mockCreateSessionScanner.mockImplementationOnce(async () => createSessionScannerStub());
+    mockClaudeLocal.mockImplementationOnce(async () => {});
+
+    const { claudeLocalLauncher } = await import('./claudeLocalLauncher');
+    await claudeLocalLauncher(session);
+
+    // Resolve BEFORE the drain, or the durable write carries the still-live state.
+    expect(lifecycle).toEqual(['finalize', 'flush', 'dispose']);
+  });
+
   it('does not offer Runtime Activity or start Claude when local observer installation rejects', async () => {
     const providerTasks = {
       report: vi.fn(async () => {}),

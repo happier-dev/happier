@@ -1,9 +1,12 @@
 import {
   ACTIVITY_SESSION_SYSTEM_RECORD_KINDS,
   SESSION_SYSTEM_RECORD_ACTIVITY_NAMESPACE,
+  SessionBackgroundTaskRecordV1Schema,
   SessionWorkflowRunSnapshotV1Schema,
+  buildBackgroundTaskSystemRecordLocalId as buildBackgroundTaskSystemRecordLocalIdShared,
   buildWorkflowRunSystemRecordLocalId as buildWorkflowRunSystemRecordLocalIdShared,
   type ActivitySessionSystemRecordKind,
+  type SessionBackgroundTaskRecordV1,
   type SessionSystemRecordContent,
   type SessionSystemRecordNamespace,
   type SessionWorkflowRunSnapshotV1,
@@ -26,6 +29,7 @@ export const ACTIVITY_SYSTEM_RECORD_NAMESPACE = SESSION_SYSTEM_RECORD_ACTIVITY_N
 
 export const ACTIVITY_SYSTEM_RECORD_KINDS = {
   workflowRun: ACTIVITY_SESSION_SYSTEM_RECORD_KINDS[0],
+  backgroundTask: ACTIVITY_SESSION_SYSTEM_RECORD_KINDS[1],
 } as const satisfies Record<string, ActivitySessionSystemRecordKind>;
 
 /**
@@ -79,4 +83,47 @@ export function openWorkflowRunSystemRecordPayload(params: Readonly<{
   } catch {
     return null;
   }
+}
+
+/**
+ * Stable, idempotent local id for one background task's durable detail record. Re-exported through
+ * this module so CLI callers address `activity` records through one door, exactly as the workflow
+ * builder is.
+ */
+export function buildBackgroundTaskSystemRecordLocalId(params: Readonly<{ taskId: string }>): string {
+  return buildBackgroundTaskSystemRecordLocalIdShared(params);
+}
+
+function parseBackgroundTaskRecord(payload: unknown): SessionBackgroundTaskRecordV1 | null {
+  const parsed = SessionBackgroundTaskRecordV1Schema.safeParse(payload);
+  return parsed.success ? parsed.data : null;
+}
+
+/**
+ * Seals one `activity/background_task.v1` payload with the same encryption parity as its workflow
+ * sibling: an encrypted session stores an encrypted record and the server never decrypts.
+ *
+ * The schema parse here is load-bearing beyond typing. `SessionBackgroundTaskRecordV1Schema` is
+ * `.strip()`ed and bounds the label at the redactor's own truncation length, so a label that never
+ * went through `redactBackgroundCommand` fails to seal rather than persisting a raw command.
+ */
+export function sealBackgroundTaskSystemRecordPayload(params: Readonly<{
+  mode: SessionStoredContentEncryptionMode;
+  ctx?: SessionEncryptionContext;
+  payload: SessionBackgroundTaskRecordV1;
+}>): SessionSystemRecordContent {
+  const payload = parseBackgroundTaskRecord(params.payload);
+  if (!payload) {
+    throw new Error('Invalid activity background_task.v1 system record payload');
+  }
+  if (params.mode === 'plain') {
+    return { t: 'plain', v: payload };
+  }
+  if (!params.ctx) {
+    throw new Error('Missing session encryption context for encrypted activity system record');
+  }
+  return {
+    t: 'encrypted',
+    c: encryptSessionPayload({ ctx: params.ctx, payload }),
+  };
 }

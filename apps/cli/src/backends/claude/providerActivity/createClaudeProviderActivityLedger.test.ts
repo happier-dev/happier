@@ -14,6 +14,7 @@ describe('Claude provider task lifecycle', () => {
         })).toEqual({
             activity: null,
             interruptTarget: { type: 'active', taskId: 'async-agent' },
+            backgroundTask: null,
         });
         expect(normalizeClaudeProviderTaskEvent({
             type: 'system',
@@ -22,6 +23,7 @@ describe('Claude provider task lifecycle', () => {
         })).toEqual({
             activity: null,
             interruptTarget: { type: 'active', taskId: 'task-without-session' },
+            backgroundTask: null,
         });
         expect(normalizeClaudeProviderTaskEvent({
             type: 'system',
@@ -31,6 +33,7 @@ describe('Claude provider task lifecycle', () => {
         })).toEqual({
             activity: null,
             interruptTarget: { type: 'terminal', taskId: 'task-without-session' },
+            backgroundTask: null,
         });
         expect(readClaudeProviderTaskActivity({
             type: 'user',
@@ -81,6 +84,35 @@ describe('Claude provider task lifecycle', () => {
             task_id: 't1',
             status: 'completed',
         })).toBeNull();
+    });
+
+    it('admits an unknown but fully typed task type while an absent task type stays known-only', () => {
+        // PLAN 4.9.1 step 5: a known-foreground type defers to authenticated hook evidence, a
+        // known-background type admits, and an UNKNOWN but fully typed one degrades to background.
+        // The allowlist of two (`local_bash` | `local_workflow`) silently dropped every other
+        // detached shape - the exact failure t3code's denylist exists to prevent.
+        for (const taskType of ['shell', 'monitor', 'monitor_mcp', 'container_bash']) {
+            expect(readClaudeProviderTaskActivity({
+                type: 'system',
+                subtype: 'task_started',
+                session_id: 's1',
+                task_id: `bg-${taskType}`,
+                task_type: taskType,
+            })).toEqual({ type: 'started', sessionId: 's1', taskId: `bg-${taskType}` });
+        }
+        // Untyped input never reaches classification (PLAN 4.9.1 step 1): no `task_type` means no
+        // provider evidence of detached work, so liveness stays with the authenticated hook.
+        expect(readClaudeProviderTaskActivity({
+            type: 'system',
+            subtype: 'task_started',
+            session_id: 's1',
+            task_id: 'untyped-1',
+        })).toEqual({
+            type: 'started',
+            sessionId: 's1',
+            taskId: 'untyped-1',
+            admission: 'known-only',
+        });
     });
 
     it('keeps local/remote Agent typed starts and unknown progress non-admitting', () => {
@@ -317,6 +349,54 @@ describe('readClaudeSessionHookProviderTaskActivity', () => {
 });
 
 describe('createClaudeProviderActivityLedger', () => {
+    it('never lets a foreign session raise this ledger\'s active provider-task count', () => {
+        // PLAN 4.9.1 step 2 (identity). `hasActiveProviderTasks()` holds THIS session's turn open,
+        // so another session's typed lifecycle row must be inert here - not merely stored under a
+        // different key, where it still counts.
+        const ledger = createClaudeProviderActivityLedger();
+        ledger.noteOwnedSessionId('claude-session-1');
+
+        const foreign = readClaudeProviderTaskActivity({
+            type: 'system',
+            subtype: 'task_started',
+            session_id: 'claude-session-2',
+            task_id: 'bash-1',
+            task_type: 'local_bash',
+        });
+        if (!foreign) throw new Error('expected typed started activity');
+
+        expect(ledger.apply(foreign)).toBe(false);
+        expect(ledger.getActiveProviderTaskCount()).toBe(0);
+        expect(ledger.hasActiveProviderTasks()).toBe(false);
+        expect(ledger.getActiveProviderTaskBlockers()).toEqual([]);
+
+        const owned = readClaudeProviderTaskActivity({
+            type: 'system',
+            subtype: 'task_started',
+            session_id: 'claude-session-1',
+            task_id: 'bash-2',
+            task_type: 'local_bash',
+        });
+        if (!owned) throw new Error('expected typed started activity');
+        expect(ledger.apply(owned)).toBe(true);
+        expect(ledger.getActiveProviderTaskCount()).toBe(1);
+    });
+
+    it('keeps every session id this runtime has owned admissible across a provider session change', () => {
+        // The Claude session id moves within one Happier session (resume, `init`, compact boundary),
+        // and the ledger outlives every one of them. Ownership is therefore a lineage, not a single
+        // current id - otherwise a compaction would make live tasks foreign to their own ledger.
+        const ledger = createClaudeProviderActivityLedger();
+        ledger.noteOwnedSessionId('claude-session-1');
+        ledger.noteOwnedSessionId('claude-session-2');
+
+        expect(ledger.apply({ type: 'started', sessionId: 'claude-session-1', taskId: 'pre-compact' })).toBe(true);
+        expect(ledger.apply({ type: 'started', sessionId: 'claude-session-2', taskId: 'post-compact' })).toBe(true);
+        expect(ledger.getActiveProviderTaskCount()).toBe(2);
+        expect(ledger.apply({ type: 'started', sessionId: 'claude-session-3', taskId: 'foreign' })).toBe(false);
+        expect(ledger.getActiveProviderTaskCount()).toBe(2);
+    });
+
     it('keys membership by exact session/task tuple and removes only the exact sibling', () => {
         const ledger = createClaudeProviderActivityLedger();
         ledger.apply({ type: 'started', sessionId: 's1', taskId: 'same' });

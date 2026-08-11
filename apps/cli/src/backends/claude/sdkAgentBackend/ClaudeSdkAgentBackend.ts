@@ -406,25 +406,37 @@ export class ClaudeSdkAgentBackend implements AgentBackend {
     const taskFacts = normalizeClaudeProviderTaskEvent(msg);
     const taskActivity = taskFacts.activity;
     if (taskActivity) this.providerActivityLedger.apply(taskActivity);
-    if (taskFacts.interruptTarget?.type === 'active') {
+    // The cancellation target is deliberately BROADER than Activity membership - a typed task that
+    // names no session stays actionable - but broader is not unowned. A row that names ANOTHER
+    // session is the one case we can prove is not ours, read from the same owner the admission gate
+    // uses (PLAN 4.9.1 step 2). Adopting it would point `stopTask` at someone else's work and, on
+    // its own, keep this runtime out of `idle` for as long as that foreign task lives.
+    const isForeignTaskRow = (
+      taskActivity !== null
+      && !this.providerActivityLedger.isOwnedSessionId(taskActivity.sessionId)
+    );
+    // A foreign row simply has no target from this runtime's point of view. Everything else about
+    // the message is unchanged: it still flows through the rest of this handler exactly as before.
+    const interruptTarget = isForeignTaskRow ? null : taskFacts.interruptTarget;
+    if (interruptTarget?.type === 'active') {
       const startsNewTarget = (
         type === 'user'
         || (type === 'system' && (msg as SDKSystemMessage).subtype === 'task_started')
       );
       if (startsNewTarget || !this.activeTaskId) {
-        this.activeTaskId = taskFacts.interruptTarget.taskId;
+        this.activeTaskId = interruptTarget.taskId;
         this.activeTaskSessionId = taskActivity?.sessionId ?? null;
       }
     } else if (
-      taskFacts.interruptTarget?.type === 'terminal'
-      && taskFacts.interruptTarget.taskId === this.activeTaskId
+      interruptTarget?.type === 'terminal'
+      && interruptTarget.taskId === this.activeTaskId
       && taskActivity?.type === 'terminal'
       && (
         this.activeTaskSessionId === null
         || taskActivity.sessionId === this.activeTaskSessionId
       )
     ) {
-      const terminalTaskId = taskFacts.interruptTarget.taskId;
+      const terminalTaskId = interruptTarget.taskId;
       const activeBlockers = this.providerActivityLedger
         .getActiveProviderTaskBlockers()
         .filter((blocker) => blocker.taskId !== terminalTaskId);
@@ -600,6 +612,11 @@ export class ClaudeSdkAgentBackend implements AgentBackend {
     if (!sessionId) return;
     const normalized = sessionId as SessionId;
     this.vendorSessionId = normalized;
+    // PLAN 4.9.1 step 2. This backend owns its OWN provider-activity ledger, so it arms the identity
+    // gate at its own session-identity chokepoint. A lineage, not a swap: `init` mints a new vendor
+    // session id at every compact boundary, and a task started before one must not become foreign to
+    // the ledger that is counting it.
+    this.providerActivityLedger.noteOwnedSessionId(normalized);
     if (!this.acceptedSessionIds.has(normalized)) {
       this.acceptedSessionIds.add(normalized);
       this.emit({ type: 'event', name: 'vendor_session_id', payload: { sessionId: normalized } });

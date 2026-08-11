@@ -568,9 +568,24 @@ export async function claudeRemoteLauncher(
     // the goal source (`onRawTranscriptValue`). Its CWF4 owned-id filter is applied at the work-state
     // merge chokepoint below so workflow agents do not ALSO render as top-level task/todo rows. Null
     // when no credentials are available yet — the goal / work-state path is unaffected.
+    // The sidechain importer is created further down (it needs the message queue), so the workflow
+    // source reaches it through this holder rather than the other way round: a workflow run cannot
+    // start before the launcher has finished wiring, so the holder is always set by the time the
+    // journal follower asks for it.
+    let subagentFileCollectorRef: ClaudeRemoteSubagentFileCollector | null = null;
     const workflowActivitySource = await createClaudeWorkflowActivitySourceForSession({
         session,
         logPrefix: '[remote]',
+        // Workflow agent transcripts ride the SAME importer as `Task` sub-agent transcripts: one
+        // follower budget, one dedupe, one `isSidechain`/`sidechainId` marking rule.
+        registerWorkflowAgentTranscript: async (registration) => {
+            await subagentFileCollectorRef?.registerSidechainFile({
+                sidechainId: registration.sidechainId,
+                agentId: registration.agentId,
+                filePath: registration.filePath,
+                source: 'workflow-agent',
+            });
+        },
         getCurrentClaudeSessionId: () => {
             const claudeSessionId = session.client.getMetadataSnapshot?.()?.claudeSessionId;
             return typeof claudeSessionId === 'string' && claudeSessionId.trim().length > 0 ? claudeSessionId.trim() : null;
@@ -710,6 +725,7 @@ export async function claudeRemoteLauncher(
             });
         },
     });
+    subagentFileCollectorRef = subagentFileCollector;
     // Set up callback to release delayed messages when permission is requested
     permissionHandler.setOnPermissionRequest((toolCallId: string) => {
         void messageQueue.releaseToolCall(toolCallId);
@@ -2173,8 +2189,18 @@ export async function claudeRemoteLauncher(
         // active; the goal may resume) before the goal source stops observing.
         goalWorkStateSource.finalizeInterruptedGoalOnShutdown();
 
-        // Drain any pending workflow-activity writes, then stop scheduling.
+        // RULING-14: workflow runs, their agents and their `Task` children all live INSIDE the
+        // Claude query, so this teardown is the observation that they are over — resolve them
+        // (`stopped`/`interrupted` + `cancelled` agents, never `failed`) before draining, exactly as
+        // the goal source does three lines above. Without this a run and its agents stay painted as
+        // live forever. Happier execution runs are untouched: they own their own backend and query,
+        // genuinely outlive this process, and are answered by their pid-backed marker registry.
         if (workflowActivitySource) {
+            try {
+                workflowActivitySource.finalizeInterruptedActivityOnShutdown();
+            } catch (error) {
+                logger.debug('[remote]: failed to resolve interrupted Claude workflow activity (non-fatal)', error);
+            }
             try {
                 await workflowActivitySource.flush();
             } catch (error) {

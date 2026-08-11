@@ -5,6 +5,7 @@ import {
 import { logger } from '@/ui/logger';
 
 import type { Session } from '../session';
+import type { ClaudeWorkflowAgentTranscriptRegistration } from './claudeWorkflowJournalFollower';
 import {
   wireClaudeWorkflowActivitySource,
   type WiredClaudeWorkflowActivitySource,
@@ -25,6 +26,13 @@ export async function createClaudeWorkflowActivitySourceForSession(params: Reado
   session: Session;
   logPrefix: string;
   getCurrentClaudeSessionId: () => string | null;
+  /**
+   * Hand a workflow agent's sidecar transcript to the launcher's sidechain importer — the same one
+   * that imports `Task` sub-agent transcripts. Omitted by launchers that run no importer.
+   */
+  registerWorkflowAgentTranscript?: (
+    registration: ClaudeWorkflowAgentTranscriptRegistration,
+  ) => void | Promise<void>;
 }>): Promise<WiredClaudeWorkflowActivitySource | null> {
   const sessionId = params.session.sessionId ?? params.session.client.sessionId;
   if (!sessionId) {
@@ -49,6 +57,7 @@ export async function createClaudeWorkflowActivitySourceForSession(params: Reado
   };
 
   const runtimeActivityAdapter = params.session.getProviderTaskRuntimeActivityAdapter?.() ?? null;
+  const providerActivityLedger = params.session.getProviderTaskActivityLedger?.() ?? null;
   const source = wireClaudeWorkflowActivitySource({
     backendId: 'claude',
     agentId: 'claude',
@@ -69,6 +78,12 @@ export async function createClaudeWorkflowActivitySourceForSession(params: Reado
           })
         ),
       }
+      : {}),
+    ...(providerActivityLedger
+      ? { isOwnedClaudeSessionId: (sessionId) => providerActivityLedger.isOwnedSessionId(sessionId) }
+      : {}),
+    ...(params.registerWorkflowAgentTranscript
+      ? { registerWorkflowAgentTranscript: params.registerWorkflowAgentTranscript }
       : {}),
     logPrefix: params.logPrefix,
   });

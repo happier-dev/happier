@@ -1,4 +1,11 @@
 import { normalizeClaudeAgentSdkProviderTaskId } from '@happier-dev/protocol';
+
+import {
+    readClaudeBackgroundTaskFact,
+    type ClaudeBackgroundTaskFact,
+} from './claudeBackgroundTaskEvent';
+import { resolveClaudeProviderTaskAdmission } from './claudeProviderTaskClassification';
+
 export {
     isTerminalClaudeAgentSdkProviderTaskStatus,
     normalizeClaudeAgentSdkProviderTaskId,
@@ -36,7 +43,19 @@ export type ClaudeProviderTaskInterruptTargetEvidence = Readonly<{
 export type ClaudeProviderTaskEventFacts = Readonly<{
     activity: ClaudeProviderTaskActivity | null;
     interruptTarget: ClaudeProviderTaskInterruptTargetEvidence | null;
+    /**
+     * The durable-record projection of the SAME row (PLAN 4.9). Independent of `activity`: a
+     * `known-only` start still describes a real task, and a terminal row still describes a real
+     * outcome, even when neither moves liveness.
+     */
+    backgroundTask: ClaudeBackgroundTaskFact | null;
 }>;
+
+const NO_TASK_FACTS: ClaudeProviderTaskEventFacts = {
+    activity: null,
+    interruptTarget: null,
+    backgroundTask: null,
+};
 
 function record(value: unknown): Readonly<Record<string, unknown>> | null {
     return value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -79,13 +98,13 @@ function readTaskId(value: unknown): string | null {
  */
 export function normalizeClaudeProviderTaskEvent(value: unknown): ClaudeProviderTaskEventFacts {
     const row = record(value);
-    if (!row) return { activity: null, interruptTarget: null };
+    if (!row) return NO_TASK_FACTS;
 
     if (row.type === 'user') {
         const toolResult = record(row.toolUseResult ?? row.tool_use_result);
         const status = normalizedString(toolResult?.status);
         if (status !== 'async_launched' && status !== 'remote_launched') {
-            return { activity: null, interruptTarget: null };
+            return NO_TASK_FACTS;
         }
         const taskId = normalizeClaudeAgentSdkProviderTaskId(
             toolResult?.taskId
@@ -96,39 +115,46 @@ export function normalizeClaudeProviderTaskEvent(value: unknown): ClaudeProvider
         return {
             activity: null,
             interruptTarget: taskId ? { type: 'active', taskId } : null,
+            backgroundTask: null,
         };
     }
 
-    if (row.type !== 'system') return { activity: null, interruptTarget: null };
+    if (row.type !== 'system') return NO_TASK_FACTS;
     const sessionId = normalizedString(row.session_id);
     const taskId = normalizeClaudeAgentSdkProviderTaskId(row.task_id);
-    if (!taskId) return { activity: null, interruptTarget: null };
+    if (!taskId) return NO_TASK_FACTS;
     const interruptTarget = row.subtype === 'task_started' || row.subtype === 'task_progress'
         ? { type: 'active' as const, taskId }
         : row.subtype === 'task_notification' || row.subtype === 'task_updated'
             ? { type: 'terminal' as const, taskId }
             : null;
-    if (!sessionId) return { activity: null, interruptTarget };
+    if (!sessionId) return { activity: null, interruptTarget, backgroundTask: null };
+    // ONE parse, two projections: liveness below, durable record here. Both read the row the
+    // identity checks above have already validated (PLAN 4.9.1 steps 1-2).
+    const backgroundTask = readClaudeBackgroundTaskFact(row, { sessionId, taskId });
 
     if (row.subtype === 'task_started') {
-        const taskType = normalizedString(row.task_type ?? row.taskType);
-        const providerProvesBackground = taskType === 'local_bash' || taskType === 'local_workflow';
+        const admission = resolveClaudeProviderTaskAdmission(
+            normalizedString(row.task_type ?? row.taskType),
+        );
         return {
             activity: {
                 type: 'started',
                 sessionId,
                 taskId,
-                ...(providerProvesBackground
-                    ? {}
-                    : { admission: 'known-only' as const }),
+                ...(admission === 'known-only'
+                    ? { admission: 'known-only' as const }
+                    : {}),
             },
             interruptTarget,
+            backgroundTask,
         };
     }
     if (row.subtype === 'task_progress') {
         return {
             activity: { type: 'progress', sessionId, taskId },
             interruptTarget,
+            backgroundTask,
         };
     }
     const notificationStatus = exactTerminalStatus(row.status);
@@ -136,6 +162,7 @@ export function normalizeClaudeProviderTaskEvent(value: unknown): ClaudeProvider
         return {
             activity: { type: 'terminal', terminalStatus: notificationStatus, sessionId, taskId },
             interruptTarget,
+            backgroundTask,
         };
     }
     const taskUpdatedStatus = record(row.patch)?.status;
@@ -155,9 +182,10 @@ export function normalizeClaudeProviderTaskEvent(value: unknown): ClaudeProvider
                 taskId,
             },
             interruptTarget,
+            backgroundTask,
         };
     }
-    return { activity: null, interruptTarget: null };
+    return NO_TASK_FACTS;
 }
 
 export function readClaudeProviderTaskActivity(
@@ -285,6 +313,23 @@ export function createClaudeProviderActivityLedger() {
             identity: ClaudeProviderTaskIdentity;
         }>;
     const tasks = new Map<string, ProviderTaskRecord>();
+    /**
+     * Every Claude session id this ledger has been told it owns (PLAN 4.9.1 step 2).
+     *
+     * A LINEAGE, not a single current id: the ledger is created once per Happier session
+     * (`session.ts` `getProviderTaskActivityLedger`) and outlives every provider session id it
+     * passes through — resume, `init`, and each compact boundary mint a new one. Pinning a single
+     * "current" id would make a live task foreign to its own ledger the moment the session
+     * compacted.
+     *
+     * Empty means ownership was never declared, and an undeclared owner cannot call anything
+     * foreign — so admission is unchanged for callers that never note an id.
+     */
+    const ownedSessionIds = new Set<string>();
+
+    const isForeignSession = (sessionId: string): boolean => (
+        ownedSessionIds.size > 0 && !ownedSessionIds.has(sessionId)
+    );
 
     const noteActive = (
         identity: ClaudeProviderTaskIdentity,
@@ -306,7 +351,25 @@ export function createClaudeProviderActivityLedger() {
     };
 
     return {
+        /**
+         * Declare one Claude session id this ledger speaks for. Called wherever the runtime learns
+         * or re-learns its provider session identity, so ownership follows the session rather than
+         * being guessed from traffic.
+         */
+        noteOwnedSessionId(sessionId: string): void {
+            const normalized = normalizedString(sessionId);
+            if (normalized) ownedSessionIds.add(normalized);
+        },
+        /**
+         * The SAME predicate the admission gate applies, exposed so the durable background-task
+         * path answers "is this our session?" from this one owner instead of re-deriving it from a
+         * single current session id (which a compaction would invalidate).
+         */
+        isOwnedSessionId: (sessionId: string): boolean => !isForeignSession(sessionId),
         apply(activity: ClaudeProviderTaskActivity): boolean {
+            // Identity gate: another session's typed lifecycle row must not raise THIS session's
+            // active count, because that count holds this session's turn open.
+            if (isForeignSession(activity.sessionId)) return false;
             const key = keyOf(activity);
             const current = tasks.get(key);
             if (activity.type === 'terminal') {

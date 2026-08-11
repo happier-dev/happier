@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
-import { parseClaudeWorkflowFact } from './claudeWorkflowCorrelation';
+import {
+  createClaudeWorkflowAgentProfileWrapper,
+  createClaudeWorkflowScriptWrapper,
+  parseClaudeWorkflowFact,
+} from './claudeWorkflowCorrelation';
 
 describe('parseClaudeWorkflowFact', () => {
   it('extracts an explicit Workflow tool-use start without leaking the script body', () => {
@@ -78,6 +82,170 @@ await parallel([
         { label: 'pin-ux', phaseTitle: 'Investigate' },
         { label: 'architecture-feasibility', phaseTitle: 'Assess' },
       ],
+    });
+  });
+
+  it('carries the script FILE path of a `Workflow {scriptPath}` tool-use (the shape every recent run used)', () => {
+    // The Workflow tool has two input shapes. Every production run launched by path scraped zero
+    // labels and zero phases because nothing read `scriptPath`, so every agent fell to an ordinal.
+    const fact = parseClaudeWorkflowFact({
+      type: 'assistant',
+      session_id: 'claude-session-1',
+      uuid: 'event-1',
+      message: {
+        content: [{
+          type: 'tool_use',
+          id: 'toolu_wf',
+          name: 'Workflow',
+          input: { scriptPath: '/tmp/aau/wave20.js' },
+        }],
+      },
+    });
+
+    expect(fact).toEqual({
+      kind: 'workflow-start',
+      workflowToolUseId: 'toolu_wf',
+      title: 'Workflow',
+      scriptPath: '/tmp/aau/wave20.js',
+      sourceSessionId: 'claude-session-1',
+      uuid: 'event-1',
+    });
+  });
+
+  it('carries the script FILE path exposed by the async launch result', () => {
+    const fact = parseClaudeWorkflowFact({
+      type: 'user',
+      session_id: 'claude-session-1',
+      uuid: 'event-workflow-launch',
+      message: {
+        content: [{
+          type: 'tool_result',
+          tool_use_id: 'toolu_wf',
+          is_error: false,
+          content: 'Async workflow launched.',
+        }],
+      },
+      toolUseResult: {
+        status: 'async_launched',
+        taskType: 'local_workflow',
+        taskId: 'workflow-task-1',
+        workflowName: 'aau-wave-20',
+        runId: 'wf_00c5c448-f1b',
+        transcriptDir: '/tmp/wf_00c5c448-f1b',
+        scriptPath: '/tmp/aau/wave20.js',
+      },
+    });
+
+    expect(fact).toMatchObject({
+      kind: 'workflow-launch',
+      workflowToolUseId: 'toolu_wf',
+      scriptPath: '/tmp/aau/wave20.js',
+      transcriptDir: '/tmp/wf_00c5c448-f1b',
+    });
+  });
+
+  it('scrapes a file-sourced workflow script into the same start fact an inline script produces', () => {
+    const fact = parseClaudeWorkflowFact(createClaudeWorkflowScriptWrapper({
+      workflowToolUseId: 'toolu_wf',
+      script: `
+export const meta = { name: 'aau-wave-20' }
+
+phase('Investigate')
+await parallel([
+  agent(A, { label: 'INV-1 naming', phase: 'Investigate' }),
+  agent(B, { label: 'INV-2 timing', phase: 'Investigate' }),
+])
+`,
+      sourceSessionId: 'claude-session-1',
+    }));
+
+    expect(fact).toEqual({
+      kind: 'workflow-start',
+      workflowToolUseId: 'toolu_wf',
+      title: 'aau-wave-20',
+      phases: [{ kind: 'phase', index: 1, title: 'Investigate' }],
+      journalAgentSpecs: [
+        { label: 'INV-1 naming', phaseTitle: 'Investigate' },
+        { label: 'INV-2 timing', phaseTitle: 'Investigate' },
+      ],
+      sourceSessionId: 'claude-session-1',
+    });
+  });
+
+  describe('workflow agent profile (the agent transcript beside the journal)', () => {
+    it('titles a running agent from the lane heading its own prompt declares', () => {
+      const fact = parseClaudeWorkflowFact(createClaudeWorkflowAgentProfileWrapper({
+        workflowToolUseId: 'toolu_wf',
+        agentId: 'a48f516fb1d79d150',
+        prompt: [
+          '## Program context',
+          'The r4.2 agent-activity unification has landed.',
+          '',
+          '# LANE CLI-1 — the workflow tracker tells the truth',
+          'Read the evidence first.',
+        ].join('\n'),
+        model: 'opus',
+        sourceSessionId: 'claude-session-1',
+      }));
+
+      expect(fact).toEqual({
+        kind: 'workflow-agent-profile',
+        workflowToolUseId: 'toolu_wf',
+        agentId: 'a48f516fb1d79d150',
+        title: 'LANE CLI-1 — the workflow tracker tells the truth',
+        model: 'opus',
+        sourceSessionId: 'claude-session-1',
+      });
+    });
+
+    it('falls back to the prompt’s own top-level heading below shared program preamble', () => {
+      // Real shape from the run behind the user's screenshots: every sibling opens with the same
+      // `##` program preamble and declares its own lane as the first `#` heading.
+      const fact = parseClaudeWorkflowFact(createClaudeWorkflowAgentProfileWrapper({
+        workflowToolUseId: 'toolu_wf',
+        agentId: 'a48f516fb1d79d150',
+        prompt: [
+          '## What the user observed, from three screenshots of a live session',
+          '## Program context',
+          'The r4.2 agent-activity unification has landed.',
+          '# INV-2 — do we HAVE elapsed time, tokens and usage for each kind of agent?',
+          '### Sub-heading',
+        ].join('\n'),
+      }));
+
+      expect(fact).toMatchObject({
+        title: 'INV-2 — do we HAVE elapsed time, tokens and usage for each kind of agent?',
+      });
+    });
+
+    it('asserts no title when the prompt declares no lane of its own', () => {
+      // Measured over 280 real multi-agent runs: the prompt's FIRST LINE is unique across siblings
+      // in only 15% of them, so titling by prompt head would paint N identical rows. A stable
+      // ordinal beats a non-discriminating title.
+      const fact = parseClaudeWorkflowFact(createClaudeWorkflowAgentProfileWrapper({
+        workflowToolUseId: 'toolu_wf',
+        agentId: 'a48f516fb1d79d150',
+        prompt: 'You are auditing the Happier monorepo at /Users/leeroy/dev (branch dev).\nRules:\n- READ ONLY.',
+      }));
+
+      expect(fact).toEqual({
+        kind: 'workflow-agent-profile',
+        workflowToolUseId: 'toolu_wf',
+        agentId: 'a48f516fb1d79d150',
+      });
+    });
+
+    it('bounds a prompt-derived title so a whole prompt can never become a row title', () => {
+      const fact = parseClaudeWorkflowFact(createClaudeWorkflowAgentProfileWrapper({
+        workflowToolUseId: 'toolu_wf',
+        agentId: 'agent-long',
+        prompt: `LANE ${'x'.repeat(4000)}`,
+      }));
+
+      expect(fact).toMatchObject({ kind: 'workflow-agent-profile', agentId: 'agent-long' });
+      const title = (fact as { title?: string }).title ?? '';
+      expect(title.length).toBeGreaterThan(0);
+      expect(title.length).toBeLessThanOrEqual(160);
     });
   });
 
@@ -473,6 +641,46 @@ await parallel([
       parentToolUseId: 'parent-tool',
       sourceSessionId: 'claude-session-1',
       uuid: 'event-3',
+    });
+  });
+
+  describe('subagent tool_result (the only terminal evidence a synchronous subagent emits)', () => {
+    const successfulToolResult = (toolUseId: string) => ({
+      type: 'user',
+      session_id: 'claude-session-1',
+      uuid: 'event-result',
+      message: {
+        content: [{
+          type: 'tool_result',
+          tool_use_id: toolUseId,
+          is_error: false,
+          content: [{ type: 'text', text: 'investigation complete' }],
+        }],
+      },
+      toolUseResult: { totalDurationMs: 4000 },
+    });
+
+    it('yields a completion only for a tool-use id the caller has proven is a subagent', () => {
+      expect(parseClaudeWorkflowFact(successfulToolResult('toolu_task'), {
+        isKnownSubagentToolUseId: (id) => id === 'toolu_task',
+      })).toEqual({
+        kind: 'subagent-result',
+        toolUseId: 'toolu_task',
+        status: 'complete',
+        resultPreview: 'investigation complete',
+        timeUsedSeconds: 4,
+        sourceSessionId: 'claude-session-1',
+        uuid: 'event-result',
+      });
+    });
+
+    it('yields nothing for an identical result belonging to any other tool', () => {
+      // A successful Read/Bash result is byte-identical to a successful Task result, so shape can
+      // never decide this — only correlation state can.
+      expect(parseClaudeWorkflowFact(successfulToolResult('toolu_read'), {
+        isKnownSubagentToolUseId: (id) => id === 'toolu_task',
+      })).toBeNull();
+      expect(parseClaudeWorkflowFact(successfulToolResult('toolu_task'))).toBeNull();
     });
   });
 });

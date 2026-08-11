@@ -106,7 +106,10 @@ function toExecutionRunPublicState(state: TranscriptExecutionRunState): Executio
         runClass,
         ioMode,
         status: state.status,
-        startedAtMs: state.startedAtMs ?? state.finishedAtMs ?? 0,
+        // Never `?? state.finishedAtMs`: a start borrowed from the end reports every run it touches
+        // as having taken zero time, which is the defect the roster shipped for months (D-8). The
+        // wire field is required, so 0 is the unknown sentinel and renderers guard on `> 0`.
+        startedAtMs: state.startedAtMs ?? 0,
         ...(typeof state.finishedAtMs === 'number' ? { finishedAtMs: state.finishedAtMs } : {}),
     });
     return parsed.success ? parsed.data : null;

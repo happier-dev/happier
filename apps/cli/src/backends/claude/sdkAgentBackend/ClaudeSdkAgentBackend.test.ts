@@ -72,7 +72,7 @@ const rl = readline.createInterface({ input: process.stdin });
 	    if (toolName && turn === 1) {
 	      // Request permission for a tool call; the parent will reply with a control_response.
 	      const reqId = 'req-1';
-    process.stdout.write(JSON.stringify({ type: 'control_request', request_id: reqId, request: { subtype: 'can_use_tool', tool_name: toolName, input: toolInput } }) + '\\n');
+    process.stdout.write(JSON.stringify({ type: 'control_request', request_id: reqId, request: { subtype: 'can_use_tool', tool_name: toolName, input: toolInput, tool_use_id: 'toolu_permission_1' } }) + '\\n');
     const onControl = (line2) => {
       const t2 = String(line2 || '').trim();
       if (!t2) return;

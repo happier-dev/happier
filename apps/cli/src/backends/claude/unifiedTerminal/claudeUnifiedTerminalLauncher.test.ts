@@ -25,10 +25,18 @@ const mocks = vi.hoisted(() => ({
     statusCode: null,
     statusMessage: null,
   })),
+  // Defaults to `null`, which is exactly what the real factory returns for this file's session stub
+  // (it exposes no system-record writer). Cases that need to observe the source inject one per call;
+  // the return type is widened here so an injected fake needs no cast at the call site.
+  createClaudeWorkflowActivitySourceForSession: vi.fn(async (): Promise<unknown> => null),
 }));
 
 vi.mock('./runClaudeUnifiedTerminalSession', () => ({
   runClaudeUnifiedTerminalSession: mocks.runClaudeUnifiedTerminalSession,
+}));
+
+vi.mock('../workflows/createClaudeWorkflowActivitySourceForSession', () => ({
+  createClaudeWorkflowActivitySourceForSession: mocks.createClaudeWorkflowActivitySourceForSession,
 }));
 
 vi.mock('@/terminal/attachment/tmuxAttach', () => ({
@@ -4299,5 +4307,33 @@ describe('claudeUnifiedTerminalLauncher', () => {
       if (previousGateEnv === undefined) delete process.env.HAPPIER_FEATURE_CLAUDE_UNIFIED_TUI_RUNTIME_CONTROL__ENABLED;
       else process.env.HAPPIER_FEATURE_CLAUDE_UNIFIED_TUI_RUNTIME_CONTROL__ENABLED = previousGateEnv;
     }
+  });
+
+  // RULING-14. This launcher's teardown IS the observation that the Claude process is gone, so a
+  // workflow run and its agents that were still live at that moment must be resolved — otherwise the
+  // roster paints them "Working" forever. The remote launcher already did this; this one only
+  // drained, which is why the fix was live on one launcher out of three.
+  it('resolves live workflow runs and agents when the provider dies (RULING-14)', async () => {
+    setProcessTty(false);
+    const lifecycle: string[] = [];
+    mocks.createClaudeWorkflowActivitySourceForSession.mockResolvedValueOnce({
+      observeTranscriptMessage: vi.fn(),
+      getWorkflowOwnedAgentToolUseIds: vi.fn(() => new Set<string>()),
+      isWorkflowOwnedProviderTaskId: vi.fn(() => false),
+      isWorkflowOwnedTaskReference: vi.fn(() => false),
+      finalizeInterruptedActivityOnShutdown: vi.fn(() => { lifecycle.push('finalize'); }),
+      flush: vi.fn(async () => { lifecycle.push('flush'); }),
+      reconcileStartupInterruptedRuns: vi.fn(async () => {}),
+      armStartupReconciliation: vi.fn(),
+      dispose: vi.fn(() => { lifecycle.push('dispose'); }),
+    });
+    mocks.runClaudeUnifiedTerminalSession.mockImplementationOnce(async () => {});
+
+    await claudeUnifiedTerminalLauncher(createSession(), {
+      initialMode: { permissionMode: 'default', claudeUnifiedTerminalHost: 'tmux' },
+    });
+
+    // Resolve BEFORE the drain, or the durable write carries the still-live state.
+    expect(lifecycle).toEqual(['finalize', 'flush', 'dispose']);
   });
 });

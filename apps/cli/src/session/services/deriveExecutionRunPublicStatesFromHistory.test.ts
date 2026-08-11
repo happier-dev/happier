@@ -195,4 +195,45 @@ describe('listExecutionRunPublicStatesFromHistoryRows', () => {
             },
         ]);
     });
+
+    it('never borrows the finish instant for a run whose start was never recorded (D-8)', () => {
+        const runs = listExecutionRunPublicStatesFromHistoryRows([
+            {
+                id: 'result-row',
+                createdAt: Number.NaN,
+                role: 'agent',
+                raw: {
+                    role: 'agent',
+                    content: {
+                        type: 'acp',
+                        provider: 'claude',
+                        data: {
+                            type: 'tool-result',
+                            callId: 'call_hist_no_start',
+                            output: {
+                                _happier: { canonicalToolName: 'SubAgentRun' },
+                                runId: 'run_hist_no_start',
+                                callId: 'call_hist_no_start',
+                                sidechainId: 'call_hist_no_start',
+                                intent: 'plan',
+                                backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+                                permissionMode: 'workspace_write',
+                                retentionPolicy: 'ephemeral',
+                                runClass: 'bounded',
+                                ioMode: 'request_response',
+                                status: 'succeeded',
+                                finishedAtMs: 16_000,
+                            },
+                        },
+                    },
+                },
+            },
+        ]);
+
+        expect(runs).toHaveLength(1);
+        expect(runs[0]?.finishedAtMs).toBe(16_000);
+        // A start taken from the finish reports the run as having taken zero time. The wire field is
+        // required, so 0 is the unknown sentinel and readers must not print it as an instant.
+        expect(runs[0]?.startedAtMs).toBe(0);
+    });
 });

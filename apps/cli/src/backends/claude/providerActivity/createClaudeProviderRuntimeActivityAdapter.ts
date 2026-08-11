@@ -92,7 +92,11 @@ export function createClaudeProviderRuntimeActivityAdapter(params: Readonly<{
             if (!isCurrentRuntime()) return;
             observationComplete = false;
             if (observationState !== 'active') return;
-            await enqueueProjection(currentProjection(), reasonCode);
+            // Observation loss is published as `unknown` whatever the ledger still holds. Tasks left
+            // in flight when the query dies are not evidence of liveness — they are exactly the
+            // tasks whose outcome we can no longer observe. Projecting `active` from that residue
+            // is what left a dead session claiming background work forever.
+            await enqueueProjection({ state: 'unknown', activeCount: 0 }, reasonCode);
         },
     };
 }

@@ -49,6 +49,14 @@ export type WorkflowStartFact = Readonly<{
   title: string;
   phases?: readonly WorkflowProgressPhaseFact[];
   journalAgentSpecs?: readonly WorkflowJournalAgentSpecFact[];
+  /**
+   * Set when the tool-use named a script FILE instead of inlining it (`Workflow {scriptPath}`).
+   *
+   * The tool has two input shapes and only `{script}` carries the text inline, so a `{scriptPath}`
+   * launch has no phases and no agent labels until the file itself is read. The sidecar follower
+   * owns that read and feeds the bytes back through `createClaudeWorkflowScriptWrapper`.
+   */
+  scriptPath?: string;
   sourceSessionId?: string;
   uuid?: string;
 }>;
@@ -69,6 +77,8 @@ export type WorkflowLaunchFact = Readonly<{
   title?: string;
   summary?: string;
   transcriptDir?: string;
+  /** The workflow script file the launch ran, when the tool was invoked by path. */
+  scriptPath?: string;
   sourceSessionId?: string;
   uuid?: string;
 }>;
@@ -136,6 +146,33 @@ export type WorkflowJournalAgentSpecFact = Readonly<{
   phaseTitle?: string;
 }>;
 
+/**
+ * What a workflow agent's OWN sidecar transcript says about itself.
+ *
+ * The journal is the only naming channel a running workflow agent has, and a `started` entry is
+ * exactly `{type, key, agentId}` — a hex id and nothing else. The agent's own `agent-<id>.jsonl`
+ * (its first prompt) and `agent-<id>.meta.json` (its model) sit in the directory the journal
+ * follower already watches, so this fact carries the two things that directory can prove about an
+ * otherwise anonymous agent.
+ */
+export type WorkflowAgentProfileFact = Readonly<{
+  kind: 'workflow-agent-profile';
+  workflowToolUseId: string;
+  agentId: string;
+  /** Bounded, single-line title the agent's prompt declares about itself; absent when it declares none. */
+  title?: string;
+  model?: string;
+  /**
+   * The sidechain its own transcript was IMPORTED under, when the importer accepted the file.
+   *
+   * The third thing that directory can prove about an anonymous agent, and the only one that is a
+   * capability rather than a description: it is what lets a client open the agent. Absent means no
+   * transcript was imported — never "not yet" — so a row built from this fact stays unopenable.
+   */
+  sidechainId?: string;
+  sourceSessionId?: string;
+}>;
+
 export type WorkflowJournalFact = Readonly<{
   kind: 'workflow-journal';
   workflowToolUseId: string;
@@ -149,7 +186,33 @@ export type WorkflowJournalFact = Readonly<{
   sourceSessionId?: string;
 }>;
 
-export type ClaudeWorkflowFact = WorkflowStartFact | WorkflowLaunchFact | TaskLifecycleFact | SubagentStartFact | WorkflowJournalFact;
+/**
+ * The `tool_result` for a previously observed `Task` tool-use — a plain subagent finishing.
+ *
+ * A backgrounded subagent also emits `task_notification`/`task_updated`, but a SYNCHRONOUS one
+ * emits nothing except this result, so without it a plain subagent stays `active` forever. The
+ * tracker only applies it to tool-use ids it has already seen as `subagent-start`, so an unrelated
+ * tool result can never close an agent.
+ */
+export type SubagentResultFact = Readonly<{
+  kind: 'subagent-result';
+  toolUseId: string;
+  status: Extract<ClaudeActivityStatusSignal, 'complete' | 'failed'>;
+  summary?: string;
+  resultPreview?: string;
+  timeUsedSeconds?: number;
+  sourceSessionId?: string;
+  uuid?: string;
+}>;
+
+export type ClaudeWorkflowFact =
+  | WorkflowStartFact
+  | WorkflowLaunchFact
+  | TaskLifecycleFact
+  | SubagentStartFact
+  | SubagentResultFact
+  | WorkflowAgentProfileFact
+  | WorkflowJournalFact;
 
 const TASK_LIFECYCLE_SUBTYPES = new Set([
   'task_started',
@@ -158,23 +221,22 @@ const TASK_LIFECYCLE_SUBTYPES = new Set([
   'task_notification',
 ]);
 
+function readScriptWorkflowName(script: string): string | null {
+  const match = script.match(/name:\s*['"]([^'"]+)['"]/);
+  return match?.[1] ?? null;
+}
+
 function readWorkflowName(input: Record<string, unknown> | null): string | null {
   // `Workflow {script}` carries the workflow name in the script's `meta.name`; fall back to a
   // description if present. Avoids storing raw scripts in the snapshot.
   const description = readString(input?.description);
   if (description) return description;
   const script = readString(input?.script);
-  if (script) {
-    const match = script.match(/name:\s*['"]([^'"]+)['"]/);
-    if (match?.[1]) return match[1];
-  }
+  if (script) return readScriptWorkflowName(script);
   return null;
 }
 
-function readWorkflowPhases(input: Record<string, unknown> | null): WorkflowProgressPhaseFact[] | undefined {
-  const script = readString(input?.script);
-  if (!script) return undefined;
-
+function readScriptWorkflowPhases(script: string): WorkflowProgressPhaseFact[] | undefined {
   const titles: string[] = [];
   for (const match of script.matchAll(/\{\s*title\s*:\s*['"]([^'"]+)['"]/g)) {
     const title = readString(match[1]);
@@ -189,10 +251,12 @@ function readWorkflowPhases(input: Record<string, unknown> | null): WorkflowProg
   return titles.map((title, index) => ({ kind: 'phase', index: index + 1, title }));
 }
 
-function readWorkflowJournalAgentSpecs(input: Record<string, unknown> | null): WorkflowJournalAgentSpecFact[] | undefined {
+function readWorkflowPhases(input: Record<string, unknown> | null): WorkflowProgressPhaseFact[] | undefined {
   const script = readString(input?.script);
-  if (!script) return undefined;
+  return script ? readScriptWorkflowPhases(script) : undefined;
+}
 
+function readScriptWorkflowJournalAgentSpecs(script: string): WorkflowJournalAgentSpecFact[] | undefined {
   const specs: WorkflowJournalAgentSpecFact[] = [];
   let currentPhase: string | undefined;
   for (const line of script.split('\n')) {
@@ -215,6 +279,11 @@ function readWorkflowJournalAgentSpecs(input: Record<string, unknown> | null): W
   }
 
   return specs.length > 0 ? specs : undefined;
+}
+
+function readWorkflowJournalAgentSpecs(input: Record<string, unknown> | null): WorkflowJournalAgentSpecFact[] | undefined {
+  const script = readString(input?.script);
+  return script ? readScriptWorkflowJournalAgentSpecs(script) : undefined;
 }
 
 function parseWorkflowProgress(value: unknown): WorkflowProgressEntryFact[] | undefined {
@@ -281,12 +350,14 @@ function parseWorkflowToolUse(message: Record<string, unknown>): WorkflowStartFa
     const title = readWorkflowName(input) ?? 'Workflow';
     const phases = readWorkflowPhases(input);
     const journalAgentSpecs = readWorkflowJournalAgentSpecs(input);
+    const scriptPath = readString(input?.scriptPath) ?? readString(input?.script_path);
     return {
       kind: 'workflow-start',
       workflowToolUseId: id,
       title,
       ...(phases ? { phases } : {}),
       ...(journalAgentSpecs ? { journalAgentSpecs } : {}),
+      ...(scriptPath ? { scriptPath } : {}),
       ...(sourceSessionId ? { sourceSessionId } : {}),
       ...(uuid ? { uuid } : {}),
     };
@@ -382,6 +453,7 @@ function parseWorkflowLaunchResult(message: Record<string, unknown>): WorkflowLa
     const summary = normalizeSummary(toolUseResult?.summary);
     const taskId = readString(toolUseResult?.taskId) ?? readString(toolUseResult?.task_id);
     const providerRunId = readString(toolUseResult?.runId) ?? readString(toolUseResult?.run_id);
+    const scriptPath = readString(toolUseResult?.scriptPath) ?? readString(toolUseResult?.script_path);
     return {
       kind: 'workflow-launch',
       workflowToolUseId,
@@ -391,6 +463,7 @@ function parseWorkflowLaunchResult(message: Record<string, unknown>): WorkflowLa
       ...(title ? { title } : {}),
       ...(summary ? { summary } : {}),
       ...(transcriptDir ? { transcriptDir } : {}),
+      ...(scriptPath ? { scriptPath } : {}),
       ...(sourceSessionId ? { sourceSessionId } : {}),
       ...(uuid ? { uuid } : {}),
     };
@@ -446,6 +519,54 @@ function parseSubagentToolUse(message: Record<string, unknown>): SubagentStartFa
       toolUseId: id,
       title,
       ...(parentToolUseId ? { parentToolUseId } : {}),
+      ...(sourceSessionId ? { sourceSessionId } : {}),
+      ...(uuid ? { uuid } : {}),
+    };
+  }
+  return null;
+}
+
+/**
+ * Parse a NON-error `tool_result` as a plain-subagent completion.
+ *
+ * A synchronous `Task` subagent emits no lifecycle system event at all — the tool result is its only
+ * terminal evidence — while the error case is already covered upstream by
+ * `parseFailedWorkflowToolResult`. A successful `Task` result is byte-indistinguishable from a
+ * successful `Read`/`Bash` result, so identity comes from the caller's correlation state rather than
+ * from the payload shape: without `isKnownSubagentToolUseId` this parser yields nothing, keeping the
+ * module contract "null unless workflow-relevant" intact. Guessing at the result shape would drift
+ * with the SDK; the id gate cannot.
+ */
+function parseSubagentToolResult(
+  message: Record<string, unknown>,
+  isKnownSubagentToolUseId: ((toolUseId: string) => boolean) | undefined,
+): SubagentResultFact | null {
+  if (!isKnownSubagentToolUseId) return null;
+  if (message.type !== 'user') return null;
+  const nested = readRecord(message.message);
+  const content = nested?.content;
+  if (!Array.isArray(content)) return null;
+
+  const sourceSessionId = readSourceSessionId(message);
+  const uuid = readString(message.uuid) ?? undefined;
+  const toolUseResult = readRecord(message.toolUseResult) ?? readRecord(message.tool_use_result);
+  const timeUsedSeconds = readDurationSecondsFromMs(
+    toolUseResult?.totalDurationMs ?? toolUseResult?.total_duration_ms,
+  );
+
+  for (const part of content) {
+    const block = readRecord(part);
+    if (block?.type !== 'tool_result') continue;
+    if (block.is_error === true) continue;
+    const toolUseId = readString(block.tool_use_id);
+    if (!toolUseId || !isKnownSubagentToolUseId(toolUseId)) continue;
+    const resultPreview = normalizeResultPreview(readToolResultContentText(block));
+    return {
+      kind: 'subagent-result',
+      toolUseId,
+      status: 'complete',
+      ...(resultPreview ? { resultPreview } : {}),
+      ...(timeUsedSeconds !== undefined ? { timeUsedSeconds } : {}),
       ...(sourceSessionId ? { sourceSessionId } : {}),
       ...(uuid ? { uuid } : {}),
     };
@@ -523,6 +644,8 @@ function parseTaskLifecycle(message: Record<string, unknown>): TaskLifecycleFact
 }
 
 const WORKFLOW_JOURNAL_WRAPPER_TYPE = 'happier_workflow_journal';
+const WORKFLOW_SCRIPT_WRAPPER_TYPE = 'happier_workflow_script';
+const WORKFLOW_AGENT_PROFILE_WRAPPER_TYPE = 'happier_workflow_agent_profile';
 
 export function createClaudeWorkflowJournalWrapper(params: Readonly<{
   workflowToolUseId: string;
@@ -534,6 +657,128 @@ export function createClaudeWorkflowJournalWrapper(params: Readonly<{
     workflowToolUseId: params.workflowToolUseId,
     entry: params.entry,
     ...(params.sourceSessionId ? { sourceSessionId: params.sourceSessionId } : {}),
+  };
+}
+
+/**
+ * Feed a workflow script read from disk back through the SAME fact path an inline `{script}`
+ * tool-use takes, so a `{scriptPath}` launch produces the same phases and agent label specs.
+ */
+export function createClaudeWorkflowScriptWrapper(params: Readonly<{
+  workflowToolUseId: string;
+  script: string;
+  sourceSessionId?: string | undefined;
+}>): Record<string, unknown> {
+  return {
+    type: WORKFLOW_SCRIPT_WRAPPER_TYPE,
+    workflowToolUseId: params.workflowToolUseId,
+    script: params.script,
+    ...(params.sourceSessionId ? { sourceSessionId: params.sourceSessionId } : {}),
+  };
+}
+
+/** Feed one workflow agent's own sidecar prompt/model into the tracker's naming chain. */
+export function createClaudeWorkflowAgentProfileWrapper(params: Readonly<{
+  workflowToolUseId: string;
+  agentId: string;
+  prompt?: string | undefined;
+  model?: string | undefined;
+  sidechainId?: string | undefined;
+  sourceSessionId?: string | undefined;
+}>): Record<string, unknown> {
+  return {
+    type: WORKFLOW_AGENT_PROFILE_WRAPPER_TYPE,
+    workflowToolUseId: params.workflowToolUseId,
+    agentId: params.agentId,
+    ...(params.prompt !== undefined ? { prompt: params.prompt } : {}),
+    ...(params.model !== undefined ? { model: params.model } : {}),
+    ...(params.sidechainId !== undefined ? { sidechainId: params.sidechainId } : {}),
+    ...(params.sourceSessionId ? { sourceSessionId: params.sourceSessionId } : {}),
+  };
+}
+
+/** A row title must stay a title: bounded and single-line, never a prompt dump. */
+export const WORKFLOW_AGENT_PROMPT_TITLE_MAX = 160;
+
+/**
+ * The lane a workflow-agent prompt declares about ITSELF — the only prompt-derived title worth
+ * asserting.
+ *
+ * Measured over 280 real multi-agent workflow runs in this machine's Claude transcript corpus
+ * (1 590 agents): the prompt's FIRST LINE is unique across siblings in only 15% of runs, so titling
+ * by prompt head would paint N identical rows in the other 85% — worse than distinct ordinals. Two
+ * self-declarations do carry the agent's own identity: a lane/unit marker line, and failing that the
+ * first level-1 markdown heading (shared program preamble is written at `##`, the lane's own heading
+ * at `#`). Together they name 53% of agents and collide across siblings in 41 of 280 runs. Where a
+ * prompt declares neither, this returns nothing and the caller keeps its stable ordinal.
+ */
+const WORKFLOW_AGENT_PROMPT_LANE_MARKER = /^[#*_>\s-]*(?:YOUR\s+)?(?:LANE|UNIT|PACKET|TASK|ROLE|MISSION)\b/i;
+const WORKFLOW_AGENT_PROMPT_TOP_HEADING = /^#\s+\S/;
+
+function normalizeWorkflowAgentPromptTitle(line: string): string | undefined {
+  const cleaned = line
+    .replace(/^[#*_>\s-]+/, '')
+    .replace(/\*\*/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (cleaned.length === 0) return undefined;
+  return cleaned.length > WORKFLOW_AGENT_PROMPT_TITLE_MAX
+    ? cleaned.slice(0, WORKFLOW_AGENT_PROMPT_TITLE_MAX).trimEnd()
+    : cleaned;
+}
+
+export function deriveWorkflowAgentPromptTitle(prompt: unknown): string | undefined {
+  if (typeof prompt !== 'string') return undefined;
+  let topHeading: string | undefined;
+  for (const rawLine of prompt.split('\n')) {
+    const line = rawLine.trim();
+    if (line.length === 0) continue;
+    if (WORKFLOW_AGENT_PROMPT_LANE_MARKER.test(line)) {
+      const marker = normalizeWorkflowAgentPromptTitle(line);
+      if (marker) return marker;
+    }
+    if (topHeading === undefined && WORKFLOW_AGENT_PROMPT_TOP_HEADING.test(line)) {
+      topHeading = normalizeWorkflowAgentPromptTitle(line);
+    }
+  }
+  return topHeading;
+}
+
+function parseWorkflowScriptFact(message: Record<string, unknown>): WorkflowStartFact | null {
+  if (message.type !== WORKFLOW_SCRIPT_WRAPPER_TYPE) return null;
+  const workflowToolUseId = readString(message.workflowToolUseId);
+  const script = readString(message.script);
+  if (!workflowToolUseId || !script) return null;
+  const phases = readScriptWorkflowPhases(script);
+  const journalAgentSpecs = readScriptWorkflowJournalAgentSpecs(script);
+  const sourceSessionId = readString(message.sourceSessionId) ?? undefined;
+  return {
+    kind: 'workflow-start',
+    workflowToolUseId,
+    title: readScriptWorkflowName(script) ?? 'Workflow',
+    ...(phases ? { phases } : {}),
+    ...(journalAgentSpecs ? { journalAgentSpecs } : {}),
+    ...(sourceSessionId ? { sourceSessionId } : {}),
+  };
+}
+
+function parseWorkflowAgentProfileFact(message: Record<string, unknown>): WorkflowAgentProfileFact | null {
+  if (message.type !== WORKFLOW_AGENT_PROFILE_WRAPPER_TYPE) return null;
+  const workflowToolUseId = readString(message.workflowToolUseId);
+  const agentId = readString(message.agentId);
+  if (!workflowToolUseId || !agentId) return null;
+  const title = deriveWorkflowAgentPromptTitle(message.prompt);
+  const model = readModel(message.model);
+  const sidechainId = readString(message.sidechainId) ?? undefined;
+  const sourceSessionId = readString(message.sourceSessionId) ?? undefined;
+  return {
+    kind: 'workflow-agent-profile',
+    workflowToolUseId,
+    agentId,
+    ...(title ? { title } : {}),
+    ...(model ? { model } : {}),
+    ...(sidechainId ? { sidechainId } : {}),
+    ...(sourceSessionId ? { sourceSessionId } : {}),
   };
 }
 
@@ -593,21 +838,36 @@ function parseWorkflowJournalFact(message: Record<string, unknown>): WorkflowJou
   };
 }
 
+export type ClaudeWorkflowFactParseContext = Readonly<{
+  /**
+   * Correlation state owned by the tracker: tool-use ids already observed as `subagent-start`.
+   * Required to recognise a successful subagent `tool_result`, which is payload-identical to every
+   * other successful tool result. Absent => that fact is never produced.
+   */
+  isKnownSubagentToolUseId?: (toolUseId: string) => boolean;
+}>;
+
 /**
  * Parse one raw transcript value into a workflow fact, or `null` if it carries no workflow-relevant
  * signal. The tracker decides routing/promotion; this only extracts shapes.
  */
-export function parseClaudeWorkflowFact(value: unknown): ClaudeWorkflowFact | null {
+export function parseClaudeWorkflowFact(
+  value: unknown,
+  context?: ClaudeWorkflowFactParseContext,
+): ClaudeWorkflowFact | null {
   const message = readRecord(value);
   if (!message) return null;
   return (
     parseTaskNotificationMessage(message)
     ?? parseWorkflowJournalFact(message)
+    ?? parseWorkflowScriptFact(message)
+    ?? parseWorkflowAgentProfileFact(message)
     ?? parseFailedWorkflowToolResult(message)
     ?? parseSuccessfulWorkflowTaskStopResult(message)
     ?? parseWorkflowLaunchResult(message)
     ?? parseWorkflowToolUse(message)
     ?? parseTaskLifecycle(message)
     ?? parseSubagentToolUse(message)
+    ?? parseSubagentToolResult(message, context?.isKnownSubagentToolUseId)
   );
 }

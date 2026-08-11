@@ -1,6 +1,6 @@
 import {
+  SESSION_AGENT_ACTIVITY_HEADLINE_METADATA_KEY,
   SessionWorkflowActivityHeadlineV1Schema,
-  type SessionWorkflowActivityHeadlineV1,
   type SessionWorkflowRunSnapshotV1,
   type SessionSystemRecord,
   type SessionSystemRecordNamespace,
@@ -14,13 +14,19 @@ import {
   buildWorkflowRunSystemRecordLocalId,
   openWorkflowRunSystemRecordPayload,
 } from '@/session/systemRecords/activity/activitySystemRecords';
-import { commitWorkflowActivitySystemRecord } from '@/session/systemRecords/activity/commitWorkflowActivitySystemRecords';
+import {
+  commitBackgroundTaskActivitySystemRecord,
+  commitWorkflowActivitySystemRecord,
+} from '@/session/systemRecords/activity/commitWorkflowActivitySystemRecords';
 import type {
   SessionEncryptionContext,
   SessionStoredContentEncryptionMode,
 } from '@/session/transport/encryption/sessionEncryptionContext';
 import { logger } from '@/ui/logger';
+import type { SessionActivityHeadlineBundle } from '@/session/systemRecords/activity/publishWorkflowActivitySnapshot';
+import { createBackgroundTaskRecordPublisher } from '../providerActivity/backgroundTaskRecordPublisher';
 import type { ClaudeProviderTaskActivity } from '../providerActivity/createClaudeProviderActivityLedger';
+import type { ClaudeWorkflowAgentTranscriptRegistration } from './claudeWorkflowJournalFollower';
 
 import {
   createClaudeWorkflowActivitySource,
@@ -43,9 +49,11 @@ import {
  * raw transcript channel (the same channel `observeRaw` already feeds the goal source). It resolves:
  * - `commitRecord` -> `commitWorkflowActivitySystemRecord` bound to the session token + encryption
  *   mode/ctx (encryption parity with memory records);
- * - `writeHeadline` -> awaited metadata update writing the `sessionWorkflowActivityHeadlineV1`
- *   metadata key (the live invalidation pointer; never full detail). Rejections intentionally flow
- *   back to the coalesced publisher so a dropped headline write is retried.
+ * - `writeHeadlines` -> ONE awaited metadata update writing BOTH activity headline keys:
+ *   `sessionWorkflowActivityHeadlineV1` (unchanged shape, still read by released clients and by
+ *   `../dev`) and `sessionAgentActivityHeadlineV1` (the unified roster pointer). A single update
+ *   keeps the keys consistent with each other and keeps metadata write traffic at one per drain.
+ *   Rejections intentionally flow back to the coalesced publisher so a dropped write is retried.
  *
  * The encryption mode/ctx are resolved lazily per write via `resolveEncryption` so the wiring does
  * not need them at construction time (they may require a session fetch for the data-encryption key).
@@ -85,6 +93,16 @@ export function wireClaudeWorkflowActivitySource(params: Readonly<{
   startupReconcileGraceMs?: number;
   /** Exact live provider-task facts forwarded to Claude's single Runtime Activity adapter. */
   onProviderTaskActivity?: (activity: ClaudeProviderTaskActivity) => Promise<void> | void;
+  /**
+   * The provider ledger's session-ownership predicate, so the durable background-task path applies
+   * the SAME identity rule as liveness admission (PLAN 4.9.1 step 2) from the one owner that knows
+   * the session lineage.
+   */
+  isOwnedClaudeSessionId?: (sessionId: string) => boolean;
+  /** Hand a workflow agent's sidecar transcript to the launcher's ONE sidechain importer. */
+  registerWorkflowAgentTranscript?: (
+    registration: ClaudeWorkflowAgentTranscriptRegistration,
+  ) => void | Promise<void>;
 }>): WiredClaudeWorkflowActivitySource {
   const { binding } = params;
 
@@ -116,6 +134,30 @@ export function wireClaudeWorkflowActivitySource(params: Readonly<{
     });
   };
 
+  // Durable background-task records ride the SAME session binding and the same encryption
+  // resolution as workflow records: one credential path, one seal policy, one commit owner.
+  const backgroundTaskRecordPublisher = createBackgroundTaskRecordPublisher({
+    commitRecord: async (record) => {
+      const { mode, ctx } = await resolveEncryptionOnce();
+      await commitBackgroundTaskActivitySystemRecord({
+        mode,
+        ...(ctx ? { ctx } : {}),
+        record,
+        upsertSystemRecord: binding.upsertSystemRecord,
+      });
+    },
+    ...(params.isOwnedClaudeSessionId ? { isOwnedSessionId: params.isOwnedClaudeSessionId } : {}),
+    ...(params.debounceMs !== undefined ? { debounceMs: params.debounceMs } : {}),
+    onError: (error, context) => {
+      logger.debug(
+        `${params.logPrefix ?? '[claude-workflow-source]'}: durable background task record write failed for ${context.taskId} (${
+          context.retryable ? 'will retry' : 'permanently rejected; record dropped'
+        })`,
+        error,
+      );
+    },
+  });
+
   const readCommittedRunSnapshot = binding.fetchSystemRecord
     ? async (runId: string): Promise<SessionWorkflowRunSnapshotV1 | null> => {
       const record = await binding.fetchSystemRecord?.({
@@ -132,9 +174,13 @@ export function wireClaudeWorkflowActivitySource(params: Readonly<{
     }
     : undefined;
 
-  const writeHeadline = async (headline: SessionWorkflowActivityHeadlineV1): Promise<void> => {
+  const writeHeadlines = async (bundle: SessionActivityHeadlineBundle): Promise<void> => {
     await binding.metadataWriter.updateMetadata(
-      (metadata) => ({ ...metadata, sessionWorkflowActivityHeadlineV1: headline }),
+      (metadata) => ({
+        ...metadata,
+        sessionWorkflowActivityHeadlineV1: bundle.workflow,
+        [SESSION_AGENT_ACTIVITY_HEADLINE_METADATA_KEY]: bundle.agentActivity,
+      }),
     );
   };
 
@@ -157,9 +203,13 @@ export function wireClaudeWorkflowActivitySource(params: Readonly<{
     getCurrentClaudeSessionId: binding.getCurrentClaudeSessionId,
     commitRecord,
     ...(readCommittedRunSnapshot ? { readCommittedRunSnapshot } : {}),
-    writeHeadline,
+    writeHeadlines,
+    backgroundTaskRecordPublisher,
     ...(params.onProviderTaskActivity
       ? { onProviderTaskActivity: params.onProviderTaskActivity }
+      : {}),
+    ...(params.registerWorkflowAgentTranscript
+      ? { registerWorkflowAgentTranscript: params.registerWorkflowAgentTranscript }
       : {}),
     ...(params.debounceMs !== undefined ? { debounceMs: params.debounceMs } : {}),
     ...(params.logPrefix ? { logPrefix: params.logPrefix } : {}),

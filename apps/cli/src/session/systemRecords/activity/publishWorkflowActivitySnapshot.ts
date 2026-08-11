@@ -1,29 +1,45 @@
 import {
+  buildSessionAgentActivityHeadline,
   buildSessionWorkflowActivityHeadline,
   bumpWorkflowRunRecordRevision,
   isWorkflowRunSnapshotMaterialChange,
+  type SessionAgentActivityEntryV1,
+  type SessionAgentActivityHeadlineV1,
   type SessionWorkflowActivityHeadlineV1,
   type SessionWorkflowRunHeadlineV1,
   type SessionWorkflowRunSnapshotV1,
 } from '@happier-dev/protocol';
 
+import { isPermanentRequestError } from '@/api/client/httpStatusError';
+
+import { projectWorkflowRunAgentActivityEntries } from './agentActivityHeadlineProjection';
+
 /**
- * Provider-agnostic per-run workflow activity publisher (CWF3).
+ * Provider-agnostic per-run activity publisher (CWF3, widened for agent activity).
  *
  * The ONE chokepoint that turns the normalizer's per-run snapshot map into durable
- * `activity/workflow_run.v1` records (FIRST) and a compact `sessionWorkflowActivityHeadlineV1`
- * metadata headline (SECOND). Publish order and failure isolation are enforced here so the UI never
- * observes a headline pointing at a missing durable record:
+ * `activity/workflow_run.v1` records (FIRST) and the compact session-metadata headlines (SECOND).
+ * Publish order and failure isolation are enforced here so the UI never observes a headline pointing
+ * at a missing durable record:
  *
- * - Record FIRST, headline SECOND.
+ * - Record FIRST, headlines SECOND.
  * - Per-run failure isolation: a failed record write for run A must not block run B's record/headline
  *   advance. A run that has never committed is omitted from the headline (no stale pointer); a run
  *   that previously committed keeps its last committed headline entry until a later write succeeds.
- * - The headline is derived from the SAME snapshots via the shared protocol builder, so it is
- *   count-only and ordering is deterministic across clients.
+ * - Both headlines are derived from the SAME committed snapshots via shared protocol builders, so
+ *   they are count-only, deterministically ordered, and structurally incapable of disagreeing about
+ *   what exists.
+ *
+ * BOTH keys are handed to the transport in ONE `writeHeadlines` call. Two callbacks would mean two
+ * session-metadata mutations per drain — double the write traffic on every progress tick, and a
+ * window in which the two keys describe different worlds. One bundle, one write, one truth.
+ *
+ * Agent-activity kinds published here are exactly the ones this seam has a proven live writer for:
+ * `workflow_run` and `workflow_agent`, both carried by the snapshot the tracker already commits. A
+ * kind without a writer would be a dormant branch in every consumer (PLAN §5.1 item 11).
  *
  * The publisher does no scheduling/coalescing itself — the coalesced scheduler drives it. It is pure
- * orchestration over injected `commitRecord`/`writeHeadline` boundary functions, so it is fully unit
+ * orchestration over injected `commitRecord`/`writeHeadlines` boundary functions, so it is fully unit
  * testable without HTTP/metadata transport.
  */
 
@@ -45,9 +61,30 @@ export type WorkflowActivityPublisher = Readonly<{
   publish(input: WorkflowActivityPublishInput): Promise<WorkflowActivityPublishResult>;
 }>;
 
+/**
+ * Both headline keys for one drain, written together.
+ *
+ * `workflow` keeps its exact released shape and key — this program is the expand step only (PLAN
+ * §5.2), so an old client reading `sessionWorkflowActivityHeadlineV1` sees precisely what it saw
+ * before.
+ */
+export type SessionActivityHeadlineBundle = Readonly<{
+  workflow: SessionWorkflowActivityHeadlineV1;
+  agentActivity: SessionAgentActivityHeadlineV1;
+}>;
+
 /** The last successfully committed durable state for a run (used for revision ownership/failure isolation). */
 type CommittedRunState = Readonly<{
+  /** The snapshot whose durable record is committed. Owns `recordRevision`. */
   snapshot: SessionWorkflowRunSnapshotV1;
+  /**
+   * The newest projected snapshot for this run, used for DISPLAY fields only.
+   *
+   * Mirrors what the workflow headline already does for unchanged runs: display can move ahead of
+   * the last durable write, the record pointer cannot. Keeping it lets the agent-activity entries
+   * (which read `agents[]`) stay as fresh as the run headline's counts, from one shared value.
+   */
+  display: SessionWorkflowRunSnapshotV1;
   headline: SessionWorkflowRunHeadlineV1;
 }>;
 
@@ -83,8 +120,14 @@ export function createWorkflowActivityPublisher(params: Readonly<{
   readCommittedRunSnapshot?: (runId: string) => Promise<SessionWorkflowRunSnapshotV1 | null>;
   /** Durable per-run record write. Rejection => that run's headline does not advance this drain. */
   commitRecord: (snapshot: SessionWorkflowRunSnapshotV1) => Promise<void>;
-  /** Headline metadata write. Rejection => the scheduler retries the current dirty run set. */
-  writeHeadline: (headline: SessionWorkflowActivityHeadlineV1) => Promise<void> | void;
+  /**
+   * Single metadata write carrying BOTH headline keys. Rejection => the scheduler retries the
+   * current dirty run set; the next drain rebuilds both headlines from committed state, so a retry
+   * is idempotent.
+   */
+  writeHeadlines: (bundle: SessionActivityHeadlineBundle) => Promise<void> | void;
+  /** Terminal-history bound for the agent-activity headline. Live entries are never bounded. */
+  recentEntriesLimit?: number;
   /** Diagnostics sink for per-run record write failures. */
   onError?: (error: unknown, context: Readonly<{ runId: string; retryable: boolean }>) => void;
   now?: () => number;
@@ -102,6 +145,7 @@ export function createWorkflowActivityPublisher(params: Readonly<{
     if (!snapshot) return;
     committedByRun.set(runId, {
       snapshot,
+      display: snapshot,
       headline: buildRunHeadline(snapshot, now()),
     });
   }
@@ -136,6 +180,7 @@ export function createWorkflowActivityPublisher(params: Readonly<{
         };
         committedByRun.set(runId, {
           snapshot: committed.snapshot,
+          display: refreshedSnapshot,
           headline: buildRunHeadline(refreshedSnapshot, committed.headline.recordUpdatedAt),
         });
         continue;
@@ -149,6 +194,7 @@ export function createWorkflowActivityPublisher(params: Readonly<{
         await params.commitRecord(snapshotToCommit);
         committedByRun.set(runId, {
           snapshot: snapshotToCommit,
+          display: snapshotToCommit,
           headline: buildRunHeadline(snapshotToCommit, now()),
         });
       } catch (error) {
@@ -182,25 +228,44 @@ export function createWorkflowActivityPublisher(params: Readonly<{
       };
       committedByRun.set(runId, {
         snapshot: committed.snapshot,
+        display: refreshedSnapshot,
         headline: buildRunHeadline(refreshedSnapshot, committed.headline.recordUpdatedAt),
       });
     }
 
-    // 2) Headline SECOND — derive from committed (durable-backed) run headlines only.
-    const runs: SessionWorkflowRunHeadlineV1[] = [...committedByRun.values()].map((state) => state.headline);
-    const headline = buildSessionWorkflowActivityHeadline({
-      backendId: params.backendId,
-      ...(params.agentId ? { agentId: params.agentId } : {}),
-      updatedAt: now(),
-      runs,
+    // 2) Headlines SECOND — both derived from committed (durable-backed) state, in one write.
+    const committedStates = [...committedByRun.values()];
+    const runs: SessionWorkflowRunHeadlineV1[] = committedStates.map((state) => state.headline);
+    const entries: SessionAgentActivityEntryV1[] = [];
+    for (const state of committedStates) {
+      entries.push(...projectWorkflowRunAgentActivityEntries(state.display));
+    }
+    const publishedAt = now();
+    await params.writeHeadlines({
+      workflow: buildSessionWorkflowActivityHeadline({
+        backendId: params.backendId,
+        ...(params.agentId ? { agentId: params.agentId } : {}),
+        updatedAt: publishedAt,
+        runs,
+      }),
+      agentActivity: buildSessionAgentActivityHeadline({
+        backendId: params.backendId,
+        ...(params.agentId ? { agentId: params.agentId } : {}),
+        updatedAt: publishedAt,
+        entries,
+        ...(params.recentEntriesLimit !== undefined ? { recentEntriesLimit: params.recentEntriesLimit } : {}),
+      }),
     });
-    await params.writeHeadline(headline);
     return { failedRunIds, permanentFailedRunIds };
   }
 
   return { publish };
 }
 
+/**
+ * RPC-transport rejection codes that carry no HTTP status of their own. They are this seam's
+ * vocabulary on top of the canonical status rule, never a second copy of it.
+ */
 const NON_RETRYABLE_WORKFLOW_RECORD_ERROR_CODES = new Set([
   'conflict',
   'forbidden',
@@ -210,6 +275,10 @@ const NON_RETRYABLE_WORKFLOW_RECORD_ERROR_CODES = new Set([
 ]);
 
 function isRetryableWorkflowActivityRecordWriteError(error: unknown): boolean {
+  // The 4xx/5xx split and "this response was already refused" have ONE owner
+  // (`httpStatusError#isPermanentRequestError`). Without it a validation 400, a 426 upgrade demand
+  // and an unparseable body all read as retryable here and the coalescer re-queues them forever.
+  if (isPermanentRequestError(error)) return false;
   const record = error && typeof error === 'object' ? error as Record<string, unknown> : null;
   const code = typeof record?.code === 'string'
     ? record.code

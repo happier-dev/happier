@@ -44,9 +44,24 @@ type ResolveJsonlPathForAgentId = (params: {
   claudeSessionId: string | null;
 }) => string | null;
 
+/**
+ * How this collector came to hold a file — the ONLY thing that differs between its two callers.
+ *
+ * - `task-tool`: discovered by observing a `Task`/`Agent` tool use and resolving the agent's JSONL.
+ *   The sidechain id is the tool-use id, and the remote launcher synthesises a prompt root from
+ *   that tool use.
+ * - `workflow-agent`: handed over by a caller that already holds the file. A workflow run has ONE
+ *   `Workflow` tool call and many `agent-<id>.jsonl` sidecars, so there is no per-agent tool call to
+ *   discover, no tool-use id to key on, and nothing that synthesises a prompt root.
+ *
+ * Everything past registration — follow, dedupe, mark, emit — is one path for both.
+ */
+export type ClaudeSidechainImportSource = 'task-tool' | 'workflow-agent';
+
 type Entry = {
   sidechainId: string; // Task tool_use id
   agentId: string;
+  source: ClaudeSidechainImportSource;
   providerTaskIds: readonly string[];
   outputFilePath: string;
   resolvedJsonlPath: string;
@@ -284,11 +299,47 @@ export class ClaudeRemoteSubagentFileCollector {
     return name.includes('@') ? name : `${name}@${teamName}`;
   }
 
+  /**
+   * Import a sidechain whose file the CALLER already resolved.
+   *
+   * The workflow journal follower is the one caller: it is already holding the run's sidecar
+   * directory, so it knows `agent-<agentId>.jsonl` exists before any tool call could tell us. It
+   * hands the file over here rather than importing it itself, so workflow agent transcripts and
+   * `Task` subagent transcripts are produced by ONE importer with one dedupe, one follower cap and
+   * one marking rule.
+   *
+   * The `sidechainId` is minted by the protocol owner (`buildWorkflowAgentSidechainId`) and passed
+   * in whole; this class never composes one.
+   */
+  async registerSidechainFile(params: Readonly<{
+    sidechainId: string;
+    agentId: string;
+    filePath: string;
+    source: ClaudeSidechainImportSource;
+  }>): Promise<void> {
+    const sidechainId = readNonBlankOpaqueIdentifier(params.sidechainId) ?? '';
+    const agentId = String(params.agentId ?? '').trim();
+    const filePath = String(params.filePath ?? '').trim();
+    if (!sidechainId || !agentId || !filePath) return;
+
+    const registration = this.registerTaskOutputFile({
+      sidechainId,
+      agentId,
+      source: params.source,
+      providerTaskIds: buildProviderTaskIdCandidates({ toolUseResult: null, agentId, sidechainId }),
+      outputFilePath: filePath,
+    });
+    this.pendingRegistrations.add(registration);
+    void registration.finally(() => this.pendingRegistrations.delete(registration));
+    await registration;
+  }
+
   private async registerTaskOutputFile(params: {
     sidechainId: string;
     agentId: string;
     providerTaskIds: readonly string[];
     outputFilePath: string;
+    source?: ClaudeSidechainImportSource;
     markCompletedAfterRegister?: boolean;
   }): Promise<void> {
     const existing = this.entriesBySidechainId.get(params.sidechainId);
@@ -310,6 +361,7 @@ export class ClaudeRemoteSubagentFileCollector {
 
     const sidechainId = params.sidechainId;
     const agentId = params.agentId;
+    const source: ClaudeSidechainImportSource = params.source ?? 'task-tool';
     const replaySuppressor = createClaudeJsonlResetReplaySuppressor();
     const handleFollowerMetric = (event: JsonlFollowerMetricEvent): void => {
       if (event.type !== 'file_reset') return;
@@ -320,6 +372,7 @@ export class ClaudeRemoteSubagentFileCollector {
     const entry: Entry = {
       sidechainId,
       agentId,
+      source,
       providerTaskIds: params.providerTaskIds,
       outputFilePath: params.outputFilePath,
       resolvedJsonlPath,
@@ -334,6 +387,7 @@ export class ClaudeRemoteSubagentFileCollector {
         onJson: (value) => this.ingestJson({
           sidechainId,
           agentId,
+          source,
           providerTaskIds: params.providerTaskIds,
           resolvedJsonlPath,
         }, value, { replaySuppressor }),
@@ -414,7 +468,13 @@ export class ClaudeRemoteSubagentFileCollector {
   }
 
   private ingestJson(
-    params: { sidechainId: string; agentId: string; providerTaskIds: readonly string[]; resolvedJsonlPath: string },
+    params: {
+      sidechainId: string;
+      agentId: string;
+      source: ClaudeSidechainImportSource;
+      providerTaskIds: readonly string[];
+      resolvedJsonlPath: string;
+    },
     value: unknown,
     opts?: { replaySuppressor?: ClaudeJsonlResetReplaySuppressor },
   ): void {
@@ -429,7 +489,9 @@ export class ClaudeRemoteSubagentFileCollector {
     }
 
     // Skip the prompt root; remote launcher inserts a synthetic prompt root from Task tool_use.
-    if (isPromptRootUserMessage(parsed)) return;
+    // That reason is Task-specific and does not hold for a workflow agent: it has no tool call, so
+    // nothing synthesises a root, and skipping would drop the one record saying what it was asked.
+    if (params.source === 'task-tool' && isPromptRootUserMessage(parsed)) return;
 
     const uuid = typeof (parsed as any).uuid === 'string' ? String((parsed as any).uuid) : '';
     if (uuid) {

@@ -192,7 +192,7 @@ describe('createClaudeWorkflowActivitySource', () => {
       agentId: 'claude',
       getCurrentClaudeSessionId: () => 'claude-session-1',
       commitRecord: async (s) => { committed.push(s.runId); },
-      writeHeadline: (h) => { headlines.push(h); },
+      writeHeadlines: (bundle) => { headlines.push(bundle.workflow); },
       debounceMs: 300,
     });
     return { committed, headlines, source };
@@ -225,7 +225,7 @@ describe('createClaudeWorkflowActivitySource', () => {
       agentId: 'claude',
       getCurrentClaudeSessionId: () => 'claude-session-1',
       commitRecord: async () => {},
-      writeHeadline: (headline) => { headlines.push(headline); },
+      writeHeadlines: (bundle) => { headlines.push(bundle.workflow); },
       onProviderTaskActivity: async (activity) => { providerTaskActivities.push(activity); },
       debounceMs: 0,
     });
@@ -276,7 +276,7 @@ describe('createClaudeWorkflowActivitySource', () => {
       agentId: 'claude',
       getCurrentClaudeSessionId: () => 'claude-session-1',
       commitRecord: async () => {},
-      writeHeadline: () => {},
+      writeHeadlines: () => {},
       onProviderTaskActivity: async (activity) => { providerTaskActivities.push(activity); },
       debounceMs: 0,
     });
@@ -311,7 +311,7 @@ describe('createClaudeWorkflowActivitySource', () => {
       agentId: 'claude',
       getCurrentClaudeSessionId: () => 'claude-session-1',
       commitRecord: async (snapshot) => { committed.push(snapshot); },
-      writeHeadline: (headline) => { headlines.push(headline); },
+      writeHeadlines: (bundle) => { headlines.push(bundle.workflow); },
       debounceMs: 300,
     });
 
@@ -385,7 +385,7 @@ describe('createClaudeWorkflowActivitySource', () => {
       backendId: 'claude',
       getCurrentClaudeSessionId: () => 'claude-session-1',
       commitRecord: async (s) => { committed.push(s.runId); },
-      writeHeadline: () => {},
+      writeHeadlines: () => {},
       debounceMs: 5000,
     });
     source.observeTranscriptMessage(workflowToolUse('toolu_wf', 'wf'));
@@ -400,6 +400,37 @@ describe('createClaudeWorkflowActivitySource', () => {
     });
     await source.flush();
     expect(committed).toContain('toolu_wf');
+  });
+
+  it('resolves live runs and agents when the process that owned them shuts down (RULING-14)', async () => {
+    const committed: SessionWorkflowRunSnapshotV1[] = [];
+    const source = createClaudeWorkflowActivitySource({
+      backendId: 'claude',
+      agentId: 'claude',
+      getCurrentClaudeSessionId: () => 'claude-session-1',
+      commitRecord: async (snapshot) => { committed.push(snapshot); },
+      writeHeadlines: () => {},
+      debounceMs: 300,
+    });
+
+    source.observeTranscriptMessage(workflowToolUse('toolu_wf', 'shutdown-wf'));
+    source.observeTranscriptMessage({
+      type: 'happier_workflow_journal',
+      workflowToolUseId: 'toolu_wf',
+      sourceSessionId: 'claude-session-1',
+      entry: { type: 'started', key: 'k1', agentId: 'agent_live' },
+    });
+    await source.flush();
+    committed.length = 0;
+
+    source.finalizeInterruptedActivityOnShutdown();
+    await source.flush();
+
+    const snapshot = committed.at(-1);
+    expect(snapshot).toMatchObject({ runId: 'toolu_wf', status: 'stopped', statusReason: 'interrupted' });
+    expect(snapshot?.agents.map((agent) => agent.status)).toEqual(['cancelled']);
+
+    source.dispose();
   });
 
   it('hydrates unified Workflow launch results from the sidecar journal', async () => {
@@ -422,7 +453,7 @@ describe('createClaudeWorkflowActivitySource', () => {
       agentId: 'claude',
       getCurrentClaudeSessionId: () => 'claude-session-1',
       commitRecord: async (snapshot) => { committed.push(snapshot); },
-      writeHeadline: () => {},
+      writeHeadlines: () => {},
       debounceMs: 300,
     });
 

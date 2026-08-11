@@ -1211,9 +1211,11 @@ export async function claudeUnifiedTerminalLauncher(
       }
     }
   } finally {
-    // G-6: mark an active-but-unmet Claude goal as interrupted on graceful teardown (status stays
-    // active; the goal may resume) before the source is disposed.
-    transcriptProjector.finalizeInterruptedGoal();
+    // This teardown is the OBSERVATION that the provider process is gone: resolve every
+    // shutdown-sensitive source the projector owns before the sources are drained and disposed.
+    // G-6 marks an active-but-unmet goal interrupted; RULING-14 resolves live workflow runs and
+    // their agents so they stop reading as "Working" forever.
+    transcriptProjector.finalizeInterruptedWorkOnShutdown();
     // Drain any pending workflow-activity writes, then stop scheduling (dispose via reset()).
     await transcriptProjector.flushWorkflowActivity();
     transcriptProjector.reset();

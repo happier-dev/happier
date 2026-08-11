@@ -213,6 +213,35 @@ function subagentTask(params: Readonly<{ id: string; description: string; parent
   };
 }
 
+/**
+ * The `tool_result` Claude persists for a `Task` tool-use. This is the ONLY terminal evidence a
+ * synchronous subagent emits — backgrounded ones additionally emit `task_notification`.
+ */
+function subagentToolResult(params: Readonly<{
+  toolUseId: string;
+  isError?: boolean;
+  sessionId?: string;
+  uuid?: string;
+}>) {
+  return {
+    type: 'user',
+    session_id: params.sessionId ?? 'claude-session-1',
+    uuid: params.uuid ?? `uuid-result-${params.toolUseId}`,
+    message: {
+      content: [{
+        type: 'tool_result',
+        tool_use_id: params.toolUseId,
+        is_error: params.isError === true,
+        content: [{ type: 'text', text: 'done' }],
+      }],
+    },
+    toolUseResult: {
+      content: [{ type: 'text', text: 'done' }],
+      totalDurationMs: 1234,
+    },
+  };
+}
+
 describe('createClaudeWorkflowActivityTracker', () => {
   it('reconciles a crash-residue run while leaving a live re-observed run untouched', () => {
     const tracker = createClaudeWorkflowActivityTracker({ backendId: 'claude' });
@@ -640,6 +669,61 @@ describe('createClaudeWorkflowActivityTracker', () => {
     expect(run?.totalAgents).toBe(2);
   });
 
+  it('closes a plain subagent on its Task tool_result (the only terminal evidence a synchronous subagent emits)', () => {
+    const tracker = createClaudeWorkflowActivityTracker({ backendId: 'claude' });
+    tracker.observe(subagentTask({ id: 'task_1', description: 'first' }), { updatedAt: 1000 });
+    tracker.observe(subagentTask({ id: 'task_2', description: 'second' }), { updatedAt: 1001 });
+
+    const completed = tracker.observe(subagentToolResult({ toolUseId: 'task_1' }), { updatedAt: 2000 });
+    expect(completed.changedRunIds).toContain('implicit:agent-activity');
+    const afterFirst = tracker.getRunSnapshot('implicit:agent-activity');
+    expect(afterFirst?.agents.find((agent) => agent.id === 'task_1')?.status).toBe('complete');
+    expect(afterFirst?.completedAgents).toBe(1);
+    // The run is still working while a sibling is live.
+    expect(afterFirst?.status).toBe('active');
+
+    tracker.observe(subagentToolResult({ toolUseId: 'task_2', isError: true }), { updatedAt: 3000 });
+    const afterBoth = tracker.getRunSnapshot('implicit:agent-activity');
+    expect(afterBoth?.agents.find((agent) => agent.id === 'task_2')?.status).toBe('failed');
+    // Every agent terminal => the synthesized run is terminal too; it must not claim liveness forever.
+    expect(afterBoth?.status).toBe('failed');
+  });
+
+  it('closes an explicit workflow child launched as a Task when its tool_result arrives', () => {
+    const tracker = createClaudeWorkflowActivityTracker({ backendId: 'claude' });
+    tracker.observe(workflowToolUse({ id: 'toolu_wf', name: 'wf' }), { updatedAt: 1000 });
+    tracker.observe(subagentTask({ id: 'child_1', description: 'child', parentToolUseId: 'toolu_wf' }), { updatedAt: 1100 });
+
+    tracker.observe(subagentToolResult({ toolUseId: 'child_1' }), { updatedAt: 2000 });
+    const run = tracker.getRunSnapshot('toolu_wf');
+    expect(run?.agents.find((agent) => agent.id === 'child_1')?.status).toBe('complete');
+    // An explicit run's own status stays owned by its workflow lifecycle events, never by a child result.
+    expect(run?.status).toBe('active');
+  });
+
+  it('ignores a tool_result whose tool-use id is not a known subagent', () => {
+    const tracker = createClaudeWorkflowActivityTracker({ backendId: 'claude' });
+    tracker.observe(subagentTask({ id: 'task_1', description: 'first' }), { updatedAt: 1000 });
+    tracker.observe(subagentTask({ id: 'task_2', description: 'second' }), { updatedAt: 1001 });
+
+    const observation = tracker.observe(subagentToolResult({ toolUseId: 'toolu_unrelated' }), { updatedAt: 2000 });
+    expect(observation.changedRunIds).toEqual([]);
+    const run = tracker.getRunSnapshot('implicit:agent-activity');
+    expect(run?.agents.every((agent) => agent.status === 'active')).toBe(true);
+  });
+
+  it('keeps a single plain subagent unpromoted but remembers its terminal result for a later promotion', () => {
+    const tracker = createClaudeWorkflowActivityTracker({ backendId: 'claude' });
+    tracker.observe(subagentTask({ id: 'task_1', description: 'first' }), { updatedAt: 1000 });
+    expect(tracker.observe(subagentToolResult({ toolUseId: 'task_1' }), { updatedAt: 1500 }).changedRunIds).toEqual([]);
+    expect(tracker.getRunSnapshotMap().size).toBe(0);
+
+    tracker.observe(subagentTask({ id: 'task_2', description: 'second' }), { updatedAt: 2000 });
+    const run = tracker.getRunSnapshot('implicit:agent-activity');
+    expect(run?.agents.find((agent) => agent.id === 'task_1')?.status).toBe('complete');
+    expect(run?.agents.find((agent) => agent.id === 'task_2')?.status).toBe('active');
+  });
+
   it('lets an explicit Workflow win: a later parent_tool_use_id migrates implicit child agents to the explicit run', () => {
     const tracker = createClaudeWorkflowActivityTracker({ backendId: 'claude' });
     // Two plain subagents form an implicit run.
@@ -724,16 +808,11 @@ await parallel([
     }), { updatedAt: 1101 });
 
     let snapshot = tracker.getRunSnapshot('toolu_wf');
-    expect(snapshot?.phases.find((p) => p.title === 'Investigate')?.agentIds).toEqual([
-      'ada15d97cdea9c7fd',
-      'a2b7b902e76418dba',
-    ]);
-    expect(snapshot?.phases.find((p) => p.title === 'Assess')?.agentIds).toEqual([]);
-    // W-7: an opaque started journal entry now prefers the script's declared agent label over the
-    // `Workflow agent N` ordinal (ordinals are the last resort, not the norm).
+    // RULING-13: a `started` entry is `{type,key,agentId}` — nothing in it can be attributed to a
+    // declared label, so neither a label nor a phase is asserted. The ordinal is the honest answer.
     expect(snapshot?.agents.map((agent) => [agent.id, agent.title, agent.phaseTitle])).toEqual([
-      ['ada15d97cdea9c7fd', 'shadcn-docs', 'Investigate'],
-      ['a2b7b902e76418dba', 'pin-ux', 'Investigate'],
+      ['ada15d97cdea9c7fd', 'Workflow agent 1', undefined],
+      ['a2b7b902e76418dba', 'Workflow agent 2', undefined],
     ]);
 
     tracker.observe(workflowJournal({
@@ -758,7 +837,7 @@ await parallel([
     });
   });
 
-  it('keeps live sidecar journal phase membership stable when started order differs from script label order', () => {
+  it('never wears another lane label when journal arrival order differs from script label order (RULING-13)', () => {
     const tracker = createClaudeWorkflowActivityTracker({ backendId: 'claude' });
     tracker.observe(workflowToolUseWithScript({
       id: 'toolu_wf',
@@ -803,21 +882,17 @@ await parallel([
     }), { updatedAt: 1103 });
 
     let snapshot = tracker.getRunSnapshot('toolu_wf');
-    expect(snapshot?.phases.find((phase) => phase.title === 'Investigate')?.agentIds).toEqual([
-      'opaque-third',
-      'opaque-first',
-      'opaque-second',
+    // Script text order is first,second,third,critic; the journal delivered third,first,second,critic.
+    // Zipping labels onto agents by arrival order gave 4 of 6 agents ANOTHER lane's name in a real
+    // production run. A wrong name actively misleads, so no label is asserted without an identity
+    // match — the stable ordinal is what a `started` entry can actually prove.
+    expect(snapshot?.agents.map((agent) => [agent.id, agent.title])).toEqual([
+      ['opaque-third', 'Workflow agent 1'],
+      ['opaque-first', 'Workflow agent 2'],
+      ['opaque-second', 'Workflow agent 3'],
+      ['opaque-critic', 'Workflow agent 4'],
     ]);
-    expect(snapshot?.phases.find((phase) => phase.title === 'Assess')?.agentIds).toEqual([
-      'opaque-critic',
-    ]);
-    // W-7: opaque started entries adopt the script's declared labels (sequential spec assignment).
-    expect(snapshot?.agents.map((agent) => agent.title)).toEqual([
-      'first',
-      'second',
-      'third',
-      'critic',
-    ]);
+    expect(snapshot?.agents.map((agent) => agent.title)).not.toContain('first');
 
     tracker.observe(workflowJournal({
       workflowToolUseId: 'toolu_wf',
@@ -856,7 +931,7 @@ await parallel([
     expect(agent?.title).not.toBe('a36519ccc5c401aeb');
   });
 
-  it('prefers the declared script label for a terminal opaque journal fact (W-7)', () => {
+  it('does not borrow a declared script label for an opaque terminal fact it cannot attribute (RULING-13)', () => {
     const tracker = createClaudeWorkflowActivityTracker({ backendId: 'claude' });
     tracker.observe(workflowToolUseWithScript({
       id: 'toolu_wf',
@@ -875,9 +950,39 @@ await parallel([
       result: {},
     }), { updatedAt: 1100 });
 
+    // One declared label and one agent LOOKS unambiguous, but the run can gain a second agent at
+    // any time and the first would already be wearing spec 0's name. There is no derivable identity
+    // between a journal key/agent id and a script label, so none is asserted.
     const agent = tracker.getRunSnapshot('toolu_wf')?.agents[0];
-    expect(agent?.title).toBe('doc-reader');
+    expect(agent?.title).toBe('Workflow agent 1');
     expect(agent?.title).not.toBe('b7c2raw');
+  });
+
+  it('adopts a declared label only when the agent names it itself, and takes its phase with it', () => {
+    const tracker = createClaudeWorkflowActivityTracker({ backendId: 'claude' });
+    tracker.observe(workflowToolUseWithScript({
+      id: 'toolu_wf',
+      script: `
+phase('Investigate')
+await parallel([
+  agent('Read the docs', { label: 'doc-reader', phase: 'Investigate' }),
+  agent('Check pins', { label: 'pin-ux', phase: 'Investigate' }),
+])
+`,
+    }), { updatedAt: 1000 });
+    tracker.observe(workflowJournal({
+      workflowToolUseId: 'toolu_wf',
+      type: 'result',
+      key: 'v2:only',
+      agentId: 'b7c2raw',
+      // `lane` IS the agent naming itself; matching it to a declared label is identity, not position.
+      result: { lane: 'pin-ux' },
+    }), { updatedAt: 1100 });
+
+    expect(tracker.getRunSnapshot('toolu_wf')?.agents[0]).toMatchObject({
+      title: 'pin-ux',
+      phaseTitle: 'Investigate',
+    });
   });
 
   it('keeps a genuine journal result title (lane) rather than substituting a placeholder (W-7)', () => {
@@ -905,6 +1010,244 @@ await parallel([
     tracker.observe(workflowJournal({ workflowToolUseId: 'toolu_wf', type: 'started', key: 'k1', agentId: 'raw-1' }), { updatedAt: 1200 });
     tracker.observe(workflowJournal({ workflowToolUseId: 'toolu_wf', type: 'started', key: 'k2', agentId: 'raw-2' }), { updatedAt: 1201 });
     expect(tracker.getRunSnapshot('toolu_wf')?.agents.map((a) => a.title)).toEqual(['Workflow agent 1', 'Workflow agent 2']);
+  });
+
+  describe('agent sidecar profile (the agent transcript beside the journal)', () => {
+    const agentProfile = (params: Readonly<{
+      workflowToolUseId: string;
+      agentId: string;
+      prompt?: string;
+      model?: string;
+      sidechainId?: string;
+      sessionId?: string;
+    }>) => ({
+      type: 'happier_workflow_agent_profile',
+      workflowToolUseId: params.workflowToolUseId,
+      agentId: params.agentId,
+      sourceSessionId: params.sessionId ?? 'claude-session-1',
+      ...(params.prompt !== undefined ? { prompt: params.prompt } : {}),
+      ...(params.model !== undefined ? { model: params.model } : {}),
+      ...(params.sidechainId !== undefined ? { sidechainId: params.sidechainId } : {}),
+    });
+
+    /**
+     * The open target reaches the record, and it reaches the RIGHT agent.
+     *
+     * Every agent of a run shares one `Workflow` tool call, so an import that leaked across agents
+     * would show one of them the others' transcript. These assert the id lands per agent and never
+     * on an agent that had none.
+     */
+    it('carries each agent’s imported sidechain onto its own snapshot, and only its own', () => {
+      const tracker = createClaudeWorkflowActivityTracker({ backendId: 'claude' });
+      tracker.observe(workflowToolUse({ id: 'toolu_wf', name: 'plain' }), { updatedAt: 1000 });
+      tracker.observe(workflowJournal({ workflowToolUseId: 'toolu_wf', type: 'started', key: 'k1', agentId: 'raw-1' }), { updatedAt: 1100 });
+      tracker.observe(workflowJournal({ workflowToolUseId: 'toolu_wf', type: 'started', key: 'k2', agentId: 'raw-2' }), { updatedAt: 1101 });
+
+      tracker.observe(agentProfile({
+        workflowToolUseId: 'toolu_wf',
+        agentId: 'raw-1',
+        sidechainId: 'workflow_agent_sidechain:toolu_wf:raw-1',
+      }), { updatedAt: 1150 });
+
+      const agents = tracker.getRunSnapshot('toolu_wf')?.agents ?? [];
+      expect(agents[0]).toMatchObject({ id: 'raw-1', sidechainId: 'workflow_agent_sidechain:toolu_wf:raw-1' });
+      expect(agents[1]).not.toHaveProperty('sidechainId');
+    });
+
+    it('accepts a profile that proves only the import — an unnamed agent still becomes openable', () => {
+      const tracker = createClaudeWorkflowActivityTracker({ backendId: 'claude' });
+      tracker.observe(workflowToolUse({ id: 'toolu_wf', name: 'plain' }), { updatedAt: 1000 });
+      tracker.observe(workflowJournal({ workflowToolUseId: 'toolu_wf', type: 'started', key: 'k1', agentId: 'raw-1' }), { updatedAt: 1100 });
+
+      tracker.observe(agentProfile({
+        workflowToolUseId: 'toolu_wf',
+        agentId: 'raw-1',
+        sidechainId: 'workflow_agent_sidechain:toolu_wf:raw-1',
+      }), { updatedAt: 1150 });
+
+      expect(tracker.getRunSnapshot('toolu_wf')?.agents[0]).toMatchObject({
+        title: 'Workflow agent 1',
+        sidechainId: 'workflow_agent_sidechain:toolu_wf:raw-1',
+      });
+    });
+
+    it('remembers an import proven before the agent’s journal entry arrives', () => {
+      const tracker = createClaudeWorkflowActivityTracker({ backendId: 'claude' });
+      tracker.observe(workflowToolUse({ id: 'toolu_wf', name: 'plain' }), { updatedAt: 1000 });
+      tracker.observe(agentProfile({
+        workflowToolUseId: 'toolu_wf',
+        agentId: 'raw-1',
+        sidechainId: 'workflow_agent_sidechain:toolu_wf:raw-1',
+      }), { updatedAt: 1050 });
+      tracker.observe(workflowJournal({ workflowToolUseId: 'toolu_wf', type: 'started', key: 'k1', agentId: 'raw-1' }), { updatedAt: 1100 });
+
+      expect(tracker.getRunSnapshot('toolu_wf')?.agents[0]?.sidechainId)
+        .toBe('workflow_agent_sidechain:toolu_wf:raw-1');
+    });
+
+    it('replaces the ordinal of a RUNNING agent with the lane its own prompt declares, and carries its model', () => {
+      const tracker = createClaudeWorkflowActivityTracker({ backendId: 'claude' });
+      tracker.observe(workflowToolUse({ id: 'toolu_wf', name: 'plain' }), { updatedAt: 1000 });
+      tracker.observe(workflowJournal({ workflowToolUseId: 'toolu_wf', type: 'started', key: 'k1', agentId: 'raw-1' }), { updatedAt: 1100 });
+      expect(tracker.getRunSnapshot('toolu_wf')?.agents[0]?.title).toBe('Workflow agent 1');
+
+      tracker.observe(agentProfile({
+        workflowToolUseId: 'toolu_wf',
+        agentId: 'raw-1',
+        prompt: '## Program context\nblah\n\n# LANE CLI-1 — the tracker tells the truth\nbody',
+        model: 'opus',
+      }), { updatedAt: 1150 });
+
+      expect(tracker.getRunSnapshot('toolu_wf')?.agents[0]).toMatchObject({
+        id: 'raw-1',
+        title: 'LANE CLI-1 — the tracker tells the truth',
+        status: 'active',
+        model: 'opus',
+      });
+    });
+
+    it('names an agent whose profile is read before its journal entry arrives', () => {
+      const tracker = createClaudeWorkflowActivityTracker({ backendId: 'claude' });
+      tracker.observe(workflowToolUse({ id: 'toolu_wf', name: 'plain' }), { updatedAt: 1000 });
+      tracker.observe(agentProfile({
+        workflowToolUseId: 'toolu_wf',
+        agentId: 'raw-1',
+        prompt: 'UNIT A — archaeology',
+      }), { updatedAt: 1050 });
+      tracker.observe(workflowJournal({ workflowToolUseId: 'toolu_wf', type: 'started', key: 'k1', agentId: 'raw-1' }), { updatedAt: 1100 });
+
+      expect(tracker.getRunSnapshot('toolu_wf')?.agents[0]?.title).toBe('UNIT A — archaeology');
+    });
+
+    it('never overrides the name the agent gave itself in its own result', () => {
+      const tracker = createClaudeWorkflowActivityTracker({ backendId: 'claude' });
+      tracker.observe(workflowToolUse({ id: 'toolu_wf', name: 'plain' }), { updatedAt: 1000 });
+      tracker.observe(workflowJournal({
+        workflowToolUseId: 'toolu_wf',
+        type: 'result',
+        key: 'k1',
+        agentId: 'raw-1',
+        result: { lane: 'auth-module' },
+      }), { updatedAt: 1100 });
+      tracker.observe(agentProfile({
+        workflowToolUseId: 'toolu_wf',
+        agentId: 'raw-1',
+        prompt: 'LANE something-else',
+      }), { updatedAt: 1150 });
+
+      expect(tracker.getRunSnapshot('toolu_wf')?.agents[0]?.title).toBe('auth-module');
+    });
+
+    it('creates no agent for a profile whose run is unknown', () => {
+      const tracker = createClaudeWorkflowActivityTracker({ backendId: 'claude' });
+      const obs = tracker.observe(agentProfile({ workflowToolUseId: 'toolu_unknown', agentId: 'raw-1', prompt: 'LANE x' }), { updatedAt: 1000 });
+      expect(obs.changedRunIds).toEqual([]);
+      expect(tracker.getRunSnapshotMap().size).toBe(0);
+    });
+  });
+
+  describe('agent start time (the elapsed-time slot)', () => {
+    it('records when a live agent was first observed', () => {
+      const tracker = createClaudeWorkflowActivityTracker({ backendId: 'claude' });
+      tracker.observe(workflowToolUse({ id: 'toolu_wf', name: 'plain' }), { updatedAt: 1000 });
+      tracker.observe(workflowJournal({ workflowToolUseId: 'toolu_wf', type: 'started', key: 'k1', agentId: 'raw-1' }), { updatedAt: 1100 });
+      tracker.observe(workflowJournal({ workflowToolUseId: 'toolu_wf', type: 'started', key: 'k1', agentId: 'raw-1' }), { updatedAt: 5000 });
+
+      // First observation wins: a later re-observation must not push the clock forward and shrink
+      // the elapsed time the user reads.
+      expect(tracker.getRunSnapshot('toolu_wf')?.agents[0]?.startedAt).toBe(1100);
+    });
+
+    it('leaves the start time blank for an agent first seen already finished', () => {
+      const tracker = createClaudeWorkflowActivityTracker({ backendId: 'claude' });
+      tracker.observe(workflowToolUse({ id: 'toolu_wf', name: 'plain' }), { updatedAt: 1000 });
+      tracker.observe(workflowJournal({
+        workflowToolUseId: 'toolu_wf',
+        type: 'result',
+        key: 'k1',
+        agentId: 'raw-1',
+        result: { lane: 'late' },
+      }), { updatedAt: 1100 });
+
+      // We never saw it run, so we do not know when it started. An invented elapsed figure is worse
+      // than a blank one.
+      expect(tracker.getRunSnapshot('toolu_wf')?.agents[0]?.startedAt).toBeUndefined();
+    });
+
+    it('records a start time for a plain subagent promoted into the implicit run', () => {
+      const tracker = createClaudeWorkflowActivityTracker({ backendId: 'claude' });
+      tracker.observe(subagentTask({ id: 'toolu_a', description: 'a' }), { updatedAt: 1000 });
+      tracker.observe(subagentTask({ id: 'toolu_b', description: 'b' }), { updatedAt: 1200 });
+
+      const agents = tracker.getRunSnapshot('implicit:agent-activity')?.agents ?? [];
+      expect(agents.map((agent) => [agent.id, agent.startedAt])).toEqual([
+        ['toolu_a', 1000],
+        ['toolu_b', 1200],
+      ]);
+    });
+  });
+
+  describe('finalizeInterruptedActivityOnShutdown (RULING-14: terminal state on process death)', () => {
+    it('resolves a run and its live agents when the process that owned them goes away', () => {
+      const tracker = createClaudeWorkflowActivityTracker({ backendId: 'claude' });
+      tracker.observe(workflowToolUse({ id: 'toolu_wf', name: 'plain' }), { updatedAt: 1000 });
+      tracker.observe(workflowJournal({ workflowToolUseId: 'toolu_wf', type: 'started', key: 'k1', agentId: 'raw-1' }), { updatedAt: 1100 });
+      tracker.observe(workflowJournal({
+        workflowToolUseId: 'toolu_wf',
+        type: 'result',
+        key: 'k2',
+        agentId: 'raw-2',
+        result: { lane: 'done-lane' },
+      }), { updatedAt: 1200 });
+
+      const observation = tracker.finalizeInterruptedActivityOnShutdown({ updatedAt: 9000 });
+      expect(observation.changedRunIds).toEqual(['toolu_wf']);
+      expect(observation.terminalRunIds).toEqual(['toolu_wf']);
+
+      const snapshot = tracker.getRunSnapshot('toolu_wf');
+      // A crash is a stop, never a failure — the run contract already ruled that; agents inherit it.
+      expect(snapshot).toMatchObject({ status: 'stopped', statusReason: 'interrupted', completedAt: 9000 });
+      expect(snapshot?.agents.map((agent) => [agent.id, agent.status, agent.completedAt])).toEqual([
+        // The live agent stops at the last instant we have evidence for, not at the teardown instant.
+        ['raw-1', 'cancelled', 1100],
+        // An agent that already finished keeps its own outcome.
+        ['raw-2', 'complete', undefined],
+      ]);
+      expect(snapshot?.agents.every((agent) => agent.status !== 'failed')).toBe(true);
+    });
+
+    it('resolves a live agent left behind inside an already-terminal run', () => {
+      const tracker = createClaudeWorkflowActivityTracker({ backendId: 'claude' });
+      tracker.observe(workflowToolUse({ id: 'toolu_wf', name: 'plain' }), { updatedAt: 1000 });
+      tracker.observe(workflowJournal({ workflowToolUseId: 'toolu_wf', type: 'started', key: 'k1', agentId: 'raw-1' }), { updatedAt: 1100 });
+      tracker.observe(taskStarted({ toolUseId: 'toolu_wf' }), { updatedAt: 1150 });
+      tracker.observe(taskUpdatedCompleted({}), { updatedAt: 1200 });
+
+      const before = tracker.getRunSnapshot('toolu_wf');
+      expect(before?.agents[0]?.status).toBe('active');
+
+      tracker.finalizeInterruptedActivityOnShutdown({ updatedAt: 9000 });
+      expect(tracker.getRunSnapshot('toolu_wf')?.agents[0]?.status).toBe('cancelled');
+    });
+
+    it('changes nothing when every run and agent already reached a terminal state', () => {
+      const tracker = createClaudeWorkflowActivityTracker({ backendId: 'claude' });
+      tracker.observe(workflowToolUse({ id: 'toolu_wf', name: 'plain' }), { updatedAt: 1000 });
+      tracker.observe(workflowJournal({
+        workflowToolUseId: 'toolu_wf',
+        type: 'result',
+        key: 'k1',
+        agentId: 'raw-1',
+        result: { lane: 'done' },
+      }), { updatedAt: 1100 });
+      tracker.observe(taskStarted({ toolUseId: 'toolu_wf' }), { updatedAt: 1150 });
+      tracker.observe(taskUpdatedCompleted({}), { updatedAt: 1200 });
+
+      const observation = tracker.finalizeInterruptedActivityOnShutdown({ updatedAt: 9000 });
+      expect(observation.changedRunIds).toEqual([]);
+      expect(tracker.getRunSnapshot('toolu_wf')).toMatchObject({ status: 'complete' });
+      expect(tracker.getRunSnapshot('toolu_wf')?.statusReason).toBeUndefined();
+    });
   });
 
   it('rejects events from a foreign Claude source session', () => {

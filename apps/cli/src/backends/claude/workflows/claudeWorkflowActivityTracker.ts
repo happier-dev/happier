@@ -14,8 +14,10 @@ import type { ClaudeProviderTaskActivity } from '../providerActivity/createClaud
 
 import {
   parseClaudeWorkflowFact,
+  type SubagentResultFact,
   type SubagentStartFact,
   type TaskLifecycleFact,
+  type WorkflowAgentProfileFact,
   type WorkflowJournalFact,
   type WorkflowJournalAgentSpecFact,
   type WorkflowLaunchFact,
@@ -55,11 +57,35 @@ type MutablePhase = {
   agentIds: string[];
 };
 
+/**
+ * Where an agent's current title came from, highest authority first (RULING-13).
+ *
+ * - `journal`: the agent named ITSELF (a journal `result.lane`/`label`/`item`/`message`) or the
+ *   provider handed us a title (`workflow_progress` label, `Task` description).
+ * - `label`: a script-declared label matched to this agent by identity — never by position.
+ * - `prompt`: the lane the agent's own sidecar prompt declares about itself.
+ * - `ordinal`: `Workflow agent N`. Says nothing, but never says something false.
+ *
+ * A lower-authority source may fill a title but must never overwrite a higher-authority one, so a
+ * late sidecar read cannot clobber the name an agent published for itself.
+ */
+type AgentTitleSource = 'journal' | 'label' | 'prompt' | 'ordinal';
+
+const AGENT_TITLE_AUTHORITY: Readonly<Record<AgentTitleSource, number>> = {
+  journal: 3,
+  label: 2,
+  prompt: 1,
+  ordinal: 0,
+};
+
 type MutableAgent = {
   id: string;
   title: string;
+  titleSource: AgentTitleSource;
   status: SessionWorkflowAgentStatusV1;
   vendorRef?: string;
+  /** The sidechain this agent's own transcript was imported under. Set once, and only by proof. */
+  sidechainId?: string;
   parentId?: string;
   phaseIndex?: number;
   phaseTitle?: string;
@@ -103,7 +129,8 @@ type MutableRun = {
   journalAgentSpecs: WorkflowJournalAgentSpecFact[];
   journalSpecIndexByKey: Map<string, number>;
   journalSpecIndexByAgentId: Map<string, number>;
-  nextJournalSpecIndex: number;
+  /** What each agent's own sidecar transcript says about itself, keyed by agent id. */
+  agentProfilesById: Map<string, Readonly<{ title?: string; model?: string; sidechainId?: string }>>;
   childToolUseIds: Set<string>;
   updatedAt: number;
 };
@@ -119,6 +146,13 @@ export type ClaudeWorkflowActivityTracker = Readonly<{
   getRunSnapshotMap(): ReadonlyMap<string, SessionWorkflowRunSnapshotV1>;
   reconcileInterruptedRunFromHeadline(
     run: WorkflowInterruptedRunSeed,
+    params: Readonly<{ updatedAt: number }>,
+  ): WorkflowActivityObservation;
+  /**
+   * Resolve every non-terminal run and agent because the process that owned them is going away
+   * (RULING-14). Called from an OBSERVED death — graceful teardown — never from a timer.
+   */
+  finalizeInterruptedActivityOnShutdown(
     params: Readonly<{ updatedAt: number }>,
   ): WorkflowActivityObservation;
   /** Run ids whose latest published agents are workflow-owned (CWF4 suppression hook). */
@@ -195,6 +229,10 @@ export function createClaudeWorkflowActivityTracker(params: Readonly<{
   // Claude `task_updated` terminal events carry only `task_id` (no `tool_use_id`), so the run's
   // provider task id is learned from earlier lifecycle events that carry both and used to route.
   const runIdByTaskId = new Map<string, string>();
+  // Tool-use ids proven to be plain `Task` subagents. A successful subagent `tool_result` is
+  // payload-identical to any other successful tool result, so this set is the only thing that makes
+  // it recognisable — see `parseSubagentToolResult`.
+  const subagentToolUseIds = new Set<string>();
   const liveObservedRunIds = new Set<string>();
   let implicitRunId: string | undefined;
 
@@ -229,7 +267,7 @@ export function createClaudeWorkflowActivityTracker(params: Readonly<{
       journalAgentSpecs: [],
       journalSpecIndexByKey: new Map(),
       journalSpecIndexByAgentId: new Map(),
-      nextJournalSpecIndex: 0,
+      agentProfilesById: new Map(),
       childToolUseIds: new Set(),
       updatedAt: init.updatedAt ?? 0,
       ...(init.workflowToolUseId ? { workflowToolUseId: init.workflowToolUseId } : {}),
@@ -270,8 +308,11 @@ export function createClaudeWorkflowActivityTracker(params: Readonly<{
   function upsertAgent(run: MutableRun, agent: Readonly<{
     id: string;
     title: string;
+    /** Defaults to `journal`: a provider-given title outranks anything we derived ourselves. */
+    titleSource?: AgentTitleSource;
     status: SessionWorkflowAgentStatusV1;
     vendorRef?: string;
+    sidechainId?: string;
     parentId?: string;
     phaseIndex?: number;
     phaseTitle?: string;
@@ -287,13 +328,21 @@ export function createClaudeWorkflowActivityTracker(params: Readonly<{
     updatedAt: number;
   }>): void {
     const existing = run.agentsById.get(agent.id);
+    const titleSource = agent.titleSource ?? 'journal';
     if (!existing) {
+      // The elapsed-time slot: an agent first seen ALIVE started when we first saw it. An agent
+      // first seen already finished has no knowable start, and an invented one would paint a
+      // fabricated elapsed figure — so it stays blank.
+      const observedStartedAt = agent.startedAt
+        ?? (isTerminalAgentStatus(agent.status) ? undefined : agent.updatedAt);
       const created: MutableAgent = {
         id: agent.id,
         title: agent.title,
+        titleSource,
         status: agent.status,
         updatedAt: agent.updatedAt,
         ...(agent.vendorRef ? { vendorRef: agent.vendorRef } : {}),
+        ...(agent.sidechainId ? { sidechainId: agent.sidechainId } : {}),
         ...(agent.parentId ? { parentId: agent.parentId } : {}),
         ...(agent.phaseIndex !== undefined ? { phaseIndex: agent.phaseIndex } : {}),
         ...(agent.phaseTitle ? { phaseTitle: agent.phaseTitle } : {}),
@@ -303,7 +352,7 @@ export function createClaudeWorkflowActivityTracker(params: Readonly<{
         ...(agent.tokensUsed !== undefined ? { tokensUsed: agent.tokensUsed } : {}),
         ...(agent.toolCalls !== undefined ? { toolCalls: agent.toolCalls } : {}),
         ...(agent.timeUsedSeconds !== undefined ? { timeUsedSeconds: agent.timeUsedSeconds } : {}),
-        ...(agent.startedAt !== undefined ? { startedAt: agent.startedAt } : {}),
+        ...(observedStartedAt !== undefined ? { startedAt: observedStartedAt } : {}),
         ...(agent.completedAt !== undefined ? { completedAt: agent.completedAt } : {}),
         ...(agent.attempt !== undefined ? { attempt: agent.attempt } : {}),
       };
@@ -317,7 +366,10 @@ export function createClaudeWorkflowActivityTracker(params: Readonly<{
     const shouldPreserveTerminalStatus = isTerminalAgentStatus(existing.status)
       && !isTerminalAgentStatus(agent.status)
       && !isNewerAttempt;
-    existing.title = agent.title || existing.title;
+    if (agent.title && AGENT_TITLE_AUTHORITY[titleSource] >= AGENT_TITLE_AUTHORITY[existing.titleSource]) {
+      existing.title = agent.title;
+      existing.titleSource = titleSource;
+    }
     if (!shouldPreserveTerminalStatus) {
       existing.status = agent.status;
       existing.updatedAt = agent.updatedAt;
@@ -328,6 +380,9 @@ export function createClaudeWorkflowActivityTracker(params: Readonly<{
       }
     }
     if (agent.vendorRef) existing.vendorRef = agent.vendorRef;
+    // First import wins. The id is composed from identifiers that do not change, so a SECOND value
+    // would mean a second transcript for one agent; adopting it would orphan whatever was filed.
+    if (agent.sidechainId && !existing.sidechainId) existing.sidechainId = agent.sidechainId;
     if (agent.parentId) existing.parentId = agent.parentId;
     if (agent.phaseIndex !== undefined) existing.phaseIndex = agent.phaseIndex;
     if (agent.phaseTitle) existing.phaseTitle = agent.phaseTitle;
@@ -337,7 +392,8 @@ export function createClaudeWorkflowActivityTracker(params: Readonly<{
     if (agent.tokensUsed !== undefined) existing.tokensUsed = agent.tokensUsed;
     if (agent.toolCalls !== undefined) existing.toolCalls = agent.toolCalls;
     if (agent.timeUsedSeconds !== undefined) existing.timeUsedSeconds = agent.timeUsedSeconds;
-    if (agent.startedAt !== undefined) existing.startedAt = agent.startedAt;
+    // First observation wins: moving a start time forward would silently shrink elapsed time.
+    if (agent.startedAt !== undefined && existing.startedAt === undefined) existing.startedAt = agent.startedAt;
     if (agent.completedAt !== undefined) existing.completedAt = agent.completedAt;
     if (agent.attempt !== undefined) existing.attempt = agent.attempt;
     assignAgentToPhase(run, agent.id, agent.phaseIndex);
@@ -385,7 +441,6 @@ export function createClaudeWorkflowActivityTracker(params: Readonly<{
       run.journalAgentSpecs = [...fact.journalAgentSpecs];
       run.journalSpecIndexByKey.clear();
       run.journalSpecIndexByAgentId.clear();
-      run.nextJournalSpecIndex = 0;
     }
     run.updatedAt = updatedAt;
     return run.runId;
@@ -496,6 +551,30 @@ export function createClaudeWorkflowActivityTracker(params: Readonly<{
       return null;
     }
 
+    // A lifecycle event addressed to a CHILD agent's tool-use id closes that agent, never the run.
+    // Without this, one failed subagent inside a fan-out marked the whole run failed, and a plain
+    // subagent's own `task_notification` closed the synthesized "Agent activity" run around it.
+    if (
+      toolUseId
+      && toolUseId !== run.runId
+      && toolUseId !== run.workflowToolUseId
+      && runIdByChildToolUseId.get(toolUseId) === run.runId
+      && run.agentsById.has(toolUseId)
+    ) {
+      const childStatus = runStatusFromSignal(fact.status);
+      if (!isTerminalRunStatus(childStatus)) return run.runId;
+      applyChildAgentTerminal(run, {
+        agentId: toolUseId,
+        status: fact.status === 'unknown' ? 'unknown' : fact.status,
+        updatedAt,
+        ...(fact.summary ? { summary: fact.summary } : {}),
+        ...(fact.resultPreview ? { resultPreview: fact.resultPreview } : {}),
+        ...(fact.completedAt !== undefined ? { completedAt: fact.completedAt } : {}),
+        ...(fact.usage.timeUsedSeconds !== undefined ? { timeUsedSeconds: fact.usage.timeUsedSeconds } : {}),
+      });
+      return run.runId;
+    }
+
     // Learn the run's provider task id so a later id-only terminal event can route back to it.
     if (fact.taskId) {
       run.providerTaskId = fact.taskId;
@@ -590,6 +669,18 @@ export function createClaudeWorkflowActivityTracker(params: Readonly<{
     return undefined;
   }
 
+  /**
+   * The script-declared label for THIS agent, or nothing.
+   *
+   * RULING-13: a label is attached only through a stable identity — the journal key or the agent id
+   * (both learned from an earlier identity match), or the agent naming the label ITSELF in its
+   * result. There is deliberately no positional fallback: the journal delivers agents in completion
+   * order while a script declares them in text order, and for any `parallel()`/`pipeline()` stage
+   * those orders are unrelated. Zipping the two gave 4 of 6 agents ANOTHER lane's name in a real
+   * production run. The journal key is an opaque `v2:<sha256>` that cannot be reconstructed from the
+   * script, and only 49 of 720 real script labels appear verbatim in exactly one agent prompt, so no
+   * derivable key exists — which is why the positional path was deleted rather than repaired.
+   */
   function resolveJournalSpec(run: MutableRun, fact: WorkflowJournalFact): WorkflowJournalAgentSpecFact | undefined {
     if (fact.journalKey) {
       const existingIndex = run.journalSpecIndexByKey.get(fact.journalKey);
@@ -607,12 +698,11 @@ export function createClaudeWorkflowActivityTracker(params: Readonly<{
       if (assignedIndexes.has(index)) return false;
       return spec.label.toLocaleLowerCase() === titleNormalized;
     });
-    const index = matchingIndex >= 0 ? matchingIndex : run.nextJournalSpecIndex;
-    const spec = run.journalAgentSpecs[index];
+    if (matchingIndex < 0) return undefined;
+    const spec = run.journalAgentSpecs[matchingIndex];
     if (!spec) return undefined;
-    if (matchingIndex < 0) run.nextJournalSpecIndex = index + 1;
-    if (fact.journalKey) run.journalSpecIndexByKey.set(fact.journalKey, index);
-    run.journalSpecIndexByAgentId.set(fact.agentId, index);
+    if (fact.journalKey) run.journalSpecIndexByKey.set(fact.journalKey, matchingIndex);
+    run.journalSpecIndexByAgentId.set(fact.agentId, matchingIndex);
     return spec;
   }
 
@@ -631,33 +721,42 @@ export function createClaudeWorkflowActivityTracker(params: Readonly<{
     // parser, so gating this on `status === 'active'` (the old code) leaked the RAW HEX AGENT ID as
     // the row title for completed agents. Never display a raw agent id.
     const isOpaqueJournalTitle = fact.title === fact.agentId;
-    // Prefer, in order: explicit label from the workflow script spec -> `Workflow agent N` ordinal.
-    // (A prompt first-line excerpt would slot between these, but journal facts do not currently
-    // carry the prompt — see claudeWorkflowCorrelation.parseWorkflowJournalFact; recorded as the
-    // upstream loss point in the lane report.) The ordinal is a stable last resort.
+    // RULING-13 naming priority, highest first:
+    //   1. the name the agent published for ITSELF (a journal result lane/label/item/message);
+    //   2. a script label matched by stable identity (never by position — see `resolveJournalSpec`);
+    //   3. the lane the agent's own sidecar prompt declares (`workflow-agent-profile`);
+    //   4. `Workflow agent N` — stable, and never false.
     const journalLabel = journalSpec && journalSpec.label !== fact.agentId ? journalSpec.label : undefined;
-    const resolvedTitle = isOpaqueJournalTitle
-      ? (journalLabel ?? `Workflow agent ${fallbackOrdinal}`)
-      : fact.title;
+    const profile = run.agentProfilesById.get(fact.agentId);
+    const resolved: { title: string; source: AgentTitleSource } = isOpaqueJournalTitle
+      ? journalLabel
+        ? { title: journalLabel, source: 'label' }
+        : profile?.title
+          ? { title: profile.title, source: 'prompt' }
+          : { title: `Workflow agent ${fallbackOrdinal}`, source: 'ordinal' }
+      : { title: fact.title, source: 'journal' };
     const effectiveFact = journalSpec
       ? {
         ...fact,
-        title: resolvedTitle,
+        title: resolved.title,
         phaseTitle: fact.phaseTitle ?? journalSpec.phaseTitle,
       }
       : {
         ...fact,
-        title: resolvedTitle,
+        title: resolved.title,
       };
     const phaseIndex = resolveJournalPhaseIndex(run, effectiveFact);
     upsertAgent(run, {
       id: effectiveFact.agentId,
       title: effectiveFact.title,
+      titleSource: resolved.source,
       status: effectiveFact.status,
       updatedAt,
       parentId: effectiveFact.workflowToolUseId,
       ...(phaseIndex !== undefined ? { phaseIndex } : {}),
       ...(effectiveFact.phaseTitle ? { phaseTitle: effectiveFact.phaseTitle } : {}),
+      ...(profile?.model ? { model: profile.model } : {}),
+      ...(profile?.sidechainId ? { sidechainId: profile.sidechainId } : {}),
       ...(effectiveFact.summary ? { summary: effectiveFact.summary } : {}),
       ...(effectiveFact.resultPreview ? { resultPreview: effectiveFact.resultPreview } : {}),
     });
@@ -667,8 +766,50 @@ export function createClaudeWorkflowActivityTracker(params: Readonly<{
     return run.runId;
   }
 
+  /**
+   * What one workflow agent's own sidecar transcript proves about it.
+   *
+   * A journal `started` entry carries only `{type, key, agentId}`, so 100% of workflow agents are
+   * anonymous while they run. The agent's own `agent-<id>.jsonl`/`.meta.json` sit in the directory
+   * the journal follower already watches; this folds them in. It never creates an agent — reading a
+   * file is not evidence of a lifecycle transition — but a profile that lands before the journal
+   * entry is remembered and applied the moment the agent appears.
+   */
+  function applyWorkflowAgentProfile(fact: WorkflowAgentProfileFact, updatedAt: number): string | null {
+    if (isForeignSource(fact.sourceSessionId)) return null;
+    // An import with no readable prompt and no model is still evidence: it makes the agent openable.
+    if (!fact.title && !fact.model && !fact.sidechainId) return null;
+    const workflowRunId = runIdByWorkflowToolUseId.get(fact.workflowToolUseId) ?? fact.workflowToolUseId;
+    const run = runs.get(workflowRunId);
+    if (!run) return null;
+
+    const previous = run.agentProfilesById.get(fact.agentId);
+    run.agentProfilesById.set(fact.agentId, {
+      ...(fact.title ?? previous?.title ? { title: fact.title ?? previous?.title } : {}),
+      ...(fact.model ?? previous?.model ? { model: fact.model ?? previous?.model } : {}),
+      ...(previous?.sidechainId ?? fact.sidechainId
+        ? { sidechainId: previous?.sidechainId ?? fact.sidechainId }
+        : {}),
+    });
+
+    const existing = run.agentsById.get(fact.agentId);
+    if (!existing) return run.runId;
+    upsertAgent(run, {
+      id: existing.id,
+      title: fact.title ?? existing.title,
+      titleSource: fact.title ? 'prompt' : existing.titleSource,
+      status: existing.status,
+      updatedAt: existing.updatedAt,
+      ...(fact.model ? { model: fact.model } : {}),
+      ...(fact.sidechainId ? { sidechainId: fact.sidechainId } : {}),
+    });
+    run.updatedAt = updatedAt;
+    return run.runId;
+  }
+
   function applySubagentStart(fact: SubagentStartFact, updatedAt: number): string | null {
     if (isForeignSource(fact.sourceSessionId)) return null;
+    subagentToolUseIds.add(fact.toolUseId);
     // A child whose explicit parent is a known Workflow run attaches there (explicit-wins).
     if (fact.parentToolUseId) {
       const parentRunId = runIdByWorkflowToolUseId.get(fact.parentToolUseId)
@@ -695,8 +836,16 @@ export function createClaudeWorkflowActivityTracker(params: Readonly<{
   }
 
   // Plain subagents that are not (yet) owned by an explicit run. They become an implicit run only
-  // once >= threshold are seen, so a single plain subagent stays a task (CWF4).
-  const pendingImplicitSubagents = new Map<string, SubagentStartFact & { updatedAt: number }>();
+  // once >= threshold are seen, so a single plain subagent stays a task (CWF4). A buffered entry
+  // keeps any terminal result observed while it waited, so a promotion later cannot resurrect a
+  // finished subagent as `active`.
+  type PendingImplicitSubagent = SubagentStartFact & {
+    updatedAt: number;
+    status: SessionWorkflowAgentStatusV1;
+    resultPreview?: string;
+    timeUsedSeconds?: number;
+  };
+  const pendingImplicitSubagents = new Map<string, PendingImplicitSubagent>();
 
   function promoteImplicitSubagent(fact: SubagentStartFact, updatedAt: number): string | null {
     if (implicitRunId) {
@@ -710,7 +859,7 @@ export function createClaudeWorkflowActivityTracker(params: Readonly<{
       }
     }
 
-    pendingImplicitSubagents.set(fact.toolUseId, { ...fact, updatedAt });
+    pendingImplicitSubagents.set(fact.toolUseId, { ...fact, updatedAt, status: 'active' });
     if (pendingImplicitSubagents.size < CLAUDE_IMPLICIT_WORKFLOW_AGENT_THRESHOLD) {
       return null;
     }
@@ -724,13 +873,116 @@ export function createClaudeWorkflowActivityTracker(params: Readonly<{
       startedAt: updatedAt,
     });
     for (const pending of pendingImplicitSubagents.values()) {
-      upsertAgent(run, { id: pending.toolUseId, title: pending.title, status: 'active', updatedAt: pending.updatedAt });
+      upsertAgent(run, {
+        id: pending.toolUseId,
+        title: pending.title,
+        status: pending.status,
+        updatedAt: pending.updatedAt,
+        ...(pending.resultPreview ? { resultPreview: pending.resultPreview } : {}),
+        ...(pending.timeUsedSeconds !== undefined ? { timeUsedSeconds: pending.timeUsedSeconds } : {}),
+      });
       run.childToolUseIds.add(pending.toolUseId);
       runIdByChildToolUseId.set(pending.toolUseId, run.runId);
     }
     pendingImplicitSubagents.clear();
     run.updatedAt = updatedAt;
+    rollUpImplicitRunStatus(run);
     return run.runId;
+  }
+
+  /**
+   * A plain subagent's `Task` tool_result — the only terminal evidence a SYNCHRONOUS subagent emits.
+   *
+   * Applied strictly to tool-use ids already observed as `subagent-start`, so a `Read`/`Bash` result
+   * (which parses identically) can never close an agent. The error case arrives upstream as a
+   * `task-lifecycle` fact and is handled in `applyTaskLifecycle`'s child branch.
+   */
+  function applySubagentResult(fact: SubagentResultFact, updatedAt: number): string | null {
+    if (isForeignSource(fact.sourceSessionId)) return null;
+
+    const pending = pendingImplicitSubagents.get(fact.toolUseId);
+    if (pending) {
+      // Not promoted yet: remember the outcome so a later promotion publishes the truth, but do not
+      // synthesize a run for it (CWF4 — a single plain subagent is a task, not a run).
+      pendingImplicitSubagents.set(fact.toolUseId, {
+        ...pending,
+        status: fact.status,
+        updatedAt,
+        ...(fact.resultPreview ? { resultPreview: fact.resultPreview } : {}),
+        ...(fact.timeUsedSeconds !== undefined ? { timeUsedSeconds: fact.timeUsedSeconds } : {}),
+      });
+      return null;
+    }
+
+    const runId = runIdByChildToolUseId.get(fact.toolUseId);
+    if (!runId) return null;
+    const run = runs.get(runId);
+    if (!run?.agentsById.has(fact.toolUseId)) return null;
+
+    applyChildAgentTerminal(run, {
+      agentId: fact.toolUseId,
+      status: fact.status,
+      updatedAt,
+      ...(fact.resultPreview ? { resultPreview: fact.resultPreview } : {}),
+      ...(fact.timeUsedSeconds !== undefined ? { timeUsedSeconds: fact.timeUsedSeconds } : {}),
+    });
+    return run.runId;
+  }
+
+  /**
+   * Close ONE agent inside a run. A child's outcome never decides its parent run's status: an
+   * explicit run's status is owned by its own workflow lifecycle events, and the synthesized
+   * implicit run is closed only by the all-children-terminal roll-up below.
+   */
+  function applyChildAgentTerminal(run: MutableRun, params: Readonly<{
+    agentId: string;
+    status: SessionWorkflowAgentStatusV1;
+    updatedAt: number;
+    summary?: string;
+    resultPreview?: string;
+    completedAt?: number;
+    timeUsedSeconds?: number;
+  }>): void {
+    const existing = run.agentsById.get(params.agentId);
+    upsertAgent(run, {
+      id: params.agentId,
+      title: existing?.title ?? params.agentId,
+      // Re-asserting an existing title must not promote its authority, or a late sidecar read could
+      // no longer replace an ordinal.
+      ...(existing ? { titleSource: existing.titleSource } : {}),
+      status: params.status,
+      updatedAt: params.updatedAt,
+      ...(params.summary ? { summary: params.summary } : {}),
+      ...(params.resultPreview ? { resultPreview: params.resultPreview } : {}),
+      ...(params.completedAt !== undefined ? { completedAt: params.completedAt } : {}),
+      ...(params.timeUsedSeconds !== undefined ? { timeUsedSeconds: params.timeUsedSeconds } : {}),
+    });
+    run.updatedAt = params.updatedAt;
+    rollUpImplicitRunStatus(run);
+  }
+
+  /**
+   * The implicit "Agent activity" run is a synthesized grouping of plain subagents, so it has no
+   * lifecycle events of its own. Without this it would claim liveness forever once created. Explicit
+   * runs are untouched — their status comes from real Workflow lifecycle evidence.
+   */
+  function rollUpImplicitRunStatus(run: MutableRun): void {
+    if (run.explicit || run.runId !== implicitRunId) return;
+    const agents = [...run.agentsById.values()];
+    if (agents.length === 0) return;
+    if (!agents.every((agent) => isTerminalAgentStatus(agent.status))) {
+      if (!isTerminalRunStatus(run.status)) return;
+      // A previously-closed run gained live work again (a resumed/new subagent).
+      run.status = 'active';
+      delete run.completedAt;
+      return;
+    }
+    run.status = agents.some((agent) => agent.status === 'failed')
+      ? 'failed'
+      : agents.every((agent) => agent.status === 'cancelled')
+        ? 'cancelled'
+        : 'complete';
+    run.completedAt = run.updatedAt;
   }
 
   function projectPhases(run: MutableRun): SessionWorkflowPhaseSnapshotV1[] {
@@ -754,6 +1006,7 @@ export function createClaudeWorkflowActivityTracker(params: Readonly<{
         status: agent.status,
         updatedAt: agent.updatedAt,
         ...(agent.vendorRef ? { vendorRef: agent.vendorRef } : {}),
+        ...(agent.sidechainId ? { sidechainId: agent.sidechainId } : {}),
         ...(agent.parentId ? { parentId: agent.parentId } : {}),
         ...(agent.phaseIndex !== undefined ? { phaseIndex: agent.phaseIndex } : {}),
         ...(agent.phaseTitle ? { phaseTitle: agent.phaseTitle } : {}),
@@ -826,7 +1079,9 @@ export function createClaudeWorkflowActivityTracker(params: Readonly<{
     value: unknown,
     observeParams: Readonly<{ updatedAt: number; live?: boolean }>,
   ): WorkflowActivityObservation {
-    const fact = parseClaudeWorkflowFact(value);
+    const fact = parseClaudeWorkflowFact(value, {
+      isKnownSubagentToolUseId: (toolUseId) => subagentToolUseIds.has(toolUseId),
+    });
     if (!fact) {
       return { changedRunIds: [], startedRunIds: [], terminalRunIds: [], statusChangedRunIds: [] };
     }
@@ -845,6 +1100,10 @@ export function createClaudeWorkflowActivityTracker(params: Readonly<{
       touchedRunId = applyTaskLifecycle(fact, observeParams.updatedAt, providerTaskActivities);
     } else if (fact.kind === 'workflow-journal') {
       touchedRunId = applyWorkflowJournal(fact, observeParams.updatedAt);
+    } else if (fact.kind === 'workflow-agent-profile') {
+      touchedRunId = applyWorkflowAgentProfile(fact, observeParams.updatedAt);
+    } else if (fact.kind === 'subagent-result') {
+      touchedRunId = applySubagentResult(fact, observeParams.updatedAt);
     } else {
       touchedRunId = applySubagentStart(fact, observeParams.updatedAt);
     }
@@ -966,6 +1225,63 @@ export function createClaudeWorkflowActivityTracker(params: Readonly<{
     };
   }
 
+  /**
+   * RULING-14 — terminal state on PROCESS DEATH, not on turn failure and never on inactivity.
+   *
+   * Every kind this tracker holds — workflow runs, workflow agents, `Task` sidechains, background
+   * shells — runs INSIDE the Claude query. When that query is gone the work is over: that is a
+   * recorded observation, not an inference, so no timer and no turn outcome is consulted. A turn can
+   * fail with the process alive and its children still working (an auth failure scoped to a subagent
+   * is deliberately not surfaced as a primary-session failure), which is exactly why turn failure is
+   * the wrong trigger.
+   *
+   * Never `failed`: the adapter contract already ruled that a run reconciled after a CLI crash lands
+   * as a stop, never a failure. Agents inherit that ruling as `cancelled`, and each agent's
+   * `completedAt` is the last instant we actually have evidence for — never a fabricated end.
+   *
+   * Happier execution runs are structurally exempt: they create their own backend and query owned by
+   * the CLI session process, so they genuinely outlive a provider death — and they are not in this
+   * tracker at all. Their liveness is answered by their own pid-backed marker registry.
+   */
+  function finalizeInterruptedActivityOnShutdown(
+    finalizeParams: Readonly<{ updatedAt: number }>,
+  ): WorkflowActivityObservation {
+    const changedRunIds: string[] = [];
+    const terminalRunIds: string[] = [];
+    const statusChangedRunIds: string[] = [];
+
+    for (const run of runs.values()) {
+      const priorStatus = run.status;
+      let touched = false;
+
+      for (const agent of run.agentsById.values()) {
+        if (isTerminalAgentStatus(agent.status)) continue;
+        agent.status = 'cancelled';
+        if (agent.completedAt === undefined) agent.completedAt = agent.updatedAt;
+        agent.updatedAt = finalizeParams.updatedAt;
+        touched = true;
+      }
+
+      if (!isTerminalRunStatus(run.status)) {
+        run.status = 'stopped';
+        run.statusReason = 'interrupted';
+        run.completedAt = finalizeParams.updatedAt;
+        touched = true;
+      }
+
+      if (!touched) continue;
+      run.updatedAt = finalizeParams.updatedAt;
+      const { material } = projectRun(run);
+      if (material) changedRunIds.push(run.runId);
+      if (run.status !== priorStatus) {
+        statusChangedRunIds.push(run.runId);
+        if (isTerminalRunStatus(run.status)) terminalRunIds.push(run.runId);
+      }
+    }
+
+    return { changedRunIds, startedRunIds: [], terminalRunIds, statusChangedRunIds };
+  }
+
   function getWorkflowOwnedAgentToolUseIds(): ReadonlySet<string> {
     const owned = new Set<string>();
     for (const run of runs.values()) {
@@ -997,6 +1313,7 @@ export function createClaudeWorkflowActivityTracker(params: Readonly<{
     getRunSnapshot,
     getRunSnapshotMap,
     reconcileInterruptedRunFromHeadline,
+    finalizeInterruptedActivityOnShutdown,
     getWorkflowOwnedAgentToolUseIds,
     isWorkflowOwnedProviderTaskId,
     isWorkflowOwnedTaskReference,

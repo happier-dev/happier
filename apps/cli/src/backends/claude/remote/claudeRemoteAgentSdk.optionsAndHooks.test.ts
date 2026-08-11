@@ -523,6 +523,82 @@ describe('claudeRemoteAgentSdk options and hooks', () => {
         await runnerPromise;
     });
 
+    it('never targets another session\'s task with stopTask(), and interrupts this turn instead', async () => {
+        // Same shape as the test above, one field different: the task names a session this runtime
+        // has not been told it owns. `init` declares the lineage, so the row is provably foreign
+        // rather than merely unattributed (a task with no session id stays actionable). Adopted as
+        // the interrupt target it does two wrong things at once - it asks the provider to kill
+        // another session's work, and it silently replaces the interrupt that would have stopped
+        // OUR turn.
+        const stopTask = vi.fn(async (_taskId: string) => {});
+        const interrupt = vi.fn(async () => {});
+        let capturedTurnInterrupt: null | (() => Promise<void>) = null;
+        let resolveFinish: (() => void) | null = null;
+        let resolveForeignTaskSeen: (() => void) | null = null;
+        const foreignTaskSeen = new Promise<void>((resolve) => { resolveForeignTaskSeen = () => resolve(); });
+        const finish = new Promise<void>((resolve) => {
+            resolveFinish = () => resolve();
+        });
+
+        const createQuery = vi.fn((_params: any) => {
+            return {
+                async *[Symbol.asyncIterator]() {
+                    yield { type: 'system', subtype: 'init', session_id: 'sess_mine' } as any;
+                    yield { type: 'system', subtype: 'task_started', task_id: 'task_foreign', session_id: 'sess_someone_else' } as any;
+                    resolveForeignTaskSeen?.();
+                    await finish;
+                    yield { type: 'result' } as any;
+                },
+                stopTask,
+                interrupt,
+                close: vi.fn(),
+                setPermissionMode: vi.fn(),
+                setModel: vi.fn(),
+                setMaxThinkingTokens: vi.fn(),
+                supportedCommands: vi.fn(async () => []),
+                supportedModels: vi.fn(async () => []),
+            } as any;
+        });
+
+        let didSendFirst = false;
+        const nextMessage = vi.fn(async () => {
+            if (didSendFirst) return null;
+            didSendFirst = true;
+            return { message: 'hello', mode: makeMode({ permissionMode: 'default' } as any) };
+        });
+
+        const runnerPromise = claudeRemoteAgentSdk({
+            sessionId: null,
+            transcriptPath: null,
+            path: '/tmp',
+            claudeArgs: [],
+            claudeExecutablePath: '/tmp/claude',
+            canCallTool: async () => ({ behavior: 'allow', updatedInput: {} }),
+            isAborted: () => false,
+            nextMessage,
+            onReady: () => {},
+            onSessionFound: () => {},
+            onMessage: () => {},
+            setTurnInterrupt: (next: (() => Promise<void>) | null) => {
+                if (next) capturedTurnInterrupt = next;
+            },
+            createQuery,
+        } as any);
+
+        for (let i = 0; i < 50 && !capturedTurnInterrupt; i += 1) {
+            // eslint-disable-next-line no-await-in-loop
+            await new Promise((r) => setTimeout(r, 5));
+        }
+        if (!capturedTurnInterrupt) throw new Error('Expected claudeRemoteAgentSdk to register a turn interrupt handler');
+        await foreignTaskSeen;
+
+        await (capturedTurnInterrupt as unknown as () => Promise<void>)();
+        expect(stopTask).not.toHaveBeenCalled();
+        expect(interrupt).toHaveBeenCalled();
+        (resolveFinish as unknown as (() => void) | null)?.();
+        await runnerPromise;
+    });
+
     it('does not emit duplicate assistant text after stopTask interrupt when streamed text already covered it', async () => {
         const stopTask = vi.fn(async (_taskId: string) => {});
         let capturedTurnInterrupt: null | (() => Promise<void>) = null;

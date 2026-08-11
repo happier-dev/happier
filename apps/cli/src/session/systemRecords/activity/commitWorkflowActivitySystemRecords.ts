@@ -1,4 +1,8 @@
-import type { SessionSystemRecordUpsertRequest, SessionWorkflowRunSnapshotV1 } from '@happier-dev/protocol';
+import type {
+  SessionBackgroundTaskRecordV1,
+  SessionSystemRecordUpsertRequest,
+  SessionWorkflowRunSnapshotV1,
+} from '@happier-dev/protocol';
 
 import type {
   SessionEncryptionContext,
@@ -8,7 +12,9 @@ import type {
 import {
   ACTIVITY_SYSTEM_RECORD_KINDS,
   ACTIVITY_SYSTEM_RECORD_NAMESPACE,
+  buildBackgroundTaskSystemRecordLocalId,
   buildWorkflowRunSystemRecordLocalId,
+  sealBackgroundTaskSystemRecordPayload,
   sealWorkflowRunSystemRecordPayload,
 } from './activitySystemRecords';
 
@@ -37,6 +43,35 @@ export async function commitWorkflowActivitySystemRecord(params: Readonly<{
       mode: params.mode,
       ...(params.ctx ? { ctx: params.ctx } : {}),
       payload: params.snapshot,
+    }),
+  };
+
+  await params.upsertSystemRecord(request);
+}
+
+/**
+ * Idempotent durable commit for ONE background task's `activity/background_task.v1` system record
+ * (PLAN 4.9, R-9).
+ *
+ * Same shape, same namespace and the same encryption parity as its workflow sibling above — one
+ * commit owner for the `activity` namespace rather than a second write path per kind. The stable
+ * local id (`activity:background_task:v1:${taskId}`) makes the upsert idempotent, so a retry
+ * replaces the record in place instead of accumulating duplicates.
+ */
+export async function commitBackgroundTaskActivitySystemRecord(params: Readonly<{
+  mode: SessionStoredContentEncryptionMode;
+  ctx?: SessionEncryptionContext;
+  record: SessionBackgroundTaskRecordV1;
+  upsertSystemRecord: (request: SessionSystemRecordUpsertRequest) => Promise<void>;
+}>): Promise<void> {
+  const request: SessionSystemRecordUpsertRequest = {
+    namespace: ACTIVITY_SYSTEM_RECORD_NAMESPACE,
+    kind: ACTIVITY_SYSTEM_RECORD_KINDS.backgroundTask,
+    localId: buildBackgroundTaskSystemRecordLocalId({ taskId: params.record.taskId }),
+    content: sealBackgroundTaskSystemRecordPayload({
+      mode: params.mode,
+      ...(params.ctx ? { ctx: params.ctx } : {}),
+      payload: params.record,
     }),
   };
 

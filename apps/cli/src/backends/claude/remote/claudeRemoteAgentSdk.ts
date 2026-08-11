@@ -354,6 +354,12 @@ export async function claudeRemoteAgentSdk(opts: {
 		        const normalized = typeof sessionId === 'string' ? sessionId.trim() : '';
 		        if (normalized.length > 0) {
 		            latestClaudeSessionId = normalized;
+		            // The one chokepoint where provider session identity moves (`init`, compact
+		            // boundary, hook-reported resume). The ledger accumulates the lineage so a
+		            // task started before a compaction is not foreign to its own ledger afterwards.
+		            // Safe despite the later `const`: this closure only ever runs after the query
+		            // options are built.
+		            providerActivityLedger.noteOwnedSessionId(normalized);
 		            const explicitTranscriptPath = (() => {
 		                if (!data || typeof data !== 'object') return '';
 		                const obj: any = data;
@@ -475,6 +481,9 @@ export async function claudeRemoteAgentSdk(opts: {
     const providerRuntimeActivityEvidence =
         opts.providerRuntimeActivityEvidence ?? createClaudeRuntimeActivityEvidence();
     const providerActivityLedger = providerRuntimeActivityEvidence.providerActivityLedger;
+    // Seed ownership from the identity this runtime already knows, so the identity gate is armed
+    // before the first `task_started` rather than only after the SDK reports `init`.
+    if (latestClaudeSessionId) providerActivityLedger.noteOwnedSessionId(latestClaudeSessionId);
     const resolveReplacementProviderTaskInterruptId = (terminalTaskId: string): string | null => (
         providerActivityLedger
             .getActiveProviderTaskBlockers()
@@ -2159,8 +2168,22 @@ export async function claudeRemoteAgentSdk(opts: {
                 const providerTaskFacts = isReplaySdkMessage(message)
                     ? null
                     : normalizeClaudeProviderTaskEvent(message);
-                if (providerTaskFacts?.interruptTarget?.type === 'active') {
-                    const taskId = providerTaskFacts.interruptTarget.taskId;
+                // A typed row that NAMES another session is not this runtime's to stop, read from
+                // the same ownership owner the admission gate uses (PLAN 4.9.1 step 2). The target
+                // stays deliberately broader than Activity membership - a task with no session id
+                // is still actionable - but adopting a provably foreign one would ask the provider
+                // to kill someone else's work AND silently replace the interrupt that stops ours.
+                const isForeignProviderTaskRow = (
+                    providerTaskFacts?.activity != null
+                    && !providerActivityLedger.isOwnedSessionId(providerTaskFacts.activity.sessionId)
+                );
+                // A foreign row simply has no target here; the row itself still flows through every
+                // handler below exactly as before.
+                const providerTaskInterruptTarget = isForeignProviderTaskRow
+                    ? null
+                    : providerTaskFacts?.interruptTarget ?? null;
+                if (providerTaskInterruptTarget?.type === 'active') {
+                    const taskId = providerTaskInterruptTarget.taskId;
                     const previousDetachedTaskId: string | null = detachedTaskInterruptId;
                     detachedTaskInterruptId = taskId;
                     if (
@@ -2171,10 +2194,10 @@ export async function claudeRemoteAgentSdk(opts: {
                         foregroundTaskInterruptId = taskId;
                     }
                 } else if (
-                    providerTaskFacts?.interruptTarget?.type === 'terminal'
-                    && providerTaskFacts.activity === null
+                    providerTaskInterruptTarget?.type === 'terminal'
+                    && providerTaskFacts?.activity === null
                 ) {
-                    const taskId = providerTaskFacts.interruptTarget.taskId;
+                    const taskId = providerTaskInterruptTarget.taskId;
                     if (foregroundTaskInterruptId === taskId) foregroundTaskInterruptId = null;
                     if (detachedTaskInterruptId === taskId) {
                         detachedTaskInterruptId = resolveReplacementProviderTaskInterruptId(taskId);

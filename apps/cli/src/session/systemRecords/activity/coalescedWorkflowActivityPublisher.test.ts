@@ -5,6 +5,8 @@ import {
   type SessionWorkflowRunSnapshotV1,
 } from '@happier-dev/protocol';
 
+import { createHttpStatusError } from '@/api/client/httpStatusError';
+
 import { createCoalescedWorkflowActivityPublisher } from './coalescedWorkflowActivityPublisher';
 import type { WorkflowActivityPublishInput } from './publishWorkflowActivitySnapshot';
 
@@ -110,6 +112,34 @@ describe('createCoalescedWorkflowActivityPublisher', () => {
 
     expect(publisher.publish).toHaveBeenCalledTimes(2);
     expect(publishes[1]?.changedRunIds).toEqual(['a']);
+  });
+
+  it('re-queues a drain that threw a retryable error, and drops one the server refused permanently', async () => {
+    // The whole-drain catch covers the headline write, which is a separate request from the per-run
+    // records. A 503 there is worth another attempt; a 400/403 is the same bytes being refused
+    // again, and re-queueing it is a 300 ms metadata-write loop for the session's lifetime.
+    for (const testCase of [
+      { error: createHttpStatusError(503, 'Busy'), expectedPublishes: 2 },
+      { error: createHttpStatusError(400, 'Invalid parameters'), expectedPublishes: 1 },
+    ]) {
+      const publisher = {
+        publish: vi.fn(async () => { throw testCase.error; }),
+      };
+      const scheduler = createCoalescedWorkflowActivityPublisher({
+        publisher,
+        getSnapshots: () => new Map([['a', runSnapshot('a')]]),
+        debounceMs: 300,
+        onError: () => {},
+      });
+
+      scheduler.notify({ changedRunIds: ['a'], startedRunIds: [], terminalRunIds: ['a'], statusChangedRunIds: [] });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(publisher.publish).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(300);
+
+      expect(publisher.publish).toHaveBeenCalledTimes(testCase.expectedPublishes);
+      scheduler.dispose();
+    }
   });
 
   it('does nothing when notified with no changed runs', async () => {

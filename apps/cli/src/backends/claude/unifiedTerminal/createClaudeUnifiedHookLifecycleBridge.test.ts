@@ -819,7 +819,10 @@ describe('createClaudeUnifiedHookLifecycleBridge', () => {
     }
   });
 
-  it('routes definitive sidechain OAuth revocation without promoting generic subagent auth evidence', async () => {
+  it.each([
+    'Please run /login · API Error: 401 OAuth access token has been revoked.',
+    'Please run /login · API Error: 401 OAuth access token has expired. Re-authenticate to continue.',
+  ])('routes definitive sidechain OAuth failure without promoting generic subagent auth evidence: %s', async (lastAssistantMessage) => {
     let subscribedHook: ((data: SessionHookData) => void) | undefined;
     const onRuntimeAuthFailureEvent = vi.fn();
     const bridge = createClaudeUnifiedHookLifecycleBridge({
@@ -848,7 +851,7 @@ describe('createClaudeUnifiedHookLifecycleBridge', () => {
         session_id: 'claude-session-id',
         agent_id: 'agent_sidechain_1',
         error: 'authentication_failed',
-        last_assistant_message: 'Please run /login · API Error: 401 OAuth access token has been revoked.',
+        last_assistant_message: lastAssistantMessage,
       } as any);
 
       await vi.waitFor(() => {

@@ -65,6 +65,55 @@ describe('wireClaudeWorkflowActivitySource', () => {
     });
   });
 
+  it('publishes BOTH activity headline keys in ONE metadata update, after the durable record', async () => {
+    let metadata: Metadata = {
+      path: '/x',
+      host: 'h',
+      homeDir: '/home/tester',
+      happyHomeDir: '/home/tester/.happier',
+      happyLibDir: '/home/tester/.happier/lib',
+      happyToolsDir: '/home/tester/.happier/tools',
+    };
+    const order: string[] = [];
+    let metadataUpdates = 0;
+    const binding: TestBinding = {
+      sessionId: 'sess',
+      metadataWriter: {
+        updateMetadata: (updater) => {
+          metadataUpdates += 1;
+          order.push('metadata');
+          metadata = updater(metadata);
+        },
+      },
+      upsertSystemRecord: async () => { order.push('record'); },
+      resolveEncryption: async () => ({ mode: 'plain' }),
+      getCurrentClaudeSessionId: () => 'claude-session-1',
+    };
+
+    const source = wireClaudeWorkflowActivitySource({ backendId: 'claude', agentId: 'claude', binding });
+    source.observeTranscriptMessage(workflowToolUse('toolu_wf', 'wf'));
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.runAllTimersAsync();
+
+    expect(order).toEqual(['record', 'metadata']);
+    // One update, not one per key: the two headlines must never describe different worlds, and a
+    // per-key write would double metadata traffic on every progress tick.
+    expect(metadataUpdates).toBe(1);
+
+    const written = metadata as Record<string, unknown>;
+    expect(written).toHaveProperty('sessionWorkflowActivityHeadlineV1');
+    const agentActivity = written.sessionAgentActivityHeadlineV1 as {
+      v: number;
+      activeEntries: { entryId: string; kind: string; status: string }[];
+      primaryEntryId: string | null;
+    };
+    expect(agentActivity.v).toBe(1);
+    expect(agentActivity.activeEntries).toEqual([
+      expect.objectContaining({ entryId: 'workflow_run:toolu_wf', kind: 'workflow_run', status: 'running' }),
+    ]);
+    expect(agentActivity.primaryEntryId).toBe('workflow_run:toolu_wf');
+  });
+
   it('resolves session encryption AT MOST ONCE across many record writes (bounded fetch)', async () => {
     let metadata: Metadata = {
       path: '/x',
@@ -466,6 +515,95 @@ describe('wireClaudeWorkflowActivitySource', () => {
       recordRevision: '8',
     }));
     expect(upserts).toHaveLength(1);
+    source.dispose();
+  });
+  it('commits a redacted activity/background_task.v1 record for a live background command', async () => {
+    // The end-to-end reachability proof for R-9: a real `task_started` arriving on the SAME channel
+    // every runner already feeds must reach durable storage, redacted, with no extra wiring.
+    let metadata: Metadata = {
+      path: '/x',
+      host: 'h',
+      homeDir: '/home/tester',
+      happyHomeDir: '/home/tester/.happier',
+      happyLibDir: '/home/tester/.happier/lib',
+      happyToolsDir: '/home/tester/.happier/tools',
+    };
+    const upserts: Array<{ namespace: string; kind: string; localId: string; content: unknown }> = [];
+    const binding: TestBinding = {
+      sessionId: 'sess',
+      metadataWriter: { updateMetadata: (updater) => { metadata = updater(metadata); } },
+      upsertSystemRecord: async (record) => { upserts.push(record as never); },
+      resolveEncryption: async () => ({ mode: 'plain' }),
+      getCurrentClaudeSessionId: () => 'claude-session-1',
+    };
+
+    const source = wireClaudeWorkflowActivitySource({
+      backendId: 'claude',
+      agentId: 'claude',
+      binding,
+      isOwnedClaudeSessionId: (sessionId) => sessionId === 'claude-session-1',
+    });
+
+    source.observeTranscriptMessage({
+      type: 'system',
+      subtype: 'task_started',
+      session_id: 'claude-session-1',
+      task_id: 'task_1',
+      tool_use_id: 'toolu_bash_1',
+      description: 'deploy.sh --token=ghp_FAKEFAKEFAKEFAKEFAKEFAKE0000',
+      task_type: 'local_bash',
+    });
+    // A different session's task must not enter this session's durable history.
+    source.observeTranscriptMessage({
+      type: 'system',
+      subtype: 'task_started',
+      session_id: 'claude-session-2',
+      task_id: 'foreign_1',
+      description: 'sleep 600',
+      task_type: 'local_bash',
+    });
+    // Replayed history is not new evidence.
+    source.observeTranscriptMessage({
+      type: 'system',
+      subtype: 'task_started',
+      session_id: 'claude-session-1',
+      task_id: 'replayed_1',
+      description: 'sleep 600',
+      task_type: 'local_bash',
+    }, { historicalReplay: true });
+    await vi.runAllTimersAsync();
+    await source.flush();
+
+    const backgroundUpserts = upserts.filter((record) => record.kind === 'background_task.v1');
+    expect(backgroundUpserts).toHaveLength(1);
+    expect(backgroundUpserts[0]).toMatchObject({
+      namespace: 'activity',
+      kind: 'background_task.v1',
+      localId: 'activity:background_task:v1:task_1',
+    });
+    const content = backgroundUpserts[0]?.content as { t: string; v: Record<string, unknown> };
+    expect(content.t).toBe('plain');
+    expect(content.v).toMatchObject({ v: 1, taskId: 'task_1', kind: 'command', status: 'running' });
+    expect(String(content.v.label)).not.toContain('ghp_FAKEFAKEFAKEFAKEFAKEFAKE0000');
+    expect(String(content.v.label)).toContain('deploy.sh');
+
+    source.observeTranscriptMessage({
+      type: 'system',
+      subtype: 'task_notification',
+      session_id: 'claude-session-1',
+      task_id: 'task_1',
+      status: 'completed',
+      summary: 'Background command completed',
+    });
+    await vi.runAllTimersAsync();
+    await source.flush();
+
+    const terminal = upserts.filter((record) => record.kind === 'background_task.v1').at(-1);
+    expect((terminal?.content as { v: Record<string, unknown> }).v).toMatchObject({
+      taskId: 'task_1',
+      status: 'succeeded',
+      summary: 'Background command completed',
+    });
     source.dispose();
   });
 });

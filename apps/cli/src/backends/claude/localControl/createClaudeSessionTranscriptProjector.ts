@@ -127,10 +127,21 @@ export function createClaudeSessionTranscriptProjector(params: Readonly<{
   /** Drain pending workflow-activity writes immediately (turn end / stream close / finalize). No-op without a source. */
   flushWorkflowActivity(): Promise<void>;
   /**
-   * G-6: on graceful session teardown, if the Claude goal is still active/unmet, republish it with
-   * `statusReason:'interrupted'` (status stays active). No-op when there is no active goal.
+   * The ONE teardown observation for every shutdown-sensitive source this projector owns. Call it
+   * from an OBSERVED death (a launcher's graceful teardown) immediately BEFORE
+   * `flushWorkflowActivity()`, so the resolved state is what gets drained.
+   *
+   * - G-6 goal: an active/unmet Claude goal is republished with `statusReason:'interrupted'`
+   *   (status stays active — the goal may resume).
+   * - RULING-14 workflow activity: every non-terminal run/agent resolves, because the process that
+   *   owned them is going away. Without this a run and its agents stay painted live forever.
+   *
+   * Both sources resolve from ONE call on purpose. They were two calls, one launcher wired only the
+   * goal half, and workflow runs on the local + unified-terminal launchers stayed "Working" forever.
+   * Happier execution runs are NOT swept: they are owned by the CLI session process, not the
+   * provider process, genuinely outlive this teardown, and are not in these sources at all.
    */
-  finalizeInterruptedGoal(): void;
+  finalizeInterruptedWorkOnShutdown(): void;
   reset(): void;
 }> {
   const workflowActivitySource = params.workflowActivitySource ?? null;
@@ -366,8 +377,14 @@ export function createClaudeSessionTranscriptProjector(params: Readonly<{
     recordGoalSetIntent() {
       goalWorkStateSource.recordGoalSetIntent();
     },
-    finalizeInterruptedGoal() {
+    finalizeInterruptedWorkOnShutdown() {
       goalWorkStateSource.finalizeInterruptedGoalOnShutdown();
+      if (!workflowActivitySource) return;
+      try {
+        workflowActivitySource.finalizeInterruptedActivityOnShutdown();
+      } catch (error) {
+        logger.debug(`${params.logPrefix}: failed to resolve interrupted Claude workflow activity (non-fatal)`, error);
+      }
     },
     async flushWorkflowActivity() {
       if (!workflowActivitySource) return;

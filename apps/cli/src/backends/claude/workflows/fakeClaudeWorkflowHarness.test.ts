@@ -14,6 +14,7 @@ const { buildWorkflowSpec, LONG_PREVIEW } = require('../../../../../../packages/
 };
 
 import { createClaudeWorkflowActivityTracker } from './claudeWorkflowActivityTracker';
+import type { SessionActivityHeadlineBundle } from '@/session/systemRecords/activity/publishWorkflowActivitySnapshot';
 import { createClaudeWorkflowActivitySource as createProductionClaudeWorkflowActivitySource } from './claudeWorkflowActivitySource';
 function createClaudeWorkflowActivitySource(params: Parameters<typeof createProductionClaudeWorkflowActivitySource>[0]) {
   return createProductionClaudeWorkflowActivitySource(params);
@@ -142,7 +143,7 @@ describe('fake Claude workflow harness builder drives the real CWF3 source + CWF
       agentId: 'claude',
       getCurrentClaudeSessionId: () => SESSION_ID,
       commitRecord: async (snapshot) => { committed.push(snapshot); },
-      writeHeadline: (headline) => { headlines.push(headline as never); },
+      writeHeadlines: (bundle) => { headlines.push(bundle.workflow as never); },
       debounceMs: 50,
     });
 
@@ -162,6 +163,41 @@ describe('fake Claude workflow harness builder drives the real CWF3 source + CWF
     ]);
     expect(headlineRunIds.has('toolu_wf_a')).toBe(true);
     expect(headlineRunIds.has('toolu_wf_b')).toBe(true);
+
+    source.dispose();
+  });
+
+  it('names every agent of the concurrent preset in the unified headline, so a cold open needs no transcript', async () => {
+    const bundles: SessionActivityHeadlineBundle[] = [];
+    const source = createClaudeWorkflowActivitySource({
+      backendId: 'claude',
+      agentId: 'claude',
+      getCurrentClaudeSessionId: () => SESSION_ID,
+      commitRecord: async () => {},
+      writeHeadlines: (bundle) => { bundles.push(bundle); },
+      debounceMs: 50,
+    });
+
+    for (const record of stampedRecords('concurrent')) {
+      source.observeTranscriptMessage(record);
+    }
+    await source.flush();
+
+    const agentActivity = bundles.at(-1)!.agentActivity;
+    const entries = [...agentActivity.activeEntries, ...(agentActivity.recentEntries ?? [])];
+    // Both runs AND all four of their agents are addressable from metadata alone — the count-only
+    // workflow headline can name none of them (R-3).
+    expect(entries.filter((entry) => entry.kind === 'workflow_run').map((entry) => entry.entryId).sort()).toEqual([
+      'workflow_run:toolu_wf_a',
+      'workflow_run:toolu_wf_b',
+    ]);
+    expect(entries.filter((entry) => entry.kind === 'workflow_agent').map((entry) => [entry.title, entry.status, entry.parentId]))
+      .toEqual(expect.arrayContaining([
+        ['alpha_search', 'succeeded', 'workflow_run:toolu_wf_a'],
+        ['alpha_coder', 'succeeded', 'workflow_run:toolu_wf_a'],
+        ['beta_coder', 'succeeded', 'workflow_run:toolu_wf_b'],
+        ['beta_tester', 'failed', 'workflow_run:toolu_wf_b'],
+      ]));
 
     source.dispose();
   });

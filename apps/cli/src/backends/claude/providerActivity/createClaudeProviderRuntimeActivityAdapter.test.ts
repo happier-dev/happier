@@ -139,7 +139,7 @@ describe('createClaudeProviderRuntimeActivityAdapter', () => {
         expect(markUnknown).not.toHaveBeenCalled();
     });
 
-    it('uses unknown only for zero-key same-runtime observation loss and preserves affirmative truth', async () => {
+    it('uses unknown for same-runtime observation loss and keeps affirmative truth for live evidence', async () => {
         const { adapter, ledger, reports, markUnknown } = harness();
         await adapter.activateObservation('observer-installed');
         await adapter.observeActivity({
@@ -151,13 +151,45 @@ describe('createClaudeProviderRuntimeActivityAdapter', () => {
         await adapter.observeActivity({
             activity: { type: 'started', sessionId: 's1', taskId: 't1' }, evidence: 'live',
         });
-        await adapter.handleRuntimeLoss('lost');
-        expect(reports.at(-1)?.activeCount).toBe(1);
+        expect(reports.at(-1)).toEqual({ state: 'active', activeCount: 1 });
         expect(ledger.hasActiveProviderTasks()).toBe(true);
+    });
+
+    it('publishes unknown when observation is lost while provider tasks are still in flight', async () => {
+        const { adapter, ledger, reports, markUnknown } = harness();
+        await adapter.activateObservation('observer-installed');
+        await adapter.observeActivity({
+            activity: { type: 'started', sessionId: 's1', taskId: 'workflow-1' }, evidence: 'live',
+        });
+        await adapter.observeActivity({
+            activity: { type: 'started', sessionId: 's1', taskId: 'subagent-1' }, evidence: 'live',
+        });
+        expect(reports.at(-1)).toEqual({ state: 'active', activeCount: 2 });
+
+        await adapter.handleRuntimeLoss('claude_agent_sdk_stream_finalized');
+
+        // The query that owned those tasks is gone: a non-empty ledger is evidence of ignorance,
+        // not of liveness, so the session must project unknown rather than stay active forever.
+        expect(markUnknown).toHaveBeenLastCalledWith('claude_agent_sdk_stream_finalized');
+        expect(reports.at(-1)).toEqual({ state: 'active', activeCount: 2 });
+        // Inventory evidence is preserved for blocker diagnostics; only the projection changes.
+        expect(ledger.hasActiveProviderTasks()).toBe(true);
+    });
+
+    it('does not republish a projection after an in-flight observation loss already marked unknown', async () => {
+        const { adapter, markUnknown } = harness();
+        await adapter.activateObservation('observer-installed');
+        await adapter.observeActivity({
+            activity: { type: 'started', sessionId: 's1', taskId: 't1' }, evidence: 'live',
+        });
+        await adapter.handleRuntimeLoss('claude_process_exit');
+        expect(markUnknown).toHaveBeenCalledTimes(1);
+
         await adapter.observeActivity({
             activity: { type: 'terminal', sessionId: 's1', taskId: 't1' }, evidence: 'live',
         });
-        expect(markUnknown).toHaveBeenLastCalledWith('claude-native-terminal');
+
+        expect(markUnknown).toHaveBeenCalledTimes(1);
     });
 
     it('does not republish an unchanged tuple inventory for progress aliases', async () => {

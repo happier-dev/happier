@@ -829,6 +829,14 @@ export class Session {
      * all registered callbacks (e.g., SessionScanner) about the change.
      */
     onSessionFound = (sessionId: string, hookData?: SessionHookData) => {
+        // PLAN 4.9.1 step 2: arm the provider-task identity gate HERE, at the one place this runtime
+        // learns its Claude session identity, so the unified terminal, the local launcher and the
+        // remote launcher inherit it instead of each remembering to arm the ledger they were handed.
+        // A lineage, not a swap - every id this session has passed through stays owned, so a task
+        // started before a compact boundary is not foreign to its own ledger afterwards. Placed
+        // before the change/early-return checks below so a re-reported id is still declared.
+        this.providerTaskActivityLedger?.noteOwnedSessionId(sessionId);
+
         const nextTranscriptPathRaw = hookData?.transcript_path ?? hookData?.transcriptPath;
         const nextTranscriptPath = typeof nextTranscriptPathRaw === 'string' ? nextTranscriptPathRaw : null;
         const hookTranscriptPathIsNativeCandidate = isClaudeNativeTranscriptPathCandidate({
