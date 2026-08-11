@@ -10,6 +10,10 @@ function workflow(name) {
   return YAML.parse(readFileSync(resolve(repoRoot, '.github/workflows', name), 'utf8'));
 }
 
+function action(name) {
+  return YAML.parse(readFileSync(resolve(repoRoot, '.github/actions', name, 'action.yml'), 'utf8'));
+}
+
 function needs(job) {
   return Array.isArray(job.needs) ? job.needs : job.needs ? [job.needs] : [];
 }
@@ -74,9 +78,10 @@ test('nightly resume pins the prior source, reuses completed immutable candidate
   }
   const statusSource = parsed.jobs.release_status.steps.map((step) => step.run ?? '').join('\n');
   assert.match(statusSource, /CLI_VERSION/);
-  assert.match(statusSource, /\['cli', \['cli', 'CLI_VERSION'\]\]/);
-  assert.match(statusSource, /\['hstack', \['stack', 'HSTACK_VERSION'\]\]/);
-  assert.match(statusSource, /normalizeResult\(process\.env\.VERIFY_RESULT\) === 'success'/);
+  assert.match(statusSource, /\['cli', \['cli', 'CLI_VERSION', 'CLI_RESUME_VERIFIED'\]\]/);
+  assert.match(statusSource, /\['hstack', \['stack', 'HSTACK_VERSION', 'HSTACK_RESUME_VERIFIED'\]\]/);
+  assert.match(statusSource, /CLI_RESUME_VERIFIED/);
+  assert.match(statusSource, /normalizeResult\(process\.env\.VERIFY_RESULT\) === 'success'[\s\S]*process\.env\[candidate\[2\]\] === 'true'/);
 });
 
 test('full release rejects invalid resume provenance before planning and reuses only bound candidates', () => {
@@ -100,7 +105,74 @@ test('full release rejects invalid resume provenance before planning and reuses 
   const statusSource = parsed.jobs.release_status.steps.map((step) => step.run ?? '').join('\n');
   assert.match(statusSource, /CLI_VERSION/);
   assert.match(statusSource, /product:\s*'cli'/);
-  assert.match(statusSource, /normalizeResult\(process\.env\.CANDIDATE_VERIFY_RESULT\) === 'success'/);
+  assert.match(statusSource, /CLI_RESUME_VERIFIED/);
+  assert.match(statusSource, /normalizeResult\(process\.env\.CANDIDATE_VERIFY_RESULT\) === 'success'[\s\S]*process\.env\[resumeVerifiedName\] === 'true'/);
+});
+
+test('failed grouped verification independently certifies each successful immutable sibling for resume', () => {
+  const verifier = workflow('verify-release-resume-candidates.yml');
+  for (const output of ['cli_verified', 'stack_verified', 'server_verified', 'ui_web_verified']) {
+    assert.ok(verifier.on.workflow_call.outputs[output], `missing per-product output ${output}`);
+  }
+  const verifyJob = verifier.jobs.verify;
+  const productSteps = new Map(
+    verifyJob.steps
+      .filter((step) => String(step.id ?? '').startsWith('verify_'))
+      .map((step) => [step.id, step]),
+  );
+  for (const id of ['verify_cli', 'verify_stack', 'verify_server', 'verify_ui_web']) {
+    const step = productSteps.get(id);
+    assert.ok(step, `missing independent ${id} step`);
+    assert.equal(step['continue-on-error'], true);
+    assert.equal(step.uses, './.release-control/.github/actions/verify-immutable-release-candidate');
+    assert.match(step.if, /always\(\)/);
+  }
+  const outputSource = verifyJob.steps.find((step) => step.id === 'outputs')?.run ?? '';
+  assert.match(outputSource, /\$\{name\}_verified=\$value/);
+  for (const id of ['cli', 'stack', 'server', 'ui_web']) {
+    assert.match(outputSource, new RegExp(`emit_result ${id} `));
+  }
+
+  const owner = action('verify-immutable-release-candidate');
+  const ownerSource = owner.runs.steps.map((step) => step.run ?? '').join('\n');
+  assert.match(ownerSource, /verify-release-candidate-identity\.mjs/);
+  assert.match(ownerSource, /gh release download/);
+  assert.match(ownerSource, /verify-artifacts\.mjs/);
+  const downloadStep = owner.runs.steps.find((step) => step.id === 'download');
+  const verifyStep = owner.runs.steps.find((step) => step.id === 'verify');
+  assert.ok(downloadStep, 'shared owner must isolate tokened identity and download');
+  assert.ok(verifyStep, 'shared owner must isolate tokenless artifact verification');
+  assert.ok(downloadStep.env.GH_TOKEN);
+  assert.ok(downloadStep.env.GITHUB_TOKEN);
+  assert.equal('GH_TOKEN' in (verifyStep.env ?? {}), false);
+  assert.equal('GITHUB_TOKEN' in (verifyStep.env ?? {}), false);
+
+  const grouped = workflow('release-verify.yml').jobs.verify_candidate;
+  for (const id of ['cli', 'stack', 'server', 'ui_web']) {
+    const step = grouped.steps.find((candidate) => candidate.id === `verify_${id}`);
+    assert.ok(step, `grouped verifier must delegate ${id} to the shared owner`);
+    assert.equal(step.uses, './.release-control/.github/actions/verify-immutable-release-candidate');
+    assert.match(step.if, /always\(\)/);
+  }
+  const groupedInlineSource = grouped.steps.map((step) => step.run ?? '').join('\n');
+  assert.doesNotMatch(groupedInlineSource, /gh release download|verify-artifacts\.mjs/);
+
+  for (const [name, groupedJob, candidates] of [
+    ['nightly-dev.yml', 'release_verify', ['cli', 'hstack', 'server_runtime', 'ui_web']],
+    ['release.yml', 'verify_release_candidates', ['publish_cli_binaries', 'publish_hstack_binaries', 'publish_server_runtime', 'publish_ui_web']],
+  ]) {
+    const parsed = workflow(name);
+    const independent = parsed.jobs.verify_resume_candidates;
+    assert.ok(independent, `${name} must independently certify successful siblings`);
+    assert.ok(needs(independent).includes(groupedJob));
+    for (const candidate of candidates) assert.ok(needs(independent).includes(candidate));
+    assert.match(independent.if, /always\(\)/);
+    assert.match(independent.if, new RegExp(`needs\\.${groupedJob}\\.result != 'success'`));
+    for (const input of ['candidate_cli_version', 'candidate_stack_version', 'candidate_server_version', 'candidate_ui_web_version']) {
+      assert.match(independent.with[input], /\.result == 'success'/);
+    }
+    assert.ok(needs(parsed.jobs.release_status).includes('verify_resume_candidates'));
+  }
 });
 
 for (const name of ['nightly-dev.yml', 'release.yml']) {

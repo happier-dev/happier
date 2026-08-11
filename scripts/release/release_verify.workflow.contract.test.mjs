@@ -105,34 +105,44 @@ test('release candidate verification runs trusted workflow control bytes under t
     'candidate source must remain metadata rather than executable checkout bytes',
   );
 
-  const privilegedSteps = job.steps.filter((step) => step?.env?.GITHUB_TOKEN || step?.env?.GH_TOKEN);
+  const delegatedVerifiers = job.steps.filter(
+    (step) => step?.uses === './.release-control/.github/actions/verify-immutable-release-candidate',
+  );
+  assert.equal(delegatedVerifiers.length, 4, 'all candidate products must share one trusted verification owner');
+
+  const ownerRaw = await readFile(
+    join(repoRoot, '.github', 'actions', 'verify-immutable-release-candidate', 'action.yml'),
+    'utf8',
+  );
+  const owner = YAML.parse(ownerRaw, { prettyErrors: true });
+  const privilegedSteps = owner.runs.steps.filter((step) => step?.env?.GITHUB_TOKEN || step?.env?.GH_TOKEN);
   assert.equal(privilegedSteps.length, 1, 'exactly one step should receive the repository token');
   const privileged = privilegedSteps[0];
+  assert.match(String(privileged.run ?? ''), /control_dir="\$GITHUB_WORKSPACE\/\.release-control"/);
   assert.match(
     String(privileged.run ?? ''),
-    /\.release-control\/scripts\/pipeline\/release\/verify-release-candidate-identity\.mjs/,
+    /\$control_dir\/scripts\/pipeline\/release\/verify-release-candidate-identity\.mjs/,
   );
   assert.doesNotMatch(String(privileged.run ?? ''), /node\s+scripts\/pipeline\//);
   assert.doesNotMatch(String(privileged.run ?? ''), /\$\{\{\s*inputs\./);
 
   for (const [name, expression] of Object.entries({
+    REPOSITORY: '${{ inputs.repository }}',
     RELEASE_CHANNEL: '${{ inputs.channel }}',
     CANDIDATE_SOURCE_SHA: '${{ inputs.candidate_source_sha }}',
-    CANDIDATE_CLI_VERSION: '${{ inputs.candidate_cli_version }}',
-    CANDIDATE_STACK_VERSION: '${{ inputs.candidate_stack_version }}',
-    CANDIDATE_SERVER_VERSION: '${{ inputs.candidate_server_version }}',
-    CANDIDATE_UI_WEB_VERSION: '${{ inputs.candidate_ui_web_version }}',
+    CANDIDATE_PRODUCT: '${{ inputs.product }}',
+    CANDIDATE_VERSION: '${{ inputs.version }}',
   })) {
     assert.equal(privileged.env?.[name], expression, `${name} must enter the shell through env`);
   }
 
-  const artifactVerification = job.steps.find((step) => /Verify downloaded signed artifacts/.test(String(step?.name ?? '')));
+  const artifactVerification = owner.runs.steps.find((step) => /Verify downloaded signed artifacts/.test(String(step?.name ?? '')));
   assert.ok(artifactVerification, 'downloaded artifacts must be verified in a separate step');
   assert.equal(artifactVerification.env?.GITHUB_TOKEN, undefined);
   assert.equal(artifactVerification.env?.GH_TOKEN, undefined);
   assert.match(
     String(artifactVerification.run ?? ''),
-    /\.release-control\/scripts\/pipeline\/release\/verify-artifacts\.mjs/,
+    /\$control_dir\/scripts\/pipeline\/release\/verify-artifacts\.mjs/,
   );
   assert.doesNotMatch(String(artifactVerification.run ?? ''), /\$\{\{\s*inputs\./);
 });

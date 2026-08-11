@@ -57,6 +57,7 @@ exit 0
         '--bump', 'none',
         '--source-sha', AUTHORIZED_DEV_SHA,
         '--workflow-control-sha', AUTHORIZED_DEV_SHA,
+        '--resume-run-id', '31506884258',
         '--release-profile', 'stable',
         '--allow-dirty', 'true',
       ],
@@ -79,10 +80,53 @@ exit 0
     assert.match(commands, /-f validation_profile=stable/);
     assert.match(commands, new RegExp(`-f authorized_promotion_source_sha=${AUTHORIZED_DEV_SHA}`));
     assert.match(commands, new RegExp(`-f workflow_control_sha=${AUTHORIZED_DEV_SHA}`));
+    assert.match(commands, /-f resume_run_id=31506884258/);
     assert.doesNotMatch(commands, /-f release_message=/);
     assert.match(output, /release profile=stable/);
     assert.match(output, /hosted release workflow/i);
     assert.doesNotMatch(commands, /publish-server-runtime|promote-deploy-branch|release upload/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('the local release command rejects malformed resume run identities before external access', () => {
+  const root = mkdtempSync(join(tmpdir(), 'hosted-release-resume-id-'));
+  const bin = join(root, 'bin');
+  const log = join(root, 'commands.log');
+  mkdirSync(bin);
+  writeFileSync(log, '');
+  executable(join(bin, 'git'), `#!/bin/sh\necho "git $*" >> ${JSON.stringify(log)}\nexit 0\n`);
+  executable(join(bin, 'gh'), `#!/bin/sh\necho "gh $*" >> ${JSON.stringify(log)}\nexit 0\n`);
+
+  try {
+    for (const resumeRunId of ['0', '-1', '1.5', 'abc', ' 123', '123 ']) {
+      writeFileSync(log, '');
+      const resumeRunIdArgs = resumeRunId.startsWith('-')
+        ? [`--resume-run-id=${resumeRunId}`]
+        : ['--resume-run-id', resumeRunId];
+      const result = spawnSync(
+        process.execPath,
+        [
+          'scripts/pipeline/run.mjs',
+          'release',
+          '--confirm', 'release dev to preview',
+          '--repository', 'happier-dev/happier',
+          '--deploy-environment', 'preview',
+          '--deploy-targets', 'server',
+          ...resumeRunIdArgs,
+          '--allow-dirty', 'true',
+        ],
+        {
+          cwd: repoRoot,
+          env: { ...process.env, PATH: `${bin}:${process.env.PATH ?? ''}` },
+          encoding: 'utf8',
+        },
+      );
+      assert.equal(result.status, 1, `${JSON.stringify(resumeRunId)} must fail closed`);
+      assert.match(result.stderr, /--resume-run-id must be a positive GitHub Actions run ID/);
+      assert.equal(readFileSync(log, 'utf8'), '', 'invalid resume identity must fail before Git or GitHub access');
+    }
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

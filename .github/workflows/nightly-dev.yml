@@ -164,6 +164,19 @@ jobs:
       run_daemon_continuity: true
       run_session_continuity: true
 
+  verify_resume_candidates:
+    name: Verify successful immutable siblings for resume
+    if: ${{ always() && needs.prepare_release_candidate.result == 'success' && needs.release_verify.result != 'success' }}
+    needs: [prepare_release_candidate, cli, hstack, server_runtime, ui_web, release_verify]
+    uses: ./.github/workflows/verify-release-resume-candidates.yml
+    with:
+      channel: dev
+      candidate_source_sha: ${{ needs.prepare_release_candidate.outputs.source_sha }}
+      candidate_cli_version: ${{ needs.cli.result == 'success' && needs.cli.outputs.version || '' }}
+      candidate_stack_version: ${{ needs.hstack.result == 'success' && needs.hstack.outputs.version || '' }}
+      candidate_server_version: ${{ needs.server_runtime.result == 'success' && needs.server_runtime.outputs.version || '' }}
+      candidate_ui_web_version: ${{ needs.ui_web.result == 'success' && needs.ui_web.outputs.version || '' }}
+
   promote_server:
     name: Promote verified server candidate
     needs: [prepare_release_candidate, server_runtime, release_verify]
@@ -283,7 +296,7 @@ jobs:
   release_status:
     name: Summarize nightly release status
     if: ${{ always() }}
-    needs: [prepare_release_candidate, cli, hstack, server_runtime, ui_web, release_verify, promote_server, promote_hstack, promote_cli, promote_ui_web, ui_mobile, ui_desktop, docker, verify_promoted]
+    needs: [prepare_release_candidate, cli, hstack, server_runtime, ui_web, release_verify, verify_resume_candidates, promote_server, promote_hstack, promote_cli, promote_ui_web, ui_mobile, ui_desktop, docker, verify_promoted]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -310,6 +323,10 @@ jobs:
           UI_WEB_RESULT: ${{ needs.ui_web.result }}
           UI_WEB_VERSION: ${{ needs.ui_web.outputs.version }}
           VERIFY_RESULT: ${{ needs.release_verify.result }}
+          CLI_RESUME_VERIFIED: ${{ needs.verify_resume_candidates.outputs.cli_verified }}
+          HSTACK_RESUME_VERIFIED: ${{ needs.verify_resume_candidates.outputs.stack_verified }}
+          SERVER_RESUME_VERIFIED: ${{ needs.verify_resume_candidates.outputs.server_verified }}
+          UI_WEB_RESUME_VERIFIED: ${{ needs.verify_resume_candidates.outputs.ui_web_verified }}
           PROMOTE_SERVER_RESULT: ${{ needs.promote_server.result }}
           PROMOTE_HSTACK_RESULT: ${{ needs.promote_hstack.result }}
           PROMOTE_CLI_RESULT: ${{ needs.promote_cli.result }}
@@ -330,10 +347,10 @@ jobs:
             ['ui-desktop', 'UI_DESKTOP_RESULT'], ['docker', 'DOCKER_RESULT'], ['rolling-verification', 'VERIFY_PROMOTED_RESULT'],
           ];
           const candidateProducts = new Map([
-            ['cli', ['cli', 'CLI_VERSION']],
-            ['hstack', ['stack', 'HSTACK_VERSION']],
-            ['server', ['server', 'SERVER_VERSION']],
-            ['ui-web', ['ui-web', 'UI_WEB_VERSION']],
+            ['cli', ['cli', 'CLI_VERSION', 'CLI_RESUME_VERIFIED']],
+            ['hstack', ['stack', 'HSTACK_VERSION', 'HSTACK_RESUME_VERIFIED']],
+            ['server', ['server', 'SERVER_VERSION', 'SERVER_RESUME_VERIFIED']],
+            ['ui-web', ['ui-web', 'UI_WEB_VERSION', 'UI_WEB_RESUME_VERIFIED']],
           ]);
           const normalizeResult = (value) => value === 'success' ? 'success' : value === 'skipped' ? 'skipped' : 'failed';
           const input = {
@@ -346,7 +363,9 @@ jobs:
               const candidate = candidateProducts.get(id);
               const version = candidate ? process.env[candidate[1]] ?? '' : '';
               const verified = candidate
-                ? result === 'success' && version !== '' && normalizeResult(process.env.VERIFY_RESULT) === 'success'
+                ? result === 'success'
+                  && version !== ''
+                  && (normalizeResult(process.env.VERIFY_RESULT) === 'success' || process.env[candidate[2]] === 'true')
                 : result === 'success';
               return {
                 id,

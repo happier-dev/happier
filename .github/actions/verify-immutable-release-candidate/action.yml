@@ -1,0 +1,90 @@
+name: Verify immutable release candidate
+description: Verify one published immutable release against its source identity, checksums, and Minisign signature
+
+inputs:
+  repository:
+    description: GitHub owner/repository containing the immutable release
+    required: true
+  channel:
+    description: Canonical release channel for version admission
+    required: true
+  candidate_source_sha:
+    description: Exact source commit identified by the immutable tag
+    required: true
+  product:
+    description: Candidate product (cli, hstack, server, ui-web)
+    required: true
+  version:
+    description: Exact immutable candidate version
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Bind identity and download exact immutable release candidate
+      id: download
+      shell: bash
+      env:
+        REPOSITORY: ${{ inputs.repository }}
+        RELEASE_CHANNEL: ${{ inputs.channel }}
+        CANDIDATE_SOURCE_SHA: ${{ inputs.candidate_source_sha }}
+        CANDIDATE_PRODUCT: ${{ inputs.product }}
+        CANDIDATE_VERSION: ${{ inputs.version }}
+        GH_TOKEN: ${{ github.token }}
+        GITHUB_TOKEN: ${{ github.token }}
+      run: |
+        set -euo pipefail
+        case "$CANDIDATE_PRODUCT" in
+          cli)
+            tag_prefix='cli-v'
+            checksum_stem='happier'
+            ;;
+          hstack)
+            tag_prefix='stack-v'
+            checksum_stem='hstack'
+            ;;
+          server)
+            tag_prefix='server-v'
+            checksum_stem='happier-server'
+            ;;
+          ui-web)
+            tag_prefix='ui-web-v'
+            checksum_stem='happier-ui-web'
+            ;;
+          *)
+            echo "Unsupported immutable candidate product: $CANDIDATE_PRODUCT" >&2
+            exit 1
+            ;;
+        esac
+
+        control_dir="$GITHUB_WORKSPACE/.release-control"
+        node "$control_dir/scripts/pipeline/release/verify-release-candidate-identity.mjs" \
+          --repository "$REPOSITORY" \
+          --channel "$RELEASE_CHANNEL" \
+          --candidate-source-sha "$CANDIDATE_SOURCE_SHA" \
+          --candidate-product "$CANDIDATE_PRODUCT" \
+          --candidate-version "$CANDIDATE_VERSION"
+
+        candidate_dir="$(mktemp -d "$RUNNER_TEMP/happier-verify-${CANDIDATE_PRODUCT}-XXXXXX")"
+        gh release download "${tag_prefix}${CANDIDATE_VERSION}" \
+          --repo "$REPOSITORY" \
+          --dir "$candidate_dir"
+        checksums="$candidate_dir/checksums-${checksum_stem}-v${CANDIDATE_VERSION}.txt"
+        test -f "$checksums"
+        test -f "${checksums}.minisig"
+        echo "candidate_dir=$candidate_dir" >> "$GITHUB_OUTPUT"
+        echo "checksums=$checksums" >> "$GITHUB_OUTPUT"
+    - name: Verify downloaded signed artifacts without repository token
+      id: verify
+      shell: bash
+      env:
+        CANDIDATE_DIR: ${{ steps.download.outputs.candidate_dir }}
+        CHECKSUMS: ${{ steps.download.outputs.checksums }}
+      run: |
+        set -euo pipefail
+        control_dir="$GITHUB_WORKSPACE/.release-control"
+        node "$control_dir/scripts/pipeline/release/verify-artifacts.mjs" \
+          --artifacts-dir "$CANDIDATE_DIR" \
+          --checksums "$CHECKSUMS" \
+          --public-key "$control_dir/scripts/release/installers/happier-release.pub" \
+          --skip-smoke

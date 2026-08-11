@@ -166,83 +166,51 @@ jobs:
       - name: Install minisign from trusted control bytes
         uses: ./.release-control/.github/actions/bootstrap-minisign
 
-      - name: Verify immutable identities and download candidate data
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-          GH_TOKEN: ${{ github.token }}
-          REPOSITORY: ${{ github.repository }}
-          RELEASE_CHANNEL: ${{ inputs.channel }}
-          CANDIDATE_SOURCE_SHA: ${{ inputs.candidate_source_sha }}
-          CANDIDATE_CLI_VERSION: ${{ inputs.candidate_cli_version }}
-          CANDIDATE_STACK_VERSION: ${{ inputs.candidate_stack_version }}
-          CANDIDATE_SERVER_VERSION: ${{ inputs.candidate_server_version }}
-          CANDIDATE_UI_WEB_VERSION: ${{ inputs.candidate_ui_web_version }}
-          VERIFY_STACK_RELEASE: ${{ inputs.verify_stack_release }}
+      - name: Require requested HStack verification identity
+        if: ${{ inputs.verify_stack_release && inputs.candidate_stack_version == '' }}
         run: |
-          set -euo pipefail
-          if [ "$VERIFY_STACK_RELEASE" = "true" ] && [ -z "$CANDIDATE_STACK_VERSION" ]; then
-            echo "Stack release verification requires candidate_stack_version." >&2
-            exit 1
-          fi
-          node "$GITHUB_WORKSPACE/.release-control/scripts/pipeline/release/verify-release-candidate-identity.mjs" \
-            --repository "$REPOSITORY" \
-            --channel "$RELEASE_CHANNEL" \
-            --candidate-source-sha "$CANDIDATE_SOURCE_SHA" \
-            --candidate-cli-version "$CANDIDATE_CLI_VERSION" \
-            --candidate-stack-version "$CANDIDATE_STACK_VERSION" \
-            --candidate-server-version "$CANDIDATE_SERVER_VERSION" \
-            --candidate-ui-web-version "$CANDIDATE_UI_WEB_VERSION"
-
-          candidates_dir="$RUNNER_TEMP/release-candidates"
-          mkdir -p "$candidates_dir"
-          if [ -n "$CANDIDATE_CLI_VERSION" ]; then
-            mkdir -p "$candidates_dir/cli"
-            gh release download "cli-v${CANDIDATE_CLI_VERSION}" --repo "$REPOSITORY" --dir "$candidates_dir/cli"
-          fi
-          if [ -n "$CANDIDATE_STACK_VERSION" ]; then
-            mkdir -p "$candidates_dir/stack"
-            gh release download "stack-v${CANDIDATE_STACK_VERSION}" --repo "$REPOSITORY" --dir "$candidates_dir/stack"
-          fi
-          if [ -n "$CANDIDATE_SERVER_VERSION" ]; then
-            mkdir -p "$candidates_dir/server"
-            gh release download "server-v${CANDIDATE_SERVER_VERSION}" --repo "$REPOSITORY" --dir "$candidates_dir/server"
-          fi
-          if [ -n "$CANDIDATE_UI_WEB_VERSION" ]; then
-            mkdir -p "$candidates_dir/ui-web"
-            gh release download "ui-web-v${CANDIDATE_UI_WEB_VERSION}" --repo "$REPOSITORY" --dir "$candidates_dir/ui-web"
-          fi
-
-      - name: Verify downloaded signed artifacts without repository token
-        env:
-          CANDIDATE_CLI_VERSION: ${{ inputs.candidate_cli_version }}
-          CANDIDATE_STACK_VERSION: ${{ inputs.candidate_stack_version }}
-          CANDIDATE_SERVER_VERSION: ${{ inputs.candidate_server_version }}
-          CANDIDATE_UI_WEB_VERSION: ${{ inputs.candidate_ui_web_version }}
-        run: |
-          set -euo pipefail
-          verifier="$GITHUB_WORKSPACE/.release-control/scripts/pipeline/release/verify-artifacts.mjs"
-          public_key="$GITHUB_WORKSPACE/.release-control/scripts/release/installers/happier-release.pub"
-          candidates_dir="$RUNNER_TEMP/release-candidates"
-          verify_artifacts() {
-            version="$1"
-            product_dir="$2"
-            checksum_stem="$3"
-            if [ -z "$version" ]; then
-              return
-            fi
-            checksums="$product_dir/checksums-${checksum_stem}-v${version}.txt"
-            test -f "$checksums"
-            test -f "${checksums}.minisig"
-            node "$verifier" \
-              --artifacts-dir "$product_dir" \
-              --checksums "$checksums" \
-              --public-key "$public_key" \
-              --skip-smoke
-          }
-          verify_artifacts "$CANDIDATE_CLI_VERSION" "$candidates_dir/cli" happier
-          verify_artifacts "$CANDIDATE_STACK_VERSION" "$candidates_dir/stack" hstack
-          verify_artifacts "$CANDIDATE_SERVER_VERSION" "$candidates_dir/server" happier-server
-          verify_artifacts "$CANDIDATE_UI_WEB_VERSION" "$candidates_dir/ui-web" happier-ui-web
+          echo 'Stack release verification requires candidate_stack_version.' >&2
+          exit 1
+      - name: Verify CLI candidate
+        id: verify_cli
+        if: ${{ always() && inputs.candidate_cli_version != '' }}
+        uses: ./.release-control/.github/actions/verify-immutable-release-candidate
+        with:
+          repository: ${{ github.repository }}
+          channel: ${{ inputs.channel }}
+          candidate_source_sha: ${{ inputs.candidate_source_sha }}
+          product: cli
+          version: ${{ inputs.candidate_cli_version }}
+      - name: Verify HStack candidate
+        id: verify_stack
+        if: ${{ always() && inputs.candidate_stack_version != '' }}
+        uses: ./.release-control/.github/actions/verify-immutable-release-candidate
+        with:
+          repository: ${{ github.repository }}
+          channel: ${{ inputs.channel }}
+          candidate_source_sha: ${{ inputs.candidate_source_sha }}
+          product: hstack
+          version: ${{ inputs.candidate_stack_version }}
+      - name: Verify server candidate
+        id: verify_server
+        if: ${{ always() && inputs.candidate_server_version != '' }}
+        uses: ./.release-control/.github/actions/verify-immutable-release-candidate
+        with:
+          repository: ${{ github.repository }}
+          channel: ${{ inputs.channel }}
+          candidate_source_sha: ${{ inputs.candidate_source_sha }}
+          product: server
+          version: ${{ inputs.candidate_server_version }}
+      - name: Verify UI-web candidate
+        id: verify_ui_web
+        if: ${{ always() && inputs.candidate_ui_web_version != '' }}
+        uses: ./.release-control/.github/actions/verify-immutable-release-candidate
+        with:
+          repository: ${{ github.repository }}
+          channel: ${{ inputs.channel }}
+          candidate_source_sha: ${{ inputs.candidate_source_sha }}
+          product: ui-web
+          version: ${{ inputs.candidate_ui_web_version }}
 
   resolve_validation_profile:
     name: Resolve bounded validation profile

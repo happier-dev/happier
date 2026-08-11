@@ -4258,6 +4258,7 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
               'release-profile': { type: 'string', default: '' },
               'source-sha': { type: 'string', default: '' },
               'workflow-control-sha': { type: 'string', default: '' },
+              'resume-run-id': { type: 'string', default: '' },
               'allow-dirty': { type: 'string', default: 'false' },
               'dry-run': { type: 'boolean', default: false },
               json: { type: 'boolean', default: false },
@@ -4315,6 +4316,7 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
           const bumpPreset = String(values.bump ?? '').trim() || 'none';
           const authorizedPromotionSourceSha = String(values['source-sha'] ?? '').trim().toLowerCase();
           const workflowControlSha = String(values['workflow-control-sha'] ?? '').trim();
+          const resumeRunId = String(values['resume-run-id'] ?? '');
           const promotionSourceBranch = resolveReleasePromotionSourceBranch(action);
 
           const uiExpoAction = String(values['ui-expo-action'] ?? '').trim() || 'none';
@@ -4334,6 +4336,9 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
           }
           if (workflowControlSha && !FULL_GIT_SHA.test(workflowControlSha)) {
             fail('--workflow-control-sha must be a full 40-character lowercase Git commit SHA.');
+          }
+          if (resumeRunId && !/^[1-9][0-9]*$/u.test(resumeRunId)) {
+            fail('--resume-run-id must be a positive GitHub Actions run ID.');
           }
           if (!dryRun && !authorizedPromotionSourceSha) {
             fail('--source-sha is required for a hosted release dispatch.');
@@ -4392,6 +4397,7 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
               '-f', `bump=${bumpPreset}`,
               '-f', `authorized_promotion_source_sha=${authorizedPromotionSource.sha}`,
               ...(workflowControlSha ? ['-f', `workflow_control_sha=${workflowControlSha}`] : []),
+              ...(resumeRunId ? ['-f', `resume_run_id=${resumeRunId}`] : []),
               '-f', `confirm=${action}`,
             ];
             execFileSync('gh', workflowArgs, {
@@ -4418,6 +4424,7 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
                 schemaVersion: 1,
                 sourceBranch: promotionSourceBranch,
                 authorizedPromotionSourceSha: authorizedPromotionSource.sha,
+                ...(resumeRunId ? { resumeRunId } : {}),
               })}\n`,
             );
             return;

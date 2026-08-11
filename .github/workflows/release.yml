@@ -842,6 +842,19 @@ jobs:
       verify_stack_release: ${{ needs.publish_hstack_binaries.result == 'success' }}
       validation_profile: ${{ needs.plan.outputs.validation_profile }}
 
+  verify_resume_candidates:
+    name: Verify successful immutable siblings for resume
+    if: ${{ always() && inputs.dry_run != true && needs.bind_server_source.result == 'success' && needs.verify_release_candidates.result != 'success' }}
+    needs: [plan, bind_server_source, publish_cli_binaries, publish_hstack_binaries, publish_server_runtime, publish_ui_web, verify_release_candidates]
+    uses: ./.github/workflows/verify-release-resume-candidates.yml
+    with:
+      channel: ${{ inputs.environment == 'production' && 'production' || 'preview' }}
+      candidate_source_sha: ${{ needs.bind_server_source.outputs.authorized_sha }}
+      candidate_cli_version: ${{ needs.publish_cli_binaries.result == 'success' && needs.publish_cli_binaries.outputs.version || '' }}
+      candidate_stack_version: ${{ needs.publish_hstack_binaries.result == 'success' && needs.publish_hstack_binaries.outputs.version || '' }}
+      candidate_server_version: ${{ needs.publish_server_runtime.result == 'success' && needs.publish_server_runtime.outputs.version || '' }}
+      candidate_ui_web_version: ${{ needs.publish_ui_web.result == 'success' && needs.publish_ui_web.outputs.version || '' }}
+
   promote_server_runtime:
     if: ${{ always() && needs.verify_release_candidates.result == 'success' && needs.publish_server_runtime.result == 'success' && needs.publish_server_runtime.outputs.version != '' }}
     needs: [bind_server_source, verify_release_candidates, publish_server_runtime]
@@ -979,7 +992,7 @@ jobs:
   release_status:
     name: Summarize release status
     if: ${{ always() }}
-    needs: [plan, bind_server_source, supported_old_relay_compatibility, publish_cli_binaries, publish_hstack_binaries, publish_server_runtime, publish_ui_web, verify_release_candidates, promote_server_runtime, promote_ui_web, promote_cli_binaries, promote_hstack_binaries, publish_docker, publish_npm, release_verify]
+    needs: [plan, bind_server_source, supported_old_relay_compatibility, publish_cli_binaries, publish_hstack_binaries, publish_server_runtime, publish_ui_web, verify_release_candidates, verify_resume_candidates, promote_server_runtime, promote_ui_web, promote_cli_binaries, promote_hstack_binaries, publish_docker, publish_npm, release_verify]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -1021,6 +1034,10 @@ jobs:
           UI_WEB_RESULT: ${{ needs.publish_ui_web.result }}
           UI_WEB_VERSION: ${{ needs.publish_ui_web.outputs.version }}
           CANDIDATE_VERIFY_RESULT: ${{ needs.verify_release_candidates.result }}
+          CLI_RESUME_VERIFIED: ${{ needs.verify_resume_candidates.outputs.cli_verified }}
+          HSTACK_RESUME_VERIFIED: ${{ needs.verify_resume_candidates.outputs.stack_verified }}
+          SERVER_RESUME_VERIFIED: ${{ needs.verify_resume_candidates.outputs.server_verified }}
+          UI_WEB_RESUME_VERIFIED: ${{ needs.verify_resume_candidates.outputs.ui_web_verified }}
           PROMOTE_SERVER_RESULT: ${{ needs.promote_server_runtime.result }}
           PROMOTE_UI_WEB_RESULT: ${{ needs.promote_ui_web.result }}
           PROMOTE_CLI_RESULT: ${{ needs.promote_cli_binaries.result }}
@@ -1063,10 +1080,10 @@ jobs:
               .map(normalizeResult)
               .every((result) => result === 'success' || result === 'skipped');
           const definitions = [
-            { id: 'cli', envName: 'CLI_RESULT', product: 'cli', versionName: 'CLI_VERSION' },
-            { id: 'hstack', envName: 'HSTACK_RESULT', product: 'stack', versionName: 'HSTACK_VERSION' },
-            { id: 'server', envName: 'SERVER_RESULT', product: 'server', versionName: 'SERVER_VERSION' },
-            { id: 'ui-web', envName: 'UI_WEB_RESULT', product: 'ui-web', versionName: 'UI_WEB_VERSION' },
+            { id: 'cli', envName: 'CLI_RESULT', product: 'cli', versionName: 'CLI_VERSION', resumeVerifiedName: 'CLI_RESUME_VERIFIED' },
+            { id: 'hstack', envName: 'HSTACK_RESULT', product: 'stack', versionName: 'HSTACK_VERSION', resumeVerifiedName: 'HSTACK_RESUME_VERIFIED' },
+            { id: 'server', envName: 'SERVER_RESULT', product: 'server', versionName: 'SERVER_VERSION', resumeVerifiedName: 'SERVER_RESUME_VERIFIED' },
+            { id: 'ui-web', envName: 'UI_WEB_RESULT', product: 'ui-web', versionName: 'UI_WEB_VERSION', resumeVerifiedName: 'UI_WEB_RESUME_VERIFIED' },
             { id: 'supported-old-relay-compatibility', envName: 'OLD_RELAY_COMPATIBILITY_RESULT' },
             { id: 'candidate-verification', envName: 'CANDIDATE_VERIFY_RESULT' },
             { id: 'promote-server', envName: 'PROMOTE_SERVER_RESULT' },
@@ -1082,14 +1099,15 @@ jobs:
             channel: process.env.CHANNEL,
             sourceSha: process.env.SOURCE_SHA || 'unavailable',
             requestedSurfaces: definitions.map(({ id }) => ({ id, requested: requested[id], required: true })),
-            surfaces: definitions.map(({ id, envName, product, versionName }) => {
+            surfaces: definitions.map(({ id, envName, product, versionName, resumeVerifiedName }) => {
               const result = normalizeResult(process.env[envName]);
               return {
                 id,
                 result,
                 ...(result === 'success' ? { identity: {
                   verified: product
-                    ? Boolean(process.env[versionName]) && normalizeResult(process.env.CANDIDATE_VERIFY_RESULT) === 'success'
+                    ? Boolean(process.env[versionName])
+                      && (normalizeResult(process.env.CANDIDATE_VERIFY_RESULT) === 'success' || process.env[resumeVerifiedName] === 'true')
                     : true,
                   sourceSha: process.env.SOURCE_SHA || 'unavailable',
                   ...(product ? { product, version: process.env[versionName] ?? '' } : {}),
