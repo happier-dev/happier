@@ -1,4 +1,4 @@
-import { readHttpStatus } from '@/api/client/httpStatusError';
+import { isPermanentRequestStatus, readHttpStatus } from '@/api/client/httpStatusError';
 import { readNormalizedErrorCode } from '@/api/offline/serverConnectionErrors';
 
 export type AutomationWorkerErrorClass = 'transient' | 'permanent';
@@ -18,14 +18,10 @@ function getErrorCode(error: unknown): string {
 }
 
 export function classifyAutomationWorkerError(error: unknown): AutomationWorkerErrorClass {
-  const status = readHttpStatus(error);
-  if (status !== null) {
-    if (status >= 500 || status === 408 || status === 425 || status === 429) {
-      return 'transient';
-    }
-    if (status >= 400 && status < 500) {
-      return 'permanent';
-    }
+  // The 4xx/5xx split has ONE owner (`httpStatusError#isPermanentRequestStatus`); this policy adds
+  // only the transport-code vocabulary and the delay curve on top of it.
+  if (isPermanentRequestStatus(readHttpStatus(error))) {
+    return 'permanent';
   }
 
   const code = getErrorCode(error);

@@ -116,21 +116,15 @@ function isNetworkMessage(message: string): boolean {
   );
 }
 
-function readPreservedStatus(error: unknown): number | null {
-  const status = readHttpStatus(error);
-  if (status !== null) return status;
-  const record = asRecord(error);
-  const topLevelStatus = record?.status;
-  return typeof topLevelStatus === 'number' && Number.isFinite(topLevelStatus)
-    ? Math.trunc(topLevelStatus)
-    : null;
-}
-
 export function classifyServerEndpointError(
   error: unknown,
   options: Readonly<{ featureAbsentStatusCodes?: readonly number[] }> = {},
 ): ServerEndpointErrorClassification {
-  const statusCode = readPreservedStatus(error) ?? undefined;
+  // Where a status lives on an error has ONE reader (`httpStatusError#readHttpStatus`), which now
+  // covers the top-level `status`/`statusCode` this function used to compensate for locally. Two
+  // readers of the same question is how a shape ends up classified correctly here and as an
+  // unclassifiable blip everywhere else.
+  const statusCode = readHttpStatus(error) ?? undefined;
   if (statusCode === 401 || statusCode === 403) {
     return { kind: 'auth_failed', retryable: false, statusCode };
   }
