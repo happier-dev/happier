@@ -282,7 +282,15 @@ export function resolveDarwinPayloadNotarizationCommands({
       .filter((entry) => entry.gatekeeperAssessable)
       .map((entry) => [
         'spctl',
-        ['--assess', '--type', 'execute', '--verbose=4', entry.path],
+        [
+          '--assess',
+          '--ignore-cache',
+          '--no-cache',
+          '--type',
+          'execute',
+          '--verbose=4',
+          entry.path,
+        ],
       ]),
     ticketDelivery: 'online',
     stapled: false,

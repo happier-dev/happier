@@ -154,6 +154,9 @@ test('Darwin payload notarization signs and strictly verifies every Mach-O leaf 
       '/tmp/happier-v1.2.3-darwin-arm64/happier',
     ],
   );
+  assert.equal(commands.assess.every(([, args]) => (
+    args.includes('--ignore-cache') && args.includes('--no-cache')
+  )), true, 'Gatekeeper propagation retries must bypass and not repopulate stale assessment results');
   assert.deepEqual(commands.submit, [
     'xcrun',
     [
