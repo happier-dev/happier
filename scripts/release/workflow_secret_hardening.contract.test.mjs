@@ -142,7 +142,7 @@ test('release workflow keeps provider checks outside the compact manual release 
   const ciJob = parsed?.jobs?.ci;
   assert.ok(ciJob, 'ci job should exist');
   assert.equal(ciJob.secrets, undefined, 'ci should not inherit secrets');
-  assert.equal(ciJob.with?.run_providers, false, 'ci should never run providers directly');
+  assert.equal(ciJob.with?.run_providers, undefined, 'exact-SHA CI evidence should not dispatch provider checks');
   assert.equal(parsed?.jobs?.providers, undefined, 'release.yml should not embed a separate providers job; provider contracts run from their dedicated workflow');
 });
 
@@ -163,6 +163,10 @@ test('manual secret-bearing workflows enforce trusted refs', async () => {
 
   for (const file of files) {
     const { raw } = await loadWorkflow(file);
+    if (file === 'release.yml') {
+      assert.match(raw, /scripts\/pipeline\/release\/validate-release-dispatch\.mjs/, 'release.yml should delegate trusted dispatch admission to the canonical script');
+      continue;
+    }
     assert.match(
       raw,
       /Untrusted .*workflow control ref|Untrusted workflow_dispatch ref|trusted refs for manual dispatch|Refusing workflow_dispatch from untrusted ref/,

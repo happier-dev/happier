@@ -39,7 +39,6 @@ test('workflows that run pipeline scripts set up Node 22', async () => {
 test('release workflows pin Yarn via Corepack (avoid runner drift)', async () => {
   const expected = /corepack prepare yarn@1\.22\.22 --activate/;
   const files = [
-    'release.yml',
     'release-npm.yml',
     'promote-ui.yml',
     'promote-server.yml',

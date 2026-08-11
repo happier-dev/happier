@@ -134,13 +134,11 @@ test('release workflow admits one authorized promotion-source SHA and passes it 
   assert.match(raw, /AUTHORIZED_PROMOTION_SOURCE_SHA:\s*\$\{\{ inputs\.authorized_promotion_source_sha \}\}/);
   assert.match(raw, /HMAINT_OPERATION_ID:\s*\$\{\{ inputs\.hmaint_operation_id \}\}/);
   assert.match(raw, /RELEASE_NOTES_ID:\s*\$\{\{ inputs\.release_notes_id \}\}/);
-  assert.match(raw, /authorized_promotion_source_sha is required when dry_run is false/);
-  assert.match(raw, /hmaint_operation_id must match rel_ followed by 8-80 ASCII letters, digits, underscores, or hyphens/);
-  assert.match(raw, /release_notes_id must contain only lowercase letters, digits, dots, underscores, or hyphens/);
-  assert.match(raw, /run-name:\s*\$\{\{ inputs\.hmaint_operation_id != '' && format\('RELEASE — Publish \(\{0\}\)', inputs\.hmaint_operation_id\) \|\| 'RELEASE — Publish \(manual\)' \}\}/);
+  assert.match(raw, /scripts\/pipeline\/release\/validate-release-dispatch\.mjs/);
+  assert.match(raw, /run-name:\s*\$\{\{ inputs\.hmaint_operation_id != '' && format\('RELEASE — Publish \(\{0\}, \{1\}\)', inputs\.hmaint_operation_id, inputs\.hmaint_attempt_id\) \|\| 'RELEASE — Publish \(manual\)' \}\}/);
   assert.match(
     raw,
-    /Checkout authorized release planning source[\s\S]*?ref: \$\{\{ inputs\.authorized_promotion_source_sha \|\| steps\.plan_refs\.outputs\.source_ref \}\}/,
+    /Checkout authorized release planning source[\s\S]*?ref: \$\{\{ inputs\.authorized_promotion_source_sha \|\| needs\.ci\.outputs\.source_ref \}\}/,
   );
   assert.match(raw, /promote_main:[\s\S]*?source_sha: \$\{\{[^\n]+\}\}/);
   assert.match(raw, /promote_preview:[\s\S]*?source_sha: \$\{\{[^\n]+\}\}/);

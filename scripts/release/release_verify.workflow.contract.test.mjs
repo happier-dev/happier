@@ -20,7 +20,7 @@ test('release-verify resolves public validation profiles centrally while retaini
   );
   assert.equal(workflow.on.workflow_call.inputs.validation_profile.default, '');
   assert.ok(workflow.jobs.resolve_validation_profile, 'one resolver must own automatic suite selection');
-  assert.match(String(workflow.jobs.resolve_validation_profile.steps?.at(-1)?.run ?? ''), /release-contract/);
+  assert.match(String(workflow.jobs.resolve_validation_profile.steps?.at(-1)?.run ?? ''), /resolve-validation-plan\.mjs/);
   assert.ok(workflow.jobs.verify.needs.includes('resolve_validation_profile'));
 
   const verifyBlock = raw.slice(raw.indexOf('\n  verify:'));
@@ -71,12 +71,12 @@ test('release-verify resolves public validation profiles centrally while retaini
   assert.equal(resolver.env.CANDIDATE_CLI_VERSION, '${{ inputs.candidate_cli_version }}');
   assert.equal(resolver.env.CANDIDATE_SERVER_VERSION, '${{ inputs.candidate_server_version }}');
   assert.equal(resolver.env.RELEASE_CHANNEL, '${{ inputs.channel }}');
-  assert.match(resolver.run, /const hasCliCandidate = Boolean\(process\.env\.CANDIDATE_CLI_VERSION\)/);
-  assert.match(resolver.run, /const hasServerCandidate = Boolean\(process\.env\.CANDIDATE_SERVER_VERSION\)/);
-  assert.match(resolver.run, /run_cli_update_continuity: String\(selected\.has\("cli-update"\)\)/);
-  assert.match(resolver.run, /run_session_continuity: String\(selected\.has\("session-continuity"\)\)/);
-  assert.match(resolver.run, /const hasPublishedRelayPredecessor = process\.env\.RELEASE_CHANNEL === "preview" \|\| process\.env\.RELEASE_CHANNEL === "production"/);
-  assert.match(resolver.run, /run_release_assets_docker: String\(selected\.has\("docker-release-assets"\)\)/);
+  assert.match(resolver.run, /--has-cli-candidate/);
+  assert.match(resolver.run, /--has-server-candidate/);
+  assert.match(resolver.run, /--has-published-relay-predecessor/);
+  assert.match(resolver.run, /--risk-cli-upgrade/);
+  assert.match(resolver.run, /--risk-session-continuity/);
+  assert.match(resolver.run, /--risk-relay-upgrade/);
 
   assert.equal(
     workflow.jobs.verify.with.checkout_sha,
