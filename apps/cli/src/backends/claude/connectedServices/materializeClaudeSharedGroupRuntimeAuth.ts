@@ -16,6 +16,7 @@ import { materializeClaudeCodeNativeAuth } from './nativeAuth/materializeClaudeC
 import { resolveClaudeCodeCredentialsFilePath } from './nativeAuth/claudeCodeCredentialFile';
 import { verifyClaudeCodeNativeAuth } from './nativeAuth/verifyClaudeCodeNativeAuth';
 import type { ClaudeCodeNativeAuthMaterializationResult } from './nativeAuth/materializeClaudeCodeNativeAuth';
+import { readClaudeSubscriptionCredentialIdentity } from './nativeAuth/claudeSubscriptionCredentialIdentity';
 
 type ClaudeSharedGroupRuntimeAuthMaterializationResult =
   ClaudeCodeNativeAuthMaterializationResult
@@ -82,11 +83,12 @@ export async function materializeClaudeSharedGroupRuntimeAuth(
           claudeConfigDir: target.metadata.runtimeClaudeConfigDir,
         })).status === 'ok';
       if (exactExistingCredential) {
+        const identity = readClaudeSubscriptionCredentialIdentity(target.record);
         await reconcileClaudeAccountScopedRootConfigFile({
           path: join(target.metadata.runtimeClaudeConfigDir, '.claude.json'),
           preserveExistingAccountState: true,
-          providerAccountId: target.record.oauth.providerAccountId,
-          providerEmail: target.record.oauth.providerEmail,
+          providerAccountId: identity?.providerAccountId ?? null,
+          providerEmail: identity?.providerEmail ?? null,
         });
         return {
           status: 'materialized' as const,
@@ -108,11 +110,12 @@ export async function materializeClaudeSharedGroupRuntimeAuth(
       });
       if (materialized.status !== 'materialized') return materialized;
 
+      const identity = readClaudeSubscriptionCredentialIdentity(target.record);
       await reconcileClaudeAccountScopedRootConfigFile({
         path: join(target.metadata.runtimeClaudeConfigDir, '.claude.json'),
         preserveExistingAccountState: false,
-        providerAccountId: target.record.oauth.providerAccountId,
-        providerEmail: target.record.oauth.providerEmail,
+        providerAccountId: identity?.providerAccountId ?? null,
+        providerEmail: identity?.providerEmail ?? null,
       });
       await writeClaudeConnectedServiceHomeProvenance({
         claudeConfigDir: target.metadata.runtimeClaudeConfigDir,

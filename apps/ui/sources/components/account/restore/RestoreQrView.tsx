@@ -208,7 +208,7 @@ export const RestoreQrView = React.memo(function RestoreQrView() {
                                 data={buildAccountConnectDeepLink({ publicKeyB64Url: encodeBase64(keypair.publicKey, 'base64url') })}
                                 size={260}
                                 foregroundColor={theme.colors.text.primary}
-                                backgroundColor="transparent"
+                                backgroundColor={theme.colors.surface.base}
                             />
                         )}
                     </View>

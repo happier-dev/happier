@@ -193,7 +193,7 @@ describe('OptionPickerOverlay', () => {
         expect(screen.getTextContent()).toContain('modelPickerOverlay.loadingModelsA11y');
     });
 
-    it('updates the custom value immediately (no Save button) when entering a custom model', async () => {
+    it('commits a custom model on blur (no Save button) without pushing a value up-tree on each keystroke', async () => {
         const onSubmitCustomValue = vi.fn();
         const onSelect = vi.fn();
         const { OptionPickerOverlay } = await import('./OptionPickerOverlay');
@@ -216,13 +216,306 @@ describe('OptionPickerOverlay', () => {
         expect(screen.findByTestId('model-picker-overlay-custom')).toBeTruthy();
         await screen.pressByTestIdAsync('model-picker-overlay-custom');
         expect(screen.findByTestId('model-picker-overlay-custom-input')).toBeTruthy();
+
+        // Typing must NOT commit up-tree per keystroke. Committing mid-type churns the
+        // parent picker option list, which remounts this input and drops the keyboard.
         await act(async () => {
-            screen.changeTextByTestId('model-picker-overlay-custom-input', '  custom-model  ');
+            screen.changeTextByTestId('model-picker-overlay-custom-input', 'c');
+        });
+        await act(async () => {
+            screen.changeTextByTestId('model-picker-overlay-custom-input', 'custom-model');
+        });
+        expect(onSubmitCustomValue).not.toHaveBeenCalled();
+
+        // There is no explicit Save button; commit happens on blur with the full value.
+        expect(screen.findByTestId('model-picker-overlay-custom-save')).toBeNull();
+        await act(async () => {
+            screen.findByTestId('model-picker-overlay-custom-input')?.props.onBlur?.();
         });
 
-        expect(screen.findByTestId('model-picker-overlay-custom-save')).toBeNull();
-        expect(onSubmitCustomValue).toHaveBeenCalledWith('  custom-model  ');
+        expect(onSubmitCustomValue).toHaveBeenCalledTimes(1);
+        expect(onSubmitCustomValue).toHaveBeenCalledWith('custom-model');
         expect(onSelect).not.toHaveBeenCalled();
+    });
+
+    it('does not commit typed custom text when a listed option is selected instead', async () => {
+        const onSubmitCustomValue = vi.fn();
+        let closeOnSelect = false;
+        const host: { unmount: () => Promise<void> } = { unmount: async () => {} };
+        const onSelect = vi.fn(() => {
+            if (closeOnSelect) void host.unmount();
+        });
+        const { OptionPickerOverlay } = await import('./OptionPickerOverlay');
+
+        const screen = await renderScreen(<OptionPickerOverlay
+                    title="Model"
+                    effectiveLabel="Default"
+                    notes={[]}
+                    options={[
+                        { value: 'default', label: 'Default', description: '' },
+                        { value: 'fast', label: 'Fast', description: '' },
+                    ]}
+                    selectedValue="default"
+                    emptyText="empty"
+                    canEnterCustomValue
+                    customLabel="Custom model"
+                    onSubmitCustomValue={onSubmitCustomValue}
+                    onSelect={onSelect}
+                />);
+        host.unmount = screen.unmount;
+
+        await screen.pressByTestIdAsync('model-picker-overlay-custom');
+        await act(async () => {
+            screen.changeTextByTestId('model-picker-overlay-custom-input', 'half-typed');
+        });
+
+        // A host that closes the picker on select unmounts inside the onSelect call, before the
+        // passive effect that refreshes the pending-commit ref can run. The unmount flush must
+        // already know the editor was abandoned, or it commits the half-typed id over the choice.
+        closeOnSelect = true;
+        await screen.pressByTestIdAsync('model-picker-overlay-option:fast');
+
+        expect(onSelect).toHaveBeenCalledWith('fast');
+        expect(onSubmitCustomValue).not.toHaveBeenCalled();
+    });
+
+    it('discards abandoned custom text when a listed option is selected', async () => {
+        const onSubmitCustomValue = vi.fn();
+        const onSelect = vi.fn();
+        const { OptionPickerOverlay } = await import('./OptionPickerOverlay');
+
+        const screen = await renderScreen(<OptionPickerOverlay
+                    title="Model"
+                    effectiveLabel="Default"
+                    notes={[]}
+                    options={[
+                        { value: 'default', label: 'Default', description: '' },
+                        { value: 'fast', label: 'Fast', description: '' },
+                    ]}
+                    selectedValue="default"
+                    emptyText="empty"
+                    canEnterCustomValue
+                    customLabel="Custom model"
+                    onSubmitCustomValue={onSubmitCustomValue}
+                    onSelect={onSelect}
+                />);
+
+        await screen.pressByTestIdAsync('model-picker-overlay-custom');
+        await act(async () => {
+            screen.changeTextByTestId('model-picker-overlay-custom-input', 'half-typed');
+        });
+        await screen.pressByTestIdAsync('model-picker-overlay-option:fast');
+
+        // Reopening the editor must not revive the abandoned text, or dismissing later would
+        // commit it over the selection the user actually made.
+        await screen.pressByTestIdAsync('model-picker-overlay-custom');
+        expect(screen.findByTestId('model-picker-overlay-custom-input')?.props.value).toBe('');
+
+        await screen.unmount();
+        expect(onSubmitCustomValue).not.toHaveBeenCalled();
+        expect(onSelect).toHaveBeenCalledWith('fast');
+    });
+
+    it('allows re-selecting the same custom model after picking a listed option', async () => {
+        const onSubmitCustomValue = vi.fn();
+        const { OptionPickerOverlay } = await import('./OptionPickerOverlay');
+
+        const screen = await renderScreen(<OptionPickerOverlay
+                    title="Model"
+                    effectiveLabel="Default"
+                    notes={[]}
+                    options={[
+                        { value: 'default', label: 'Default', description: '' },
+                        { value: 'fast', label: 'Fast', description: '' },
+                    ]}
+                    selectedValue="default"
+                    emptyText="empty"
+                    canEnterCustomValue
+                    customLabel="Custom model"
+                    onSubmitCustomValue={onSubmitCustomValue}
+                    onSelect={() => {}}
+                />);
+
+        await screen.pressByTestIdAsync('model-picker-overlay-custom');
+        await act(async () => {
+            screen.changeTextByTestId('model-picker-overlay-custom-input', 'my-model');
+        });
+        await act(async () => {
+            screen.findByTestId('model-picker-overlay-custom-input')?.props.onSubmitEditing?.();
+        });
+        expect(onSubmitCustomValue).toHaveBeenCalledTimes(1);
+
+        // Switching to a listed option abandons that custom selection, so choosing the same custom
+        // id again is a real new selection — the commit de-dup must not swallow it.
+        await screen.pressByTestIdAsync('model-picker-overlay-option:fast');
+        await screen.pressByTestIdAsync('model-picker-overlay-custom');
+        await act(async () => {
+            screen.changeTextByTestId('model-picker-overlay-custom-input', 'my-model');
+        });
+        await act(async () => {
+            screen.findByTestId('model-picker-overlay-custom-input')?.props.onSubmitEditing?.();
+        });
+
+        expect(onSubmitCustomValue).toHaveBeenCalledTimes(2);
+        expect(onSubmitCustomValue).toHaveBeenLastCalledWith('my-model');
+    });
+
+    it('discards abandoned custom text when the selection changes from outside the picker', async () => {
+        const onSubmitCustomValue = vi.fn();
+        const { OptionPickerOverlay } = await import('./OptionPickerOverlay');
+
+        let setSelected: ((next: string) => void) | null = null;
+        function Host() {
+            const [selectedValue, setSelectedValue] = React.useState('default');
+            setSelected = setSelectedValue;
+            return (
+                <OptionPickerOverlay
+                    title="Model"
+                    effectiveLabel="Default"
+                    notes={[]}
+                    options={[
+                        { value: 'default', label: 'Default', description: '' },
+                        { value: 'fast', label: 'Fast', description: '' },
+                    ]}
+                    selectedValue={selectedValue}
+                    emptyText="empty"
+                    canEnterCustomValue
+                    customLabel="Custom model"
+                    onSubmitCustomValue={onSubmitCustomValue}
+                    onSelect={() => {}}
+                />
+            );
+        }
+
+        const screen = await renderScreen(<Host />);
+        await screen.pressByTestIdAsync('model-picker-overlay-custom');
+        await act(async () => {
+            screen.changeTextByTestId('model-picker-overlay-custom-input', 'half-typed');
+        });
+
+        // The selection changes programmatically, not through the picker's own handler.
+        await act(async () => {
+            setSelected?.('fast');
+        });
+
+        await screen.pressByTestIdAsync('model-picker-overlay-custom');
+        expect(screen.findByTestId('model-picker-overlay-custom-input')?.props.value).toBe('');
+
+        await screen.unmount();
+        expect(onSubmitCustomValue).not.toHaveBeenCalled();
+    });
+
+    it('discards the draft when an external listed selection replaces an initially custom one', async () => {
+        const onSubmitCustomValue = vi.fn();
+        const { OptionPickerOverlay } = await import('./OptionPickerOverlay');
+
+        let setSelected: ((next: string) => void) | null = null;
+        function Host() {
+            const [selectedValue, setSelectedValue] = React.useState('my-model');
+            setSelected = setSelectedValue;
+            return (
+                <OptionPickerOverlay
+                    title="Model"
+                    effectiveLabel="Default"
+                    notes={[]}
+                    options={[
+                        { value: 'default', label: 'Default', description: '' },
+                        { value: 'fast', label: 'Fast', description: '' },
+                    ]}
+                    selectedValue={selectedValue}
+                    emptyText="empty"
+                    canEnterCustomValue
+                    customLabel="Custom model"
+                    onSubmitCustomValue={onSubmitCustomValue}
+                    onSelect={() => {}}
+                />
+            );
+        }
+
+        // Mounts with a custom model already selected, so the editor opens with reason
+        // 'selected-custom' — the branch that returns early.
+        const screen = await renderScreen(<Host />);
+        expect(screen.findByTestId('model-picker-overlay-custom-input')?.props.value).toBe('my-model');
+
+        await act(async () => {
+            setSelected?.('fast');
+        });
+        await screen.pressByTestIdAsync('model-picker-overlay-custom');
+        expect(screen.findByTestId('model-picker-overlay-custom-input')?.props.value).toBe('');
+
+        await screen.unmount();
+        expect(onSubmitCustomValue).not.toHaveBeenCalled();
+    });
+
+    it('does not commit the draft when blur is caused by tapping a listed option', async () => {
+        const onSubmitCustomValue = vi.fn();
+        const onSelect = vi.fn();
+        const { OptionPickerOverlay } = await import('./OptionPickerOverlay');
+
+        const screen = await renderScreen(<OptionPickerOverlay
+                    title="Model"
+                    effectiveLabel="Default"
+                    notes={[]}
+                    options={[
+                        { value: 'default', label: 'Default', description: '' },
+                        { value: 'fast', label: 'Fast', description: '' },
+                    ]}
+                    selectedValue="default"
+                    emptyText="empty"
+                    canEnterCustomValue
+                    customLabel="Custom model"
+                    onSubmitCustomValue={onSubmitCustomValue}
+                    onSelect={onSelect}
+                />);
+
+        await screen.pressByTestIdAsync('model-picker-overlay-custom');
+        await act(async () => {
+            screen.changeTextByTestId('model-picker-overlay-custom-input', 'half-typed');
+        });
+
+        // Tapping another control blurs the focused input first. Committing there would publish an
+        // unintended intermediate model change before the option the user actually chose.
+        await act(async () => {
+            screen.findByTestId('model-picker-overlay-option:fast')?.props.onPressIn?.();
+            screen.findByTestId('model-picker-overlay-custom-input')?.props.onBlur?.();
+        });
+        await screen.pressByTestIdAsync('model-picker-overlay-option:fast');
+
+        expect(onSubmitCustomValue).not.toHaveBeenCalled();
+        expect(onSelect).toHaveBeenCalledWith('fast');
+    });
+
+    it('commits a typed custom model when the picker is dismissed without a blur', async () => {
+        const onSubmitCustomValue = vi.fn();
+        const { OptionPickerOverlay } = await import('./OptionPickerOverlay');
+
+        const screen = await renderScreen(<OptionPickerOverlay
+                    title="Model"
+                    effectiveLabel="Default"
+                    notes={[]}
+                    options={[
+                        { value: 'default', label: 'Default', description: '' },
+                    ]}
+                    selectedValue="default"
+                    emptyText="empty"
+                    canEnterCustomValue
+                    customLabel="Custom model"
+                    onSubmitCustomValue={onSubmitCustomValue}
+                    onSelect={() => {}}
+                />);
+
+        await screen.pressByTestIdAsync('model-picker-overlay-custom');
+        await act(async () => {
+            screen.changeTextByTestId('model-picker-overlay-custom-input', 'custom-model');
+        });
+        expect(onSubmitCustomValue).not.toHaveBeenCalled();
+
+        // Dismissing the overlay unmounts a still-focused input, which fires no blur on
+        // either React Native or React Native Web — the typed id must not be lost.
+        await screen.unmount();
+
+        expect(onSubmitCustomValue).toHaveBeenCalledTimes(1);
+        expect(onSubmitCustomValue).toHaveBeenCalledWith('custom-model');
     });
 
     it('matches and submits model identifiers as exact opaque values', async () => {

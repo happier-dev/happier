@@ -17,6 +17,27 @@ type QuotaDescriptorModule = Readonly<{
 describe('createClaudeSubscriptionQuotaFetcher', () => {
   const claudeCodeScope = 'user:inference user:profile user:sessions:claude_code user:mcp_servers user:file_upload';
 
+  it('does not claim exact quota support for setup-token credentials', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
+    const record = buildConnectedServiceCredentialRecord({
+      now: 1_000_000,
+      serviceId: 'claude-subscription',
+      profileId: 'setup',
+      kind: 'token',
+      token: {
+        token: 'sk-ant-oat01-setup-placeholder',
+        providerAccountId: null,
+        providerEmail: null,
+      },
+    });
+
+    const fetcher = createClaudeSubscriptionQuotaFetcher({ staleAfterMs: 300_000 });
+    await expect(fetcher.fetch({ record, now: 1_000_000, signal: new AbortController().signal }))
+      .resolves.toBeNull();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it('exposes a provider-owned descriptor that parses Anthropic endpoint host env before loading the fetcher', async () => {
     const descriptor = (claudeSubscriptionQuotaFetcherModule as QuotaDescriptorModule)
       .claudeSubscriptionQuotaFetcherDescriptor;

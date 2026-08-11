@@ -1,10 +1,14 @@
 import {
+  ConnectedServiceCredentialRecordV1Schema,
   ConnectedServiceCredentialRevisionV1Schema,
-  type ConnectedServiceCredentialRecordV1,
   type ConnectedServiceCredentialRevisionV1,
 } from '@happier-dev/protocol';
 
 import type { ClaudeSubscriptionNativeAuthSelectionDescriptor } from './nativeAuth/materializeClaudeCodeNativeAuth';
+import {
+  isHealthyClaudeSubscriptionNativeAuthCredentialRecord,
+  type ClaudeSubscriptionNativeAuthCredentialRecord,
+} from './nativeAuth/claudeCodeCredentialHealth';
 import type { ConnectedServiceSharedGenerationMutationCurrentness } from '@/daemon/connectedServices/credentials/lifecycleTypes';
 import {
   readClaudeRuntimeAuthSharedGroupSurfaceMetadata,
@@ -12,7 +16,7 @@ import {
 } from './claudeRuntimeAuthSharedGroupSurfaceMetadata';
 
 export type ClaudeSharedGroupHotApplyTarget = Readonly<{
-  record: ConnectedServiceCredentialRecordV1 & { kind: 'oauth'; serviceId: 'claude-subscription' };
+  record: ClaudeSubscriptionNativeAuthCredentialRecord;
   metadata: ClaudeRuntimeAuthSharedGroupSurfaceMetadata;
   selectionDescriptor: Extract<ClaudeSubscriptionNativeAuthSelectionDescriptor, { kind: 'group' }>;
   credentialRevision: ConnectedServiceCredentialRevisionV1;
@@ -35,13 +39,13 @@ function readNumber(value: unknown): number | null {
     : null;
 }
 
-function readClaudeSubscriptionOauthRecord(
+function readClaudeSubscriptionNativeAuthRecord(
   value: unknown,
-): (ConnectedServiceCredentialRecordV1 & { kind: 'oauth'; serviceId: 'claude-subscription' }) | null {
-  const record = readRecord(value);
-  if (!record) return null;
-  return record.serviceId === 'claude-subscription' && record.kind === 'oauth'
-    ? record as ConnectedServiceCredentialRecordV1 & { kind: 'oauth'; serviceId: 'claude-subscription' }
+): ClaudeSubscriptionNativeAuthCredentialRecord | null {
+  const parsed = ConnectedServiceCredentialRecordV1Schema.safeParse(value);
+  if (!parsed.success) return null;
+  return isHealthyClaudeSubscriptionNativeAuthCredentialRecord(parsed.data)
+    ? parsed.data
     : null;
 }
 
@@ -52,7 +56,7 @@ export function resolveClaudeSharedGroupHotApplyTarget(
   if (!selectionRecord) return null;
   const serviceId = readString(selectionRecord.serviceId);
   if (serviceId !== null && serviceId !== 'claude-subscription') return null;
-  const record = readClaudeSubscriptionOauthRecord(selectionRecord.record);
+  const record = readClaudeSubscriptionNativeAuthRecord(selectionRecord.record);
   const metadata = readClaudeRuntimeAuthSharedGroupSurfaceMetadata(selection);
   const groupId = readString(selectionRecord.groupId);
   const activeProfileId = readString(selectionRecord.activeProfileId);

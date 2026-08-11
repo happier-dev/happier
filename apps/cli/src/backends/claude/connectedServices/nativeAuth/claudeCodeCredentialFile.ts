@@ -11,7 +11,11 @@ import {
   type ClaudeCodeCredentialHealth,
 } from './claudeCodeCredentialHealth';
 import { readClaudeCodeMacOsKeychainCredentialWithMetadata } from './claudeCodeMacOsKeychain';
-import { parseClaudeCodeCredentialScopes } from './claudeCodeCredentialScopes';
+import {
+  CLAUDE_CODE_REQUIRED_OAUTH_SCOPES,
+  CLAUDE_CODE_SETUP_TOKEN_SCOPES,
+  parseClaudeCodeCredentialScopes,
+} from './claudeCodeCredentialScopes';
 import {
   buildSafeClaudeCodeCredentialComparatorEntry,
   computeClaudeCodeCredentialAccountProofFingerprint,
@@ -224,7 +228,21 @@ export function buildClaudeCodeCredentialPayload(
   record: ConnectedServiceCredentialRecordV1,
 ): ClaudeCodeCredentialPayloadBuildResult {
   const health = classifyClaudeCodeCredentialHealth(record);
-  if (health.status !== 'ok' || record.kind !== 'oauth') {
+  if (health.status !== 'ok') {
+    return { status: 'diagnostic', health };
+  }
+  if (record.kind === 'token') {
+    return {
+      status: 'ok',
+      payload: {
+        claudeAiOauth: {
+          accessToken: record.token.token,
+          scopes: [...CLAUDE_CODE_SETUP_TOKEN_SCOPES],
+        },
+      },
+    };
+  }
+  if (record.kind !== 'oauth') {
     return { status: 'diagnostic', health };
   }
   const raw = readObject(record.oauth.raw);

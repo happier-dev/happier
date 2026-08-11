@@ -15,6 +15,13 @@ export type ClaudeCodeCredentialHealth = Readonly<{
   missingScopes: readonly string[];
 }>;
 
+export type ClaudeSubscriptionNativeAuthCredentialRecord =
+  ConnectedServiceCredentialRecordV1
+  & Readonly<{
+    serviceId: 'claude-subscription';
+    kind: 'oauth' | 'token';
+  }>;
+
 function isNonBlank(value: string | null | undefined): boolean {
   return typeof value === 'string' && value.trim().length > 0;
 }
@@ -24,6 +31,11 @@ export function classifyClaudeCodeCredentialHealth(
 ): ClaudeCodeCredentialHealth {
   if (record.serviceId !== 'claude-subscription') {
     return { status: 'unsupported_service', missingScopes: [] };
+  }
+  if (record.kind === 'token') {
+    return isNonBlank(record.token.token)
+      ? { status: 'ok', missingScopes: [] }
+      : { status: 'missing_access_token', missingScopes: [] };
   }
   if (record.kind !== 'oauth') {
     return { status: 'unsupported_credential_kind', missingScopes: [] };
@@ -39,4 +51,14 @@ export function classifyClaudeCodeCredentialHealth(
     return { status: 'missing_required_scope', missingScopes };
   }
   return { status: 'ok', missingScopes: [] };
+}
+
+export function isHealthyClaudeSubscriptionNativeAuthCredentialRecord(
+  record: ConnectedServiceCredentialRecordV1,
+): record is ClaudeSubscriptionNativeAuthCredentialRecord {
+  return (
+    record.serviceId === 'claude-subscription'
+    && (record.kind === 'oauth' || record.kind === 'token')
+    && classifyClaudeCodeCredentialHealth(record).status === 'ok'
+  );
 }

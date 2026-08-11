@@ -1,9 +1,13 @@
-import { CLAUDE_CODE_REQUIRED_OAUTH_SCOPES } from '@happier-dev/agents';
+import {
+  CLAUDE_CODE_REQUIRED_OAUTH_SCOPES,
+  CLAUDE_CODE_SETUP_TOKEN_SCOPES,
+} from '@happier-dev/agents';
 
 export {
   CLAUDE_CODE_RECOMMENDED_OAUTH_SCOPE,
   CLAUDE_CODE_RECOMMENDED_OAUTH_SCOPES,
   CLAUDE_CODE_REQUIRED_OAUTH_SCOPES,
+  CLAUDE_CODE_SETUP_TOKEN_SCOPES,
 } from '@happier-dev/agents';
 
 export function parseClaudeCodeCredentialScopes(
@@ -30,4 +34,17 @@ export function findMissingClaudeCodeCredentialScopes(
 ): string[] {
   const scopes = new Set(parseClaudeCodeCredentialScopes(value));
   return CLAUDE_CODE_REQUIRED_OAUTH_SCOPES.filter((scope) => !scopes.has(scope));
+}
+
+export function findMissingClaudeCodeNativeCredentialScopes(
+  value: string | readonly string[] | null | undefined,
+): string[] {
+  const scopes = parseClaudeCodeCredentialScopes(value);
+  if (
+    scopes.length === CLAUDE_CODE_SETUP_TOKEN_SCOPES.length
+    && CLAUDE_CODE_SETUP_TOKEN_SCOPES.every((scope) => scopes.includes(scope))
+  ) {
+    return [];
+  }
+  return findMissingClaudeCodeCredentialScopes(scopes);
 }

@@ -596,7 +596,7 @@ describe('materializeClaudeConnectedServiceRuntimeAuthSelection', () => {
       .rejects.toMatchObject({ code: 'ENOENT' });
   });
 
-  it('does not expose shared group hot-apply metadata for token-backed Claude subscription groups', async () => {
+  it('exposes shared group hot-apply metadata for token-backed Claude subscription groups', async () => {
     const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-claude-runtime-selection-server-'));
     const homeDir = await mkdtemp(join(tmpdir(), 'happier-claude-runtime-selection-home-'));
     const projectDir = await mkdtemp(join(tmpdir(), 'happier-claude-runtime-selection-project-'));
@@ -622,6 +622,18 @@ describe('materializeClaudeConnectedServiceRuntimeAuthSelection', () => {
         providerEmail: 'setup@example.test',
       },
     });
+    const profileClaudeConfigDir = resolveClaudeConnectedServiceStableConfigDir({
+      activeServerDir,
+      serviceId: 'claude-subscription',
+      fallbackProfileId: 'setup',
+      selection: {
+        kind: 'profile',
+        serviceId: 'claude-subscription',
+        profileId: 'setup',
+        record,
+      },
+    });
+    if (!profileClaudeConfigDir) throw new Error('expected stable profile Claude config dir');
     const previousBindings: ConnectedServiceBindingsV1 = {
       v: 1,
       bindingsByServiceId: {
@@ -704,10 +716,15 @@ describe('materializeClaudeConnectedServiceRuntimeAuthSelection', () => {
       profileId: 'setup',
       groupId: 'work',
       activeProfileId: 'setup',
+      targetMaterializedEnv: { CLAUDE_CONFIG_DIR: groupClaudeConfigDir },
+      targetMaterializedRoot: groupClaudeConfigDir,
+      claudeRuntimeAuthSharedGroupSurface: {
+        mode: 'shared_group_auth_surface',
+        runtimeClaudeConfigDir: groupClaudeConfigDir,
+        runtimeMaterializedRoot: groupClaudeConfigDir,
+        sourceClaudeConfigDir: profileClaudeConfigDir,
+      },
     });
-    expect((result as { targetMaterializedEnv?: unknown }).targetMaterializedEnv).toBeUndefined();
-    expect((result as { targetMaterializedRoot?: unknown }).targetMaterializedRoot).toBeUndefined();
-    expect((result as { claudeRuntimeAuthSharedGroupSurface?: unknown }).claudeRuntimeAuthSharedGroupSurface).toBeUndefined();
     await expect(readFile(join(groupClaudeConfigDir, '.credentials.json'), 'utf8'))
       .rejects.toMatchObject({ code: 'ENOENT' });
   });

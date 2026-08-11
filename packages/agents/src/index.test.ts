@@ -113,6 +113,7 @@ describe('agents package exports', () => {
       'user:mcp_servers',
       'user:file_upload',
     ].join(' '));
+    expect(mod.CLAUDE_CODE_SETUP_TOKEN_SCOPES).toEqual(['user:inference']);
     expect(mod.GEMINI_CLI_OAUTH_CLIENT_ID).toBe(
       '681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j.apps.googleusercontent.com',
     );

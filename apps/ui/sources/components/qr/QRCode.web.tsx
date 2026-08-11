@@ -27,6 +27,19 @@ function getRectPath(x: number, y: number, w: number, h: number,
             Z`;
 }
 
+// Compound even-odd path for a locator ring: outer 7x7 rounded square with the
+// inner 5x5 punched out. The ring is painted purely in the foreground color so
+// a transparent background cannot erase it (mirrors DiffRect in QRCode.tsx).
+function getLocatorRingPath(x: number, y: number, moduleSize: number, baseRadius: number): string {
+    const outerRadius = moduleSize * (baseRadius + 1);
+    const innerRadius = moduleSize * baseRadius;
+    const outer = getRectPath(x, y, 7 * moduleSize, 7 * moduleSize,
+        outerRadius, outerRadius, outerRadius, outerRadius);
+    const inner = getRectPath(x + moduleSize, y + moduleSize, 5 * moduleSize, 5 * moduleSize,
+        innerRadius, innerRadius, innerRadius, innerRadius);
+    return `${outer} ${inner}`;
+}
+
 interface QRCodeProps {
     data: string;
     size?: number;
@@ -138,23 +151,10 @@ export const QRCode = React.memo((props: QRCodeProps) => {
                 {modules}
 
                 {/* Top-left locator pattern */}
-                <rect
-                    x={2 * moduleSize}
-                    y={2 * moduleSize}
-                    width={7 * moduleSize}
-                    height={7 * moduleSize}
-                    rx={moduleSize * (baseRadius + 1)}
-                    ry={moduleSize * (baseRadius + 1)}
+                <path
+                    d={getLocatorRingPath(2 * moduleSize, 2 * moduleSize, moduleSize, baseRadius)}
                     fill={foregroundColor}
-                />
-                <rect
-                    x={3 * moduleSize}
-                    y={3 * moduleSize}
-                    width={5 * moduleSize}
-                    height={5 * moduleSize}
-                    rx={moduleSize * baseRadius}
-                    ry={moduleSize * baseRadius}
-                    fill={backgroundColor}
+                    fillRule="evenodd"
                 />
                 <rect
                     x={4 * moduleSize}
@@ -167,23 +167,10 @@ export const QRCode = React.memo((props: QRCodeProps) => {
                 />
 
                 {/* Top-right locator pattern */}
-                <rect
-                    x={(qrMatrix.size - 7 + 2) * moduleSize}
-                    y={2 * moduleSize}
-                    width={7 * moduleSize}
-                    height={7 * moduleSize}
-                    rx={moduleSize * (baseRadius + 1)}
-                    ry={moduleSize * (baseRadius + 1)}
+                <path
+                    d={getLocatorRingPath((qrMatrix.size - 7 + 2) * moduleSize, 2 * moduleSize, moduleSize, baseRadius)}
                     fill={foregroundColor}
-                />
-                <rect
-                    x={(qrMatrix.size - 7 + 1 + 2) * moduleSize}
-                    y={3 * moduleSize}
-                    width={5 * moduleSize}
-                    height={5 * moduleSize}
-                    rx={moduleSize * baseRadius}
-                    ry={moduleSize * baseRadius}
-                    fill={backgroundColor}
+                    fillRule="evenodd"
                 />
                 <rect
                     x={(qrMatrix.size - 7 + 2 + 2) * moduleSize}
@@ -196,23 +183,10 @@ export const QRCode = React.memo((props: QRCodeProps) => {
                 />
 
                 {/* Bottom-left locator pattern */}
-                <rect
-                    x={2 * moduleSize}
-                    y={(qrMatrix.size - 7 + 2) * moduleSize}
-                    width={7 * moduleSize}
-                    height={7 * moduleSize}
-                    rx={moduleSize * (baseRadius + 1)}
-                    ry={moduleSize * (baseRadius + 1)}
+                <path
+                    d={getLocatorRingPath(2 * moduleSize, (qrMatrix.size - 7 + 2) * moduleSize, moduleSize, baseRadius)}
                     fill={foregroundColor}
-                />
-                <rect
-                    x={3 * moduleSize}
-                    y={(qrMatrix.size - 7 + 1 + 2) * moduleSize}
-                    width={5 * moduleSize}
-                    height={5 * moduleSize}
-                    rx={moduleSize * baseRadius}
-                    ry={moduleSize * baseRadius}
-                    fill={backgroundColor}
+                    fillRule="evenodd"
                 />
                 <rect
                     x={4 * moduleSize}
