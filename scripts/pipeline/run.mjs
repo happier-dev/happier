@@ -1094,6 +1094,8 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
         subcommand !== 'release-prepare-binary-assets' &&
         subcommand !== 'release-publish-manifests' &&
         subcommand !== 'release-verify-artifacts' &&
+        subcommand !== 'release-analyze' &&
+        subcommand !== 'release-local-candidates' &&
         subcommand !== 'release-compute-changed-components' &&
         subcommand !== 'release-compute-versioned-component-changes' &&
         subcommand !== 'release-resolve-bump-plan' &&
@@ -2051,6 +2053,8 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
         subcommand === 'release-prepare-binary-assets' ||
         subcommand === 'release-publish-manifests' ||
         subcommand === 'release-verify-artifacts' ||
+        subcommand === 'release-analyze' ||
+        subcommand === 'release-local-candidates' ||
         subcommand === 'release-compute-changed-components' ||
         subcommand === 'release-compute-versioned-component-changes' ||
         subcommand === 'release-resolve-bump-plan' ||
@@ -2082,8 +2086,12 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
                     ? 'prepare-binary-assets.mjs'
                     : subcommand === 'release-publish-manifests'
                       ? 'publish-manifests.mjs'
-                      : subcommand === 'release-verify-artifacts'
-                        ? 'verify-artifacts.mjs'
+                    : subcommand === 'release-verify-artifacts'
+                      ? 'verify-artifacts.mjs'
+                      : subcommand === 'release-analyze'
+                        ? 'analyze-release-change.mjs'
+                      : subcommand === 'release-local-candidates'
+                        ? 'execute-local-candidates.mjs'
                         : subcommand === 'release-compute-changed-components'
                           ? 'compute-changed-components.mjs'
                           : subcommand === 'release-compute-versioned-component-changes'
@@ -2096,6 +2104,17 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
 
         const scriptArgs =
           subcommand === 'release-compute-deploy-plan' ? ['--deploy-environment', deployEnvironment, ...passthrough] : passthrough;
+
+        if (subcommand === 'release-analyze' || (subcommand === 'release-local-candidates' && dryRun)) {
+          runReleaseWrappedScript({
+            repoRoot,
+            env: process.env,
+            scriptFile,
+            args: subcommand === 'release-local-candidates' ? [...scriptArgs, '--dry-run'] : scriptArgs,
+            dryRun: false,
+          });
+          return;
+        }
 
         if (dryRun) {
           runReleaseWrappedScript({
@@ -4263,6 +4282,7 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
               'workflow-control-sha': { type: 'string', default: '' },
               'resume-run-id': { type: 'string', default: '' },
               'operation-id': { type: 'string', default: '' },
+              'attempt-id': { type: 'string', default: 'attempt_1' },
               'release-notes-id': { type: 'string', default: '' },
               'qualified-v4-activation-approval': { type: 'string', default: 'false' },
               'allow-dirty': { type: 'string', default: 'false' },
@@ -4324,6 +4344,7 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
           const workflowControlSha = String(values['workflow-control-sha'] ?? '').trim();
           const resumeRunId = String(values['resume-run-id'] ?? '');
           const operationId = String(values['operation-id'] ?? '').trim();
+          const attemptId = String(values['attempt-id'] ?? '').trim();
           const releaseNotesId = String(values['release-notes-id'] ?? '').trim();
           const qualifiedV4ActivationApproval = parseBoolString(
             values['qualified-v4-activation-approval'],
@@ -4351,6 +4372,9 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
           }
           if (operationId && !RELEASE_OPERATION_ID.test(operationId)) {
             fail('--operation-id must match rel_ followed by 8-80 ASCII letters, digits, underscores, or hyphens.');
+          }
+          if (!/^attempt_[1-9][0-9]*$/u.test(attemptId)) {
+            fail('--attempt-id must match attempt_<positive integer>.');
           }
           if (authorizedPromotionSourceSha && !FULL_GIT_SHA.test(authorizedPromotionSourceSha)) {
             fail('--source-sha must be a full 40-character commit SHA when provided.');
@@ -4390,7 +4414,9 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
             resolveAuthorizedReleaseSource({
               repoRoot,
               remoteUrl: 'origin',
-              sourceRef: `refs/heads/${promotionSourceBranch}`,
+              sourceRef: resumeRunId && authorizedPromotionSourceSha
+                ? authorizedPromotionSourceSha
+                : `refs/heads/${promotionSourceBranch}`,
               authorizedSha: authorizedPromotionSourceSha,
             });
 
@@ -4449,6 +4475,7 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
               ...(workflowControlSha ? ['-f', `workflow_control_sha=${workflowControlSha}`] : []),
               ...(resumeRunId ? ['-f', `resume_run_id=${resumeRunId}`] : []),
               ...(operationId ? ['-f', `hmaint_operation_id=${operationId}`] : []),
+              ...(operationId ? ['-f', `hmaint_attempt_id=${attemptId}`] : []),
               '-f', `confirm=${action}`,
             ];
             execFileSync('gh', workflowArgs, {

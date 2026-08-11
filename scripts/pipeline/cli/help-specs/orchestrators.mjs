@@ -12,10 +12,28 @@
 
 /** @type {Record<string, CommandHelpSpec>} */
 export const COMMAND_HELP_ORCHESTRATORS = {
+  'release-analyze': {
+    summary: 'Classify changed release seams before notes/version materialization.',
+    usage: 'node scripts/pipeline/run.mjs release-analyze --base <ref> --head <ref> --profile <integrated|stable> --has-cli-candidate <bool> --has-server-candidate <bool> --has-published-relay-predecessor <bool>',
+    bullets: [
+      'Returns deterministic risk triggers and required fast/heavy evidence; the release agent owns the semantic compatibility verdict.',
+      'Run while inspecting the release diff, before committing release notes or versions.',
+    ],
+    examples: ['node scripts/pipeline/run.mjs release-analyze --base cli-v1.2.3 --head HEAD --profile integrated --has-cli-candidate true --has-server-candidate false --has-published-relay-predecessor false'],
+  },
+  'release-local-candidates': {
+    summary: 'Execute immutable publication, verification, and rolling promotion locally through the canonical release scripts.',
+    usage: 'node scripts/pipeline/run.mjs release-local-candidates --channel <dev|preview|stable> --source-sha <sha> --repository <owner/repo> --candidates <product=version,...> [--phase <publish-immutable|verify|promote-rolling|all>] [--dry-run]',
+    bullets: [
+      'Uses the same script-owned immutable publishers, candidate verifier, and rolling promoter as GitHub workflows.',
+      'Each phase can be rerun independently without rebuilding a verified immutable candidate.',
+    ],
+    examples: ['node scripts/pipeline/run.mjs release-local-candidates --channel preview --source-sha <sha> --repository happier-dev/happier --candidates cli=1.2.3-preview.4,server=1.2.3-preview.5 --dry-run'],
+  },
   release: {
     summary: 'Orchestrate a full dev/preview/production release (recommended entrypoint).',
     usage:
-      'node scripts/pipeline/run.mjs release --confirm <action> --repository <owner/repo> [--deploy-environment dev|preview|production] [--deploy-targets <csv>] [--source-sha <sha>] [--workflow-control-sha <sha>] [--resume-run-id <run-id>] [--operation-id <id>] [--release-notes-id <id>] [--qualified-v4-activation-approval <bool>] [--dry-run] [--json]',
+      'node scripts/pipeline/run.mjs release --confirm <action> --repository <owner/repo> [--deploy-environment dev|preview|production] [--deploy-targets <csv>] [--source-sha <sha>] [--workflow-control-sha <sha>] [--resume-run-id <run-id>] [--operation-id <id>] [--attempt-id <attempt_n>] [--release-notes-id <id>] [--qualified-v4-activation-approval <bool>] [--dry-run] [--json]',
     options: [
       '--confirm <action>                Required safety confirmation.',
       '--repository <owner/repo>         Required; e.g. happier-dev/happier.',
@@ -30,6 +48,7 @@ export const COMMAND_HELP_ORCHESTRATORS = {
       '--workflow-control-sha <sha>      Optional dispatcher-observed dev SHA for hosted workflow-control fencing.',
       '--resume-run-id <run-id>          Optional completed release run whose individually verified immutable candidates should be reused.',
       '--operation-id <id>               Optional conductor correlation ID; required for --dry-run --json.',
+      '--attempt-id <attempt_n>           Hosted execution-attempt identity for exact resume correlation (default: attempt_1).',
       '--release-notes-id <id>           Required approved release-note entry for preview/production dispatches.',
       '--qualified-v4-activation-approval <bool>  Separate explicit approval for irreversible Qualified V4 activation (default: false).',
       '--allow-dirty <bool>              true|false (default: false).',
