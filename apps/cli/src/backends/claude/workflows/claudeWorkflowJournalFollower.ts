@@ -60,6 +60,14 @@ type WorkflowAgentProfileFacts = {
   sidechainSettled: boolean;
   /** A read is in flight; a second journal entry must not race a duplicate one against it. */
   reading: boolean;
+  /**
+   * A journal entry asked while a read was in flight, so that read does not count as its answer.
+   *
+   * Journal entries are drained in batches, so the second entry for an agent normally lands during
+   * the first entry's read. Dropping it as "already reading" throws away a retry trigger — and the
+   * one it throws away may be the last entry that agent ever gets.
+   */
+  retryRequested: boolean;
 };
 
 type WorkflowJournalEntry = Readonly<{
@@ -273,13 +281,18 @@ export function createClaudeWorkflowJournalFollower(params: Readonly<{
         modelSettled: false,
         sidechainSettled: false,
         reading: false,
+        retryRequested: false,
       };
       entry.agentProfiles.set(agentId, facts);
     }
     const state = facts;
-    if (state.reading) return;
     if (state.promptSettled && state.modelSettled && state.sidechainSettled) return;
+    if (state.reading) {
+      state.retryRequested = true;
+      return;
+    }
     state.reading = true;
+    state.retryRequested = false;
     trackSidecarRead((async () => {
       try {
         const base = join(entry.transcriptDir, `agent-${agentId}`);
@@ -330,6 +343,9 @@ export function createClaudeWorkflowJournalFollower(params: Readonly<{
         }));
       } finally {
         state.reading = false;
+        // An entry that arrived mid-read was never answered by this read; answer it now. The
+        // settled checks at the top are what stop this from becoming a loop.
+        if (state.retryRequested) emitAgentProfile(entry, agentId);
       }
     })());
   }

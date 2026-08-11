@@ -348,6 +348,49 @@ describe('createClaudeWorkflowJournalFollower', () => {
       });
     });
 
+    /**
+     * The journal does not wait for the disk.
+     *
+     * A run's entries are drained in a batch, so the second entry for an agent routinely arrives
+     * while the first entry's sidecar read is still in flight. Dropping it as "already reading"
+     * loses a retry trigger — and if it was the last entry for that agent, it loses the only one
+     * left.
+     */
+    it('does not drop a retry that arrives while the first read is still running', async () => {
+      await writeFile(join(dir, 'agent-race.jsonl'), `${JSON.stringify({
+        type: 'user',
+        message: { role: 'user', content: 'LANE RACE' },
+      })}\n`, 'utf8');
+      await writeFile(join(dir, 'journal.jsonl'), [
+        JSON.stringify({ type: 'started', key: 'k', agentId: 'race' }),
+        JSON.stringify({ type: 'progress', key: 'k', agentId: 'race' }),
+        '',
+      ].join('\n'), 'utf8');
+
+      const registered: string[] = [];
+      let attempts = 0;
+      const follower = createClaudeWorkflowJournalFollower({
+        onJournalValue: () => {},
+        watchFile: () => () => {},
+        registerAgentTranscript: (registration) => {
+          attempts += 1;
+          // The importer is not wired for the first attempt — the launcher's own startup window.
+          if (attempts === 1) throw new Error('importer not wired');
+          registered.push(registration.filePath);
+        },
+      });
+
+      try {
+        follower.observeTranscriptMessage(launchResult({ withScriptPath: false }));
+        await follower.syncAll();
+      } finally {
+        follower.dispose();
+      }
+
+      expect(attempts).toBe(2);
+      expect(registered).toEqual([join(dir, 'agent-race.jsonl')]);
+    });
+
     it('withholds the sidechain id when the importer REJECTS the file, and retries it', async () => {
       await writeFile(join(dir, 'agent-a1.jsonl'), `${JSON.stringify({
         type: 'user',
