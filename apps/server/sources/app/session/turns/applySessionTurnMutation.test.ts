@@ -79,6 +79,38 @@ describe("applySessionTurnMutationToTurns", () => {
         }
     });
 
+    it("unions, deduplicates, and sorts transcript anchor append deltas", () => {
+        const decision = applySessionTurnMutationToTurns({
+            currentLatestTurnId: "turn-1",
+            turns: [{
+                turnId: "turn-1",
+                provider: "codex",
+                providerTurnId: "provider-turn-1",
+                status: "in_progress",
+                startedAt: 100,
+                updatedAt: 100,
+                transcriptAnchors: { userMessageSeqs: [13, 12, 12] },
+            }],
+            appliedAt: 151,
+            mutation: {
+                v: 1,
+                sessionId: "s1",
+                mutationId: "mutation-append-anchor-delta",
+                action: "append_transcript_anchors",
+                turnId: "turn-1",
+                provider: "codex",
+                providerTurnId: "provider-turn-1",
+                observedAt: 150,
+                transcriptAnchors: { userMessageSeqs: [14, 13] },
+            },
+        });
+
+        expect(decision.apply).toBe(true);
+        if (decision.apply) {
+            expect(decision.changedTurn.transcriptAnchors).toEqual({ userMessageSeqs: [12, 13, 14] });
+        }
+    });
+
     it("lets newer matching task-complete evidence supersede a stale failed runtime issue", () => {
         const decision = applySessionTurnMutationToTurns({
             currentLatestTurnId: "turn-1",

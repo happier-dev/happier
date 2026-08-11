@@ -121,15 +121,22 @@ function mergeTranscriptAnchors(
     incoming: SessionTurnTranscriptAnchorsV1 | undefined,
 ): SessionTurnTranscriptAnchorsV1 | undefined {
     if (!incoming) return existing ? cloneAnchors(existing) : undefined;
+    const userMessageSeqs = [...(existing?.userMessageSeqs ?? []), ...(incoming.userMessageSeqs ?? [])];
     return {
         ...(existing ?? {}),
         ...incoming,
-        ...(incoming.userMessageSeqs ? { userMessageSeqs: [...incoming.userMessageSeqs] } : {}),
+        ...(userMessageSeqs.length > 0
+            ? { userMessageSeqs: [...new Set(userMessageSeqs)].sort((a, b) => a - b) }
+            : {}),
     };
 }
 
 function readMutationTranscriptAnchors(mutation: SessionTurnMutationV1): SessionTurnTranscriptAnchorsV1 | undefined {
-    if (mutation.action === "append_transcript_anchors" || mutation.action === "mark_rollback_eligible") {
+    if (
+        mutation.action === "begin"
+        || mutation.action === "append_transcript_anchors"
+        || mutation.action === "mark_rollback_eligible"
+    ) {
         return mutation.transcriptAnchors;
     }
     return undefined;

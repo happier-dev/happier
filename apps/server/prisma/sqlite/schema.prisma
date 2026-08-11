@@ -448,7 +448,10 @@ model SessionTurn {
     updatedAt               BigInt
     terminalAt              BigInt?
     lastRuntimeIssueJson    String?
-    transcriptAnchorsJson   String?
+    transcriptAnchorsJson                  String?
+    transcriptAnchorProjectionVersion      Int @default(0)
+    transcriptAnchorMinSeq                 Int?
+    transcriptAnchorMaxSeq                 Int?
     rollbackState           String?
     rollbackReason          String?
     providerRollbackOrdinal Int?
@@ -461,6 +464,7 @@ model SessionTurn {
     @@index([sessionId, status])
     @@index([sessionId, rollbackState])
     @@index([sessionId, provider, providerTurnId])
+    @@index([sessionId, transcriptAnchorProjectionVersion, transcriptAnchorMaxSeq, transcriptAnchorMinSeq], map: "SessionTurn_transcript_anchor_range_idx")
 }
 
 model SessionTurnMutationReceipt {

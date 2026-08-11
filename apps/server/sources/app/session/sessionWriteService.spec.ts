@@ -2439,7 +2439,13 @@ describe("sessionWriteService", () => {
                 updatedAt: BigInt(100),
                 terminalAt: null,
                 lastRuntimeIssueJson: null,
-                transcriptAnchorsJson: null,
+                transcriptAnchorsJson: JSON.stringify({
+                    startUserMessageSeq: 70,
+                    userMessageSeqs: [72, "malformed"],
+                    startSeqInclusive: 70,
+                    endSeqInclusive: 75,
+                    finalAssistantMessageSeq: 2_147_483_648,
+                }),
                 rollbackState: null,
                 rollbackReason: null,
                 providerRollbackOrdinal: null,
@@ -2472,6 +2478,15 @@ describe("sessionWriteService", () => {
             expect(currentTx.sessionTurnMutationReceipt.update).toHaveBeenCalledWith({
                 where: { sessionId_mutationId: { sessionId: "s1", mutationId: "exact-end-before-begin" } },
                 data: expect.objectContaining({ decision: "applied" }),
+            });
+            expect(currentTx.sessionTurn.update).toHaveBeenCalledWith({
+                where: { sessionId_turnId: { sessionId: "s1", turnId: "turn-1" } },
+                data: expect.objectContaining({
+                    status: "cancelled",
+                    transcriptAnchorProjectionVersion: 1,
+                    transcriptAnchorMinSeq: 70,
+                    transcriptAnchorMaxSeq: 75,
+                }),
             });
             expect(currentTx.sessionTurnMutationReceipt.create).not.toHaveBeenCalled();
         });
@@ -2671,6 +2686,9 @@ describe("sessionWriteService", () => {
                     status: "completed",
                     terminalAt: BigInt(200),
                     updatedAt: BigInt(200),
+                    transcriptAnchorProjectionVersion: 1,
+                    transcriptAnchorMinSeq: null,
+                    transcriptAnchorMaxSeq: null,
                     lastMutationId: "mutation-completed",
                 }),
             });
@@ -3344,6 +3362,12 @@ describe("sessionWriteService", () => {
                     turnId: "turn-2",
                     providerTurnId: undefined,
                     observedAt: 300,
+                    transcriptAnchors: {
+                        startUserMessageSeq: 20,
+                        userMessageSeqs: [20, 25],
+                        startSeqInclusive: 20,
+                        endSeqInclusive: 27,
+                    },
                 },
             });
 
@@ -3355,6 +3379,15 @@ describe("sessionWriteService", () => {
                     status: "in_progress",
                     startedAt: BigInt(300),
                     updatedAt: BigInt(300),
+                    transcriptAnchorsJson: JSON.stringify({
+                        startUserMessageSeq: 20,
+                        userMessageSeqs: [20, 25],
+                        startSeqInclusive: 20,
+                        endSeqInclusive: 27,
+                    }),
+                    transcriptAnchorProjectionVersion: 1,
+                    transcriptAnchorMinSeq: 20,
+                    transcriptAnchorMaxSeq: 27,
                 }),
             });
             expect(currentTx.sessionTurn.create.mock.calls[0]?.[0]?.data).not.toHaveProperty("providerTurnId");
@@ -3373,6 +3406,167 @@ describe("sessionWriteService", () => {
                 latestTurnId: "turn-2",
                 latestTurnStatus: "in_progress",
                 latestTurnStatusObservedAt: 300,
+            });
+        });
+
+        it("persists newer matching recovery begin anchor deltas and their projection", async () => {
+            currentTx.session.findUnique
+                .mockResolvedValueOnce({ accountId: "u1" })
+                .mockResolvedValueOnce({
+                    id: "s1",
+                    seq: 5,
+                    lastViewedSessionSeq: 5,
+                    pendingCount: 0,
+                    pendingPermissionRequestCount: 0,
+                    pendingUserActionRequestCount: 0,
+                    latestTurnId: "turn-1",
+                    latestTurnStatus: "failed",
+                    latestTurnStatusObservedAt: 200,
+                    lastRuntimeIssue: null,
+                    active: true,
+                    archivedAt: null,
+                });
+            currentTx.sessionShare.findUnique.mockResolvedValue(null);
+            currentTx.sessionTurnMutationReceipt.findUnique.mockResolvedValue(null);
+            currentTx.sessionTurn.findMany.mockResolvedValue([{
+                turnId: "turn-1",
+                provider: "codex",
+                providerTurnId: "provider-turn-1",
+                status: "failed",
+                startedAt: BigInt(100),
+                updatedAt: BigInt(200),
+                terminalAt: BigInt(200),
+                lastRuntimeIssueJson: null,
+                transcriptAnchorsJson: JSON.stringify({
+                    userMessageSeqs: [12],
+                }),
+                rollbackState: null,
+                rollbackReason: null,
+                providerRollbackOrdinal: null,
+                rollbackUpdatedAt: null,
+                lastMutationId: "mutation-failed",
+            }]);
+            currentTx.sessionTurn.update.mockResolvedValue({});
+            currentTx.sessionTurnMutationReceipt.create.mockResolvedValue({});
+            currentTx.session.update.mockResolvedValue({});
+            getSessionParticipantUserIds.mockResolvedValue(["u1"]);
+            markAccountChanged.mockResolvedValueOnce(107);
+
+            const res = await applySessionTurnMutation({
+                actorUserId: "u1",
+                mutation: {
+                    v: 1,
+                    sessionId: "s1",
+                    mutationId: "mutation-recovered-begin",
+                    action: "begin",
+                    turnId: "turn-1",
+                    provider: "codex",
+                    providerTurnId: "provider-turn-1",
+                    observedAt: 300,
+                    transcriptAnchors: {
+                        userMessageSeqs: [13],
+                    },
+                },
+            });
+
+            expect(currentTx.sessionTurn.update).toHaveBeenCalledWith({
+                where: { sessionId_turnId: { sessionId: "s1", turnId: "turn-1" } },
+                data: expect.objectContaining({
+                    status: "in_progress",
+                    startedAt: BigInt(300),
+                    updatedAt: BigInt(300),
+                    terminalAt: null,
+                    transcriptAnchorsJson: JSON.stringify({
+                        userMessageSeqs: [12, 13],
+                    }),
+                    transcriptAnchorProjectionVersion: 1,
+                    transcriptAnchorMinSeq: 12,
+                    transcriptAnchorMaxSeq: 13,
+                }),
+            });
+            expect(res).toMatchObject({
+                ok: true,
+                didApply: true,
+                latestTurnId: "turn-1",
+                latestTurnStatus: "in_progress",
+                latestTurnStatusObservedAt: 300,
+                lastRuntimeIssue: null,
+            });
+        });
+
+        it("unions append anchor deltas before persisting their query projection", async () => {
+            currentTx.session.findUnique
+                .mockResolvedValueOnce({ accountId: "u1" })
+                .mockResolvedValueOnce({
+                    id: "s1",
+                    seq: 5,
+                    lastViewedSessionSeq: 5,
+                    pendingCount: 0,
+                    pendingPermissionRequestCount: 0,
+                    pendingUserActionRequestCount: 0,
+                    latestTurnId: "turn-1",
+                    latestTurnStatus: "in_progress",
+                    latestTurnStatusObservedAt: 100,
+                    lastRuntimeIssue: null,
+                    active: true,
+                    archivedAt: null,
+                });
+            currentTx.sessionShare.findUnique.mockResolvedValue(null);
+            currentTx.sessionTurnMutationReceipt.findUnique.mockResolvedValue(null);
+            currentTx.sessionTurn.findMany.mockResolvedValue([{
+                turnId: "turn-1",
+                provider: "codex",
+                providerTurnId: "provider-turn-1",
+                status: "in_progress",
+                startedAt: BigInt(100),
+                updatedAt: BigInt(100),
+                terminalAt: null,
+                lastRuntimeIssueJson: null,
+                transcriptAnchorsJson: JSON.stringify({ userMessageSeqs: [12] }),
+                rollbackState: null,
+                rollbackReason: null,
+                providerRollbackOrdinal: null,
+                rollbackUpdatedAt: null,
+                lastMutationId: "mutation-begin",
+            }]);
+            currentTx.sessionTurn.update.mockResolvedValue({});
+            currentTx.sessionTurnMutationReceipt.create.mockResolvedValue({});
+            currentTx.session.update.mockResolvedValue({});
+            getSessionParticipantUserIds.mockResolvedValue(["u1"]);
+            markAccountChanged.mockResolvedValueOnce(108);
+
+            const res = await applySessionTurnMutation({
+                actorUserId: "u1",
+                mutation: {
+                    v: 1,
+                    sessionId: "s1",
+                    mutationId: "mutation-append-anchor-delta",
+                    action: "append_transcript_anchors",
+                    turnId: "turn-1",
+                    provider: "codex",
+                    providerTurnId: "provider-turn-1",
+                    observedAt: 200,
+                    transcriptAnchors: { userMessageSeqs: [13] },
+                },
+            });
+
+            expect(currentTx.sessionTurn.update).toHaveBeenCalledWith({
+                where: { sessionId_turnId: { sessionId: "s1", turnId: "turn-1" } },
+                data: expect.objectContaining({
+                    status: "in_progress",
+                    updatedAt: BigInt(200),
+                    transcriptAnchorsJson: JSON.stringify({ userMessageSeqs: [12, 13] }),
+                    transcriptAnchorProjectionVersion: 1,
+                    transcriptAnchorMinSeq: 12,
+                    transcriptAnchorMaxSeq: 13,
+                }),
+            });
+            expect(res).toMatchObject({
+                ok: true,
+                didApply: true,
+                latestTurnId: "turn-1",
+                latestTurnStatus: "in_progress",
+                latestTurnStatusObservedAt: 200,
             });
         });
 

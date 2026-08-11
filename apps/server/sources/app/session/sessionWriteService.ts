@@ -398,6 +398,67 @@ function serializeJsonField(value: unknown | undefined): string | null | undefin
     return value === null ? null : JSON.stringify(value);
 }
 
+const MAX_SESSION_TURN_TRANSCRIPT_ANCHOR_PROJECTION_SEQ = 2_147_483_647;
+
+type SessionTurnTranscriptAnchorProjection = Readonly<{
+    transcriptAnchorProjectionVersion: 1;
+    transcriptAnchorMinSeq: number | null;
+    transcriptAnchorMaxSeq: number | null;
+}>;
+
+function parseTranscriptAnchorProjectionJson(value: string | null | undefined): Record<string, unknown> {
+    if (!value) return {};
+    try {
+        const parsed: unknown = JSON.parse(value);
+        return parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)
+            ? parsed as Record<string, unknown>
+            : {};
+    } catch {
+        return {};
+    }
+}
+
+function readTranscriptAnchorProjectionSeq(value: unknown): number | null {
+    return typeof value === "number"
+        && Number.isSafeInteger(value)
+        && value >= 0
+        && value <= MAX_SESSION_TURN_TRANSCRIPT_ANCHOR_PROJECTION_SEQ
+        ? value
+        : null;
+}
+
+function deriveSessionTurnTranscriptAnchorProjection(
+    transcriptAnchorsJson: string | null | undefined,
+): SessionTurnTranscriptAnchorProjection {
+    // This deliberately tolerates malformed legacy JSON so the persisted projection can serve
+    // as a safe coarse query filter without becoming the transcript-anchor semantic authority.
+    const anchors = parseTranscriptAnchorProjectionJson(transcriptAnchorsJson);
+    let minSeq: number | null = null;
+    let maxSeq: number | null = null;
+    const observe = (value: unknown) => {
+        const seq = readTranscriptAnchorProjectionSeq(value);
+        if (seq === null) return;
+        minSeq = minSeq === null ? seq : Math.min(minSeq, seq);
+        maxSeq = maxSeq === null ? seq : Math.max(maxSeq, seq);
+    };
+
+    observe(anchors.startUserMessageSeq);
+    observe(anchors.startSeqInclusive);
+    observe(anchors.endSeqInclusive);
+    observe(anchors.finalAssistantMessageSeq);
+    if (Array.isArray(anchors.userMessageSeqs)) {
+        for (const userMessageSeq of anchors.userMessageSeqs) {
+            observe(userMessageSeq);
+        }
+    }
+
+    return {
+        transcriptAnchorProjectionVersion: 1,
+        transcriptAnchorMinSeq: minSeq,
+        transcriptAnchorMaxSeq: maxSeq,
+    };
+}
+
 function buildSessionTurnWriteData(turn: Readonly<{
     provider?: string;
     providerTurnId?: string;
@@ -414,7 +475,11 @@ function buildSessionTurnWriteData(turn: Readonly<{
         updatedAt: number;
     };
     lastMutationId?: string;
-}>) {
+}>, retainedTranscriptAnchorsJson?: string | null) {
+    const transcriptAnchorsJson = serializeJsonField(turn.transcriptAnchors);
+    const transcriptAnchorProjection = deriveSessionTurnTranscriptAnchorProjection(
+        transcriptAnchorsJson === undefined ? retainedTranscriptAnchorsJson : transcriptAnchorsJson,
+    );
     return {
         ...(turn.provider ? { provider: turn.provider } : {}),
         ...(turn.providerTurnId ? { providerTurnId: turn.providerTurnId } : {}),
@@ -427,7 +492,8 @@ function buildSessionTurnWriteData(turn: Readonly<{
                 ? { terminalAt: BigInt(turn.terminalAt) }
                 : {}),
         ...(turn.lastRuntimeIssue !== undefined ? { lastRuntimeIssueJson: serializeJsonField(turn.lastRuntimeIssue) } : {}),
-        ...(turn.transcriptAnchors !== undefined ? { transcriptAnchorsJson: serializeJsonField(turn.transcriptAnchors) } : {}),
+        ...(turn.transcriptAnchors !== undefined ? { transcriptAnchorsJson } : {}),
+        ...transcriptAnchorProjection,
         ...(turn.rollback
             ? {
                 rollbackState: turn.rollback.state,
@@ -675,7 +741,7 @@ export async function applySessionTurnMutationInTx(params: Readonly<{
 
     if (decision.apply) {
         const existingRow = turnRows.find((row) => row.turnId === decision.changedTurn.turnId);
-        const turnData = buildSessionTurnWriteData(decision.changedTurn);
+        const turnData = buildSessionTurnWriteData(decision.changedTurn, existingRow?.transcriptAnchorsJson);
         if (existingRow) {
             await params.tx.sessionTurn.update({
                 where: { sessionId_turnId: { sessionId: params.sessionId, turnId: decision.changedTurn.turnId } },
