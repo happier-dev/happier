@@ -1,5 +1,6 @@
 import { z } from 'zod';
 
+import { SessionBackgroundTaskRecordV1Schema } from '../activity/backgroundTask/backgroundTaskRecordV1.js';
 import { SessionWorkflowRunSnapshotV1Schema } from '../sessionWorkflowActivity/sessionWorkflowRunSnapshotV1.js';
 import { SessionSummaryShardV1Schema } from '../structuredMessages/sessionSummaryShardV1.js';
 import { SessionSynopsisV1Schema } from '../structuredMessages/sessionSynopsisV1.js';
@@ -35,6 +36,9 @@ export const SESSION_SYSTEM_RECORD_CATALOG = defineSessionSystemRecordCatalog({
     kinds: {
       'workflow_run.v1': {
         payloadSchema: SessionWorkflowRunSnapshotV1Schema,
+      },
+      'background_task.v1': {
+        payloadSchema: SessionBackgroundTaskRecordV1Schema,
       },
     },
   },

@@ -17,12 +17,18 @@ const UrlSchema = z.string().min(1);
 export const BashInputV2Schema = BaseEnvelopeSchema.extend({
   command: z.string().min(1).optional(),
   timeout: z.number().int().positive().optional(),
+  // A *request* to detach the command. Only the result's `backgroundTaskId` attests that the
+  // provider actually detached it, so renderers must not treat this flag as proof.
+  run_in_background: z.boolean().optional(),
 }).passthrough();
 
 export const BashResultV2Schema = BaseEnvelopeSchema.extend({
   stdout: z.string().optional(),
   stderr: z.string().optional(),
   exit_code: z.number().int().optional(),
+  // Present only when the provider detached the command. This is the join key between the `Bash`
+  // tool result and the background-task ledger/record that tracks the detached process.
+  backgroundTaskId: z.string().optional(),
   errorMessage: z.string().optional(),
 }).passthrough();
 
@@ -219,6 +225,39 @@ export const TaskResultV2Schema = BaseEnvelopeSchema.extend({
 
 export const SubAgentInputV2Schema = TaskInputV2Schema;
 export const SubAgentResultV2Schema = TaskResultV2Schema;
+
+/**
+ * Background-task control tools.
+ *
+ * Field sets are taken from the Claude Agent SDK's generated tool schemas
+ * (`TaskOutputInput`, `TaskStopInput`, `TaskStopOutput`) and nothing is added beyond them. The SDK
+ * publishes **no** `TaskOutputOutput` in its `ToolOutputSchemas` union, and the Happier Claude
+ * launcher additionally blanks `TaskOutput` tool-result content to keep the transcript compact, so
+ * the result envelope stays deliberately open rather than claiming a shape.
+ */
+export const TaskOutputInputV2Schema = BaseEnvelopeSchema.extend({
+  task_id: z.string().optional(),
+  block: z.boolean().optional(),
+  timeout: z.number().optional(),
+}).passthrough();
+
+export const TaskOutputResultV2Schema = BaseEnvelopeSchema.extend({
+  errorMessage: z.string().optional(),
+}).passthrough();
+
+export const TaskStopInputV2Schema = BaseEnvelopeSchema.extend({
+  task_id: z.string().optional(),
+  // Deprecated by the SDK in favour of `task_id`; still accepted on the wire.
+  shell_id: z.string().optional(),
+}).passthrough();
+
+export const TaskStopResultV2Schema = BaseEnvelopeSchema.extend({
+  message: z.string().optional(),
+  task_id: z.string().optional(),
+  task_type: z.string().optional(),
+  command: z.string().optional(),
+  errorMessage: z.string().optional(),
+}).passthrough();
 
 export const ReasoningInputV2Schema = BaseEnvelopeSchema.extend({
   text: z.string().optional(),
@@ -430,6 +469,8 @@ const TOOL_INPUT_SCHEMAS: Record<KnownCanonicalToolNameV2, z.ZodTypeAny> = {
   TodoRead: TodoReadInputV2Schema,
   SubAgent: SubAgentInputV2Schema,
   Task: TaskInputV2Schema,
+  TaskOutput: TaskOutputInputV2Schema,
+  TaskStop: TaskStopInputV2Schema,
   Workflow: WorkflowInputV2Schema,
   Reasoning: ReasoningInputV2Schema,
   EnterPlanMode: EnterPlanModeInputV2Schema,
@@ -463,6 +504,8 @@ const TOOL_RESULT_SCHEMAS: Record<KnownCanonicalToolNameV2, z.ZodTypeAny> = {
   TodoRead: TodoResultV2Schema,
   SubAgent: SubAgentResultV2Schema,
   Task: TaskResultV2Schema,
+  TaskOutput: TaskOutputResultV2Schema,
+  TaskStop: TaskStopResultV2Schema,
   Workflow: WorkflowResultV2Schema,
   Reasoning: ReasoningResultV2Schema,
   EnterPlanMode: BaseEnvelopeSchema.passthrough(),

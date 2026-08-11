@@ -1,3 +1,9 @@
+import {
+  boundRecentActivityHeadlineEntries,
+  partitionActivityHeadlineEntries,
+  sortActiveActivityHeadlineEntries,
+  type ActivityHeadlineEntryAccessors,
+} from '../sessionActivityHeadlineOrdering.js';
 import type {
   SessionWorkflowActivityHeadlineTruncationV1,
   SessionWorkflowActivityHeadlineV1,
@@ -41,22 +47,23 @@ function activeRunStatusPriority(status: SessionWorkflowRunStatusV1 | 'pending')
   }
 }
 
-function compareActiveWorkflowRunHeadlines(a: SessionWorkflowRunHeadlineV1, b: SessionWorkflowRunHeadlineV1): number {
-  const priorityDelta = activeRunStatusPriority(a.status) - activeRunStatusPriority(b.status);
-  if (priorityDelta !== 0) return priorityDelta;
-  return a.runId < b.runId ? -1 : a.runId > b.runId ? 1 : 0; // runId ascending tie-break
-}
-
-function compareTerminalWorkflowRunHeadlines(a: SessionWorkflowRunHeadlineV1, b: SessionWorkflowRunHeadlineV1): number {
-  if (a.updatedAt !== b.updatedAt) return b.updatedAt - a.updatedAt; // updatedAt descending
-  return a.runId < b.runId ? -1 : a.runId > b.runId ? 1 : 0; // runId ascending tie-break
-}
+/**
+ * How the shared headline-ordering owner reads a workflow run. Ordering, bounding and the
+ * "progress timestamps never touch the active side" rule live in
+ * `../sessionActivityHeadlineOrdering.ts`, which the agent-activity headline also calls — this
+ * module contributes only the workflow vocabulary's terminality, priority and projection.
+ */
+const WORKFLOW_RUN_HEADLINE_ACCESSORS: ActivityHeadlineEntryAccessors<SessionWorkflowRunHeadlineV1> = {
+  id: (run) => run.runId,
+  activePriority: (run) => activeRunStatusPriority(run.status),
+  updatedAt: (run) => run.updatedAt,
+};
 
 /** Deterministic active-run ordering shared by every client so they agree on `primaryRunId`. */
 export function sortActiveWorkflowRunHeadlines(
   runs: readonly SessionWorkflowRunHeadlineV1[],
 ): SessionWorkflowRunHeadlineV1[] {
-  return [...runs].sort(compareActiveWorkflowRunHeadlines);
+  return sortActiveActivityHeadlineEntries(runs, WORKFLOW_RUN_HEADLINE_ACCESSORS);
 }
 
 /**
@@ -75,13 +82,15 @@ export function boundRecentWorkflowRunHeadlines(
   terminalRuns: readonly SessionWorkflowRunHeadlineV1[],
   limit: number = SESSION_WORKFLOW_ACTIVITY_RECENT_RUNS_LIMIT,
 ): { recentRuns: SessionWorkflowRunHeadlineV1[]; truncated?: SessionWorkflowActivityHeadlineTruncationV1 } {
-  const sorted = [...terminalRuns].sort(compareTerminalWorkflowRunHeadlines);
-  const recentRuns = sorted.slice(0, Math.max(0, limit));
-  const omittedCount = sorted.length - recentRuns.length;
+  const { recent, omittedCount } = boundRecentActivityHeadlineEntries(
+    terminalRuns,
+    WORKFLOW_RUN_HEADLINE_ACCESSORS,
+    limit,
+  );
   if (omittedCount > 0) {
-    return { recentRuns, truncated: { reason: 'run_limit', omittedCount } };
+    return { recentRuns: recent, truncated: { reason: 'run_limit', omittedCount } };
   }
-  return { recentRuns };
+  return { recentRuns: recent };
 }
 
 /**
@@ -126,20 +135,14 @@ export type BuildSessionWorkflowActivityHeadlineInput = Readonly<{
 export function buildSessionWorkflowActivityHeadline(
   input: BuildSessionWorkflowActivityHeadlineInput,
 ): SessionWorkflowActivityHeadlineV1 {
-  const active: SessionWorkflowRunHeadlineV1[] = [];
-  const terminal: SessionWorkflowRunHeadlineV1[] = [];
-  for (const rawRun of input.runs) {
+  const { active: activeRuns, recent: recentRuns, omittedCount } = partitionActivityHeadlineEntries({
+    entries: input.runs,
+    accessors: WORKFLOW_RUN_HEADLINE_ACCESSORS,
+    isTerminal: (run) => isTerminalWorkflowRunStatus(run.status),
     // Project at the single producer chokepoint so detail can never reach the headline.
-    const run = projectWorkflowRunHeadline(rawRun);
-    if (isTerminalWorkflowRunStatus(run.status)) {
-      terminal.push(run);
-    } else {
-      active.push(run);
-    }
-  }
-
-  const activeRuns = sortActiveWorkflowRunHeadlines(active);
-  const { recentRuns, truncated } = boundRecentWorkflowRunHeadlines(terminal, input.recentRunsLimit);
+    project: projectWorkflowRunHeadline,
+    recentLimit: input.recentRunsLimit ?? SESSION_WORKFLOW_ACTIVITY_RECENT_RUNS_LIMIT,
+  });
 
   const headline: SessionWorkflowActivityHeadlineV1 = {
     v: 1,
@@ -150,6 +153,6 @@ export function buildSessionWorkflowActivityHeadline(
   };
   if (input.agentId) headline.agentId = input.agentId;
   if (recentRuns.length > 0) headline.recentRuns = recentRuns;
-  if (truncated) headline.truncated = truncated;
+  if (omittedCount > 0) headline.truncated = { reason: 'run_limit', omittedCount };
   return headline;
 }

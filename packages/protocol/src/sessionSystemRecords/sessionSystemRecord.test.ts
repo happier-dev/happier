@@ -65,6 +65,17 @@ function validWorkflowRunPayload() {
   };
 }
 
+function validBackgroundTaskPayload() {
+  return {
+    v: 1,
+    taskId: 'task_1',
+    kind: 'command',
+    status: 'running',
+    label: 'grep -rn "thing" ~/repo',
+    updatedAt: 1000,
+  };
+}
+
 describe('session system record protocol schemas', () => {
   it('accepts encrypted system-record upsert content for registered memory kinds', () => {
     const schema = protocolSchema('SessionSystemRecordUpsertRequestSchema');
@@ -185,6 +196,61 @@ describe('session system record protocol schemas', () => {
     expect(isRegistered('activity', 'workflow_run.v1')).toBe(true);
     expect(isRegistered('memory', 'workflow_run.v1')).toBe(false);
     expect(isRegistered('activity', 'synopsis.v1')).toBe(false);
+  });
+
+  it('registers activity/background_task.v1 so the record can actually be written', () => {
+    // A kind that is declared but unregistered parses everywhere and is rejected at the one place
+    // that matters — the upsert route — so registration is the reachability check for the kind.
+    const isRegistered = (protocol as Record<string, unknown>).isRegisteredSessionSystemRecordKind as (
+      namespace: string,
+      kind: string,
+    ) => boolean;
+    expect(isRegistered('activity', 'background_task.v1')).toBe(true);
+
+    const schema = protocolSchema('SessionSystemRecordUpsertRequestSchema');
+    expect(schema.safeParse({
+      namespace: 'activity',
+      kind: 'background_task.v1',
+      localId: 'activity:background_task:v1:task_1',
+      content: { t: 'encrypted', c: 'ciphertext' },
+    }).success).toBe(true);
+    expect(schema.safeParse({
+      namespace: 'activity',
+      kind: 'background_task.v1',
+      localId: 'activity:background_task:v1:task_1',
+      content: { t: 'plain', v: validBackgroundTaskPayload() },
+    }).success).toBe(true);
+  });
+
+  it('rejects plain activity content that does not match the background_task.v1 payload', () => {
+    const schema = protocolSchema('SessionSystemRecordUpsertRequestSchema');
+
+    // A provider terminal word instead of the protocol status vocabulary.
+    expect(schema.safeParse({
+      namespace: 'activity',
+      kind: 'background_task.v1',
+      localId: 'activity:background_task:v1:task_1',
+      content: { t: 'plain', v: { ...validBackgroundTaskPayload(), status: 'completed' } },
+    }).success).toBe(false);
+    // A workflow snapshot filed under the background-task kind.
+    expect(schema.safeParse({
+      namespace: 'activity',
+      kind: 'background_task.v1',
+      localId: 'activity:background_task:v1:task_1',
+      content: { t: 'plain', v: validWorkflowRunPayload() },
+    }).success).toBe(false);
+  });
+
+  it('addresses one background task at one stable local id', () => {
+    const build = (protocol as Record<string, unknown>).buildBackgroundTaskSystemRecordLocalId as (
+      params: { taskId: string },
+    ) => string;
+
+    expect(build({ taskId: 'task_1' })).toBe('activity:background_task:v1:task_1');
+    expect(build({ taskId: '  task_1  ' })).toBe(build({ taskId: 'task_1' }));
+    // An empty id would collide every unaddressable task onto one record; task ids arrive from
+    // provider events, so this is a reachable input rather than a programmer-only mistake.
+    expect(() => build({ taskId: '   ' })).toThrow();
   });
 
   it('rejects unregistered namespaces, kinds, and blank local ids', () => {

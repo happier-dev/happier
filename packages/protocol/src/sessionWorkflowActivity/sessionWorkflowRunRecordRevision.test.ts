@@ -118,3 +118,62 @@ describe('isWorkflowRunSnapshotMaterialChange', () => {
     expect(isWorkflowRunSnapshotMaterialChange(prev, snapshot({ completedAt: 5000 }))).toBe(true);
   });
 });
+
+/**
+ * An agent becoming OPENABLE is a material change.
+ *
+ * The sidechain id arrives after the agent already exists — the transcript is imported once its
+ * sidecar file appears — so it typically lands on a tick where nothing else moved. A material-change
+ * table that cannot see it leaves the committed record and the published headline describing an
+ * agent with no transcript, and the row stays unopenable until some unrelated change happens to
+ * rewrite the record.
+ */
+describe('isWorkflowRunSnapshotMaterialChange — the open target', () => {
+  it('treats an agent gaining its imported sidechain as material', () => {
+    const before = snapshot();
+    const after = snapshot({
+      agents: [
+        { id: 'a1', title: 'web_search', status: 'complete', phaseIndex: 1, updatedAt: 900 },
+        {
+          id: 'a2',
+          title: 'reader',
+          status: 'active',
+          phaseIndex: 1,
+          updatedAt: 950,
+          sidechainId: 'workflow_agent_sidechain:toolu_wf:a2',
+        },
+      ],
+    });
+
+    expect(isWorkflowRunSnapshotMaterialChange(before, after)).toBe(true);
+  });
+
+  it('treats one agent’s sidechain moving to another agent as material', () => {
+    const withA1 = snapshot({
+      agents: [
+        { id: 'a1', title: 'web_search', status: 'complete', phaseIndex: 1, updatedAt: 900, sidechainId: 'sc:1' },
+        { id: 'a2', title: 'reader', status: 'active', phaseIndex: 1, updatedAt: 950 },
+      ],
+    });
+    const withA2 = snapshot({
+      agents: [
+        { id: 'a1', title: 'web_search', status: 'complete', phaseIndex: 1, updatedAt: 900 },
+        { id: 'a2', title: 'reader', status: 'active', phaseIndex: 1, updatedAt: 950, sidechainId: 'sc:1' },
+      ],
+    });
+
+    expect(isWorkflowRunSnapshotMaterialChange(withA1, withA2)).toBe(true);
+  });
+
+  it('stays immaterial when the same sidechain is republished', () => {
+    const agents = [
+      { id: 'a1', title: 'web_search', status: 'complete' as const, phaseIndex: 1, updatedAt: 900 },
+      { id: 'a2', title: 'reader', status: 'active' as const, phaseIndex: 1, updatedAt: 950, sidechainId: 'sc:1' },
+    ];
+
+    expect(isWorkflowRunSnapshotMaterialChange(
+      snapshot({ agents }),
+      snapshot({ agents, updatedAt: 2000 }),
+    )).toBe(false);
+  });
+});

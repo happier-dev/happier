@@ -19,6 +19,12 @@ export const KNOWN_CANONICAL_TOOL_NAMES_V2 = [
   'TodoRead',
   'SubAgent',
   'Task',
+  // Background-task control tools. These act on a headless background task (a `Bash`
+  // `run_in_background` command or a backgrounded agent), never on a subagent roster entry, so they
+  // are deliberately distinct from `Task`/`SubAgent`. Verified against the Claude Agent SDK's
+  // `ToolInputSchemas` union (`TaskOutputInput`, `TaskStopInput`).
+  'TaskOutput',
+  'TaskStop',
   // Dynamic Workflow run (provider-agnostic). Distinct from `Task`/`SubAgent`: a `Workflow`
   // tool call starts an orchestrated multi-agent run rendered by a dedicated workflow card.
   'Workflow',

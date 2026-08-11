@@ -50,6 +50,8 @@ type MaterialAgentProjection = Readonly<{
   title: string;
   status: string;
   vendorRef?: string;
+  /** Openability: gaining, losing or moving a transcript changes what the row can do. */
+  sidechainId?: string;
   parentId?: string;
   phaseIndex?: number;
   phaseTitle?: string;
@@ -78,6 +80,7 @@ function projectMaterialAgent(agent: SessionWorkflowAgentSnapshotV1): MaterialAg
     title: agent.title,
     status: agent.status,
     vendorRef: agent.vendorRef,
+    sidechainId: agent.sidechainId,
     parentId: agent.parentId,
     phaseIndex: agent.phaseIndex,
     phaseTitle: agent.phaseTitle,

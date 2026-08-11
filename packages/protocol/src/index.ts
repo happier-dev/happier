@@ -198,24 +198,61 @@ export {
 } from './sessionWorkflowActivity/index.js';
 
 export {
+  AGENT_ACTIVITY_ENTRY_ID_SEPARATOR,
   AGENT_ACTIVITY_KINDS_V1,
   AGENT_ACTIVITY_STATUSES_V1,
   AGENT_ACTIVITY_TONES_V1,
   AgentActivityKindV1Schema,
   AgentActivityStatusV1Schema,
   AgentActivityToneV1Schema,
+  SESSION_AGENT_ACTIVITY_ENTRY_TITLE_MAX,
+  SESSION_AGENT_ACTIVITY_HEADLINE_METADATA_KEY,
+  SESSION_AGENT_ACTIVITY_RECENT_ENTRIES_LIMIT,
   SESSION_SUBAGENT_STATUS_SOURCES_V1,
+  WORKFLOW_AGENT_SIDECHAIN_ID_PREFIX,
+  SessionAgentActivityEntryV1Schema,
+  SessionAgentActivityHeadlineTruncationV1Schema,
+  SessionAgentActivityHeadlineV1Schema,
   SessionSubagentStatusSourceV1Schema,
+  boundRecentAgentActivityEntries,
+  buildAgentActivityEntryId,
+  buildSessionAgentActivityHeadline,
+  buildWorkflowAgentSidechainId,
   fromExecutionRunStatus,
   fromSubagentStatus,
   fromWorkflowAgentStatus,
   fromWorkflowRunStatus,
+  isInProgressAgentActivityStatus,
+  isTerminalAgentActivityStatus,
+  parseAgentActivityEntryId,
+  parseSessionAgentActivityHeadlineV1,
+  projectAgentActivityEntry,
+  readSessionAgentActivityHeadlineFromMetadata,
+  resolveAgentActivityEntryActivePriority,
+  resolveAgentActivityEntryAgentHandle,
   resolveAgentActivityTone,
+  resolvePrimaryAgentActivityEntryId,
+  sortActiveAgentActivityEntries,
+  type AgentActivityEntryRefV1,
   type AgentActivityKindV1,
   type AgentActivityStatusV1,
   type AgentActivityToneV1,
+  type BuildSessionAgentActivityHeadlineInput,
+  type SessionAgentActivityEntryV1,
+  type SessionAgentActivityHeadlineTruncationV1,
+  type SessionAgentActivityHeadlineV1,
   type SessionSubagentStatusSourceV1,
 } from './sessionAgentActivity/index.js';
+
+export {
+  boundRecentActivityHeadlineEntries,
+  partitionActivityHeadlineEntries,
+  sortActiveActivityHeadlineEntries,
+  type ActivityHeadlineEntryAccessors,
+  type BoundedActivityHeadlineHistory,
+  type PartitionActivityHeadlineEntriesInput,
+  type PartitionedActivityHeadlineEntries,
+} from './sessionActivityHeadlineOrdering.js';
 
 export * from './sessionRuntimeActivity/index.js';
 export * from './sessionRuntimeActivity/projection.js';
@@ -759,6 +796,22 @@ export {
 } from './activity/webhookPayload.js';
 
 export {
+  BACKGROUND_TASK_KINDS_V1,
+  BACKGROUND_TASK_LABEL_MAX,
+  BACKGROUND_TASK_SUMMARY_MAX,
+  BackgroundTaskKindV1Schema,
+  SessionBackgroundTaskRecordV1Schema,
+  type BackgroundTaskKindV1,
+  type SessionBackgroundTaskRecordV1,
+} from './activity/backgroundTask/backgroundTaskRecordV1.js';
+
+export {
+  BACKGROUND_TASK_LABEL_TRUNCATION_SUFFIX,
+  redactBackgroundCommand,
+  type BackgroundCommandPathCollapse,
+} from './activity/backgroundTask/backgroundTaskRedaction.js';
+
+export {
   WorkspaceCheckoutKindSchema,
   AbsoluteWorkspacePathSchema,
   WorkspaceLocationScmSchema,
@@ -812,11 +865,13 @@ export {
   SESSION_SYSTEM_RECORD_KINDS,
   SESSION_SYSTEM_RECORD_MEMORY_NAMESPACE,
   SESSION_SYSTEM_RECORD_NAMESPACES,
+  ActivityBackgroundTaskSystemRecordPayloadSchema,
   ActivitySessionSystemRecordKindSchema,
   ActivitySessionSystemRecordPayloadSchema,
   ActivitySessionSystemRecordRawPayloadSchema,
   ActivityWorkflowRunSystemRecordPayloadSchema,
   isActivitySessionSystemRecordKind,
+  type ActivityBackgroundTaskSystemRecordPayload,
   type ActivitySessionSystemRecordKind,
   type ActivitySessionSystemRecordPayload,
   type ActivitySessionSystemRecordRawPayload,
@@ -838,6 +893,7 @@ export {
   SessionSystemRecordSchema,
   SessionSystemRecordUpsertRequestSchema,
   SessionSystemRecordUpsertResponseSchema,
+  buildBackgroundTaskSystemRecordLocalId,
   buildWorkflowRunSystemRecordLocalId,
   getSessionSystemRecordPayloadSchema,
   isMemorySessionSystemRecordKind,

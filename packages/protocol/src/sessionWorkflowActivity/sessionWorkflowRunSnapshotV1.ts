@@ -75,6 +75,21 @@ export const SessionWorkflowAgentSnapshotV1Schema = z
     title: z.string().trim().min(1).max(SESSION_WORKFLOW_RUN_SNAPSHOT_TITLE_MAX),
     status: SessionWorkflowAgentStatusV1Schema,
     vendorRef: z.string().trim().min(1).optional(),
+    /**
+     * The durable sidechain holding this agent's own transcript, when one was IMPORTED for it.
+     *
+     * The open target, and the only one an agent of a workflow can have: a plain subagent is opened
+     * through the tool call that spawned it, but a workflow run has one `Workflow` tool call and
+     * many agents, so there is no per-agent tool call to route through. A client that has this can
+     * fetch the transcript by id; a client that does not must treat the row as unopenable.
+     *
+     * PRESENT ONLY AS PROOF, never as intent. It is written when the importer actually registered
+     * the agent's sidecar file, so absence means "no transcript to open" rather than "not yet" —
+     * a producer that minted it optimistically would make every row pressable and some of them
+     * open nothing. Optional and additive in both reachable directions: every released producer
+     * omits it (the live case today), and a released reader that predates it strips it.
+     */
+    sidechainId: z.string().trim().min(1).optional(),
     parentId: z.string().trim().min(1).optional(),
     phaseIndex: z.number().int().optional(),
     phaseTitle: z.string().trim().min(1).max(SESSION_WORKFLOW_RUN_SNAPSHOT_TITLE_MAX).optional(),

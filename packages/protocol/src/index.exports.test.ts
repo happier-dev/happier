@@ -267,6 +267,25 @@ describe('protocol package root exports', () => {
         expect(protocol.fromSubagentStatus('terminated')).toBe('cancelled');
     });
 
+    it('exports the agent-activity headline, its metadata key and the shared headline ordering owner', () => {
+        expect(protocol.SESSION_AGENT_ACTIVITY_HEADLINE_METADATA_KEY).toBe('sessionAgentActivityHeadlineV1');
+        expect(typeof protocol.SessionAgentActivityEntryV1Schema?.safeParse).toBe('function');
+        expect(typeof protocol.SessionAgentActivityHeadlineV1Schema?.safeParse).toBe('function');
+        expect(typeof protocol.buildSessionAgentActivityHeadline).toBe('function');
+        expect(typeof protocol.readSessionAgentActivityHeadlineFromMetadata).toBe('function');
+        // The shared ordering/bounding owner both headline builders call (PLAN 3.1).
+        expect(typeof protocol.partitionActivityHeadlineEntries).toBe('function');
+
+        const headline = protocol.buildSessionAgentActivityHeadline({
+            backendId: 'claude',
+            updatedAt: 2,
+            entries: [{ entryId: 'workflow_run:wf_1', kind: 'workflow_run', title: 'run', status: 'running', updatedAt: 1 }],
+        });
+        expect(protocol.readSessionAgentActivityHeadlineFromMetadata({
+            [protocol.SESSION_AGENT_ACTIVITY_HEADLINE_METADATA_KEY]: headline,
+        })?.primaryEntryId).toBe('workflow_run:wf_1');
+    });
+
     it('exports connected-service settings schemas without the undeployed Codex-specific setting', () => {
         expect(typeof (protocol as any).ConnectedServicesDefaultAuthByAgentIdV1Schema?.safeParse).toBe('function');
         expect(typeof (protocol as any).ConnectedServicesProviderStateSharingSettingsV1Schema?.safeParse).toBe('function');
