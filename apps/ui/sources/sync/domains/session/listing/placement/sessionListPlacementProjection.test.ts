@@ -115,8 +115,40 @@ describe('projectSessionListPlacement', () => {
         });
     });
 
-    it('keeps canonical background activity in Working without an observedAt freshness lease', () => {
-        const nowMs = 10_000;
+    it('keeps canonical background activity in Working on an aged projection the runtime still witnesses', () => {
+        // The projection instant is stamped only when the projected pair CHANGES, so an hour-old
+        // `observedAt` is the normal shape of work that has been running for an hour. Placement must
+        // not require a fresh stamp — that would drop live background work out of Working.
+        const nowMs = 10_000_000;
+
+        const placement = projectSessionListPlacement({
+            nowMs,
+            session: makeSession({
+                active: true,
+                activeAt: nowMs - 15_000,
+                presence: 'online',
+                thinking: false,
+                thinkingAt: 0,
+                latestTurnStatus: 'completed',
+                latestTurnStatusObservedAt: nowMs - 2_000,
+                lastRuntimeIssue: null,
+                runtimeActivityState: 'active',
+                runtimeActivityActiveCount: 1,
+                runtimeActivityObservedAt: nowMs - 3_600_000,
+                runtimeActivityRevision: 1,
+            }),
+        });
+
+        expect(placement.kind).toBe('working');
+        expect(placement.retainedWorking).toBe(false);
+    });
+
+    it('drops background activity out of Working once nothing witnesses the runtime any more', () => {
+        // Was: "keeps canonical background activity in Working without an observedAt freshness
+        // lease" — the contract that kept a session published `active` moments before an
+        // unwitnessed death pinned to Working forever. With the session keep-alive at 15 s, a
+        // three-minute silence is twelve missed pings, not a slow session.
+        const nowMs = 10_000_000;
 
         const placement = projectSessionListPlacement({
             nowMs,
@@ -127,7 +159,7 @@ describe('projectSessionListPlacement', () => {
                 thinking: false,
                 thinkingAt: 0,
                 latestTurnStatus: 'completed',
-                latestTurnStatusObservedAt: nowMs - 2_000,
+                latestTurnStatusObservedAt: nowMs - 180_000,
                 lastRuntimeIssue: null,
                 runtimeActivityState: 'active',
                 runtimeActivityActiveCount: 1,
@@ -136,8 +168,7 @@ describe('projectSessionListPlacement', () => {
             }),
         });
 
-        expect(placement.kind).toBe('working');
-        expect(placement.retainedWorking).toBe(false);
+        expect(placement.kind).not.toBe('working');
     });
 
     it.each([

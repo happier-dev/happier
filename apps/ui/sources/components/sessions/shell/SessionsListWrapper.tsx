@@ -19,6 +19,7 @@ import {
     resolveSessionListSurfaceOwnership,
     SESSION_LIST_SURFACE_OWNER_PHONE_ROOT,
 } from '@/components/sessions/shell/surface/sessionListSurfaceOwnership';
+import { useSurfaceAnchorPathname } from '@/components/sessions/shell/surface/sessionSurfaceAnchorPathname';
 import {
     areRetainedSessionListPaneStatesEqual,
     readRetainedSessionListPaneSnapshot,
@@ -84,10 +85,13 @@ export const SessionsListWrapper = React.memo((props: SessionsListWrapperProps) 
 
 const RouteBoundSessionsListWrapperContent = React.memo((props: SessionsListWrapperProps) => {
     const routePathname = usePathname();
+    // The foreground surface route is the anchor, not the raw pathname: an overlay route such as
+    // /new is shown *over* the current screen, so the list must keep the route it was showing.
+    const anchorPathname = useSurfaceAnchorPathname(routePathname);
     return (
         <SessionsListWrapperContent
             pathname={props.pathname ?? routePathname}
-            surfaceRoutePathname={props.surfaceRoutePathname ?? routePathname}
+            surfaceRoutePathname={props.surfaceRoutePathname ?? anchorPathname}
         />
     );
 });

@@ -280,6 +280,7 @@ function createSessionRowModel(overrides: Partial<SessionListRowModel> = {}): Se
         isActive: true,
         hasUnreadMessages: false,
         pendingCount: 0,
+        agentActivityLabel: null,
         pendingBlockedCount: 0,
         tags: ['model-tag'],
         allKnownTags: ['model-tag', 'other-tag'],
@@ -554,8 +555,10 @@ describe('SessionItem activity time', () => {
         expect(rowModel.hasUnreadMessages).toBe(true);
         expect(screen.findByTestId('session-list-status-subtitle-sess_row_model-pending')).toBeTruthy();
         expect(screen.findByTestId('session-row-attention-indicator-spinner-sess_row_model-secondary')).toBeTruthy();
+        // The background line now renders the SESSION's status text, which is where the count
+        // lives, instead of a second key the row would have to re-interpolate.
         expect(screen.findByTestId('session-list-status-subtitle-text-sess_row_model-pending')?.props.children)
-            .toBe('status.backgroundActive');
+            .toBe('background activity');
         expect(screen.getTextContent()).toContain('2');
     });
 

@@ -82,6 +82,7 @@ function createSettings(
         hideInactiveSessions: false,
         showServerBadge: false,
         showPinnedServerBadge: true,
+        agentActivityCountEnabled: false,
         tagsEnabled: true,
         sessionTagsByKey: {},
         allKnownTags: [],

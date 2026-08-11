@@ -627,7 +627,32 @@ vi.mock('@/components/sessions/agentInput/routing/useSessionRecipientState', () 
   useSessionRecipientState: () => recipientStateState.current,
 }));
 vi.mock('@/hooks/session/useSessionSubagents', () => ({
-  useSessionSubagents: () => ({ subagents: [], participantTargets: participantTargetsState.current, sidechainIds: [] }),
+  useSessionSubagents: () => ({
+    // SessionView now consumes the canonical subagent roster and derives recipient targets itself.
+    // Keep this fixture at that owner boundary instead of injecting the removed derived output.
+    subagents: participantTargetsState.current.map((target) => ({
+      id: target.key,
+      kind: target.recipient.kind === 'agent_team_member' ? 'agent_team_member' : 'execution_run',
+      status: 'running',
+      recipient: target.recipient,
+      transcript: {},
+      capabilities: {
+        canOpen: false,
+        canSend: true,
+        canStop: false,
+        canLaunchChild: false,
+        canDelete: false,
+        canOpenAdvancedRun: false,
+      },
+      timestamps: {},
+      display: {
+        title: target.displayLabel,
+        ...(target.accentName ? { accentName: target.accentName } : {}),
+      },
+    })),
+    participantTargets: [],
+    sidechainIds: [],
+  }),
 }));
 vi.mock('@/sync/domains/session/control/localControlSwitch', async (importOriginal) => {
   const actual = await importOriginal<any>();
@@ -3301,6 +3326,7 @@ describe('SessionView (direct sessions)', () => {
       : []);
     expect(recipientOptions.map((option: { id: string }) => option.id)).toEqual([
       'lead',
+      'agent_team_broadcast:team-1',
       'member-1',
       'run-1',
     ]);

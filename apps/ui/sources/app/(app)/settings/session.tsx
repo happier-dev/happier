@@ -41,6 +41,7 @@ export default React.memo(function SessionSettingsScreen() {
 
     const [sessionTagsEnabled, setSessionTagsEnabled] = useSettingMutable('sessionTagsEnabled');
     const [sessionListWorkingStatusAnimatedTextEnabled, setSessionListWorkingStatusAnimatedTextEnabled] = useSettingMutable('sessionListWorkingStatusAnimatedTextEnabled');
+    const [sessionListAgentActivityCountEnabled, setSessionListAgentActivityCountEnabled] = useSettingMutable('sessionListAgentActivityCountEnabled');
     const [sessionListNarrowWorkingIndicatorStyle, setSessionListNarrowWorkingIndicatorStyle] = useSettingMutable('sessionListNarrowWorkingIndicatorStyle');
 
     // Session list settings (moved from Appearance)
@@ -806,6 +807,23 @@ export default React.memo(function SessionSettingsScreen() {
                     }
                     showChevron={false}
                     onPress={() => setSessionListWorkingStatusAnimatedTextEnabled(sessionListWorkingStatusAnimatedTextEnabled === false)}
+                />
+                <Item
+                    testID="settings-session-agentActivityCount-item"
+                    title={t('settingsSession.sessionList.agentActivityCountTitle')}
+                    subtitle={sessionListAgentActivityCountEnabled === true
+                        ? t('settingsSession.sessionList.agentActivityCountEnabledSubtitle')
+                        : t('settingsSession.sessionList.agentActivityCountDisabledSubtitle')}
+                    icon={<Icon name="robot" size={29} color={theme.colors.accent.blue} />}
+                    rightElement={
+                        <Switch
+                            testID="settings-session-agentActivityCount-toggle"
+                            value={sessionListAgentActivityCountEnabled === true}
+                            onValueChange={(next) => setSessionListAgentActivityCountEnabled(Boolean(next))}
+                        />
+                    }
+                    showChevron={false}
+                    onPress={() => setSessionListAgentActivityCountEnabled(sessionListAgentActivityCountEnabled !== true)}
                 />
                 <DropdownMenu
                     open={openSessionListAttentionPromotionModeMenu}

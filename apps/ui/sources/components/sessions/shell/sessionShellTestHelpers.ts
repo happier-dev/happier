@@ -144,6 +144,7 @@ export function createSessionItemTestRowModel(
         isActive: session.active === true,
         hasUnreadMessages: false,
         pendingCount: session.pendingCount ?? 0,
+        agentActivityLabel: null,
         pendingBlockedCount: session.pendingBlockedCount ?? 0,
         tags: [...(input.tags ?? [])],
         allKnownTags: [...(input.allKnownTags ?? [])],

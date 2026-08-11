@@ -145,6 +145,8 @@ type SessionItemRenderProps = Omit<SessionItemBaseProps, 'activityTimeMode' | 's
     sessionNameResolved: string;
     sessionSubtitle: string;
     pendingCount: number;
+    /** Live agent work in this session, already named. `null` unless the person opted in (R-8). */
+    agentActivityLabel: string | null;
     isSessionIdentityLoading: boolean;
     activityTimeLabel: string;
     rowAttentionState: SessionRowAttentionState;
@@ -566,6 +568,13 @@ const stylesheet = StyleSheet.create((theme) => ({
         fontSize: 11,
         lineHeight: 11,
     },
+    agentActivityCountText: {
+        // Never truncated away by a long status: the count is the shortest thing on this line and
+        // the reason the person turned it on.
+        flexShrink: 0,
+        color: theme.colors.text.secondary,
+        fontVariant: ['tabular-nums'],
+    },
     statusTextMinimal: {
         fontSize: 10,
         lineHeight: 12,
@@ -635,6 +644,7 @@ const SessionItemContent = React.memo(
         sessionNameResolved,
         sessionSubtitle,
         pendingCount,
+        agentActivityLabel,
         isSessionIdentityLoading,
         activityTimeLabel,
         rowAttentionState,
@@ -995,7 +1005,7 @@ const SessionItemContent = React.memo(
         const rowDensity = isMinimal ? 'minimal' : compact ? 'compact' : 'default';
         const effectiveSecondaryLineMode = rowPresentation.secondaryLine === 'path' ? 'path' : 'status';
         const statusLineText = rowPresentation.statusTextKey ? t(rowPresentation.statusTextKey) : sessionStatus.statusText;
-        const rowStatusColor = rowPresentation.statusTextKey === 'status.backgroundActive'
+        const rowStatusColor = rowPresentation.backgroundActivityStatusLine === true
             ? theme.colors.text.secondary
             : resolveSessionRowAttentionStateColor(rowAttentionState, theme);
         const rowAttentionAccessibilityLabel =
@@ -1005,7 +1015,7 @@ const SessionItemContent = React.memo(
                 || rowPresentation.attentionIndicator === 'permission'
                 || rowPresentation.attentionIndicator === 'action'
                 ? statusLineText
-                : rowPresentation.statusTextKey && rowPresentation.statusTextKey !== 'status.backgroundActive'
+                : rowPresentation.statusTextKey
                     ? statusLineText
                     : undefined;
         const shouldShowStatusSecondaryLine = rowPresentation.secondaryLine === 'status' && statusLineText.trim().length > 0;
@@ -1307,6 +1317,19 @@ const SessionItemContent = React.memo(
                                 >
                                     {statusLineText}
                                 </Text>
+                                {agentActivityLabel !== null ? (
+                                    <Text
+                                        testID={`session-list-agent-activity-count-${resolvedSession.id}`}
+                                        style={[
+                                            styles.statusText,
+                                            compact ? styles.statusTextCompact : null,
+                                            styles.agentActivityCountText,
+                                        ]}
+                                        numberOfLines={1}
+                                    >
+                                        {agentActivityLabel}
+                                    </Text>
+                                ) : null}
                             </View>
                         ) : (
                             <Text
@@ -1647,6 +1670,7 @@ function SessionItemFromRowModel(props: SessionItemProps & { rowModel: SessionLi
             sessionNameResolved={rowModel.title}
             sessionSubtitle={itemProps.subtitleOverride ?? rowModel.subtitle}
             pendingCount={rowModel.pendingCount}
+            agentActivityLabel={rowModel.agentActivityLabel}
             isSessionIdentityLoading={rowModel.isIdentityLoading}
             activityTimeLabel={rowModel.activity.label}
             rowAttentionState={rowModel.attention.rowState}

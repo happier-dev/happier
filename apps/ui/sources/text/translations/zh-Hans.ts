@@ -1267,7 +1267,7 @@ export const zhHans: TranslationStructure = {
     online: "在线",
     working: "正在工作...",
     workingRetained: "工作中，等待更新…",
-    backgroundActive: "后台任务正在运行",
+    backgroundActive: ({ count }: { count: number }) => `后台运行 ${count} 项`,
     activityUnknown: "活动状态不可用",
     readyForReview: "已可审核",
     offline: "离线",
@@ -4886,7 +4886,6 @@ export const zhHans: TranslationStructure = {
       statusExhausted: "组已耗尽",
     },
     workState: {
-      accessibilityLabel: "会话工作状态",
       commandDescription: "设置或查看会话目标",
       unsupportedTitle: "目标不可用",
       unsupportedMessage: "此后端尚不支持可编辑的会话目标。",
@@ -4911,18 +4910,12 @@ export const zhHans: TranslationStructure = {
         blockedPaused: "已阻塞或已暂停",
         done: "已完成或已取消",
       },
+    activity: {
+        sectionTitle: "正在运行",
+        openFullRoster: "打开所有代理",
+    },
     workflow: {
-        sectionTitle: "活动工作流",
-        goalActive: "目标进行中",
-        goalLabel: ({ title }: { title: string }) => `目标: ${title}`,
-        bare: "工作流",
-        agentsFallback: ({ fraction }: { fraction: string }) => `工作流 ${fraction} 个智能体`,
-        olderRunsHidden: ({ count }: { count: number }) => `${count} 个较早的运行未显示`,
-        phaseLabel: ({ title, fraction }: { title: string; fraction: string }) => `${title} ${fraction}`,
-        plural: ({ count }: { count: number }) => `${count} 个工作流`,
-        pluralWithAgents: ({ count, agents }: { count: number; agents: number }) => `${count} 个工作流 · ${agents} 个智能体`,
         join: ({ left, right }: { left: string; right: string }) => `${left} · ${right}`,
-        permissionBlocked: "需要审查",
     },
       goal: {
         title: "目标",
@@ -5043,20 +5036,43 @@ export const zhHans: TranslationStructure = {
       // Agent-activity row vocabulary. Status is rendered as a translated word, never as a raw
       // enum, so colour is never the only carrier of an abnormal state.
       agentActivity: {
+          composer: {
+              workflowsWithAgents: ({ workflows, agents }: { workflows: number; agents: number }) =>
+                `${workflows} 个工作流，${agents} 个代理`,
+              workflowsRunning: ({ count }: { count: number }) => `${count} 个工作流正在运行`,
+              subagentsWorking: ({ count }: { count: number }) => `${count} 个子代理正在工作`,
+              backgroundTasksRunning: ({ count }: { count: number }) => `${count} 个后台命令正在运行`,
+          },
         untitled: "未命名代理",
         menuTitle: "代理操作",
         row: {
           a11yLabel: ({ title, status }: { title: string; status: string }) => `${title}，${status}`,
+            expand: ({ title }: { title: string }) => `显示 ${title} 的最近活动`,
+            collapse: ({ title }: { title: string }) => `隐藏 ${title} 的最近活动`,
         },
         staleness: {
           quiet: "近期无更新",
-          stale: ({ minutes }: { minutes: number }) => `${minutes} 分钟无更新`,
+          stale: ({ minutes }: { minutes: number }) => `超过 ${minutes} 分钟无更新`,
+        },
+        sessionNotice: {
+          stopped: "此会话已停止，显示的内容可能已不再运行。",
+          stoppedAuth: "登录已过期，此会话已停止，显示的内容可能已不再运行。",
+          unobserved: "此会话已无人观察，显示的内容可能已不再运行。",
+        },
+        backgroundTask: {
+            title: "后台命令",
+            statusWithDuration: ({ status, duration }: { status: string; duration: string }) => `${status} · ${duration}`,
+            openCommand: "在记录中打开该命令",
+        },
+        preview: {
+            openDetails: '打开详情',
+            empty: '还没有任何记录',
         },
         status: {
           queued: "排队中",
           starting: "启动中",
           running: "运行中",
-          waiting: "需要你处理",
+          waiting: "等待批准",
           blocked: "已阻塞",
           succeeded: "已完成",
           failed: "已失败",
@@ -5085,7 +5101,6 @@ export const zhHans: TranslationStructure = {
           deleteTeamConfirmAction: "删除团队",
         },
         section: {
-          needsYou: "需要你处理",
           working: "进行中",
           finished: "已完成",
         },
@@ -5839,7 +5854,6 @@ export const zhHans: TranslationStructure = {
         },
     attentionSectionTitle: '需要注意',
     workingSectionTitle: '正在工作',
-    backgroundWorkingSectionTitle: '正在后台工作',
     hideInactiveSessions: '隐藏非活动会话',
     showInactiveSessions: '显示非活动会话',
   },
@@ -6324,7 +6338,14 @@ export const zhHans: TranslationStructure = {
       elapsedSeconds: ({ seconds }: { seconds: string }) => `${seconds}s`,
       unknownToolTitle: "工具",
     },
+    taskOutputView: {
+      waitingForTask: "正在等待后台任务完成。",
+    },
+    taskStopView: {
+      stoppedCommandLabel: "已停止的命令",
+    },
     bashView: {
+      backgroundNotice: "已转入后台运行——此步骤不会等待其完成。",
       commandDiffTitle: "原始命令",
       commandDiffHint:
         "命令预览会隐藏一小段用于清理环境的前缀，以便更易阅读。完整的原始命令如下所示。",
@@ -6477,6 +6498,8 @@ export const zhHans: TranslationStructure = {
       question: "问题",
       changeTitle: "更改标题",
       switchMode: "切换模式",
+      taskOutput: "任务输出",
+      taskStop: "停止任务",
     },
     geminiExecute: {
       cwd: ({ cwd }: { cwd: string }) => `📁 ${cwd}`,
@@ -7358,6 +7381,9 @@ settingsSession: {
 	        tagsTitle: '会话标签',
 	        tagsEnabledSubtitle: '在会话列表中显示标签控件',
 	        tagsDisabledSubtitle: '隐藏标签控件',
+         agentActivityCountTitle: '列表行中的代理数量',
+         agentActivityCountEnabledSubtitle: '显示每个会话有多少代理在工作',
+         agentActivityCountDisabledSubtitle: '列表行中不显示代理数量',
 	        workingStatusAnimatedTextTitle: '动态工作文本',
 	        workingStatusAnimatedTextEnabledSubtitle: '会话运行时轮换工作动词',
 	        workingStatusAnimatedTextDisabledSubtitle: '会话运行时显示固定的“正在工作...”标签',

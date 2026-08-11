@@ -19,6 +19,8 @@ import {
 } from '@/sync/domains/messages/transcriptRenderableAggregate';
 import { resolveLastViewedSessionSeq } from '@/sync/domains/session/readCursor/resolveLastViewedSessionSeq';
 import { resolveSessionReadableSeq } from '@/sync/domains/session/readCursor/resolveSessionReadableSeq';
+import { countSessionAgentActivityFromMetadata } from '@/sync/domains/session/agentActivity/countSessionAgentActivityFromMetadata';
+import type { AgentActivityCounts } from '@/sync/domains/session/agentActivity/deriveAgentActivityCounts';
 import { resolveSessionProjectGroupingKeyParts } from './sessionListProjectGroupingKeys';
 import { deriveSessionListMeaningfulActivityAt } from './deriveSessionListActivity';
 import type { SessionListAttentionPromotionReason } from './attentionPromotion/sessionListAttentionPromotionTypes';
@@ -53,6 +55,21 @@ export interface SessionListRenderableMetadata {
         pendingActivityAt: number;
         updatedAt: number;
     } | null;
+    /**
+     * What agent work is live in this session, projected once from the published agent-activity
+     * headline.
+     *
+     * It lives on the PROJECTION rather than being read per row because a list row never holds a
+     * session's real metadata — only this narrow copy — and a row that had to reach for the full
+     * object to draw a number would put an O(sessions) metadata read back on the session list, which
+     * is a shape this repository has already measured as a freeze. Projected here it is computed
+     * once per metadata version, and it goes stale exactly when the rest of this object does.
+     *
+     * The whole tally rather than one scalar: the row says the same sentence the composer chip says,
+     * and a lone integer is what let the row understate a five-agent workflow as "1 agent working"
+     * while the chip named the workflow.
+     */
+    agentActivityCounts?: AgentActivityCounts;
     hiddenSystemSession?: boolean;
     terminalControlServiceabilityV1?: {
         v: 1;
@@ -151,6 +168,17 @@ export function deriveSessionListRenderableHasUnreadMessagesFromReadableSeq(
     });
 }
 
+/**
+ * Work still open in this session — the same tally the session header's glyph, the composer chip
+ * and the Agents tab badge read. One counter, one grouping rule, one description (R-8).
+ *
+ * An agent stopped on a permission prompt is open work and is already inside `live`, so there is no
+ * second tally to add here and no way for the two to drift.
+ */
+function readAgentActivityCounts(metadata: Metadata): AgentActivityCounts {
+    return countSessionAgentActivityFromMetadata(metadata);
+}
+
 export function buildSessionListRenderableMetadata(metadata: Metadata | null | undefined): SessionListRenderableMetadata | null {
     if (!metadata) return null;
     const directSessionV1 = (() : DirectSessionRenderableMetadata | null => {
@@ -196,6 +224,7 @@ export function buildSessionListRenderableMetadata(metadata: Metadata | null | u
         flavor: typeof metadata.flavor === 'string' ? metadata.flavor : null,
         directSessionV1,
         readStateV1,
+        agentActivityCounts: readAgentActivityCounts(metadata),
         hiddenSystemSession: metadata.systemSessionV1?.hidden === true,
         terminalControlServiceabilityV1: metadata.terminal?.controlServiceabilityV1 ?? null,
     };

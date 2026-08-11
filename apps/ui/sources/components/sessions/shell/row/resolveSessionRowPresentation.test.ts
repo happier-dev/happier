@@ -207,7 +207,7 @@ describe('resolveSessionRowPresentation', () => {
             attentionIndicator: 'working',
             titleTone: 'emphasized',
             secondaryLine: 'status',
-            statusTextKey: 'status.backgroundActive',
+            backgroundActivityStatusLine: true,
         });
         expect(resolveSessionRowPresentation({
             attentionState: 'pending',
@@ -219,7 +219,7 @@ describe('resolveSessionRowPresentation', () => {
             attentionIndicator: 'working',
             titleTone: 'emphasized',
             secondaryLine: 'status',
-            statusTextKey: 'status.backgroundActive',
+            backgroundActivityStatusLine: true,
         });
         expect(resolveSessionRowPresentation({
             attentionState: 'ready',
@@ -231,7 +231,7 @@ describe('resolveSessionRowPresentation', () => {
             attentionIndicator: 'working',
             titleTone: 'emphasized',
             secondaryLine: 'status',
-            statusTextKey: 'status.backgroundActive',
+            backgroundActivityStatusLine: true,
         });
         expect(resolveSessionRowPresentation({
             attentionState: 'permission_required',
@@ -285,7 +285,7 @@ describe('resolveSessionRowPresentation', () => {
             attentionIndicator: 'working',
             titleTone: 'quiet',
             secondaryLine: 'status',
-            statusTextKey: 'status.backgroundActive',
+            backgroundActivityStatusLine: true,
         });
     });
 

@@ -24,7 +24,20 @@ export type SessionRowPresentation = Readonly<{
     attentionIndicator: SessionRowAttentionIndicator;
     titleTone: SessionRowTitleTone;
     secondaryLine: SessionRowSecondaryLine;
-    statusTextKey?: 'status.readyForReview' | 'status.error' | 'status.workingRetained' | 'status.backgroundActive';
+    statusTextKey?: 'status.readyForReview' | 'status.error' | 'status.workingRetained';
+    /**
+     * The status line is the session's background-activity line.
+     *
+     * It carries no key of its own, deliberately: that line now states HOW MUCH work is running in
+     * the background, and the count belongs to `getSessionStatus`, which is the one owner of what a
+     * session's status says. A key here would have to be re-interpolated with a second copy of the
+     * count, and the list row and the session view would start disagreeing the moment one of them
+     * changed. The row renders `sessionStatus.statusText` instead.
+     *
+     * It is still flagged, because the row treats this line differently from an attention line: it
+     * takes ordinary secondary ink and is not announced as an attention state.
+     */
+    backgroundActivityStatusLine?: true;
 }>;
 
 export function resolveLegacySessionRowAttentionState(input: Readonly<{
@@ -91,7 +104,7 @@ export function resolveSessionRowPresentation(input: Readonly<{
     }
 
     if (input.backgroundActive === true) {
-        return { attentionIndicator, titleTone, secondaryLine: 'status', statusTextKey: 'status.backgroundActive' };
+        return { attentionIndicator, titleTone, secondaryLine: 'status', backgroundActivityStatusLine: true };
     }
 
     if (input.attentionState === 'ready') {

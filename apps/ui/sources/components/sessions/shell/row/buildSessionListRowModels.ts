@@ -40,6 +40,7 @@ type StablePresentationSettingsRefs = Readonly<{
     hideInactiveSessions: SessionListRowPresentationSettings['hideInactiveSessions'];
     showServerBadge: SessionListRowPresentationSettings['showServerBadge'];
     showPinnedServerBadge: SessionListRowPresentationSettings['showPinnedServerBadge'];
+    agentActivityCountEnabled: SessionListRowPresentationSettings['agentActivityCountEnabled'];
     tagsEnabled: SessionListRowPresentationSettings['tagsEnabled'];
     sessionTagsByKey: SessionListRowPresentationSettings['sessionTagsByKey'];
     allKnownTags: SessionListRowPresentationSettings['allKnownTags'];
@@ -104,6 +105,7 @@ function buildStablePresentationSettingsRefs(
         hideInactiveSessions: settings.hideInactiveSessions,
         showServerBadge: settings.showServerBadge,
         showPinnedServerBadge: settings.showPinnedServerBadge,
+        agentActivityCountEnabled: settings.agentActivityCountEnabled,
         tagsEnabled: settings.tagsEnabled,
         sessionTagsByKey: settings.sessionTagsByKey,
         allKnownTags: settings.allKnownTags,
@@ -130,6 +132,7 @@ function areStablePresentationSettingsRefsEqual(
         && previous.hideInactiveSessions === next.hideInactiveSessions
         && previous.showServerBadge === next.showServerBadge
         && previous.showPinnedServerBadge === next.showPinnedServerBadge
+        && previous.agentActivityCountEnabled === next.agentActivityCountEnabled
         && previous.tagsEnabled === next.tagsEnabled
         && previous.sessionTagsByKey === next.sessionTagsByKey
         && previous.allKnownTags === next.allKnownTags
@@ -178,6 +181,7 @@ function buildInputSignature(input: Readonly<{
     appendSignaturePart(parts, settings.hideInactiveSessions ? 1 : 0);
     appendSignaturePart(parts, settings.showServerBadge ? 1 : 0);
     appendSignaturePart(parts, settings.showPinnedServerBadge ? 1 : 0);
+    appendSignaturePart(parts, settings.agentActivityCountEnabled ? 1 : 0);
     appendSignaturePart(parts, settings.tagsEnabled ? 1 : 0);
     appendSignatureList(parts, rowTags);
     appendSignatureList(parts, settings.allKnownTags);

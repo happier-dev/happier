@@ -1307,7 +1307,7 @@ export const pl: TranslationStructure = {
     online: "w sieci",
     working: "pracuje...",
     workingRetained: "pracuje, oczekiwanie na aktualizacje…",
-    backgroundActive: "zadania w tle działają",
+    backgroundActive: ({ count }: { count: number }) => `${count} działa w tle`,
     activityUnknown: "stan aktywności jest niedostępny",
     readyForReview: "gotowe do przeglądu",
     offline: "poza siecią",
@@ -5085,7 +5085,6 @@ export const pl: TranslationStructure = {
       statusExhausted: "Grupa wyczerpana",
     },
     workState: {
-      accessibilityLabel: "Stan pracy sesji",
       commandDescription: "Ustaw lub sprawdź cel sesji",
       unsupportedTitle: "Cel niedostępny",
       unsupportedMessage:
@@ -5113,18 +5112,12 @@ export const pl: TranslationStructure = {
         blockedPaused: "Zablokowane lub wstrzymane",
         done: "Ukończone lub anulowane",
       },
+    activity: {
+        sectionTitle: "Trwa teraz",
+        openFullRoster: "Otwórz wszystkich agentów",
+    },
     workflow: {
-        sectionTitle: "Aktywne przepływy pracy",
-        goalActive: "Cel aktywny",
-        goalLabel: ({ title }: { title: string }) => `Cel: ${title}`,
-        bare: "Przepływ pracy",
-        agentsFallback: ({ fraction }: { fraction: string }) => `Przepływ pracy ${fraction} agentów`,
-        olderRunsHidden: ({ count }: { count: number }) => `${count} starszych uruchomień ukrytych`,
-        phaseLabel: ({ title, fraction }: { title: string; fraction: string }) => `${title} ${fraction}`,
-        plural: ({ count }: { count: number }) => `${count} przepływy pracy`,
-        pluralWithAgents: ({ count, agents }: { count: number; agents: number }) => `${count} przepływy pracy · ${agents} agentów`,
         join: ({ left, right }: { left: string; right: string }) => `${left} · ${right}`,
-        permissionBlocked: "Wymaga przeglądu",
     },
       goal: {
         title: "Cel",
@@ -5247,20 +5240,46 @@ export const pl: TranslationStructure = {
         // Agent-activity row vocabulary. Status is rendered as a translated word, never as a raw
         // enum, so colour is never the only carrier of an abnormal state.
         agentActivity: {
+            composer: {
+                workflowsWithAgents: ({ workflows, agents }: { workflows: number; agents: number }) =>
+                    `${workflows} ${plural({ count: workflows, one: 'przepływ pracy', few: 'przepływy pracy', many: 'przepływów pracy' })}, ${agents} ${plural({ count: agents, one: 'agent', few: 'agenci', many: 'agentów' })}`,
+                workflowsRunning: ({ count }: { count: number }) =>
+                    `${count} ${plural({ count, one: 'przepływ pracy', few: 'przepływy pracy', many: 'przepływów pracy' })} ${plural({ count, one: 'działa', few: 'działają', many: 'działa' })}`,
+                subagentsWorking: ({ count }: { count: number }) =>
+                    `${count} ${plural({ count, one: 'subagent', few: 'subagenci', many: 'subagentów' })} ${plural({ count, one: 'pracuje', few: 'pracują', many: 'pracuje' })}`,
+                backgroundTasksRunning: ({ count }: { count: number }) =>
+                    `${count} ${plural({ count, one: 'polecenie w tle', few: 'polecenia w tle', many: 'poleceń w tle' })} ${plural({ count, one: 'działa', few: 'działają', many: 'działa' })}`,
+            },
           untitled: "Agent bez nazwy",
           menuTitle: "Akcje agenta",
           row: {
             a11yLabel: ({ title, status }: { title: string; status: string }) => `${title}, ${status}`,
+              expand: ({ title }: { title: string }) => `Pokaż ostatnią aktywność: ${title}`,
+              collapse: ({ title }: { title: string }) => `Ukryj ostatnią aktywność: ${title}`,
           },
           staleness: {
             quiet: "Brak niedawnych aktualizacji",
-            stale: ({ minutes }: { minutes: number }) => `Brak aktualizacji od ${minutes} min`,
+            stale: ({ minutes }: { minutes: number }) => `Brak aktualizacji od ponad ${minutes} min`,
+          },
+          sessionNotice: {
+            stopped: "Ta sesja została zatrzymana — to, co widzisz, może już nie działać.",
+            stoppedAuth: "Ta sesja została zatrzymana, ponieważ wygasło logowanie — to, co widzisz, może już nie działać.",
+            unobserved: "Ta sesja nie jest już obserwowana — to, co widzisz, może już nie działać.",
+          },
+          backgroundTask: {
+              title: "Polecenie w tle",
+              statusWithDuration: ({ status, duration }: { status: string; duration: string }) => `${status} · ${duration}`,
+              openCommand: "Otwórz polecenie w transkrypcji",
+          },
+          preview: {
+              openDetails: 'Otwórz szczegóły',
+              empty: 'Nic jeszcze nie zapisano',
           },
           status: {
             queued: "W kolejce",
             starting: "Uruchamianie",
             running: "W trakcie",
-            waiting: "Czeka na Ciebie",
+            waiting: "Oczekuje na zatwierdzenie",
             blocked: "Zablokowany",
             succeeded: "Zakończony",
             failed: "Niepowodzenie",
@@ -5289,7 +5308,6 @@ export const pl: TranslationStructure = {
             deleteTeamConfirmAction: "Usuń zespół",
           },
           section: {
-            needsYou: "Czeka na Ciebie",
             working: "W trakcie",
             finished: "Zakończone",
           },
@@ -6056,7 +6074,6 @@ export const pl: TranslationStructure = {
         },
     attentionSectionTitle: 'Wymaga uwagi',
     workingSectionTitle: 'Pracuje',
-    backgroundWorkingSectionTitle: 'Pracuje w tle',
     hideInactiveSessions: 'Ukryj nieaktywne sesje',
     showInactiveSessions: 'Pokaż nieaktywne sesje',
   },
@@ -6549,7 +6566,14 @@ export const pl: TranslationStructure = {
       elapsedSeconds: ({ seconds }: { seconds: string }) => `${seconds}s`,
       unknownToolTitle: "Narzędzie",
     },
+    taskOutputView: {
+      waitingForTask: "Oczekiwanie na zakończenie zadania w tle.",
+    },
+    taskStopView: {
+      stoppedCommandLabel: "Zatrzymane polecenie",
+    },
     bashView: {
+      backgroundNotice: "Wysłano w tło — ten krok nie czeka na zakończenie.",
       commandDiffTitle: "Surowe polecenie",
       commandDiffHint:
         "Podgląd polecenia ukrywa krótki prefiks czyszczenia środowiska, aby zachować czytelność. Pełne surowe polecenie jest pokazane poniżej.",
@@ -6703,6 +6727,8 @@ export const pl: TranslationStructure = {
       question: "Pytanie",
       changeTitle: "Zmień tytuł",
       switchMode: "Zmień tryb",
+      taskOutput: "Wynik zadania",
+      taskStop: "Zatrzymaj zadanie",
     },
     geminiExecute: {
       cwd: ({ cwd }: { cwd: string }) => `📁 ${cwd}`,
@@ -7605,6 +7631,9 @@ settingsSession: {
 	          tagsTitle: 'Tagi sesji',
 	          tagsEnabledSubtitle: 'Kontrolki tagów widoczne na liście sesji',
 	          tagsDisabledSubtitle: 'Kontrolki tagów ukryte',
+           agentActivityCountTitle: 'Liczba agentów w wierszach',
+           agentActivityCountEnabledSubtitle: 'Pokazuj, ilu agentów pracuje nad każdą sesją',
+           agentActivityCountDisabledSubtitle: 'Nie pokazuj liczby agentów w wierszach',
 	          workingStatusAnimatedTextTitle: 'Animowany tekst pracy',
 	          workingStatusAnimatedTextEnabledSubtitle: 'Zmieniaj czasowniki pracy podczas działania sesji',
 	          workingStatusAnimatedTextDisabledSubtitle: 'Pokazuj stałą etykietę pracuje... podczas działania sesji',

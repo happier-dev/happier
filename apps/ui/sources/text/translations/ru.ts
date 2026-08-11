@@ -5170,7 +5170,6 @@ export const ru: TranslationStructure = {
         },
     attentionSectionTitle: 'Требует внимания',
     workingSectionTitle: 'В работе',
-    backgroundWorkingSectionTitle: 'Работает в фоне',
     hideInactiveSessions: 'Скрыть неактивные сессии',
     showInactiveSessions: 'Показать неактивные сессии',
   },
@@ -5425,7 +5424,7 @@ export const ru: TranslationStructure = {
     online: "в сети",
     working: "работаю...",
     workingRetained: "работает, ожидание обновлений…",
-    backgroundActive: "фоновые задачи выполняются",
+    backgroundActive: ({ count }: { count: number }) => `${count} выполняется в фоне`,
     activityUnknown: "статус активности недоступен",
     readyForReview: "готово к проверке",
     offline: "не в сети",
@@ -5539,7 +5538,6 @@ export const ru: TranslationStructure = {
       statusExhausted: "Группа исчерпана",
     },
     workState: {
-      accessibilityLabel: "Рабочее состояние сеанса",
       commandDescription: "Задать или посмотреть цель сеанса",
       unsupportedTitle: "Цель недоступна",
       unsupportedMessage:
@@ -5567,18 +5565,12 @@ export const ru: TranslationStructure = {
         blockedPaused: "Заблокированы или приостановлены",
         done: "Выполнены или отменены",
       },
+    activity: {
+        sectionTitle: "Сейчас выполняется",
+        openFullRoster: "Открыть всех агентов",
+    },
     workflow: {
-        sectionTitle: "Активные рабочие процессы",
-        goalActive: "Цель активна",
-        goalLabel: ({ title }: { title: string }) => `Цель: ${title}`,
-        bare: "Рабочий процесс",
-        agentsFallback: ({ fraction }: { fraction: string }) => `Рабочий процесс ${fraction} агентов`,
-        olderRunsHidden: ({ count }: { count: number }) => `${count} предыдущих запусков скрыто`,
-        phaseLabel: ({ title, fraction }: { title: string; fraction: string }) => `${title} ${fraction}`,
-        plural: ({ count }: { count: number }) => `${count} рабочих процессов`,
-        pluralWithAgents: ({ count, agents }: { count: number; agents: number }) => `${count} рабочих процессов · ${agents} агентов`,
         join: ({ left, right }: { left: string; right: string }) => `${left} · ${right}`,
-        permissionBlocked: "Требует проверки",
     },
       goal: {
         title: "Цель",
@@ -5701,20 +5693,43 @@ export const ru: TranslationStructure = {
         // Agent-activity row vocabulary. Status is rendered as a translated word, never as a raw
         // enum, so colour is never the only carrier of an abnormal state.
         agentActivity: {
+            composer: {
+                workflowsWithAgents: ({ workflows, agents }: { workflows: number; agents: number }) =>
+                    `Рабочих процессов: ${workflows}, агентов: ${agents}`,
+                workflowsRunning: ({ count }: { count: number }) => `Рабочих процессов в работе: ${count}`,
+                subagentsWorking: ({ count }: { count: number }) => `Субагентов в работе: ${count}`,
+                backgroundTasksRunning: ({ count }: { count: number }) => `Фоновых команд в работе: ${count}`,
+            },
           untitled: "Агент без имени",
           menuTitle: "Действия агента",
           row: {
             a11yLabel: ({ title, status }: { title: string; status: string }) => `${title}, ${status}`,
+              expand: ({ title }: { title: string }) => `Показать недавнюю активность: ${title}`,
+              collapse: ({ title }: { title: string }) => `Скрыть недавнюю активность: ${title}`,
           },
           staleness: {
             quiet: "Нет недавних обновлений",
-            stale: ({ minutes }: { minutes: number }) => `Нет обновлений ${minutes} мин`,
+            stale: ({ minutes }: { minutes: number }) => `Нет обновлений более ${minutes} мин`,
+          },
+          sessionNotice: {
+            stopped: "Эта сессия остановлена — показанное может уже не выполняться.",
+            stoppedAuth: "Эта сессия остановлена из-за истёкшего входа — показанное может уже не выполняться.",
+            unobserved: "За этой сессией больше не ведётся наблюдение — показанное может уже не выполняться.",
+          },
+          backgroundTask: {
+              title: "Фоновая команда",
+              statusWithDuration: ({ status, duration }: { status: string; duration: string }) => `${status} · ${duration}`,
+              openCommand: "Открыть команду в транскрипте",
+          },
+          preview: {
+              openDetails: 'Открыть подробности',
+              empty: 'Пока ничего не записано',
           },
           status: {
             queued: "В очереди",
             starting: "Запускается",
             running: "Выполняется",
-            waiting: "Ждёт вас",
+            waiting: "Ожидает подтверждения",
             blocked: "Заблокирован",
             succeeded: "Завершён",
             failed: "Ошибка",
@@ -5743,7 +5758,6 @@ export const ru: TranslationStructure = {
             deleteTeamConfirmAction: "Удалить команду",
           },
           section: {
-            needsYou: "Ждут вас",
             working: "В работе",
             finished: "Завершённые",
           },
@@ -6535,7 +6549,14 @@ export const ru: TranslationStructure = {
       elapsedSeconds: ({ seconds }: { seconds: string }) => `${seconds}с`,
       unknownToolTitle: "Инструмент",
     },
+    taskOutputView: {
+      waitingForTask: "Ожидание завершения фоновой задачи.",
+    },
+    taskStopView: {
+      stoppedCommandLabel: "Остановленная команда",
+    },
     bashView: {
+      backgroundNotice: "Отправлено в фоновый режим — этот шаг не ждёт завершения.",
       commandDiffTitle: "Сырая команда",
       commandDiffHint:
         "Предпросмотр команды скрывает короткий префикс очистки окружения, чтобы его было легче читать. Полная сырая команда показана ниже.",
@@ -6689,6 +6710,8 @@ export const ru: TranslationStructure = {
       question: "Вопрос",
       changeTitle: "Изменить заголовок",
       switchMode: "Сменить режим",
+      taskOutput: "Вывод задачи",
+      taskStop: "Остановить задачу",
     },
     geminiExecute: {
       cwd: ({ cwd }: { cwd: string }) => `📁 ${cwd}`,
@@ -7592,6 +7615,9 @@ settingsSession: {
 	        tagsTitle: 'Теги сессии',
 	        tagsEnabledSubtitle: 'Управление тегами отображается в списке',
 	        tagsDisabledSubtitle: 'Управление тегами скрыто',
+         agentActivityCountTitle: 'Счётчик агентов в строках',
+         agentActivityCountEnabledSubtitle: 'Показывать, сколько агентов работает в каждой сессии',
+         agentActivityCountDisabledSubtitle: 'Не показывать счётчики агентов в строках',
 	        workingStatusAnimatedTextTitle: 'Анимированный рабочий текст',
 	        workingStatusAnimatedTextEnabledSubtitle: 'Менять рабочие глаголы, пока сессия выполняется',
 	        workingStatusAnimatedTextDisabledSubtitle: 'Показывать постоянную метку работаю..., пока сессия выполняется',

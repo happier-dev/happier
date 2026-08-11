@@ -174,6 +174,7 @@ function createBoundaryProps() {
             hideInactiveSessions: false,
             showServerBadge: false,
             showPinnedServerBadge: false,
+            agentActivityCountEnabled: false,
             tagsEnabled: true,
             sessionTagsByKey: {},
             allKnownTags: [],

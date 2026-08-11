@@ -1617,7 +1617,7 @@ export const it: TranslationStructure = {
     online: "in linea",
     working: "al lavoro...",
     workingRetained: "al lavoro, in attesa di aggiornamenti…",
-    backgroundActive: "attività in background in esecuzione",
+    backgroundActive: ({ count }: { count: number }) => `${count} in esecuzione in background`,
     activityUnknown: "stato dell'attività non disponibile",
     readyForReview: "pronto per la revisione",
     offline: "non in linea",
@@ -5406,7 +5406,6 @@ export const it: TranslationStructure = {
       statusExhausted: "Gruppo esaurito",
     },
     workState: {
-      accessibilityLabel: "Stato di lavoro della sessione",
       commandDescription: "Imposta o consulta l’obiettivo della sessione",
       unsupportedTitle: "Obiettivo non disponibile",
       unsupportedMessage:
@@ -5434,18 +5433,12 @@ export const it: TranslationStructure = {
         blockedPaused: "Bloccato o in pausa",
         done: "Completato o annullato",
       },
+    activity: {
+        sectionTitle: "In esecuzione ora",
+        openFullRoster: "Apri tutti gli agenti",
+    },
     workflow: {
-        sectionTitle: "Flussi di lavoro attivi",
-        goalActive: "Obiettivo attivo",
-        goalLabel: ({ title }: { title: string }) => `Obiettivo: ${title}`,
-        bare: "Flusso di lavoro",
-        agentsFallback: ({ fraction }: { fraction: string }) => `Flusso di lavoro ${fraction} agenti`,
-        olderRunsHidden: ({ count }: { count: number }) => `${count} esecuzioni precedenti nascoste`,
-        phaseLabel: ({ title, fraction }: { title: string; fraction: string }) => `${title} ${fraction}`,
-        plural: ({ count }: { count: number }) => `${count} flussi di lavoro`,
-        pluralWithAgents: ({ count, agents }: { count: number; agents: number }) => `${count} flussi di lavoro · ${agents} agenti`,
         join: ({ left, right }: { left: string; right: string }) => `${left} · ${right}`,
-        permissionBlocked: "Richiede revisione",
     },
       goal: {
         title: "Obiettivo",
@@ -5568,20 +5561,43 @@ export const it: TranslationStructure = {
           // Agent-activity row vocabulary. Status is rendered as a translated word, never as a raw
           // enum, so colour is never the only carrier of an abnormal state.
           agentActivity: {
+              composer: {
+                  workflowsWithAgents: ({ workflows, agents }: { workflows: number; agents: number }) =>
+                    `${workflows} ${workflows === 1 ? 'workflow' : 'workflow'}, ${agents} ${agents === 1 ? 'agente' : 'agenti'}`,
+                  workflowsRunning: ({ count }: { count: number }) => (count === 1 ? '1 workflow in corso' : `${count} workflow in corso`),
+                  subagentsWorking: ({ count }: { count: number }) => (count === 1 ? '1 subagente al lavoro' : `${count} subagenti al lavoro`),
+                  backgroundTasksRunning: ({ count }: { count: number }) => (count === 1 ? '1 comando in background in corso' : `${count} comandi in background in corso`),
+              },
             untitled: "Agente senza nome",
             menuTitle: "Azioni dell’agente",
             row: {
               a11yLabel: ({ title, status }: { title: string; status: string }) => `${title}, ${status}`,
+                expand: ({ title }: { title: string }) => `Mostra l’attività recente di ${title}`,
+                collapse: ({ title }: { title: string }) => `Nascondi l’attività recente di ${title}`,
             },
             staleness: {
               quiet: "Nessun aggiornamento recente",
-              stale: ({ minutes }: { minutes: number }) => `Nessun aggiornamento da ${minutes} min`,
+              stale: ({ minutes }: { minutes: number }) => `Nessun aggiornamento da oltre ${minutes} min`,
+            },
+            sessionNotice: {
+              stopped: "Questa sessione si è interrotta: ciò che è mostrato potrebbe non essere più in esecuzione.",
+              stoppedAuth: "Questa sessione si è interrotta perché l'accesso è scaduto: ciò che è mostrato potrebbe non essere più in esecuzione.",
+              unobserved: "Questa sessione non è più osservata: ciò che è mostrato potrebbe non essere più in esecuzione.",
+            },
+            backgroundTask: {
+                title: "Comando in background",
+                statusWithDuration: ({ status, duration }: { status: string; duration: string }) => `${status} · ${duration}`,
+                openCommand: "Apri il comando nella trascrizione",
+            },
+            preview: {
+                openDetails: 'Apri i dettagli',
+                empty: 'Ancora nulla da mostrare',
             },
             status: {
               queued: "In coda",
               starting: "Avvio in corso",
               running: "In esecuzione",
-              waiting: "Ha bisogno di te",
+              waiting: "In attesa di approvazione",
               blocked: "Bloccato",
               succeeded: "Completato",
               failed: "Non riuscito",
@@ -5610,7 +5626,6 @@ export const it: TranslationStructure = {
               deleteTeamConfirmAction: "Elimina team",
             },
             section: {
-              needsYou: "Ha bisogno di te",
               working: "In corso",
               finished: "Completati",
             },
@@ -6381,7 +6396,6 @@ export const it: TranslationStructure = {
         },
     attentionSectionTitle: 'Richiede attenzione',
     workingSectionTitle: 'In lavorazione',
-    backgroundWorkingSectionTitle: 'In lavorazione in background',
     hideInactiveSessions: 'Nascondi sessioni inattive',
     showInactiveSessions: 'Mostra sessioni inattive',
   },
@@ -6871,7 +6885,14 @@ export const it: TranslationStructure = {
         elapsedSeconds: ({ seconds }: { seconds: string }) => `${seconds}s`,
         unknownToolTitle: "Strumento",
       },
+      taskOutputView: {
+        waitingForTask: "In attesa che l’attività in background termini.",
+      },
+      taskStopView: {
+        stoppedCommandLabel: "Comando interrotto",
+      },
       bashView: {
+        backgroundNotice: "Inviato in background: questo passaggio non attende il completamento.",
         commandDiffTitle: "Comando grezzo",
         commandDiffHint:
           "L’anteprima del comando nasconde un breve prefisso di pulizia dell’ambiente per mantenerlo leggibile. Il comando grezzo completo è mostrato qui sotto.",
@@ -7062,6 +7083,8 @@ export const it: TranslationStructure = {
       question: "Domanda",
       changeTitle: "Cambia titolo",
       switchMode: "Cambia modalità",
+      taskOutput: "Output dell’attività",
+      taskStop: "Interrompi attività",
     },
     geminiExecute: {
       cwd: ({ cwd }: { cwd: string }) => `📁 ${cwd}`,
@@ -7933,6 +7956,9 @@ settingsSession: {
 	          tagsTitle: 'Tag della sessione',
 	          tagsEnabledSubtitle: "Controlli tag visibili nell'elenco sessioni",
 	          tagsDisabledSubtitle: 'Controlli tag nascosti',
+           agentActivityCountTitle: 'Conteggio agenti nelle righe',
+           agentActivityCountEnabledSubtitle: 'Mostra quanti agenti lavorano su ogni sessione',
+           agentActivityCountDisabledSubtitle: 'Mantieni le righe senza conteggi di agenti',
 	          workingStatusAnimatedTextTitle: 'Testo di lavoro animato',
 	          workingStatusAnimatedTextEnabledSubtitle: 'Alterna verbi di lavoro mentre una sessione è in esecuzione',
 	          workingStatusAnimatedTextDisabledSubtitle: 'Mostra un’etichetta fissa al lavoro... mentre una sessione è in esecuzione',

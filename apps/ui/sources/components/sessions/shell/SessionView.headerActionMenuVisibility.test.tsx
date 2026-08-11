@@ -52,6 +52,9 @@ const sessionExecutionRunsSupportedState = vi.hoisted(() => ({ supported: false,
 const executionRunsBackendsState = vi.hoisted(() => ({ backends: null as Record<string, unknown> | null }));
 const sessionMessagesState = vi.hoisted(() => ({ messages: [] as any[] }));
 const automationsSupportState = vi.hoisted(() => ({ enabled: false, serverId: null as string | null }));
+// The header automations icon is a count badge, so it renders only for a session that actually has
+// enabled automations. A fixed zero here made every automations assertion unreachable.
+const automationsEnabledCountState = vi.hoisted(() => ({ count: 0 }));
 const mobileWorkspaceExperienceState = vi.hoisted(() => ({
   value: undefined as 'classic' | 'cockpit' | undefined,
   setValue: vi.fn(),
@@ -380,7 +383,7 @@ installSessionShellCommonModuleMocks({
       },
       useSettings: () => ({ experiments: true, featureToggles: {} }),
       useAutomations: () => [],
-      useSessionAutomationsEnabledCount: () => 0,
+      useSessionAutomationsEnabledCount: () => automationsEnabledCountState.count,
       useOpenApprovalArtifactsForSession: () => [],
     });
   },
@@ -457,6 +460,7 @@ describe('SessionView header action menu visibility', () => {
     sessionMessagesState.messages = [];
     automationsSupportState.enabled = false;
     automationsSupportState.serverId = null;
+    automationsEnabledCountState.count = 0;
     mobileWorkspaceExperienceState.value = undefined;
     mobileWorkspaceExperienceState.setValue.mockReset();
     cockpitRegistrationState.registration = null;
@@ -486,17 +490,20 @@ describe('SessionView header action menu visibility', () => {
     });
   });
 
-  it('hides the open runs button when execution runs are unsupported for the session', async () => {
+  it('withholds the runs destination entirely when execution runs are unsupported for the session', async () => {
     platformState.os = 'web';
     responsiveState.deviceType = 'phone';
     responsiveState.isLandscape = false;
+    windowDimensionsState.width = 420;
     executionRunsFeatureState.enabled = true;
     sessionExecutionRunsSupportedState.supported = false;
     executionRunsBackendsState.backends = null;
     const screen = await renderSessionView();
-    const openRunsButton = findPressableByAccessibilityLabel(screen, 'session.openRuns');
 
-    expect(openRunsButton).toBeUndefined();
+    // Asserted in the folded header, where the runs destination lives: at a width that does not
+    // fold, no header surface offers runs at all and the absence would prove nothing.
+    expect(findPressableByAccessibilityLabel(screen, 'session.openRuns')).toBeUndefined();
+    expect(getHeaderExtraItemIds(getLastHeaderActionMenuProps())).not.toContain('header.openRuns');
   });
 
   it('uses stable display target for workspace presentation instead of live reachable target', async () => {
@@ -659,10 +666,11 @@ describe('SessionView header action menu visibility', () => {
     vi.useRealTimers();
   });
 
-  it('shows the open runs button when the viewed session server supports execution runs', async () => {
+  it('offers the runs destination when the viewed session server supports execution runs', async () => {
     platformState.os = 'web';
     responsiveState.deviceType = 'phone';
     responsiveState.isLandscape = false;
+    windowDimensionsState.width = 420;
     executionRunsFeatureState.enabled = false;
     sessionExecutionRunsSupportedState.supported = true;
     sessionExecutionRunsSupportedState.serverId = 'server-2';
@@ -671,12 +679,15 @@ describe('SessionView header action menu visibility', () => {
     };
 
     const screen = await renderSessionView('server-2');
-    const openRunsButton = findPressableByAccessibilityLabel(screen, 'session.openRuns');
 
-    expect(openRunsButton).toBeDefined();
+    // Support is resolved against the viewed session's server, not the active one: the mocked hook
+    // only answers true for `server-2`, so a wrongly scoped read drops the item.
+    expect(getHeaderExtraItemIds(getLastHeaderActionMenuProps())).toContain('header.openRuns');
+    expect(findPressableByAccessibilityLabel(screen, 'session.openRuns')).toBeUndefined();
   });
 
   it('shows neutral background copy in the header without making the composer busy or hiding execution runs', async () => {
+    windowDimensionsState.width = 420;
     sessionExecutionRunsSupportedState.supported = true;
     sessionState.session = {
       ...sessionState.session,
@@ -692,7 +703,7 @@ describe('SessionView header action menu visibility', () => {
     const screen = await renderSessionView();
 
     expect(screen.findByTestId('session-header-background-activity-status')).toBeDefined();
-    expect(findPressableByAccessibilityLabel(screen, 'session.openRuns')).toBeDefined();
+    expect(getHeaderExtraItemIds(getLastHeaderActionMenuProps())).toContain('header.openRuns');
   });
 
   it('routes to session automations through blur-safe navigation', async () => {
@@ -704,6 +715,7 @@ describe('SessionView header action menu visibility', () => {
     executionRunsBackendsState.backends = null;
     sessionMessagesState.messages = [];
     automationsSupportState.enabled = true;
+    automationsEnabledCountState.count = 2;
     routerPushSpy.mockReset();
     navigateWithBlurOnWebSpy.mockClear();
 
@@ -728,6 +740,7 @@ describe('SessionView header action menu visibility', () => {
     sessionMessagesState.messages = [];
     automationsSupportState.enabled = true;
     automationsSupportState.serverId = 'server-2';
+    automationsEnabledCountState.count = 1;
 
     const screen = await renderSessionView('server-2');
     const openAutomationsButton = findPressableByAccessibilityLabel(screen, 'session.openAutomations');
@@ -888,10 +901,11 @@ describe('SessionView header action menu visibility', () => {
     expect(mobileWorkspaceExperienceState.setValue).toHaveBeenCalledWith('cockpit');
   });
 
-  it('keeps the open runs button visible when the transcript already contains execution-run signals', async () => {
+  it('keeps the runs destination available when the transcript already contains execution-run signals', async () => {
     platformState.os = 'web';
     responsiveState.deviceType = 'phone';
     responsiveState.isLandscape = false;
+    windowDimensionsState.width = 420;
     executionRunsFeatureState.enabled = true;
     sessionExecutionRunsSupportedState.supported = true;
     executionRunsBackendsState.backends = null;
@@ -902,10 +916,11 @@ describe('SessionView header action menu visibility', () => {
       },
     ];
 
-    const screen = await renderSessionView();
-    const openRunsButton = findPressableByAccessibilityLabel(screen, 'session.openRuns');
+    await renderSessionView();
 
-    expect(openRunsButton).toBeDefined();
+    // No launchable backend, but the session already ran one: an absent backend list must not
+    // withdraw the destination that the transcript proves is populated.
+    expect(getHeaderExtraItemIds(getLastHeaderActionMenuProps())).toContain('header.openRuns');
   });
 
   it('renders a header subagents button when the transcript contains subagent activity', async () => {
@@ -936,7 +951,7 @@ describe('SessionView header action menu visibility', () => {
     expect(openSubagentsButton).toBeDefined();
   });
 
-  it('renders a header subagents button when launch surfaces are available even before any subagents exist', async () => {
+  it('withholds the header subagents indicator before any agent is active while still offering the destination', async () => {
     platformState.os = 'web';
     responsiveState.deviceType = 'phone';
     responsiveState.isLandscape = false;
@@ -951,9 +966,16 @@ describe('SessionView header action menu visibility', () => {
     sessionMessagesState.messages = [];
 
     const screen = await renderSessionView();
-    const openSubagentsButton = findPressableByAccessibilityLabel(screen, 'session.openSubagents');
 
-    expect(openSubagentsButton).toBeDefined();
+    // The icon is a live indicator: `activeCount` is its whole condition, so a session that can
+    // launch agents but is running none shows nothing. The destination is not lost — it is a
+    // header-menu item, which is where a place to go belongs.
+    expect(findPressableByAccessibilityLabel(screen, 'session.openSubagents')).toBeUndefined();
+
+    windowDimensionsState.width = 420;
+    await screen.update(<SessionView id="s1" />);
+
+    expect(getHeaderExtraItemIds(getLastHeaderActionMenuProps())).toContain('header.openSubagents');
   });
 
   it('renders SessionHeaderActionMenu even when automations and execution runs are disabled', async () => {

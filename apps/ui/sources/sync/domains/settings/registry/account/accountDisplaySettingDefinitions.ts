@@ -174,6 +174,13 @@ export const ACCOUNT_DISPLAY_SETTING_DEFINITIONS = defineSettingDefinitions({
         storageScope: 'account',
         analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'boolean', privacy: 'safe', identityScope: 'person' },
     },
+    sessionListAgentActivityCountEnabled: {
+        schema: z.boolean(),
+        default: false,
+        description: 'Show how many agents are working on a session in its session-list row',
+        storageScope: 'account',
+        analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'boolean', privacy: 'safe', identityScope: 'person' },
+    },
     sessionListNarrowWorkingIndicatorStyle: {
         schema: z.enum(['spinner', 'pulse']),
         default: 'spinner',

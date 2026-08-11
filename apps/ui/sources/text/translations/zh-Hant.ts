@@ -1884,7 +1884,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
         online: '線上',
         working: '正在工作...',
         workingRetained: '工作中，等待更新…',
-        backgroundActive: '背景工作正在執行',
+        backgroundActive: ({ count }: { count: number }) => `背景執行 ${count} 項`,
         activityUnknown: '活動狀態無法使用',
         readyForReview: '已可審閱',
         offline: '離線',
@@ -4384,7 +4384,6 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
             statusExhausted: '群組已耗盡',
           },
           workState: {
-            accessibilityLabel: '工作階段工作狀態',
             commandDescription: '設定或查看工作階段目標',
             unsupportedTitle: '目標無法使用',
             unsupportedMessage: '此後端尚不支援可編輯的工作階段目標。',
@@ -4409,18 +4408,12 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
               blockedPaused: '已阻塞或已暫停',
               done: '已完成或已取消',
             },
+          activity: {
+              sectionTitle: "正在執行",
+              openFullRoster: "開啟所有代理",
+          },
           workflow: {
-              sectionTitle: '進行中的工作流程',
-              goalActive: '目標進行中',
-              goalLabel: ({ title }: { title: string }) => `目標: ${title}`,
-              bare: '工作流程',
-              agentsFallback: ({ fraction }: { fraction: string }) => `工作流程 ${fraction} 個代理`,
-              olderRunsHidden: ({ count }: { count: number }) => `${count} 個較早的執行未顯示`,
-              phaseLabel: ({ title, fraction }: { title: string; fraction: string }) => `${title} ${fraction}`,
-              plural: ({ count }: { count: number }) => `${count} 個工作流程`,
-              pluralWithAgents: ({ count, agents }: { count: number; agents: number }) => `${count} 個工作流程 · ${agents} 個代理`,
               join: ({ left, right }: { left: string; right: string }) => `${left} · ${right}`,
-              permissionBlocked: '需要審查',
           },
             goal: {
               title: '目標',
@@ -4520,20 +4513,43 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
             // Agent-activity row vocabulary. Status is rendered as a translated word, never as a raw
             // enum, so colour is never the only carrier of an abnormal state.
             agentActivity: {
+                composer: {
+                    workflowsWithAgents: ({ workflows, agents }: { workflows: number; agents: number }) =>
+                        `${workflows} 個工作流程，${agents} 個代理`,
+                    workflowsRunning: ({ count }: { count: number }) => `${count} 個工作流程正在執行`,
+                    subagentsWorking: ({ count }: { count: number }) => `${count} 個子代理正在工作`,
+                    backgroundTasksRunning: ({ count }: { count: number }) => `${count} 個背景指令正在執行`,
+                },
                 untitled: "未命名代理",
                 menuTitle: "代理操作",
                 row: {
                     a11yLabel: ({ title, status }: { title: string; status: string }) => `${title}，${status}`,
+                    expand: ({ title }: { title: string }) => `顯示 ${title} 的近期活動`,
+                    collapse: ({ title }: { title: string }) => `隱藏 ${title} 的近期活動`,
                 },
                 staleness: {
                     quiet: "近期無更新",
-                    stale: ({ minutes }: { minutes: number }) => `${minutes} 分鐘無更新`,
+                    stale: ({ minutes }: { minutes: number }) => `超過 ${minutes} 分鐘無更新`,
+                },
+                sessionNotice: {
+                    stopped: "此工作階段已停止，顯示的內容可能已不再執行。",
+                    stoppedAuth: "登入已過期，此工作階段已停止，顯示的內容可能已不再執行。",
+                    unobserved: "此工作階段已無人觀察，顯示的內容可能已不再執行。",
+                },
+                backgroundTask: {
+                    title: '背景指令',
+                    statusWithDuration: ({ status, duration }: { status: string; duration: string }) => `${status} · ${duration}`,
+                    openCommand: '在紀錄中開啟該指令',
+                },
+                preview: {
+                    openDetails: '開啟詳細資料',
+                    empty: '尚未有任何紀錄',
                 },
                 status: {
                     queued: "排隊中",
                     starting: "啟動中",
                     running: "執行中",
-                    waiting: "需要你處理",
+                    waiting: "等待核准",
                     blocked: "已阻擋",
                     succeeded: "已完成",
                     failed: "已失敗",
@@ -4562,7 +4578,6 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
                     deleteTeamConfirmAction: "刪除團隊",
                 },
                 section: {
-                    needsYou: "需要你處理",
                     working: "進行中",
                     finished: "已完成",
                 },
@@ -5075,7 +5090,6 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
         },
         attentionSectionTitle: '需要注意',
         workingSectionTitle: '正在工作',
-        backgroundWorkingSectionTitle: '正在背景工作',
         hideInactiveSessions: '隱藏非使用中工作階段',
         showInactiveSessions: '顯示非使用中工作階段',
     },
@@ -5409,7 +5423,14 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
             elapsedSeconds: ({ seconds }: { seconds: string }) => `${seconds}s`,
             unknownToolTitle: '工具',
         },
+        taskOutputView: {
+            waitingForTask: '正在等待背景工作完成。',
+        },
+        taskStopView: {
+            stoppedCommandLabel: '已停止的命令',
+        },
         bashView: {
+            backgroundNotice: '已轉入背景執行——此步驟不會等待其完成。',
             commandDiffTitle: '原始命令',
             commandDiffHint: '命令預覽會隱藏一小段用於清理環境的前綴，以便更易閱讀。完整的原始命令如下所示。',
         },
@@ -5557,6 +5578,8 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
             question: '問題',
             changeTitle: '變更標題',
             switchMode: '切換模式',
+            taskOutput: '任務輸出',
+            taskStop: '停止任務',
         },
         geminiExecute: {
             cwd: ({ cwd }: { cwd: string }) => `📁 ${cwd}`,
@@ -6348,6 +6371,9 @@ settingsSession: {
 	              tagsTitle: '工作階段標籤',
 	              tagsEnabledSubtitle: '在工作階段列表中顯示標籤控制項',
 	              tagsDisabledSubtitle: '隱藏標籤控制項',
+               agentActivityCountTitle: '清單列中的代理數量',
+               agentActivityCountEnabledSubtitle: '顯示每個工作階段有多少代理在工作',
+               agentActivityCountDisabledSubtitle: '清單列中不顯示代理數量',
 	              workingStatusAnimatedTextTitle: '動態工作文字',
 	              workingStatusAnimatedTextEnabledSubtitle: '工作階段執行時輪換工作動詞',
 	              workingStatusAnimatedTextDisabledSubtitle: '工作階段執行時顯示固定的「正在工作...」標籤',

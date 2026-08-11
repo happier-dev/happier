@@ -1599,7 +1599,7 @@ export const ja: TranslationStructure = {
     online: "オンライン",
     working: "作業中...",
     workingRetained: "作業中、更新待ち…",
-    backgroundActive: "バックグラウンドタスク実行中",
+    backgroundActive: ({ count }: { count: number }) => `バックグラウンドで${count}件実行中`,
     activityUnknown: "アクティビティの状態を確認できません",
     readyForReview: "レビュー準備完了",
     offline: "オフライン",
@@ -5333,7 +5333,6 @@ localTailscale: {
       statusExhausted: "グループが枯渇",
     },
     workState: {
-      accessibilityLabel: "セッション作業状態",
       commandDescription: "セッションの目標を設定または確認",
       unsupportedTitle: "目標を使用できません",
       unsupportedMessage:
@@ -5361,18 +5360,12 @@ localTailscale: {
         blockedPaused: "ブロック中または一時停止中",
         done: "完了またはキャンセル",
       },
+    activity: {
+        sectionTitle: "実行中",
+        openFullRoster: "すべてのエージェントを開く",
+    },
     workflow: {
-        sectionTitle: "アクティブなワークフロー",
-        goalActive: "目標がアクティブ",
-        goalLabel: ({ title }: { title: string }) => `目標: ${title}`,
-        bare: "ワークフロー",
-        agentsFallback: ({ fraction }: { fraction: string }) => `ワークフロー ${fraction} エージェント`,
-        olderRunsHidden: ({ count }: { count: number }) => `${count} 件の実行は非表示`,
-        phaseLabel: ({ title, fraction }: { title: string; fraction: string }) => `${title} ${fraction}`,
-        plural: ({ count }: { count: number }) => `${count} 個のワークフロー`,
-        pluralWithAgents: ({ count, agents }: { count: number; agents: number }) => `${count} 個のワークフロー · ${agents} エージェント`,
         join: ({ left, right }: { left: string; right: string }) => `${left} · ${right}`,
-        permissionBlocked: "確認が必要",
     },
       goal: {
         title: "目標",
@@ -5496,20 +5489,43 @@ localTailscale: {
         // Agent-activity row vocabulary. Status is rendered as a translated word, never as a raw
         // enum, so colour is never the only carrier of an abnormal state.
         agentActivity: {
+            composer: {
+                workflowsWithAgents: ({ workflows, agents }: { workflows: number; agents: number }) =>
+                    `ワークフロー ${workflows} 件、エージェント ${agents} 件`,
+                workflowsRunning: ({ count }: { count: number }) => `ワークフロー ${count} 件が実行中`,
+                subagentsWorking: ({ count }: { count: number }) => `サブエージェント ${count} 件が作業中`,
+                backgroundTasksRunning: ({ count }: { count: number }) => `バックグラウンドコマンド ${count} 件が実行中`,
+            },
           untitled: "名称未設定のエージェント",
           menuTitle: "エージェントの操作",
           row: {
             a11yLabel: ({ title, status }: { title: string; status: string }) => `${title}、${status}`,
+              expand: ({ title }: { title: string }) => `${title} の最近のアクティビティを表示`,
+              collapse: ({ title }: { title: string }) => `${title} の最近のアクティビティを非表示`,
           },
           staleness: {
             quiet: "最近の更新なし",
-            stale: ({ minutes }: { minutes: number }) => `${minutes}分間更新なし`,
+            stale: ({ minutes }: { minutes: number }) => `${minutes}分以上更新なし`,
+          },
+          sessionNotice: {
+            stopped: "このセッションは停止しました。表示中の項目はすでに実行されていない可能性があります。",
+            stoppedAuth: "サインインの期限切れによりこのセッションは停止しました。表示中の項目はすでに実行されていない可能性があります。",
+            unobserved: "このセッションは監視されていません。表示中の項目はすでに実行されていない可能性があります。",
+          },
+          backgroundTask: {
+              title: "バックグラウンドコマンド",
+              statusWithDuration: ({ status, duration }: { status: string; duration: string }) => `${status} · ${duration}`,
+              openCommand: "トランスクリプトでコマンドを開く",
+          },
+          preview: {
+              openDetails: '詳細を開く',
+              empty: 'まだ記録がありません',
           },
           status: {
             queued: "キュー待ち",
             starting: "起動中",
             running: "実行中",
-            waiting: "対応が必要",
+            waiting: "承認待ち",
             blocked: "ブロック中",
             succeeded: "完了",
             failed: "失敗",
@@ -5538,7 +5554,6 @@ localTailscale: {
             deleteTeamConfirmAction: "チームを削除",
           },
           section: {
-            needsYou: "対応が必要",
             working: "実行中",
             finished: "完了",
           },
@@ -6301,7 +6316,6 @@ localTailscale: {
         },
     attentionSectionTitle: '確認が必要',
     workingSectionTitle: '処理中',
-    backgroundWorkingSectionTitle: 'バックグラウンドで処理中',
     hideInactiveSessions: '非アクティブなセッションを非表示',
     showInactiveSessions: '非アクティブなセッションを表示',
   },
@@ -6799,7 +6813,14 @@ localTailscale: {
       elapsedSeconds: ({ seconds }: { seconds: string }) => `${seconds}s`,
       unknownToolTitle: "ツール",
     },
+    taskOutputView: {
+      waitingForTask: "バックグラウンドタスクの完了を待っています。",
+    },
+    taskStopView: {
+      stoppedCommandLabel: "停止したコマンド",
+    },
     bashView: {
+      backgroundNotice: "バックグラウンドに送りました。このステップは完了を待ちません。",
       commandDiffTitle: "生のコマンド",
       commandDiffHint:
         "読みやすくするため、コマンドのプレビューでは短い環境クリーンアップの接頭辞を隠しています。完全な生のコマンドは下に表示されます。",
@@ -6988,6 +7009,8 @@ localTailscale: {
       question: "質問",
       changeTitle: "タイトルを変更",
       switchMode: "モードを切り替え",
+      taskOutput: "タスクの出力",
+      taskStop: "タスクを停止",
     },
     geminiExecute: {
       cwd: ({ cwd }: { cwd: string }) => `📁 ${cwd}`,
@@ -7853,6 +7876,9 @@ settingsSession: {
 	        tagsTitle: 'セッションタグ',
 	        tagsEnabledSubtitle: 'セッション一覧にタグ操作を表示',
 	        tagsDisabledSubtitle: 'タグ操作を非表示',
+         agentActivityCountTitle: '行にエージェント数を表示',
+         agentActivityCountEnabledSubtitle: '各セッションで作業中のエージェント数を表示します',
+         agentActivityCountDisabledSubtitle: '行にエージェント数を表示しません',
 	        workingStatusAnimatedTextTitle: '作業中テキストのアニメーション',
 	        workingStatusAnimatedTextEnabledSubtitle: 'セッションの実行中に作業中の動詞を切り替えます',
 	        workingStatusAnimatedTextDisabledSubtitle: 'セッションの実行中は固定の「作業中...」ラベルを表示します',

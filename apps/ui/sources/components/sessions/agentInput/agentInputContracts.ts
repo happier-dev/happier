@@ -43,7 +43,12 @@ export type AgentInputComposerAttachmentBadge = Readonly<{
     removeAccessibilityLabel?: string;
 }>;
 
-export type AgentInputStatusBadgeTone = 'neutral' | 'active' | 'paused' | 'warning' | 'complete';
+/**
+ * `danger` is distinct from `warning` on purpose: warning means a person is being asked for
+ * something, danger means something already went wrong. The agent-activity badge shows both in one
+ * row ("1 needs you · 1 failed" vs "1 agent failed") and they must not read the same.
+ */
+export type AgentInputStatusBadgeTone = 'neutral' | 'active' | 'paused' | 'warning' | 'danger' | 'complete';
 export type AgentInputStatusBadgeEmphasis = 'quiet' | 'prominent';
 
 export type AgentInputStatusBadge = Readonly<{

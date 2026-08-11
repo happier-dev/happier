@@ -77,7 +77,7 @@ import { useWarmRepositoryDirectoryCacheOnSessionOpen } from '@/hooks/session/fi
 import { Modal } from '@/modal';
 import { useScmSessionAutoRefresh } from '@/scm/refresh/useScmSessionAutoRefresh';
 import { continueSessionWithReplay, sessionAbort, resumeSession } from '@/sync/ops';
-import { storage, useActiveServerAccountScope, useEndpointConnectivity, useIsDataReady, useLaunchSelectionMachines, useLocalSetting, useOpenApprovalArtifactsForSession, useProfile, useRealtimeStatus, useSessionAutomationsEnabledCount, useSessionConnectedServiceAccountSwitchEvents, useSessionMessages, useSessionOrganizationProjection, useSessionPendingMessages, useSessionSubagentSourceMessages, useSessionTranscriptIds, useSessionUsage, useSessionVisibleReadSeq, useSetting, useSettingMutable, useSettings, useSyncError, useWorkspaceReviewCommentsDrafts } from '@/sync/domains/state/storage';
+import { storage, useActiveServerAccountScope, useEndpointConnectivity, useIsDataReady, useLaunchSelectionMachines, useLocalSetting, useOpenApprovalArtifactsForSession, useProfile, useRealtimeStatus, useSessionAutomationsEnabledCount, useSessionConnectedServiceAccountSwitchEvents, useSessionMessages, useSessionOrganizationProjection, useSessionPendingMessages, useSessionTranscriptIds, useSessionUsage, useSessionVisibleReadSeq, useSetting, useSettingMutable, useSettings, useSyncError, useWorkspaceReviewCommentsDrafts } from '@/sync/domains/state/storage';
 import { canContinueSessionWithFreshSpawn, canResumeSessionWithOptions } from '@/agents/runtime/resumeCapabilities';
 import { DEFAULT_AGENT_ID, getAgentCore, resolveAgentIdFromFlavor, buildResumeSessionExtrasFromUiState } from '@/agents/catalog/catalog';
 import {
@@ -148,8 +148,12 @@ import {
     resolveParticipantRoutedSend,
 } from '@/sync/domains/input/participants/resolveParticipantRoutedSend';
 import { useSessionAgentInputRoutingControls } from '@/components/sessions/agentInput/routing/useSessionAgentInputRoutingControls';
-import { useSessionSubagents } from '@/hooks/session/useSessionSubagents';
+import { useSessionAgentActivity } from '@/hooks/session/useSessionAgentActivity';
+import { useReconciledStableRows } from '@/hooks/session/reconcileStableRows';
+import { deriveSessionSubagentRecipients } from '@/sync/domains/session/subagents/deriveSessionSubagentRecipients';
+import type { AgentActivityCounts } from '@/sync/domains/session/agentActivity/deriveAgentActivityCounts';
 import { hasSessionSubagentLaunchCards } from '@/agents/registry/sessionSubagentUiBehavior';
+import { useSurfaceAnchorPathname } from '@/components/sessions/shell/surface/sessionSurfaceAnchorPathname';
 import { isExecutionRunNotRunningSendError, sessionExecutionRunSend } from '@/sync/ops/sessionExecutionRuns';
 import { nowServerMs } from '@/sync/runtime/time';
 import { readSessionUiTelemetryNowMs } from '@/sync/runtime/performance/sessionUiTelemetry';
@@ -174,7 +178,6 @@ import { canApplySteerConfigInFlight, decideSessionMessageDelivery, type Message
 import { submitSessionUserMessage } from '@/sync/domains/session/input/submitSessionUserMessage';
 import { createSyncBackedSubmitPort } from '@/sync/domains/session/input/syncBackedSubmitPort';
 import { isSessionLocallyAttached } from '@/sync/domains/session/control/sessionLocalControl';
-import { deriveSessionSubagentCounts } from '@/sync/domains/session/subagents/deriveSessionSubagentCounts';
 import { resolveSessionWorkspacePresentation } from '@/sync/domains/session/listing/sessionWorkspacePresentation';
 import { isModelSelectableForSession } from '@/sync/domains/models/modelOptions';
 import { getInactiveSessionUiState } from '@/components/sessions/model/inactiveSessionUi';
@@ -229,10 +232,10 @@ import {
     resolvePrimarySessionWorkStateItem,
 } from '@/components/sessions/workState/sessionWorkStatePresentation';
 import {
+    resolveSessionActivityComposerTranslate,
     resolveSessionActivityStatusBadgePresentation,
     shouldRetainSessionActivityStatusBadge,
 } from '@/components/sessions/workState/sessionActivityPresentation';
-import { useSessionWorkflowActivity } from '@/components/sessions/workState/useSessionWorkflowActivity';
 import { isSessionGoalEditingAvailable } from '@/components/sessions/workState/sessionGoalEditingAvailability';
 import { SessionWorkStatePopover } from '@/components/sessions/workState/SessionWorkStatePopover';
 import { layout } from '@/components/ui/layout/layout';
@@ -385,8 +388,10 @@ const sessionSubmitPort = createSyncBackedSubmitPort(sync);
 const SESSION_COMPOSER_SUGGESTION_KINDS: readonly ComposerSuggestionKindId[] = [
     'file',
     'vendorPlugin',
-    // Only the session composer offers `session`: it is the one host with a real session, and
-    // a reference is same-server only (D-8), which is a fact only this host has.
+    // A reference is same-server only (D-8), and this host answers that from its own session.
+    // The new-session composer offers `session` too, by declaring its spawn target instead
+    // (`useNewSessionScreenModel`); the automation and participant composers do not, because
+    // neither carries the composer's `mentions[]` envelope to its send yet.
     'session',
     'skill',
     'slashCommand',
@@ -740,6 +745,8 @@ type SessionViewLoadedProps = Readonly<{
     executionRunsEnabled: boolean;
     jumpToSeq: number | null;
     participantTargets: readonly SessionParticipantTarget[];
+    /** The one activity tally for this session, derived once above and shared with the header. */
+    agentActivityCounts: AgentActivityCounts;
     paneUrlState: SessionPaneUrlState | null;
     initialAttachmentDrafts: readonly AttachmentDraft[] | null;
     paneScopeId: string;
@@ -759,7 +766,10 @@ type SessionViewLoadedProps = Readonly<{
 
 type SessionViewLoadedWithPendingMessagesProps = Omit<
     SessionViewLoadedProps,
-    'directSessionRuntime' | 'participantTargets' | 'pendingMessages'
+    'agentActivityCounts'
+    | 'directSessionRuntime'
+    | 'participantTargets'
+    | 'pendingMessages'
 >;
 
 const MemoizedSessionViewLoaded = React.memo(SessionViewLoaded);
@@ -768,22 +778,33 @@ const SessionViewLoadedWithPendingMessages = React.memo(function SessionViewLoad
     props: SessionViewLoadedWithPendingMessagesProps,
 ) {
     const { messages: pendingMessages } = useSessionPendingMessages(props.sessionId);
-    const subagentSourceMessages = useSessionSubagentSourceMessages(props.sessionId);
     const directSessionRuntime = useDirectSessionRuntime({
         sessionId: props.sessionId,
         metadata: props.session.metadata ?? null,
     });
-    const { participantTargets } = useSessionSubagents({
+    // One roster derivation for this subtree. The composer badge needs a count and the routing
+    // controls need the recipient targets, and both come out of the same merged activity — deriving
+    // the roster twice here would double the work `useSessionSubagents` does on every subagent-
+    // relevant transcript change for a number and a list that must agree anyway (R-8, R-11).
+    //
+    // This is the NARROW variant deliberately: it reads the subagent-source projection and the
+    // headline, and subscribes to nothing that ticks per streamed token. The roster variant's
+    // transcript enrichment is the Agents pane's cost to pay, not the composer's.
+    const agentActivity = useSessionAgentActivity({
         sessionId: props.sessionId,
-        session: props.session,
-        messages: subagentSourceMessages,
         directSessionRuntime,
     });
+    const derivedParticipantTargets = React.useMemo(
+        () => deriveSessionSubagentRecipients(agentActivity.subagents),
+        [agentActivity.subagents],
+    );
+    const participantTargets = useReconciledStableRows(derivedParticipantTargets, readParticipantTargetKey);
 
     return (
         <ComposerBannerCollapseProvider>
             <MemoizedSessionViewLoaded
                 {...props}
+                agentActivityCounts={agentActivity.counts}
                 directSessionRuntime={directSessionRuntime}
                 participantTargets={participantTargets}
                 pendingMessages={pendingMessages}
@@ -791,6 +812,10 @@ const SessionViewLoadedWithPendingMessages = React.memo(function SessionViewLoad
         </ComposerBannerCollapseProvider>
     );
 });
+
+function readParticipantTargetKey(target: SessionParticipantTarget): string {
+    return target.key;
+}
 
 type SessionHeaderRightElementProps = Readonly<{
     sessionId: string;
@@ -821,23 +846,23 @@ const SessionHeaderRightElement = React.memo(function SessionHeaderRightElement(
     const sessionExecutionRunsSupported = useSessionExecutionRunsSupported(props.sessionId, {
         serverId: props.currentSessionRouteServerId,
     });
-    const subagentSourceMessages = useSessionSubagentSourceMessages(props.sessionId);
     const directSessionRuntime = useDirectSessionRuntime({
         sessionId: props.sessionId,
         metadata: props.session.metadata ?? null,
     });
-    const { subagents } = useSessionSubagents({
+    // R-8: the header count reads the unified activity model, not a private tally over the raw
+    // roster. It is the same `counts` object the composer badge and the Agents pane use, so the
+    // glyph beside the composer and the list it opens cannot report different numbers.
+    const { counts: agentActivityCounts } = useSessionAgentActivity({
         sessionId: props.sessionId,
-        session: props.session,
-        messages: subagentSourceMessages,
         directSessionRuntime,
     });
-    const subagentCounts = React.useMemo(() => deriveSessionSubagentCounts(subagents), [subagents]);
-    // The header icon is a live indicator driven by `subagentCounts.active` at its call site. The
-    // overflow menu is a destination, so it stays available whenever there is anything to look at,
-    // finished agents included.
+    // The icon is a live indicator: work that is still open, which includes an agent stopped on a
+    // permission prompt. The overflow menu is a destination, so it stays available whenever there is
+    // anything to look at, finished agents included.
+    const openAgentCount = agentActivityCounts.live;
     const shouldOfferSubagentsMenuItem =
-        subagentCounts.total > 0
+        agentActivityCounts.total > 0
         || sessionExecutionRunsSupported
         || hasSessionSubagentLaunchCards(props.session);
 
@@ -897,7 +922,7 @@ const SessionHeaderRightElement = React.memo(function SessionHeaderRightElement(
         if (shouldOfferSubagentsMenuItem) {
             items.push({
                 id: 'header.openSubagents',
-                title: t('session.openSubagents', { count: subagentCounts.active }),
+                title: t('session.openSubagents', { count: openAgentCount }),
                 icon: <Icon name="robot" size={ICON_SIZE.md} color={theme.colors.text.secondary} />,
             });
         }
@@ -925,7 +950,7 @@ const SessionHeaderRightElement = React.memo(function SessionHeaderRightElement(
         props.showWorkspaceExperienceToggle,
         sessionExecutionRunsSupported,
         shouldOfferSubagentsMenuItem,
-        subagentCounts.active,
+        openAgentCount,
         theme.colors.text.secondary,
     ]);
 
@@ -989,7 +1014,7 @@ const SessionHeaderRightElement = React.memo(function SessionHeaderRightElement(
             {!props.shouldFoldHeaderIconActions ? (
                 <SessionHeaderSubagentsButton
                     scopeId={props.paneScopeId}
-                    activeCount={subagentCounts.active}
+                    activeCount={openAgentCount}
                 />
             ) : null}
             <SessionHeaderTerminalButton
@@ -1015,10 +1040,12 @@ const SessionHeaderRightElement = React.memo(function SessionHeaderRightElement(
                     accessibilityRole="button"
                     accessibilityLabel={t('session.openAutomations')}
                 >
-                    <SessionHeaderIconWithCount
-                        count={props.sessionAutomationsEnabledCount}
-                        badgeColor={theme.colors.status.error}
-                    >
+                    {/* No `badgeColor` override: this count shares `SessionHeaderIconWithCount`
+                        with the agent count sitting a few points to its left, and in this row a
+                        filled-red count means one thing only — a person is needed. Enabled
+                        automations are a configuration fact, not a request for attention, so it
+                        takes the primitive's default accent. */}
+                    <SessionHeaderIconWithCount count={props.sessionAutomationsEnabledCount}>
                         <Icon
                             name="timer"
                             size={SESSION_HEADER_ICON_SIZE_PX}
@@ -1497,9 +1524,10 @@ export const SessionView = React.memo((props: SessionViewProps) => {
     const surfaceFocused = typeof props.surfaceFocusedOverride === 'boolean'
         ? props.surfaceFocusedOverride
         : routeFocused;
+    const anchorPathname = useSurfaceAnchorPathname(pathname);
     const isRouteAnchor = typeof props.routeAnchorOverride === 'boolean'
         ? props.routeAnchorOverride
-        : isOwnedSessionRoutePathname(pathname, sessionId);
+        : isOwnedSessionRoutePathname(anchorPathname, sessionId);
     const shouldRenderSessionSurface = surfaceFocused || isRouteAnchor;
     const shouldRetainSessionSurface = Platform.OS === 'web' ? shouldRenderSessionSurface : true;
     const sessionRunnerRuntimeStatusRetention = useSessionRunnerRuntimeStatusRetention({
@@ -1615,6 +1643,16 @@ export const SessionView = React.memo((props: SessionViewProps) => {
         toggleWorkspaceExperienceRef.current();
     }, []);
     const shouldFoldHeaderIconActions = windowWidth < 520;
+
+    // `ChatHeaderView` is memoized, and the header is the one surface that must not repaint on
+    // every transcript-driven render of this screen. An element built inline in the JSX below is a
+    // new object on every render and defeats that memo on its own, so the gutter element is built
+    // here with the only two inputs it has.
+    const headerGutterElement = React.useMemo(() => (
+        shouldFoldHeaderIconActions
+            ? undefined
+            : <SessionHeaderRightSidebarButton scopeId={paneScopeId} />
+    ), [paneScopeId, shouldFoldHeaderIconActions]);
 
     // Compute header props based on session state
     const headerProps = useMemo(() => {
@@ -1805,11 +1843,7 @@ export const SessionView = React.memo((props: SessionViewProps) => {
                         {...headerProps}
                         onBackPress={handleBackPress}
                         showBackButton={!isTablet}
-                        gutterElement={
-                            shouldFoldHeaderIconActions
-                                ? undefined
-                                : <SessionHeaderRightSidebarButton scopeId={paneScopeId} />
-                        }
+                        gutterElement={headerGutterElement}
                         constrainWidth={constrainHeaderWidth}
                         includeTopInset={headerSafeAreaTopMode !== 'external'}
                     />
@@ -2220,6 +2254,7 @@ function SessionViewLoaded({
     executionRunsEnabled,
     jumpToSeq,
     participantTargets,
+    agentActivityCounts,
     paneUrlState,
     initialAttachmentDrafts,
     paneScopeId,
@@ -2267,6 +2302,32 @@ function SessionViewLoaded({
     const multiPaneEnabled = useLocalSetting('uiMultiPanePanelsEnabled') !== false;
     const sessionsRightPaneDefaultOpen = useLocalSetting('sessionsRightPaneDefaultOpen');
     const pane = useAppPaneScope(paneScopeId);
+    /**
+     * The lead-in from the compact work-state surface to the expanded Agents roster.
+     *
+     * `undefined` when the pane cannot present — which is every native phone
+     * (`resolvePaneLayout` returns `right: 'hidden'` there) — so the affordance is simply absent
+     * rather than rendering a control whose press does nothing (A9). remote-dev has no
+     * `/session/[id]/agents` route and §4.7 puts one out of scope, so the compact surface expands
+     * IN PLACE instead of routing; this is an additional destination, never the overflow mechanism.
+     */
+    const openAgentActivityRoster = React.useMemo<(() => void) | undefined>(() => {
+        const layoutIfOpened = resolvePaneLayout({
+            containerWidthPx: windowWidth,
+            deviceType: multiPaneDeviceType,
+            multiPaneEnabled,
+            rightOpen: true,
+            detailsOpen: false,
+            mainMinPx: PANE_SIZING_DEFAULTS.mainMinPx,
+            rightMinPx: PANE_SIZING_DEFAULTS.right.minPx,
+            detailsMinPx: PANE_SIZING_DEFAULTS.details.minPx,
+        });
+        if (layoutIfOpened.kind === 'single') return undefined;
+        return () => {
+            pane.openRight({ tabId: 'agents' });
+            pane.setRightTab('agents');
+        };
+    }, [multiPaneDeviceType, multiPaneEnabled, pane, windowWidth]);
     const activeServerId = getActiveServerSnapshot().serverId;
     const sessionRouteServerId = (routeServerId ?? '').trim()
         || resolveServerIdForSessionIdFromLocalCache(sessionId)
@@ -2425,13 +2486,6 @@ function SessionViewLoaded({
         () => resolvePrimarySessionWorkStateItem(sessionWorkStateSnapshot),
         [sessionWorkStateSnapshot],
     );
-    // UIW1/UIW2: live workflow activity headline + loaded run detail. Drives the compact badge's
-    // workflow segment (active phase when loaded, headline counts otherwise) through the single
-    // `sessionActivityPresentation` seam below.
-    const sessionWorkflowActivity = useSessionWorkflowActivity({
-        sessionId,
-        metadata: session.metadata,
-    });
     const [activeStatusBadgeKey, setActiveStatusBadgeKey] = React.useState<string | null>(null);
     // Composer banner collapse is owned by ComposerBannerCollapseProvider (mounted above this
     // component) so a banner and the badge that toggles it agree even across subtrees, and so the
@@ -2520,49 +2574,47 @@ function SessionViewLoaded({
     const sessionGoalActionChip = React.useMemo<AgentInputExtraActionChip | null>(() => {
         if (!canEditSessionGoals) return null;
         return createGoalActionChip({
+            sessionId,
             snapshot: sessionWorkStateSnapshot,
             editableGoal: canEditSessionGoals,
             goalActionCapabilityFallback: sessionGoalActionCapabilityFallback,
             currentObjective: sessionGoalObjective,
+            ...(openAgentActivityRoster ? { onOpenFullRoster: openAgentActivityRoster } : null),
             onSetGoal: setSessionGoalForView,
             onClearGoal: clearSessionGoalForView,
         });
-    }, [canEditSessionGoals, clearSessionGoalForView, sessionGoalActionCapabilityFallback, sessionGoalObjective, sessionWorkStateSnapshot, setSessionGoalForView]);
-    // UIW2: the SINGLE compact above-AgentInput badge seam. Goal/task/todo priority is delegated to
-    // the protocol resolver inside `resolveSessionActivityStatusBadgePresentation`; workflow headline
-    // composition is layered on top. There is no second badge path that recomputes priority.
+    }, [canEditSessionGoals, clearSessionGoalForView, openAgentActivityRoster, sessionGoalActionCapabilityFallback, sessionGoalObjective, sessionId, sessionWorkStateSnapshot, setSessionGoalForView]);
+    // The SINGLE compact above-AgentInput chip. Goal/task/todo priority is delegated to the
+    // protocol resolver inside `resolveSessionActivityStatusBadgePresentation`; live work is
+    // composed from the ONE unified agent-activity tally this subtree already derives, which is
+    // what makes the chip, the popover it opens, the header glyph and the Agents tab badge
+    // structurally incapable of reporting different numbers. There is no second badge path.
     const sessionWorkStateBadges = React.useMemo<ReadonlyArray<AgentInputStatusBadge>>(() => {
         const presentation = resolveSessionActivityStatusBadgePresentation({
             workStateSnapshot: sessionWorkStateSnapshot,
-            workflowHeadline: sessionWorkflowActivity.headline,
-            loadedWorkflowRunsById: sessionWorkflowActivity.loadedRunsById,
+            agentActivityCounts,
             activeStatusBadgeKey,
             editableGoal: canEditSessionGoals,
             translateWorkState: t,
-            translateWorkflow: {
-                goalActive: () => t('session.workState.workflow.goalActive'),
-                goalLabel: (params) => t('session.workState.workflow.goalLabel', params),
-                workflowAgentsFallback: (params) => t('session.workState.workflow.agentsFallback', params),
-                workflowBare: () => t('session.workState.workflow.bare'),
-                workflowPhaseLabel: (params) => t('session.workState.workflow.phaseLabel', params),
-                workflowsPlural: (params) => t('session.workState.workflow.plural', params),
-                workflowsPluralWithAgents: (params) => t('session.workState.workflow.pluralWithAgents', params),
-                join: (params) => t('session.workState.workflow.join', params),
-            },
+            // Resolved by the presentation owner, not spelled here: the session-list row says this
+            // same sentence, and two hosts binding their own keys is how the row came to understate
+            // a five-agent workflow as "1 agent working" while the chip said something else.
+            translateActivity: resolveSessionActivityComposerTranslate(),
         });
         if (!presentation) return [];
         const iconName = presentation.iconKind === 'goal'
             ? 'crosshair'
-            : presentation.iconKind === 'workflow'
-                ? 'graph'
-                : presentation.iconKind === 'permission'
-                    ? 'warning-circle'
-                    : 'list';
+            : presentation.iconKind === 'agent'
+                ? 'robot'
+                : 'list';
         return [{
             key: SESSION_WORK_STATE_STATUS_BADGE_KEY,
             label: presentation.label,
             testID: 'session-work-state-status-badge',
-            accessibilityLabel: t('session.workState.accessibilityLabel'),
+            // The live state, not the name of the surface: `AgentInputStatusBadge` resolves its
+            // accessible name as `accessibilityLabel ?? label`, so a static string here REPLACES
+            // the visible one and this chip is the only composer carrier of agent activity (R-12).
+            accessibilityLabel: presentation.accessibilityLabel,
             tone: presentation.tone,
             emphasis: presentation.emphasis,
             icon: (tint) => <Icon name={iconName} size={14} color={tint} />,
@@ -2570,17 +2622,18 @@ function SessionViewLoaded({
                 <SessionWorkStatePopover
                     open={open}
                     anchorRef={anchorRef}
+                    sessionId={sessionId}
                     snapshot={sessionWorkStateSnapshot}
-                    workflowActivity={sessionWorkflowActivity}
                     editableGoal={canEditSessionGoals}
                     goalActionCapabilityFallback={sessionGoalActionCapabilityFallback}
+                    {...(openAgentActivityRoster ? { onOpenFullRoster: openAgentActivityRoster } : null)}
                     onRequestClose={onRequestClose}
                     onSetGoal={canEditSessionGoals ? setSessionGoalForView : undefined}
                     onClearGoal={canEditSessionGoals ? clearSessionGoalForView : undefined}
                 />
             ),
         }];
-    }, [activeStatusBadgeKey, canEditSessionGoals, clearSessionGoalForView, sessionGoalActionCapabilityFallback, sessionWorkStateSnapshot, sessionWorkflowActivity, setSessionGoalForView]);
+    }, [activeStatusBadgeKey, agentActivityCounts, canEditSessionGoals, clearSessionGoalForView, openAgentActivityRoster, sessionGoalActionCapabilityFallback, sessionId, sessionWorkStateSnapshot, setSessionGoalForView]);
     const usageLimitRecoveryCheckNowAgentId = React.useMemo(() => (
         resolveAgentIdFromFlavor(session.lastRuntimeIssue?.provider)
         ?? resolveAgentIdFromSessionMetadata(session.metadata)
@@ -3289,14 +3342,18 @@ function SessionViewLoaded({
         usageLimitStatusBadgePresentation,
     ]);
     React.useEffect(() => {
+        // The tally, not a boolean this host derives: `counts.live > 0` here was a SECOND answer to
+        // the question the chip above already answers, and on a run whose named agents have all
+        // finished the two disagreed — this effect closed the open work-state popover while the chip
+        // stayed on screen naming the workflow (FIX-F1).
         if (shouldRetainSessionActivityStatusBadge({
             activeStatusBadgeKey,
             hasPrimaryWorkStateItem: Boolean(primaryWorkStateItem),
             canShowEmptyGoalControls: canEditSessionGoals,
-            hasActiveWorkflowRuns: sessionWorkflowActivity.activeRuns.length > 0,
+            agentActivityCounts,
         })) return;
         setActiveStatusBadgeKey(null);
-    }, [activeStatusBadgeKey, canEditSessionGoals, primaryWorkStateItem, sessionWorkflowActivity.activeRuns.length]);
+    }, [activeStatusBadgeKey, agentActivityCounts, canEditSessionGoals, primaryWorkStateItem]);
     const isVoiceConversationSession = isVoiceConversationSystemSessionMetadata(session.metadata ?? null);
     const isHiddenSystemSessionSession = isHiddenSystemSession({ metadata: session.metadata ?? null });
     const modelMode = liveComposerState.modelMode;

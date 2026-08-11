@@ -18,6 +18,7 @@ function resolvePillVariant(tone: AgentInputStatusBadgeTone): StatusPillVariant 
     if (tone === 'active') return 'info';
     if (tone === 'complete') return 'success';
     if (tone === 'warning') return 'warning';
+    if (tone === 'danger') return 'danger';
     // `paused` reads as a muted, inactive state — the neutral pill, same as `neutral`.
     return 'neutral';
 }

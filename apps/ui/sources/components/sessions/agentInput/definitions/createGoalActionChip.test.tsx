@@ -51,6 +51,7 @@ describe('createGoalActionChip', () => {
         const onSetGoal = vi.fn();
         const onClearGoal = vi.fn();
         const chip = createGoalActionChip({
+        sessionId: 'sess_1',
             snapshot: SNAPSHOT,
             editableGoal: true,
             currentObjective: 'Ship goals',
@@ -101,6 +102,7 @@ describe('createGoalActionChip', () => {
     it('renders the goal glyph without a visible set-goal label when no objective is set', async () => {
         const { createGoalActionChip } = await import('./createGoalActionChip');
         const chip = createGoalActionChip({
+        sessionId: 'sess_1',
             snapshot: null,
             editableGoal: true,
             currentObjective: null,
@@ -130,7 +132,8 @@ describe('createGoalActionChip', () => {
     // goal so screen-reader users can tell the two states apart.
     function renderChip(currentObjective: string | null, editableGoal = true) {
         return import('./createGoalActionChip').then(({ createGoalActionChip }) => {
-            const chip = createGoalActionChip({ snapshot: null, editableGoal, currentObjective });
+            const chip = createGoalActionChip({
+        sessionId: 'sess_1', snapshot: null, editableGoal, currentObjective });
             return renderScreen(
                 <React.Fragment>
                     {chip.render({

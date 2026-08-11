@@ -16,6 +16,11 @@ import {
 import type { SessionListRenderableSession } from './sessionListRenderable';
 import { resolveSessionReadStateAction } from '../readState/sessionReadState';
 import type { Session } from '@/sync/domains/state/storageTypes';
+// The entry id is asked of the protocol owner, not spelled here. This projection joins the
+// published headline by id, so a hand-written literal is a copy of the wire format that keeps
+// passing after the real one moves.
+import { buildAgentActivityEntryId } from '@happier-dev/protocol';
+import { EMPTY_AGENT_ACTIVITY_COUNTS } from '@/sync/domains/session/agentActivity/deriveAgentActivityCounts';
 
 const storageState = vi.hoisted(() => ({
     sessionMessages: {} as Record<string, unknown>,
@@ -137,6 +142,83 @@ describe('preserveSessionListRenderableStaleFields', () => {
 });
 
 describe('buildSessionListRenderableFromSession', () => {
+    /**
+     * The count has to be projected here or it cannot exist at all: a session-list row is handed
+     * this narrow object and never the session's real metadata, so a count read at the row would be
+     * permanently zero on every virtualized list. It is derived from the published headline through
+     * the one activity counter, so the number a row shows is the number the session's own pane
+     * shows.
+     */
+    describe('agent activity count projection (R-8)', () => {
+        function buildWithHeadline(activeStatuses: readonly string[]) {
+            return buildSessionListRenderableFromSession({
+                id: 's_agent_activity',
+                seq: 4,
+                createdAt: 1,
+                updatedAt: 1,
+                active: true,
+                activeAt: 1,
+                archivedAt: null,
+                metadataVersion: 1,
+                agentState: null,
+                agentStateVersion: 0,
+                thinking: false,
+                thinkingAt: 0,
+                presence: 'online',
+                metadata: {
+                    path: '/repo',
+                    sessionAgentActivityHeadlineV1: {
+                        v: 1,
+                        backendId: 'claude',
+                        updatedAt: 1_000,
+                        activeEntries: activeStatuses.map((status, index) => ({
+                            entryId: buildAgentActivityEntryId({
+                                kind: 'workflow_agent',
+                                runId: 'run_1',
+                                agentId: `a${index}`,
+                            }),
+                            kind: 'workflow_agent',
+                            title: `Agent ${index}`,
+                            status,
+                            updatedAt: 1_000,
+                        })),
+                    },
+                },
+            } as unknown as Session);
+        }
+
+        it('projects how many agents are still working', () => {
+            expect(buildWithHeadline(['running', 'queued', 'succeeded']).metadata?.agentActivityCounts)
+                .toMatchObject({ live: 2, liveSubagents: 2 });
+        });
+
+        it('counts an agent stopped on a person, which is still an open agent', () => {
+            expect(buildWithHeadline(['waiting']).metadata?.agentActivityCounts)
+                .toMatchObject({ live: 1, liveSubagents: 1 });
+        });
+
+        it('projects zero for a session that has published no headline', () => {
+            const renderable = buildSessionListRenderableFromSession({
+                id: 's_no_headline',
+                seq: 4,
+                createdAt: 1,
+                updatedAt: 1,
+                active: true,
+                activeAt: 1,
+                archivedAt: null,
+                metadataVersion: 1,
+                agentState: null,
+                agentStateVersion: 0,
+                thinking: false,
+                thinkingAt: 0,
+                presence: 'online',
+                metadata: { path: '/repo' },
+            } as unknown as Session);
+
+            expect(renderable.metadata?.agentActivityCounts).toEqual(EMPTY_AGENT_ACTIVITY_COUNTS);
+        });
+    });
+
     it('treats terminal turn projection as authoritative over legacy thinking in renderable state', () => {
         const renderable = buildSessionListRenderableFromSession({
             id: 's_terminal_thinking',

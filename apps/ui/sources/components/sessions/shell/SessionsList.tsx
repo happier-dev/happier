@@ -802,6 +802,7 @@ export const SessionsListContent = React.memo(function SessionsListContent(props
         storageKind: props.storageKind,
     });
     const sessionListWorkingIndicatorStyle = useSetting('sessionListNarrowWorkingIndicatorStyle');
+    const sessionListAgentActivityCountEnabled = useSetting('sessionListAgentActivityCountEnabled');
     const sessionListIdentityDisplay = useSetting('sessionListIdentityDisplay');
     const sessionListActiveColorMode = useSetting('sessionListActiveColorModeV1');
     const sessionListSectionModeRaw = useSetting('sessionListSectionModeV1');
@@ -1095,6 +1096,7 @@ export const SessionsListContent = React.memo(function SessionsListContent(props
             hideInactiveSessions,
             showServerBadge,
             showPinnedServerBadge,
+            agentActivityCountEnabled: sessionListAgentActivityCountEnabled === true,
             tagsEnabled: sessionTagsEnabled === true,
             sessionTagsByKey: sessionTagsV1 ?? EMPTY_SESSION_TAGS_BY_KEY,
             allKnownTags,
@@ -1118,6 +1120,7 @@ export const SessionsListContent = React.memo(function SessionsListContent(props
         hideInactiveSessions,
         pinnedKeyList,
         reachableSessionDisplayByKeyRecord,
+        sessionListAgentActivityCountEnabled,
         sessionListActiveColorMode,
         sessionListIdentityDisplay,
         sessionListWorkingIndicatorStyle,

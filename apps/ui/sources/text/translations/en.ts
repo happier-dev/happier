@@ -1138,7 +1138,7 @@ export const en = {
         online: 'online',
         working: 'working...',
         workingRetained: 'working, awaiting updates…',
-        backgroundActive: 'working in background',
+        backgroundActive: ({ count }: { count: number }) => `${count} running in background`,
         activityUnknown: 'activity status unavailable',
         readyForReview: 'ready for review',
         offline: 'offline',
@@ -4718,7 +4718,6 @@ export const en = {
             statusExhausted: 'Group exhausted',
         },
         workState: {
-            accessibilityLabel: 'Session work state',
             commandDescription: 'Set or inspect the session goal',
             unsupportedTitle: 'Goal unavailable',
             unsupportedMessage: 'This backend does not support editable session goals yet.',
@@ -4743,18 +4742,12 @@ export const en = {
                 blockedPaused: 'Blocked or paused',
                 done: 'Complete or cancelled',
             },
+            activity: {
+                sectionTitle: 'Running now',
+                openFullRoster: 'Open all agents',
+            },
             workflow: {
-                sectionTitle: 'Active workflows',
-                goalActive: 'Goal active',
-                goalLabel: ({ title }: { title: string }) => `Goal: ${title}`,
-                bare: 'Workflow',
-                agentsFallback: ({ fraction }: { fraction: string }) => `Workflow ${fraction} agents`,
-                olderRunsHidden: ({ count }: { count: number }) => `${count} older runs not shown`,
-                phaseLabel: ({ title, fraction }: { title: string; fraction: string }) => `${title} ${fraction}`,
-                plural: ({ count }: { count: number }) => `${count} workflows`,
-                pluralWithAgents: ({ count, agents }: { count: number; agents: number }) => `${count} workflows · ${agents} agents`,
                 join: ({ left, right }: { left: string; right: string }) => `${left} · ${right}`,
-                permissionBlocked: 'Needs review',
             },
             goal: {
                 title: 'Goal',
@@ -4874,20 +4867,46 @@ export const en = {
         // Agent-activity row vocabulary. Status is rendered as a translated word, never as a raw
         // enum, so colour is never the only carrier of an abnormal state.
         agentActivity: {
+            composer: {
+                workflowsWithAgents: ({ workflows, agents }: { workflows: number; agents: number }) =>
+                    `${workflows} ${workflows === 1 ? 'workflow' : 'workflows'}, ${agents} ${agents === 1 ? 'agent' : 'agents'}`,
+                workflowsRunning: ({ count }: { count: number }) => (count === 1 ? '1 workflow running' : `${count} workflows running`),
+                subagentsWorking: ({ count }: { count: number }) => (count === 1 ? '1 subagent working' : `${count} subagents working`),
+                backgroundTasksRunning: ({ count }: { count: number }) => (count === 1 ? '1 background command running' : `${count} background commands running`),
+            },
             untitled: 'Unnamed agent',
             menuTitle: 'Agent actions',
             row: {
                 a11yLabel: ({ title, status }: { title: string; status: string }) => `${title}, ${status}`,
+                expand: ({ title }: { title: string }) => `Show recent activity for ${title}`,
+                collapse: ({ title }: { title: string }) => `Hide recent activity for ${title}`,
             },
             staleness: {
                 quiet: 'No recent update',
-                stale: ({ minutes }: { minutes: number }) => `No update in ${minutes} min`,
+                stale: ({ minutes }: { minutes: number }) => `No update for over ${minutes} min`,
+            },
+            // The session fact, stated ONCE beside the work rather than rewritten into every row
+            // (RULING-16). Each line reports what the runtime told us and hedges only the part we
+            // genuinely cannot observe — never "these agents failed", which nothing has said.
+            sessionNotice: {
+                stopped: 'This session stopped — anything still shown may no longer be running.',
+                stoppedAuth: 'This session stopped because its sign-in expired — anything still shown may no longer be running.',
+                unobserved: 'This session is no longer being observed — anything still shown may no longer be running.',
+            },
+            backgroundTask: {
+                title: 'Background command',
+                statusWithDuration: ({ status, duration }: { status: string; duration: string }) => `${status} · ${duration}`,
+                openCommand: 'Open the command in the transcript',
+            },
+            preview: {
+                openDetails: 'Open details',
+                empty: 'Nothing recorded yet',
             },
             status: {
                 queued: 'Queued',
                 starting: 'Starting',
                 running: 'Running',
-                waiting: 'Needs you',
+                waiting: 'Awaiting approval',
                 blocked: 'Blocked',
                 succeeded: 'Succeeded',
                 failed: 'Failed',
@@ -4912,11 +4931,10 @@ export const en = {
                 deleteConfirmAction: 'Delete',
                 deleteTeam: 'Delete team',
                 deleteTeamConfirmTitle: 'Delete this team?',
-                deleteTeamConfirmMessage: 'Every teammate in this team is shut down. This cannot be undone.',
+                deleteTeamConfirmMessage: 'Every teammate in this team will be shut down. This cannot be undone.',
                 deleteTeamConfirmAction: 'Delete team',
             },
             section: {
-                needsYou: 'Needs you',
                 working: 'Working',
                 finished: 'Finished',
             },
@@ -5663,7 +5681,6 @@ export const en = {
         },
         attentionSectionTitle: 'Needs attention',
         workingSectionTitle: 'Working',
-        backgroundWorkingSectionTitle: 'Working in background',
         hideInactiveSessions: 'Hide inactive sessions',
         showInactiveSessions: 'Show inactive sessions',
     },
@@ -6116,7 +6133,14 @@ export const en = {
             elapsedSeconds: ({ seconds }: { seconds: string }) => `${seconds}s`,
             unknownToolTitle: 'Tool',
         },
+        taskOutputView: {
+            waitingForTask: 'Waiting for the background task to finish.',
+        },
+        taskStopView: {
+            stoppedCommandLabel: 'Stopped command',
+        },
         bashView: {
+            backgroundNotice: 'Sent to the background — this step does not wait for it to finish.',
             commandDiffTitle: 'Raw command',
             commandDiffHint: 'The command preview hides a short environment-cleanup prefix to keep it readable. The full raw command is shown below.',
         },
@@ -6265,6 +6289,8 @@ export const en = {
             question: 'Question',
             changeTitle: 'Change Title',
             switchMode: 'Switch mode',
+            taskOutput: 'Task output',
+            taskStop: 'Stop task',
         },
         geminiExecute: {
             cwd: ({ cwd }: { cwd: string }) => `📁 ${cwd}`,
@@ -7146,6 +7172,9 @@ settingsSession: {
 	              tagsTitle: 'Session tags',
 	              tagsEnabledSubtitle: 'Tag controls visible in the session list',
 	              tagsDisabledSubtitle: 'Tag controls hidden',
+               agentActivityCountTitle: 'Agent count in rows',
+               agentActivityCountEnabledSubtitle: 'Show how many agents are working on each session',
+               agentActivityCountDisabledSubtitle: 'Keep session rows free of agent counts',
 	              workingStatusAnimatedTextTitle: 'Animated working text',
 	              workingStatusAnimatedTextEnabledSubtitle: 'Rotate working verbs while a session is running',
 	              workingStatusAnimatedTextDisabledSubtitle: 'Show a steady working... label while a session is running',

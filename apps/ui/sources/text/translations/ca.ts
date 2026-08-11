@@ -1230,7 +1230,7 @@ export const ca: TranslationStructure = {
         online: 'en línia',
         working: 'treballant...',
         workingRetained: 'treballant, esperant actualitzacions…',
-        backgroundActive: 'tasques en segon pla en execució',
+        backgroundActive: ({ count }: { count: number }) => `${count} en execució en segon pla`,
         activityUnknown: "l'estat de l'activitat no està disponible",
         readyForReview: 'a punt per revisar',
         offline: 'fora de línia',
@@ -4736,7 +4736,6 @@ deps: {
             statusExhausted: 'Grup esgotat',
         },
         workState: {
-            accessibilityLabel: 'Estat de treball de la sessió',
             commandDescription: 'Defineix o consulta l’objectiu de la sessió',
             unsupportedTitle: 'Objectiu no disponible',
             unsupportedMessage: 'Aquest backend encara no admet objectius de sessió editables.',
@@ -4761,18 +4760,12 @@ deps: {
                 blockedPaused: 'Bloquejat o en pausa',
                 done: 'Completat o cancel·lat',
             },
+            activity: {
+                sectionTitle: "En execució ara",
+                openFullRoster: "Obre tots els agents",
+            },
             workflow: {
-                sectionTitle: 'Fluxos de treball actius',
-                goalActive: 'Objectiu actiu',
-                goalLabel: ({ title }: { title: string }) => `Objectiu: ${title}`,
-                bare: 'Flux de treball',
-                agentsFallback: ({ fraction }: { fraction: string }) => `Flux de treball ${fraction} agents`,
-                olderRunsHidden: ({ count }: { count: number }) => `${count} execucions anteriors ocultes`,
-                phaseLabel: ({ title, fraction }: { title: string; fraction: string }) => `${title} ${fraction}`,
-                plural: ({ count }: { count: number }) => `${count} fluxos de treball`,
-                pluralWithAgents: ({ count, agents }: { count: number; agents: number }) => `${count} fluxos de treball · ${agents} agents`,
                 join: ({ left, right }: { left: string; right: string }) => `${left} · ${right}`,
-                permissionBlocked: 'Cal revisió',
             },
             goal: {
                 title: 'Objectiu',
@@ -4892,20 +4885,43 @@ deps: {
                 // Agent-activity row vocabulary. Status is rendered as a translated word, never as a raw
                 // enum, so colour is never the only carrier of an abnormal state.
                 agentActivity: {
+                    composer: {
+                        workflowsWithAgents: ({ workflows, agents }: { workflows: number; agents: number }) =>
+                            `${workflows} ${workflows === 1 ? 'flux de treball' : 'fluxos de treball'}, ${agents} ${agents === 1 ? 'agent' : 'agents'}`,
+                        workflowsRunning: ({ count }: { count: number }) => (count === 1 ? '1 flux de treball en curs' : `${count} fluxos de treball en curs`),
+                        subagentsWorking: ({ count }: { count: number }) => (count === 1 ? '1 subagent treballant' : `${count} subagents treballant`),
+                        backgroundTasksRunning: ({ count }: { count: number }) => (count === 1 ? '1 ordre en segon pla en curs' : `${count} ordres en segon pla en curs`),
+                    },
                     untitled: "Agent sense nom",
                     menuTitle: "Accions de l’agent",
                     row: {
                         a11yLabel: ({ title, status }: { title: string; status: string }) => `${title}, ${status}`,
+                        expand: ({ title }: { title: string }) => `Mostra l’activitat recent de ${title}`,
+                        collapse: ({ title }: { title: string }) => `Amaga l’activitat recent de ${title}`,
                     },
                     staleness: {
                         quiet: "Sense actualitzacions recents",
-                        stale: ({ minutes }: { minutes: number }) => `Sense actualitzacions des de fa ${minutes} min`,
+                        stale: ({ minutes }: { minutes: number }) => `Sense actualitzacions des de fa més de ${minutes} min`,
+                    },
+                    sessionNotice: {
+                        stopped: "Aquesta sessió s'ha aturat: és possible que el que es mostra ja no s'estigui executant.",
+                        stoppedAuth: "Aquesta sessió s'ha aturat perquè ha caducat l'inici de sessió: és possible que el que es mostra ja no s'estigui executant.",
+                        unobserved: "Aquesta sessió ja no s'observa: és possible que el que es mostra ja no s'estigui executant.",
+                    },
+                    backgroundTask: {
+                        title: 'Ordre en segon pla',
+                        statusWithDuration: ({ status, duration }: { status: string; duration: string }) => `${status} · ${duration}`,
+                        openCommand: 'Obre l’ordre a la transcripció',
+                    },
+                    preview: {
+                        openDetails: 'Obre els detalls',
+                        empty: 'Encara no hi ha res registrat',
                     },
                     status: {
                         queued: "A la cua",
                         starting: "Iniciant",
                         running: "En execució",
-                        waiting: "Et necessita",
+                        waiting: "Esperant aprovació",
                         blocked: "Bloquejat",
                         succeeded: "Completat",
                         failed: "Ha fallat",
@@ -4934,7 +4950,6 @@ deps: {
                         deleteTeamConfirmAction: "Suprimeix l'equip",
                     },
                     section: {
-                        needsYou: "Et necessiten",
                         working: "En curs",
                         finished: "Finalitzats",
                     },
@@ -5682,7 +5697,6 @@ deps: {
         },
         attentionSectionTitle: 'Requereix atenció',
         workingSectionTitle: 'Treballant',
-        backgroundWorkingSectionTitle: 'Treballant en segon pla',
         hideInactiveSessions: 'Amaga sessions inactives',
         showInactiveSessions: 'Mostra sessions inactives',
     },
@@ -6133,7 +6147,14 @@ deps: {
               elapsedSeconds: ({ seconds }: { seconds: string }) => `${seconds}s`,
               unknownToolTitle: 'Eina',
           },
+          taskOutputView: {
+              waitingForTask: 'S’està esperant que acabi la tasca en segon pla.',
+          },
+          taskStopView: {
+              stoppedCommandLabel: 'Comanda aturada',
+          },
           bashView: {
+              backgroundNotice: 'Enviada a segon pla: aquest pas no espera que acabi.',
               commandDiffTitle: 'Comanda en brut',
               commandDiffHint: 'La previsualització de la comanda amaga un prefix curt de neteja de l’entorn per mantenir-la llegible. La comanda en brut completa es mostra a continuació.',
           },
@@ -6281,6 +6302,8 @@ deps: {
             question: 'Pregunta',
             changeTitle: 'Canvia el títol',
             switchMode: 'Canvia el mode',
+            taskOutput: 'Sortida de la tasca',
+            taskStop: 'Atura la tasca',
         },
         geminiExecute: {
             cwd: ({ cwd }: { cwd: string }) => `📁 ${cwd}`,
@@ -7161,6 +7184,9 @@ settingsSession: {
 	                tagsTitle: 'Etiquetes de sessió',
 	                tagsEnabledSubtitle: 'Controls d\'etiquetes visibles a la llista de sessions',
 	                tagsDisabledSubtitle: 'Controls d\'etiquetes ocults',
+                 agentActivityCountTitle: 'Recompte d’agents a les files',
+                 agentActivityCountEnabledSubtitle: 'Mostra quants agents treballen a cada sessió',
+                 agentActivityCountDisabledSubtitle: 'Manté les files sense recomptes d’agents',
 	                workingStatusAnimatedTextTitle: 'Text de treball animat',
 	                workingStatusAnimatedTextEnabledSubtitle: 'Alterna verbs de treball mentre una sessió s’executa',
 	                workingStatusAnimatedTextDisabledSubtitle: 'Mostra una etiqueta fixa de treballant... mentre una sessió s’executa',

@@ -3,6 +3,10 @@ import { describe, expect, it } from 'vitest';
 import type { Message } from '@/sync/domains/messages/messageTypes';
 import type { SessionListViewItem } from '@/sync/domains/session/listing/sessionListViewData';
 import type { SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
+import {
+    EMPTY_AGENT_ACTIVITY_COUNTS,
+    type AgentActivityCounts,
+} from '@/sync/domains/session/agentActivity/deriveAgentActivityCounts';
 import type { SessionMessages } from '@/sync/store/domains/messages';
 import type { SessionPending } from '@/sync/store/domains/pending';
 import { createReducer } from '@/sync/reducer/reducer';
@@ -138,6 +142,7 @@ function createSettings(
         hideInactiveSessions: false,
         showServerBadge: false,
         showPinnedServerBadge: true,
+        agentActivityCountEnabled: false,
         tagsEnabled: true,
         sessionTagsByKey: {},
         allKnownTags: [],
@@ -435,7 +440,8 @@ describe('buildSessionListRowModel', () => {
         expect(model.pendingCount).toBe(2);
         expect(model.presentation.attentionIndicator).toBe('working');
         expect(model.presentation.secondaryLine).toBe('status');
-        expect(model.presentation.statusTextKey).toBe('status.backgroundActive');
+        expect(model.presentation.backgroundActivityStatusLine).toBe(true);
+        expect(model.presentation.statusTextKey).toBeUndefined();
         expect(model.workingIndicatorPaused).toBe(false);
     });
 
@@ -462,7 +468,7 @@ describe('buildSessionListRowModel', () => {
         });
 
         expect(model.status.state).toBe('disconnected');
-        expect(model.presentation.statusTextKey).not.toBe('status.backgroundActive');
+        expect(model.presentation.backgroundActivityStatusLine).toBeUndefined();
     });
 
     it('keeps explicit unknown activity quiet', () => {
@@ -494,13 +500,40 @@ describe('buildSessionListRowModel', () => {
         expect(model.workingIndicatorPaused).toBe(false);
     });
 
-    it('does not schedule a clock refresh for detached activity', () => {
+    it('schedules exactly one clock refresh for detached activity: the instant its evidence expires', () => {
+        // Was: "does not schedule a clock refresh for detached activity". Background activity can
+        // now go quiet, so the row that shows it has to be woken when it does — otherwise the
+        // freshness gate only takes effect the next time something unrelated re-renders, which is
+        // how a dead session kept saying "running in background" forever. One wake, on the newest
+        // witness, not one per signal.
         const model = buildSessionListRowModel({
             item: createSessionItem(createRenderable('s1', {
                 active: true,
+                activeAt: NOW_MS - 15_000,
                 runtimeActivityState: 'active',
                 runtimeActivityActiveCount: 1,
                 runtimeActivityObservedAt: NOW_MS - 1_000,
+                runtimeActivityRevision: 4,
+            }), { groupKind: 'date' }),
+            state: {},
+            dataIndex: 0,
+            isFirst: true,
+            isLast: true,
+            isSingle: true,
+            settings: createSettings({ runtimeNowMs: NOW_MS }),
+        });
+
+        expect(model.nextRuntimeFreshnessAtMs).toBe(NOW_MS - 1_000 + 120_000);
+    });
+
+    it('does not schedule a clock refresh once nothing witnesses the detached activity', () => {
+        const model = buildSessionListRowModel({
+            item: createSessionItem(createRenderable('s1', {
+                active: true,
+                activeAt: NOW_MS - 300_000,
+                runtimeActivityState: 'active',
+                runtimeActivityActiveCount: 1,
+                runtimeActivityObservedAt: NOW_MS - 300_000,
                 runtimeActivityRevision: 4,
             }), { groupKind: 'date' }),
             state: {},
@@ -826,5 +859,68 @@ describe('buildSessionListRowModel', () => {
 
         expect(unblockedModel.pendingBlockedCount).toBe(0);
         expect(unblockedModel.attention.listState).toBe('pending');
+    });
+
+    /**
+     * A list row never holds a session's real metadata, only the narrow renderable projection, so
+     * the count has to travel on that projection. A test that fed a full `Session` here would pass
+     * while every real virtualized row silently reported zero.
+     */
+    describe('agent activity count (R-8)', () => {
+        function renderableWithCounts(counts: Partial<AgentActivityCounts>): SessionListRenderableSession {
+            const base = createRenderable('s-agents');
+            return {
+                ...base,
+                metadata: {
+                    ...base.metadata!,
+                    agentActivityCounts: { ...EMPTY_AGENT_ACTIVITY_COUNTS, ...counts },
+                },
+            };
+        }
+
+        function buildWithSetting(enabled: boolean, counts: Partial<AgentActivityCounts>) {
+            return buildSessionListRowModel({
+                item: createSessionItem(renderableWithCounts(counts)),
+                dataIndex: 0,
+                isFirst: true,
+                isLast: true,
+                isSingle: true,
+                settings: createSettings({ agentActivityCountEnabled: enabled }),
+            });
+        }
+
+        it('says nothing while the opt-in setting is off, which is the default', () => {
+            expect(createSettings().agentActivityCountEnabled).toBe(false);
+            expect(buildWithSetting(false, { live: 3, liveSubagents: 3 }).agentActivityLabel).toBeNull();
+        });
+
+        it('names the session\'s live agents once the setting is on', () => {
+            expect(buildWithSetting(true, { live: 3, liveSubagents: 3 }).agentActivityLabel)
+                .toBe('3 subagents working');
+        });
+
+        /**
+         * RULING-10 at the row.
+         *
+         * The row understated a five-agent workflow exactly as the chip did — one number through one
+         * noun, "1 agent working" — because it read a scalar rather than the description. It now
+         * composes through the same owner as the chip, so the two cannot disagree about the same
+         * session.
+         */
+        it('states a workflow and its agent complement, exactly as the composer chip does', () => {
+            expect(buildWithSetting(true, { live: 1, liveWorkflowRuns: 1, liveWorkflowAgents: 5 }).agentActivityLabel)
+                .toBe('1 workflow, 5 agents');
+        });
+
+        it('says nothing for a session with no published activity', () => {
+            expect(buildSessionListRowModel({
+                item: createSessionItem(createRenderable('s-quiet')),
+                dataIndex: 0,
+                isFirst: true,
+                isLast: true,
+                isSingle: true,
+                settings: createSettings({ agentActivityCountEnabled: true }),
+            }).agentActivityLabel).toBeNull();
+        });
     });
 });

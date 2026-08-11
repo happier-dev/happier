@@ -21,13 +21,17 @@ const GOAL_CHIP_KEY = 'session-goal';
  * AgentInput primary-line chip that surfaces the session goal and opens the shared work-state goal
  * popover (set/edit/pause/resume/complete/clear) anchored to the chip. It is an additional entry
  * point alongside the above-input work-state badge; both share `SessionWorkStateContent` so there is
- * one editable-goal implementation.
+ * one editable-goal implementation — and, since r4.1, one live-activity section, so the two entry
+ * points cannot disagree about what the session is working on.
  */
 export function createGoalActionChip(params: Readonly<{
+    sessionId: string;
     snapshot: SessionWorkStateSnapshot | null;
     editableGoal: boolean;
     goalActionCapabilityFallback?: GoalActionCapabilities | null;
     currentObjective: string | null;
+    /** Opens the expanded monitoring surface from the activity section. */
+    onOpenFullRoster?: () => void;
     onSetGoal?: (request: SessionWorkStateGoalSetRequest) => Promise<SessionWorkStateGoalOperationResult>;
     onClearGoal?: () => Promise<SessionWorkStateGoalOperationResult>;
 }>): AgentInputExtraActionChip {
@@ -57,6 +61,8 @@ export function createGoalActionChip(params: Readonly<{
             reserveKeyboardInset: true,
             renderContent: ({ requestClose }) => (
                 <SessionWorkStateContent
+                    sessionId={params.sessionId}
+                    {...(params.onOpenFullRoster ? { onOpenFullRoster: params.onOpenFullRoster } : null)}
                     snapshot={params.snapshot}
                     editableGoal={params.editableGoal}
                     goalActionCapabilityFallback={params.goalActionCapabilityFallback ?? null}

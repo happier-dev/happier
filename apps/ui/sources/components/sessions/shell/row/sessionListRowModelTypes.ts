@@ -45,6 +45,12 @@ export type SessionListRowPresentationSettings = Readonly<{
     hideInactiveSessions: boolean;
     showServerBadge: boolean;
     showPinnedServerBadge: boolean;
+    /**
+     * Opt-in, OFF by default (R-8). A count on every row is a number a person did not ask for on a
+     * surface they scan rather than read, so the row model always carries it and the setting decides
+     * whether it is drawn.
+     */
+    agentActivityCountEnabled: boolean;
     tagsEnabled: boolean;
     sessionTagsByKey: Readonly<Record<string, readonly string[]>>;
     allKnownTags: readonly string[];
@@ -101,6 +107,16 @@ export type SessionListRowModel = Readonly<{
     hasUnreadMessages: boolean;
     pendingCount: number;
     pendingBlockedCount: number;
+    /**
+     * What agent work is live in this session, in the same words the composer chip uses.
+     *
+     * Always composed when the setting is on and always `null` when it is off, so a row never
+     * carries a sentence the list is not drawing. Built from the session's published headline —
+     * the only agent-activity source a list row can afford (see
+     * `countSessionAgentActivityFromMetadata`) — through the chip's own label owner, because a row
+     * that reduced it to one integer said "1 agent working" about a five-agent workflow.
+     */
+    agentActivityLabel: string | null;
     tags: readonly string[];
     allKnownTags: readonly string[];
     tagsEnabled: boolean;

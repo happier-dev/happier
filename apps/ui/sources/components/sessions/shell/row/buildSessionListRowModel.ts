@@ -17,6 +17,12 @@ import {
 import {
     resolveNextSessionRuntimePresentationFreshnessAtMs,
 } from '@/sync/domains/session/attention/deriveSessionRuntimePresentationState';
+import { countSessionAgentActivityFromMetadata } from '@/sync/domains/session/agentActivity/countSessionAgentActivityFromMetadata';
+import type { AgentActivityCounts } from '@/sync/domains/session/agentActivity/deriveAgentActivityCounts';
+import {
+    formatSessionAgentActivityLabel,
+    resolveSessionActivityComposerTranslate,
+} from '@/components/sessions/workState/sessionActivityPresentation';
 import { formatShortRelativeTimeAt } from '@/utils/time/formatShortRelativeTime';
 import { t } from '@/text';
 import { sessionTagKey } from '../sessionTagUtils';
@@ -192,6 +198,20 @@ function resolveHasUnreadMessages(
     return (session as SessionListRenderableSession).hasUnreadMessages === true;
 }
 
+/**
+ * What agent work is live, from whichever shape of session this row was handed.
+ *
+ * A renderable-backed row carries the tally already projected (see `SessionListRenderableMetadata`),
+ * which is the path every virtualized list row takes. A row backed by a full store session — the
+ * fallback when no renderable exists — computes it from real metadata through the same owner, so the
+ * two paths cannot produce different numbers.
+ */
+function readSessionAgentActivityCounts(session: SessionStatusSource): AgentActivityCounts {
+    const projected = (session as SessionListRenderableSession).metadata?.agentActivityCounts;
+    if (projected) return projected;
+    return countSessionAgentActivityFromMetadata((session as Session).metadata);
+}
+
 function resolveNextRuntimeFreshnessAtMs(session: SessionStatusSource, nowMs: number): number | null {
     if (session.active !== true || session.presence !== 'online') return null;
     return resolveNextSessionRuntimePresentationFreshnessAtMs({
@@ -335,6 +355,16 @@ export function buildSessionListRowModel(input: BuildSessionListRowModelInput): 
         workingRetained: presentsRetainedWorking,
         backgroundActive: status.state === 'background_active',
     });
+    // Absent unless the person asked for it (R-8): the row model always carries the field so a host
+    // cannot invent a second way to get the sentence, and the setting decides whether it is drawn.
+    // Composed through the composer chip's own owner, so a row and the session it opens onto cannot
+    // describe the same workflow differently.
+    const agentActivityLabel = settings.agentActivityCountEnabled
+        ? formatSessionAgentActivityLabel(
+            readSessionAgentActivityCounts(resolvedSession),
+            resolveSessionActivityComposerTranslate(),
+        )
+        : null;
     const nextRuntimeFreshnessAtMs = resolveNextRuntimeFreshnessAtMs(resolvedSession, settings.runtimeNowMs);
     const isArchived = resolvedSession.archivedAt != null;
     const isPinned = item.pinned === true || settings.pinnedSessionKeys.includes(rowKey);
@@ -392,6 +422,7 @@ export function buildSessionListRowModel(input: BuildSessionListRowModelInput): 
         hasUnreadMessages,
         pendingCount,
         pendingBlockedCount,
+        agentActivityLabel,
         tags: settings.sessionTagsByKey[rowKey] ?? [],
         allKnownTags: settings.allKnownTags,
         tagsEnabled: settings.tagsEnabled,

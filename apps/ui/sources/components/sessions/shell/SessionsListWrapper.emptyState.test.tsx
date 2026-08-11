@@ -19,6 +19,7 @@ const sessionListState = vi.hoisted(() => ({
 }));
 const routeState = vi.hoisted(() => ({
     pathname: '/',
+    listeners: new Set<() => void>(),
 }));
 const emptyStateState = vi.hoisted(() => ({
     hasHiddenInactiveSessions: false,
@@ -67,7 +68,18 @@ installSessionShellCommonModuleMocks({
     router: async () => {
         const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
         return createExpoRouterMock({
-            pathname: () => routeState.pathname,
+            // Reactive like the real router: a route change re-renders its subscribers, so a spec
+            // can move the route on a mounted tree instead of only before mount.
+            pathname: () => React.useSyncExternalStore(
+                (listener) => {
+                    routeState.listeners.add(listener);
+                    return () => {
+                        routeState.listeners.delete(listener);
+                    };
+                },
+                () => routeState.pathname,
+                () => routeState.pathname,
+            ),
         }).module;
     },
     storage: async () => {
@@ -162,6 +174,14 @@ vi.mock('@react-navigation/native', () => ({
         () => focusState.isFocused,
     ),
 }));
+async function setRoutePathname(pathname: string) {
+    await act(async () => {
+        routeState.pathname = pathname;
+        for (const listener of [...routeState.listeners]) listener();
+    });
+    await flushHookEffects();
+}
+
 async function renderSessionsListWrapper() {
     const { SessionsListWrapper } = await import('./SessionsListWrapper');
     return renderScreen(<SessionsListWrapper />);
@@ -177,6 +197,7 @@ describe('SessionsListWrapper (empty state)', () => {
         sessionListState.paneVersion = 0;
         sessionListState.paneListeners.clear();
         routeState.pathname = '/';
+        routeState.listeners.clear();
         emptyStateState.hasHiddenInactiveSessions = false;
         featureDecisionState.enabled = false;
         storageKindState.storageKind = 'persisted';
@@ -461,6 +482,34 @@ describe('SessionsListWrapper (empty state)', () => {
             sessionListSurfaceDataActive: true,
         });
         expect(screen.findByType('SessionsListContent' as any).props.data).toBe(retainedData);
+
+        await screen.unmount();
+    });
+
+    it('keeps the retained foreground session identity while an overlay route is open over that session', async () => {
+        const { SessionsListWrapper } = await import('./SessionsListWrapper');
+        const retainedData = [{ type: 'session', session: { id: 'session-2' } }];
+        sessionListState.data = retainedData;
+        focusState.isFocused = true;
+        routeState.pathname = '/';
+
+        const screen = await renderScreen(<SessionsListWrapper pathname="/" />);
+
+        expect(sessionListState.paneOptions[0]).toEqual({
+            activeSessionId: null,
+            sessionListSurfaceDataActive: true,
+        });
+
+        await setRoutePathname('/session/session-2');
+        // The new-session modal opens over the session route; it does not replace it, so the list
+        // must stay anchored to that session rather than forgetting which one is in the foreground.
+        await setRoutePathname('/new');
+        await setRoutePathname('/');
+
+        expect(sessionListState.paneOptions.at(-1)).toEqual({
+            activeSessionId: 'session-2',
+            sessionListSurfaceDataActive: true,
+        });
 
         await screen.unmount();
     });

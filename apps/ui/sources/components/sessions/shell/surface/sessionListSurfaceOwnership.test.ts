@@ -4,6 +4,7 @@ import {
     normalizeSessionListSurfaceOwnership,
     resolvePhoneRootSessionListSurfaceDataActive,
     resolveSessionListSurfaceOwnership,
+    resolveSidebarSessionListSurfaceInteractive,
 } from './sessionListSurfaceOwnership';
 
 describe('sessionListSurfaceOwnership', () => {
@@ -87,5 +88,14 @@ describe('sessionListSurfaceOwnership', () => {
         expect(resolvePhoneRootSessionListSurfaceDataActive('/')).toBe(true);
         expect(resolvePhoneRootSessionListSurfaceDataActive('/session/session-1')).toBe(false);
         expect(resolvePhoneRootSessionListSurfaceDataActive('/new')).toBe(false);
+    });
+
+    it('stops sidebar interaction under every overlay route, not just the new-session one', () => {
+        expect(resolveSidebarSessionListSurfaceInteractive('/')).toBe(true);
+        expect(resolveSidebarSessionListSurfaceInteractive('/session/session-1')).toBe(true);
+        expect(resolveSidebarSessionListSurfaceInteractive('/new')).toBe(false);
+        expect(resolveSidebarSessionListSurfaceInteractive('/new/pick/machine')).toBe(false);
+        expect(resolveSidebarSessionListSurfaceInteractive('/direct/browse')).toBe(false);
+        expect(resolveSidebarSessionListSurfaceInteractive('/zen/new')).toBe(false);
     });
 });
