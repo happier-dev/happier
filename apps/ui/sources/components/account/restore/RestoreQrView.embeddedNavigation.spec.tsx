@@ -6,6 +6,7 @@ import type { QRAuthKeyPair } from '@/auth/flows/qrStart';
 import { createExpoRouterMock } from '@/dev/testkit/mocks/router';
 import { createModalModuleMock } from '@/dev/testkit/mocks/modal';
 import { createTextModuleMock } from '@/dev/testkit/mocks/text';
+import { lightTheme } from '@/theme';
 
 type ReactActEnvironmentGlobal = typeof globalThis & {
     IS_REACT_ACT_ENVIRONMENT?: boolean;
@@ -72,23 +73,12 @@ vi.mock('@/text', () => textMock);
 vi.mock('react-native-unistyles', async () => {
     const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
     return createUnistylesMock({
-        theme: {
-            colors: {
-                surface: '#fff',
-                text: '#000',
-                textSecondary: '#666',
-                divider: '#ddd',
-                input: {
-                    background: '#fff',
-                    text: '#000',
-                },
-            },
-        },
+        theme: lightTheme,
     });
 });
 
 vi.mock('@/components/qr/QRCode', () => ({
-    QRCode: () => React.createElement('QRCode'),
+    QRCode: (props: Record<string, unknown>) => React.createElement('QRCode', props),
 }));
 
 vi.mock('@/sync/api/capabilities/getReadyServerFeatures', () => ({
@@ -174,6 +164,26 @@ describe('RestoreQrView (embedded navigation)', () => {
             });
 
             expect(onOpenScanQr).toHaveBeenCalledTimes(1);
+        } finally {
+            act(() => {
+                tree?.unmount();
+            });
+        }
+    });
+
+    it('renders the restore QR code on the themed surface quiet zone', async () => {
+        vi.resetModules();
+        const { RestoreQrView } = await import('./RestoreQrView');
+
+        let tree!: renderer.ReactTestRenderer;
+        try {
+            await act(async () => {
+                tree = renderer.create(<RestoreQrView embedded />);
+            });
+            await act(async () => {});
+
+            const qrCode = tree.root.findByType('QRCode');
+            expect(qrCode.props.backgroundColor).toBe(lightTheme.colors.surface.base);
         } finally {
             act(() => {
                 tree?.unmount();
