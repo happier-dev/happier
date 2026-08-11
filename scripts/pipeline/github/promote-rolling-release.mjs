@@ -2,8 +2,8 @@
 
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { createReadStream } from 'node:fs';
-import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { closeSync, createReadStream, openSync } from 'node:fs';
+import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
@@ -12,6 +12,9 @@ const FULL_SHA = /^[a-f0-9]{40}$/;
 const DEFAULT_UPLOAD_ATTEMPTS = 8;
 const DEFAULT_UPLOAD_RETRY_DELAY_MS = 5_000;
 const DEFAULT_UPLOAD_MAX_RETRY_DELAY_MS = 60_000;
+const DEFAULT_MUTATION_CONFIRM_ATTEMPTS = 8;
+const DEFAULT_MUTATION_CONFIRM_RETRY_DELAY_MS = 1_000;
+const DEFAULT_MUTATION_CONFIRM_MAX_RETRY_DELAY_MS = 5_000;
 const TRANSIENT_UPLOAD_CONNECTIVITY_EXHAUSTED_EXIT_CODE = 75;
 
 class TransientUploadConnectivityExhaustedError extends Error {
@@ -87,21 +90,26 @@ function isExplicitHttpNotFound(error) {
 /**
  * @param {string} cmd
  * @param {string[]} args
+ * @param {string} destination
  * @param {{ env?: Record<string, string>; dryRun?: boolean; cwd?: string }} [opts]
  */
-function runBuffer(cmd, args, opts = {}) {
+function runToFile(cmd, args, destination, opts = {}) {
   const printable = `${cmd} ${args.map((arg) => (arg.includes(' ') ? JSON.stringify(arg) : arg)).join(' ')}`;
   if (opts.dryRun) {
     console.log(`[dry-run] ${printable}`);
-    return Buffer.alloc(0);
+    return;
   }
-  return execFileSync(cmd, args, {
-    cwd: opts.cwd ?? process.cwd(),
-    env: { ...process.env, ...(opts.env ?? {}) },
-    encoding: 'buffer',
-    stdio: ['ignore', 'pipe', 'pipe'],
-    timeout: 10 * 60_000,
-  });
+  const output = openSync(destination, 'w');
+  try {
+    execFileSync(cmd, args, {
+      cwd: opts.cwd ?? process.cwd(),
+      env: { ...process.env, ...(opts.env ?? {}) },
+      stdio: ['ignore', output, 'pipe'],
+      timeout: 10 * 60_000,
+    });
+  } finally {
+    closeSync(output);
+  }
 }
 
 function commandFailureOutput(error) {
@@ -323,6 +331,24 @@ function runMutationAndConfirm({ args, env, dryRun, confirm, failureMessage }) {
   }
   if (confirm()) return;
   if (mutationError) throw mutationError;
+  const attempts = readPositiveIntegerEnv(
+    'HAPPIER_PIPELINE_GH_MUTATION_CONFIRM_ATTEMPTS',
+    DEFAULT_MUTATION_CONFIRM_ATTEMPTS,
+  );
+  const retryDelayMs = readNonNegativeIntegerEnv(
+    'HAPPIER_PIPELINE_GH_MUTATION_CONFIRM_RETRY_DELAY_MS',
+    DEFAULT_MUTATION_CONFIRM_RETRY_DELAY_MS,
+  );
+  const maxRetryDelayMs = readNonNegativeIntegerEnv(
+    'HAPPIER_PIPELINE_GH_MUTATION_CONFIRM_MAX_RETRY_DELAY_MS',
+    DEFAULT_MUTATION_CONFIRM_MAX_RETRY_DELAY_MS,
+  );
+  for (let attempt = 2; attempt <= attempts; attempt += 1) {
+    const delayMs = Math.min(retryDelayMs * (2 ** (attempt - 2)), maxRetryDelayMs);
+    console.warn(`[pipeline] GitHub mutation is not visible yet; retrying confirmation (${attempt}/${attempts})`);
+    sleepSync(delayMs);
+    if (confirm()) return;
+  }
   fail(failureMessage);
 }
 
@@ -384,13 +410,12 @@ async function downloadReleaseAssetsById({ repo, releaseId, destination, env, dr
     if (separator <= 0) fail(`Invalid release asset row: ${line}`);
     const assetId = line.slice(0, separator);
     const name = line.slice(separator + 1);
-    const bytes = runBuffer('gh', [
+    runToFile('gh', [
       'api',
       `repos/${repo}/releases/assets/${assetId}`,
       '-H',
       'Accept: application/octet-stream',
-    ], { env, dryRun });
-    if (!dryRun) await writeFile(join(destination, name), bytes);
+    ], join(destination, name), { env, dryRun });
   }
 }
 

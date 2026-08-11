@@ -73,6 +73,8 @@ function fixture({ missingRolling = false } = {}) {
   const publishedState = join(root, 'published-state');
   const channelRef = join(root, 'channel-ref');
   const stagingRef = join(root, 'staging-ref');
+  const staleStagingRef = join(root, 'stale-staging-ref');
+  const staleDeleteCounter = join(root, 'stale-delete-counter');
   const backupRef = join(root, 'backup-ref');
   const release1Tag = join(root, 'release-1-tag');
   const release1Name = join(root, 'release-1-name');
@@ -192,7 +194,23 @@ if [ "$1" = "api" ]; then
   esac
   case "$*" in
     *git/ref/tags/cli-v1.2.3-preview.4*) printf '%s\\n' ${JSON.stringify(targetSha)} ;;
-    *git/ref/tags/happier-rolling-staging-*) if [ -f ${JSON.stringify(stagingRef)} ]; then cat ${JSON.stringify(stagingRef)}; else not_found; fi ;;
+    *git/ref/tags/happier-rolling-staging-*)
+      if [ -f ${JSON.stringify(stagingRef)} ]; then
+        cat ${JSON.stringify(stagingRef)}
+      elif [ -f ${JSON.stringify(staleStagingRef)} ]; then
+        count="$(cat ${JSON.stringify(staleDeleteCounter)})"
+        count=$((count + 1))
+        printf '%s' "$count" > ${JSON.stringify(staleDeleteCounter)}
+        if [ "$count" -le "\${HAPPIER_TEST_STALE_DELETE_CONFIRM_READS:-0}" ]; then
+          cat ${JSON.stringify(staleStagingRef)}
+        else
+          rm -f ${JSON.stringify(staleStagingRef)} ${JSON.stringify(staleDeleteCounter)}
+          not_found
+        fi
+      else
+        not_found
+      fi
+      ;;
     *git/ref/tags/happier-rolling-backup-*) if [ -f ${JSON.stringify(backupRef)} ]; then cat ${JSON.stringify(backupRef)}; else not_found; fi ;;
     *git/ref/tags/cli-preview*) if [ -f ${JSON.stringify(channelRef)} ]; then cat ${JSON.stringify(channelRef)}; else not_found; fi ;;
     *releases/tags/happier-rolling-backup-cli-preview*)
@@ -321,7 +339,13 @@ if [ "$1" = "api" ]; then
       tag="\${4##*/}"
       case "$tag" in
         cli-preview) rm -f ${JSON.stringify(channelRef)} ;;
-        happier-rolling-staging-*) rm -f ${JSON.stringify(stagingRef)} ;;
+        happier-rolling-staging-*)
+          if [ "\${HAPPIER_TEST_STALE_DELETE_CONFIRM_READS:-0}" -gt 0 ] && [ -f ${JSON.stringify(stagingRef)} ]; then
+            cp ${JSON.stringify(stagingRef)} ${JSON.stringify(staleStagingRef)}
+            printf '0' > ${JSON.stringify(staleDeleteCounter)}
+          fi
+          rm -f ${JSON.stringify(stagingRef)}
+          ;;
         happier-rolling-backup-*) rm -f ${JSON.stringify(backupRef)} ;;
       esac
       ;;
@@ -396,6 +420,31 @@ test('rolling promotion sends release assets to the exact GitHub upload API host
       assert.match(call, /gh api -X POST https:\/\/uploads\.github\.com\/repos\/test\/test\/releases\/77\/assets\?name=/);
       assert.doesNotMatch(call, /--hostname uploads\.github\.com/);
     }
+  } finally {
+    rmSync(testFixture.root, { recursive: true, force: true });
+  }
+});
+
+test('rolling promotion audits release assets without buffering their bytes in the child process', () => {
+  const testFixture = fixture();
+  try {
+    const largeMetadata = Buffer.alloc(2 * 1024 * 1024, 'x');
+    writeFileSync(join(testFixture.root, 'source', 'large-release-metadata.json'), largeMetadata);
+
+    const result = spawnSync(process.execPath, args(), {
+      cwd: repoRoot,
+      env: {
+        ...process.env,
+        PATH: `${testFixture.bin}:${process.env.PATH ?? ''}`,
+      },
+      encoding: 'utf8',
+    });
+
+    assert.equal(result.status, 0, String(result.stderr));
+    assert.deepEqual(
+      readFileSync(join(testFixture.staging, 'large-release-metadata.json')),
+      largeMetadata,
+    );
   } finally {
     rmSync(testFixture.root, { recursive: true, force: true });
   }
@@ -644,6 +693,30 @@ test('a transport failure while confirming deletion is not accepted as successfu
     execFileSync(process.execPath, args(), { cwd: repoRoot, env, encoding: 'utf8' });
     assert.equal(existsSync(testFixture.backupRef), false);
     assert.equal(existsSync(testFixture.stagingRef), false);
+  } finally {
+    rmSync(testFixture.root, { recursive: true, force: true });
+  }
+});
+
+test('rolling promotion tolerates delayed visibility after a successful temporary ref deletion', () => {
+  const testFixture = fixture();
+  try {
+    const result = spawnSync(process.execPath, args(), {
+      cwd: repoRoot,
+      env: {
+        ...process.env,
+        PATH: `${testFixture.bin}:${process.env.PATH ?? ''}`,
+        HAPPIER_TEST_STALE_DELETE_CONFIRM_READS: '2',
+        HAPPIER_PIPELINE_GH_MUTATION_CONFIRM_RETRY_DELAY_MS: '0',
+      },
+      encoding: 'utf8',
+    });
+
+    assert.equal(result.status, 0, String(result.stderr));
+    const stagingDeleteCalls = readFileSync(testFixture.log, 'utf8')
+      .split('\n')
+      .filter((line) => /-X DELETE repos\/test\/test\/git\/refs\/tags\/happier-rolling-staging-/.test(line));
+    assert.equal(stagingDeleteCalls.length, 1, 'stale confirmation reads must not repeat the mutation');
   } finally {
     rmSync(testFixture.root, { recursive: true, force: true });
   }
