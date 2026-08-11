@@ -32,11 +32,11 @@ It names the canonical versioned release targets, executable validation suites,
 and three profiles:
 
 - `integrated` and `stable` expose the same eligible automatic suite catalog.
-  The registry's candidate-applicability owner selects only suites the exact
-  release can exercise: artifact verification and CLI upgrade for a CLI
-  candidate; binary smoke for CLI or server candidates; session continuity for
-  a server candidate; and the named Docker relay upgrade only when a supported
-  published relay predecessor exists.
+  The registry selects inexpensive artifact/binary facts for applicable
+  products and selects heavy upgrade scenarios only when the actual diff
+  changes their seam: daemon/update continuity, session/restart ownership, or
+  relay persistence/startup. Candidate existence alone does not select every
+  heavy scenario.
 - `stable` additionally selects the full source-check profile and requires the
   private release agent to review preview candidate equivalence and soak,
   breaking changes, reachable version-skew directions, persistence, and
@@ -48,9 +48,9 @@ and three profiles:
   dispatch.
 
 The workflow derives source-check depth from the selected public profile; a
-caller cannot select a second checks profile. Every exact server candidate also
-runs the focused real MySQL 8 contract. The broader cross-platform service
-matrix remains part of the full stable gate rather than every preview.
+caller cannot select a second checks profile. MySQL, cross-platform service,
+and installer/updater trust-root gates are selected by the affected diff rather
+than every server, CLI, preview, or stable candidate.
 
 The slow test lane contains two pinned server-v0.2.1 regressions for pending
 queue and first-prompt behavior. They are exact tests, not a general
@@ -73,6 +73,12 @@ dispatch. Qualified V4 activation is not implemented in this release line; its
 separate approval input must remain false. That go-ahead must name the selected profile and the exact SHA of the
 candidate whose evidence was reviewed. Do not substitute a branch name or a
 moving channel pointer for the exact SHA.
+
+Before changelog/version materialization, the release agent runs
+`node scripts/pipeline/run.mjs release-analyze ...` over the actual source
+range and completes the semantic compatibility review while inspecting that
+same diff for notes and version recommendations. After commit/push, only an
+unexpected runtime-reachable delta invalidates the affected analysis.
 
 `node scripts/pipeline/run.mjs release --release-profile integrated` is the
 normal preview path; preview and dev default to `integrated`, while production
@@ -110,12 +116,24 @@ Deploy branches typically include `deploy/<env>/ui`, `deploy/<env>/server`, `dep
 
 ### Release authority and binary integrity
 
-Privileged release writes run only in the hosted workflows. A non-dry local
-`scripts/pipeline/run.mjs release` invocation validates its inputs and dispatches
-`release.yml`; it does not publish assets, move deploy refs, load release
-secrets, or call deployment hooks itself. Local `--dry-run` planning uses
+The default privileged conductor dispatches the hosted workflow, but the
+semantic release phases remain script-owned. `release-analyze` performs
+changed-seam planning, `release-validate` runs selected evidence, and
+`release-local-candidates` can publish, verify, and promote the same immutable
+CLI/stack/server/UI-web candidates directly when appropriate credentials and
+native platform prerequisites are available. GitHub YAML supplies triggers,
+permissions, runners, secrets/OIDC, matrices, and typed job wiring; it must not
+become a second owner of release policy.
+
+Local `--dry-run` planning uses
 remote-advertised identities and object-only fetches, so it does not update or
 prune local branch, remote-tracking, or tag refs.
+
+When a hosted run fails, use native failed-job rerun if workflow code and
+candidate bytes are unchanged. If workflow control changed, resume the failed
+operation through `hmaint release resume`; a new attempt may reuse only
+individually verified immutable candidates from the exact prior run. Any
+candidate-reachable source change requires a new candidate.
 
 For CLI, stack, server-runtime, and UI-web binary releases:
 
