@@ -13,6 +13,7 @@ import {
 } from './nativeAuth/claudeCodeCredentialFile';
 import type { ClaudeSubscriptionNativeAuthSelectionDescriptor } from './nativeAuth/materializeClaudeCodeNativeAuth';
 import { verifyClaudeCodeNativeAuth } from './nativeAuth/verifyClaudeCodeNativeAuth';
+import { readClaudeSubscriptionCredentialIdentity } from './nativeAuth/claudeSubscriptionCredentialIdentity';
 import { verifyClaudeSharedGroupGenerationApplication } from './verifyClaudeSharedGroupGenerationApplication';
 import type {
   ConnectedServiceProviderRuntimeAuthAdapter,
@@ -43,20 +44,6 @@ function readClaudeConfigDir(input: ConnectedServiceRuntimeAuthTargetInput): str
   return readString(env?.CLAUDE_CONFIG_DIR);
 }
 
-function readCredentialProviderAccountId(record: ConnectedServiceCredentialRecordV1 | null): string | null {
-  if (!record) return null;
-  return record.kind === 'oauth'
-    ? readString(record.oauth.providerAccountId)
-    : readString(record.token.providerAccountId);
-}
-
-function readCredentialProviderEmail(record: ConnectedServiceCredentialRecordV1 | null): string | null {
-  if (!record) return null;
-  return record.kind === 'oauth'
-    ? readString(record.oauth.providerEmail)
-    : readString(record.token.providerEmail);
-}
-
 async function materializedCredentialMatchesRecord(params: Readonly<{
   record: ConnectedServiceCredentialRecordV1;
   claudeConfigDir: string;
@@ -82,10 +69,15 @@ function buildSharedGroupVerification(params: Readonly<{
   }> | null;
 }>) {
   if (params.selectionDescriptor.kind !== 'group') return null;
+  const recordIdentity = readClaudeSubscriptionCredentialIdentity(params.record);
   return {
     status: 'weakly_verified' as const,
-    providerAccountId: params.materializedIdentity?.providerAccountId ?? readCredentialProviderAccountId(params.record),
-    activeAccountId: params.materializedIdentity?.providerEmail ?? readCredentialProviderEmail(params.record),
+    providerAccountId: params.materializedIdentity?.providerAccountId
+      ?? recordIdentity?.providerAccountId
+      ?? null,
+    activeAccountId: params.materializedIdentity?.providerEmail
+      ?? recordIdentity?.providerEmail
+      ?? null,
     sharedAuthSurfaceId: params.selectionDescriptor.groupId,
     proofStrength: 'weak' as const,
     source: 'shared_group_auth_surface',
@@ -99,9 +91,10 @@ function attachClaudeSourceAccountIdentity(
 ): ReturnType<typeof classifyClaudeConnectedServiceRuntimeAuthFailure> {
   if (!classification || classification.sourceProviderAccountId) return classification;
   const record = readCredentialRecord(input);
-  const sourceProviderAccountId = readCredentialProviderAccountId(record);
+  const sourceIdentity = readClaudeSubscriptionCredentialIdentity(record);
+  const sourceProviderAccountId = sourceIdentity?.providerAccountId ?? null;
   if (!sourceProviderAccountId) return classification;
-  const sourceAccountLabel = readCredentialProviderEmail(record);
+  const sourceAccountLabel = sourceIdentity?.providerEmail ?? null;
   return {
     ...classification,
     sourceProviderAccountId,
@@ -251,11 +244,12 @@ export function createClaudeConnectedServiceRuntimeAuthAdapter(): ConnectedServi
           environmentVariables: { CLAUDE_CONFIG_DIR: claudeConfigDir },
         });
         if (proof.status === 'verified') {
+          const recordIdentity = readClaudeSubscriptionCredentialIdentity(record);
           return {
             ...proof,
             proofStrength: 'exact' as const,
-            providerAccountId: readCredentialProviderAccountId(record),
-            activeAccountId: readCredentialProviderEmail(record),
+            providerAccountId: recordIdentity?.providerAccountId ?? null,
+            activeAccountId: recordIdentity?.providerEmail ?? null,
           };
         }
       }

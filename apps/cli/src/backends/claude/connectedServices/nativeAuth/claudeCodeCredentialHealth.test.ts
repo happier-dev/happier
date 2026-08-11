@@ -54,7 +54,7 @@ describe('classifyClaudeCodeCredentialHealth', () => {
     });
   });
 
-  it('does not treat setup-token records as Claude Unified native auth', () => {
+  it('accepts non-empty setup-token records as Claude Unified native auth', () => {
     const record = buildConnectedServiceCredentialRecord({
       now: 1000,
       serviceId: 'claude-subscription',
@@ -64,7 +64,7 @@ describe('classifyClaudeCodeCredentialHealth', () => {
     });
 
     expect(classifyClaudeCodeCredentialHealth(record)).toEqual({
-      status: 'unsupported_credential_kind',
+      status: 'ok',
       missingScopes: [],
     });
   });

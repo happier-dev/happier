@@ -899,11 +899,15 @@ describe('materializeConnectedServicesForSpawn', () => {
     })).rejects.toThrow(/anthropic oauth/i);
   });
 
-  it('diagnoses Claude subscription setup-token as unsupported for Claude Unified native auth', async () => {
+  it('materializes Claude subscription setup-token as isolated Claude Unified native auth', async () => {
     const baseDir = await mkdtemp(join(tmpdir(), 'happier-connected-services-test-'));
     const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-connected-services-server-test-'));
     const sourceClaudeConfigDir = await mkdtemp(join(tmpdir(), 'happier-source-claude-config-test-'));
     await writeFile(join(sourceClaudeConfigDir, 'settings.json'), '{"theme":"dark"}\n');
+    await writeFile(
+      join(sourceClaudeConfigDir, '.credentials.json'),
+      '{"claudeAiOauth":{"accessToken":"ambient-machine-token","scopes":[]}}\n',
+    );
     const setup = buildConnectedServiceCredentialRecord({
       now: 10,
       serviceId: 'claude-subscription',
@@ -940,16 +944,22 @@ describe('materializeConnectedServicesForSpawn', () => {
     expect(JSON.parse(result!.env[HAPPIER_CONNECTED_SERVICE_MATERIALIZED_ENV_KEYS_ENV_KEY]!)).toEqual(
       ['CLAUDE_CONFIG_DIR'],
     );
-    await expect(lstat(join(result!.env.CLAUDE_CONFIG_DIR!, 'settings.json'))).rejects.toThrow();
+    await expect(readFile(join(result!.env.CLAUDE_CONFIG_DIR!, 'settings.json'), 'utf8'))
+      .resolves.toBe('{"theme":"dark"}\n');
+    expect(JSON.parse(await readFile(join(result!.env.CLAUDE_CONFIG_DIR!, '.credentials.json'), 'utf8'))).toEqual({
+      claudeAiOauth: {
+        accessToken: 'sk-ant-oat01-123',
+        scopes: [
+          'user:inference',
+          'user:profile',
+          'user:sessions:claude_code',
+        ],
+      },
+    });
     expect('CLAUDE_CODE_OAUTH_TOKEN' in result!.env).toBe(false);
     expect('CLAUDE_CODE_SETUP_TOKEN' in result!.env).toBe(false);
     expect('ANTHROPIC_API_KEY' in result!.env).toBe(false);
-    expect(result!.diagnostics).toContainEqual(expect.objectContaining({
-      code: 'claude_subscription_setup_token_not_supported_for_unified',
-      severity: 'blocking',
-      providerId: 'claude',
-      serviceId: 'claude-subscription',
-    }));
+    expect(result!.diagnostics).not.toContainEqual(expect.objectContaining({ severity: 'blocking' }));
   });
 
   it('materializes Claude subscription oauth with an auth-isolated Claude config root', async () => {

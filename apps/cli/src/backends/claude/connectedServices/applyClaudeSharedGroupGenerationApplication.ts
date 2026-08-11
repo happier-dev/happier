@@ -3,24 +3,17 @@ import { buildClaudeRuntimeAuthSharedGroupSurfaceMetadata } from './claudeRuntim
 import { materializeClaudeSharedGroupRuntimeAuth } from './materializeClaudeSharedGroupRuntimeAuth';
 import { verifyClaudeSharedGroupGenerationApplication } from './verifyClaudeSharedGroupGenerationApplication';
 import type { ConnectedServiceCredentialLifecycleDescriptor } from '@/daemon/connectedServices/credentials/lifecycleTypes';
+import { isHealthyClaudeSubscriptionNativeAuthCredentialRecord } from './nativeAuth/claudeCodeCredentialHealth';
 
 type ApplySharedGenerationApplication = NonNullable<
   ConnectedServiceCredentialLifecycleDescriptor['applySharedGenerationApplication']
 >;
 
-type SharedGenerationRecord = Parameters<ApplySharedGenerationApplication>[0]['record'];
-
-function isClaudeSubscriptionOAuthRecord(
-  record: SharedGenerationRecord,
-): record is SharedGenerationRecord & Readonly<{ kind: 'oauth'; serviceId: 'claude-subscription' }> {
-  return record.kind === 'oauth' && record.serviceId === 'claude-subscription';
-}
-
 export const applyClaudeSharedGroupGenerationApplication: ApplySharedGenerationApplication = async (input) => {
   const record = input.record;
   if (
     input.serviceId !== 'claude-subscription'
-    || !isClaudeSubscriptionOAuthRecord(record)
+    || !isHealthyClaudeSubscriptionNativeAuthCredentialRecord(record)
   ) {
     return { status: 'unavailable' };
   }

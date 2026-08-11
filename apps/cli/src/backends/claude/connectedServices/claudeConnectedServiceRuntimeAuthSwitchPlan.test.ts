@@ -22,7 +22,7 @@ describe('resolveClaudeConnectedServiceRuntimeAuthSwitchPlan', () => {
     });
   });
 
-  it('requires restart/rematerialize for Claude subscription setup-token credentials', () => {
+  it('supports native credential-file hot apply for Claude subscription setup-token credentials', () => {
     const record = buildConnectedServiceCredentialRecord({
       now: 1000,
       serviceId: 'claude-subscription',
@@ -32,10 +32,10 @@ describe('resolveClaudeConnectedServiceRuntimeAuthSwitchPlan', () => {
     });
 
     expect(resolveClaudeConnectedServiceRuntimeAuthSwitchPlan(record)).toEqual({
-      supportsHotApply: false,
-      recovery: 'restart_rematerialize',
-      envKeys: [],
-      materialization: 'unsupported_setup_token',
+      supportsHotApply: true,
+      recovery: 'shared_group_auth_surface_rewrite',
+      envKeys: ['CLAUDE_CONFIG_DIR'],
+      materialization: 'claude_code_native_credentials_file',
     });
   });
 
