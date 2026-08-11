@@ -247,6 +247,7 @@ jobs:
           HMAINT_ATTEMPT_ID: ${{ inputs.hmaint_attempt_id }}
           RELEASE_NOTES_ID: ${{ inputs.release_notes_id }}
           BUMP: ${{ inputs.bump }}
+          QUALIFIED_V4_ACTIVATION_APPROVAL: ${{ inputs.qualified_v4_activation_approval }}
           CONFIRM: ${{ inputs.confirm }}
           DEPLOY_TARGETS: ${{ inputs.deploy_targets }}
           ENVIRONMENT: ${{ inputs.environment }}

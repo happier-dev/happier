@@ -16,7 +16,8 @@ const text = (value) => String(value ?? '').trim();
 /**
  * @param {{ authorizedPromotionSourceSha?: string; resumeRunId?: string; operationId?: string;
  * attemptId?: string; releaseNotesId?: string; bump?: string; confirm?: string;
- * deployTargets?: string; environment?: string; dryRun?: boolean; eventName?: string; refName?: string }} input
+ * deployTargets?: string; environment?: string; dryRun?: boolean; eventName?: string; refName?: string;
+ * qualifiedV4ActivationApproval?: boolean }} input
  */
 export function validateReleaseDispatch(input) {
   const authorizedSha = text(input.authorizedPromotionSourceSha);
@@ -36,6 +37,7 @@ export function validateReleaseDispatch(input) {
   if (operationId && !ATTEMPT.test(attemptId)) throw new Error('hmaint_attempt_id must match attempt_<positive integer>.');
   if (!RELEASE_NOTES.test(releaseNotesId)) throw new Error('release_notes_id has an invalid format.');
   if (bump !== 'none') throw new Error('Release candidates must already be materialized; final exact-SHA promotion requires bump=none.');
+  if (input.qualifiedV4ActivationApproval === true) throw new Error('Qualified V4 activation is not implemented on this release line.');
 
   let mode;
   let sourceRef = 'dev';
@@ -87,6 +89,7 @@ export function validateReleaseDispatchFromEnvironment(env) {
     dryRun: env.DRY_RUN === 'true',
     eventName: env.GITHUB_EVENT_NAME,
     refName: env.GITHUB_REF_NAME,
+    qualifiedV4ActivationApproval: env.QUALIFIED_V4_ACTIVATION_APPROVAL === 'true',
   });
 }
 

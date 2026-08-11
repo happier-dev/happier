@@ -16,6 +16,7 @@ const base = {
   dryRun: false,
   eventName: 'workflow_dispatch',
   refName: 'dev',
+  qualifiedV4ActivationApproval: false,
 };
 
 test('resolves preview source and comparison refs', () => {
@@ -39,4 +40,5 @@ test('accepts an exact resume run identifier', () => {
 test('rejects old bump selection and untrusted refs', () => {
   assert.throws(() => validateReleaseDispatch({ ...base, bump: 'patch' }), /materialized/u);
   assert.throws(() => validateReleaseDispatch({ ...base, refName: 'feature/release' }), /untrusted ref/u);
+  assert.throws(() => validateReleaseDispatch({ ...base, qualifiedV4ActivationApproval: true }), /not implemented/u);
 });
