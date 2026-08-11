@@ -32,7 +32,7 @@ Then test whether the change improves total system locality, leverage, and code 
 
 Run a **subtraction attack** on every material new mechanism, dependency, mode, configuration value, wrapper, fallback, abstraction, or parallel path: try removing it while preserving the complete authorized contract. If the behavior already holds, the canonical owner can enforce it more directly, or a standard/platform/existing package facility satisfies every affected surface with lower lifetime cost, the addition is unsupported complexity. Compare concepts, ownership, caller knowledge, invalid states, and failure paths—not lines, files, or tests; this is an in-place lens, not a new lane, report, or gate.
 
-For a changed domain concept, run a **split-brain attack**: search the touched corridor for another active owner, decision, registry, parser/normalizer, reader/writer, bypass, or similar-but-different implementation. A pre-existing same-concept split-brain is a finding, not grandfathered debt. Verify that any remaining compatibility adapter only translates a historical shape and delegates decisions to the canonical owner.
+For a changed domain concept, run a **split-brain attack**: search the touched corridor for another active owner, decision, registry, parser/normalizer, reader/writer, bypass, or similar-but-different implementation. Search by the defect's mechanism, not only its name — the fix you just wrote is the search key, and every sibling caller, instance, and platform build of that concept is either fixed or explicitly exempt in writing. A pre-existing same-concept split-brain is a finding, not grandfathered debt. Verify that any remaining compatibility adapter only translates a historical shape and delegates decisions to the canonical owner.
 
 For compatibility-sensitive changes, run a **provenance attack** using `skills/happier-compatibility`: re-derive each retained path from an exact released artifact/tag or applicable predecessor worktree basis, check every claimed reachable old/new direction, and identify shims or tests that preserve only an undeployed intermediary. Reject speculative matrices and fallbacks that are not tied to a reachable seam.
 
@@ -41,7 +41,7 @@ For compatibility-sensitive changes, run a **provenance attack** using `skills/h
 Check the deliverable against the patterns that read as skill and aren't (`docs/agent-craft.md` §8). The highest-frequency ones:
 
 - **Thoroughness theater** — exhaustive coverage of what was easy to check, presented as coverage of the risk. Where are the "if I'm wrong, it's here" spots in the report?
-- **Green tests as proof** — green means "didn't break what we previously thought to check", not "correct".
+- **Green tests as proof** — green means "didn't break what we previously thought to check", not "correct". A test you have never seen fail proves nothing; break the behavior and watch it go red.
 - **Defensive over-engineering** — fallbacks for impossible states are unexamined uncertainty made permanent, and future split-brains.
 - **Silent recovery** — an error worked around and not mentioned discards the most informative event of the session.
 - **Uniform hedging** — everything marked uncertain so nothing can be wrong; commit where the evidence commits.

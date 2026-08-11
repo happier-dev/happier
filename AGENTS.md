@@ -30,6 +30,7 @@ This file is the canonical cross-tool constitution for this repository.
    - `skills/happier-review` as the only general Happier review/QA orchestrator for plans, session changes, worktrees, branches/PRs, features, affected code corridors, and review-fix loops. The superseded generic `review-protocol` and `code-reviewer` skills are archived and must not be invoked for this repository.
    - `skills/happier-testing` for TDD, test quality, lane selection, and live validation.
    - `skills/happier-diagnose` for read-only runtime/support diagnosis of daemon, session, provider, auth, or connectivity incidents. A requested repository fix proceeds through `happier-implement` after the evidence is established.
+   - `skills/happier-profile-and-optimize` for profiling and optimization work whose success is a measured cost: slow open/foreground/navigation, jank, startup, blocked JS, hangs, memory, render churn, a slow query or bad query plan, or verifying a speedup claim. It owns instrument selection and falsification method for app/device and server/database alike; the implementation itself still proceeds through `happier-implement`. It is not the write-time checklist — the gotchas that apply while authoring UI code live in `apps/ui/AGENTS.md` → **Performance and continuity** and apply without routing to a skill.
    - `skills/happier-compatibility` for wire, persistence, mixed-version, upgrade, rollback, and `remote-dev` → `dev` compatibility work.
    - `skills/decompose-gates` for hard multi-part work and lane briefs.
    - `skills/verify-claims` before relying on delegated or externally reported claims.
@@ -75,6 +76,8 @@ This file is the canonical cross-tool constitution for this repository.
 - Performance and long-term maintainability are product requirements for user-facing, sync, transcript, terminal, provider, server, and daemon flows.
 - Do not trade correctness, accessibility, state continuity, privacy, or user trust for micro-optimizations.
 - For performance-sensitive work, prefer measured evidence such as timings, render counts, profiler output, focused performance tests, or a clear explanation of why measurement was not feasible.
+- Name the phase and the metric before optimizing, and confirm the instrument can observe the cost you are chasing: a framework-scoped profiler cannot see work outside that framework. If total blocked/elapsed time materially exceeds what the instrument attributes, the instrument is wrong about the target — widen it before optimizing what it did show. Attributing that residual to a suspected cause by subtraction is a hypothesis, not a measurement; observe the cause directly before fixing it.
+- Claim no ratio, percentage, or speedup without both sides measured on the same workload and machine state; state the workload size. Prefer counts, blocked time, and work-avoided proofs over wall clock on a shared machine.
 - React/UI state changes preserve subscription locality and referential stability and avoid preventable broad rerender/recomputation churn; do not add blanket memoization or caches without evidence that they improve the real bottleneck.
 - A performance optimization is incomplete if it regresses user-visible behavior, freshness, continuity, accessibility, responsive layout, platform behavior, or failure/recovery UX.
 - Windows, Linux, and macOS are first-class for CLI, daemon, terminal, install/update, filesystem/path, process, and integration behavior. Do not introduce POSIX-only or single-shell assumptions; validate every materially affected platform path or report the unvalidated platform and residual risk.
@@ -105,6 +108,8 @@ Before changing production behavior:
 
 - Risk is probability of error × cost of error × silence of failure. Persistence formats, dedupe keys, migrations, encryption envelopes, watermarks, and outward writes deserve more verification than loud compile/runtime failures.
 - Before implementation, identify the two or three places where an error would be most damaging or least visible and design verification around them.
+- A fallback, retry, downgrade, or `catch` that cannot be observed in production is itself a defect: report it on a signal that is on by default, or fail loudly instead. A path gated behind opt-in telemetry is unobserved.
+- Coalescing, de-dupe, and cache keys must include every input that changes the result, and only work guaranteed to settle may be coalesced — one hung shared promise poisons every later caller. A read-await-write cache without in-flight sharing lets N concurrent callers each do the whole job, and a batch or threshold API called one item at a time silently disables the decision it exists to make.
 - Audit boring mechanical stretches as deliberately as the interesting core.
 - For implementation work:
   1. establish current behavior and the canonical owner;
@@ -117,7 +122,7 @@ Before changing production behavior:
 ## Scope-preserving solution economy
 
 - Establish the complete authorized outcome before optimizing the solution. Explicit user requirements and approved-plan obligations—including integration, migration, removals, compatibility, UX, security, accessibility, platform behavior, performance, testing, and validation—are not optional complexity. Simplify only inside that boundary; changing an approved outcome requires the normal clarification or amendment process.
-- Solution economy does not mean localism. Scope follows the required behavior, invariant, canonical owner, and materially affected corridor—not only the file, function, package, or user-visible path named in the request. A change is incomplete when it repairs the named path while leaving the same reachable defect, divergent decision, bypass, or split-brain elsewhere.
+- Solution economy does not mean localism. Scope follows the required behavior, invariant, canonical owner, and materially affected corridor—not only the file, function, package, or user-visible path named in the request. A change is incomplete when it repairs the named path while leaving the same reachable defect, divergent decision, bypass, or split-brain elsewhere. After fixing a defect, use the defect itself as a search key: enumerate every other caller, instance, and platform build of that concept and record each as fixed or explicitly exempt. A comment or local workaround describing a hazard is a sweep trigger — the sibling call sites face the same hazard unguarded.
 - Before adding code, files, abstractions, dependencies, configuration, state, or coordination, consider the options in this order:
   1. add nothing when the complete requirement already holds or the proposed mechanism is speculative;
   2. fix, reuse, refine, consolidate, or replace through the canonical owner, migrating every materially affected consumer and removing active competing owners or bypasses;
@@ -186,7 +191,7 @@ Before changing production behavior:
 - A valid RED test fails because the intended behavior is missing or wrong. Failure from fixtures, mocks, setup, wording, syntax, or unrelated runtime errors is not valid RED.
 - Test through the canonical/public owner boundary when practical and exercise real internal logic.
 - One discriminating test is more valuable than many shallow permutations. Add cases only for materially distinct contracts, boundaries, or failure modes.
-- A useful test distinguishes the intended implementation from at least one plausible incorrect implementation. If it would pass both, strengthen or remove it.
+- A useful test distinguishes the intended implementation from at least one plausible incorrect implementation. For a load-bearing assertion, prove that by execution rather than by reading: break the behavior and watch the test go red. A load-bearing test never observed failing is not evidence.
 - Do not add runtime tests that merely restate TypeScript types, mirror implementation structure, assert pass-through wiring or incidental call counts, or police wording, Markdown, whitespace, raw styles, or example values.
 - Assert stable outcomes, state, error type/code/shape/status, and published contracts rather than implementation details or exact prose.
 - Remove or consolidate redundant tests introduced or exposed by the change.
