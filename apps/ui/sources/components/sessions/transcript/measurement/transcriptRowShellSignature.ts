@@ -10,6 +10,8 @@ import {
     isPendingMessageProviderDeliveryInFlight,
     resolvePendingMessageHeightBearingChrome,
 } from '@/components/sessions/pending/pendingMessageVisualState';
+import { resolveSessionActionDraftHeightBearingPaint } from '@/components/sessions/actions/sessionActionDraftPresentation';
+import type { ResolveSessionActionFieldOptions } from '@/components/sessions/actions/sessionActionFieldOptions';
 import { resolveToolStatusIndicatorKind } from '@/components/tools/shell/presentation/resolveToolStatusIndicatorKind';
 import type { Message } from '@/sync/domains/messages/messageTypes';
 import type { SessionActionDraft } from '@/sync/domains/sessionActions/sessionActionDraftTypes';
@@ -105,6 +107,14 @@ export function buildTranscriptRowShellSignature(params: Readonly<{
     groupingMode: string;
     item: TranscriptRowShellItem;
     latestCommittedActivityKey: string | null;
+    /**
+     * F-4: the option list an `action-draft` row's `select` / `multiselect` fields paint. The card
+     * resolves this from a settings subscription it owns, and an OFFSCREEN row has no card — so the
+     * producer of the key has to carry it. `useTranscriptItemsPipeline` takes it from
+     * `useSessionActionFieldOptionsForRowHeight`, whose whole job is to be the narrowest subscription
+     * that answers this question. Rows other than `action-draft` never call it.
+     */
+    resolveActionDraftFieldOptions: ResolveSessionActionFieldOptions;
     resolveThinkingExpanded: (messageId: string) => boolean;
     sessionActive: boolean;
     widthBucket: string;
@@ -363,7 +373,7 @@ export function buildTranscriptRowShellSignature(params: Readonly<{
         // See `buildActionDraftPresentationKey` for why `status` is deliberately absent.
         return {
             ...base,
-            structuralKey: buildActionDraftPresentationKey(item.draft),
+            structuralKey: buildActionDraftPresentationKey(item.draft, params.resolveActionDraftFieldOptions),
             expansionKey: 'tools:none|thinking:none',
             rowState: 'pending-action',
         };
@@ -399,18 +409,60 @@ export function buildTranscriptRowShellSignature(params: Readonly<{
 }
 
 /**
- * Text extent, not text. A queued prompt can be very large (a pasted spec), and this runs per row
- * per render, so the key carries the two facts that decide how many lines the block paints:
- * rendered length and hard line breaks. It reads `displayText ?? text` — the same string
- * `PendingMessagesTranscriptBlock` renders.
+ * Text extent BOUNDED BY THE BOX THAT PAINTS IT. THE rule for keying a painted line, used by every
+ * row that paints live text. A painted line can be very large (a pasted spec) and this runs per row
+ * per render, so the key carries only the facts that decide how many lines the box paints.
+ *
+ * `maxLines` is the painter's own clamp — a `numberOfLines` on the `Text`, or a `multiline={false}`
+ * `TextInput`, which is a clamp of one — and `null` means the box grows with its content.
+ *
+ *   - UNBOUNDED box: rendered length AND hard line breaks. Both can add a line.
+ *   - CLAMP OF ONE: a constant. No value it can hold paints a second line, so neither its length nor
+ *     its hard breaks are height-bearing.
+ *   - CLAMP OF TWO OR MORE: rendered length AND hard line breaks, the breaks capped at
+ *     `maxLines - 1`. Such a box is NOT height-invariant in its text — it paints one line while the
+ *     value fits and `maxLines` once it does not — so length stays in exactly as it does for an
+ *     unbounded box. The cap is what keeps breaks the clamp already swallows out of the key.
+ *
+ * Keying a live line VERBATIM is the churn defect (F-P2 / F-P3): the same box repainted at the same
+ * height would delete the row's measured size on every tick through `validateItemSizeVersion`.
+ * Keying a SINGLE-LINE box by its length is the same defect one level down (V-1 / V-2): a user
+ * typing in a single-line input, or a counter stepping `9 / 10 -> 10 / 10`, moved the key with the
+ * painted box byte-identical.
+ *
+ * F-1 (2026-08-11): V-2 dropped length at ANY clamp, which over-corrected into the opposite defect.
+ * Every case V-2 measured — `9 / 10 -> 10 / 10`, `99 -> 100 / 200`, `Compiling -> Linking` — paints
+ * inside a clamp of ONE; dropping length inside a clamp of TWO was a real UNDER-key, and an
+ * offscreen row whose two-line label grew kept a stale measured height and a stale floor. The drop
+ * is therefore restricted to the clamp that can actually pay for it.
+ *
+ * The residual is deliberate and bounded, and it is the same residual in both directions: two
+ * same-length strings of different glyph widths can wrap differently without moving the key. The
+ * row's own `onLayout` stays the measurement authority for that — the same trade this file has
+ * always made for the pending prompt.
  */
-function buildPendingTextPresentationKey(message: Pick<PendingMessage, 'text' | 'displayText'>): string {
-    const rendered = (message.displayText ?? message.text) ?? '';
+function buildTextExtentPresentationKey(rendered: string, maxLines: number | null): string {
     let newlines = 0;
     for (let i = 0; i < rendered.length; i += 1) {
         if (rendered.charCodeAt(i) === 10) newlines += 1;
     }
-    return `${rendered.length}n${newlines}`;
+    if (maxLines === null) return `${rendered.length}n${newlines}`;
+    if (maxLines <= 1) return `c${maxLines}`;
+    return `c${maxLines}:${rendered.length}n${Math.min(newlines, maxLines - 1)}`;
+}
+
+/**
+ * Reads `displayText ?? text` — the same string `PendingMessagesTranscriptBlock` renders.
+ *
+ * Keyed as UNBOUNDED. Observed 2026-08-11 and deliberately left alone this round: the block paints
+ * that text through `numberOfLines={collapsedLines}` while the message is COLLAPSED, so this is an
+ * over-key of the same family as V-1 — but the clamp comes from the
+ * `transcriptPendingMessageCollapsedLines` SETTING and the collapsed/expanded state is the block's
+ * own local state, neither of which reaches this module. Fixing it needs that state threaded in, not
+ * a hardcoded clamp here, which would UNDER-key the expanded message.
+ */
+function buildPendingTextPresentationKey(message: Pick<PendingMessage, 'text' | 'displayText'>): string {
+    return buildTextExtentPresentationKey((message.displayText ?? message.text) ?? '', null);
 }
 
 function buildPendingMessagePresentationKey(
@@ -438,9 +490,9 @@ function buildDiscardedPendingMessagePresentationKey(message: DiscardedPendingMe
 }
 
 /**
- * A draft row paints its action form, so the row's height moves with which fields that form paints
- * and with how much text its inputs hold. The input VALUES are not serialized (arbitrary payload,
- * and the form is actively typed into); their total extent is, so a shrink still re-seeds the floor.
+ * A draft row paints an action form, so the row's height moves with WHICH fields that form paints and
+ * with how much text each of them displays — both read off the painter,
+ * `resolveSessionActionDraftHeightBearingPaint`, exactly as the pending row's chrome is.
  *
  * F-P3 (2026-08-10): `draft.status` is DELIBERATELY absent, for the same reason `visualState.kind`
  * left the pending row's key. `SessionActionDraftCard` reads `props.draft.status` in exactly three
@@ -448,34 +500,75 @@ function buildDiscardedPendingMessagePresentationKey(message: DiscardedPendingMe
  * `Pressable.disabled`), the cancel button's `disabled`, and both buttons' `opacity`. None of them
  * adds, removes, or reflows a box, so `editing -> running` on every action start moved this key with
  * the painted card byte-identical, and every move deleted the row's measured size (Legend
- * `validateItemSizeVersion`) and its reservation (`resetReservationForStructuralChange`).
+ * `validateItemSizeVersion`) and its reservation (`resetReservationForStructuralChange`). That
+ * invariant is pinned at the owner by
+ * `SessionActionDraftCard.test.tsx#paints byte-identical in-flow chrome for every draft status`.
  *
- * `draft.error` STAYS: it gates a real in-flow `<Text>` line, and it is what a failed start actually
- * writes (`setStatus('editing', message)`), so the growth direction still invalidates. It is keyed as
- * a presence bit rather than a length because the card's own `error` is
- * `validationError ?? draft.error` — the card-local validation string is not in the projection at
- * all, so this key can never be the authority on the notice's line count. The row's own `onLayout` is,
- * exactly as it is for the pending row's runtime-derived notices. Do not buy that back by lifting
- * component-local state into the transcript item.
+ * F-P6 (2026-08-11), the CONVERSE, found while auditing F-P3: what remained was still a PROXY over
+ * the raw payload (top-level key count + summed top-level string lengths), and a proxy is blind the
+ * other way. The card's visible field SET is a function of the input VALUES (`visibleWhen`), and
+ * `review.start` drives all three of its conditional fields from an OBJECT (`base.kind`) or an ARRAY
+ * (`engineIds`) — both scored as zero by that proxy — so a labelled `TextInput` appeared or vanished
+ * with the key byte-identical, and the reconciler handed the taller frame the shorter row's floor.
+ * Nested and array-valued text (`base.baseBranch`, `engines.coderabbit.configFiles`) was invisible
+ * for the same reason. Keying the PAINT rather than the payload fixes all of it at once; the field
+ * `disabled` flag stays out, because like `status` it only reaches a chip's opacity.
  *
- * The invariant this key depends on is pinned at the owner by
- * `SessionActionDraftCard.test.tsx#paints byte-identical in-flow chrome for every draft status`: if
- * a status ever starts changing what the card paints, that test fails and this key must grow a
- * height-bearing descriptor rather than the status itself.
+ * V-1 (2026-08-11): F-P6 over-corrected. It keyed EVERY text field by extent, and most of them paint
+ * a `multiline={false}` `TextInput` — one line tall for every value — so the key moved on every
+ * keystroke in a `text` field or a comma `text_list`, which the pre-F-P6 key did not do. The
+ * descriptor now names each field's box (`textBox.maxLines`) and the bounded extent rule above does
+ * the rest: extent where the box grows, a constant where it cannot.
+ *
+ * V-4 (2026-08-11): `errorLine` is now the line the card actually paints — `validationError ??
+ * draft.error` — resolved by the descriptor. It is keyed by extent rather than presence because a
+ * one-line failure and a pasted stack trace are different heights, and it is UNBOUNDED because the
+ * card's notice `<Text>` carries no `numberOfLines`.
+ *
+ * F-4 (2026-08-11): the OPTION LIST of a `select` / `multiselect` is keyed too, and it is the last
+ * height-bearing input this row had left outside the key. `ActionInputFields` paints one chip per
+ * option into a `flexDirection: 'row', flexWrap: 'wrap'` container, so gaining or losing a chip can
+ * add or remove a wrapped line — and the list is a function of the SYNCED
+ * `backendEnabledByTargetKey` setting, so another device can change it while this row is offscreen,
+ * where no `onLayout` exists and the reconciler's floor is monotonic within one structuralKey.
+ *
+ * WHAT is keyed, and why not less: each option's LABEL, under the same bounded-extent rule as every
+ * other painted line (the chip's `<Text>` carries no `numberOfLines`, so it is unbounded), in PAINT
+ * ORDER.
+ *   - A bare COUNT is not enough: two lists of the same length whose labels differ in width wrap
+ *     differently in that `flexWrap` row, and ../dev additionally lets the capabilities snapshot
+ *     rename an option at an unchanged id.
+ *   - An unordered SET of option VALUES is not enough either: it is blind to a label change at an
+ *     unchanged value, and to a reorder, which repacks the wrapped rows.
+ *   - `disabled` is deliberately EXCLUDED. Like `draft.status` in F-P3 it reaches only the chip's
+ *     `opacity` and its press handler. Excluding it is also what keeps the async
+ *     machine-capabilities snapshot — the one input that flips it — out of the transcript's
+ *     subscriptions entirely.
+ * The residual is the corridor's usual one and is stated once above: two labels of the same length
+ * and different glyph widths can wrap differently without moving the key.
  */
-function buildActionDraftPresentationKey(draft: SessionActionDraft): string {
-    let inputKeyCount = 0;
-    let inputTextLength = 0;
-    for (const key of Object.keys(draft.input)) {
-        inputKeyCount += 1;
-        const value = draft.input[key];
-        if (typeof value === 'string') inputTextLength += value.length;
-    }
+function buildActionDraftPresentationKey(
+    draft: SessionActionDraft,
+    resolveFieldOptions: ResolveSessionActionFieldOptions,
+): string {
+    const paint = resolveSessionActionDraftHeightBearingPaint({
+        draft,
+        sessionId: draft.sessionId,
+        resolveFieldOptions,
+    });
     return [
         draft.id,
         draft.actionId,
-        draft.error ? 'error' : '',
-        `${inputKeyCount}k${inputTextLength}`,
+        buildTextExtentPresentationKey(paint.errorLine, null),
+        paint.fields
+            .map((entry) => `${entry.field.path}@${entry.field.widget}${
+                entry.textBox === null ? '' : `=${buildTextExtentPresentationKey(entry.textBox.text, entry.textBox.maxLines)}`
+            }${
+                entry.options === null
+                    ? ''
+                    : `#${entry.options.map((option) => buildTextExtentPresentationKey(option.label, null)).join('/')}`
+            }`)
+            .join(','),
     ].join(':');
 }
 

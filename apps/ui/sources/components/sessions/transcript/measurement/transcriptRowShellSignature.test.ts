@@ -159,6 +159,8 @@ describe('buildTranscriptRowShellSignature', () => {
             groupingMode: 'turns',
             item: params.item,
             latestCommittedActivityKey: params.latestCommittedActivityKey ?? null,
+            // No `action-draft` row in this file, so the resolver is never called.
+            resolveActionDraftFieldOptions: () => [],
             resolveThinkingExpanded: () => false,
             sessionActive: params.sessionActive ?? false,
             widthBucket: 'w:400',

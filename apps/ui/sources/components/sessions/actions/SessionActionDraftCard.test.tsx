@@ -109,6 +109,26 @@ vi.mock('@/sync/ops/actions/defaultActionExecutor', () => ({
   }),
 }));
 
+/**
+ * The resolver the card's own `useSessionActionFieldOptions` produces under this file's mocks
+ * (`useEnabledAgentIds` -> `['claude']`, no capabilities snapshot, `t` returning the key). Built
+ * through the SAME `buildSessionActionFieldOptionsResolver` the hook uses, so the guards below
+ * compare the descriptor against the paint rather than against a hand-written option list.
+ */
+async function buildMockedFieldOptionsResolver() {
+  const { buildSessionActionFieldOptionsResolver } = await import('./sessionActionFieldOptions');
+  const { getAgentCore } = await import('@/agents/catalog/catalog');
+  const { t } = await import('@/text');
+  // `t`'s overloads require a params argument for parameterised keys; an agent display name key
+  // never is one, so this narrows to the single-argument form the hook actually calls.
+  const translate = t as unknown as (key: string) => string;
+  return buildSessionActionFieldOptionsResolver({
+    enabledAgentIds: ['claude'],
+    executionRunsBackends: null,
+    resolveAgentLabel: (agentId) => translate(String(getAgentCore(agentId as never).displayNameKey)),
+  });
+}
+
 describe('SessionActionDraftCard', () => {
   beforeEach(() => {
     resetSessionActionsCommonModuleMockState();
@@ -363,6 +383,96 @@ describe('SessionActionDraftCard', () => {
     // Only the instructions field should render a TextInput when base.kind=none.
     const inputs = screen.tree.findAllByType('TextInput');
     expect(inputs.length).toBe(1);
+  });
+
+  /**
+   * F-P6 (2026-08-11) — anti-drift guard for `resolveSessionActionDraftHeightBearingPaint`, which is
+   * what `transcriptRowShellSignature` keys this row's height on. The descriptor is only trustworthy
+   * while it describes THE PAINT, so this asserts the painted `TextInput` values ARE the descriptor's
+   * `textBox.text`, in order, for a draft whose conditional fields are open.
+   *
+   * V-1 (2026-08-11) extends it to the part F-P6 got wrong: `textBox.maxLines` must agree with the
+   * painted `multiline` prop of the SAME input. A descriptor that claims a box grows when the card
+   * paints a one-line input is exactly how the row's size version came to move on every keystroke.
+   */
+  it('paints exactly the text and the box shape the height-bearing descriptor reports', async () => {
+    const { SessionActionDraftCard } = await import('./SessionActionDraftCard');
+    const { resolveSessionActionDraftHeightBearingPaint } = await import('./sessionActionDraftPresentation');
+
+    const input = {
+      engineIds: ['coderabbit'],
+      instructions: 'Review\nthis carefully.',
+      changeType: 'committed',
+      base: { kind: 'branch', baseBranch: 'release/2026-08-11' },
+      engines: { coderabbit: { configFiles: ['a.yml', 'b.yml'] } },
+    };
+    const draft = { id: 'd1', sessionId: 's1', actionId: 'review.start', createdAt: 1, status: 'editing', input } as const;
+
+    const screen = await renderScreen(React.createElement(SessionActionDraftCard, { sessionId: 's1', draft: draft as any }));
+
+    const paint = resolveSessionActionDraftHeightBearingPaint({
+      draft,
+      sessionId: 's1',
+      resolveFieldOptions: await buildMockedFieldOptionsResolver(),
+    });
+    const textBoxes = paint.fields
+      .map((entry) => entry.textBox)
+      .filter((box): box is NonNullable<typeof box> => box !== null);
+
+    // The conditional branch field and the CodeRabbit list are both open here, so this is three.
+    expect(textBoxes.map((box) => box.text)).toEqual(['Review\nthis carefully.', 'release/2026-08-11', 'a.yml, b.yml']);
+    // `instructions` is a textarea and grows; `base.baseBranch` (text) and the comma-separated
+    // `configFiles` (text_list) are one-line inputs whose height cannot move with their value.
+    expect(textBoxes.map((box) => box.maxLines)).toEqual([null, 1, 1]);
+
+    const inputs = screen.tree.findAllByType('TextInput');
+    expect(inputs.map((node: any) => node.props.value)).toEqual(textBoxes.map((box) => box.text));
+    expect(inputs.map((node: any) => (node.props.multiline === true ? null : 1)))
+      .toEqual(textBoxes.map((box) => box.maxLines));
+  });
+
+  /**
+   * F-4 (2026-08-11) — the other half of the same guard, for the input the size key gained last:
+   * the chip list. `transcriptRowShellSignature` keys an `action-draft` row on
+   * `paint.fields[].options`, and that is only trustworthy while it IS the chips the card paints. A
+   * descriptor that reported option VALUES, or dropped a `select` field, or folded the
+   * non-height-bearing `disabled` flag into the label would pass every key-level test and be wrong
+   * here.
+   */
+  it('reports exactly the chips it paints as the descriptor option list', async () => {
+    const { SessionActionDraftCard } = await import('./SessionActionDraftCard');
+    const { resolveSessionActionDraftHeightBearingPaint } = await import('./sessionActionDraftPresentation');
+
+    const draft = {
+      id: 'd1',
+      sessionId: 's1',
+      actionId: 'review.start',
+      createdAt: 1,
+      status: 'editing',
+      input: { engineIds: ['claude'], instructions: 'Review', changeType: 'all', base: { kind: 'none' } },
+    } as const;
+
+    const screen = await renderScreen(React.createElement(SessionActionDraftCard, { sessionId: 's1', draft: draft as any }));
+
+    const paint = resolveSessionActionDraftHeightBearingPaint({
+      draft,
+      sessionId: 's1',
+      resolveFieldOptions: await buildMockedFieldOptionsResolver(),
+    });
+    const describedChipLabels = paint.fields.flatMap((entry) => (entry.options ?? []).map((option) => option.label));
+
+    // Every `ActionFieldChip` carries an `accessibilityState.selected`; the card's Cancel / Start
+    // buttons do not, which is what separates chips from the rest of the pressables.
+    const paintedChipLabels = screen.tree
+      .findAllByType('Pressable')
+      .filter((node: any) => node.props?.accessibilityState?.selected !== undefined)
+      .map((node: any) => {
+        const texts = node.findAllByType('Text');
+        return String(texts[0]?.props?.children ?? '');
+      });
+
+    expect(describedChipLabels.length).toBeGreaterThan(0);
+    expect(describedChipLabels).toEqual(paintedChipLabels);
   });
 
   it('parses text_list input into a string array patch', async () => {

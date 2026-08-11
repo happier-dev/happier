@@ -86,6 +86,8 @@ function signatureFor(params: SizeVersionParams): TranscriptItemHeightValiditySi
         groupingMode: 'linear',
         item: messageRow(),
         latestCommittedActivityKey: (params.isLatestCommittedActivity ?? true) ? STREAMED_MESSAGE_ID : null,
+        // No `action-draft` row in this file, so the resolver is never called.
+        resolveActionDraftFieldOptions: () => [],
         resolveThinkingExpanded: () => params.thinkingExpanded ?? false,
         sessionActive: params.sessionActive ?? true,
         widthBucket: params.widthBucket ?? 'w:400',

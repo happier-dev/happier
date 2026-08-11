@@ -4,7 +4,7 @@ import { buildPendingSessionRequestsSourceSignature } from '@/sync/domains/sessi
 import { listPendingUserActionRequests } from '@/utils/sessions/sessionUtils';
 import { EMPTY_PENDING_USER_ACTION_REQUESTS } from '@/components/sessions/transcript/chatListEmptyValues';
 import type { ChatListProps } from '@/components/sessions/transcript/chatListTypes';
-import { useStableValueBySignature } from '@/components/sessions/transcript/items/stableValueBySignature';
+import { useStableValueBySignature } from '@/hooks/ui/useStableValueBySignature';
 
 export function useTranscriptRootPendingRequests(params: Readonly<{
     messageIdsOldestFirst: readonly string[];

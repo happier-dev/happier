@@ -9,6 +9,7 @@ import type { Message } from '@/sync/domains/messages/messageTypes';
 import { sync, type SessionViewportAnchorSnapshot } from '@/sync/sync';
 import { useSessionCatchingUpNewer, useSessionTailContiguousFloorSeq } from '@/sync/store/hooks';
 import { useSessionScreenIsFocused } from '@/components/sessions/shell/useSessionScreenIsFocused';
+import { useSessionActionFieldOptionsForRowHeight } from '@/components/sessions/actions/useSessionActionFieldOptions';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { useTranscriptMotionConfig } from '@/components/sessions/transcript/motion/useTranscriptMotionConfig';
 import { TranscriptMotionProvider } from '@/components/sessions/transcript/motion/TranscriptMotionProvider';
@@ -654,6 +655,12 @@ export const ChatListInternal = React.memo((props: ChatListInternalProps) => {
     const transcriptScrollPinOffsetThresholdPx = useSetting('transcriptScrollPinOffsetThresholdPx');
     const transcriptScrollAutoFollowWhenPinned = useSetting('transcriptScrollAutoFollowWhenPinned');
     const transcriptToolCallsCollapsedPreviewCountSetting = useSetting('transcriptToolCallsCollapsedPreviewCount');
+    // F-4 (2026-08-11): the height-bearing half of the action-draft option resolution, so an
+    // `action-draft` row's size key moves when a SYNCED settings push adds or removes one of its
+    // chips while the row is offscreen. This hook is deliberately the narrow variant — one
+    // `useSetting('backendEnabledByTargetKey')` subscription, no machine-capabilities snapshot — and
+    // its result identity is keyed on the enabled-agent list, so it does not churn the transcript.
+    const resolveActionDraftFieldOptions = useSessionActionFieldOptionsForRowHeight();
     const [scrollPin, setScrollPin] = React.useState<TranscriptScrollPinState>(() => ({
         isPinned: resolveSessionEntryViewportState(readSessionViewportForEntry(props.sessionId)).shouldFollowBottom,
         newActivityCount: 0,
@@ -1206,6 +1213,7 @@ export const ChatListInternal = React.memo((props: ChatListInternalProps) => {
         preDecompositionItemsRef,
         rendererKind: mainTranscriptRendererSelection.renderer.kind,
         renderWindowIndexMapRef,
+        resolveActionDraftFieldOptions,
         resolveThinkingExpanded,
         rowFontScaleKey: resolveFontScaleKey(),
         rowWidthBucket: listLayoutWidthBucket,

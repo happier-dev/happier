@@ -16,7 +16,7 @@ import type {
     ChatListProps,
 } from '@/components/sessions/transcript/chatListTypes';
 import { useTranscriptSessionCommon } from '@/components/sessions/transcript/transcriptSessionCommon';
-import { useStableValueBySignature } from '@/components/sessions/transcript/items/stableValueBySignature';
+import { useStableValueBySignature } from '@/hooks/ui/useStableValueBySignature';
 import { preloadEnrichedMarkdownRuntime } from '@/components/markdown/enriched/preloadEnrichedMarkdownRuntime';
 import { useTranscriptRootDerivedItems } from '@/components/sessions/transcript/items/useTranscriptRootDerivedItems';
 import { useTranscriptRootNavigationState } from '@/components/sessions/transcript/navigation/useTranscriptRootNavigationState';

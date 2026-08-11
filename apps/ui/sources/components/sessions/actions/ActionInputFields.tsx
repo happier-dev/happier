@@ -23,6 +23,53 @@ export function getValueAtPath(input: Record<string, unknown>, path: string): un
     return cur;
 }
 
+/**
+ * Whether this field's `TextInput` is painted `multiline`, and therefore whether its box GROWS with
+ * the value it holds. A `multiline={false}` input is exactly one line tall for every string it can
+ * ever display.
+ *
+ * THE single decision: the JSX below renders `multiline={...}` from this function, and the transcript
+ * row's height-bearing descriptor (`resolveSessionActionDraftHeightBearingPaint`) reads it to decide
+ * whether the field's text can move the row's height — so the size key and the painted box cannot
+ * disagree. Deriving it from the widget NAME in a second place is exactly the drift this avoids.
+ */
+export function actionFieldPaintsMultilineInput(
+    field: Pick<ActionInputFieldHint, 'widget' | 'listSeparator'>,
+): boolean {
+    if (field?.widget === 'textarea') return true;
+    if (field?.widget === 'text_list') return field?.listSeparator === 'newline';
+    return false;
+}
+
+/**
+ * The exact string a field's `TextInput` displays, or `null` for the chip widgets, which paint one
+ * chip per OPTION and therefore have no text box at all.
+ *
+ * Exported so the transcript row's height-bearing descriptor
+ * (`resolveSessionActionDraftHeightBearingPaint`) keys the SAME string this file renders, rather than
+ * restating the join rule in a second place where it can drift.
+ */
+export function resolveActionFieldDisplayText(
+    field: ActionInputFieldHint,
+    input: Record<string, unknown>,
+): string | null {
+    const path = typeof field?.path === 'string' ? field.path : '';
+    const widget = typeof field?.widget === 'string' ? field.widget : '';
+    if (!path || !widget) return null;
+    const value = getValueAtPath(input, path);
+
+    if (widget === 'text_list') {
+        const items = Array.isArray(value)
+            ? (value as unknown[]).map((item) => String(item ?? '').trim()).filter(Boolean)
+            : [];
+        return field?.listSeparator === 'newline' ? items.join('\n') : items.join(', ');
+    }
+    if (widget === 'textarea' || widget === 'text') {
+        return typeof value === 'string' ? value : '';
+    }
+    return null;
+}
+
 export function setValueAtTopLevelPatch(input: Record<string, unknown>, path: string, value: unknown): Record<string, unknown> {
     const parts = path.split('.').filter(Boolean);
     if (parts.length === 0) return {};
@@ -198,10 +245,8 @@ export function ActionInputFields(props: Readonly<{
 
                 if (widget === 'text_list') {
                     const separator = field?.listSeparator === 'newline' ? '\n' : ',';
-                    const items = Array.isArray(value)
-                        ? (value as unknown[]).map((item) => String(item ?? '').trim()).filter(Boolean)
-                        : [];
-                    const displayValue = separator === '\n' ? items.join('\n') : items.join(', ');
+                    const displayValue = resolveActionFieldDisplayText(field, props.input) ?? '';
+                    const multiline = actionFieldPaintsMultilineInput(field);
                     return (
                         <View key={path} style={{ marginTop: 10 }}>
                             <Text style={{ color: theme.colors.text.secondary, marginBottom: 6 }}>{label}</Text>
@@ -214,14 +259,14 @@ export function ActionInputFields(props: Readonly<{
                                     const next = parts.map((part) => part.trim()).filter((part) => part.length > 0);
                                     props.onPatch(setValueAtTopLevelPatch(props.input, path, next));
                                 }}
-                                multiline={field?.listSeparator === 'newline'}
+                                multiline={multiline}
                                 placeholderTextColor={theme.colors.input.placeholder}
                                 style={{
                                     borderWidth: 1,
                                     borderColor: theme.colors.border.default,
                                     borderRadius: 10,
                                     padding: 10,
-                                    ...(field?.listSeparator === 'newline' ? { minHeight: 80 } : {}),
+                                    ...(multiline ? { minHeight: 80 } : {}),
                                     color: theme.colors.text.primary,
                                 }}
                             />
@@ -230,8 +275,8 @@ export function ActionInputFields(props: Readonly<{
                 }
 
                 if (widget === 'textarea' || widget === 'text') {
-                    const displayValue = typeof value === 'string' ? value : '';
-                    const multiline = widget === 'textarea';
+                    const displayValue = resolveActionFieldDisplayText(field, props.input) ?? '';
+                    const multiline = actionFieldPaintsMultilineInput(field);
                     return (
                         <View key={path} style={{ marginTop: 10 }}>
                             <Text style={{ color: theme.colors.text.secondary, marginBottom: 6 }}>{label}</Text>

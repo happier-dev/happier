@@ -17,6 +17,8 @@ function signatureFor(item: TranscriptRowShellItem) {
         groupingMode: 'linear',
         item,
         latestCommittedActivityKey: null,
+        // No `action-draft` row in this file, so the resolver is never called.
+        resolveActionDraftFieldOptions: () => [],
         resolveThinkingExpanded: () => false,
         sessionActive: true,
         widthBucket: 'w:400',
