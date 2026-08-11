@@ -154,26 +154,6 @@ vi.mock('@/components/tools/shell/views/ToolFullView', () => ({
 vi.mock('@/components/tools/shell/presentation/ToolHeader', () => ({ ToolHeader: () => React.createElement('ToolHeader') }));
 vi.mock('@/components/tools/shell/presentation/ToolStatusIndicator', () => ({ ToolStatusIndicator: () => React.createElement('ToolStatusIndicator') }));
 vi.mock('@/components/ui/text/Text', () => ({ Text: ({ children }: any) => React.createElement('Text', null, children) }));
-vi.mock('@/constants/Typography', () => ({
-  Typography: {
-    default: () => ({}),
-    mono: () => ({}),
-    tabular: () => ({}),
-    eyebrow: () => ({}),
-    rowTitle: () => ({}),
-    rowMeta: () => ({}),
-    pillLabel: () => ({}),
-    keyHint: () => ({}),
-    timestamp: () => ({}),
-    logo: () => ({}),
-    header: () => ({}),
-    body: () => ({}),
-    legacy: {
-      spaceMono: () => ({}),
-      systemMono: () => ({}),
-    },
-  },
-}));
 vi.mock('@/components/sessions/agentInput', () => ({
   AgentInput: (props: any) =>
     React.createElement(

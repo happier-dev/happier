@@ -158,17 +158,6 @@ export function installSessionSettingsEntryModuleMocks(
         TextInput: 'TextInput',
     }));
 
-    vi.mock('@/constants/Typography', () => ({
-        FontWeights: {
-            regular: '400',
-        },
-        Typography: {
-            default: () => ({}),
-            pillLabel: () => ({}),
-            keyHint: () => ({}),
-        },
-    }));
-
     vi.mock('@/text', async () => {
         if (sessionSettingsEntryState.options.textModule) {
             return await sessionSettingsEntryState.options.textModule();

@@ -29,13 +29,25 @@ const FAMILY_SPECIFIERS: Record<string, InlineMockFamilyName> = {
     '@/sync/domains/state/storage': 'storage',
 };
 
+// Each family's canonical testkit module publishes its factory in two spellings: `create*` returns
+// the module object, and `install*` is a one-line wrapper returning a factory that calls `create*`
+// (`installStorageModuleStub` is `() => createStorageModuleStub(overrides)`). Both are the canonical
+// shape, so both belong here -- recognising only `create*` reported every `install*` call site as an
+// ad hoc inline mock. `createReactNativeNativeMock` is the native counterpart of the web factory in
+// the same module, and was missing for the same reason.
 const CANONICAL_MARKERS: Record<InlineMockFamilyName, readonly string[]> = {
-    reactNative: ['createReactNativeWebMock'],
-    unistyles: ['createUnistylesMock'],
-    text: ['createTextModuleMock'],
-    modal: ['createModalModuleMock'],
+    reactNative: ['createReactNativeWebMock', 'installReactNativeWebMock', 'createReactNativeNativeMock'],
+    unistyles: ['createUnistylesMock', 'installUnistylesMock'],
+    text: ['createTextModuleMock', 'installTextModuleMock'],
+    modal: ['createModalModuleMock', 'installModalModuleMock'],
     router: ['createExpoRouterMock'],
-    storage: ['createStorageModuleMock', 'createPartialStorageModuleMock', 'createStorageModuleStub'],
+    storage: [
+        'createStorageModuleMock',
+        'createPartialStorageModuleMock',
+        'createStorageModuleStub',
+        'installPartialStorageModuleMock',
+        'installStorageModuleStub',
+    ],
 };
 
 const CANONICAL_HELPER_MARKERS: Record<InlineMockFamilyName, readonly Readonly<{

@@ -61,13 +61,6 @@ vi.mock('@/sync/domains/features/featureBuildPolicy', () => ({
     getFeatureBuildPolicyDecision: () => 'deny',
 }));
 
-vi.mock('@/constants/Typography', () => ({
-    Typography: {
-        default: () => ({}),
-        eyebrow: () => ({}),
-    },
-}));
-
 vi.mock('@/components/ui/layout/layout', () => ({
     layout: { maxWidth: 1000 },
 }));

@@ -5,6 +5,7 @@ import { installVitestRnShim } from './vitestRnShim';
 import { resetRuntimeFetch } from '@/utils/system/runtimeFetch';
 import { SHADOW_LEVELS } from '@/shadowElevation';
 import { buildLightStateColors, LIGHT_STATE_INFO_FOREGROUND } from '@/theme/tokens/stateColors';
+import { lightSurfaceColors, lightTextColors } from '@/theme/tokens/surfaceAndTextColors';
 import { standardCleanup } from './testkit/cleanup/standardCleanup';
 import { createReanimatedModuleMock } from './testkit/mocks/reanimated';
 import { resetReactNativeMmkvStub } from './reactNativeMmkvStub';
@@ -600,15 +601,11 @@ vi.mock('react-native-unistyles', () => {
             //
             // Main colors
             //
-            text: {
-                primary: '#000000',
-                secondary: '#666666',
-                tertiary: '#999999',
-                link: '#2BACCC',
-                destructive: '#FF3B30',
-                placeholder: '#999999',
-                disabled: '#C0C0C0',
-            },
+            // Not restated, for the reason spelled out on `state` below: hand-copying this block
+            // had it serving `#000000`/`#666666`/`#999999` where the app paints
+            // `#222222`/`#6c6c70`/`#99999d`, so every suite without its own theme was certifying
+            // colours the app never renders. `theme/tokens/surfaceAndTextColors.ts` imports nothing.
+            text: lightTextColors,
             accent: {
                 blue: '#007AFF',
                 green: '#34C759',
@@ -627,16 +624,9 @@ vi.mock('react-native-unistyles', () => {
             // `vitestSetupThemeParity.test.ts` fails the moment those two disagree.
             state: buildLightStateColors(LIGHT_STATE_INFO_FOREGROUND.default),
             background: { canvas: '#F5F5F5' },
-            surface: {
-                base: '#ffffff',
-                inset: '#F8F8F8',
-                elevated: '#f0f0f0',
-                ripple: 'rgba(0, 0, 0, 0.08)',
-                pressed: '#f0f0f2',
-                selected: '#f2f2f2',
-                pressedOverlay: '#f0f0f2',
-                sectionTint: 'rgba(0,0,0,0.022)',
-            },
+            // See `text` above — same owner, four more drifts closed (`pressed`, `pressedOverlay`,
+            // `selected`, `sectionTint`).
+            surface: lightSurfaceColors,
             border: {
                 default: '#eaeaea',
                 surface: 'transparent',

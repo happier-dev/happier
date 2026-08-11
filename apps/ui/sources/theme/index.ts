@@ -12,6 +12,12 @@ import {
     darkStateColors,
     LIGHT_STATE_INFO_FOREGROUND,
 } from './tokens/stateColors';
+import {
+    darkSurfaceColors,
+    darkTextColors,
+    lightSurfaceColors,
+    lightTextColors,
+} from './tokens/surfaceAndTextColors';
 import { createVerticalGradient } from './verticalGradient';
 
 // The opt-in glass composer is a large surface, so its top inner-shadow reads a
@@ -59,15 +65,10 @@ export const lightTheme = {
         // Main colors
         //
 
-        text: {
-            primary: '#222222',
-            secondary: '#6c6c70',
-            tertiary: '#99999d',
-            link: '#2BACCC',
-            destructive: '#FF3B30',
-            placeholder: '#999999',
-            disabled: '#C0C0C0',
-        },
+        // `text.*` and `surface.*` are owned by `theme/tokens/surfaceAndTextColors.ts` for the same
+        // reason `state.*` is: the Vitest theme mock must consume the same bytes rather than restate
+        // them. See that module for the seven drifts restating produced.
+        text: lightTextColors,
         accent: {
             blue: '#007AFF',
             green: '#34C759',
@@ -89,19 +90,7 @@ export const lightTheme = {
         background: {
             canvas: '#F5F5F5',
         },
-        surface: {
-            base: '#ffffff',
-            inset: '#F8F8F8',
-            elevated: '#f0f0f0',
-            ripple: 'rgba(0, 0, 0, 0.08)',
-            pressed: '#fafafa',
-            selected: '#f8f8f8',
-            pressedOverlay: '#fafafa',
-            // Barely-there grouped-section tint. Baked as an opacity overlay (not a
-            // solid inset) so it reads a hair off the base surface; a runtime opacity
-            // transform would be a silent no-op once web var-ifies the token.
-            sectionTint: 'rgba(0,0,0,0.012)',
-        },
+        surface: lightSurfaceColors,
         // The keyboard focus indicator. Deliberately its own hue rather than an alias of
         // `state.active` or `accent.blue`: the ring's promise is >=3:1 against every surface the
         // app can put behind it (WCAG 2.2 SC 1.4.11 / 2.4.11), and an accent that gets re-tuned
@@ -374,15 +363,8 @@ export const darkTheme = {
         // Main colors
         //
 
-        text: {
-            primary: '#EFEFEF',
-            secondary: '#8A817C',
-            tertiary: '#6C625D',
-            link: '#9EB9FF',
-            destructive: '#EE6E6C',
-            placeholder: '#766C67',
-            disabled: '#635955',
-        },
+        // See the light theme: owned by `theme/tokens/surfaceAndTextColors.ts`.
+        text: darkTextColors,
         accent: {
             blue: '#9EB9FF',
             green: '#66DC7E',
@@ -397,16 +379,7 @@ export const darkTheme = {
         background: {
             canvas: '#131111',
         },
-        surface: {
-            base: '#191717',
-            inset: '#171515',
-            elevated: '#221C1C',
-            ripple: 'rgba(255, 255, 255, 0.055)',
-            pressed: '#302727',
-            selected: '#292121',
-            pressedOverlay: 'rgba(255,255,255,0.036)',
-            sectionTint: 'rgba(255,255,255,0.014)',
-        },
+        surface: darkSurfaceColors,
         // See the light theme for why this is a dedicated hue. #A9C2FF measures 10.07:1 on
         // `surface.base` down to 6.20:1 on `border.strong` over `surface.pressed`.
         focus: {

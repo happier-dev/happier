@@ -121,13 +121,6 @@ vi.mock('@/components/ui/layout/layout', () => ({
     layout: { maxWidth: 999 },
 }));
 
-vi.mock('@/constants/Typography', () => ({
-    Typography: {
-        default: () => ({}),
-        mono: () => ({}),
-    },
-}));
-
 vi.mock('@/components/ui/text/Text', () => ({
     Text: 'Text',
     TextInput: 'TextInput',

@@ -373,7 +373,6 @@ vi.mock('@happier-dev/agents', async (importOriginal) => {
         },
     };
 });
-vi.mock('@/constants/Typography', () => ({ Typography: { default: () => ({}) } }));
 vi.mock('@/utils/sessions/sessionUtils', () => ({
     getSessionName: () => 'name',
     useSessionStatus: (...args: unknown[]) => {
