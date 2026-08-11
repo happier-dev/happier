@@ -12,8 +12,101 @@ import { ArtifactEncryption } from '@/sync/encryption/artifactEncryption';
 import type { Artifact, ArtifactCreateRequest, ArtifactUpdateRequest, DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
 import type { ArtifactHeader } from '@/sync/domains/artifacts/artifactTypes';
 
+/**
+ * An unwrapped artifact data key together with the exact wrapped envelope it came
+ * from. Unwrapping is a pure function of (envelope, account content key) and the
+ * account content key is fixed for the lifetime of an `Encryption` instance, so a
+ * byte-identical envelope never has to be opened twice. Keeping the envelope beside
+ * the key is what makes "unchanged" checkable — a bare key cannot tell a rotated
+ * envelope from an unchanged one, which is why the previous cache was written on
+ * every refresh and read by no refresh.
+ */
+export type ArtifactDataKeyCacheEntry = Readonly<{
+    envelope: string;
+    dataKey: Uint8Array;
+}>;
+
+export type ArtifactDataKeyCache = Map<string, ArtifactDataKeyCacheEntry>;
+
 function isServerFetchConnectivityTimeoutError(error: unknown): boolean {
     return error instanceof Error && error.name === 'ServerFetchConnectivityTimeoutError';
+}
+
+/**
+ * Single owner of "which artifact data keys must actually be unwrapped".
+ *
+ * Reuses every entry whose server-reported envelope is byte-identical, opens the
+ * remainder in ONE batch (`decryptEncryptionKeys` owns the native-worker routing
+ * decision and can only make it for a batch it is given whole), and drops the
+ * cached entry for any artifact whose envelope failed to open so a rotated key is
+ * never served from a stale unwrap. Result covers every requested artifact id.
+ */
+async function resolveArtifactDataKeys(params: {
+    artifacts: readonly Pick<Artifact, 'id' | 'dataEncryptionKey'>[];
+    encryption: Encryption;
+    artifactDataKeys: ArtifactDataKeyCache;
+}): Promise<Map<string, Uint8Array | null>> {
+    const { artifacts, encryption, artifactDataKeys } = params;
+
+    const resolved = new Map<string, Uint8Array | null>();
+    const pendingArtifactIds: string[] = [];
+    const pendingEnvelopes: string[] = [];
+
+    for (const artifact of artifacts) {
+        const envelope = artifact.dataEncryptionKey;
+        if (typeof envelope !== 'string' || envelope.length === 0) {
+            artifactDataKeys.delete(artifact.id);
+            resolved.set(artifact.id, null);
+            continue;
+        }
+        const cached = artifactDataKeys.get(artifact.id);
+        if (cached && cached.envelope === envelope) {
+            resolved.set(artifact.id, cached.dataKey);
+            continue;
+        }
+        pendingArtifactIds.push(artifact.id);
+        pendingEnvelopes.push(envelope);
+    }
+
+    if (pendingEnvelopes.length === 0) {
+        return resolved;
+    }
+
+    let decryptedKeys: Array<Uint8Array | null>;
+    try {
+        decryptedKeys = await encryption.decryptEncryptionKeys(pendingEnvelopes);
+    } catch {
+        decryptedKeys = pendingEnvelopes.map(() => null);
+    }
+
+    for (let index = 0; index < pendingArtifactIds.length; index += 1) {
+        const artifactId = pendingArtifactIds[index]!;
+        const dataKey = decryptedKeys[index] ?? null;
+        if (!dataKey) {
+            // A rotated envelope that fails to open must not leave the previous key
+            // cached: the next refresh would reuse a key this artifact no longer uses.
+            artifactDataKeys.delete(artifactId);
+            resolved.set(artifactId, null);
+            continue;
+        }
+        artifactDataKeys.set(artifactId, { envelope: pendingEnvelopes[index]!, dataKey });
+        resolved.set(artifactId, dataKey);
+    }
+
+    return resolved;
+}
+
+async function resolveArtifactDataKey(params: {
+    artifact: Pick<Artifact, 'id' | 'dataEncryptionKey'>;
+    encryption: Encryption;
+    artifactDataKeys: ArtifactDataKeyCache;
+}): Promise<Uint8Array | null> {
+    const resolved = await resolveArtifactDataKeys({
+        artifacts: [params.artifact],
+        encryption: params.encryption,
+        artifactDataKeys: params.artifactDataKeys,
+    });
+    return resolved.get(params.artifact.id) ?? null;
 }
 
 function normalizeArtifactHeaderForDecryptedArtifact(header: ArtifactHeader): ArtifactHeader {
@@ -43,23 +136,27 @@ function normalizeArtifactHeaderForDecryptedArtifact(header: ArtifactHeader): Ar
 export async function decryptArtifactListItem(params: {
     artifact: Artifact;
     encryption: Encryption;
-    artifactDataKeys: Map<string, Uint8Array>;
+    artifactDataKeys: ArtifactDataKeyCache;
 }): Promise<DecryptedArtifact | null> {
     const { artifact, encryption, artifactDataKeys } = params;
+    const dataKey = await resolveArtifactDataKey({ artifact, encryption, artifactDataKeys });
+    return buildDecryptedArtifactListItem({ artifact, dataKey });
+}
+
+async function buildDecryptedArtifactListItem(params: {
+    artifact: Artifact;
+    dataKey: Uint8Array | null;
+}): Promise<DecryptedArtifact | null> {
+    const { artifact, dataKey } = params;
 
     try {
-        // Decrypt the data encryption key
-        const decryptedKey = await encryption.decryptEncryptionKey(artifact.dataEncryptionKey);
-        if (!decryptedKey) {
+        if (!dataKey) {
             console.error(`Failed to decrypt key for artifact ${artifact.id}`);
             return null;
         }
 
-        // Store the decrypted key in memory
-        artifactDataKeys.set(artifact.id, decryptedKey);
-
         // Create artifact encryption instance
-        const artifactEncryption = new ArtifactEncryption(decryptedKey);
+        const artifactEncryption = new ArtifactEncryption(dataKey);
 
         // Decrypt header
         const header = await artifactEncryption.decryptHeader(artifact.header);
@@ -97,20 +194,16 @@ export async function decryptArtifactListItem(params: {
 export async function decryptArtifactWithBody(params: {
     artifact: Artifact;
     encryption: Encryption;
-    artifactDataKeys: Map<string, Uint8Array>;
+    artifactDataKeys: ArtifactDataKeyCache;
 }): Promise<DecryptedArtifact | null> {
     const { artifact, encryption, artifactDataKeys } = params;
 
     try {
-        // Decrypt the data encryption key
-        const decryptedKey = await encryption.decryptEncryptionKey(artifact.dataEncryptionKey);
+        const decryptedKey = await resolveArtifactDataKey({ artifact, encryption, artifactDataKeys });
         if (!decryptedKey) {
             console.error(`Failed to decrypt key for artifact ${artifact.id}`);
             return null;
         }
-
-        // Store the decrypted key in memory
-        artifactDataKeys.set(artifact.id, decryptedKey);
 
         // Create artifact encryption instance
         const artifactEncryption = new ArtifactEncryption(decryptedKey);
@@ -142,7 +235,7 @@ export async function decryptArtifactWithBody(params: {
 export async function fetchAndApplyArtifactsList(params: {
     credentials: AuthCredentials | null | undefined;
     encryption: Encryption;
-    artifactDataKeys: Map<string, Uint8Array>;
+    artifactDataKeys: ArtifactDataKeyCache;
     applyArtifacts: (artifacts: DecryptedArtifact[]) => void;
     shouldContinue?: () => boolean;
 }): Promise<void> {
@@ -163,11 +256,19 @@ export async function fetchAndApplyArtifactsList(params: {
         log.log(`📦 fetchArtifactsList: Received ${artifacts.length} artifacts from server`);
         const decryptedArtifacts: DecryptedArtifact[] = [];
 
+        // Unwrap only what this response actually changed, and unwrap it in ONE batch
+        // rather than a curve25519 open per artifact per refresh.
+        const dataKeysByArtifactId = await resolveArtifactDataKeys({
+            artifacts,
+            encryption,
+            artifactDataKeys,
+        });
+        if (!shouldContinue()) return;
+
         for (const artifact of artifacts) {
-            const decrypted = await decryptArtifactListItem({
+            const decrypted = await buildDecryptedArtifactListItem({
                 artifact,
-                encryption,
-                artifactDataKeys,
+                dataKey: dataKeysByArtifactId.get(artifact.id) ?? null,
             });
             if (!shouldContinue()) return;
             if (decrypted) {
@@ -192,7 +293,7 @@ export async function fetchArtifactWithBodyFromApi(params: {
     credentials: AuthCredentials;
     artifactId: string;
     encryption: Encryption;
-    artifactDataKeys: Map<string, Uint8Array>;
+    artifactDataKeys: ArtifactDataKeyCache;
 }): Promise<DecryptedArtifact | null> {
     const { credentials, artifactId, encryption, artifactDataKeys } = params;
 
@@ -216,7 +317,7 @@ export async function createArtifactViaApi(params: {
     sessions?: string[];
     draft?: boolean;
     encryption: Encryption;
-    artifactDataKeys: Map<string, Uint8Array>;
+    artifactDataKeys: ArtifactDataKeyCache;
     addArtifact: (artifact: DecryptedArtifact) => void;
 }): Promise<string> {
     const { credentials, title, body, sessions, draft, encryption, artifactDataKeys, addArtifact } = params;
@@ -236,7 +337,7 @@ export async function createArtifactWithHeaderViaApi(params: {
     header: ArtifactHeader;
     body: string | null;
     encryption: Encryption;
-    artifactDataKeys: Map<string, Uint8Array>;
+    artifactDataKeys: ArtifactDataKeyCache;
     addArtifact: (artifact: DecryptedArtifact) => void;
 }): Promise<string> {
     const { credentials, header, body, encryption, artifactDataKeys, addArtifact } = params;
@@ -248,11 +349,13 @@ export async function createArtifactWithHeaderViaApi(params: {
         // Generate data encryption key
         const dataEncryptionKey = ArtifactEncryption.generateDataEncryptionKey();
 
-        // Store the decrypted key in memory
-        artifactDataKeys.set(artifactId, dataEncryptionKey);
-
         // Encrypt the data encryption key with user's key
         const encryptedKey = await encryption.encryptEncryptionKey(dataEncryptionKey);
+        const envelope = encodeBase64(encryptedKey, 'base64');
+
+        // Remember the key against the envelope the server will report back, so the
+        // next list refresh recognises it as unchanged instead of re-opening it.
+        artifactDataKeys.set(artifactId, { envelope, dataKey: dataEncryptionKey });
 
         // Create artifact encryption instance
         const artifactEncryption = new ArtifactEncryption(dataEncryptionKey);
@@ -266,7 +369,7 @@ export async function createArtifactWithHeaderViaApi(params: {
             id: artifactId,
             header: encryptedHeader,
             body: encryptedBody,
-            dataEncryptionKey: encodeBase64(encryptedKey, 'base64'),
+            dataEncryptionKey: envelope,
         };
 
         // Send to server
@@ -306,7 +409,7 @@ export async function updateArtifactViaApi(params: {
     sessions?: string[];
     draft?: boolean;
     encryption: Encryption;
-    artifactDataKeys: Map<string, Uint8Array>;
+    artifactDataKeys: ArtifactDataKeyCache;
     getArtifact: (artifactId: string) => DecryptedArtifact | undefined;
     updateArtifact: (artifact: DecryptedArtifact) => void;
 }): Promise<void> {
@@ -371,7 +474,7 @@ export async function updateArtifactWithHeaderViaApi(params: {
     header: ArtifactHeader;
     body: string | null;
     encryption: Encryption;
-    artifactDataKeys: Map<string, Uint8Array>;
+    artifactDataKeys: ArtifactDataKeyCache;
     getArtifact: (artifactId: string) => DecryptedArtifact | undefined;
     updateArtifact: (artifact: DecryptedArtifact) => void;
 }): Promise<void> {
@@ -384,7 +487,7 @@ export async function updateArtifactWithHeaderViaApi(params: {
     }
 
     // Get the data encryption key from memory
-    let dataEncryptionKey = artifactDataKeys.get(artifactId);
+    let dataEncryptionKey = artifactDataKeys.get(artifactId)?.dataKey;
 
     // Determine current versions
     let headerVersion = currentArtifact.headerVersion;
@@ -397,11 +500,14 @@ export async function updateArtifactWithHeaderViaApi(params: {
 
         // Decrypt and store the data encryption key if we don't have it
         if (!dataEncryptionKey) {
-            const decryptedKey = await encryption.decryptEncryptionKey(fullArtifact.dataEncryptionKey);
+            const decryptedKey = await resolveArtifactDataKey({
+                artifact: fullArtifact,
+                encryption,
+                artifactDataKeys,
+            });
             if (!decryptedKey) {
                 throw new Error('Failed to decrypt encryption key');
             }
-            artifactDataKeys.set(artifactId, decryptedKey);
             dataEncryptionKey = decryptedKey;
         }
     }
@@ -479,7 +585,7 @@ export async function decryptSocketNewArtifactUpdate(params: {
     createdAt: number;
     updatedAt: number;
     encryption: Encryption;
-    artifactDataKeys: Map<string, Uint8Array>;
+    artifactDataKeys: ArtifactDataKeyCache;
 }): Promise<DecryptedArtifact | null> {
     const {
         artifactId,
@@ -495,15 +601,16 @@ export async function decryptSocketNewArtifactUpdate(params: {
         artifactDataKeys,
     } = params;
 
-    // Decrypt the data encryption key
-    const decryptedKey = await encryption.decryptEncryptionKey(dataEncryptionKey);
+    // Decrypt the data encryption key (and remember it against its envelope)
+    const decryptedKey = await resolveArtifactDataKey({
+        artifact: { id: artifactId, dataEncryptionKey },
+        encryption,
+        artifactDataKeys,
+    });
     if (!decryptedKey) {
         console.error(`Failed to decrypt key for new artifact ${artifactId}`);
         return null;
     }
-
-    // Store the decrypted key in memory
-    artifactDataKeys.set(artifactId, decryptedKey);
 
     // Create artifact encryption instance
     const artifactEncryption = new ArtifactEncryption(decryptedKey);
@@ -590,7 +697,7 @@ export async function handleNewArtifactSocketUpdate(params: {
     createdAt: number;
     updatedAt: number;
     encryption: Encryption;
-    artifactDataKeys: Map<string, Uint8Array>;
+    artifactDataKeys: ArtifactDataKeyCache;
     addArtifact: (artifact: DecryptedArtifact) => void;
     log: { log: (message: string) => void };
 }): Promise<void> {
@@ -640,7 +747,7 @@ export async function handleUpdateArtifactSocketUpdate(params: {
     createdAt: number;
     header?: { version: number; value: string } | null;
     body?: { version: number; value: string } | null;
-    artifactDataKeys: Map<string, Uint8Array>;
+    artifactDataKeys: ArtifactDataKeyCache;
     getExistingArtifact: (artifactId: string) => DecryptedArtifact | undefined;
     updateArtifact: (artifact: DecryptedArtifact) => void;
     invalidateArtifactsSync: () => void;
@@ -668,7 +775,7 @@ export async function handleUpdateArtifactSocketUpdate(params: {
 
     try {
         // Get the data encryption key from memory
-        const dataEncryptionKey = artifactDataKeys.get(artifactId);
+        const dataEncryptionKey = artifactDataKeys.get(artifactId)?.dataKey;
         if (!dataEncryptionKey) {
             console.error(`Encryption key not found for artifact ${artifactId}, fetching artifacts`);
             invalidateArtifactsSync();
@@ -693,7 +800,7 @@ export async function handleUpdateArtifactSocketUpdate(params: {
 export function handleDeleteArtifactSocketUpdate(params: {
     artifactId: string;
     deleteArtifact: (artifactId: string) => void;
-    artifactDataKeys: Map<string, Uint8Array>;
+    artifactDataKeys: ArtifactDataKeyCache;
 }): void {
     const { artifactId, deleteArtifact, artifactDataKeys } = params;
 

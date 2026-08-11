@@ -1,7 +1,7 @@
 import { TokenStorage, type AuthCredentials, isLegacyAuthCredentials } from '@/auth/storage/tokenStorage';
 import { Encryption } from '@/sync/encryption/encryption';
 import { createEncryptionFromAuthCredentials } from '@/auth/encryption/createEncryptionFromAuthCredentials';
-import { fetchAndApplyMachines } from '@/sync/engine/machines/syncMachines';
+import { fetchAndApplyMachines, type MachineDataKeyCacheEntry } from '@/sync/engine/machines/syncMachines';
 import { fetchAndApplySessions } from '@/sync/engine/sessions/sessionSnapshot';
 import { getEffectiveServerSelectionFromRawSettings } from '@/sync/domains/server/selection/serverSelectionResolution';
 import { listServerProfiles, resolveServerProfileScopeId, type ServerProfile } from '@/sync/domains/server/serverProfiles';
@@ -61,7 +61,7 @@ type ManagedConcurrentServer = {
     encryption: Encryption | null;
     sessionDataKeys: Map<string, Uint8Array>;
     sessionDataKeyEnvelopes: Map<string, string>;
-    machineDataKeys: Map<string, Uint8Array>;
+    machineDataKeys: Map<string, MachineDataKeyCacheEntry>;
     refreshQueued: boolean;
     refreshInFlight: Promise<void> | null;
     refreshTimer: ReturnType<typeof setTimeout> | null;
@@ -403,7 +403,7 @@ function createManagedServer(target: ConcurrentTarget, credentials: AuthCredenti
         encryption: null,
         sessionDataKeys: new Map<string, Uint8Array>(),
         sessionDataKeyEnvelopes: new Map<string, string>(),
-        machineDataKeys: new Map<string, Uint8Array>(),
+        machineDataKeys: new Map<string, MachineDataKeyCacheEntry>(),
         refreshQueued: false,
         refreshInFlight: null,
         refreshTimer: null,

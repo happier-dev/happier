@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
+import type { MachineDataKeyCacheEntry } from './syncMachines';
 
 vi.mock('@/log', () => ({ log: { log: vi.fn() } }));
 
@@ -103,7 +104,7 @@ describe('fetchAndApplyMachines request override', () => {
         );
 
         const encryption = createEncryptionHarness();
-        const machineDataKeys = new Map<string, Uint8Array>();
+        const machineDataKeys = new Map<string, MachineDataKeyCacheEntry>();
         const applied: unknown[][] = [];
 
         await fetchAndApplyMachines({
@@ -155,7 +156,7 @@ describe('fetchAndApplyMachines request override', () => {
         await fetchAndApplyMachines({
             credentials: { token: 't', secret: 's' } satisfies AuthCredentials,
             encryption,
-            machineDataKeys: new Map<string, Uint8Array>(),
+            machineDataKeys: new Map<string, MachineDataKeyCacheEntry>(),
             request: requestSpy,
             applyMachines: (machines) => {
                 applied.push(machines);
@@ -201,7 +202,7 @@ describe('fetchAndApplyMachines request override', () => {
         await fetchAndApplyMachines({
             credentials: { token: 't', secret: 's' } satisfies AuthCredentials,
             encryption,
-            machineDataKeys: new Map<string, Uint8Array>(),
+            machineDataKeys: new Map<string, MachineDataKeyCacheEntry>(),
             request: requestSpy,
             applyMachines,
             ...( {
@@ -271,7 +272,7 @@ describe('fetchAndApplyMachines request override', () => {
         await fetchAndApplyMachines({
             credentials: { token: 't', secret: 's' } satisfies AuthCredentials,
             encryption,
-            machineDataKeys: new Map<string, Uint8Array>(),
+            machineDataKeys: new Map<string, MachineDataKeyCacheEntry>(),
             request: requestSpy,
             applyMachines,
             ...( {
@@ -335,7 +336,7 @@ describe('fetchAndApplyMachines request override', () => {
         const fetchPromise = fetchAndApplyMachines({
             credentials: { token: 't', secret: 's' } satisfies AuthCredentials,
             encryption,
-            machineDataKeys: new Map<string, Uint8Array>(),
+            machineDataKeys: new Map<string, MachineDataKeyCacheEntry>(),
             request: requestSpy,
             applyMachines,
             getExistingMachine: (machineId: string) => machineId === 'm_cached'
@@ -415,7 +416,7 @@ describe('fetchAndApplyMachines request override', () => {
         await fetchAndApplyMachines({
             credentials: { token: 't', secret: 's' } satisfies AuthCredentials,
             encryption,
-            machineDataKeys: new Map<string, Uint8Array>(),
+            machineDataKeys: new Map<string, MachineDataKeyCacheEntry>(),
             request: requestSpy,
             applyMachines,
             getExistingMachine: (machineId: string) => machineId === 'm_cached'
@@ -490,7 +491,7 @@ describe('fetchAndApplyMachines request override', () => {
         const fetchPromise = fetchAndApplyMachines({
             credentials: { token: 't', secret: 's' } satisfies AuthCredentials,
             encryption,
-            machineDataKeys: new Map<string, Uint8Array>(),
+            machineDataKeys: new Map<string, MachineDataKeyCacheEntry>(),
             request: requestSpy,
             applyMachines,
             applyMachineDisplayEntries,
@@ -544,7 +545,7 @@ describe('fetchAndApplyMachines request override', () => {
         await fetchAndApplyMachines({
             credentials: { token: 't', secret: 's' } satisfies AuthCredentials,
             encryption,
-            machineDataKeys: new Map<string, Uint8Array>(),
+            machineDataKeys: new Map<string, MachineDataKeyCacheEntry>(),
             request: requestSpy,
             applyMachines,
             applyMachineDisplayEntries,
@@ -572,7 +573,7 @@ describe('fetchAndApplyMachines request override', () => {
             });
 
             const encryption = createEncryptionHarness();
-            const machineDataKeys = new Map<string, Uint8Array>();
+            const machineDataKeys = new Map<string, MachineDataKeyCacheEntry>();
             const applyMachines = vi.fn();
 
             await expect(
@@ -618,7 +619,7 @@ describe('fetchAndApplyMachines request override', () => {
         const encryption = createEncryptionHarness();
         encryption.decryptEncryptionKeys.mockResolvedValueOnce([null]);
 
-        const machineDataKeys = new Map<string, Uint8Array>();
+        const machineDataKeys = new Map<string, MachineDataKeyCacheEntry>();
         const applied: unknown[][] = [];
 
         await fetchAndApplyMachines({
@@ -665,7 +666,7 @@ describe('fetchAndApplyMachines request override', () => {
         const encryption = createEncryptionHarness();
         encryption.decryptEncryptionKeys.mockImplementation(async (values: readonly string[]) => values.map(() => null));
 
-        const machineDataKeys = new Map<string, Uint8Array>();
+        const machineDataKeys = new Map<string, MachineDataKeyCacheEntry>();
 
         await fetchAndApplyMachines({
             credentials: { token: 't', secret: 's' } satisfies AuthCredentials,
@@ -710,7 +711,7 @@ describe('fetchAndApplyMachines request override', () => {
         );
 
         const encryption = createEncryptionHarness();
-        const machineDataKeys = new Map<string, Uint8Array>();
+        const machineDataKeys = new Map<string, MachineDataKeyCacheEntry>();
 
         const machineStateById: Record<string, any> = {
             m2: { id: 'm2' },
@@ -764,7 +765,7 @@ describe('fetchAndApplyMachines request override', () => {
         await fetchAndApplyMachines({
             credentials: { token: 't', secret: 's' } satisfies AuthCredentials,
             encryption,
-            machineDataKeys: new Map<string, Uint8Array>(),
+            machineDataKeys: new Map<string, MachineDataKeyCacheEntry>(),
             request: requestSpy,
             applyMachines,
             applyMachineDisplayEntries,

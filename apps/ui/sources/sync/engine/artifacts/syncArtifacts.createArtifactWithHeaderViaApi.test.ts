@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { Encryption } from '@/sync/encryption/encryption';
+import type { ArtifactDataKeyCache } from './syncArtifacts';
 
 vi.mock('@/sync/api/artifacts/apiArtifacts', () => ({
   createArtifact: vi.fn(async (_credentials: any, request: any) => ({
@@ -19,7 +20,7 @@ vi.mock('@/sync/api/artifacts/apiArtifacts', () => ({
 describe('createArtifactWithHeaderViaApi', () => {
   it('preserves passthrough header metadata in local decrypted artifacts', async () => {
     const encryption = await Encryption.create(new Uint8Array(32).fill(9));
-    const artifactDataKeys = new Map<string, Uint8Array>();
+    const artifactDataKeys: ArtifactDataKeyCache = new Map();
     const added: any[] = [];
 
     const { createArtifactWithHeaderViaApi } = await import('./syncArtifacts');

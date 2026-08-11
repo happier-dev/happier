@@ -33,7 +33,7 @@ function buildBaseParams(overrides: Partial<Omit<Parameters<typeof handleUpdateC
             getMachineEncryption: () => null,
             removeSessionEncryption: () => {},
         } as unknown as Parameters<typeof handleUpdateContainer>[0]['encryption'],
-        artifactDataKeys: new Map<string, Uint8Array>(),
+        artifactDataKeys: new Map(),
         applySessions: vi.fn(),
         fetchSessions: vi.fn(),
         applyMessages: vi.fn(),

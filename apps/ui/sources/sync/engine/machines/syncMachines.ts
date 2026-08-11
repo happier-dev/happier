@@ -20,6 +20,20 @@ type SyncEncryption = {
 
 const warnedMachineDataEncryptionKeyFailuresByEncryption = new WeakMap<SyncEncryption, Set<string>>();
 
+/**
+ * An unwrapped machine data key together with the exact wrapped envelope it came from.
+ *
+ * Carrying the envelope with the key is what makes the cache safe to read: a refresh may
+ * reuse a plaintext key only when the server still reports the same envelope, so a
+ * rotated key is never missed and no machine is left holding a key it no longer uses.
+ * Keeping the two in one entry makes "a key whose source envelope is unknown"
+ * unrepresentable.
+ */
+export type MachineDataKeyCacheEntry = Readonly<{
+    envelope: string;
+    dataKey: Uint8Array;
+}>;
+
 type MachineReplacementFields = Pick<
     Machine,
     'replacedByMachineId' | 'replacedAt' | 'replacementReason' | 'replacementSource' | 'replacementActorUserId'
@@ -195,7 +209,7 @@ export function buildMachineFromMachineActivityEphemeralUpdate(params: {
 export async function fetchAndApplyMachines(params: {
     credentials: AuthCredentials;
     encryption: SyncEncryption;
-    machineDataKeys: Map<string, Uint8Array>;
+    machineDataKeys: Map<string, MachineDataKeyCacheEntry>;
     request?: (path: string, init: RequestInit) => Promise<Response>;
     applyMachines: (machines: Machine[], replace?: boolean) => void;
     getExistingMachine?: (machineId: string) => Machine | null | undefined;
@@ -303,20 +317,41 @@ export async function fetchAndApplyMachines(params: {
 
     // First, collect and decrypt encryption keys for all machines.
     //
-    // One batched open, not one call per machine. `decryptEncryptionKeys` is the
-    // canonical owner of the native-crypto-worker routing decision, and it sizes that
-    // decision on the whole batch: a lone wrapped data-key envelope is ~505 bridge
-    // bytes, under the default `minPayloadBytes` (512), so a per-machine call is forced
-    // onto the JS reference path (a curve25519 open, plus a second one whenever the
-    // account key is stored as a seed) no matter how healthy the native worker is.
-    // Batching also lets the JS reference path release the thread between chunks.
+    // Unwrap only what this response actually changed. `machineDataKeys` remembers the
+    // exact wrapped envelope each plaintext key came from, so an unchanged envelope is
+    // reused instead of re-opened: unwrapping is a pure function of (envelope, account
+    // content key), and the account content key is fixed for the lifetime of an
+    // `Encryption` instance — the cache is cleared with it on a server-scope reset.
+    // This matters because a machines refresh is not rare: it fires on new-session
+    // screen focus, settings focus, machine screen focus, handoff, resume and
+    // foreground, and every one of those used to re-run a curve25519 open per machine.
+    //
+    // What remains is opened in one batch, not one call per machine.
+    // `decryptEncryptionKeys` is the canonical owner of the native-crypto-worker routing
+    // decision, and it sizes that decision on the whole batch: a lone wrapped data-key
+    // envelope is ~505 bridge bytes, under the default `minPayloadBytes` (512), so a
+    // per-machine call is forced onto the JS reference path (a curve25519 open, plus a
+    // second one whenever the account key is stored as a seed) no matter how healthy the
+    // native worker is. Batching also lets the JS reference path release the thread
+    // between chunks.
     const machineKeysMap = new Map<string, Uint8Array | null>();
+    const readMachineEnvelope = (machine: { dataEncryptionKey?: string | null }): string | null =>
+        typeof machine.dataEncryptionKey === 'string' && machine.dataEncryptionKey.length > 0
+            ? machine.dataEncryptionKey
+            : null;
+    const reusedKeyByMachineId = new Map<string, Uint8Array>();
     const envelopeMachineIds: string[] = [];
     const envelopes: string[] = [];
     for (const machine of machines) {
-        if (typeof machine.dataEncryptionKey !== 'string' || machine.dataEncryptionKey.length === 0) continue;
+        const envelope = readMachineEnvelope(machine);
+        if (!envelope) continue;
+        const cached = machineDataKeys.get(machine.id);
+        if (cached && cached.envelope === envelope) {
+            reusedKeyByMachineId.set(machine.id, cached.dataKey);
+            continue;
+        }
         envelopeMachineIds.push(machine.id);
-        envelopes.push(machine.dataEncryptionKey);
+        envelopes.push(envelope);
     }
     let decryptedKeys: Array<Uint8Array | null> = [];
     if (envelopes.length > 0) {
@@ -331,16 +366,27 @@ export async function fetchAndApplyMachines(params: {
         decryptedKeyByMachineId.set(envelopeMachineIds[index]!, decryptedKeys[index] ?? null);
     }
     for (const machine of machines) {
+        const reusedKey = reusedKeyByMachineId.get(machine.id);
+        if (reusedKey) {
+            machineKeysMap.set(machine.id, reusedKey);
+            continue;
+        }
+        const envelope = readMachineEnvelope(machine);
         const hasEnvelope = decryptedKeyByMachineId.has(machine.id);
         const decryptedKey = hasEnvelope ? decryptedKeyByMachineId.get(machine.id) ?? null : null;
+        if (!decryptedKey) {
+            // A rotated envelope that fails to open must not leave the previous key
+            // cached: the next refresh would reuse a key this machine no longer uses.
+            machineDataKeys.delete(machine.id);
+        }
         if (!decryptedKey && hasEnvelope) {
             warnMachineDataEncryptionKeyDecryptFailureOnce(encryption, machine.id);
             machineKeysMap.set(machine.id, null);
             continue;
         }
         machineKeysMap.set(machine.id, decryptedKey);
-        if (decryptedKey) {
-            machineDataKeys.set(machine.id, decryptedKey);
+        if (decryptedKey && envelope) {
+            machineDataKeys.set(machine.id, { envelope, dataKey: decryptedKey });
         }
     }
 

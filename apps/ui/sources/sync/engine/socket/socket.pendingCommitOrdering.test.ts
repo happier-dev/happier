@@ -122,7 +122,7 @@ function buildBaseParams(overrides: Partial<Omit<HandleUpdateContainerParams, 'u
             decryptEncryptionKey: vi.fn(async () => null as Uint8Array | null),
             initializeMachines: vi.fn(async () => {}),
         } as unknown as HandleUpdateContainerParams['encryption'],
-        artifactDataKeys: new Map<string, Uint8Array>(),
+        artifactDataKeys: new Map(),
         applySessions: vi.fn(),
         fetchSessions: vi.fn(),
         applyMessages: (sessionId: string, messages: any) => storage.getState().applyMessages(sessionId, messages),

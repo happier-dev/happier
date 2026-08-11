@@ -80,6 +80,7 @@ import {
     handleDeleteArtifactSocketUpdate,
     handleNewArtifactSocketUpdate,
     handleUpdateArtifactSocketUpdate,
+    type ArtifactDataKeyCache,
 } from '@/sync/engine/artifacts/syncArtifacts';
 import {
     handleNewFeedPostUpdate,
@@ -1068,7 +1069,7 @@ export async function handleSocketUpdate(params: {
     getPendingSettings?: () => Partial<Settings>;
     sourceServerId?: string | null;
     shouldContinue?: () => boolean;
-    artifactDataKeys: Map<string, Uint8Array>;
+    artifactDataKeys: ArtifactDataKeyCache;
     applySessions: ApplySessions;
     fetchSessions: () => void;
     hydrateSessionById?: (sessionId: string, reason: SocketSessionHydrationReason) => void;
@@ -1183,7 +1184,7 @@ export async function handleUpdateContainer(params: {
     getPendingSettings?: () => Partial<Settings>;
     sourceServerId?: string | null;
     shouldContinue?: () => boolean;
-    artifactDataKeys: Map<string, Uint8Array>;
+    artifactDataKeys: ArtifactDataKeyCache;
     applySessions: ApplySessions;
     fetchSessions: () => void;
     hydrateSessionById?: (sessionId: string, reason: SocketSessionHydrationReason) => void;

@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
+import type { MachineDataKeyCacheEntry } from './syncMachines';
 
 vi.mock('@/log', () => ({ log: { log: vi.fn() } }));
 
@@ -88,7 +89,7 @@ describe('fetchAndApplyMachines machine data-key unwrapping', () => {
             machineRow('m4', 'env-4'),
         ]));
         const encryption = createEncryptionHarness((values) => values.map((_, index) => new Uint8Array([index + 1])));
-        const machineDataKeys = new Map<string, Uint8Array>();
+        const machineDataKeys = new Map<string, MachineDataKeyCacheEntry>();
 
         await fetchAndApplyMachines({
             credentials: { token: 't', secret: 's' } satisfies AuthCredentials,
@@ -104,7 +105,7 @@ describe('fetchAndApplyMachines machine data-key unwrapping', () => {
         expect(encryption.decryptEncryptionKeys).toHaveBeenCalledTimes(1);
         expect(encryption.decryptEncryptionKeys.mock.calls[0]![0]).toEqual(['env-1', 'env-2', 'env-4']);
         expect([...machineDataKeys.keys()].sort()).toEqual(['m1', 'm2', 'm4']);
-        expect(machineDataKeys.get('m2')).toEqual(new Uint8Array([2]));
+        expect(machineDataKeys.get('m2')).toEqual({ envelope: 'env-2', dataKey: new Uint8Array([2]) });
     });
 
     it('maps a per-item decrypt failure to the machine that owns that envelope', async () => {
@@ -115,7 +116,7 @@ describe('fetchAndApplyMachines machine data-key unwrapping', () => {
         ]));
         const encryption = createEncryptionHarness((values) =>
             values.map((value) => (value === 'env-1' ? null : new Uint8Array([9]))));
-        const machineDataKeys = new Map<string, Uint8Array>();
+        const machineDataKeys = new Map<string, MachineDataKeyCacheEntry>();
         const initializedKeys: Array<Map<string, Uint8Array | null>> = [];
         encryption.initializeMachines.mockImplementation(async (machineKeys) => {
             initializedKeys.push(new Map(machineKeys));
@@ -130,8 +131,112 @@ describe('fetchAndApplyMachines machine data-key unwrapping', () => {
         });
 
         expect(machineDataKeys.has('m1')).toBe(false);
-        expect(machineDataKeys.get('m2')).toEqual(new Uint8Array([9]));
+        expect(machineDataKeys.get('m2')?.dataKey).toEqual(new Uint8Array([9]));
         expect(initializedKeys[0]?.get('m1')).toBe(null);
         expect(initializedKeys[0]?.get('m2')).toEqual(new Uint8Array([9]));
+    });
+
+    it('does not re-open an envelope whose unwrapped key is already cached', async () => {
+        const fetchAndApplyMachines = await loadFetchAndApplyMachines();
+        const request = vi.fn(async () => jsonResponse([
+            machineRow('m1', 'env-1'),
+            machineRow('m2', 'env-2'),
+        ]));
+        const encryption = createEncryptionHarness((values) =>
+            values.map((value) => new Uint8Array([value === 'env-1' ? 1 : 2])));
+        const machineDataKeys = new Map<string, MachineDataKeyCacheEntry>();
+        const initializedKeys: Array<Map<string, Uint8Array | null>> = [];
+        encryption.initializeMachines.mockImplementation(async (machineKeys) => {
+            initializedKeys.push(new Map(machineKeys));
+        });
+
+        const call = async () => fetchAndApplyMachines({
+            credentials: { token: 't', secret: 's' } satisfies AuthCredentials,
+            encryption,
+            machineDataKeys,
+            request,
+            applyMachines: () => {},
+        });
+
+        await call();
+        await call();
+
+        // The second refresh sees the same wrapped envelopes it already unwrapped, so it
+        // must not run a single asymmetric open — machine refreshes fire on every screen
+        // focus and every foreground.
+        expect(encryption.decryptEncryptionKeys).toHaveBeenCalledTimes(1);
+        // Machine encryption is still initialized with the same plaintext keys.
+        expect(initializedKeys[1]?.get('m1')).toEqual(new Uint8Array([1]));
+        expect(initializedKeys[1]?.get('m2')).toEqual(new Uint8Array([2]));
+    });
+
+    it('re-opens only the machine whose envelope rotated', async () => {
+        const fetchAndApplyMachines = await loadFetchAndApplyMachines();
+        let rotated = false;
+        const request = vi.fn(async () => jsonResponse([
+            machineRow('m1', 'env-1'),
+            machineRow('m2', rotated ? 'env-2-rotated' : 'env-2'),
+        ]));
+        const keyByEnvelope: Record<string, Uint8Array> = {
+            'env-1': new Uint8Array([1]),
+            'env-2': new Uint8Array([2]),
+            'env-2-rotated': new Uint8Array([22]),
+        };
+        const encryption = createEncryptionHarness((values) => values.map((value) => keyByEnvelope[value] ?? null));
+        const machineDataKeys = new Map<string, MachineDataKeyCacheEntry>();
+        const initializedKeys: Array<Map<string, Uint8Array | null>> = [];
+        encryption.initializeMachines.mockImplementation(async (machineKeys) => {
+            initializedKeys.push(new Map(machineKeys));
+        });
+
+        const call = async () => fetchAndApplyMachines({
+            credentials: { token: 't', secret: 's' } satisfies AuthCredentials,
+            encryption,
+            machineDataKeys,
+            request,
+            applyMachines: () => {},
+        });
+
+        await call();
+        rotated = true;
+        await call();
+
+        expect(encryption.decryptEncryptionKeys).toHaveBeenCalledTimes(2);
+        expect(encryption.decryptEncryptionKeys.mock.calls[1]![0]).toEqual(['env-2-rotated']);
+        expect(initializedKeys[1]?.get('m1')).toEqual(new Uint8Array([1]));
+        expect(initializedKeys[1]?.get('m2')).toEqual(new Uint8Array([22]));
+        expect(machineDataKeys.get('m2')).toEqual({ envelope: 'env-2-rotated', dataKey: new Uint8Array([22]) });
+    });
+
+    it('drops the cached key when a rotated envelope fails to open', async () => {
+        const fetchAndApplyMachines = await loadFetchAndApplyMachines();
+        let rotated = false;
+        const request = vi.fn(async () => jsonResponse([
+            machineRow('m1', rotated ? 'env-1-rotated' : 'env-1'),
+        ]));
+        const encryption = createEncryptionHarness((values) =>
+            values.map((value) => (value === 'env-1' ? new Uint8Array([1]) : null)));
+        const machineDataKeys = new Map<string, MachineDataKeyCacheEntry>();
+        const initializedKeys: Array<Map<string, Uint8Array | null>> = [];
+        encryption.initializeMachines.mockImplementation(async (machineKeys) => {
+            initializedKeys.push(new Map(machineKeys));
+        });
+
+        const call = async () => fetchAndApplyMachines({
+            credentials: { token: 't', secret: 's' } satisfies AuthCredentials,
+            encryption,
+            machineDataKeys,
+            request,
+            applyMachines: () => {},
+        });
+
+        await call();
+        rotated = true;
+        await call();
+
+        // A stale key must never survive a failed re-open: the machine falls back to the
+        // legacy encryptor exactly as it does on a first-fetch failure.
+        expect(machineDataKeys.has('m1')).toBe(false);
+        expect(initializedKeys[1]?.get('m1')).toBe(null);
     });
 });
