@@ -114,6 +114,36 @@ export function OptionPickerOverlay(props: OptionPickerOverlayProps) {
     );
     const lastCommittedCustomValueRef = React.useRef<string>(selectedCustomValue);
     const previousSelectedValueRef = React.useRef(selectedValue);
+    // Dismissing the picker unmounts a still-focused input without firing `onBlur` on either
+    // React Native or React Native Web, so the unmount path has to flush the pending value.
+    // `commitCustomValue` is idempotent, so a blur followed by unmount commits once. Seeded
+    // neutral and refreshed on every render below, so it can live above the code that resets it.
+    const pendingCustomCommitRef = React.useRef<{
+        visible: boolean;
+        value: string;
+        commit: (raw: string) => void;
+    }>({ visible: false, value: '', commit: () => {} });
+
+    /**
+     * Forget an in-progress custom model draft.
+     *
+     * Called wherever a listed option supersedes the custom selection — through this picker or
+     * from outside it. Hiding the editor is not enough: a surviving draft is revived when the
+     * editor reopens and a later dismiss commits it over the real selection. Clearing the
+     * last-committed marker matters too, or re-choosing that same custom id afterwards is
+     * swallowed as a duplicate.
+     */
+    // Pressing another control blurs the focused input BEFORE that control's press handler runs.
+    // Without this, tapping a listed option commits the half-typed draft first and publishes an
+    // unintended intermediate model change before the option the user actually chose.
+    const selectionPressPendingRef = React.useRef(false);
+
+    const abandonCustomDraft = React.useCallback(() => {
+        selectionPressPendingRef.current = false;
+        pendingCustomCommitRef.current = { ...pendingCustomCommitRef.current, visible: false, value: '' };
+        lastCommittedCustomValueRef.current = '';
+        setCustomValue('');
+    }, []);
     const probeHintText = React.useMemo(() => {
         if (!probe || probe.phase === 'idle') return null;
         if (props.options.length > 1 || props.canEnterCustomValue) return null;
@@ -148,8 +178,9 @@ export function OptionPickerOverlay(props: OptionPickerOverlayProps) {
             }
             customEditorOpenReasonRef.current = null;
             setCustomEditorVisible(false);
+            abandonCustomDraft();
         }
-    }, [customEditorVisible, optionValues, selectedCustomValue, selectedValue]);
+    }, [abandonCustomDraft, customEditorVisible, optionValues, selectedCustomValue, selectedValue]);
 
     const filteredOptions = React.useMemo(() => {
         if (!showSearch || !normalizedQuery) return props.options;
@@ -255,9 +286,12 @@ export function OptionPickerOverlay(props: OptionPickerOverlayProps) {
 
     const handleSelectOption = React.useCallback((nextValue: string) => {
         customEditorOpenReasonRef.current = null;
+        // Synchronously, before `onSelect`: a host that unmounts inside it never runs the passive
+        // effect that refreshes the pending-commit ref.
+        abandonCustomDraft();
         setCustomEditorVisible(false);
         props.onSelect(nextValue);
-    }, [props]);
+    }, [abandonCustomDraft, props]);
 
     const commitCustomValue = React.useCallback((raw: string) => {
         const normalized = readNonBlankSessionControlIdentifier(raw);
@@ -271,10 +305,26 @@ export function OptionPickerOverlay(props: OptionPickerOverlayProps) {
         props.onSelect(normalized);
     }, [props]);
 
+    React.useEffect(() => {
+        pendingCustomCommitRef.current = {
+            visible: customEditorVisible,
+            value: customValue,
+            commit: commitCustomValue,
+        };
+    });
+    React.useEffect(() => () => {
+        const pending = pendingCustomCommitRef.current;
+        if (!pending.visible) return;
+        pending.commit(pending.value);
+    }, []);
+
     const handleCustomValueChange = React.useCallback((next: string) => {
+        // Only update local editor state while typing. Committing on every keystroke
+        // pushes the value up to the parent, which regenerates the picker option list
+        // (with a fresh detail-content closure) and remounts this input — dropping the
+        // keyboard after each character. Commit happens on submit/blur instead.
         setCustomValue(next);
-        commitCustomValue(next);
-    }, [commitCustomValue]);
+    }, []);
 
     const selectedTileValue = customEditorVisible ? null : props.selectedValue;
     return (
@@ -400,6 +450,7 @@ export function OptionPickerOverlay(props: OptionPickerOverlayProps) {
                                                 >
                                                     <Pressable
                                                         testID={`${optionTestIDPrefix}:${option.value}`}
+                                                        onPressIn={() => { selectionPressPendingRef.current = true; }}
                                                         onPress={() => handleSelectOption(option.value)}
                                                         accessibilityRole="button"
                                                         accessibilityLabel={option.accessibilityLabel}
@@ -558,6 +609,15 @@ export function OptionPickerOverlay(props: OptionPickerOverlayProps) {
                                         autoCorrect={false}
                                         autoCapitalize="none"
                                         onSubmitEditing={() => commitCustomValue(customValue)}
+                                        onBlur={() => {
+                                            if (selectionPressPendingRef.current) {
+                                                // Consume the flag: this blur belongs to a listed-option press,
+                                                // whose handler discards the draft moments later.
+                                                selectionPressPendingRef.current = false;
+                                                return;
+                                            }
+                                            commitCustomValue(customValue);
+                                        }}
                                         style={[styles.searchInput, styles.customEditorInput] as any}
                                     />
                                 </View>
