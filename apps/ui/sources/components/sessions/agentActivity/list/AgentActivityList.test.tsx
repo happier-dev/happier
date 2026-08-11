@@ -207,96 +207,23 @@ describe('AgentActivityList', () => {
         await screen.unmount();
     });
 
-    it('offers a warm first-run empty state with the launch affordance', async () => {
-        const onLaunch = vi.fn();
-        const screen = await renderScreen(
-            <AgentActivityList testID="roster" entries={[]} onLaunch={onLaunch} />,
-        );
+    /**
+     * The empty state has ONE shape, because a roster with no rows has one meaning.
+     *
+     * This used to be five cases across a `freshness` union, an `emptyVariant` and an `onLaunch`,
+     * none of which any host could set through the shared surface — so the hydrating skeleton, the
+     * offline notice and the `idle` copy were certified green while being unreachable in the app.
+     * They are gone; what remains is the state the pane can actually reach.
+     */
+    it('says the one thing an empty roster means, and offers no second way in', async () => {
+        const screen = await renderScreen(<AgentActivityList testID="roster" entries={[]} />);
 
         expect(screen.getTextContent()).toContain('Your agents will show up here');
-        screen.pressByTestId('roster:empty:launch');
-        expect(onLaunch).toHaveBeenCalledTimes(1);
-
-        await screen.unmount();
-    });
-
-    it('says one quiet line when a session simply has nothing running now', async () => {
-        const screen = await renderScreen(
-            <AgentActivityList testID="roster" entries={[]} emptyVariant="idle" onLaunch={() => {}} />,
-        );
-
-        const text = screen.getTextContent();
-        expect(text).toContain('No agents running right now');
-        // The orienting copy and its illustration belong to first use only; repeating them every
-        // time a session goes quiet turns warmth into noise.
-        expect(text).not.toContain('Your agents will show up here');
+        // The pane composes its launch section directly beneath this; a button here would be a
+        // second entry point four points above the first.
         expect(screen.findByTestId('roster:empty:launch')).toBeNull();
 
         await screen.unmount();
-    });
-
-    it('derives the skeleton count from the headline and caps it at four', async () => {
-        const many = await renderScreen(
-            <AgentActivityList testID="roster" entries={[]} freshness={{ kind: 'hydrating', expectedCount: 9 }} />,
-        );
-        expect(many.findAllByTestId('roster:skeleton:row')).toHaveLength(4);
-        await many.unmount();
-
-        const few = await renderScreen(
-            <AgentActivityList testID="roster" entries={[]} freshness={{ kind: 'hydrating', expectedCount: 2 }} />,
-        );
-        expect(few.findAllByTestId('roster:skeleton:row')).toHaveLength(2);
-        await few.unmount();
-    });
-
-    it('invents neither a skeleton count nor an empty state when the headline has not arrived', async () => {
-        const screen = await renderScreen(
-            <AgentActivityList testID="roster" entries={[]} freshness={{ kind: 'hydrating', expectedCount: null }} />,
-        );
-
-        expect(screen.findAllByTestId('roster:skeleton:row')).toHaveLength(0);
-        // "No agents" is a claim, and hydration has not earned it yet.
-        expect(screen.getTextContent()).not.toContain('Your agents will show up here');
-        expect(screen.getTextContent()).not.toContain('No agents running right now');
-
-        await screen.unmount();
-    });
-
-    it('never replaces hydrated rows with a skeleton while refreshing', async () => {
-        const screen = await renderScreen(
-            <AgentActivityList
-                testID="roster"
-                entries={[entry({ id: 'live', title: 'Sweeping the corridor' })]}
-                freshness={{ kind: 'hydrating', expectedCount: 6 }}
-            />,
-        );
-
-        expect(screen.getTextContent()).toContain('Sweeping the corridor');
-        expect(screen.findAllByTestId('roster:skeleton:row')).toHaveLength(0);
-        expect(screen.getTextContent()).toContain('Refreshing');
-
-        await screen.unmount();
-    });
-
-    it('keeps the last known roster offline and says so, instead of claiming there is none', async () => {
-        const withRows = await renderScreen(
-            <AgentActivityList
-                testID="roster"
-                entries={[entry({ id: 'live', title: 'Sweeping the corridor' })]}
-                freshness={{ kind: 'offline' }}
-            />,
-        );
-        expect(withRows.getTextContent()).toContain('Sweeping the corridor');
-        expect(withRows.getTextContent()).toContain('Offline');
-        await withRows.unmount();
-
-        const withoutRows = await renderScreen(
-            <AgentActivityList testID="roster" entries={[]} freshness={{ kind: 'offline' }} onLaunch={() => {}} />,
-        );
-        // Unreachable is not empty.
-        expect(withoutRows.getTextContent()).toContain('Offline');
-        expect(withoutRows.getTextContent()).not.toContain('Your agents will show up here');
-        await withoutRows.unmount();
     });
 
     it('caps the finished rows only when there is somewhere for "show all" to go', async () => {

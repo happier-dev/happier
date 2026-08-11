@@ -4583,14 +4583,10 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
                 },
                 list: {
                     showAllFinished: ({ count }: { count: number }) => `查看全部（${count}）`,
-                    refreshing: "正在重新整理…",
-                    offline: "已離線：顯示最後一次更新。",
                 },
                 empty: {
                     firstUseTitle: "你的代理會顯示在這裡",
                     firstUseSubtitle: "啟動一個，就能看到它在做什麼、花了多久，以及什麼時候需要你。",
-                    firstUseAction: "啟動代理",
-                    idle: "目前沒有正在執行的代理。",
                 },
             },
             subagents: {

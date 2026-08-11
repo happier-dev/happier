@@ -5313,14 +5313,10 @@ export const pl: TranslationStructure = {
           },
           list: {
             showAllFinished: ({ count }: { count: number }) => `Pokaż wszystkie (${count})`,
-            refreshing: "Odświeżanie…",
-            offline: "Offline — pokazujemy ostatnią aktualizację.",
           },
           empty: {
             firstUseTitle: "Twoi agenci pojawią się tutaj",
             firstUseSubtitle: "Uruchom jednego, a zobaczysz, co robi, ile to trwa i kiedy potrzebuje Ciebie.",
-            firstUseAction: "Uruchom agenta",
-            idle: "W tej chwili nie działa żaden agent.",
           },
         },
         subagents: {

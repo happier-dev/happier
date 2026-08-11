@@ -10,6 +10,7 @@ import { Modal } from '@/modal';
 import { t } from '@/text';
 
 import type { AgentActivityRowActionId } from '../agentActivityRowEntry';
+import { AGENT_ROW_ACTION_HIT_SLOP } from './agentRowMetrics';
 
 /**
  * The row's only action affordance.
@@ -88,8 +89,6 @@ function resolveConfirmation(
     return null;
 }
 
-/** 28pt box + 8pt slop = the 44pt touch target, without a 44pt glyph. */
-const OVERFLOW_HIT_SLOP = 8;
 const OVERFLOW_GLYPH_PX = 18;
 
 export type AgentActivityRowOverflowProps = Readonly<{
@@ -143,7 +142,7 @@ export const AgentActivityRowOverflow = React.memo((props: AgentActivityRowOverf
                 <IconAction
                     testID={testID}
                     size="sm"
-                    hitSlop={OVERFLOW_HIT_SLOP}
+                    hitSlop={AGENT_ROW_ACTION_HIT_SLOP}
                     accessibilityLabel={accessibilityLabel}
                     onPress={(event) => {
                         event?.stopPropagation?.();

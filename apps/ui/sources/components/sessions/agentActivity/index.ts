@@ -33,11 +33,7 @@ export { formatElapsedDuration } from './presentation/formatElapsedDuration';
 export { resolveAgentActivityElapsedStartMs } from './presentation/resolveAgentActivityElapsedStartMs';
 export { resolveAgentActivityMetaLine } from './presentation/resolveAgentActivityMetaLine';
 export { resolveAgentActivityTitle } from './presentation/resolveAgentActivityTitle';
-export {
-    AgentActivityList,
-    type AgentActivityListFreshness,
-    type AgentActivityListProps,
-} from './list/AgentActivityList';
+export { AgentActivityList, type AgentActivityListProps } from './list/AgentActivityList';
 export {
     AgentActivitySectionHeader,
     type AgentActivitySectionHeaderProps,
@@ -127,15 +123,18 @@ export {
     type AgentActivityTimeSlotProps,
 } from './row/AgentActivityTimeSlot';
 export {
+    AGENT_ACTIVITY_SURFACE_DENSITY,
+    AGENT_ROW_ACTION_GAP_PX,
+    AGENT_ROW_ACTION_HIT_SLOP,
     AGENT_ROW_DETAIL_INSET_PX,
-    AGENT_ROW_DIVIDER_INSET_PX,
     AGENT_ROW_MIN_HEIGHT_PX,
+    AGENT_ROW_SEPARATOR_HEIGHT_PX,
+    AGENT_ROW_SEPARATOR_INSET_PX,
     AGENT_STATUS_COLUMN_PX,
     AGENT_STATUS_GLYPH_PX,
     AGENT_TIME_SLOT_MIN_PX,
 } from './row/agentRowMetrics';
 export {
-    AGENT_ACTIVITY_SURFACE_DENSITY,
     AgentActivitySurface,
     type AgentActivitySurfaceProps,
 } from './surface/AgentActivitySurface';
@@ -146,10 +145,4 @@ export {
 export {
     AgentActivityEmptyState,
     type AgentActivityEmptyStateProps,
-    type AgentActivityEmptyStateVariant,
 } from './states/AgentActivityEmptyState';
-export {
-    AGENT_ACTIVITY_SKELETON_MAX_ROWS,
-    AgentActivitySkeleton,
-    type AgentActivitySkeletonProps,
-} from './states/AgentActivitySkeleton';

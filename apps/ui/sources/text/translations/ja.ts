@@ -5559,14 +5559,10 @@ localTailscale: {
           },
           list: {
             showAllFinished: ({ count }: { count: number }) => `すべて表示（${count}）`,
-            refreshing: "更新中…",
-            offline: "オフラインです。最後に取得した状態を表示しています。",
           },
           empty: {
             firstUseTitle: "エージェントはここに表示されます",
             firstUseSubtitle: "起動すると、何をしているか、どれくらいかかっているか、いつ対応が必要かを追えます。",
-            firstUseAction: "エージェントを起動",
-            idle: "現在実行中のエージェントはありません。",
           },
         },
         subagents: {

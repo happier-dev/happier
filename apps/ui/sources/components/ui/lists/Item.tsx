@@ -26,6 +26,7 @@ import {
     ITEM_ICON_GLYPH_SIZE,
     MENU_ROW_METRICS,
     ITEM_ICON_MARGIN_RIGHT,
+    ITEM_ROW_PADDING_HORIZONTAL,
     ITEM_SUBTITLE_TEXT_METRICS,
     ITEM_TITLE_TEXT_METRICS,
 } from '@/components/ui/lists/itemDensityMetrics';
@@ -150,21 +151,21 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
     container: {
         flexDirection: 'row',
         alignItems: 'center',
-        paddingHorizontal: 16,
+        paddingHorizontal: ITEM_ROW_PADDING_HORIZONTAL.comfortable,
         minHeight: Platform.select({ ios: 44, default: 56 }),
     },
     containerCompact: {
-        paddingHorizontal: 12,
+        paddingHorizontal: ITEM_ROW_PADDING_HORIZONTAL.compact,
         // Compact rows are used heavily in right rails (files/SCM) and should feel editor-like on web/tablet.
         // Keep iOS slightly taller for touch affordance, but reduce desktop web density.
         minHeight: Platform.select({ ios: 38, default: 34 }),
     },
     containerCozy: {
-        paddingHorizontal: 14,
+        paddingHorizontal: ITEM_ROW_PADDING_HORIZONTAL.cozy,
         minHeight: Platform.select({ ios: 42, default: 44 }),
     },
     containerTight: {
-        paddingHorizontal: 10,
+        paddingHorizontal: ITEM_ROW_PADDING_HORIZONTAL.tight,
         // Tight density is reserved for file trees / editor-like lists where users expect high information density.
         // Keep iOS sufficiently tall for touch affordance.
         minHeight: Platform.select({ ios: 36, default: 24 }),

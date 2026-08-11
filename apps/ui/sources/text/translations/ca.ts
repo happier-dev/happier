@@ -4955,14 +4955,10 @@ deps: {
                     },
                     list: {
                         showAllFinished: ({ count }: { count: number }) => `Mostra’ls tots (${count})`,
-                        refreshing: "S’està actualitzant…",
-                        offline: "Sense connexió: es mostra la darrera actualització.",
                     },
                     empty: {
                         firstUseTitle: "Els teus agents apareixeran aquí",
                         firstUseSubtitle: "Inicia’n un i podràs seguir què fa, quant ha trigat i el moment en què et necessita.",
-                        firstUseAction: "Inicia un agent",
-                        idle: "Ara mateix no hi ha cap agent en execució.",
                     },
                 },
                 subagents: {

@@ -4940,14 +4940,10 @@ export const en = {
             },
             list: {
                 showAllFinished: ({ count }: { count: number }) => `Show all ${count}`,
-                refreshing: 'Refreshing…',
-                offline: 'Offline — showing the last update.',
             },
             empty: {
                 firstUseTitle: 'Your agents will show up here',
                 firstUseSubtitle: 'Launch one and you can follow what it’s doing, how long it has taken, and the moment it needs you.',
-                firstUseAction: 'Launch an agent',
-                idle: 'No agents running right now.',
             },
         },
         subagents: {

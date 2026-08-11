@@ -5409,14 +5409,10 @@ export const pt: TranslationStructure = {
           },
           list: {
             showAllFinished: ({ count }: { count: number }) => `Ver todos (${count})`,
-            refreshing: "Atualizando…",
-            offline: "Off-line: mostrando a última atualização.",
           },
           empty: {
             firstUseTitle: "Seus agentes vão aparecer aqui",
             firstUseSubtitle: "Inicie um e acompanhe o que ele está fazendo, quanto tempo levou e o momento em que precisa de você.",
-            firstUseAction: "Iniciar um agente",
-            idle: "Nenhum agente em execução no momento.",
           },
         },
         subagents: {

@@ -276,6 +276,44 @@ describe('AgentActivityRow', () => {
     });
 
     /**
+     * RULING-15. `Item`'s hairline is `Platform.select({ ios: 0.33, default: 0 })` — zero height on
+     * web and on Android — so once the compact roster dropped its gap there was nothing at all
+     * between two rows on the two platforms most of this app is read on. The separation is drawn by
+     * the row itself now, once, so all three platforms get the same rule and `Item` stays untouched.
+     */
+    it('draws its own visible row separation on every platform', async () => {
+        const AgentActivityRow = await importRow();
+        const { AGENT_ROW_SEPARATOR_INSET_PX } = await import('./agentRowMetrics');
+
+        for (const os of ['web', 'ios'] as const) {
+            platformRef.os = os;
+            const screen = await renderScreen(
+                <AgentActivityRow entry={makeEntry()} density="compact" showDivider testID="row" />,
+            );
+
+            const separator = screen.findByTestId('row:separator');
+            expect(separator).toBeTruthy();
+            const style = flatten(separator?.props.style);
+            expect(Number(style.height)).toBeGreaterThan(0);
+            // It starts under the title's first glyph, so it reads as a list rule rather than as a
+            // table border drawn across the status column.
+            expect(style.marginLeft).toBe(AGENT_ROW_SEPARATOR_INSET_PX.compact);
+
+            await screen.unmount();
+        }
+    });
+
+    it('stops the rule at the section edge, so a heading is a break and not another row', async () => {
+        const AgentActivityRow = await importRow();
+
+        const screen = await renderScreen(
+            <AgentActivityRow entry={makeEntry()} showDivider={false} testID="row" />,
+        );
+        expect(screen.findByTestId('row:separator')).toBeNull();
+        await screen.unmount();
+    });
+
+    /**
      * r4.0: the row makes no attention claim. The 2pt rail was the third carrier of "a person is
      * needed" and it is gone — a permission-blocked agent is now told by its glyph and its status
      * word, exactly like every other abnormal state.

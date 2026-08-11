@@ -4,8 +4,6 @@ import Animated from 'react-native-reanimated';
 import { StyleSheet } from 'react-native-unistyles';
 
 import { Item } from '@/components/ui/lists/Item';
-import { Text } from '@/components/ui/text/Text';
-import { Typography } from '@/constants/Typography';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 import { t } from '@/text';
 
@@ -13,14 +11,7 @@ import type { AgentActivityRowActionId, AgentActivityRowEntry } from '../agentAc
 import { useAgentActivityStalenessResolver } from '../presentation/useAgentActivityStaleness';
 import { AgentActivityDisclosure } from '../row/AgentActivityDisclosure';
 import { AgentActivityRow } from '../row/AgentActivityRow';
-import {
-    AgentActivityEmptyState,
-    type AgentActivityEmptyStateVariant,
-} from '../states/AgentActivityEmptyState';
-import {
-    AGENT_ACTIVITY_SKELETON_MAX_ROWS,
-    AgentActivitySkeleton,
-} from '../states/AgentActivitySkeleton';
+import { AgentActivityEmptyState } from '../states/AgentActivityEmptyState';
 import { resolveAgentActivityListMotion } from './agentActivityListMotion';
 import {
     AGENT_ACTIVITY_FINISHED_IN_PANE_LIMIT,
@@ -51,15 +42,6 @@ import { useAgentActivitySectionMigration } from './useAgentActivitySectionMigra
  * `useAgentActivitySectionMigration`, the gate in `listMotionQuiet`, and the springs in
  * `agentActivityListMotion`; this component only joins them to the flat sequence above.
  */
-
-export type AgentActivityListFreshness =
-    | Readonly<{ kind: 'live' }>
-    /** Roster still arriving. `expectedCount` comes from the activity headline, or is unknown. */
-    | Readonly<{ kind: 'hydrating'; expectedCount: number | null }>
-    /** Cannot reach the source. Whatever is on screen is the last thing we actually knew. */
-    | Readonly<{ kind: 'offline' }>;
-
-const LIVE_FRESHNESS: AgentActivityListFreshness = { kind: 'live' };
 
 export type AgentActivityListProps = Readonly<{
     /**
@@ -104,8 +86,6 @@ export type AgentActivityListProps = Readonly<{
      * under it would state the same thing twice.
      */
     showSectionHeaders?: boolean;
-    /** Offered in the first-run empty state. Absent means this host cannot launch anything. */
-    onLaunch?: () => void;
     /**
      * Live units this host draws itself, outside the list — the members of a running workflow it
      * renders as a run panel.
@@ -115,9 +95,6 @@ export type AgentActivityListProps = Readonly<{
      * be two different numbers about the same session. See `buildAgentActivitySectionModel`.
      */
     foldedWorkingCount?: number;
-    /** Which empty state applies. Only the host knows whether this session ever had an agent. */
-    emptyVariant?: AgentActivityEmptyStateVariant;
-    freshness?: AgentActivityListFreshness;
     metaPlacement?: 'below' | 'inline';
     density?: 'comfortable' | 'cozy' | 'compact' | 'tight';
     /**
@@ -150,19 +127,16 @@ export const AgentActivityList = React.memo((props: AgentActivityListProps) => {
     const {
         animationEnabled: animationEnabledProp,
         density,
-        emptyVariant = 'firstUse',
         entries,
         foldedWorkingCount,
         metaPlacement,
         onAction,
-        onLaunch,
         onPress,
         onShowAllFinished,
         onShowAllWorking,
         renderEntryBody,
         testID,
     } = props;
-    const freshness = props.freshness ?? LIVE_FRESHNESS;
     const showSectionHeaders = props.showSectionHeaders !== false;
     const workingLimit = props.workingLimit ?? null;
 
@@ -229,8 +203,6 @@ export const AgentActivityList = React.memo((props: AgentActivityListProps) => {
      * outside the list is still work on screen, so it disqualifies the empty state.
      */
     const hasFoldedWork = (foldedWorkingCount ?? 0) > 0;
-    const skeletonRows = resolveSkeletonRowCount({ hasEntries: hasEntries || hasFoldedWork, freshness });
-    const notice = resolveFreshnessNotice({ freshness, skeletonRows });
 
     const renderItemContent = (item: AgentActivityListItem): React.ReactNode => {
         if (item.kind === 'header') {
@@ -331,31 +303,13 @@ export const AgentActivityList = React.memo((props: AgentActivityListProps) => {
             onPointerLeave={releaseMotion}
             onPointerCancel={releaseMotion}
         >
-            {notice != null ? (
-                <Text
-                    testID={testID ? `${testID}:notice` : undefined}
-                    style={styles.notice}
-                >
-                    {notice}
-                </Text>
-            ) : null}
-            {skeletonRows > 0 ? (
-                <AgentActivitySkeleton
-                    count={skeletonRows}
-                    testID={testID ? `${testID}:skeleton` : undefined}
-                />
-            ) : null}
             {hasEntries ? (
                 <View testID={testID ? `${testID}:body` : undefined} style={styles.body}>
                     {items.map(renderItem)}
                 </View>
             ) : null}
-            {!hasEntries && !hasFoldedWork && freshness.kind === 'live' ? (
-                <AgentActivityEmptyState
-                    variant={emptyVariant}
-                    onLaunch={onLaunch}
-                    testID={testID ? `${testID}:empty` : undefined}
-                />
+            {!hasEntries && !hasFoldedWork ? (
+                <AgentActivityEmptyState testID={testID ? `${testID}:empty` : undefined} />
             ) : null}
         </View>
     );
@@ -363,52 +317,11 @@ export const AgentActivityList = React.memo((props: AgentActivityListProps) => {
 
 AgentActivityList.displayName = 'AgentActivityList';
 
-/**
- * How many placeholder rows to draw, which is zero unless the headline said how many to expect.
- *
- * Two rules, both about not lying: a skeleton never covers content that is already on screen (that
- * is the "flash to empty" this pane must not do), and a count is never invented.
- */
-function resolveSkeletonRowCount(params: Readonly<{
-    hasEntries: boolean;
-    freshness: AgentActivityListFreshness;
-}>): number {
-    if (params.hasEntries || params.freshness.kind !== 'hydrating') return 0;
-    const expected = params.freshness.expectedCount;
-    if (expected == null || expected <= 0) return 0;
-    return Math.min(Math.floor(expected), AGENT_ACTIVITY_SKELETON_MAX_ROWS);
-}
-
-/**
- * The honest one-liner about where this data came from, or `null` when it is simply live.
- *
- * Suppressed while a skeleton is drawing, because the skeleton already says "still arriving" and
- * two simultaneous statements of the same fact read as two facts.
- */
-function resolveFreshnessNotice(params: Readonly<{
-    freshness: AgentActivityListFreshness;
-    skeletonRows: number;
-}>): string | null {
-    if (params.freshness.kind === 'offline') return t('session.agentActivity.list.offline');
-    if (params.freshness.kind === 'hydrating' && params.skeletonRows === 0) {
-        return t('session.agentActivity.list.refreshing');
-    }
-    return null;
-}
-
-const styles = StyleSheet.create((theme) => ({
+const styles = StyleSheet.create(() => ({
     container: {
         width: '100%',
     },
     body: {
         width: '100%',
-    },
-    notice: {
-        ...Typography.default(),
-        fontSize: 12,
-        color: theme.colors.text.secondary,
-        paddingHorizontal: 16,
-        paddingTop: 12,
-        paddingBottom: 4,
     },
 }));

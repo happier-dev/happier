@@ -5289,14 +5289,10 @@ export const es: TranslationStructure = {
             },
             list: {
               showAllFinished: ({ count }: { count: number }) => `Ver todos (${count})`,
-              refreshing: "Actualizando…",
-              offline: "Sin conexión: se muestra la última actualización.",
             },
             empty: {
               firstUseTitle: "Tus agentes aparecerán aquí",
               firstUseSubtitle: "Inicia uno y podrás seguir qué está haciendo, cuánto ha tardado y el momento en que te necesita.",
-              firstUseAction: "Iniciar un agente",
-              idle: "Ahora mismo no hay ningún agente en ejecución.",
             },
           },
           subagents: {

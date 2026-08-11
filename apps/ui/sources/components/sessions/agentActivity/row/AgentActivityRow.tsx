@@ -28,8 +28,11 @@ import { AgentActivityRowOverflow } from './AgentActivityRowOverflow';
 import { AgentActivityStatusSlot } from './AgentActivityStatusSlot';
 import { AgentActivityTimeSlot } from './AgentActivityTimeSlot';
 import {
-    AGENT_ROW_DIVIDER_INSET_PX,
+    AGENT_ROW_ACTION_GAP_PX,
+    AGENT_ROW_ACTION_HIT_SLOP,
     AGENT_ROW_MIN_HEIGHT_PX,
+    AGENT_ROW_SEPARATOR_HEIGHT_PX,
+    AGENT_ROW_SEPARATOR_INSET_PX,
     AGENT_STATUS_COLUMN_PX,
     AGENT_STATUS_GLYPH_PX,
 } from './agentRowMetrics';
@@ -65,9 +68,6 @@ const TONE_INKED_META: ReadonlySet<AgentActivityStatusV1> = new Set([
     'timedOut',
     'cancelled',
 ]);
-
-/** Takes the 28pt `sm` box to the 44pt floor, the same way the overflow beside it does. */
-const DISCLOSURE_HIT_SLOP = 8;
 
 export type AgentActivityRowProps = Readonly<{
     entry: AgentActivityRowEntry;
@@ -138,6 +138,9 @@ export const AgentActivityRow = React.memo((props: AgentActivityRowProps) => {
 
     const isInteractive = onPress != null;
     const hasOverflow = onAction != null && entry.actions.length > 0;
+    // `Item`'s default, preserved: a host that says nothing gets a rule, and the list withholds it
+    // at a section edge so a heading reads as a break rather than as another row.
+    const showSeparator = props.showDivider !== false;
 
     const handlePress = React.useCallback(
         () => onPress?.(entry.id),
@@ -190,7 +193,7 @@ export const AgentActivityRow = React.memo((props: AgentActivityRowProps) => {
                     // the row press it sits inside and open the agent while expanding it.
                     <IconAction
                         size="sm"
-                        hitSlop={DISCLOSURE_HIT_SLOP}
+                        hitSlop={AGENT_ROW_ACTION_HIT_SLOP}
                         accessibilityLabel={props.disclosure === 'expanded'
                             ? t('session.agentActivity.row.collapse', { title })
                             : t('session.agentActivity.row.expand', { title })}
@@ -246,8 +249,9 @@ export const AgentActivityRow = React.memo((props: AgentActivityRowProps) => {
                 })}
                 accessibilityState={accessibilityState}
                 density={props.density}
-                showDivider={props.showDivider}
-                dividerInset={AGENT_ROW_DIVIDER_INSET_PX}
+                // The rule below is this row's, on every platform. `Item`'s own is iOS-only, so
+                // leaving it on would mean two hairlines there and none on web or Android.
+                showDivider={false}
                 style={{
                     // Derived from whether an overflow actually rendered. A flat 44 everywhere would
                     // grow the transcript card and the work-state popover by half again.
@@ -256,20 +260,35 @@ export const AgentActivityRow = React.memo((props: AgentActivityRowProps) => {
                         : AGENT_ROW_MIN_HEIGHT_PX.readOnly,
                 }}
             />
+            {showSeparator ? (
+                <View
+                    testID={testID ? `${testID}:separator` : undefined}
+                    style={[styles.separator, { marginLeft: AGENT_ROW_SEPARATOR_INSET_PX[density] }]}
+                />
+            ) : null}
         </View>
     );
 });
 
 AgentActivityRow.displayName = 'AgentActivityRow';
 
-const styles = StyleSheet.create(() => ({
+const styles = StyleSheet.create((theme) => ({
     container: {
         position: 'relative',
+    },
+    separator: {
+        height: AGENT_ROW_SEPARATOR_HEIGHT_PX,
+        // The same ink every list rule in this app uses. A separator invented for this corridor
+        // would be a second weight for one concept, visible the moment a roster sits beside a
+        // settings list.
+        backgroundColor: theme.colors.border.default,
     },
     rightCluster: {
         flexDirection: 'row',
         alignItems: 'center',
-        gap: 4,
+        // The gap is touch geometry, not decoration: it is what the two controls' hit slops are
+        // derived from, so the seam between them belongs to one of them and not to both.
+        gap: AGENT_ROW_ACTION_GAP_PX,
     },
     inlineMeta: {
         ...Typography.timestamp(),

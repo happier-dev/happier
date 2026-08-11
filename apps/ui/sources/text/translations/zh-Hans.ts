@@ -5106,14 +5106,10 @@ export const zhHans: TranslationStructure = {
         },
         list: {
           showAllFinished: ({ count }: { count: number }) => `查看全部（${count}）`,
-          refreshing: "正在刷新…",
-          offline: "已离线：显示最后一次更新。",
         },
         empty: {
           firstUseTitle: "你的代理会显示在这里",
           firstUseSubtitle: "启动一个，就能看到它在做什么、用了多久，以及什么时候需要你。",
-          firstUseAction: "启动代理",
-          idle: "当前没有正在运行的代理。",
         },
       },
       subagents: {

@@ -5631,14 +5631,10 @@ export const it: TranslationStructure = {
             },
             list: {
               showAllFinished: ({ count }: { count: number }) => `Mostra tutti (${count})`,
-              refreshing: "Aggiornamento…",
-              offline: "Offline: viene mostrato l’ultimo aggiornamento.",
             },
             empty: {
               firstUseTitle: "I tuoi agenti compariranno qui",
               firstUseSubtitle: "Avviane uno e potrai seguire cosa sta facendo, quanto ha impiegato e il momento in cui ha bisogno di te.",
-              firstUseAction: "Avvia un agente",
-              idle: "Al momento non c’è nessun agente in esecuzione.",
             },
           },
           subagents: {

@@ -56,6 +56,16 @@ export type IconActionProps = Readonly<{
 // curvature stays proportional instead of looking tighter than its neighbours'.
 const ICON_ACTION_RADIUS_PX = { sm: 8, md: 8, lg: 12 } as const;
 
+/**
+ * The painted box per size.
+ *
+ * Exported because a caller that places two of these side by side has to reason about the touch
+ * geometry they compose — where each one's `hitSlop` reaches, and whether the two overlap. A caller
+ * that re-typed `28` to do that arithmetic would be holding a private copy of this table, and the
+ * copy is what silently stops matching when a size changes here.
+ */
+export const ICON_ACTION_BOX_PX = { sm: 28, md: 34, lg: 38 } as const;
+
 const stylesheet = StyleSheet.create(() => ({
     base: {
         alignItems: 'center',
@@ -63,17 +73,17 @@ const stylesheet = StyleSheet.create(() => ({
         borderRadius: ICON_ACTION_RADIUS_PX.md,
     },
     sm: {
-        width: 28,
-        height: 28,
+        width: ICON_ACTION_BOX_PX.sm,
+        height: ICON_ACTION_BOX_PX.sm,
     },
     md: {
-        width: 34,
-        height: 34,
+        width: ICON_ACTION_BOX_PX.md,
+        height: ICON_ACTION_BOX_PX.md,
     },
     // Sized to sit in a row with a 38pt primary action.
     lg: {
-        width: 38,
-        height: 38,
+        width: ICON_ACTION_BOX_PX.lg,
+        height: ICON_ACTION_BOX_PX.lg,
         borderRadius: ICON_ACTION_RADIUS_PX.lg,
     },
     disabled: {

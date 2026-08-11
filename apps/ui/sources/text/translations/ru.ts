@@ -5763,14 +5763,10 @@ export const ru: TranslationStructure = {
           },
           list: {
             showAllFinished: ({ count }: { count: number }) => `Показать все (${count})`,
-            refreshing: "Обновление…",
-            offline: "Нет связи — показано последнее обновление.",
           },
           empty: {
             firstUseTitle: "Здесь появятся ваши агенты",
             firstUseSubtitle: "Запустите одного — и увидите, что он делает, сколько это заняло и когда ему нужна ваша помощь.",
-            firstUseAction: "Запустить агента",
-            idle: "Сейчас нет запущенных агентов.",
           },
         },
         subagents: {

@@ -64,6 +64,21 @@ export const ITEM_SUBTITLE_TEXT_METRICS: Record<ResolvedItemDensity, Readonly<{
     },
 };
 
+/**
+ * The horizontal padding an item row reserves inside its own bounds, per density.
+ *
+ * Exported because a host that embeds rows inside an already-padded container (a transcript tool
+ * card, a popover panel) has to cancel it with a negative margin, or every row's leading glyph sits
+ * indented from the header above it. The alternative — each host hardcoding `-12` — is how one of
+ * these two numbers eventually stops matching the other.
+ */
+export const ITEM_ROW_PADDING_HORIZONTAL: Record<ResolvedItemDensity, number> = {
+    comfortable: 16,
+    cozy: 14,
+    compact: 12,
+    tight: 10,
+};
+
 export const ITEM_ICON_BOX_SIZE: Record<ResolvedItemDensity, number> = {
     comfortable: selectValue({ ios: 32, default: 32 }),
     cozy: selectValue({ ios: 22, default: 24 }),

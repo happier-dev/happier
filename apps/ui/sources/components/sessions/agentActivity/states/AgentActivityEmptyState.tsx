@@ -1,45 +1,32 @@
 import * as React from 'react';
-import { View } from 'react-native';
-import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { useUnistyles } from 'react-native-unistyles';
 
-import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { EmptyState } from '@/components/ui/empty/EmptyState';
 import { Icon } from '@/components/ui/icons/Icon';
-import { Text } from '@/components/ui/text/Text';
-import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 
 /**
- * The two ways a roster can be empty, which are not the same thing.
+ * What a roster with nothing in it says.
  *
- * A session that has never run an agent is a person who does not yet know what this pane is for;
- * that is worth a sentence and a way in. A session whose agents have simply finished is a person
- * who already knows; repeating the introduction every time work goes quiet turns warmth into
- * chatter. Same absence of rows, two different messages.
+ * **One message, because a roster with no rows has exactly one meaning.** This briefly carried a
+ * second `idle` variant ("no agents running right now") plus a launch button, on the theory that a
+ * session whose agents had merely finished should not get the introduction again. Neither was
+ * reachable: the only surface that draws this is the Agents pane, which is not live-only — a
+ * session whose agents have finished *lists* them, so an empty roster there means the session has
+ * never run one. The compact work-state surface returns `null` before the list mounts at all.
  *
- * "We cannot reach the machine" is a third thing and is deliberately not handled here — the list
- * keeps the last known roster and says it is offline rather than claiming there is nothing.
+ * The launch affordance went the same way: the pane already composes `SessionSubagentLaunchSection`
+ * directly beneath this, so the button was a second way in, four points below the first.
+ *
+ * "We cannot reach the machine" is a different thing and is deliberately not handled here.
  */
 
-export type AgentActivityEmptyStateVariant = 'firstUse' | 'idle';
-
 export type AgentActivityEmptyStateProps = Readonly<{
-    variant: AgentActivityEmptyStateVariant;
-    /** The way in. Omitted when the host has no launcher, and then no affordance is offered. */
-    onLaunch?: () => void;
     testID?: string;
 }>;
 
 export function AgentActivityEmptyState(props: AgentActivityEmptyStateProps): React.ReactElement {
     const { theme } = useUnistyles();
-
-    if (props.variant === 'idle') {
-        return (
-            <View testID={props.testID} style={styles.idleContainer}>
-                <Text style={styles.idleText}>{t('session.agentActivity.empty.idle')}</Text>
-            </View>
-        );
-    }
 
     return (
         <EmptyState
@@ -48,28 +35,6 @@ export function AgentActivityEmptyState(props: AgentActivityEmptyStateProps): Re
             icon={<Icon name="robot" size={29} color={theme.colors.text.secondary} />}
             title={t('session.agentActivity.empty.firstUseTitle')}
             subtitle={t('session.agentActivity.empty.firstUseSubtitle')}
-            action={props.onLaunch ? (
-                <RoundButton
-                    testID={props.testID ? `${props.testID}:launch` : undefined}
-                    size="normal"
-                    title={t('session.agentActivity.empty.firstUseAction')}
-                    onPress={props.onLaunch}
-                />
-            ) : undefined}
         />
     );
 }
-
-const styles = StyleSheet.create((theme) => ({
-    idleContainer: {
-        paddingHorizontal: 16,
-        paddingVertical: 16,
-    },
-    idleText: {
-        ...Typography.default(),
-        fontSize: 13,
-        // Secondary, never tertiary: this line is the only content on screen, so it carries the
-        // whole meaning of the pane at that moment.
-        color: theme.colors.text.secondary,
-    },
-}));
