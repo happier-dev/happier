@@ -26,7 +26,7 @@ test('nightly-dev verifies exact immutable candidates before promoting rolling r
   for (const job of ['cli', 'hstack', 'server_runtime', 'ui_web']) {
     assert.match(
       raw,
-      new RegExp(`${job}:[\\s\\S]*?needs:\\s*\\[prepare_release_candidate\\][\\s\\S]*?publish_rolling:\\s*false`),
+      new RegExp(`${job}:[\\s\\S]*?needs:\\s*\\[resolve_resume, prepare_release_candidate\\][\\s\\S]*?publish_rolling:\\s*false`),
       `${job} should publish an immutable candidate without moving its rolling reference`,
     );
   }
@@ -103,10 +103,7 @@ test('nightly status producer emits the strict summarizer input contract', async
   const producer = raw.slice(start + marker.length, end);
   assert.match(producer, /process\.stdout\.write/, 'nightly status producer must write the strict input directly to stdout');
   const sourceSha = 'a'.repeat(40);
-  const output = execFileSync(process.execPath, ['--input-type=module'], {
-    input: producer,
-    encoding: 'utf8',
-    env: {
+  const producerEnv = {
       ...process.env,
       GITHUB_RUN_ID: '12345',
       RELEASE_RUN: '12345',
@@ -115,6 +112,14 @@ test('nightly status producer emits the strict summarizer input contract', async
       SOURCE_SHA: sourceSha,
       CANDIDATE_RESULT: 'success',
       IMMUTABLE_VERIFICATION_RESULT: 'success',
+      CLI_CANDIDATE_RESULT: 'success',
+      CLI_CANDIDATE_VERSION: '0.2.10-dev.1',
+      STACK_CANDIDATE_RESULT: 'success',
+      STACK_CANDIDATE_VERSION: '0.2.10-dev.1',
+      SERVER_CANDIDATE_RESULT: 'success',
+      SERVER_CANDIDATE_VERSION: '0.2.10-dev.1',
+      UI_WEB_CANDIDATE_RESULT: 'success',
+      UI_WEB_CANDIDATE_VERSION: '0.2.10-dev.1',
       CLI_RESULT: 'success',
       STACK_RESULT: 'success',
       SERVER_RESULT: 'success',
@@ -131,7 +136,11 @@ test('nightly status producer emits the strict summarizer input contract', async
       UI_MOBILE_RESULT: 'success',
       UI_DESKTOP_RESULT: 'success',
       VERIFY_PROMOTED_RESULT: 'success',
-    },
+  };
+  const output = execFileSync(process.execPath, ['--input-type=module'], {
+    input: producer,
+    encoding: 'utf8',
+    env: producerEnv,
     stdio: ['pipe', 'pipe', 'pipe'],
   });
   const input = JSON.parse(output);
@@ -144,4 +153,22 @@ test('nightly status producer emits the strict summarizer input contract', async
   });
   assert.equal(summary.terminal, 'published');
   assert.ok(summary.surfaces.every((surface) => surface.evidence === 'verified' || surface.evidence === 'accepted'));
+
+  const unverifiedOutput = execFileSync(process.execPath, ['--input-type=module'], {
+    input: producer,
+    encoding: 'utf8',
+    env: { ...producerEnv, IMMUTABLE_VERIFICATION_RESULT: 'failure' },
+    stdio: ['pipe', 'pipe', 'pipe'],
+  });
+  const unverifiedSummary = summarizeReleaseStatus(JSON.parse(unverifiedOutput));
+  for (const id of [
+    'cli-immutable-candidate',
+    'hstack-immutable-candidate',
+    'server-immutable-candidate',
+    'ui-web-immutable-candidate',
+  ]) {
+    const surface = unverifiedSummary.surfaces.find((entry) => entry.id === id);
+    assert.equal(surface?.state, 'partial', `${id} must not become resumable without grouped candidate verification`);
+    assert.equal(surface?.identity?.verified, false);
+  }
 });

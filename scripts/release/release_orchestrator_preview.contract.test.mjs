@@ -142,8 +142,12 @@ test('release workflow fans a versioned Stack target through immutable publicati
   assert.match(String(finalVerifier?.with?.candidate_stack_version ?? ''), /needs\.publish_hstack_binaries\.outputs\.version/);
   assert.match(String(finalVerifier?.with?.verify_stack_release ?? ''), /needs\.promote_hstack_binaries\.result == 'success'/);
   assert.equal(verifierInputs?.verify_stack_release?.type, 'boolean');
-  assert.match(verifierRaw, /VERIFY_STACK_RELEASE:\s*\$\{\{ inputs\.verify_stack_release \}\}/);
-  assert.match(verifierRaw, /if \[ "\$VERIFY_STACK_RELEASE" = "true" \]/);
+  const stackIdentityGuard = parse(verifierRaw)?.jobs?.verify_candidate?.steps?.find(
+    (step) => step.name === 'Require requested HStack verification identity',
+  );
+  assert.ok(stackIdentityGuard);
+  assert.match(String(stackIdentityGuard.if ?? ''), /inputs\.verify_stack_release/);
+  assert.match(String(stackIdentityGuard.if ?? ''), /inputs\.candidate_stack_version == ''/);
 });
 
 test('release workflow can publish self-host UI web bundle via a dedicated workflow', async () => {

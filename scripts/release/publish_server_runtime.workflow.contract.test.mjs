@@ -152,6 +152,8 @@ test('first secret-free guard rejects every noncanonical workflow channel alias 
     CALLER_REPOSITORY: 'happier-dev/happier',
     WORKFLOW_REPOSITORY: 'happier-dev/happier',
     WORKFLOW_REF: 'happier-dev/happier/.github/workflows/publish-server-runtime.yml@refs/heads/main',
+    RETRY_VERSION: '',
+    RESUME_VERSION: '',
   };
   for (const channel of ['stable', 'preview', 'dev']) {
     const result = spawnSync('bash', ['-euo', 'pipefail', '-c', step.run], { env: { ...process.env, ...baseEnv, CHANNEL: channel } });
@@ -161,6 +163,17 @@ test('first secret-free guard rejects every noncanonical workflow channel alias 
     const result = spawnSync('bash', ['-euo', 'pipefail', '-c', step.run], { env: { ...process.env, ...baseEnv, CHANNEL: channel } });
     assert.notEqual(result.status, 0, `alias channel ${channel} bypassed the first guard`);
   }
+
+  const conflictingModes = spawnSync('bash', ['-euo', 'pipefail', '-c', step.run], {
+    env: {
+      ...process.env,
+      ...baseEnv,
+      CHANNEL: 'dev',
+      RETRY_VERSION: '0.1.0-dev.1',
+      RESUME_VERSION: '0.1.0-dev.1',
+    },
+  });
+  assert.notEqual(conflictingModes.status, 0, 'retry and resume modes must remain mutually exclusive');
 });
 
 test('all repository callers supply canonical workflow channel labels', async () => {

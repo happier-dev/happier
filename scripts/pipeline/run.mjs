@@ -4261,6 +4261,7 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
               'release-profile': { type: 'string', default: '' },
               'source-sha': { type: 'string', default: '' },
               'workflow-control-sha': { type: 'string', default: '' },
+              'resume-run-id': { type: 'string', default: '' },
               'operation-id': { type: 'string', default: '' },
               'release-notes-id': { type: 'string', default: '' },
               'qualified-v4-activation-approval': { type: 'string', default: 'false' },
@@ -4321,6 +4322,7 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
           const bumpPreset = String(values.bump ?? '').trim() || 'none';
           const authorizedPromotionSourceSha = String(values['source-sha'] ?? '').trim().toLowerCase();
           const workflowControlSha = String(values['workflow-control-sha'] ?? '').trim();
+          const resumeRunId = String(values['resume-run-id'] ?? '');
           const operationId = String(values['operation-id'] ?? '').trim();
           const releaseNotesId = String(values['release-notes-id'] ?? '').trim();
           const qualifiedV4ActivationApproval = parseBoolString(
@@ -4355,6 +4357,9 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
           }
           if (workflowControlSha && !FULL_GIT_SHA.test(workflowControlSha)) {
             fail('--workflow-control-sha must be a full 40-character lowercase Git commit SHA.');
+          }
+          if (resumeRunId && !/^[1-9][0-9]*$/u.test(resumeRunId)) {
+            fail('--resume-run-id must be a positive GitHub Actions run ID.');
           }
           if ((deployEnvironment !== 'dev' || jsonOutput) && !releaseNotesId) {
             fail('--release-notes-id is required for normal preview/production release dispatch.');
@@ -4401,6 +4406,7 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
                 validationProfile: releaseProfile.id,
                 operationId,
                 releaseNotesId,
+                ...(resumeRunId ? { resumeRunId } : {}),
                 approvals: { qualifiedV4Activation: qualifiedV4ActivationApproval },
               })}\n`,
             );
@@ -4441,6 +4447,7 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
               '-f', `release_notes_id=${releaseNotesId}`,
               '-f', `qualified_v4_activation_approval=${qualifiedV4ActivationApproval}`,
               ...(workflowControlSha ? ['-f', `workflow_control_sha=${workflowControlSha}`] : []),
+              ...(resumeRunId ? ['-f', `resume_run_id=${resumeRunId}`] : []),
               ...(operationId ? ['-f', `hmaint_operation_id=${operationId}`] : []),
               '-f', `confirm=${action}`,
             ];

@@ -32,6 +32,11 @@ on:
         required: false
         default: ""
         type: string
+      resume_version:
+        description: "Existing immutable candidate to re-verify and return without rebuilding or promoting"
+        required: false
+        default: ""
+        type: string
       authorized_sha:
         description: "Caller-bound source SHA (required when invoked by the full release)"
         required: false
@@ -63,6 +68,10 @@ on:
         required: false
         default: ""
         type: string
+      resume_version:
+        required: false
+        default: ""
+        type: string
       authorized_sha:
         required: false
         default: ""
@@ -74,7 +83,7 @@ on:
     outputs:
       version:
         description: Exact immutable HStack version published by this invocation
-        value: ${{ jobs.finalize_publish.outputs.version }}
+        value: ${{ jobs.finalize_publish.outputs.version || jobs.release_actor_guard.outputs.resume_version }}
 
 permissions:
   contents: read
@@ -96,6 +105,8 @@ jobs:
           CALLER_REPOSITORY: ${{ github.repository }}
           WORKFLOW_REPOSITORY: ${{ job.workflow_repository }}
           WORKFLOW_REF: ${{ job.workflow_ref }}
+          RETRY_VERSION: ${{ inputs.retry_version }}
+          RESUME_VERSION: ${{ inputs.resume_version }}
         run: |
           set -euo pipefail
           case "$CHANNEL" in
@@ -103,6 +114,10 @@ jobs:
             *) echo "Noncanonical HStack publisher channel: $CHANNEL" >&2; exit 1 ;;
           esac
           test "$CALLER_REPOSITORY" = "$WORKFLOW_REPOSITORY"
+          if [ -n "$RETRY_VERSION" ] && [ -n "$RESUME_VERSION" ]; then
+            echo "retry_version and resume_version are mutually exclusive." >&2
+            exit 1
+          fi
           case "$WORKFLOW_REF" in
             "$WORKFLOW_REPOSITORY/.github/workflows/publish-hstack-binaries.yml@refs/heads/dev"|\
             "$WORKFLOW_REPOSITORY/.github/workflows/publish-hstack-binaries.yml@refs/heads/preview"|\
@@ -116,6 +131,8 @@ jobs:
     permissions:
       contents: read
     runs-on: ubuntu-latest
+    outputs:
+      resume_version: ${{ steps.resume.outputs.resume_version }}
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -124,15 +141,37 @@ jobs:
           ref: ${{ job.workflow_sha }}
           fetch-depth: 1
           persist-credentials: false
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22.x
       - name: Authorize release actor
         uses: ./.github/actions/release-actor-guard
         with:
           team_slug: release-admins
           app_id: ${{ secrets.RELEASE_BOT_APP_ID }}
           private_key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
+      - name: Re-verify reusable immutable HStack candidate
+        id: resume
+        if: ${{ inputs.resume_version != '' && inputs.retry_version == '' }}
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          CHANNEL: ${{ inputs.channel }}
+          SOURCE_SHA: ${{ inputs.authorized_sha }}
+          RESUME_VERSION: ${{ inputs.resume_version }}
+        run: |
+          set -euo pipefail
+          node scripts/pipeline/release/verify-release-candidate-identity.mjs \
+            --repository "$REPOSITORY" \
+            --channel "$CHANNEL" \
+            --candidate-source-sha "$SOURCE_SHA" \
+            --candidate-product hstack \
+            --candidate-version "$RESUME_VERSION"
+          echo "resume_version=$RESUME_VERSION" >> "$GITHUB_OUTPUT"
 
   prepare:
-    if: ${{ inputs.retry_version == '' }}
+    if: ${{ inputs.retry_version == '' && inputs.resume_version == '' }}
     needs: [release_actor_guard]
     runs-on: ubuntu-24.04
     permissions:
@@ -270,7 +309,7 @@ jobs:
 
   build_candidate:
     name: Build unsigned HStack candidate
-    if: ${{ inputs.retry_version == '' }}
+    if: ${{ inputs.retry_version == '' && inputs.resume_version == '' }}
     needs: [prepare]
     runs-on: ubuntu-24.04
     permissions: {}
@@ -335,7 +374,7 @@ jobs:
 
   finalize_darwin:
     name: Sign and notarize HStack (${{ matrix.platform_key }})
-    if: ${{ inputs.retry_version == '' }}
+    if: ${{ inputs.retry_version == '' && inputs.resume_version == '' }}
     needs: [prepare, build_candidate]
     runs-on: ${{ matrix.runner }}
     environment: release-shared
@@ -458,7 +497,7 @@ jobs:
 
   finalize_publish:
     name: Finalize and publish exact HStack candidate
-    if: ${{ inputs.retry_version == '' }}
+    if: ${{ inputs.retry_version == '' && inputs.resume_version == '' }}
     needs: [prepare, build_candidate, finalize_darwin]
     runs-on: ubuntu-24.04
     environment: release-shared
@@ -547,7 +586,7 @@ jobs:
 
   promote_existing:
     name: Recover rolling HStack projection
-    if: ${{ inputs.retry_version != '' }}
+    if: ${{ inputs.retry_version != '' && inputs.resume_version == '' }}
     needs: [release_actor_guard]
     runs-on: ubuntu-latest
     environment: release-shared

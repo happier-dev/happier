@@ -50,8 +50,8 @@ test('release workflow verifies immutable candidates before promoting preview or
   );
   assert.match(
     raw,
-    /plan:[\s\S]*?needs:\s*\[release_actor_guard, resolve_validation_profile, ci\][\s\S]*?needs\.resolve_validation_profile\.result == 'success'[\s\S]*?needs\.ci\.result == 'success'/,
-    'release.yml planning must fail closed unless the canonical profile and its pre-release CI gate succeed',
+    /plan:[\s\S]*?needs:\s*\[release_actor_guard, resolve_resume, resolve_validation_profile, ci\][\s\S]*?needs\.resolve_resume\.result == 'success'[\s\S]*?needs\.resolve_validation_profile\.result == 'success'[\s\S]*?needs\.ci\.result == 'success'/,
+    'release.yml planning must fail closed unless resume admission, the canonical profile, and pre-release CI all succeed',
   );
   assert.match(
     raw,
@@ -181,6 +181,11 @@ test('release workflow derives validation, notes, and terminal status from the e
     'preview and stable releases both execute post-promotion verification',
   );
   assert.match(releaseStatus, /requestedSurfaces: definitions\.map\(\(\{ id, evidence \}\) => \(\{ id, requested: Boolean\(requested\[id\]\), required: true, evidence \}\)\)/);
+  assert.match(
+    releaseStatus,
+    /verified:\s*product\s*\?\s*Boolean\(process\.env\[versionName\]\)[\s\S]*normalizeResult\(process\.env\.CANDIDATE_VERIFY_RESULT\)\s*===\s*'success'[\s\S]*process\.env\[resumeVerifiedName\]\s*===\s*'true'/,
+    'candidate versions become resumable only after grouped or owner-scoped immutable-candidate verification succeeds',
+  );
   assert.match(releaseStatus, /summarize-release-status\.mjs/);
   assert.match(releaseStatus, /GITHUB_STEP_SUMMARY/);
   assert.match(releaseStatus, /actions\/upload-artifact@[\s\S]*?name:\s*happier-release-status/);

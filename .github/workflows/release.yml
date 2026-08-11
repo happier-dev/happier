@@ -71,6 +71,11 @@ on:
         required: false
         default: ""
         type: string
+      resume_run_id:
+        description: "Completed RELEASE run ID whose verified immutable candidates should be reused"
+        required: false
+        default: ""
+        type: string
       hmaint_operation_id:
         description: "Safety — conductor operation ID; leave empty only for emergency direct manual dispatch"
         required: false
@@ -163,6 +168,17 @@ jobs:
           app_id: ${{ secrets.RELEASE_BOT_APP_ID }}
           private_key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
 
+  resolve_resume:
+    name: Resolve resumable release candidates
+    needs: [release_actor_guard]
+    uses: ./.github/workflows/resolve-release-resume.yml
+    with:
+      origin_run_id: ${{ inputs.resume_run_id }}
+      expected_workflow: .github/workflows/release.yml
+      expected_channel: ${{ inputs.environment == 'production' && 'production' || 'preview' }}
+      expected_source_sha: ${{ inputs.authorized_promotion_source_sha }}
+      expected_operation_id: ${{ inputs.hmaint_operation_id }}
+
   resolve_validation_profile:
     name: Resolve public release validation profile
     needs: [release_actor_guard]
@@ -233,8 +249,8 @@ jobs:
 
   plan:
     name: Release Plan (inputs + changes + bump/publish decisions)
-    needs: [release_actor_guard, resolve_validation_profile, ci]
-    if: ${{ always() && needs.release_actor_guard.result == 'success' && needs.resolve_validation_profile.result == 'success' && needs.ci.result == 'success' }}
+    needs: [release_actor_guard, resolve_resume, resolve_validation_profile, ci]
+    if: ${{ always() && needs.release_actor_guard.result == 'success' && needs.resolve_resume.result == 'success' && needs.resolve_validation_profile.result == 'success' && needs.ci.result == 'success' }}
     permissions:
       contents: read
     runs-on: ubuntu-latest
@@ -942,8 +958,8 @@ jobs:
       run_tests: false
 
   publish_server_runtime:
-    if: always() && needs.plan.result == 'success' && needs.prepare_release_candidate.result == 'success' && inputs.dry_run != true && needs.plan.outputs.publish_server_runtime_needed == 'true' && ((inputs.environment == 'production' && needs.promote_main.result == 'success') || (inputs.environment == 'preview' && needs.promote_preview.result == 'success'))
-    needs: [plan, promote_preview, promote_main, prepare_release_candidate]
+    if: always() && needs.resolve_resume.result == 'success' && needs.plan.result == 'success' && needs.prepare_release_candidate.result == 'success' && inputs.dry_run != true && needs.plan.outputs.publish_server_runtime_needed == 'true' && ((inputs.environment == 'production' && needs.promote_main.result == 'success') || (inputs.environment == 'preview' && needs.promote_preview.result == 'success'))
+    needs: [resolve_resume, plan, promote_preview, promote_main, prepare_release_candidate]
     permissions:
       contents: write
     uses: ./.github/workflows/publish-server-runtime.yml
@@ -952,13 +968,14 @@ jobs:
       channel: ${{ inputs.environment == 'production' && 'stable' || 'preview' }}
       source_ref: ${{ needs.prepare_release_candidate.outputs.source_sha }}
       authorized_sha: ${{ needs.prepare_release_candidate.outputs.source_sha }}
+      resume_version: ${{ needs.resolve_resume.outputs.server_version }}
       allow_stable: ${{ inputs.environment == 'production' }}
       release_message: ${{ needs.prepare_release_candidate.outputs.release_notes_github_markdown }}
       publish_rolling: false
 
   publish_ui_web:
-    if: always() && needs.plan.result == 'success' && needs.prepare_release_candidate.result == 'success' && inputs.dry_run != true && (contains(format(',{0},', inputs.deploy_targets), ',ui,') || inputs.force_deploy == true || needs.plan.outputs.changed_ui == 'true' || needs.plan.outputs.changed_shared == 'true') && ((inputs.environment == 'production' && needs.promote_main.result == 'success') || (inputs.environment == 'preview' && needs.promote_preview.result == 'success'))
-    needs: [plan, promote_preview, promote_main, prepare_release_candidate]
+    if: always() && needs.resolve_resume.result == 'success' && needs.plan.result == 'success' && needs.prepare_release_candidate.result == 'success' && inputs.dry_run != true && (contains(format(',{0},', inputs.deploy_targets), ',ui,') || inputs.force_deploy == true || needs.plan.outputs.changed_ui == 'true' || needs.plan.outputs.changed_shared == 'true') && ((inputs.environment == 'production' && needs.promote_main.result == 'success') || (inputs.environment == 'preview' && needs.promote_preview.result == 'success'))
+    needs: [resolve_resume, plan, promote_preview, promote_main, prepare_release_candidate]
     permissions:
       contents: write
     uses: ./.github/workflows/publish-ui-web.yml
@@ -967,13 +984,14 @@ jobs:
       channel: ${{ inputs.environment == 'production' && 'stable' || 'preview' }}
       source_ref: ${{ needs.prepare_release_candidate.outputs.source_sha }}
       authorized_sha: ${{ needs.prepare_release_candidate.outputs.source_sha }}
+      resume_version: ${{ needs.resolve_resume.outputs.ui_web_version }}
       allow_stable: ${{ inputs.environment == 'production' }}
       release_message: ${{ needs.prepare_release_candidate.outputs.release_notes_github_markdown }}
       publish_rolling: false
 
   publish_cli_binaries:
-    if: always() && needs.plan.result == 'success' && needs.prepare_release_candidate.result == 'success' && inputs.dry_run != true && needs.plan.outputs.publish_cli_binaries_needed == 'true' && ((inputs.environment == 'production' && needs.promote_main.result == 'success') || (inputs.environment == 'preview' && needs.promote_preview.result == 'success'))
-    needs: [plan, promote_preview, promote_main, prepare_release_candidate]
+    if: always() && needs.resolve_resume.result == 'success' && needs.plan.result == 'success' && needs.prepare_release_candidate.result == 'success' && inputs.dry_run != true && needs.plan.outputs.publish_cli_binaries_needed == 'true' && ((inputs.environment == 'production' && needs.promote_main.result == 'success') || (inputs.environment == 'preview' && needs.promote_preview.result == 'success'))
+    needs: [resolve_resume, plan, promote_preview, promote_main, prepare_release_candidate]
     permissions:
       contents: write
     uses: ./.github/workflows/publish-cli-binaries.yml
@@ -982,13 +1000,14 @@ jobs:
       channel: ${{ inputs.environment == 'production' && 'stable' || 'preview' }}
       source_ref: ${{ needs.prepare_release_candidate.outputs.source_sha }}
       authorized_sha: ${{ needs.prepare_release_candidate.outputs.source_sha }}
+      resume_version: ${{ needs.resolve_resume.outputs.cli_version }}
       allow_stable: ${{ inputs.environment == 'production' }}
       release_message: ${{ needs.prepare_release_candidate.outputs.release_notes_github_markdown }}
       publish_rolling: false
 
   publish_hstack_binaries:
-    if: always() && needs.plan.result == 'success' && needs.prepare_release_candidate.result == 'success' && inputs.dry_run != true && needs.plan.outputs.publish_stack == 'true' && ((inputs.environment == 'production' && needs.promote_main.result == 'success') || (inputs.environment == 'preview' && needs.promote_preview.result == 'success'))
-    needs: [plan, promote_preview, promote_main, prepare_release_candidate]
+    if: always() && needs.resolve_resume.result == 'success' && needs.plan.result == 'success' && needs.prepare_release_candidate.result == 'success' && inputs.dry_run != true && needs.plan.outputs.publish_stack == 'true' && ((inputs.environment == 'production' && needs.promote_main.result == 'success') || (inputs.environment == 'preview' && needs.promote_preview.result == 'success'))
+    needs: [resolve_resume, plan, promote_preview, promote_main, prepare_release_candidate]
     permissions:
       contents: write
     uses: ./.github/workflows/publish-hstack-binaries.yml
@@ -997,6 +1016,7 @@ jobs:
       channel: ${{ inputs.environment == 'production' && 'stable' || 'preview' }}
       source_ref: ${{ needs.prepare_release_candidate.outputs.source_sha }}
       authorized_sha: ${{ needs.prepare_release_candidate.outputs.source_sha }}
+      resume_version: ${{ needs.resolve_resume.outputs.stack_version }}
       allow_stable: ${{ inputs.environment == 'production' }}
       release_message: ${{ needs.prepare_release_candidate.outputs.release_notes_github_markdown }}
       publish_rolling: false
@@ -1015,6 +1035,19 @@ jobs:
       candidate_ui_web_version: ${{ needs.publish_ui_web.outputs.version }}
       verify_stack_release: ${{ needs.publish_hstack_binaries.result == 'success' }}
       validation_profile: ${{ needs.plan.outputs.validation_profile }}
+
+  verify_resume_candidates:
+    name: Verify successful immutable siblings for resume
+    if: ${{ always() && inputs.dry_run != true && needs.prepare_release_candidate.result == 'success' && needs.verify_release_candidates.result != 'success' }}
+    needs: [plan, prepare_release_candidate, publish_cli_binaries, publish_hstack_binaries, publish_server_runtime, publish_ui_web, verify_release_candidates]
+    uses: ./.github/workflows/verify-release-resume-candidates.yml
+    with:
+      channel: ${{ inputs.environment == 'production' && 'production' || 'preview' }}
+      candidate_source_sha: ${{ needs.prepare_release_candidate.outputs.source_sha }}
+      candidate_cli_version: ${{ needs.publish_cli_binaries.result == 'success' && needs.publish_cli_binaries.outputs.version || '' }}
+      candidate_stack_version: ${{ needs.publish_hstack_binaries.result == 'success' && needs.publish_hstack_binaries.outputs.version || '' }}
+      candidate_server_version: ${{ needs.publish_server_runtime.result == 'success' && needs.publish_server_runtime.outputs.version || '' }}
+      candidate_ui_web_version: ${{ needs.publish_ui_web.result == 'success' && needs.publish_ui_web.outputs.version || '' }}
 
   promote_server_runtime:
     if: ${{ always() && needs.verify_release_candidates.result == 'success' && needs.publish_server_runtime.result == 'success' && needs.publish_server_runtime.outputs.version != '' }}
@@ -1169,7 +1202,7 @@ jobs:
   release_status:
     name: Summarize release status
     if: ${{ always() }}
-    needs: [plan, prepare_release_candidate, publish_cli_binaries, publish_hstack_binaries, publish_server_runtime, publish_ui_web, verify_release_candidates, promote_server_runtime, promote_ui_web, promote_cli_binaries, promote_hstack_binaries, publish_docker, deploy_ui, deploy_server, deploy_website, deploy_docs, publish_npm, release_verify]
+    needs: [plan, prepare_release_candidate, publish_cli_binaries, publish_hstack_binaries, publish_server_runtime, publish_ui_web, verify_release_candidates, verify_resume_candidates, promote_server_runtime, promote_ui_web, promote_cli_binaries, promote_hstack_binaries, publish_docker, deploy_ui, deploy_server, deploy_website, deploy_docs, publish_npm, release_verify]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -1211,10 +1244,18 @@ jobs:
           UI_EXPO_ACTION: ${{ inputs.ui_expo_action }}
           SOURCE_SHA: ${{ needs.prepare_release_candidate.outputs.source_sha || inputs.authorized_promotion_source_sha }}
           CLI_RESULT: ${{ needs.publish_cli_binaries.result }}
+          CLI_VERSION: ${{ needs.publish_cli_binaries.outputs.version }}
           HSTACK_RESULT: ${{ needs.publish_hstack_binaries.result }}
+          HSTACK_VERSION: ${{ needs.publish_hstack_binaries.outputs.version }}
           SERVER_RESULT: ${{ needs.publish_server_runtime.result }}
+          SERVER_VERSION: ${{ needs.publish_server_runtime.outputs.version }}
           UI_WEB_RESULT: ${{ needs.publish_ui_web.result }}
+          UI_WEB_VERSION: ${{ needs.publish_ui_web.outputs.version }}
           CANDIDATE_VERIFY_RESULT: ${{ needs.verify_release_candidates.result }}
+          CLI_RESUME_VERIFIED: ${{ needs.verify_resume_candidates.outputs.cli_verified }}
+          HSTACK_RESUME_VERIFIED: ${{ needs.verify_resume_candidates.outputs.stack_verified }}
+          SERVER_RESUME_VERIFIED: ${{ needs.verify_resume_candidates.outputs.server_verified }}
+          UI_WEB_RESUME_VERIFIED: ${{ needs.verify_resume_candidates.outputs.ui_web_verified }}
           PROMOTE_SERVER_RESULT: ${{ needs.promote_server_runtime.result }}
           PROMOTE_UI_WEB_RESULT: ${{ needs.promote_ui_web.result }}
           PROMOTE_CLI_RESULT: ${{ needs.promote_cli_binaries.result }}
@@ -1263,10 +1304,10 @@ jobs:
               .map(normalizeResult)
               .every((result) => result === 'success' || result === 'skipped');
           const definitions = [
-            { id: 'cli', envName: 'CLI_RESULT', evidence: 'verified' },
-            { id: 'hstack', envName: 'HSTACK_RESULT', evidence: 'verified' },
-            { id: 'server', envName: 'SERVER_RESULT', evidence: 'verified' },
-            { id: 'ui-web', envName: 'UI_WEB_RESULT', evidence: 'verified' },
+            { id: 'cli', envName: 'CLI_RESULT', evidence: 'verified', product: 'cli', versionName: 'CLI_VERSION', resumeVerifiedName: 'CLI_RESUME_VERIFIED' },
+            { id: 'hstack', envName: 'HSTACK_RESULT', evidence: 'verified', product: 'stack', versionName: 'HSTACK_VERSION', resumeVerifiedName: 'HSTACK_RESUME_VERIFIED' },
+            { id: 'server', envName: 'SERVER_RESULT', evidence: 'verified', product: 'server', versionName: 'SERVER_VERSION', resumeVerifiedName: 'SERVER_RESUME_VERIFIED' },
+            { id: 'ui-web', envName: 'UI_WEB_RESULT', evidence: 'verified', product: 'ui-web', versionName: 'UI_WEB_VERSION', resumeVerifiedName: 'UI_WEB_RESUME_VERIFIED' },
             { id: 'candidate-verification', envName: 'CANDIDATE_VERIFY_RESULT', evidence: 'verified' },
             { id: 'promote-server', envName: 'PROMOTE_SERVER_RESULT', evidence: 'verified' },
             { id: 'promote-ui-web', envName: 'PROMOTE_UI_WEB_RESULT', evidence: 'verified' },
@@ -1290,7 +1331,7 @@ jobs:
             channel: process.env.CHANNEL,
             sourceSha: process.env.SOURCE_SHA || 'unavailable',
             requestedSurfaces: definitions.map(({ id, evidence }) => ({ id, requested: Boolean(requested[id]), required: true, evidence })),
-            surfaces: definitions.map(({ id, envName, evidence }) => {
+            surfaces: definitions.map(({ id, envName, evidence, product, versionName, resumeVerifiedName }) => {
               const result = normalizeResult(process.env[envName]);
               const recoveryHint = result === 'failed' ? { workflow: envName.toLowerCase() } : undefined;
               if (result === 'success' && evidence === 'accepted') {
@@ -1299,7 +1340,14 @@ jobs:
               return {
                 id,
                 result,
-                ...(result === 'success' ? { identity: { verified: true, sourceSha: process.env.SOURCE_SHA || 'unavailable' } } : {}),
+                ...(result === 'success' ? { identity: {
+                  verified: product
+                    ? Boolean(process.env[versionName])
+                      && (normalizeResult(process.env.CANDIDATE_VERIFY_RESULT) === 'success' || process.env[resumeVerifiedName] === 'true')
+                    : true,
+                  sourceSha: process.env.SOURCE_SHA || 'unavailable',
+                  ...(product ? { product, version: process.env[versionName] ?? '' } : {}),
+                } } : {}),
                 ...(recoveryHint ? { recoveryHint } : {}),
               };
             }),
@@ -1323,6 +1371,7 @@ jobs:
           name: happier-release-status
           path: ${{ runner.temp }}/release-status.json
           if-no-files-found: error
+          overwrite: true
 
   sync_dev:
     if: ${{ inputs.dry_run != true && inputs.environment == 'production' && (vars.RELEASE_SYNC_DEV_FROM_MAIN == '' || vars.RELEASE_SYNC_DEV_FROM_MAIN == 'true') && needs.release_verify.result == 'success' }}
