@@ -104,8 +104,15 @@ export function resolveProviderSessionSubagentAutoRecipient(
     return null;
 }
 
-export function shouldIgnoreProviderSessionSubagentActivityPreviewText(params: Readonly<{
-    subagent: SessionSubagent;
+/**
+ * The ONE answer to "is this line provider noise rather than activity".
+ *
+ * Every surface that shows the newest useful line of a sidechain routes through here — the roster
+ * row's meta line and the disclosed preview body alike. They project differently (one line versus
+ * steps plus a line), and that is fine; what they may not do is disagree about what counts as a
+ * line, which is exactly what happened while only one of them filtered.
+ */
+export function shouldIgnoreProviderActivityPreviewText(params: Readonly<{
     text: string;
 }>): boolean {
     for (const behavior of listSessionProviderBehaviors({ flavor: null })) {

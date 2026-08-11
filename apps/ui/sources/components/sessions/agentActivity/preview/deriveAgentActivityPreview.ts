@@ -1,3 +1,5 @@
+import { shouldIgnoreProviderActivityPreviewText } from '@/sync/domains/session/providers/sessionProviderBehaviorRegistry';
+
 import { collapseToSingleLine } from '../presentation/collapseToSingleLine';
 
 /**
@@ -86,15 +88,21 @@ export function deriveAgentActivityPreview(
     let lastLine: string | null = null;
     let pendingPermission = false;
 
-    // Backwards, and stopping as soon as both budgets are met: a sidechain with four thousand
-    // messages must cost the same as one with four. Pending permission is the exception — it is a
-    // property of the whole sidechain, so it is answered by a separate bounded scan below.
+    // ONE backwards walk, stopping the moment every answer is settled.
+    //
+    // Steps and the line are bounded by construction, so once a person is being waited on this
+    // costs the same for four thousand messages as for four. `pendingPermission` is the one
+    // predicate over the WHOLE sidechain — "somewhere in here, nothing moves until a person acts" —
+    // so a sidechain with no outstanding prompt is walked to the start to prove it. Once, though,
+    // not twice: this used to be a bounded walk followed by an unbounded permission scan, which
+    // read every message anyway and then read the tail a second time on top.
     for (let index = messages.length - 1; index >= 0; index -= 1) {
         const message = messages[index];
         if (!message) continue;
 
         const tool = message.tool;
         if (tool) {
+            if (tool.permission?.status === 'pending') pendingPermission = true;
             if (steps.length < AGENT_ACTIVITY_PREVIEW_STEP_LIMIT) {
                 const name = collapseToSingleLine(tool.name);
                 if (name) {
@@ -106,23 +114,19 @@ export function deriveAgentActivityPreview(
                     });
                 }
             }
-            continue;
+        } else if (lastLine === null) {
+            // Through the provider registry, never a local rule: the roster row above this body
+            // suppresses provider lifecycle chatter with the same call, and a body that quoted what
+            // its own row deliberately hid would be two answers to one question.
+            const line = collapseToSingleLine(message.text);
+            if (line !== null && !shouldIgnoreProviderActivityPreviewText({ text: line })) {
+                lastLine = clampLine(line);
+            }
         }
 
-        if (lastLine === null) {
-            lastLine = clampLine(collapseToSingleLine(message.text));
-        }
-
-        if (lastLine !== null && steps.length >= AGENT_ACTIVITY_PREVIEW_STEP_LIMIT) break;
-    }
-
-    // The newest prompt is the one a person can act on, so the scan runs from the end and stops at
-    // the first one it finds — the same direction and the same bound as everything above.
-    for (let index = messages.length - 1; index >= 0; index -= 1) {
-        if (messages[index]?.tool?.permission?.status === 'pending') {
-            pendingPermission = true;
-            break;
-        }
+        if (pendingPermission
+            && lastLine !== null
+            && steps.length >= AGENT_ACTIVITY_PREVIEW_STEP_LIMIT) break;
     }
 
     steps.reverse();

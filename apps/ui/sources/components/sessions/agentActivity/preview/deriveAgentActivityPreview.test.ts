@@ -50,6 +50,27 @@ function agentText(id: string, text: string, createdAt = 1): Message {
     return { kind: 'agent-text', id, localId: null, createdAt, text };
 }
 
+/**
+ * The same messages, plus a count of how many times the projection actually looked at one.
+ *
+ * Cost is the contract here, and cost is invisible to an output assertion: a projection that walks
+ * four thousand messages returns exactly the same three steps as one that walks four. So the walk
+ * itself is observed, through the array the projection is handed.
+ */
+function countingMessages(source: readonly Message[]): Readonly<{
+    messages: readonly Message[];
+    readVisits: () => number;
+}> {
+    let visits = 0;
+    const messages = new Proxy([...source], {
+        get(target, property, receiver) {
+            if (typeof property === 'string' && /^\d+$/.test(property)) visits += 1;
+            return Reflect.get(target, property, receiver);
+        },
+    });
+    return { messages, readVisits: () => visits };
+}
+
 describe('deriveAgentActivityPreview', () => {
     it('shows the newest steps, newest last, bounded by the step limit', () => {
         const preview = deriveAgentActivityPreview([
@@ -145,6 +166,56 @@ describe('deriveAgentActivityPreview', () => {
         const preview = deriveAgentActivityPreview([]);
 
         expect(preview).toEqual({ steps: [], lastLine: null, pendingPermission: false, isEmpty: true });
+    });
+
+    it('suppresses the provider lifecycle noise the roster suppresses, so a row and its body agree', () => {
+        const preview = deriveAgentActivityPreview([
+            agentText('m1', 'There is no AGENTS.md inside the live-ui-manual-qa-repo directory.', 1),
+            agentText('m2', '{"type":"idle_notification","from":"beta","idleReason":"available"}', 2),
+            agentText('m3', '"{\\"type\\":\\"shutdown_approved\\",\\"from\\":\\"beta\\"}"', 3),
+        ]);
+
+        expect(preview.lastLine).toBe('There is no AGENTS.md inside the live-ui-manual-qa-repo directory.');
+    });
+
+    it('reads each message at most once, not once per answer', () => {
+        const { messages, readVisits } = countingMessages([
+            ...Array.from({ length: 200 }, (_unused, index) => toolMessage({
+                id: `t${index}`,
+                createdAt: index + 1,
+            })),
+            agentText('m1', 'done', 500),
+        ]);
+
+        deriveAgentActivityPreview(messages);
+
+        expect(readVisits()).toBeLessThanOrEqual(messages.length);
+    });
+
+    it('stops the moment every answer is settled', () => {
+        const { messages, readVisits } = countingMessages([
+            ...Array.from({ length: 200 }, (_unused, index) => toolMessage({
+                id: `filler${index}`,
+                createdAt: index + 1,
+            })),
+            agentText('m1', 'done', 300),
+            toolMessage({
+                id: 'pending',
+                name: 'Bash',
+                state: 'running',
+                createdAt: 301,
+                permission: { id: 'p1', status: 'pending' },
+            }),
+            toolMessage({ id: 'after1', name: 'Read', createdAt: 302 }),
+            toolMessage({ id: 'after2', name: 'Grep', createdAt: 303 }),
+        ]);
+
+        const preview = deriveAgentActivityPreview(messages);
+
+        expect(preview.pendingPermission).toBe(true);
+        expect(preview.lastLine).toBe('done');
+        // Four messages answer all three questions; nothing older can change any of them.
+        expect(readVisits()).toBeLessThanOrEqual(4);
     });
 
     it('distinguishes three different agents rather than collapsing them', () => {

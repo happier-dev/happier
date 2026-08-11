@@ -29,8 +29,16 @@ export type SessionProviderSubagentBehavior = Readonly<{
         flavor: string | null;
         messages: readonly Message[];
     }>) => readonly SessionSubagent[];
+    /**
+     * This line is provider bookkeeping and must never be shown as activity.
+     *
+     * A fact about the TEXT, deliberately: every surface that shows "the newest useful line" for a
+     * sidechain asks this — the roster row, and the expanded body under it, which is loaded by
+     * sidechain id and has no subagent to describe. Taking a subagent here would make the rule
+     * unanswerable for exactly the rows that most need it, and the two surfaces would disagree
+     * about the same sidechain.
+     */
     shouldIgnoreActivityPreviewText?: (ctx: Readonly<{
-        subagent: SessionSubagent;
         text: string;
     }>) => boolean;
     resolveAutoRecipient?: (ctx: SessionSubagentAutoRecipientContext) => ParticipantRecipientV1 | null;

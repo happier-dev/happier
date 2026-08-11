@@ -1,5 +1,5 @@
 import type { SessionSubagent } from './types';
-import { shouldIgnoreProviderSessionSubagentActivityPreviewText } from '@/sync/domains/session/providers/sessionProviderBehaviorRegistry';
+import { shouldIgnoreProviderActivityPreviewText } from '@/sync/domains/session/providers/sessionProviderBehaviorRegistry';
 
 type SidechainMessageLike = Readonly<{
     createdAt?: number | null;
@@ -33,13 +33,8 @@ export function deriveSessionSubagentActivityPreview(params: Readonly<{
     for (let index = sidechainMessages.length - 1; index >= 0; index -= 1) {
         const message = sidechainMessages[index];
         const textPreview = normalizePreviewText(message?.text);
-        if (textPreview) {
-            if (!shouldIgnoreProviderSessionSubagentActivityPreviewText({
-                subagent: params.subagent,
-                text: textPreview,
-            })) {
-                return textPreview;
-            }
+        if (textPreview && !shouldIgnoreProviderActivityPreviewText({ text: textPreview })) {
+            return textPreview;
         }
 
         const descriptionPreview = normalizePreviewText(message?.tool?.description);

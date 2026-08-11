@@ -58,6 +58,35 @@ describe('deriveSessionSubagentActivityPreview', () => {
         expect(preview).toBe('There is no AGENTS.md inside the live-ui-manual-qa-repo directory.');
     });
 
+    /**
+     * The suppression rule is a fact about the TEXT, not about which roster kind produced it.
+     *
+     * It used to be gated on `agent_team_member`, so the same lifecycle payload was noise in one row
+     * and a headline in the next — and the expanded body beside it, which has no subagent to gate
+     * on, disagreed with both. A lifecycle event is provider bookkeeping wherever it lands.
+     */
+    it('skips lifecycle payloads for a subagent that is not a team member either', () => {
+        const preview = deriveSessionSubagentActivityPreview({
+            subagent: {
+                ...baseSubagent,
+                id: 'execution_run:run_1',
+                kind: 'execution_run',
+                transcript: { sidechainId: 'toolu_run', toolId: 'toolu_run', toolMessageRouteId: 'tool:toolu_run' },
+                recipient: { kind: 'execution_run', runId: 'run_1', label: 'Delegate execution run' },
+            },
+            reducerState: {
+                sidechains: new Map([
+                    ['toolu_run', [
+                        { text: 'Wrote the report.' },
+                        { text: '{"type":"idle_notification","from":"beta","idleReason":"available"}' },
+                    ]],
+                ]),
+            },
+        });
+
+        expect(preview).toBe('Wrote the report.');
+    });
+
     it('skips double-encoded lifecycle payloads when scanning from newest to oldest', () => {
         const preview = deriveSessionSubagentActivityPreview({
             subagent: baseSubagent,

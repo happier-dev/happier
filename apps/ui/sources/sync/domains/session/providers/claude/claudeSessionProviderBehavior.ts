@@ -67,10 +67,11 @@ export const CLAUDE_SESSION_PROVIDER_BEHAVIOR: SessionProviderBehavior = {
     },
     subagents: {
         deriveSubagents: ({ flavor, messages }) => deriveClaudeTeamSubagents({ flavor, messages }),
-        shouldIgnoreActivityPreviewText: ({ subagent, text }) => {
-            if (subagent.recipient?.kind !== 'agent_team_member') return false;
-            return readClaudeIgnoredLifecycleEventType(text) !== null;
-        },
+        // `idle_notification` / `shutdown_approved` are the agent-team transport talking to itself.
+        // The reader below already requires the whole line to parse as one of those events, so the
+        // rule needs no roster-kind gate to be safe — and without a gate the roster row and the
+        // expanded body under it cannot disagree about the same sidechain.
+        shouldIgnoreActivityPreviewText: ({ text }) => readClaudeIgnoredLifecycleEventType(text) !== null,
         resolveAutoRecipient: resolveClaudeTeamMemberAutoRecipient,
     },
 };
