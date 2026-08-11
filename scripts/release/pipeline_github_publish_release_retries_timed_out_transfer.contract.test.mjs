@@ -15,10 +15,9 @@ test('pipeline GitHub release retries a stalled asset transfer after its transfe
   fs.mkdirSync(binDir, { recursive: true });
 
   const ghLog = resolve(tmp, 'gh.log');
-  const stateFile = resolve(tmp, 'state.json');
+  const firstUploadMarker = resolve(tmp, 'first-upload-started');
   const asset = resolve(tmp, 'asset.txt');
   fs.writeFileSync(ghLog, '', 'utf8');
-  fs.writeFileSync(stateFile, JSON.stringify({ uploadAttempts: 0 }), 'utf8');
   fs.writeFileSync(asset, 'hello\n', 'utf8');
 
   const ghPath = resolve(binDir, 'gh');
@@ -27,16 +26,16 @@ const fs = require('node:fs');
 const path = require('node:path');
 const args = process.argv.slice(2);
 const logFile = ${JSON.stringify(ghLog)};
-const stateFile = ${JSON.stringify(stateFile)};
+const firstUploadMarker = ${JSON.stringify(firstUploadMarker)};
 const asset = ${JSON.stringify(asset)};
 fs.appendFileSync(logFile, \`gh \${args.join(' ')}\\n\`);
 
 if (args[0] === 'release' && args[1] === 'upload') {
-  const state = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
-  state.uploadAttempts += 1;
-  fs.writeFileSync(stateFile, JSON.stringify(state));
-  if (state.uploadAttempts === 1) {
-    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 500);
+  try {
+    fs.closeSync(fs.openSync(firstUploadMarker, 'wx'));
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 2000);
+  } catch (error) {
+    if (error.code !== 'EEXIST') throw error;
   }
   process.exit(0);
 }
@@ -68,7 +67,7 @@ if (args[0] === 'release' && args[1] === 'download') {
         GH_REPO: 'test/test',
         GH_TOKEN: 'dummy',
         GITHUB_REPOSITORY: '',
-        HAPPIER_PIPELINE_GH_RELEASE_TRANSFER_TIMEOUT_MS: '50',
+        HAPPIER_PIPELINE_GH_RELEASE_TRANSFER_TIMEOUT_MS: '1000',
         HAPPIER_PIPELINE_GH_RELEASE_UPLOAD_RETRIES: '3',
         HAPPIER_PIPELINE_GH_RELEASE_UPLOAD_RETRY_DELAY_MS: '10',
         PATH: `${binDir}:${process.env.PATH ?? ''}`,
