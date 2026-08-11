@@ -1,3 +1,4 @@
+import { findMachineInCollection, type MachineCollection } from './machineCollection';
 import {
     isMachineReplaced,
     normalizeMachineIdentityString,
@@ -6,7 +7,7 @@ import {
 
 const MAX_REPLACEMENT_CHAIN_LENGTH = 16;
 
-type MachineReplacementRecord = Readonly<{
+export type MachineReplacementRecord = Readonly<{
     id: string;
     replacedByMachineId?: string | null;
     replacedAt?: unknown;
@@ -14,15 +15,12 @@ type MachineReplacementRecord = Readonly<{
 
 export function resolveCanonicalMachineId(
     machineIdInput: string | null | undefined,
-    machines: ReadonlyArray<MachineReplacementRecord>,
+    machines: MachineCollection<MachineReplacementRecord>,
 ): CanonicalMachineResolution | null {
     const machineId = normalizeMachineIdentityString(machineIdInput);
     if (!machineId) return null;
     if (machineId.startsWith('host:')) return null;
 
-    const machineById = new Map<string, MachineReplacementRecord>(
-        machines.map((machine) => [machine.id, machine] as const),
-    );
     const chain: string[] = [];
     const visited = new Set<string>();
     let currentMachineId = machineId;
@@ -32,7 +30,7 @@ export function resolveCanonicalMachineId(
         visited.add(currentMachineId);
         chain.push(currentMachineId);
 
-        const machine = machineById.get(currentMachineId);
+        const machine = findMachineInCollection(machines, currentMachineId);
         if (!machine || !isMachineReplaced(machine)) {
             return {
                 machineId: currentMachineId,
@@ -43,7 +41,7 @@ export function resolveCanonicalMachineId(
 
         const replacementMachineId = normalizeMachineIdentityString(machine.replacedByMachineId);
         if (!replacementMachineId || replacementMachineId === currentMachineId) return null;
-        if (!machineById.has(replacementMachineId)) {
+        if (!findMachineInCollection(machines, replacementMachineId)) {
             return {
                 machineId: currentMachineId,
                 reason: 'missingReplacementTarget',

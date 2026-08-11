@@ -1,4 +1,5 @@
 import type { Machine } from '@/sync/domains/state/storageTypes';
+import { findMachineInCollection, type MachineCollection } from '@/sync/domains/machines/identity/machineCollection';
 import { resolveCanonicalMachineId } from '@/sync/domains/machines/identity/resolveCanonicalMachineId';
 import { resolveSessionRpcTarget } from '@/sync/domains/machines/identity/resolveSessionMachineTargets';
 
@@ -15,7 +16,7 @@ export function resolveSessionMachineRpcTarget(input: Readonly<{
     sessionPath?: string | null;
     projectMachineId?: string | null;
     projectPath?: string | null;
-    machines: ReadonlyArray<Machine>;
+    machines: MachineCollection<Machine>;
 }>): { machineId: string; basePath: string } | null {
     const target = resolveSessionRpcTarget({
         sessionActive: input.sessionActive,
@@ -32,7 +33,7 @@ export function resolveSessionReachableMachineId(input: Readonly<{
     machineId: string | null | undefined;
     fallbackMachineId?: string | null | undefined;
     hostHint?: string | null | undefined;
-    machines: ReadonlyArray<Machine>;
+    machines: MachineCollection<Machine>;
 }>): string | null {
     const machineId = normalizeNonEmptyString(input.machineId);
     const fallbackMachineId = normalizeNonEmptyString(input.fallbackMachineId);
@@ -45,6 +46,6 @@ export function resolveSessionReachableMachineId(input: Readonly<{
 
     const canonical = resolveCanonicalMachineId(requestedMachineId, input.machines);
     if (canonical?.reason === 'replacement') return canonical.machineId;
-    if (canonical === null && input.machines.some((machine) => machine.id === requestedMachineId)) return null;
+    if (canonical === null && findMachineInCollection(input.machines, requestedMachineId)) return null;
     return requestedMachineId;
 }

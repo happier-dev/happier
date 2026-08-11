@@ -1,7 +1,7 @@
 import type { InvalidateSync } from '@/utils/sessions/sync';
 import { storage } from '@/sync/domains/state/storage';
 import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
-import { resolveProjectMachineScopeId } from '@/sync/runtime/orchestration/projectManager';
+import { resolveProjectMachineScopeId } from '@/sync/runtime/orchestration/projectKeyIdentity';
 import { readSessionWorkspaceContext } from '@/sync/domains/session/readSessionWorkspaceContext';
 import { clearSuggestionFileSearchCache } from '@/sync/domains/input/suggestionFileCacheInvalidation';
 import { resolveSessionFileSuggestionScope } from '@/sync/ops/resolveSessionFileSuggestionScope';

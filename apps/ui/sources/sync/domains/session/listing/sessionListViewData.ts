@@ -4,8 +4,7 @@ import type { SessionListAttentionPromotionReason } from './attentionPromotion/s
 import type { SessionListWorkingPlacementReason } from './placement/sessionListPlacementProjection';
 import { t } from '@/text';
 import {
-    resolveDisplayMachineIdForSessionFromState,
-    resolveDisplayPathForSessionFromState,
+    resolveDisplayIdentityForSessionFromState,
     type SessionMachineTargetState,
 } from '@/sync/ops/sessionMachineTarget';
 import { isUserFacingSession } from './isUserFacingSession';
@@ -197,19 +196,15 @@ function groupSessionsByProject(params: Readonly<{
     const sessionTargetState = params.sessionTargetState;
 
     for (const session of params.sessions) {
+        // One resolution per session. Asking for the machine id and the path separately resolved
+        // the same display target — and re-read the same project — twice per row on the
+        // session-list build path, which the store runs for every list rebuild.
         const target = sessionTargetState
-            ? {
-                machineId: resolveDisplayMachineIdForSessionFromState({
-                    state: sessionTargetState,
-                    sessionId: session.id,
-                    metadata: session.metadata ?? null,
-                }),
-                basePath: resolveDisplayPathForSessionFromState({
-                    state: sessionTargetState,
-                    sessionId: session.id,
-                    metadata: session.metadata ?? null,
-                }),
-            }
+            ? resolveDisplayIdentityForSessionFromState({
+                state: sessionTargetState,
+                sessionId: session.id,
+                metadata: session.metadata ?? null,
+            })
             : null;
         const workspace = resolveSessionWorkspacePresentation({
             metadata: session.metadata ?? null,

@@ -1,5 +1,6 @@
 import type { Machine } from '@/sync/domains/state/storageTypes';
 
+import { findMachineInCollection, type MachineCollection } from './machineCollection';
 import { isMachineReplaced, normalizeMachineIdentityString } from './machineIdentityTypes';
 import { resolveCanonicalMachineId } from './resolveCanonicalMachineId';
 
@@ -15,13 +16,12 @@ function isMachineRevoked(machine: Readonly<{ revokedAt?: unknown }> | null | un
 
 export function resolveReplacementAwareMachineRpcTarget(input: Readonly<{
     machineId?: string | null;
-    machines: ReadonlyArray<Machine>;
+    machines: MachineCollection<Machine>;
 }>): ReplacementAwareMachineRpcTarget | null {
     const originMachineId = normalizeMachineIdentityString(input.machineId);
     if (!originMachineId || originMachineId.startsWith('host:')) return null;
 
-    const machineById = new Map(input.machines.map((machine) => [machine.id, machine] as const));
-    const originMachine = machineById.get(originMachineId);
+    const originMachine = findMachineInCollection(input.machines, originMachineId);
     if (!originMachine) {
         return {
             machineId: originMachineId,
@@ -33,7 +33,7 @@ export function resolveReplacementAwareMachineRpcTarget(input: Readonly<{
     const canonical = resolveCanonicalMachineId(originMachineId, input.machines);
     if (!canonical || canonical.reason === 'missingReplacementTarget') return null;
 
-    const targetMachine = machineById.get(canonical.machineId);
+    const targetMachine = findMachineInCollection(input.machines, canonical.machineId);
     if (targetMachine && (isMachineRevoked(targetMachine) || isMachineReplaced(targetMachine))) return null;
 
     return {

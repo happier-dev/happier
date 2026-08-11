@@ -31,7 +31,11 @@ installSessionUtilsCommonModuleMocks({
     text: async () => {
         const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
         return createTextModuleMock({
-            translate: (key: string) => key,
+            // Interpolation is rendered, not dropped: the background-active line's whole point is
+            // the integer it carries, and a mock that swallowed params would pass either way.
+            translate: (key: string, params?: Record<string, unknown>) => (
+                params ? `${key}:${JSON.stringify(params)}` : key
+            ),
         });
     },
     storage: async () => {
@@ -809,10 +813,27 @@ describe('getSessionStatus', () => {
         });
 
         expect(status.state).toBe('background_active');
-        expect(status.statusText).toBe('status.backgroundActive');
+        expect(status.statusText).toBe('status.backgroundActive:{"count":1}');
         expect(status.statusColor).toBe('default-token');
         expect(status.statusDotColor).toBe('default-token');
         expect(status.isPulsing).toBe(false);
+    });
+
+    it('names how much background work is running instead of one count-free string', async () => {
+        const { getSessionStatus } = await import('./sessionUtils');
+        const now = 1_000_000;
+        const status = getSessionStatus(createBaseSession({
+            activeAt: now - 10_000,
+            latestTurnStatus: 'completed',
+            latestTurnStatusObservedAt: now - 5_000,
+            runtimeActivityState: 'active',
+            runtimeActivityRevision: 1,
+            runtimeActivityActiveCount: 3,
+            runtimeActivityObservedAt: now - 1_000,
+        }), now, { workingTextMode: 'static' });
+
+        expect(status.state).toBe('background_active');
+        expect(status.statusText).toBe('status.backgroundActive:{"count":3}');
     });
 
     it('keeps projected unknown activity quiet', async () => {

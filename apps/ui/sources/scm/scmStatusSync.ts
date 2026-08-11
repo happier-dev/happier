@@ -21,7 +21,7 @@ import { reportScmStatusSyncError } from './statusSync/errorReporting';
 import { ATTRIBUTION_INVALIDATION_WINDOW_MS, shouldAttributeChangedPaths } from './sync/attribution';
 import { isSessionPathWithinRepoRoot } from './sync/paths';
 import { collectChangedPaths } from './sync/snapshotDiff';
-import { resolveProjectMachineScopeId } from '@/sync/runtime/orchestration/projectManager';
+import { resolveProjectMachineScopeId } from '@/sync/runtime/orchestration/projectKeyIdentity';
 import { readSessionWorkspaceContext } from '@/sync/domains/session/readSessionWorkspaceContext';
 
 type InvalidationSource = 'unknown' | 'mutation';

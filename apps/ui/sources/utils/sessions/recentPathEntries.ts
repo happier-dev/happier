@@ -1,5 +1,15 @@
 export type SessionRecentPathEntry = string;
 
+/**
+ * The empty recent-path projection. It lives here, with the codec, rather than with the projection
+ * builder: the store's initial state reads it while the store module is still evaluating, and the
+ * builder module transitively imports the store, so reading it from there is a temporal-dead-zone
+ * fault inside that import cycle. This module imports nothing.
+ */
+export const EMPTY_SESSION_RECENT_PATH_ENTRIES: SessionRecentPathEntry[] = Object.freeze(
+    [] as SessionRecentPathEntry[],
+) as SessionRecentPathEntry[];
+
 const SESSION_RECENT_PATH_ENTRY_PREFIX = 'happier:session-recent-path:v1:';
 
 type DecodedSessionRecentPathEntry = Readonly<{

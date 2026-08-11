@@ -10,7 +10,7 @@ import { storage } from '@/sync/domains/state/storage';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import type { MachineDisplayRenderable } from '@/sync/domains/machines/machineDisplayRenderable';
 import { resolveSessionMachineId } from '@/sync/domains/session/directSessions/resolveSessionMachineId';
-import { normalizeKnownProjectMachineId } from '@/sync/runtime/orchestration/projectManager';
+import { normalizeKnownProjectMachineId } from '@/sync/runtime/orchestration/projectKeyIdentity';
 import { resolvePathRelativeToRoot } from '@/utils/path/resolvePathRelativeToRoot';
 
 type SessionTargetMetadataLike = Readonly<{
@@ -131,7 +131,7 @@ export function resolveMachineTargetForSessionFromState(
   const metadata = session?.metadata ?? null;
   const project = typeof state.getProjectForSession === 'function' ? state.getProjectForSession(sessionId) : null;
 
-  const machines = Object.values(state.machines ?? {}) as Machine[];
+  const machinesById = state.machines ?? {};
   // Project keys use a synthetic "unknown" machine scope for sessions without a
   // machineId; it is a grouping key, not a machine, and must not steer targeting.
   const projectMachineId = normalizeKnownProjectMachineId(project?.key?.machineId);
@@ -142,12 +142,14 @@ export function resolveMachineTargetForSessionFromState(
     sessionPath: normalizeNonEmptyString(metadata?.path),
     projectMachineId,
     projectPath: normalizeNonEmptyString(project?.key?.path),
-    machines,
+    machines: machinesById,
   });
+  // Only the legacy host-match fallback needs to *scan* machines, and `??` reaches it only when
+  // id-based targeting already failed — so the list is materialised on that path alone.
   const resolvedTarget = target ?? resolveLegacyHostMachineTarget({
     metadata,
     projectMachineId,
-    machines,
+    machines: Object.values(machinesById) as Machine[],
   });
   return resolveWorkspaceLocationForMachineTarget(metadata, resolvedTarget);
 }
@@ -322,7 +324,10 @@ export function resolveDisplayMachineTargetForSessionFromState(input: Readonly<{
       sessionPath: normalizeNonEmptyString(metadata?.path),
       projectMachineId: project?.key?.machineId ?? null,
       projectPath: normalizeNonEmptyString(project?.key?.path),
-      machines: Object.values(input.state.machines ?? {}) as Machine[],
+      // The store's own id-keyed record, handed over as-is. This resolver is called once per
+      // session inside store-write loops, so materialising a list here rebuilt the machine index
+      // per session — O(sessions x machines) allocation on the hottest write path in the app.
+      machines: input.state.machines ?? {},
     });
   }
 
@@ -333,7 +338,7 @@ export function resolveDisplayMachineTargetForSessionFromState(input: Readonly<{
     sessionPath: normalizeNonEmptyString(metadata?.path),
     projectMachineId: null,
     projectPath: null,
-    machines: Object.values(input.state.machines ?? {}) as Machine[],
+    machines: input.state.machines ?? {},
   });
 }
 
@@ -348,22 +353,41 @@ export function readDisplayMachineTargetForSession(input: Readonly<{
   });
 }
 
+/**
+ * What a session row shows: the machine it is attributed to and the path under it, each falling
+ * back to the session's own metadata when no display target resolves.
+ *
+ * Both values come out of one target resolution. Asking for them separately resolved the same
+ * target — and re-read the project for the same session — twice per row, which is pure waste for
+ * any caller that needs both (every session-row and recent-path projection does).
+ */
+export type SessionDisplayIdentity = Readonly<{
+  machineId: string;
+  basePath: string;
+}>;
+
+export function resolveDisplayIdentityForSessionFromState(input: Readonly<{
+  state: SessionMachineTargetState;
+  sessionId?: string | null;
+  metadata?: SessionTargetMetadataLike;
+}>): SessionDisplayIdentity {
+  const target = resolveDisplayMachineTargetForSessionFromState({
+    state: input.state,
+    sessionId: normalizeNonEmptyString(input.sessionId),
+    metadata: input.metadata,
+  });
+  return {
+    machineId: target?.machineId || resolveSessionMachineId(input.metadata) || '',
+    basePath: target?.basePath || normalizeNonEmptyString(input.metadata?.path) || '',
+  };
+}
+
 export function resolveDisplayMachineIdForSessionFromState(input: Readonly<{
   state: SessionMachineTargetState;
   sessionId?: string | null;
   metadata?: SessionTargetMetadataLike;
 }>): string {
-  const sessionId = normalizeNonEmptyString(input.sessionId);
-  const target = resolveDisplayMachineTargetForSessionFromState({
-    state: input.state,
-    sessionId,
-    metadata: input.metadata,
-  });
-  if (target?.machineId) return target.machineId;
-  return (
-    resolveSessionMachineId(input.metadata)
-    ?? ''
-  );
+  return resolveDisplayIdentityForSessionFromState(input).machineId;
 }
 
 export function resolveDisplayPathForSessionFromState(input: Readonly<{
@@ -371,14 +395,7 @@ export function resolveDisplayPathForSessionFromState(input: Readonly<{
   sessionId?: string | null;
   metadata?: SessionTargetMetadataLike;
 }>): string {
-  const sessionId = normalizeNonEmptyString(input.sessionId);
-  const target = resolveDisplayMachineTargetForSessionFromState({
-    state: input.state,
-    sessionId,
-    metadata: input.metadata,
-  });
-  if (target?.basePath) return target.basePath;
-  return normalizeNonEmptyString(input.metadata?.path) ?? '';
+  return resolveDisplayIdentityForSessionFromState(input).basePath;
 }
 
 export function readDisplayMachineIdForSession(input: Readonly<{
@@ -397,6 +414,17 @@ export function readDisplayPathForSession(input: Readonly<{
   metadata?: SessionTargetMetadataLike;
 }>): string {
   return resolveDisplayPathForSessionFromState({
+    state: storage.getState() as SessionMachineTargetState,
+    sessionId: input.sessionId,
+    metadata: input.metadata,
+  });
+}
+
+export function readDisplayIdentityForSession(input: Readonly<{
+  sessionId?: string | null;
+  metadata?: SessionTargetMetadataLike;
+}>): SessionDisplayIdentity {
+  return resolveDisplayIdentityForSessionFromState({
     state: storage.getState() as SessionMachineTargetState,
     sessionId: input.sessionId,
     metadata: input.metadata,

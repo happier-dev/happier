@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { resolveProjectMachineScopeId } from './projectManager';
+import { resolveProjectMachineScopeId } from './projectKeyIdentity';
 
 describe('resolveProjectMachineScopeId', () => {
     it('does not use host as a project machine identity fallback', () => {

@@ -89,7 +89,7 @@ export function resolveSessionWorkspacePresentation(params: Readonly<{
     const targetPath = normalizeNonEmptyString(params.target?.basePath);
     const rawDisplayMachineId = targetMachineId ?? parts.machineId;
     const canonical = rawDisplayMachineId
-        ? resolveCanonicalMachineId(rawDisplayMachineId, Object.values(params.machines))
+        ? resolveCanonicalMachineId(rawDisplayMachineId, params.machines)
         : null;
     const displayMachineId = canonical?.reason === 'missingReplacementTarget'
         ? rawDisplayMachineId

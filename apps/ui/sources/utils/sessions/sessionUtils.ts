@@ -365,7 +365,10 @@ export function getSessionStatus(session: SessionStatusSource, nowMs: number = D
         return {
             state: 'background_active',
             isConnected: true,
-            statusText: t('status.backgroundActive'),
+            // The count the provider ledger already published, said out loud. It is deliberately
+            // kind-neutral: the projection sums every runtime-activity contributor, so the number
+            // is attested but the noun would not be.
+            statusText: t('status.backgroundActive', { count: runtimeStatus.backgroundActiveCount }),
             shouldShowStatus: true,
             statusColor: statusColors.default,
             statusDotColor: statusColors.default,

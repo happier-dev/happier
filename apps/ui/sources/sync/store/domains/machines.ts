@@ -69,7 +69,9 @@ function resolveMachineGroupId(
     machinesById: Record<string, MachineDisplayRenderable>,
 ): string {
     if (!parts.machineId) return 'unknown';
-    const canonical = resolveCanonicalMachineId(parts.machineId, Object.values(machinesById));
+    // Called once per renderable session by `collectReferencedProjectMachineGroupIds`; the record
+    // is already the id index the resolution needs, so it is passed through rather than flattened.
+    const canonical = resolveCanonicalMachineId(parts.machineId, machinesById);
     const machineId = canonical?.reason === 'missingReplacementTarget'
         ? parts.machineId
         : canonical?.machineId ?? parts.machineId;

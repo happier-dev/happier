@@ -1,7 +1,7 @@
 import { storage } from '@/sync/domains/state/storage';
 import { readSessionWorkspaceContext } from '@/sync/domains/session/readSessionWorkspaceContext';
 import { resolveSessionMachineId } from '@/sync/domains/session/directSessions/resolveSessionMachineId';
-import { resolveProjectMachineScopeId } from '@/sync/runtime/orchestration/projectManager';
+import { resolveProjectMachineScopeId } from '@/sync/runtime/orchestration/projectKeyIdentity';
 import { readMachineTargetForSession } from '@/sync/ops/sessionMachineTarget';
 import { resolveAbsolutePath } from '@/utils/path/pathUtils';
 

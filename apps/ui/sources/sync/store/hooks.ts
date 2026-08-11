@@ -69,8 +69,9 @@ import { isMachineVisibleForLaunchSelection } from '../domains/machines/identity
 import { resolveServerIdForSessionIdFromLocalState } from '../runtime/orchestration/serverScopedRpc/resolveServerIdForSessionIdFromLocalCache';
 import { buildWorkspaceCacheKey, type WorkspaceScopeBase } from '../domains/workspaces/workspaceScope';
 import { buildSessionFolderAssignmentKey } from '../domains/session/folders';
-import { readDisplayMachineIdForSession, readDisplayPathForSession } from '../ops/sessionMachineTarget';
-import { encodeSessionRecentPathEntry, type SessionRecentPathEntry } from '@/utils/sessions/recentPathEntries';
+import { buildSessionRecentPathEntries } from '../domains/session/listing/sessionRecentPathEntries';
+import { createProjectForSessionResolver, resolveProjectForSession } from '../runtime/orchestration/projectForSessionResolver';
+import type { SessionRecentPathEntry } from '@/utils/sessions/recentPathEntries';
 import { isMachineOnline } from '@/utils/sessions/machineUtils';
 import {
   buildSessionRealtimeScmScopeFromSnapshot,
@@ -150,40 +151,35 @@ export function useSessionsReady(): boolean {
   return getStorage()((state) => state.isDataReady);
 }
 
+/**
+ * Derived here, in the selector zustand runs as its snapshot-equality check on every `setState`.
+ *
+ * That is affordable because the derivation is genuinely a *read* and it is skipped outright when
+ * neither of its two source records moved:
+ *
+ *  - `createProjectForSessionResolver` computes the project key `addSession` would file a session
+ *    under instead of registering it; the store's own `getProjectForSession` writes three `Map`s
+ *    per path-bearing session, which is what made this selector a write.
+ *  - the display resolver indexes the store's id-keyed machine record instead of rebuilding an
+ *    index per session, so the walk allocates nothing.
+ *  - `getStableSessionRecentPathEntries` returns the previous array whenever `sessions` and
+ *    `machines` still hold the same object identities, and re-uses it when a rebuild produced the
+ *    same entries — so a plain `Object.is` snapshot check is enough and no `useShallow` (which
+ *    builds two entry `Map`s per publish) is involved.
+ *
+ * `hooks.useSessions.test.tsx` pins both counts — `addSession` calls and `Map` constructions — at
+ * zero for an unrelated publish *and* for a publish that forces the full rebuild.
+ *
+ * A store-owned projection field was tried instead and removed: it bought nothing measurable on
+ * device and cost a hand-maintained invariant — every machine or session field the display
+ * resolver ever starts reading would have had to be added to a change gate, silently going stale
+ * if it were not. Keying on whole-record identity has no such failure mode.
+ *
+ * `null` still means "not hydrated yet", which recent-path consumers read as "keep the last known
+ * paths" rather than "there are none".
+ */
 export function useSessionRecentPathEntries(): SessionRecentPathEntry[] | null {
-  return getStorage()(
-    useShallow((state) => {
-      if (!state.isDataReady) return null;
-
-      const entries: Array<{ key: SessionRecentPathEntry; createdAt: number }> = [];
-      for (const session of Object.values(state.sessions)) {
-        const machineId = readDisplayMachineIdForSession({
-          sessionId: session.id,
-          metadata: session.metadata ?? null,
-        });
-        const path = readDisplayPathForSession({
-          sessionId: session.id,
-          metadata: session.metadata ?? null,
-        });
-        if (!machineId || !path) continue;
-
-        const createdAt = session.createdAt || 0;
-        entries.push({
-          key: encodeSessionRecentPathEntry({
-            sessionId: session.id,
-            machineId,
-            path,
-            createdAt,
-          }),
-          createdAt,
-        });
-      }
-
-      return entries
-        .sort((a, b) => b.createdAt - a.createdAt)
-        .map((entry) => entry.key);
-    }),
-  );
+  return getStorage()((state) => (state.isDataReady ? getStableSessionRecentPathEntries(state) : null));
 }
 
 export function useSession(id: string): Session | null {
@@ -228,8 +224,10 @@ export type SessionReferenceTarget = Readonly<{
  * session route — which already answers a genuinely missing id with its own explicit
  * "Session isn't available" screen — owns the failure the client cannot predict.
  *
- * `deleted` therefore comes from `deletedSessionIds`, written only by `deleteSession`, i.e. by
- * the changes stream reporting an actual deletion. `metadata` is whichever cached copy exists so
+ * `deleted` therefore comes from `deletedSessionIds`, written only by `deleteSession` — reached
+ * on a `delete-session` update, a `session-share-revoked` update, or an exact session fetch
+ * answering `not_found`, which is the server telling this viewer it cannot have the session at
+ * all. That is the same ground the route states. `metadata` is whichever cached copy exists so
  * a known session still shows its live title; it is always a *stored* object, never a projection,
  * so the selection stays referentially stable.
  */
@@ -1486,6 +1484,52 @@ function buildSessionListWorkspaceSignature(workspace: SessionListViewItem['work
   return ['workspaceScope', workspace.serverId ?? '', workspace.machineId ?? '', workspace.rootPath].join('\u0003');
 }
 
+type SessionRecentPathEntriesCache = Readonly<{
+  sessions: unknown;
+  machines: unknown;
+  entries: SessionRecentPathEntry[];
+}>;
+
+let sessionRecentPathEntriesCache: SessionRecentPathEntriesCache | null = null;
+
+/**
+ * The recent-path projection, derived at most once per change to the two records it reads.
+ *
+ * The identity check is the whole gate — not a list of fields the projection is believed to care
+ * about. `applySessions` and `applyMachines` replace the record they write, so a moved input is
+ * always a new object; an unrelated publish keeps both identities and costs one comparison.
+ */
+function getStableSessionRecentPathEntries(state: {
+  sessions: Record<string, Session>;
+  machines: Record<string, Machine>;
+}): SessionRecentPathEntry[] {
+  const cached = sessionRecentPathEntriesCache;
+  if (cached && cached.sessions === state.sessions && cached.machines === state.machines) {
+    return cached.entries;
+  }
+
+  const next = buildSessionRecentPathEntries({
+    sessions: state.sessions,
+    machines: state.machines,
+    getProjectForSession: createProjectForSessionResolver(state.sessions),
+  });
+  // A rebuild that produced the same rows must not re-render every recent-path consumer.
+  const entries = cached && hasSameSessionRecentPathEntries(cached.entries, next) ? cached.entries : next;
+  sessionRecentPathEntriesCache = { sessions: state.sessions, machines: state.machines, entries };
+  return entries;
+}
+
+function hasSameSessionRecentPathEntries(
+  previous: readonly SessionRecentPathEntry[],
+  next: readonly SessionRecentPathEntry[],
+): boolean {
+  if (previous.length !== next.length) return false;
+  for (let index = 0; index < next.length; index += 1) {
+    if (previous[index] !== next[index]) return false;
+  }
+  return true;
+}
+
 function getStableSessionListShellViewData(data: SessionListViewItem[] | null): SessionListViewItem[] | null {
   if (sessionListShellViewDataCache?.source === data) {
     return sessionListShellViewDataCache.data;
@@ -1702,13 +1746,35 @@ export function useProjectForSession(sessionId: string | null) {
   );
 }
 
+/**
+ * The session's own recorded path, falling back to the path of the project it is filed under.
+ *
+ * The fallback is resolved only when it can be reached, and through the pure resolver rather than
+ * the store's `getProjectForSession`. Both halves of that matter:
+ *
+ *  - the store's `getProjectForSession` reads *by writing* — it calls `projectManager.addSession`,
+ *    which re-sets `sessionToProject` and rescans the project's session list on every call — and
+ *    this selector is what zustand runs as its snapshot-equality check, so it re-executes for every
+ *    mounted consumer on every publish. A transcript mounts one consumer per row wrapper
+ *    (`useTranscriptSessionCommon`) and a streaming session publishes continuously, so one write
+ *    per evaluation multiplies by rows x publishes;
+ *  - in the branch that used to pay for it the fallback is redundant anyway. `addSession` files a
+ *    path-bearing session under `metadata.path`, so the project path it would return is the trimmed
+ *    session path that already outranks it. Only a session with no usable path of its own can take
+ *    the fallback, and that is exactly the case the pure resolver forwards to the manager's
+ *    surviving mapping.
+ */
 export function useSessionWorkspacePath(sessionId: string | null): string | null {
-  return getStorage()(
-    (state) => resolveSessionWorkspacePath({
-      sessionPath: sessionId ? state.sessions[sessionId]?.metadata?.path ?? null : null,
-      projectPath: sessionId ? state.getProjectForSession(sessionId)?.key?.path ?? null : null,
-    })
-  );
+  return getStorage()((state) => {
+    if (!sessionId) return null;
+    const sessionPath = resolveSessionWorkspacePath({
+      sessionPath: state.sessions[sessionId]?.metadata?.path ?? null,
+    });
+    if (sessionPath !== null) return sessionPath;
+    return resolveSessionWorkspacePath({
+      projectPath: resolveProjectForSession(state.sessions, sessionId)?.key?.path ?? null,
+    });
+  });
 }
 
 export function useSessionRpcAvailabilityState(sessionId: string | null): Readonly<{
