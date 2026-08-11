@@ -12,6 +12,9 @@ const FULL_SHA = /^[a-f0-9]{40}$/;
 const DEFAULT_UPLOAD_ATTEMPTS = 8;
 const DEFAULT_UPLOAD_RETRY_DELAY_MS = 5_000;
 const DEFAULT_UPLOAD_MAX_RETRY_DELAY_MS = 60_000;
+const DEFAULT_MUTATION_CONFIRM_ATTEMPTS = 8;
+const DEFAULT_MUTATION_CONFIRM_RETRY_DELAY_MS = 1_000;
+const DEFAULT_MUTATION_CONFIRM_MAX_RETRY_DELAY_MS = 5_000;
 const TRANSIENT_UPLOAD_CONNECTIVITY_EXHAUSTED_EXIT_CODE = 75;
 
 class TransientUploadConnectivityExhaustedError extends Error {
@@ -328,6 +331,24 @@ function runMutationAndConfirm({ args, env, dryRun, confirm, failureMessage }) {
   }
   if (confirm()) return;
   if (mutationError) throw mutationError;
+  const attempts = readPositiveIntegerEnv(
+    'HAPPIER_PIPELINE_GH_MUTATION_CONFIRM_ATTEMPTS',
+    DEFAULT_MUTATION_CONFIRM_ATTEMPTS,
+  );
+  const retryDelayMs = readNonNegativeIntegerEnv(
+    'HAPPIER_PIPELINE_GH_MUTATION_CONFIRM_RETRY_DELAY_MS',
+    DEFAULT_MUTATION_CONFIRM_RETRY_DELAY_MS,
+  );
+  const maxRetryDelayMs = readNonNegativeIntegerEnv(
+    'HAPPIER_PIPELINE_GH_MUTATION_CONFIRM_MAX_RETRY_DELAY_MS',
+    DEFAULT_MUTATION_CONFIRM_MAX_RETRY_DELAY_MS,
+  );
+  for (let attempt = 2; attempt <= attempts; attempt += 1) {
+    const delayMs = Math.min(retryDelayMs * (2 ** (attempt - 2)), maxRetryDelayMs);
+    console.warn(`[pipeline] GitHub mutation is not visible yet; retrying confirmation (${attempt}/${attempts})`);
+    sleepSync(delayMs);
+    if (confirm()) return;
+  }
   fail(failureMessage);
 }
 
