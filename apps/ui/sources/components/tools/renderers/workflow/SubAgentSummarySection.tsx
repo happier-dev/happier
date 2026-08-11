@@ -1,8 +1,8 @@
 import * as React from 'react';
 import { View, Pressable } from 'react-native';
-import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { StyleSheet } from 'react-native-unistyles';
 import { useRouter } from 'expo-router';
-import { ActivitySpinner, iconMatchedSpinnerSize } from '@/components/ui/feedback/ActivitySpinner';
+import { ToolStatusIndicator } from '@/components/tools/shell/presentation/ToolStatusIndicator';
 
 import type { Message, ToolCall } from '@/sync/domains/messages/messageTypes';
 import type { Metadata } from '@/sync/domains/state/storageTypes';
@@ -12,15 +12,6 @@ import { Text } from '@/components/ui/text/Text';
 import { collectSubAgentSummaryTools } from './collectSubAgentSummaryTools';
 import { buildToolCallMessageRouteId } from '@/sync/domains/messages/messageRouteIds';
 import { navigateWithBlurOnWeb } from '@/utils/platform/navigateWithBlurOnWeb';
-import { Icon } from '@/components/ui/icons/Icon';
-
-
-/**
- * Ink size of a summary row's status mark. The running spinner derives its diameter from this
- * through `iconMatchedSpinnerSize`, so a tool settling from running to done does not appear to
- * change size.
- */
-const SUB_AGENT_SUMMARY_STATUS_GLYPH_PX = 16;
 
 type TaskOperation = 'run' | 'create' | 'list' | 'update' | 'unknown';
 
@@ -135,7 +126,6 @@ export const SubAgentSummarySection = React.memo<{
         hideResultInlineWhenBackgroundRun?: boolean;
     }>;
 }>(function SubAgentSummarySection({ tool, metadata, messages, detailLevel = 'summary', sessionId, messageId, interaction, opts }) {
-    const { theme } = useUnistyles();
     const styles = stylesheet;
     const router = useRouter();
 
@@ -219,22 +209,15 @@ export const SubAgentSummarySection = React.memo<{
                 <View key={`${item.tool.name}-${index}`} testID="task-like-summary-tool-item" style={styles.toolItem}>
                     <Text style={styles.toolTitle}>{item.title}</Text>
                     <View style={styles.statusContainer}>
-                        {item.state === 'running' && (
-                            <ActivitySpinner
-                                // Matched to the 16px outcome glyphs beside it, through the one
-                                // helper that owns the ratio. The platform fork it replaces guessed
-                                // twice and disagreed with itself: 20px on iOS, 14px everywhere
-                                // else, against a 16px glyph on both.
-                                size={iconMatchedSpinnerSize(SUB_AGENT_SUMMARY_STATUS_GLYPH_PX)}
-                                color={theme.colors.state.neutral.foreground}
-                            />
-                        )}
-                        {item.state === 'completed' && (
-                            <Icon name="check-circle" size={SUB_AGENT_SUMMARY_STATUS_GLYPH_PX} color={theme.colors.state.success.foreground} />
-                        )}
-                        {item.state === 'error' && (
-                            <Icon name="x-circle" size={SUB_AGENT_SUMMARY_STATUS_GLYPH_PX} color={theme.colors.state.danger.foreground} />
-                        )}
+                        {/*
+                          * A summary row shows the status of a TOOL CALL, so it takes the same mark
+                          * every other tool row in the transcript takes. The three-arm switch this
+                          * replaces read `ToolCall.state` alone and was wrong twice over: a tool
+                          * that completed with an error result showed a green check, and a tool
+                          * held at an open permission prompt showed a spinner claiming progress.
+                          * `resolveToolStatusIndicatorKind` already owns both facts.
+                          */}
+                        <ToolStatusIndicator tool={item.tool} />
                     </View>
                 </View>
             ))}

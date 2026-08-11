@@ -5,6 +5,7 @@ import { ToolSectionView } from '../../shell/presentation/ToolSectionView';
 import { CommandView } from '@/components/sessions/transcript/CommandView';
 import { Metadata } from '@/sync/domains/state/storageTypes';
 import { extractShellCommand, stripShellCommandPreludeForDisplay } from '../../normalization/parse/shellCommand';
+import { readBashBackgroundTaskId } from '../../normalization/parse/backgroundTask';
 import { maybeParseJson } from '../../normalization/parse/parseJson';
 import { extractStdStreams, tailTextWithEllipsis } from '../../normalization/parse/stdStreams';
 import { CodeView } from '@/components/ui/media/CodeView';
@@ -18,6 +19,11 @@ export const BashView = React.memo((props: { tool: ToolCall; metadata: Metadata 
     const command = stripShellCommandPreludeForDisplay(rawCommandTrimmed);
     const isFullView = props.detailLevel === 'full';
     const didStripPrelude = rawCommandTrimmed.length > 0 && command !== rawCommandTrimmed;
+
+    // A detached command returns immediately with an empty stream pair, so without this the card
+    // reads as "ran and produced nothing". `backgroundTaskId` is the provider's attestation that it
+    // detached, and the same id is the join key to the background-task ledger and record.
+    const backgroundTaskId = readBashBackgroundTaskId(result);
 
     const parsedStreams = extractStdStreams(result);
     let unparsedOutput: string | null = null;
@@ -66,6 +72,11 @@ export const BashView = React.memo((props: { tool: ToolCall; metadata: Metadata 
                     hideEmptyOutput
                     fullWidth={isFullView}
                 />
+                {backgroundTaskId ? (
+                    <Text style={styles.backgroundNotice} numberOfLines={2}>
+                        {t('tools.bashView.backgroundNotice')}
+                    </Text>
+                ) : null}
             </ToolSectionView>
             {isFullView && didStripPrelude ? (
                 <ToolSectionView title={t('tools.bashView.commandDiffTitle')} fullWidth>
@@ -80,6 +91,12 @@ export const BashView = React.memo((props: { tool: ToolCall; metadata: Metadata 
 });
 
 const styles = StyleSheet.create((theme) => ({
+    backgroundNotice: {
+        marginTop: 6,
+        marginHorizontal: 12,
+        fontSize: 13,
+        color: theme.colors.text.secondary,
+    },
     commandDiffHint: {
         marginHorizontal: 12,
         marginBottom: 8,

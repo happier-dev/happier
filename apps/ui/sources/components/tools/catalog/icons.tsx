@@ -12,3 +12,8 @@ export const ICON_EXIT = (size: number, color: string) => <Icon name="sign-out" 
 export const ICON_TODO = (size: number, color: string) => <Icon name="lightbulb" size={size} color={color} />;
 export const ICON_REASONING = (size: number, color: string) => <Icon name="lightbulb" size={size} color={color} />;
 export const ICON_QUESTION = (size: number, color: string) => <Icon name="question" size={size} color={color} />;
+// Background-task control. `tray` reads as "collect what the detached process produced"; `stop` is
+// already the app's one glyph for "halt running work" (the composer's stop control uses it).
+// Deliberately NOT `stop-circle`, which the agent-activity status table owns for `cancelled`.
+export const ICON_TASK_OUTPUT = (size: number, color: string) => <Icon name="tray" size={size} color={color} />;
+export const ICON_TASK_STOP = (size: number, color: string) => <Icon name="stop" size={size} color={color} />;

@@ -133,6 +133,32 @@ describe('resolveToolHeaderTextPresentation (real known tools)', () => {
         expect(model.title).toBe('Workspace indexing');
     });
 
+    it('names TaskOutput after the background task it reads, not after a subagent', () => {
+        const tool = makeToolCall({ name: 'TaskOutput', input: { task_id: 'task_1', block: true, timeout: 30000 } });
+        const model = resolveToolHeaderTextPresentation({ tool, metadata: null });
+        expect(model.normalizedToolName).toBe('TaskOutput');
+        expect(model.title).toBe('Task output');
+        expect(model.subtitle).toBe('task_1');
+    });
+
+    it('names TaskStop after the command it stopped when the result reports one', () => {
+        const tool = makeToolCall({
+            name: 'TaskStop',
+            input: { task_id: 'task_1' },
+            result: { message: 'Stopped task_1', task_id: 'task_1', task_type: 'local_bash', command: 'sleep 600' },
+        });
+        const model = resolveToolHeaderTextPresentation({ tool, metadata: null });
+        expect(model.normalizedToolName).toBe('TaskStop');
+        expect(model.title).toBe('Stop task');
+        expect(model.subtitle).toBe('sleep 600');
+    });
+
+    it('falls back to the task id for TaskStop while the stop is still in flight', () => {
+        const tool = makeToolCall({ name: 'TaskStop', state: 'running', input: { task_id: 'task_1' }, result: null });
+        const model = resolveToolHeaderTextPresentation({ tool, metadata: null });
+        expect(model.subtitle).toBe('task_1');
+    });
+
     it('capitalizes simple lowercase tool names (skill)', () => {
         const tool = makeToolCall({ name: 'skill', input: {} });
         const model = resolveToolHeaderTextPresentation({ tool, metadata: null });

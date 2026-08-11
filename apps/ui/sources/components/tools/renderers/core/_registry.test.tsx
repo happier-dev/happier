@@ -27,6 +27,8 @@ vi.mock('../workflow/AgentTeamView', () => ({ AgentTeamView: () => null }));
 vi.mock('../system/WorkspaceIndexingPermissionView', () => ({ WorkspaceIndexingPermissionView: () => null }));
 vi.mock('../fileOps/DeleteView', () => ({ DeleteView: () => null }));
 vi.mock('../system/UnknownToolView', () => ({ UnknownToolView: () => null }));
+vi.mock('../system/TaskOutputView', () => ({ TaskOutputView: () => null }));
+vi.mock('../system/TaskStopView', () => ({ TaskStopView: () => null }));
 vi.mock('../system/MCPToolView', () => ({
     MCPToolView: () => null,
     formatMCPTitle: () => 'MCP',
@@ -66,6 +68,33 @@ describe('toolViewRegistry', () => {
         expect(getToolViewComponent('TaskList')).toBe(SubAgentView);
         expect(getToolViewComponent('TaskUpdate')).toBe(SubAgentView);
         expect(getToolViewComponent('SubAgent')).toBe(SubAgentView);
+    });
+
+    // `TaskOutput` and `TaskStop` are real Claude Agent SDK tools (`TaskOutputInput` /
+    // `TaskStopInput`) that act on a *background task* — a detached process with no transcript, no
+    // sidechain and no recipient. They are neither subagents nor unknown tools.
+    it('gives the background-task control tools their own cards, not the subagent card', async () => {
+        const [{ getToolViewComponent, toolViewRegistry }, { SubAgentView }, { UnknownToolView }] = await Promise.all([
+            import('./_registry'),
+            import('../workflow/SubAgentView'),
+            import('../system/UnknownToolView'),
+        ]);
+
+        for (const toolName of ['TaskOutput', 'TaskStop'] as const) {
+            const view = getToolViewComponent(toolName);
+            expect(view).toBe(toolViewRegistry[toolName]);
+            expect(view).not.toBe(SubAgentView);
+            expect(view).not.toBe(UnknownToolView);
+        }
+        expect(toolViewRegistry.TaskOutput).not.toBe(toolViewRegistry.TaskStop);
+    });
+
+    it('keeps the snake_case background-task spellings off the subagent card too', async () => {
+        const [{ getToolViewComponent, toolViewRegistry }] = await Promise.all([import('./_registry')]);
+
+        // `permissionHandler.ts` already treats `task_output` as a real alias of `TaskOutput`.
+        expect(getToolViewComponent('task_output')).toBe(toolViewRegistry.TaskOutput);
+        expect(getToolViewComponent('task_stop')).toBe(toolViewRegistry.TaskStop);
     });
 
     it('maps Workflow to the workflow activity renderer', async () => {

@@ -10,7 +10,7 @@ import {
     pressTestInstanceAsync,
     renderScreen,
 } from '@/dev/testkit';
-import type { SessionWorkflowRunSnapshotV1 } from '@happier-dev/protocol';
+import { buildAgentActivityEntryId, type SessionWorkflowRunSnapshotV1 } from '@happier-dev/protocol';
 
 import { installWorkflowRendererCommonModuleMocks } from './workflowRendererTestHelpers';
 
@@ -33,7 +33,7 @@ installWorkflowRendererCommonModuleMocks({
 
 // Boundary mock: the records-backed data hook (crosses sync/network). The renderer itself is real.
 const useWorkflowRunForToolUseId = vi.fn();
-vi.mock('@/components/sessions/workState/useSessionWorkflowActivity', () => ({
+vi.mock('@/components/sessions/workState/useWorkflowRunDetails', () => ({
     useWorkflowRunForToolUseId: (...args: unknown[]) => useWorkflowRunForToolUseId(...args),
 }));
 
@@ -189,6 +189,85 @@ describe('WorkflowActivityView', () => {
 
         expect(collectHostText(tree)).toContain('Agent 299');
         expect(tree.root.findAllByProps({ testID: 'workflow-card-wf_large-show-more' })).toHaveLength(0);
+    });
+
+    /**
+     * The deciding check for the host migration (R-5): the card must render agents through the ONE
+     * shared row, not through a second component with its own glyph table, its own status colours
+     * and its own duration formatter. Every assertion below fails against the row this replaced —
+     * it announced the bare title, rendered no status text at all, and put its metrics in a private
+     * `Text` rather than the row's detail slot.
+     */
+    it('renders every agent through the one shared agent-activity row', async () => {
+        useWorkflowRunForToolUseId.mockReturnValue({
+            runHeadline: null,
+            detail: {
+                state: 'loaded',
+                runId: 'wf_1',
+                snapshot: snapshot({
+                    runId: 'wf_1',
+                    title: 'Investigate',
+                    totalAgents: 1,
+                    phases: [],
+                    agents: [{ id: 'a1', title: 'web_search', status: 'complete', updatedAt: 1, tokensUsed: 1200 }],
+                }),
+            },
+        });
+
+        const tree = await renderCard();
+        const rows = tree.root.findAll((node) => {
+            const nodeProps = node.props as Record<string, unknown> | undefined;
+            return nodeProps != null
+                && 'showChevron' in nodeProps
+                && 'iconBoxSize' in nodeProps
+                && nodeProps.testID === 'workflow-card-agent-wf_1-a1';
+        });
+        expect(rows).toHaveLength(1);
+        const rowProps = rows[0].props as Record<string, unknown>;
+
+        // The translated status word from the PROTOCOL vocabulary (`complete` -> `succeeded`), which
+        // is the proof the adapter ran rather than the workflow enum reaching the screen.
+        expect(rowProps.accessibilityLabel).toBe('a11yLabel:web_search,succeeded');
+        // Still one line: the metrics take the row's right-hand slot, never a second line. A flat
+        // two-line row here would grow a six-agent card by half again.
+        expect(rowProps.subtitle).toBeNull();
+        expect(rowProps.detail).toBe('tokens:1.2k');
+        // The fixed leading status column — the scan axis — not a pill drifting with title length.
+        expect(tree.root.findAllByProps({ testID: 'workflow-card-agent-wf_1-a1:status' }).length).toBeGreaterThan(0);
+    });
+
+    /**
+     * One screen must not contradict another about the same agent. The durable record is refetched
+     * on its revision, which does not advance for a display-only update, so the card's snapshot can
+     * be older than the published headline already knows. Without the later-of join the transcript
+     * card says "no update for over 10 min" about an agent the popover and the run panel show as
+     * fresh — visible at the same time, on the same screen.
+     */
+    it('takes the later of the record and headline instants before calling an agent silent', async () => {
+        const nowMs = Date.now();
+        const workingAgentSnapshot = snapshot({
+            runId: 'wf_1',
+            title: 'Investigate',
+            status: 'active',
+            totalAgents: 1,
+            phases: [],
+            agents: [{ id: 'a2', title: 'editor', status: 'active', updatedAt: nowMs - 1_200_000 }],
+        });
+        const entryId = buildAgentActivityEntryId({ kind: 'workflow_agent', runId: 'wf_1', agentId: 'a2' });
+
+        // Discriminating baseline: with only the stale record instant, the card DOES call it silent.
+        useWorkflowRunForToolUseId.mockReturnValue({
+            runHeadline: null,
+            detail: { state: 'loaded', runId: 'wf_1', snapshot: workingAgentSnapshot },
+        });
+        expect(collectHostText(await renderCard()).join(' ')).toContain('stale');
+
+        useWorkflowRunForToolUseId.mockReturnValue({
+            runHeadline: null,
+            detail: { state: 'loaded', runId: 'wf_1', snapshot: workingAgentSnapshot },
+            agentEvidenceAtMsById: new Map([[entryId, nowMs - 5_000]]),
+        });
+        expect(collectHostText(await renderCard()).join(' ')).not.toContain('stale');
     });
 
     it('expands an agent row to show normalized summary detail when available', async () => {

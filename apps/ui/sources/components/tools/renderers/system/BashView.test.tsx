@@ -1,6 +1,6 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import { makeToolCall, makeToolViewProps } from '@/dev/testkit';
+import { collectHostText, makeToolCall, makeToolViewProps } from '@/dev/testkit';
 import { renderScreen } from '@/dev/testkit';
 import { installSystemToolRendererCommonModuleMocks } from './systemToolRendererTestHelpers';
 
@@ -131,6 +131,40 @@ describe('BashView', () => {
                 command: 'rm -rf /tmp/x',
             }),
         );
+    });
+
+    it('says a detached command went to the background instead of showing it as an empty run', async () => {
+        commandViewSpy.mockClear();
+        const { BashView } = await import('./BashView');
+
+        // A detached command returns immediately with empty streams; `backgroundTaskId` is the
+        // provider's attestation that it detached, and the join key to the background task.
+        const tool = makeToolCall({
+            name: 'Bash',
+            state: 'completed',
+            input: { command: 'sleep 600', run_in_background: true },
+            result: JSON.stringify({ stdout: '', stderr: '', interrupted: false, backgroundTaskId: 'task_1' }),
+        });
+
+        const screen = await renderScreen(React.createElement(BashView, makeToolViewProps(tool)));
+
+        expect(collectHostText(screen.tree)).toContain('tools.bashView.backgroundNotice');
+        expect(commandViewSpy).toHaveBeenCalledWith(expect.objectContaining({ command: 'sleep 600' }));
+    });
+
+    it('does not claim a background run from the input flag alone', async () => {
+        const { BashView } = await import('./BashView');
+
+        // `run_in_background` is a request the provider may decline; only the result attests.
+        const tool = makeToolCall({
+            name: 'Bash',
+            state: 'completed',
+            input: { command: 'sleep 600', run_in_background: true },
+            result: { stdout: 'done', stderr: '' },
+        });
+
+        const screen = await renderScreen(React.createElement(BashView, makeToolViewProps(tool)));
+        expect(collectHostText(screen.tree)).not.toContain('tools.bashView.backgroundNotice');
     });
 
     it('shows a subtle hint + raw command in full view when a prelude was stripped', async () => {

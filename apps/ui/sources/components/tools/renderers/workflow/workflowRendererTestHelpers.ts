@@ -113,10 +113,10 @@ export function installWorkflowRendererCommonModuleMocks(
         Ionicons: 'Ionicons',
     }));
 
-    vi.mock('@/components/ui/text/Text', () => ({
-        Text: ({ children, ...props }: { children?: React.ReactNode }) => React.createElement('Text', props, children),
-        TextInput: (props: Record<string, unknown>) => React.createElement('TextInput', props),
-    }));
+    vi.mock('@/components/ui/text/Text', async () => {
+        const { createUiTextModuleMock } = await import('@/dev/testkit/mocks/uiText');
+        return createUiTextModuleMock();
+    });
 
     vi.mock('../../shell/presentation/ToolSectionView', () => ({
         ToolSectionView: ({ children }: { children?: React.ReactNode }) => React.createElement(React.Fragment, null, children),

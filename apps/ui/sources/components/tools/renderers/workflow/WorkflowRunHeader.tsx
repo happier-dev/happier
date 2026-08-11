@@ -8,17 +8,21 @@ import { t } from '@/text';
 import {
     resolveWorkflowMeterTone,
     resolveWorkflowProgressFraction,
-    type WorkflowStatusTone,
 } from '@/components/sessions/workState/sessionWorkflowActivityPresentation';
 import type { WorkflowPhaseRollup } from '@/components/sessions/workState/sessionWorkflowActivityTypes';
-import type { SessionWorkflowRunStatusV1 } from '@happier-dev/protocol';
+import { AgentActivityStatusSlot } from '@/components/sessions/agentActivity/row/AgentActivityStatusSlot';
+import { fromWorkflowRunStatus, type SessionWorkflowRunStatusV1 } from '@happier-dev/protocol';
 
-import { WorkflowStatusIcon } from './workflowStatusIcon';
 import { Icon } from '@/components/ui/icons/Icon';
 
 /**
  * Run header shared by the transcript card (UIW4) and popover run panel (UIW3): workflow icon,
  * title, status, agent fraction, and a progress meter. Theme-driven, primitive props.
+ *
+ * The status mark comes from the shared `AgentActivityStatusSlot`, through the protocol adapter, so
+ * a run's glyph and its ink are decided in the same place as every agent row beneath it. There is
+ * no local status->colour switch here and there must not be one: a header that painted `failed`
+ * from its own table is how the run and its agents end up disagreeing about what red means.
  */
 
 export type WorkflowRunHeaderProps = Readonly<{
@@ -30,7 +34,6 @@ export type WorkflowRunHeaderProps = Readonly<{
     rollup: WorkflowPhaseRollup;
     /** Optional one-line summary, e.g. `Phase 2 of 3 · 3/5 agents · 45.2K tokens · 2m 15s`. */
     summaryLine?: string;
-    tone: WorkflowStatusTone;
     /** Present only when the header is acting as a collapsible control. */
     expanded?: boolean;
 }>;
@@ -48,7 +51,7 @@ export const WorkflowRunHeader = React.memo<WorkflowRunHeaderProps>((props) => {
                     {props.title}
                 </Text>
                 <View style={styles.statusBadge}>
-                    <WorkflowStatusIcon status={props.status} size={14} />
+                    <AgentActivityStatusSlot status={fromWorkflowRunStatus(props.status)} size={14} />
                     <Text style={styles.statusLabel} numberOfLines={1}>
                         {props.statusLabel}
                     </Text>

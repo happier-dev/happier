@@ -27,6 +27,8 @@ import { DeleteView } from '../fileOps/DeleteView';
 import { MCPToolView } from '../system/MCPToolView';
 import { UnknownToolView } from '../system/UnknownToolView';
 import { SubAgentRunView } from '../workflow/SubAgentRunView';
+import { TaskOutputView } from '../system/TaskOutputView';
+import { TaskStopView } from '../system/TaskStopView';
 import { AgentTeamView } from '../workflow/AgentTeamView';
 import { WorkflowActivityView } from '../workflow/WorkflowActivityView';
 import { KnownCanonicalToolNameV2Schema, type KnownCanonicalToolNameV2 } from '@happier-dev/protocol';
@@ -72,6 +74,9 @@ export const toolViewRegistry: Record<KnownCanonicalToolNameV2, ToolViewComponen
     MultiEdit: MultiEditView,
     Workflow: WorkflowActivityView,
     Task: SubAgentView,
+    // Background-task control tools act on a detached process, never on a subagent roster entry.
+    TaskOutput: TaskOutputView,
+    TaskStop: TaskStopView,
     AskUserQuestion: AskUserQuestionView,
     AcpHistoryImport: AcpHistoryImportView,
     WorkspaceIndexingPermission: WorkspaceIndexingPermissionView,
@@ -115,4 +120,6 @@ export { DeleteView } from '../fileOps/DeleteView';
 export { MCPToolView } from '../system/MCPToolView';
 export { UnknownToolView } from '../system/UnknownToolView';
 export { SubAgentRunView } from '../workflow/SubAgentRunView';
+export { TaskOutputView } from '../system/TaskOutputView';
+export { TaskStopView } from '../system/TaskStopView';
 export { WorkflowActivityView } from '../workflow/WorkflowActivityView';

@@ -4,18 +4,21 @@ import { StyleSheet } from 'react-native-unistyles';
 
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
+import { formatElapsedDuration } from '@/components/sessions/agentActivity/presentation/formatElapsedDuration';
+import { useAgentActivityStalenessResolver } from '@/components/sessions/agentActivity/presentation/useAgentActivityStaleness';
 import {
     buildWorkflowActivityRows,
     computeWorkflowRunRollup,
     resolveActiveWorkflowPhasePosition,
-    resolveWorkflowRunTone,
 } from '@/components/sessions/workState/sessionWorkflowActivityPresentation';
-import { useWorkflowRunForToolUseId } from '@/components/sessions/workState/useSessionWorkflowActivity';
+import { useWorkflowRunForToolUseId } from '@/components/sessions/workState/useWorkflowRunDetails';
+import { resolveAgentActivityEvidenceAtMs } from '@/sync/domains/session/agentActivity';
 import type { WorkflowActivityRowViewModel } from '@/components/sessions/workState/sessionWorkflowActivityTypes';
+import { fromWorkflowAgentStatus } from '@happier-dev/protocol';
 import type { SessionWorkflowAgentStatusV1, SessionWorkflowRunSnapshotV1 } from '@happier-dev/protocol';
 
 import type { ToolViewProps } from '../core/_registry';
-import { WorkflowAgentRow } from './WorkflowAgentRow';
+import { WorkflowAgentActivityRow } from './WorkflowAgentActivityRow';
 import { WorkflowPhaseHeader } from './WorkflowPhaseHeader';
 import { WorkflowRunHeader } from './WorkflowRunHeader';
 import { formatWorkflowRunStatusLabel } from './workflowStatusLabel';
@@ -88,6 +91,11 @@ function selectInlineRows(snapshot: SessionWorkflowRunSnapshotV1, agentLimit: nu
     return { rows: compacted, hiddenCount: agentRows.length - keepIds.size };
 }
 
+const EMPTY_INLINE_ROWS = Object.freeze({
+    rows: Object.freeze([]) as readonly WorkflowActivityRowViewModel[],
+    hiddenCount: 0,
+});
+
 function formatFooter(snapshot: SessionWorkflowRunSnapshotV1): string {
     const parts: string[] = [];
     // Detail-absent runs (unified-terminal mode) carry no per-agent rows; claiming "0 agents" reads
@@ -100,8 +108,9 @@ function formatFooter(snapshot: SessionWorkflowRunSnapshotV1): string {
         parts.push(t('tools.workflowActivityView.tokens', { tokens }));
     }
     if (typeof snapshot.timeUsedSeconds === 'number' && snapshot.timeUsedSeconds > 0) {
-        const s = snapshot.timeUsedSeconds;
-        parts.push(s >= 60 ? `${Math.floor(s / 60)}m ${Math.round(s % 60)}s` : `${Math.round(s)}s`);
+        // Through the one elapsed formatter (C9), so the run's own duration reads the same as the
+        // agent durations above it instead of being a fourth local spelling of the same idea.
+        parts.push(formatElapsedDuration(snapshot.timeUsedSeconds * 1_000));
     }
     return parts.join(' · ');
 }
@@ -109,16 +118,29 @@ function formatFooter(snapshot: SessionWorkflowRunSnapshotV1): string {
 export const WorkflowActivityView = React.memo<ToolViewProps>(({ tool, sessionId, metadata }) => {
     const [visibleAgentLimit, setVisibleAgentLimit] = React.useState(INLINE_AGENT_INITIAL_LIMIT);
     const toolUseId = typeof tool.id === 'string' ? tool.id : null;
-    const { detail } = useWorkflowRunForToolUseId({
+    const { detail, agentEvidenceAtMsById } = useWorkflowRunForToolUseId({
         sessionId: sessionId ?? '',
         metadata,
         toolUseId,
     });
-    const loadedRunId = detail?.state === 'loaded' ? detail.snapshot.runId : null;
+    // The third host of the shared agent row, and it carried the same defect the run panel did: an
+    // agent that has gone silent kept a turning spinner and a running clock. One clock, one
+    // threshold, resolved by the host exactly as the roster and the run panel resolve it.
+    const resolveStaleness = useAgentActivityStalenessResolver();
+    const loadedSnapshot = detail?.state === 'loaded' ? detail.snapshot : null;
+    const loadedRunId = loadedSnapshot?.runId ?? null;
 
     React.useEffect(() => {
         setVisibleAgentLimit(INLINE_AGENT_INITIAL_LIMIT);
     }, [loadedRunId]);
+
+    // Memoized because the rows it builds are now the rows' PROPS, not primitives copied out of
+    // them: rebuilding the view models on every render would hand every memoized row a new object
+    // and re-render the whole card on each metadata tick.
+    const inlineRows = React.useMemo(
+        () => (loadedSnapshot ? selectInlineRows(loadedSnapshot, visibleAgentLimit) : EMPTY_INLINE_ROWS),
+        [loadedSnapshot, visibleAgentLimit],
+    );
 
     // Minimal shell while the matching record loads / is unknown / is missing.
     if (!detail || detail.state !== 'loaded') {
@@ -150,7 +172,7 @@ export const WorkflowActivityView = React.memo<ToolViewProps>(({ tool, sessionId
             agents: snapshot.totalAgents,
         })
         : undefined;
-    const { rows, hiddenCount } = selectInlineRows(snapshot, visibleAgentLimit);
+    const { rows, hiddenCount } = inlineRows;
     const footer = formatFooter(snapshot);
     const showNoDetail = rows.length === 0 && !footer;
 
@@ -163,27 +185,33 @@ export const WorkflowActivityView = React.memo<ToolViewProps>(({ tool, sessionId
                 completedAgents={snapshot.completedAgents}
                 totalAgents={snapshot.totalAgents}
                 rollup={rollup}
-                tone={resolveWorkflowRunTone(snapshot.status)}
                 {...(summaryLine ? { summaryLine } : {})}
             />
             <View style={styles.body}>
                 {showNoDetail ? (
                     <Text style={styles.noDetail}>{t('tools.workflowActivityView.noDetail')}</Text>
                 ) : (
-                    rows.map((row) =>
+                    rows.map((row, index) =>
                         row.kind === 'phaseHeader' ? (
                             <WorkflowPhaseHeader key={row.rowId} title={row.title} fallback={row.fallback} rollup={row.rollup} />
                         ) : (
-                            <WorkflowAgentRow
+                            <WorkflowAgentActivityRow
                                 key={row.rowId}
-                                title={row.agent.title}
-                                status={row.agent.status}
-                                {...(row.agent.model ? { model: row.agent.model } : {})}
-                                {...(typeof row.agent.tokensUsed === 'number' ? { tokensUsed: row.agent.tokensUsed } : {})}
-                                {...(typeof row.agent.toolCalls === 'number' ? { toolCalls: row.agent.toolCalls } : {})}
-                                {...(typeof row.agent.timeUsedSeconds === 'number' ? { timeUsedSeconds: row.agent.timeUsedSeconds } : {})}
-                                {...(row.agent.resultPreview ? { resultPreview: row.agent.resultPreview } : {})}
-                                {...(row.agent.summary ? { summary: row.agent.summary } : {})}
+                                agent={row.agent}
+                                staleness={resolveStaleness({
+                                    status: fromWorkflowAgentStatus(row.agent.status),
+                                    // The same later-of join the run panel uses, from the one owner
+                                    // (S-3): the durable record can lag the headline, and a second
+                                    // spelling here is how one screen ends up calling an agent
+                                    // silent while another shows it working.
+                                    updatedAtMs: resolveAgentActivityEvidenceAtMs({
+                                        entryId: row.rowId,
+                                        recordUpdatedAtMs: row.agent.updatedAtMs ?? null,
+                                        evidenceAtMsById: agentEvidenceAtMsById,
+                                    }),
+                                    endedAtMs: row.agent.endedAtMs ?? null,
+                                })}
+                                showDivider={index < rows.length - 1}
                                 testID={`workflow-card-agent-${row.agent.runId}-${row.agent.agentId}`}
                             />
                         ),
