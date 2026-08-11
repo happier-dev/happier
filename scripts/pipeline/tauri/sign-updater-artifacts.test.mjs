@@ -12,7 +12,7 @@ function createFixture() {
   fs.mkdirSync(path.join(bundleDir, 'nested'), { recursive: true });
   const artifacts = [
     path.join(bundleDir, 'happier.AppImage'),
-    path.join(bundleDir, 'nested', 'happier.msi'),
+    path.join(bundleDir, 'nested', 'Happier (dev)_0.2.10-266_x64_en-US.msi'),
   ];
   for (const artifact of artifacts) {
     fs.writeFileSync(artifact, 'candidate-bytes');
