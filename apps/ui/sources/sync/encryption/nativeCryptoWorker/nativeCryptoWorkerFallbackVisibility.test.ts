@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
     readNativeCryptoWorkerFallbackDiagnostics,
@@ -122,27 +122,74 @@ describe('native crypto worker fallback visibility', () => {
         });
     });
 
-    it('does not record a degradation for intentional routing decisions', async () => {
+    it('counts intentional routing decisions as declines, never as degradations', async () => {
+        const nativeRun = vi.fn(async () => ['native']);
+
         await runNativeCryptoWorkerBatch({
             operation: 'decryptDataKeyEnvelopeV1',
             routing: { mode: 'off' },
             itemCount: 4,
             payloadBytes: 50_000,
             probe: async () => availableCapability,
-            nativeRun: async () => ['native'],
+            nativeRun,
             referenceRun: async () => ['reference'],
         });
         await runNativeCryptoWorkerBatch({
-            operation: 'decryptDataKeyEnvelopeV1',
+            operation: 'decryptSecretboxJson',
             routing: { mode: 'auto', minPayloadBytes: 4096 },
             itemCount: 1,
             payloadBytes: 128,
             probe: async () => availableCapability,
+            nativeRun,
+            referenceRun: async () => ['reference'],
+        });
+        await runNativeCryptoWorkerBatch({
+            operation: 'decryptSecretboxJson',
+            routing: { mode: 'auto', minBatchSize: 8 },
+            itemCount: 2,
+            payloadBytes: 50_000,
+            probe: async () => availableCapability,
+            nativeRun,
+            referenceRun: async () => ['reference'],
+        });
+
+        expect(nativeRun).not.toHaveBeenCalled();
+        expect(readNativeCryptoWorkerFallbackDiagnostics()).toMatchObject({
+            totalFallbacks: 0,
+            totalRoutingDeclines: 3,
+            lastRoutingDeclineReason: 'below_min_batch_size',
+            lastRoutingDeclineOperation: 'decryptSecretboxJson',
+            routingDeclineCountsByReason: {
+                routing_disabled: 1,
+                below_min_payload_bytes: 1,
+                below_min_batch_size: 1,
+            },
+        });
+    });
+
+    it('does not record a routing decline on a platform that has no native worker at all', async () => {
+        // Same rule as for degradations: on web the JS path IS the implementation,
+        // so a threshold that changed nothing must not appear as a lost opportunity.
+        const webWorker = createWebNativeCryptoWorker();
+        const capabilityCacheKey = {};
+
+        await probeNativeCryptoWorkerCapabilities({ worker: webWorker, capabilityCacheKey, routing: { mode: 'auto' } });
+        await runNativeCryptoWorkerBatch({
+            operation: 'decryptSecretboxJson',
+            routing: { mode: 'auto', minPayloadBytes: 4096 },
+            itemCount: 1,
+            payloadBytes: 128,
+            capabilityCacheKey,
+            probe: () => webWorker.probe(),
             nativeRun: async () => ['native'],
             referenceRun: async () => ['reference'],
         });
 
-        expect(readNativeCryptoWorkerFallbackDiagnostics()).toMatchObject({ totalFallbacks: 0 });
+        expect(readNativeCryptoWorkerFallbackDiagnostics()).toMatchObject({
+            totalFallbacks: 0,
+            totalRoutingDeclines: 0,
+            lastRoutingDeclineReason: null,
+        });
     });
 
     it('does not report a degradation on a platform that has no native worker at all', async () => {

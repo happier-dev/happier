@@ -42,6 +42,7 @@ import {
     markNativeCryptoWorkerQueueQuiescent,
     runNativeCryptoWorkerQueuedBatch,
 } from './nativeCryptoWorker/nativeCryptoWorkerQueue';
+import { getDefaultNativeCryptoWorkerRouting } from './nativeCryptoWorker/nativeCryptoWorkerRoutingConfig';
 import { recordNativeCryptoWorkerBridgeSerialization } from './nativeCryptoWorker/nativeCryptoWorkerTelemetry';
 import { probeNativeCryptoWorkerCapabilities } from './nativeCryptoWorker/probeNativeCryptoWorkerCapabilities';
 import {
@@ -151,8 +152,13 @@ export class Encryption {
     private machineKeyFingerprints = new Map<string, string>();
     private cache: EncryptionCache;
     private aesBatchConcurrencyLimit = DEFAULT_AES_BATCH_CONCURRENCY_LIMIT;
+    // Per-instance worker object. This is the cross-account fence: the queue registry
+    // (`nativeCryptoWorkerQueue`) and the capability cache are both keyed by this object,
+    // so two Encryption instances can never share a queue and no batch can ever mix two
+    // accounts' items. Key material travels per item, never as worker state.
     private nativeCryptoWorker: NativeCryptoWorker = createNativeCryptoWorker();
-    private nativeCryptoWorkerRouting: NativeCryptoWorkerRoutingInput = {};
+    // Routing is resolved at construction, not by a call each new site must remember.
+    private nativeCryptoWorkerRouting: NativeCryptoWorkerRoutingInput = getDefaultNativeCryptoWorkerRouting();
     private nativeCryptoWorkerAccountId = DEFAULT_NATIVE_CRYPTO_WORKER_ACCOUNT_ID;
     private nativeCryptoWorkerServerId: string | null = null;
     private nativeCryptoWorkerGenerations = new Map<string, number>();
@@ -538,6 +544,9 @@ export class Encryption {
     }
 
     async decryptEncryptionKeys(encryptedValues: readonly string[], scopeInput: EncryptionScopeInput = {}): Promise<Array<Uint8Array | null>> {
+        // Nothing to open. Short-circuited before routing so an empty call is not
+        // recorded as a routing decision it never made.
+        if (encryptedValues.length === 0) return [];
         return syncPerformanceTelemetry.measureAsync(
             'sync.encryption.account.decryptDataKey',
             { items: encryptedValues.length },
@@ -557,9 +566,10 @@ export class Encryption {
                         return null;
                     }
                 });
-                if (routing.mode === 'off' || encryptedValues.length < routing.minBatchSize) {
-                    return (await referenceRun()).map((value) => value ? cryptoWorkerBase64ToBytes(value) : null);
-                }
+                // No pre-gate here. `runNativeCryptoWorkerBatch` is the single owner of
+                // "does this batch reach the worker", and a copy of half its thresholds
+                // at this call site would take the JS path without the owner ever
+                // recording which branch chose it.
                 const payloadBytes = estimateCryptoWorkerBatchBridgeBytes(encryptedValues).totalBridgeBytes
                     + estimateCryptoWorkerRawBytesBridgeBytes(this.contentKeyPair.privateKey).totalBridgeBytes * encryptedValues.length;
                 let capturedScope: CryptoWorkerScope | null = null;

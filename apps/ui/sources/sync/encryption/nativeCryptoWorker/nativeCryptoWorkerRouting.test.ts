@@ -263,6 +263,30 @@ describe('runNativeCryptoWorkerBatch', () => {
         expect(nativeRun).not.toHaveBeenCalled();
     });
 
+    it('routes a multi-item data-key batch natively: N items clear the per-item byte floor', async () => {
+        const probe = vi.fn(async () => availableCapability);
+        const nativeRun = vi.fn(async () => ['native']);
+        const referenceRun = vi.fn(async () => ['reference']);
+
+        // A wrapped data key estimates to ~505 bridge bytes, so a lone one sits under
+        // the 512 B floor by design, but any batch of two or more clears it. This is
+        // the arithmetic that says a batched machines/artifacts refresh reaching the
+        // JS reference path was NOT declined by a threshold.
+        const result = await runNativeCryptoWorkerBatch({
+            operation: 'decryptDataKeyEnvelopeV1',
+            routing: { mode: 'auto', minPayloadBytes: 512 },
+            itemCount: 2,
+            payloadBytes: 1010,
+            probe,
+            nativeRun,
+            referenceRun,
+        });
+
+        expect(result.source).toBe('native');
+        expect(nativeRun).toHaveBeenCalledTimes(1);
+        expect(referenceRun).not.toHaveBeenCalled();
+    });
+
     it('returns cancelled when a signal aborts queued native work before dispatch', async () => {
         const owner = {};
         const scope = { accountId: 'account', serverId: 'server', generation: 1 };
