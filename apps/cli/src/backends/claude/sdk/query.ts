@@ -36,6 +36,7 @@ import { killProcessTree } from '@/agent/acp/killProcessTree'
 import { isolateClaudeRuntimeAuthEnv } from '@/backends/claude/spawn/isolateClaudeRuntimeAuthEnv'
 import { logClaudeRuntimeAuthEnvDiagnostic } from '@/backends/claude/spawn/logClaudeRuntimeAuthEnvDiagnostic'
 import { HAPPIER_SPAWN_EXPLICIT_ENV_KEYS_JSON_ENV_VAR } from '@/daemon/spawn/spawnExplicitEnvKeysMarker'
+import { readNonBlankOpaqueIdentifier } from '@/utils/opaqueIdentifiers'
 
 /**
  * Query class manages Claude Code process interaction
@@ -264,8 +265,13 @@ export class Query implements AsyncIterableIterator<SDKMessage> {
             if (!this.canCallTool) {
                 throw new Error('canCallTool callback is not provided.')
             }
+            const toolUseId = readNonBlankOpaqueIdentifier(request.request.tool_use_id)
+            if (!toolUseId) {
+                throw new Error('Cannot apply a permission decision without a canonical tool-use ID')
+            }
             return this.canCallTool(request.request.tool_name, request.request.input, {
-                signal
+                signal,
+                toolUseId,
             })
         }
         

@@ -65,7 +65,6 @@ import { SDKToLogConverter } from "./utils/sdkToLogConverter";
 import type { EnhancedMode, PermissionMode } from "./loop";
 import { RawJSONLines } from "@/backends/claude/types";
 import { OutgoingMessageQueue } from "./utils/OutgoingMessageQueue";
-import { getToolName } from "./utils/getToolName";
 import { syncClaudePermissionModeFromMetadata } from "./utils/syncPermissionModeFromMetadata";
 import { resolveClaudeSdkPermissionModeFromEnhancedMode } from "./utils/permissionMode";
 import { readClaudeActiveTerminalMode } from './utils/readClaudeActiveTerminalMode';

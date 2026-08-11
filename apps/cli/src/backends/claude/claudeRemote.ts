@@ -123,7 +123,12 @@ export async function claudeRemote(opts: {
      * Used by the remote launcher to implement UI "Abort" without losing context.
      */
     setTurnInterrupt?: ((handler: (() => Promise<void>) | null) => void) | null,
-    canCallTool: (toolName: string, input: unknown, mode: EnhancedMode, options: { signal: AbortSignal }) => Promise<PermissionResult>,
+    canCallTool: (
+        toolName: string,
+        input: unknown,
+        mode: EnhancedMode,
+        options: { signal: AbortSignal; toolUseId?: string | null },
+    ) => Promise<PermissionResult>,
     /** Path to temporary settings file with SessionStart hook (required for session tracking) */
     hookSettingsPath: string,
     /** Session-scoped plugin whose hooks provide lifecycle and runtime-activity evidence. */
@@ -267,7 +272,7 @@ export async function claudeRemote(opts: {
         extraArgs: extraArgs.length > 0 ? extraArgs : undefined,
         strictMcpConfig: argOverrides.strictMcpConfig,
         includeHookEvents: true,
-        canCallTool: (toolName: string, input: unknown, options: { signal: AbortSignal }) =>
+        canCallTool: (toolName: string, input: unknown, options: { signal: AbortSignal; toolUseId?: string | null }) =>
             opts.canCallTool(toolName, input, mode, options),
         executable: runtimeExecutable,
         abort: opts.signal,
