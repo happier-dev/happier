@@ -442,6 +442,7 @@ describe('OpenCode auth-switch fake-provider e2e', () => {
       activeProfileId: 'profile-new',
       fallbackProfileId: 'profile-old',
       generation: 2,
+      credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS',
       record: nextRecord,
       previousLaunchFingerprint: launchFingerprint,
       previousOwnerToken: ownerToken,
