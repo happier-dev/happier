@@ -46,8 +46,14 @@ for (const entry of cases) {
 }
 
 test('release verification delegates immutable tag resolution to trusted control code', async () => {
-  const raw = await readFile(join(repoRoot, '.github', 'workflows', 'release-verify.yml'), 'utf8');
-  assert.match(raw, /\.release-control\/scripts\/pipeline\/release\/verify-release-candidate-identity\.mjs/);
+  const [raw, ownerRaw] = await Promise.all([
+    readFile(join(repoRoot, '.github', 'workflows', 'release-verify.yml'), 'utf8'),
+    readFile(join(repoRoot, '.github', 'actions', 'verify-immutable-release-candidate', 'action.yml'), 'utf8'),
+  ]);
+  assert.match(raw, /\.release-control\/\.github\/actions\/verify-immutable-release-candidate/);
+  assert.match(ownerRaw, /\$control_dir\/scripts\/pipeline\/release\/verify-release-candidate-identity\.mjs/);
   assert.doesNotMatch(raw, /resolve_tag_commit\(\)/);
   assert.doesNotMatch(raw, /verify_tag\(\)/);
+  assert.doesNotMatch(ownerRaw, /resolve_tag_commit\(\)/);
+  assert.doesNotMatch(ownerRaw, /verify_tag\(\)/);
 });

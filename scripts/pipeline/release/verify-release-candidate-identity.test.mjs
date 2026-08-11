@@ -53,6 +53,43 @@ test('candidate identity validates versions before token or network requirements
   );
 });
 
+test('candidate identity accepts one canonical product/version pair for reusable candidate admission', async () => {
+  await assert.rejects(
+    () => main([
+      '--repository', 'happier-dev/happier',
+      '--channel', 'dev',
+      '--candidate-source-sha', SOURCE_SHA,
+      '--candidate-product', 'hstack',
+      '--candidate-version', '0.2.10-dev.14.2',
+    ], {}),
+    /GITHUB_TOKEN is required/,
+  );
+
+  await assert.rejects(
+    () => main([
+      '--repository', 'happier-dev/happier',
+      '--channel', 'dev',
+      '--candidate-source-sha', SOURCE_SHA,
+      '--candidate-product', 'cli',
+      '--candidate-version', '0.2.10-preview.7',
+    ], {}),
+    /must match/,
+  );
+});
+
+test('candidate identity accepts the stable leaf-workflow channel for production resume admission', async () => {
+  await assert.rejects(
+    () => main([
+      '--repository', 'happier-dev/happier',
+      '--channel', 'stable',
+      '--candidate-source-sha', SOURCE_SHA,
+      '--candidate-product', 'server',
+      '--candidate-version', '0.2.10',
+    ], {}),
+    /GITHUB_TOKEN is required/,
+  );
+});
+
 test('candidate identity resolves annotated and lightweight immutable tags to the expected commit', async (t) => {
   const requests = [];
   const server = createServer((request, response) => {
