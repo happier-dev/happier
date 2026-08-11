@@ -438,6 +438,7 @@ jobs:
         with:
           name: ui-ota-${{ needs.apply_bump.outputs.release_sha }}
           path: ${{ runner.temp }}/prepared-ota
+          include-hidden-files: true
           if-no-files-found: error
           retention-days: 1
 

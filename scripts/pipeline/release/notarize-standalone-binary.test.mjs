@@ -154,6 +154,9 @@ test('Darwin payload notarization signs and strictly verifies every Mach-O leaf 
       '/tmp/happier-v1.2.3-darwin-arm64/happier',
     ],
   );
+  assert.equal(commands.assess.every(([, args]) => (
+    args.includes('--ignore-cache') && args.includes('--no-cache')
+  )), true, 'Gatekeeper propagation retries must bypass and not repopulate stale assessment results');
   assert.deepEqual(commands.submit, [
     'xcrun',
     [
@@ -231,7 +234,7 @@ test('Gatekeeper assessment retries only transient online-ticket propagation fai
   );
 });
 
-test('Gatekeeper assessment keeps a bounded fifteen-minute window for accepted ticket propagation', () => {
+test('Gatekeeper assessment keeps a bounded thirty-minute window for accepted ticket propagation', () => {
   const command = ['spctl', ['--assess', '--type', 'execute', '/tmp/happier']];
   const retryDelays = [];
   let attempts = 0;
@@ -242,16 +245,18 @@ test('Gatekeeper assessment keeps a bounded fifteen-minute window for accepted t
     runGatekeeperAssessment(command, {
       runCommand: () => {
         attempts += 1;
-        if (attempts < 10) throw ticketPropagationError;
+        if (attempts < 18) throw ticketPropagationError;
       },
       sleep: (delayMs) => retryDelays.push(delayMs),
       logger: { warn: () => {} },
     }),
     true,
   );
-  assert.equal(attempts, 10);
-  assert.deepEqual(retryDelays, [15_000, 30_000, 60_000, 120_000, 120_000, 120_000, 120_000, 120_000, 120_000]);
-  assert.equal(retryDelays.reduce((total, delayMs) => total + delayMs, 0), 13 * 60_000 + 45_000);
+  assert.equal(attempts, 18);
+  assert.deepEqual(retryDelays.slice(0, 4), [15_000, 30_000, 60_000, 120_000]);
+  assert.equal(retryDelays.length, 17);
+  assert.equal(retryDelays.slice(3).every((delayMs) => delayMs === 120_000), true);
+  assert.equal(retryDelays.reduce((total, delayMs) => total + delayMs, 0), 29 * 60_000 + 45_000);
 });
 
 test('codesign retries only Apple timestamp service availability failures', () => {

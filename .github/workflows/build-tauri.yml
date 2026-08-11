@@ -550,7 +550,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          ephemeral_password="$(uuidgen 2>/dev/null || cat /proc/sys/kernel/random/uuid)"
+          ephemeral_password="$(node -p 'require("node:crypto").randomUUID()')"
           ephemeral_key="${RUNNER_TEMP}/tauri-ephemeral.key"
           yarn --silent tauri signer generate --ci --password "${ephemeral_password}" --write-keys "${ephemeral_key}"
           echo "TAURI_EPHEMERAL_KEY=${ephemeral_key}" >> "$GITHUB_ENV"

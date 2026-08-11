@@ -3,25 +3,36 @@ import assert from 'node:assert/strict';
 
 import { execFileSyncPortable } from '../pipeline/lib/exec-file-sync-portable.mjs';
 
-test('execFileSyncPortable enables shell when cmd ends with .cmd', () => {
-  /** @type {any} */
-  let seenOpts = null;
+test('execFileSyncPortable preserves Windows cmd shim argument boundaries', () => {
+  /** @type {{ cmd: string; args: string[]; opts: any } | null} */
+  let seen = null;
   const out = execFileSyncPortable(
-    'C:\\hostedtoolcache\\windows\\node\\22.22.1\\x64\\corepack.cmd',
-    ['yarn', '--version'],
+    'C:\\npm\\prefix\\yarn.cmd',
+    [
+      '--silent',
+      'tauri',
+      'signer',
+      'sign',
+      '--password',
+      'opaque! secret',
+      'D:\\a\\happier\\bundle\\Happier (dev)_0.2.10-266_x64_en-US.msi',
+    ],
     { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
     {
       execFileSync: (cmd, args, opts) => {
-        void cmd;
-        void args;
-        seenOpts = opts;
+        seen = { cmd, args, opts };
         return 'ok';
       },
     },
   );
 
   assert.equal(out, 'ok');
-  assert.equal(Boolean(seenOpts?.shell), true);
+  assert.equal(seen?.cmd, 'cmd.exe');
+  assert.deepEqual(seen?.args?.slice(0, 3), ['/d', '/s', '/c']);
+  assert.match(seen?.args?.[3] ?? '', /Happier\^ \^\(dev\^\)_0\.2\.10-266_x64_en-US\.msi/);
+  assert.match(seen?.args?.[3] ?? '', /opaque\^!\^ secret/);
+  assert.equal(seen?.opts?.windowsVerbatimArguments, true);
+  assert.equal(seen?.opts?.shell, undefined);
 });
 
 test('execFileSyncPortable does not override an explicit shell option', () => {
@@ -43,4 +54,3 @@ test('execFileSyncPortable does not override an explicit shell option', () => {
 
   assert.equal(seenOpts?.shell, false);
 });
-

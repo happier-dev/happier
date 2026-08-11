@@ -81,3 +81,19 @@ test('promote-ui prepares OTA bytes without secrets and publishes only the bound
   assert.match(promoteText, /EXPO_TOKEN/);
   assert.doesNotMatch(promoteText, /ui-mobile-release/);
 });
+
+test('prepared OTA artifacts preserve manifest-covered hidden files across the trust boundary', async () => {
+  for (const [workflowName, jobName, stepName] of [
+    ['publish-ui-mobile-dev.yml', 'prepare_ota', 'Upload exact prepared OTA bytes'],
+    ['promote-ui.yml', 'validate_candidate', 'Upload prepared OTA artifacts'],
+  ]) {
+    const { parsed } = await loadWorkflow(workflowName);
+    const upload = parsed?.jobs?.[jobName]?.steps?.find((step) => step?.name === stepName);
+    assert.ok(upload, `${workflowName} must upload its prepared OTA artifact`);
+    assert.equal(
+      upload.with?.['include-hidden-files'],
+      true,
+      `${workflowName} must preserve manifest-covered .well-known files`,
+    );
+  }
+});

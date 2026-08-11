@@ -180,6 +180,7 @@ jobs:
         with:
           name: ui-mobile-dev-ota-${{ steps.source.outputs.source_sha }}
           path: ${{ runner.temp }}/prepared-ota
+          include-hidden-files: true
           if-no-files-found: error
           retention-days: 1
 
