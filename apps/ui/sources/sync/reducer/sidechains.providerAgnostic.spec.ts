@@ -323,6 +323,105 @@ describe('sidechains (provider-agnostic)', () => {
     expect(toolMessage.tool.result).toBeUndefined();
   });
 
+  it('closes subagent tools with sidechain activity once the session process that hosted them ended', () => {
+    const state = createReducer();
+
+    const subAgentTool: NormalizedMessage = {
+      id: 'msg_subagent',
+      localId: null,
+      createdAt: 1000,
+      role: 'agent',
+      isSidechain: false,
+      content: [
+        {
+          type: 'tool-call',
+          id: 'tool_subagent_1',
+          name: 'SubAgent',
+          input: { prompt: 'Search for files' },
+          description: null,
+          uuid: 'uuid_subagent',
+          parentUUID: null,
+        },
+      ],
+    };
+
+    const sidechainText: NormalizedMessage = {
+      id: 'msg_sc_text',
+      localId: null,
+      createdAt: 1200,
+      role: 'agent',
+      isSidechain: true,
+      sidechainId: 'tool_subagent_1',
+      content: [
+        {
+          type: 'text',
+          text: 'Still working',
+          uuid: 'uuid_sc_text',
+          parentUUID: null,
+        },
+      ],
+    };
+
+    const result = reducer(state, [subAgentTool, sidechainText], null, {
+      ownerProcessGoneSinceMs: 4000,
+    });
+
+    const toolMessage = result.messages.find((m) => m.kind === 'tool-call' && m.tool?.name === 'SubAgent');
+    if (!toolMessage || toolMessage.kind !== 'tool-call') throw new Error('Expected SubAgent tool message');
+    expect(toolMessage.tool.state).toBe('unavailable');
+    expect(toolMessage.tool.completedAt).toBe(4000);
+    expect(toolMessage.tool.result).toBeUndefined();
+  });
+
+  it('keeps subagent tools running when their sidechain spoke after the session was last seen', () => {
+    const state = createReducer();
+
+    const subAgentTool: NormalizedMessage = {
+      id: 'msg_subagent',
+      localId: null,
+      createdAt: 1000,
+      role: 'agent',
+      isSidechain: false,
+      content: [
+        {
+          type: 'tool-call',
+          id: 'tool_subagent_1',
+          name: 'SubAgent',
+          input: { prompt: 'Search for files' },
+          description: null,
+          uuid: 'uuid_subagent',
+          parentUUID: null,
+        },
+      ],
+    };
+
+    const sidechainText: NormalizedMessage = {
+      id: 'msg_sc_text',
+      localId: null,
+      createdAt: 5000,
+      role: 'agent',
+      isSidechain: true,
+      sidechainId: 'tool_subagent_1',
+      content: [
+        {
+          type: 'text',
+          text: 'Still working',
+          uuid: 'uuid_sc_text',
+          parentUUID: null,
+        },
+      ],
+    };
+
+    const result = reducer(state, [subAgentTool, sidechainText], null, {
+      ownerProcessGoneSinceMs: 4000,
+    });
+
+    const toolMessage = result.messages.find((m) => m.kind === 'tool-call' && m.tool?.name === 'SubAgent');
+    if (!toolMessage || toolMessage.kind !== 'tool-call') throw new Error('Expected SubAgent tool message');
+    expect(toolMessage.tool.state).toBe('running');
+    expect(toolMessage.tool.completedAt).toBeNull();
+  });
+
   it('restores unavailable subagent tools when sidechain activity arrives later', () => {
     const state = createReducer();
 

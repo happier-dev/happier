@@ -3,13 +3,13 @@ import { describe, expect, it } from 'vitest';
 
 import type { Message, ToolCallMessage } from '@/sync/domains/messages/messageTypes';
 
-import {
-    buildExecutionRunPublicStateFromTranscriptState,
-    deriveExecutionRunSubagents,
-    findTranscriptExecutionRunState,
-} from './deriveExecutionRunSubagents';
+import { deriveExecutionRunSubagents } from './deriveExecutionRunSubagents';
+import { findTranscriptExecutionRunState } from './deriveTranscriptExecutionRunStateIndex';
+import { buildExecutionRunPublicStateFromTranscriptState } from './executionRunPublicStateFromTranscript';
 
 const RUN_ID = 'run_0f1e2d3c4b5a';
+
+const DEFAULT_CREATED_AT = 1_700_000_000_000;
 
 function createSubAgentRunMessage(params: Readonly<{
     id?: string;
@@ -17,8 +17,14 @@ function createSubAgentRunMessage(params: Readonly<{
     input?: Record<string, unknown>;
     result?: unknown;
     seq?: number;
+    /** Tool-call message creation instant — when the run was REQUESTED. */
+    createdAt?: number;
+    /** `ToolCall.startedAt`; `null` models a call still holding a permission prompt. */
+    toolStartedAt?: number | null;
+    /** `ToolCall.completedAt`; `null` models a terminal call whose finish was never recorded. */
+    toolCompletedAt?: number | null;
 }>): ToolCallMessage {
-    const createdAt = 1_700_000_000_000;
+    const createdAt = params.createdAt ?? DEFAULT_CREATED_AT;
     return {
         kind: 'tool-call',
         id: params.id ?? 'message_subagent_run',
@@ -31,8 +37,10 @@ function createSubAgentRunMessage(params: Readonly<{
             state: params.state,
             input: { runId: RUN_ID, ...(params.input ?? {}) },
             createdAt,
-            startedAt: createdAt,
-            completedAt: params.state === 'running' ? null : createdAt + 1_000,
+            startedAt: params.toolStartedAt !== undefined ? params.toolStartedAt : createdAt,
+            completedAt: params.toolCompletedAt !== undefined
+                ? params.toolCompletedAt
+                : (params.state === 'running' ? null : createdAt + 1_000),
             description: null,
             ...(params.result !== undefined ? { result: params.result } : {}),
         },
@@ -218,6 +226,135 @@ describe('deriveExecutionRunSubagents — status comes from the structured paylo
         ]);
 
         expect(run.status).toBe('running');
+    });
+});
+
+describe('deriveExecutionRunSubagents — elapsed time is never fabricated (D-8)', () => {
+    function createExecutionRunStopMessage(params: Readonly<{
+        seq: number;
+        createdAt: number;
+        completedAt: number;
+    }>): ToolCallMessage {
+        return {
+            kind: 'tool-call',
+            id: 'message_execution_run_stop',
+            seq: params.seq,
+            localId: null,
+            createdAt: params.createdAt,
+            tool: {
+                id: 'tool_execution_run_stop',
+                name: 'execution_run_stop',
+                state: 'completed',
+                input: { runId: RUN_ID },
+                createdAt: params.createdAt,
+                startedAt: params.createdAt,
+                completedAt: params.completedAt,
+                description: null,
+                result: { ok: true, runId: RUN_ID },
+            },
+            children: [],
+        } as ToolCallMessage;
+    }
+
+    it('reports the instant the tool finished, not the instant it was requested', () => {
+        const run = deriveSingleRun([
+            createSubAgentRunMessage({
+                state: 'completed',
+                createdAt: DEFAULT_CREATED_AT,
+                toolStartedAt: DEFAULT_CREATED_AT,
+                toolCompletedAt: DEFAULT_CREATED_AT + 16_000,
+                result: { status: 'succeeded', runId: RUN_ID },
+            }),
+        ]);
+
+        expect(run.timestamps.startedAtMs).toBe(DEFAULT_CREATED_AT);
+        // The defect this pins: both fields resolved to the tool-call message's own `createdAt`, so
+        // a sixteen-second run rendered `0:00`.
+        expect(run.timestamps.finishedAtMs).toBe(DEFAULT_CREATED_AT + 16_000);
+    });
+
+    it('claims no finish instant when the tool never recorded one', () => {
+        const run = deriveSingleRun([
+            createSubAgentRunMessage({
+                state: 'completed',
+                createdAt: DEFAULT_CREATED_AT,
+                toolStartedAt: DEFAULT_CREATED_AT,
+                toolCompletedAt: null,
+                result: { status: 'succeeded', runId: RUN_ID },
+            }),
+        ]);
+
+        expect(run.status).toBe('succeeded');
+        expect(run.timestamps.startedAtMs).toBe(DEFAULT_CREATED_AT);
+        expect(run.timestamps.finishedAtMs).toBeUndefined();
+    });
+
+    it('keeps the first observed start when the same run is observed again later', () => {
+        const run = deriveSingleRun([
+            createSubAgentRunMessage({
+                id: 'message_run_started',
+                seq: 1,
+                state: 'running',
+                createdAt: DEFAULT_CREATED_AT,
+                toolStartedAt: DEFAULT_CREATED_AT,
+                toolCompletedAt: null,
+            }),
+            createSubAgentRunMessage({
+                id: 'message_run_finished',
+                seq: 2,
+                state: 'completed',
+                createdAt: DEFAULT_CREATED_AT + 12_000,
+                toolStartedAt: DEFAULT_CREATED_AT + 12_000,
+                toolCompletedAt: DEFAULT_CREATED_AT + 14_000,
+                result: { status: 'succeeded', runId: RUN_ID },
+            }),
+        ]);
+
+        expect(run.timestamps.startedAtMs).toBe(DEFAULT_CREATED_AT);
+        expect(run.timestamps.finishedAtMs).toBe(DEFAULT_CREATED_AT + 14_000);
+    });
+
+    it('takes a stopped run’s finish instant from the stop call that ended it', () => {
+        const run = deriveSingleRun([
+            createSubAgentRunMessage({
+                seq: 1,
+                state: 'running',
+                createdAt: DEFAULT_CREATED_AT,
+                toolStartedAt: DEFAULT_CREATED_AT,
+                toolCompletedAt: null,
+            }),
+            createExecutionRunStopMessage({
+                seq: 2,
+                createdAt: DEFAULT_CREATED_AT + 20_000,
+                completedAt: DEFAULT_CREATED_AT + 21_000,
+            }),
+        ]);
+
+        expect(run.status).toBe('cancelled');
+        expect(run.timestamps.startedAtMs).toBe(DEFAULT_CREATED_AT);
+        expect(run.timestamps.finishedAtMs).toBe(DEFAULT_CREATED_AT + 21_000);
+    });
+
+    it('does not resolve an unknown start to the finish instant in the public state', () => {
+        const publicState = buildExecutionRunPublicStateFromTranscriptState({
+            runId: RUN_ID,
+            status: 'succeeded',
+            intent: 'review',
+            backendId: 'claude',
+            runClass: 'bounded',
+            ioMode: 'request_response',
+            toolId: 'tool_subagent_run',
+            sidechainId: 'sidechain_1',
+            updatedAtMs: DEFAULT_CREATED_AT + 16_000,
+            finishedAtMs: DEFAULT_CREATED_AT + 16_000,
+        });
+
+        expect(publicState).not.toBeNull();
+        expect(publicState?.finishedAtMs).toBe(DEFAULT_CREATED_AT + 16_000);
+        // A start borrowed from the finish would render "started 16s after it ended took 0s" — the
+        // schema requires a number, so 0 is the unknown sentinel and the details card must not
+        // print it as a date.
+        expect(publicState?.startedAtMs).toBe(0);
     });
 });
 

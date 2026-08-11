@@ -37,27 +37,43 @@ function collectSubagentSidechainIds(params: Readonly<{
     return Array.from(ids);
 }
 
-function hasLinkedSubagentSidechainActivity(params: Readonly<{
+/**
+ * Latest instant at which a subagent tool-call's linked sidechain produced a message, or `null`
+ * when the row is not a subagent tool-call or its sidechain never spoke. A sidechain that has
+ * spoken is why the ordinary sweep leaves the row alone: it looked alive.
+ */
+function readLatestLinkedSubagentSidechainActivityAt(params: Readonly<{
     state: ReducerState;
     messageId: string;
     tool: ToolCall;
-}>): boolean {
-    if (!isSubAgentTranscriptToolName(params.tool.name)) return false;
+}>): number | null {
+    if (!isSubAgentTranscriptToolName(params.tool.name)) return null;
 
+    let latest: number | null = null;
     for (const id of collectSubagentSidechainIds(params)) {
         const chain = params.state.sidechains.get(id);
-        if (chain && chain.length > 0) {
-            return true;
+        if (!chain) continue;
+        for (const message of chain) {
+            const createdAt = message.createdAt;
+            if (typeof createdAt !== 'number' || !Number.isFinite(createdAt)) continue;
+            if (latest === null || createdAt > latest) latest = createdAt;
         }
     }
 
-    return false;
+    return latest;
 }
 
 export function markRunningToolsUnavailable(params: Readonly<{
     state: ReducerState;
     completedAt: number;
     changed: Set<string>;
+    /**
+     * Set when the sweep is triggered by the session process that owned these tool calls being
+     * gone, rather than by a turn boundary. Subagent sidechains run inside that process, so a
+     * sidechain that once looked alive is no longer evidence of life — unless it spoke after the
+     * instant we last saw the process, which would mean that instant is stale rather than final.
+     */
+    ownerProcessEnded?: boolean;
 }>): void {
     const completedAt = Math.trunc(params.completedAt);
     if (!Number.isFinite(completedAt)) return;
@@ -68,7 +84,16 @@ export function markRunningToolsUnavailable(params: Readonly<{
         if (tool.state !== 'running') continue;
         if (tool.startedAt === null) continue;
         if (tool.createdAt > completedAt) continue;
-        if (hasLinkedSubagentSidechainActivity({ state: params.state, messageId, tool })) continue;
+
+        const sidechainActivityAt = readLatestLinkedSubagentSidechainActivityAt({
+            state: params.state,
+            messageId,
+            tool,
+        });
+        if (sidechainActivityAt !== null) {
+            if (params.ownerProcessEnded !== true) continue;
+            if (sidechainActivityAt > completedAt) continue;
+        }
 
         tool.state = 'unavailable';
         tool.completedAt = completedAt;

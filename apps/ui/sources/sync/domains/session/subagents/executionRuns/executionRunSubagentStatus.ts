@@ -108,8 +108,14 @@ export function isTerminalSubagentStatus(status: SessionSubagentStatus): boolean
 /**
  * A `SubAgentRun` call the parent turn interrupted leaves an abort placeholder rather than a run
  * outcome; it is ambiguous, not failed, so external/liveness evidence may still upgrade it.
+ *
+ * Exported because the renderer needs the same answer: `SubAgentRunView` shows the still-streaming
+ * sidechain instead of an error card for exactly these results, and it carried its own copy of this
+ * walk. Two copies of "is this an interruption?" is two places for the marker string, the escaped
+ * quotes and the depth bound to drift, and the failure would be silent — an interrupted run quietly
+ * rendering as failed on one surface and as running on the other.
  */
-function valueHasRequestInterruptedSignal(value: unknown, depth = 0): boolean {
+export function valueHasRequestInterruptedSignal(value: unknown, depth = 0): boolean {
     if (depth > 5 || value == null) return false;
     if (typeof value === 'string') return value.replaceAll('\\"', '"').toLowerCase().includes('request interrupted');
     if (Array.isArray(value)) return value.some((item) => valueHasRequestInterruptedSignal(item, depth + 1));

@@ -25,6 +25,24 @@ export type SessionRuntimePresentationState = Readonly<{
     freshProviderRuntimeActivity: boolean;
     working: boolean;
     backgroundActive: boolean;
+    /**
+     * How many units of runtime activity are running while no foreground turn is, or `0`.
+     *
+     * The provider ledger already counts them and the projection already carries the integer
+     * (`runtimeActivityActiveCount`) across the wire, the warm cache and the persisted schema; it
+     * used to be collapsed to the boolean above one line before the only surface that speaks about
+     * it, which is why the session could only ever say "working in background".
+     *
+     * It is an ATTESTED count, never a claim: it is non-zero only when the projection itself is
+     * `active`, which the schema pins to `activeCount > 0`, and it is `0` whenever a foreground turn
+     * owns the session, because the boolean it accompanies is.
+     *
+     * It counts runtime-activity units, NOT background commands specifically. The projection is the
+     * sum of every contributor (`session/runtimeActivity/aggregate.ts`) — today the Claude provider
+     * task ledger and running execution runs — so a surface may state the number but must not name
+     * the kind.
+     */
+    backgroundActiveCount: number;
     activityState: SessionRuntimeActivityPresentationState;
     runtimeProjectionInProgress: boolean;
     runtimeActivelyWorking: boolean;
@@ -68,6 +86,54 @@ export function isFreshTimestamp(
         && timestamp + budgetMs > nowMs;
 }
 
+/**
+ * Whether the runtime that publishes this session's state is still there to publish it.
+ *
+ * One owner for "live", because it is the precondition of every claim derived from a report the
+ * runtime made: the presentation state below, and the session-observation fact beside it. Two
+ * consumers already re-decided it locally (`sessionListPlacementProjection`,
+ * `sessionListRowStateSnapshot` both spell `isOnline && backgroundActive`) because the deriver did
+ * not — which is the shape a split decision takes before it diverges.
+ */
+export function isLiveSessionRuntime(
+    input: Pick<DeriveSessionRuntimePresentationStateInput, 'active' | 'presence' | 'archivedAt'>,
+): boolean {
+    const isArchived = typeof input.archivedAt === 'number' && Number.isFinite(input.archivedAt);
+    return !isArchived && input.active === true && input.presence === 'online';
+}
+
+/**
+ * The instants that prove somebody was still observing this session's runtime, newest first.
+ *
+ * **`runtimeActivityObservedAt` is not a heartbeat.** The server stamps it only when the projected
+ * `(state, activeCount)` pair actually changes — a semantic duplicate never rewrites storage — so a
+ * background task that has been running for an hour legitimately carries an hour-old instant.
+ * Ageing that instant out on its own would mark live work dead, which is worse than the bug this
+ * gate exists to close.
+ *
+ * The session keep-alive is the signal that genuinely repeats: the CLI pings every
+ * `HAPPIER_SESSION_KEEPALIVE_IDLE_MS` (15 s by default, faster while a turn is in flight), which is
+ * what advances `activeAt`. Either instant being recent means the claim is still witnessed.
+ */
+export function readSessionRuntimeObservationTimestamps(
+    input: Pick<DeriveSessionRuntimePresentationStateInput, 'activeAt' | 'runtimeActivityObservedAt'>,
+): readonly number[] {
+    const timestamps: number[] = [];
+    const activeAt = normalizeRuntimeStatusTimestamp(input.activeAt);
+    if (activeAt !== null) timestamps.push(activeAt);
+    const observedAt = normalizeRuntimeStatusTimestamp(input.runtimeActivityObservedAt);
+    if (observedAt !== null) timestamps.push(observedAt);
+    return timestamps;
+}
+
+function hasWitnessedRuntimeActivityObservation(
+    input: DeriveSessionRuntimePresentationStateInput,
+    nowMs: number,
+): boolean {
+    return readSessionRuntimeObservationTimestamps(input)
+        .some((timestamp) => isFreshTimestamp(timestamp, nowMs, SESSION_RUNTIME_STATUS_STALE_SIGNAL_MS));
+}
+
 export function deriveSessionRuntimePresentationState(
     input: DeriveSessionRuntimePresentationStateInput,
     nowMs: number,
@@ -78,7 +144,7 @@ export function deriveSessionRuntimePresentationState(
     const thinkingAt = normalizeRuntimeStatusTimestamp(input.thinkingAt);
     const isOnline = input.presence === 'online';
     const isActive = input.active === true;
-    const isLiveRuntime = !isArchived && isActive && isOnline;
+    const isLiveRuntime = isLiveSessionRuntime(input);
     const hasTerminalMaterializedTurnStatus = isTerminalPrimaryTurnStatus(latestTurnStatus);
     const blocksLegacyThinking = isLegacyThinkingBlockedByTurnProjection(latestTurnStatus);
     const freshThinking =
@@ -88,7 +154,9 @@ export function deriveSessionRuntimePresentationState(
         && isFreshTimestamp(thinkingAt, nowMs, SESSION_RUNTIME_STATUS_STALE_SIGNAL_MS)
         && !blocksLegacyThinking;
     const freshInProgress = freshInProgressSignals.length > 0;
-    const runtimeActivityState = isArchived ? 'idle' : readRuntimeActivityPresentationState(input);
+    const runtimeActivityState = isArchived
+        ? 'idle'
+        : readRuntimeActivityPresentationState(input, nowMs, isLiveRuntime);
     const freshProviderRuntimeActivity = runtimeActivityState === 'active';
     const working = freshInProgress || freshThinking;
     const backgroundActive = !working && freshProviderRuntimeActivity;
@@ -113,6 +181,7 @@ export function deriveSessionRuntimePresentationState(
         freshProviderRuntimeActivity,
         working,
         backgroundActive,
+        backgroundActiveCount: backgroundActive ? readRuntimeActivityActiveCount(input) : 0,
         activityState,
         runtimeProjectionInProgress: freshInProgress,
         runtimeActivelyWorking,
@@ -163,6 +232,15 @@ export function readSessionRuntimePresentationFreshnessTimestamps(
         if (thinkingAt !== null) timestamps.push(thinkingAt);
     }
     timestamps.push(...readFreshInProgressRuntimeSignalTimestamps(input, nowMs));
+    if (runtimeStatus.freshProviderRuntimeActivity) {
+        // Background activity can now expire, so the surfaces that show it must be woken when it
+        // does — otherwise the gate above only takes effect the next time something unrelated
+        // re-renders, which is exactly how "forever" happened in the first place. Only the newest
+        // witness is published: it is the one whose expiry can change the answer.
+        const witnesses = readSessionRuntimeObservationTimestamps(input)
+            .filter((timestamp) => isFreshTimestamp(timestamp, nowMs, SESSION_RUNTIME_STATUS_STALE_SIGNAL_MS));
+        if (witnesses.length > 0) timestamps.push(Math.max(...witnesses));
+    }
     if (runtimeStatus.freshPermissionRequired || runtimeStatus.freshActionRequired) {
         const pendingRequestObservedAt = normalizeRuntimeStatusTimestamp(input.pendingRequestObservedAt);
         if (pendingRequestObservedAt !== null) timestamps.push(pendingRequestObservedAt);
@@ -215,15 +293,42 @@ function normalizeRuntimeStatusTimestamp(value: number | null | undefined): numb
         : null;
 }
 
+/**
+ * The projected active count, or `0` when the projection does not attest one.
+ *
+ * Shared with the state resolver below so "is there runtime activity" and "how much" can never
+ * disagree: a positive count here is exactly the condition that makes the state `active`.
+ */
+function readRuntimeActivityActiveCount(
+    input: DeriveSessionRuntimePresentationStateInput,
+): number {
+    const value = input.runtimeActivityActiveCount;
+    return typeof value === 'number' && Number.isFinite(value) && value > 0
+        ? Math.trunc(value)
+        : 0;
+}
+
 function readRuntimeActivityPresentationState(
     input: DeriveSessionRuntimePresentationStateInput,
+    nowMs: number,
+    isLiveRuntime: boolean,
 ): SessionRuntimeActivityState {
     if (
         input.runtimeActivityState === 'active'
-        && typeof input.runtimeActivityActiveCount === 'number'
-        && Number.isFinite(input.runtimeActivityActiveCount)
-        && input.runtimeActivityActiveCount > 0
-    ) return 'active';
+        && readRuntimeActivityActiveCount(input) > 0
+    ) {
+        // An `active` projection is a report, and a report outlives its reporter. The witnessed
+        // deaths are handled at the producer (runtime loss now publishes `unknown` even with tasks
+        // in flight); the residue is the UNWITNESSED one — SIGKILL, OOM, laptop sleep — where
+        // nobody was alive to publish anything and the last claim would render forever.
+        //
+        // So the claim is kept only while something still witnesses it. We do not assert death:
+        // the projection vocabulary already carries `unknown`, and a wrong record is permanent
+        // where a wrong sentence is not.
+        return isLiveRuntime && hasWitnessedRuntimeActivityObservation(input, nowMs)
+            ? 'active'
+            : 'unknown';
+    }
     if (
         input.runtimeActivityState === 'idle'
         && input.runtimeActivityActiveCount === 0

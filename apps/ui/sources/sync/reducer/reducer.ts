@@ -299,7 +299,25 @@ export type ReducerResult = {
     reducerStateChanged?: boolean;
 };
 
-export function reducer(state: ReducerState, messages: NormalizedMessage[], agentState?: AgentState | null): ReducerResult {
+export type ReducerSessionRuntimeOwnership = Readonly<{
+    /**
+     * Instant at which the CLI session process that owns this transcript was last observed
+     * attached, when it is no longer attached. `null` while the process is attached (or while the
+     * client has no confident evidence that it is gone).
+     *
+     * Transcript tool calls — including subagent sidechains — run inside that process, so once it
+     * is gone none of them can still be running. This is a session-death fact, never an
+     * inactivity guess: without it, no amount of elapsed time closes a row.
+     */
+    ownerProcessGoneSinceMs?: number | null;
+}>;
+
+export function reducer(
+    state: ReducerState,
+    messages: NormalizedMessage[],
+    agentState?: AgentState | null,
+    ownership?: ReducerSessionRuntimeOwnership,
+): ReducerResult {
 	    const DEBUG_SIDECHAINS = isDebugFlagEnabled({
 	        // Enable in browser devtools via: `window.__HAPPIER_DEBUG_SIDECHAINS__ = true`
 	        // (kept off by default to avoid noisy logs for users).
@@ -540,6 +558,19 @@ export function reducer(state: ReducerState, messages: NormalizedMessage[], agen
             state,
             completedAt: latestReadyEventAt,
             changed,
+        });
+    }
+
+    // The process that hosted every one of these tool calls is gone. Subagent sidechains have no
+    // other closing path — nothing can ever write their result — so this is the sweep that stops
+    // them presenting as work in progress. It changes presentation only; no record is written.
+    const ownerProcessGoneSinceMs = ownership?.ownerProcessGoneSinceMs;
+    if (typeof ownerProcessGoneSinceMs === 'number' && Number.isFinite(ownerProcessGoneSinceMs)) {
+        markRunningToolsUnavailable({
+            state,
+            completedAt: ownerProcessGoneSinceMs,
+            changed,
+            ownerProcessEnded: true,
         });
     }
 

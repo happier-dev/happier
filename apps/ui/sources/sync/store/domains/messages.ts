@@ -11,6 +11,8 @@ import {
 } from '../../domains/state/persistence';
 import { isToolPotentiallyMutableForScm } from '@/sync/domains/tools/toolMutationClassification';
 import { syncPerformanceTelemetry } from '../../runtime/syncPerformanceTelemetry';
+import { nowServerMs } from '../../runtime/time';
+import { SESSION_RUNTIME_STATUS_STALE_SIGNAL_MS } from '@/sync/domains/session/attention/deriveSessionRuntimePresentationState';
 import { buildSessionListRenderableFromSession, type SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
 import { shouldIncludeSubagentSourceMessage } from '@/sync/domains/session/subagents/subagentSourceMessageDetection';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
@@ -364,6 +366,24 @@ function buildPinRouteHydrationFacts(messages: ReadonlyArray<Message>): readonly
     return facts;
 }
 
+/**
+ * Instant the session's CLI process was last observed attached, when the client is confident that
+ * process is gone. `presence` is exactly `active ? 'online' : activeAt`, so a detached session
+ * already carries its own last-seen instant; we additionally require the detachment to have
+ * outlived the runtime-signal staleness bound so a reconnect blip is never read as death.
+ *
+ * This is a death fact, not an inactivity verdict: a session that is still attached never produces
+ * one, however long it has been quiet.
+ */
+function readOwnerProcessGoneSinceMs(session: Session | undefined): number | null {
+    if (!session || session.active === true) return null;
+    const activeAt = typeof session.activeAt === 'number' && Number.isFinite(session.activeAt)
+        ? Math.trunc(session.activeAt)
+        : null;
+    if (activeAt === null || activeAt <= 0) return null;
+    return nowServerMs() - activeAt > SESSION_RUNTIME_STATUS_STALE_SIGNAL_MS ? activeAt : null;
+}
+
 export function applyAgentStateUpdateToSessionMessages(params: Readonly<{
     existing: SessionMessages;
     agentState: Session['agentState'] | null;
@@ -609,6 +629,7 @@ export function createMessagesDomain<S extends MessagesDomain & MessagesDomainDe
                         existingSession.reducerState,
                         normalizedMessages,
                         shouldApplyAgentState ? agentState : null,
+                        { ownerProcessGoneSinceMs: readOwnerProcessGoneSinceMs(session) },
                     ),
                 );
                 const processedMessages = reducerResult.messages;
