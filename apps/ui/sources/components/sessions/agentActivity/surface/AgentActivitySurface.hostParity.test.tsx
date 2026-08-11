@@ -3,6 +3,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vite
 
 import {
     buildAgentActivityEntryId,
+    buildWorkflowAgentSidechainId,
     type SessionAgentActivityEntryV1,
     type SessionAgentActivityHeadlineV1,
     type SessionWorkflowRunSnapshotV1,
@@ -169,6 +170,111 @@ function workflowAgentEntry(over: Readonly<{
             ? {}
             : { parentId: buildAgentActivityEntryId({ kind: 'workflow_run', runId: over.runId }) }),
     };
+}
+
+type ProducerRealAgent = Readonly<{ agentId: string; title: string; line: string }>;
+
+/**
+ * The workflow shape a PRODUCER can actually publish, seeded end to end.
+ *
+ * Every earlier preview proof in this file seeds `parented: false` workflow agents and no
+ * `workflow_run` entry at all — a wire shape no producer emits. `agentActivityHeadlineProjection.ts`
+ * publishes ONE run entry plus one agent entry per snapshot agent, each carrying
+ * `parentId = <the run entry>`; so under the real partition every agent of a LIVE run is folded into
+ * the run panel and never listed. Proving reachability on the unparented shape therefore proved
+ * nothing about the surface a phone has, which is how the run panel shipped with no preview at all.
+ *
+ * So this seeds all four halves the producer writes together: the unified headline (run + parented
+ * agents, with the sidechain ids the importer proved), and the durable `activity/workflow_run.v1`
+ * snapshot the panel draws its rows from — with the same per-agent sidechain ids, since the headline
+ * projection copies them from exactly this record.
+ */
+function seedProducerRealWorkflow(params: Readonly<{
+    runId: string;
+    workflowToolUseId: string;
+    agents: readonly ProducerRealAgent[];
+    /** `false` publishes the run and its agents as finished, in `recentEntries`. */
+    live: boolean;
+}>): Readonly<{
+    runEntryId: string;
+    entryIdByAgentId: ReadonlyMap<string, string>;
+    sidechainIdByAgentId: ReadonlyMap<string, string>;
+}> {
+    const { agents, live, runId, workflowToolUseId } = params;
+    const sidechainIdByAgentId = new Map<string, string>();
+    const entryIdByAgentId = new Map<string, string>();
+    for (const agent of agents) {
+        sidechainIdByAgentId.set(
+            agent.agentId,
+            buildWorkflowAgentSidechainId({ workflowToolUseId, agentId: agent.agentId }),
+        );
+        entryIdByAgentId.set(
+            agent.agentId,
+            buildAgentActivityEntryId({ kind: 'workflow_agent', runId, agentId: agent.agentId }),
+        );
+    }
+
+    runSnapshots.set(runId, testkit.makeSessionWorkflowRunSnapshot({
+        runId,
+        title: 'Ship the release',
+        workflowToolUseId,
+        status: live ? 'active' : 'complete',
+        totalAgents: agents.length,
+        completedAgents: live ? 0 : agents.length,
+        agents: agents.map((agent) => ({
+            id: agent.agentId,
+            title: agent.title,
+            status: live ? 'active' as const : 'complete' as const,
+            updatedAt: 2_000,
+            sidechainId: sidechainIdByAgentId.get(agent.agentId)!,
+        })),
+    }) as SessionWorkflowRunSnapshotV1);
+
+    const runEntryId = buildAgentActivityEntryId({ kind: 'workflow_run', runId });
+    const entries: SessionAgentActivityEntryV1[] = [
+        {
+            entryId: runEntryId,
+            kind: 'workflow_run',
+            title: 'Ship the release',
+            status: live ? 'running' : 'succeeded',
+            updatedAt: 2_000,
+            runId,
+        },
+        ...agents.map((agent) => workflowAgentEntry({
+            runId,
+            agentId: agent.agentId,
+            title: agent.title,
+            status: live ? 'running' : 'succeeded',
+            sidechainId: sidechainIdByAgentId.get(agent.agentId)!,
+        })),
+    ];
+
+    const fixture = testkit.makeSessionAgentActivityFixture({
+        sessionId: SESSION_ID,
+        session: {
+            metadata: unifiedHeadline(
+                live ? { activeEntries: entries } : { activeEntries: [], recentEntries: entries },
+            ) as never,
+        },
+    });
+    for (const agent of agents) {
+        fixture.reducerState.sidechains.set(sidechainIdByAgentId.get(agent.agentId)!, [
+            testkit.makeAgentActivitySidechainMessage({
+                id: `${agent.agentId}_step`,
+                createdAt: 1_000,
+                toolName: 'Read',
+                toolDescription: `${agent.agentId}.ts`,
+            }),
+            testkit.makeAgentActivitySidechainMessage({
+                id: `${agent.agentId}_line`,
+                createdAt: 1_001,
+                text: agent.line,
+            }),
+        ]);
+    }
+    seed(fixture);
+
+    return { runEntryId, entryIdByAgentId, sidechainIdByAgentId };
 }
 
 /**
@@ -758,4 +864,125 @@ describe('one agent-activity surface, two hosts', () => {
         expect(compact.getTextContent()).not.toContain('file_0.ts');
         await compact.unmount();
     }, 180_000);
+
+    /**
+     * (W25-a) The producer-real live run: every agent is INSIDE the panel, and each one still opens
+     * its own transcript.
+     *
+     * This is the case the corridor actually ships and the one it had never tested. A live run's
+     * agents are parented, so the partition folds all of them into `SessionWorkflowRunPanel` — the
+     * flat list holds none of them — and the panel drew its rows through a path that carried no
+     * sidechain id at all. The compact popover is the ONLY agent surface a phone has and it draws
+     * that same panel, so a preview reachable only from a listed row was reachable only on a tablet
+     * or desktop with the pane open.
+     *
+     * Three properties in one case, because each alone is passable by a wrong implementation:
+     * folded (so this is the real partition, not the unparented shape), distinct per agent (one
+     * `Workflow` tool call owns many sidecars, so a body keyed on the run would show all three
+     * agents one conversation), and lazy (drawing the panel loads nothing; expanding one row loads
+     * exactly that agent's sidechain).
+     */
+    it('opens each agent transcript from INSIDE a live run panel, in both hosts', async () => {
+        const runId = 'wf_producer_live';
+        const agents: readonly ProducerRealAgent[] = [
+            { agentId: 'a1', title: 'Reviewer', line: 'Reviewed the auth flow' },
+            { agentId: 'a2', title: 'Planner', line: 'Drafted the migration plan' },
+        ];
+        const seeded = seedProducerRealWorkflow({
+            runId,
+            workflowToolUseId: 'toolu_workflow_1',
+            agents,
+            live: true,
+        });
+        const firstEntryId = seeded.entryIdByAgentId.get('a1')!;
+        const secondEntryId = seeded.entryIdByAgentId.get('a2')!;
+
+        for (const [testID, host] of [
+            [PANE_TEST_ID, <SessionRightPanelAgentsView sessionId={SESSION_ID} scopeId="session:s1" />] as const,
+            [COMPACT_TEST_ID, <CompactHost sessionId={SESSION_ID} />] as const,
+        ]) {
+            ensureSidechainSpy.mockClear();
+            const screen = await testkit.renderScreen(host);
+            await testkit.flushHookEffects();
+
+            // The real partition: parented agents are folded into the panel, so the list has none of
+            // them. An assertion that passed here on a listed row would be testing the old fixture.
+            expect(screen.findByTestId(`${testID}:row:${firstEntryId}`), `${testID} listed row`).toBeNull();
+            expect(screen.findByTestId(`workflow-run-panel-${runId}`), `${testID} panel`).toBeTruthy();
+            expect(screen.findByTestId(`workflow-agent-${runId}-a1`), `${testID} panel row`).toBeTruthy();
+            // Nothing is fetched to DRAW the panel.
+            expect(sidechainRequests(), `${testID} idle fetches`).toEqual([]);
+
+            screen.pressByTestId(`workflow-agent-${runId}-a1`);
+            await testkit.flushHookEffects();
+
+            expect(screen.findByTestId(`${testID}:preview:${firstEntryId}`), `${testID} preview`).toBeTruthy();
+            expect(screen.getTextContent(), `${testID} first line`).toContain(agents[0]!.line);
+            expect(screen.getTextContent(), `${testID} first step`).toContain('a1.ts');
+            // The second agent's transcript is neither shown nor loaded: one row, one sidechain.
+            expect(screen.getTextContent(), `${testID} second line`).not.toContain(agents[1]!.line);
+            expect(screen.findByTestId(`${testID}:preview:${secondEntryId}`), `${testID} second preview`).toBeNull();
+            expect(sidechainRequests(), `${testID} fetches`).toEqual([seeded.sidechainIdByAgentId.get('a1')]);
+
+            screen.pressByTestId(`workflow-agent-${runId}-a2`);
+            await testkit.flushHookEffects();
+            expect(screen.getTextContent(), `${testID} second line after expand`).toContain(agents[1]!.line);
+            expect(sidechainRequests(), `${testID} both fetches`).toEqual([
+                seeded.sidechainIdByAgentId.get('a1'),
+                seeded.sidechainIdByAgentId.get('a2'),
+            ]);
+
+            await screen.unmount();
+        }
+    }, 240_000);
+
+    /**
+     * (W25-b) The producer-real FINISHED run, which is the other half of the partition.
+     *
+     * A terminal run is not drawn as a panel — it is history, so it and its agents go into the
+     * ordered list — and that listed path is where W23 proved the preview. Proving it again here on
+     * the shape a producer publishes (a `workflow_run` entry in `recentEntries`, agents parented to
+     * it) is what makes that claim about the product rather than about a fixture.
+     *
+     * It also pins the deliberate bound: the compact popover answers "what is running", so finished
+     * work is absent from it by design (§4.7). That is a scope decision, and the way to keep it a
+     * decision rather than a defect is to state it in a test.
+     */
+    it('lists a finished run\'s agents and opens each transcript from the pane', async () => {
+        const runId = 'wf_producer_done';
+        const agents: readonly ProducerRealAgent[] = [
+            { agentId: 'a1', title: 'Reviewer', line: 'Reviewed the auth flow' },
+            { agentId: 'a2', title: 'Planner', line: 'Drafted the migration plan' },
+        ];
+        const seeded = seedProducerRealWorkflow({
+            runId,
+            workflowToolUseId: 'toolu_workflow_2',
+            agents,
+            live: false,
+        });
+        const firstEntryId = seeded.entryIdByAgentId.get('a1')!;
+
+        const pane = await testkit.renderScreen(
+            <SessionRightPanelAgentsView sessionId={SESSION_ID} scopeId="session:s1" />,
+        );
+        await testkit.flushHookEffects();
+        // No panel for a finished run, and its agents are rows in the list beside the run itself.
+        expect(pane.findByTestId(`workflow-run-panel-${runId}`)).toBeNull();
+        expect(pane.findByTestId(`${PANE_TEST_ID}:row:${seeded.runEntryId}`)).toBeTruthy();
+        expect(pane.findByTestId(`${PANE_TEST_ID}:row:${firstEntryId}`)).toBeTruthy();
+
+        pane.pressByTestId(`${PANE_TEST_ID}:row:${firstEntryId}`);
+        await testkit.flushHookEffects();
+        expect(pane.findByTestId(`${PANE_TEST_ID}:preview:${firstEntryId}`)).toBeTruthy();
+        expect(pane.getTextContent()).toContain(agents[0]!.line);
+        expect(sidechainRequests()).toEqual([seeded.sidechainIdByAgentId.get('a1')]);
+        await pane.unmount();
+
+        const compact = await testkit.renderScreen(<CompactHost sessionId={SESSION_ID} />);
+        await testkit.flushHookEffects();
+        // Live-only by contract: finished work is not folded away here, it is out of scope here.
+        expect(compact.findByTestId(`${COMPACT_TEST_ID}:row:${firstEntryId}`)).toBeNull();
+        expect(compact.getTextContent()).not.toContain(agents[0]!.line);
+        await compact.unmount();
+    }, 240_000);
 });

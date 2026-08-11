@@ -35,6 +35,16 @@ export type WorkflowAgentActivityRowProps = Readonly<{
      * instead of the few whose note actually changed.
      */
     staleness?: AgentActivityStaleness;
+    /**
+     * The host's bounded transcript preview for this agent, when it has one.
+     *
+     * Built by the agent-activity surface through the one open-target resolver and handed down whole,
+     * so this adapter never learns what a sidechain is: the host that has a roster passes a body, the
+     * host that has only a durable record passes nothing. It WINS over the result summary because it
+     * is the richer, live answer to the same question — and the summary keeps the body whenever no
+     * transcript was imported, which is every run a released producer published.
+     */
+    preview?: React.ReactNode;
     showDivider?: boolean;
     testID?: string;
 }>;
@@ -53,16 +63,18 @@ export const WorkflowAgentActivityRow = React.memo<WorkflowAgentActivityRowProps
                 staleness={props.staleness}
                 showDivider={props.showDivider}
                 testID={props.testID}
-                {...(detailText
-                    ? {
-                        body: (
-                            <AgentActivityResultDetail
-                                text={detailText}
-                                {...(props.testID ? { detailTestID: `${props.testID}-detail` } : {})}
-                            />
-                        ),
-                    }
-                    : null)}
+                {...(props.preview
+                    ? { body: props.preview }
+                    : detailText
+                        ? {
+                            body: (
+                                <AgentActivityResultDetail
+                                    text={detailText}
+                                    {...(props.testID ? { detailTestID: `${props.testID}-detail` } : {})}
+                                />
+                            ),
+                        }
+                        : null)}
             />
         </View>
     );

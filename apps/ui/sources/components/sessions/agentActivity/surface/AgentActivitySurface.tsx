@@ -4,21 +4,24 @@ import { StyleSheet } from 'react-native-unistyles';
 import { useRouter } from 'expo-router';
 
 import { ITEM_ROW_PADDING_HORIZONTAL } from '@/components/ui/lists/itemDensityMetrics';
-import type { ResolvedItemDensity } from '@/components/ui/lists/useResolvedItemDensity';
 import { SessionWorkflowRunPanel } from '@/components/sessions/workState/SessionWorkflowRunPanel';
+import { buildWorkflowAgentRows } from '@/components/sessions/workState/sessionWorkflowActivityPresentation';
 import type { SessionSubagent } from '@/sync/domains/session/subagents/types';
 
 import type { AgentActivityRowActionId } from '../agentActivityRowEntry';
 import { BackgroundTaskDetail } from '../background/BackgroundTaskDetail';
+import { resolveAgentActivityOpenEntryFromWorkflowAgent } from '../entry/fromWorkflowAgent';
 import { AgentActivityList } from '../list/AgentActivityList';
 import type { ListMotionQuiet } from '../list/listMotionQuiet';
 import {
     isNavigableAgentActivityOpenTarget,
     resolveAgentActivityOpenTarget,
     type AgentActivityOpenTarget,
+    type AgentActivityOpenTargetEntry,
 } from '../open/resolveAgentActivityOpenTarget';
 import { AgentActivityPreview } from '../preview/AgentActivityPreview';
 import { useAgentActivityStalenessResolver } from '../presentation/useAgentActivityStaleness';
+import { AGENT_ACTIVITY_SURFACE_DENSITY } from '../row/agentRowMetrics';
 import type { AgentActivitySurfaceModel } from './useAgentActivitySurfaceModel';
 
 /**
@@ -57,14 +60,10 @@ import type { AgentActivitySurfaceModel } from './useAgentActivitySurfaceModel';
  *   newest line of its sidechain — in a right slot it would take width from the title and
  *   ellipsize away the one datum a monitoring surface exists to show.
  *
- * DENSITY is not a parameter. The roster is pinned compact everywhere: the pane used to inherit the
- * user's `uiItemDensity` (default cozy), so the same agent was one density step larger in the
- * monitoring surface than in the popover beside it. A list-density preference is about how much of
- * a settings screen fits at once and has no business sizing an agent roster.
+ * DENSITY is not a parameter, and it is not this component's to declare either: it is pinned for
+ * every agent row in `AGENT_ACTIVITY_SURFACE_DENSITY`, which the subagent details header reads too
+ * without importing this module.
  */
-
-/** Pinned, not inherited — see the note above. */
-export const AGENT_ACTIVITY_SURFACE_DENSITY: ResolvedItemDensity = 'compact';
 
 const SURFACE_ROW_PADDING_PX = ITEM_ROW_PADDING_HORIZONTAL[AGENT_ACTIVITY_SURFACE_DENSITY];
 
@@ -141,16 +140,36 @@ export const AgentActivitySurface = React.memo((props: AgentActivitySurfaceProps
      */
     const targetsByEntryId = React.useMemo(() => {
         const targets = new Map<string, AgentActivityOpenTarget>();
-        for (const entry of model.listedEntries) {
+        const add = (entry: AgentActivityOpenTargetEntry): void => {
             const target = resolveAgentActivityOpenTarget({
                 sessionId,
                 entry,
                 subagent: readSubagentForEntry(entry.id),
             });
             if (target) targets.set(entry.id, target);
+        };
+        for (const entry of model.listedEntries) add(entry);
+        // The agents this surface draws INSIDE a run panel, which the list never sees. Every agent of
+        // a live run is parented, so the partition folds all of them into a panel — and a target map
+        // built from the list alone made a workflow transcript unreachable on the compact popover,
+        // the only agent surface a phone has. Read off the same durable snapshot the panel draws its
+        // rows from, through the same projection, so the two cannot disagree about which agent has a
+        // transcript; the ids join because both sides mint them with `buildAgentActivityEntryId`.
+        for (const runEntry of model.runEntries) {
+            const snapshot = model.runDetails.loadedRunsById.get(runEntry.runId ?? runEntry.id);
+            if (!snapshot) continue;
+            for (const agent of buildWorkflowAgentRows(snapshot)) {
+                add(resolveAgentActivityOpenEntryFromWorkflowAgent(agent));
+            }
         }
         return targets;
-    }, [model.listedEntries, readSubagentForEntry, sessionId]);
+    }, [
+        model.listedEntries,
+        model.runDetails.loadedRunsById,
+        model.runEntries,
+        readSubagentForEntry,
+        sessionId,
+    ]);
     const targetsRef = React.useRef(targetsByEntryId);
     targetsRef.current = targetsByEntryId;
     const readTarget = React.useCallback(
@@ -293,6 +312,12 @@ export const AgentActivitySurface = React.memo((props: AgentActivitySurfaceProps
                             defaultExpanded={model.runEntries.length === 1}
                             resolveAgentStaleness={resolveStaleness}
                             agentEvidenceAtMsById={model.agentEvidenceAtMsById}
+                            // The SAME body renderer the list uses, keyed by the same entry id: an
+                            // agent inside a panel discloses the same bounded preview, loaded the
+                            // same way, and would offer the same "open details" the moment one of
+                            // them resolved a route. A panel-local preview would be the fourth
+                            // parallel answer this corridor has spent six waves removing.
+                            renderAgentBody={renderEntryBody}
                         />
                     </View>
                 );

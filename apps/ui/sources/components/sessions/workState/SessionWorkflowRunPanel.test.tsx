@@ -10,7 +10,7 @@ import {
     renderScreen,
 } from '@/dev/testkit';
 import { installWorkflowRendererCommonModuleMocks } from '@/components/tools/renderers/workflow/workflowRendererTestHelpers';
-import type { SessionWorkflowRunSnapshotV1 } from '@happier-dev/protocol';
+import { buildAgentActivityEntryId, type SessionWorkflowRunSnapshotV1 } from '@happier-dev/protocol';
 
 import type { SessionWorkflowRunPanelProps } from './SessionWorkflowRunPanel';
 
@@ -65,10 +65,15 @@ function largeSnapshot(runId: string, count: number): SessionWorkflowRunSnapshot
 describe('SessionWorkflowRunPanel', () => {
     let SessionWorkflowRunPanel!: React.ComponentType<SessionWorkflowRunPanelProps>;
     let areSessionWorkflowRunPanelPropsEqual!: typeof import('./SessionWorkflowRunPanel').areSessionWorkflowRunPanelPropsEqual;
+    let Text!: React.ComponentType<{ testID?: string; children?: React.ReactNode }>;
 
     beforeAll(async () => {
         ({ SessionWorkflowRunPanel, areSessionWorkflowRunPanelPropsEqual } = await import('./SessionWorkflowRunPanel'));
-    }, 60_000);
+        ({ Text } = await import('@/components/ui/text/Text'));
+        // Same budget as the other composed suites in this corridor: a cold transform of the text
+        // primitive's module graph can exceed a minute on a loaded machine, and a timeout here
+        // skips every case in the file rather than failing one.
+    }, 300_000);
 
     async function render(props: Partial<SessionWorkflowRunPanelProps> & Pick<SessionWorkflowRunPanelProps, 'runId'>): Promise<renderer.ReactTestRenderer> {
         return (await renderScreen(React.createElement(SessionWorkflowRunPanel, {
@@ -208,5 +213,67 @@ describe('SessionWorkflowRunPanel', () => {
         // The unified entry's status is an input now, so a status change must re-render the header.
         expect(areSessionWorkflowRunPanelPropsEqual(base, { ...base, entryStatus: 'succeeded' })).toBe(false);
         expect(areSessionWorkflowRunPanelPropsEqual(base, { ...base, runHeadline: { ...runA, completedAgents: 2 } })).toBe(false);
+        // A host body renderer is an input to what every agent row discloses, so a new one must
+        // re-render: memoizing past it would leave expanded agents showing the previous roster's
+        // transcript.
+        expect(areSessionWorkflowRunPanelPropsEqual(
+            { ...base, renderAgentBody: () => null },
+            { ...base, renderAgentBody: () => null },
+        )).toBe(false);
+    });
+
+    /**
+     * RULING-17: the panel does not decide what an agent discloses — it ASKS, by agent-activity
+     * entry id, and shows what it is handed.
+     *
+     * The id is the whole contract. A panel that asked by `agentId` (or by its own row key) would
+     * get `null` for every agent from a host keyed on the protocol id, and the failure would be
+     * silent: the rows would simply keep showing the provider's summary and no transcript would ever
+     * be reachable from a run panel — which is the defect this wave exists to fix.
+     */
+    it('asks the host for each agent body by entry id, and prefers it to the provider summary', async () => {
+        const snap = snapshot({
+            runId: 'a',
+            title: 'Build',
+            totalAgents: 2,
+            completedAgents: 0,
+            agents: [
+                { id: 'x', title: 'Reviewer', status: 'active', updatedAt: 1, summary: 'REVIEWER SUMMARY' },
+                { id: 'y', title: 'Planner', status: 'active', updatedAt: 1, summary: 'PLANNER SUMMARY' },
+            ],
+        });
+        const reviewerEntryId = buildAgentActivityEntryId({ kind: 'workflow_agent', runId: 'a', agentId: 'x' });
+        const plannerEntryId = buildAgentActivityEntryId({ kind: 'workflow_agent', runId: 'a', agentId: 'y' });
+        const asked: string[] = [];
+
+        const screen = await renderScreen(React.createElement(SessionWorkflowRunPanel, {
+            runId: 'a',
+            entryTitle: 'Build',
+            entryStatus: 'running',
+            runHeadline: null,
+            snapshot: snap,
+            detailState: 'loaded',
+            defaultExpanded: true,
+            renderAgentBody: (entryId: string) => {
+                asked.push(entryId);
+                // Only the reviewer has a transcript; the planner's row must keep its summary.
+                return entryId === reviewerEntryId
+                    ? React.createElement(Text, { testID: 'host-body-x' }, 'HOST TRANSCRIPT')
+                    : null;
+            },
+        }));
+
+        expect(asked).toContain(reviewerEntryId);
+        expect(asked).toContain(plannerEntryId);
+
+        await screen.pressByTestIdAsync('workflow-agent-a-x');
+        expect(screen.findByTestId('host-body-x')).toBeTruthy();
+        expect(screen.getTextContent()).toContain('HOST TRANSCRIPT');
+        // The host body REPLACES the summary rather than stacking a second card under one row.
+        expect(screen.getTextContent()).not.toContain('REVIEWER SUMMARY');
+
+        await screen.pressByTestIdAsync('workflow-agent-a-y');
+        expect(screen.getTextContent()).toContain('PLANNER SUMMARY');
+        await screen.unmount();
     });
 });

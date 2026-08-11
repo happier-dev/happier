@@ -81,6 +81,10 @@ function buildAgentRow(
         ...(typeof agent.timeUsedSeconds === 'number' ? { timeUsedSeconds: agent.timeUsedSeconds } : {}),
         ...(agent.resultPreview ? { resultPreview: agent.resultPreview } : {}),
         ...(agent.summary ? { summary: agent.summary } : {}),
+        // The open target, copied only when the record proves one — the same rule the CLI's headline
+        // projection applies to the same field. Minting one for an agent whose sidecar was never
+        // imported would give every row inside a run panel a disclosure over an empty transcript.
+        ...(agent.sidechainId ? { sidechainId: agent.sidechainId } : {}),
         // Copied only when the snapshot actually has them (D-8): an absent start must stay absent
         // rather than borrow `updatedAt`, and an absent finish must not borrow the start.
         ...(typeof agent.startedAt === 'number' ? { startedAtMs: agent.startedAt } : {}),
@@ -224,9 +228,21 @@ export function resolveWorkflowProgressFraction(run: Pick<SessionWorkflowRunHead
     return Math.min(1, Math.max(0, run.completedAgents / run.totalAgents));
 }
 
+/**
+ * Every agent of a loaded run as the shared row model, phases ignored.
+ *
+ * The flat view of the one projection `buildWorkflowActivityRows` groups: same rows, same ids, same
+ * fields. It is exported because a surface that draws this run as a panel must also resolve an open
+ * target per agent, and asking that question of a second, locally rebuilt agent shape is how the
+ * panel and the roster would come to disagree about which agent has a transcript.
+ */
+export function buildWorkflowAgentRows(snapshot: SessionWorkflowRunSnapshotV1): readonly WorkflowAgentRowViewModel[] {
+    return snapshot.agents.map((agent) => buildAgentRow(snapshot, agent));
+}
+
 /** Rollup over all agents in a loaded run snapshot (run-level counts derived from agent rows). */
 export function computeWorkflowRunRollup(snapshot: SessionWorkflowRunSnapshotV1): WorkflowPhaseRollup {
-    return computeWorkflowPhaseRollup(snapshot.agents.map((agent) => buildAgentRow(snapshot, agent)));
+    return computeWorkflowPhaseRollup(buildWorkflowAgentRows(snapshot));
 }
 
 /**

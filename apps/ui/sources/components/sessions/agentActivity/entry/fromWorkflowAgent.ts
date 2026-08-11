@@ -7,6 +7,7 @@ import {
     AGENT_ACTIVITY_ROW_NO_ACTIONS,
     type AgentActivityRowEntry,
 } from '../agentActivityRowEntry';
+import type { AgentActivityOpenTargetEntry } from '../open/resolveAgentActivityOpenTarget';
 import { formatElapsedDuration } from '../presentation/formatElapsedDuration';
 import { resolveAgentActivityElapsedStartMs } from '../presentation/resolveAgentActivityElapsedStartMs';
 
@@ -56,6 +57,27 @@ export function resolveAgentActivityEntryFromWorkflowAgent(
         // affordance §4.4 defines belongs to the run, not to one agent inside it. An empty list is
         // what makes the row render no overflow at all, rather than an empty menu.
         actions: AGENT_ACTIVITY_ROW_NO_ACTIONS,
+    };
+}
+
+/**
+ * The same agent as the ONE open-target resolver reads it.
+ *
+ * A second projection beside the row one, and deliberately so: the row's presentation contract has
+ * no `sidechainId` (a row does not render a transcript id) while the resolver's entry has no status
+ * or metrics (openability must never be decided from them). This is the whole adapter — no id is
+ * minted and no openability is decided here, so a run-panel agent and the same agent listed in the
+ * roster reach the resolver as the same entry and cannot get different answers.
+ */
+export function resolveAgentActivityOpenEntryFromWorkflowAgent(
+    agent: WorkflowAgentRowViewModel,
+): AgentActivityOpenTargetEntry {
+    return {
+        id: agent.rowId,
+        kind: 'workflow_agent',
+        title: agent.title,
+        runId: agent.runId,
+        sidechainId: agent.sidechainId ?? null,
     };
 }
 

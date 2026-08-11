@@ -10,6 +10,7 @@ import {
 import {
     buildWorkflowActivityRows,
     computeWorkflowPhaseRollup,
+    buildWorkflowAgentRows,
     computeWorkflowRunRollup,
     groupWorkflowAgentsByPhase,
     readSessionWorkflowActivityHeadlineFromMetadata,
@@ -153,6 +154,36 @@ describe('buildWorkflowActivityRows', () => {
             phaseId: 'unassigned',
             fallback: 'activity',
         });
+    });
+
+    /**
+     * The open target a run panel's agent row is drawn from.
+     *
+     * `sidechainId` is the ONLY field that makes an agent inside a run panel openable — a workflow
+     * has one `Workflow` tool call and many agents, so there is no per-agent tool call to route
+     * through — and dropping it here is invisible: the rows still render, the counts still add up,
+     * and every transcript is simply unreachable from the surface a phone actually has. Both
+     * directions are asserted because the producer writes the field only as PROOF of an import, so a
+     * projection that defaulted it would give every row a disclosure over an empty transcript.
+     */
+    it('carries a per-agent sidechain id on both row paths, and only when the record proves one', () => {
+        const agents = [
+            { id: 'imported', title: 'Reviewer', status: 'active' as const, updatedAt: 1, sidechainId: 'workflow_agent_sidechain:toolu_1:imported' },
+            { id: 'bare', title: 'Planner', status: 'active' as const, updatedAt: 1 },
+        ];
+        const phased = buildWorkflowActivityRows(snapshot({
+            phases: [{ id: 'p1', title: 'Research', order: 1, agentIds: ['imported', 'bare'] }],
+            agents,
+        }));
+        const flat = buildWorkflowActivityRows(snapshot({ agents }));
+
+        for (const rows of [phased, flat]) {
+            const agentRows = rows.filter((row) => row.kind === 'agent');
+            expect(agentRows.map((row) => row.kind === 'agent' ? row.agent.sidechainId : null))
+                .toEqual(['workflow_agent_sidechain:toolu_1:imported', undefined]);
+        }
+        expect(buildWorkflowAgentRows(snapshot({ agents })).map((agent) => agent.sidechainId))
+            .toEqual(['workflow_agent_sidechain:toolu_1:imported', undefined]);
     });
 });
 

@@ -116,6 +116,18 @@ export type SessionWorkflowRunPanelProps = Readonly<{
      * in hand does. Taking the later of the two keeps a working agent from being called silent.
      */
     agentEvidenceAtMsById?: ReadonlyMap<string, number>;
+    /**
+     * What one agent row discloses, asked of the surface by agent-activity entry id.
+     *
+     * The panel does not decide this and must not: the same function answers for a listed roster
+     * row, so an agent whose transcript was imported gets the same bounded preview, the same lazy
+     * load and the same "open details" rule wherever it is drawn. `null` for an agent with no
+     * transcript, which is what leaves the provider's own result summary as the body.
+     *
+     * Absent means the host has no roster behind it — the panel then behaves exactly as it did
+     * before this seam existed.
+     */
+    renderAgentBody?: (entryId: string) => React.ReactNode;
 }>;
 
 export function areSessionWorkflowRunPanelPropsEqual(
@@ -130,7 +142,8 @@ export function areSessionWorkflowRunPanelPropsEqual(
         && prev.detailState === next.detailState
         && prev.defaultExpanded === next.defaultExpanded
         && prev.resolveAgentStaleness === next.resolveAgentStaleness
-        && prev.agentEvidenceAtMsById === next.agentEvidenceAtMsById;
+        && prev.agentEvidenceAtMsById === next.agentEvidenceAtMsById
+        && prev.renderAgentBody === next.renderAgentBody;
 }
 
 export const SessionWorkflowRunPanel = React.memo<SessionWorkflowRunPanelProps>((props) => {
@@ -225,6 +238,9 @@ export const SessionWorkflowRunPanel = React.memo<SessionWorkflowRunPanelProps>(
                                                     endedAtMs: row.agent.endedAtMs ?? null,
                                                 }),
                                             }
+                                            : null)}
+                                        {...(props.renderAgentBody
+                                            ? { preview: props.renderAgentBody(row.agent.rowId) }
                                             : null)}
                                         showDivider={index < visibleRows.length - 1}
                                         testID={`workflow-agent-${row.agent.runId}-${row.agent.agentId}`}
