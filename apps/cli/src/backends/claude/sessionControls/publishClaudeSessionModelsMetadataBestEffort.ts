@@ -9,14 +9,20 @@ import { resolveClaudeSessionModelsState } from './resolveClaudeSessionModelsSta
 const EFFORT_DEPENDENT_OPTION_IDS = ['reasoning_effort', 'ultracode'] as const;
 
 /**
- * Drop effort-dependent overrides a session set earlier when the runtime can no longer apply them.
+ * Drop effort-dependent overrides the selected model does not advertise.
  *
  * Hiding the controls from `sessionModelsV1` is not enough: the composer emits whatever overrides
  * are in metadata regardless of which options are advertised, and treats them as non-steerable — so
  * a stale `ultracode` would keep riding later prompts and could push a busy send down the
  * "provider config change refused" path.
  */
-function withoutEffortDependentOverrides(prev: Metadata): Metadata {
+function withoutUnsupportedEffortDependentOverrides(
+  prev: Metadata,
+  supportedOptionIds: ReadonlySet<string>,
+): Metadata {
+  const unsupportedOptionIds = EFFORT_DEPENDENT_OPTION_IDS.filter((id) => !supportedOptionIds.has(id));
+  if (unsupportedOptionIds.length === 0) return prev;
+
   const next = { ...prev };
   let changed = false;
 
@@ -24,10 +30,12 @@ function withoutEffortDependentOverrides(prev: Metadata): Metadata {
     const state = prev[key];
     const overrides = state?.overrides;
     if (!overrides) continue;
-    if (!EFFORT_DEPENDENT_OPTION_IDS.some((id) => id in overrides)) continue;
+    if (!unsupportedOptionIds.some((id) => id in overrides)) continue;
 
     const retained = Object.fromEntries(
-      Object.entries(overrides).filter(([id]) => !EFFORT_DEPENDENT_OPTION_IDS.includes(id as typeof EFFORT_DEPENDENT_OPTION_IDS[number])),
+      Object.entries(overrides).filter(
+        ([id]) => !unsupportedOptionIds.includes(id as typeof unsupportedOptionIds[number]),
+      ),
     );
     next[key] = { ...state, overrides: retained };
     changed = true;
@@ -62,13 +70,16 @@ export async function publishClaudeSessionModelsMetadataBestEffort(params: Reado
   }).catch(() => null);
   if (!state) return;
 
-  const supportsEffort = state.availableModels.some(
-    (model) => (model.modelOptions ?? []).some((option) => option.id === 'reasoning_effort'),
+  const selectedModel = state.availableModels.find(
+    (model) => model.id === currentModelId || model.extendedContextModelId === currentModelId,
+  );
+  const selectedModelOptionIds = new Set(
+    (selectedModel?.modelOptions ?? []).map((option) => option.id),
   );
 
   try {
     await params.session.updateMetadata((prev) => {
-      const base = supportsEffort ? prev : withoutEffortDependentOverrides(prev);
+      const base = withoutUnsupportedEffortDependentOverrides(prev, selectedModelOptionIds);
       const reconciled = reconcileClaudeSessionModelsState({
         metadata: base,
         incomingState: state,

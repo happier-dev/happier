@@ -1693,6 +1693,8 @@ async function runClaudeLocalFastStart(credentials: Credentials, options: StartO
                                     options.modelId = modelOverrideRef.current ?? undefined;
                                     options.model = modelOverrideRef.current ?? undefined;
                                     options.modelUpdatedAt = modelOverrideRef.updatedAt;
+                                    currentModel = modelOverrideRef.current ?? undefined;
+                                    currentModelUpdatedAt = modelOverrideRef.updatedAt;
                                 },
                             });
 
@@ -2037,6 +2039,20 @@ async function runClaudeLocalFastStart(credentials: Credentials, options: StartO
                     });
                     seedInitialAppendSystemPrompt(defaultSystemPromptText);
 
+                    const initialClaudeUnifiedTerminalMode = pinClaudeRemoteModeToActiveRuntime({
+                        permissionMode: options.permissionMode ?? 'default',
+                        agentModeId: currentAgentModeId,
+                        model: currentModel,
+                        fallbackModel: currentFallbackModel,
+                        customSystemPrompt: currentCustomSystemPrompt,
+                        appendSystemPrompt: currentAppendSystemPrompt,
+                        reasoningEffort: currentReasoningEffort,
+                        modelEffortLevels: modelEffortTracker.getLevels(),
+                        modelEffortLevelsModelId: modelEffortTracker.getModelId(),
+                        ultracode: currentUltracode,
+                        ...currentClaudeRemoteMetaState,
+                    }, sessionRuntimeModeKind);
+
                     const exitCode = await loop({
                         path: workingDirectory,
                         model: options.model,
@@ -2044,19 +2060,7 @@ async function runClaudeLocalFastStart(credentials: Credentials, options: StartO
                         permissionModeUpdatedAt: options.permissionModeUpdatedAt,
                         startingMode: options.startingMode,
                         claudeUnifiedTerminalEnabled: unifiedTerminalRuntimeActive,
-                        initialClaudeUnifiedTerminalMode: pinClaudeRemoteModeToActiveRuntime({
-                            permissionMode: options.permissionMode ?? 'default',
-                            agentModeId: currentAgentModeId,
-                            model: currentModel,
-                            fallbackModel: currentFallbackModel,
-                            customSystemPrompt: currentCustomSystemPrompt,
-                            appendSystemPrompt: currentAppendSystemPrompt,
-                            reasoningEffort: currentReasoningEffort,
-                            modelEffortLevels: modelEffortTracker.getLevels(),
-                            modelEffortLevelsModelId: modelEffortTracker.getModelId(),
-                            ultracode: currentUltracode,
-                            ...currentClaudeRemoteMetaState,
-                        }, sessionRuntimeModeKind),
+                        initialClaudeUnifiedTerminalMode,
                         claudeCodeExperimentalAgentTeamsEnabled: currentClaudeRemoteMetaState.claudeCodeExperimentalAgentTeamsEnabled,
                         startedBy: options.startedBy,
                         terminalRuntime: options.terminalRuntime ?? null,
@@ -2082,11 +2086,11 @@ async function runClaudeLocalFastStart(credentials: Credentials, options: StartO
                         },
                         onSessionReady: async (sessionInstance) => {
                             currentSession = sessionInstance;
-                            const currentModelId =
-                                typeof options.modelId === 'string'
-                                    ? options.modelId.trim()
-                                    : (typeof options.model === 'string' ? options.model.trim() : '');
+                            const currentModelId = typeof currentModel === 'string' ? currentModel.trim() : '';
                             await modelEffortTracker.refresh(currentModelId);
+                            initialClaudeUnifiedTerminalMode.model = currentModelId || undefined;
+                            initialClaudeUnifiedTerminalMode.modelEffortLevels = modelEffortTracker.getLevels();
+                            initialClaudeUnifiedTerminalMode.modelEffortLevelsModelId = modelEffortTracker.getModelId();
                             if (!didPublishSessionModelsMetadata) {
                                 didPublishSessionModelsMetadata = true;
                                 void publishClaudeSessionModelsMetadataBestEffort({

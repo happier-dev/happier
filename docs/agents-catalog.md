@@ -162,8 +162,9 @@ per-model metadata than the static one, so audit what the dynamic path drops bef
 A provider with both surfaces needs **one owner** for the model list. Claude's is
 `apps/cli/src/backends/claude/models/resolveClaudeModelCatalog.ts`: the preflight probe adapter and
 the in-session `sessionModelsV1` publisher both read it, so the two pickers cannot disagree about
-which models exist or which effort tiers they report. It caches per resolved account config dir +
-endpoint + ambient-credential fingerprint, so a session start does not pay a network round trip.
+which models exist or which effort tiers they report. Its provider-owned cache identity is the
+normalized endpoint, credential kind, and full SHA-256 credential hash. A warm cache entry avoids a
+network request; a cold session start may fetch the catalog before publishing the resolved models.
 Effort tiers are resolved once when the session mode is built and travel on the mode, so spawn-time
 resolution and launch-option hashing see the same value and hashing stays pure.
 
@@ -176,8 +177,8 @@ Provider-owned probing:
 - Set `resolveModelsProbeVariant` on the catalog entry whenever the probe result depends on
   something other than the agent id — runtime flavor, auth method, or the bound connected account.
   The returned string partitions the probe cache; without it, results computed for one account or
-  runtime mode are served to another. Codex and Claude both key theirs on the connected-service
-  binding.
+  runtime mode are served to another. Codex uses this generic cache variant; Claude instead declares
+  provider-owned caching and keys its catalog by the effective endpoint and credential identity.
 - Fail closed to the static catalog. A probe that cannot authenticate returns `null` rather than
   probing with whatever credential happens to be in the daemon's environment.
 

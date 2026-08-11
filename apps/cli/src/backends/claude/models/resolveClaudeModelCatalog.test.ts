@@ -77,6 +77,21 @@ describe('resolveClaudeModelCatalog', () => {
     expect(models.some((m) => m.id === 'claude-fable-5')).toBe(true);
   });
 
+  it('keeps the first discovered row when an alias and dated snapshot normalize to the same id', async () => {
+    process.env.ANTHROPIC_API_KEY = 'sk-ant-key';
+    fetchAnthropicModelsMock.mockResolvedValue([
+      { id: 'claude-opus-9', displayName: 'Opus 9 Alias' },
+      { id: 'claude-opus-9-20260812', displayName: 'Opus 9 Snapshot' },
+    ]);
+
+    const models = await resolveClaudeModelCatalog({ timeoutMs: 1_000 });
+    const matching = models.filter((model) => model.id === 'claude-opus-9' || model.id === 'claude-opus-9-20260812');
+
+    expect(matching).toEqual([
+      expect.objectContaining({ id: 'claude-opus-9', name: 'Opus 9 Alias' }),
+    ]);
+  });
+
   it('records a successful endpoint response as dynamic even when every id is already curated', async () => {
     process.env.ANTHROPIC_API_KEY = 'sk-ant-key';
     fetchAnthropicModelsMock.mockResolvedValue([

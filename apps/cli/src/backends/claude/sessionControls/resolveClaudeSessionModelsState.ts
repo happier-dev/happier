@@ -20,10 +20,9 @@ export async function resolveClaudeSessionModelsState(params: Readonly<{
 
   const updatedAt = params.nowMs();
   // Same owner as the new-session preflight probe, so the in-session picker cannot disagree about
-  // which models exist or which effort tiers they support. Cached per account; falls back to the
-  // curated catalog when the Models API is unavailable.
-  // No binding needed here: an in-session process already has CLAUDE_CONFIG_DIR pointed at the
-  // materialized account, and the catalog keys its cache on that resolved dir.
+  // which models exist or which effort tiers they support. The catalog owns credential-aware
+  // caching and falls back to the curated list when the Models API is unavailable. No binding is
+  // needed here: the in-session process already runs with the selected account environment.
   const models = await resolveClaudeModelCatalog({ timeoutMs: params.timeoutMs });
 
   return {

@@ -79,13 +79,17 @@ function isRunnableDiscoveredModel(normalizedId: string): boolean {
 function mergeStaticWithDiscovered(entries: readonly AnthropicModelEntry[]): AgentModelDescriptor[] {
   const staticModels = resolveStaticClaudeModels();
   const staticNormalizedIds = new Set(staticModels.map((model) => normalizeDatedId(model.id)));
+  const discoveredNormalizedIds = new Set<string>();
 
   const discovered = entries
     .filter((entry) => {
       const normalized = normalizeDatedId(entry.id);
       if (normalized.length === 0 || normalized === 'default') return false;
       if (staticNormalizedIds.has(normalized)) return false;
-      return isRunnableDiscoveredModel(normalized);
+      if (!isRunnableDiscoveredModel(normalized)) return false;
+      if (discoveredNormalizedIds.has(normalized)) return false;
+      discoveredNormalizedIds.add(normalized);
+      return true;
     })
     .map((entry) => buildDiscoveredClaudeModelDescriptor(entry));
 
