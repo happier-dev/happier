@@ -121,7 +121,7 @@ function buildPreflightRuntimeAuthSelection(params: Readonly<{
   record: ConnectedServiceCredentialRecordV1;
   selection: ConnectedServiceResolvedSelection | null;
 }>): unknown {
-  if (params.serviceId !== 'claude-subscription' || params.selection?.kind !== 'group' || params.record.kind !== 'oauth') {
+  if (params.serviceId !== 'claude-subscription' || params.selection?.kind !== 'group') {
     return params.baseSelection;
   }
 
@@ -266,7 +266,6 @@ export const materializeClaudeConnectedServiceRuntimeAuthSelection: ConnectedSer
     : null;
   const sharedGroupSurfaceMetadata = params.input.serviceId === 'claude-subscription'
     && selection?.kind === 'group'
-    && record.kind === 'oauth'
     ? buildClaudeRuntimeAuthSharedGroupSurfaceMetadata({
         runtimeClaudeConfigDir: materializedClaudeConfigDir,
         runtimeMaterializedRoot: materialized.targetMaterializedRoot,

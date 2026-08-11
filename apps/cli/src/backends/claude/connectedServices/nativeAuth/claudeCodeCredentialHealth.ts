@@ -25,6 +25,11 @@ export function classifyClaudeCodeCredentialHealth(
   if (record.serviceId !== 'claude-subscription') {
     return { status: 'unsupported_service', missingScopes: [] };
   }
+  if (record.kind === 'token') {
+    return isNonBlank(record.token.token)
+      ? { status: 'ok', missingScopes: [] }
+      : { status: 'missing_access_token', missingScopes: [] };
+  }
   if (record.kind !== 'oauth') {
     return { status: 'unsupported_credential_kind', missingScopes: [] };
   }

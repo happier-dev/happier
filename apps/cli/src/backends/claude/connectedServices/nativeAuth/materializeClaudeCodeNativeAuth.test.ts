@@ -244,6 +244,44 @@ describe('materializeClaudeCodeNativeAuth', () => {
     expect(result.env).not.toHaveProperty('CLAUDE_CODE_SETUP_TOKEN');
   });
 
+  it('materializes setup tokens as native Claude OAuth access tokens', async () => {
+    const claudeConfigDir = await mkdtemp(join(tmpdir(), 'happier-claude-native-auth-setup-token-'));
+    const record = buildConnectedServiceCredentialRecord({
+      now: REALISTIC_ISSUED_AT_MS,
+      serviceId: 'claude-subscription',
+      profileId: 'setup',
+      kind: 'token',
+      token: {
+        token: 'sk-ant-oat01-setup-placeholder',
+        providerAccountId: null,
+        providerEmail: null,
+      },
+    });
+
+    const result = await materializeClaudeCodeNativeAuth({ record, claudeConfigDir });
+
+    expect(result).toEqual({
+      status: 'materialized',
+      env: {
+        CLAUDE_CONFIG_DIR: claudeConfigDir,
+      },
+      diagnostics: [],
+      credentialPath: join(claudeConfigDir, '.credentials.json'),
+    });
+    expect(JSON.parse(await readFile(join(claudeConfigDir, '.credentials.json'), 'utf8'))).toEqual({
+      claudeAiOauth: {
+        accessToken: 'sk-ant-oat01-setup-placeholder',
+        scopes: [
+          'user:inference',
+          'user:profile',
+          'user:sessions:claude_code',
+        ],
+      },
+    });
+    expect(result.env).not.toHaveProperty('CLAUDE_CODE_SETUP_TOKEN');
+    expect(result.env).not.toHaveProperty('CLAUDE_CODE_OAUTH_TOKEN');
+  });
+
   it('updates an already-provenanced managed Claude home in place instead of replacing the live root', async () => {
     const homeDir = await mkdtemp(join(tmpdir(), 'happier-claude-native-auth-home-in-place-'));
     const sourceClaudeConfigDir = await mkdtemp(join(tmpdir(), 'happier-claude-native-auth-source-in-place-'));

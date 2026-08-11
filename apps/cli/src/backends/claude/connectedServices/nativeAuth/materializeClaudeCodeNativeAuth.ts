@@ -323,17 +323,36 @@ function hasNonBlankString(value: unknown): boolean {
   return typeof value === 'string' && value.trim().length > 0;
 }
 
+function readClaudeSubscriptionCredentialIdentity(record: ConnectedServiceCredentialRecordV1): Readonly<{
+  providerAccountId: string | null;
+  providerEmail: string | null;
+}> | null {
+  if (record.kind === 'oauth') {
+    return {
+      providerAccountId: record.oauth.providerAccountId,
+      providerEmail: record.oauth.providerEmail,
+    };
+  }
+  if (record.kind === 'token') {
+    return {
+      providerAccountId: record.token.providerAccountId,
+      providerEmail: record.token.providerEmail,
+    };
+  }
+  return null;
+}
+
 function buildClaudeSubscriptionNativeAuthIdentityDiagnostic(params: Readonly<{
   record: ConnectedServiceCredentialRecordV1;
   selectionDescriptor: ClaudeSubscriptionNativeAuthSelectionDescriptor;
   credentialHealthStatus: ClaudeCodeCredentialHealthStatus;
 }>): ClaudeSubscriptionNativeAuthIdentityDiagnostic {
-  const recordOauth = params.record.kind === 'oauth' ? params.record.oauth : null;
+  const credentialIdentity = readClaudeSubscriptionCredentialIdentity(params.record);
   const base = {
     serviceId: 'claude-subscription' as const,
     credentialHealthStatus: params.credentialHealthStatus,
-    hasProviderAccountId: hasNonBlankString(recordOauth?.providerAccountId),
-    hasProviderEmail: hasNonBlankString(recordOauth?.providerEmail),
+    hasProviderAccountId: hasNonBlankString(credentialIdentity?.providerAccountId),
+    hasProviderEmail: hasNonBlankString(credentialIdentity?.providerEmail),
   };
   if (params.selectionDescriptor.kind === 'group') {
     return {
@@ -413,7 +432,8 @@ async function shouldPreserveClaudeAccountScopedState(params: Readonly<{
   record: ConnectedServiceCredentialRecordV1;
   targetClaudeConfigDir: string;
 }>): Promise<boolean> {
-  if (params.record.kind !== 'oauth') return false;
+  const credentialIdentity = readClaudeSubscriptionCredentialIdentity(params.record);
+  if (!credentialIdentity) return false;
   const provenance = await readClaudeConnectedServiceHomeProvenance(params.targetClaudeConfigDir);
   if (provenance?.credentialProfileId !== params.record.profileId) return false;
   const existingCredential = await readClaudeCodeNativeCredentialFile(params.targetClaudeConfigDir);
@@ -427,8 +447,8 @@ async function shouldPreserveClaudeAccountScopedState(params: Readonly<{
   ) return false;
   const root = await readClaudeRootConfigFile(join(params.targetClaudeConfigDir, '.claude.json'));
   const identity = readClaudeOauthAccountIdentity(root?.oauthAccount);
-  if (params.record.oauth.providerAccountId && identity.accountId !== params.record.oauth.providerAccountId) return false;
-  if (params.record.oauth.providerEmail && identity.email !== params.record.oauth.providerEmail) return false;
+  if (credentialIdentity.providerAccountId && identity.accountId !== credentialIdentity.providerAccountId) return false;
+  if (credentialIdentity.providerEmail && identity.email !== credentialIdentity.providerEmail) return false;
   return true;
 }
 
@@ -505,12 +525,8 @@ export async function materializeClaudeSubscriptionNativeAuthHome(params: Readon
     record: params.record,
     targetClaudeConfigDir: params.targetClaudeConfigDir,
   });
-  const oauthIdentity = params.record.kind === 'oauth'
-    ? {
-        providerAccountId: params.record.oauth.providerAccountId,
-        providerEmail: params.record.oauth.providerEmail,
-      }
-    : { providerAccountId: null, providerEmail: null };
+  const oauthIdentity = readClaudeSubscriptionCredentialIdentity(params.record)
+    ?? { providerAccountId: null, providerEmail: null };
   const identityDiagnostic = buildClaudeSubscriptionNativeAuthIdentityDiagnostic({
     record: params.record,
     selectionDescriptor: params.selectionDescriptor,
