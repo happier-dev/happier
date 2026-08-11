@@ -115,9 +115,59 @@ jobs:
       allow_stable: false
       release_message: ${{ needs.prepare_release_candidate.outputs.release_message }}
 
+  resolve_validation_risk:
+    name: Resolve changed-seam validation risk
+    needs: [prepare_release_candidate]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      risk_cli_upgrade: ${{ steps.risk.outputs.risk_cli_upgrade }}
+      risk_session_continuity: ${{ steps.risk.outputs.risk_session_continuity }}
+    steps:
+      - name: Checkout trusted release control
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          persist-credentials: false
+      - name: Checkout exact nightly candidate
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ needs.prepare_release_candidate.outputs.source_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+          path: release-source
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22.x
+      - name: Resolve risk since the last fully promoted nightly
+        id: risk
+        working-directory: release-source
+        env:
+          CANDIDATE_SOURCE_SHA: ${{ needs.prepare_release_candidate.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          git fetch --force --no-tags origin 'refs/tags/ui-web-dev:refs/tags/ui-web-dev' 2>/dev/null || true
+          if base="$(git rev-parse 'ui-web-dev^{commit}' 2>/dev/null)"; then
+            :
+          else
+            base="$(git rev-list --max-parents=0 HEAD | tail -n 1)"
+          fi
+          node ../scripts/pipeline/release/analyze-release-change.mjs \
+            --base "$base" \
+            --head "$CANDIDATE_SOURCE_SHA" \
+            --profile integrated \
+            --has-cli-candidate true \
+            --has-server-candidate true \
+            --has-published-relay-predecessor false \
+            --repository-root "$PWD" \
+            --github-output "$GITHUB_OUTPUT"
+
   release_verify:
     name: Verify exact immutable nightly candidates
-    needs: [prepare_release_candidate, cli, hstack, server_runtime, ui_web]
+    needs: [prepare_release_candidate, cli, hstack, server_runtime, ui_web, resolve_validation_risk]
     uses: ./.github/workflows/release-verify.yml
     secrets: inherit
     with:
@@ -127,11 +177,10 @@ jobs:
       candidate_stack_version: ${{ needs.hstack.outputs.version }}
       candidate_server_version: ${{ needs.server_runtime.outputs.version }}
       candidate_ui_web_version: ${{ needs.ui_web.outputs.version }}
-      run_installers_smoke: true
-      run_binary_smoke: true
-      run_cli_update_continuity: true
-      run_daemon_continuity: true
-      run_session_continuity: true
+      validation_profile: integrated
+      risk_cli_upgrade: ${{ needs.resolve_validation_risk.outputs.risk_cli_upgrade == 'true' }}
+      risk_session_continuity: ${{ needs.resolve_validation_risk.outputs.risk_session_continuity == 'true' }}
+      risk_relay_upgrade: false
 
   verify_resume_candidates:
     name: Verify successful immutable siblings for resume
@@ -292,16 +341,16 @@ jobs:
           SOURCE_SHA: ${{ needs.prepare_release_candidate.outputs.source_sha || 'unavailable' }}
           CANDIDATE_RESULT: ${{ needs.prepare_release_candidate.result }}
           IMMUTABLE_VERIFICATION_RESULT: ${{ needs.release_verify.result }}
-          CLI_CANDIDATE_RESULT: ${{ needs.cli.result }}
           CLI_CANDIDATE_VERSION: ${{ needs.cli.outputs.version }}
-          STACK_CANDIDATE_RESULT: ${{ needs.hstack.result }}
           STACK_CANDIDATE_VERSION: ${{ needs.hstack.outputs.version }}
-          SERVER_CANDIDATE_RESULT: ${{ needs.server_runtime.result }}
           SERVER_CANDIDATE_VERSION: ${{ needs.server_runtime.outputs.version }}
-          UI_WEB_CANDIDATE_RESULT: ${{ needs.ui_web.result }}
           UI_WEB_CANDIDATE_VERSION: ${{ needs.ui_web.outputs.version }}
+          CLI_CANDIDATE_RESULT: ${{ needs.cli.result }}
+          STACK_CANDIDATE_RESULT: ${{ needs.hstack.result }}
+          SERVER_CANDIDATE_RESULT: ${{ needs.server_runtime.result }}
+          UI_WEB_CANDIDATE_RESULT: ${{ needs.ui_web.result }}
           CLI_RESUME_VERIFIED: ${{ needs.verify_resume_candidates.outputs.cli_verified }}
-          STACK_RESUME_VERIFIED: ${{ needs.verify_resume_candidates.outputs.stack_verified }}
+          HSTACK_RESUME_VERIFIED: ${{ needs.verify_resume_candidates.outputs.stack_verified }}
           SERVER_RESUME_VERIFIED: ${{ needs.verify_resume_candidates.outputs.server_verified }}
           UI_WEB_RESUME_VERIFIED: ${{ needs.verify_resume_candidates.outputs.ui_web_verified }}
           CLI_RESULT: ${{ needs.promote_cli.result }}
@@ -314,83 +363,10 @@ jobs:
           POST_PROMOTION_RESULT: ${{ needs.verify_promoted.result }}
         run: |
           set -euo pipefail
-          node --input-type=module <<'NODE' > "$RUNNER_TEMP/release-status-input.json"
-          const result = (name) => ['success', 'skipped'].includes(process.env[name]) ? process.env[name] : 'failed';
-          const sourceSha = process.env.SOURCE_SHA;
-          const item = (id, required, evidence, name, verified, recoveryHint) => ({
-            id,
-            requested: true,
-            required,
-            evidence,
-            result: evidence === 'accepted' && result(name) === 'success' ? 'accepted' : result(name),
-            identity: { sourceSha, verified },
-            recoveryHint,
-          });
-          const candidateItem = (id, product, resultName, versionName, resumeVerifiedName) => {
-            const candidateResult = result(resultName);
-            const version = process.env[versionName] ?? '';
-            return {
-              id,
-              requested: true,
-              required: true,
-              evidence: 'verified',
-              result: candidateResult,
-              identity: {
-                product,
-                sourceSha,
-                verified: candidateResult === 'success'
-                  && version !== ''
-                  && (result('IMMUTABLE_VERIFICATION_RESULT') === 'success' || process.env[resumeVerifiedName] === 'true'),
-                version,
-              },
-              recoveryHint: { job: resultName.toLowerCase(), version },
-            };
-          };
-          const promotedVerified = (name) => result(name) === 'success' && result('POST_PROMOTION_RESULT') === 'success';
-          const observed = [
-            item('candidate', true, 'verified', 'CANDIDATE_RESULT', result('CANDIDATE_RESULT') === 'success', { job: 'prepare_release_candidate' }),
-            candidateItem('cli-immutable-candidate', 'cli', 'CLI_CANDIDATE_RESULT', 'CLI_CANDIDATE_VERSION', 'CLI_RESUME_VERIFIED'),
-            candidateItem('hstack-immutable-candidate', 'stack', 'STACK_CANDIDATE_RESULT', 'STACK_CANDIDATE_VERSION', 'STACK_RESUME_VERIFIED'),
-            candidateItem('server-immutable-candidate', 'server', 'SERVER_CANDIDATE_RESULT', 'SERVER_CANDIDATE_VERSION', 'SERVER_RESUME_VERIFIED'),
-            candidateItem('ui-web-immutable-candidate', 'ui-web', 'UI_WEB_CANDIDATE_RESULT', 'UI_WEB_CANDIDATE_VERSION', 'UI_WEB_RESUME_VERIFIED'),
-            item('immutable_candidate_verification', true, 'verified', 'IMMUTABLE_VERIFICATION_RESULT', result('IMMUTABLE_VERIFICATION_RESULT') === 'success', { job: 'release_verify' }),
-            item('cli_rolling_release', false, 'verified', 'CLI_RESULT', promotedVerified('CLI_RESULT'), { job: 'promote_cli' }),
-            item('hstack_rolling_release', false, 'verified', 'STACK_RESULT', promotedVerified('STACK_RESULT'), { job: 'promote_hstack' }),
-            item('server_rolling_release', false, 'verified', 'SERVER_RESULT', promotedVerified('SERVER_RESULT'), { job: 'promote_server' }),
-            item('ui_web_rolling_release', false, 'verified', 'UI_WEB_RESULT', promotedVerified('UI_WEB_RESULT'), { job: 'promote_ui_web' }),
-            item('ui_mobile', false, 'accepted', 'MOBILE_RESULT', false, { job: 'ui_mobile' }),
-            item('ui_desktop', false, 'accepted', 'DESKTOP_RESULT', false, { job: 'ui_desktop' }),
-            item('docker', false, 'accepted', 'DOCKER_RESULT', false, { job: 'docker' }),
-            item('post_promotion_identity', false, 'verified', 'POST_PROMOTION_RESULT', result('POST_PROMOTION_RESULT') === 'success', { job: 'verify_promoted' }),
-          ];
-          process.stdout.write(`${JSON.stringify({
-            run: { id: Number(process.env.RELEASE_RUN), url: process.env.RELEASE_RUN_URL, name: process.env.RELEASE_RUN_NAME },
-            channel: 'dev',
-            sourceSha,
-            requestedSurfaces: observed.map(({ id, requested, required, evidence }) => ({ id, requested, required, evidence })),
-            surfaces: observed.map(({ id, result: surfaceResult, identity, recoveryHint }) => ({ id, result: surfaceResult, identity, recoveryHint })),
-          })}\n`);
-          NODE
-          node "$GITHUB_WORKSPACE/.release-control/scripts/pipeline/release/summarize-release-status.mjs" \
-            --input "$RUNNER_TEMP/release-status-input.json" \
-            --out "$RUNNER_TEMP/release-status.json"
-
-      - name: Write nightly release status summary
-        run: |
-          node --input-type=module <<'NODE' >> "$GITHUB_STEP_SUMMARY"
-          import { readFile } from 'node:fs/promises';
-          const status = JSON.parse(await readFile(`${process.env.RUNNER_TEMP}/release-status.json`, 'utf8'));
-          console.log('## Nightly release status');
-          console.log(`Channel: \`${status.channel}\`  \nSource: \`${status.sourceSha}\`  \nTerminal: **${status.terminal}**`);
-          console.log('\n| Surface | State | Result | Exact identity |\n| --- | --- | --- | --- |');
-          for (const surface of status.surfaces) {
-            console.log(`| ${surface.id} | ${surface.state} | ${surface.result ?? '-'} | ${surface.identity?.verified === true ? 'yes' : 'no'} |`);
-          }
-          console.log('\n<details><summary>Exact status JSON</summary>\n');
-          console.log('```json');
-          console.log(JSON.stringify(status, null, 2));
-          console.log('```\n</details>');
-          NODE
+          node "$GITHUB_WORKSPACE/.release-control/scripts/pipeline/release/project-release-status.mjs" \
+            --mode nightly \
+            --out "$RUNNER_TEMP/release-status.json" \
+            --summary "$GITHUB_STEP_SUMMARY"
 
       - name: Upload nightly release status artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02

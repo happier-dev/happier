@@ -1,10 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { summarizeReleaseStatus } from '../pipeline/release/summarize-release-status.mjs';
+import { projectReleaseStatus } from '../pipeline/release/project-release-status.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, '..', '..');
@@ -33,7 +32,7 @@ test('nightly-dev verifies exact immutable candidates before promoting rolling r
 
   assert.match(
     raw,
-    /release_verify:[\s\S]*?needs:\s*\[prepare_release_candidate, cli, hstack, server_runtime, ui_web\][\s\S]*?candidate_source_sha:\s*\$\{\{ needs\.prepare_release_candidate\.outputs\.source_sha \}\}[\s\S]*?candidate_cli_version:\s*\$\{\{ needs\.cli\.outputs\.version \}\}[\s\S]*?candidate_stack_version:\s*\$\{\{ needs\.hstack\.outputs\.version \}\}[\s\S]*?candidate_server_version:\s*\$\{\{ needs\.server_runtime\.outputs\.version \}\}[\s\S]*?candidate_ui_web_version:\s*\$\{\{ needs\.ui_web\.outputs\.version \}\}/,
+    /release_verify:[\s\S]*?needs:\s*\[prepare_release_candidate, cli, hstack, server_runtime, ui_web, resolve_validation_risk\][\s\S]*?candidate_source_sha:\s*\$\{\{ needs\.prepare_release_candidate\.outputs\.source_sha \}\}[\s\S]*?candidate_cli_version:\s*\$\{\{ needs\.cli\.outputs\.version \}\}[\s\S]*?candidate_stack_version:\s*\$\{\{ needs\.hstack\.outputs\.version \}\}[\s\S]*?candidate_server_version:\s*\$\{\{ needs\.server_runtime\.outputs\.version \}\}[\s\S]*?candidate_ui_web_version:\s*\$\{\{ needs\.ui_web\.outputs\.version \}\}/,
     'release verification should consume the exact SHA and immutable versions produced by candidate jobs',
   );
 
@@ -88,20 +87,12 @@ test('nightly-dev propagates generic unattended copy and terminal status', async
   );
   assert.match(
     raw,
-    /release_status:[\s\S]*?if:\s*\$\{\{\s*always\(\)\s*\}\}[\s\S]*?needs:\s*\[[^\]]*hstack[^\]]*promote_hstack[^\]]*\][\s\S]*?summarize-release-status\.mjs[\s\S]*?GITHUB_STEP_SUMMARY/,
+    /release_status:[\s\S]*?if:\s*\$\{\{\s*always\(\)\s*\}\}[\s\S]*?needs:\s*\[[^\]]*hstack[^\]]*promote_hstack[^\]]*\][\s\S]*?project-release-status\.mjs[\s\S]*?GITHUB_STEP_SUMMARY/,
     'nightly terminal status must include the HStack candidate and promotion outcomes',
   );
 });
 
-test('nightly status producer emits the strict summarizer input contract', async () => {
-  const raw = await readFile(join(repoRoot, '.github', 'workflows', 'nightly-dev.yml'), 'utf8');
-  const marker = "node --input-type=module <<'NODE' > \"$RUNNER_TEMP/release-status-input.json\"\n";
-  const start = raw.indexOf(marker);
-  const end = raw.indexOf('\n          NODE', start);
-  assert.ok(start >= 0 && end > start, 'nightly status producer must keep an executable JSON-input heredoc');
-
-  const producer = raw.slice(start + marker.length, end);
-  assert.match(producer, /process\.stdout\.write/, 'nightly status producer must write the strict input directly to stdout');
+test('nightly status projector emits the strict summarizer contract', () => {
   const sourceSha = 'a'.repeat(40);
   const producerEnv = {
       ...process.env,
@@ -137,14 +128,7 @@ test('nightly status producer emits the strict summarizer input contract', async
       UI_DESKTOP_RESULT: 'success',
       VERIFY_PROMOTED_RESULT: 'success',
   };
-  const output = execFileSync(process.execPath, ['--input-type=module'], {
-    input: producer,
-    encoding: 'utf8',
-    env: producerEnv,
-    stdio: ['pipe', 'pipe', 'pipe'],
-  });
-  const input = JSON.parse(output);
-  const summary = summarizeReleaseStatus(input);
+  const summary = projectReleaseStatus('nightly', producerEnv);
 
   assert.deepEqual(summary.run, {
     id: 12345,
@@ -154,13 +138,10 @@ test('nightly status producer emits the strict summarizer input contract', async
   assert.equal(summary.terminal, 'published');
   assert.ok(summary.surfaces.every((surface) => surface.evidence === 'verified' || surface.evidence === 'accepted'));
 
-  const unverifiedOutput = execFileSync(process.execPath, ['--input-type=module'], {
-    input: producer,
-    encoding: 'utf8',
-    env: { ...producerEnv, IMMUTABLE_VERIFICATION_RESULT: 'failure' },
-    stdio: ['pipe', 'pipe', 'pipe'],
+  const unverifiedSummary = projectReleaseStatus('nightly', {
+    ...producerEnv,
+    IMMUTABLE_VERIFICATION_RESULT: 'failure',
   });
-  const unverifiedSummary = summarizeReleaseStatus(JSON.parse(unverifiedOutput));
   for (const id of [
     'cli-immutable-candidate',
     'hstack-immutable-candidate',

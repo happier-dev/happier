@@ -94,7 +94,8 @@ test('release workflow admits exact candidate notes before branch promotion and 
   const raw = await readFile(join(repoRoot, '.github', 'workflows', 'release.yml'), 'utf8');
   const notesAdmission = raw.slice(raw.indexOf('\n  admit_release_notes:'), raw.indexOf('\n  promote_main:'));
 
-  assert.match(notesAdmission, /admit_release_notes:[\s\S]*?needs:\s*\[plan\][\s\S]*?resolve-authorized-release-source\.mjs[\s\S]*?Project approved release notes from exact candidate[\s\S]*?project-release-notes\.mjs/);
+  assert.match(notesAdmission, /admit_release_notes:[\s\S]*?needs:\s*\[plan\][\s\S]*?ref:\s*\$\{\{ needs\.plan\.outputs\.source_sha \}\}[\s\S]*?Project approved release notes from exact candidate[\s\S]*?project-release-notes\.mjs/);
+  assert.doesNotMatch(notesAdmission, /resolve-authorized-release-source\.mjs/, 'planning already binds and verifies the exact authorized source');
   assert.match(
     raw,
     /promote_main:[\s\S]*?needs:\s*\[plan, release_admission, admit_release_notes\][\s\S]*?source_sha:\s*\$\{\{\s*needs\.admit_release_notes\.outputs\.source_sha\s*\}\}/,
@@ -130,7 +131,7 @@ test('release workflow derives validation, notes, and terminal status from the e
 
   assert.match(
     raw,
-    /resolve_validation_profile:[\s\S]*?profile:\s*\$\{\{\s*steps\.resolve\.outputs\.profile\s*\}\}[\s\S]*?checks_profile:\s*\$\{\{\s*steps\.resolve\.outputs\.checks_profile\s*\}\}[\s\S]*?VALIDATION_PROFILE:\s*\$\{\{\s*inputs\.validation_profile\s*\}\}[\s\S]*?profile\?\.normalRelease[\s\S]*?profile\?\.checksProfile/,
+    /resolve_validation_profile:[\s\S]*?profile:\s*\$\{\{\s*steps\.resolve\.outputs\.profile\s*\}\}[\s\S]*?checks_profile:\s*\$\{\{\s*steps\.resolve\.outputs\.checks_profile\s*\}\}[\s\S]*?VALIDATION_PROFILE:\s*\$\{\{\s*inputs\.validation_profile\s*\}\}[\s\S]*?release-validation\/resolve-profile\.mjs/,
     'the trusted public-contract resolver must own normal profile and checks-profile admission before CI',
   );
   assert.match(
@@ -170,23 +171,12 @@ test('release workflow derives validation, notes, and terminal status from the e
     /deploy_ui:[\s\S]*?expo_update_message:/,
     'promote-ui must derive Expo metadata from the exact approved release ID instead of accepting a second note input',
   );
-  assert.match(releaseStatus, /if:\s*\$\{\{\s*always\(\)\s*\}\}/);
+  assert.match(releaseStatus, /if:\s*\$\{\{\s*always\(\)\s*&&\s*inputs\.dry_run != true\s*\}\}/);
   assert.doesNotMatch(raw, /supported_old_relay_compatibility/);
-  assert.match(releaseStatus, /VALIDATION_PROFILE:\s*\$\{\{\s*needs\.plan\.outputs\.validation_profile\s*\}\}/);
-  assert.match(releaseStatus, /PUBLISH_CLI:\s*\$\{\{\s*needs\.plan\.outputs\.publish_cli\s*\}\}/);
-  assert.match(releaseStatus, /requested\['release-verification'\] = candidateReleaseRequested\s*\n\s*&& normalizeResult\(process\.env\.CANDIDATE_VERIFY_RESULT\) === 'success'/);
-  assert.doesNotMatch(
-    releaseStatus,
-    /requested\['release-verification'\][\s\S]*?VALIDATION_PROFILE === 'stable'/,
-    'preview and stable releases both execute post-promotion verification',
-  );
-  assert.match(releaseStatus, /requestedSurfaces: definitions\.map\(\(\{ id, evidence \}\) => \(\{ id, requested: Boolean\(requested\[id\]\), required: true, evidence \}\)\)/);
-  assert.match(
-    releaseStatus,
-    /verified:\s*product\s*\?\s*Boolean\(process\.env\[versionName\]\)[\s\S]*normalizeResult\(process\.env\.CANDIDATE_VERIFY_RESULT\)\s*===\s*'success'[\s\S]*process\.env\[resumeVerifiedName\]\s*===\s*'true'/,
-    'candidate versions become resumable only after grouped or owner-scoped immutable-candidate verification succeeds',
-  );
-  assert.match(releaseStatus, /summarize-release-status\.mjs/);
+  assert.match(releaseStatus, /REQUEST_CLI:\s*\$\{\{\s*needs\.plan\.outputs\.publish_cli_binaries_needed == 'true'\s*\}\}/);
+  assert.match(releaseStatus, /IMMUTABLE_VERIFICATION_RESULT:\s*\$\{\{\s*needs\.verify_release_candidates\.result\s*\}\}/);
+  assert.match(releaseStatus, /CLI_RESUME_VERIFIED:\s*\$\{\{\s*needs\.verify_resume_candidates\.outputs\.cli_verified\s*\}\}/);
+  assert.match(releaseStatus, /project-release-status\.mjs/);
   assert.match(releaseStatus, /GITHUB_STEP_SUMMARY/);
   assert.match(releaseStatus, /actions\/upload-artifact@[\s\S]*?name:\s*happier-release-status/);
 });
@@ -204,6 +194,7 @@ test('server releases admit the focused MySQL contract and stable platform evide
 
   assert.equal(mysqlGate.uses, './.github/workflows/extended-db-tests.yml');
   assert.match(mysqlGate.if, /needs\.plan\.outputs\.publish_server_runtime_needed == 'true'/);
+  assert.match(mysqlGate.if, /needs\.plan\.outputs\.risk_mysql_contract == 'true'/);
   assert.doesNotMatch(mysqlGate.if, /checks_profile/);
   assert.deepEqual(mysqlGate.with, {
     run_e2e_postgres: false,
@@ -213,17 +204,19 @@ test('server releases admit the focused MySQL contract and stable platform evide
   });
 
   assert.equal(platformGate.uses, './.github/workflows/tests.yml');
-  assert.match(platformGate.if, /needs\.plan\.outputs\.checks_profile == 'full'/);
+  assert.match(platformGate.if, /needs\.plan\.outputs\.risk_platform_services == 'true'/);
   assert.equal(platformGate.with.run_self_host_systemd, true);
   assert.equal(platformGate.with.run_self_host_launchd, true);
   assert.equal(platformGate.with.run_self_host_schtasks, true);
   assert.equal(platformGate.with.run_self_host_daemon, true);
 
-  assert.deepEqual(admission.needs, ['plan', 'mysql_db_contract', 'platform_service_validation']);
+  assert.deepEqual(admission.needs, ['plan', 'mysql_db_contract', 'platform_service_validation', 'trust_root_validation']);
   const admissionScript = admission.steps.map((step) => step.run ?? '').join('\n');
-  assert.match(admissionScript, /production releases require checks_profile=full/);
-  assert.match(admissionScript, /server runtime publication requires a successful MySQL gate/);
-  assert.match(admissionScript, /server or CLI publication requires successful platform gates/);
+  assert.match(admissionScript, /admit-release\.mjs/);
+  const admissionStep = admission.steps.find((step) => String(step.name).includes('risk-selected publication admission'));
+  assert.equal(admissionStep.env.RISK_MYSQL_CONTRACT, '${{ needs.plan.outputs.risk_mysql_contract }}');
+  assert.equal(admissionStep.env.RISK_PLATFORM_SERVICES, '${{ needs.plan.outputs.risk_platform_services }}');
+  assert.equal(admissionStep.env.RISK_TRUST_ROOTS, '${{ needs.plan.outputs.risk_trust_roots }}');
 
   for (const jobName of ['promote_preview', 'promote_main']) {
     assert.ok(release.jobs[jobName].needs.includes('release_admission'));

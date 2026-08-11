@@ -5,6 +5,8 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parse } from 'yaml';
 
+import { validateReleaseDispatch } from '../pipeline/release/validate-release-dispatch.mjs';
+
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, '..', '..');
 
@@ -33,8 +35,20 @@ test('release workflow only promotes and publishes the exact prepared candidate 
   );
   assert.doesNotMatch(raw, /^  bump_versions_dev:/m);
   assert.doesNotMatch(raw, /needs\.bump_versions_dev/);
-  assert.match(raw, /if \[ "\$env_name" = "preview" \]; then[\s\S]*?if \[ "\$confirm" != "release dev to preview" \]; then/);
-  assert.doesNotMatch(raw, /\[ "\$confirm" != "release dev to preview" \] && \[ "\$confirm" != "release dev to main" \]/);
+  assert.match(raw, /node scripts\/pipeline\/release\/validate-release-dispatch\.mjs/);
+  const previewDispatch = {
+    authorizedPromotionSourceSha: 'a'.repeat(40),
+    releaseNotesId: 'release-1',
+    bump: 'none',
+    deployTargets: 'ui,server',
+    environment: 'preview',
+    dryRun: false,
+  };
+  assert.equal(validateReleaseDispatch({ ...previewDispatch, confirm: 'release dev to preview' }).mode, 'preview_release');
+  assert.throws(
+    () => validateReleaseDispatch({ ...previewDispatch, confirm: 'release dev to main' }),
+    /Confirmation mismatch for preview releases/u,
+  );
 
   assert.match(raw, /source_ref:\s*\$\{\{ needs\.prepare_release_candidate\.outputs\.source_sha \}\}/);
   assert.match(raw, /publish_npm:[\s\S]*?source_ref:\s*\$\{\{ needs\.prepare_release_candidate\.outputs\.source_sha \}\}/);

@@ -76,13 +76,12 @@ test('nightly resume pins the prior source, reuses completed immutable candidate
     assert.equal(parsed.jobs[jobName].with.resume_version, `\${{ needs.resolve_resume.outputs.${output} }}`);
     assert.equal(parsed.jobs[jobName].with.authorized_sha, '${{ needs.prepare_release_candidate.outputs.source_sha }}');
   }
-  const statusSource = parsed.jobs.release_status.steps.map((step) => step.run ?? '').join('\n');
-  assert.match(statusSource, /CLI_CANDIDATE_VERSION/);
-  assert.match(statusSource, /candidateItem\('cli-immutable-candidate',\s*'cli'/);
-  assert.match(statusSource, /candidateItem\('hstack-immutable-candidate',\s*'stack'/);
-  assert.match(statusSource, /CLI_RESUME_VERIFIED/);
-  assert.match(statusSource, /IMMUTABLE_VERIFICATION_RESULT[\s\S]*process\.env\[resumeVerifiedName\] === 'true'/);
   const statusProjection = parsed.jobs.release_status.steps.find((step) => String(step.name).includes('Project nightly release status'));
+  assert.match(statusProjection.run, /project-release-status\.mjs/);
+  assert.equal(statusProjection.env.CLI_CANDIDATE_VERSION, '${{ needs.cli.outputs.version }}');
+  assert.equal(statusProjection.env.STACK_CANDIDATE_VERSION, '${{ needs.hstack.outputs.version }}');
+  assert.equal(statusProjection.env.CLI_RESUME_VERIFIED, '${{ needs.verify_resume_candidates.outputs.cli_verified }}');
+  assert.equal(statusProjection.env.IMMUTABLE_VERIFICATION_RESULT, '${{ needs.release_verify.result }}');
   assert.equal(statusProjection.env.SOURCE_SHA, "${{ needs.prepare_release_candidate.outputs.source_sha || 'unavailable' }}");
 });
 
@@ -104,11 +103,11 @@ test('full release resume binds the prior run to the same operation and authoriz
     assert.ok(needs(parsed.jobs[jobName]).includes('resolve_resume'));
     assert.equal(parsed.jobs[jobName].with.resume_version, `\${{ needs.resolve_resume.outputs.${output} }}`);
   }
-  const statusSource = parsed.jobs.release_status.steps.map((step) => step.run ?? '').join('\n');
-  assert.match(statusSource, /CLI_VERSION/);
-  assert.match(statusSource, /product:\s*'cli'/);
-  assert.match(statusSource, /CLI_RESUME_VERIFIED/);
-  assert.match(statusSource, /CANDIDATE_VERIFY_RESULT[\s\S]*process\.env\[resumeVerifiedName\] === 'true'/);
+  const statusProjection = parsed.jobs.release_status.steps.find((step) => String(step.name).includes('Project release status'));
+  assert.match(statusProjection.run, /project-release-status\.mjs/);
+  assert.equal(statusProjection.env.CLI_VERSION, '${{ needs.publish_cli_binaries.outputs.version }}');
+  assert.equal(statusProjection.env.CLI_RESUME_VERIFIED, '${{ needs.verify_resume_candidates.outputs.cli_verified }}');
+  assert.equal(statusProjection.env.IMMUTABLE_VERIFICATION_RESULT, '${{ needs.verify_release_candidates.result }}');
 });
 
 test('failed grouped verification independently certifies each successful immutable sibling for resume', () => {

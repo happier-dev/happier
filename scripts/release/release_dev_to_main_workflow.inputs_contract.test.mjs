@@ -61,14 +61,15 @@ test('release workflow resolves the public profile internally before CI and plan
   assert.equal(resolver.outputs.profile, '${{ steps.resolve.outputs.profile }}');
   assert.equal(resolver.outputs.checks_profile, '${{ steps.resolve.outputs.checks_profile }}');
   assert.equal(resolverStep?.env?.VALIDATION_PROFILE, '${{ inputs.validation_profile }}');
-  assert.match(resolverStep?.run ?? '', /profile\?\.normalRelease/);
-  assert.match(resolverStep?.run ?? '', /profile\?\.checksProfile/);
+  assert.match(resolverStep?.run ?? '', /release-validation\/resolve-profile\.mjs/);
   assert.doesNotMatch(resolverStep?.run ?? '', /CHECKS_PROFILE/);
 
   assert.deepEqual(parsed.jobs.ci.needs, ['resolve_validation_profile']);
   assert.equal(parsed.jobs.ci.if, "${{ needs.resolve_validation_profile.result == 'success' }}");
-  assert.equal(parsed.jobs.ci.with.run_e2e_core, "${{ needs.resolve_validation_profile.outputs.checks_profile == 'full' }}");
-  assert.equal(parsed.jobs.ci.with.run_e2e_core_slow, undefined);
+  assert.equal(parsed.jobs.ci.permissions.actions, 'read');
+  assert.match(raw, /node scripts\/pipeline\/release\/validate-release-dispatch\.mjs/);
+  assert.match(raw, /node scripts\/pipeline\/release\/verify-existing-ci\.mjs/);
+  assert.equal(parsed.jobs.ci.with, undefined, 'release admission must reuse exact-SHA push CI instead of rerunning a second suite');
   assert.equal(parsed.jobs.supported_old_relay_compatibility, undefined);
   assert.ok(parsed.jobs.plan.needs.includes('resolve_validation_profile'));
   assert.equal(parsed.jobs.plan.outputs.validation_profile, '${{ needs.resolve_validation_profile.outputs.profile }}');
@@ -80,7 +81,7 @@ test('release workflow derives promote mode from confirm and uses compact defaul
   const { raw } = await loadWorkflow();
 
   assert.match(raw, /CONFIRM:\s*\$\{\{ inputs\.confirm \}\}/, 'confirm should cross the workflow boundary as environment data');
-  assert.match(raw, /confirm="\$CONFIRM"/, 'confirm should be read as the only promotion selector');
+  assert.match(raw, /node scripts\/pipeline\/release\/validate-release-dispatch\.mjs/, 'the canonical dispatch validator should own promotion selection');
   assert.doesNotMatch(raw, /confirm="\$\{\{ inputs\.confirm \}\}"/, 'workflow input must not be interpolated into shell source');
   assert.doesNotMatch(raw, /inputs\.promote_mode/, 'workflow should not read promote_mode input anymore');
 
