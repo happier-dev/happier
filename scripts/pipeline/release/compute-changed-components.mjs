@@ -3,6 +3,7 @@
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import { classifyChangedPaths, deriveVersionedComponentChanges } from './component-registry.mjs';
+import { classifyReleaseValidationRisks } from '../release-validation/release-risk.mjs';
 
 function fail(msg) {
   process.stderr.write(`[compute-changed-components] ${msg}\n`);
@@ -56,6 +57,7 @@ function main() {
 
   const classified = classifyChangedPaths(paths);
   const versioned = deriveVersionedComponentChanges(classified);
+  const risks = classifyReleaseValidationRisks(paths);
 
   // Preserve the workflow's existing outputs naming.
   const outputs = {
@@ -66,6 +68,13 @@ function main() {
     changed_docs: String(Boolean(classified.docs)),
     changed_shared: String(Boolean(classified.shared)),
     changed_stack: String(Boolean(versioned.stack)),
+    compatibility_analysis_required: String(risks.compatibilityAnalysisRequired),
+    risk_cli_upgrade: String(risks.cliUpgrade),
+    risk_session_continuity: String(risks.sessionContinuity),
+    risk_relay_upgrade: String(risks.relayUpgrade),
+    risk_mysql_contract: String(risks.mysqlContract),
+    risk_platform_services: String(risks.platformServices),
+    risk_trust_roots: String(risks.trustRoots),
     commit_count: String(commitCount),
   };
 

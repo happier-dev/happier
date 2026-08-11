@@ -150,7 +150,12 @@ export function resolveReleaseValidationProfile(raw) {
  * Resolve automatic suites reachable for one exact candidate. Profiles own
  * eligibility; this function is the only candidate-applicability owner.
  * @param {string} profileId
- * @param {{ hasCliCandidate: boolean; hasServerCandidate: boolean; hasPublishedRelayPredecessor: boolean }} context
+ * @param {{
+ *   hasCliCandidate: boolean;
+ *   hasServerCandidate: boolean;
+ *   hasPublishedRelayPredecessor: boolean;
+ *   risks: { cliUpgrade: boolean; sessionContinuity: boolean; relayUpgrade: boolean };
+ * }} context
  */
 export function resolveAutomaticReleaseValidationExecution(profileId, context) {
   const profile = RELEASE_VALIDATION_PROFILES.find((candidate) => candidate.id === String(profileId ?? '').trim());
@@ -158,9 +163,11 @@ export function resolveAutomaticReleaseValidationExecution(profileId, context) {
   const applicable = {
     'artifact-verify': context.hasCliCandidate,
     'binary-smoke': context.hasCliCandidate || context.hasServerCandidate,
-    'session-continuity': context.hasServerCandidate,
-    'cli-update': context.hasCliCandidate,
-    'docker-release-assets': context.hasServerCandidate && context.hasPublishedRelayPredecessor,
+    'session-continuity': context.hasServerCandidate && context.risks.sessionContinuity,
+    'cli-update': context.hasCliCandidate && context.risks.cliUpgrade,
+    'docker-release-assets': context.hasServerCandidate
+      && context.hasPublishedRelayPredecessor
+      && context.risks.relayUpgrade,
   };
   const selectedSuiteIds = [];
   const skippedSuiteIds = [];

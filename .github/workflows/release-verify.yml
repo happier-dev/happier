@@ -20,6 +20,21 @@ on:
         options:
           - integrated
           - stable
+      risk_cli_upgrade:
+        description: "Risk — changed daemon/update seam requires released-to-candidate continuity"
+        required: false
+        default: false
+        type: boolean
+      risk_session_continuity:
+        description: "Risk — changed runtime/session seam requires restart continuity"
+        required: false
+        default: false
+        type: boolean
+      risk_relay_upgrade:
+        description: "Risk — changed relay persistence/startup seam requires container upgrade"
+        required: false
+        default: false
+        type: boolean
       run_installers_smoke:
         description: "Verify — Installers smoke (linux/macos/windows)"
         required: true
@@ -79,6 +94,18 @@ on:
         required: false
         default: ''
         type: string
+      risk_cli_upgrade:
+        required: false
+        default: false
+        type: boolean
+      risk_session_continuity:
+        required: false
+        default: false
+        type: boolean
+      risk_relay_upgrade:
+        required: false
+        default: false
+        type: boolean
       candidate_source_sha:
         required: false
         default: ''
@@ -287,50 +314,30 @@ jobs:
           CANDIDATE_CLI_VERSION: ${{ inputs.candidate_cli_version }}
           CANDIDATE_SERVER_VERSION: ${{ inputs.candidate_server_version }}
           RELEASE_CHANNEL: ${{ inputs.channel }}
+          RISK_CLI_UPGRADE: ${{ inputs.risk_cli_upgrade }}
+          RISK_SESSION_CONTINUITY: ${{ inputs.risk_session_continuity }}
+          RISK_RELAY_UPGRADE: ${{ inputs.risk_relay_upgrade }}
         run: |
           set -euo pipefail
-          node "$GITHUB_WORKSPACE/.release-control/scripts/pipeline/run.mjs" release-contract | node --input-type=module -e '
-            import { pathToFileURL } from "node:url";
-            let raw = "";
-            for await (const chunk of process.stdin) raw += chunk;
-            const legacy = Object.fromEntries(Object.entries({
-              run_installers_smoke: process.env.LEGACY_RUN_INSTALLERS_SMOKE,
-              run_binary_smoke: process.env.LEGACY_RUN_BINARY_SMOKE,
-              run_cli_update_continuity: process.env.LEGACY_RUN_CLI_UPDATE_CONTINUITY,
-              run_daemon_continuity: process.env.LEGACY_RUN_DAEMON_CONTINUITY,
-              run_session_continuity: process.env.LEGACY_RUN_SESSION_CONTINUITY,
-              run_release_assets_docker: process.env.LEGACY_RUN_RELEASE_ASSETS_DOCKER,
-              run_self_host_systemd: process.env.LEGACY_RUN_SELF_HOST_SYSTEMD,
-              run_self_host_launchd: process.env.LEGACY_RUN_SELF_HOST_LAUNCHD,
-              run_self_host_schtasks: process.env.LEGACY_RUN_SELF_HOST_SCHTASKS,
-              run_self_host_daemon: process.env.LEGACY_RUN_SELF_HOST_DAEMON,
-            }));
-            let outputs = legacy;
-            if (process.env.VALIDATION_PROFILE) {
-              const contract = JSON.parse(raw);
-              const profile = contract.validationProfiles?.find((entry) => entry.id === process.env.VALIDATION_PROFILE);
-              if (contract.kind !== "happier.public-release-contract.v1" || contract.schemaVersion !== 1 || !profile?.normalRelease) throw new Error(`Unsupported normal release validation profile: ${process.env.VALIDATION_PROFILE}`);
-              const hasCliCandidate = Boolean(process.env.CANDIDATE_CLI_VERSION);
-              const hasServerCandidate = Boolean(process.env.CANDIDATE_SERVER_VERSION);
-              const hasPublishedRelayPredecessor = process.env.RELEASE_CHANNEL === "preview" || process.env.RELEASE_CHANNEL === "production";
-              const registry = await import(pathToFileURL(`${process.cwd()}/.release-control/scripts/pipeline/release-validation/registry.mjs`).href);
-              const execution = registry.resolveAutomaticReleaseValidationExecution(profile.id, { hasCliCandidate, hasServerCandidate, hasPublishedRelayPredecessor });
-              const selected = new Set(execution.selectedSuiteIds);
-              outputs = {
-                run_installers_smoke: "false",
-                run_binary_smoke: String(selected.has("binary-smoke")),
-                run_cli_update_continuity: String(selected.has("cli-update")),
-                run_daemon_continuity: "false",
-                run_session_continuity: String(selected.has("session-continuity")),
-                run_release_assets_docker: String(selected.has("docker-release-assets")),
-                run_self_host_systemd: "false",
-                run_self_host_launchd: "false",
-                run_self_host_schtasks: "false",
-                run_self_host_daemon: "false",
-              };
-            }
-            for (const [key, value] of Object.entries(outputs)) console.log(`${key}=${value}`);
-          ' >> "$GITHUB_OUTPUT"
+          node "$GITHUB_WORKSPACE/.release-control/scripts/pipeline/release-validation/resolve-validation-plan.mjs" \
+            --profile "$VALIDATION_PROFILE" \
+            --has-cli-candidate "$([[ -n "$CANDIDATE_CLI_VERSION" ]] && echo true || echo false)" \
+            --has-server-candidate "$([[ -n "$CANDIDATE_SERVER_VERSION" ]] && echo true || echo false)" \
+            --has-published-relay-predecessor "$([[ "$RELEASE_CHANNEL" == preview || "$RELEASE_CHANNEL" == production ]] && echo true || echo false)" \
+            --risk-cli-upgrade "$RISK_CLI_UPGRADE" \
+            --risk-session-continuity "$RISK_SESSION_CONTINUITY" \
+            --risk-relay-upgrade "$RISK_RELAY_UPGRADE" \
+            --legacy-run-installers-smoke "$LEGACY_RUN_INSTALLERS_SMOKE" \
+            --legacy-run-binary-smoke "$LEGACY_RUN_BINARY_SMOKE" \
+            --legacy-run-cli-update-continuity "$LEGACY_RUN_CLI_UPDATE_CONTINUITY" \
+            --legacy-run-daemon-continuity "$LEGACY_RUN_DAEMON_CONTINUITY" \
+            --legacy-run-session-continuity "$LEGACY_RUN_SESSION_CONTINUITY" \
+            --legacy-run-release-assets-docker "$LEGACY_RUN_RELEASE_ASSETS_DOCKER" \
+            --legacy-run-self-host-systemd "$LEGACY_RUN_SELF_HOST_SYSTEMD" \
+            --legacy-run-self-host-launchd "$LEGACY_RUN_SELF_HOST_LAUNCHD" \
+            --legacy-run-self-host-schtasks "$LEGACY_RUN_SELF_HOST_SCHTASKS" \
+            --legacy-run-self-host-daemon "$LEGACY_RUN_SELF_HOST_DAEMON" \
+            --github-output "$GITHUB_OUTPUT"
 
   verify:
     name: Verify (tests.yml)
