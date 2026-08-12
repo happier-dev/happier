@@ -9814,6 +9814,7 @@
                               "type": "string",
                               "enum": [
                                 "openai-models",
+                                "anthropic-models",
                                 "ollama-tags",
                                 "lmstudio-native-models"
                               ]
@@ -9998,6 +9999,7 @@
                               "type": "string",
                               "enum": [
                                 "openai-models",
+                                "anthropic-models",
                                 "ollama-tags",
                                 "lmstudio-native-models"
                               ]
@@ -10139,6 +10141,7 @@
                         "type": "string",
                         "enum": [
                           "openai-models",
+                          "anthropic-models",
                           "ollama-tags",
                           "lmstudio-native-models"
                         ]

@@ -2183,3 +2183,130 @@ describe('session metadata privacy envelopes v1', () => {
     })).toEqual(ownerMetadata);
   });
 });
+
+describe('producer-declared option override rules survive owner metadata projection', () => {
+  const REASONING_OPTION = {
+    id: 'reasoning_effort',
+    name: 'Thinking',
+    type: 'select',
+    currentValue: 'high',
+    options: [
+      { value: 'high', name: 'High' },
+      { value: 'xhigh', name: 'XHigh' },
+    ],
+  } as const;
+  const ULTRACODE_OPTION = {
+    id: 'ultracode',
+    name: 'Ultracode',
+    type: 'boolean',
+    currentValue: 'false',
+    overridesWhenOn: { optionIds: ['reasoning_effort'], forcedValue: 'xhigh' },
+  } as const;
+
+  it('accepts and preserves overridesWhenOn on model-catalog options', () => {
+    const created = createSessionOwnerMetadataV1({
+      metadata: {
+        sessionModelsV1: {
+          v: 1,
+          agentId: 'claude',
+          updatedAt: 1,
+          currentModelId: 'claude-opus-5',
+          availableModels: [{
+            id: 'claude-opus-5',
+            name: 'Opus 5',
+            modelOptions: [REASONING_OPTION, ULTRACODE_OPTION],
+          }],
+        },
+      },
+    });
+
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+    expect(
+      created.ownerMetadata.runtime?.sessionModelsV1
+        ?.availableModels[0]?.modelOptions?.[1]?.overridesWhenOn,
+    ).toEqual({ optionIds: ['reasoning_effort'], forcedValue: 'xhigh' });
+  });
+
+  it('accepts and preserves overridesWhenOn on config-catalog options', () => {
+    const created = createSessionOwnerMetadataV1({
+      metadata: {
+        sessionConfigOptionsV1: {
+          v: 1,
+          agentId: 'claude',
+          updatedAt: 1,
+          configOptions: [REASONING_OPTION, ULTRACODE_OPTION],
+        },
+      },
+    });
+
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+    expect(created.ownerMetadata.runtime?.sessionConfigOptionsV1?.configOptions[1]?.overridesWhenOn)
+      .toEqual({ optionIds: ['reasoning_effort'], forcedValue: 'xhigh' });
+  });
+
+  it('still rejects a structurally invalid override rule rather than silently dropping it', () => {
+    expect(createSessionOwnerMetadataV1({
+      metadata: {
+        sessionConfigOptionsV1: {
+          v: 1,
+          agentId: 'claude',
+          updatedAt: 1,
+          configOptions: [{ ...ULTRACODE_OPTION, overridesWhenOn: { optionIds: [] } }],
+        },
+      },
+    })).toEqual({
+      ok: false,
+      error: 'unsupported_owner_metadata',
+      unsupportedFields: [
+        'runtime.sessionConfigOptionsV1.configOptions.0.overridesWhenOn.optionIds',
+      ],
+    });
+  });
+});
+
+describe('extended-context model ids survive owner metadata projection', () => {
+  it('accepts absence from an older producer and preserves the optional descriptor fact when present', () => {
+    const created = createSessionOwnerMetadataV1({
+      metadata: {
+        sessionModelsV1: {
+          v: 1,
+          agentId: 'claude',
+          updatedAt: 1,
+          currentModelId: 'claude-sonnet-4-6',
+          availableModels: [
+            { id: 'claude-haiku-4-5', name: 'Haiku 4.5' },
+            {
+              id: 'claude-sonnet-4-6',
+              name: 'Sonnet 4.6',
+              extendedContextModelId: 'claude-sonnet-4-6[1m]',
+            },
+          ],
+        },
+      },
+    });
+
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+    expect(created.ownerMetadata.runtime?.sessionModelsV1?.availableModels).toEqual([
+      { id: 'claude-haiku-4-5', name: 'Haiku 4.5' },
+      {
+        id: 'claude-sonnet-4-6',
+        name: 'Sonnet 4.6',
+        extendedContextModelId: 'claude-sonnet-4-6[1m]',
+      },
+    ]);
+    expect(projectSessionMetadataAgentVocabularyWriteCompatibilityV1({
+      sessionModelsV1: created.ownerMetadata.runtime?.sessionModelsV1,
+    })).toMatchObject({
+      sessionModelsV1: {
+        provider: 'claude',
+        availableModels: [
+          { id: 'claude-haiku-4-5', name: 'Haiku 4.5' },
+          { extendedContextModelId: 'claude-sonnet-4-6[1m]' },
+        ],
+      },
+    });
+  });
+});

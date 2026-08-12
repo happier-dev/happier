@@ -23,26 +23,16 @@ import { withPreflightSessionControlsProbeEnvironment } from './preflightSession
 import { spawn } from 'node:child_process';
 import { z } from 'zod';
 
-type ProbedAgentModelOptionValue = string | number | boolean | null;
+type ProbedAgentModelOptionValue = ProbedCatalogOptionValue;
 
-type ProbedAgentModelOption = Readonly<{
-  id: string;
-  name: string;
-  description?: string;
-  type: string;
-  currentValue: ProbedAgentModelOptionValue;
-  options?: ReadonlyArray<Readonly<{
-    value: ProbedAgentModelOptionValue;
-    name: string;
-    description?: string;
-  }>>;
-}>;
+type ProbedAgentModelOption = ProbedCatalogOption;
 
 export type ProbedAgentModel = Readonly<{
   id: string;
   name: string;
   description?: string;
   contextWindowTokens?: number;
+  extendedContextModelId?: string;
   modelOptions?: ReadonlyArray<ProbedAgentModelOption>;
 }>;
 
@@ -63,25 +53,18 @@ const agentModelsProbeCache = new AsyncTtlCache<ProbedAgentModelsResult>({
 
 const ProbeNonEmptyStringSchema = z.string().trim().min(1);
 const ProbeDescriptionSchema = z.string();
-const ProbeOptionValueSchema = z.union([z.string(), z.number(), z.boolean(), z.null()]);
 const ProbeModelOptionChoiceInputSchema = z.object({
   value: z.unknown().optional(),
   name: ProbeNonEmptyStringSchema,
   description: ProbeDescriptionSchema.optional(),
-});
-const ProbeModelOptionInputSchema = z.object({
-  id: ProbeNonEmptyStringSchema,
-  name: ProbeNonEmptyStringSchema,
-  description: ProbeDescriptionSchema.optional(),
-  type: ProbeNonEmptyStringSchema,
-  currentValue: z.unknown().optional(),
-  options: z.array(z.unknown()).optional(),
 });
 const ProbeDynamicModelInputSchema = z.object({
   id: ProbeNonEmptyStringSchema.optional(),
   modelId: ProbeNonEmptyStringSchema.optional(),
   name: ProbeNonEmptyStringSchema,
   description: ProbeDescriptionSchema.optional(),
+  contextWindowTokens: z.number().int().positive().max(100_000_000).optional(),
+  extendedContextModelId: ProbeNonEmptyStringSchema.optional(),
   modelOptions: z.array(z.unknown()).optional(),
 });
 const ProbeConfigOptionCandidateSchema = z.object({
@@ -130,6 +113,9 @@ function buildStatic(agentId: CatalogAgentLookupId): ProbedAgentModelsResult {
         name: model.name,
         ...(typeof model.description === 'string' ? { description: model.description } : {}),
         ...(typeof model.contextWindowTokens === 'number' ? { contextWindowTokens: model.contextWindowTokens } : {}),
+        ...(typeof model.extendedContextModelId === 'string'
+          ? { extendedContextModelId: model.extendedContextModelId }
+          : {}),
         ...(Array.isArray(model.modelOptions) && model.modelOptions.length > 0 ? { modelOptions: model.modelOptions } : {}),
       })),
     ]
@@ -207,13 +193,19 @@ function normalizeProbeModel(modelRaw: unknown): ProbedAgentModel | null {
   if (!id) return null;
 
   const normalizedOptions = parsed.data.modelOptions
-    ?.map((option) => normalizeProbeModelOption(option))
+    ?.map((option) => normalizeProbedCatalogOption(option))
     .filter((option): option is NonNullable<typeof option> => option !== null);
 
   return {
     id,
     name: parsed.data.name,
     ...(parsed.data.description ? { description: parsed.data.description } : {}),
+    ...(parsed.data.contextWindowTokens === undefined
+      ? {}
+      : { contextWindowTokens: parsed.data.contextWindowTokens }),
+    ...(parsed.data.extendedContextModelId === undefined
+      ? {}
+      : { extendedContextModelId: parsed.data.extendedContextModelId }),
     ...(normalizedOptions && normalizedOptions.length > 0 ? { modelOptions: normalizedOptions } : {}),
   };
 }

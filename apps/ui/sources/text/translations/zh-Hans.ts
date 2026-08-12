@@ -6695,6 +6695,8 @@ export const zhHans = {
       selectedForResume: "恢复此会话时将使用所选模型。",
       configureInCli: "在 CLI 设置中配置模型",
       unavailable: "此机器上此提供商的模型发现不可用。",
+      extendedContextToggleLabel: "100 万令牌上下文",
+      extendedContextToggleDescription: "为此模型使用扩展的 100 万令牌上下文窗口。",
       customDescription: "使用列表中未显示的模型 id。",
       customPromptBody: "输入模型 id",
       customPlaceholder: "例如 claude-3.5-sonnet",

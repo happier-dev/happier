@@ -394,6 +394,44 @@ describe('createClaudeUnifiedTerminalTurnOperations', () => {
     }
   });
 
+  it.each([
+    { label: 'create', launchIntent: { kind: 'new_session' as const } },
+    {
+      label: 'resume',
+      launchIntent: { kind: 'resume_native' as const, providerSessionId: 'provider-session-resume' },
+    },
+  ])('omits unsupported effort controls from the first Claude terminal launch for $label', async ({ launchIntent }) => {
+    const terminalHost = createTerminalHostFixture();
+    const events = createEventsFixture();
+    const ctx = createPluginContextFixture(terminalHost.service, events.service);
+    const runtime = expectRuntimeEnvelope(createClaudeUnifiedTerminalTurnOperations({
+      ctx,
+      directory: '/tmp/claude-project',
+      happierSessionId: 'happy-session-no-effort',
+      hostPreference: 'zellij',
+      launchEnv: {},
+      supportsEffort: false,
+      initialModelId: 'claude-opus-4-8',
+      initialEffort: 'xhigh',
+      initialUltracode: true,
+      permissionMode: 'default',
+      launchIntent,
+    })).operations;
+
+    try {
+      await expect(runtime.updateSessionRuntimeConfig({
+        configOption: { id: 'reasoning_effort', value: 'xhigh' },
+      })).resolves.toMatchObject({ status: 'unsupported' });
+      await runtime.startProviderSession();
+
+      const launch = terminalHost.service.createOrAttachHost.mock.calls[0]?.[0].launch;
+      expect(launch.args).not.toContain('--effort');
+      expect(launch.args.join(' ')).not.toContain('ultracode');
+    } finally {
+      await runtime.resetOrDisposeRuntime().catch(() => undefined);
+    }
+  });
+
   it('launches with the Claude yolo allow flag without bypass permissions by default', async () => {
     const terminalHost = createTerminalHostFixture();
     const events = createEventsFixture();

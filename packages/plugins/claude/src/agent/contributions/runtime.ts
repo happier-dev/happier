@@ -34,14 +34,12 @@ import {
   resolveClaudeCliSessionOptions,
 } from '../cli/command.js';
 import { resolveClaudeSessionRuntimePreferences } from '../preferences/session.js';
-import { probeClaudePreflightModelsRaw } from '../preflight/models.js';
 import { mapClaudeProviderFailureToUsageDetails } from '../runtime/issues/runtimeIssues.js';
 import { resolveClaudeCodingPromptBehaviorBlocks } from '../prompting/behavior.js';
 import { createClaudePromptSubmitVerificationPolicy } from '../runtime/terminal/unified/promptSubmitVerification.js';
 import { claudeSubscriptionQuotaFetcherDescriptor } from '../auth/services/quota/subscriptionFetcher.js';
 import {
   buildClaudeRuntimeLocalHandoffMetadata,
-  type ClaudeRuntimeLocalHandoffSession,
 } from '../surfaces/sessions/handoff/runtimeLocalMetadata.js';
 import { prepareClaudeQualifiedPurposeRoot } from '../auth/services/qualifiedPurposeRoot.js';
 import { claudeHandoffSurface } from '../surfaces/sessions/handoff/providerOps.js';
@@ -464,10 +462,6 @@ export const CLAUDE_AGENT_RUNTIME_CONTRIBUTION = Object.freeze({
     transformHeadlessTmuxArgv: ensureClaudeHeadlessTmuxRemoteStartingModeArgs,
     promptSubmitVerification: createClaudePromptSubmitVerificationPolicy(),
     retainsSessionHookArtifacts: true,
-  },
-  preflightSessionControls: {
-    failureCacheStrategy: 'cooldown',
-    probeModelsRaw: probeClaudePreflightModelsRaw,
   },
   cliSessionCommand: {
     ...claudeCliSessionCommandConfig,

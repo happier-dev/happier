@@ -23,14 +23,29 @@ describe('custom provider authoring state', () => {
         });
     });
 
-    it('keeps Anthropic-compatible providers manual-only and uses x-api-key', () => {
+    it('probes Anthropic-compatible providers with x-api-key by default', () => {
+        const draft = createCustomProviderDraft('anthropic');
         const template = buildCustomProviderTemplate({
-            ...createCustomProviderDraft('anthropic'),
+            ...draft,
             name: 'Anthropic gateway',
             baseUrl: 'https://gateway.example.test/anthropic',
         });
 
-        expect(template.catalog).toEqual({ source: 'manual', manualModelPolicy: 'allowed' });
+        expect(draft.endpoints.find((endpoint) => endpoint.protocol === 'anthropic')).toMatchObject({
+            probePathsText: '/v1/models?limit=1000',
+            probeParser: 'anthropic-models',
+            publicHeadersText: 'anthropic-version: 2023-06-01',
+        });
+
+        expect(template.catalog).toEqual({
+            source: 'probe',
+            manualModelPolicy: 'allowed',
+            probes: [{
+                endpointTemplateId: 'anthropic',
+                path: '/v1/models?limit=1000',
+                parser: 'anthropic-models',
+            }],
+        });
         expect(template.credential?.transports[0]?.destination).toEqual({
             kind: 'httpHeader',
             name: 'x-api-key',
@@ -58,7 +73,8 @@ describe('custom provider authoring state', () => {
             name: 'Keep me',
             baseUrl: 'https://gateway.example.test',
             protocol: 'anthropic',
-            catalog: 'manual',
+            catalog: 'probe',
+            modelsPath: '/v1/models?limit=1000',
             credentialStyle: 'x-api-key',
         });
     });

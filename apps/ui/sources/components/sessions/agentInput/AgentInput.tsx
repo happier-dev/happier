@@ -43,7 +43,13 @@ import {
     supportsFreeformModelSelectionForSession,
     type ModelOption,
 } from '@/sync/domains/models/modelOptions';
+import {
+    buildExtendedContextModelControl,
+    EXTENDED_CONTEXT_MODEL_TOGGLE_OPTION_ID,
+    resolveExtendedContextModelIdForToggle,
+} from '@/sync/domains/models/extendedContextModelControl';
 import { describeEffectiveModelMode } from '@/sync/domains/models/describeEffectiveModelMode';
+import type { CurrentSessionRunnerProcessIdentity } from '@/sync/domains/models/resolveSessionModelSelectionDisposition';
 import {
     ReportedModelStatusIcon,
     reportedModelSummary,
@@ -2070,24 +2076,48 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         props.onAcpConfigOptionChange,
     ]);
 
+    const selectedModelForControls = React.useMemo(() => (
+        findModelOptionForEffectiveModelId(modelOptions, effectiveModelPolicy.selectedModelId)
+    ), [effectiveModelPolicy.selectedModelId, modelOptions]);
+
     const selectedModelOptionControls = React.useMemo(() => {
-        if (!props.onAcpConfigOptionChange) return null;
-        // [1m]-tolerant: a Claude extended-context variant id (`<id>[1m]`) keeps the base
-        // model's controls (Thinking / Ultracode) while the variant is selected.
-        const selectedModel = findModelOptionForEffectiveModelId(modelOptions, effectiveModelPolicy.selectedModelId);
-        if (!selectedModel?.modelOptions?.length) return null;
-        return computeAcpConfigOptionControlsFromOverride({
-            agentId,
-            configOptions: selectedModel.modelOptions,
-            overrides: props.acpConfigOptionOverridesOverride?.overrides ?? null,
-        });
+        const baseControls = props.onAcpConfigOptionChange && selectedModelForControls?.modelOptions?.length
+            ? [...(computeAcpConfigOptionControlsFromOverride({
+                agentId,
+                configOptions: selectedModelForControls.modelOptions,
+                overrides: props.acpConfigOptionOverridesOverride?.overrides ?? null,
+            }) ?? [])]
+            : [];
+        const extendedContextControl = props.onModelModeChange
+            ? buildExtendedContextModelControl({
+                model: selectedModelForControls,
+                effectiveModelId: effectiveModelPolicy.selectedModelId,
+            })
+            : null;
+        if (extendedContextControl) baseControls.push(extendedContextControl);
+        return baseControls.length > 0 ? baseControls : null;
     }, [
         agentId,
         effectiveModelPolicy.selectedModelId,
-        modelOptions,
         props.acpConfigOptionOverridesOverride,
         props.onAcpConfigOptionChange,
+        props.onModelModeChange,
+        selectedModelForControls,
     ]);
+    const handleSelectModelOptionValue = React.useCallback((configId: string, valueId: string) => {
+        if (configId === EXTENDED_CONTEXT_MODEL_TOGGLE_OPTION_ID) {
+            const modelId = resolveExtendedContextModelIdForToggle({
+                model: selectedModelForControls,
+                enabled: valueId === 'true',
+            });
+            if (!modelId) return;
+            hapticsLight();
+            props.onModelModeChange?.(modelId);
+            return;
+        }
+        hapticsLight();
+        props.onAcpConfigOptionChange?.(configId, valueId);
+    }, [props.onAcpConfigOptionChange, props.onModelModeChange, selectedModelForControls]);
     const hasSettingsAcpConfigSection = Boolean(acpConfigOptionControls);
 
     const shouldShowModelOptionDescriptions = React.useMemo(() => {

@@ -124,6 +124,7 @@ describe('applyActiveModelFacts', () => {
           name: 'Provider model',
           description: 'Provider-backed model',
           contextWindowTokens: 200_000,
+          extendedContextModelId: 'provider-model[1m]',
           modelOptions: [{
             id: 'reasoning',
             name: 'Reasoning',
@@ -149,6 +150,7 @@ describe('applyActiveModelFacts', () => {
           name: 'Provider model',
           description: 'Provider-backed model',
           contextWindowTokens: 200_000,
+          extendedContextModelId: 'provider-model[1m]',
           modelOptions: [{
             id: 'reasoning',
             currentValue: 'high',

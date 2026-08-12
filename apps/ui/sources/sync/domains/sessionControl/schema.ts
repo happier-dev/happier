@@ -27,12 +27,14 @@ const SessionModelOptionSchema = z.object({
     type: z.string().trim().min(1),
     currentValue: z.union([z.string(), z.number(), z.boolean(), z.null()]),
     options: z.array(SessionModelOptionChoiceSchema).default([]),
+    overridesWhenOn: SessionOptionOverrideRuleSchema.optional(),
 });
 
 const SessionModelSchema = z.object({
     id: z.string().trim().min(1),
     name: z.string().trim().min(1),
     description: z.string().trim().min(1).optional(),
+    extendedContextModelId: z.string().trim().min(1).optional(),
     modelOptions: z.array(SessionModelOptionSchema).default([]),
 });
 

@@ -328,6 +328,7 @@ test('all bundled first-party Provider contributions have complete current verif
     ['lmstudio', 'happier.provider.lmstudio', 'LMSTUDIO_PROVIDER_CONTRIBUTION'],
     ['cliproxyapi', 'happier.provider.cliproxyapi', 'CLIPROXYAPI_PROVIDER_CONTRIBUTION'],
     ['openai-models', 'happier.provider.openai', 'OPENAI_PROVIDER_CONTRIBUTION'],
+    ['claude', 'happier.agent.claude', 'ANTHROPIC_PROVIDER_CONTRIBUTION'],
   ] as const;
   for (const [pluginPackageId, pluginId, exportName] of specs) {
     const module = await import(`../../../packages/plugins/${pluginPackageId}/src/provider/contribution.ts`);
@@ -337,7 +338,7 @@ test('all bundled first-party Provider contributions have complete current verif
       pluginPackageId,
       pluginId,
       contributions: [module[exportName]],
-      todayUtc: '2026-07-27',
+      todayUtc: '2026-08-10',
     }).length, 1);
   }
 });

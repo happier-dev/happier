@@ -1,12 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import type {
-    PluginExecService,
+    ExecService,
     PluginExecSpawnRequest,
-} from '@happier-dev/plugin-sdk/runtime';
+} from '@happier-dev/plugin-sdk/exec';
 
 import {
-    probeClaudePreflightModels,
-    probeClaudePreflightModelsRaw,
+    probeClaudeSupportsEffortRaw,
 } from './models.js';
 
 function createExecRunFixture(params: Readonly<{
@@ -41,63 +40,18 @@ function createExecRunFixture(params: Readonly<{
         },
         clients: { spawn: async () => { throw new Error('protocol clients should not be used'); } },
         agentCli: { checkReadiness: async () => { throw new Error('agent CLI readiness should not be used'); } },
-    } satisfies PluginExecService;
+    } satisfies ExecService;
     return { exec, runs };
 }
 
-describe('probeClaudePreflightModels', () => {
-    it('returns Claude static model facts with context windows when the CLI supports effort options', async () => {
-        const models = await probeClaudePreflightModels({
-            cwd: '/tmp/project',
-            timeoutMs: 1_500,
-            probeHelpText: async () => '  --effort <level>  Effort level for the current session',
-        });
+describe('probeClaudeSupportsEffortRaw', () => {
+    it('returns one fail-closed installed effort capability fact', async () => {
+        const supported = createExecRunFixture({ stdout: '  --effort <level>' });
+        const unsupported = createExecRunFixture({ stdout: 'Claude Code help' });
+        const failed = createExecRunFixture({ exitCode: 2, stderr: 'bad install' });
 
-        expect(models).toEqual(expect.arrayContaining([
-            expect.objectContaining({
-                id: 'claude-fable-5',
-                contextWindowTokens: 1_000_000,
-                modelOptions: expect.arrayContaining([expect.objectContaining({
-                    id: 'reasoning_effort',
-                    currentValue: 'high',
-                })]),
-            }),
-            expect.objectContaining({
-                id: 'claude-opus-4-8',
-                contextWindowTokens: 1_000_000,
-                modelOptions: expect.arrayContaining([expect.objectContaining({
-                    id: 'reasoning_effort',
-                    currentValue: 'high',
-                })]),
-            }),
-            expect.objectContaining({
-                id: 'claude-opus-4-7',
-                contextWindowTokens: 1_000_000,
-                modelOptions: expect.arrayContaining([expect.objectContaining({
-                    id: 'reasoning_effort',
-                    currentValue: 'xhigh',
-                })]),
-            }),
-        ]));
-    });
-
-    it('returns null when the installed CLI does not expose effort options', async () => {
-        const models = await probeClaudePreflightModels({
-            cwd: '/tmp/project',
-            timeoutMs: 1_500,
-            probeHelpText: async () => 'Claude Code help output without the required option',
-        });
-
-        expect(models).toBeNull();
-    });
-
-    it('probes CLI help through the binary-safe agent CLI exec path', async () => {
-        const fixture = createExecRunFixture({
-            stdout: '  --effort <level>  Effort level for the current session',
-        });
-
-        const models = await probeClaudePreflightModelsRaw({
-            exec: fixture.exec,
+        await expect(probeClaudeSupportsEffortRaw({
+            exec: supported.exec,
             cwd: '/workspace',
             timeoutMs: 2_500,
             env: {
@@ -105,17 +59,19 @@ describe('probeClaudePreflightModels', () => {
                 ANTHROPIC_API_KEY: 'sk-test',
                 ANTHROPIC_AUTH_TOKEN: undefined,
             },
-        });
+        })).resolves.toBe(true);
+        await expect(probeClaudeSupportsEffortRaw({
+            exec: unsupported.exec,
+            cwd: '/workspace',
+            timeoutMs: 2_500,
+        })).resolves.toBe(false);
+        await expect(probeClaudeSupportsEffortRaw({
+            exec: failed.exec,
+            cwd: '/workspace',
+            timeoutMs: 2_500,
+        })).resolves.toBe(false);
 
-        expect(models).toEqual(expect.arrayContaining([
-            expect.objectContaining({
-                id: 'claude-fable-5',
-                modelOptions: expect.arrayContaining([
-                    expect.objectContaining({ id: 'reasoning_effort' }),
-                ]),
-            }),
-        ]));
-        expect(fixture.runs).toEqual([{
+        expect(supported.runs).toEqual([{
             input: {
                 executable: { kind: 'systemTool', id: 'claude-cli' },
                 args: ['--help'],

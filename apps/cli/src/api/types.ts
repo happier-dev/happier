@@ -695,11 +695,13 @@ export type Metadata = Readonly<Partial<RuntimeDescriptorMetadataCarrier>> & {
     agentId: string,
     updatedAt: number,
     currentModelId: string,
+    activeSelectionV1?: SessionActiveModelSelectionV1,
     availableModels: Array<{
       id: string,
       name: string,
       description?: string,
       contextWindowTokens?: number,
+      extendedContextModelId?: string,
       modelOptions?: Array<{
         id: string,
         name: string,
@@ -724,6 +726,7 @@ export type Metadata = Readonly<Partial<RuntimeDescriptorMetadataCarrier>> & {
       name: string,
       description?: string,
       contextWindowTokens?: number,
+      extendedContextModelId?: string,
       modelOptions?: Array<{
         id: string,
         name: string,

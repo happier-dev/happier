@@ -1,4 +1,8 @@
-import { isClaudeUltracodeSupportedModelId } from '../../reasoningEffort.js';
+import type { AgentSessionProviderBinding } from '@happier-dev/plugin-sdk/agents/runtime';
+import {
+  isClaudeUltracodeSupportedModelId,
+  resolveClaudeEffectiveEffortForModel,
+} from '../../reasoningEffort.js';
 import type { ClaudeProviderConfigurationOutcome } from '../../providerOperations.js';
 import { CLAUDE_UNIFIED_TERMINAL_PROVIDER_ID } from './constants.js';
 import type {
@@ -57,6 +61,10 @@ export function mapRuntimeConfigUpdateToDesired(
     launchPermissionMode: string | null;
     /** Verified-or-launch model id used to capability-gate ultracode requests. */
     effectiveModelId: string | null;
+    /** Exact Provider model facts when this is a Provider-bound Claude session. */
+    providerModel?: AgentSessionProviderBinding['model'];
+    /** Installed Claude CLI exposes the effort control surface. */
+    supportsEffort: boolean;
   }>,
 ): ClaudeUnifiedDesiredUpdateResolution {
   const desired: {
@@ -100,15 +108,33 @@ export function mapRuntimeConfigUpdateToDesired(
         return { kind: 'not_controllable', reason: `unknown_config_option:${optionId ?? 'missing'}` };
       }
       if (optionId === 'ultracode') {
+        if (!context.supportsEffort) {
+          return { kind: 'not_controllable', reason: 'effort_unsupported_by_installed_cli' };
+        }
         const ultracode = readBooleanValue(option.value);
         if (ultracode === null) return { kind: 'not_controllable', reason: 'malformed_config_option' };
-        // Capability-gate so the controller never types `/effort ultracode` at a model that does
-        // not offer it (conservative: an unhonorable ON request resolves to OFF).
-        desired.ultracode = ultracode && isClaudeUltracodeSupportedModelId(context.effectiveModelId);
+        if (ultracode && !isClaudeUltracodeSupportedModelId(
+          desired.model ?? context.effectiveModelId,
+          context.providerModel,
+        )) {
+          return { kind: 'not_controllable', reason: 'ultracode_unsupported_for_model' };
+        }
+        desired.ultracode = ultracode;
       } else {
+        if (!context.supportsEffort) {
+          return { kind: 'not_controllable', reason: 'effort_unsupported_by_installed_cli' };
+        }
         const effort = readNonEmptyString(option.value);
         if (effort === null) return { kind: 'not_controllable', reason: 'malformed_config_option' };
-        desired.reasoningEffort = effort;
+        const effectiveEffort = resolveClaudeEffectiveEffortForModel({
+          modelId: desired.model ?? context.effectiveModelId,
+          effort,
+          ...(context.providerModel ? { providerModel: context.providerModel } : {}),
+        });
+        if (!effectiveEffort) {
+          return { kind: 'not_controllable', reason: 'effort_unsupported_for_model' };
+        }
+        desired.reasoningEffort = effectiveEffort;
       }
       continue;
     }

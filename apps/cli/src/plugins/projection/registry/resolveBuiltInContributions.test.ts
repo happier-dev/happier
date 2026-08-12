@@ -114,6 +114,7 @@ describe('resolveBuiltInContributions', () => {
       localId: entry.identity.localId,
       providerId: entry.definition.id,
     }))).toEqual(expect.arrayContaining([
+      { pluginId: 'happier.agent.claude', localId: 'anthropic', providerId: 'anthropic' },
       { pluginId: 'happier.provider.deepseek', localId: 'deepseek', providerId: 'deepseek' },
       { pluginId: 'happier.provider.lmstudio', localId: 'lmstudio', providerId: 'lmstudio' },
       { pluginId: 'happier.provider.ollama', localId: 'ollama', providerId: 'ollama' },

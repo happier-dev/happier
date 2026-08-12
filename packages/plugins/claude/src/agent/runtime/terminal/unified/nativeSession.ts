@@ -133,6 +133,7 @@ function createClaudeNativeUnifiedTerminalContext(
 type ClaudeNativeUnifiedTerminalSessionInput = Readonly<{
   request: AgentSessionOpenRequest;
   context: AgentSessionRuntimeContext;
+  supportsEffort?: boolean;
 }>;
 
 function resolvePermissionMode(input: ClaudeNativeUnifiedTerminalSessionInput) {
@@ -204,13 +205,14 @@ export async function openClaudeNativeUnifiedTerminalSession(
     ?? null;
   const providerModel = input.request.providerBinding?.model;
   const requestedEffort = input.request.configuration?.options.reasoning_effort?.value;
-  const initialEffort = resolveClaudeEffortForModel({
+  const initialEffort = input.supportsEffort === true ? resolveClaudeEffortForModel({
     modelId: initialModelId,
     effort: requestedEffort,
     ...(providerModel ? { providerModel } : {}),
-  });
+  }) : null;
   const requestedUltracode = input.request.configuration?.options.ultracode?.value;
-  const initialUltracode = (requestedUltracode === true || requestedUltracode === 'true')
+  const initialUltracode = input.supportsEffort === true
+    && (requestedUltracode === true || requestedUltracode === 'true')
     && isClaudeUltracodeSupportedModelId(initialModelId, providerModel);
   const resume = resolveClaudeNativeUnifiedResume({
     request: input.request,
@@ -223,6 +225,7 @@ export async function openClaudeNativeUnifiedTerminalSession(
     happierSessionId: input.request.sessionId,
     hostPreference: readHostPreference(hostSetting),
     launchEnv,
+    supportsEffort: input.supportsEffort === true,
     initialModelId,
     ...(initialEffort ? { initialEffort } : {}),
     ...(initialUltracode ? { initialUltracode: true } : {}),

@@ -351,6 +351,7 @@ export type ClaudeUnifiedTerminalTurnOperationsParams = Readonly<{
   happierSessionId: string;
   hostPreference: TerminalHostPreference;
   launchEnv: Readonly<Record<string, string>>;
+  supportsEffort?: boolean;
   providerModel?: AgentSessionProviderBinding['model'];
   initialModelId?: string | null;
   initialEffort?: string | null;
@@ -974,8 +975,10 @@ export function createClaudeUnifiedTerminalTurnOperations(
   });
   let launchModelId: string | null = readNonEmptyString(params.initialModelId);
   let launchFallbackModelId: string | null = null;
-  let launchEffort: string | null = readNonEmptyString(params.initialEffort);
-  let launchUltracode = params.initialUltracode === true;
+  let launchEffort: string | null = params.supportsEffort === false
+    ? null
+    : readNonEmptyString(params.initialEffort);
+  let launchUltracode = params.supportsEffort !== false && params.initialUltracode === true;
   // Effective permission mode at spawn. Plan-inclusive: a pre-launch `{modeId:'plan'}` toggle
   // wins over the raw permission mode so the TUI launches in plan rather than the raw mode.
   let launchPermissionMode: string | null = params.permissionMode;
@@ -3570,6 +3573,8 @@ export function createClaudeUnifiedTerminalTurnOperations(
           const resolution = mapRuntimeConfigUpdateToDesired(update, {
             launchPermissionMode,
             effectiveModelId: verifiedModelId ?? launchModelId,
+            ...(currentProviderModel ? { providerModel: currentProviderModel } : {}),
+            supportsEffort: params.supportsEffort !== false,
           });
           if (resolution.kind === 'desired') {
             const outcome = await controller.applyDesiredRuntimeConfig({
@@ -3615,6 +3620,18 @@ export function createClaudeUnifiedTerminalTurnOperations(
         return rememberRuntimeConfigUpdateOutcome(Object.freeze({
           status: 'requires_interactive_control',
           reason: 'claude_unified_terminal_running',
+        } as const), promptDependentUpdate ? { promptMayProceed: false } : {});
+      }
+      const configOptionId = update.configOption && typeof update.configOption === 'object'
+        ? readNonEmptyString((update.configOption as Readonly<Record<string, unknown>>).id)
+        : null;
+      if (
+        params.supportsEffort === false
+        && (configOptionId === 'reasoning_effort' || configOptionId === 'effort' || configOptionId === 'ultracode')
+      ) {
+        return rememberRuntimeConfigUpdateOutcome(Object.freeze({
+          status: 'unsupported',
+          reason: 'effort_unsupported_by_installed_cli',
         } as const), promptDependentUpdate ? { promptMayProceed: false } : {});
       }
       const modelId = readNonEmptyString(update.modelId);

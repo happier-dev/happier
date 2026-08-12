@@ -45,6 +45,9 @@ const workspacePackages: readonly WorkspacePackageSpec[] = [
     {
         packageName: '@happier-dev/agents',
         packageSourceRoot: resolve('../../packages/agents/src'),
+        sourceSubpathAliases: {
+            'providers/claude-model-options': 'providers/claudeModelOptions',
+        },
     },
     {
         packageName: '@happier-dev/cli-common',

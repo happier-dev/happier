@@ -16,7 +16,11 @@ import { z } from 'zod';
 import type { CapabilitySupport, ProviderWireProtocol } from './capabilities/v1.js';
 import { CapabilitySupportSchema, ProviderWireProtocolSchema } from './capabilities/v1.js';
 import type { ProviderCatalogProbeV1 } from './catalog/descriptorV1.js';
-import { ProviderCatalogParserV1Schema, ProviderCatalogProbeV1Schema } from './catalog/descriptorV1.js';
+import {
+  ProviderCatalogParserV1Schema,
+  ProviderCatalogProbeV1Schema,
+  type ProviderCatalogParserV1,
+} from './catalog/descriptorV1.js';
 import { PROVIDER_CATALOG_LIMITS_V1 } from './catalog/limits.js';
 import type { ProviderModelLoadDescriptorV1 } from './contributions/v1.js';
 import { ProviderModelLoadDescriptorV1Schema } from './contributions/v1.js';
@@ -584,7 +588,7 @@ export function createProviderProbeRequestFingerprintV1(input: Readonly<{
   method: 'GET';
   endpointUrl: string;
   path: string;
-  parser: 'openai-models' | 'ollama-tags' | 'lmstudio-native-models';
+  parser: ProviderCatalogParserV1;
   publicHeaders: Readonly<Record<string, string>>;
 }>): ProviderProbeRequestFingerprintV1 {
   if (input.method !== 'GET') throw new TypeError('Provider catalog and availability probes must use GET');
@@ -636,7 +640,7 @@ export function createProviderManagedProbeRequestFingerprintV1(input: Readonly<{
   protocol: ProviderWireProtocol;
   method: 'GET';
   path: string;
-  parser: 'openai-models' | 'ollama-tags' | 'lmstudio-native-models';
+  parser: ProviderCatalogParserV1;
   publicHeaders: Readonly<Record<string, string>>;
 }>): ProviderProbeRequestFingerprintV1 {
   if (input.method !== 'GET') throw new TypeError('Provider catalog and availability probes must use GET');

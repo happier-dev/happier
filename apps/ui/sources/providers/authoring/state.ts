@@ -46,9 +46,9 @@ function endpointDraft(protocol: CustomProviderPreset, enabled: boolean, baseUrl
         requiresApiKey: true,
         credentialStyle: defaults.credentialStyle,
         credentialHeader: '',
-        publicHeadersText: '',
+        publicHeadersText: protocol === 'anthropic' ? 'anthropic-version: 2023-06-01' : '',
         probePathsText: defaults.modelsPath,
-        probeParser: 'openai-models',
+        probeParser: protocol === 'anthropic' ? 'anthropic-models' : 'openai-models',
     };
 }
 
@@ -57,7 +57,12 @@ function protocolDefaults(protocol: CustomProviderPreset): Pick<
     'protocol' | 'credentialStyle' | 'catalog' | 'modelsPath'
 > {
     if (protocol === 'anthropic') {
-        return { protocol, credentialStyle: 'x-api-key', catalog: 'manual', modelsPath: '' };
+        return {
+            protocol,
+            credentialStyle: 'x-api-key',
+            catalog: 'probe',
+            modelsPath: '/v1/models?limit=1000',
+        };
     }
     return { protocol, credentialStyle: 'bearer', catalog: 'probe', modelsPath: '/v1/models' };
 }

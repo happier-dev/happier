@@ -7,24 +7,26 @@ import type {
   AgentRuntimeContext,
   AgentRuntimeFactory,
   AgentPermissionIntent,
+  AgentSessionModel,
   AgentSessionOpenRequest,
+  AgentSessionProviderBinding,
   AgentSessionRuntime,
   AgentSessionRuntimeContext,
   AgentSessionRuntimeEvent,
-} from '@happier-dev/plugin-sdk/agent-runtime';
+} from '@happier-dev/plugin-sdk/agents/runtime';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
-import { AgentRuntimeJsonValueSchema } from '@happier-dev/plugin-sdk/agent-runtime';
+import { AgentRuntimeJsonValueSchema } from '@happier-dev/plugin-sdk/agents/runtime';
 import type { PluginDiagnosticData } from '@happier-dev/plugin-sdk';
-import type { AgentModelDescriptor } from '@happier-dev/plugin-sdk/experimental/agents';
+import type { AgentModelDescriptor } from '@happier-dev/plugin-sdk/agents';
 import {
   createAgentSessionPreAdmissionBuffer,
   type AgentSessionPreAdmissionBuffer,
   type AgentSessionPreAdmissionBufferResult,
-} from '@happier-dev/agents/runtime/session/preAdmissionBuffer';
-import { isRuntimeConfigUpdateOutcomeApplied } from '@happier-dev/agents';
+} from '@happier-dev/plugin-sdk/agents/runtime';
+import { isRuntimeConfigUpdateOutcomeApplied } from '@happier-dev/plugin-sdk/agents/runtime';
 
 import { createClaudeNativePermissionEngine } from '../permissions/nativePermissionEngine.js';
 import { CLAUDE_STATIC_MODELS } from '../models.js';
@@ -68,6 +70,7 @@ import {
 } from './reasoningEffort.js';
 import { CLAUDE_AUTH_ENV_KEYS } from '../auth/services/runtime/env.js';
 import { prepareClaudeQualifiedPurposeRoot } from '../auth/services/qualifiedPurposeRoot.js';
+import { probeClaudeSupportsEffortRaw } from '../preflight/models.js';
 
 /**
  * Provider-local event codec only. Claude's SDK and terminal leaves still share this strict
@@ -130,6 +133,7 @@ type ClaudeNativePromptCustodyOperations =
   }>;
 
 export type ClaudeNativeSessionOperations = ClaudeRuntimeTurnOperations & Readonly<{
+  supportsEffort?: boolean;
   subscribeEffectiveModel?: ClaudeEffectiveModelEvidenceSubscription;
   subscribeUsageObservation?: ClaudeUsageObservationSubscription;
   subscribeCanonicalAgentSessionEvents?: (
@@ -173,17 +177,29 @@ export type ClaudeNativeSessionOperations = ClaudeRuntimeTurnOperations & Readon
 export type ClaudeNativeSessionFactory = (input: Readonly<{
   request: AgentSessionOpenRequest;
   context: AgentSessionRuntimeContext;
+  supportsEffort?: boolean;
 }>) => ClaudeNativeSessionOperations | Promise<ClaudeNativeSessionOperations>;
 
 export type ClaudeNativeExecutionSessionFactory = (input: Readonly<{
   request: Extract<AgentExecutionRunOpenRequest, { kind: 'create' }>;
   context: AgentRuntimeContext;
+  supportsEffort?: boolean;
 }>) => ClaudeNativeSessionOperations | Promise<ClaudeNativeSessionOperations>;
+
+type ClaudeSupportsEffortResolver = (input: Readonly<{
+  request: Readonly<{
+    cwd: string;
+    launchEnvironment?: AgentLaunchEnvironment;
+    providerBinding?: AgentSessionProviderBinding;
+  }>;
+  context: AgentRuntimeContext;
+}>) => Promise<boolean>;
 
 export type CreateClaudeNativeRuntimeOptions = Readonly<{
   openSession: ClaudeNativeSessionFactory;
   openExecutionSession?: ClaudeNativeExecutionSessionFactory;
   prepareLaunchEnvironment?: ClaudeNativeLaunchEnvironmentPreparer;
+  resolveSupportsEffort?: ClaudeSupportsEffortResolver;
 }>;
 
 type ClaudePreparedLaunchEnvironment = Readonly<{
@@ -196,6 +212,7 @@ export type ClaudeNativeLaunchEnvironmentPreparer = (input: Readonly<{
   request: Readonly<{
     cwd: string;
     launchEnvironment?: AgentLaunchEnvironment;
+    providerBinding?: AgentSessionProviderBinding;
   }>;
   context: AgentRuntimeContext;
 }>) => Promise<ClaudePreparedLaunchEnvironment>;
@@ -253,6 +270,17 @@ async function waitForClaudePurposeObservations(
 
 export const prepareClaudeQualifiedConnectedAccountLaunch:
   ClaudeNativeLaunchEnvironmentPreparer = async ({ request, context }) => {
+    if (request.providerBinding !== undefined) {
+      return Object.freeze({
+        launchEnvironment: request.launchEnvironment ?? Object.freeze({
+          values: Object.freeze({}),
+          unset: Object.freeze([]),
+        }),
+        armInvalidation() {},
+        async dispose() {},
+      });
+    }
+
     const subscriptions: Array<Readonly<{ dispose(): void }>> = [];
     const initialObservations = new Map<string, Promise<void>>();
     const resolveInitial = new Map<string, () => void>();
@@ -398,10 +426,20 @@ export function createClaudeNativeSessionOpener(openers: Readonly<{
         settings: input.context.services.settings,
       },
     });
-    return await (selected
+    const operations = await (selected
       ? openers.openUnifiedTerminalSession(input)
       : openers.openAgentSdkSession(input));
+    return { ...operations, supportsEffort: input.supportsEffort === true };
   };
+}
+
+async function resolveClaudeInstalledEffortSupport(input: Parameters<ClaudeSupportsEffortResolver>[0]) {
+  return await probeClaudeSupportsEffortRaw({
+    exec: input.context.services.exec,
+    cwd: input.request.cwd,
+    timeoutMs: 5_000,
+    env: input.request.launchEnvironment?.values,
+  });
 }
 
 function diagnostic(code: string, message: string): PluginDiagnosticData {
@@ -562,9 +600,22 @@ export function createClaudeNativeSessionRuntimeFromOperations(
   const terminalPromptDeliveriesByInputId = new Map<string, ClaudeTerminalPromptDelivery>();
   const unifiedPromptAcceptanceOperations =
     operations.promptCustody === 'unified_terminal' ? operations : null;
-  let models: readonly AgentModelDescriptor[] = currentProviderBinding
-    ? [currentProviderBinding.model]
-    : CLAUDE_STATIC_MODELS.map((model) => ({
+  const supportsEffort = operations.supportsEffort === true;
+  const projectRuntimeModel = (model: AgentSessionModel): AgentSessionModel => {
+    if (supportsEffort) return model;
+    const { modelOptions: _effortOptions, ...modelWithoutEffortOptions } = model;
+    const retainedOptions = (model.modelOptions ?? []).filter(
+      (option) => option.id !== 'reasoning_effort' && option.id !== 'ultracode',
+    );
+    return {
+      ...modelWithoutEffortOptions,
+      ...(retainedOptions.length > 0 ? { modelOptions: retainedOptions } : {}),
+      suppressedModelOptionIds: ['reasoning_effort', 'ultracode'],
+    };
+  };
+  let models: readonly AgentSessionModel[] = currentProviderBinding
+    ? [projectRuntimeModel(currentProviderBinding.model)]
+    : CLAUDE_STATIC_MODELS.map((model) => projectRuntimeModel({
         id: model.id,
         name: model.name,
         ...(model.description ? { description: model.description } : {}),
@@ -696,14 +747,14 @@ export function createClaudeNativeSessionRuntimeFromOperations(
     currentModelId = modelId;
     const index = models.findIndex((model) => model.id === modelId);
     const previous = index >= 0 ? models[index] : undefined;
-    const next = {
+    const next = projectRuntimeModel({
       ...(previous ?? {}),
       id: modelId,
       name: evidence.displayName?.trim() || previous?.name || modelId,
       ...(evidence.contextWindowTokens !== null && evidence.contextWindowTokens !== undefined
         ? { contextWindowTokens: evidence.contextWindowTokens }
         : {}),
-    };
+    });
     models = index >= 0
       ? models.map((model, modelIndex) => modelIndex === index ? next : model)
       : [...models, next];
@@ -959,9 +1010,50 @@ export function createClaudeNativeSessionRuntimeFromOperations(
         };
       }
       const changedOption = changedOptions[0];
-      if (effectiveProviderBinding && changedOption) {
-        const [id, option] = changedOption;
-        const value = option.value;
+      if (
+        changedOption
+        && !supportsEffort
+        && (changedOption[0] === 'reasoning_effort' || changedOption[0] === 'ultracode')
+      ) {
+        return {
+          status: 'unsupported',
+          diagnostic: diagnostic(
+            'claude_effort_unsupported_by_installed_cli',
+            'The installed Claude CLI does not expose effort controls.',
+          ),
+        };
+      }
+      if (
+        nextProviderBinding
+        && currentProviderBinding
+        && !isDeepStrictEqual(nextProviderBinding.model, currentProviderBinding.model)
+      ) {
+        const configuredEffort = configuration.options.reasoning_effort?.value;
+        const configuredUltracode = configuration.options.ultracode?.value;
+        const reasoningSupported = configuredEffort === null
+          || configuredEffort === undefined
+          || isClaudeEffortSupportedForProviderModel(nextProviderBinding.model, configuredEffort);
+        const ultracodeEnabled = configuredUltracode === true || configuredUltracode === 'true';
+        const ultracodeSupported = !ultracodeEnabled
+          || isClaudeUltracodeSupportedModelId(
+            nextProviderBinding.model.id,
+            nextProviderBinding.model,
+          );
+        if (!reasoningSupported || !ultracodeSupported) {
+          return {
+            status: 'unsupported',
+            diagnostic: diagnostic(
+              'claude_provider_model_option_unsupported',
+              `Provider model '${nextProviderBinding.model.id}' cannot atomically apply the current Claude configuration options.`,
+            ),
+          };
+        }
+      }
+      const effectiveConfigOption = changedOption
+        ? { id: changedOption[0], value: changedOption[1].value }
+        : null;
+      if (effectiveProviderBinding && effectiveConfigOption) {
+        const { id, value } = effectiveConfigOption;
         const supported = id === 'reasoning_effort'
           ? value === null
             || isClaudeEffortSupportedForProviderModel(effectiveProviderBinding.model, value)
@@ -991,14 +1083,12 @@ export function createClaudeNativeSessionRuntimeFromOperations(
           : { permissionMode: configuration.permissionIntent.value }),
         ...(configuration.model.value === null ? {} : { modelId: configuration.model.value }),
         ...(nextProviderBinding ? { providerBinding: nextProviderBinding } : {}),
-        ...(changedOption
-          ? { configOption: { id: changedOption[0], value: changedOption[1].value } }
-          : {}),
+        ...(effectiveConfigOption ? { configOption: effectiveConfigOption } : {}),
       });
       if (isRuntimeConfigUpdateOutcomeApplied(result)) {
         if (nextProviderBinding) {
           currentProviderBinding = nextProviderBinding;
-          models = [nextProviderBinding.model];
+          models = [projectRuntimeModel(nextProviderBinding.model)];
         }
         currentModelId = configuration.model.value;
         appliedConfiguration = configuration;
@@ -1008,7 +1098,7 @@ export function createClaudeNativeSessionRuntimeFromOperations(
           changed: [
             'permissionIntent',
             'model',
-            ...(changedOption ? [`options.${changedOption[0]}`] : []),
+            ...(effectiveConfigOption ? [`options.${effectiveConfigOption.id}`] : []),
           ],
         };
       }
@@ -1090,8 +1180,12 @@ function terminalSurface(): NonNullable<AgentRuntime['surfaces']>['terminal'] {
         ?? [];
       const partition = partitionClaudeTerminalUserArgs(rawArgs);
       const overrides = parseClaudeTerminalRawSpawnOptionOverrides(rawArgs);
-      const model = readString(request.metadata.model) ?? overrides.model;
-      const fallbackModel = readString(request.metadata.fallbackModel) ?? overrides.fallbackModel;
+      const model = request.modelSelection?.modelId.trim() || null;
+      // A Provider-bound fallback needs its own structured authorization; raw
+      // metadata or argv cannot widen the exact host-selected Provider model.
+      const fallbackModel = request.modelSelection?.providerConnectionId
+        ? null
+        : readString(request.metadata.fallbackModel) ?? overrides.fallbackModel;
       const customSystemPrompt = readString(request.metadata.customSystemPrompt) ?? overrides.customSystemPrompt;
       const appendSystemPrompt = readString(request.metadata.appendSystemPrompt) ?? overrides.appendSystemPrompt;
       return {
@@ -1187,49 +1281,61 @@ export function createClaudeNativeRuntime(
   options: CreateClaudeNativeRuntimeOptions,
 ): AgentRuntime {
   const goals = createClaudeNativeGoalControl();
-  return {
+  const openSession = async (
+    request: AgentSessionOpenRequest,
+    context: AgentSessionRuntimeContext
+  ): Promise<AgentSessionRuntime> => {
+    const prepared = options.prepareLaunchEnvironment
+      ? await options.prepareLaunchEnvironment({ request, context })
+      : null;
+    const effectiveRequest = prepared
+      ? Object.freeze({
+          ...request,
+          launchEnvironment: prepared.launchEnvironment,
+        }) as AgentSessionOpenRequest
+      : request;
+    let operations: ClaudeNativeSessionOperations;
+    try {
+      const supportsEffort = await (options.resolveSupportsEffort
+        ?? resolveClaudeInstalledEffortSupport)({
+          request: effectiveRequest,
+          context,
+        });
+      operations = await options.openSession({
+        request: effectiveRequest,
+        context,
+        supportsEffort,
+      });
+    } catch (error) {
+      await prepared?.dispose();
+      throw error;
+    }
+    const releaseGoals = goals.bind(request.sessionId, operations);
+    try {
+      const runtime = createClaudeNativeSessionRuntimeFromOperations(
+        operations,
+        effectiveRequest,
+        context,
+        async () => {
+          releaseGoals();
+          await prepared?.dispose();
+        },
+      );
+      prepared?.armInvalidation(
+        async () => await runtime.dispose('runtime_recovery'),
+      );
+      return runtime;
+    } catch (error) {
+      releaseGoals();
+      await prepared?.dispose();
+      throw error;
+    }
+  };
+  const runtime: AgentRuntime = {
     sessions: {
       goals: goals.control,
       async open(request, context) {
-        const prepared = options.prepareLaunchEnvironment
-          ? await options.prepareLaunchEnvironment({ request, context })
-          : null;
-        const effectiveRequest = prepared
-          ? Object.freeze({
-              ...request,
-              launchEnvironment: prepared.launchEnvironment,
-            }) as AgentSessionOpenRequest
-          : request;
-        let operations: ClaudeNativeSessionOperations;
-        try {
-          operations = await options.openSession({
-            request: effectiveRequest,
-            context,
-          });
-        } catch (error) {
-          await prepared?.dispose();
-          throw error;
-        }
-        const releaseGoals = goals.bind(request.sessionId, operations);
-        try {
-          const runtime = createClaudeNativeSessionRuntimeFromOperations(
-            operations,
-            effectiveRequest,
-            context,
-            async () => {
-              releaseGoals();
-              await prepared?.dispose();
-            },
-          );
-          prepared?.armInvalidation(
-            async () => await runtime.dispose('runtime_recovery'),
-          );
-          return runtime;
-        } catch (error) {
-          releaseGoals();
-          await prepared?.dispose();
-          throw error;
-        }
+        return await openSession(request, context);
       },
     },
     executionRuns: {
@@ -1245,6 +1351,8 @@ export function createClaudeNativeRuntime(
           sessionId: request.runId,
           cwd: request.cwd,
           ...(request.launchEnvironment ? { launchEnvironment: request.launchEnvironment } : {}),
+          ...(request.configuration ? { configuration: request.configuration } : {}),
+          ...(request.providerBinding ? { providerBinding: request.providerBinding } : {}),
         };
         const prepared = options.prepareLaunchEnvironment
           ? await options.prepareLaunchEnvironment({
@@ -1266,9 +1374,15 @@ export function createClaudeNativeRuntime(
           : sessionRequest;
         let operations: ClaudeNativeSessionOperations;
         try {
+          const supportsEffort = await (options.resolveSupportsEffort
+            ?? resolveClaudeInstalledEffortSupport)({
+              request: effectiveRequest,
+              context,
+            });
           operations = await options.openExecutionSession({
             request: effectiveRequest,
             context,
+            supportsEffort,
           });
         } catch (error) {
           await prepared?.dispose();
@@ -1293,6 +1407,7 @@ export function createClaudeNativeRuntime(
       terminal: terminalSurface(),
     },
   };
+  return runtime;
 }
 
 function providerSessionId(request: AgentSessionOpenRequest): string | null {
@@ -1304,6 +1419,7 @@ function providerSessionId(request: AgentSessionOpenRequest): string | null {
 async function openClaudeNativeAgentSdkSession(input: Readonly<{
   request: AgentSessionOpenRequest;
   context: AgentSessionRuntimeContext;
+  supportsEffort?: boolean;
 }>): Promise<ClaudeNativeSessionOperations> {
   const sdkContext = createClaudeNativeAgentSdkContext(input.context, input.context);
   const launchSettings = await resolveClaudeNativeLaunchSettings({
@@ -1319,13 +1435,14 @@ async function openClaudeNativeAgentSdkSession(input: Readonly<{
     ?? null;
   const providerModel = input.request.providerBinding?.model;
   const requestedEffort = input.request.configuration?.options.reasoning_effort?.value;
-  const initialEffort = resolveClaudeEffortForModel({
+  const initialEffort = input.supportsEffort === true ? resolveClaudeEffortForModel({
     modelId: initialModelId,
     effort: requestedEffort,
     ...(providerModel ? { providerModel } : {}),
-  });
+  }) : null;
   const requestedUltracode = input.request.configuration?.options.ultracode?.value;
-  const initialUltracode = (requestedUltracode === true || requestedUltracode === 'true')
+  const initialUltracode = input.supportsEffort === true
+    && (requestedUltracode === true || requestedUltracode === 'true')
     && isClaudeUltracodeSupportedModelId(initialModelId, providerModel);
   return createClaudeAgentSdkTurnOperations({
     ctx: sdkContext,
@@ -1335,6 +1452,7 @@ async function openClaudeNativeAgentSdkSession(input: Readonly<{
     launchEnv: launchSettings.launchEnv,
     advancedOptions: launchSettings.advancedOptions,
     permissionMode: input.request.configuration?.permissionIntent.value ?? 'default',
+    supportsEffort: input.supportsEffort === true,
     initialModelId,
     ...(initialEffort ? { initialEffort } : {}),
     ...(initialUltracode ? { initialUltracode: true } : {}),
@@ -1354,6 +1472,7 @@ async function openClaudeNativeAgentSdkSession(input: Readonly<{
 async function openClaudeNativeExecutionSession(input: Readonly<{
   request: Extract<AgentExecutionRunOpenRequest, { kind: 'create' }>;
   context: AgentRuntimeContext;
+  supportsEffort?: boolean;
 }>): Promise<ClaudeNativeSessionOperations> {
   const sdkContext = createClaudeNativeAgentSdkContext(input.context);
   const launchSettings = await resolveClaudeNativeLaunchSettings({
@@ -1364,6 +1483,20 @@ async function openClaudeNativeExecutionSession(input: Readonly<{
     }),
     includeAdvancedOptions: true,
   });
+  const initialModelId = input.request.providerBinding?.model.id
+    ?? input.request.configuration?.model.value
+    ?? null;
+  const providerModel = input.request.providerBinding?.model;
+  const requestedEffort = input.request.configuration?.options.reasoning_effort?.value;
+  const initialEffort = input.supportsEffort === true ? resolveClaudeEffortForModel({
+    modelId: initialModelId,
+    effort: requestedEffort,
+    ...(providerModel ? { providerModel } : {}),
+  }) : null;
+  const requestedUltracode = input.request.configuration?.options.ultracode?.value;
+  const initialUltracode = input.supportsEffort === true
+    && (requestedUltracode === true || requestedUltracode === 'true')
+    && isClaudeUltracodeSupportedModelId(initialModelId, providerModel);
   return createClaudeAgentSdkTurnOperations({
     ctx: sdkContext,
     queryContext: sdkContext.agentRuntime.exec,
@@ -1371,7 +1504,12 @@ async function openClaudeNativeExecutionSession(input: Readonly<{
     directory: input.request.cwd,
     launchEnv: launchSettings.launchEnv,
     advancedOptions: launchSettings.advancedOptions,
-    permissionMode: 'default',
+    permissionMode: input.request.configuration?.permissionIntent.value ?? 'default',
+    supportsEffort: input.supportsEffort === true,
+    initialModelId,
+    ...(initialEffort ? { initialEffort } : {}),
+    ...(initialUltracode ? { initialUltracode: true } : {}),
+    ...(providerModel ? { providerModel } : {}),
     happierSessionId: null,
     publishSdkMessages: true,
     enableSessionWorkState: false,
@@ -1386,4 +1524,5 @@ export const createClaudeAgentRuntime: AgentRuntimeFactory = () => createClaudeN
   }),
   openExecutionSession: openClaudeNativeExecutionSession,
   prepareLaunchEnvironment: prepareClaudeQualifiedConnectedAccountLaunch,
+  resolveSupportsEffort: resolveClaudeInstalledEffortSupport,
 });

@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 import { ProviderWireProtocolSchema, type ProviderWireProtocol } from '../capabilities/v1.js';
-import { ProviderCatalogParserV1Schema } from '../catalog/descriptorV1.js';
+import { ProviderCatalogParserV1Schema, type ProviderCatalogParserV1 } from '../catalog/descriptorV1.js';
 import { ProviderOriginRelativePathSchema } from '../originRelativePathSchema.js';
 import { CustomProviderTemplateV1Schema, type CustomProviderTemplateV1 } from './customTemplateV1.js';
 
@@ -97,11 +97,8 @@ function credentialDestination(style: CustomProviderCredentialStyleV1, header: s
   }
 }
 
-function catalogParser(protocol: ProviderWireProtocol): 'openai-models' {
-  if (protocol !== 'openai-chat' && protocol !== 'openai-responses') {
-    throw new TypeError('Anthropic custom providers do not have a standard model-list parser');
-  }
-  return 'openai-models';
+function catalogParser(protocol: ProviderWireProtocol): ProviderCatalogParserV1 {
+  return protocol === 'anthropic' ? 'anthropic-models' : 'openai-models';
 }
 
 /** Canonical owner shared by CLI and UI advanced custom-provider authoring. */
@@ -155,6 +152,9 @@ export function normalizeCustomProviderTemplateV1(input: CustomProviderSimpleFor
     endpoints: [{
       protocol: form.protocol,
       baseUrl: form.baseUrl,
+      ...(form.protocol === 'anthropic'
+        ? { publicHeaders: { 'anthropic-version': '2023-06-01' } }
+        : {}),
       ...(form.credentialStyle ? { credentialStyle: form.credentialStyle } : {}),
       ...(form.credentialHeader ? { credentialHeader: form.credentialHeader } : {}),
     }],

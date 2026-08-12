@@ -14,6 +14,102 @@ describe('parseProviderCatalogResponse', () => {
       .toThrow('missing data');
   });
 
+  it('parses bounded Anthropic model rows through the declared Anthropic discriminant', () => {
+    expect(parseProviderCatalogResponse('anthropic-models', {
+      data: [
+        {
+          id: 'claude-future-6',
+          display_name: 'Claude Future 6',
+          type: 'model',
+          max_input_tokens: 1_000_000,
+          capabilities: {
+            effort: {
+              supported: true,
+              low: { supported: true },
+              medium: { supported: true },
+              high: { supported: true },
+              xhigh: { supported: true },
+              max: { supported: true },
+            },
+          },
+        },
+        { id: 'claude-sonnet-4-6', type: 'model' },
+      ],
+      has_more: false,
+    })).toEqual({
+      models: [
+        {
+          id: 'claude-future-6',
+          name: 'Claude Future 6',
+          contextWindowTokens: 1_000_000,
+          capabilities: { reasoningControls: 'supported' },
+          modelOptions: [{
+            id: 'reasoning_effort',
+            name: 'Thinking',
+            type: 'select',
+            currentValue: 'high',
+            options: [
+              { value: 'low', name: 'Low' },
+              { value: 'medium', name: 'Medium' },
+              { value: 'high', name: 'High' },
+              { value: 'xhigh', name: 'XHigh' },
+              { value: 'max', name: 'Max' },
+            ],
+          }, {
+            id: 'ultracode',
+            name: 'Ultracode',
+            description: 'Maximum coding effort. Forces XHigh Thinking effort while enabled.',
+            type: 'boolean',
+            currentValue: 'false',
+            overridesWhenOn: {
+              optionIds: ['reasoning_effort'],
+              forcedValue: 'xhigh',
+            },
+          }],
+        },
+        { id: 'claude-sonnet-4-6' },
+      ],
+      loadStates: [],
+    });
+
+    expect(() => parseProviderCatalogResponse('anthropic-models', {
+      data: [{ id: 'same' }, { id: 'same' }],
+    })).toThrow('Duplicate');
+    expect(() => parseProviderCatalogResponse('anthropic-models', {
+      data: [{ id: 'claude-opus-4-6', display_name: 42 }],
+    })).toThrow('display_name');
+    expect(() => parseProviderCatalogResponse('anthropic-models', {
+      models: [{ id: 'wrong-envelope' }],
+    })).toThrow('missing data');
+  });
+
+  it('rejects malformed Anthropic context and effort capability facts', () => {
+    const parseRow = (row: unknown) => parseProviderCatalogResponse('anthropic-models', { data: [row] });
+
+    expect(() => parseRow({ id: 'bad-context', max_input_tokens: 0 }))
+      .toThrow('max_input_tokens');
+    expect(() => parseRow({ id: 'bad-context', max_input_tokens: 100_000_001 }))
+      .toThrow('max_input_tokens');
+    expect(() => parseRow({ id: 'bad-effort', capabilities: { effort: { supported: 'yes' } } }))
+      .toThrow('effort');
+    expect(() => parseRow({
+      id: 'bad-tier',
+      capabilities: { effort: { supported: true, low: { supported: 'yes' } } },
+    })).toThrow('low');
+    expect(() => parseRow({
+      id: 'empty-effort',
+      capabilities: { effort: { supported: true, low: { supported: false } } },
+    })).toThrow('supported tier');
+
+    expect(parseRow({
+      id: 'no-effort',
+      capabilities: { effort: { supported: false } },
+    }).models).toEqual([{
+      id: 'no-effort',
+      capabilities: { reasoningControls: 'unsupported' },
+    }]);
+  });
+
   it('preserves exact Ollama model capabilities and excludes explicitly non-completion models', () => {
     expect(parseProviderCatalogResponse('ollama-tags', {
       models: [

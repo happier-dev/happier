@@ -16,6 +16,9 @@ export function parsePreflightModelListFromProbeModelsResult(raw: unknown): Pref
                 id: String(m.id),
                 name: String(m.name),
                 ...(typeof m.description === 'string' ? { description: m.description } : {}),
+                ...(typeof m.extendedContextModelId === 'string' && m.extendedContextModelId.trim().length > 0
+                    ? { extendedContextModelId: m.extendedContextModelId.trim() }
+                    : {}),
                 ...(Array.isArray(m.modelOptions) && m.modelOptions.length > 0
                     ? { modelOptions: m.modelOptions as readonly AcpConfigOption[] }
                     : {}),

@@ -52,12 +52,37 @@ describe('provider catalog merge', () => {
     expect(failed.staleProbeModels).toEqual([]);
   });
 
+  it('keeps curated static rows when the first probe attempt fails', () => {
+    const failed = applyProviderCatalogRefreshV1(
+      { snapshot: null, staleProbeModels: [] },
+      { status: 'failed', failedAt: 25 },
+    );
+
+    expect(mergeProviderCatalogV1({
+      staticModels: [{ id: 'static-fallback', name: 'Static fallback' }],
+      manualModels: [],
+      probeState: failed,
+    }).rows).toEqual([expect.objectContaining({
+      descriptor: { id: 'static-fallback', name: 'Static fallback' },
+      sources: { static: true, manual: false, probe: false },
+      confidence: 'verified_static',
+    })]);
+  });
+
   it('projects probe capability evidence into the canonical model descriptor', () => {
     const state = applyProviderCatalogRefreshV1({ snapshot: null, staleProbeModels: [] }, {
       status: 'success',
       observedAt: 20,
       models: [{
         id: 'probe-model',
+        contextWindowTokens: 1_000_000,
+        modelOptions: [{
+          id: 'reasoning_effort',
+          name: 'Thinking',
+          type: 'select',
+          currentValue: 'high',
+          options: [{ value: 'high', name: 'High' }],
+        }],
         capabilities: {
           toolRoundTrips: 'supported',
           reasoningControls: 'unsupported',
@@ -72,10 +97,60 @@ describe('provider catalog merge', () => {
     }).rows[0]?.descriptor).toEqual({
       id: 'probe-model',
       name: 'probe-model',
+      contextWindowTokens: 1_000_000,
+      modelOptions: [{
+        id: 'reasoning_effort',
+        name: 'Thinking',
+        type: 'select',
+        currentValue: 'high',
+        options: [{ value: 'high', name: 'High' }],
+      }],
       capabilities: {
         toolRoundTrips: 'supported',
         reasoningControls: 'unsupported',
       },
+    });
+  });
+
+  it('keeps complete verified static descriptors authoritative over overlapping probe facts', () => {
+    const merged = mergeProviderCatalogV1({
+      staticModels: [{
+        id: 'static-model',
+        name: 'Verified static',
+        contextWindowTokens: 200_000,
+        modelOptions: [{
+          id: 'reasoning_effort', name: 'Thinking', type: 'select', currentValue: 'high',
+          options: [{ value: 'high', name: 'High' }],
+        }],
+      }],
+      manualModels: [],
+      probeState: {
+        snapshot: {
+          observedAt: 20,
+          stale: false,
+          models: [{
+            id: 'static-model',
+            name: 'Unverified probe',
+            contextWindowTokens: 1_000_000,
+            modelOptions: [{
+              id: 'reasoning_effort', name: 'Thinking', type: 'select', currentValue: 'max',
+              options: [{ value: 'max', name: 'Max' }],
+            }],
+          }],
+        },
+        staleProbeModels: [],
+      },
+    });
+
+    expect(merged.rows[0]).toMatchObject({
+      descriptor: {
+        id: 'static-model',
+        name: 'Verified static',
+        contextWindowTokens: 200_000,
+        modelOptions: [{ currentValue: 'high' }],
+      },
+      sources: { static: true, probe: true },
+      confidence: 'verified_static',
     });
   });
 

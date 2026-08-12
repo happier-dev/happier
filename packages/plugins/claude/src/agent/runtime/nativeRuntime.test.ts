@@ -58,6 +58,7 @@ function createNativeOperations(sessionId: string): Readonly<{
       for (const listener of usageListeners) listener(observation);
     },
     runtime: {
+      supportsEffort: true,
       subscribeEffectiveModel(listener) {
         effectiveModelListeners.add(listener);
         return () => effectiveModelListeners.delete(listener);
@@ -121,6 +122,15 @@ function createNativeOperations(sessionId: string): Readonly<{
       async disposeProviderSession() {},
     },
   };
+}
+
+function createTestClaudeNativeRuntime(
+  options: Parameters<typeof createClaudeNativeRuntime>[0],
+) {
+  return createClaudeNativeRuntime({
+    resolveSupportsEffort: async () => true,
+    ...options,
+  });
 }
 
 const context = {
@@ -195,7 +205,7 @@ describe('createClaudeNativeRuntime', () => {
       services: { connectedAccounts },
       session: { services: { activeInput: { bind: () => ({ dispose() {} }) } } },
     } as unknown as AgentSessionRuntimeContext;
-    const runtime = createClaudeNativeRuntime({
+    const runtime = createTestClaudeNativeRuntime({
       openSession,
       prepareLaunchEnvironment: prepareClaudeQualifiedConnectedAccountLaunch,
     });
@@ -272,7 +282,7 @@ describe('createClaudeNativeRuntime', () => {
       services: { connectedAccounts },
       session: { services: { activeInput: { bind: () => ({ dispose() {} }) } } },
     } as unknown as AgentSessionRuntimeContext;
-    const runtime = createClaudeNativeRuntime({
+    const runtime = createTestClaudeNativeRuntime({
       openSession,
       prepareLaunchEnvironment: prepareClaudeQualifiedConnectedAccountLaunch,
     });
@@ -324,7 +334,7 @@ describe('createClaudeNativeRuntime', () => {
       services: { connectedAccounts },
       session: { services: { activeInput: { bind: () => ({ dispose() {} }) } } },
     } as unknown as AgentSessionRuntimeContext;
-    const runtime = createClaudeNativeRuntime({
+    const runtime = createTestClaudeNativeRuntime({
       openSession,
       prepareLaunchEnvironment: prepareClaudeQualifiedConnectedAccountLaunch,
     });
@@ -377,7 +387,7 @@ describe('createClaudeNativeRuntime', () => {
         return { dispose() {} };
       }),
     };
-    const runtime = createClaudeNativeRuntime({
+    const runtime = createTestClaudeNativeRuntime({
       openSession: vi.fn(),
       openExecutionSession,
       prepareLaunchEnvironment: prepareClaudeQualifiedConnectedAccountLaunch,
@@ -397,6 +407,203 @@ describe('createClaudeNativeRuntime', () => {
       ANTHROPIC_API_KEY: 'execution-key',
       CLAUDE_CONFIG_DIR: expect.any(String),
     });
+    await run?.dispose();
+  });
+
+  it('preserves Provider session authority without consulting a selected Claude Subscription', async () => {
+    const openSession = vi.fn<ClaudeNativeSessionFactory>(
+      ({ request }) => createNativeOperations(request.sessionId).runtime,
+    );
+    const connectedAccounts = {
+      getBinding: vi.fn(async (purpose: string) => ({
+        purpose,
+        service: purpose === 'model_upstream'
+          ? { pluginId: 'happier.agent.claude', localId: 'claude-subscription' }
+          : { pluginId: 'happier.agent.claude', localId: 'anthropic' },
+        target: { kind: 'account' as const, displayName: 'Native Claude authority' },
+      })),
+      materialize: vi.fn(async () => ({
+        kind: 'files' as const,
+        files: {
+          '.credentials.json': new TextEncoder().encode(JSON.stringify({
+            claudeAiOauth: { accessToken: 'native-subscription-token' },
+          })),
+        },
+      })),
+      requestSelection: vi.fn(),
+      watch: vi.fn((_purpose: string, listener: (event: { kind: 'resync' }) => unknown) => {
+        queueMicrotask(() => { void listener({ kind: 'resync' }); });
+        return { dispose() {} };
+      }),
+    };
+    const providerBinding: AgentSessionProviderBinding = {
+      connectionId: ProviderConnectionIdSchema.parse('pc_provider_session_authority'),
+      model: { id: 'claude-sonnet-4-6', name: 'Provider Sonnet' },
+      materialization: { v: 1, kind: 'spawnEnv' },
+    };
+    const providerLaunchEnvironment = Object.freeze({
+      values: Object.freeze({
+        ANTHROPIC_BASE_URL: 'https://gateway.example/v1',
+        ANTHROPIC_API_KEY: 'provider-session-key',
+        ANTHROPIC_CUSTOM_HEADERS: 'X-Tenant: provider-session',
+      }),
+      unset: Object.freeze(['ANTHROPIC_AUTH_TOKEN']),
+    });
+    const runtime = createTestClaudeNativeRuntime({
+      openSession,
+      prepareLaunchEnvironment: prepareClaudeQualifiedConnectedAccountLaunch,
+    });
+
+    const session = await runtime.sessions.open({
+      kind: 'create',
+      sessionId: 'provider-session-authority',
+      cwd: '/repo',
+      providerBinding,
+      launchEnvironment: providerLaunchEnvironment,
+    }, {
+      signal: new AbortController().signal,
+      services: { connectedAccounts },
+      session: { services: { activeInput: { bind: () => ({ dispose() {} }) } } },
+    } as unknown as AgentSessionRuntimeContext);
+
+    expect(openSession.mock.calls[0]?.[0].request).toMatchObject({ providerBinding });
+    expect(openSession.mock.calls[0]?.[0].request.launchEnvironment).toBe(providerLaunchEnvironment);
+    expect(connectedAccounts.watch).not.toHaveBeenCalled();
+    expect(connectedAccounts.getBinding).not.toHaveBeenCalled();
+    expect(connectedAccounts.materialize).not.toHaveBeenCalled();
+    await session.dispose();
+  });
+
+  it('preserves Provider execution authority without consulting a selected Anthropic account', async () => {
+    const openExecutionSession = vi.fn(
+      () => createNativeOperations('provider-execution-authority').runtime,
+    );
+    const connectedAccounts = {
+      getBinding: vi.fn(async (purpose: string) => purpose === 'model_upstream'
+        ? null
+        : {
+            purpose,
+            service: { pluginId: 'happier.agent.claude', localId: 'anthropic' },
+            target: { kind: 'account' as const, displayName: 'Native Anthropic authority' },
+          }),
+      materialize: vi.fn(async () => ({
+        kind: 'environment' as const,
+        env: { ANTHROPIC_API_KEY: 'native-anthropic-key' },
+      })),
+      requestSelection: vi.fn(),
+      watch: vi.fn((_purpose: string, listener: (event: { kind: 'resync' }) => unknown) => {
+        queueMicrotask(() => { void listener({ kind: 'resync' }); });
+        return { dispose() {} };
+      }),
+    };
+    const providerBinding: AgentSessionProviderBinding = {
+      connectionId: ProviderConnectionIdSchema.parse('pc_provider_execution_authority'),
+      model: { id: 'gateway-claude', name: 'Gateway Claude' },
+      materialization: { v: 1, kind: 'spawnEnv' },
+    };
+    const providerLaunchEnvironment = Object.freeze({
+      values: Object.freeze({
+        ANTHROPIC_BASE_URL: 'https://gateway.example/v1',
+        ANTHROPIC_AUTH_TOKEN: 'provider-execution-token',
+        ANTHROPIC_CUSTOM_HEADERS: 'X-Tenant: provider-execution',
+      }),
+      unset: Object.freeze(['ANTHROPIC_API_KEY']),
+    });
+    const runtime = createTestClaudeNativeRuntime({
+      openSession: vi.fn(),
+      openExecutionSession,
+      prepareLaunchEnvironment: prepareClaudeQualifiedConnectedAccountLaunch,
+    });
+
+    const run = await runtime.executionRuns?.open({
+      kind: 'create',
+      runId: 'provider-execution-authority',
+      cwd: '/repo',
+      input: { text: 'hello' },
+      providerBinding,
+      launchEnvironment: providerLaunchEnvironment,
+    }, {
+      signal: new AbortController().signal,
+      services: { connectedAccounts },
+    } as unknown as AgentRuntimeContext);
+
+    expect(openExecutionSession.mock.calls[0]?.[0].request).toMatchObject({ providerBinding });
+    expect(openExecutionSession.mock.calls[0]?.[0].request.launchEnvironment)
+      .toBe(providerLaunchEnvironment);
+    expect(connectedAccounts.watch).not.toHaveBeenCalled();
+    expect(connectedAccounts.getBinding).not.toHaveBeenCalled();
+    expect(connectedAccounts.materialize).not.toHaveBeenCalled();
+    await run?.dispose();
+  });
+
+  it('carries bounded Provider launch inputs into the execution session owner', async () => {
+    const operations = createNativeOperations('provider-execution').runtime;
+    const openExecutionSession = vi.fn(() => operations);
+    const runtime = createTestClaudeNativeRuntime({
+      openSession: vi.fn(),
+      openExecutionSession,
+    });
+    const providerConnectionId = ProviderConnectionIdSchema.parse('pc_claude');
+    const configuration = {
+      mode: { value: null, updatedAtMs: 0 },
+      model: { value: 'claude-sonnet-4-6', updatedAtMs: 5 },
+      permissionIntent: { value: 'default' as const, updatedAtMs: 5 },
+      options: { reasoning_effort: { value: 'high', updatedAtMs: 5 } },
+    };
+    const providerBinding: AgentSessionProviderBinding = {
+      connectionId: providerConnectionId,
+      model: { id: 'claude-sonnet-4-6', name: 'Claude Sonnet 4.6' },
+      materialization: { v: 1, kind: 'spawnEnv' },
+    };
+
+    const run = await runtime.executionRuns?.open({
+      kind: 'create',
+      runId: 'provider-execution',
+      cwd: '/repo',
+      input: { text: 'hello' },
+      modelSelection: {
+        agentTargetKey: 'backend:claude',
+        providerConnectionId,
+        modelId: 'claude-sonnet-4-6',
+      },
+      configuration,
+      providerBinding,
+    }, {} as AgentRuntimeContext);
+
+    expect(openExecutionSession).toHaveBeenCalledWith(expect.objectContaining({
+      request: expect.objectContaining({ configuration, providerBinding }),
+    }));
+    await run?.dispose();
+  });
+
+  it('fails closed on effort controls for execution runs when the installed CLI lacks support', async () => {
+    const operations = createNativeOperations('execution-effort-unsupported').runtime;
+    const openExecutionSession = vi.fn(() => operations);
+    const resolveSupportsEffort = vi.fn(async () => false);
+    const runtimeOptions = {
+      openSession: vi.fn(),
+      openExecutionSession,
+      resolveSupportsEffort,
+    };
+    const runtime = createTestClaudeNativeRuntime(runtimeOptions);
+
+    const run = await runtime.executionRuns?.open({
+      kind: 'create',
+      runId: 'execution-effort-unsupported',
+      cwd: '/repo',
+      input: { text: 'hello' },
+      configuration: {
+        mode: { value: null, updatedAtMs: 1 },
+        model: { value: 'claude-opus-4-8', updatedAtMs: 1 },
+        permissionIntent: { value: 'default' as const, updatedAtMs: 1 },
+        options: { reasoning_effort: { value: 'xhigh', updatedAtMs: 1 } },
+      },
+    }, {} as AgentRuntimeContext);
+
+    expect(resolveSupportsEffort).toHaveBeenCalledTimes(1);
+    expect(openExecutionSession).toHaveBeenCalledWith(expect.objectContaining({
+      supportsEffort: false,
+    }));
     await run?.dispose();
   });
 
@@ -478,7 +685,7 @@ describe('createClaudeNativeRuntime', () => {
         },
       },
     } as unknown as AgentSessionRuntimeContext;
-    const runtime = createClaudeNativeRuntime({ openSession });
+    const runtime = createTestClaudeNativeRuntime({ openSession });
 
     const session = await runtime.sessions.open({
       kind: 'create',
@@ -521,7 +728,7 @@ describe('createClaudeNativeRuntime', () => {
         },
       },
     } as unknown as AgentSessionRuntimeContext;
-    const runtime = createClaudeNativeRuntime({
+    const runtime = createTestClaudeNativeRuntime({
       openSession: createClaudeNativeSessionOpener({
         openAgentSdkSession,
         openUnifiedTerminalSession,
@@ -560,7 +767,7 @@ describe('createClaudeNativeRuntime', () => {
         },
       },
     } as unknown as AgentSessionRuntimeContext;
-    const runtime = createClaudeNativeRuntime({
+    const runtime = createTestClaudeNativeRuntime({
       openSession: createClaudeNativeSessionOpener({
         openAgentSdkSession,
         openUnifiedTerminalSession,
@@ -578,7 +785,7 @@ describe('createClaudeNativeRuntime', () => {
   it('maps the existing Claude provider session into canonical native custody and runtime events', async () => {
     const native = createNativeOperations('session-1');
     const openSession = vi.fn<ClaudeNativeSessionFactory>(() => native.runtime);
-    const runtime = createClaudeNativeRuntime({ openSession });
+    const runtime = createTestClaudeNativeRuntime({ openSession });
     const session = await runtime.sessions.open({
       kind: 'create',
       sessionId: 'session-1',
@@ -639,7 +846,7 @@ describe('createClaudeNativeRuntime', () => {
         },
       },
     } as unknown as AgentSessionRuntimeContext;
-    const runtime = createClaudeNativeRuntime({
+    const runtime = createTestClaudeNativeRuntime({
       openSession: () => ({
         ...native.runtime,
         isTurnInFlight: () => true,
@@ -695,7 +902,7 @@ describe('createClaudeNativeRuntime', () => {
         },
       },
     } as unknown as AgentSessionRuntimeContext;
-    const runtime = createClaudeNativeRuntime({ openSession: () => native.runtime });
+    const runtime = createTestClaudeNativeRuntime({ openSession: () => native.runtime });
     const session = await runtime.sessions.open({
       kind: 'create',
       sessionId: 'session-models',
@@ -775,7 +982,7 @@ describe('createClaudeNativeRuntime', () => {
           },
         },
       } as unknown as AgentSessionRuntimeContext;
-      const runtime = createClaudeNativeRuntime({ openSession: () => native.runtime });
+      const runtime = createTestClaudeNativeRuntime({ openSession: () => native.runtime });
       const baseRequest = {
         sessionId: 'session-provider-model',
         cwd: '/repo',
@@ -835,7 +1042,7 @@ describe('createClaudeNativeRuntime', () => {
   it('forwards only explicitly supported Provider reasoning values', async () => {
     const native = createNativeOperations('session-provider-reasoning');
     const updateProviderConfiguration = vi.fn(async () => ({ status: 'applied' as const }));
-    const runtime = createClaudeNativeRuntime({
+    const runtime = createTestClaudeNativeRuntime({
       openSession: () => ({ ...native.runtime, updateProviderConfiguration }),
     });
     const providerBinding = {
@@ -889,6 +1096,173 @@ describe('createClaudeNativeRuntime', () => {
       },
     })).resolves.toMatchObject({ status: 'unsupported' });
     expect(updateProviderConfiguration).not.toHaveBeenCalled();
+
+    await session.dispose();
+  });
+
+  it('rejects a stale Provider reasoning override before calling the runtime or publishing the new descriptor', async () => {
+    const native = createNativeOperations('session-provider-reasoning-switch');
+    const updateProviderConfiguration = vi.fn(async () => ({ status: 'applied' as const }));
+    let modelSource: {
+      read(): Readonly<{
+        currentModelId?: string | null;
+        models?: readonly Readonly<{ id: string; name: string }>[];
+      }>;
+    } | null = null;
+    const sessionContext = {
+      session: {
+        services: {
+          activeInput: { bind: () => ({ dispose() {} }), publishStatus: vi.fn() },
+          models: {
+            bind(source: NonNullable<typeof modelSource>) {
+              modelSource = source;
+              return { dispose() {} };
+            },
+          },
+        },
+      },
+    } as unknown as AgentSessionRuntimeContext;
+    const currentBinding = {
+      connectionId: ProviderConnectionIdSchema.parse('pc_deepseek'),
+      model: {
+        id: 'deepseek-ai/DeepSeek-V3.1',
+        name: 'DeepSeek V3.1',
+        capabilities: { reasoningControls: 'supported' as const },
+        modelOptions: [{
+          id: 'reasoning_effort',
+          name: 'Reasoning',
+          type: 'select',
+          currentValue: 'high',
+          options: [
+            { value: 'high', name: 'High' },
+            { value: 'xhigh', name: 'XHigh' },
+          ],
+        }],
+      },
+      materialization: { v: 1 as const, kind: 'spawnEnv' as const },
+    } satisfies AgentSessionProviderBinding;
+    const nextBinding = {
+      ...currentBinding,
+      model: {
+        id: 'deepseek-ai/DeepSeek-V3.2',
+        name: 'DeepSeek V3.2',
+        capabilities: { reasoningControls: 'supported' as const },
+        modelOptions: [{
+          id: 'reasoning_effort',
+          name: 'Reasoning',
+          type: 'select',
+          currentValue: 'high',
+          options: [{ value: 'high', name: 'High' }],
+        }],
+      },
+    } satisfies AgentSessionProviderBinding;
+    const baseConfiguration = {
+      mode: { value: null, updatedAtMs: 1 },
+      model: { value: currentBinding.model.id, updatedAtMs: 1 },
+      permissionIntent: { value: 'default' as const, updatedAtMs: 1 },
+      options: {
+        reasoning_effort: { value: 'xhigh', updatedAtMs: 1 },
+      },
+    };
+    const runtime = createTestClaudeNativeRuntime({
+      openSession: () => ({ ...native.runtime, updateProviderConfiguration }),
+    });
+    const session = await runtime.sessions.open({
+      kind: 'create',
+      sessionId: 'session-provider-reasoning-switch',
+      cwd: '/repo',
+      configuration: baseConfiguration,
+      providerBinding: currentBinding,
+    }, sessionContext);
+
+    await expect(session.updateConfiguration?.({
+      ...baseConfiguration,
+      model: { value: nextBinding.model.id, updatedAtMs: 2 },
+      providerBinding: nextBinding,
+    })).resolves.toMatchObject({ status: 'unsupported' });
+    expect(updateProviderConfiguration).not.toHaveBeenCalled();
+    expect(modelSource?.read()).toEqual({
+      currentModelId: currentBinding.model.id,
+      models: [currentBinding.model],
+    });
+
+    await session.dispose();
+  });
+
+  it('rejects stale Provider ultracode before calling the runtime or publishing the new descriptor', async () => {
+    const native = createNativeOperations('session-provider-ultracode-switch');
+    const updateProviderConfiguration = vi.fn(async () => ({ status: 'applied' as const }));
+    let modelSource: {
+      read(): Readonly<{
+        currentModelId?: string | null;
+        models?: readonly Readonly<{ id: string; name: string }>[];
+      }>;
+    } | null = null;
+    const sessionContext = {
+      session: {
+        services: {
+          activeInput: { bind: () => ({ dispose() {} }), publishStatus: vi.fn() },
+          models: {
+            bind(source: NonNullable<typeof modelSource>) {
+              modelSource = source;
+              return { dispose() {} };
+            },
+          },
+        },
+      },
+    } as unknown as AgentSessionRuntimeContext;
+    const currentBinding = {
+      connectionId: ProviderConnectionIdSchema.parse('pc_deepseek'),
+      model: {
+        id: 'deepseek-ai/DeepSeek-V3.1',
+        name: 'DeepSeek V3.1',
+        capabilities: { reasoningControls: 'supported' as const },
+        modelOptions: [{
+          id: 'ultracode',
+          name: 'Ultracode',
+          type: 'boolean',
+          currentValue: true,
+        }],
+      },
+      materialization: { v: 1 as const, kind: 'spawnEnv' as const },
+    } satisfies AgentSessionProviderBinding;
+    const nextBinding = {
+      ...currentBinding,
+      model: {
+        id: 'deepseek-ai/DeepSeek-V3.2',
+        name: 'DeepSeek V3.2',
+        capabilities: { reasoningControls: 'unknown' as const },
+      },
+    } satisfies AgentSessionProviderBinding;
+    const baseConfiguration = {
+      mode: { value: null, updatedAtMs: 1 },
+      model: { value: currentBinding.model.id, updatedAtMs: 1 },
+      permissionIntent: { value: 'default' as const, updatedAtMs: 1 },
+      options: {
+        ultracode: { value: true, updatedAtMs: 1 },
+      },
+    };
+    const runtime = createTestClaudeNativeRuntime({
+      openSession: () => ({ ...native.runtime, updateProviderConfiguration }),
+    });
+    const session = await runtime.sessions.open({
+      kind: 'create',
+      sessionId: 'session-provider-ultracode-switch',
+      cwd: '/repo',
+      configuration: baseConfiguration,
+      providerBinding: currentBinding,
+    }, sessionContext);
+
+    await expect(session.updateConfiguration?.({
+      ...baseConfiguration,
+      model: { value: nextBinding.model.id, updatedAtMs: 2 },
+      providerBinding: nextBinding,
+    })).resolves.toMatchObject({ status: 'unsupported' });
+    expect(updateProviderConfiguration).not.toHaveBeenCalled();
+    expect(modelSource?.read()).toEqual({
+      currentModelId: currentBinding.model.id,
+      models: [currentBinding.model],
+    });
 
     await session.dispose();
   });
@@ -966,7 +1340,7 @@ describe('createClaudeNativeRuntime', () => {
       permissionIntent: { value: 'default' as const, updatedAtMs: 1 },
       options: {},
     };
-    const runtime = createClaudeNativeRuntime({
+    const runtime = createTestClaudeNativeRuntime({
       openSession: () => ({ ...native.runtime, updateProviderConfiguration }),
     });
     const session = await runtime.sessions.open({
@@ -1030,7 +1404,7 @@ describe('createClaudeNativeRuntime', () => {
 
   it('publishes leaf usage through the canonical AgentRuntime usage event', async () => {
     const native = createNativeOperations('session-provider-usage');
-    const runtime = createClaudeNativeRuntime({ openSession: () => native.runtime });
+    const runtime = createTestClaudeNativeRuntime({ openSession: () => native.runtime });
     const session = await runtime.sessions.open({
       kind: 'create',
       sessionId: 'session-provider-usage',
@@ -1083,7 +1457,7 @@ describe('createClaudeNativeRuntime', () => {
     const native = createNativeOperations('session-goals');
     const setGoal = vi.fn(async () => undefined);
     const clearGoal = vi.fn(async () => undefined);
-    const runtime = createClaudeNativeRuntime({
+    const runtime = createTestClaudeNativeRuntime({
       openSession: () => ({
         ...native.runtime,
         setGoal,
@@ -1133,7 +1507,7 @@ describe('createClaudeNativeRuntime', () => {
   });
 
   it('publishes declared inactive goal mutations through the canonical goal work-state source', async () => {
-    const runtime = createClaudeNativeRuntime({
+    const runtime = createTestClaudeNativeRuntime({
       openSession: ({ request }) => createNativeOperations(request.sessionId).runtime,
     });
     const publish = vi.fn(async () => ({
@@ -1179,7 +1553,7 @@ describe('createClaudeNativeRuntime', () => {
   });
 
   it('declares a host-owned terminal launch plan without launching a process in the plugin', async () => {
-    const runtime = createClaudeNativeRuntime({
+    const runtime = createTestClaudeNativeRuntime({
       openSession: ({ request }) => createNativeOperations(request.sessionId).runtime,
     });
 
@@ -1187,13 +1561,35 @@ describe('createClaudeNativeRuntime', () => {
       sessionId: 'session-1',
       cwd: '/repo',
       metadata: {
-        claudeArgs: ['--model', 'stale', '--permission-mode=acceptEdits', 'prompt'],
+        claudeArgs: [
+          '--model',
+          'stale',
+          '--fallback-model',
+          'raw-fallback-must-not-win',
+          '--permission-mode=acceptEdits',
+          'prompt',
+        ],
         model: 'claude-opus-4-8',
+        fallbackModel: 'metadata-fallback-must-not-win',
+        modelSelectionIntentV1: {
+          v: 1,
+          updatedAt: 41,
+          selection: {
+            agentTargetKey: 'backend:claude',
+            providerConnectionId: 'pc_next',
+            modelId: 'proposed-provider-model',
+          },
+        },
+      },
+      modelSelection: {
+        agentTargetKey: 'backend:claude',
+        providerConnectionId: 'pc_claude',
+        modelId: 'claude-sonnet-4-6',
       },
     }))).resolves.toEqual({
       argv: [
         '--model',
-        'claude-opus-4-8',
+        'claude-sonnet-4-6',
         'prompt',
         '--permission-mode',
         'acceptEdits',
@@ -1240,7 +1636,7 @@ describe('createClaudeNativeRuntime', () => {
 
   it('does not synthesize provider acceptance from a turn failure before prompt transport', async () => {
     const native = createNativeOperations('session-provider-evidence');
-    const runtime = createClaudeNativeRuntime({
+    const runtime = createTestClaudeNativeRuntime({
       openSession: () => ({
         ...native.runtime,
         async sendProviderTurnPrompt() {
@@ -1291,7 +1687,7 @@ describe('createClaudeNativeRuntime', () => {
   it('waits for exact prompt transport before accepting and publishes acceptance before buffered output', async () => {
     const native = createNativeOperations('session-exact-transport');
     const transport = deferred<Readonly<{ kind: 'accepted' }>>();
-    const runtime = createClaudeNativeRuntime({
+    const runtime = createTestClaudeNativeRuntime({
       openSession: () => ({
         ...native.runtime,
         async sendProviderTurnPrompt() {
@@ -1337,7 +1733,7 @@ describe('createClaudeNativeRuntime', () => {
 
   it('keeps exact transport acceptance monotonic across a later turn failure', async () => {
     const native = createNativeOperations('session-accepted-then-failed');
-    const runtime = createClaudeNativeRuntime({ openSession: () => native.runtime });
+    const runtime = createTestClaudeNativeRuntime({ openSession: () => native.runtime });
     const session = await runtime.sessions.open({
       kind: 'create',
       sessionId: 'session-accepted-then-failed',
@@ -1374,7 +1770,7 @@ describe('createClaudeNativeRuntime', () => {
     const native = createNativeOperations('session-unified-provider-acceptance');
     let publishProviderAcceptance:
       ((info: Readonly<{ localIds?: readonly string[] }>) => void) | null = null;
-    const runtime = createClaudeNativeRuntime({
+    const runtime = createTestClaudeNativeRuntime({
       openSession: () => ({
         ...native.runtime,
         promptCustody: 'unified_terminal' as const,
@@ -1413,7 +1809,7 @@ describe('createClaudeNativeRuntime', () => {
 
   it('projects a provider session identity published after native session startup', async () => {
     const native = createNativeOperations('session-late-provider-identity');
-    const runtime = createClaudeNativeRuntime({ openSession: () => native.runtime });
+    const runtime = createTestClaudeNativeRuntime({ openSession: () => native.runtime });
     const session = await runtime.sessions.open({
       kind: 'create',
       sessionId: 'session-late-provider-identity',
@@ -1439,7 +1835,7 @@ describe('createClaudeNativeRuntime', () => {
   it('delivers declared follow-up input as the next Claude turn while preserving native custody', async () => {
     const native = createNativeOperations('session-follow-up');
     const send = vi.fn(native.runtime.sendProviderTurnPrompt);
-    const runtime = createClaudeNativeRuntime({
+    const runtime = createTestClaudeNativeRuntime({
       openSession: () => ({ ...native.runtime, sendProviderTurnPrompt: send }),
     });
     const session = await runtime.sessions.open({
@@ -1478,7 +1874,7 @@ describe('createClaudeNativeRuntime', () => {
       });
       return { kind: 'accepted' } as const;
     });
-    const runtime = createClaudeNativeRuntime({
+    const runtime = createTestClaudeNativeRuntime({
       openSession: ({ request }) => createNativeOperations(request.sessionId).runtime,
       openExecutionSession: () => ({
         ...native.runtime,
@@ -1506,7 +1902,7 @@ describe('createClaudeNativeRuntime', () => {
   it('uses the same exact transport outcome for execution-run input', async () => {
     const native = createNativeOperations('execution-run-transport-unknown');
     const transport = deferred<Readonly<{ kind: 'accepted' }>>();
-    const runtime = createClaudeNativeRuntime({
+    const runtime = createTestClaudeNativeRuntime({
       openSession: ({ request }) => createNativeOperations(request.sessionId).runtime,
       openExecutionSession: () => ({
         ...native.runtime,
@@ -1537,7 +1933,7 @@ describe('createClaudeNativeRuntime', () => {
 
   it('publishes unknown custody when Claude send throws after delivery may have begun', async () => {
     const native = createNativeOperations('session-unknown');
-    const runtime = createClaudeNativeRuntime({
+    const runtime = createTestClaudeNativeRuntime({
       openSession: () => ({
         ...native.runtime,
         async sendProviderTurnPrompt() {

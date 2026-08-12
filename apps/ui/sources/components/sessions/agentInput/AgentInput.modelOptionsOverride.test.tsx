@@ -1838,4 +1838,78 @@ describe('AgentInput (modelOptionsOverride)', () => {
         expect(onRefresh).toHaveBeenCalledTimes(1);
     });
 
+    it('routes the descriptor-owned extended-context toggle through model selection', async () => {
+        const { AgentInput } = await import('./AgentInput');
+        const onModelModeChange = vi.fn();
+
+        const screen = await renderScreen(React.createElement(AgentInput, {
+            value: 'hello',
+            placeholder: 'placeholder',
+            onChangeText: () => {},
+            onSend: () => {},
+            autocompleteKinds: [],
+            autocompleteSuggestions: async () => [],
+            agentType: 'claude',
+            permissionMode: 'default',
+            onPermissionModeChange: () => {},
+            modelMode: 'claude-sonnet-4-6',
+            onModelModeChange,
+            modelOptionsOverride: [{
+                value: 'claude-sonnet-4-6',
+                label: 'Sonnet 4.6',
+                description: 'Balanced',
+                extendedContextModelId: 'claude-sonnet-4-6[1m]',
+            }],
+        } as any));
+        await screen.pressByTestIdAsync('agent-input-agent-chip');
+
+        const contextControl = lastOptionPickerOverlayProps?.selectedOptionControls?.find(
+            (control: any) => control.option.id === 'extended_context_model',
+        );
+        expect(contextControl?.effectiveValue).toBe('false');
+        lastOptionPickerOverlayProps?.onSelectOptionControlValue?.('extended_context_model', 'true');
+        expect(onModelModeChange).toHaveBeenCalledWith('claude-sonnet-4-6[1m]');
+    });
+
+    it('keeps base controls visible for an extended-context selection and toggles back', async () => {
+        const { AgentInput } = await import('./AgentInput');
+        const onModelModeChange = vi.fn();
+
+        const screen = await renderScreen(React.createElement(AgentInput, {
+            value: 'hello',
+            placeholder: 'placeholder',
+            onChangeText: () => {},
+            onSend: () => {},
+            autocompleteKinds: [],
+            autocompleteSuggestions: async () => [],
+            agentType: 'claude',
+            permissionMode: 'default',
+            onPermissionModeChange: () => {},
+            modelMode: 'claude-sonnet-4-6[1m]',
+            onModelModeChange,
+            onAcpConfigOptionChange: () => {},
+            modelOptionsOverride: [{
+                value: 'claude-sonnet-4-6',
+                label: 'Sonnet 4.6',
+                description: 'Balanced',
+                extendedContextModelId: 'claude-sonnet-4-6[1m]',
+                modelOptions: [{
+                    id: 'reasoning_effort',
+                    name: 'Thinking',
+                    type: 'select',
+                    currentValue: 'high',
+                    options: [{ value: 'high', name: 'High' }],
+                }],
+            }],
+        } as any));
+        await screen.pressByTestIdAsync('agent-input-agent-chip');
+
+        const controls = lastOptionPickerOverlayProps?.selectedOptionControls ?? [];
+        expect(controls.find((control: any) => control.option.id === 'extended_context_model')?.effectiveValue)
+            .toBe('true');
+        expect(controls.some((control: any) => control.option.id === 'reasoning_effort')).toBe(true);
+        lastOptionPickerOverlayProps?.onSelectOptionControlValue?.('extended_context_model', 'false');
+        expect(onModelModeChange).toHaveBeenCalledWith('claude-sonnet-4-6');
+    });
+
 });

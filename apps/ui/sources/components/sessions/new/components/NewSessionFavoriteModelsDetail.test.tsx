@@ -955,4 +955,47 @@ describe('NewSessionFavoriteModelsDetail', () => {
 
         expect(onRemoveFavoriteModelSelection).toHaveBeenCalledWith(favorite);
     });
+
+    it('routes an extended-context favorite control through model selection instead of config overrides', async () => {
+        const onSelectFavoriteModel = vi.fn();
+        const onSelectFavoriteModelOptionValue = vi.fn();
+        preflightModelsByTargetKey['agent:claude'] = {
+            modelOptions: [{
+                value: 'claude-sonnet-4-6',
+                label: 'Sonnet 4.6',
+                description: 'Balanced',
+                extendedContextModelId: 'claude-sonnet-4-6[1m]',
+            }],
+            preflightModels: null,
+        };
+        const claudeEntry = createBuiltInEntry('claude', 'Claude');
+        const { NewSessionFavoriteModelsDetail } = await import('./NewSessionFavoriteModelsDetail');
+
+        await renderScreen(<NewSessionFavoriteModelsDetail
+            favoriteModelSelections={[favoriteModel('agent:claude', 'claude-sonnet-4-6')]}
+            resolvedBackendEntries={[claudeEntry]}
+            selectedBackendTargetKey="agent:claude"
+            selectedModelId="claude-sonnet-4-6"
+            selectedConfigOverrides={{ reasoning_effort: 'high' }}
+            selectedMachineId="machine-1"
+            capabilityServerId="server-1"
+            settings={settings}
+            onSelectFavoriteModel={onSelectFavoriteModel}
+            onSelectFavoriteModelOptionValue={onSelectFavoriteModelOptionValue}
+            onToggleFavoriteModel={vi.fn()}
+        />);
+
+        const latestPickerProps = optionPickerOverlayProps.at(-1);
+        expect(latestPickerProps?.selectedOptionControls?.find(
+            (control) => control.option.id === 'extended_context_model',
+        )?.effectiveValue).toBe('false');
+        latestPickerProps?.onSelectOptionControlValue?.('extended_context_model', 'true');
+
+        expect(onSelectFavoriteModel).toHaveBeenCalledWith(
+            claudeEntry,
+            expectedNativeSelection('agent:claude', 'claude-sonnet-4-6[1m]'),
+            { reasoning_effort: 'high' },
+        );
+        expect(onSelectFavoriteModelOptionValue).not.toHaveBeenCalled();
+    });
 });

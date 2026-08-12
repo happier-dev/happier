@@ -18,6 +18,10 @@
       "types": "./dist/process/shellCommand.d.ts",
       "default": "./dist/process/shellCommand.js"
     },
+    "./providers/claude-model-options": {
+      "types": "./dist/providers/claudeModelOptions.d.ts",
+      "default": "./dist/providers/claudeModelOptions.js"
+    },
     "./session/controls/checkpoints": {
       "types": "./dist/session/controls/checkpoints.d.ts",
       "default": "./dist/session/controls/checkpoints.js"

@@ -20,6 +20,7 @@ export type ModelOption = Readonly<{
     value: ModelMode;
     label: string;
     description: string;
+    extendedContextModelId?: string;
     modelOptions?: readonly AcpConfigOption[];
 }>;
 
@@ -28,6 +29,7 @@ export type PreflightModelList = Readonly<{
         id: string;
         name: string;
         description?: string;
+        extendedContextModelId?: string;
         modelOptions?: readonly AcpConfigOption[];
     }>>;
     supportsFreeform: boolean;
@@ -48,6 +50,7 @@ type SessionModelListState = Readonly<{
         id?: unknown;
         name?: unknown;
         description?: unknown;
+        extendedContextModelId?: unknown;
         modelOptions?: unknown;
     }>;
 }>;
@@ -61,6 +64,12 @@ function dedupeModelOptionsByValue(options: readonly ModelOption[]): readonly Mo
     });
 }
 
+export function readExtendedContextModelId(value: unknown): string | undefined {
+    if (typeof value !== 'string') return undefined;
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : undefined;
+}
+
 function mergeDynamicModelOptionWithCatalog(
     option: ModelOption,
     catalogByValue: ReadonlyMap<string, ModelOption>,
@@ -69,10 +78,14 @@ function mergeDynamicModelOptionWithCatalog(
     if (!catalog) return option;
     const hasModelOptions = Array.isArray(option.modelOptions) && option.modelOptions.length > 0;
     const hasDescription = typeof option.description === 'string' && option.description.trim().length > 0;
+    const hasExtendedContextModelId = readExtendedContextModelId(option.extendedContextModelId) !== undefined;
     return {
         ...option,
         ...(!hasDescription && catalog.description ? { description: catalog.description } : {}),
         ...(!hasModelOptions && catalog.modelOptions ? { modelOptions: catalog.modelOptions } : {}),
+        ...(!hasExtendedContextModelId && catalog.extendedContextModelId
+            ? { extendedContextModelId: catalog.extendedContextModelId }
+            : {}),
     };
 }
 
@@ -154,6 +167,9 @@ export function getModelOptionsForPreflightModelList(list: PreflightModelList): 
                 value,
                 label,
                 description: typeof m.description === 'string' ? m.description : '',
+                ...(readExtendedContextModelId(m.extendedContextModelId)
+                    ? { extendedContextModelId: readExtendedContextModelId(m.extendedContextModelId) }
+                    : {}),
                 ...(Array.isArray(m.modelOptions) && m.modelOptions.length > 0 ? { modelOptions: m.modelOptions } : {}),
             }];
         });
@@ -234,6 +250,9 @@ function getStaticModelOptionsForAgentType(agentType: AgentType): readonly Model
             value,
             label: model.name,
             description: typeof model.description === 'string' ? model.description : '',
+            ...(readExtendedContextModelId(model.extendedContextModelId)
+                ? { extendedContextModelId: readExtendedContextModelId(model.extendedContextModelId) }
+                : {}),
             ...(Array.isArray(model.modelOptions) && model.modelOptions.length > 0 ? { modelOptions: model.modelOptions } : {}),
         });
     }
@@ -292,6 +311,9 @@ function resolveModelOptionsForSession(agentType: AgentType, metadata: Metadata 
                     value,
                     label: String(m.name),
                     description,
+                    ...(readExtendedContextModelId(m.extendedContextModelId)
+                        ? { extendedContextModelId: readExtendedContextModelId(m.extendedContextModelId) }
+                        : {}),
                     ...(modelOptionsRaw ? { modelOptions: modelOptionsRaw } : {}),
                 };
             });
@@ -337,11 +359,14 @@ export function getModelOptionsForSession(agentType: AgentType, metadata: Metada
 }
 
 /**
- * Finds the model option matching an effective model id, tolerating bracket variant
- * suffixes: Claude models a 1M context window as `<id>[1m]`, so a selected variant id
- * must still resolve to its base catalog option (label, description, modelOptions).
+ * Finds the option matching either its base id or the exact extended-context id
+ * declared by that descriptor. Undeclared bracket suffixes are intentionally not
+ * treated as model aliases.
  */
-export function findModelOptionForEffectiveModelId<T extends Readonly<{ value: string }>>(
+export function findModelOptionForEffectiveModelId<T extends Readonly<{
+    value: string;
+    extendedContextModelId?: string;
+}>>(
     options: readonly T[],
     effectiveModelId: string | null | undefined,
 ): T | null {
@@ -349,7 +374,5 @@ export function findModelOptionForEffectiveModelId<T extends Readonly<{ value: s
     if (!raw) return null;
     const exact = options.find((option) => option.value === raw);
     if (exact) return exact;
-    const base = raw.replace(/\[[^\]]*\]$/u, '');
-    if (base === raw) return null;
-    return options.find((option) => option.value === base) ?? null;
+    return options.find((option) => option.extendedContextModelId === raw) ?? null;
 }

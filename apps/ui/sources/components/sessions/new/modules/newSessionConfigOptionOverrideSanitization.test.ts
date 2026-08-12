@@ -3,12 +3,13 @@ import { describe, expect, it } from 'vitest';
 import { sanitizeNewSessionConfigOverridesForModelSelection } from './newSessionConfigOptionOverrideSanitization';
 
 describe('sanitizeNewSessionConfigOverridesForModelSelection', () => {
-    it('preserves base model scoped overrides when the selected model is an effective bracket variant', () => {
+    it('preserves base model scoped overrides when the selected model is its declared extended-context variant', () => {
         expect(sanitizeNewSessionConfigOverridesForModelSelection({
             providerId: 'claude',
             configOptions: [],
             modelOptions: [{
                 value: 'claude-sonnet-4-6',
+                extendedContextModelId: 'claude-sonnet-4-6[1m]',
                 modelOptions: [{
                     id: 'reasoning_effort',
                     name: 'Reasoning effort',

@@ -5,7 +5,13 @@ import {
   type ProviderCatalogParserV1,
   type ProviderCatalogProbeModelV1,
   type ProviderModelLoadStateV1,
+  ProviderModelDescriptorV1Schema,
 } from '@happier-dev/protocol';
+import {
+  buildClaudeModelOptions,
+  CLAUDE_EFFORT_LEVELS,
+  type ClaudeEffortLevel,
+} from '@happier-dev/agents/providers/claude-model-options';
 
 export type ParsedProviderCatalogResponse = Readonly<{
   models: readonly ProviderCatalogProbeModelV1[];
@@ -52,6 +58,72 @@ function requiredOwnString(value: unknown, key: string): string {
   return output;
 }
 
+function optionalOwnObject(value: unknown, key: string, label: string): Record<string, unknown> | undefined {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new TypeError('Provider model row must be an object');
+  }
+  const descriptor = Object.getOwnPropertyDescriptor(value, key);
+  if (!descriptor) return undefined;
+  if (!descriptor.enumerable || !('value' in descriptor)
+    || typeof descriptor.value !== 'object' || descriptor.value === null || Array.isArray(descriptor.value)) {
+    throw new TypeError(`${label} must be an object`);
+  }
+  return descriptor.value as Record<string, unknown>;
+}
+
+function requiredOwnBoolean(value: unknown, key: string, label: string): boolean {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new TypeError(`${label} must be an object`);
+  }
+  const descriptor = Object.getOwnPropertyDescriptor(value, key);
+  if (!descriptor || !descriptor.enumerable || !('value' in descriptor)
+    || typeof descriptor.value !== 'boolean') {
+    throw new TypeError(`${label} ${key} must be a boolean`);
+  }
+  return descriptor.value;
+}
+
+function optionalOwnContextWindowTokens(value: unknown): number | undefined {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new TypeError('Provider model row must be an object');
+  }
+  const descriptor = Object.getOwnPropertyDescriptor(value, 'max_input_tokens');
+  if (!descriptor) return undefined;
+  if (!descriptor.enumerable || !('value' in descriptor)) {
+    throw new TypeError('Provider model max_input_tokens must be a positive bounded integer');
+  }
+  try {
+    return ProviderModelDescriptorV1Schema.shape.contextWindowTokens.parse(descriptor.value);
+  } catch {
+    throw new TypeError('Provider model max_input_tokens must be a positive bounded integer');
+  }
+}
+
+function readAnthropicEffortCapability(value: unknown): Readonly<{
+  supported: boolean;
+  levels: readonly ClaudeEffortLevel[];
+}> | undefined {
+  const capabilities = optionalOwnObject(value, 'capabilities', 'Anthropic model capabilities');
+  if (!capabilities) return undefined;
+  const effort = optionalOwnObject(capabilities, 'effort', 'Anthropic model effort capability');
+  if (!effort) return undefined;
+  const supported = requiredOwnBoolean(effort, 'supported', 'Anthropic model effort capability');
+  const levels: ClaudeEffortLevel[] = [];
+  for (const level of CLAUDE_EFFORT_LEVELS) {
+    const tier = optionalOwnObject(effort, level, `Anthropic model effort tier ${level}`);
+    if (tier && requiredOwnBoolean(tier, 'supported', `Anthropic model effort tier ${level}`)) {
+      levels.push(level);
+    }
+  }
+  if (!supported && levels.length > 0) {
+    throw new TypeError('Anthropic model effort capability cannot disable supported tiers');
+  }
+  if (supported && levels.length === 0) {
+    throw new TypeError('Anthropic model effort capability requires a supported tier');
+  }
+  return { supported, levels };
+}
+
 function optionalOwnStringArray(
   value: unknown,
   key: string,
@@ -93,6 +165,33 @@ function parseOpenAiModels(input: unknown): ParsedProviderCatalogResponse {
       const id = requiredOwnString(row, 'id');
       const name = optionalOwnString(row, 'name');
       return name === undefined ? { id } : { id, name };
+    })),
+    loadStates: [],
+  };
+}
+
+function parseAnthropicModels(input: unknown): ParsedProviderCatalogResponse {
+  const rows = boundedArray(ownDataProperty(input, 'data'), 'Anthropic model list');
+  return {
+    models: normalizeModels(rows.map((row) => {
+      const id = requiredOwnString(row, 'id');
+      const name = optionalOwnString(row, 'display_name');
+      const contextWindowTokens = optionalOwnContextWindowTokens(row);
+      const effort = readAnthropicEffortCapability(row);
+      const modelOptions = effort?.supported
+        ? buildClaudeModelOptions({ supportedLevels: effort.levels })
+        : [];
+      return {
+        id,
+        ...(name === undefined ? {} : { name }),
+        ...(contextWindowTokens === undefined ? {} : { contextWindowTokens }),
+        ...(effort ? {
+          capabilities: {
+            reasoningControls: effort.supported ? 'supported' as const : 'unsupported' as const,
+          },
+        } : {}),
+        ...(modelOptions.length > 0 ? { modelOptions } : {}),
+      };
     })),
     loadStates: [],
   };
@@ -165,6 +264,7 @@ export function parseProviderCatalogResponse(
 ): ParsedProviderCatalogResponse {
   switch (ProviderCatalogParserV1Schema.parse(parser)) {
     case 'openai-models': return parseOpenAiModels(input);
+    case 'anthropic-models': return parseAnthropicModels(input);
     case 'ollama-tags': return parseOllamaTags(input);
     case 'lmstudio-native-models': return parseLmStudioModels(input);
   }

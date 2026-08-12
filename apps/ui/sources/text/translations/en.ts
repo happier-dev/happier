@@ -7098,6 +7098,8 @@ export const en = {
               selectedForResume: 'The selected model will be used when this session resumes.',
               configureInCli: 'Configure models in CLI settings',
               unavailable: 'Model discovery is unavailable for this provider on this machine.',
+              extendedContextToggleLabel: '1M context',
+              extendedContextToggleDescription: 'Use the extended 1M-token context window for this model.',
               customDescription: 'Use a model id that isn’t listed.',
               customPromptBody: 'Enter a model id',
               customPlaceholder: 'e.g. claude-3.5-sonnet',

@@ -8,6 +8,7 @@ import {
 import { CLAUDE_PROVIDER_OWNED_ENV_KEYS } from './agent/providerBinding/adapter.js';
 import { CLAUDE_AGENT_SETTINGS_CONTRIBUTION } from './agentSettings/definition.js';
 import { CLAUDE_UI_TRANSLATIONS } from './ui/translations.js';
+import { ANTHROPIC_PROVIDER_CONTRIBUTION } from './provider/contribution.js';
 
 export const PLUGIN_MANIFEST = {
   schemaVersion: 2,
@@ -86,6 +87,7 @@ export const PLUGIN_MANIFEST = {
     optional: [],
   },
   contributes: {
+    providers: [ANTHROPIC_PROVIDER_CONTRIBUTION],
     connectedAccountDescriptors: [{
       id: 'claude-subscription',
       title: 'Claude',

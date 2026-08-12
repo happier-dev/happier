@@ -6905,6 +6905,8 @@ export const ru = {
         selectedForResume: "Выбранная модель будет использоваться после возобновления этой сессии.",
         configureInCli: "Настройте модели в настройках CLI",
         unavailable: "Обнаружение моделей недоступно для этого провайдера на этой машине.",
+        extendedContextToggleLabel: "Контекст на 1 млн токенов",
+        extendedContextToggleDescription: "Использовать расширенное контекстное окно на 1 млн токенов для этой модели.",
         customDescription: "Использовать ID модели, которого нет в списке.",
         customPromptBody: "Введите ID модели",
         customPlaceholder: "например: claude-3.5-sonnet",

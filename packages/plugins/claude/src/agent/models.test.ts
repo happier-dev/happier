@@ -49,6 +49,24 @@ describe('CLAUDE_STATIC_MODELS extended-context variant declaration', () => {
     });
 });
 
+describe('CLAUDE_STATIC_MODELS current Sonnet facts', () => {
+    it('publishes Sonnet 4.6 with max effort but no xhigh option', () => {
+        const effort = model('claude-sonnet-4-6').modelOptions
+            ?.find((option) => option.id === 'reasoning_effort');
+        expect(effort).toMatchObject({
+            currentValue: 'high',
+            options: [
+                { value: 'low', name: 'Low' },
+                { value: 'medium', name: 'Medium' },
+                { value: 'high', name: 'High' },
+                { value: 'max', name: 'Max' },
+            ],
+        });
+    });
+
+});
+
+
 describe('CLAUDE_STATIC_MODELS flagship default', () => {
     it('keeps the flagship Claude default pointing at a real catalog model', () => {
         expect(CLAUDE_STATIC_MODELS.some((candidate) => candidate.id === CURRENT_FLAGSHIP_CLAUDE_MODEL_ID)).toBe(true);

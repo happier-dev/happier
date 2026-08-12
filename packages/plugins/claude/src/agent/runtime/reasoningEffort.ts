@@ -1,12 +1,20 @@
-import type { AgentSessionProviderBinding } from '@happier-dev/plugin-sdk/agent-runtime';
+import type { AgentSessionProviderBinding } from '@happier-dev/plugin-sdk/agents/runtime';
+import {
+    CLAUDE_EFFORT_LEVELS,
+    formatClaudeEffortLevelLabel,
+    normalizeClaudeEffortLevel,
+    type ClaudeEffortLevel,
+} from '@happier-dev/agents/providers/claude-model-options';
+
+export {
+    CLAUDE_EFFORT_LEVELS,
+    formatClaudeEffortLevelLabel,
+    type ClaudeEffortLevel,
+} from '@happier-dev/agents/providers/claude-model-options';
 
 type ClaudeProviderModel = AgentSessionProviderBinding['model'];
 
 export const CURRENT_FLAGSHIP_CLAUDE_MODEL_ID = 'claude-opus-5';
-
-export const CLAUDE_EFFORT_LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
-
-export type ClaudeEffortLevel = (typeof CLAUDE_EFFORT_LEVELS)[number];
 
 const CLAUDE_EFFORT_LEVEL_PRIORITY: readonly ClaudeEffortLevel[] = CLAUDE_EFFORT_LEVELS;
 
@@ -16,7 +24,7 @@ const CLAUDE_EFFORT_LEVELS_BY_MODEL_ID: ReadonlyMap<string, readonly ClaudeEffor
     ['claude-opus-4-8', ['low', 'medium', 'high', 'xhigh', 'max']],
     ['claude-opus-4-7', ['low', 'medium', 'high', 'xhigh', 'max']],
     ['claude-opus-4-6', ['low', 'medium', 'high', 'max']],
-    ['claude-sonnet-4-6', ['low', 'medium', 'high']],
+    ['claude-sonnet-4-6', ['low', 'medium', 'high', 'max']],
     ['claude-opus-4-5', ['low', 'medium', 'high']],
 ]);
 
@@ -26,13 +34,6 @@ function normalizeModelId(raw: unknown): string {
     // The suffixed id itself is never mutated on any send path.
     const value = typeof raw === 'string' ? raw.trim().toLowerCase() : '';
     return value.replace(/\[[^\]]*\]$/u, '');
-}
-
-function normalizeClaudeEffortLevel(raw: unknown): ClaudeEffortLevel | null {
-    const value = typeof raw === 'string' ? raw.trim().toLowerCase() : '';
-    if (!value) return null;
-    if (value === 'low' || value === 'medium' || value === 'high' || value === 'xhigh' || value === 'max') return value;
-    return null;
 }
 
 function resolveProviderEffortOption(
@@ -108,21 +109,6 @@ export function resolveClaudeDefaultEffortLevelForModelId(modelIdRaw: unknown): 
     return modelId === 'claude-opus-4-7' ? 'xhigh' : 'high';
 }
 
-export function formatClaudeEffortLevelLabel(level: ClaudeEffortLevel): string {
-    switch (level) {
-        case 'low':
-            return 'Low';
-        case 'medium':
-            return 'Medium';
-        case 'high':
-            return 'High';
-        case 'xhigh':
-            return 'XHigh';
-        case 'max':
-            return 'Max';
-    }
-}
-
 export function resolveClaudeDefaultEffortForKnownAliasOrModel(modelIdRaw: unknown): ClaudeEffortLevel | null {
     const modelId = normalizeModelId(modelIdRaw);
     if (!modelId) return null;
@@ -171,7 +157,7 @@ function resolveBestSupportedClaudeEffort(
     return null;
 }
 
-export function resolveClaudeEffortForModel(params: Readonly<{
+export function resolveClaudeEffectiveEffortForModel(params: Readonly<{
     modelId: unknown;
     effort: unknown;
     providerModel?: ClaudeProviderModel;
@@ -184,19 +170,27 @@ export function resolveClaudeEffortForModel(params: Readonly<{
         }
         const supportedLevels = resolveClaudeEffortLevelsForProviderModel(params.providerModel);
         if (!supportedLevels.includes(effort)) return null;
-        const defaultEffort = normalizeClaudeEffortLevel(
-            resolveProviderEffortOption(params.providerModel)?.currentValue,
-        );
-        return effort === defaultEffort ? null : effort;
+        return effort;
     }
     const supportedLevels = resolveClaudeEffortLevelsForKnownAliasOrModel(params.modelId);
     if (supportedLevels.length === 0) return null;
 
     const normalized = resolveBestSupportedClaudeEffort(effort, supportedLevels);
     if (!normalized) return null;
-    const defaultEffort = resolveClaudeDefaultEffortForKnownAliasOrModel(params.modelId);
+    return normalized;
+}
 
-    return normalized === defaultEffort ? null : normalized;
+export function resolveClaudeEffortForModel(params: Readonly<{
+    modelId: unknown;
+    effort: unknown;
+    providerModel?: ClaudeProviderModel;
+}>): ClaudeEffortLevel | null {
+    const effective = resolveClaudeEffectiveEffortForModel(params);
+    if (!effective) return null;
+    const defaultEffort = params.providerModel
+        ? normalizeClaudeEffortLevel(resolveProviderEffortOption(params.providerModel)?.currentValue)
+        : resolveClaudeDefaultEffortForKnownAliasOrModel(params.modelId);
+    return effective === defaultEffort ? null : effective;
 }
 
 /**

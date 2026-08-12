@@ -7,6 +7,7 @@ import { findModelOptionForEffectiveModelId } from '@/sync/domains/models/modelO
 
 type NewSessionModelOptionWithConfigOptions = Readonly<{
     value: string;
+    extendedContextModelId?: string;
     modelOptions?: ReadonlyArray<SessionConfigOption>;
 }>;
 

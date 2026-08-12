@@ -44,6 +44,12 @@ import {
     type FavoriteModelAvailability,
     type FavoriteModelSelectionV1,
 } from '@/sync/domains/models/favoriteModelSelections';
+import { findModelOptionForEffectiveModelId } from '@/sync/domains/models/modelOptions';
+import {
+    buildExtendedContextModelControl,
+    EXTENDED_CONTEXT_MODEL_TOGGLE_OPTION_ID,
+    resolveExtendedContextModelIdForToggle,
+} from '@/sync/domains/models/extendedContextModelControl';
 import { buildFavoriteBackendIdentity } from '@/sync/domains/models/favoriteModelBackendIdentity';
 import { t } from '@/text';
 import { sessionModelSelectionKey } from '@/components/sessions/modelPicker/sessionModelSelectionKey';
@@ -267,6 +273,15 @@ function FavoriteBackendModelsCollector(props: Readonly<{
                     providerAccessibilityLabelByRefKey.set(refKey, option.accessibilityLabel);
                 }
             }
+        }
+        for (const modelOption of modelOptions) {
+            if (!modelOption.extendedContextModelId) continue;
+            const baseAvailability = native.get(modelOption.value);
+            if (!baseAvailability) continue;
+            native.set(modelOption.extendedContextModelId, {
+                ...baseAvailability,
+                modelId: modelOption.extendedContextModelId,
+            });
         }
         return { native, provider, providerAccessibilityLabelByRefKey };
     }, [
@@ -597,6 +612,27 @@ export function NewSessionFavoriteModelsDetail(props: NewSessionFavoriteModelsDe
                         if (!selectedSnapshot || selectedValue.length === 0) return;
                         const model = selectedSnapshot.modelByValue.get(selectedValue);
                         if (!model) return;
+                        if (configId === EXTENDED_CONTEXT_MODEL_TOGGLE_OPTION_ID) {
+                            const selectedModelOption = findModelOptionForEffectiveModelId(
+                                selectedSnapshot.modelOptions,
+                                model.modelSelection.ref.modelId,
+                            );
+                            const modelId = resolveExtendedContextModelIdForToggle({
+                                model: selectedModelOption,
+                                enabled: valueId === 'true',
+                            });
+                            if (!modelId) return;
+                            props.onSelectFavoriteModel(
+                                selectedSnapshot.entry,
+                                {
+                                    ...model.modelSelection,
+                                    updatedAt: Date.now(),
+                                    ref: { ...model.modelSelection.ref, modelId },
+                                },
+                                props.selectedConfigOverrides,
+                            );
+                            return;
+                        }
                         props.onSelectFavoriteModelOptionValue?.(
                             selectedSnapshot.entry,
                             model.modelSelection,

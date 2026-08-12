@@ -36,6 +36,9 @@ export function applyActiveModelFacts(
         ...(providerDescriptor.contextWindowTokens === undefined
           ? {}
           : { contextWindowTokens: providerDescriptor.contextWindowTokens }),
+        ...(providerDescriptor.extendedContextModelId === undefined
+          ? {}
+          : { extendedContextModelId: providerDescriptor.extendedContextModelId }),
         ...(providerDescriptor.modelOptions === undefined
           ? {}
           : {

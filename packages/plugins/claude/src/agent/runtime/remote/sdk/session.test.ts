@@ -2291,6 +2291,44 @@ describe('bindClaudeAgentSdkFallbackSession', () => {
     }
   });
 
+  it.each([
+    { label: 'create', initialProviderSessionId: null },
+    { label: 'resume', initialProviderSessionId: 'provider-session-resume' },
+  ])('omits unsupported effort controls from the first SDK query for $label', async ({ initialProviderSessionId }) => {
+    const terminalHost = createTerminalHostFixture();
+    const events = createEventsFixture();
+    const exec = createSdkExecFixture();
+    const ctx = createPluginContextFixture(terminalHost.service, events.service, {
+      exec: exec.service,
+    });
+    const operations = createClaudeAgentSdkProviderOperations({
+      ctx,
+      directory: '/tmp/claude-project',
+      launchEnv: {},
+      permissionMode: 'default',
+      supportsEffort: false,
+      initialModelId: 'claude-opus-4-8',
+      initialEffort: 'xhigh',
+      initialUltracode: true,
+      initialProviderSessionId,
+    });
+
+    try {
+      await expect(operations.updateProviderConfiguration({
+        configOption: { id: 'reasoning_effort', value: 'xhigh' },
+      })).resolves.toMatchObject({ status: 'unsupported' });
+      await operations.sendProviderTurnPrompt('first prompt');
+      await vi.waitFor(() => expect(exec.spawnClient).toHaveBeenCalledTimes(1));
+
+      const args = exec.spawnClient.mock.calls[0]?.[0].launch.args as string[];
+      expect(args).not.toContain('--effort');
+      expect(args.join(' ')).not.toContain('ultracode');
+    } finally {
+      await operations.cancelProviderTurn('test_complete').catch(() => undefined);
+      await operations.disposeProviderSession('test_complete').catch(() => undefined);
+    }
+  });
+
   it('applies an ultracode runtime update as a single inline --settings overlay on the next SDK query', async () => {
     const terminalHost = createTerminalHostFixture();
     const events = createEventsFixture();

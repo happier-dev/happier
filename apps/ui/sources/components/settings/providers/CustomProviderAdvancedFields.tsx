@@ -33,6 +33,7 @@ export const CustomProviderAdvancedFields = React.memo(function CustomProviderAd
     ], []);
     const probeParsers = React.useMemo<readonly DropdownMenuItem[]>(() => [
         { id: 'openai-models', title: t('settingsProviders.authoring.probeParser.openaiModels') },
+        { id: 'anthropic-models', title: t('settingsProviders.authoring.protocol.anthropic.title') },
         { id: 'ollama-tags', title: t('settingsProviders.authoring.probeParser.ollamaTags') },
         { id: 'lmstudio-native-models', title: t('settingsProviders.authoring.probeParser.lmStudioNative') },
     ], []);
@@ -112,7 +113,8 @@ export const CustomProviderAdvancedFields = React.memo(function CustomProviderAd
                                 }}
                                 items={probeParsers}
                                 onSelect={(probeParser) => {
-                                    if (probeParser === 'openai-models' || probeParser === 'ollama-tags' || probeParser === 'lmstudio-native-models') {
+                                    if (probeParser === 'openai-models' || probeParser === 'anthropic-models'
+                                        || probeParser === 'ollama-tags' || probeParser === 'lmstudio-native-models') {
                                         update(endpoint.protocol, { probeParser });
                                     }
                                 }}

@@ -7034,6 +7034,8 @@ export const pt = {
         selectedForResume: "O modelo selecionado será usado quando esta sessão for retomada.",
         configureInCli: "Configurar modelos nas configurações do CLI",
         unavailable: "A descoberta de modelos está indisponível para este provedor nesta máquina.",
+        extendedContextToggleLabel: "Contexto de 1 milhão de tokens",
+        extendedContextToggleDescription: "Use a janela de contexto estendida de 1 milhão de tokens para este modelo.",
         customDescription: "Use um id de modelo que não está na lista.",
         customPromptBody: "Digite um id de modelo",
         customPlaceholder: "ex.: claude-3.5-sonnet",

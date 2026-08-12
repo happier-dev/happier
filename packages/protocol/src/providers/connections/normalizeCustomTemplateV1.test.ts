@@ -51,8 +51,39 @@ describe('normalizeCustomProviderTemplateV1', () => {
       baseUrl: 'http://localhost:4040/v1',
       catalog: 'manual',
     })).toMatchObject({
-      endpointTemplates: [{ protocol: 'anthropic' }],
+      endpointTemplates: [{
+        protocol: 'anthropic',
+        publicHeaders: { 'anthropic-version': '2023-06-01' },
+      }],
       catalog: { source: 'manual' },
+    });
+  });
+
+  it('normalizes an Anthropic simple probe with its explicit model-list parser', () => {
+    expect(normalizeCustomProviderTemplateV1({
+      name: 'Anthropic gateway',
+      protocol: 'anthropic',
+      baseUrl: 'https://gateway.example/anthropic',
+      credentialStyle: 'x-api-key',
+      catalog: 'probe',
+      modelsPath: '/v1/models?limit=1000',
+    })).toMatchObject({
+      endpointTemplates: [{ protocol: 'anthropic' }],
+      credential: {
+        transports: [{
+          protocols: ['anthropic'],
+          uses: ['probe', 'runtime'],
+          destination: { kind: 'httpHeader', name: 'x-api-key', format: 'raw' },
+        }],
+      },
+      catalog: {
+        source: 'probe',
+        probes: [{
+          endpointTemplateId: 'anthropic',
+          path: '/v1/models?limit=1000',
+          parser: 'anthropic-models',
+        }],
+      },
     });
   });
 

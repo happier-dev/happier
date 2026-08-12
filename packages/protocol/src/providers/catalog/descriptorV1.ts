@@ -7,6 +7,7 @@ import { PROVIDER_CATALOG_LIMITS_V1 } from './limits.js';
 
 export const ProviderCatalogParserV1Schema = z.enum([
   'openai-models',
+  'anthropic-models',
   'ollama-tags',
   'lmstudio-native-models',
 ]);

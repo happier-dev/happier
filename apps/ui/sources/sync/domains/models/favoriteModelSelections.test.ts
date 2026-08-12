@@ -155,6 +155,39 @@ describe('favorite model selections', () => {
         })).toEqual([]);
     });
 
+    it('resolves a native extended-context favorite through its descriptor-owned base option', () => {
+        const favorite = FavoriteModelSelectionV1Schema.parse({
+            selection: {
+                v: 1,
+                updatedAt: 50,
+                ref: {
+                    agentTargetKey: 'backend:claude',
+                    providerConnectionId: null,
+                    modelId: 'claude-sonnet-4-6[1m]',
+                },
+            },
+        });
+        const availabilityById = buildFavoriteModelAvailabilityById({
+            mode: 'static-only',
+            modelOptions: [{
+                value: 'claude-sonnet-4-6',
+                label: 'Sonnet 4.6',
+                description: 'Balanced',
+                extendedContextModelId: 'claude-sonnet-4-6[1m]',
+            }],
+            preflightModels: null,
+        });
+
+        expect(resolveAvailableFavoriteModelsForBackend({
+            favorites: [favorite],
+            backend: { backendTargetKey: 'backend:claude' },
+            availabilityById,
+        })).toEqual([expect.objectContaining({
+            modelId: 'claude-sonnet-4-6[1m]',
+            modelLabel: 'Sonnet 4.6',
+        })]);
+    });
+
     it('requires the favorite model ref to match the selected agent target', () => {
         expect(() => toggleFavoriteModelSelection({
             favorites: [],

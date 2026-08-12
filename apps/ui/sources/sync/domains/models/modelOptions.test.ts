@@ -88,6 +88,8 @@ describe('modelOptions', () => {
                 }),
             ]),
         });
+        expect(options.find((option) => option.value === 'claude-sonnet-4-6')?.extendedContextModelId)
+            .toBe('claude-sonnet-4-6[1m]');
     });
 
     it('prefers ACP session models when present', () => {
@@ -386,7 +388,12 @@ describe('modelOptions', () => {
 describe('findModelOptionForEffectiveModelId', () => {
     const options = [
         { value: 'default', label: 'Default', description: '' },
-        { value: 'claude-sonnet-4-6', label: 'Sonnet 4.6', description: 'Balanced' },
+        {
+            value: 'claude-sonnet-4-6',
+            label: 'Sonnet 4.6',
+            description: 'Balanced',
+            extendedContextModelId: 'claude-sonnet-4-6[1m]',
+        },
         { value: 'claude-fable-5', label: 'Fable 5', description: 'Newest' },
     ] as any;
 

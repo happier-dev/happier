@@ -7,7 +7,11 @@ import {
 } from './runtimeControlIntegration.js';
 import { aggregateApplyOutcome } from './tuiControls/outcome.js';
 
-const CONTEXT = { launchPermissionMode: 'acceptEdits', effectiveModelId: 'claude-opus-4-7' } as const;
+const CONTEXT = {
+  launchPermissionMode: 'acceptEdits',
+  effectiveModelId: 'claude-opus-4-7',
+  supportsEffort: true,
+} as const;
 
 describe('mapRuntimeConfigUpdateToDesired', () => {
   it('maps modelId / effort / ultracode / plan-mode directives onto the desired config', () => {
@@ -44,13 +48,54 @@ describe('mapRuntimeConfigUpdateToDesired', () => {
     });
   });
 
-  it('capability-gates ultracode: an unhonorable ON request resolves to OFF', () => {
+  it('rejects effort controls when the installed CLI or effective model cannot honor them', () => {
     expect(
       mapRuntimeConfigUpdateToDesired(
         { configOption: { id: 'ultracode', value: true } },
         { ...CONTEXT, effectiveModelId: 'claude-sonnet-4-6' },
       ),
-    ).toEqual({ kind: 'desired', desired: { ultracode: false } });
+    ).toEqual({ kind: 'not_controllable', reason: 'ultracode_unsupported_for_model' });
+    expect(
+      mapRuntimeConfigUpdateToDesired(
+        { configOption: { id: 'reasoning_effort', value: 'xhigh' } },
+        { ...CONTEXT, supportsEffort: false },
+      ),
+    ).toEqual({ kind: 'not_controllable', reason: 'effort_unsupported_by_installed_cli' });
+  });
+
+  it('preserves a supported native effort for live TUI control', () => {
+    expect(mapRuntimeConfigUpdateToDesired(
+      { configOption: { id: 'reasoning_effort', value: 'max' } },
+      { ...CONTEXT, effectiveModelId: 'claude-sonnet-4-6' },
+    )).toEqual({ kind: 'desired', desired: { reasoningEffort: 'max' } });
+  });
+
+  it('uses the exact Provider descriptor without native downgrade or Claude-id inference', () => {
+    const providerModel = {
+      id: 'claude-opus-4-8',
+      name: 'Gateway Opus',
+      capabilities: { reasoningControls: 'supported' as const },
+      modelOptions: [{
+        id: 'reasoning_effort',
+        name: 'Reasoning',
+        type: 'select' as const,
+        currentValue: 'high',
+        options: [
+          { value: 'low', name: 'Low' },
+          { value: 'high', name: 'High' },
+        ],
+      }],
+    };
+    const providerContext = { ...CONTEXT, effectiveModelId: providerModel.id, providerModel };
+
+    expect(mapRuntimeConfigUpdateToDesired(
+      { configOption: { id: 'reasoning_effort', value: 'max' } },
+      providerContext,
+    )).toEqual({ kind: 'not_controllable', reason: 'effort_unsupported_for_model' });
+    expect(mapRuntimeConfigUpdateToDesired(
+      { configOption: { id: 'ultracode', value: true } },
+      providerContext,
+    )).toEqual({ kind: 'not_controllable', reason: 'ultracode_unsupported_for_model' });
   });
 
   it('does not consume the retired plural configOptions alias', () => {

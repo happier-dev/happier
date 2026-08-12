@@ -18,6 +18,7 @@
   "include": [
     "src/*.ts",
     "src/agent/**/*.ts",
+    "src/provider/**/*.ts",
     "src/ui/**/*.ts"
   ],
   "exclude": [

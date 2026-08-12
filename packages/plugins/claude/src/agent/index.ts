@@ -10,7 +10,6 @@ export * from './mcp/configServers.js';
 export * from './preflight/index.js';
 export * from './promptAssets/index.js';
 export * from './providerBinding/adapter.js';
-export * from './sessionControls/index.js';
 export * from './transcripts/index.js';
 export * from './usage/index.js';
 export * from './hooks/protocol.js';

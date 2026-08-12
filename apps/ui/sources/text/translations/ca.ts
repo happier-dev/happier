@@ -6058,6 +6058,8 @@ deps: {
               selectedForResume: 'El model seleccionat s’utilitzarà quan es reprengui aquesta sessió.',
               configureInCli: 'Configura els models a la configuració del CLI',
               unavailable: 'La detecció de models no està disponible per a aquest proveïdor en aquesta màquina.',
+              extendedContextToggleLabel: 'Context d’1 milió de tokens',
+              extendedContextToggleDescription: 'Fes servir la finestra de context ampliada d’1 milió de tokens per a aquest model.',
               customDescription: 'Fes servir un ID de model que no apareix a la llista.',
               customPromptBody: 'Introdueix un ID de model',
               customPlaceholder: 'p. ex. claude-3.5-sonnet',

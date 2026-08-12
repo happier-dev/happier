@@ -65,6 +65,26 @@ describe('modelOptions preflight', () => {
                 expect.objectContaining({ id: 'reasoning_effort' }),
             ]),
         });
+        expect(out.find((option) => option.value === 'claude-sonnet-4-6')?.extendedContextModelId)
+            .toBe('claude-sonnet-4-6[1m]');
+    });
+
+    it('carries an extended-context id authored by a dynamic model source', () => {
+        const preflight = parsePreflightModelListFromProbeModelsResult({
+            availableModels: [{
+                id: 'dynamic-model',
+                name: 'Dynamic model',
+                extendedContextModelId: 'dynamic-model[1m]',
+            }],
+            supportsFreeform: true,
+        });
+        const out = getModelOptionsForAgentTypeOrPreflight({
+            agentType: 'opencode',
+            preflight,
+        });
+
+        expect(out.find((option) => option.value === 'dynamic-model')?.extendedContextModelId)
+            .toBe('dynamic-model[1m]');
     });
 
     it('prefers preflight model list and always includes Default first', () => {

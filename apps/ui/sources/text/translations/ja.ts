@@ -7163,6 +7163,8 @@ localTailscale: {
       selectedForResume: "このセッションを再開すると、選択したモデルが使用されます。",
       configureInCli: "CLIの設定でモデルを構成",
       unavailable: "このマシンでは、このプロバイダーのモデル検出を利用できません。",
+      extendedContextToggleLabel: "100万トークンのコンテキスト",
+      extendedContextToggleDescription: "このモデルで拡張された100万トークンのコンテキストウィンドウを使用します。",
       customDescription: "一覧にないモデルIDを使用します。",
       customPromptBody: "モデルIDを入力してください",
       customPlaceholder: "例: claude-3.5-sonnet",

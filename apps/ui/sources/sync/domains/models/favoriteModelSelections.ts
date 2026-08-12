@@ -134,6 +134,14 @@ function addModelOptionAvailability(
         modelLabel: option.label || modelId,
         modelDescription: option.description ?? '',
     });
+    const extendedContextModelId = normalizeFavoriteModelId(option.extendedContextModelId);
+    if (isFavoriteModelSelectableId(extendedContextModelId) && !out.has(extendedContextModelId)) {
+        out.set(extendedContextModelId, {
+            modelId: extendedContextModelId,
+            modelLabel: option.label || modelId,
+            modelDescription: option.description ?? '',
+        });
+    }
 }
 
 export function buildFavoriteModelAvailabilityById(params: Readonly<{
@@ -158,6 +166,14 @@ export function buildFavoriteModelAvailabilityById(params: Readonly<{
             modelLabel: model.name || modelId,
             modelDescription: model.description ?? '',
         });
+        const extendedContextModelId = normalizeFavoriteModelId(model.extendedContextModelId);
+        if (isFavoriteModelSelectableId(extendedContextModelId) && !out.has(extendedContextModelId)) {
+            out.set(extendedContextModelId, {
+                modelId: extendedContextModelId,
+                modelLabel: model.name || modelId,
+                modelDescription: model.description ?? '',
+            });
+        }
     }
 
     for (const option of params.modelOptions) {

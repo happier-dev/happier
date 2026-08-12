@@ -5396,6 +5396,8 @@ const zhHantOverrides: DeepPartial<typeof zhHans> = {
               selectedForResume: '恢復此工作階段時將使用所選模型。',
               configureInCli: '在 CLI 設定中配置模型',
               unavailable: '此機器上此提供者的模型探索無法使用。',
+              extendedContextToggleLabel: '100 萬權杖上下文',
+              extendedContextToggleDescription: '為此模型使用擴充的 100 萬權杖上下文視窗。',
           },
         codexPermissionMode: {
             title: '權限模式',

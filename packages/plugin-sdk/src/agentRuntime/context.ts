@@ -353,6 +353,12 @@ type AgentSessionModelOption = Readonly<{
 type AgentSessionModel = Readonly<
   Omit<AgentModelDescriptor, 'modelOptions'> & {
     modelOptions?: readonly AgentSessionModelOption[];
+    /**
+     * Runtime-owned negative facts. The session-model publisher must omit these option ids even
+     * when a persisted Provider/catalog descriptor contains richer facts for the same model.
+     * This marker controls publication only and is never persisted as part of the model descriptor.
+     */
+    suppressedModelOptionIds?: readonly string[];
   }
 >;
 

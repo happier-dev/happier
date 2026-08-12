@@ -7241,6 +7241,8 @@ export const it = {
         selectedForResume: "Il modello selezionato verrà usato alla ripresa di questa sessione.",
         configureInCli: "Configura i modelli nelle impostazioni CLI",
         unavailable: "Il rilevamento dei modelli non è disponibile per questo provider su questa macchina.",
+        extendedContextToggleLabel: "Contesto da 1 milione di token",
+        extendedContextToggleDescription: "Usa la finestra di contesto estesa da 1 milione di token per questo modello.",
         customDescription: "Usa un id modello che non è in elenco.",
         customPromptBody: "Inserisci un id modello",
         customPlaceholder: "es. claude-3.5-sonnet",

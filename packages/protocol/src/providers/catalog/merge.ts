@@ -6,12 +6,21 @@ import type { ProviderManualModelV1 } from '../settings/v1.js';
 import { PROVIDER_SETTINGS_LIMITS_V1, ProviderManualModelV1Schema } from '../settings/v1.js';
 import { PROVIDER_CATALOG_LIMITS_V1 } from './limits.js';
 
+export type ProviderCatalogProbeModelV1 = Readonly<{
+  id: ProviderModelDescriptorV1['id'];
+  name?: ProviderModelDescriptorV1['name'];
+  contextWindowTokens?: ProviderModelDescriptorV1['contextWindowTokens'];
+  modelOptions?: ProviderModelDescriptorV1['modelOptions'];
+  capabilities?: ProviderModelDescriptorV1['capabilities'];
+}>;
+
 export const ProviderCatalogProbeModelV1Schema = z.object({
   id: ProviderModelDescriptorV1Schema.shape.id,
   name: ProviderModelDescriptorV1Schema.shape.name.optional(),
+  contextWindowTokens: ProviderModelDescriptorV1Schema.shape.contextWindowTokens,
+  modelOptions: ProviderModelDescriptorV1Schema.shape.modelOptions,
   capabilities: ProviderModelDescriptorV1Schema.shape.capabilities,
-}).strict();
-export type ProviderCatalogProbeModelV1 = z.infer<typeof ProviderCatalogProbeModelV1Schema>;
+}).strict() satisfies z.ZodType<ProviderCatalogProbeModelV1>;
 
 const ProviderRuntimeTimestampV1Schema = z.number().finite().nonnegative();
 export const ProviderCatalogProbeModelsV1Schema = z.array(ProviderCatalogProbeModelV1Schema)
@@ -148,6 +157,8 @@ function probeDescriptor(model: ProviderCatalogProbeModelV1): ProviderModelDescr
   return {
     id: model.id,
     name: model.name ?? model.id,
+    ...(model.contextWindowTokens ? { contextWindowTokens: model.contextWindowTokens } : {}),
+    ...(model.modelOptions ? { modelOptions: model.modelOptions } : {}),
     ...(model.capabilities ? { capabilities: model.capabilities } : {}),
   };
 }

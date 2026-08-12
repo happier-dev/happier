@@ -1017,12 +1017,13 @@ describe('NewSessionEngineOptionDetail', () => {
         }));
     });
 
-    it('shows base model scoped controls when the selected model is an effective bracket variant', async () => {
+    it('shows base model scoped controls when the selected model is its declared extended-context variant', async () => {
         modelOptionsState.value = [
             {
                 value: 'claude-sonnet-4-6',
                 label: 'Claude Sonnet 4.6',
                 description: 'Base model with a 1M context variant.',
+                extendedContextModelId: 'claude-sonnet-4-6[1m]',
                 modelOptions: [{
                     id: 'reasoning_effort',
                     name: 'Reasoning effort',

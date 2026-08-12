@@ -1,9 +1,8 @@
-import type { AgentModelConfig, AgentModelDescriptor, AgentModelOption } from '@happier-dev/plugin-sdk/experimental/agents';
+import { buildClaudeModelOptions } from '@happier-dev/agents/providers/claude-model-options';
+import type { AgentModelConfig, AgentModelDescriptor } from '@happier-dev/plugin-sdk/agents';
 
 import { isClaude1mContextOptInModelId, toClaude1mModelId } from './contextWindow.js';
 import {
-    formatClaudeEffortLevelLabel,
-    isClaudeUltracodeSupportedModelId,
     resolveClaudeDefaultEffortLevelForModelId,
     resolveClaudeEffortLevelsForModelId,
 } from './runtime/reasoningEffort.js';
@@ -11,30 +10,10 @@ import {
 function withClaudeModelFacts(model: AgentModelDescriptor): AgentModelDescriptor {
     const levels = resolveClaudeEffortLevelsForModelId(model.id);
     const currentValue = resolveClaudeDefaultEffortLevelForModelId(model.id);
-    const modelOptions: AgentModelOption[] = [];
-    if (levels.length > 0 && currentValue) {
-        modelOptions.push({
-            id: 'reasoning_effort',
-            name: 'Thinking',
-            type: 'select',
-            currentValue,
-            options: levels.map((level) => ({
-                value: level,
-                name: formatClaudeEffortLevelLabel(level),
-            })),
-        });
-    }
-    // Ultracode is a session-scoped boolean toggle (never an effort level) and is only
-    // honorable on xhigh-capable models.
-    if (isClaudeUltracodeSupportedModelId(model.id)) {
-        modelOptions.push({
-            id: 'ultracode',
-            name: 'Ultracode',
-            description: 'Maximum coding effort. Overrides the Thinking level while enabled.',
-            type: 'boolean',
-            currentValue: 'false',
-        });
-    }
+    const modelOptions = buildClaudeModelOptions({
+        supportedLevels: levels,
+        defaultEffort: currentValue,
+    });
 
     return {
         ...model,

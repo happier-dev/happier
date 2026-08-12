@@ -47,6 +47,10 @@ function normalizePersistedModelList(input: unknown): PreflightModelList | null 
             id: modelRecord.id,
             name: modelRecord.name,
             ...(typeof modelRecord.description === 'string' ? { description: modelRecord.description } : {}),
+            ...(typeof modelRecord.extendedContextModelId === 'string'
+                && modelRecord.extendedContextModelId.trim().length > 0
+                ? { extendedContextModelId: modelRecord.extendedContextModelId.trim() }
+                : {}),
             ...(modelOptions ? { modelOptions } : {}),
         }];
     });

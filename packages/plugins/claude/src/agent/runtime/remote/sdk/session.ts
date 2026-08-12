@@ -629,6 +629,7 @@ export type ClaudeAgentSdkTurnOperationsParams = Readonly<{
     toolPermissionPolicy?: ClaudeAgentSdkToolPermissionPolicy | null;
     abortSignal?: AbortSignal;
     initialModelId?: string | null;
+    supportsEffort?: boolean;
     initialEffort?: string | null;
     initialUltracode?: boolean;
     providerModel?: AgentSessionProviderBinding['model'];
@@ -685,8 +686,9 @@ export function createClaudeAgentSdkTurnOperations(
     let currentModelId: string | null = readString(params.initialModelId);
     let currentProviderModel = params.providerModel;
     let currentFallbackModel: string | null = null;
-    let currentEffort: string | null = readString(params.initialEffort);
-    let currentUltracode = params.initialUltracode === true;
+    const supportsEffort = params.supportsEffort !== false;
+    let currentEffort: string | null = supportsEffort ? readString(params.initialEffort) : null;
+    let currentUltracode = supportsEffort && params.initialUltracode === true;
     let contextUsageRefreshPromise: Promise<boolean> | null = null;
     const toolPermissionPolicy = params.toolPermissionPolicy ?? null;
     const sessionWorkStateEnabled = params.enableSessionWorkState === true;
@@ -1643,6 +1645,13 @@ export function createClaudeAgentSdkTurnOperations(
         },
         async updateProviderConfiguration(update) {
             const configOption = isRecord(update.configOption) ? update.configOption : null;
+            const configOptionId = readString(configOption?.id);
+            if (
+                !supportsEffort
+                && (configOptionId === 'reasoning_effort' || configOptionId === 'effort' || configOptionId === 'ultracode')
+            ) {
+                return { status: 'unsupported' as const, reason: 'effort_unsupported_by_installed_cli' };
+            }
             if (readString(configOption?.id) === CLAUDE_CONTEXT_USAGE_REFRESH_CONFIG_OPTION_ID) {
                 try {
                     const refreshed = await requestContextUsageOnDemand();

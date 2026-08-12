@@ -254,6 +254,88 @@ describe('createSessionRuntimeModelsPublisher', () => {
     publisher.dispose();
   });
 
+  it('honors runtime option suppression after active Provider facts are applied', async () => {
+    const connectionId = ProviderConnectionIdSchema.parse('pc_runtime_suppression');
+    const target = {
+      selection: {
+        agentTargetKey: 'backend:generic-agent',
+        providerConnectionId: connectionId,
+        modelId: 'provider-current',
+      },
+      policy: 'live',
+      providerBinding: {
+        connectionId,
+        model: {
+          id: 'provider-current',
+          name: 'Authorized Provider model',
+          description: 'Provider-authored description',
+          contextWindowTokens: 200_000,
+          modelOptions: [
+            {
+              id: 'reasoning_effort',
+              name: 'Reasoning effort',
+              type: 'select',
+              currentValue: 'high',
+              options: [{ value: 'high', name: 'High' }],
+            },
+            {
+              id: 'ultracode',
+              name: 'Ultracode',
+              type: 'boolean',
+              currentValue: 'false',
+            },
+            {
+              id: 'provider_only',
+              name: 'Provider-only fact',
+              type: 'boolean',
+              currentValue: 'true',
+            },
+          ],
+        },
+        materialization: { v: 1, kind: 'spawnEnv' },
+      },
+      sessionBindingMetadata: null,
+      runtimeBindingBasis: null,
+      revalidateBeforeEffect: async () => true,
+    } satisfies AuthorizedSessionModelTransitionTarget;
+    const withActiveFacts = applyActiveModelFacts(
+      createTestMetadata({}),
+      target,
+      'generic-agent',
+    );
+    const source = createSource();
+    source.publish({
+      currentModelId: 'provider-current',
+      models: [{
+        id: 'provider-current',
+        name: 'Runtime model',
+        suppressedModelOptionIds: ['reasoning_effort', 'ultracode'],
+      }],
+    });
+    const session = createSession(withActiveFacts);
+    const publisher = createSessionRuntimeModelsPublisher({
+      agentId: 'generic-agent',
+      session,
+      source,
+    });
+
+    await publisher.flush();
+
+    expect(session.getMetadataSnapshot().sessionModelsV1?.availableModels).toEqual([{
+      id: 'provider-current',
+      name: 'Runtime model',
+      description: 'Provider-authored description',
+      contextWindowTokens: 200_000,
+      modelOptions: [{
+        id: 'provider_only',
+        name: 'Provider-only fact',
+        type: 'boolean',
+        currentValue: 'true',
+      }],
+    }]);
+    publisher.dispose();
+  });
+
   it('does not restore stale legacy options omitted by canonical model facts', async () => {
     const source = createSource();
     const session = createSession({

@@ -6903,6 +6903,8 @@ export const es = {
         selectedForResume: "El modelo seleccionado se usará cuando se reanude esta sesión.",
         configureInCli: "Configurar modelos en la configuración del CLI",
         unavailable: "La detección de modelos no está disponible para este proveedor en esta máquina.",
+        extendedContextToggleLabel: "Contexto de 1 millón de tokens",
+        extendedContextToggleDescription: "Usa la ventana de contexto ampliada de 1 millón de tokens para este modelo.",
         customDescription: "Usa un id de modelo que no esté en la lista.",
         customPromptBody: "Introduce un id de modelo",
         customPlaceholder: "p. ej., claude-3.5-sonnet",

@@ -570,12 +570,16 @@ const SessionOwnerModelOptionV1Schema = z.object({
   type: BoundedIdentifierSchema,
   currentValue: SessionOwnerScalarValueV1Schema,
   options: z.array(SessionOwnerCatalogValueOptionV1Schema).max(2_048).optional(),
+  // Producer-declared; see AgentModelOptionOverrideRule. These envelopes are strict, so an
+  // undeclared field would reject the WHOLE owner metadata rather than drop the rule.
+  overridesWhenOn: AgentModelOptionOverrideRuleSchema.optional(),
 }).strict();
 const SessionOwnerModelCatalogItemV1Schema = z.object({
   id: BoundedIdentifierSchema,
   name: z.string().trim().min(1).max(2_000),
   description: z.string().max(20_000).optional(),
-  contextWindowTokens: z.number().int().nonnegative().optional(),
+  contextWindowTokens: z.number().int().positive().optional(),
+  extendedContextModelId: BoundedIdentifierSchema.optional(),
   modelOptions: z.array(SessionOwnerModelOptionV1Schema).max(2_048).optional(),
 }).strict();
 const SessionOwnerModelCatalogV1Schema = z.object({

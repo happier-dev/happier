@@ -53,18 +53,31 @@ function mergeState(params: Readonly<{
   base: SessionModelsState | null;
   previous: SessionModelsState | null;
   runtime: AgentSessionModelsSnapshot;
+  authoritativeCurrentModelId?: string | null;
 }>): SessionModelsState | null {
   if (params.runtime.models === null) return params.base;
   const availableModels: SessionModel[] = [];
   const indexById = new Map<string, number>();
+  const suppressedOptionIdsByModelId = new Map<string, readonly string[]>();
   for (const model of params.runtime.models) {
     if (indexById.has(model.id)) continue;
     indexById.set(model.id, availableModels.length);
+    if (model.suppressedModelOptionIds?.length) {
+      suppressedOptionIdsByModelId.set(model.id, model.suppressedModelOptionIds);
+    }
+    const modelOptions = mergeOptions(
+      model.modelOptions,
+      undefined,
+      model.suppressedModelOptionIds,
+    );
     availableModels.push({
       id: model.id,
       name: model.name,
       ...(model.description === undefined ? {} : { description: model.description }),
       ...(model.contextWindowTokens === undefined ? {} : { contextWindowTokens: model.contextWindowTokens }),
+      ...(model.extendedContextModelId === undefined
+        ? {}
+        : { extendedContextModelId: model.extendedContextModelId }),
       ...(model.modelOptions?.length ? { modelOptions: mergeOptions(model.modelOptions, undefined) } : {}),
     });
   }
@@ -88,11 +101,18 @@ function mergeState(params: Readonly<{
           ? { contextWindowTokens: model.contextWindowTokens }
           : {}
       ),
+      ...(
+        existing.extendedContextModelId === undefined
+        && model.extendedContextModelId !== undefined
+          ? { extendedContextModelId: model.extendedContextModelId }
+          : {}
+      ),
       ...(modelOptions ? { modelOptions } : {}),
     };
   }
   if (availableModels.length === 0) return params.base;
   const candidates = [
+    params.authoritativeCurrentModelId ?? undefined,
     params.runtime.currentModelId ?? undefined,
     params.previous?.currentModelId,
     params.base?.currentModelId,
