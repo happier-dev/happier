@@ -385,6 +385,62 @@ describe('sessionStopWithServerScope', () => {
     expect(mockStorageState.applySessions).not.toHaveBeenCalled();
   });
 
+  it('falls back to the live runner when the daemon lost only its tracked-runner entry', async () => {
+    mockStorageState.sessions = {
+      'sid-untracked-runner': {
+        active: true,
+        metadata: { machineId: 'machine-1', path: '/repo' },
+      },
+    };
+    mockStorageState.machines = {
+      'machine-1': { id: 'machine-1', active: true, activeAt: Date.now() },
+    };
+    mockMachineRpcWithServerScope.mockResolvedValue({
+      status: 'incomplete',
+      reason: 'tracked_runner_absent',
+    });
+    mockSessionRpcWithServerScope.mockResolvedValue({ success: true, message: 'Killing happier process' });
+
+    await expect(sessionStopWithServerScope('sid-untracked-runner', { serverId: 'server-a' })).resolves.toEqual({
+      success: false,
+      message: 'Stop requested; waiting for the session to become inactive',
+      code: 'session_stop_requested',
+      recovery: 'wait_for_inactive',
+    });
+    expect(mockSessionRpcWithServerScope).toHaveBeenCalledWith({
+      method: 'killSession',
+      payload: {},
+      serverId: 'server-a',
+      sessionId: 'sid-untracked-runner',
+    });
+  });
+
+  it('preserves tracked-runner evidence when the fallback runner route is also unavailable', async () => {
+    mockStorageState.sessions = {
+      'sid-untracked-runner-offline': {
+        active: true,
+        metadata: { machineId: 'machine-1', path: '/repo' },
+      },
+    };
+    mockStorageState.machines = {
+      'machine-1': { id: 'machine-1', active: true, activeAt: Date.now() },
+    };
+    mockMachineRpcWithServerScope.mockResolvedValue({
+      status: 'incomplete',
+      reason: 'tracked_runner_absent',
+    });
+    mockSessionRpcWithServerScope.mockRejectedValue(Object.assign(new Error('RPC method not available'), {
+      rpcErrorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
+    }));
+
+    await expect(sessionStopWithServerScope('sid-untracked-runner-offline', { serverId: 'server-a' })).resolves.toEqual({
+      success: false,
+      message: 'Session stop incomplete: tracked_runner_absent',
+      code: 'session_stop_failed',
+    });
+    expect(mockSessionRpcWithServerScope).toHaveBeenCalledTimes(1);
+  });
+
   it('reports unavailable control without claiming the runtime needs an upgrade', async () => {
     const err = Object.assign(new Error('RPC method not available'), {
       rpcErrorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
