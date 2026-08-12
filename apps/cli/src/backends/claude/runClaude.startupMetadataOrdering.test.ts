@@ -650,6 +650,73 @@ describe('runClaude startup metadata ordering', () => {
         expect(probeClaudeInstalledRuntimeCapabilitiesMock).toHaveBeenCalledTimes(1);
     });
 
+    it('retains discovered model effort evidence for the initial ordinary launch after readiness', async () => {
+        vi.doMock('@/backends/claude/models/resolveClaudeModelCatalog', async (importOriginal) => {
+            const actual = await importOriginal<typeof import('@/backends/claude/models/resolveClaudeModelCatalog')>();
+            return {
+                ...actual,
+                resolveClaudeModelCatalog: vi.fn(async () => [{
+                    id: 'claude-opus-9',
+                    name: 'Opus 9',
+                    modelOptions: [{
+                        id: 'reasoning_effort',
+                        name: 'Thinking',
+                        type: 'select',
+                        currentValue: 'high',
+                        options: [
+                            { value: 'low', name: 'Low' },
+                            { value: 'high', name: 'High' },
+                            { value: 'xhigh', name: 'XHigh' },
+                        ],
+                    }],
+                }]),
+            };
+        });
+        vi.doMock('@/backends/claude/sessionControls/publishClaudeSessionModelsMetadataBestEffort', () => ({
+            publishClaudeSessionModelsMetadataBestEffort: vi.fn(async () => {}),
+        }));
+        initializeRuntimeOverridesSynchronizerMock.mockImplementationOnce(async (params: RuntimeOverridesSynchronizerParams) => {
+            lastRuntimeOverridesSynchronizerParams = params;
+            return createRuntimeOverridesSynchronizer({
+                seedFromSession: vi.fn(async () => {}),
+                syncFromMetadata: vi.fn(),
+            });
+        });
+        const { loop } = await import('@/backends/claude/loop');
+        const reportMock = vi.mocked(reportSessionToDaemonIfRunning);
+        reportMock.mockRejectedValueOnce(stopAfterStartupCoordinator);
+        let initialMode: any = null;
+        vi.mocked(loop).mockImplementationOnce(async (params: any) => {
+            initialMode = params.initialClaudeUnifiedTerminalMode;
+            await params.onSessionReady(params.session);
+            return 0;
+        });
+        const { runClaude } = await import('./runClaude');
+
+        try {
+            const runPromise = runClaude(testCredentials, {
+                startedBy: 'daemon',
+                startingMode: 'remote',
+                model: 'claude-opus-9',
+            }).then(
+                () => 'resolved',
+                (error) => error,
+            );
+            await waitFor(() => applyStartupMetadataUpdateToSessionMock.mock.calls.length === 1);
+            metadataUpdateDeferred.resolve();
+            await expect(runPromise).resolves.toBe(stopAfterStartupCoordinator);
+
+            expect(initialMode).toMatchObject({
+                model: 'claude-opus-9',
+                modelEffortLevels: ['low', 'high', 'xhigh'],
+                modelEffortLevelsModelId: 'claude-opus-9',
+            });
+        } finally {
+            vi.doUnmock('@/backends/claude/models/resolveClaudeModelCatalog');
+            vi.doUnmock('@/backends/claude/sessionControls/publishClaudeSessionModelsMetadataBestEffort');
+        }
+    });
+
     it('disposes runtime Activity when standard session transport close fails', async () => {
         currentMetadataVersion = 1;
         const closeError = new Error('session-close-failed');

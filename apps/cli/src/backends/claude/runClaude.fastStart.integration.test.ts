@@ -620,6 +620,7 @@ describe('runClaude fast-start', () => {
   });
 
   it('removes unsupported installed effort and ultracode from fast-start message launch modes after one probe', async () => {
+    const previousGetOrCreateSessionImplementation = getOrCreateSessionSpy.getMockImplementation();
     vi.resetModules();
     vi.doMock('@/backends/claude/sessionControls/publishClaudeSessionModelsMetadataBestEffort', () => ({
       publishClaudeSessionModelsMetadataBestEffort: vi.fn(async () => {}),
@@ -680,6 +681,11 @@ describe('runClaude fast-start', () => {
         supportsEffort: true,
         supportsUltracode: true,
       });
+      if (previousGetOrCreateSessionImplementation) {
+        getOrCreateSessionSpy.mockImplementation(previousGetOrCreateSessionImplementation);
+      } else {
+        getOrCreateSessionSpy.mockReset();
+      }
       vi.doUnmock('@/backends/claude/sessionControls/publishClaudeSessionModelsMetadataBestEffort');
     }
   });

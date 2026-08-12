@@ -100,7 +100,10 @@ import {
     probeClaudeInstalledRuntimeCapabilities,
     resolveClaudeInstalledRuntimeSessionMode,
 } from '@/backends/claude/sessionControls/probeClaudeInstalledRuntimeCapabilities';
-import { createClaudeModelEffortLevelsTracker } from '@/backends/claude/models/claudeModelEffortLevelsTracker';
+import {
+    createClaudeModelEffortLevelsTracker,
+    type ClaudeModelEffortLevelsTracker,
+} from '@/backends/claude/models/claudeModelEffortLevelsTracker';
 import { resolveTerminationArchiveDecision } from '@/agent/runtime/terminationArchivePolicy';
 import { buildClaudeAgentState } from '@/backends/claude/localControl/buildClaudeAgentState';
 import { serializeAxiosErrorForLog } from '@/api/client/serializeAxiosErrorForLog';
@@ -109,6 +112,19 @@ import type { RuntimeActivityApplicability } from '@/session/runtimeActivity/typ
 import { createClaudeProviderRuntimeActivityBindingOwner } from './providerActivity/createClaudeProviderRuntimeActivityAdapter';
 
 type ClaudePermissionLifecycleHookEventName = 'PermissionRequest' | 'PermissionRequestCompleted';
+
+async function refreshClaudeInitialModeModelEffortEvidence(params: Readonly<{
+    initialMode: EnhancedMode;
+    modelEffortTracker: ClaudeModelEffortLevelsTracker;
+    modelId: unknown;
+}>): Promise<string> {
+    const currentModelId = typeof params.modelId === 'string' ? params.modelId.trim() : '';
+    await params.modelEffortTracker.refresh(currentModelId);
+    params.initialMode.model = currentModelId || undefined;
+    params.initialMode.modelEffortLevels = params.modelEffortTracker.getLevels();
+    params.initialMode.modelEffortLevelsModelId = params.modelEffortTracker.getModelId();
+    return currentModelId;
+}
 
 function buildPermissionLifecycleSessionHook(
     data: PermissionHookData,
@@ -1222,6 +1238,19 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
         }
     })();
     const resolvedMcpPort = parsePortFromUrl(resolvedMcp.happierMcpServer.url);
+    const initialClaudeUnifiedTerminalMode = pinClaudeRemoteModeToActiveRuntime(resolveClaudeInstalledRuntimeSessionMode({
+        permissionMode: options.permissionMode ?? 'default',
+        agentModeId: currentAgentModeId,
+        model: currentModel,
+        fallbackModel: currentFallbackModel,
+        customSystemPrompt: currentCustomSystemPrompt,
+        appendSystemPrompt: currentAppendSystemPrompt,
+        modelEffortLevels: modelEffortTracker.getLevels(),
+        modelEffortLevelsModelId: modelEffortTracker.getModelId(),
+        reasoningEffort: currentReasoningEffort,
+        ultracode: currentUltracode,
+        ...currentClaudeRemoteMetaState,
+    }, installedRuntimeCapabilities), sessionRuntimeModeKind);
     let exitCode = 0;
     let loopError: unknown = null;
     try {
@@ -1234,19 +1263,7 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
             permissionModeUpdatedAt: options.permissionModeUpdatedAt,
             startingMode: options.startingMode,
             claudeUnifiedTerminalEnabled: unifiedTerminalRuntimeActive,
-            initialClaudeUnifiedTerminalMode: pinClaudeRemoteModeToActiveRuntime(resolveClaudeInstalledRuntimeSessionMode({
-                permissionMode: options.permissionMode ?? 'default',
-                agentModeId: currentAgentModeId,
-                model: currentModel,
-                fallbackModel: currentFallbackModel,
-                customSystemPrompt: currentCustomSystemPrompt,
-                appendSystemPrompt: currentAppendSystemPrompt,
-                modelEffortLevels: modelEffortTracker.getLevels(),
-                modelEffortLevelsModelId: modelEffortTracker.getModelId(),
-                reasoningEffort: currentReasoningEffort,
-                ultracode: currentUltracode,
-                ...currentClaudeRemoteMetaState,
-            }, installedRuntimeCapabilities), sessionRuntimeModeKind),
+            initialClaudeUnifiedTerminalMode,
             claudeCodeExperimentalAgentTeamsEnabled: currentClaudeRemoteMetaState.claudeCodeExperimentalAgentTeamsEnabled,
             startedBy: options.startedBy,
             messageQueue,
@@ -1282,11 +1299,11 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
             onSessionReady: async (sessionInstance) => {
                 // Store reference for hook server callback
                 currentSession = sessionInstance;
-                const currentModelId =
-                    typeof options.modelId === 'string'
-                        ? options.modelId.trim()
-                        : (typeof options.model === 'string' ? options.model.trim() : '');
-                await modelEffortTracker.refresh(currentModelId);
+                const currentModelId = await refreshClaudeInitialModeModelEffortEvidence({
+                    initialMode: initialClaudeUnifiedTerminalMode,
+                    modelEffortTracker,
+                    modelId: typeof options.modelId === 'string' ? options.modelId : options.model,
+                });
                 if (!didPublishSessionModelsMetadata) {
                     didPublishSessionModelsMetadata = true;
                     void publishClaudeSessionModelsMetadataBestEffort({
@@ -2099,11 +2116,11 @@ async function runClaudeLocalFastStart(credentials: Credentials, options: StartO
                         },
                         onSessionReady: async (sessionInstance) => {
                             currentSession = sessionInstance;
-                            const currentModelId = typeof currentModel === 'string' ? currentModel.trim() : '';
-                            await modelEffortTracker.refresh(currentModelId);
-                            initialClaudeUnifiedTerminalMode.model = currentModelId || undefined;
-                            initialClaudeUnifiedTerminalMode.modelEffortLevels = modelEffortTracker.getLevels();
-                            initialClaudeUnifiedTerminalMode.modelEffortLevelsModelId = modelEffortTracker.getModelId();
+                            const currentModelId = await refreshClaudeInitialModeModelEffortEvidence({
+                                initialMode: initialClaudeUnifiedTerminalMode,
+                                modelEffortTracker,
+                                modelId: currentModel,
+                            });
                             if (!didPublishSessionModelsMetadata) {
                                 didPublishSessionModelsMetadata = true;
                                 void publishClaudeSessionModelsMetadataBestEffort({
