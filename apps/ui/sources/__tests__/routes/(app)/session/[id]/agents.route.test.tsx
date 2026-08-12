@@ -73,7 +73,7 @@ vi.mock('@/components/sessions/panes/agents/SessionRightPanelAgentsView', () => 
 }));
 
 vi.mock('@/components/sessions/shell/SessionInvalidLinkFallback', () => ({
-    SessionInvalidLinkFallback: () => React.createElement('SessionInvalidLinkFallback'),
+    SessionInvalidLinkFallback: () => React.createElement('SessionInvalidLinkFallback', { testID: 'session-invalid-link' }),
 }));
 
 const SessionAgentsScreen = (await import('@/app/(app)/session/[id]/agents')).default;
@@ -108,13 +108,13 @@ describe('session agents route', () => {
     it('falls back to the invalid-link surface for a missing session and an empty id', async () => {
         routeState.hydration = 'missing';
         const missing = await renderScreen(<SessionAgentsScreen />);
-        expect(missing.findAll((node) => node.type === 'SessionInvalidLinkFallback')).toHaveLength(1);
+        expect(missing.findByTestId('session-invalid-link')).toBeTruthy();
         expect(agentsViewSpy).not.toHaveBeenCalled();
 
         routeState.hydration = 'available';
         routeState.id = '   ';
         const blank = await renderScreen(<SessionAgentsScreen />);
-        expect(blank.findAll((node) => node.type === 'SessionInvalidLinkFallback')).toHaveLength(1);
+        expect(blank.findByTestId('session-invalid-link')).toBeTruthy();
         expect(agentsViewSpy).not.toHaveBeenCalled();
     });
 
@@ -123,7 +123,7 @@ describe('session agents route', () => {
         layoutState.deviceType = 'tablet';
 
         const screen = await renderScreen(<SessionAgentsScreen />);
-        await flushHookEffects(screen);
+        await flushHookEffects();
 
         expect(openRightSpy).toHaveBeenCalledWith({ tabId: 'agents' });
         expect(setRightTabSpy).toHaveBeenCalledWith('agents');

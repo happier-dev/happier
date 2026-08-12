@@ -71,7 +71,7 @@ vi.mock('@/components/sessions/panes/details/SessionTranscriptDetailsView', () =
 }));
 
 vi.mock('@/components/sessions/shell/SessionInvalidLinkFallback', () => ({
-    SessionInvalidLinkFallback: () => React.createElement('SessionInvalidLinkFallback'),
+    SessionInvalidLinkFallback: () => React.createElement('SessionInvalidLinkFallback', { testID: 'session-invalid-link' }),
 }));
 
 const SessionAgentTranscriptScreen = (await import('@/app/(app)/session/[id]/transcript')).default;
@@ -108,13 +108,13 @@ describe('session agent transcript route', () => {
     it('falls back to the invalid-link surface without a sidechain id and for a missing session', async () => {
         routeState.sidechainId = '';
         const noSidechain = await renderScreen(<SessionAgentTranscriptScreen />);
-        expect(noSidechain.findAll((node) => node.type === 'SessionInvalidLinkFallback')).toHaveLength(1);
+        expect(noSidechain.findByTestId('session-invalid-link')).toBeTruthy();
         expect(transcriptViewSpy).not.toHaveBeenCalled();
 
         routeState.sidechainId = 'wf/a1';
         routeState.hydration = 'missing';
         const missing = await renderScreen(<SessionAgentTranscriptScreen />);
-        expect(missing.findAll((node) => node.type === 'SessionInvalidLinkFallback')).toHaveLength(1);
+        expect(missing.findByTestId('session-invalid-link')).toBeTruthy();
         expect(transcriptViewSpy).not.toHaveBeenCalled();
     });
 
@@ -123,7 +123,7 @@ describe('session agent transcript route', () => {
         layoutState.deviceType = 'tablet';
 
         const screen = await renderScreen(<SessionAgentTranscriptScreen />);
-        await flushHookEffects(screen);
+        await flushHookEffects();
 
         expect(openDetailsTabSpy).toHaveBeenCalledWith(
             expect.objectContaining({ key: 'transcript:sidechain:wf/a1', kind: 'transcript', title: 'Reviewer' }),
