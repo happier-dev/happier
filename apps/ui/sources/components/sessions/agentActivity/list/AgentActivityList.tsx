@@ -107,12 +107,6 @@ export type AgentActivityListProps = Readonly<{
      */
     rowInsetCorrectionPx?: number;
     /**
-     * Threaded to every row's spinner so an inactive tab or an off-screen pane stops animating,
-     * and the master switch for the list's own motion: with it off, rows take their real section
-     * at once rather than dwelling for a travel nobody would see.
-     */
-    animationEnabled?: boolean;
-    /**
      * The quiet window of the scroller that owns this list, so a migration never lands mid-scroll.
      *
      * Optional because the list does not scroll itself: a host with a scroller creates one with
@@ -125,7 +119,6 @@ export type AgentActivityListProps = Readonly<{
 
 export const AgentActivityList = React.memo((props: AgentActivityListProps) => {
     const {
-        animationEnabled: animationEnabledProp,
         density,
         entries,
         foldedWorkingCount,
@@ -141,15 +134,10 @@ export const AgentActivityList = React.memo((props: AgentActivityListProps) => {
     const workingLimit = props.workingLimit ?? null;
 
     const reducedMotion = useReducedMotionPreference();
-    const animationEnabled = animationEnabledProp !== false;
     const ownQuiet = useListMotionQuiet();
     const quiet = props.motionQuiet ?? ownQuiet.quiet;
-    const motion = resolveAgentActivityListMotion({ animationEnabled, reducedMotion });
-    const placementById = useAgentActivitySectionMigration({
-        entries,
-        quiet,
-        enabled: animationEnabled,
-    });
+    const motion = resolveAgentActivityListMotion({ reducedMotion });
+    const placementById = useAgentActivitySectionMigration({ entries, quiet });
 
     const items = React.useMemo(() => {
         const flattened = flattenAgentActivitySectionModel(
@@ -243,7 +231,6 @@ export const AgentActivityList = React.memo((props: AgentActivityListProps) => {
                     metaPlacement={metaPlacement}
                     density={density}
                     staleness={resolveStaleness(item.entry)}
-                    animationEnabled={animationEnabledProp}
                     showDivider={!item.isLastInSection}
                     testID={testID ? `${testID}:row:${item.entry.id}` : undefined}
                 />
@@ -258,7 +245,6 @@ export const AgentActivityList = React.memo((props: AgentActivityListProps) => {
                 onAction={onAction}
                 metaPlacement={metaPlacement}
                 density={density}
-                animationEnabled={animationEnabledProp}
                 staleness={resolveStaleness(item.entry)}
                 // The hairline stops at the section edge, so the headings read as breaks rather
                 // than as rows that happen to have bold text.

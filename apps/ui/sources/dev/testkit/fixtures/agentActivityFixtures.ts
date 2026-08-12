@@ -120,12 +120,58 @@ export type AgentActivityFixtureExecutionRun = Readonly<{
     createdAt?: number;
 }>;
 
+/**
+ * A Claude agent-team teammate, as the transcript actually records one.
+ *
+ * The kind has no CLI publisher: its status is a MEMBERSHIP SNAPSHOT derived from these tool calls
+ * (`deriveClaudeTeamParticipants`), which is why a fixture has to speak in messages rather than in
+ * a published entry the way `workflow_agent` can.
+ */
+export type AgentActivityFixtureTeamMember = Readonly<{
+    teamId: string;
+    memberId: string;
+    memberLabel?: string;
+    createdAt?: number;
+}>;
+
 export function agentActivityFixtureSidechainId(key: string): string {
     return `toolu_${key}`;
 }
 
 export function agentActivityFixtureSubagentId(key: string): string {
     return `subagent_sidechain:${agentActivityFixtureSidechainId(key)}`;
+}
+
+export function agentActivityFixtureTeamMemberSubagentId(
+    member: Readonly<{ teamId: string; memberId: string }>,
+): string {
+    return `agent_team_member:${member.teamId}:${member.memberId}`;
+}
+
+export function makeAgentActivityTeamMemberToolCallMessage(
+    member: AgentActivityFixtureTeamMember,
+): ToolCallMessage {
+    const createdAt = member.createdAt ?? 1_000;
+    const toolUseId = `toolu_team_${member.memberId}`;
+    return createToolCallMessageFixture({
+        id: `message_${toolUseId}`,
+        localId: null,
+        createdAt,
+        tool: {
+            id: toolUseId,
+            name: 'Task',
+            state: 'running',
+            input: {
+                team_name: member.teamId,
+                agent_id: member.memberId,
+                name: member.memberLabel ?? member.memberId,
+            },
+            createdAt,
+            startedAt: createdAt,
+            completedAt: null,
+            description: null,
+        },
+    });
 }
 
 export function executionRunFixtureSidechainId(runId: string): string {
@@ -249,6 +295,7 @@ export type SessionAgentActivityFixtureOptions = Readonly<{
     flavor?: string;
     subagents?: readonly AgentActivityFixtureSubagent[];
     executionRuns?: readonly AgentActivityFixtureExecutionRun[];
+    teamMembers?: readonly AgentActivityFixtureTeamMember[];
     session?: Partial<Session>;
 }>;
 
@@ -304,6 +351,10 @@ export function makeSessionAgentActivityFixture(
                 text: run.activity,
             }),
         ];
+    }
+
+    for (const member of options.teamMembers ?? []) {
+        messages.push(makeAgentActivityTeamMemberToolCallMessage(member));
     }
 
     const reducerState = makeAgentActivityReducerState(sidechains);

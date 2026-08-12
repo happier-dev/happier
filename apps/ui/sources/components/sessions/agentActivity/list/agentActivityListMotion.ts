@@ -87,11 +87,6 @@ export type AgentActivityListMotion = Readonly<{
     entering: SpringMotionBuilder | undefined;
 }>;
 
-const MOTION_NONE: AgentActivityListMotion = Object.freeze({
-    layout: undefined,
-    entering: undefined,
-});
-
 let motionFull: AgentActivityListMotion | null = null;
 let motionReduced: AgentActivityListMotion | null = null;
 
@@ -110,16 +105,18 @@ function resolveMotionReduced(): AgentActivityListMotion {
 }
 
 /**
- * Which animations this render may attach. Returns one of three shared objects, because these go
+ * Which animations this render may attach. Returns one of two shared objects, because these go
  * straight onto every item and a fresh object per render would defeat the rows' memoization.
  *
- * `animationEnabled: false` means nobody is looking — an inactive tab, an off-screen pane — and
- * animating there is work paid for and never seen.
+ * The reader's preference is the ONLY thing that switches these off. An earlier
+ * `animationEnabled` gate — "nobody is looking, so do not animate" — was never wired to a host and
+ * could not have been: the case it was written for is a retained-but-inactive tab, and a frozen
+ * subtree cannot receive the prop that would quiet it, because the commit that delivers it IS the
+ * commit that unfreezes the tab. Removed in W30 rather than left as a switch only a test could
+ * throw.
  */
 export function resolveAgentActivityListMotion(params: Readonly<{
-    animationEnabled: boolean;
     reducedMotion: boolean;
 }>): AgentActivityListMotion {
-    if (!params.animationEnabled) return MOTION_NONE;
     return params.reducedMotion ? resolveMotionReduced() : resolveMotionFull();
 }

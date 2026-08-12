@@ -6,6 +6,12 @@ import {
     type SessionAgentActivityRow,
     type SessionBackgroundTaskRow,
 } from '@/hooks/session/useSessionAgentActivity';
+import { useNowMs } from '@/hooks/time/useNowMs';
+import { buildAgentActivityEvidenceIndex } from '@/sync/domains/session/agentActivity';
+import {
+    deriveSessionWorkObservation,
+    type SessionWorkObservation,
+} from '@/sync/domains/session/attention/deriveSessionWorkObservation';
 import type { SessionSubagent } from '@/sync/domains/session/subagents/types';
 import { useSession } from '@/sync/domains/state/storage';
 
@@ -25,6 +31,10 @@ import { resolveAgentActivitySectionId } from '../list/agentActivitySectionModel
  * `liveOnly` is the ONE genuine difference between the two surfaces and it is a parameter of the
  * partition, not a second filter: the compact surface answers "what is running", the pane also
  * keeps history.
+ *
+ * The session-level observation (RULING-16) is derived here for the same reason the counts are: it
+ * is one fact about one session, and two hosts asking it separately is how they come to hedge
+ * differently about the same roster. The model reports it; the surface decides how to say it.
  */
 
 export type AgentActivitySurfaceModel = Readonly<{
@@ -52,12 +62,40 @@ export type AgentActivitySurfaceModel = Readonly<{
      * entry ids and the snapshot row ids are the same protocol id, so the two join exactly.
      */
     agentEvidenceAtMsById: ReadonlyMap<string, number>;
+    /**
+     * Whether this session is still observing the work it owns, and if not, since when (RULING-16).
+     *
+     * A fact about the SESSION, stated once beside the work by whoever draws it. It must never be
+     * mapped onto a row's status or its section: a client that has stopped observing a session has
+     * learned nothing about the individual agents, and rewriting them would be a durable-looking
+     * claim about work nobody watched.
+     */
+    sessionObservation: SessionWorkObservation;
+    /**
+     * Whether anything on this surface still claims to be in flight — the one tally (RULING-12).
+     *
+     * Read by the consumer of `sessionObservation`, because the hedge that observation licenses is
+     * about work still SHOWN as running. Nearly every session a reader opens is `unobserved` — that
+     * is simply what a session that is not running looks like — so a notice that ignored this would
+     * sit permanently above every finished roster in the app.
+     */
+    hasWorkInFlight: boolean;
     subagents: readonly SessionSubagent[];
     readSubagentForEntry: (entryId: string) => SessionSubagent | null;
     readBackgroundTaskForEntry: (entryId: string) => SessionBackgroundTaskRow | null;
     /** `false` when this surface would draw nothing at all, so a host can decide presence in render. */
     hasContent: boolean;
 }>;
+
+/**
+ * How often the observation is re-asked, and why it is the staleness cadence.
+ *
+ * The only answer time alone can change is `observed` -> `unobserved`, at a 120 s freshness budget
+ * (`SESSION_RUNTIME_STATUS_STALE_SIGNAL_MS`) — so a 30 s check is at worst 30 s late on a sentence
+ * nobody is waiting for. It is the interval the row staleness resolver already subscribes to, and
+ * `nowMsClockStore` buckets by interval, so this surface still has exactly one timer.
+ */
+const SESSION_OBSERVATION_CHECK_INTERVAL_MS = 30_000;
 
 export function useAgentActivitySurfaceModel(params: Readonly<{
     sessionId: string;
@@ -92,16 +130,20 @@ export function useAgentActivitySurfaceModel(params: Readonly<{
         runIds,
     });
 
-    const agentEvidenceAtMsById = React.useMemo(() => {
-        const byEntryId = new Map<string, number>();
-        for (const entry of entries) {
-            const updatedAtMs = entry.updatedAtMs;
-            if (typeof updatedAtMs === 'number' && Number.isFinite(updatedAtMs)) {
-                byEntryId.set(entry.id, updatedAtMs);
-            }
-        }
-        return byEntryId;
-    }, [entries]);
+    // The shared owner of "freshest instant per entry id", not a fourth private index: the run
+    // panel, the transcript workflow card and this surface all join the durable record against the
+    // headline, and a second spelling of that join is how one screen calls an agent silent while
+    // another shows it working.
+    const agentEvidenceAtMsById = React.useMemo(
+        () => buildAgentActivityEvidenceIndex(entries),
+        [entries],
+    );
+
+    const observationNowMs = useNowMs(SESSION_OBSERVATION_CHECK_INTERVAL_MS);
+    const sessionObservation = React.useMemo(
+        () => deriveSessionWorkObservation(session ?? {}, observationNowMs),
+        [observationNowMs, session],
+    );
 
     return React.useMemo(() => ({
         sessionId,
@@ -111,6 +153,8 @@ export function useAgentActivitySurfaceModel(params: Readonly<{
         foldedWorkingCount,
         runDetails,
         agentEvidenceAtMsById,
+        sessionObservation,
+        hasWorkInFlight: counts.live > 0,
         subagents: activity.subagents,
         readSubagentForEntry: activity.readSubagentForEntry,
         readBackgroundTaskForEntry: activity.readBackgroundTaskForEntry,
@@ -120,11 +164,13 @@ export function useAgentActivitySurfaceModel(params: Readonly<{
         activity.readSubagentForEntry,
         activity.subagents,
         agentEvidenceAtMsById,
+        counts.live,
         foldedWorkingCount,
         listedEntries,
         runDetails,
         runEntries,
         session,
         sessionId,
+        sessionObservation,
     ]);
 }

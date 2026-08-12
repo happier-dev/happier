@@ -274,30 +274,6 @@ describe('AgentActivityList migration choreography', () => {
         await screen.unmount();
     });
 
-    it('repositions immediately and animates nothing when the pane is not being animated', async () => {
-        const alpha = entry({ id: 'alpha', status: 'running' });
-        const roster = [alpha, entry({ id: 'beta', status: 'running', startedAtMs: T0 + 1 })];
-        const screen = await renderScreen(
-            <AgentActivityList testID="roster" entries={roster} animationEnabled={false} />,
-        );
-
-        await screen.update(
-            <AgentActivityList
-                testID="roster"
-                entries={[finished(alpha, Date.now()), roster[1]!]}
-                animationEnabled={false}
-            />,
-        );
-        // Nobody is watching an off-screen pane, so holding the row would only guarantee a reflow
-        // the moment it comes back.
-        expect(layoutSignature(screen)).toBe(
-            'section:working > row:beta > section:finished > row:alpha',
-        );
-        expect(motionWrapper(screen, 'beta')?.props.layout).toBeUndefined();
-
-        await screen.unmount();
-    });
-
     it('animates in a genuinely new row, and never replays an entrance for one already rendered', async () => {
         const alpha = entry({ id: 'alpha', status: 'running' });
         const screen = await renderScreen(<AgentActivityList testID="roster" entries={[alpha]} />);

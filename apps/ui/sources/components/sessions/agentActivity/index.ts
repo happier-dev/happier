@@ -146,3 +146,8 @@ export {
     AgentActivityEmptyState,
     type AgentActivityEmptyStateProps,
 } from './states/AgentActivityEmptyState';
+export {
+    AgentActivitySessionNotice,
+    resolveAgentActivitySessionNoticeKey,
+    type AgentActivitySessionNoticeProps,
+} from './states/AgentActivitySessionNotice';

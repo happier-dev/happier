@@ -64,7 +64,6 @@ export type AgentActivityDisclosureProps = Readonly<{
     staleness?: AgentActivityStaleness;
     /** Suppressed automatically while expanded, so the row and its body read as one block. */
     showDivider?: boolean;
-    animationEnabled?: boolean;
     testID?: string;
 }>;
 
@@ -95,7 +94,6 @@ export const AgentActivityDisclosure = React.memo((props: AgentActivityDisclosur
             density={props.density}
             metaPlacement={props.metaPlacement}
             staleness={props.staleness}
-            animationEnabled={props.animationEnabled}
             showDivider={isExpanded ? false : props.showDivider}
             {...(onAction ? { onAction } : null)}
             {...(canDisclose

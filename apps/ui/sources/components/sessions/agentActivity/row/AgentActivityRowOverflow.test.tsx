@@ -2,6 +2,7 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { ICON_ACTION_BOX_PX, type IconActionSize } from '@/components/ui/buttons/IconAction';
 import { renderScreen } from '@/dev/testkit';
 
 import type { AgentActivityRowActionId } from '../agentActivityRowEntry';
@@ -52,6 +53,29 @@ async function renderOverflow(
     return { screen, onAction };
 }
 
+type HitSlopRect = Readonly<{ top: number; bottom: number; left: number; right: number }>;
+
+/**
+ * The touch rectangle the trigger actually composes: its painted box plus the slop it asked for.
+ *
+ * Read off the rendered control rather than off the constant it happens to use, because the
+ * contract is the resulting target — a test that reads `AGENT_ROW_ACTION_HIT_SLOP` back to itself
+ * passes whatever that constant becomes, which is exactly how this assertion came to certify a
+ * number instead of a touch target.
+ */
+function readTouchRect(triggerProps: Record<string, unknown>) {
+    const hitSlop = triggerProps.hitSlop as number | HitSlopRect;
+    const slop: HitSlopRect = typeof hitSlop === 'number'
+        ? { top: hitSlop, bottom: hitSlop, left: hitSlop, right: hitSlop }
+        : hitSlop;
+    const boxPx = ICON_ACTION_BOX_PX[triggerProps.size as IconActionSize];
+    return {
+        boxPx,
+        widthPx: boxPx + slop.left + slop.right,
+        heightPx: boxPx + slop.top + slop.bottom,
+    };
+}
+
 function readMenu(screen: Awaited<ReturnType<typeof renderScreen>>): MenuAction[] | null {
     const matches = screen.tree.root.findAll((node) => {
         const nodeProps = node.props as Record<string, unknown> | undefined;
@@ -93,17 +117,26 @@ describe('AgentActivityRowOverflow', () => {
         await screen.unmount();
     });
 
-    it('reaches the 44pt touch target without a 44pt glyph', async () => {
+    it('reaches the row\'s 44pt touch height without growing the glyph box', async () => {
         const { screen } = await renderOverflow(['open_full']);
 
         const trigger = screen.tree.root.find((node) => {
             const nodeProps = node.props as Record<string, unknown> | undefined;
             return nodeProps?.testID === 'overflow' && nodeProps?.hitSlop != null;
         });
-        // 28pt box + 8pt slop on every side. The four icon buttons this replaces were 30x30 with
-        // no slop at all.
-        expect(trigger.props.size).toBe('sm');
-        expect(trigger.props.hitSlop).toBe(8);
+        const touch = readTouchRect(trigger.props as Record<string, unknown>);
+
+        // The painted control stays small and quiet — the four icon buttons this replaces were
+        // 30x30 with no slop at all. The target is bought with slop, never with chrome.
+        expect(touch.boxPx).toBe(28);
+        // Vertically nothing competes inside the row, so the target takes the full 44pt row height
+        // (`AGENT_ROW_MIN_HEIGHT_PX.withActions`) and a finger arriving high or low still lands.
+        expect(touch.heightPx).toBe(44);
+        // Horizontally it stops short of 44 on purpose: the disclosure caret sits beside it and the
+        // two hit areas must meet without overlapping — `agentRowMetrics.test.ts` owns that seam.
+        // 40pt is the comfortable-target floor the split has to keep clearing.
+        expect(touch.widthPx).toBeGreaterThanOrEqual(40);
+        expect(touch.widthPx).toBeLessThan(touch.heightPx);
 
         await screen.unmount();
     });

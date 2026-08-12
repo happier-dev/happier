@@ -100,8 +100,6 @@ export type AgentActivityRowProps = Readonly<{
      */
     metaPlacement?: 'below' | 'inline';
     density?: 'comfortable' | 'cozy' | 'compact' | 'tight';
-    /** Threaded to the status spinner so an offscreen row stops animating. */
-    animationEnabled?: boolean;
     /**
      * How long this entry has been silent (4.10), resolved by the host from the shared clock.
      *
@@ -158,8 +156,9 @@ export const AgentActivityRow = React.memo((props: AgentActivityRowProps) => {
             size={AGENT_STATUS_GLYPH_PX[density]}
             // A stale row stops claiming liveness with everything it has, not just its clock: a
             // spinner turning next to a frozen number reads as a broken clock rather than as an
-            // agent that has gone quiet.
-            animationEnabled={staleness === 'stale' ? false : props.animationEnabled}
+            // agent that has gone quiet. Silence is the ONLY thing that freezes a row's spinner —
+            // there is no host switch above this one (W30).
+            animationEnabled={staleness !== 'stale'}
             testID={testID ? `${testID}:status` : undefined}
         />
     );

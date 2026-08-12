@@ -83,7 +83,6 @@ function sameHeld(
 function reconcileMigrations(
     state: MigrationState,
     entries: readonly AgentActivityRowEntry[],
-    enabled: boolean,
     now: number,
 ): void {
     const present = new Set<string>();
@@ -94,9 +93,8 @@ function reconcileMigrations(
         const target = resolveAgentActivitySectionId(entry.status);
         const drawn = state.drawn.get(entry.id);
 
-        // A row nobody has seen yet has nowhere to travel from, and a disabled pane has no reason
-        // to hold anything: both adopt the real section immediately.
-        if (drawn === undefined || !enabled) {
+        // A row nobody has seen yet has nowhere to travel from: it adopts its real section at once.
+        if (drawn === undefined) {
             state.drawn.set(entry.id, target);
             if (state.pending.delete(entry.id)) state.revision += 1;
             continue;
@@ -156,10 +154,8 @@ function applyReadyMigrations(state: MigrationState, now: number): boolean {
 export function useAgentActivitySectionMigration(params: Readonly<{
     entries: readonly AgentActivityRowEntry[];
     quiet: ListMotionQuiet;
-    /** False for a pane nobody is looking at: rows adopt their real section with no dwell. */
-    enabled: boolean;
 }>): ReadonlyMap<string, AgentActivitySectionId> | undefined {
-    const { enabled, entries, quiet } = params;
+    const { entries, quiet } = params;
 
     const stateRef = React.useRef<MigrationState | null>(null);
     stateRef.current ??= createMigrationState();
@@ -167,11 +163,11 @@ export function useAgentActivitySectionMigration(params: Readonly<{
 
     const [, commit] = React.useReducer((count: number) => count + 1, 0);
 
-    reconcileMigrations(state, entries, enabled, Date.now());
+    reconcileMigrations(state, entries, Date.now());
     const revision = state.revision;
 
     React.useEffect(() => {
-        if (!enabled || state.pending.size === 0) return;
+        if (state.pending.size === 0) return;
 
         let timer: ReturnType<typeof setTimeout> | null = null;
         let unsubscribe: (() => void) | null = null;
@@ -206,7 +202,7 @@ export function useAgentActivitySectionMigration(params: Readonly<{
             if (timer !== null) clearTimeout(timer);
             unsubscribe?.();
         };
-    }, [commit, enabled, quiet, revision, state]);
+    }, [commit, quiet, revision, state]);
 
     return state.held;
 }

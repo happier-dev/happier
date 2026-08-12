@@ -54,6 +54,19 @@ function findRowProps(screen: Awaited<ReturnType<typeof renderScreen>>): Record<
     return matches[0].props as Record<string, unknown>;
 }
 
+/**
+ * How many separators the row is currently drawing beneath itself.
+ *
+ * The rule between two agent rows is the ROW's, not `Item`'s (RULING-15/RULING-20): `Item`'s own
+ * hairline is zero-height on Android and web, so `AgentActivityRow` hands it `showDivider={false}`
+ * unconditionally and paints its own. Reading `Item`'s prop back therefore says nothing — it is
+ * permanently `false` — so the only honest observation is whether the row's separator element is
+ * on screen.
+ */
+function countSeparators(screen: Awaited<ReturnType<typeof renderScreen>>): number {
+    return screen.tree.root.findAllByProps({ testID: 'row:separator' }).length;
+}
+
 async function pressRow(screen: Awaited<ReturnType<typeof renderScreen>>) {
     const pressable = screen.tree.root
         .findAllByProps({ testID: 'row' })
@@ -145,17 +158,41 @@ describe('AgentActivityDisclosure', () => {
         act(() => screen.tree.unmount());
     });
 
-    it('suppresses the row divider while expanded so the row and its body read as one block', async () => {
+    it('suppresses the separator under an expanded row, and brings it back on collapse', async () => {
         const AgentActivityDisclosure = await importDisclosure();
         const screen = await renderScreen(
             <AgentActivityDisclosure entry={makeEntry()} body={<Body />} showDivider testID="row" />,
         );
 
-        expect(findRowProps(screen).showDivider).toBe(true);
+        expect(countSeparators(screen)).toBe(1);
 
         await pressRow(screen);
 
+        // A rule between the row and the body it just opened would read as the start of the NEXT
+        // row, so the disclosed content would look like a sibling of its own header instead of
+        // part of it. This is the whole reason the wrapper overrides the host's `showDivider`.
+        expect(countSeparators(screen)).toBe(0);
+
+        await pressRow(screen);
+
+        // And the suppression is scoped to the expansion, not a latch: a collapsed row is an
+        // ordinary row again and must not leave a gap in the list's rhythm.
+        expect(countSeparators(screen)).toBe(1);
+
+        act(() => screen.tree.unmount());
+    });
+
+    it('never draws two rules: the row separator is the only one, Item\'s stays off', async () => {
+        const AgentActivityDisclosure = await importDisclosure();
+        const screen = await renderScreen(
+            <AgentActivityDisclosure entry={makeEntry()} body={<Body />} showDivider testID="row" />,
+        );
+
+        // `Item`'s hairline is iOS-only, so the corridor draws its own on every platform. Leaving
+        // `Item`'s on as well would put two rules under an iOS row and none under a web one — the
+        // divergence RULING-15 moved separation onto the activity surface to end.
         expect(findRowProps(screen).showDivider).toBe(false);
+        expect(countSeparators(screen)).toBe(1);
 
         act(() => screen.tree.unmount());
     });

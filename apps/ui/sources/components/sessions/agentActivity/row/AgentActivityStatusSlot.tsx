@@ -59,8 +59,9 @@ export type AgentActivityStatusSlotProps = Readonly<{
     /** Glyph ink size. The spinner diameter is derived from it, never chosen separately. */
     size?: number;
     /**
-     * Freeze the spinner without unmounting it. Mounted-but-offscreen list rows pass `false` so
-     * overscan content does not force a browser frame on every refresh tick.
+     * Freeze the spinner without unmounting it, for a glyph that must stay in place while ceasing
+     * to claim liveness: a row whose agent has gone silent (4.10), and a step inside a disclosed
+     * preview, where the row above already carries the one spinner that says this agent is working.
      */
     animationEnabled?: boolean;
     testID?: string;

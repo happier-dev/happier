@@ -15,19 +15,10 @@ import { describe, expect, it, vi } from 'vitest';
 vi.mock('react-native-reanimated', () => ({}));
 
 describe('agent roster list motion import isolation', () => {
-    it('imports, and answers the disabled case, without reading a Reanimated runtime value', async () => {
+    it('answers the reduced-motion case without reading one, because both animations settle instantly', async () => {
         const { resolveAgentActivityListMotion } = await import('./agentActivityListMotion');
 
-        const motion = resolveAgentActivityListMotion({ animationEnabled: false, reducedMotion: false });
-
-        expect(motion.layout).toBeUndefined();
-        expect(motion.entering).toBeUndefined();
-    });
-
-    it('answers the reduced-motion case without one either, because both animations settle instantly', async () => {
-        const { resolveAgentActivityListMotion } = await import('./agentActivityListMotion');
-
-        const motion = resolveAgentActivityListMotion({ animationEnabled: true, reducedMotion: true });
+        const motion = resolveAgentActivityListMotion({ reducedMotion: true });
 
         expect(motion.layout).toBeUndefined();
         expect(motion.entering).toBeUndefined();
@@ -43,7 +34,7 @@ describe('agent roster list motion import isolation', () => {
         const { resolveAgentActivityListMotion } = await import('./agentActivityListMotion');
         const { resolveMotionPresentation } = await import('@/components/ui/motion');
 
-        const motion = resolveAgentActivityListMotion({ animationEnabled: true, reducedMotion: true });
+        const motion = resolveAgentActivityListMotion({ reducedMotion: true });
 
         expect(motion.layout === undefined)
             .toBe(resolveMotionPresentation('sectionMigration', true) === 'settleInstantly');

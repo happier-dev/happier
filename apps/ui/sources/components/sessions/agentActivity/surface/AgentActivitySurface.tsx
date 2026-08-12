@@ -22,6 +22,7 @@ import {
 import { AgentActivityPreview } from '../preview/AgentActivityPreview';
 import { useAgentActivityStalenessResolver } from '../presentation/useAgentActivityStaleness';
 import { AGENT_ACTIVITY_SURFACE_DENSITY } from '../row/agentRowMetrics';
+import { AgentActivitySessionNotice } from '../states/AgentActivitySessionNotice';
 import type { AgentActivitySurfaceModel } from './useAgentActivitySurfaceModel';
 
 /**
@@ -293,9 +294,33 @@ export const AgentActivitySurface = React.memo((props: AgentActivitySurfaceProps
         () => ({ paddingHorizontal: hostContentInsetPx > 0 ? 0 : SURFACE_ROW_PADDING_PX }),
         [hostContentInsetPx],
     );
+    // The session notice carries the row gutter itself, so it takes the ROW correction rather than
+    // the panel one: its sentence then starts on exactly the edge the row titles below it do, in a
+    // padded host and in an unpadded one.
+    const rowBleedStyle = React.useMemo(
+        () => (rowBleedPx === 0 ? undefined : { marginHorizontal: rowBleedPx }),
+        [rowBleedPx],
+    );
 
     return (
         <View style={styles.surface} testID={testID}>
+            {/*
+              * The session fact, stated ONCE above the work it qualifies (RULING-16) — never mapped
+              * onto a row's status or its section.
+              *
+              * Gated on work still being in flight, because that is what the sentence hedges: nearly
+              * every session a reader opens is `unobserved` — that is simply what a session that is
+              * not running looks like — and the pane keeps history, so an ungated notice would sit
+              * permanently above every finished roster saying that agents which ended yesterday may
+              * no longer be running.
+              */}
+            {model.hasWorkInFlight ? (
+                <AgentActivitySessionNotice
+                    observation={model.sessionObservation}
+                    style={rowBleedStyle}
+                    testID={`${testID}:session-notice`}
+                />
+            ) : null}
             {model.runEntries.map((entry) => {
                 const runId = entry.runId ?? entry.id;
                 return (

@@ -6,10 +6,12 @@ import {
     buildWorkflowAgentSidechainId,
     type SessionAgentActivityEntryV1,
     type SessionAgentActivityHeadlineV1,
+    type SessionRuntimeIssueV1,
     type SessionWorkflowRunSnapshotV1,
 } from '@happier-dev/protocol';
 
 import { clearSessionTranscriptDerivedCachesForSession } from '@/sync/runtime/sessionTranscriptDerivedCaches';
+import type { Session } from '@/sync/domains/state/storageTypes';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -115,6 +117,10 @@ const PANE_TEST_ID = 'session-agents-roster';
 const COMPACT_TEST_ID = 'session-work-state-activity';
 const EMPTY_STATE_KEY = 'session.agentActivity.empty.firstUseTitle';
 const STALE_KEY = 'session.agentActivity.staleness.stale';
+const UNOBSERVED_KEY = 'session.agentActivity.sessionNotice.unobserved';
+const STOPPED_AUTH_KEY = 'session.agentActivity.sessionNotice.stoppedAuth';
+const STOPPED_KEY = 'session.agentActivity.sessionNotice.stopped';
+const RUNNING_STATUS_KEY = 'session.agentActivity.status.running';
 
 let useSessionWorkStateActivitySection: typeof import('../../workState/SessionWorkStateActivitySection')['useSessionWorkStateActivitySection'];
 let SessionRightPanelAgentsView: typeof import('../../panes/agents/SessionRightPanelAgentsView')['SessionRightPanelAgentsView'];
@@ -201,6 +207,18 @@ function seedProducerRealWorkflow(params: Readonly<{
     sidechainIdByAgentId: ReadonlyMap<string, string>;
 }> {
     const { agents, live, runId, workflowToolUseId } = params;
+    /**
+     * The record revision the producer stamps on the run entry, and ONLY the run entry.
+     *
+     * `agentActivityHeadlineProjection.ts` writes `recordRevision: snapshot.recordRevision`
+     * unconditionally, so a seed without it is not the shape the producer publishes: it is the
+     * older shape that makes `useWorkflowRunDetails` fall back to keying the durable fetch on the
+     * entry's evidence instant. Both branches are real — a CLI predating the field is reachable the
+     * moment a client and a daemon differ — and this file exercises them separately: the run
+     * entries seeded inline below carry no revision and take the fallback, while the producer-real
+     * seeds here take the revision key the current CLI actually emits.
+     */
+    const recordRevision = '1';
     const sidechainIdByAgentId = new Map<string, string>();
     const entryIdByAgentId = new Map<string, string>();
     for (const agent of agents) {
@@ -218,6 +236,7 @@ function seedProducerRealWorkflow(params: Readonly<{
         runId,
         title: 'Ship the release',
         workflowToolUseId,
+        recordRevision,
         status: live ? 'active' : 'complete',
         totalAgents: agents.length,
         completedAgents: live ? 0 : agents.length,
@@ -239,6 +258,10 @@ function seedProducerRealWorkflow(params: Readonly<{
             status: live ? 'running' : 'succeeded',
             updatedAt: 2_000,
             runId,
+            // Copied from the snapshot exactly as the projection does, so the headline names the
+            // record version it points at. Agents stay unstamped: they live INSIDE the run's
+            // record and a second freshness authority for one record is what the producer refuses.
+            recordRevision,
         },
         ...agents.map((agent) => workflowAgentEntry({
             runId,
@@ -288,6 +311,50 @@ function sidechainRequests(): string[] {
     return ensureSidechainSpy.mock.calls
         .map((call) => String((call as unknown as readonly unknown[])[1]))
         .filter((id, index, all) => all.indexOf(id) === index);
+}
+
+/** One session, one subagent, and whatever runtime facts the case is about. */
+function seedLiveSubagentSession(params: Readonly<{
+    sessionId: string;
+    status?: 'running' | 'succeeded';
+    session?: Partial<Session>;
+}>): void {
+    seed(testkit.makeSessionAgentActivityFixture({
+        sessionId: params.sessionId,
+        subagents: [{
+            key: 'alpha',
+            title: 'Audit the auth flow',
+            status: params.status ?? 'running',
+            activity: 'Reading auth.ts',
+        }],
+        ...(params.session ? { session: params.session } : {}),
+    }));
+}
+
+/** The classification the CLI writes when a session's runtime fails, as the wire spells it. */
+function runtimeIssue(over: Readonly<{ source: SessionRuntimeIssueV1['source']; code?: string }>): SessionRuntimeIssueV1 {
+    return {
+        v: 1,
+        scope: 'primary_session',
+        status: 'failed',
+        code: over.code ?? 'provider_auth_expired',
+        source: over.source,
+        // Long before anything else this fixture carries, so no later evidence contradicts it.
+        occurredAt: 1_500,
+    };
+}
+
+/**
+ * How many times a surface states the session fact. RULING-16 allows exactly one, or none.
+ *
+ * Counted in the rendered TEXT rather than by testID, because the tree carries a composite and a
+ * host node for the same element and a node count would read two for one sentence.
+ */
+function noticeCount(
+    screen: Readonly<{ getTextContent: () => string }>,
+    key: string,
+): number {
+    return screen.getTextContent().split(key).length - 1;
 }
 
 function rowIds(screen: Readonly<{ findAll: (p: (node: any) => boolean) => any[] }>, prefix: string): string[] {
@@ -984,5 +1051,164 @@ describe('one agent-activity surface, two hosts', () => {
         expect(compact.findByTestId(`${COMPACT_TEST_ID}:row:${firstEntryId}`)).toBeNull();
         expect(compact.getTextContent()).not.toContain(agents[0]!.line);
         await compact.unmount();
+    }, 240_000);
+
+    /**
+     * (W26-a) RULING-16: the session fact is stated ONCE, beside the work, and no row is rewritten.
+     *
+     * `deriveSessionWorkObservation` has been the answer to "is this session still observing the
+     * work it owns" since wave 24 and had no consumer at all, so the roster kept painting running
+     * agents of a session nothing has witnessed for decades with no hedge anywhere on screen. The
+     * mitigation is a sentence at section level: rewriting each row's status would be a
+     * durable-looking claim about work this client never observed, and it would silently move rows
+     * between sections while it did it.
+     */
+    it('states an unobserved session once above the roster, and rewrites no row', async () => {
+        seedLiveSubagentSession({ sessionId: SESSION_ID });
+        const entryId = testkit.agentActivityFixtureSubagentId('alpha');
+
+        for (const [testID, host] of [
+            [PANE_TEST_ID, <SessionRightPanelAgentsView sessionId={SESSION_ID} scopeId="session:s1" />] as const,
+            [COMPACT_TEST_ID, <CompactHost sessionId={SESSION_ID} />] as const,
+        ]) {
+            const screen = await testkit.renderScreen(host);
+            await testkit.flushHookEffects();
+
+            expect(screen.findHostByTestId(`${testID}:session-notice`), `${testID} notice`).toBeTruthy();
+            expect(noticeCount(screen, UNOBSERVED_KEY), `${testID} notices`).toBe(1);
+            // The row is untouched: same title, still announced as running. A consumer that mapped
+            // the session fact onto a row would show up here as a rewritten status, which is
+            // exactly what stating it at section level exists to avoid.
+            const row = screen.findByTestId(`${testID}:row:${entryId}`);
+            expect(row, `${testID} row`).toBeTruthy();
+            expect(screen.getTextContent(), `${testID} row title`).toContain('Audit the auth flow');
+            expect(String(row?.props.accessibilityLabel), `${testID} row status`).toContain(RUNNING_STATUS_KEY);
+            await screen.unmount();
+        }
+    }, 240_000);
+
+    /**
+     * (W26-b) The same sentence, in the vocabulary each fact deserves — and silence where another
+     * surface already owns the copy.
+     *
+     * `auth` is named because an expired sign-in is actionable and no surface in this app has ever
+     * interpreted it; every other classified stop shares one sentence, because a reader cannot act
+     * on a taxonomy of provider failures; and `usage_limit` is deliberately NOT restated here,
+     * because the usage-limit banner already owns that copy, its reset time and its recovery
+     * action, and a second voice for it is how two surfaces come to disagree about when the session
+     * resumes.
+     */
+    it('names an expired sign-in, defers a usage limit, and says nothing while the session is observed', async () => {
+        seedLiveSubagentSession({
+            sessionId: 'w26_auth',
+            session: { lastRuntimeIssue: runtimeIssue({ source: 'auth_error' }) },
+        });
+        seedLiveSubagentSession({
+            sessionId: 'w26_usage',
+            session: { lastRuntimeIssue: runtimeIssue({ source: 'usage_limit', code: 'usage_limit_reached' }) },
+        });
+        seedLiveSubagentSession({
+            sessionId: 'w26_exit',
+            session: { lastRuntimeIssue: runtimeIssue({ source: 'provider_process_exit', code: 'provider_exited' }) },
+        });
+        seedLiveSubagentSession({
+            sessionId: 'w26_observed',
+            // Live AND witnessed: the runtime is there and something saw it a moment ago.
+            session: { active: true, presence: 'online', activeAt: Date.now() },
+        });
+
+        const auth = await testkit.renderScreen(
+            <SessionRightPanelAgentsView sessionId="w26_auth" scopeId="session:w26_auth" />,
+        );
+        await testkit.flushHookEffects();
+        expect(auth.findHostByTestId(`${PANE_TEST_ID}:session-notice`)).toBeTruthy();
+        expect(noticeCount(auth, STOPPED_AUTH_KEY)).toBe(1);
+        await auth.unmount();
+
+        // Every other classified stop shares one sentence: the reader is told the session is not
+        // running, not given a taxonomy of provider failures they cannot act on.
+        const exited = await testkit.renderScreen(
+            <SessionRightPanelAgentsView sessionId="w26_exit" scopeId="session:w26_exit" />,
+        );
+        await testkit.flushHookEffects();
+        expect(exited.getTextContent()).toContain(STOPPED_KEY);
+        expect(exited.getTextContent()).not.toContain(STOPPED_AUTH_KEY);
+        await exited.unmount();
+
+        const usage = await testkit.renderScreen(
+            <SessionRightPanelAgentsView sessionId="w26_usage" scopeId="session:w26_usage" />,
+        );
+        await testkit.flushHookEffects();
+        expect(usage.findHostByTestId(`${PANE_TEST_ID}:session-notice`)).toBeNull();
+        expect(usage.getTextContent()).not.toContain('sessionNotice');
+        await usage.unmount();
+
+        const observed = await testkit.renderScreen(
+            <SessionRightPanelAgentsView sessionId="w26_observed" scopeId="session:w26_observed" />,
+        );
+        await testkit.flushHookEffects();
+        expect(observed.findHostByTestId(`${PANE_TEST_ID}:session-notice`)).toBeNull();
+        expect(observed.getTextContent()).not.toContain('sessionNotice');
+        await observed.unmount();
+    }, 240_000);
+
+    /**
+     * (W26-c) The hedge is about work still shown as in flight, so with none of that it is noise.
+     *
+     * Nearly every session a reader opens is `unobserved` — that is simply what a session not
+     * running right now looks like — and the pane keeps history. An unconditional notice would sit
+     * permanently above every finished roster in the app, saying that agents which finished
+     * yesterday "may no longer be running".
+     */
+    it('says nothing about an unobserved session whose work has all finished', async () => {
+        seedLiveSubagentSession({ sessionId: 'w26_history', status: 'succeeded' });
+
+        const pane = await testkit.renderScreen(
+            <SessionRightPanelAgentsView sessionId="w26_history" scopeId="session:w26_history" />,
+        );
+        await testkit.flushHookEffects();
+        // The roster is there and the session is unobserved — only the hedge is absent.
+        expect(pane.findByTestId(`${PANE_TEST_ID}:row:${testkit.agentActivityFixtureSubagentId('alpha')}`)).toBeTruthy();
+        expect(pane.findHostByTestId(`${PANE_TEST_ID}:session-notice`)).toBeNull();
+        expect(pane.getTextContent()).not.toContain(UNOBSERVED_KEY);
+        await pane.unmount();
+    }, 240_000);
+
+    /**
+     * (W29-a) The kind nobody publishes is covered by the same sentence, and by nothing else.
+     *
+     * An agent-team teammate is the ONE kind with no resolver on either side: its status is a
+     * membership snapshot derived from the transcript (`deriveClaudeTeamSubagents`), so the CLI
+     * teardown never sees it (there is no CLI publisher for this kind) and the client's tool-state
+     * sweep cannot reach it either (the status is not derived from tool state). After a stop it
+     * therefore stays `running` forever.
+     *
+     * That is the correct row behaviour and this test asserts it stays that way: an explicit
+     * disband IS observable (`TeamDelete` drops the member out of the participant snapshot and the
+     * row becomes `terminated`), so the only thing left to "resolve" is a death nobody witnessed —
+     * exactly the inference this program has refused three times. What the reader gets instead is
+     * the section-level fact, and this pins that it actually reaches THIS kind: the notice's gate is
+     * `hasWorkInFlight`, which is the roster's live count, so a teammate that did not reach the
+     * roster or was not counted live would leave the hedge silent above a running row.
+     */
+    it('hedges an unobserved session that only has agent-team members running, and resolves none of them', async () => {
+        const member = { teamId: 'review-team', memberId: 'teammate_1', memberLabel: 'Reviewer' };
+        seed(testkit.makeSessionAgentActivityFixture({
+            sessionId: 'w29_team',
+            teamMembers: [member],
+        }));
+        const entryId = testkit.agentActivityFixtureTeamMemberSubagentId(member);
+
+        const pane = await testkit.renderScreen(
+            <SessionRightPanelAgentsView sessionId="w29_team" scopeId="session:w29_team" />,
+        );
+        await testkit.flushHookEffects();
+
+        const row = pane.findByTestId(`${PANE_TEST_ID}:row:${entryId}`);
+        expect(row, 'team member row').toBeTruthy();
+        expect(String(row?.props.accessibilityLabel), 'team member status').toContain(RUNNING_STATUS_KEY);
+        expect(pane.findHostByTestId(`${PANE_TEST_ID}:session-notice`), 'team notice').toBeTruthy();
+        expect(noticeCount(pane, UNOBSERVED_KEY), 'team notices').toBe(1);
+        await pane.unmount();
     }, 240_000);
 });
