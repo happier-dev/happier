@@ -140,6 +140,10 @@ function containsRefreshTokenFailureMessage(text: string): boolean {
     || /refresh\s+token\s+(?:(?:has\s+been|was)\s+)?(?:invalidated|revoked)/i.test(text);
 }
 
+function containsChatGptAccountModelIncompatibility(text: string): boolean {
+  return /\bmodel\b[\s\S]{0,180}\bnot supported\b[\s\S]{0,180}\busing Codex with a ChatGPT account\b/i.test(text);
+}
+
 function readResetAtMs(value: unknown): number | null {
   if (typeof value === 'number' && Number.isFinite(value) && value >= 0) {
     return Math.trunc(value < 10_000_000_000 ? value * 1000 : value);
@@ -240,6 +244,14 @@ export function classifyCodexConnectedServiceAuthFailure(
   }
 
   if (!input.providerErrorPath) return null;
+
+  if (containsChatGptAccountModelIncompatibility(text)) {
+    return buildClassification(input, {
+      kind: 'permission_denied',
+      limitCategory: 'plan_invalid',
+      source: record ? 'structured_provider_error' : 'stable_provider_message',
+    });
+  }
 
   const providerCode = normalizeProviderCode(structuredCode ?? codexErrorInfo);
   if ((providerCode && refreshFailedProviderCodes.has(providerCode)) || containsRefreshTokenFailureMessage(text)) {

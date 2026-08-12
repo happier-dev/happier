@@ -1038,7 +1038,15 @@ export function createDaemonControlApp({
       };
     }
     if (sourceAuthorization && sourceAuthorization.status !== 'authorized') {
-      return ok(sourceAuthorization);
+      const result = await handleConnectedServiceRuntimeAuthFailure({
+        sessionId,
+        switchesThisTurn,
+        classification,
+        ...(request.body.reportId ? { interruptedOriginId: request.body.reportId } : {}),
+        resumePromptMode,
+        sourceAuthorization,
+      });
+      return ok(result);
     }
     classification = applyAuthorizedRuntimeAuthFailureSourceBinding(classification, sourceAuthorization);
     if (isRuntimeAuthRecoveryOwnedFailure) {

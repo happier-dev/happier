@@ -207,7 +207,13 @@ describe('createDaemonControlApp connected-service runtime auth handling', () =>
     resetConnectedServiceRuntimeAuthFailureReportDedupeForTests();
     const outboxDir = await createTempDir('happier-runtime-auth-post-apply-superseded-');
     const beginClassifiedFailure = vi.fn();
-    const handleConnectedServiceRuntimeAuthFailure = vi.fn();
+    const handleConnectedServiceRuntimeAuthFailure = vi.fn(async () => ({
+      status: 'recovery_superseded' as const,
+      reason: 'source_tuple_mismatch' as const,
+      serviceId: 'openai-codex',
+      groupId: 'main',
+      profileId: 'edison',
+    }));
     const readRuntimeIdentity = vi.fn(async () => ({
       status: 'unavailable' as const,
       reason: 'runtime_identity_probe_account_mismatch',
@@ -310,7 +316,14 @@ describe('createDaemonControlApp connected-service runtime auth handling', () =>
       });
       expect(readRuntimeIdentity).not.toHaveBeenCalled();
       expect(beginClassifiedFailure).not.toHaveBeenCalled();
-      expect(handleConnectedServiceRuntimeAuthFailure).not.toHaveBeenCalled();
+      expect(handleConnectedServiceRuntimeAuthFailure).toHaveBeenCalledWith(expect.objectContaining({
+        sessionId: tracked.happySessionId,
+        interruptedOriginId: 'runtime-auth-report:post-apply-superseded',
+        sourceAuthorization: expect.objectContaining({
+          status: 'recovery_superseded',
+          reason: 'source_tuple_mismatch',
+        }),
+      }));
       await expect(readRuntimeAuthFailureReportOutboxItems({ outboxDir })).resolves.toHaveLength(0);
     } finally {
       await app.close();
