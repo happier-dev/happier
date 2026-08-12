@@ -434,6 +434,7 @@ describe('createClaudeUnifiedResumeChoiceStartupResolver', () => {
 
       expect(port.sentLiteral).toEqual(['1']);
       expect(port.sentKeys).toEqual([]);
+      expect(port.sentRaw).toEqual([]);
     },
   );
 
