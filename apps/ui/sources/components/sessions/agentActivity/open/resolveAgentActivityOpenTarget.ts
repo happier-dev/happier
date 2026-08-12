@@ -28,6 +28,10 @@ import type { SessionSubagent } from '@/sync/domains/session/subagents/types';
  *   already fetches by id (V-2), so it can be INSPECTED in place. It has no owning tool message,
  *   so `resolveSessionSubagentFullRoute` cannot resolve it and no route may be claimed for it —
  *   which is why navigability is a property of the target rather than of the caller's optimism.
+ *   It does now have a DESTINATION — a scoped transcript details tab — but a destination is not a
+ *   route: a tab exists only where a pane scope does, so whether that affordance is drawn is a
+ *   HOST declaration (`AgentActivitySurface.onOpenSidechainTranscript`), asked separately from the
+ *   route question below. Two questions, because the two answers genuinely differ per host.
  *
  * A background command deliberately resolves NOTHING here. It is a headless process with no
  * transcript and no route; its detail is disclosed in place from its durable record by its own
@@ -113,11 +117,16 @@ export function resolveAgentActivityOpenTarget(params: Readonly<{
 }
 
 /**
- * Whether this target has somewhere to NAVIGATE, as opposed to somewhere to look.
+ * Whether this target has a full-screen ROUTE — somewhere every device can navigate to.
  *
- * The distinction is the whole point of the union: an inspectable target still earns a press (it
- * discloses its preview), but only a navigable one may offer "open details". A caller that checked
- * `target != null` before pushing a route would ship the fourth dead control.
+ * It is the question the ROW PRESS asks (`useSessionAgentActivity` sets `canOpen` from it), and it
+ * must stay the route question: a row press is host-independent, drawn identically in the pane and
+ * in the compact popover, so answering `true` for a destination only one of them can reach would
+ * ship a dead control on the other. A sidechain target is inspectable in place and openable in a
+ * details pane, and neither of those is a route — which is why it answers `false` here while the
+ * surface still offers "open details" wherever its host declared it can host one.
+ *
+ * A caller that checked `target != null` before pushing a route would ship the fourth dead control.
  */
 export function isNavigableAgentActivityOpenTarget(
     target: AgentActivityOpenTarget | null,

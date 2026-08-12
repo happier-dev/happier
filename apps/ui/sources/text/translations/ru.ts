@@ -5701,6 +5701,8 @@ export const ru: TranslationStructure = {
                 backgroundTasksRunning: ({ count }: { count: number }) => `Фоновых команд в работе: ${count}`,
             },
           untitled: "Агент без имени",
+          screenTitle: "Агенты",
+          transcriptScreenTitle: "Стенограмма агента",
           menuTitle: "Действия агента",
           row: {
             a11yLabel: ({ title, status }: { title: string; status: string }) => `${title}, ${status}`,
@@ -5848,6 +5850,7 @@ export const ru: TranslationStructure = {
       detailsPanel: {
         emptyHint: "Откройте файл или diff на правой панели.",
         unsupportedTab: "Эта вкладка деталей не поддерживается.",
+        transcriptFromOtherSession: "Эта расшифровка относится к другой сессии.",
         closeA11y: "Закрыть детали",
           openRightSidebarA11y: "Открыть правую боковую панель",
           closeRightSidebarA11y: "Закрыть правую боковую панель",

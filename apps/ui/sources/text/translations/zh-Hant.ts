@@ -4521,6 +4521,8 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
                     backgroundTasksRunning: ({ count }: { count: number }) => `${count} 個背景指令正在執行`,
                 },
                 untitled: "未命名代理",
+                screenTitle: "代理",
+                transcriptScreenTitle: "代理記錄",
                 menuTitle: "代理操作",
                 row: {
                     a11yLabel: ({ title, status }: { title: string; status: string }) => `${title}，${status}`,
@@ -4665,6 +4667,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
             detailsPanel: {
                 emptyHint: '從右側面板開啟檔案或差異。',
                 unsupportedTab: '不支援的詳細分頁。',
+                transcriptFromOtherSession: '此對話記錄屬於其他工作階段。',
                 closeA11y: '關閉詳細資料',
                 openRightSidebarA11y: '開啟右側邊欄',
                 closeRightSidebarA11y: '關閉右側邊欄',

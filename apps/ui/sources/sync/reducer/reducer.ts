@@ -684,6 +684,35 @@ function processUsageData(state: ReducerState, usage: UsageData, timestamp: numb
 }
 
 
+/**
+ * One sidechain's transcript, in the `Message` shape every transcript renderer already speaks.
+ *
+ * The reducer stores sidechains as flat `ReducerMessage` records and, until now, projected them
+ * into `Message` in exactly one place: as the `children` of the tool-call that owns them. That is
+ * unreachable for a sidechain NO tool call owns — an imported workflow-agent sidecar — so a details
+ * host had no way to read one without re-implementing the conversion, which would be a second
+ * message model for the same records.
+ *
+ * So the read lives here, beside both things it needs: the `sidechains` map and the one converter.
+ * Returns a fresh array (empty when the sidechain is unknown), oldest first, in store order.
+ */
+export function readReducerSidechainMessages(
+    state: ReducerState | null | undefined,
+    sidechainId: string,
+): Message[] {
+    const normalizedSidechainId = sidechainId.trim();
+    if (!state || !normalizedSidechainId) return [];
+    const chain = state.sidechains.get(normalizedSidechainId);
+    if (!chain || chain.length === 0) return [];
+
+    const messages: Message[] = [];
+    for (const reducerMsg of chain) {
+        const message = convertReducerMessageToMessage(reducerMsg, state);
+        if (message) messages.push(message);
+    }
+    return messages;
+}
+
 function convertReducerMessageToMessage(reducerMsg: ReducerMessage, state: ReducerState): Message | null {
     const observationMetadata: TranscriptObservationMetadata = {
         ...(reducerMsg.sourceCreatedAt !== undefined ? { sourceCreatedAt: reducerMsg.sourceCreatedAt } : {}),

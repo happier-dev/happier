@@ -5251,6 +5251,8 @@ export const pl: TranslationStructure = {
                     `${count} ${plural({ count, one: 'polecenie w tle', few: 'polecenia w tle', many: 'poleceń w tle' })} ${plural({ count, one: 'działa', few: 'działają', many: 'działa' })}`,
             },
           untitled: "Agent bez nazwy",
+          screenTitle: "Agenci",
+          transcriptScreenTitle: "Zapis agenta",
           menuTitle: "Akcje agenta",
           row: {
             a11yLabel: ({ title, status }: { title: string; status: string }) => `${title}, ${status}`,
@@ -5398,6 +5400,7 @@ export const pl: TranslationStructure = {
       detailsPanel: {
         emptyHint: "Otwórz plik lub diff z prawego panelu.",
         unsupportedTab: "Nieobsługiwana karta szczegółów.",
+        transcriptFromOtherSession: "Ten zapis rozmowy należy do innej sesji.",
         closeA11y: "Zamknij szczegóły",
           openRightSidebarA11y: "Otwórz prawy pasek boczny",
           closeRightSidebarA11y: "Zamknij prawy pasek boczny",

@@ -4893,6 +4893,8 @@ deps: {
                         backgroundTasksRunning: ({ count }: { count: number }) => (count === 1 ? '1 ordre en segon pla en curs' : `${count} ordres en segon pla en curs`),
                     },
                     untitled: "Agent sense nom",
+                    screenTitle: 'Agents',
+                    transcriptScreenTitle: "Transcripció de l'agent",
                     menuTitle: "Accions de l’agent",
                     row: {
                         a11yLabel: ({ title, status }: { title: string; status: string }) => `${title}, ${status}`,
@@ -5040,6 +5042,7 @@ deps: {
               detailsPanel: {
                   emptyHint: 'Obre un fitxer o un diff des del panell dret.',
                   unsupportedTab: 'Pestanya de detalls no compatible.',
+                  transcriptFromOtherSession: 'Aquesta transcripció pertany a una altra sessió.',
                         closeA11y: 'Tanca els detalls',
                         openRightSidebarA11y: 'Obre la barra lateral dreta',
                         closeRightSidebarA11y: 'Tanca la barra lateral dreta',

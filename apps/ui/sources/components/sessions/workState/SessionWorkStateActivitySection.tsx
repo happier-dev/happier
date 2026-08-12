@@ -1,7 +1,6 @@
 import * as React from 'react';
 import { Pressable, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
-import { useRouter } from 'expo-router';
 
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
@@ -10,7 +9,7 @@ import {
     useAgentActivitySurfaceModel,
     type AgentActivitySurfaceModel,
 } from '@/components/sessions/agentActivity/surface/useAgentActivitySurfaceModel';
-import { resolveSessionSubagentFullRoute } from '@/components/sessions/agents/navigation/resolveSessionSubagentFullRoute';
+import { useOpenSessionTarget } from '@/components/sessions/panes/open/useOpenSessionTarget';
 import type { SessionSubagent } from '@/sync/domains/session/subagents/types';
 
 /**
@@ -25,8 +24,9 @@ import type { SessionSubagent } from '@/sync/domains/session/subagents/types';
  *
  * **It is the compact view, so it is bounded and live-only.** A terminal row here would be history
  * competing with the live line the surface exists to state, and the pane is the surface with room
- * for history. Overflow expands IN PLACE rather than routing away: the right pane is structurally
- * hidden on every phone, so an affordance that only routed there would be a dead control.
+ * for history. Its own overflow expands IN PLACE rather than routing away; the separate lead-in to
+ * the full roster is a destination, and it resolves to the Agents pane or the agents screen through
+ * the shared open decision rather than to a right pane a phone never draws.
  *
  * **It is a HOOK, not a slot — REVISED r4.2, and this is the fix for two defects at once.** The
  * section used to be mounted unconditionally by its host and answer "did I paint anything?" upward
@@ -72,11 +72,10 @@ export type SessionWorkStateActivityOptions = Readonly<{
      */
     onOpenFullRoster?: () => void;
     /**
-     * Dismisses the surrounding popover before this section routes away.
+     * Dismisses the surrounding popover once this section has opened something.
      *
-     * A press here pushes a full-screen route rather than opening a details tab, because a popover
-     * anchored to the composer has no pane scope to open one in — and leaving it anchored over the
-     * screen the reader just navigated to is what makes an overlay feel broken.
+     * Leaving a popover anchored over the screen the reader just navigated to — or over the details
+     * pane that just took their press — is what makes an overlay feel broken.
      */
     onRequestClose?: () => void;
 }>;
@@ -120,22 +119,34 @@ function SessionWorkStateActivitySection(
     props: SessionWorkStateActivitySectionProps,
 ): React.ReactElement {
     const { model, onOpenFullRoster, onRequestClose } = props;
-    const router = useRouter();
 
     /**
-     * Where a press goes, which is the one thing this host still owns.
+     * Where a press goes — asked, not decided here.
      *
-     * The full-screen route, on every device: the pane upgrades a press to a details tab because it
-     * has a pane scope, and this surface is drawn inside a popover that has none. It is the same
-     * destination — the subagent's own transcript — reached the way a phone already reaches it,
-     * which matters because this popover is the ONLY agent surface a phone has.
+     * This host used to push the full-screen route unconditionally, on the reasoning that a popover
+     * anchored to the composer has no pane to open a tab in. It does: a pane scope is addressed by
+     * session id, exactly as a transcript file link addresses it, so the same press opens a details
+     * tab on a wide layout and a full screen on a phone. That is the behaviour a reader already
+     * knows from following a file link out of the transcript, and it is why an imported workflow
+     * sidechain — which has no route of its own — is now openable from here at all.
      */
+    const openTarget = useOpenSessionTarget({ sessionId: model.sessionId });
+    // The popover dismisses itself only when something actually opened: a press that resolved
+    // nowhere must leave the reader where they were rather than closing over an unchanged screen.
     const openSubagent = React.useCallback((subagent: SessionSubagent) => {
-        const route = resolveSessionSubagentFullRoute({ sessionId: model.sessionId, subagent });
-        if (!route) return;
-        onRequestClose?.();
-        router.push(route as never);
-    }, [model.sessionId, onRequestClose, router]);
+        if (openTarget({ kind: 'subagent', subagent }, { intent: 'preview' })) onRequestClose?.();
+    }, [onRequestClose, openTarget]);
+    const openSidechainTranscript = React.useCallback((target: Readonly<{
+        sidechainId: string;
+        title: string;
+    }>) => {
+        const opened = openTarget({
+            kind: 'transcript',
+            scope: { kind: 'sidechain', sessionId: model.sessionId, sidechainId: target.sidechainId },
+            title: target.title,
+        }, { intent: 'preview' });
+        if (opened) onRequestClose?.();
+    }, [model.sessionId, onRequestClose, openTarget]);
 
     return (
         <View style={styles.section} testID="session-work-state-activity-section">
@@ -148,6 +159,7 @@ function SessionWorkStateActivitySection(
                 // One section by construction (`liveOnly`), and the title above already names it.
                 showSectionHeaders={false}
                 onOpenSubagent={openSubagent}
+                onOpenSidechainTranscript={openSidechainTranscript}
                 {...(onRequestClose ? { onNavigateAway: onRequestClose } : null)}
             />
             {onOpenFullRoster ? (

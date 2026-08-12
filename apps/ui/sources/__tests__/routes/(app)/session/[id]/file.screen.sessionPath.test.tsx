@@ -97,8 +97,9 @@ vi.mock('@/hooks/session/files/useFileScmStageActions', () => ({
     }),
 }));
 
-vi.mock('@/components/ui/panels/shouldRedirectDetailsRouteToPanes', () => ({
-    shouldRedirectDetailsRouteToPanes: () => shouldRedirectToPanes,
+vi.mock('@/components/sessions/panes/open/useSessionOpenLayout', () => ({
+    useCanDockSessionPane: () => shouldRedirectToPanes,
+    useSessionOpenLayout: () => ({ containerWidthPx: 1400, deviceType: 'tablet', multiPaneEnabled: true }),
 }));
 
 vi.mock('@/utils/platform/responsive', async (importOriginal) => {

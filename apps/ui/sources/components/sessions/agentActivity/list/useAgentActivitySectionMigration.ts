@@ -26,9 +26,12 @@ import type { ListMotionQuiet } from './listMotionQuiet';
  * 3. **Nothing moves under a finger.** A commit that comes due while the list is being scrolled or
  *    hovered is held until the quiet window says the list is still again.
  *
- * An escalation is deliberately exempt from rule 1: a row entering `NEEDS YOU` is the one case
- * where the person is the thing being waited on, so it is ready at once and only rules 2 and 3
- * apply.
+ * Rule 1 applies in ONE direction only, and the asymmetry is deliberate. The dwell exists so a row
+ * the reader is watching does not leave under them the instant it ends, and that is a `finished`
+ * concern: a row travelling the other way — back into `working`, because a terminal-looking agent
+ * resumed — is news, and holding it back would leave the roster stating something that has stopped
+ * being true. So only a migration whose target is `finished` waits; every other target is ready at
+ * once and only rules 2 and 3 apply to it.
  *
  * **`Date.now()` and `setTimeout` here are not a second clock.** The shared `useNowMs` store exists
  * so that many rows displaying elapsed time share one tick, and its finest bucket is a second —

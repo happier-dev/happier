@@ -5347,6 +5347,8 @@ export const pt: TranslationStructure = {
                 backgroundTasksRunning: ({ count }: { count: number }) => (count === 1 ? '1 comando em segundo plano em execução' : `${count} comandos em segundo plano em execução`),
             },
           untitled: "Agente sem nome",
+          screenTitle: "Agentes",
+          transcriptScreenTitle: "Transcrição do agente",
           menuTitle: "Ações do agente",
           row: {
             a11yLabel: ({ title, status }: { title: string; status: string }) => `${title}, ${status}`,
@@ -5494,6 +5496,7 @@ export const pt: TranslationStructure = {
       detailsPanel: {
         emptyHint: "Abra um arquivo ou diff no painel direito.",
         unsupportedTab: "Aba de detalhes não suportada.",
+        transcriptFromOtherSession: "Esta transcrição pertence a outra sessão.",
         closeA11y: "Fechar detalhes",
           openRightSidebarA11y: "Abrir barra lateral direita",
           closeRightSidebarA11y: "Fechar barra lateral direita",

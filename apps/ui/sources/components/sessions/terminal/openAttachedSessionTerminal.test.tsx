@@ -16,6 +16,12 @@ const cockpitState = vi.hoisted(() => ({
 const machineState = vi.hoisted(() => ({
     sessionAttachSupported: true as boolean | undefined,
 }));
+const layoutState = vi.hoisted(() => ({
+    windowWidthPx: 1400,
+    deviceType: 'tablet' as 'phone' | 'tablet',
+    platformOS: 'web' as 'web' | 'ios',
+}));
+const routerPushSpy = vi.hoisted(() => vi.fn());
 const sessionState = vi.hoisted(() => ({
     session: {
         id: 'session-1',
@@ -64,10 +70,33 @@ vi.mock('@/components/sessions/model/useSessionMachineTarget', () => ({
     useSessionMachineTarget: () => ({ machineId: 'machine-1' }),
 }));
 
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock({
+        useWindowDimensions: () => ({ width: layoutState.windowWidthPx, height: 900 }),
+        Platform: Object.defineProperty({}, 'OS', {
+            get: () => layoutState.platformOS,
+            enumerable: true,
+        }) as any,
+    });
+});
+
+vi.mock('@/utils/platform/responsive', () => ({
+    useDeviceType: () => layoutState.deviceType,
+}));
+
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    return createExpoRouterMock({ router: { push: routerPushSpy } }).module;
+});
+
 vi.mock('@/sync/domains/state/storage', () => ({
     getStorage: () => (selector: (state: any) => unknown) => selector({
         sessions: sessionState.session ? { 'session-1': sessionState.session } : {},
     }),
+    // Multi-pane on: the sidebar terminal now asks the shared open decision whether this layout has
+    // a right pane at all, so a switched-off setting would send every case to the terminal screen.
+    useLocalSetting: (key: string) => (key === 'uiMultiPanePanelsEnabled' ? true : null),
     useMachine: () => ({
         metadata: {
             daemonTerminalSessionAttachSupported: machineState.sessionAttachSupported,
@@ -90,6 +119,10 @@ describe('useOpenAttachedSessionTerminal', () => {
     beforeEach(() => {
         paneState.openRight.mockReset();
         paneState.setRightTab.mockReset();
+        routerPushSpy.mockReset();
+        layoutState.windowWidthPx = 1400;
+        layoutState.deviceType = 'tablet';
+        layoutState.platformOS = 'web';
         cockpitState.registration = null;
         machineState.sessionAttachSupported = true;
         sessionState.session = {
@@ -148,6 +181,21 @@ describe('useOpenAttachedSessionTerminal', () => {
 
         expect(paneState.openRight).toHaveBeenCalledWith({ tabId: 'terminal' });
         expect(paneState.setRightTab).toHaveBeenCalledWith('terminal');
+    });
+
+    it('opens the terminal screen instead of a hidden right pane on a phone layout', async () => {
+        // The overflow item's phone path. Outside the cockpit it docked to `sidebar`, which is the
+        // right pane, which no phone draws — the same dead control as the header terminal button.
+        layoutState.deviceType = 'phone';
+        layoutState.platformOS = 'ios';
+        layoutState.windowWidthPx = 390;
+        const { useOpenAttachedSessionTerminal } = await import('./openAttachedSessionTerminal');
+
+        const hook = await renderHook(() => useOpenAttachedSessionTerminal('session-1'));
+        hook.getCurrent().open();
+
+        expect(routerPushSpy).toHaveBeenCalledWith('/session/session-1/terminal');
+        expect(paneState.openRight).not.toHaveBeenCalled();
     });
 
     it('fails closed when the target daemon does not advertise typed session attach', async () => {

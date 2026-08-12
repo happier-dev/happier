@@ -5044,6 +5044,8 @@ export const zhHans: TranslationStructure = {
               backgroundTasksRunning: ({ count }: { count: number }) => `${count} 个后台命令正在运行`,
           },
         untitled: "未命名代理",
+        screenTitle: "代理",
+        transcriptScreenTitle: "代理记录",
         menuTitle: "代理操作",
         row: {
           a11yLabel: ({ title, status }: { title: string; status: string }) => `${title}，${status}`,
@@ -5191,6 +5193,7 @@ export const zhHans: TranslationStructure = {
     detailsPanel: {
       emptyHint: "从右侧面板打开文件或差异。",
       unsupportedTab: "不支持的详情标签页。",
+      transcriptFromOtherSession: "此对话记录属于其他会话。",
       closeA11y: "关闭详情",
       openRightSidebarA11y: "打开右侧边栏",
       closeRightSidebarA11y: "关闭右侧边栏",

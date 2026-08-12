@@ -4,6 +4,7 @@ import type { PaneDriver } from '@/components/appShell/panes/types';
 import { SessionRightPanel } from './SessionRightPanel';
 import { SessionBottomPanel } from './bottom/SessionBottomPanel';
 import { SessionDetailsPanel } from './SessionDetailsPanel';
+import { resolveSessionPaneScopeId } from './sessionPaneScopeId';
 
 type SessionPaneScopedProps = Readonly<{ sessionId: string; scopeId: string }>;
 
@@ -20,7 +21,7 @@ export async function prefetchSessionPaneModules(): Promise<void> {
 }
 
 export function useRegisterSessionPaneDriver(sessionId: string): string {
-    const scopeId = React.useMemo(() => `session:${sessionId}`, [sessionId]);
+    const scopeId = React.useMemo(() => resolveSessionPaneScopeId(sessionId), [sessionId]);
     const paneCtx = useOptionalAppPaneContext();
     const registerDriver = paneCtx?.registerDriver ?? null;
     const canRegister = Boolean(registerDriver);

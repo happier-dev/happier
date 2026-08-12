@@ -3,8 +3,6 @@ import { ScrollView, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { useRouter } from 'expo-router';
 
-import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneScope';
-import { useDeviceType } from '@/utils/platform/responsive';
 import type { SessionSubagent } from '@/sync/domains/session/subagents/types';
 
 import { AgentActivitySurface } from '@/components/sessions/agentActivity/surface/AgentActivitySurface';
@@ -17,7 +15,7 @@ import {
     deleteSessionSubagentTeammate,
     stopSessionSubagentRun,
 } from '@/components/sessions/agents/actions/sessionSubagentCommands';
-import { createSessionSubagentDetailsTab } from '@/components/sessions/agents/navigation/createSessionSubagentDetailsTab';
+import { useOpenSessionTarget } from '@/components/sessions/panes/open/useOpenSessionTarget';
 import { resolveSessionSubagentFullRoute } from '@/components/sessions/agents/navigation/resolveSessionSubagentFullRoute';
 import { resolveSessionSubagentAdvancedRoute } from '@/components/sessions/agents/navigation/resolveSessionSubagentAdvancedRoute';
 import { SessionSubagentLaunchSection } from '@/components/sessions/agents/launch/SessionSubagentLaunchSection';
@@ -64,22 +62,34 @@ const stylesheet = StyleSheet.create(() => ({
 export const SessionRightPanelAgentsView = React.memo((props: Readonly<{ sessionId: string; scopeId: string }>) => {
     const styles = stylesheet;
     const router = useRouter();
-    const deviceType = useDeviceType();
-    const pane = useAppPaneScope(props.scopeId);
     const listMotion = useListMotionQuiet();
     const model = useAgentActivitySurfaceModel({ sessionId: props.sessionId });
+    // WHERE a press lands is the app's one decision, asked here rather than answered again: this
+    // view used to ask `deviceType === 'phone'`, which is a different question from "can this layout
+    // host a details pane" and gave the opposite answer to the transcript row above it whenever
+    // multi-pane was off on a wide window.
+    const openTarget = useOpenSessionTarget({ sessionId: props.sessionId, scopeId: props.scopeId });
 
     const openPreview = React.useCallback((subagent: SessionSubagent) => {
-        const fullRoute = resolveSessionSubagentFullRoute({
-            sessionId: props.sessionId,
-            subagent,
-        });
-        if (deviceType === 'phone' || !subagent.capabilities.canOpen) {
-            if (fullRoute) router.push(fullRoute as any);
-            return;
-        }
-        pane.openDetailsTab(createSessionSubagentDetailsTab(subagent), { intent: 'preview' });
-    }, [deviceType, pane, props.sessionId, router]);
+        openTarget({ kind: 'subagent', subagent }, { intent: 'preview' });
+    }, [openTarget]);
+
+    /**
+     * The destination an imported workflow-agent sidechain finally has: its transcript, in a details
+     * tab where a details pane fits and on its own screen where one does not. The sidecar has no
+     * owning tool message, so `resolveSessionSubagentFullRoute` cannot address it — the scoped
+     * transcript route is what makes it reachable from a phone at all.
+     */
+    const openSidechainTranscript = React.useCallback((target: Readonly<{
+        sidechainId: string;
+        title: string;
+    }>) => {
+        openTarget({
+            kind: 'transcript',
+            scope: { kind: 'sidechain', sessionId: props.sessionId, sidechainId: target.sidechainId },
+            title: target.title,
+        }, { intent: 'preview' });
+    }, [openTarget, props.sessionId]);
 
     // The accessor, not the model: it keeps ONE identity for the life of this pane while the model
     // object changes on every session tick, so the memoized surface below is not handed a new
@@ -144,6 +154,7 @@ export const SessionRightPanelAgentsView = React.memo((props: Readonly<{ session
                     // pane used to inherit `uiItemDensity` (cozy) and is pinned compact now.
                     metaPlacement="below"
                     onOpenSubagent={openPreview}
+                    onOpenSidechainTranscript={openSidechainTranscript}
                     onAction={handleAction}
                     motionQuiet={listMotion.quiet}
                 />

@@ -47,6 +47,9 @@ const keyboardDismissSpy = vi.hoisted(() => vi.fn());
 const platformState = vi.hoisted(() => ({ os: 'web' as 'web' | 'android' }));
 const responsiveState = vi.hoisted(() => ({ deviceType: 'phone' as 'phone' | 'tablet', isLandscape: false }));
 const windowDimensionsState = vi.hoisted(() => ({ width: 800, height: 600 }));
+// Multi-pane is ON by default in the app; this suite pinned it off, which made every layout answer
+// "no pane here" for the same reason and could not tell a phone apart from a switched-off desktop.
+const multiPaneSettingState = vi.hoisted(() => ({ enabled: false as boolean }));
 const executionRunsFeatureState = vi.hoisted(() => ({ enabled: false }));
 const sessionExecutionRunsSupportedState = vi.hoisted(() => ({ supported: false, serverId: null as string | null }));
 const executionRunsBackendsState = vi.hoisted(() => ({ backends: null as Record<string, unknown> | null }));
@@ -357,7 +360,7 @@ installSessionShellCommonModuleMocks({
       useSessionUsage: () => null,
       useLocalSetting: (key: string) => {
         if (key === 'acknowledgedCliVersions') return {};
-        if (key === 'uiMultiPanePanelsEnabled') return false;
+        if (key === 'uiMultiPanePanelsEnabled') return multiPaneSettingState.enabled;
         if (key === 'detailsPaneTabsBehavior') return 'preview';
         if (key === 'rightPaneWidthPx') return 360;
         if (key === 'rightPaneWidthBasisPx') return 1200;
@@ -483,6 +486,7 @@ describe('SessionView header action menu visibility', () => {
     navigateWithBlurOnWebSpy.mockClear();
     windowDimensionsState.width = 800;
     windowDimensionsState.height = 600;
+    multiPaneSettingState.enabled = false;
     Object.defineProperty(globalThis, 'location', {
       value: { href: 'http://localhost/session/s1', pathname: '/session/s1' },
       writable: true,
@@ -753,6 +757,9 @@ describe('SessionView header action menu visibility', () => {
     responsiveState.deviceType = 'phone';
     responsiveState.isLandscape = false;
     windowDimensionsState.width = 420;
+    // Panes ON: transcript navigation is offered only where the pane it lives in can be drawn, so a
+    // switched-off multi-pane setting would withhold it for an unrelated reason.
+    multiPaneSettingState.enabled = true;
     executionRunsFeatureState.enabled = true;
     sessionExecutionRunsSupportedState.supported = true;
     executionRunsBackendsState.backends = null;
@@ -781,6 +788,7 @@ describe('SessionView header action menu visibility', () => {
     responsiveState.deviceType = 'phone';
     responsiveState.isLandscape = false;
     windowDimensionsState.width = 800;
+    multiPaneSettingState.enabled = true;
 
     const screen = await renderSessionView();
     const openNavigationButton = findPressableByAccessibilityLabel(screen, 'session.openTranscriptNavigation');
@@ -793,6 +801,7 @@ describe('SessionView header action menu visibility', () => {
     responsiveState.deviceType = 'phone';
     responsiveState.isLandscape = false;
     windowDimensionsState.width = 420;
+    multiPaneSettingState.enabled = true;
 
     await renderSessionView();
 
@@ -999,6 +1008,64 @@ describe('SessionView header action menu visibility', () => {
     expect(getHeaderExtraItemIds(props)).toContain('header.openAttachedClaudeTerminal');
     expect(props.onSelectExtraItem('header.openAttachedClaudeTerminal')).toBe(true);
     expect(attachedTerminalState.open).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * The one reachability cell this whole corridor turns on. Below 520pt the agents GLYPH is folded
+   * away, so on a phone this menu item is the ONLY entry point to the roster — and the pane it used
+   * to open is structurally hidden there. Two tests asserted the item is OFFERED; nothing ever
+   * SELECTED it, so the destination rested on reading a one-line handler.
+   */
+  it('pushes the agents screen when the folded subagents item is selected on a phone', async () => {
+    // A native phone, panes ON: the layout — not a disabled setting — is what has no room for a pane.
+    platformState.os = 'android';
+    responsiveState.deviceType = 'phone';
+    responsiveState.isLandscape = false;
+    windowDimensionsState.width = 420;
+    multiPaneSettingState.enabled = true;
+    sessionExecutionRunsSupportedState.supported = true;
+
+    await renderSessionView();
+
+    expect(getHeaderExtraItemIds(getLastHeaderActionMenuProps())).toContain('header.openSubagents');
+    expect(getLastHeaderActionMenuProps().onSelectExtraItem('header.openSubagents')).toBe(true);
+    expect(routerPushSpy).toHaveBeenCalledWith('/session/s1/agents?serverId=server-1');
+    expect(openRightSpy).not.toHaveBeenCalled();
+  });
+
+  it('opens the agents tab from the same folded item where the layout can host a right pane', async () => {
+    // Same item, same width, same press — web normalizes to `tablet` in the pane host, so a narrow
+    // browser window still draws an overlay right pane. If the item pushed a route unconditionally
+    // this would fail, which is what makes the phone assertion above mean something.
+    platformState.os = 'web';
+    responsiveState.deviceType = 'phone';
+    responsiveState.isLandscape = false;
+    windowDimensionsState.width = 420;
+    multiPaneSettingState.enabled = true;
+    sessionExecutionRunsSupportedState.supported = true;
+
+    await renderSessionView();
+
+    expect(getLastHeaderActionMenuProps().onSelectExtraItem('header.openSubagents')).toBe(true);
+    expect(openRightSpy).toHaveBeenCalledWith({ tabId: 'agents' });
+    expect(setRightTabSpy).toHaveBeenCalledWith('agents');
+    expect(routerPushSpy).not.toHaveBeenCalledWith('/session/s1/agents?serverId=server-1');
+  });
+
+  it('does not offer transcript navigation on a phone layout that cannot draw the pane it lives in', async () => {
+    // Navigation exists only as a right-pane tab or a cockpit surface — there is no screen to fall
+    // back to — so on a classic phone the honest answer is no offer, not a dead menu row.
+    platformState.os = 'android';
+    responsiveState.deviceType = 'phone';
+    responsiveState.isLandscape = false;
+    windowDimensionsState.width = 420;
+    multiPaneSettingState.enabled = true;
+
+    await renderSessionView();
+
+    expect(getHeaderExtraItemIds(getLastHeaderActionMenuProps())).not.toContain('header.openTranscriptNavigation');
+    expect(getLastHeaderActionMenuProps().onSelectExtraItem('header.openTranscriptNavigation')).toBe(false);
+    expect(openRightSpy).not.toHaveBeenCalled();
   });
 
   it('renders a raised landscape back button on Android phones when the top header is hidden', async () => {

@@ -46,7 +46,7 @@ import { SessionHeaderRightSidebarButton } from '@/components/sessions/actions/S
 import { SessionHeaderSubagentsButton } from '@/components/sessions/actions/SessionHeaderSubagentsButton';
 import { SessionHeaderTerminalButton } from '@/components/sessions/actions/SessionHeaderTerminalButton';
 import { useOpenAttachedSessionTerminal } from '@/components/sessions/terminal/openAttachedSessionTerminal';
-import { SessionHeaderTranscriptNavigationButton, useOpenTranscriptNavigationSurface } from '@/components/sessions/actions/SessionHeaderTranscriptNavigationButton';
+import { SessionHeaderTranscriptNavigationButton, useTranscriptNavigationSurface } from '@/components/sessions/actions/SessionHeaderTranscriptNavigationButton';
 import { ChatList, type TranscriptViewportChangeState } from '@/components/sessions/transcript/ChatList';
 import { applyTranscriptJumpHighlightForJumpResult } from '@/components/sessions/transcript/navigation/transcriptJumpHighlightStore';
 import { TranscriptFirstPaintPlaceholder } from '@/components/sessions/transcript/TranscriptFirstPaintPlaceholder';
@@ -258,9 +258,7 @@ import { SessionScreenTestIdsProvider } from './sessionScreenTestIds';
 import { useSessionScreenIsFocused } from './useSessionScreenIsFocused';
 import { resolveMobileWorkspaceExperienceToggleActionId } from '@/components/workspaceCockpit/mobileWorkspaceExperience';
 import { useMobileWorkspaceExperienceState } from '@/components/workspaceCockpit/useMobileWorkspaceExperienceState';
-import { resolvePaneLayout } from '@/components/ui/panels/paneBreakpoints';
-import { PANE_SIZING_DEFAULTS } from '@/components/appShell/panes/layout/paneSizing';
-import { resolveMultiPaneDeviceType } from '@/components/appShell/panes/layout/resolveMultiPaneDeviceType';
+import { useOpenSessionTarget } from '@/components/sessions/panes/open/useOpenSessionTarget';
 import type { SessionPaneUrlState } from '@/components/sessions/panes/url/sessionPaneUrlState';
 import { useSessionPaneUrlSync } from '@/components/sessions/panes/url/useSessionPaneUrlSync';
 import { SessionResumeProvider } from '@/components/sessions/model/SessionResumeContext';
@@ -835,11 +833,13 @@ type SessionHeaderRightElementProps = Readonly<{
 const SessionHeaderRightElement = React.memo(function SessionHeaderRightElement(props: SessionHeaderRightElementProps) {
     const { theme } = useUnistyles();
     const router = useRouter();
-    const pane = useAppPaneScope(props.paneScopeId);
-    const paneRef = React.useRef(pane);
-    paneRef.current = pane;
+    const openAgentRoster = useOpenSessionTarget({
+        sessionId: props.sessionId,
+        scopeId: props.paneScopeId,
+        serverId: props.currentSessionRouteServerId,
+    });
     const attachedSessionTerminal = useOpenAttachedSessionTerminal(props.sessionId);
-    const openTranscriptNavigation = useOpenTranscriptNavigationSurface({
+    const transcriptNavigation = useTranscriptNavigationSurface({
         scopeId: props.paneScopeId,
         sessionId: props.sessionId,
     });
@@ -887,14 +887,16 @@ const SessionHeaderRightElement = React.memo(function SessionHeaderRightElement(
             return true;
         }
         if (actionId === 'header.openTranscriptNavigation') {
-            openTranscriptNavigation();
+            if (!transcriptNavigation.available) return false;
+            transcriptNavigation.open();
             return true;
         }
         if (actionId !== 'header.openSubagents') return false;
-        paneRef.current.openRight({ tabId: 'agents' });
-        paneRef.current.setRightTab('agents');
-        return true;
-    }, [attachedSessionTerminal, openTranscriptNavigation, props.mobileWorkspaceExperienceToggleActionId, props.onToggleWorkspaceExperience]);
+        // The SAME decision the header glyph makes, and the one that matters most: below 520pt the
+        // glyph is folded away, so on a phone this menu item is the only way into the roster — and
+        // it used to open a right pane that is structurally hidden there.
+        return openAgentRoster({ kind: 'agentRoster' });
+    }, [attachedSessionTerminal, openAgentRoster, transcriptNavigation, props.mobileWorkspaceExperienceToggleActionId, props.onToggleWorkspaceExperience]);
 
     const headerExtraItems = React.useMemo(() => {
         const items: DropdownMenuItem[] = [];
@@ -914,11 +916,16 @@ const SessionHeaderRightElement = React.memo(function SessionHeaderRightElement(
         }
         if (!props.shouldFoldHeaderIconActions) return items;
 
-        items.push({
-            id: 'header.openTranscriptNavigation',
-            title: t('session.openTranscriptNavigation'),
-            icon: <Icon name="list" size={16} color={theme.colors.text.secondary} />,
-        });
+        // Offered only where it leads somewhere. Below the fold this menu is the phone's ONLY way to
+        // transcript navigation, and navigation exists solely as a right-pane tab or a cockpit
+        // surface — so on a classic phone layout there is nothing behind it to open.
+        if (transcriptNavigation.available) {
+            items.push({
+                id: 'header.openTranscriptNavigation',
+                title: t('session.openTranscriptNavigation'),
+                icon: <Icon name="list" size={16} color={theme.colors.text.secondary} />,
+            });
+        }
         if (shouldOfferSubagentsMenuItem) {
             items.push({
                 id: 'header.openSubagents',
@@ -952,6 +959,7 @@ const SessionHeaderRightElement = React.memo(function SessionHeaderRightElement(
         shouldOfferSubagentsMenuItem,
         openAgentCount,
         theme.colors.text.secondary,
+        transcriptNavigation.available,
     ]);
 
     const badgeLabel =
@@ -1013,7 +1021,9 @@ const SessionHeaderRightElement = React.memo(function SessionHeaderRightElement(
             ) : null}
             {!props.shouldFoldHeaderIconActions ? (
                 <SessionHeaderSubagentsButton
+                    sessionId={props.sessionId}
                     scopeId={props.paneScopeId}
+                    serverId={props.currentSessionRouteServerId}
                     activeCount={openAgentCount}
                 />
             ) : null}
@@ -2284,10 +2294,6 @@ function SessionViewLoaded({
     const directSessionLink = directSessionRuntime.directSessionLink;
     const isLandscape = useIsLandscape();
     const deviceType = useDeviceType();
-    const multiPaneDeviceType = React.useMemo(
-        () => resolveMultiPaneDeviceType({ platform: Platform.OS, deviceType }),
-        [deviceType],
-    );
     const { width: windowWidth } = useWindowDimensions();
     const reducedMotionPreferred = useReducedMotionPreference();
     // Seed from the pane-keyed width source so the first frame after a session switch already has the
@@ -2302,37 +2308,35 @@ function SessionViewLoaded({
     const multiPaneEnabled = useLocalSetting('uiMultiPanePanelsEnabled') !== false;
     const sessionsRightPaneDefaultOpen = useLocalSetting('sessionsRightPaneDefaultOpen');
     const pane = useAppPaneScope(paneScopeId);
-    /**
-     * The lead-in from the compact work-state surface to the expanded Agents roster.
-     *
-     * `undefined` when the pane cannot present — which is every native phone
-     * (`resolvePaneLayout` returns `right: 'hidden'` there) — so the affordance is simply absent
-     * rather than rendering a control whose press does nothing (A9). remote-dev has no
-     * `/session/[id]/agents` route and §4.7 puts one out of scope, so the compact surface expands
-     * IN PLACE instead of routing; this is an additional destination, never the overflow mechanism.
-     */
-    const openAgentActivityRoster = React.useMemo<(() => void) | undefined>(() => {
-        const layoutIfOpened = resolvePaneLayout({
-            containerWidthPx: windowWidth,
-            deviceType: multiPaneDeviceType,
-            multiPaneEnabled,
-            rightOpen: true,
-            detailsOpen: false,
-            mainMinPx: PANE_SIZING_DEFAULTS.mainMinPx,
-            rightMinPx: PANE_SIZING_DEFAULTS.right.minPx,
-            detailsMinPx: PANE_SIZING_DEFAULTS.details.minPx,
-        });
-        if (layoutIfOpened.kind === 'single') return undefined;
-        return () => {
-            pane.openRight({ tabId: 'agents' });
-            pane.setRightTab('agents');
-        };
-    }, [multiPaneDeviceType, multiPaneEnabled, pane, windowWidth]);
     const activeServerId = getActiveServerSnapshot().serverId;
     const sessionRouteServerId = (routeServerId ?? '').trim()
         || resolveServerIdForSessionIdFromLocalCache(sessionId)
         || activeServerId;
     const capabilityServerId = sessionRouteServerId;
+    /**
+     * WHERE anything belonging to this session opens — the one decision, asked rather than repeated.
+     *
+     * Three inline copies of it used to live in this file and its header element: the roster lead-in
+     * probed `resolvePaneLayout` itself, the files button probed it again, and the header's agents
+     * controls did not probe at all and opened a right pane that a phone never draws.
+     */
+    const openSessionTarget = useOpenSessionTarget({
+        sessionId,
+        scopeId: paneScopeId,
+        serverId: sessionRouteServerId,
+    });
+    /**
+     * The lead-in from the compact work-state surface to the expanded Agents roster.
+     *
+     * It used to be `undefined` on every phone, because the right pane is hidden there and an
+     * affordance that leads nowhere must not render (A9). The roster now has a screen of its own, so
+     * the destination exists on every device and the lead-in is unconditional: the Agents tab where a
+     * right pane fits, `/session/<id>/agents` where it does not. The compact surface still expands
+     * its own overflow IN PLACE — that cap and this destination are different mechanisms.
+     */
+    const openAgentActivityRoster = React.useCallback(() => {
+        openSessionTarget({ kind: 'agentRoster' });
+    }, [openSessionTarget]);
     const accountProfile = useProfile();
     const usageLimitRecoveryFeatureEnabled = useFeatureEnabled('sessions.usageLimitRecovery', {
         scopeKind: 'spawn',
@@ -2579,7 +2583,7 @@ function SessionViewLoaded({
             editableGoal: canEditSessionGoals,
             goalActionCapabilityFallback: sessionGoalActionCapabilityFallback,
             currentObjective: sessionGoalObjective,
-            ...(openAgentActivityRoster ? { onOpenFullRoster: openAgentActivityRoster } : null),
+            onOpenFullRoster: openAgentActivityRoster,
             onSetGoal: setSessionGoalForView,
             onClearGoal: clearSessionGoalForView,
         });
@@ -2626,7 +2630,7 @@ function SessionViewLoaded({
                     snapshot={sessionWorkStateSnapshot}
                     editableGoal={canEditSessionGoals}
                     goalActionCapabilityFallback={sessionGoalActionCapabilityFallback}
-                    {...(openAgentActivityRoster ? { onOpenFullRoster: openAgentActivityRoster } : null)}
+                    onOpenFullRoster={openAgentActivityRoster}
                     onRequestClose={onRequestClose}
                     onSetGoal={canEditSessionGoals ? setSessionGoalForView : undefined}
                     onClearGoal={canEditSessionGoals ? clearSessionGoalForView : undefined}
@@ -4490,26 +4494,8 @@ function SessionViewLoaded({
         }, [extraActionChips, routingControls.extraActionChips, sessionConnectedServicesAuthSwitch.connectedServicesAuthChip, sessionGoalActionChip]);
 
     const openFileViewer = React.useCallback(() => {
-        const layoutIfOpened = resolvePaneLayout({
-            containerWidthPx: windowWidth,
-            deviceType: multiPaneDeviceType,
-            multiPaneEnabled,
-            rightOpen: true,
-            detailsOpen: false,
-            mainMinPx: PANE_SIZING_DEFAULTS.mainMinPx,
-            rightMinPx: PANE_SIZING_DEFAULTS.right.minPx,
-            detailsMinPx: PANE_SIZING_DEFAULTS.details.minPx,
-        });
-
-        if (layoutIfOpened.kind === 'single') {
-            const href = buildCurrentSessionHref('/files');
-            router.push(href as never);
-            return;
-        }
-
-        pane.openRight({ tabId: 'files' });
-        pane.setRightTab('files');
-    }, [buildCurrentSessionHref, multiPaneDeviceType, multiPaneEnabled, pane.openRight, pane.setRightTab, router, windowWidth]);
+        openSessionTarget({ kind: 'fileBrowser' });
+    }, [openSessionTarget]);
     const handleAgentInputFileViewerPress = useStableAgentInputFileViewerPress(openFileViewer);
     const handleAgentInputAbort = React.useCallback(() => {
         return sessionAbort(sessionId);

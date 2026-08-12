@@ -4,6 +4,7 @@ import type { SessionCommitDetailsViewProps } from '@/components/sessions/files/
 import type { SessionFileDetailsViewProps } from '@/components/sessions/files/views/SessionFileDetailsView';
 import type { SessionScmReviewDetailsViewProps } from '@/components/sessions/files/views/SessionScmReviewDetailsView';
 import type { SessionScmStashDetailsViewProps } from '@/components/sessions/files/views/SessionScmStashDetailsView';
+import type { SessionTranscriptDetailsViewProps } from '@/components/sessions/panes/details/SessionTranscriptDetailsView';
 
 type SessionSubagentDetailsViewProps = Readonly<{
     sessionId: string;
@@ -35,3 +36,8 @@ export const SessionSubagentDetailsViewForPanel = React.lazy(async () => {
     const mod = await import('@/components/sessions/agents/details/SessionSubagentDetailsView');
     return { default: mod.SessionSubagentDetailsView };
 }) satisfies React.ComponentType<SessionSubagentDetailsViewProps>;
+
+export const SessionTranscriptDetailsViewForPanel = React.lazy(async () => {
+    const mod = await import('@/components/sessions/panes/details/SessionTranscriptDetailsView');
+    return { default: mod.SessionTranscriptDetailsView };
+}) satisfies React.ComponentType<SessionTranscriptDetailsViewProps>;

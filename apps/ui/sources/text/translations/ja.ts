@@ -5497,6 +5497,8 @@ localTailscale: {
                 backgroundTasksRunning: ({ count }: { count: number }) => `バックグラウンドコマンド ${count} 件が実行中`,
             },
           untitled: "名称未設定のエージェント",
+          screenTitle: "エージェント",
+          transcriptScreenTitle: "エージェントの記録",
           menuTitle: "エージェントの操作",
           row: {
             a11yLabel: ({ title, status }: { title: string; status: string }) => `${title}、${status}`,
@@ -5644,6 +5646,7 @@ localTailscale: {
       detailsPanel: {
         emptyHint: "右側パネルからファイルまたは差分を開いてください。",
         unsupportedTab: "未対応の詳細タブです。",
+        transcriptFromOtherSession: "このトランスクリプトは別のセッションのものです。",
         closeA11y: "詳細を閉じる",
           openRightSidebarA11y: "右サイドバーを開く",
           closeRightSidebarA11y: "右サイドバーを閉じる",

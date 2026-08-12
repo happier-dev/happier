@@ -4875,6 +4875,8 @@ export const en = {
                 backgroundTasksRunning: ({ count }: { count: number }) => (count === 1 ? '1 background command running' : `${count} background commands running`),
             },
             untitled: 'Unnamed agent',
+            screenTitle: 'Agents',
+            transcriptScreenTitle: 'Agent transcript',
             menuTitle: 'Agent actions',
             row: {
                 a11yLabel: ({ title, status }: { title: string; status: string }) => `${title}, ${status}`,
@@ -5025,6 +5027,7 @@ export const en = {
         detailsPanel: {
             emptyHint: 'Open a file or diff from the right panel.',
             unsupportedTab: 'Unsupported details tab.',
+            transcriptFromOtherSession: 'This transcript belongs to another session.',
             closeA11y: 'Close details',
             openRightSidebarA11y: 'Open right sidebar',
             closeRightSidebarA11y: 'Close right sidebar',

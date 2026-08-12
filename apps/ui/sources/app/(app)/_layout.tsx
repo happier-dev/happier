@@ -239,6 +239,22 @@ const RootLayoutShell = React.memo(function RootLayoutShell(): React.ReactElemen
                 }}
             />
             <Stack.Screen
+                name="session/[id]/agents"
+                options={{
+                    headerShown: true,
+                    headerTitle: t('session.agentActivity.screenTitle'),
+                    headerBackTitle: t('common.back'),
+                }}
+            />
+            <Stack.Screen
+                name="session/[id]/transcript"
+                options={{
+                    headerShown: true,
+                    headerTitle: '',
+                    headerBackTitle: t('common.back'),
+                }}
+            />
+            <Stack.Screen
                 name="session/[id]/files"
                 // The Files/SCM mobile route renders the exact same surface as the desktop right panel,
                 // including its own header (tabs + close button). Avoid double headers.

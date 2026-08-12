@@ -8,17 +8,44 @@ import {
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
+const layoutState = vi.hoisted(() => ({
+    dockLocation: 'bottom' as 'bottom' | 'details' | 'sidebar',
+    deviceType: 'tablet' as 'phone' | 'tablet',
+    platformOS: 'web' as 'web' | 'ios',
+    windowWidthPx: 1400,
+}));
+const routerPushSpy = vi.hoisted(() => vi.fn());
+
 installSessionActionsCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            useWindowDimensions: () => ({ width: layoutState.windowWidthPx, height: 900 }),
+            Platform: Object.defineProperty({}, 'OS', {
+                get: () => layoutState.platformOS,
+                enumerable: true,
+            }) as any,
+        });
+    },
+    router: async () => {
+        const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+        return createExpoRouterMock({ router: { push: routerPushSpy } }).module;
+    },
     storage: async () => {
         const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
         return createStorageModuleStub({
             useLocalSetting: (key: string) => {
-                if (key === 'embeddedTerminalDockLocation') return 'bottom';
+                if (key === 'embeddedTerminalDockLocation') return layoutState.dockLocation;
+                if (key === 'uiMultiPanePanelsEnabled') return true;
                 return null;
             },
         });
     },
 });
+
+vi.mock('@/sync/runtime/orchestration/serverScopedRpc/usePreferredServerIdForSession', () => ({
+    usePreferredServerIdForSession: () => 'server-session',
+}));
 
 const openBottomSpy = vi.fn();
 const closeBottomSpy = vi.fn();
@@ -62,7 +89,7 @@ vi.mock('@/hooks/server/useFeatureEnabled', () => ({
 }));
 
 vi.mock('@/utils/platform/responsive', () => ({
-    useDeviceType: () => 'tablet',
+    useDeviceType: () => layoutState.deviceType,
 }));
 
 describe('SessionHeaderTerminalButton', () => {
@@ -76,7 +103,14 @@ describe('SessionHeaderTerminalButton', () => {
         setRightTabSpy.mockClear();
         pane.scopeState.bottom.isOpen = false;
         pane.scopeState.bottom.activeTabId = null;
+        pane.scopeState.right.isOpen = false;
+        pane.scopeState.right.activeTabId = null;
         terminalFeatureScopeState.enabledForServerId = 'server-session';
+        routerPushSpy.mockClear();
+        layoutState.dockLocation = 'bottom';
+        layoutState.deviceType = 'tablet';
+        layoutState.platformOS = 'web';
+        layoutState.windowWidthPx = 1400;
     });
 
     it('switches an open attached terminal back to the workspace shell instead of closing the pane', async () => {
@@ -121,6 +155,40 @@ describe('SessionHeaderTerminalButton', () => {
 
         expect(closeBottomSpy).toHaveBeenCalledTimes(1);
         expect(openBottomSpy).not.toHaveBeenCalled();
+    });
+
+    /**
+     * The sidebar IS the right pane, and `resolvePaneLayout` hides the right pane on every phone —
+     * where this button is also the one header icon rendered OUTSIDE the fold guard, so it is always
+     * visible. Pressing it used to call `openRight` into a pane that is never drawn: visible, always,
+     * and dead. Same defect the agents glyph had, one button over.
+     */
+    it('opens the terminal screen instead of a hidden right pane on a phone layout', async () => {
+        layoutState.dockLocation = 'sidebar';
+        layoutState.deviceType = 'phone';
+        layoutState.platformOS = 'ios';
+        layoutState.windowWidthPx = 390;
+
+        const { SessionHeaderTerminalButton } = await import('./SessionHeaderTerminalButton');
+        const screen = await renderScreen(<SessionHeaderTerminalButton sessionId="s1" scopeId="session:s1" serverId="server-session" />);
+
+        await screen.pressByTestIdAsync('session-header-terminal-button');
+
+        expect(routerPushSpy).toHaveBeenCalledWith('/session/s1/terminal?serverId=server-session');
+        expect(openRightSpy).not.toHaveBeenCalled();
+    });
+
+    it('still opens the sidebar terminal in the right pane where the layout has one', async () => {
+        layoutState.dockLocation = 'sidebar';
+
+        const { SessionHeaderTerminalButton } = await import('./SessionHeaderTerminalButton');
+        const screen = await renderScreen(<SessionHeaderTerminalButton sessionId="s1" scopeId="session:s1" serverId="server-session" />);
+
+        await screen.pressByTestIdAsync('session-header-terminal-button');
+
+        expect(openRightSpy).toHaveBeenCalledWith({ tabId: 'terminal' });
+        expect(setRightTabSpy).toHaveBeenCalledWith('terminal');
+        expect(routerPushSpy).not.toHaveBeenCalled();
     });
 
     it('suppresses the header terminal button testID when the session screen is hidden', async () => {

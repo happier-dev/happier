@@ -30,7 +30,9 @@ import {
     SessionScmReviewDetailsViewForPanel,
     SessionScmStashDetailsViewForPanel,
     SessionSubagentDetailsViewForPanel,
+    SessionTranscriptDetailsViewForPanel,
 } from './SessionDetailsPanelDetailViews';
+import { isSessionTranscriptDetailsResource } from './details/sessionTranscriptDetailsResource';
 
 export type SessionDetailsPanelProps = Readonly<{
     sessionId: string;
@@ -381,6 +383,32 @@ export const SessionDetailsPanel = React.memo((props: SessionDetailsPanelProps) 
                 );
             }
         }
+        if (resource?.kind === 'transcript') {
+            if (isSessionTranscriptDetailsResource(tab.resource)) {
+                // Same-session, enforced rather than assumed. This panel is scoped to ONE session:
+                // its neighbours (files, commits, terminal, subagents) all resolve against
+                // `props.sessionId`, and a transcript carrying a different one would render another
+                // session's conversation under this session's chrome. Routing a cross-session open
+                // is a product decision, not plumbing, so the refusal is explicit and visible.
+                if (tab.resource.scope.sessionId !== props.sessionId) {
+                    return (
+                        <View style={styles.empty} testID="session-details-transcript-session-mismatch">
+                            <Text style={styles.emptyText}>
+                                {t('session.detailsPanel.transcriptFromOtherSession')}
+                            </Text>
+                        </View>
+                    );
+                }
+                return (
+                    <React.Suspense fallback={renderLoadingFallback()}>
+                        <SessionTranscriptDetailsViewForPanel
+                            scope={tab.resource.scope}
+                            testID="session-details-transcript"
+                        />
+                    </React.Suspense>
+                );
+            }
+        }
         if (resource?.kind === 'executionRunLauncher') {
             if (isExecutionRunLauncherResource(tab.resource)) {
                 return (
@@ -446,7 +474,9 @@ export const SessionDetailsPanel = React.memo((props: SessionDetailsPanelProps) 
                                             ? 'terminal'
                                             : tab.kind === 'executionRunLauncher'
                                                 ? 'play'
-                                                : resolveProviderSessionDetailsTabIconName(tab) ?? 'circle';
+                                                : tab.kind === 'transcript'
+                                                    ? 'chat-circle-dots'
+                                                    : resolveProviderSessionDetailsTabIconName(tab) ?? 'circle';
                         return (
                             <View
                                 key={tab.key}

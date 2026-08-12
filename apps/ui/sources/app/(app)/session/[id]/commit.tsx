@@ -1,10 +1,9 @@
 import * as React from 'react';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { Platform, View, useWindowDimensions } from 'react-native';
+import { Platform, View } from 'react-native';
 import { SessionCommitDetailsView } from '@/components/sessions/files/views/SessionCommitDetailsView';
-import { useDeviceType } from '@/utils/platform/responsive';
-import { useLocalSetting } from '@/sync/domains/state/storage';
-import { shouldRedirectDetailsRouteToPanes } from '@/components/ui/panels/shouldRedirectDetailsRouteToPanes';
+import { useCanDockSessionPane } from '@/components/sessions/panes/open/useSessionOpenLayout';
+import { resolveSessionPaneScopeId } from '@/components/sessions/panes/sessionPaneScopeId';
 import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneScope';
 import { serializeSessionPaneUrlState } from '@/components/sessions/panes/url/sessionPaneUrlState';
 import { SessionInvalidLinkFallback } from '@/components/sessions/shell/SessionInvalidLinkFallback';
@@ -42,15 +41,12 @@ export default function CommitScreen() {
     const shaRaw = decodeSha(shaParam || '').trim();
     const sha = shaRaw.split(/\s+/)[0] ?? '';
 
-    const multiPaneEnabled = useLocalSetting('uiMultiPanePanelsEnabled');
-    const deviceType = useDeviceType();
-    const { width: containerWidthPx } = useWindowDimensions();
-    const shouldRedirect =
-        Boolean(sessionId)
-        && Boolean(sha)
-        && shouldRedirectDetailsRouteToPanes({ containerWidthPx, deviceType, multiPaneEnabled });
+    // One owner for "can this layout dock a details pane", shared with `/file` and the open
+    // direction — not a second reading of the device type and the multi-pane setting.
+    const canDockDetailsPane = useCanDockSessionPane('details');
+    const shouldRedirect = Boolean(sessionId) && Boolean(sha) && canDockDetailsPane;
 
-    const pane = useAppPaneScope(`session:${sessionId}`);
+    const pane = useAppPaneScope(resolveSessionPaneScopeId(sessionId));
     const shouldUseDetailsScreen = Platform.OS !== 'web';
     const hasRedirectedToDetailsRef = React.useRef(false);
 

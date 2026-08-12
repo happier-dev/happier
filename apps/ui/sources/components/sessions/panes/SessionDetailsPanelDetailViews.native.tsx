@@ -3,3 +3,4 @@ export { SessionCommitDetailsView as SessionCommitDetailsViewForPanel } from '@/
 export { SessionFileDetailsView as SessionFileDetailsViewForPanel } from '@/components/sessions/files/views/SessionFileDetailsView';
 export { SessionScmReviewDetailsView as SessionScmReviewDetailsViewForPanel } from '@/components/sessions/files/views/SessionScmReviewDetailsView';
 export { SessionScmStashDetailsView as SessionScmStashDetailsViewForPanel } from '@/components/sessions/files/views/SessionScmStashDetailsView';
+export { SessionTranscriptDetailsView as SessionTranscriptDetailsViewForPanel } from '@/components/sessions/panes/details/SessionTranscriptDetailsView';

@@ -2,6 +2,8 @@ import * as React from 'react';
 import { isAttachedSessionTerminalAvailableForSession } from '@/agents/registry/registryUiBehavior';
 import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneScope';
 import { useSessionMachineTarget } from '@/components/sessions/model/useSessionMachineTarget';
+import { useOpenSessionTarget } from '@/components/sessions/panes/open/useOpenSessionTarget';
+import { resolveSessionPaneScopeId } from '@/components/sessions/panes/sessionPaneScopeId';
 import { useSessionCockpitChromeRegistration } from '@/components/workspaceCockpit/session/SessionCockpitChromeRegistry';
 import { getStorage, useMachine } from '@/sync/domains/state/storage';
 import { openEmbeddedTerminalInDockLocation } from './embeddedTerminalDocking';
@@ -26,7 +28,8 @@ export function useOpenAttachedSessionTerminal(sessionId: string | null): Readon
     open: () => void;
 }> {
     const normalizedSessionId = sessionId?.trim() ?? '';
-    const pane = useAppPaneScope(`session:${normalizedSessionId}`);
+    const pane = useAppPaneScope(resolveSessionPaneScopeId(normalizedSessionId));
+    const openTarget = useOpenSessionTarget({ sessionId: normalizedSessionId });
     const cockpitChrome = useSessionCockpitChromeRegistration();
     // Subscription width: this hook feeds `SessionHeaderRightElement`, whose
     // `onSelectExtraItem` identity gates `SessionHeaderActionMenu`'s comparator. Subscribing
@@ -62,7 +65,14 @@ export function useOpenAttachedSessionTerminal(sessionId: string | null): Readon
             cockpitChrome.switchSurface('terminal');
             return;
         }
+        if (terminalAvailability.dockLocation === 'sidebar') {
+            // The sidebar IS the right pane, which no phone layout draws. Same open decision the
+            // header terminal button makes: the pane where one exists, the terminal screen where it
+            // does not — never `openRight` into a pane that is structurally hidden.
+            openTarget({ kind: 'terminal' });
+            return;
+        }
         openEmbeddedTerminalInDockLocation({ pane, dockLocation: terminalAvailability.dockLocation });
-    }, [available, cockpitChrome, normalizedSessionId, pane, terminalAvailability.dockLocation]);
+    }, [available, cockpitChrome, normalizedSessionId, openTarget, pane, terminalAvailability.dockLocation]);
     return React.useMemo(() => ({ available, unavailableReason, open }), [available, open, unavailableReason]);
 }
