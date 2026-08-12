@@ -297,7 +297,7 @@ describe('pasteTextViaTmuxBuffer', () => {
       ['send-keys', '-t', 'happy:claude.1', 'C-m'],
       ['send-keys', '-t', 'happy:claude.1', 'C-m'],
     ]);
-    expect(verifyAfterSubmit).toHaveBeenCalledTimes(2);
+    expect(verifyAfterSubmit).toHaveBeenCalledTimes(3);
   });
 
   it('reports ambiguous failure when the collapsed paste marker remains after the bounded Enter retry', async () => {

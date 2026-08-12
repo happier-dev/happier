@@ -50,9 +50,13 @@ function createZellijTerminalHostAdapter(
 function createClaudeZellijTerminalHostAdapter(
   params: Parameters<typeof createZellijTerminalHostAdapterBase>[0],
 ) {
+  const policy = createClaudePromptSubmitVerificationPolicy();
   return createZellijTerminalHostAdapter({
     ...params,
-    promptSubmitVerification: createClaudePromptSubmitVerificationPolicy(),
+    promptSubmitVerification: {
+      ...policy,
+      isPromptStagedBeforeSubmit: () => true,
+    },
   });
 }
 
@@ -3648,7 +3652,62 @@ describe('createZellijTerminalHostAdapter', () => {
     expect(calls).toEqual([`write:${rawText}`, 'enter']);
   });
 
-  it('bounds prompt write and Enter with the adapter action timeout when input has no timeout', async () => {
+  it('waits for the Claude composer to stage the exact prompt before sending Enter', async () => {
+    const prompt = 'continue';
+    const calls: string[] = [];
+    let dumpCount = 0;
+    const actions: ZellijActions = {
+      attachCreateBackground: async () => ({ exitCode: 0, stdout: '', stderr: '' }),
+      runCommand: async () => ({ exitCode: 0, stdout: 'terminal_1', stderr: '' }),
+      writeBytesChunked: async () => {
+        calls.push('write');
+      },
+      sendEnter: async () => {
+        calls.push('enter');
+      },
+      sendEscape: async () => {
+        throw new Error('should not interrupt');
+      },
+      listPanes: async () => [{ id: 1, is_plugin: false, is_focused: true }],
+      dumpScreen: async () => {
+        dumpCount += 1;
+        calls.push(`dump:${dumpCount}`);
+        if (dumpCount === 1) return 'Claude Code\n❯';
+        if (dumpCount === 2) return `Claude Code\n❯ ${prompt}`;
+        return 'Claude Code\n❯';
+      },
+      closePane: async () => undefined,
+      killSession: async () => ({ exitCode: 0, stdout: '', stderr: '' }),
+      deleteSession: async () => ({ exitCode: 0, stdout: '', stderr: '' }),
+    };
+    const adapter = createZellijTerminalHostAdapter({
+      zellijBinary: '/tools/zellij',
+      happyHomeDir: '/home/happier',
+      actions,
+      actionTimeoutMs: 500,
+      promptSubmitVerification: createClaudePromptSubmitVerificationPolicy(),
+    });
+
+    await expect(adapter.injectUserPrompt(
+      {
+        kind: 'zellij',
+        sessionName: 'session-a',
+        paneId: 'terminal_1',
+        attachMetadata: { attachStrategy: 'terminal_host', topology: 'shared' },
+      },
+      {
+        text: prompt,
+        multiline: false,
+        origin: { kind: 'ui_pending', nonce: 'nonce-stage-before-enter' },
+        scheduling: {},
+      },
+    )).resolves.toMatchObject({ status: 'injected' });
+
+    expect(calls.indexOf('dump:2')).toBeLessThan(calls.indexOf('enter'));
+    expect(dumpCount).toBeGreaterThanOrEqual(4);
+  });
+
+  it('bounds prompt write and Enter with the size-aware prompt timeout when input has no timeout', async () => {
     const timeouts: Record<string, number | undefined> = {};
     const actions: ZellijActions = {
       attachCreateBackground: async () => ({ exitCode: 0, stdout: '', stderr: '' }),
@@ -3690,7 +3749,7 @@ describe('createZellijTerminalHostAdapter', () => {
       },
     )).resolves.toMatchObject({ status: 'injected' });
 
-    expect(timeouts.write).toBe(123);
+    expect(timeouts.write).toBeGreaterThan(123);
     expect(timeouts.enter).toBeGreaterThan(0);
     expect(timeouts.enter).toBeLessThanOrEqual(123);
   });

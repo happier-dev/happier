@@ -18,6 +18,7 @@ import { evaluateTmuxPaneLiveness } from './paneLiveness';
 import { TmuxUtilities } from './TmuxUtilities';
 import { pasteTextViaTmuxBuffer } from './typeText';
 import type { TerminalPromptSubmitVerificationPolicy } from '../terminalHost/promptSubmitVerification';
+import { resolveTerminalPromptWriteTimeoutMs } from '@/agent/runtime/terminal/injection/promptWriteTimeout';
 
 /**
  * Stability sampling delay between the two full-pane captures used to detect that the user is
@@ -194,7 +195,7 @@ export function createTmuxTerminalHostAdapter(params?: Readonly<{
         bufferName: createTmuxPromptBufferName(),
         submitDelayMs: resolveTmuxPromptSubmitDelayMs(),
         submitRetryDelayMs: resolveTmuxPromptSubmitDelayMs(),
-        timeoutMs: input.scheduling.timeoutMs,
+        timeoutMs: input.scheduling.timeoutMs ?? resolveTerminalPromptWriteTimeoutMs(input.text),
         ...(writeBoundary
           ? {
               authorizeBeforeWrite: async () => {
@@ -206,6 +207,10 @@ export function createTmuxTerminalHostAdapter(params?: Readonly<{
           : {}),
         ...(promptSubmitVerification?.shouldVerifyAfterSubmit(input.text)
           ? {
+            verifyStagedBeforeSubmit: async ({ text }) => promptSubmitVerification.isPromptStagedBeforeSubmit({
+              promptText: text,
+              screenText: await tmux.captureCurrentInput(targetFromHandle(handle)),
+            }),
             verifyAfterSubmit: async ({ text }) => promptSubmitVerification.isPromptStillPendingAfterSubmit({
               promptText: text,
               screenText: await tmux.captureCurrentInput(targetFromHandle(handle)),

@@ -41,6 +41,7 @@ import {
   runTerminalPromptSubmission,
   type TerminalPromptSubmitVerificationPolicy,
 } from '../terminalHost/promptSubmitVerification';
+import { resolveTerminalPromptWriteTimeoutMs } from '@/agent/runtime/terminal/injection/promptWriteTimeout';
 
 const DEFAULT_INPUT_STABILITY_DELAY_MS = 50;
 /**
@@ -1463,7 +1464,7 @@ export function createZellijTerminalHostAdapter(params: Readonly<{
         }
       }
 
-      const injectionTimeoutMs = input.scheduling.timeoutMs ?? actionTimeoutMs;
+      const injectionTimeoutMs = input.scheduling.timeoutMs ?? resolveTerminalPromptWriteTimeoutMs(input.text);
       const deadline = createTerminalHostDeadline(injectionTimeoutMs);
       const textToWrite = input.text;
       const textToWriteBytes = Buffer.byteLength(textToWrite, 'utf8');
@@ -1515,6 +1516,24 @@ export function createZellijTerminalHostAdapter(params: Readonly<{
         duplicateRisk = 'likely';
         const submission = await runTerminalPromptSubmission({
           promptText: textToWrite,
+          ...(promptSubmitVerification?.shouldVerifyAfterSubmit(textToWrite)
+            ? {
+              verifyStagedBeforeSubmit: async ({ promptText, remainingTimeoutMs }) => {
+                const screenText = await actions.dumpScreen({
+                  zellijBinary: params.zellijBinary,
+                  env: sessionEnv(env, handle.sessionName),
+                  paneId,
+                  ...(remainingTimeoutMs !== undefined
+                    ? { timeoutMs: remainingTimeoutMs }
+                    : { timeoutMs: actionTimeoutMs }),
+                });
+                return promptSubmitVerification.isPromptStagedBeforeSubmit({
+                  promptText,
+                  screenText,
+                });
+              },
+            }
+            : {}),
           submitEnter: async ({ remainingTimeoutMs }) => {
             await actions.sendEnter({
               zellijBinary: params.zellijBinary,

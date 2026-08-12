@@ -14,9 +14,13 @@ const TMUX_HANDLE = {
 } as const;
 
 function createClaudeTmuxTerminalHostAdapter(tmux: TmuxUtilities) {
+  const policy = createClaudePromptSubmitVerificationPolicy();
   return createTmuxTerminalHostAdapter({
     tmux,
-    promptSubmitVerification: createClaudePromptSubmitVerificationPolicy(),
+    promptSubmitVerification: {
+      ...policy,
+      isPromptStagedBeforeSubmit: () => true,
+    },
   });
 }
 
@@ -247,9 +251,49 @@ describe('createTmuxTerminalHostAdapter', () => {
     expect(captureCurrentInput).toHaveBeenCalledTimes(2);
   });
 
-  it('submits after a successful native paste without requiring pre-submit screen capture', async () => {
+  it('waits for the Claude composer to stage the exact prompt before sending Enter', async () => {
+    const prompt = 'continue';
+    const order: string[] = [];
     const tmux = new TmuxUtilities();
-    vi.spyOn(tmux, 'executeTmuxCommand').mockImplementation(async (args) => ({
+    vi.spyOn(tmux, 'executeTmuxCommand').mockImplementation(async (args) => {
+      order.push(args[0] ?? '');
+      return {
+        returncode: 0,
+        stdout: args[0] === 'display-message' ? '0\t12345\tclaude\n' : '',
+        stderr: '',
+        command: [...args],
+      };
+    });
+    let captureCount = 0;
+    vi.spyOn(tmux, 'captureCurrentInput').mockImplementation(async () => {
+      captureCount += 1;
+      order.push(`capture:${captureCount}`);
+      if (captureCount === 1) return 'Claude Code\n❯';
+      if (captureCount === 2) return `Claude Code\n❯ ${prompt}`;
+      return 'Claude Code\n❯';
+    });
+    const adapter = createTmuxTerminalHostAdapter({
+      tmux,
+      promptSubmitVerification: createClaudePromptSubmitVerificationPolicy(),
+    });
+
+    await expect(adapter.injectUserPrompt(
+      TMUX_HANDLE,
+      {
+        text: prompt,
+        multiline: false,
+        origin: { kind: 'ui_pending', nonce: 'nonce-stage-before-enter' },
+        scheduling: { timeoutMs: 500 },
+      },
+    )).resolves.toMatchObject({ status: 'injected' });
+
+    expect(order.indexOf('capture:2')).toBeLessThan(order.indexOf('send-keys'));
+    expect(captureCount).toBeGreaterThanOrEqual(4);
+  });
+
+  it('does not submit when pre-submit screen capture is unavailable', async () => {
+    const tmux = new TmuxUtilities();
+    const executeTmuxCommand = vi.spyOn(tmux, 'executeTmuxCommand').mockImplementation(async (args) => ({
       returncode: 0,
       stdout: args[0] === 'display-message' ? '0\t12345\tclaude\n' : '',
       stderr: '',
@@ -269,13 +313,11 @@ describe('createTmuxTerminalHostAdapter', () => {
     )).resolves.toMatchObject({
       status: 'failed',
       reason: 'host_unreachable',
-      phase: 'after_enter_unknown',
-      duplicateRisk: 'likely',
+      phase: 'after_write_before_enter',
+      duplicateRisk: 'possible',
     });
 
-    expect(tmux.executeTmuxCommand.mock.calls.map((call) => call[0]).filter((args) => args[0] === 'send-keys')).toEqual([
-      ['send-keys', '-t', 'happy:claude.1', 'C-m'],
-    ]);
+    expect(executeTmuxCommand.mock.calls.map((call) => call[0]).filter((args) => args[0] === 'send-keys')).toEqual([]);
   });
 
   it('pastes multiline prompts without sending tmux newline keys before submit', async () => {

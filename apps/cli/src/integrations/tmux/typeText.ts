@@ -135,6 +135,7 @@ export async function pasteTextViaTmuxBuffer(params: Readonly<{
   submitRetryDelayMs?: number | undefined;
   timeoutMs?: number | undefined;
   wait?: ((delayMs: number) => Promise<void>) | undefined;
+  verifyStagedBeforeSubmit?: ((params: Readonly<{ text: string; remainingTimeoutMs?: number | undefined }>) => Promise<boolean>) | undefined;
   verifyAfterSubmit?: ((params: Readonly<{ text: string; remainingTimeoutMs?: number | undefined }>) => Promise<boolean>) | undefined;
   authorizeBeforeWrite?: (() => boolean | Promise<boolean>) | undefined;
 }>): Promise<TmuxNativePasteTextResult> {
@@ -239,6 +240,14 @@ export async function pasteTextViaTmuxBuffer(params: Readonly<{
 
   const submission = await runTerminalPromptSubmission({
     promptText: normalizedText,
+    ...(params.verifyStagedBeforeSubmit
+      ? {
+        verifyStagedBeforeSubmit: async ({ promptText, remainingTimeoutMs }) => params.verifyStagedBeforeSubmit?.({
+          text: promptText,
+          remainingTimeoutMs,
+        }) ?? false,
+      }
+      : {}),
     submitEnter: sendSubmitEnter,
     ...(params.verifyAfterSubmit
       ? {
