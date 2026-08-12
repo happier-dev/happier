@@ -639,6 +639,8 @@ describe('runClaude fast-start', () => {
     initResolved = false;
     backendInitDelayMs = 0;
     beforeLoopCapture = overrideSynced.promise;
+    const previousGetOrCreateSessionImpl = getOrCreateSessionSpy.getMockImplementation();
+    if (!previousGetOrCreateSessionImpl) throw new Error('expected the session creation test implementation');
     getOrCreateSessionSpy.mockImplementation(async () => ({ id: 'sess_model_override', metadataVersion: 1 }));
 
     const persistedMetadata = {
@@ -686,7 +688,7 @@ describe('runClaude fast-start', () => {
       autoSessionReady = true;
       awaitAutoSessionReadyCallback = false;
       beforeLoopCapture = null;
-      getOrCreateSessionSpy.mockImplementation(async () => ({ id: 'sess_1', metadataVersion: 1 }));
+      getOrCreateSessionSpy.mockImplementation(previousGetOrCreateSessionImpl);
     }
 
     if (testError) throw testError;

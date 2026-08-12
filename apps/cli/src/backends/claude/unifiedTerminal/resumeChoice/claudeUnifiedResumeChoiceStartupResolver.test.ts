@@ -39,6 +39,24 @@ const EFFORT_DIALOG_MEDIUM = [
   '  2. No, go back',
 ].join('\n');
 
+const EFFORT_DIALOG_ULTRACODE = [
+  'Change effort level?',
+  'This conversation is cached for the current effort level.',
+  'Switching to ultracode means the full history gets re-read before Claude can continue.',
+  '',
+  '❯ 1. Yes, switch to ultracode',
+  '  2. No, go back',
+].join('\n');
+
+const EFFORT_DIALOG_XHIGH = [
+  'Change effort level?',
+  'This conversation is cached for the current effort level.',
+  'Switching to xhigh means the full history gets re-read before Claude can continue.',
+  '',
+  '❯ 1. Yes, switch to xhigh',
+  '  2. No, go back',
+].join('\n');
+
 const SWITCH_MODEL_DIALOG = [
   'Switch model?',
   'Reading from cache may produce different results.',
@@ -388,6 +406,36 @@ describe('createClaudeUnifiedResumeChoiceStartupResolver', () => {
     expect(port.sentLiteral).toEqual(['2']);
     expect(port.sentKeys).toEqual([]);
   });
+
+  it.each([
+    ['ultracode', EFFORT_DIALOG_ULTRACODE],
+    ['xhigh', EFFORT_DIALOG_XHIGH],
+  ] as const)(
+    'accepts an orphan %s effort target when startup configured Ultracode',
+    async (_target, capture) => {
+      const { session } = createPermissionHandlerSessionStub('resume-choice-session');
+      const broker = new ClaudeUnifiedDialogChoiceBroker(session);
+      const port = createFakeControlPort({ captures: [capture, IDLE] });
+      const resolver = createClaudeUnifiedResumeChoiceStartupResolver({
+        choice: 'ask_every_time',
+        broker,
+        port,
+        wait: async () => undefined,
+        settleMs: 1,
+        startupMode: { permissionMode: 'default', ultracode: true },
+        isRuntimeControlInFlight: () => false,
+      });
+
+      await expect(resolver({
+        screenState: parseClaudeScreenState(capture),
+        observedAtMs: 1,
+        abortSignal: new AbortController().signal,
+      })).resolves.toEqual({ status: 'handled' });
+
+      expect(port.sentLiteral).toEqual(['1']);
+      expect(port.sentKeys).toEqual([]);
+    },
+  );
 
   it('leaves an effort-change dialog to the runtime-control apply episode while that driver owns it', async () => {
     const { session } = createPermissionHandlerSessionStub('resume-choice-session');
