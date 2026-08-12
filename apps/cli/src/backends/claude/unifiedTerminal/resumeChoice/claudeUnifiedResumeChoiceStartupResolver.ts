@@ -56,9 +56,12 @@ function normalizeNonEmptyString(value: string | null | undefined): string | nul
 
 function resolveConfiguredEffortTargets(startupMode: EnhancedMode | undefined): readonly string[] {
   if (!startupMode) return [];
-  const desired = mapEnhancedModeToDesiredRuntimeConfig(startupMode);
-  if (desired.ultracode === true) return ['ultracode', 'xhigh'];
-  const effort = normalizeNonEmptyString(desired.reasoningEffort);
+  // This resolver only answers an effort-change dialog Claude has already rendered. The visible
+  // dialog is provider evidence that the target exists, so compare it with the configured startup
+  // intent directly. The stricter runtime-control mapper still owns whether Happier may proactively
+  // request an effort for a model whose capabilities are not evidenced.
+  if (startupMode.ultracode === true) return ['ultracode', 'xhigh'];
+  const effort = normalizeNonEmptyString(startupMode.reasoningEffort);
   return effort ? [effort] : [];
 }
 
