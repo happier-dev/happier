@@ -61,4 +61,20 @@ describe('dispatchCli root help', () => {
 
     expect(defaultHandlerSpy).not.toHaveBeenCalled();
   });
+
+  it('returns the predecessor empty plugin catalog without starting the default agent', async () => {
+    await dispatchCli({
+      args: ['plugins', 'list', '--json'],
+      rawArgv: ['happier', 'plugins', 'list', '--json'],
+      terminalRuntime: null,
+    });
+
+    expect(defaultHandlerSpy).not.toHaveBeenCalled();
+    expect(output.logs).toContainEqual(JSON.stringify({
+      v: 1,
+      ok: true,
+      kind: 'plugins_list',
+      data: { plugins: [] },
+    }));
+  });
 });
