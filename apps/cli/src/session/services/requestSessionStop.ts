@@ -69,6 +69,9 @@ async function stopSessionViaMarkersBestEffort(params: Readonly<{
         happySessionId: marker.happySessionId,
         pid: marker.pid,
         ...(typeof marker.processCommandHash === 'string' ? { processCommandHash: marker.processCommandHash } : {}),
+        ...(typeof marker.processInstanceFingerprint === 'string'
+          ? { processInstanceFingerprint: marker.processInstanceFingerprint }
+          : {}),
         ...(marker.respawn
           ? {
               spawnOptions: {

@@ -89,7 +89,7 @@ describe('isSessionRunnerActive', () => {
     expect(res).toBe(true);
   });
 
-  it('treats a live lock PID as inactive when command hash mismatch proves PID reuse', async () => {
+  it('treats a live lock PID as active when only its legacy command hash drifts', async () => {
     const res = await isSessionRunnerActive({
       sessionId: 'sess_1',
       trackedSessions: [],
@@ -100,10 +100,31 @@ describe('isSessionRunnerActive', () => {
       }),
       getProcessCommandHash: async () => 'b'.repeat(64),
     });
+    expect(res).toBe(true);
+  });
+
+  it('treats a live lock PID as inactive when the process-instance fingerprint proves reuse', async () => {
+    const res = await isSessionRunnerActive({
+      sessionId: 'sess_1',
+      trackedSessions: [],
+      readProcessRunState: async () => 'servable',
+      readSessionRunnerLockStatus: async () => ({
+        ok: true,
+        lock: {
+          sessionId: 'sess_1',
+          pid: 123,
+          acquiredAtMs: 1,
+          processCommandHash: 'a'.repeat(64),
+          processInstanceFingerprint: 'linux-proc:old',
+        },
+      }),
+      getProcessCommandHash: async () => 'b'.repeat(64),
+      getProcessInstanceFingerprint: () => 'linux-proc:new',
+    });
     expect(res).toBe(false);
   });
 
-  it('treats a live lock PID as inactive when its stored hash belongs to a non-Happier process', async () => {
+  it('treats a live lock PID as active when legacy classification no longer recognizes its command', async () => {
     const res = await isSessionRunnerActive({
       sessionId: 'sess_1',
       trackedSessions: [],
@@ -114,7 +135,7 @@ describe('isSessionRunnerActive', () => {
       }),
       getProcessCommandHash: async () => null,
     });
-    expect(res).toBe(false);
+    expect(res).toBe(true);
   });
 
   it('treats a live lock PID as active when process identity cannot be inspected', async () => {
@@ -183,7 +204,7 @@ describe('isSessionRunnerActive', () => {
     expect(res).toBe(true);
   });
 
-  it('treats a tracked session PID as inactive when command hash mismatch proves PID reuse', async () => {
+  it('treats a tracked session PID as active when only its legacy command hash drifts', async () => {
     const tracked: TrackedSession = {
       startedBy: 'daemon',
       pid: 456,
@@ -197,10 +218,10 @@ describe('isSessionRunnerActive', () => {
       readSessionRunnerLockStatus: async () => ({ ok: false, reason: 'not_found' }),
       getProcessCommandHash: async () => 'b'.repeat(64),
     });
-    expect(res).toBe(false);
+    expect(res).toBe(true);
   });
 
-  it('treats a tracked session PID as inactive when its stored hash belongs to a non-Happier process', async () => {
+  it('treats a tracked session PID as active when legacy classification no longer recognizes its command', async () => {
     const tracked: TrackedSession = {
       startedBy: 'daemon',
       pid: 456,
@@ -214,10 +235,10 @@ describe('isSessionRunnerActive', () => {
       readSessionRunnerLockStatus: async () => ({ ok: false, reason: 'not_found' }),
       getProcessCommandHash: async () => null,
     });
-    expect(res).toBe(false);
+    expect(res).toBe(true);
   });
 
-  it('treats a tracked child-process PID as inactive when its stored hash belongs to a non-Happier process', async () => {
+  it('treats a tracked child-process PID as active when legacy classification no longer recognizes its command', async () => {
     const tracked: TrackedSession = {
       startedBy: 'daemon',
       pid: 456,
@@ -233,7 +254,7 @@ describe('isSessionRunnerActive', () => {
       readSessionRunnerLockStatus: async () => ({ ok: false, reason: 'not_found' }),
       getProcessCommandHash: async () => null,
     });
-    expect(res).toBe(false);
+    expect(res).toBe(true);
   });
 
   it('treats a tracked session PID as active when process identity cannot be inspected', async () => {

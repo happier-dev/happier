@@ -21,7 +21,6 @@ import {
   type StopSessionResult,
 } from './stopSessionContract';
 import {
-  requireExactTerminalControlServiceabilityRetirement,
   type ExactTerminalControlServiceabilityRetirement,
 } from './retireTerminalControlServiceability';
 
@@ -54,6 +53,7 @@ async function taskkillWindowsDaemonChild(params: Readonly<{
   const safe = await isPidSafeHappySessionProcess({
     pid: params.pid,
     expectedProcessCommandHash: params.session.processCommandHash,
+    expectedProcessInstanceFingerprint: params.session.processInstanceFingerprint,
   });
   if (!safe) {
     params.logPidReuseRefusal(`[DAEMON RUN] Refusing to taskkill PID ${params.pid} for session ${params.normalizedSessionId} (PID reuse safety)`);
@@ -110,6 +110,7 @@ export function createStopSession(params: Readonly<{
   }>) => Promise<ExactTerminalControlServiceabilityRetirement | void>;
   recoverStrandedTerminalControlServiceability?: (input: Readonly<{
     sessionId: string;
+    expectedAttachmentId?: string;
   }>) => Promise<StopSessionResult | null>;
   expectedTerminalAttachmentId?: string;
   /** Marker fallback must positively prove plain topology when no attachment descriptor exists. */
@@ -218,20 +219,35 @@ export function createStopSession(params: Readonly<{
     }
 
     if (pidsToStop.length === 0) {
-      if (attachmentInfo?.version === 2) {
-        logWarning(`[DAEMON RUN] Refusing to destroy terminal attachment without exact tracked-runner exit proof for session ${normalizedSessionId}`);
-        return incompleteStopSession('tracked_runner_absent');
-      }
       if (!isPidFallback && params.recoverStrandedTerminalControlServiceability) {
         try {
           const recovered = await params.recoverStrandedTerminalControlServiceability({
             sessionId: normalizedSessionId,
+            ...(attachmentInfo?.version === 2
+              ? { expectedAttachmentId: attachmentInfo.attachmentId }
+              : {}),
           });
+          if (recovered?.status === 'stopped' && attachmentInfo?.version === 2) {
+            const removed = await (params.removeAttachmentInfo ?? removeTerminalAttachmentInfo)({
+              happyHomeDir: configuration.happyHomeDir,
+              sessionId: normalizedSessionId,
+              expectedAttachmentId: attachmentInfo.attachmentId,
+              expectedTerminal: attachmentInfo.terminal,
+            }).catch(() => false);
+            if (!removed) {
+              return incompleteStopSession('terminal_attachment_descriptor_retirement_failed');
+            }
+            await notifyExactTerminalAttachmentRetired(attachmentInfo);
+          }
           if (recovered) return recovered;
         } catch (error) {
           logWarning(`[DAEMON RUN] Failed to inspect stranded terminal control for session ${normalizedSessionId}`, error);
           return incompleteStopSession('missing_topology_proof');
         }
+      }
+      if (attachmentInfo?.version === 2) {
+        logWarning(`[DAEMON RUN] Refusing to destroy terminal attachment without exact tracked-runner exit proof for session ${normalizedSessionId}`);
+        return incompleteStopSession('tracked_runner_absent');
       }
       logger.debug(`[DAEMON RUN] Session ${normalizedSessionId} not found`);
       return { status: 'not_found' };
@@ -316,8 +332,12 @@ export function createStopSession(params: Readonly<{
         continue;
       }
 
-      // PID reuse safety: verify the PID still looks like a Happy session process (and matches hash if known).
-      const safe = await isPidSafeHappySessionProcess({ pid, expectedProcessCommandHash: session.processCommandHash });
+      // PID reuse safety: verify the PID is still a Happy runner and matches the strongest persisted identity.
+      const safe = await isPidSafeHappySessionProcess({
+        pid,
+        expectedProcessCommandHash: session.processCommandHash,
+        expectedProcessInstanceFingerprint: session.processInstanceFingerprint,
+      });
       if (!safe) {
         logPidReuseRefusal(`[DAEMON RUN] Refusing to SIGTERM PID ${pid} for session ${normalizedSessionId} (PID reuse safety)`);
         continue;
@@ -391,12 +411,14 @@ export function createStopSession(params: Readonly<{
         removeAttachmentInfo: params.removeAttachmentInfo ?? removeTerminalAttachmentInfo,
         beforeDescriptorRetirement: params.retireExactTerminalControlServiceability
           ? async ({ attachmentInfo: currentAttachmentInfo }) => {
-              const retirement = await params.retireExactTerminalControlServiceability!({
+              // A replacement projection already superseded this exact attachment. That is a
+              // successful fence for the old host: preserve the replacement and retire only the
+              // still-matching local descriptor.
+              await params.retireExactTerminalControlServiceability!({
                 happyHomeDir: configuration.happyHomeDir,
                 sessionId: normalizedSessionId,
                 attachmentInfo: currentAttachmentInfo,
               });
-              requireExactTerminalControlServiceabilityRetirement(retirement);
             }
           : undefined,
       });

@@ -27,7 +27,7 @@ import { readSessionMarkerForPid } from '../sessionRegistry';
 import {
   isValidProcessCommandHash,
   readSessionRunnerProcessIdentity as readSessionRunnerProcessIdentityDefault,
-  storedProcessHashProvesPidReuse,
+  storedProcessIdentityProvesPidReuse,
   type SessionRunnerProcessIdentity,
 } from '../sessionRunnerProcessIdentity';
 import { requestDaemonSelfRestart } from './requestDaemonSelfRestart';
@@ -70,16 +70,16 @@ function hasLiveDaemonChildProcessHandle(
 
 export function getTrackedSessionHeartbeatPruneReason(params: Readonly<{
   isPidAlive: boolean;
-  trackedSession: Pick<TrackedSession, 'startedBy' | 'pid' | 'childProcess' | 'processCommandHash'>;
+  trackedSession: Pick<TrackedSession, 'startedBy' | 'pid' | 'childProcess' | 'processCommandHash' | 'processInstanceFingerprint'>;
   currentIdentity?: SessionRunnerProcessIdentity;
 }>): TrackedSessionHeartbeatPruneReason | null {
   if (!params.isPidAlive) return 'process-missing';
   if (!params.currentIdentity) return null;
-  const processHashProvesPidReuse = storedProcessHashProvesPidReuse({
-    storedProcessCommandHash: params.trackedSession.processCommandHash,
+  const processIdentityProvesPidReuse = storedProcessIdentityProvesPidReuse({
+    storedProcessInstanceFingerprint: params.trackedSession.processInstanceFingerprint,
     currentIdentity: params.currentIdentity,
   });
-  if (!processHashProvesPidReuse) return null;
+  if (!processIdentityProvesPidReuse) return null;
   if (hasLiveDaemonChildProcessHandle(params.trackedSession)) return null;
   return 'process-reused';
 }
@@ -211,7 +211,10 @@ export function startDaemonHeartbeatLoop(params: Readonly<{
       // Prune stale sessions
       for (const [pid, tracked] of pidToTrackedSession.entries()) {
         const isPidAlive = isPidAliveBestEffort(pid);
-        const currentIdentity = isPidAlive && isValidProcessCommandHash(tracked.processCommandHash)
+        const currentIdentity = isPidAlive && (
+          isValidProcessCommandHash(tracked.processCommandHash)
+          || Boolean(tracked.processInstanceFingerprint)
+        )
           ? await readSessionRunnerProcessIdentityForHeartbeat({ pid }).catch(() => ({ kind: 'unknown' as const }))
           : undefined;
         const pruneReason = getTrackedSessionHeartbeatPruneReason({

@@ -7,9 +7,10 @@ import { configuration } from '@/configuration';
 import { readProcessRunState as readProcessRunStateDefault, type ProcessRunState } from './processRunState';
 import {
   readSessionRunnerProcessIdentity,
-  storedProcessHashMatchesCurrentIdentity,
-  storedProcessHashProvesPidReuse,
+  storedProcessIdentityMatchesCurrentIdentity,
+  storedProcessIdentityProvesPidReuse,
   type SessionRunnerProcessCommandHashReader,
+  type SessionRunnerProcessInstanceFingerprintReader,
 } from './sessionRunnerProcessIdentity';
 
 type LockPayload = Readonly<{
@@ -17,6 +18,7 @@ type LockPayload = Readonly<{
   pid: number;
   acquiredAtMs: number;
   processCommandHash?: string;
+  processInstanceFingerprint?: string;
 }>;
 
 function normalizeSessionId(raw: unknown): string {
@@ -68,10 +70,19 @@ function safeParseLockPayload(raw: string): LockPayload | null {
     const acquiredAtMs = Number(parsed?.acquiredAtMs);
     const processCommandHashRaw = typeof parsed?.processCommandHash === 'string' ? parsed.processCommandHash : '';
     const processCommandHash = /^[a-f0-9]{64}$/.test(processCommandHashRaw) ? processCommandHashRaw : undefined;
+    const processInstanceFingerprint = typeof parsed?.processInstanceFingerprint === 'string'
+      ? parsed.processInstanceFingerprint.trim() || undefined
+      : undefined;
     if (!sessionId) return null;
     if (!Number.isFinite(pid) || pid <= 0) return null;
     if (!Number.isFinite(acquiredAtMs) || acquiredAtMs <= 0) return null;
-    return { sessionId, pid: Math.floor(pid), acquiredAtMs: Math.floor(acquiredAtMs), ...(processCommandHash ? { processCommandHash } : {}) };
+    return {
+      sessionId,
+      pid: Math.floor(pid),
+      acquiredAtMs: Math.floor(acquiredAtMs),
+      ...(processCommandHash ? { processCommandHash } : {}),
+      ...(processInstanceFingerprint ? { processInstanceFingerprint } : {}),
+    };
   } catch {
     return null;
   }
@@ -97,6 +108,7 @@ export async function acquireSessionRunnerLock(params: Readonly<{
   happyHomeDir?: string;
   readProcessRunState?: (pid: number) => Promise<ProcessRunState>;
   getCurrentProcessCommandHash?: SessionRunnerProcessCommandHashReader;
+  getProcessInstanceFingerprint?: SessionRunnerProcessInstanceFingerprintReader;
   killWedgedPid?: (pid: number) => void;
 }>): Promise<AcquireSessionRunnerLockResult> {
   const sessionId = normalizeSessionId(params.sessionId);
@@ -120,15 +132,18 @@ export async function acquireSessionRunnerLock(params: Readonly<{
     await readSessionRunnerProcessIdentity({
       pid: pidToRead,
       getProcessCommandHash: params.getCurrentProcessCommandHash,
+      getProcessInstanceFingerprint: params.getProcessInstanceFingerprint,
     });
   const processIdentity = await readProcessIdentity(pid);
   const processCommandHash = processIdentity.kind === 'happy' ? processIdentity.processCommandHash : null;
+  const processInstanceFingerprint = processIdentity.processInstanceFingerprint;
 
   const payload: LockPayload = {
     sessionId,
     pid,
     acquiredAtMs: nowMs,
     ...(processCommandHash ? { processCommandHash } : {}),
+    ...(processInstanceFingerprint ? { processInstanceFingerprint } : {}),
   };
   const serialized = JSON.stringify(payload, null, 2) + '\n';
 
@@ -185,15 +200,16 @@ export async function acquireSessionRunnerLock(params: Readonly<{
     const holderState = await readHolderRunState(existing.pid);
     if (holderState === 'dead' || holderState === 'zombie') {
       // Dead or defunct: cannot serve, safe to break below (a zombie needs no kill).
-    } else if (existing.processCommandHash) {
+    } else if (existing.processCommandHash || existing.processInstanceFingerprint) {
       const currentIdentity = await readProcessIdentity(existing.pid);
-      if (storedProcessHashProvesPidReuse({
-        storedProcessCommandHash: existing.processCommandHash,
+      if (storedProcessIdentityProvesPidReuse({
+        storedProcessInstanceFingerprint: existing.processInstanceFingerprint,
         currentIdentity,
       })) {
-        // Provably a different process (PID reuse) or not a Happy process: treat the lock as stale and break it.
-      } else if (holderState === 'stopped' && storedProcessHashMatchesCurrentIdentity({
+        // The OS process-instance fingerprint proves PID reuse; treat the lock as stale and break it.
+      } else if (holderState === 'stopped' && storedProcessIdentityMatchesCurrentIdentity({
         storedProcessCommandHash: existing.processCommandHash,
+        storedProcessInstanceFingerprint: existing.processInstanceFingerprint,
         currentIdentity,
       })) {
         // Proven same runner image but SIGSTOPped: it holds the lock and serves nothing
@@ -211,7 +227,7 @@ export async function acquireSessionRunnerLock(params: Readonly<{
         return { ok: false, reason: 'already_running', heldByPid: existing.pid };
       }
     } else {
-      // Fail-closed: without a command hash, we can't safely distinguish PID reuse.
+      // Fail-closed: without persisted identity, we cannot safely distinguish PID reuse.
       return { ok: false, reason: 'already_running', heldByPid: existing.pid };
     }
   }

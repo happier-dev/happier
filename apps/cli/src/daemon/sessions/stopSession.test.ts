@@ -481,6 +481,38 @@ describe('createStopSession', () => {
     expect(dispose).not.toHaveBeenCalled();
   });
 
+  it('retires the exact local descriptor when canonical recovery proves the stranded host is dead', async () => {
+    const { createStopSession } = await import('./stopSession');
+    const attachmentInfo = createBoundAttachment('sess-dead-stranded-host', 'attachment-dead-stranded-host');
+    const recoverStrandedTerminalControlServiceability = vi.fn(async () => ({ status: 'stopped' as const }));
+    const removeAttachmentInfo = vi.fn(async () => true);
+    const onExactTerminalAttachmentRetired = vi.fn(async () => undefined);
+    const stop = createStopSession({
+      pidToTrackedSession: new Map(),
+      readAttachmentInfo: vi.fn(async () => attachmentInfo),
+      recoverStrandedTerminalControlServiceability,
+      removeAttachmentInfo,
+      onExactTerminalAttachmentRetired,
+    });
+
+    await expect(stop(attachmentInfo.sessionId)).resolves.toEqual({ status: 'stopped' });
+    expect(recoverStrandedTerminalControlServiceability).toHaveBeenCalledWith({
+      sessionId: attachmentInfo.sessionId,
+      expectedAttachmentId: attachmentInfo.attachmentId,
+    });
+    expect(removeAttachmentInfo).toHaveBeenCalledWith({
+      happyHomeDir: expect.any(String),
+      sessionId: attachmentInfo.sessionId,
+      expectedAttachmentId: attachmentInfo.attachmentId,
+      expectedTerminal: attachmentInfo.terminal,
+    });
+    expect(onExactTerminalAttachmentRetired).toHaveBeenCalledWith({
+      happyHomeDir: expect.any(String),
+      sessionId: attachmentInfo.sessionId,
+      attachmentInfo,
+    });
+  });
+
   it('signals and observes the exact runner before destroying its exact terminal attachment', async () => {
     const { createStopSession } = await import('./stopSession');
     const attachmentId = 'attachment-stop-1' as NonNullable<import('@/integrations/terminalHost/_types').TerminalHostHandle['attachmentId']>;
@@ -1061,7 +1093,7 @@ describe('createStopSession', () => {
     expect(onExactTerminalAttachmentRetired).not.toHaveBeenCalled();
   });
 
-  it('does not retire local evidence when serviceability retirement is superseded by a replacement attachment', async () => {
+  it('retires only the old local evidence when serviceability was superseded by a replacement attachment', async () => {
     const { createStopSession } = await import('./stopSession');
     const attachmentInfo = createBoundAttachment(
       'sess-serviceability-superseded',
@@ -1097,12 +1129,13 @@ describe('createStopSession', () => {
       onExactTerminalAttachmentRetired,
     });
 
-    await expect(stop(attachmentInfo.sessionId)).resolves.toEqual({
-      status: 'incomplete',
-      reason: 'terminal_control_serviceability_retirement_failed',
-    });
-    expect(removeAttachmentInfo).not.toHaveBeenCalled();
-    expect(onExactTerminalAttachmentRetired).not.toHaveBeenCalled();
+    await expect(stop(attachmentInfo.sessionId)).resolves.toEqual({ status: 'stopped' });
+    expect(removeAttachmentInfo).toHaveBeenCalledWith(expect.objectContaining({
+      expectedAttachmentId: attachmentInfo.attachmentId,
+    }));
+    expect(onExactTerminalAttachmentRetired).toHaveBeenCalledWith(expect.objectContaining({
+      attachmentInfo,
+    }));
   });
 
   it('parks a legacy attachment even when its old host is already missing', async () => {

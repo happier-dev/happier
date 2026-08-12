@@ -59,6 +59,7 @@ import {
   notifyTerminalAttachmentRetiredThroughCatalog,
 } from '@/backends/catalog';
 import { CATALOG_AGENT_IDS } from '@/backends/types';
+import { readProcessInstanceFingerprintSync } from '@happier-dev/cli-common/processInstance';
 import {
   writeDaemonStateIfLockOwned,
   writeConnectedServiceBrokerState,
@@ -2342,11 +2343,12 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
         const stopSessionCore = createStopSession({
           pidToTrackedSession,
           loadTerminalHostAdapters,
-          recoverStrandedTerminalControlServiceability: async ({ sessionId }) => await recoverStrandedTerminalControlServiceability({
+          recoverStrandedTerminalControlServiceability: async ({ sessionId, expectedAttachmentId }) => await recoverStrandedTerminalControlServiceability({
             credentials,
             currentMachineId: machineId,
             happyHomeDir: configuration.happyHomeDir,
             sessionId,
+            ...(expectedAttachmentId ? { expectedAttachmentId } : {}),
             loadTerminalHostAdapters,
             retireExactTerminalControlServiceability: retireTerminalControlServiceabilityForCurrentAccount,
           }),
@@ -2910,11 +2912,13 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
           const existingSessionId = typeof params.existingSessionId === 'string'
             ? params.existingSessionId.trim()
             : '';
+          const processInstanceFingerprint = readProcessInstanceFingerprintSync(params.pid) ?? undefined;
           await writeSessionMarker({
             pid: params.pid,
             happySessionId: existingSessionId || `PID-${params.pid}`,
             startedBy: 'daemon',
             cwd: params.directory,
+            ...(processInstanceFingerprint ? { processInstanceFingerprint } : {}),
             respawn,
           });
         };

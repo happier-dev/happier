@@ -4,8 +4,9 @@ import { readSessionRunnerLockStatus, type SessionRunnerLockStatus } from '../se
 import {
   isValidProcessCommandHash,
   readSessionRunnerProcessIdentity,
-  storedProcessHashProvesPidReuse,
+  storedProcessIdentityProvesPidReuse,
   type SessionRunnerProcessCommandHashReader,
+  type SessionRunnerProcessInstanceFingerprintReader,
 } from '../sessionRunnerProcessIdentity';
 import type { SessionRunnerServiceability } from './pendingQueueWake';
 
@@ -34,17 +35,23 @@ async function isPidPresentForDuplicateFence(pid: number, readProcessRunState: R
   return state === 'servable';
 }
 
-async function storedProcessHashProvesCurrentPidReuse(params: {
+async function storedProcessIdentityProvesCurrentPidReuse(params: {
   storedProcessCommandHash: string | null | undefined;
+  storedProcessInstanceFingerprint: string | null | undefined;
   pid: number;
   getProcessCommandHash?: SessionRunnerProcessCommandHashReader;
+  getProcessInstanceFingerprint?: SessionRunnerProcessInstanceFingerprintReader;
 }): Promise<boolean> {
-  if (!isValidProcessCommandHash(params.storedProcessCommandHash)) return false;
-  return storedProcessHashProvesPidReuse({
-    storedProcessCommandHash: params.storedProcessCommandHash,
+  if (
+    !isValidProcessCommandHash(params.storedProcessCommandHash)
+    && !params.storedProcessInstanceFingerprint
+  ) return false;
+  return storedProcessIdentityProvesPidReuse({
+    storedProcessInstanceFingerprint: params.storedProcessInstanceFingerprint,
     currentIdentity: await readSessionRunnerProcessIdentity({
       pid: params.pid,
       getProcessCommandHash: params.getProcessCommandHash,
+      getProcessInstanceFingerprint: params.getProcessInstanceFingerprint,
     }),
   });
 }
@@ -53,6 +60,7 @@ async function isLockActive(params: {
   sessionId: string;
   readProcessRunState: ReadProcessRunState;
   getProcessCommandHash?: SessionRunnerProcessCommandHashReader;
+  getProcessInstanceFingerprint?: SessionRunnerProcessInstanceFingerprintReader;
   readSessionRunnerLockStatus: (args: { sessionId: string }) => Promise<SessionRunnerLockStatus>;
 }): Promise<boolean> {
   const status = await params.readSessionRunnerLockStatus({ sessionId: params.sessionId }).catch(() => null);
@@ -61,13 +69,14 @@ async function isLockActive(params: {
   const pid = status.lock.pid;
   if (!(await isPidPresentForDuplicateFence(pid, params.readProcessRunState))) return false;
 
-  // If the lock PID is alive but its command hash is provably different, the OS reused
-  // the PID for another process. Treat it as inactive so acquisition can break the stale lock.
+  // Only an exact process-instance mismatch proves that the OS reused this live PID.
   if (
-    await storedProcessHashProvesCurrentPidReuse({
+    await storedProcessIdentityProvesCurrentPidReuse({
       storedProcessCommandHash: status.lock.processCommandHash,
+      storedProcessInstanceFingerprint: status.lock.processInstanceFingerprint,
       pid,
       getProcessCommandHash: params.getProcessCommandHash,
+      getProcessInstanceFingerprint: params.getProcessInstanceFingerprint,
     })
   ) {
     return false;
@@ -82,6 +91,7 @@ async function isTrackedSessionActive(params: {
   tracked: TrackedSession;
   readProcessRunState: ReadProcessRunState;
   getProcessCommandHash?: SessionRunnerProcessCommandHashReader;
+  getProcessInstanceFingerprint?: SessionRunnerProcessInstanceFingerprintReader;
 }): Promise<boolean> {
   if (!trackedSessionMatchesSessionId(params.tracked, params.sessionId)) return false;
 
@@ -92,13 +102,14 @@ async function isTrackedSessionActive(params: {
   // holds a ChildProcess handle for it.
   if (!(await isPidPresentForDuplicateFence(pidToCheck, params.readProcessRunState))) return false;
 
-  // A matching live PID is not enough: the OS may have reused the PID after the original
-  // runner exited. Unknown process identity still fails closed to avoid duplicate spawns.
+  // A live PID is not enough when an exact process-instance fingerprint proves reuse.
   if (
-    await storedProcessHashProvesCurrentPidReuse({
+    await storedProcessIdentityProvesCurrentPidReuse({
       storedProcessCommandHash: params.tracked.processCommandHash,
+      storedProcessInstanceFingerprint: params.tracked.processInstanceFingerprint,
       pid: pidToCheck,
       getProcessCommandHash: params.getProcessCommandHash,
+      getProcessInstanceFingerprint: params.getProcessInstanceFingerprint,
     })
   ) {
     return false;
@@ -112,6 +123,7 @@ export async function isSessionRunnerActive(params: Readonly<{
   trackedSessions: Iterable<TrackedSession>;
   readProcessRunState?: ReadProcessRunState;
   getProcessCommandHash?: SessionRunnerProcessCommandHashReader;
+  getProcessInstanceFingerprint?: SessionRunnerProcessInstanceFingerprintReader;
   readSessionRunnerLockStatus?: (args: { sessionId: string }) => Promise<SessionRunnerLockStatus>;
 }>): Promise<boolean> {
   const sessionId = normalizeSessionId(params.sessionId);
@@ -126,6 +138,7 @@ export async function isSessionRunnerActive(params: Readonly<{
       tracked,
       readProcessRunState,
       getProcessCommandHash: params.getProcessCommandHash,
+      getProcessInstanceFingerprint: params.getProcessInstanceFingerprint,
     })) {
       return true;
     }
@@ -135,6 +148,7 @@ export async function isSessionRunnerActive(params: Readonly<{
     sessionId,
     readProcessRunState,
     getProcessCommandHash: params.getProcessCommandHash,
+    getProcessInstanceFingerprint: params.getProcessInstanceFingerprint,
     readSessionRunnerLockStatus: readLockStatus,
   });
 }

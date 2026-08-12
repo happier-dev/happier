@@ -13,6 +13,7 @@ import {
 import type { SpawnSessionOptions } from '@/rpc/handlers/registerSessionHandlers';
 import { resolveSessionRuntimeSnapshot } from './sessions/runtimeSnapshot/resolveSessionRuntimeSnapshot';
 import { extractResumeIdFromCommand } from './sessions/extractResumeIdFromCommand';
+import { readProcessInstanceFingerprintSync } from '@happier-dev/cli-common/processInstance';
 
 type AdoptSessionsFromMarkersResult = Readonly<{
   adopted: number;
@@ -157,10 +158,12 @@ export function adoptSessionsFromMarkers(params: {
   happyProcesses: HappyProcessInfo[];
   pidToTrackedSession: Map<number, TrackedSession>;
   credentials?: Credentials | null;
+  readProcessInstanceFingerprint?: typeof readProcessInstanceFingerprintSync;
 }): AdoptSessionsFromMarkersResult {
   const happyPidToType = new Map(params.happyProcesses.map((p) => [p.pid, p.type] as const));
   const happyPidToCommandHash = new Map(params.happyProcesses.map((p) => [p.pid, hashProcessCommand(p.command)] as const));
   const happyPidToCommand = new Map(params.happyProcesses.map((p) => [p.pid, p.command] as const));
+  const readProcessInstanceFingerprint = params.readProcessInstanceFingerprint ?? readProcessInstanceFingerprintSync;
 
   let adopted = 0;
   let eligible = 0;
@@ -176,7 +179,15 @@ export function adoptSessionsFromMarkers(params: {
     }
     eligible++;
 
-    // Stronger PID reuse safety: require the marker's observed command hash to match what is currently running.
+    const currentProcessInstanceFingerprint = readProcessInstanceFingerprint(marker.pid) ?? undefined;
+    if (
+      marker.processInstanceFingerprint
+      && currentProcessInstanceFingerprint !== marker.processInstanceFingerprint
+    ) {
+      continue;
+    }
+
+    // Legacy markers have no process-generation fingerprint, so retain strict command matching.
     if (!marker.processCommandHash) {
       continue;
     }
@@ -184,7 +195,7 @@ export function adoptSessionsFromMarkers(params: {
     if (!currentHash) {
       continue;
     }
-    if (currentHash !== marker.processCommandHash) {
+    if (currentHash !== marker.processCommandHash && !marker.processInstanceFingerprint) {
       const currentCommand = happyPidToCommand.get(marker.pid);
       if (
         !canAdoptDaemonStartedHashDriftMarker({
@@ -239,6 +250,7 @@ export function adoptSessionsFromMarkers(params: {
       ...(marker.activeTurnId ? { activeTurnId: marker.activeTurnId } : {}),
       pid: marker.pid,
       processCommandHash: currentHash,
+      ...(currentProcessInstanceFingerprint ? { processInstanceFingerprint: currentProcessInstanceFingerprint } : {}),
       processCommand: currentCommand,
       reattachedFromDiskMarker: true,
     });

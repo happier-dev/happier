@@ -46,6 +46,8 @@ export interface TrackedSession {
    * If present, we require this to match before sending SIGTERM by PID.
    */
   processCommandHash?: string;
+  /** Exact OS process-instance fingerprint used to distinguish PID generations. */
+  processInstanceFingerprint?: string;
   /** Best-effort observed process command line used for startup runtime refresh checks. */
   processCommand?: string;
   childProcess?: ChildProcess;
