@@ -1,5 +1,5 @@
-import { readBackendTargetRefV2, type BackendTargetRefV2 } from '@happier-dev/protocol';
-import { resolveAgentConfiguredRuntimeKind } from '@happier-dev/agents';
+import { ConnectedServiceBindingsV1Schema, readBackendTargetRefV2, type BackendTargetRefV2, type ConnectedServiceBindingsV1 } from '@happier-dev/protocol';
+import { getAgentModelConfig, resolveAgentConfiguredRuntimeKind } from '@happier-dev/agents';
 
 import { resolveCatalogAgentIdForBackendTarget } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import { isAgentId, type AgentId } from '@/agents/catalog/catalog';
@@ -9,6 +9,7 @@ import { stableJsonStringify } from '@/utils/json/stableJsonStringify';
 export type NewSessionCapabilityProbeContext = Readonly<{
     cacheKeySuffixParts?: readonly string[] | null;
     capabilityParams?: Readonly<Record<string, unknown>> | null;
+    modelSuccessCacheMaxAgeMs?: number | null;
 }>;
 
 const MAX_CACHED_PROBE_CONTEXTS = 32;
@@ -18,6 +19,7 @@ function getOrCreateProbeContext(params: Readonly<{
     key: string;
     cacheKeySuffixParts: readonly string[];
     capabilityParams: Readonly<Record<string, unknown>>;
+    modelSuccessCacheMaxAgeMs?: number | null;
 }>): NewSessionCapabilityProbeContext {
     const key = params.key.trim();
     const existing = probeContextByKey.get(key);
@@ -30,6 +32,9 @@ function getOrCreateProbeContext(params: Readonly<{
     const created: NewSessionCapabilityProbeContext = Object.freeze({
         cacheKeySuffixParts: Object.freeze([...params.cacheKeySuffixParts]),
         capabilityParams: Object.freeze({ ...params.capabilityParams }),
+        ...(params.modelSuccessCacheMaxAgeMs
+            ? { modelSuccessCacheMaxAgeMs: params.modelSuccessCacheMaxAgeMs }
+            : {}),
     });
 
     probeContextByKey.set(key, created);
@@ -40,10 +45,6 @@ function getOrCreateProbeContext(params: Readonly<{
     }
 
     return created;
-}
-
-function hasConnectedServicesPayload(value: unknown): boolean {
-    return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
 export function normalizeNewSessionCapabilityProbeContextCacheKeySuffixParts(
@@ -59,6 +60,7 @@ export function buildNewSessionCapabilityProbeContextKey(probeContext: NewSessio
     return stableJsonStringify({
         cacheKeySuffixParts: probeContext?.cacheKeySuffixParts ?? null,
         capabilityParams: probeContext?.capabilityParams ?? null,
+        modelSuccessCacheMaxAgeMs: probeContext?.modelSuccessCacheMaxAgeMs ?? null,
     });
 }
 
@@ -66,7 +68,6 @@ export function resolveNewSessionCapabilityProbeContext(params: Readonly<{
     backendTarget: BackendTargetRefV2;
     settings: Settings;
     runtimeCarrierAgentId?: AgentId | null;
-    connectedServices?: unknown;
 }>): NewSessionCapabilityProbeContext | null {
     const backendTarget = readBackendTargetRefV2(params.backendTarget);
     const agentId = isAgentId(params.runtimeCarrierAgentId)
@@ -80,30 +81,50 @@ export function resolveNewSessionCapabilityProbeContext(params: Readonly<{
         agentId,
         accountSettings: params.settings as unknown as Record<string, unknown>,
     });
-    const hasConnectedServices = hasConnectedServicesPayload(params.connectedServices);
-    if (!runtimeKind && !hasConnectedServices) return null;
-
-    if (runtimeKind && !hasConnectedServices) {
-        return getOrCreateProbeContext({
-            key: `runtime:${runtimeKind}`,
-            cacheKeySuffixParts: [runtimeKind],
-            capabilityParams: { runtimeKindOverride: runtimeKind },
-        });
-    }
-
-    const connectedServicesKey = hasConnectedServices ? stableJsonStringify(params.connectedServices) : '';
-    const cacheKeySuffixParts = [
-        ...(runtimeKind ? [`runtime:${runtimeKind}`] : []),
-        ...(hasConnectedServices ? [`connectedServices:${connectedServicesKey}`] : []),
-    ];
-    const capabilityParams = {
-        ...(runtimeKind ? { runtimeKindOverride: runtimeKind } : {}),
-        ...(hasConnectedServices ? { connectedServices: params.connectedServices } : {}),
-    };
+    if (!runtimeKind) return null;
 
     return getOrCreateProbeContext({
-        key: cacheKeySuffixParts.join('|'),
+        key: `runtime:${runtimeKind}`,
+        cacheKeySuffixParts: [runtimeKind],
+        capabilityParams: { runtimeKindOverride: runtimeKind },
+    });
+}
+
+export function resolveNewSessionModelCapabilityProbeContext(params: Readonly<{
+    backendTarget: BackendTargetRefV2;
+    settings: Settings;
+    runtimeCarrierAgentId?: AgentId | null;
+    connectedServices?: ConnectedServiceBindingsV1 | null;
+    connectedServicesCacheIdentity?: string | null;
+}>): NewSessionCapabilityProbeContext | null {
+    const shared = resolveNewSessionCapabilityProbeContext(params);
+    const backendTarget = readBackendTargetRefV2(params.backendTarget);
+    const agentId = isAgentId(params.runtimeCarrierAgentId)
+        ? params.runtimeCarrierAgentId
+        : (resolveCatalogAgentIdForBackendTarget(backendTarget)
+            ?? (isAgentId(backendTarget.backendId) ? backendTarget.backendId : null));
+    const observation = agentId ? getAgentModelConfig(agentId).nativeCatalogObservation : null;
+    const bindings = ConnectedServiceBindingsV1Schema.safeParse(params.connectedServices);
+    const selection = observation && bindings.success
+        ? bindings.data.bindingsByServiceId[observation.connectedServiceId]
+        : null;
+    if (!observation || selection?.source !== 'connected') return shared;
+    const selectedIdentity = selection.selection === 'group'
+        ? `${observation.connectedServiceId}:group:${selection.groupId}`
+        : `${observation.connectedServiceId}:profile:${selection.profileId}`;
+    const cacheKeySuffixParts = [
+        ...(shared?.cacheKeySuffixParts ?? []),
+        selectedIdentity,
+        ...(params.connectedServicesCacheIdentity ? [params.connectedServicesCacheIdentity] : []),
+    ];
+    const capabilityParams = {
+        ...(shared?.capabilityParams ?? {}),
+        connectedServices: bindings.data,
+    };
+    return getOrCreateProbeContext({
+        key: stableJsonStringify({ cacheKeySuffixParts, capabilityParams }),
         cacheKeySuffixParts,
         capabilityParams,
+        modelSuccessCacheMaxAgeMs: 5 * 60_000,
     });
 }

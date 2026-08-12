@@ -9850,6 +9850,13 @@
                           "catalog-only"
                         ]
                       },
+                      "membershipPolicy": {
+                        "type": "string",
+                        "enum": [
+                          "augment",
+                          "probe-authoritative"
+                        ]
+                      },
                       "staticModels": {
                         "minItems": 1,
                         "maxItems": 5000,

@@ -220,8 +220,10 @@ export type ResolveProviderSpawnAuthorizationInput = Readonly<{
   dnsEvidenceByEndpointUrl: ProviderEndpointDnsEvidence;
   localCandidateUrlsByConnectionId?: Parameters<typeof resolveProviderConnectionForMachine>[0]['localCandidateUrlsByConnectionId'];
   lease: PluginRuntimeRegistryLease;
-  /** Exact current runtime-catalog observation; canonical static/manual rows retain precedence. */
+  /** Exact selected-model descriptor from the current runtime catalog snapshot. */
   runtimeModelDescriptor?: ProviderModelDescriptorV1;
+  /** True when the exact current catalog has a successful snapshot, including an empty one. */
+  runtimeCatalogSnapshotExists?: boolean;
   managedPurposeBindingSnapshot?: QualifiedConnectedAccountPurposeBindingsV1;
 }>;
 
@@ -629,6 +631,7 @@ function selectedModel(input: Readonly<{
   providerSettings: ProviderSettingsV1;
   supportsFreeformModelIds: boolean;
   runtimeProbe?: ProviderModelDescriptorV1;
+  runtimeCatalogSnapshotExists: boolean;
 }>): ProviderModelDescriptorV1 | null {
   const runtimeProbe = input.runtimeProbe
     ? ProviderModelDescriptorV1Schema.parse(input.runtimeProbe)
@@ -646,15 +649,19 @@ function selectedModel(input: Readonly<{
       : [],
     manualModels,
     probeState: {
-      snapshot: runtimeProbe
+      snapshot: input.runtimeCatalogSnapshotExists
         ? {
-            models: [runtimeProbe],
+            models: runtimeProbe ? [runtimeProbe] : [],
             observedAt: 0,
             stale: false,
           }
         : null,
       staleProbeModels: [],
     },
+    ...('membershipPolicy' in input.facts.catalog
+      && input.facts.catalog.membershipPolicy
+      ? { membershipPolicy: input.facts.catalog.membershipPolicy }
+      : {}),
   });
   const listed = merged.rows.find((row) => row.descriptor.id === input.modelId);
   if (listed) return listed.descriptor;
@@ -735,6 +742,9 @@ export function resolveProviderSpawnAuthorization(
     facts,
     providerSettings,
     supportsFreeformModelIds: adapter.support.supportsFreeformModelIds,
+    runtimeCatalogSnapshotExists:
+      input.runtimeCatalogSnapshotExists === true
+      || input.runtimeModelDescriptor !== undefined,
     ...(input.runtimeModelDescriptor
       ? { runtimeProbe: input.runtimeModelDescriptor }
       : {}),

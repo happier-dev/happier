@@ -20,6 +20,14 @@ export const ProviderCatalogProbeV1Schema = z.object({
 }).strict();
 export type ProviderCatalogProbeV1 = z.infer<typeof ProviderCatalogProbeV1Schema>;
 
+export const ProviderCatalogMembershipPolicyV1Schema = z.enum([
+  'augment',
+  'probe-authoritative',
+]);
+export type ProviderCatalogMembershipPolicyV1 = z.infer<
+  typeof ProviderCatalogMembershipPolicyV1Schema
+>;
+
 const ManualCatalogSchema = z.object({
   source: z.literal('manual'),
   manualModelPolicy: z.literal('allowed'),
@@ -37,6 +45,7 @@ const ProbeCatalogSchema = z.object({
 const StaticProbeCatalogSchema = z.object({
   source: z.literal('static+probe'),
   manualModelPolicy: z.enum(['allowed', 'catalog-only']),
+  membershipPolicy: ProviderCatalogMembershipPolicyV1Schema.optional(),
   staticModels: z.array(ProviderModelDescriptorV1Schema).min(1).max(PROVIDER_CATALOG_LIMITS_V1.maxModelsPerConnection),
   probes: z.array(ProviderCatalogProbeV1Schema).min(1).max(PROVIDER_CATALOG_LIMITS_V1.maxCatalogProbes),
 }).strict();

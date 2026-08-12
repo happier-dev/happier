@@ -190,7 +190,7 @@ export const PLUGIN_MANIFEST = {
         purpose: 'model_upstream',
         service: 'claude-subscription',
         required: false,
-        materializationKinds: ['environment', 'files'],
+        materializationKinds: ['environment', 'files', 'httpHeaders'],
       }, {
         purpose: 'model_upstream_api_key',
         service: 'anthropic',

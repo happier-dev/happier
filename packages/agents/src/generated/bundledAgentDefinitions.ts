@@ -466,7 +466,12 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
       "claude-sonnet-4-5"
     ],
     "defaultMode": "default",
-    "dynamicProbe": "static-only",
+    "dynamicProbe": "auto",
+    "nativeCatalogObservation": {
+      "connectedServiceId": "claude-subscription",
+      "providerLocalId": "anthropic",
+      "purpose": "model_upstream"
+    },
     "nonAcpApplyScope": "next_prompt",
     "staticModels": [
       {

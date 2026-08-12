@@ -28,8 +28,16 @@ import { probeAgentModelsBestEffort } from '@/capabilities/probes/agentModelsPro
 import { probeAgentModesBestEffort } from '@/capabilities/probes/agentModesProbe';
 import { probeAgentConfigOptionsBestEffort } from '@/capabilities/probes/agentConfigOptionsProbe';
 import { configuration } from '@/configuration';
-import type { AgentId } from '@happier-dev/agents';
-import { type CapabilityId } from '@happier-dev/protocol';
+import { getAgentModelConfig, isAgentId, type AgentId } from '@happier-dev/agents';
+import {
+    ConnectedServiceBindingsV1Schema,
+    qualifiedPurposeKey,
+    type CapabilityId,
+} from '@happier-dev/protocol';
+import type { AgentProviderCatalogObservationService } from '@/providers/probe/agentCatalogObservation';
+import { ProviderProbeCancelledError } from '@/providers/probe/client';
+import { resolveQualifiedPurposeBindingSnapshotForAgentSpawn } from '@/daemon/connectedServices/requestAuth/prepareConnectedAccountRequestAuthForSpawn';
+import { randomUUID } from 'node:crypto';
 import { resolveProbeBackendContext } from './capabilitiesProbeContext';
 import { invokeAgentCliInstall as invokeSharedProviderCliInstall } from '@/packagedRuntime/managedTools/invokeAgentCliInstall';
 import {
@@ -50,6 +58,15 @@ import { packLocalPlugin } from '@/plugins/packaging/pack';
 import { scaffoldLocalPlugin } from '@/plugins/scaffold/scaffold';
 
 const DEFAULT_PROBE_MODELS_TIMEOUT_MS = 30_000;
+
+type CliProbeDependencies = Readonly<{
+    getAgentCatalogObservation?: () => Readonly<{
+        machineId: string;
+        service: AgentProviderCatalogObservationService;
+    }> | null;
+    agentRegistrySnapshot?: ReturnType<typeof getResolvedContributionRegistry>;
+    isAgentRegistryCurrent?: () => boolean;
+}>;
 
 function buildCapabilityId(kind: 'cli' | 'tool' | 'dep', suffix: string): CapabilityId {
     // `CapabilityId` is intentionally a namespaced string type (`cli.${string}` / etc). TS does not
@@ -92,6 +109,8 @@ async function invokeCliProbeOrInstallMethod(
     agentId: AgentCatalogEntry['id'],
     method: string,
     params?: Record<string, unknown>,
+    dependencies: CliProbeDependencies = {},
+    requestContext: Readonly<{ signal?: AbortSignal }> = {},
 ): Promise<CapabilitiesInvokeResponse | null> {
     if (method === 'install') {
         return invokeAgentCliInstall(agentId, params);
@@ -117,6 +136,64 @@ async function invokeCliProbeOrInstallMethod(
     };
 
     if (method === 'probeModels') {
+        const modelConfig = isAgentId(agentId) ? getAgentModelConfig(agentId) : null;
+        const observation = modelConfig?.nativeCatalogObservation;
+        const bindings = ConnectedServiceBindingsV1Schema.safeParse(params?.connectedServices);
+        const observationRuntime = dependencies.getAgentCatalogObservation?.() ?? null;
+        if (observation && observationRuntime && bindings.success) {
+            const registry = dependencies.agentRegistrySnapshot ?? getResolvedContributionRegistry();
+            const isCurrent = (): boolean => requestContext.signal?.aborted !== true
+                && (dependencies.isAgentRegistryCurrent?.()
+                    ?? getResolvedContributionRegistry() === registry);
+            const agent = registry.agentDefinitionsById.get(agentId);
+            const consumer = agent?.identity;
+            const snapshot = resolveQualifiedPurposeBindingSnapshotForAgentSpawn({
+                agentId,
+                bindings: bindings.data,
+                contributions: registry,
+            });
+            const qualifiedPurpose = snapshot?.purposes.find((candidate) =>
+                candidate.purpose === observation.purpose
+                && candidate.consumer.pluginId === consumer?.pluginId
+                && candidate.consumer.localId === consumer.localId);
+            const purposeKey = qualifiedPurpose ? qualifiedPurposeKey(qualifiedPurpose) : null;
+            const binding = purposeKey
+                ? snapshot?.bindings.find((candidate) => qualifiedPurposeKey(candidate.purpose) === purposeKey) ?? null
+                : null;
+            const requestAuthUse = purposeKey
+                ? snapshot?.requestAuthUses?.find((candidate) => qualifiedPurposeKey(candidate.purpose) === purposeKey) ?? null
+                : null;
+            const provider = consumer
+                ? registry.providersByContributionKey?.get(`${consumer.pluginId}/${observation.providerLocalId}`)
+                : null;
+            if (consumer && qualifiedPurpose && binding && requestAuthUse && provider) {
+                const result = await observationRuntime.service.observe({
+                    machineId: observationRuntime.machineId,
+                    operationId: randomUUID(),
+                    consumer,
+                    purpose: qualifiedPurpose,
+                    binding,
+                    requestAuthUse,
+                    provider: provider.definition,
+                    trigger: params?.bypassCache === true ? 'manual_refresh' : 'picker_open',
+                    isCurrent,
+                    ...(requestContext.signal ? { signal: requestContext.signal } : {}),
+                });
+                if (!isCurrent()) throw new ProviderProbeCancelledError();
+                return {
+                    ok: true,
+                    result: {
+                        agentId,
+                        availableModels: [
+                            { id: 'default', name: 'Default' },
+                            ...result.models.filter((model) => model.id !== 'default'),
+                        ],
+                        supportsFreeform: modelConfig.supportsSelection === true && modelConfig.supportsFreeform === true,
+                        source: result.source,
+                    },
+                };
+            }
+        }
         return { ok: true, result: await probeAgentModelsBestEffort(commonProbeArgs) };
     }
     if (method === 'probeModes') {
@@ -453,7 +530,10 @@ async function invokePluginMarketplaceAction(
     };
 }
 
-function createGenericCliCapability(agentId: AgentCatalogEntry['id']): Capability {
+function createGenericCliCapability(
+    agentId: AgentCatalogEntry['id'],
+    dependencies: CliProbeDependencies,
+): Capability {
     const publicAgentId = resolvePublicCliCapabilityAgentId(agentId);
     return {
         descriptor: {
@@ -471,8 +551,14 @@ function createGenericCliCapability(agentId: AgentCatalogEntry['id']): Capabilit
             const entry = context.cliSnapshot?.clis?.[agentId];
             return buildCliCapabilityData({ request, entry });
         },
-        invoke: async ({ method, params }) => {
-            const sharedResult = await invokeCliProbeOrInstallMethod(agentId, method, params);
+        invoke: async ({ method, params, signal }) => {
+            const sharedResult = await invokeCliProbeOrInstallMethod(
+                agentId,
+                method,
+                params,
+                dependencies,
+                signal ? { signal } : {},
+            );
             if (sharedResult) return sharedResult;
             return { ok: false, error: { message: `Unsupported method: ${method}`, code: 'unsupported-method' } };
         },
@@ -512,7 +598,11 @@ function createPluginMarketplaceCapability(
     };
 }
 
-function augmentCliCapabilityWithProviderCliMethods(cap: Capability, agentId: AgentCatalogEntry['id']): Capability {
+function augmentCliCapabilityWithProviderCliMethods(
+    cap: Capability,
+    agentId: AgentCatalogEntry['id'],
+    dependencies: CliProbeDependencies,
+): Capability {
     if (!cap.descriptor.id.startsWith('cli.')) return cap;
 
     const existingMethods = cap.descriptor.methods ?? {};
@@ -526,8 +616,14 @@ function augmentCliCapabilityWithProviderCliMethods(cap: Capability, agentId: Ag
 
     const baseInvoke = cap.invoke;
 
-    const invoke: Capability['invoke'] = async ({ method, params }) => {
-        const sharedResult = await invokeCliProbeOrInstallMethod(agentId, method, params);
+    const invoke: Capability['invoke'] = async ({ method, params, signal }) => {
+        const sharedResult = await invokeCliProbeOrInstallMethod(
+            agentId,
+            method,
+            params,
+            dependencies,
+            signal ? { signal } : {},
+        );
         if (sharedResult) return sharedResult;
         if (baseInvoke) return await baseInvoke({ method, params });
         return { ok: false, error: { message: `Unsupported method: ${method}`, code: 'unsupported-method' } };
@@ -542,18 +638,29 @@ function augmentCliCapabilityWithProviderCliMethods(cap: Capability, agentId: Ag
 
 export async function createCliCapabilitiesService(dependencies: Readonly<{
     readPluginCatalog?: () => Promise<readonly PluginCatalogEntry[]>;
+    getAgentCatalogObservation?: () => Readonly<{
+        machineId: string;
+        service: AgentProviderCatalogObservationService;
+    }> | null;
+    isAgentRegistryCurrent?: () => boolean;
 }> = {}): Promise<ReturnType<typeof createCapabilitiesService>> {
     const resolvedContributionRegistry = (
         await primeResolvedContributionRegistry({ happyHomeDir: configuration.happyHomeDir }).catch(() => undefined)
     ) ?? getResolvedContributionRegistry();
+    const cliProbeDependencies: CliProbeDependencies = {
+        ...dependencies,
+        agentRegistrySnapshot: resolvedContributionRegistry,
+        isAgentRegistryCurrent: dependencies.isAgentRegistryCurrent
+            ?? (() => getResolvedContributionRegistry() === resolvedContributionRegistry),
+    };
 
     const cliCapabilities = await Promise.all(
         (Object.values(AGENTS) as AgentCatalogEntry[]).map(async (entry) => {
             if (entry.getCliCapabilityOverride) {
                 const override = await entry.getCliCapabilityOverride();
-                return augmentCliCapabilityWithProviderCliMethods(override, entry.id);
+                return augmentCliCapabilityWithProviderCliMethods(override, entry.id, cliProbeDependencies);
             }
-            return createGenericCliCapability(entry.id);
+            return createGenericCliCapability(entry.id, cliProbeDependencies);
         }),
     );
 
@@ -594,7 +701,10 @@ export async function createCliCapabilitiesService(dependencies: Readonly<{
     });
 }
 
-export function registerCapabilitiesHandlers(rpcHandlerManager: RpcHandlerRegistrar): void {
+export function registerCapabilitiesHandlers(
+    rpcHandlerManager: RpcHandlerRegistrar,
+    dependencies: Parameters<typeof createCliCapabilitiesService>[0] = {},
+): void {
     let servicePromise: Promise<ReturnType<typeof createCapabilitiesService>> | null = null;
     let servicePluginReloadGeneration: number | null = null;
 
@@ -611,7 +721,10 @@ export function registerCapabilitiesHandlers(rpcHandlerManager: RpcHandlerRegist
         if (servicePromise && servicePluginReloadGeneration === currentGeneration) return servicePromise;
         servicePromise = null;
         servicePluginReloadGeneration = currentGeneration;
-        const pending = createCliCapabilitiesService().catch((error) => {
+        const pending = createCliCapabilitiesService({
+            ...dependencies,
+            isAgentRegistryCurrent: () => readPluginReloadGeneration() === currentGeneration,
+        }).catch((error) => {
             if (servicePromise === pending) {
                 servicePromise = null;
                 if (servicePluginReloadGeneration === currentGeneration) {
@@ -636,7 +749,10 @@ export function registerCapabilitiesHandlers(rpcHandlerManager: RpcHandlerRegist
         return await (await getService()).detect(data);
     });
 
-    rpcHandlerManager.registerHandler<CapabilitiesInvokeRequest, CapabilitiesInvokeResponse>(RPC_METHODS.CAPABILITIES_INVOKE, async (data) => {
-        return await (await getService()).invoke(data);
+    rpcHandlerManager.registerHandler<CapabilitiesInvokeRequest, CapabilitiesInvokeResponse>(RPC_METHODS.CAPABILITIES_INVOKE, async (data, context) => {
+        return await (await getService()).invoke(
+            data,
+            context?.signal ? { signal: context.signal } : {},
+        );
     });
 }

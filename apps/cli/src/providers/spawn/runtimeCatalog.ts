@@ -33,6 +33,11 @@ export type ProviderRuntimeCatalogModelObservation = Readonly<{
   loadState: ProviderModelLoadStateV1;
 }>;
 
+export type ProviderRuntimeCatalogSelectionObservation = Readonly<{
+  model: ProviderModelDescriptorV1 | null;
+  loadState: ProviderModelLoadStateV1;
+}>;
+
 type SelectProviderRuntimeCatalogModelInput = Readonly<{
   runtimeState: ProviderRuntimeStateFileV1;
   machineId: string;
@@ -42,9 +47,9 @@ type SelectProviderRuntimeCatalogModelInput = Readonly<{
   modelId: string;
 }>;
 
-export function selectProviderRuntimeCatalogModelObservation(
+export function selectProviderRuntimeCatalogSelectionObservation(
   input: SelectProviderRuntimeCatalogModelInput,
-): ProviderRuntimeCatalogModelObservation | null {
+): ProviderRuntimeCatalogSelectionObservation | null {
   if (input.runtimeState.machineId !== input.machineId) return null;
   const record = selectCurrentProviderCatalogRuntimeRecord({
     state: input.runtimeState,
@@ -56,8 +61,8 @@ export function selectProviderRuntimeCatalogModelObservation(
   if (!record || !('catalogObservationId' in record.state)) return null;
   const state = record.state;
   const model = state.snapshot.models.find((candidate) => candidate.id === input.modelId);
-  if (!model) return null;
   const modelLoadState = state.snapshot.stale === false
+    && model !== undefined
     ? input.runtimeState.modelLoadStates.find((candidate) => (
         candidate.key.machineId === input.machineId
         && candidate.key.connectionId === input.connectionId
@@ -66,12 +71,23 @@ export function selectProviderRuntimeCatalogModelObservation(
       ))?.loadState ?? 'unknown'
     : 'unknown';
   return {
-    model: ProviderModelDescriptorV1Schema.parse({
-      ...model,
-      name: model.name ?? model.id,
-    }),
+    model: model
+      ? ProviderModelDescriptorV1Schema.parse({
+          ...model,
+          name: model.name ?? model.id,
+        })
+      : null,
     loadState: modelLoadState,
   };
+}
+
+export function selectProviderRuntimeCatalogModelObservation(
+  input: SelectProviderRuntimeCatalogModelInput,
+): ProviderRuntimeCatalogModelObservation | null {
+  const selected = selectProviderRuntimeCatalogSelectionObservation(input);
+  return selected?.model
+    ? { model: selected.model, loadState: selected.loadState }
+    : null;
 }
 
 export function selectProviderRuntimeCatalogModel(
@@ -93,9 +109,9 @@ type ResolveProviderRuntimeCatalogModelInput = Readonly<{
   managedPurposeBindingSnapshot?: QualifiedConnectedAccountPurposeBindingsV1;
 }>;
 
-export async function resolveProviderRuntimeCatalogObservation(
+export async function resolveProviderRuntimeCatalogSelectionObservation(
   input: ResolveProviderRuntimeCatalogModelInput,
-): Promise<ProviderRuntimeCatalogModelObservation | null> {
+): Promise<ProviderRuntimeCatalogSelectionObservation | null> {
   const connectionId = input.selection.ref.providerConnectionId;
   if (connectionId === null) return null;
   const resolution = resolveProviderConnectionForMachine({
@@ -212,7 +228,7 @@ export async function resolveProviderRuntimeCatalogObservation(
         : {}),
     });
     if (!authorization.ok) return null;
-    return selectProviderRuntimeCatalogModelObservation({
+    return selectProviderRuntimeCatalogSelectionObservation({
       runtimeState: await input.runtimeStateStore.read(),
       machineId: input.machineId,
       connectionId,
@@ -271,7 +287,7 @@ export async function resolveProviderRuntimeCatalogObservation(
     if (authorization.ok) currentAuthorizations.add(authorization.observationAuthorizationFingerprint);
   }
   if (currentAuthorizations.size === 0) return null;
-  return selectProviderRuntimeCatalogModelObservation({
+  return selectProviderRuntimeCatalogSelectionObservation({
     runtimeState: await input.runtimeStateStore.read(),
     machineId: input.machineId,
     connectionId,
@@ -279,6 +295,15 @@ export async function resolveProviderRuntimeCatalogObservation(
     currentObservationAuthorizationFingerprints: currentAuthorizations,
     modelId: input.selection.ref.modelId,
   });
+}
+
+export async function resolveProviderRuntimeCatalogObservation(
+  input: ResolveProviderRuntimeCatalogModelInput,
+): Promise<ProviderRuntimeCatalogModelObservation | null> {
+  const selected = await resolveProviderRuntimeCatalogSelectionObservation(input);
+  return selected?.model
+    ? { model: selected.model, loadState: selected.loadState }
+    : null;
 }
 
 export async function resolveProviderRuntimeCatalogModel(

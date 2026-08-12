@@ -90,7 +90,21 @@ const contribution: ResolvedProviderContribution = {
   definition,
 };
 
+const authoritativeContribution: ResolvedProviderContribution = {
+  ...contribution,
+  definition: ProviderContributionV1Schema.parse({
+    ...definition,
+    catalog: {
+      ...definition.catalog,
+      membershipPolicy: 'probe-authoritative',
+    },
+  }),
+};
+
 const registry = { providersByContributionKey: new Map([[canonicalContributionKey, contribution]]) };
+const authoritativeRegistry = {
+  providersByContributionKey: new Map([[canonicalContributionKey, authoritativeContribution]]),
+};
 const dns = new Map([['https://gateway.example/v1', ['1.1.1.1']]]);
 
 const managedContribution: ResolvedProviderContribution = {
@@ -629,6 +643,71 @@ describe('provider spawn authorization resolver', () => {
           },
         },
       },
+    });
+  });
+
+  it('does not resurrect static metadata after an authoritative snapshot omits the model', () => {
+    const settings = grantedSettings(authoritativeRegistry);
+    const result = resolveProviderSpawnAuthorization({
+      selection: {
+        v: 1,
+        updatedAt: 1,
+        ref: {
+          agentTargetKey: 'backend:codex',
+          providerConnectionId: connectionId,
+          modelId: 'model-a',
+        },
+      },
+      runtimeCatalogSnapshotExists: true,
+      machineId: 'machine-a',
+      agentTargetKey: 'backend:codex',
+      agentId: 'codex',
+      accountSettings: accountSettings(settings),
+      providerSettings: settings,
+      registry: authoritativeRegistry,
+      dnsEvidenceByEndpointUrl: dns,
+      lease: lease(),
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: { code: 'provider_compatibility_unverified' },
+    });
+  });
+
+  it('uses authoritative probe capabilities for a same-id static model at spawn', () => {
+    const settings = grantedSettings(authoritativeRegistry);
+    const result = resolveProviderSpawnAuthorization({
+      selection: {
+        v: 1,
+        updatedAt: 1,
+        ref: {
+          agentTargetKey: 'backend:codex',
+          providerConnectionId: connectionId,
+          modelId: 'model-a',
+        },
+      },
+      runtimeModelDescriptor: {
+        id: 'model-a',
+        name: 'API Model A',
+        capabilities: {
+          toolRoundTrips: 'unsupported',
+          reasoningControls: 'unsupported',
+        },
+      },
+      machineId: 'machine-a',
+      agentTargetKey: 'backend:codex',
+      agentId: 'codex',
+      accountSettings: accountSettings(settings),
+      providerSettings: settings,
+      registry: authoritativeRegistry,
+      dnsEvidenceByEndpointUrl: dns,
+      lease: lease(),
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: { code: 'provider_incompatible_with_agent' },
     });
   });
 

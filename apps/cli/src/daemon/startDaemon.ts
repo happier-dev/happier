@@ -749,6 +749,7 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
       installExternalSessionHostOperations,
       providerAccountUsageStore,
       connectedServiceRuntimeQuotaSnapshots,
+      createAgentCatalogObservation,
       refreshBrowserRouteOwners: refreshBrowserRouteOwnersFromSessionControl,
     } = await startDaemonSessionControlRuntime({
       machineId,
@@ -1047,6 +1048,7 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
         },
         resolveManagedPurposeBindingIntent:
           connectedAccountPurposeBindingRuntime.resolveBindingIntent,
+        createAgentCatalogObservation,
         readManagedLocalServicesSnapshot: async () => providerManagedLocalServicesOwner?.getManagedSnapshot() ?? null,
         prepareApiMachineForSessions:
           machineRpcRouteAttachments.prepareApiMachineForSessions,

@@ -86,6 +86,7 @@ import {
   type ProviderManagedLocalServicesDispatch,
 } from '@/providers/discovery/managedStart';
 import { createProviderLocalCatalogFallbackRunner } from '@/providers/probe/localCommand';
+import type { createAgentProviderCatalogObservationService } from '@/providers/probe/agentCatalogObservation';
 import { resolveDaemonSpawnSessionByNonce } from '../controlClient';
 import {
   UsageLimitRecoveryScheduler,
@@ -386,6 +387,12 @@ export type BootstrapMachineSyncRuntimeParams = Readonly<{
   resolveManagedPurposeBindingIntent?: Parameters<
     typeof createRuntimeProviderModelManagementServices
   >[0]['resolveManagedPurposeBindingIntent'];
+  createAgentCatalogObservation?: (
+    infrastructure: Pick<
+      Parameters<typeof createAgentProviderCatalogObservationService>[0],
+      'client' | 'scheduler'
+    >,
+  ) => ReturnType<typeof createAgentProviderCatalogObservationService>;
   readManagedLocalServicesSnapshot?: () => Promise<LocalServiceManagedRuntimeSnapshotV1 | null>;
   triggerLegacyProfileMigration?: typeof triggerLegacyProfileMigrationRuntime;
   persistedTakeoverAdmissionWaiter?: PersistedTakeoverAdmissionWaiter;
@@ -710,6 +717,9 @@ export async function bootstrapMachineSyncRuntime(
       ...providerLocalToolContext,
       runtimeStore: providerRuntimeServices.runtimeStore,
     });
+    const agentCatalogObservation = params.createAgentCatalogObservation?.(
+      providerRuntimeServices.probeInfrastructure,
+    ) ?? null;
     const providerProfileMigrationUnavailable = async (request: Readonly<{
       machineId: string;
       sourceProfileId: string;
@@ -806,6 +816,7 @@ export async function bootstrapMachineSyncRuntime(
           },
           featureGate: providerFeatureGate,
         },
+        ...(agentCatalogObservation ? { agentCatalogObservation } : {}),
         emitExternalSessionTranscriptUpdate: (payload) => connectedApiMachine.emitExternalSessionTranscriptUpdate(payload),
         executeExternalSessionHistoricalImportCommand: async (command) =>
           await connectedApiMachine.executeExternalSessionHistoricalImportCommand(command),

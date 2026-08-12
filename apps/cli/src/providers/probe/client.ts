@@ -100,15 +100,18 @@ export class ProviderProbeClientError extends Error {
     | 'provider_endpoint_unauthorized'
     | 'provider_probe_response_invalid'>;
   readonly retryAfterMs?: number;
+  /** Exact response status for caller-owned recovery policy. No response or credential material is retained. */
+  readonly httpStatus?: number;
 
   constructor(
     code: ProviderProbeClientError['code'],
-    options: Readonly<{ retryAfterMs?: number }> = {},
+    options: Readonly<{ retryAfterMs?: number; httpStatus?: number }> = {},
   ) {
     super(code);
     this.name = 'ProviderProbeClientError';
     this.code = code;
     this.retryAfterMs = options.retryAfterMs;
+    this.httpStatus = options.httpStatus;
   }
 }
 
@@ -344,6 +347,7 @@ export function createProviderProbeHttpClient(dependencies: Readonly<{
           }
           throw new ProviderProbeClientError(
             credential ? 'provider_endpoint_unauthorized' : 'provider_endpoint_auth_required',
+            { httpStatus: response.status },
           );
         }
         if (response.status === 429) {

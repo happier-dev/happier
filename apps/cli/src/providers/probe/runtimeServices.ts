@@ -159,6 +159,10 @@ function staticModels(catalog: ReturnType<typeof sourceCatalog>) {
   return 'staticModels' in catalog ? catalog.staticModels : [];
 }
 
+function catalogMembershipPolicy(catalog: ReturnType<typeof sourceCatalog>) {
+  return 'membershipPolicy' in catalog ? catalog.membershipPolicy : undefined;
+}
+
 function expectedEndpointObservations(request: ResolvedProviderProbeRpcRequest) {
   if (request.managedSource) return [];
   return request.probes.map((probe) => {
@@ -748,6 +752,9 @@ export function createRuntimeProviderServices(input: Readonly<{
       const record = context.catalogRuntimeRecord;
       const projected = projectProviderCatalogPresentation({
         staticModels: staticModels(catalog),
+        ...(catalogMembershipPolicy(catalog)
+          ? { membershipPolicy: catalogMembershipPolicy(catalog) }
+          : {}),
         manualModels: readOwnRecordValue(
           context.providerSettings.manualModelsByConnectionId,
           identity.connectionId,
@@ -776,7 +783,10 @@ export function createRuntimeProviderServices(input: Readonly<{
           id: row.descriptor.id,
           ...(row.descriptor.name ? { name: row.descriptor.name } : {}),
           source: sourceForRow(row),
-          stale: rowCatalog.stale && row.sources.probe && !row.sources.manual && !row.sources.static,
+          stale: rowCatalog.stale
+            && row.sources.probe
+            && !row.sources.manual
+            && row.confidence !== 'verified_static',
           loadState,
           visibility: visibility(row.descriptor.id),
         })),
@@ -844,5 +854,6 @@ export function createRuntimeProviderServices(input: Readonly<{
   return Object.freeze({
     probe, probeDraft, models, summary, modelLoadCatalog, modelLoadAuthorization,
     resolveCatalogContext, resolvePresentationCatalogContext, scheduleDemandRefresh, runtimeStore,
+    probeInfrastructure: Object.freeze({ client, scheduler }),
   });
 }

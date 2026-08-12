@@ -4,6 +4,7 @@ export { SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol';
 export type { SpawnSessionErrorCode, SpawnSessionErrorDetail } from '@happier-dev/protocol';
 export type { SpawnSessionOptions, SpawnSessionResult } from '@/session/shared/spawnSessionContract';
 import { registerCapabilitiesHandlers } from './capabilities';
+import type { AgentProviderCatalogObservationService } from '@/providers/probe/agentCatalogObservation';
 import { registerPreviewEnvHandler } from './previewEnv';
 import { registerBashHandler } from './bash';
 import { registerRipgrepHandler } from './ripgrep';
@@ -104,13 +105,21 @@ export function registerSessionHandlers(
         browserRecording?: BrowserRecordingRoutes | null;
         simulatorPreview?: SimulatorPreviewRoutes | null;
         daemonContributionRegistryProjection?: DaemonContributionRegistryProjectionRegistrationOptions;
+        getAgentCatalogObservation?: () => Readonly<{
+            machineId: string;
+            service: AgentProviderCatalogObservationService;
+        }> | null;
     }>,
 ) {
     const accessPolicy = opts?.accessPolicy ?? { kind: 'osUser' };
 
     registerBashHandler(rpcHandlerManager, workingDirectory, { accessPolicy });
     // Checklist-based machine capability registry (replaces legacy detect-cli / detect-capabilities / dep-status).
-    registerCapabilitiesHandlers(rpcHandlerManager);
+    registerCapabilitiesHandlers(rpcHandlerManager, {
+        ...(opts?.getAgentCatalogObservation
+            ? { getAgentCatalogObservation: opts.getAgentCatalogObservation }
+            : {}),
+    });
     registerDaemonContributionRegistryProjectionHandler(
         rpcHandlerManager,
         opts?.daemonContributionRegistryProjection,

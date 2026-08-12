@@ -111,7 +111,7 @@ describe('resolveNewSessionCapabilityProbeContext (stability)', () => {
         });
     });
 
-    it('includes connected-service bindings in capability params and cache identity', async () => {
+    it('adds selected Claude subscription bindings only to the model probe and partitions its cache identity', async () => {
         vi.resetModules();
 
         const resolveAgentConfiguredRuntimeKind = vi.fn(() => 'appServer');
@@ -126,33 +126,93 @@ describe('resolveNewSessionCapabilityProbeContext (stability)', () => {
         const { resolveNewSessionCapabilityProbeContext } = await import('./newSessionCapabilityProbeContext');
 
         const settings = {} as any;
-        const backendTarget = { kind: 'builtInAgent', agentId: 'codex' } as any;
-        const connectedServices = {
+        const backendTarget = { kind: 'builtInAgent', agentId: 'claude' } as any;
+        const firstConnectedServices = {
             v: 1,
             bindingsByServiceId: {
-                'openai-codex': {
+                'claude-subscription': {
                     source: 'connected',
                     selection: 'profile',
                     profileId: 'work',
                 },
             },
         };
+        const secondConnectedServices = {
+            v: 1,
+            bindingsByServiceId: {
+                'claude-subscription': {
+                    source: 'connected',
+                    selection: 'profile',
+                    profileId: 'personal',
+                },
+            },
+        };
 
-        const context = resolveNewSessionCapabilityProbeContext({
+        const firstInput = {
             backendTarget,
             settings,
-            connectedServices,
+            connectedServices: firstConnectedServices,
+        };
+        const secondInput = {
+            backendTarget,
+            settings,
+            connectedServices: secondConnectedServices,
+        };
+        const { resolveNewSessionModelCapabilityProbeContext } = await import('./newSessionCapabilityProbeContext');
+        const shared = resolveNewSessionCapabilityProbeContext(firstInput);
+        const first = resolveNewSessionModelCapabilityProbeContext(firstInput);
+        const second = resolveNewSessionModelCapabilityProbeContext(secondInput);
+
+        expect(shared).toEqual({
+            cacheKeySuffixParts: ['appServer'],
+            capabilityParams: { runtimeKindOverride: 'appServer' },
+        });
+        expect(shared?.capabilityParams).not.toHaveProperty('connectedServices');
+        expect(first?.capabilityParams).toEqual({
+            runtimeKindOverride: 'appServer',
+            connectedServices: firstConnectedServices,
+        });
+        expect(first?.cacheKeySuffixParts).toContain('claude-subscription:profile:work');
+        expect(second?.cacheKeySuffixParts).toContain('claude-subscription:profile:personal');
+        expect(second).not.toBe(first);
+    });
+
+    it('mints a model-only Claude observation context from a selected binding while native or unrelated selections stay omitted', async () => {
+        vi.resetModules();
+
+        const resolveAgentConfiguredRuntimeKind = vi.fn(() => null);
+        vi.doMock('@happier-dev/agents', async (importOriginal) => {
+            const actual = await importOriginal<typeof import('@happier-dev/agents')>();
+            return {
+                ...actual,
+                resolveAgentConfiguredRuntimeKind,
+            };
         });
 
-        expect(context).toEqual({
-            cacheKeySuffixParts: [
-                'runtime:appServer',
-                'connectedServices:{"bindingsByServiceId":{"openai-codex":{"profileId":"work","selection":"profile","source":"connected"}},"v":1}',
-            ],
-            capabilityParams: {
-                runtimeKindOverride: 'appServer',
-                connectedServices,
+        const { resolveNewSessionCapabilityProbeContext } = await import('./newSessionCapabilityProbeContext');
+        const input = {
+            backendTarget: { kind: 'builtInAgent', agentId: 'claude' } as any,
+            settings: {} as any,
+            connectedServices: {
+                v: 1,
+                bindingsByServiceId: {
+                    'claude-subscription': { source: 'connected', selection: 'group', groupId: 'team' },
+                },
             },
+        };
+
+        const { resolveNewSessionModelCapabilityProbeContext } = await import('./newSessionCapabilityProbeContext');
+        expect(resolveNewSessionCapabilityProbeContext(input)).toBeNull();
+        expect(resolveNewSessionModelCapabilityProbeContext(input)).toEqual({
+            cacheKeySuffixParts: ['claude-subscription:group:team'],
+            capabilityParams: { connectedServices: input.connectedServices },
         });
+        expect(resolveNewSessionModelCapabilityProbeContext({
+            ...input,
+            connectedServices: {
+                v: 1,
+                bindingsByServiceId: { 'claude-subscription': { source: 'native' } },
+            },
+        })).toBeNull();
     });
 });

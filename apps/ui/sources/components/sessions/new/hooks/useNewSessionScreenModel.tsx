@@ -911,6 +911,8 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
     const {
         setAgentOptionStateForCurrentAgent,
         connectedServicesAuthChip,
+        connectedServicesBindingsPayload,
+        connectedServicesModelProbeCacheIdentity,
         agentNewSessionOptions,
     } = useNewSessionConnectedServicesAgentOptions({
         agentType,
@@ -951,7 +953,8 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         selectedMachineId,
         capabilityServerId,
         cwd: selectedPath,
-        connectedServices: agentNewSessionOptions?.connectedServices ?? null,
+        connectedServicesBindingsPayload,
+        connectedServicesModelProbeCacheIdentity,
     });
 
     const allProfilesRequirementNames = React.useMemo(() => {

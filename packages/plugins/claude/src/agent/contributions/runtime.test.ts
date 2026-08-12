@@ -271,6 +271,22 @@ describe('Claude runtime contribution CLI command options', () => {
     }));
   });
 
+  it('declares exact-origin Authorization request auth for native model observation only', () => {
+    const connectedServices = (CLAUDE_AGENT_RUNTIME_CONTRIBUTION as Readonly<{
+      connectedServices?: Readonly<{ requestAuthUses?: readonly unknown[] }>;
+    }>).connectedServices;
+
+    expect(connectedServices?.requestAuthUses).toEqual([{
+      purpose: 'model_upstream',
+      materialization: {
+        kind: 'httpHeaders',
+        origin: 'https://api.anthropic.com',
+        headerNames: ['authorization'],
+      },
+    }]);
+    expect(JSON.stringify(connectedServices?.requestAuthUses)).not.toContain('x-api-key');
+  });
+
   it('returns explicit booleans from the service-switch restart predicate', () => {
     const connectedServices = (CLAUDE_AGENT_RUNTIME_CONTRIBUTION as Readonly<{
       connectedServices?: Readonly<{

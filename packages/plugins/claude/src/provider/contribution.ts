@@ -35,6 +35,7 @@ export const ANTHROPIC_PROVIDER_CONTRIBUTION = ProviderContributionV1Schema.pars
   catalog: {
     source: 'static+probe',
     manualModelPolicy: 'allowed',
+    membershipPolicy: 'probe-authoritative',
     staticModels: CLAUDE_STATIC_MODELS,
     probes: [{
       endpointTemplateId: 'anthropic',

@@ -477,6 +477,14 @@ export const CLAUDE_AGENT_RUNTIME_CONTRIBUTION = Object.freeze({
   },
   connectedServices: {
     serviceIds: CLAUDE_SUPPORTED_AUTH_SERVICE_IDS,
+    requestAuthUses: [{
+      purpose: 'model_upstream',
+      materialization: {
+        kind: 'httpHeaders',
+        origin: 'https://api.anthropic.com',
+        headerNames: ['authorization'],
+      },
+    }],
     noRestartRequiredServiceIds: ['claude-subscription'],
     materializedRootSubdir: 'claude-config',
     materializedHomeCredentialEntries: CLAUDE_MATERIALIZED_HOME_CREDENTIAL_ENTRIES,

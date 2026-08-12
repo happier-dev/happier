@@ -20,17 +20,22 @@ vi.mock('@/agent/catalog/registry', () => ({
   AGENTS: {
     opencode: { id: 'opencode' },
     codex: { id: 'codex', needsAccountSettingsForProbes: true },
+    claude: { id: 'claude' },
     customAcp: { id: 'customAcp' },
   },
 }));
 
-function createCall() {
+function createClient(dependencies: Parameters<typeof registerCapabilitiesHandlers>[1] = {}) {
   return createEncryptedRpcTestClient({
     scopePrefix: 'machine-test',
     encryptionKey: new Uint8Array(32).fill(7),
     logger: () => undefined,
-    registerHandlers: (manager) => registerCapabilitiesHandlers(manager),
-  }).call;
+    registerHandlers: (manager) => registerCapabilitiesHandlers(manager, dependencies),
+  });
+}
+
+function createCall(dependencies: Parameters<typeof registerCapabilitiesHandlers>[1] = {}) {
+  return createClient(dependencies).call;
 }
 
 describe('capabilities.invoke(cli.* probeModels)', () => {
@@ -62,6 +67,30 @@ describe('capabilities.invoke(cli.* probeModels)', () => {
     expect(mocks.probeModels).toHaveBeenCalledTimes(1);
     expect(mocks.probeModels).toHaveBeenCalledWith(expect.objectContaining({ agentId: 'opencode', cwd, timeoutMs: 1234 }));
   });
+
+  it('preserves connectedServices for the non-native model probe fallback', async () => {
+    mocks.probeModels.mockResolvedValue({
+      provider: 'opencode',
+      availableModels: [{ id: 'default', name: 'Default' }],
+      supportsFreeform: false,
+      source: 'static',
+    });
+    const connectedServices = {
+      v: 1,
+      bindingsByServiceId: {
+        example: { source: 'connected', selection: 'profile', profileId: 'account-selected' },
+      },
+    } as const;
+
+    await createCall()(RPC_METHODS.CAPABILITIES_INVOKE, {
+      id: 'cli.opencode',
+      method: 'probeModels',
+      params: { connectedServices },
+    });
+
+    expect(mocks.probeModels).toHaveBeenCalledWith(expect.objectContaining({ connectedServices }));
+  });
+
 
   it('uses a long enough default timeout when timeoutMs is omitted', async () => {
     mocks.probeModels.mockResolvedValue({
@@ -218,4 +247,89 @@ describe('capabilities.invoke(cli.* probeModels)', () => {
       credentials: { token: 'token' },
     }));
   });
+  it('uses only the selected Claude binding for the injected native model observation', async () => {
+    const observe = vi.fn(async () => ({
+      source: 'dynamic' as const,
+      stale: false,
+      models: [{ id: 'claude-account-model', name: 'Account model' }],
+    }));
+    const result = await createCall({
+      getAgentCatalogObservation: () => ({ machineId: 'machine-test', service: { observe } }),
+    })(RPC_METHODS.CAPABILITIES_INVOKE, {
+      id: 'cli.claude',
+      method: 'probeModels',
+      params: {
+        connectedServices: {
+          v: 1,
+          bindingsByServiceId: {
+            'claude-subscription': { source: 'connected', selection: 'profile', profileId: 'account-selected' },
+          },
+        },
+      },
+    });
+
+    expect(observe).toHaveBeenCalledOnce();
+    expect(observe).toHaveBeenCalledWith(expect.objectContaining({
+      machineId: 'machine-test',
+      binding: expect.objectContaining({
+        target: expect.objectContaining({
+          kind: 'account',
+          account: expect.objectContaining({ accountId: 'account-selected' }),
+        }),
+      }),
+    }));
+    expect(JSON.stringify(observe.mock.calls[0])).not.toContain('selected-account-token');
+    expect(JSON.stringify(observe.mock.calls[0])).not.toContain('accessToken');
+    expect(result).toEqual({
+      ok: true,
+      result: {
+        agentId: 'claude',
+        availableModels: [
+          { id: 'default', name: 'Default' },
+          { id: 'claude-account-model', name: 'Account model' },
+        ],
+        supportsFreeform: true,
+        source: 'dynamic',
+      },
+    });
+    expect(mocks.probeModels).not.toHaveBeenCalled();
+  });
+
+
+  it('threads exact RPC request currentness into the native model observation', async () => {
+    const started = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    let captured: Readonly<{ isCurrent(): boolean; signal?: AbortSignal }> | null = null;
+    const observe = vi.fn(async (request) => {
+      captured = request;
+      started.resolve();
+      await release.promise;
+      if (!request.isCurrent()) throw new Error('cancelled');
+      return { source: 'dynamic' as const, stale: false, models: [] };
+    });
+    const client = createClient({
+      getAgentCatalogObservation: () => ({ machineId: 'machine-test', service: { observe } }),
+    });
+    const controller = new AbortController();
+    const pending = client.manager.invokeLocal(RPC_METHODS.CAPABILITIES_INVOKE, {
+      id: 'cli.claude', method: 'probeModels',
+      params: {
+        connectedServices: {
+          v: 1,
+          bindingsByServiceId: {
+            'claude-subscription': { source: 'connected', selection: 'profile', profileId: 'account-selected' },
+          },
+        },
+      },
+    }, { signal: controller.signal });
+
+    await started.promise;
+    expect(captured?.isCurrent()).toBe(true);
+    expect(captured?.signal).toBe(controller.signal);
+    controller.abort();
+    expect(captured?.isCurrent()).toBe(false);
+    release.resolve();
+    await expect(pending).resolves.toMatchObject({ ok: false });
+  });
+
 });

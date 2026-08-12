@@ -36,6 +36,7 @@ describe('Anthropic Provider contribution', () => {
       catalog: {
         source: 'static+probe',
         manualModelPolicy: 'allowed',
+        membershipPolicy: 'probe-authoritative',
         probes: [{
           endpointTemplateId: 'anthropic',
           path: '/v1/models?limit=1000',

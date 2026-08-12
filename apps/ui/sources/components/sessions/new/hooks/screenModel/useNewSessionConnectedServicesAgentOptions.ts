@@ -20,6 +20,8 @@ export function useNewSessionConnectedServicesAgentOptions(params: Readonly<{
 }>): Readonly<{
     setAgentOptionStateForCurrentAgent: (key: string, value: unknown) => void;
     connectedServicesAuthChip: NewSessionConnectedServicesResult['connectedServicesAuthChip'];
+    connectedServicesBindingsPayload: NewSessionConnectedServicesResult['connectedServicesBindingsPayload'];
+    connectedServicesModelProbeCacheIdentity: NewSessionConnectedServicesResult['connectedServicesModelProbeCacheIdentity'];
     agentNewSessionOptions: Record<string, unknown> | null;
 }> {
     const agentCore = React.useMemo(() => getAgentCore(params.agentType), [params.agentType]);
@@ -32,7 +34,7 @@ export function useNewSessionConnectedServicesAgentOptions(params: Readonly<{
         });
     }, [params.selectedBackendTargetKey]);
 
-    const { connectedServicesBindingsPayload, connectedServicesAuthChip } = useNewSessionConnectedServices({
+    const { connectedServicesBindingsPayload, connectedServicesModelProbeCacheIdentity, connectedServicesAuthChip } = useNewSessionConnectedServices({
         agentCore,
         agentOptionState: params.agentOptionState,
         settings: params.settings,
@@ -53,6 +55,8 @@ export function useNewSessionConnectedServicesAgentOptions(params: Readonly<{
     return {
         setAgentOptionStateForCurrentAgent,
         connectedServicesAuthChip,
+        connectedServicesBindingsPayload,
+        connectedServicesModelProbeCacheIdentity,
         agentNewSessionOptions,
     };
 }

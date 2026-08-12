@@ -22,13 +22,20 @@ export type CapabilitiesDetectContextBuilder = (requests: CapabilityDetectReques
 export type Capability = {
     descriptor: CapabilityDescriptor;
     detect: (args: { request: CapabilityDetectRequest; context: CapabilitiesDetectContext }) => Promise<unknown>;
-    invoke?: (args: { method: string; params?: Record<string, unknown> }) => Promise<CapabilitiesInvokeResponse>;
+    invoke?: (args: {
+        method: string;
+        params?: Record<string, unknown>;
+        signal?: AbortSignal;
+    }) => Promise<CapabilitiesInvokeResponse>;
 };
 
 export type CapabilitiesService = {
     describe: () => CapabilitiesDescribeResponse;
     detect: (data: CapabilitiesDetectRequest) => Promise<CapabilitiesDetectResponse>;
-    invoke: (data: CapabilitiesInvokeRequest) => Promise<CapabilitiesInvokeResponse>;
+    invoke: (
+        data: CapabilitiesInvokeRequest,
+        context?: Readonly<{ signal?: AbortSignal }>,
+    ) => Promise<CapabilitiesInvokeResponse>;
 };
 
 function mergeOverrides(
@@ -118,7 +125,10 @@ export function createCapabilitiesService(opts: {
         return { protocolVersion: 1, results };
     };
 
-    const invoke = async (data: CapabilitiesInvokeRequest): Promise<CapabilitiesInvokeResponse> => {
+    const invoke = async (
+        data: CapabilitiesInvokeRequest,
+        context: Readonly<{ signal?: AbortSignal }> = {},
+    ): Promise<CapabilitiesInvokeResponse> => {
         const id = data?.id as CapabilityId | undefined;
         const method = typeof data?.method === 'string' ? data.method.trim() : '';
         if (!id || !method) {
@@ -134,7 +144,11 @@ export function createCapabilitiesService(opts: {
         }
 
         try {
-            return await cap.invoke({ method, params: data?.params });
+            return await cap.invoke({
+                method,
+                params: data?.params,
+                ...(context.signal ? { signal: context.signal } : {}),
+            });
         } catch (e) {
             const message = e instanceof Error ? e.message : 'Invoke failed';
             const code = e instanceof CapabilityError ? e.code : 'invoke-failed';

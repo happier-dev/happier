@@ -37,6 +37,10 @@ function staticModels(catalog: ReturnType<typeof catalogDeclaration>) {
   return 'staticModels' in catalog ? catalog.staticModels : [];
 }
 
+function membershipPolicy(catalog: ReturnType<typeof catalogDeclaration>) {
+  return 'membershipPolicy' in catalog ? catalog.membershipPolicy : undefined;
+}
+
 function providerName(connection: AssembleProviderConnectionCatalogInput['connection']): string {
   return connection.source.kind === 'contribution'
     ? connection.source.definition.name
@@ -114,6 +118,7 @@ export function projectProviderCatalogPresentation(input: Readonly<{
   staticModels: ProviderCatalogMergeInput['staticModels'];
   manualModels: ProviderCatalogMergeInput['manualModels'];
   probeState: ProviderCatalogMergeInput['probeState'];
+  membershipPolicy?: ProviderCatalogMergeInput['membershipPolicy'];
   connectionId: string;
   machineId: string;
   catalogRecord: ProviderCatalogRuntimeStateRecordV1 | null;
@@ -127,6 +132,9 @@ export function projectProviderCatalogPresentation(input: Readonly<{
     staticModels: input.staticModels,
     manualModels: input.manualModels,
     probeState: input.probeState,
+    ...(input.membershipPolicy
+      ? { membershipPolicy: input.membershipPolicy }
+      : {}),
     ...(input.probeConfidence ? { probeConfidence: input.probeConfidence } : {}),
   });
   const loadStates = loadStatesForActiveGeneration({
@@ -221,6 +229,9 @@ export function assembleProviderConnectionCatalog(
     staticModels: staticModels(catalog),
     manualModels,
     probeState,
+    ...(membershipPolicy(catalog)
+      ? { membershipPolicy: membershipPolicy(catalog) }
+      : {}),
     connectionId: input.connection.connectionId,
     machineId: input.connection.machineId,
     catalogRecord,

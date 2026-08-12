@@ -118,6 +118,7 @@ export function useNewSessionPreflightModelsState(params: Readonly<{
         () => params.probeContext?.capabilityParams ?? null,
         [probeContextKey],
     );
+    const modelSuccessCacheMaxAgeMs = params.probeContext?.modelSuccessCacheMaxAgeMs ?? undefined;
 
     const probeScopeKey = React.useMemo(() => {
         if (!backendTargetKey || !agentType) return null;
@@ -202,7 +203,7 @@ export function useNewSessionPreflightModelsState(params: Readonly<{
             lastHandledRefreshNonceRef.current = refreshNonce;
         }
 
-        const cacheEntry = readDynamicModelProbeCache(preflightModelsKey);
+        const cacheEntry = readDynamicModelProbeCache(preflightModelsKey, modelSuccessCacheMaxAgeMs);
         const cached = cacheEntry?.kind === 'success' ? cacheEntry.value : null;
         const cachedCanPersist = cacheEntry?.kind === 'success' && cacheEntry.cacheable !== false;
         const scopeStable = lastScopeKeyRef.current !== null && probeScopeKey !== null && lastScopeKeyRef.current === probeScopeKey;
@@ -387,7 +388,7 @@ export function useNewSessionPreflightModelsState(params: Readonly<{
             cancelled = true;
             if (retryTimeout) clearTimeout(retryTimeout);
         };
-    }, [agentType, backendTargetForProbe, backendTargetKey, preflightModelsKey, probeScopeKey, refreshNonce, probeContextCapabilityParams]);
+    }, [agentType, backendTargetForProbe, backendTargetKey, modelSuccessCacheMaxAgeMs, preflightModelsKey, probeScopeKey, refreshNonce, probeContextCapabilityParams]);
 
     const modelOptions = React.useMemo(
         () => {

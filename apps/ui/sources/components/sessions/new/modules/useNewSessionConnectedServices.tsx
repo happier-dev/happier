@@ -39,6 +39,7 @@ import { parseConnectedServicesBindingsByServiceIdFromAgentOptionState } from '@
 
 export type NewSessionConnectedServicesResult = Readonly<{
   connectedServicesBindingsPayload: ConnectedServiceBindingsV1 | null;
+  connectedServicesModelProbeCacheIdentity: string | null;
   connectedServicesAuthChip: AgentInputExtraActionChip | null;
 }>;
 
@@ -179,6 +180,36 @@ export function useNewSessionConnectedServices(params: Readonly<{
     supportedConnectedServiceIds,
   ]);
 
+  const connectedServicesModelProbeCacheIdentity = React.useMemo(() => {
+    if (!connectedServicesBindingsPayload || !accountProfile) return null;
+    const revisions = accountProfile.connectedServiceCredentialRevisionsV1 ?? [];
+    return JSON.stringify(Object.entries(connectedServicesBindingsPayload.bindingsByServiceId)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([serviceId, binding]) => {
+        if (binding.source !== 'connected') return [serviceId, 'native'];
+        const serviceProjection = accountProfile.connectedServicesV2.find((candidate) => candidate.serviceId === serviceId);
+        const group = binding.selection === 'group'
+          ? serviceProjection?.groups.find((candidate) => candidate.groupId === binding.groupId)
+          : null;
+        const activeProfileId = binding.selection === 'profile' ? binding.profileId : group?.activeProfileId ?? null;
+        const profile = activeProfileId
+          ? serviceProjection?.profiles.find((candidate) => candidate.profileId === activeProfileId)
+          : null;
+        const revision = activeProfileId
+          ? revisions.find((candidate) => candidate.serviceId === serviceId && candidate.profileId === activeProfileId)?.credentialRevision ?? null
+          : null;
+        return [
+          serviceId,
+          binding.selection,
+          binding.selection === 'group' ? binding.groupId : binding.profileId,
+          activeProfileId,
+          profile?.providerAccountId ?? null,
+          revision,
+          group?.generation ?? null,
+        ];
+      }));
+  }, [accountProfile, connectedServicesBindingsPayload]);
+
   const setBindingForService = React.useCallback((serviceId: string, binding: ConnectedServicesServiceBinding) => {
     setOptimisticBindingsByServiceId((prev) => {
       const next = {
@@ -271,5 +302,5 @@ export function useNewSessionConnectedServices(params: Readonly<{
         });
     }, [authLabel, connectedServicesAuthPopoverContent, supportedConnectedServiceIds]);
 
-  return { connectedServicesBindingsPayload, connectedServicesAuthChip };
+  return { connectedServicesBindingsPayload, connectedServicesModelProbeCacheIdentity, connectedServicesAuthChip };
 }

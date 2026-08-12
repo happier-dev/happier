@@ -38,10 +38,16 @@ function createLane<T extends ScheduledResult>(input: Readonly<{
   const causalInFlight = new Map<string, Promise<T>>();
   const completed = new Map<string, Completed<T>>();
 
-  const executeAndCache = (key: string, operation: () => Promise<T>) => input.execute(operation).then((result) => {
-      const previousFailures = completed.get(key)?.failures ?? 0;
+  const executeAndCache = (
+    key: string,
+    operation: () => Promise<T>,
+    resolveCompletedKey: (result: T) => string = () => key,
+  ) => input.execute(operation).then((result) => {
+      const completedKey = resolveCompletedKey(result);
+      const previousFailures = completed.get(completedKey)?.failures ?? 0;
       const failures = result.status === 'success' ? 0 : previousFailures + 1;
       completed.delete(key);
+      completed.delete(completedKey);
       const currentTime = input.now();
       for (const [completedKey, entry] of completed) {
         if (currentTime >= entry.expiresAt) completed.delete(completedKey);
@@ -56,7 +62,7 @@ function createLane<T extends ScheduledResult>(input: Readonly<{
         && (result.error?.retryAfterMs ?? 0) > 0
         ? result.error!.retryAfterMs!
         : 0;
-      completed.set(key, {
+      completed.set(completedKey, {
         result,
         failures,
         expiresAt: currentTime + (result.status === 'success'
@@ -66,13 +72,18 @@ function createLane<T extends ScheduledResult>(input: Readonly<{
       return result;
     });
 
-  const run = async (key: string, manual: boolean, operation: () => Promise<T>): Promise<T> => {
+  const run = async (
+    key: string,
+    manual: boolean,
+    operation: () => Promise<T>,
+    resolveCompletedKey?: (result: T) => string,
+  ): Promise<T> => {
     const active = inFlight.get(key);
     if (active) return active;
     const cached = completed.get(key);
     if (!manual && cached && input.now() < cached.expiresAt) return cached.result;
     let promise!: Promise<T>;
-    promise = executeAndCache(key, operation).finally(() => {
+    promise = executeAndCache(key, operation, resolveCompletedKey).finally(() => {
       if (inFlight.get(key) === promise) inFlight.delete(key);
     });
     inFlight.set(key, promise);
@@ -151,6 +162,19 @@ export function createProviderProbeScheduler(input: Readonly<{
       operation: () => Promise<T>,
     ): Promise<T> {
       return catalog.run(key, trigger === 'manual_refresh' || trigger === 'enable', operation) as Promise<T>;
+    },
+    runCatalogWithEffectiveKey<T extends ScheduledResult>(
+      key: string,
+      trigger: ProviderCatalogRefreshTrigger,
+      operation: () => Promise<T>,
+      resolveCompletedKey: (result: T) => string,
+    ): Promise<T> {
+      return catalog.run(
+        key,
+        trigger === 'manual_refresh' || trigger === 'enable',
+        operation,
+        resolveCompletedKey,
+      ) as Promise<T>;
     },
     runCatalogAfter<T extends ScheduledResult>(
       key: string,

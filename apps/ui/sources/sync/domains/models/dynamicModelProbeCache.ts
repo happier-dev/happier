@@ -122,13 +122,16 @@ function readTransientUnavailable(key: string, nowMs = Date.now()): DynamicModel
     };
 }
 
-export function readDynamicModelProbeCache(key: string): DynamicModelProbeCacheEntry | null {
+export function readDynamicModelProbeCache(
+    key: string,
+    successMaxAgeMs = DYNAMIC_MODEL_PROBE_SUCCESS_TTL_MS,
+): DynamicModelProbeCacheEntry | null {
     const snap: ProbedResourceSnapshot<PreflightModelList> = persistedCache.getSnapshot(key);
     if (snap.dataUpdatedAt !== null && snap.data) {
         return {
             kind: 'success',
             updatedAt: snap.dataUpdatedAt,
-            expiresAt: snap.dataUpdatedAt + DYNAMIC_MODEL_PROBE_SUCCESS_TTL_MS,
+            expiresAt: snap.dataUpdatedAt + Math.min(DYNAMIC_MODEL_PROBE_SUCCESS_TTL_MS, successMaxAgeMs),
             value: snap.data,
             cacheable: true,
         };

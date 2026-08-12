@@ -4,6 +4,10 @@ import type { ProviderModelDescriptorV1 } from '../../models/descriptor.js';
 import { ProviderModelDescriptorV1Schema } from '../../models/descriptor.js';
 import type { ProviderManualModelV1 } from '../settings/v1.js';
 import { PROVIDER_SETTINGS_LIMITS_V1, ProviderManualModelV1Schema } from '../settings/v1.js';
+import {
+  ProviderCatalogMembershipPolicyV1Schema,
+  type ProviderCatalogMembershipPolicyV1,
+} from './descriptorV1.js';
 import { PROVIDER_CATALOG_LIMITS_V1 } from './limits.js';
 
 export type ProviderCatalogProbeModelV1 = Readonly<{
@@ -163,11 +167,25 @@ function probeDescriptor(model: ProviderCatalogProbeModelV1): ProviderModelDescr
   };
 }
 
+function authoritativeProbeDescriptor(
+  probe: ProviderCatalogProbeModelV1,
+  curated: ProviderModelDescriptorV1 | undefined,
+): ProviderModelDescriptorV1 {
+  const descriptor = probeDescriptor(probe);
+  if (!curated) return descriptor;
+  return {
+    ...curated,
+    ...descriptor,
+    name: curated.name,
+  };
+}
+
 export function mergeProviderCatalogV1(input: Readonly<{
   staticModels: readonly ProviderModelDescriptorV1[];
   manualModels: readonly ProviderManualModelV1[];
   probeState: ProviderCatalogTransitionStateV1;
   probeConfidence?: 'probe' | 'account_unverified';
+  membershipPolicy?: ProviderCatalogMembershipPolicyV1;
 }>): Readonly<{
   rows: readonly ProviderMergedCatalogRowV1[];
   staleRows: readonly ProviderMergedCatalogRowV1[];
@@ -183,11 +201,16 @@ export function mergeProviderCatalogV1(input: Readonly<{
   const probeState = ProviderCatalogTransitionStateV1Schema.parse(input.probeState);
   const probeModels = probeState.snapshot?.models ?? [];
   const staleProbeModels = probeState.staleProbeModels;
+  const membershipPolicy = ProviderCatalogMembershipPolicyV1Schema.parse(
+    input.membershipPolicy ?? 'augment',
+  );
+  const probeOwnsMembership = membershipPolicy === 'probe-authoritative'
+    && probeState.snapshot !== null;
   assertUniqueModelIds(staticModels, 'static');
   assertUniqueModelIds(manualModels, 'manual');
 
   const uniqueIds = new Set([
-    ...staticModels.map((model) => model.id),
+    ...(probeOwnsMembership ? [] : staticModels.map((model) => model.id)),
     ...manualModels.map((model) => model.id),
     ...probeModels.map((model) => model.id),
   ]);
@@ -213,25 +236,44 @@ export function mergeProviderCatalogV1(input: Readonly<{
     emitted.add(id);
   };
 
-  for (const model of staticModels) emit(model.id, model, 'verified_static');
-  const remainingManual = manualModels.filter((model) => !emitted.has(model.id)).sort((a, b) =>
+  const sortedManual = [...manualModels].sort((a, b) =>
     a.addedAt - b.addedAt || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
-  for (const model of remainingManual) emit(model.id, { id: model.id, name: model.name ?? model.id }, 'manual');
-  const remainingProbe = probeModels.filter((model) => !emitted.has(model.id)).sort((a, b) => {
+  const sortedProbe = [...probeModels].sort((a, b) => {
     const aName = (a.name ?? a.id).toLowerCase();
     const bName = (b.name ?? b.id).toLowerCase();
     if (aName !== bName) return aName < bName ? -1 : 1;
     return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
   });
   const probeConfidence = input.probeConfidence ?? 'probe';
-  for (const model of remainingProbe) emit(model.id, probeDescriptor(model), probeConfidence);
+  if (probeOwnsMembership) {
+    for (const model of sortedManual.filter((candidate) => !probeById.has(candidate.id))) {
+      emit(model.id, { id: model.id, name: model.name ?? model.id }, 'manual');
+    }
+    for (const model of sortedProbe) {
+      emit(
+        model.id,
+        authoritativeProbeDescriptor(model, staticById.get(model.id)),
+        probeConfidence,
+      );
+    }
+  } else {
+    for (const model of staticModels) emit(model.id, model, 'verified_static');
+    for (const model of sortedManual.filter((candidate) => !emitted.has(candidate.id))) {
+      emit(model.id, { id: model.id, name: model.name ?? model.id }, 'manual');
+    }
+    for (const model of sortedProbe.filter((candidate) => !emitted.has(candidate.id))) {
+      emit(model.id, probeDescriptor(model), probeConfidence);
+    }
+  }
 
   const staleRows: ProviderMergedCatalogRowV1[] = [];
   for (const model of staleProbeModels) {
     if (emitted.has(model.id)) continue;
     staleRows.push({
-      descriptor: probeDescriptor(model),
-      sources: { manual: false, static: false, probe: true },
+      descriptor: probeOwnsMembership
+        ? authoritativeProbeDescriptor(model, staticById.get(model.id))
+        : probeDescriptor(model),
+      sources: { manual: false, static: staticById.has(model.id), probe: true },
       confidence: probeConfidence,
       catalogStale: true,
       stale: true,

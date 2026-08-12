@@ -358,6 +358,45 @@ describe('ConnectedAccountPurposeBindingOwner', () => {
     replacement.dispose();
   });
 
+  it('scopes a transient Agent catalog observation to its exact contribution consumer and currentness', () => {
+    const { owner } = createOwner();
+    let current = true;
+    const lease = owner.activatePurposeBindings({
+      subject: {
+        kind: 'agent_catalog_observation',
+        operationId: 'observation-1',
+        consumer: purpose.consumer,
+        isCurrent: () => current,
+      },
+      purposes: [purpose],
+      bindings: [{
+        purpose,
+        target: { kind: 'account', account: { service, accountId: 'selected' } },
+      }],
+    });
+
+    expect(lease.resolvePurposeBinding(purpose)).toMatchObject({
+      target: { kind: 'account', account: { accountId: 'selected' } },
+    });
+    current = false;
+    expect(lease.resolvePurposeBinding(purpose)).toBeNull();
+    lease.dispose();
+
+    expect(() => owner.activatePurposeBindings({
+      subject: {
+        kind: 'agent_catalog_observation',
+        operationId: 'observation-2',
+        consumer: purpose.consumer,
+        isCurrent: () => true,
+      },
+      purposes: [{
+        consumer: { pluginId: purpose.consumer.pluginId, localId: 'other-agent' },
+        purpose: purpose.purpose,
+      }],
+      bindings: [],
+    })).toThrow('connected_account_agent_catalog_observation_binding_consumer_mismatch');
+  });
+
   it('persists one qualified binding selected within the authorized service scope', async () => {
     const { owner, store } = createOwner();
     const signal = new AbortController().signal;

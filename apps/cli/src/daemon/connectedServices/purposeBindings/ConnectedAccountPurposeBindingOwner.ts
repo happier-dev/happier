@@ -100,6 +100,12 @@ export type ConnectedAccountPurposeBindingSubject =
       runnerPid: number;
       agentId: CatalogAgentId;
       isCurrent(): boolean;
+    }>
+  | Readonly<{
+      kind: 'agent_catalog_observation';
+      operationId: string;
+      consumer: PluginContributionIdentityV1;
+      isCurrent(): boolean;
     }>;
 
 export type ConnectedAccountPurposeBindingLease = Readonly<{
@@ -518,35 +524,56 @@ export function createConnectedAccountPurposeBindingOwner(
             isSubjectCurrent: () => true,
             sessionId,
             errorPrefix: 'connected_account_session_binding',
+            expectedConsumer: null,
           };
         })()
-      : (() => {
-          const runId = subject.runId.trim();
-          const agentId = subject.agentId.trim();
-          if (!runId) {
-            throw new Error(
-              'connected_account_execution_run_binding_run_id_required',
-            );
-          }
-          if (!Number.isInteger(subject.runnerPid) || subject.runnerPid <= 0) {
-            throw new Error(
-              'connected_account_execution_run_binding_runner_pid_required',
-            );
-          }
-          if (!agentId) {
-            throw new Error(
-              'connected_account_execution_run_binding_agent_id_required',
-            );
-          }
-          return {
-            subjectKey: JSON.stringify(['execution_run', runId]),
-            subjectId:
-              `execution-run:${runId}/runner:${subject.runnerPid}/agent:${agentId}`,
-            isSubjectCurrent: subject.isCurrent,
-            sessionId: null,
-            errorPrefix: 'connected_account_execution_run_binding',
-          };
-        })();
+      : subject.kind === 'execution_run'
+        ? (() => {
+            const runId = subject.runId.trim();
+            const agentId = subject.agentId.trim();
+            if (!runId) {
+              throw new Error(
+                'connected_account_execution_run_binding_run_id_required',
+              );
+            }
+            if (!Number.isInteger(subject.runnerPid) || subject.runnerPid <= 0) {
+              throw new Error(
+                'connected_account_execution_run_binding_runner_pid_required',
+              );
+            }
+            if (!agentId) {
+              throw new Error(
+                'connected_account_execution_run_binding_agent_id_required',
+              );
+            }
+            return {
+              subjectKey: JSON.stringify(['execution_run', runId]),
+              subjectId:
+                `execution-run:${runId}/runner:${subject.runnerPid}/agent:${agentId}`,
+              isSubjectCurrent: subject.isCurrent,
+              sessionId: null,
+              errorPrefix: 'connected_account_execution_run_binding',
+              expectedConsumer: null,
+            };
+          })()
+        : (() => {
+            const operationId = subject.operationId.trim();
+            const consumer = PluginContributionIdentityV1Schema.parse(subject.consumer);
+            if (!operationId) {
+              throw new Error(
+                'connected_account_agent_catalog_observation_binding_operation_id_required',
+              );
+            }
+            return {
+              subjectKey: JSON.stringify(['agent_catalog_observation', operationId]),
+              subjectId:
+                `agent-catalog-observation:${operationId}/agent:${consumer.pluginId}/${consumer.localId}`,
+              isSubjectCurrent: subject.isCurrent,
+              sessionId: null,
+              errorPrefix: 'connected_account_agent_catalog_observation_binding',
+              expectedConsumer: Object.freeze({ ...consumer }),
+            };
+          })();
     if (purposeBindingsBySubjectKey.has(normalized.subjectKey)) {
       throw new Error(`${normalized.errorPrefix}_already_active`);
     }
@@ -555,6 +582,15 @@ export function createConnectedAccountPurposeBindingOwner(
     );
     const coveredPurposeKeys = new Set<string>();
     for (const purpose of purposes) {
+      if (
+        normalized.expectedConsumer
+        && (
+          purpose.consumer.pluginId !== normalized.expectedConsumer.pluginId
+          || purpose.consumer.localId !== normalized.expectedConsumer.localId
+        )
+      ) {
+        throw new Error(`${normalized.errorPrefix}_consumer_mismatch`);
+      }
       const key = qualifiedPurposeKey(purpose);
       if (coveredPurposeKeys.has(key)) {
         throw new Error(`${normalized.errorPrefix}_duplicate_purpose`);

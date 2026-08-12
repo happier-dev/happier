@@ -8,6 +8,7 @@ import {
 } from '../../crypto/accountScopedCipher.js';
 import { decodeBase64, encodeBase64 } from '../../crypto/base64.js';
 import { getGeneratedRuntimeDescriptorContributionV1 } from '../../agents/runtimeDescriptorContributionsV1.js';
+import { AgentModelOptionOverrideRuleSchema } from '../../models/descriptor.js';
 import { resolveGeneratedSessionPresentationAgentIdV1 } from '../../agents/generated/sessionPresentationCompatV1.js';
 import {
   ConnectedServiceIdSchema,

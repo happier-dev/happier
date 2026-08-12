@@ -329,6 +329,7 @@ import {
     recoverManagedProviderEndpoint,
 } from '@/providers/lifecycle/managedEndpointRecovery';
 import { createProviderRedactionLease } from '@/providers/spawn/redaction';
+import { createAgentProviderCatalogObservationService } from '@/providers/probe/agentCatalogObservation';
 import {
     applyConnectedAccountRequestAuthRecovery,
     type ConnectedAccountRequestAuthRecoveryInput,
@@ -7608,6 +7609,28 @@ export async function startDaemonSessionControlRuntime(
         // recorder — so the proactive selection sees the same probed snapshots (matches the
         // single-store design of the monolithic reference).
         connectedServiceRuntimeQuotaSnapshots,
+        createAgentCatalogObservation: (
+            infrastructure: Pick<
+                Parameters<typeof createAgentProviderCatalogObservationService>[0],
+                'client' | 'scheduler'
+            >,
+        ) => createAgentProviderCatalogObservationService({
+            ...infrastructure,
+            activatePurposeBindings: params.activatePurposeBindings ?? (() => {
+                throw new Error('connected_account_purpose_binding_owner_unavailable');
+            }),
+            requestAuth: {
+                lookupRequestAuth: async (input) => {
+                    await ensureCurrentProjectionForRequestAuth();
+                    return await connectedAccountRequestAuthService.lookupRequestAuth(input);
+                },
+                refreshAfterAuthFailure: async (input) => {
+                    await ensureCurrentProjectionForRequestAuth();
+                    return await connectedAccountRequestAuthService.refreshAfterAuthFailure(input);
+                },
+            },
+            createRedactionLease: () => createProviderRedactionLease({ values: [] }),
+        }),
         refreshBrowserRouteOwners,
         // BRW-6: daemon-side on-disk browser storage purge entrypoints. The daemon's
         // session-deleted signal and logout transition drive these to remove session/ephemeral

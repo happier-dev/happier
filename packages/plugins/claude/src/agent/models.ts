@@ -86,7 +86,12 @@ export const CLAUDE_AGENT_MODEL_CONFIG = Object.freeze({
     supportsSelection: true,
     supportsFreeform: true,
     nonAcpApplyScope: 'next_prompt',
-    dynamicProbe: 'static-only',
+    dynamicProbe: 'auto',
+    nativeCatalogObservation: {
+        providerLocalId: 'anthropic',
+        purpose: 'model_upstream',
+        connectedServiceId: 'claude-subscription',
+    },
     defaultMode: 'default',
     allowedModes: CLAUDE_STATIC_MODELS.map((model) => model.id),
     staticModels: CLAUDE_STATIC_MODELS,

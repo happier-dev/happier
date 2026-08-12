@@ -45,7 +45,7 @@ import type { ProviderModelSettingsMutationIntent } from '@/providers/connection
 import {
   resolveProviderSpawnAuthorization,
 } from '@/providers/spawn/resolve';
-import { resolveProviderRuntimeCatalogModel } from '@/providers/spawn/runtimeCatalog';
+import { resolveProviderRuntimeCatalogSelectionObservation } from '@/providers/spawn/runtimeCatalog';
 import { collectProviderConnectionDnsEvidence } from '@/providers/registry/dnsEvidence';
 import { selectCurrentProviderEndpointHealthByTemplateId } from '@/providers/connections/runtimeSummary';
 import { activateAgentRuntimeContributionOnDemand } from '@/agent/runtime/registry/activationDemand';
@@ -551,7 +551,7 @@ export function createRuntimeProviderModelManagementServices(input: Readonly<{
           return { status: 'incompatible', error };
         }
       }
-      const runtimeModelDescriptor = await resolveProviderRuntimeCatalogModel({
+      const runtimeCatalogSelection = await resolveProviderRuntimeCatalogSelectionObservation({
         selection: request.selection,
         machineId: request.machineId,
         accountSettings: snapshot.settings,
@@ -582,7 +582,12 @@ export function createRuntimeProviderModelManagementServices(input: Readonly<{
         ...(managedPurposeBindingSnapshot
           ? { managedPurposeBindingSnapshot }
           : {}),
-        ...(runtimeModelDescriptor ? { runtimeModelDescriptor } : {}),
+        ...(runtimeCatalogSelection?.model
+          ? { runtimeModelDescriptor: runtimeCatalogSelection.model }
+          : {}),
+        ...(runtimeCatalogSelection !== null
+          ? { runtimeCatalogSnapshotExists: true }
+          : {}),
       });
       if (resolved.ok) {
         return resolved.authorization.bindingSecurityFingerprint === request.launchBinding.bindingSecurityFingerprint
@@ -626,6 +631,7 @@ export function createRuntimeProviderModelManagementServices(input: Readonly<{
     mutateModelSettings,
     resolveBindingStatus,
     runtimeStore: sharedRuntime.runtimeStore,
+    probeInfrastructure: sharedRuntime.probeInfrastructure,
     loadModel: service.loadNow,
     cancelModelLoad: service.cancelNow,
     rpcHandler,

@@ -314,6 +314,42 @@ describe('provider probe HTTP client', () => {
     })).rejects.toMatchObject({ code, ...(status === 429 ? { retryAfterMs: 2_000 } : {}) });
   });
 
+  it.each([401, 403] as const)('retains authenticated catalog HTTP %s without retaining secret response material', async (status) => {
+    const secret = 'Bearer selected-account-secret';
+    const client = createProviderProbeHttpClient({
+      resolveAddresses: async () => ['93.184.216.34'],
+      transport: async () => response({
+        status,
+        headers: { 'x-secret-detail': secret },
+        body: Buffer.from(secret),
+      }),
+    });
+
+    let observed: unknown;
+    try {
+      await client.getCatalog({
+        endpointUrl: 'https://models.example',
+        path: '/models',
+        parser: 'openai-models',
+        publicHeaders: {},
+        ...authorizedDestination,
+        resolveCredential: credentialResolver({
+          kind: 'httpHeader',
+          name: 'authorization',
+          value: secret,
+        }),
+      });
+    } catch (error) {
+      observed = error;
+    }
+
+    expect(observed).toMatchObject({
+      code: 'provider_endpoint_unauthorized',
+      httpStatus: status,
+    });
+    expect(JSON.stringify(observed)).not.toContain(secret);
+  });
+
   it('treats auth status from a no-credential endpoint as an invalid provider contract', async () => {
     const client = createProviderProbeHttpClient({
       resolveAddresses: async () => ['93.184.216.34'],

@@ -55,4 +55,16 @@ describe('dynamic model probe cache', () => {
             cacheable: false,
         });
     });
+
+    it('honors a caller-owned shorter success max age without creating a second cache', () => {
+        resetDynamicModelProbeCacheForTests();
+        writeDynamicModelProbeCacheSuccess('selected-account', {
+            availableModels: [{ id: 'claude-account-model', name: 'Account model' }],
+            supportsFreeform: true,
+        }, 1_000);
+
+        expect(readDynamicModelProbeCache('selected-account', 5 * 60_000)).toMatchObject({
+            kind: 'success', updatedAt: 1_000, expiresAt: 301_000,
+        });
+    });
 });

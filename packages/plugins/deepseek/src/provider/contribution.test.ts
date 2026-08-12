@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { mergeProviderCatalogV1 } from '@happier-dev/protocol';
 
 import { PLUGIN_MANIFEST } from '../manifest.js';
 
@@ -51,5 +52,29 @@ describe('DEEPSEEK_PROVIDER_CONTRIBUTION', () => {
         ]),
       }],
     });
+  });
+
+  it('keeps an omitted membership policy on the existing augmenting static+probe union', () => {
+    const catalog = PLUGIN_MANIFEST.contributes.providers[0]?.catalog;
+    expect(catalog).not.toHaveProperty('membershipPolicy');
+    expect(catalog?.source).toBe('static+probe');
+    if (catalog?.source !== 'static+probe') throw new Error('Expected DeepSeek static+probe catalog');
+
+    expect(mergeProviderCatalogV1({
+      staticModels: catalog.staticModels,
+      manualModels: [],
+      probeState: {
+        snapshot: {
+          models: [{ id: 'deepseek-account-model', name: 'Account model' }],
+          observedAt: 20,
+          stale: false,
+        },
+        staleProbeModels: [],
+      },
+    }).rows.map((row) => row.descriptor.id)).toEqual([
+      'deepseek-v4-flash',
+      'deepseek-v4-pro',
+      'deepseek-account-model',
+    ]);
   });
 });

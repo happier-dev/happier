@@ -56,6 +56,12 @@ export type AgentModelConfig = Readonly<{
    * - `static-only`: skip dynamic probing and use catalog defaults only
    */
   dynamicProbe?: 'auto' | 'static-only';
+  /** Same-plugin Provider catalog observed with one exact connected-account purpose. */
+  nativeCatalogObservation?: Readonly<{
+    providerLocalId: string;
+    purpose: string;
+    connectedServiceId: string;
+  }>;
   defaultMode: string | null;
   allowedModes: readonly string[];
   staticModels?: readonly AgentModelDescriptor[];

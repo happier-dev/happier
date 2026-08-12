@@ -154,6 +154,176 @@ describe('provider catalog merge', () => {
     });
   });
 
+  it('lets an authoritative probe snapshot own membership while exact static rows enrich presentation', () => {
+    const merged = mergeProviderCatalogV1({
+      staticModels: [
+        {
+          id: 'listed-by-probe',
+          name: 'Curated name',
+          description: 'Curated presentation',
+          contextWindowTokens: 200_000,
+          extendedContextModelId: 'listed-by-probe[1m]',
+          modelOptions: [{
+            id: 'reasoning_effort', name: 'Thinking', type: 'select', currentValue: 'high',
+            options: [{ value: 'high', name: 'High' }],
+          }],
+          capabilities: {
+            toolRoundTrips: 'unsupported',
+            reasoningControls: 'unsupported',
+          },
+        },
+        { id: 'static-only', name: 'Cold fallback only' },
+      ],
+      manualModels: [{ id: 'manual-only', name: 'Manual', addedAt: 1 }],
+      probeState: {
+        snapshot: {
+          observedAt: 20,
+          stale: false,
+          models: [{
+            id: 'listed-by-probe',
+            name: 'API name',
+            contextWindowTokens: 1_000_000,
+            modelOptions: [{
+              id: 'reasoning_effort', name: 'Thinking', type: 'select', currentValue: 'max',
+              options: [{ value: 'max', name: 'Max' }],
+            }],
+            capabilities: {
+              toolRoundTrips: 'supported',
+              reasoningControls: 'supported',
+            },
+          }],
+        },
+        staleProbeModels: [],
+      },
+      membershipPolicy: 'probe-authoritative',
+    });
+
+    expect(merged.rows.map((row) => row.descriptor.id)).toEqual([
+      'manual-only',
+      'listed-by-probe',
+    ]);
+    expect(merged.rows.find((row) => row.descriptor.id === 'listed-by-probe')).toMatchObject({
+      descriptor: {
+        name: 'Curated name',
+        description: 'Curated presentation',
+        extendedContextModelId: 'listed-by-probe[1m]',
+        contextWindowTokens: 1_000_000,
+        modelOptions: [{ currentValue: 'max' }],
+        capabilities: {
+          toolRoundTrips: 'supported',
+          reasoningControls: 'supported',
+        },
+      },
+      sources: { manual: false, static: true, probe: true },
+      confidence: 'probe',
+    });
+  });
+
+  it('treats a successful empty authoritative snapshot as empty instead of static fallback', () => {
+    const merged = mergeProviderCatalogV1({
+      staticModels: [{ id: 'static-only', name: 'Cold fallback only' }],
+      manualModels: [],
+      probeState: {
+        snapshot: { models: [], observedAt: 20, stale: false },
+        staleProbeModels: [],
+      },
+      membershipPolicy: 'probe-authoritative',
+    });
+
+    expect(merged.rows).toEqual([]);
+  });
+
+  it('lets authoritative probe facts override static context, options, and capabilities', () => {
+    const merged = mergeProviderCatalogV1({
+      staticModels: [{
+        id: 'same-id',
+        name: 'Curated name',
+        contextWindowTokens: 200_000,
+        modelOptions: [{
+          id: 'reasoning_effort', name: 'Thinking', type: 'select', currentValue: 'high',
+          options: [{ value: 'high', name: 'High' }],
+        }],
+        capabilities: {
+          toolRoundTrips: 'unsupported',
+          reasoningControls: 'unsupported',
+        },
+      }],
+      manualModels: [],
+      probeState: {
+        snapshot: {
+          observedAt: 20,
+          stale: false,
+          models: [{
+            id: 'same-id',
+            contextWindowTokens: 1_000_000,
+            modelOptions: [{
+              id: 'reasoning_effort', name: 'Thinking', type: 'select', currentValue: 'max',
+              options: [{ value: 'max', name: 'Max' }],
+            }],
+            capabilities: {
+              toolRoundTrips: 'supported',
+              reasoningControls: 'supported',
+            },
+          }],
+        },
+        staleProbeModels: [],
+      },
+      membershipPolicy: 'probe-authoritative',
+    });
+
+    expect(merged.rows[0]).toMatchObject({
+      descriptor: {
+        name: 'Curated name',
+        contextWindowTokens: 1_000_000,
+        modelOptions: [{ currentValue: 'max' }],
+        capabilities: {
+          toolRoundTrips: 'supported',
+          reasoningControls: 'supported',
+        },
+      },
+      sources: { manual: false, static: true, probe: true },
+      confidence: 'probe',
+    });
+  });
+
+  it('uses static rows as cold fallback before the first successful authoritative snapshot', () => {
+    const failed = applyProviderCatalogRefreshV1(
+      { snapshot: null, staleProbeModels: [] },
+      { status: 'failed', failedAt: 25 },
+    );
+
+    expect(mergeProviderCatalogV1({
+      staticModels: [{ id: 'static-fallback', name: 'Static fallback' }],
+      manualModels: [],
+      probeState: failed,
+      membershipPolicy: 'probe-authoritative',
+    }).rows).toEqual([expect.objectContaining({
+      descriptor: { id: 'static-fallback', name: 'Static fallback' },
+      sources: { static: true, manual: false, probe: false },
+      confidence: 'verified_static',
+    })]);
+  });
+
+  it('keeps a retained stale authoritative snapshot in control after a failed refresh', () => {
+    const success = applyProviderCatalogRefreshV1(
+      { snapshot: null, staleProbeModels: [] },
+      { status: 'success', observedAt: 20, models: [{ id: 'probe-only', name: 'Probe only' }] },
+    );
+    const failed = applyProviderCatalogRefreshV1(success, { status: 'failed', failedAt: 25 });
+
+    expect(mergeProviderCatalogV1({
+      staticModels: [{ id: 'static-only', name: 'Cold fallback only' }],
+      manualModels: [],
+      probeState: failed,
+      membershipPolicy: 'probe-authoritative',
+    }).rows).toEqual([expect.objectContaining({
+      descriptor: { id: 'probe-only', name: 'Probe only' },
+      sources: { static: false, manual: false, probe: true },
+      confidence: 'probe',
+      catalogStale: true,
+    })]);
+  });
+
   it('marks wrapper-supported managed rows as account-unverified without changing source precedence', () => {
     const merged = mergeProviderCatalogV1({
       staticModels: [{ id: 'static-model', name: 'Static' }],

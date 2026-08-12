@@ -20,6 +20,7 @@ import type {
 import { resolveProviderConnectionForMachine } from '../registry';
 import {
   resolveProviderRuntimeCatalogModel,
+  selectProviderRuntimeCatalogSelectionObservation,
   selectProviderRuntimeCatalogModelObservation,
   selectProviderRuntimeCatalogModel,
 } from './runtimeCatalog';
@@ -130,6 +131,14 @@ describe('provider spawn runtime catalog bridge', () => {
       currentObservationAuthorizationFingerprints: new Set([currentAuthorization]),
       modelId: 'wrong',
     })).toBeNull();
+    expect(selectProviderRuntimeCatalogSelectionObservation({
+      runtimeState: state,
+      machineId: 'machine-a',
+      connectionId: 'pc_gateway',
+      catalogFingerprint: 'catalog:v1:current',
+      currentObservationAuthorizationFingerprints: new Set([currentAuthorization]),
+      modelId: 'wrong',
+    })).toEqual({ model: null, loadState: 'unknown' });
   });
 
   it('does not treat an aged model-load observation as current admission truth', () => {

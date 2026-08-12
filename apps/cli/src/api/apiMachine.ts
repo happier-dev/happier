@@ -86,6 +86,7 @@ import type { BrowserDiagnosticsRoutes } from '@/daemon/browser/diagnostics/rout
 import type { BrowserRecordingRoutes } from '@/daemon/browser/recording/routes';
 import type { SimulatorPreviewRoutes } from '@/daemon/devices/simulator/previewRoutes.types';
 import type { ConnectedAccountDaemonRuntime } from '@/daemon/connectedServices/ConnectedAccountDaemonRuntime';
+import type { AgentProviderCatalogObservationService } from '@/providers/probe/agentCatalogObservation';
 
 import type { DaemonToServerEvents, ServerToDaemonEvents } from './machine/socketTypes';
 import {
@@ -251,6 +252,7 @@ export class ApiMachineClient {
     private readonly fileSystemTransferRelayOwner: TransferRelayV2DownloadSessionOwner;
     private readonly rpcLifecycleRegistrations: MachineRpcLifecycleRegistration[] = [];
     private connectedAccountDaemonRuntime: ConnectedAccountDaemonRuntime | null = null;
+    private agentCatalogObservation: AgentProviderCatalogObservationService | null = null;
     private activeTransportGeneration = 0;
     private readonly sessionSyncPendingInputServerContractController:
         ReturnType<typeof createSessionSyncPendingInputServerContractController>;
@@ -377,6 +379,9 @@ export class ApiMachineClient {
         this.filesystemAccessPolicy = resolveFilesystemAccessPolicy();
         registerSessionHandlers(this.rpcHandlerManager, this.machineRpcWorkingDirectory, {
             accessPolicy: this.filesystemAccessPolicy,
+            getAgentCatalogObservation: () => this.agentCatalogObservation
+                ? { machineId: this.machine.id, service: this.agentCatalogObservation }
+                : null,
             // G-RC4: thread the live server-features snapshot into the plugin-UI-tier projection so
             // a server that disables `plugins`/`plugins.ui` cascades the tiers OFF in the daemon
             // projection (master §3.5 "server disables X → daemon refuses"). Reuses the one fetch
@@ -443,6 +448,7 @@ export class ApiMachineClient {
         directTransferImport,
         directTransferExport,
     }: MachineRpcHandlers, deps?: MachineRpcHandlerDeps): MachineRpcLifecycleRegistration {
+        this.agentCatalogObservation = deps?.agentCatalogObservation ?? null;
         const machineRpcLifecycleRegistration = registerMachineRpcHandlers({
             rpcHandlerManager: this.rpcHandlerManager,
             handlers: {

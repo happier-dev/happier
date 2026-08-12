@@ -33,7 +33,10 @@ const currentCatalogKey: ProviderCatalogRuntimeStateKeyV1 = ProviderCatalogRunti
   observationAuthorizationFingerprint: 'observation-authorization:v1:current',
 });
 
-function contribution(name = 'Gateway') {
+function contribution(
+  name = 'Gateway',
+  membershipPolicy?: 'augment' | 'probe-authoritative',
+) {
   return ProviderContributionV1Schema.parse({
     v: 1,
     id: 'gateway',
@@ -53,6 +56,7 @@ function contribution(name = 'Gateway') {
     catalog: {
       source: 'static+probe',
       manualModelPolicy: 'allowed',
+      ...(membershipPolicy ? { membershipPolicy } : {}),
       staticModels: [
         { id: 'default', name: 'Literal Default' },
         { id: 'Case', name: 'Static Case' },
@@ -66,9 +70,10 @@ function resolvedConnection(input: Readonly<{
   connectionId?: string;
   providerName?: string;
   connectionName?: string;
+  membershipPolicy?: 'augment' | 'probe-authoritative';
 }> = {}): ResolvedProviderConnectionRecord {
   const connectionId = ProviderConnectionIdSchema.parse(input.connectionId ?? 'pc_a');
-  const definition = contribution(input.providerName);
+  const definition = contribution(input.providerName, input.membershipPolicy);
   return {
     v: 1,
     connectionId,
@@ -355,6 +360,28 @@ describe('provider catalog host assembly', () => {
       endpointHealth: availableHealth,
       catalog: { stale: false, observedAt: 10 },
       loadState: 'unknown',
+    });
+  });
+
+  it('forwards authoritative contribution membership into host catalog assembly', () => {
+    const connection = resolvedConnection({ membershipPolicy: 'probe-authoritative' });
+    const assembled = assembleProviderConnectionCatalog({
+      agentTargetKey: 'codex',
+      connection,
+      providerSettings: settings(connection),
+      runtimeState: runtimeState({
+        catalogs: [catalogRecord({
+          models: [{ id: 'Case', name: 'API Case' }],
+        })],
+      }),
+      catalogRuntimeKey: currentCatalogKey,
+    });
+
+    expect(assembled.rows.map((row) => row.ref.modelId)).toEqual(['Case']);
+    expect(assembled.rows[0]).toMatchObject({
+      descriptor: { id: 'Case', name: 'Static Case' },
+      sources: { manual: false, static: true, probe: true },
+      confidence: 'probe',
     });
   });
 

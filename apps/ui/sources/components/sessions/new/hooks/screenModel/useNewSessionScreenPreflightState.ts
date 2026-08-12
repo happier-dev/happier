@@ -1,8 +1,8 @@
 import * as React from 'react';
-import type { BackendTargetRefV2 } from '@happier-dev/protocol';
+import type { BackendTargetRefV2, ConnectedServiceBindingsV1 } from '@happier-dev/protocol';
 
 import type { AgentId } from '@/agents/catalog/catalog';
-import { resolveNewSessionCapabilityProbeContext } from '@/components/sessions/new/modules/newSessionCapabilityProbeContext';
+import { resolveNewSessionCapabilityProbeContext, resolveNewSessionModelCapabilityProbeContext } from '@/components/sessions/new/modules/newSessionCapabilityProbeContext';
 import type { Settings } from '@/sync/domains/settings/settings';
 import { useNewSessionPreflightModelsState } from '@/components/sessions/new/hooks/screenModel/useNewSessionPreflightModelsState';
 import { useNewSessionPreflightConfigOptionsState } from '@/components/sessions/new/hooks/screenModel/useNewSessionPreflightConfigOptionsState';
@@ -30,7 +30,8 @@ export function useNewSessionScreenPreflightState(params: Readonly<{
     selectedMachineId: string | null;
     capabilityServerId: string;
     cwd: string | null;
-    connectedServices?: unknown;
+    connectedServicesBindingsPayload?: ConnectedServiceBindingsV1 | null;
+    connectedServicesModelProbeCacheIdentity?: string | null;
 }>): Readonly<{
     preflightModels: ReturnType<typeof useNewSessionPreflightModelsState>['preflightModels'];
     preflightModelsTargetKey: ReturnType<typeof useNewSessionPreflightModelsState>['preflightModelsTargetKey'];
@@ -47,9 +48,17 @@ export function useNewSessionScreenPreflightState(params: Readonly<{
             backendTarget: params.backendTarget,
             settings: params.settings,
             runtimeCarrierAgentId: params.runtimeCarrierAgentId,
-            connectedServices: params.connectedServices,
         });
-    }, [params.backendTarget, params.connectedServices, params.runtimeCarrierAgentId, params.settings]);
+    }, [params.backendTarget, params.runtimeCarrierAgentId, params.settings]);
+    const modelCapabilityProbeContext = React.useMemo(() => {
+        return resolveNewSessionModelCapabilityProbeContext({
+            backendTarget: params.backendTarget,
+            settings: params.settings,
+            runtimeCarrierAgentId: params.runtimeCarrierAgentId,
+            connectedServices: params.connectedServicesBindingsPayload,
+            connectedServicesCacheIdentity: params.connectedServicesModelProbeCacheIdentity,
+        });
+    }, [params.backendTarget, params.connectedServicesBindingsPayload, params.connectedServicesModelProbeCacheIdentity, params.runtimeCarrierAgentId, params.settings]);
 
     const { preflightModels, preflightModelsTargetKey, modelOptions, probe: modelOptionsProbe } = useNewSessionPreflightModelsState({
         backendTarget: params.backendTarget,
@@ -57,7 +66,7 @@ export function useNewSessionScreenPreflightState(params: Readonly<{
         selectedMachineId: params.selectedMachineId,
         capabilityServerId: params.capabilityServerId,
         cwd: params.cwd,
-        probeContext: capabilityProbeContext,
+        probeContext: modelCapabilityProbeContext,
     });
     const { preflightModes: preflightSessionModes, modeOptions: acpSessionModeOptions, probe: acpSessionModeProbe } =
         useNewSessionPreflightSessionModesState({

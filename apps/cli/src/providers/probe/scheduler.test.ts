@@ -26,6 +26,23 @@ describe('provider probe scheduler', () => {
     expect(operation).toHaveBeenCalledTimes(2);
   });
 
+  it('retains a completed catalog result only under its effective post-operation identity', async () => {
+    const operation = vi.fn().mockResolvedValue({ status: 'success' as const, identity: 'revision-b' });
+    const scheduler = createProviderProbeScheduler({ now: () => 1_000, random: () => 0.5 });
+
+    await scheduler.runCatalogWithEffectiveKey(
+      'revision-a',
+      'picker_open',
+      operation,
+      (result) => result.identity,
+    );
+    await scheduler.runCatalog('revision-b', 'picker_open', operation);
+    expect(operation).toHaveBeenCalledTimes(1);
+
+    await scheduler.runCatalog('revision-a', 'picker_open', operation);
+    expect(operation).toHaveBeenCalledTimes(2);
+  });
+
   it('backs failures off, while explicit manual refresh bypasses the delay', async () => {
     let now = 1_000;
     const operation = vi.fn().mockResolvedValue({ status: 'error' });

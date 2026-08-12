@@ -18,6 +18,7 @@ import type { DaemonExecutionRunEntry, DaemonExecutionRunProcessInfo } from '@ha
 import type { RpcHandlerManager } from '../rpc/RpcHandlerManager';
 import type { MemoryWorkerHandle } from '@/daemon/memory/memoryWorker';
 import type { VoiceInferenceWorkerHandle } from '@/daemon/voiceInference/voiceInferenceWorker';
+import type { AgentProviderCatalogObservationService } from '@/providers/probe/agentCatalogObservation';
 import { registerMachineMemoryRpcHandlers } from './rpcHandlers.memory';
 import {
   registerMachineVoiceInferenceRpcHandlers,
@@ -228,6 +229,7 @@ export type MachineRpcHandlerDeps = Readonly<{
     services: MachineProviderRpcServices;
     featureGate: Readonly<{ isEnabled(featureId: 'providers'): boolean }>;
   }>;
+  agentCatalogObservation?: AgentProviderCatalogObservationService;
   runReplaySummaryForDialog?: typeof runReplaySummaryForDialog;
   resolveExecutionSurfaces?: SessionLifecycleMachineDeps['resolveExecutionSurfaces'];
   awaitAgentSessionOpen?: SessionLifecycleMachineDeps['awaitAgentSessionOpen'];

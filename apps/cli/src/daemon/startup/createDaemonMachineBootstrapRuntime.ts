@@ -93,6 +93,7 @@ export function createDaemonMachineBootstrapRuntime(
     dispatchProviderLocalServicesBridge?: ProviderManagedLocalServicesDispatch;
     managedCatalogRuntime?: BootstrapRuntime['managedCatalogRuntime'];
     resolveManagedPurposeBindingIntent?: BootstrapRuntime['resolveManagedPurposeBindingIntent'];
+    createAgentCatalogObservation?: BootstrapRuntime['createAgentCatalogObservation'];
     readManagedLocalServicesSnapshot?: () => Promise<LocalServiceManagedRuntimeSnapshotV1 | null>;
     prepareApiMachineForSessions?: (apiMachine: ApiMachineClient) => void;
     persistedTakeoverAdmissionWaiter?: PersistedTakeoverAdmissionWaiter;
@@ -221,6 +222,9 @@ export function createDaemonMachineBootstrapRuntime(
           resolveManagedPurposeBindingIntent:
             params.resolveManagedPurposeBindingIntent,
         }
+      : {}),
+    ...(params.createAgentCatalogObservation
+      ? { createAgentCatalogObservation: params.createAgentCatalogObservation }
       : {}),
     ...(params.readManagedLocalServicesSnapshot
       ? { readManagedLocalServicesSnapshot: params.readManagedLocalServicesSnapshot }
