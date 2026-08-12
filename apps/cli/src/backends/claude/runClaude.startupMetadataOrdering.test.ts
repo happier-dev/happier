@@ -683,10 +683,11 @@ describe('runClaude startup metadata ordering', () => {
             });
         });
         const { loop } = await import('@/backends/claude/loop');
+        type LoopParams = Parameters<typeof loop>[0];
         const reportMock = vi.mocked(reportSessionToDaemonIfRunning);
         reportMock.mockRejectedValueOnce(stopAfterStartupCoordinator);
-        let initialMode: any = null;
-        vi.mocked(loop).mockImplementationOnce(async (params: any) => {
+        let initialMode: LoopParams['initialClaudeUnifiedTerminalMode'];
+        vi.mocked(loop).mockImplementationOnce(async (params: LoopParams) => {
             initialMode = params.initialClaudeUnifiedTerminalMode;
             await params.onSessionReady(params.session);
             return 0;
