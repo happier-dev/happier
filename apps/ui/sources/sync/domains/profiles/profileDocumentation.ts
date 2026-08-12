@@ -174,24 +174,24 @@ export Z_AI_HAIKU_MODEL="GLM-4.5-Air"`,
                     {
                         name: 'MINIMAX_AUTO_COMPACT_WINDOW',
                         expectedValue: '1000000',
-                        description: 'Context capacity used for auto-compaction. Required alongside the [1m] model id to get M3\'s full 1M window.',
+                        description: 'Context capacity used for auto-compaction. Matches M3\'s 1M context window.',
                         isSecret: false,
                     },
                     {
                         name: 'MINIMAX_MODEL',
-                        expectedValue: 'MiniMax-M3[1m]',
-                        description: 'Default model. The [1m] suffix selects M3\'s 1M-context variant, as MiniMax\'s Claude Code guide specifies.',
+                        expectedValue: 'MiniMax-M3',
+                        description: 'Default model with a 1M-token context window.',
                         isSecret: false,
                     },
                     {
                         name: 'MINIMAX_OPUS_MODEL',
-                        expectedValue: 'MiniMax-M3[1m]',
+                        expectedValue: 'MiniMax-M3',
                         description: 'Model used when the session selects the Opus tier',
                         isSecret: false,
                     },
                     {
                         name: 'MINIMAX_SONNET_MODEL',
-                        expectedValue: 'MiniMax-M3[1m]',
+                        expectedValue: 'MiniMax-M3',
                         description: 'Model used when the session selects the Sonnet tier',
                         isSecret: false,
                     },
@@ -213,15 +213,14 @@ export MINIMAX_BASE_URL="https://api.minimax.io/anthropic"
 export MINIMAX_AUTH_TOKEN="YOUR_MINIMAX_API_KEY"
 export MINIMAX_API_TIMEOUT_MS="600000"
 export MINIMAX_AUTO_COMPACT_WINDOW="1000000"
-export MINIMAX_MODEL="MiniMax-M3[1m]"
-export MINIMAX_OPUS_MODEL="MiniMax-M3[1m]"
-export MINIMAX_SONNET_MODEL="MiniMax-M3[1m]"
+export MINIMAX_MODEL="MiniMax-M3"
+export MINIMAX_OPUS_MODEL="MiniMax-M3"
+export MINIMAX_SONNET_MODEL="MiniMax-M3"
 export MINIMAX_HAIKU_MODEL="MiniMax-M2.7"
 export MINIMAX_CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC="1"
 
 # Model selection guide:
-# - MiniMax-M3[1m]: Default. M3 with its 1M-context variant selected.
-# - MiniMax-M3: Same model without the extended-context suffix (200K).
+# - MiniMax-M3: Default model with a 1M-token context window.
 # - MiniMax-M2.7: Faster, lighter model for background work.`,
             };
         case 'minimax-cn':
@@ -250,24 +249,24 @@ export MINIMAX_CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC="1"
                     {
                         name: 'MINIMAX_CN_AUTO_COMPACT_WINDOW',
                         expectedValue: '1000000',
-                        description: 'Context capacity used for auto-compaction. Required alongside the [1m] model id to get M3\'s full 1M window.',
+                        description: 'Context capacity used for auto-compaction. Matches M3\'s 1M context window.',
                         isSecret: false,
                     },
                     {
                         name: 'MINIMAX_CN_MODEL',
-                        expectedValue: 'MiniMax-M3[1m]',
-                        description: 'Default model. The [1m] suffix selects M3\'s 1M-context variant, as MiniMax\'s Claude Code guide specifies.',
+                        expectedValue: 'MiniMax-M3',
+                        description: 'Default model with a 1M-token context window.',
                         isSecret: false,
                     },
                     {
                         name: 'MINIMAX_CN_OPUS_MODEL',
-                        expectedValue: 'MiniMax-M3[1m]',
+                        expectedValue: 'MiniMax-M3',
                         description: 'Model used when the session selects the Opus tier',
                         isSecret: false,
                     },
                     {
                         name: 'MINIMAX_CN_SONNET_MODEL',
-                        expectedValue: 'MiniMax-M3[1m]',
+                        expectedValue: 'MiniMax-M3',
                         description: 'Model used when the session selects the Sonnet tier',
                         isSecret: false,
                     },
@@ -289,9 +288,9 @@ export MINIMAX_CN_BASE_URL="https://api.minimaxi.com/anthropic"
 export MINIMAX_CN_AUTH_TOKEN="YOUR_MINIMAX_API_KEY"
 export MINIMAX_CN_API_TIMEOUT_MS="600000"
 export MINIMAX_CN_AUTO_COMPACT_WINDOW="1000000"
-export MINIMAX_CN_MODEL="MiniMax-M3[1m]"
-export MINIMAX_CN_OPUS_MODEL="MiniMax-M3[1m]"
-export MINIMAX_CN_SONNET_MODEL="MiniMax-M3[1m]"
+export MINIMAX_CN_MODEL="MiniMax-M3"
+export MINIMAX_CN_OPUS_MODEL="MiniMax-M3"
+export MINIMAX_CN_SONNET_MODEL="MiniMax-M3"
 export MINIMAX_CN_HAIKU_MODEL="MiniMax-M2.7"
 export MINIMAX_CN_CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC="1"`,
             };
