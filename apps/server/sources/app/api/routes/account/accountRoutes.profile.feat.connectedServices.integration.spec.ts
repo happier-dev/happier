@@ -9,6 +9,7 @@ import {
     DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1,
     stringifyConnectedServiceAuthGroupPolicy,
 } from "../connect/connectedServicesV3/authGroupPolicy";
+import { resolveConnectedServiceCredentialRevision } from "../connect/credentials/credentialRevision";
 
 describe("Account profile (integration)", () => {
     let harness: LightSqliteHarness;
@@ -133,7 +134,7 @@ describe("Account profile (integration)", () => {
                         priority: 10,
                     },
                 });
-                await db.serviceAccountToken.create({
+                const legacyUnfencedBackup = await db.serviceAccountToken.create({
                     data: {
                         accountId: account.id,
                         vendor: "openai-codex",
@@ -202,6 +203,13 @@ describe("Account profile (integration)", () => {
                     serviceId: "openai-codex",
                     profileId: "work",
                     credentialRevision: "csr_1123456789ABCDEFGHJKMNPQRS",
+                }, {
+                    serviceId: "openai-codex",
+                    profileId: "disabled-backup",
+                    credentialRevision: resolveConnectedServiceCredentialRevision({
+                        rowId: legacyUnfencedBackup.id,
+                        metadata: legacyUnfencedBackup.metadata,
+                    }),
                 }]));
                 expect(body.connectedServicesV2).toEqual(expect.arrayContaining([
                     expect.objectContaining({
