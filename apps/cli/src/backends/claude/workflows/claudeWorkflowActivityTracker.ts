@@ -78,6 +78,59 @@ const AGENT_TITLE_AUTHORITY: Readonly<Record<AgentTitleSource, number>> = {
   ordinal: 0,
 };
 
+/**
+ * Everything one agent's own sidecar transcript has proven so far, kept whole.
+ *
+ * A journal `started` entry carries only `{type, key, agentId}` and no clock at all, so the sidecar
+ * beside it is the only source for everything else about an anonymous agent: its name, its model,
+ * the sidechain its transcript was imported under, its own start, and whether it died of a terminal
+ * API error. The memo exists because a profile can be observed while the agent itself is not yet on
+ * the roster — remembering only part of it would silently discard evidence we already hold, which
+ * is how a proven start becomes "the moment we happened to look".
+ */
+type WorkflowAgentProfileMemo = Readonly<{
+  title?: string;
+  model?: string;
+  sidechainId?: string;
+  startedAt?: number;
+  endedByApiError?: boolean;
+  endedAt?: number;
+}>;
+
+/**
+ * Fold one sidecar observation into the memo, keeping the BEST evidence per field, not the last.
+ *
+ * The follower re-emits accumulated facts rather than deltas, but it also stops re-reading a fact
+ * the moment re-reading it could not change the answer — so a field proven by an early read and
+ * absent from a later emission is still true, and a later emission is never a correction.
+ */
+function mergeAgentProfileMemo(
+  previous: WorkflowAgentProfileMemo | undefined,
+  fact: WorkflowAgentProfileFact,
+): WorkflowAgentProfileMemo {
+  const title = fact.title ?? previous?.title;
+  const model = fact.model ?? previous?.model;
+  // First import wins, for the same reason `upsertAgent` adopts a sidechain once: a second value
+  // would mean a second transcript for one agent, and adopting it would orphan whatever was filed.
+  const sidechainId = previous?.sidechainId ?? fact.sidechainId;
+  // Earliest wins. A start may only move backwards — towards the instant the agent actually began.
+  const startedAt = fact.startedAt !== undefined && previous?.startedAt !== undefined
+    ? Math.min(fact.startedAt, previous.startedAt)
+    : fact.startedAt ?? previous?.startedAt;
+  // A death does not un-prove itself: the follower latches it, and every emission after it omits
+  // nothing, but a memo that forgot it would resurrect a row the transcript already closed.
+  const endedByApiError = fact.endedByApiError === true || previous?.endedByApiError === true;
+  const endedAt = fact.endedAt ?? previous?.endedAt;
+  return {
+    ...(title ? { title } : {}),
+    ...(model ? { model } : {}),
+    ...(sidechainId ? { sidechainId } : {}),
+    ...(startedAt !== undefined ? { startedAt } : {}),
+    ...(endedByApiError ? { endedByApiError } : {}),
+    ...(endedAt !== undefined ? { endedAt } : {}),
+  };
+}
+
 type MutableAgent = {
   id: string;
   title: string;
@@ -130,7 +183,7 @@ type MutableRun = {
   journalSpecIndexByKey: Map<string, number>;
   journalSpecIndexByAgentId: Map<string, number>;
   /** What each agent's own sidecar transcript says about itself, keyed by agent id. */
-  agentProfilesById: Map<string, Readonly<{ title?: string; model?: string; sidechainId?: string }>>;
+  agentProfilesById: Map<string, WorkflowAgentProfileMemo>;
   childToolUseIds: Set<string>;
   updatedAt: number;
 };
@@ -814,15 +867,58 @@ export function createClaudeWorkflowActivityTracker(params: Readonly<{
       parentId: effectiveFact.workflowToolUseId,
       ...(phaseIndex !== undefined ? { phaseIndex } : {}),
       ...(effectiveFact.phaseTitle ? { phaseTitle: effectiveFact.phaseTitle } : {}),
-      ...(profile?.model ? { model: profile.model } : {}),
-      ...(profile?.sidechainId ? { sidechainId: profile.sidechainId } : {}),
       ...(effectiveFact.summary ? { summary: effectiveFact.summary } : {}),
       ...(effectiveFact.resultPreview ? { resultPreview: effectiveFact.resultPreview } : {}),
     });
+    // Everything the agent's own sidecar already proved, folded on by its single owner. The agent
+    // may have existed for the first time one line ago, so this is also the pre-journal path: a
+    // memo remembered before the roster knew this agent is applied here, whole.
+    const agent = run.agentsById.get(effectiveFact.agentId);
+    if (agent && profile) applyAgentProfileMemo(run, agent, profile, updatedAt);
     run.childToolUseIds.add(effectiveFact.agentId);
     runIdByChildToolUseId.set(effectiveFact.agentId, run.runId);
     run.updatedAt = updatedAt;
     return run.runId;
+  }
+
+  /**
+   * Fold everything one agent's sidecar has proven onto that agent — the single owner of what a
+   * sidecar MEANS, so the two orderings that reach it cannot disagree.
+   *
+   * Both are supported: the profile arriving after the agent is on the roster (the follower's own
+   * ordering — 154 of 154 profile emissions over the real 144-agent session `15a64b1f`), and a
+   * memo remembered before it, applied by `applyWorkflowJournal` the moment the agent appears.
+   */
+  function applyAgentProfileMemo(
+    run: MutableRun,
+    existing: MutableAgent,
+    memo: WorkflowAgentProfileMemo,
+    updatedAt: number,
+  ): void {
+    // The agent's own transcript ended in a terminal API error while this process kept running and
+    // its run stayed open — the one death neither a stop nor a resume can ever observe. Per
+    // RULING-14 that is a STOP, not a failure, ending at the last instant the file evidences.
+    //
+    // An agent that reported its OWN outcome keeps it; one that a sweep resolved does not, because
+    // the sweep could only date it from the last journal line we happened to see while the
+    // transcript names the instant the agent actually stopped. Better evidence for the same event.
+    const reportedOwnOutcome = existing.status === 'complete' || existing.status === 'failed';
+    const died = memo.endedByApiError === true && !reportedOwnOutcome;
+    upsertAgent(run, {
+      id: existing.id,
+      title: memo.title ?? existing.title,
+      // Rank 3 in the RULING-13 ladder: a prompt-declared lane fills an ordinal but never displaces
+      // the name an agent published for itself, which `upsertAgent` enforces by authority.
+      titleSource: memo.title ? 'prompt' : existing.titleSource,
+      status: died ? 'cancelled' : existing.status,
+      updatedAt: died ? updatedAt : existing.updatedAt,
+      ...(memo.model ? { model: memo.model } : {}),
+      ...(memo.sidechainId ? { sidechainId: memo.sidechainId } : {}),
+      // Never fabricated: only a start the sidecar's first record actually carries, and
+      // `upsertAgent` keeps the earliest of it and anything already on screen.
+      ...(memo.startedAt !== undefined ? { startedAt: memo.startedAt } : {}),
+      ...(died ? { completedAt: memo.endedAt ?? existing.completedAt ?? existing.updatedAt } : {}),
+    });
   }
 
   /**
@@ -832,7 +928,7 @@ export function createClaudeWorkflowActivityTracker(params: Readonly<{
    * anonymous while they run. The agent's own `agent-<id>.jsonl`/`.meta.json` sit in the directory
    * the journal follower already watches; this folds them in. It never creates an agent — reading a
    * file is not evidence of a lifecycle transition — but a profile that lands before the journal
-   * entry is remembered and applied the moment the agent appears.
+   * entry is remembered WHOLE and applied the moment the agent appears.
    */
   function applyWorkflowAgentProfile(fact: WorkflowAgentProfileFact, updatedAt: number): string | null {
     if (isForeignSource(fact.sourceSessionId)) return null;
@@ -850,37 +946,12 @@ export function createClaudeWorkflowActivityTracker(params: Readonly<{
     const run = runs.get(workflowRunId);
     if (!run) return null;
 
-    const previous = run.agentProfilesById.get(fact.agentId);
-    run.agentProfilesById.set(fact.agentId, {
-      ...(fact.title ?? previous?.title ? { title: fact.title ?? previous?.title } : {}),
-      ...(fact.model ?? previous?.model ? { model: fact.model ?? previous?.model } : {}),
-      ...(previous?.sidechainId ?? fact.sidechainId
-        ? { sidechainId: previous?.sidechainId ?? fact.sidechainId }
-        : {}),
-    });
+    const memo = mergeAgentProfileMemo(run.agentProfilesById.get(fact.agentId), fact);
+    run.agentProfilesById.set(fact.agentId, memo);
 
     const existing = run.agentsById.get(fact.agentId);
     if (!existing) return run.runId;
-    // The agent's own transcript ended in a terminal API error while this process kept running and
-    // its run stayed open — the one death neither a stop nor a resume can ever observe. Per
-    // RULING-14 that is a STOP, not a failure, ending at the last instant the file evidences.
-    //
-    // An agent that reported its OWN outcome keeps it; one that a sweep resolved does not, because
-    // the sweep could only date it from the last journal line we happened to see while the
-    // transcript names the instant the agent actually stopped. Better evidence for the same event.
-    const reportedOwnOutcome = existing.status === 'complete' || existing.status === 'failed';
-    const died = fact.endedByApiError === true && !reportedOwnOutcome;
-    upsertAgent(run, {
-      id: existing.id,
-      title: fact.title ?? existing.title,
-      titleSource: fact.title ? 'prompt' : existing.titleSource,
-      status: died ? 'cancelled' : existing.status,
-      updatedAt: died ? updatedAt : existing.updatedAt,
-      ...(fact.model ? { model: fact.model } : {}),
-      ...(fact.sidechainId ? { sidechainId: fact.sidechainId } : {}),
-      ...(fact.startedAt !== undefined ? { startedAt: fact.startedAt } : {}),
-      ...(died ? { completedAt: fact.endedAt ?? existing.completedAt ?? existing.updatedAt } : {}),
-    });
+    applyAgentProfileMemo(run, existing, memo, updatedAt);
     run.updatedAt = updatedAt;
     return run.runId;
   }

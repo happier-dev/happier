@@ -1125,6 +1125,71 @@ await parallel([
       expect(tracker.getRunSnapshot('toolu_wf')?.agents[0]?.title).toBe('UNIT A — archaeology');
     });
 
+    /**
+     * The pre-journal path is a supported contract, and a sidecar proves FOUR things — a name, a
+     * model, an import, a start, and a death. The two above pin the first three; these pin the rest,
+     * so a memo cannot quietly carry half of what was already observed.
+     *
+     * (Measured: over the real 144-agent session `15a64b1f`, 154 of 154 profile emissions arrive
+     * AFTER the agent is on the roster, because the follower dispatches the journal wrapper
+     * synchronously before its async sidecar read. These pin the contract, not a live defect.)
+     */
+    it('applies the start the agent’s own transcript proved before its journal entry arrived', () => {
+      const tracker = createClaudeWorkflowActivityTracker({ backendId: 'claude' });
+      tracker.observe(workflowToolUse({ id: 'toolu_wf', name: 'plain' }), { updatedAt: 1000 });
+      tracker.observe(agentProfile({ workflowToolUseId: 'toolu_wf', agentId: 'raw-1', startedAt: 4200 }), { updatedAt: 4500 });
+      tracker.observe(workflowJournal({ workflowToolUseId: 'toolu_wf', type: 'started', key: 'k1', agentId: 'raw-1' }), { updatedAt: 5000 });
+
+      // A memo that forgot the start would date the row from 5000 — the moment we happened to look.
+      expect(tracker.getRunSnapshot('toolu_wf')?.agents[0]?.startedAt).toBe(4200);
+    });
+
+    it('resolves an agent whose transcript was proven dead before its journal entry arrived', () => {
+      const tracker = createClaudeWorkflowActivityTracker({ backendId: 'claude' });
+      tracker.observe(workflowToolUse({ id: 'toolu_wf', name: 'plain' }), { updatedAt: 1000 });
+      tracker.observe(agentProfile({
+        workflowToolUseId: 'toolu_wf',
+        agentId: 'raw-1',
+        endedByApiError: true,
+        endedAt: 4321,
+      }), { updatedAt: 4500 });
+      tracker.observe(workflowJournal({ workflowToolUseId: 'toolu_wf', type: 'started', key: 'k1', agentId: 'raw-1' }), { updatedAt: 5000 });
+
+      // A stop, never a failure (RULING-14), at the last instant the file evidences — a `started`
+      // line replayed after the transcript ended is not evidence the agent is running.
+      expect(tracker.getRunSnapshot('toolu_wf')?.agents[0]).toMatchObject({
+        status: 'cancelled',
+        completedAt: 4321,
+      });
+      expect(tracker.getRunSnapshot('toolu_wf')?.status).toBe('active');
+    });
+
+    it('still lets an agent that reports its own outcome keep it after a death was proven first', () => {
+      const tracker = createClaudeWorkflowActivityTracker({ backendId: 'claude' });
+      tracker.observe(workflowToolUse({ id: 'toolu_wf', name: 'plain' }), { updatedAt: 1000 });
+      tracker.observe(agentProfile({
+        workflowToolUseId: 'toolu_wf',
+        agentId: 'raw-1',
+        endedByApiError: true,
+        endedAt: 4321,
+      }), { updatedAt: 4500 });
+      tracker.observe(workflowJournal({
+        workflowToolUseId: 'toolu_wf',
+        type: 'result',
+        key: 'k1',
+        agentId: 'raw-1',
+        result: { lane: 'finished-lane' },
+      }), { updatedAt: 5000 });
+
+      // The self-report rule survives the reordering: applying a remembered death unconditionally
+      // would overwrite an outcome the agent published for itself.
+      expect(tracker.getRunSnapshot('toolu_wf')?.agents[0]).toMatchObject({
+        title: 'finished-lane',
+        status: 'complete',
+        completedAt: 5000,
+      });
+    });
+
     it('never overrides the name the agent gave itself in its own result', () => {
       const tracker = createClaudeWorkflowActivityTracker({ backendId: 'claude' });
       tracker.observe(workflowToolUse({ id: 'toolu_wf', name: 'plain' }), { updatedAt: 1000 });
