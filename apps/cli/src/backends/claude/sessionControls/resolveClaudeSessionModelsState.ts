@@ -1,5 +1,10 @@
 import type { Metadata } from '@/api/types';
 import { resolveClaudeModelCatalog } from '@/backends/claude/models/resolveClaudeModelCatalog';
+import {
+  isClaudeModelOptionSupportedByInstalledRuntime,
+  probeClaudeInstalledRuntimeCapabilities,
+  type ClaudeInstalledRuntimeCapabilities,
+} from './probeClaudeInstalledRuntimeCapabilities';
 
 type ClaudeSessionModelsState = NonNullable<Metadata['sessionModelsV1']>;
 
@@ -8,15 +13,13 @@ export async function resolveClaudeSessionModelsState(params: Readonly<{
   timeoutMs: number;
   currentModelId: string;
   nowMs: () => number;
-  probeHelpText: (params: Readonly<{ cwd: string; timeoutMs: number }>) => Promise<string | null>;
+  probeInstalledRuntimeCapabilities?: (
+    params: Readonly<{ cwd: string; timeoutMs: number }>,
+  ) => Promise<ClaudeInstalledRuntimeCapabilities>;
 }>): Promise<ClaudeSessionModelsState | null> {
-  const helpText = await params.probeHelpText({ cwd: params.cwd, timeoutMs: params.timeoutMs });
-  if (!helpText) return null;
-
-  // `--effort` support gates the effort CONTROL, not the model list. Returning null here would
-  // leave the new-session picker showing an account-specific list while the running session
-  // published none.
-  const supportsEffort = /\B--effort\b/i.test(helpText);
+  const installedCapabilities = await (
+    params.probeInstalledRuntimeCapabilities ?? probeClaudeInstalledRuntimeCapabilities
+  )({ cwd: params.cwd, timeoutMs: params.timeoutMs });
 
   const updatedAt = params.nowMs();
   // Same owner as the new-session preflight probe, so the in-session picker cannot disagree about
@@ -40,8 +43,8 @@ export async function resolveClaudeSessionModelsState(params: Readonly<{
         ...(typeof model.extendedContextModelId === 'string' ? { extendedContextModelId: model.extendedContextModelId } : {}),
         ...(() => {
           const modelOptions = Array.isArray(model.modelOptions)
-            ? model.modelOptions.filter((option) => supportsEffort
-              || (option.id !== 'reasoning_effort' && option.id !== 'ultracode'))
+            ? model.modelOptions.filter((option) =>
+              isClaudeModelOptionSupportedByInstalledRuntime(option.id, installedCapabilities))
             : [];
           return modelOptions.length > 0 ? { modelOptions } : {};
         })(),

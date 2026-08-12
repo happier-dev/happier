@@ -189,6 +189,10 @@ function normalizeProbeModel(modelRaw: unknown): ProbedAgentModel | null {
 
 function normalizeDynamicModels(modelsRaw: unknown): ProbedAgentModel[] | null {
   if (!Array.isArray(modelsRaw)) return null;
+  // `null` is the adapter's failure signal. An actual empty array is a successful observation
+  // with no provider-listed rows, so preserve that distinction and suppress stale static
+  // membership while retaining Happier's explicit provider-default choice.
+  if (modelsRaw.length === 0) return [{ id: 'default', name: 'Default' }];
   const parsed = modelsRaw
     .map((model) => normalizeProbeModel(model))
     .filter((model): model is ProbedAgentModel => model !== null);

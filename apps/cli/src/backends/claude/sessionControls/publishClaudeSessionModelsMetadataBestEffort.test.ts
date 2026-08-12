@@ -26,7 +26,7 @@ describe('publishClaudeSessionModelsMetadataBestEffort', () => {
       timeoutMs: 250,
       currentModelId: 'claude-sonnet-4-6',
       nowMs: () => 999,
-      probeHelpText: async () => 'Claude Code help output without effort',
+      probeInstalledRuntimeCapabilities: async () => ({ supportsEffort: false, supportsUltracode: false }),
       session: {
         ensureMetadataSnapshot: async () => state.metadata,
         updateMetadata: async (updater) => {
@@ -60,7 +60,7 @@ describe('publishClaudeSessionModelsMetadataBestEffort', () => {
       timeoutMs: 250,
       currentModelId: 'claude-sonnet-4-6',
       nowMs: () => 999,
-      probeHelpText: async () => '  --effort <level>  (low, medium, high, max)',
+      probeInstalledRuntimeCapabilities: async () => ({ supportsEffort: true, supportsUltracode: false }),
       session: {
         ensureMetadataSnapshot: async () => state.metadata,
         updateMetadata: async (updater) => {
@@ -93,7 +93,7 @@ describe('publishClaudeSessionModelsMetadataBestEffort', () => {
       timeoutMs: 250,
       currentModelId: 'claude-haiku-4-5',
       nowMs: () => 999,
-      probeHelpText: async () => '  --effort <level>  (low, medium, high, max)',
+      probeInstalledRuntimeCapabilities: async () => ({ supportsEffort: true, supportsUltracode: false }),
       session: {
         ensureMetadataSnapshot: async () => state.metadata,
         updateMetadata: async (updater) => {
@@ -130,7 +130,7 @@ describe('publishClaudeSessionModelsMetadataBestEffort', () => {
       timeoutMs: 250,
       currentModelId: 'claude-sonnet-4-6[1m]',
       nowMs: () => 999,
-      probeHelpText: async () => '  --effort <level>  (low, medium, high, max)',
+      probeInstalledRuntimeCapabilities: async () => ({ supportsEffort: true, supportsUltracode: false }),
       session: {
         ensureMetadataSnapshot: async () => state.metadata,
         updateMetadata: async (updater) => {
@@ -155,7 +155,7 @@ describe('publishClaudeSessionModelsMetadataBestEffort', () => {
       timeoutMs: 250,
       currentModelId: 'claude-sonnet-4-6',
       nowMs: () => 999,
-      probeHelpText: async () => '  --effort <level>  (low, medium, high, max)',
+      probeInstalledRuntimeCapabilities: async () => ({ supportsEffort: true, supportsUltracode: false }),
       session: {
         ensureMetadataSnapshot: async () => state.metadata,
         updateMetadata: async (updater) => {
@@ -184,7 +184,7 @@ describe('publishClaudeSessionModelsMetadataBestEffort', () => {
       timeoutMs: 250,
       currentModelId: '   ',
       nowMs: () => 999,
-      probeHelpText: async () => '  --effort <level>  (low, medium, high, max)',
+      probeInstalledRuntimeCapabilities: async () => ({ supportsEffort: true, supportsUltracode: false }),
       session: {
         ensureMetadataSnapshot: async () => state.metadata,
         updateMetadata: async (updater) => {
@@ -203,7 +203,7 @@ describe('publishClaudeSessionModelsMetadataBestEffort', () => {
       timeoutMs: 250,
       currentModelId: 'claude-sonnet-4-6',
       nowMs: () => 999,
-      probeHelpText: async () => '  --effort <level>  (low, medium, high, max)',
+      probeInstalledRuntimeCapabilities: async () => ({ supportsEffort: true, supportsUltracode: false }),
       session: {
         ensureMetadataSnapshot: async () => ({} as Metadata),
         updateMetadata: async () => {
@@ -233,7 +233,7 @@ describe('publishClaudeSessionModelsMetadataBestEffort', () => {
         timeoutMs: 250,
         currentModelId: 'claude-fable-5',
         nowMs: () => nowMs,
-        probeHelpText: async () => '  --effort <level>  (low, medium, high, max)',
+        probeInstalledRuntimeCapabilities: async () => ({ supportsEffort: true, supportsUltracode: true }),
         session: {
           ensureMetadataSnapshot: async () => state.metadata,
           updateMetadata: async (updater) => {

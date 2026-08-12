@@ -91,7 +91,8 @@ function readCapabilities(value: unknown): AnthropicModelCapabilities | undefine
  * Parse a raw `GET /v1/models` JSON body into typed entries.
  *
  * Pure and defensive: unknown shapes yield `null`, malformed entries are dropped,
- * and only entries with a non-empty string `id` survive.
+ * and only entries with a non-empty string `id` survive. A valid empty `data` array remains an
+ * empty successful result so callers can distinguish authoritative empty membership from failure.
  */
 export function parseAnthropicModelsResponse(body: unknown): AnthropicModelEntry[] | null {
   const root = readObject(body);
@@ -99,6 +100,7 @@ export function parseAnthropicModelsResponse(body: unknown): AnthropicModelEntry
   if (!Array.isArray(data)) return null;
 
   const entries: AnthropicModelEntry[] = [];
+  const wasExplicitlyEmpty = data.length === 0;
   for (const raw of data) {
     const entry = readObject(raw);
     const id = typeof entry?.id === 'string' ? entry.id.trim() : '';
@@ -117,7 +119,7 @@ export function parseAnthropicModelsResponse(body: unknown): AnthropicModelEntry
       ...(capabilities ? { capabilities } : {}),
     });
   }
-  return entries.length > 0 ? entries : null;
+  return entries.length > 0 || wasExplicitlyEmpty ? entries : null;
 }
 
 export type FetchAnthropicModelsParams = Readonly<{
@@ -136,8 +138,8 @@ export type FetchAnthropicModelsParams = Readonly<{
 /**
  * Fetch the caller's available Claude models from the Anthropic Models API.
  *
- * Returns `null` on any failure (no credential, network error, non-200, unparseable
- * body) so the probe pipeline falls back to the static catalog. Never throws.
+ * Returns `null` on any failure (no credential, network error, non-200, unparseable body). A
+ * successful response may return an empty array. Never throws.
  */
 export async function fetchAnthropicModels(
   params: FetchAnthropicModelsParams,

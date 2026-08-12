@@ -96,6 +96,10 @@ import { archiveAndCloseRuntimeSession } from '@/session/services/archiveAndClos
 import { createSessionMetadataShutdownDeadline } from '@/session/services/sessionMetadataShutdownDeadline';
 import { resolveRequestedSessionDirectory } from '@/agent/runtime/resolveRequestedSessionDirectory';
 import { publishClaudeSessionModelsMetadataBestEffort } from '@/backends/claude/sessionControls/publishClaudeSessionModelsMetadataBestEffort';
+import {
+    probeClaudeInstalledRuntimeCapabilities,
+    resolveClaudeInstalledRuntimeSessionMode,
+} from '@/backends/claude/sessionControls/probeClaudeInstalledRuntimeCapabilities';
 import { createClaudeModelEffortLevelsTracker } from '@/backends/claude/models/claudeModelEffortLevelsTracker';
 import { resolveTerminationArchiveDecision } from '@/agent/runtime/terminationArchivePolicy';
 import { buildClaudeAgentState } from '@/backends/claude/localControl/buildClaudeAgentState';
@@ -671,6 +675,10 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
         if (Number.isFinite(parsed) && parsed > 0) return parsed;
         return process.env.CI ? 3_000 : 1_500;
     };
+    const installedRuntimeCapabilities = await probeClaudeInstalledRuntimeCapabilities({
+        cwd: workingDirectory,
+        timeoutMs: resolveClaudeHelpProbeTimeoutMs(),
+    });
     let localPermissionBridgeEnabled = currentClaudeRemoteMetaState.claudeLocalPermissionBridgeEnabled === true;
     let localPermissionBridgeWaitIndefinitely = currentClaudeRemoteMetaState.claudeLocalPermissionBridgeWaitIndefinitely === true;
     let localPermissionBridgeTimeoutMs = localPermissionBridgeWaitIndefinitely
@@ -1013,7 +1021,7 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
         await modelEffortTracker.refreshWithin(currentModel);
 
         // Push with resolved permission mode, model, system prompts, and tools
-        const enhancedMode: EnhancedMode = {
+        const enhancedMode: EnhancedMode = resolveClaudeInstalledRuntimeSessionMode({
             permissionMode: messagePermissionMode || 'default',
             agentModeId: currentAgentModeId,
             replaySeedAllowed: structuredRouting ? true : parseSpecialCommand(message.content.text).type === null,
@@ -1022,12 +1030,12 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
             fallbackModel: messageFallbackModel,
             customSystemPrompt: messageCustomSystemPrompt,
             appendSystemPrompt: messageAppendSystemPrompt,
-            reasoningEffort: currentReasoningEffort,
             modelEffortLevels: modelEffortTracker.getLevels(),
             modelEffortLevelsModelId: modelEffortTracker.getModelId(),
+            reasoningEffort: currentReasoningEffort,
             ultracode: currentUltracode,
             ...currentClaudeRemoteMetaState,
-        };
+        }, installedRuntimeCapabilities);
 
         const baseQueuedText = structuredRouting?.queuedText ?? message.content.text;
         const deliveryAttribution = {
@@ -1226,19 +1234,19 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
             permissionModeUpdatedAt: options.permissionModeUpdatedAt,
             startingMode: options.startingMode,
             claudeUnifiedTerminalEnabled: unifiedTerminalRuntimeActive,
-            initialClaudeUnifiedTerminalMode: pinClaudeRemoteModeToActiveRuntime({
+            initialClaudeUnifiedTerminalMode: pinClaudeRemoteModeToActiveRuntime(resolveClaudeInstalledRuntimeSessionMode({
                 permissionMode: options.permissionMode ?? 'default',
                 agentModeId: currentAgentModeId,
                 model: currentModel,
                 fallbackModel: currentFallbackModel,
                 customSystemPrompt: currentCustomSystemPrompt,
                 appendSystemPrompt: currentAppendSystemPrompt,
-                reasoningEffort: currentReasoningEffort,
                 modelEffortLevels: modelEffortTracker.getLevels(),
                 modelEffortLevelsModelId: modelEffortTracker.getModelId(),
+                reasoningEffort: currentReasoningEffort,
                 ultracode: currentUltracode,
                 ...currentClaudeRemoteMetaState,
-            }, sessionRuntimeModeKind),
+            }, installedRuntimeCapabilities), sessionRuntimeModeKind),
             claudeCodeExperimentalAgentTeamsEnabled: currentClaudeRemoteMetaState.claudeCodeExperimentalAgentTeamsEnabled,
             startedBy: options.startedBy,
             messageQueue,
@@ -1286,6 +1294,7 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
                         timeoutMs: resolveClaudeHelpProbeTimeoutMs(),
                         currentModelId,
                         session,
+                        probeInstalledRuntimeCapabilities: async () => installedRuntimeCapabilities,
                     });
                 }
                 const readinessReport = reportSessionToDaemonIfRunning({
@@ -1506,6 +1515,10 @@ async function runClaudeLocalFastStart(credentials: Credentials, options: StartO
         if (Number.isFinite(parsed) && parsed > 0) return parsed;
         return process.env.CI ? 3_000 : 1_500;
     };
+    const installedRuntimeCapabilities = await probeClaudeInstalledRuntimeCapabilities({
+        cwd: workingDirectory,
+        timeoutMs: resolveClaudeHelpProbeTimeoutMs(),
+    });
     let pushSender: PushNotificationClient | null = null;
     let currentClaudeRemoteMetaState = resolveInitialClaudeRemoteMetaState({ metaDefaults: options.claudeRemoteMetaDefaults });
     const sessionRuntimeModeKind = normalizeClaudeRemoteMode(currentClaudeRemoteMetaState).kind;
@@ -1901,7 +1914,7 @@ async function runClaudeLocalFastStart(credentials: Credentials, options: StartO
                     });
                     // See the sibling path: bounded resolve before the mode is built, not after.
                     await modelEffortTracker.refreshWithin(currentModel);
-                    const enhancedMode: EnhancedMode = {
+                    const enhancedMode: EnhancedMode = resolveClaudeInstalledRuntimeSessionMode({
                         permissionMode: messagePermissionMode || 'default',
                         agentModeId: currentAgentModeId,
                         replaySeedAllowed: structuredRouting ? true : parseSpecialCommand(message.content.text).type === null,
@@ -1910,12 +1923,12 @@ async function runClaudeLocalFastStart(credentials: Credentials, options: StartO
                         fallbackModel: messageFallbackModel,
                         customSystemPrompt: messageCustomSystemPrompt,
                         appendSystemPrompt: messageAppendSystemPrompt,
-                        reasoningEffort: currentReasoningEffort,
                         modelEffortLevels: modelEffortTracker.getLevels(),
                         modelEffortLevelsModelId: modelEffortTracker.getModelId(),
+                        reasoningEffort: currentReasoningEffort,
                         ultracode: currentUltracode,
                         ...currentClaudeRemoteMetaState,
-                    };
+                    }, installedRuntimeCapabilities);
                     const baseQueuedText = structuredRouting?.queuedText ?? message.content.text;
                     const deliveryAttribution = {
                         userMessageSeq: deliveryInfo?.seq ?? null,
@@ -2039,19 +2052,19 @@ async function runClaudeLocalFastStart(credentials: Credentials, options: StartO
                     });
                     seedInitialAppendSystemPrompt(defaultSystemPromptText);
 
-                    const initialClaudeUnifiedTerminalMode = pinClaudeRemoteModeToActiveRuntime({
+                    const initialClaudeUnifiedTerminalMode = pinClaudeRemoteModeToActiveRuntime(resolveClaudeInstalledRuntimeSessionMode({
                         permissionMode: options.permissionMode ?? 'default',
                         agentModeId: currentAgentModeId,
                         model: currentModel,
                         fallbackModel: currentFallbackModel,
                         customSystemPrompt: currentCustomSystemPrompt,
                         appendSystemPrompt: currentAppendSystemPrompt,
-                        reasoningEffort: currentReasoningEffort,
                         modelEffortLevels: modelEffortTracker.getLevels(),
                         modelEffortLevelsModelId: modelEffortTracker.getModelId(),
+                        reasoningEffort: currentReasoningEffort,
                         ultracode: currentUltracode,
                         ...currentClaudeRemoteMetaState,
-                    }, sessionRuntimeModeKind);
+                    }, installedRuntimeCapabilities), sessionRuntimeModeKind);
 
                     const exitCode = await loop({
                         path: workingDirectory,
@@ -2101,6 +2114,7 @@ async function runClaudeLocalFastStart(credentials: Credentials, options: StartO
                                         ensureMetadataSnapshot: (opts: Readonly<{ timeoutMs: number }>) => Promise<unknown>;
                                         updateMetadata: (updater: (prev: Metadata) => Metadata) => Promise<void>;
                                     },
+                                    probeInstalledRuntimeCapabilities: async () => installedRuntimeCapabilities,
                                 });
                             }
                             const readySessionId = artifacts.deferredSession.sessionId;

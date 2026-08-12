@@ -65,30 +65,83 @@ afterEach(() => {
 });
 
 describe('resolveClaudeModelCatalog', () => {
-  it('merges discovered models into the curated catalog', async () => {
+  it('uses a successful response as membership authority and enriches matching rows without overriding API facts', async () => {
     process.env.ANTHROPIC_API_KEY = 'sk-ant-key';
     fetchAnthropicModelsMock.mockResolvedValue([
-      { id: 'claude-opus-9', displayName: 'Opus 9', capabilities: fullEffort() },
+      {
+        id: 'claude-sonnet-4-6',
+        displayName: 'Claude Sonnet 4.6',
+        maxInputTokens: 222_222,
+        capabilities: {
+          effort: {
+            supported: true,
+            low: { supported: true },
+            medium: { supported: true },
+            high: { supported: true },
+            max: { supported: true },
+          },
+        },
+      },
     ]);
 
     const models = await resolveClaudeModelCatalog({ timeoutMs: 1_000 });
 
-    expect(models.some((m) => m.id === 'claude-opus-9')).toBe(true);
-    expect(models.some((m) => m.id === 'claude-fable-5')).toBe(true);
+    expect(models).toHaveLength(1);
+    expect(models[0]).toEqual(expect.objectContaining({
+      id: 'claude-sonnet-4-6',
+      name: 'Sonnet 4.6',
+      description: expect.any(String),
+      contextWindowTokens: 222_222,
+      extendedContextModelId: 'claude-sonnet-4-6[1m]',
+    }));
+    expect(resolveClaudeEffortLevelsFromModelDescriptor(models[0])).toEqual(['low', 'medium', 'high', 'max']);
   });
 
-  it('keeps the first discovered row when an alias and dated snapshot normalize to the same id', async () => {
+  it('retains every exact returned id when an alias and dated snapshot normalize to the same curated row', async () => {
     process.env.ANTHROPIC_API_KEY = 'sk-ant-key';
     fetchAnthropicModelsMock.mockResolvedValue([
-      { id: 'claude-opus-9', displayName: 'Opus 9 Alias' },
+      { id: 'claude-sonnet-4-6', displayName: 'Sonnet Alias' },
+      { id: 'claude-sonnet-4-6-20260812', displayName: 'Sonnet Snapshot' },
+    ]);
+
+    const models = await resolveClaudeModelCatalog({ timeoutMs: 1_000 });
+
+    expect(models).toEqual([
+      expect.objectContaining({ id: 'claude-sonnet-4-6', name: 'Sonnet 4.6' }),
+      expect.objectContaining({
+        id: 'claude-sonnet-4-6-20260812',
+        name: 'Sonnet 4.6',
+        extendedContextModelId: 'claude-sonnet-4-6-20260812[1m]',
+      }),
+    ]);
+  });
+
+  it('deduplicates only repeated exact returned ids', async () => {
+    process.env.ANTHROPIC_API_KEY = 'sk-ant-key';
+    fetchAnthropicModelsMock.mockResolvedValue([
+      { id: 'claude-opus-9', displayName: 'Opus 9 First' },
+      { id: 'claude-opus-9', displayName: 'Opus 9 Duplicate' },
       { id: 'claude-opus-9-20260812', displayName: 'Opus 9 Snapshot' },
     ]);
 
     const models = await resolveClaudeModelCatalog({ timeoutMs: 1_000 });
-    const matching = models.filter((model) => model.id === 'claude-opus-9' || model.id === 'claude-opus-9-20260812');
 
-    expect(matching).toEqual([
-      expect.objectContaining({ id: 'claude-opus-9', name: 'Opus 9 Alias' }),
+    expect(models.map((model) => ({ id: model.id, name: model.name }))).toEqual([
+      { id: 'claude-opus-9', name: 'Opus 9 First' },
+      { id: 'claude-opus-9-20260812', name: 'Opus 9 Snapshot' },
+    ]);
+  });
+
+  it('does not apply a curated-generation floor to account-returned ids', async () => {
+    process.env.ANTHROPIC_API_KEY = 'sk-ant-key';
+    fetchAnthropicModelsMock.mockResolvedValue([
+      { id: 'claude-2.1-account-model', displayName: 'Account Legacy Model' },
+    ]);
+
+    const models = await resolveClaudeModelCatalog({ timeoutMs: 1_000 });
+
+    expect(models).toEqual([
+      expect.objectContaining({ id: 'claude-2.1-account-model', name: 'Account Legacy Model' }),
     ]);
   });
 
@@ -102,6 +155,15 @@ describe('resolveClaudeModelCatalog', () => {
 
     expect(resolution.source).toBe('dynamic');
     expect(resolution.models.some((model) => model.id === 'claude-fable-5')).toBe(true);
+  });
+
+  it('treats a successful empty response as authoritative empty membership', async () => {
+    process.env.ANTHROPIC_API_KEY = 'sk-ant-key';
+    fetchAnthropicModelsMock.mockResolvedValue([]);
+
+    const resolution = await resolveClaudeModelCatalogResolution({ timeoutMs: 1_000 });
+
+    expect(resolution).toEqual({ models: [], source: 'dynamic' });
   });
 
   it('serves a cached catalog and never substitutes ambient auth for a selected account', async () => {
@@ -142,6 +204,21 @@ describe('resolveClaudeModelCatalog', () => {
     process.env.ANTHROPIC_API_KEY = 'sk-ant-key-two';
     await resolveClaudeModelCatalog({ timeoutMs: 1_000 });
     expect(fetchAnthropicModelsMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('bounds retained snapshots across rotated credential identities', async () => {
+    fetchAnthropicModelsMock.mockResolvedValue([{ id: 'claude-opus-9', displayName: 'Opus 9' }]);
+
+    for (let index = 0; index < 33; index += 1) {
+      process.env.ANTHROPIC_API_KEY = `sk-ant-rotated-${index}`;
+      await resolveClaudeModelCatalog({ timeoutMs: 1_000 });
+    }
+    expect(fetchAnthropicModelsMock).toHaveBeenCalledTimes(33);
+
+    process.env.ANTHROPIC_API_KEY = 'sk-ant-rotated-0';
+    await resolveClaudeModelCatalog({ timeoutMs: 1_000 });
+
+    expect(fetchAnthropicModelsMock).toHaveBeenCalledTimes(34);
   });
 
   it('refetches when the on-disk credential is replaced in the same config dir', async () => {
@@ -211,6 +288,66 @@ describe('resolveClaudeModelCatalog', () => {
     expect(models.length).toBeGreaterThan(0);
     expect(models.some((m) => m.id === 'claude-fable-5')).toBe(true);
     expect(models.some((m) => m.id === 'claude-opus-9')).toBe(false);
+  });
+
+  it('retains the last successful dynamic snapshot when a later refresh fails', async () => {
+    process.env.ANTHROPIC_API_KEY = 'sk-ant-key';
+    let currentTimeMs = 10;
+    fetchAnthropicModelsMock
+      .mockResolvedValueOnce([{ id: 'claude-opus-9', displayName: 'Opus 9' }])
+      .mockResolvedValueOnce(null);
+
+    const first = await resolveClaudeModelCatalogResolution({
+      timeoutMs: 1_000,
+      nowMs: () => currentTimeMs,
+    });
+    currentTimeMs += 24 * 60 * 60 * 1_000 + 1;
+    const stale = await resolveClaudeModelCatalogResolution({
+      timeoutMs: 1_000,
+      nowMs: () => currentTimeMs,
+    });
+    currentTimeMs += 1;
+    const staleDuringFailureCooldown = await resolveClaudeModelCatalogResolution({
+      timeoutMs: 1_000,
+      nowMs: () => currentTimeMs,
+    });
+
+    expect(first).toEqual(expect.objectContaining({ source: 'dynamic' }));
+    expect(stale).toEqual(first);
+    expect(staleDuringFailureCooldown).toEqual(first);
+    expect(stale.models.map((model) => model.id)).toEqual(['claude-opus-9']);
+    expect(fetchAnthropicModelsMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not let another account refresh discard an expired dynamic snapshot before its own refresh', async () => {
+    let currentTimeMs = 10;
+    fetchAnthropicModelsMock
+      .mockResolvedValueOnce([{ id: 'claude-account-a', displayName: 'Account A' }])
+      .mockResolvedValueOnce([{ id: 'claude-account-b', displayName: 'Account B' }])
+      .mockResolvedValueOnce(null);
+
+    process.env.ANTHROPIC_API_KEY = 'sk-ant-account-a';
+    const accountA = await resolveClaudeModelCatalogResolution({
+      timeoutMs: 1_000,
+      nowMs: () => currentTimeMs,
+    });
+
+    currentTimeMs += 24 * 60 * 60 * 1_000 + 1;
+    process.env.ANTHROPIC_API_KEY = 'sk-ant-account-b';
+    await resolveClaudeModelCatalogResolution({
+      timeoutMs: 1_000,
+      nowMs: () => currentTimeMs,
+    });
+
+    process.env.ANTHROPIC_API_KEY = 'sk-ant-account-a';
+    const staleAccountA = await resolveClaudeModelCatalogResolution({
+      timeoutMs: 1_000,
+      nowMs: () => currentTimeMs,
+    });
+
+    expect(staleAccountA).toEqual(accountA);
+    expect(staleAccountA.models.map((model) => model.id)).toEqual(['claude-account-a']);
+    expect(fetchAnthropicModelsMock).toHaveBeenCalledTimes(3);
   });
 });
 

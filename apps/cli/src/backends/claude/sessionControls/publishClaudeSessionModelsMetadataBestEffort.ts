@@ -2,7 +2,7 @@ import type { Metadata } from '@/api/types';
 import { logger } from '@/ui/logger';
 
 import { reconcileClaudeSessionModelsState } from '../sessionModels/reconcileClaudeSessionModelsState';
-import { probeClaudeHelpText } from './probeClaudeHelpText';
+import type { ClaudeInstalledRuntimeCapabilities } from './probeClaudeInstalledRuntimeCapabilities';
 import { resolveClaudeSessionModelsState } from './resolveClaudeSessionModelsState';
 
 /** Options that only exist while the installed CLI can apply `--effort`. */
@@ -53,7 +53,9 @@ export async function publishClaudeSessionModelsMetadataBestEffort(params: Reado
     updateMetadata: (updater: (prev: Metadata) => Metadata) => Promise<void>;
   }>;
   nowMs?: () => number;
-  probeHelpText?: (params: Readonly<{ cwd: string; timeoutMs: number }>) => Promise<string | null>;
+  probeInstalledRuntimeCapabilities?: (
+    params: Readonly<{ cwd: string; timeoutMs: number }>,
+  ) => Promise<ClaudeInstalledRuntimeCapabilities>;
 }>): Promise<void> {
   const currentModelId = String(params.currentModelId ?? '').trim();
   if (!currentModelId) return;
@@ -66,7 +68,9 @@ export async function publishClaudeSessionModelsMetadataBestEffort(params: Reado
     timeoutMs: params.timeoutMs,
     currentModelId,
     nowMs: params.nowMs ?? (() => Date.now()),
-    probeHelpText: params.probeHelpText ?? probeClaudeHelpText,
+    ...(params.probeInstalledRuntimeCapabilities
+      ? { probeInstalledRuntimeCapabilities: params.probeInstalledRuntimeCapabilities }
+      : {}),
   }).catch(() => null);
   if (!state) return;
 

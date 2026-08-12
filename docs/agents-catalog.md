@@ -165,6 +165,10 @@ the in-session `sessionModelsV1` publisher both read it, so the two pickers cann
 which models exist or which effort tiers they report. Its provider-owned cache identity is the
 normalized endpoint, credential kind, and full SHA-256 credential hash. A warm cache entry avoids a
 network request; a cold session start may fetch the catalog before publishing the resolved models.
+For Claude, a successful account response is authoritative for membership and API capability/context
+facts; curated rows only enrich matching ids and serve as the fallback before the first success. A
+later failed refresh retains the bounded last successful account snapshot, serves it during the
+failure cooldown, and retries discovery after that cooldown without replacing it on repeat failure.
 Effort tiers are resolved once when the session mode is built and travel on the mode, so spawn-time
 resolution and launch-option hashing see the same value and hashing stays pure.
 

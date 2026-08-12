@@ -221,6 +221,22 @@ describe('probeAgentModelsBestEffort (static-only providers)', () => {
       .toMatchObject({ extendedContextModelId: 'claude-opus-9[1m]' });
   });
 
+  it('treats an empty provider-owned model array as authoritative instead of restoring static rows', async () => {
+    claudePreflightModelsProbeMock.mockResolvedValue([]);
+
+    const res = await probeAgentModelsBestEffort({
+      agentId: 'claude',
+      cwd: process.cwd(),
+      timeoutMs: 100,
+    });
+
+    expect(res).toMatchObject({
+      provider: 'claude',
+      source: 'dynamic',
+      availableModels: [{ id: 'default', name: 'Default' }],
+    });
+  });
+
   it('falls back only to the default Codex model when dynamic probing is unavailable', async () => {
     const res = await probeAgentModelsBestEffort({
       agentId: 'codex',

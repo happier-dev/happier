@@ -9,7 +9,7 @@ describe('resolveClaudeSessionModelsState', () => {
       timeoutMs: 250,
       currentModelId: 'claude-sonnet-4-6',
       nowMs: () => 123,
-      probeHelpText: async () => 'Claude Code help output without effort',
+      probeInstalledRuntimeCapabilities: async () => ({ supportsEffort: false, supportsUltracode: false }),
     });
 
     // Missing `--effort` disables the effort CONTROL, not the list itself; suppressing the list
@@ -27,8 +27,7 @@ describe('resolveClaudeSessionModelsState', () => {
       timeoutMs: 250,
       currentModelId: 'claude-sonnet-4-6',
       nowMs: () => 456,
-      probeHelpText: async () =>
-        '  --effort <level>  Effort level for the current session (low, medium, high, max)',
+      probeInstalledRuntimeCapabilities: async () => ({ supportsEffort: true, supportsUltracode: false }),
     });
 
     expect(res).toEqual(
@@ -118,5 +117,10 @@ describe('resolveClaudeSessionModelsState', () => {
         ]),
       }),
     );
+
+    const fableOptionIds = res?.availableModels
+      .find((model) => model.id === 'claude-fable-5')
+      ?.modelOptions?.map((option) => option.id) ?? [];
+    expect(fableOptionIds).not.toContain('ultracode');
   });
 });

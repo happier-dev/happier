@@ -230,8 +230,8 @@ export const AGENT_MODEL_CONFIG: Readonly<Record<AgentId, AgentModelConfig>> = O
     supportsSelection: true,
     supportsFreeform: true,
     nonAcpApplyScope: 'next_prompt',
-    // Augment the curated static catalog with any models the account can run (fetched from the
-    // Anthropic Models API in the Claude preflight adapter). Falls back to static on any failure.
+    // Successful account discovery owns membership and API capability/context facts. These static
+    // rows enrich matching ids and are the cold fallback until the account has a dynamic snapshot.
     dynamicProbe: 'auto',
     defaultMode: 'default',
     allowedModes: [

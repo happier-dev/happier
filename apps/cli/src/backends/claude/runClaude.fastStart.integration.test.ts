@@ -18,6 +18,18 @@ const agentStateUpdateSnapshots = vi.hoisted(() => [] as Array<{
   reason: string;
   state: any;
 }>);
+const probeClaudeInstalledRuntimeCapabilitiesMock = vi.hoisted(() => vi.fn(async () => ({
+  supportsEffort: true,
+  supportsUltracode: true,
+})));
+
+vi.mock('@/backends/claude/sessionControls/probeClaudeInstalledRuntimeCapabilities', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/backends/claude/sessionControls/probeClaudeInstalledRuntimeCapabilities')>();
+  return {
+    ...actual,
+    probeClaudeInstalledRuntimeCapabilities: probeClaudeInstalledRuntimeCapabilitiesMock,
+  };
+});
 
 vi.mock('@/backends/claude/localPermissions/localPermissionBridge', () => ({
   DEFAULT_LOCAL_PERMISSION_HOOK_RESPONSE: {
@@ -161,6 +173,7 @@ let lastRuntimeSessionClient: {
   rpcHandlerManager: { registerHandler: ReturnType<typeof vi.fn>; invokeLocal: ReturnType<typeof vi.fn> };
   setSessionRuntimeControls: ReturnType<typeof vi.fn>;
   registerSessionRuntimeControls: ReturnType<typeof vi.fn>;
+  onUserMessage: ReturnType<typeof vi.fn>;
   keepAlive: ReturnType<typeof vi.fn>;
   sendSessionDeath: ReturnType<typeof vi.fn>;
   flush: ReturnType<typeof vi.fn>;
@@ -604,6 +617,71 @@ describe('runClaude fast-start', () => {
     }
 
     if (testError) throw testError;
+  });
+
+  it('removes unsupported installed effort and ultracode from fast-start message launch modes after one probe', async () => {
+    vi.resetModules();
+    vi.doMock('@/backends/claude/sessionControls/publishClaudeSessionModelsMetadataBestEffort', () => ({
+      publishClaudeSessionModelsMetadataBestEffort: vi.fn(async () => {}),
+    }));
+    probeClaudeInstalledRuntimeCapabilitiesMock.mockReset();
+    probeClaudeInstalledRuntimeCapabilitiesMock.mockResolvedValue({
+      supportsEffort: false,
+      supportsUltracode: false,
+    });
+    loopStarted = createDeferred<void>();
+    loopExit = createDeferred<number>();
+    lastLoopOpts = null;
+    lastRuntimeSessionClient = null;
+    autoSessionReady = true;
+    awaitAutoSessionReadyCallback = false;
+    initResolved = false;
+    backendInitDelayMs = 0;
+    getOrCreateSessionSpy.mockImplementation(async () => ({ id: 'sess_fast_effort_gate', metadataVersion: 1 }));
+
+    const { runClaude } = await import('./runClaude');
+    const runPromise = runClaude(createLegacyCredentials(), {
+      startedBy: 'terminal',
+      startingMode: 'local',
+      model: 'claude-fable-5',
+    });
+
+    try {
+      await waitFor(loopStarted.promise, loopStartWaitMs);
+      await waitFor(new Promise<void>((resolve, reject) => {
+        const startedAt = Date.now();
+        const tick = () => {
+          if (lastRuntimeSessionClient?.onUserMessage.mock.calls[0]?.[0]) return resolve();
+          if (Date.now() - startedAt > 1_000) return reject(new Error('Timed out waiting for fast-start user handler'));
+          setTimeout(tick, 0);
+        };
+        tick();
+      }), 2_000);
+
+      const launchModes: unknown[] = [];
+      lastLoopOpts.messageQueue.push = vi.fn((_text: string, mode: unknown) => launchModes.push(mode));
+      const handler = lastRuntimeSessionClient?.onUserMessage.mock.calls[0]?.[0];
+      await handler({
+        content: { type: 'text', text: 'ship it' },
+        localId: 'fast-effort-gated',
+        createdAt: 101,
+        meta: { model: 'claude-fable-5', reasoningEffort: 'xhigh', ultracode: true },
+      });
+
+      expect(launchModes).toEqual([
+        expect.not.objectContaining({ reasoningEffort: expect.anything(), ultracode: expect.anything() }),
+      ]);
+      expect(probeClaudeInstalledRuntimeCapabilitiesMock).toHaveBeenCalledTimes(1);
+    } finally {
+      loopExit.resolve(0);
+      await runPromise;
+      probeClaudeInstalledRuntimeCapabilitiesMock.mockReset();
+      probeClaudeInstalledRuntimeCapabilitiesMock.mockResolvedValue({
+        supportsEffort: true,
+        supportsUltracode: true,
+      });
+      vi.doUnmock('@/backends/claude/sessionControls/publishClaudeSessionModelsMetadataBestEffort');
+    }
   });
 
   it('uses a persisted model override for the initial fast-start mode and tier identity', async () => {

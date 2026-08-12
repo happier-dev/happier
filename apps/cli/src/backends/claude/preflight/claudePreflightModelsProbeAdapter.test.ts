@@ -10,11 +10,13 @@ const {
   createConnectedServiceCredentialApiMock,
   fetchAnthropicModelsMock,
   getConnectedServiceCredentialPlainMock,
+  probeClaudeInstalledRuntimeCapabilitiesMock,
   readClaudeCodeNativeCredentialMock,
 } = vi.hoisted(() => ({
   createConnectedServiceCredentialApiMock: vi.fn(),
   fetchAnthropicModelsMock: vi.fn<(...args: unknown[]) => Promise<AnthropicModelEntry[] | null>>(),
   getConnectedServiceCredentialPlainMock: vi.fn(),
+  probeClaudeInstalledRuntimeCapabilitiesMock: vi.fn(),
   readClaudeCodeNativeCredentialMock: vi.fn<(...args: unknown[]) => Promise<unknown>>(),
 }));
 
@@ -31,6 +33,14 @@ vi.mock('@/backends/claude/models/fetchAnthropicModels', async (importOriginal) 
 vi.mock('@/backends/claude/connectedServices/nativeAuth/claudeCodeCredentialFile', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/backends/claude/connectedServices/nativeAuth/claudeCodeCredentialFile')>();
   return { ...actual, readClaudeCodeNativeCredential: readClaudeCodeNativeCredentialMock };
+});
+
+vi.mock('@/backends/claude/sessionControls/probeClaudeInstalledRuntimeCapabilities', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/backends/claude/sessionControls/probeClaudeInstalledRuntimeCapabilities')>();
+  return {
+    ...actual,
+    probeClaudeInstalledRuntimeCapabilities: probeClaudeInstalledRuntimeCapabilitiesMock,
+  };
 });
 
 import { claudePreflightModelsProbeAdapter } from './claudePreflightModelsProbeAdapter';
@@ -144,6 +154,8 @@ beforeEach(() => {
   });
   readClaudeCodeNativeCredentialMock.mockReset();
   readClaudeCodeNativeCredentialMock.mockResolvedValue(null);
+  probeClaudeInstalledRuntimeCapabilitiesMock.mockReset();
+  probeClaudeInstalledRuntimeCapabilitiesMock.mockResolvedValue({ supportsEffort: true, supportsUltracode: true });
   envScope.restore();
   envScope = createEnvKeyScope(envKeys);
 });
@@ -154,26 +166,36 @@ afterEach(() => {
 });
 
 describe('claudePreflightModelsProbeAdapter', () => {
-  it('augments the static catalog with discovered models, preserving curation and collapsing dated dupes', async () => {
+  it('projects authoritative returned membership with API facts and curated matching-row enrichment', async () => {
     process.env.ANTHROPIC_API_KEY = 'sk-ant-key';
     fetchAnthropicModelsMock.mockResolvedValue([
       { id: 'claude-opus-5', displayName: 'Claude Opus 5', maxInputTokens: 1_000_000, capabilities: fullEffort() },
-      // Dated snapshot of a curated alias — must collapse onto static `claude-opus-4-5`.
+      // Dated snapshot of a curated alias — the exact account-returned id must remain selectable.
       { id: 'claude-opus-4-5-20251101', displayName: 'Claude Opus 4.5', capabilities: fullEffort() },
       // Genuinely new model — must appear with derived options.
       { id: 'claude-opus-9', displayName: 'Opus 9', maxInputTokens: 1_000_000, capabilities: fullEffort() },
     ]);
 
     const raw = await runProbe();
-    if (!raw) throw new Error('expected augmented model list');
+    if (!raw) throw new Error('expected authoritative model list');
 
     expect(fetchAnthropicModelsMock).toHaveBeenCalledWith(expect.objectContaining({ apiKey: 'sk-ant-key' }));
 
-    // Curated static model keeps its hand-authored effort default.
-    const opus48 = raw.find((m) => m.id === 'claude-opus-4-8');
-    const opus48Effort = (opus48?.modelOptions as Array<Record<string, unknown>> | undefined)
+    expect(raw.map((model) => model.id)).toEqual([
+      'claude-opus-5',
+      'claude-opus-4-5-20251101',
+      'claude-opus-9',
+    ]);
+
+    // Matching curated rows keep curated presentation while API capabilities own effort facts.
+    const opus5 = raw.find((m) => m.id === 'claude-opus-5');
+    const opus5Effort = (opus5?.modelOptions as Array<Record<string, unknown>> | undefined)
       ?.find((o) => o.id === 'reasoning_effort');
-    expect(opus48Effort?.currentValue).toBe('high');
+    expect(opus5?.name).toBe('Opus 5');
+    expect(opus5?.description).toEqual(expect.any(String));
+    expect(opus5Effort?.options).toEqual(expect.arrayContaining([
+      expect.objectContaining({ value: 'max' }),
+    ]));
 
     // Discovered model appears with derived options + context window.
     const opus9 = raw.find((m) => m.id === 'claude-opus-9');
@@ -181,9 +203,12 @@ describe('claudePreflightModelsProbeAdapter', () => {
     expect(opus9?.contextWindowTokens).toBe(1_000_000);
     expect((opus9?.modelOptions as Array<Record<string, unknown>> | undefined)?.some((o) => o.id === 'reasoning_effort')).toBe(true);
 
-    // Dated dupe collapsed: the alias stays, the dated id is not added.
-    expect(raw.some((m) => m.id === 'claude-opus-4-5')).toBe(true);
-    expect(raw.some((m) => m.id === 'claude-opus-4-5-20251101')).toBe(false);
+    const dated = raw.find((m) => m.id === 'claude-opus-4-5-20251101');
+    expect(dated).toEqual(expect.objectContaining({
+      id: 'claude-opus-4-5-20251101',
+      name: 'Opus 4.5',
+      description: expect.any(String),
+    }));
   });
 
   it('resolves the on-disk Claude credentials when no env token is set', async () => {
@@ -208,6 +233,29 @@ describe('claudePreflightModelsProbeAdapter', () => {
 
     expect(raw).toBeNull();
     expect(fetchAnthropicModelsMock).not.toHaveBeenCalled();
+  });
+
+  it('requires explicit installed-runtime ultracode recognition beyond generic --effort support', async () => {
+    process.env.ANTHROPIC_API_KEY = 'sk-ant-key';
+    probeClaudeInstalledRuntimeCapabilitiesMock.mockResolvedValue({
+      supportsEffort: true,
+      supportsUltracode: false,
+    });
+    fetchAnthropicModelsMock.mockResolvedValue([
+      { id: 'claude-opus-9', displayName: 'Opus 9', capabilities: fullEffort() },
+    ]);
+
+    const raw = await runProbe();
+    if (!raw) throw new Error('expected model list');
+
+    for (const model of raw) {
+      const optionIds = (model.modelOptions as Array<Record<string, unknown>> | undefined)
+        ?.map((option) => option.id) ?? [];
+      expect(optionIds).not.toContain('ultracode');
+    }
+    const opus9Options = raw.find((model) => model.id === 'claude-opus-9')
+      ?.modelOptions as Array<Record<string, unknown>> | undefined;
+    expect(opus9Options?.some((option) => option.id === 'reasoning_effort')).toBe(true);
   });
 
   it('routes the request at the configured base url instead of the Anthropic host', async () => {
@@ -252,7 +300,7 @@ describe('claudePreflightModelsProbeAdapter', () => {
     expect(fetchAnthropicModelsMock).toHaveBeenCalledWith(expect.objectContaining({ accessToken: 'sk-ant-oat01-disk' }));
   });
 
-  it('drops discovered models from generations the curated catalog no longer covers', async () => {
+  it('preserves account-returned models from generations outside the curated catalog', async () => {
     process.env.ANTHROPIC_API_KEY = 'sk-ant-key';
     fetchAnthropicModelsMock.mockResolvedValue([
       { id: 'claude-opus-9', displayName: 'Opus 9', capabilities: fullEffort() },
@@ -264,18 +312,16 @@ describe('claudePreflightModelsProbeAdapter', () => {
     ]);
 
     const raw = await runProbe();
-    if (!raw) throw new Error('expected augmented model list');
+    if (!raw) throw new Error('expected authoritative model list');
 
-    expect(raw.some((m) => m.id === 'claude-opus-9')).toBe(true);
-    for (const legacyId of [
+    expect(raw.map((model) => model.id)).toEqual([
+      'claude-opus-9',
       'claude-3-5-sonnet-20241022',
       'claude-3-5-sonnet-20240620',
       'claude-3-haiku-20240307',
       'claude-2.1',
       'claude-instant-1.2',
-    ]) {
-      expect(raw.some((m) => m.id === legacyId)).toBe(false);
-    }
+    ]);
   });
 
   it('reads the selected connected account credential instead of the daemon own config dir', async () => {

@@ -1,4 +1,8 @@
-import { AGENT_MODEL_CONFIG, type AgentModelDescriptor } from '@happier-dev/agents';
+import {
+  AGENT_MODEL_CONFIG,
+  providers,
+  type AgentModelDescriptor,
+} from '@happier-dev/agents';
 import type { ConnectedServiceBindingsV1 } from '@happier-dev/protocol';
 
 import { buildDiscoveredClaudeModelDescriptor } from './deriveDiscoveredClaudeModel';
@@ -24,28 +28,15 @@ export {
 
 const CATALOG_SUCCESS_TTL_MS = 24 * 60 * 60 * 1_000;
 const CATALOG_FAILURE_TTL_MS = 60 * 1_000;
+const CATALOG_MAX_ENTRIES = 32;
 
 function readNonBlankString(value: unknown): string | null {
   return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
 }
 
-/** Lowercase + strip a trailing dated snapshot suffix (`-YYYYMMDD`) for dedup comparison only. */
+/** Lowercase + strip a trailing dated suffix (`-YYYYMMDD`) for curated-row matching only. */
 function normalizeDatedId(rawId: string): string {
   return rawId.trim().toLowerCase().replace(/-\d{8}$/u, '');
-}
-
-/**
- * Major generation of a Claude model id, or `null` for ids that are not Claude models.
- *
- * Both Claude naming schemes put the major generation in the first numeric segment —
- * `claude-3-5-sonnet` (legacy) and `claude-opus-4-8` (current) — so the first number wins. Ids from
- * an Anthropic-compatible gateway (`glm-4.6`, `deepseek-reasoner`) are not Claude models and are
- * never generation-filtered.
- */
-function resolveClaudeModelGeneration(normalizedId: string): number | null {
-  if (!normalizedId.startsWith('claude')) return null;
-  const match = normalizedId.match(/(\d+)/u);
-  return match ? Number.parseInt(match[1]!, 10) : null;
 }
 
 function resolveStaticClaudeModels(): readonly AgentModelDescriptor[] {
@@ -53,47 +44,34 @@ function resolveStaticClaudeModels(): readonly AgentModelDescriptor[] {
 }
 
 /**
- * Oldest Claude generation Happier still curates. The Models API lists every model the account may
- * call, including generations Claude Code can no longer run, so anything below the curated floor is
- * dropped rather than offered as a selectable row.
+ * A successful Models API response owns membership and API-provided capability/context facts.
+ * Curated rows only add presentation and Claude Code-specific metadata to returned ids that match
+ * either an alias or its dated snapshot form.
  */
-function resolveMinimumCuratedGeneration(): number | null {
-  const generations = resolveStaticClaudeModels()
-    .map((model) => resolveClaudeModelGeneration(normalizeDatedId(model.id)))
-    .filter((generation): generation is number => generation !== null);
-  return generations.length > 0 ? Math.min(...generations) : null;
-}
+function buildAuthoritativeDynamicCatalog(entries: readonly AnthropicModelEntry[]): AgentModelDescriptor[] {
+  const staticByNormalizedId = new Map(
+    resolveStaticClaudeModels().map((model) => [normalizeDatedId(model.id), model] as const),
+  );
 
-function isRunnableDiscoveredModel(normalizedId: string): boolean {
-  const generation = resolveClaudeModelGeneration(normalizedId);
-  if (generation === null) return true;
-  const floor = resolveMinimumCuratedGeneration();
-  return floor === null || generation >= floor;
-}
+  const seenExactIds = new Set<string>();
+  return entries.flatMap((entry) => {
+    const exactId = entry.id.trim();
+    if (seenExactIds.has(exactId)) return [];
+    seenExactIds.add(exactId);
 
-/**
- * Augment the curated static catalog with any Claude models the account can run that are NOT
- * already curated. Static models win (full curation preserved); discovered models are appended
- * with API-derived options. Dated snapshot ids collapse onto their static alias.
- */
-function mergeStaticWithDiscovered(entries: readonly AnthropicModelEntry[]): AgentModelDescriptor[] {
-  const staticModels = resolveStaticClaudeModels();
-  const staticNormalizedIds = new Set(staticModels.map((model) => normalizeDatedId(model.id)));
-  const discoveredNormalizedIds = new Set<string>();
+    const discovered = buildDiscoveredClaudeModelDescriptor(entry);
+    const curated = staticByNormalizedId.get(normalizeDatedId(entry.id));
+    if (!curated) return [discovered];
 
-  const discovered = entries
-    .filter((entry) => {
-      const normalized = normalizeDatedId(entry.id);
-      if (normalized.length === 0 || normalized === 'default') return false;
-      if (staticNormalizedIds.has(normalized)) return false;
-      if (!isRunnableDiscoveredModel(normalized)) return false;
-      if (discoveredNormalizedIds.has(normalized)) return false;
-      discoveredNormalizedIds.add(normalized);
-      return true;
-    })
-    .map((entry) => buildDiscoveredClaudeModelDescriptor(entry));
-
-  return [...staticModels, ...discovered];
+    return [{
+      ...discovered,
+      name: curated.name,
+      ...(typeof curated.description === 'string' ? { description: curated.description } : {}),
+      ...(typeof curated.extendedContextModelId === 'string'
+        ? { extendedContextModelId: providers.claude.toClaude1mModelId(exactId) }
+        : {}),
+    }];
+  });
 }
 
 export type ClaudeModelCatalogResolution = Readonly<{
@@ -116,10 +94,34 @@ export function resetClaudeModelCatalogCacheForTests(): void {
   inFlightCatalogResolutions.clear();
 }
 
-/** Drop expired entries so a long-lived daemon does not retain one per rotated credential. */
-function pruneExpiredCatalogEntries(nowMs: number): void {
+/**
+ * Drop expired static cold fallbacks. Dynamic snapshots remain eligible as last-good results for
+ * their own later refresh; the separate size bound removes least-recently-resolved identities so
+ * retaining them cannot grow without limit.
+ */
+function pruneCatalogEntries(nowMs: number, protectedKey: string): void {
   for (const [key, entry] of catalogCache) {
-    if (entry.expiresAtMs <= nowMs) catalogCache.delete(key);
+    if (
+      entry.expiresAtMs > nowMs
+      || key === protectedKey
+      || entry.resolution.source === 'dynamic'
+    ) continue;
+    catalogCache.delete(key);
+  }
+}
+
+/** Bound credential-rotation growth while never evicting the snapshot resolving this call. */
+function trimCatalogEntries(protectedKey: string): void {
+  while (catalogCache.size > CATALOG_MAX_ENTRIES) {
+    let oldestUnprotectedKey: string | null = null;
+    for (const key of catalogCache.keys()) {
+      if (key !== protectedKey) {
+        oldestUnprotectedKey = key;
+        break;
+      }
+    }
+    if (!oldestUnprotectedKey) return;
+    catalogCache.delete(oldestUnprotectedKey);
   }
 }
 
@@ -133,8 +135,9 @@ export type ResolveClaudeModelCatalogParams = Readonly<{
 }>;
 
 /**
- * The models this account can run: curated catalog, augmented with anything the Anthropic Models
- * API reports. Falls back to the curated catalog on any failure. Never throws.
+ * The models this account can run. A successful Models API response owns membership; static rows
+ * enrich matching returned ids. The curated catalog is used only until the first success, after
+ * which a failed refresh keeps the last successful dynamic snapshot. Never throws.
  */
 export async function resolveClaudeModelCatalogResolution(
   params: ResolveClaudeModelCatalogParams,
@@ -170,15 +173,20 @@ export async function resolveClaudeModelCatalogResolution(
       timeoutMs: params.timeoutMs,
     });
 
-    const resolution: ClaudeModelCatalogResolution = entries
-      ? { models: mergeStaticWithDiscovered(entries), source: 'dynamic' }
-      : { models: resolveStaticClaudeModels(), source: 'static' };
+    const resolution: ClaudeModelCatalogResolution = entries !== null
+      ? { models: buildAuthoritativeDynamicCatalog(entries), source: 'dynamic' }
+      : cached?.resolution.source === 'dynamic'
+        ? cached.resolution
+        : { models: resolveStaticClaudeModels(), source: 'static' };
     const resolvedAtMs = nowMs();
-    pruneExpiredCatalogEntries(resolvedAtMs);
+    pruneCatalogEntries(resolvedAtMs, cacheKey);
+    // Refresh insertion order so the bounded cache removes the least recently resolved identity.
+    catalogCache.delete(cacheKey);
     catalogCache.set(cacheKey, {
       resolution,
-      expiresAtMs: resolvedAtMs + (entries ? CATALOG_SUCCESS_TTL_MS : CATALOG_FAILURE_TTL_MS),
+      expiresAtMs: resolvedAtMs + (entries !== null ? CATALOG_SUCCESS_TTL_MS : CATALOG_FAILURE_TTL_MS),
     });
+    trimCatalogEntries(cacheKey);
     return resolution;
   })();
 

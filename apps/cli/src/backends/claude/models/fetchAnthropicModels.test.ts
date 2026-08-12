@@ -24,10 +24,11 @@ describe('parseAnthropicModelsResponse', () => {
     ]);
   });
 
-  it('drops entries without a string id and returns null for non-objects / empty data', () => {
+  it('drops entries without a string id, preserves valid empty success, and rejects malformed envelopes', () => {
     expect(parseAnthropicModelsResponse({ data: [{ display_name: 'no id' }, { id: 'ok' }] }))
       .toEqual([{ id: 'ok' }]);
-    expect(parseAnthropicModelsResponse({ data: [] })).toBeNull();
+    expect(parseAnthropicModelsResponse({ data: [] })).toEqual([]);
+    expect(parseAnthropicModelsResponse({ data: [{ display_name: 'no id' }] })).toBeNull();
     expect(parseAnthropicModelsResponse('nope')).toBeNull();
     expect(parseAnthropicModelsResponse({})).toBeNull();
   });
@@ -41,6 +42,18 @@ function okResponse(): Response {
 }
 
 describe('fetchAnthropicModels', () => {
+  it('returns an empty array for a successful response with no model rows', async () => {
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ data: [] }), { status: 200 }));
+
+    const result = await fetchAnthropicModels({
+      apiKey: 'sk-ant-key',
+      timeoutMs: 1_000,
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+
+    expect(result).toEqual([]);
+  });
+
   it('returns null when neither api key nor access token is provided', async () => {
     const fetchImpl = vi.fn();
     const result = await fetchAnthropicModels({ timeoutMs: 1_000, fetchImpl: fetchImpl as unknown as typeof fetch });
