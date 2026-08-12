@@ -86,6 +86,11 @@ function parseProbeConnectedServices(params?: Record<string, unknown>): Connecte
     return parsed.success ? parsed.data : null;
 }
 
+function parseProbeProfileId(params?: Record<string, unknown>): string | null {
+    const profileId = typeof params?.profileId === 'string' ? params.profileId.trim() : '';
+    return profileId || null;
+}
+
 async function resolveProbeBackendContext(params?: Record<string, unknown>): Promise<{
     backendTarget: BackendTargetRefV1 | undefined;
     credentials: Awaited<ReturnType<typeof readCredentials>> | null;
@@ -200,11 +205,13 @@ async function invokeCliProbeMethod(
     const timeoutMs = typeof timeoutMsRaw === 'number' ? timeoutMsRaw : DEFAULT_PROBE_MODELS_TIMEOUT_MS;
     const cwd = resolveProbeCwd((params ?? {}).cwd);
     const connectedServices = parseProbeConnectedServices(params);
+    const profileId = parseProbeProfileId(params);
     const commonParams = {
         agentId,
         backendTarget: probeContext.backendTarget,
         cwd,
         timeoutMs,
+        profileId,
         accountSettings: probeContext.accountSettings,
         credentials: probeContext.credentials,
         connectedServices,

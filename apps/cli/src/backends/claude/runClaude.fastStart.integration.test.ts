@@ -9,6 +9,7 @@ import type { Credentials } from '@/persistence';
 import { configuration } from '@/configuration';
 import type { registerRunnerTerminationHandlers as registerRunnerTerminationHandlersFn } from '@/agent/runtime/runnerTerminationHandlers';
 import type { RunnerTerminationEvent, RunnerTerminationOutcome } from '@/agent/runtime/runnerTerminationOutcome';
+import type { AgentModelDescriptor } from '@happier-dev/agents';
 
 type Deferred<T> = { promise: Promise<T>; resolve: (value: T) => void; reject: (error: unknown) => void };
 
@@ -17,6 +18,18 @@ const agentStateUpdateSnapshots = vi.hoisted(() => [] as Array<{
   reason: string;
   state: any;
 }>);
+const probeClaudeInstalledRuntimeCapabilitiesMock = vi.hoisted(() => vi.fn(async () => ({
+  supportsEffort: true,
+  supportsUltracode: true,
+})));
+
+vi.mock('@/backends/claude/sessionControls/probeClaudeInstalledRuntimeCapabilities', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/backends/claude/sessionControls/probeClaudeInstalledRuntimeCapabilities')>();
+  return {
+    ...actual,
+    probeClaudeInstalledRuntimeCapabilities: probeClaudeInstalledRuntimeCapabilitiesMock,
+  };
+});
 
 vi.mock('@/backends/claude/localPermissions/localPermissionBridge', () => ({
   DEFAULT_LOCAL_PERMISSION_HOOK_RESPONSE: {
@@ -84,6 +97,7 @@ let loopExit: Deferred<number> = createDeferred<number>();
 let lastLoopOpts: any = null;
 let autoSessionReady = true;
 let awaitAutoSessionReadyCallback = false;
+let beforeLoopCapture: Promise<void> | null = null;
 let lastTerminationHandlerParams: Parameters<typeof registerRunnerTerminationHandlersFn>[0] | null = null;
 let readSettingsCalls = 0;
 let initializeBackendApiContextCalls = 0;
@@ -125,9 +139,11 @@ vi.mock('@/backends/claude/loop', () => ({
     const invocationLoopExit = loopExit;
     const invocationAutoSessionReady = autoSessionReady;
     const invocationAwaitAutoSessionReadyCallback = awaitAutoSessionReadyCallback;
+    const invocationBeforeLoopCapture = beforeLoopCapture;
     loopCalls += 1;
     lastLoopOpts = opts;
     invocationLoopEntered.resolve();
+    if (invocationBeforeLoopCapture) await invocationBeforeLoopCapture;
     if (invocationAutoSessionReady) {
       const sessionReady = opts?.onSessionReady?.({
         cleanup: vi.fn(),
@@ -157,6 +173,7 @@ let lastRuntimeSessionClient: {
   rpcHandlerManager: { registerHandler: ReturnType<typeof vi.fn>; invokeLocal: ReturnType<typeof vi.fn> };
   setSessionRuntimeControls: ReturnType<typeof vi.fn>;
   registerSessionRuntimeControls: ReturnType<typeof vi.fn>;
+  onUserMessage: ReturnType<typeof vi.fn>;
   keepAlive: ReturnType<typeof vi.fn>;
   sendSessionDeath: ReturnType<typeof vi.fn>;
   flush: ReturnType<typeof vi.fn>;
@@ -530,6 +547,235 @@ describe('runClaude fast-start', () => {
     if (testError) {
       throw testError;
     }
+  });
+
+  it('does not complete true fast-start readiness before the selected model effort catalog settles', async () => {
+    vi.resetModules();
+    const catalogRequested = createDeferred<void>();
+    const catalogResult = createDeferred<readonly AgentModelDescriptor[]>();
+    vi.doMock('@/backends/claude/models/resolveClaudeModelCatalog', async (importOriginal) => {
+      const actual = await importOriginal<typeof import('@/backends/claude/models/resolveClaudeModelCatalog')>();
+      return {
+        ...actual,
+        resolveClaudeModelCatalog: vi.fn(() => {
+          catalogRequested.resolve();
+          return catalogResult.promise;
+        }),
+      };
+    });
+    vi.doMock('@/backends/claude/sessionControls/publishClaudeSessionModelsMetadataBestEffort', () => ({
+      publishClaudeSessionModelsMetadataBestEffort: vi.fn(async () => {}),
+    }));
+
+    loopEntered = createDeferred<void>();
+    loopStarted = createDeferred<void>();
+    loopExit = createDeferred<number>();
+    lastLoopOpts = null;
+    autoSessionReady = true;
+    awaitAutoSessionReadyCallback = true;
+    initResolved = false;
+    backendInitDelayMs = 200;
+    getOrCreateSessionSpy.mockImplementation(async () => ({ id: 'sess_effort_ready', metadataVersion: 1 }));
+    reportSessionToDaemonIfRunningSpy.mockClear();
+
+    const { runClaude } = await import('./runClaude');
+    let testError: unknown = null;
+    const runPromise = runClaude(createLegacyCredentials(), {
+      startedBy: 'terminal',
+      startingMode: 'local',
+      model: 'claude-opus-9',
+    }).catch((error) => {
+      testError = error;
+      loopStarted.resolve();
+    });
+
+    try {
+      await waitFor(catalogRequested.promise, loopStartWaitMs);
+      let readinessCompleted = false;
+      void loopStarted.promise.then(() => { readinessCompleted = true; });
+      await Promise.resolve();
+      expect(readinessCompleted).toBe(false);
+      expect(initResolved).toBe(false);
+
+      catalogResult.resolve([{ id: 'claude-opus-9', displayName: 'Opus 9' }]);
+      await waitFor(loopStarted.promise, loopStartWaitMs);
+      if (testError) throw testError;
+      expect(initResolved).toBe(false);
+      expect(lastLoopOpts?.initialClaudeUnifiedTerminalMode).toMatchObject({
+        model: 'claude-opus-9',
+        modelEffortLevelsModelId: 'claude-opus-9',
+      });
+    } finally {
+      catalogResult.resolve([]);
+      loopExit.resolve(0);
+      await runPromise;
+      vi.doUnmock('@/backends/claude/models/resolveClaudeModelCatalog');
+      vi.doUnmock('@/backends/claude/sessionControls/publishClaudeSessionModelsMetadataBestEffort');
+      autoSessionReady = true;
+      awaitAutoSessionReadyCallback = false;
+      getOrCreateSessionSpy.mockImplementation(async () => ({ id: 'sess_1', metadataVersion: 1 }));
+    }
+
+    if (testError) throw testError;
+  });
+
+  it('removes unsupported installed effort and ultracode from fast-start message launch modes after one probe', async () => {
+    const previousGetOrCreateSessionImplementation = getOrCreateSessionSpy.getMockImplementation();
+    vi.resetModules();
+    vi.doMock('@/backends/claude/sessionControls/publishClaudeSessionModelsMetadataBestEffort', () => ({
+      publishClaudeSessionModelsMetadataBestEffort: vi.fn(async () => {}),
+    }));
+    probeClaudeInstalledRuntimeCapabilitiesMock.mockReset();
+    probeClaudeInstalledRuntimeCapabilitiesMock.mockResolvedValue({
+      supportsEffort: false,
+      supportsUltracode: false,
+    });
+    loopStarted = createDeferred<void>();
+    loopExit = createDeferred<number>();
+    lastLoopOpts = null;
+    lastRuntimeSessionClient = null;
+    autoSessionReady = true;
+    awaitAutoSessionReadyCallback = false;
+    initResolved = false;
+    backendInitDelayMs = 0;
+    getOrCreateSessionSpy.mockImplementation(async () => ({ id: 'sess_fast_effort_gate', metadataVersion: 1 }));
+
+    const { runClaude } = await import('./runClaude');
+    const runPromise = runClaude(createLegacyCredentials(), {
+      startedBy: 'terminal',
+      startingMode: 'local',
+      model: 'claude-fable-5',
+    });
+
+    try {
+      await waitFor(loopStarted.promise, loopStartWaitMs);
+      await waitFor(new Promise<void>((resolve, reject) => {
+        const startedAt = Date.now();
+        const tick = () => {
+          if (lastRuntimeSessionClient?.onUserMessage.mock.calls[0]?.[0]) return resolve();
+          if (Date.now() - startedAt > 1_000) return reject(new Error('Timed out waiting for fast-start user handler'));
+          setTimeout(tick, 0);
+        };
+        tick();
+      }), 2_000);
+
+      const launchModes: unknown[] = [];
+      lastLoopOpts.messageQueue.push = vi.fn((_text: string, mode: unknown) => launchModes.push(mode));
+      const handler = lastRuntimeSessionClient?.onUserMessage.mock.calls[0]?.[0];
+      await handler({
+        content: { type: 'text', text: 'ship it' },
+        localId: 'fast-effort-gated',
+        createdAt: 101,
+        meta: { model: 'claude-fable-5', reasoningEffort: 'xhigh', ultracode: true },
+      });
+
+      expect(launchModes).toEqual([
+        expect.not.objectContaining({ reasoningEffort: expect.anything(), ultracode: expect.anything() }),
+      ]);
+      expect(probeClaudeInstalledRuntimeCapabilitiesMock).toHaveBeenCalledTimes(1);
+    } finally {
+      loopExit.resolve(0);
+      await runPromise;
+      probeClaudeInstalledRuntimeCapabilitiesMock.mockReset();
+      probeClaudeInstalledRuntimeCapabilitiesMock.mockResolvedValue({
+        supportsEffort: true,
+        supportsUltracode: true,
+      });
+      if (previousGetOrCreateSessionImplementation) {
+        getOrCreateSessionSpy.mockImplementation(previousGetOrCreateSessionImplementation);
+      } else {
+        getOrCreateSessionSpy.mockReset();
+      }
+      vi.doUnmock('@/backends/claude/sessionControls/publishClaudeSessionModelsMetadataBestEffort');
+    }
+  });
+
+  it('uses a persisted model override for the initial fast-start mode and tier identity', async () => {
+    vi.resetModules();
+    const overrideSynced = createDeferred<void>();
+    vi.doMock('@/agent/runtime/runtimeOverridesSynchronizer', async (importOriginal) => {
+      const actual = await importOriginal<typeof import('@/agent/runtime/runtimeOverridesSynchronizer')>();
+      return {
+        ...actual,
+        initializeRuntimeOverridesSynchronizer: async (
+          params: Parameters<typeof actual.initializeRuntimeOverridesSynchronizer>[0],
+        ) => {
+          const synchronizer = await actual.initializeRuntimeOverridesSynchronizer(params);
+          return {
+            ...synchronizer,
+            syncFromMetadata: () => {
+              synchronizer.syncFromMetadata();
+              overrideSynced.resolve();
+            },
+          };
+        },
+      };
+    });
+    vi.doMock('@/backends/claude/sessionControls/publishClaudeSessionModelsMetadataBestEffort', () => ({
+      publishClaudeSessionModelsMetadataBestEffort: vi.fn(async () => {}),
+    }));
+
+    loopStarted = createDeferred<void>();
+    loopExit = createDeferred<number>();
+    lastLoopOpts = null;
+    autoSessionReady = true;
+    awaitAutoSessionReadyCallback = true;
+    initResolved = false;
+    backendInitDelayMs = 0;
+    beforeLoopCapture = overrideSynced.promise;
+    const previousGetOrCreateSessionImpl = getOrCreateSessionSpy.getMockImplementation();
+    if (!previousGetOrCreateSessionImpl) throw new Error('expected the session creation test implementation');
+    getOrCreateSessionSpy.mockImplementation(async () => ({ id: 'sess_model_override', metadataVersion: 1 }));
+
+    const persistedMetadata = {
+      modelOverrideV1: { v: 1 as const, updatedAt: 77, modelId: 'claude-fable-5' },
+    };
+    const previousSessionImpl = sessionSyncClientSpy.getMockImplementation();
+    if (!previousSessionImpl) throw new Error('expected the session client test implementation');
+    sessionSyncClientSpy.mockImplementation((response: unknown) => {
+      const client = previousSessionImpl(response);
+      return {
+        ...client,
+        ensureMetadataSnapshot: vi.fn(async () => persistedMetadata),
+        getMetadataSnapshot: vi.fn(() => persistedMetadata),
+      };
+    });
+
+    const { runClaude } = await import('./runClaude');
+    let testError: unknown = null;
+    const runPromise = runClaude(createLegacyCredentials(), {
+      startedBy: 'terminal',
+      startingMode: 'local',
+      claudeArgs: ['--dangerously-skip-permissions'],
+    }).catch((error) => {
+      testError = error;
+      loopStarted.resolve();
+    });
+
+    try {
+      await waitFor(overrideSynced.promise, 10_000).catch((error) => {
+        throw new Error(`persisted model override did not sync (initResolved=${String(initResolved)}): ${String(error)}`);
+      });
+      await waitFor(loopStarted.promise, loopStartWaitMs);
+      if (testError) throw testError;
+      expect(lastLoopOpts?.initialClaudeUnifiedTerminalMode).toMatchObject({
+        model: 'claude-fable-5',
+        modelEffortLevelsModelId: 'claude-fable-5',
+      });
+    } finally {
+      overrideSynced.resolve();
+      loopExit.resolve(0);
+      await runPromise;
+      sessionSyncClientSpy.mockImplementation(previousSessionImpl);
+      vi.doUnmock('@/agent/runtime/runtimeOverridesSynchronizer');
+      vi.doUnmock('@/backends/claude/sessionControls/publishClaudeSessionModelsMetadataBestEffort');
+      autoSessionReady = true;
+      awaitAutoSessionReadyCallback = false;
+      beforeLoopCapture = null;
+      getOrCreateSessionSpy.mockImplementation(previousGetOrCreateSessionImpl);
+    }
+
+    if (testError) throw testError;
   });
 
   it('installs unavailable group truth before a daemon-started remote Claude producer can dequeue', async () => {

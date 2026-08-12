@@ -36,6 +36,7 @@ export function useNewSessionPreflightModelsState(params: Readonly<{
     selectedMachineId: string | null;
     capabilityServerId: string;
     cwd?: string | null;
+    profileId?: string | null;
     probeContext?: NewSessionCapabilityProbeContext | null;
     connectedServices?: ConnectedServiceBindingsV1 | null;
 }>): Readonly<{
@@ -98,12 +99,21 @@ export function useNewSessionPreflightModelsState(params: Readonly<{
         () => stableJsonStringify(params.connectedServices ?? null),
         [params.connectedServices],
     );
+    const profileId = typeof params.profileId === 'string' && params.profileId.trim().length > 0
+        ? params.profileId.trim()
+        : null;
+    const probeCacheKeySuffixParts = React.useMemo(
+        () => [
+            ...(probeContextCacheKeySuffixParts ?? []),
+            ...(profileId ? [`profile:${profileId}`] : []),
+        ],
+        [probeContextCacheKeySuffixParts, profileId],
+    );
 
     const probeScopeKey = React.useMemo(() => {
         const machineId = String(params.selectedMachineId ?? '').trim();
         if (!machineId) return null;
         const serverId = String(params.capabilityServerId ?? '').trim() || 'active';
-        const extraKeySuffixParts = probeContextCacheKeySuffixParts ?? [];
         // Scope key excludes cwd so switching worktrees doesn't flash the dynamic model list.
         return JSON.stringify([
             'dynamicModelProbeScope',
@@ -111,9 +121,9 @@ export function useNewSessionPreflightModelsState(params: Readonly<{
             machineId,
             backendTargetKey,
             connectedServicesKey,
-            ...extraKeySuffixParts,
+            ...probeCacheKeySuffixParts,
         ]);
-    }, [backendTargetKey, params.capabilityServerId, params.selectedMachineId, probeContextKey, probeContextCacheKeySuffixParts, connectedServicesKey]);
+    }, [backendTargetKey, params.capabilityServerId, params.selectedMachineId, probeContextKey, probeCacheKeySuffixParts, connectedServicesKey]);
 
     const preflightModelsKey = React.useMemo(() => {
         return buildDynamicModelProbeCacheKey({
@@ -121,10 +131,10 @@ export function useNewSessionPreflightModelsState(params: Readonly<{
             targetKey: backendTargetKey,
             serverId: params.capabilityServerId,
             cwd: params.cwd ?? null,
-            extraKeySuffixParts: probeContextCacheKeySuffixParts,
+            extraKeySuffixParts: probeCacheKeySuffixParts,
             connectedServices: params.connectedServices ?? null,
         });
-    }, [backendTargetKey, params.capabilityServerId, params.cwd, params.selectedMachineId, probeContextCacheKeySuffixParts, connectedServicesKey]);
+    }, [backendTargetKey, params.capabilityServerId, params.cwd, params.selectedMachineId, probeCacheKeySuffixParts, connectedServicesKey]);
 
     React.useEffect(() => {
         preflightModelsRef.current = preflightModels;
@@ -227,6 +237,7 @@ export function useNewSessionPreflightModelsState(params: Readonly<{
                     params: {
                         timeoutMs: NEW_SESSION_CAPABILITY_PROBE_TIMEOUT_MS,
                         backendTarget,
+                        ...(profileId ? { profileId } : {}),
                         ...(probeContextCapabilityParams ? probeContextCapabilityParams : {}),
                         ...(params.connectedServices ? { connectedServices: params.connectedServices } : {}),
                         ...(cwd ? { cwd } : {}),
@@ -242,12 +253,13 @@ export function useNewSessionPreflightModelsState(params: Readonly<{
                 if (!list) return null;
 
                 const result = res.response.result;
-                const source = result && typeof result === 'object' && !Array.isArray(result)
-                    ? (typeof (result as Record<string, unknown>).source === 'string' ? (result as Record<string, unknown>).source : null)
+                const resultRecord = result && typeof result === 'object' && !Array.isArray(result)
+                    ? result as Record<string, unknown>
                     : null;
+                const source = typeof resultRecord?.source === 'string' ? resultRecord.source : null;
                 // When the CLI probe returns a static fallback (dynamic probe failed), do not persist it
                 // for a full day. Persisting it long-lived is what causes “Thinking/Speed only appear after refresh”.
-                const cacheable = source !== 'static';
+                const cacheable = resultRecord?.cacheable !== false && source !== 'static';
                 return { list, cacheable };
             });
 
@@ -329,7 +341,7 @@ export function useNewSessionPreflightModelsState(params: Readonly<{
             cancelled = true;
             if (retryTimeout) clearTimeout(retryTimeout);
         };
-    }, [agentType, backendTarget, backendTargetKey, preflightModelsKey, probeScopeKey, params.capabilityServerId, params.cwd, params.selectedMachineId, probeContextKey, refreshNonce, probeContextCapabilityParams, params.connectedServices]);
+    }, [agentType, backendTarget, backendTargetKey, preflightModelsKey, probeScopeKey, params.capabilityServerId, params.cwd, params.selectedMachineId, profileId, probeContextKey, refreshNonce, probeContextCapabilityParams, params.connectedServices]);
 
     const modelOptions = React.useMemo(
         () => getModelOptionsForAgentTypeOrPreflight({ agentType, preflight: preflightModels }),

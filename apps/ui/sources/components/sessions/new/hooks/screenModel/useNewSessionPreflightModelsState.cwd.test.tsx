@@ -8,9 +8,11 @@ import { NEW_SESSION_CAPABILITY_PROBE_TIMEOUT_MS } from '@/components/sessions/n
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-const machineCapabilitiesInvokeMock = vi.fn(async (_machineId: any, _request: any, _options: any) => ({
-  supported: true as const,
-  response: { ok: true as const, result: { availableModels: [{ id: 'model-a', name: 'Model A' }], supportsFreeform: false } },
+const { machineCapabilitiesInvokeMock } = vi.hoisted(() => ({
+  machineCapabilitiesInvokeMock: vi.fn(async (_machineId: any, _request: any, _options: any) => ({
+    supported: true as const,
+    response: { ok: true as const, result: { availableModels: [{ id: 'model-a', name: 'Model A' }], supportsFreeform: false } },
+  })),
 }));
 
 vi.mock('@/sync/ops/capabilities', () => ({
@@ -158,6 +160,38 @@ describe('useNewSessionPreflightModelsState', () => {
       method: 'probeModels',
       params: expect.objectContaining({ connectedServices: profileConnectedServices }),
     });
+  });
+
+  it('passes the selected profile to probeModels and re-probes when it changes', async () => {
+    const { useNewSessionPreflightModelsState } = await import('./useNewSessionPreflightModelsState');
+
+    machineCapabilitiesInvokeMock.mockClear();
+    resetDynamicModelProbeCacheForTests();
+
+    function Harness(props: { profileId: string }) {
+      useNewSessionPreflightModelsState({
+        backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+        selectedMachineId: 'machine-1',
+        capabilityServerId: 'server-1',
+        cwd: '/repo',
+        profileId: props.profileId,
+      });
+      return null;
+    }
+
+    let root!: renderer.ReactTestRenderer;
+    root = (await renderScreen(React.createElement(Harness, { profileId: 'profile-a' }))).tree;
+    await act(async () => {
+      root.update(React.createElement(Harness, { profileId: 'profile-b' }));
+    });
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      root.unmount();
+    });
+
+    expect(machineCapabilitiesInvokeMock).toHaveBeenCalledTimes(2);
+    expect(machineCapabilitiesInvokeMock.mock.calls[0]?.[1]?.params).toEqual(expect.objectContaining({ profileId: 'profile-a' }));
+    expect(machineCapabilitiesInvokeMock.mock.calls[1]?.[1]?.params).toEqual(expect.objectContaining({ profileId: 'profile-b' }));
   });
 
   it('uses a long enough timeout for slow ACP providers', async () => {

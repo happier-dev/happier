@@ -152,9 +152,11 @@ describe('AGENTS', () => {
 
   it('exposes a preflight session-controls probe adapter for claude so model-scoped options can be surfaced without ACP', async () => {
     const entry = requireCatalogEntry('claude');
+    expect(entry.needsAccountSettingsForProbes).toBe(true);
     expect(entry.getPreflightSessionControlsProbeAdapter).toBeTypeOf('function');
     const adapter = await entry.getPreflightSessionControlsProbeAdapter!();
     expect(adapter).toMatchObject({
+      modelProbeCachePolicy: 'provider-owned',
       probeModelsRaw: expect.any(Function),
     });
   });

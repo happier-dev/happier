@@ -1,5 +1,9 @@
 import type { EnhancedMode } from '@/backends/claude/loop';
-import { buildClaudeEffortCliArgs, resolveClaudeUltracodeForModel } from '@/backends/claude/utils/claudeEffort';
+import {
+    buildClaudeEffortCliArgs,
+    resolveClaudeUltracodeForModel,
+    resolveModeEffortLevelsForModel,
+} from '@/backends/claude/utils/claudeEffort';
 import { getClaudeRemoteSystemPrompt } from '@/backends/claude/utils/remoteSystemPrompt';
 import { parseClaudeSdkFlagOverridesFromArgs } from '@/backends/claude/remote/sdkFlagOverrides';
 
@@ -192,6 +196,7 @@ export function resolveClaudeTerminalCliOptions(params: Readonly<{
     extraArgs.push(...buildClaudeEffortCliArgs({
         modelId: effectiveModel,
         effort: argOverrides.effort ?? params.mode.reasoningEffort,
+        supportedLevels: resolveModeEffortLevelsForModel(params.mode, effectiveModel),
     }));
     if (effectiveModel) {
         extraArgs.push('--model', effectiveModel);
@@ -233,6 +238,7 @@ export function resolveClaudeTerminalCliOptions(params: Readonly<{
         ultracodeEnabled: resolveClaudeUltracodeForModel({
             modelId: effectiveModel,
             ultracode: params.mode.ultracode,
+            supportedLevels: resolveModeEffortLevelsForModel(params.mode, effectiveModel),
         }),
         diagnostics: Object.freeze([...diagnostics]),
     });

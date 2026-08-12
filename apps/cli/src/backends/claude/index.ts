@@ -17,6 +17,7 @@ import { buildClaudeRuntimeLocalHandoffMetadata } from '@/backends/claude/sessio
 import type { AgentCatalogEntry } from '../types';
 import type { ConnectedServiceCredentialLifecycleDescriptor } from '@/daemon/connectedServices/credentials/lifecycleTypes';
 
+
 const claudeConnectedServiceCredentialLifecycleDescriptor: ConnectedServiceCredentialLifecycleDescriptor = {
   providerId: 'claude',
   serviceIds: AGENTS_CORE.claude.connectedServices.supportedServiceIds,
@@ -122,6 +123,7 @@ export const agent = {
       .hasClaudeEndpointDescriptorForSession(params),
   vendorResumeSupport: AGENTS_CORE.claude.resume.vendorResume,
   buildRuntimeLocalHandoffMetadata: buildClaudeRuntimeLocalHandoffMetadata,
+  needsAccountSettingsForProbes: true,
   getPreflightSessionControlsProbeAdapter: async () => (await import('@/backends/claude/preflight/claudePreflightModelsProbeAdapter')).claudePreflightModelsProbeAdapter,
   getHeadlessTmuxArgvTransform: async () => (await import('@/backends/claude/startup/headlessTmuxArgs')).ensureClaudeHeadlessTmuxStartingModeArgs,
 } satisfies AgentCatalogEntry;

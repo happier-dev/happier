@@ -5,7 +5,11 @@ import type {
 } from '@happier-dev/protocol';
 
 import type { InFlightConfigApplyOutcome } from '@/agent/runtime/permission/bindPermissionModeQueue';
-import { resolveClaudeUltracodeForModel } from '@/backends/claude/utils/claudeEffort';
+import {
+  resolveClaudeEffectiveEffortForModel,
+  resolveClaudeUltracodeForModel,
+  resolveModeEffortLevelsForModel,
+} from '@/backends/claude/utils/claudeEffort';
 
 import type { EnhancedMode } from '../loop';
 import { controlResultToChangeOutcome } from './tuiControls/outcome';
@@ -168,8 +172,12 @@ export function mapEnhancedModeToDesiredRuntimeConfig(mode: EnhancedMode): Claud
   } = {};
   const model = normalizeNonEmptyString(mode.model);
   if (model !== undefined) desired.model = model;
-  const reasoningEffort = normalizeNonEmptyString(mode.reasoningEffort);
-  if (reasoningEffort !== undefined) desired.reasoningEffort = reasoningEffort;
+  const reasoningEffort = resolveClaudeEffectiveEffortForModel({
+    modelId: mode.model,
+    effort: mode.reasoningEffort,
+    supportedLevels: resolveModeEffortLevelsForModel(mode, mode.model),
+  });
+  if (reasoningEffort !== null) desired.reasoningEffort = reasoningEffort;
   if (typeof mode.permissionMode === 'string') desired.permissionMode = mode.permissionMode;
   if (mode.agentModeId !== undefined) desired.agentModeId = mode.agentModeId ?? null;
   if (typeof mode.claudeRemoteMaxThinkingTokens === 'number') {
@@ -178,7 +186,11 @@ export function mapEnhancedModeToDesiredRuntimeConfig(mode: EnhancedMode): Claud
   if (typeof mode.ultracode === 'boolean') {
     // Capability-gate here so the controller never types `/effort ultracode` at a model
     // that does not offer it (conservative: an unhonorable request resolves to off).
-    desired.ultracode = resolveClaudeUltracodeForModel({ modelId: mode.model, ultracode: mode.ultracode });
+    desired.ultracode = resolveClaudeUltracodeForModel({
+        modelId: mode.model,
+        ultracode: mode.ultracode,
+        supportedLevels: resolveModeEffortLevelsForModel(mode, mode.model),
+    });
   }
   return desired;
 }

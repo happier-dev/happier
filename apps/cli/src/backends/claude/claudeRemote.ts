@@ -16,7 +16,7 @@ import { logClaudeRuntimeAuthEnvDiagnostic } from "./spawn/logClaudeRuntimeAuthE
 import { ensureClaudeJsRuntimeExecutable } from "./utils/ensureClaudeJsRuntimeExecutable";
 import { resolveClaudeCliPath } from "./utils/resolveClaudeCliPath";
 import { resolveCliRuntimeAssetPath } from '@/runtime/assets/resolveCliRuntimeAssetPath';
-import { buildClaudeEffortCliArgs } from "./utils/claudeEffort";
+import { buildClaudeEffortCliArgs, resolveModeEffortLevelsForModel } from "./utils/claudeEffort";
 import {
     buildClaudeCompactionCompletedEvent,
     buildClaudeCompactionLifecycleId,
@@ -36,6 +36,7 @@ import { isClaudeLegacyRequiredHookObservationFailure } from './remote/runtimeAc
 function buildClaudeEffortArgs(params: Readonly<{
     modelId: unknown;
     effort: unknown;
+    supportedLevels?: readonly string[];
 }>): string[] {
     return buildClaudeEffortCliArgs(params);
 }
@@ -232,6 +233,7 @@ export async function claudeRemote(opts: {
     const effortArgs = buildClaudeEffortArgs({
         modelId: argOverrides.model ?? initial.mode.model,
         effort: argOverrides.effort ?? initial.mode.reasoningEffort,
+        supportedLevels: resolveModeEffortLevelsForModel(initial.mode, argOverrides.model ?? initial.mode.model),
     });
     const extraArgs = [
         ...(opts.hookPluginDir ? ['--plugin-dir', opts.hookPluginDir] : []),

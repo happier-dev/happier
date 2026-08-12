@@ -33,6 +33,7 @@ import { normalizeClaudeToolUseNamesInSdkMessage } from '@/backends/claude/utils
 import { tryMergeUserMcpConfigArgsIntoHappierMcp } from '@/backends/claude/utils/mcpConfigMerge';
 import { ensureClaudeJsRuntimeExecutable } from '@/backends/claude/utils/ensureClaudeJsRuntimeExecutable';
 import {
+    resolveModeEffortLevelsForModel,
     buildClaudeUltracodeSettingsJson,
     resolveClaudeEffortForModel,
     resolveClaudeUltracodeForModel,
@@ -702,16 +703,20 @@ export async function claudeRemoteAgentSdk(opts: {
             typeof opts.resumeSessionAt === 'string' && opts.resumeSessionAt.trim().length > 0
                 ? opts.resumeSessionAt.trim()
                 : null;
+        const effortModelId = argOverrides.model ?? mode.model;
+        const effortSupportedLevels = resolveModeEffortLevelsForModel(mode, effortModelId);
         const resolvedEffort = resolveClaudeEffortForModel({
-            modelId: argOverrides.model ?? mode.model,
+            modelId: effortModelId,
             effort: argOverrides.effort ?? mode.reasoningEffort,
+            supportedLevels: effortSupportedLevels,
         });
         // Ultracode is a session-only SETTING, not an effort level. The vendored Agent SDK
         // (0.2.123) has no typed `ultracode` option yet, so it rides the spawned CLI's
         // `--settings` overlay via extraArgs. Revisit on SDK bump (typed control request).
         const resolvedUltracode = resolveClaudeUltracodeForModel({
-            modelId: argOverrides.model ?? mode.model,
+            modelId: effortModelId,
             ultracode: mode.ultracode,
+            supportedLevels: effortSupportedLevels,
         });
         const extraArgs = (() => {
             const out: Record<string, string | null> = Object.create(null);

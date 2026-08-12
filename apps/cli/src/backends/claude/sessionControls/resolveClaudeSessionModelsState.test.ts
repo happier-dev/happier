@@ -3,16 +3,22 @@ import { describe, expect, it } from 'vitest';
 import { resolveClaudeSessionModelsState } from './resolveClaudeSessionModelsState';
 
 describe('resolveClaudeSessionModelsState', () => {
-  it('returns null when the installed Claude CLI does not expose --effort', async () => {
+  it('still publishes the model list when the installed Claude CLI does not expose --effort', async () => {
     const res = await resolveClaudeSessionModelsState({
       cwd: '/',
       timeoutMs: 250,
       currentModelId: 'claude-sonnet-4-6',
       nowMs: () => 123,
-      probeHelpText: async () => 'Claude Code help output without effort',
+      probeInstalledRuntimeCapabilities: async () => ({ supportsEffort: false, supportsUltracode: false }),
     });
 
-    expect(res).toBeNull();
+    // Missing `--effort` disables the effort CONTROL, not the list itself; suppressing the list
+    // would leave the new-session picker and the running session disagreeing about which models
+    // exist.
+    expect(res?.availableModels.length).toBeGreaterThan(0);
+    const optionIds = (res?.availableModels ?? []).flatMap((m) => (m.modelOptions ?? []).map((o) => o.id));
+    expect(optionIds).not.toContain('reasoning_effort');
+    expect(optionIds).not.toContain('ultracode');
   });
 
   it('publishes a dynamic session model list with a Thinking option when --effort is supported', async () => {
@@ -21,8 +27,7 @@ describe('resolveClaudeSessionModelsState', () => {
       timeoutMs: 250,
       currentModelId: 'claude-sonnet-4-6',
       nowMs: () => 456,
-      probeHelpText: async () =>
-        '  --effort <level>  Effort level for the current session (low, medium, high, max)',
+      probeInstalledRuntimeCapabilities: async () => ({ supportsEffort: true, supportsUltracode: false }),
     });
 
     expect(res).toEqual(
@@ -112,5 +117,10 @@ describe('resolveClaudeSessionModelsState', () => {
         ]),
       }),
     );
+
+    const fableOptionIds = res?.availableModels
+      .find((model) => model.id === 'claude-fable-5')
+      ?.modelOptions?.map((option) => option.id) ?? [];
+    expect(fableOptionIds).not.toContain('ultracode');
   });
 });

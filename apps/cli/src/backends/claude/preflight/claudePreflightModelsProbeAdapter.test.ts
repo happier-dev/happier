@@ -1,191 +1,425 @@
-import { afterEach, describe, expect, it } from 'vitest';
-
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { ConnectedServiceCredentialRecordV1 } from '@happier-dev/protocol';
 
 import { createEnvKeyScope } from '@/testkit/env/envScope';
-import { writeExecutableShimSync } from '@/testkit/fs/executableShim';
+import type { Credentials } from '@/persistence';
+
+import type { AnthropicModelEntry } from '@/backends/claude/models/fetchAnthropicModels';
+
+const {
+  createConnectedServiceCredentialApiMock,
+  fetchAnthropicModelsMock,
+  getConnectedServiceCredentialPlainMock,
+  probeClaudeInstalledRuntimeCapabilitiesMock,
+  readClaudeCodeNativeCredentialMock,
+} = vi.hoisted(() => ({
+  createConnectedServiceCredentialApiMock: vi.fn(),
+  fetchAnthropicModelsMock: vi.fn<(...args: unknown[]) => Promise<AnthropicModelEntry[] | null>>(),
+  getConnectedServiceCredentialPlainMock: vi.fn(),
+  probeClaudeInstalledRuntimeCapabilitiesMock: vi.fn(),
+  readClaudeCodeNativeCredentialMock: vi.fn<(...args: unknown[]) => Promise<unknown>>(),
+}));
+
+vi.mock('@/api/connectedServices/connectedServiceCredentialApi', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/api/connectedServices/connectedServiceCredentialApi')>();
+  return { ...actual, createConnectedServiceCredentialApi: createConnectedServiceCredentialApiMock };
+});
+
+vi.mock('@/backends/claude/models/fetchAnthropicModels', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/backends/claude/models/fetchAnthropicModels')>();
+  return { ...actual, fetchAnthropicModels: fetchAnthropicModelsMock };
+});
+
+vi.mock('@/backends/claude/connectedServices/nativeAuth/claudeCodeCredentialFile', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/backends/claude/connectedServices/nativeAuth/claudeCodeCredentialFile')>();
+  return { ...actual, readClaudeCodeNativeCredential: readClaudeCodeNativeCredentialMock };
+});
+
+vi.mock('@/backends/claude/sessionControls/probeClaudeInstalledRuntimeCapabilities', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/backends/claude/sessionControls/probeClaudeInstalledRuntimeCapabilities')>();
+  return {
+    ...actual,
+    probeClaudeInstalledRuntimeCapabilities: probeClaudeInstalledRuntimeCapabilitiesMock,
+  };
+});
 
 import { claudePreflightModelsProbeAdapter } from './claudePreflightModelsProbeAdapter';
+import { resetClaudeModelCatalogCacheForTests } from '@/backends/claude/models/resolveClaudeModelCatalog';
 
-function makeTempDir(prefix: string): string {
-  return mkdtempSync(join(tmpdir(), prefix));
+const envKeys = [
+  'ANTHROPIC_API_KEY',
+  'ANTHROPIC_AUTH_TOKEN',
+  'ANTHROPIC_OAUTH_TOKEN',
+  'CLAUDE_CODE_OAUTH_TOKEN',
+  'ANTHROPIC_BASE_URL',
+] as const;
+let envScope = createEnvKeyScope(envKeys);
+const probeCredentials: Credentials = {
+  token: 'account-token',
+  encryption: { type: 'legacy', secret: new Uint8Array(32).fill(5) },
+};
+
+function setConnectedCredentialRecord(record: ConnectedServiceCredentialRecordV1): void {
+  getConnectedServiceCredentialPlainMock.mockResolvedValue({
+    content: { t: 'plain', v: record },
+    revisionSemantics: 'revisioned',
+    credentialRevision: 1,
+  });
 }
 
-const envKeys = ['HAPPIER_CLAUDE_PATH', 'PATH'] as const;
-let envScope = createEnvKeyScope(envKeys);
+function buildConnectedOauthRecord(params: Readonly<{
+  serviceId: 'claude-subscription';
+  profileId: string;
+  accessToken: string;
+}>): ConnectedServiceCredentialRecordV1 {
+  return {
+    v: 1,
+    serviceId: params.serviceId,
+    profileId: params.profileId,
+    kind: 'oauth',
+    oauth: {
+      accessToken: params.accessToken,
+      refreshToken: 'refresh-token',
+      idToken: null,
+      scope: null,
+      tokenType: null,
+      providerAccountId: null,
+      providerEmail: null,
+      raw: null,
+    },
+    token: null,
+    createdAt: 1,
+    updatedAt: 1,
+    expiresAt: Date.now() + 60_000,
+  };
+}
+
+function buildConnectedTokenRecord(params: Readonly<{
+  serviceId: 'anthropic';
+  profileId: string;
+  token: string;
+}>): ConnectedServiceCredentialRecordV1 {
+  return {
+    v: 1,
+    serviceId: params.serviceId,
+    profileId: params.profileId,
+    kind: 'token',
+    oauth: null,
+    token: {
+      token: params.token,
+      providerAccountId: null,
+      providerEmail: null,
+      raw: null,
+    },
+    createdAt: 1,
+    updatedAt: 1,
+    expiresAt: null,
+  };
+}
+
+function fullEffort(): AnthropicModelEntry['capabilities'] {
+  return {
+    effort: {
+      supported: true,
+      low: { supported: true },
+      medium: { supported: true },
+      high: { supported: true },
+      xhigh: { supported: true },
+      max: { supported: true },
+    },
+  };
+}
+
+async function runProbe() {
+  return claudePreflightModelsProbeAdapter.probeModelsRaw?.({
+    cwd: '/tmp',
+    timeoutMs: 1_500,
+    backendTarget: undefined,
+    accountSettings: null,
+  }) as Promise<Array<Record<string, unknown>> | null>;
+}
+
+beforeEach(() => {
+  resetClaudeModelCatalogCacheForTests();
+  fetchAnthropicModelsMock.mockReset();
+  getConnectedServiceCredentialPlainMock.mockReset();
+  getConnectedServiceCredentialPlainMock.mockResolvedValue(null);
+  createConnectedServiceCredentialApiMock.mockReset();
+  createConnectedServiceCredentialApiMock.mockReturnValue({
+    getAccountEncryptionMode: async () => 'plain',
+    getConnectedServiceCredentialSealed: async () => null,
+    getConnectedServiceCredentialPlain: getConnectedServiceCredentialPlainMock,
+    listConnectedServiceAuthGroups: async () => [],
+    getConnectedServiceAuthGroup: async () => null,
+  });
+  readClaudeCodeNativeCredentialMock.mockReset();
+  readClaudeCodeNativeCredentialMock.mockResolvedValue(null);
+  probeClaudeInstalledRuntimeCapabilitiesMock.mockReset();
+  probeClaudeInstalledRuntimeCapabilitiesMock.mockResolvedValue({ supportsEffort: true, supportsUltracode: true });
+  envScope.restore();
+  envScope = createEnvKeyScope(envKeys);
+});
 
 afterEach(() => {
   envScope.restore();
   envScope = createEnvKeyScope(envKeys);
 });
 
-function writeFakeClaudeBinary(dir: string, helpText: string): string {
-  const isWindows = process.platform === 'win32';
-  const fileName = isWindows ? 'claude.cmd' : 'claude';
-  const contents = isWindows
-    ? [
-        '@echo off',
-        'set args=%*',
-        'echo %args% | findstr /c:"--help" >nul',
-        'if %errorlevel%==0 (',
-        ...helpText.split(/\r?\n/).map((l) => `  echo ${l}`),
-        '  exit /b 0',
-        ')',
-        'exit /b 0',
-      ].join('\r\n')
-    : [
-        '#!/bin/sh',
-        'for a in "$@"; do',
-        '  if [ "$a" = "--help" ]; then',
-        '    cat <<\'EOF\'',
-        helpText,
-        'EOF',
-        '    exit 0',
-        '  fi',
-        'done',
-        'exit 0',
-      ].join('\n');
-  return writeExecutableShimSync({ dir, fileName, contents });
-}
-
 describe('claudePreflightModelsProbeAdapter', () => {
-  let tempDir: string | null = null;
+  it('projects authoritative returned membership with API facts and curated matching-row enrichment', async () => {
+    process.env.ANTHROPIC_API_KEY = 'sk-ant-key';
+    fetchAnthropicModelsMock.mockResolvedValue([
+      { id: 'claude-opus-5', displayName: 'Claude Opus 5', maxInputTokens: 1_000_000, capabilities: fullEffort() },
+      // Dated snapshot of a curated alias — the exact account-returned id must remain selectable.
+      { id: 'claude-opus-4-5-20251101', displayName: 'Claude Opus 4.5', capabilities: fullEffort() },
+      // Genuinely new model — must appear with derived options.
+      { id: 'claude-opus-9', displayName: 'Opus 9', maxInputTokens: 1_000_000, capabilities: fullEffort() },
+    ]);
 
-  afterEach(() => {
-    if (tempDir) {
-      rmSync(tempDir, { recursive: true, force: true });
-      tempDir = null;
+    const raw = await runProbe();
+    if (!raw) throw new Error('expected authoritative model list');
+
+    expect(fetchAnthropicModelsMock).toHaveBeenCalledWith(expect.objectContaining({ apiKey: 'sk-ant-key' }));
+
+    expect(raw.map((model) => model.id)).toEqual([
+      'claude-opus-5',
+      'claude-opus-4-5-20251101',
+      'claude-opus-9',
+    ]);
+
+    // Matching curated rows keep curated presentation while API capabilities own effort facts.
+    const opus5 = raw.find((m) => m.id === 'claude-opus-5');
+    const opus5Effort = (opus5?.modelOptions as Array<Record<string, unknown>> | undefined)
+      ?.find((o) => o.id === 'reasoning_effort');
+    expect(opus5?.name).toBe('Opus 5');
+    expect(opus5?.description).toEqual(expect.any(String));
+    expect(opus5Effort?.options).toEqual(expect.arrayContaining([
+      expect.objectContaining({ value: 'max' }),
+    ]));
+
+    // Discovered model appears with derived options + context window.
+    const opus9 = raw.find((m) => m.id === 'claude-opus-9');
+    expect(opus9?.name).toBe('Opus 9');
+    expect(opus9?.contextWindowTokens).toBe(1_000_000);
+    expect((opus9?.modelOptions as Array<Record<string, unknown>> | undefined)?.some((o) => o.id === 'reasoning_effort')).toBe(true);
+
+    const dated = raw.find((m) => m.id === 'claude-opus-4-5-20251101');
+    expect(dated).toEqual(expect.objectContaining({
+      id: 'claude-opus-4-5-20251101',
+      name: 'Opus 4.5',
+      description: expect.any(String),
+    }));
+  });
+
+  it('resolves the on-disk Claude credentials when no env token is set', async () => {
+    readClaudeCodeNativeCredentialMock.mockResolvedValue({
+      payload: { claudeAiOauth: { accessToken: 'sk-ant-oat01-disk', scopes: [] } },
+      updatedAtMs: 0,
+      source: 'file',
+    });
+    fetchAnthropicModelsMock.mockResolvedValue([{ id: 'claude-opus-9', displayName: 'Opus 9' }]);
+
+    const raw = await runProbe();
+    if (!raw) throw new Error('expected model list');
+
+    expect(fetchAnthropicModelsMock).toHaveBeenCalledWith(expect.objectContaining({ accessToken: 'sk-ant-oat01-disk' }));
+    expect(raw.some((m) => m.id === 'claude-opus-9')).toBe(true);
+  });
+
+  it('returns null when no credential is available', async () => {
+    readClaudeCodeNativeCredentialMock.mockResolvedValue(null);
+
+    const raw = await runProbe();
+
+    expect(raw).toBeNull();
+    expect(fetchAnthropicModelsMock).not.toHaveBeenCalled();
+  });
+
+  it('requires explicit installed-runtime ultracode recognition beyond generic --effort support', async () => {
+    process.env.ANTHROPIC_API_KEY = 'sk-ant-key';
+    probeClaudeInstalledRuntimeCapabilitiesMock.mockResolvedValue({
+      supportsEffort: true,
+      supportsUltracode: false,
+    });
+    fetchAnthropicModelsMock.mockResolvedValue([
+      { id: 'claude-opus-9', displayName: 'Opus 9', capabilities: fullEffort() },
+    ]);
+
+    const raw = await runProbe();
+    if (!raw) throw new Error('expected model list');
+
+    for (const model of raw) {
+      const optionIds = (model.modelOptions as Array<Record<string, unknown>> | undefined)
+        ?.map((option) => option.id) ?? [];
+      expect(optionIds).not.toContain('ultracode');
     }
+    const opus9Options = raw.find((model) => model.id === 'claude-opus-9')
+      ?.modelOptions as Array<Record<string, unknown>> | undefined;
+    expect(opus9Options?.some((option) => option.id === 'reasoning_effort')).toBe(true);
   });
 
-  it('adds a model-scoped Thinking option only when the installed Claude CLI supports --effort', async () => {
-    tempDir = makeTempDir('happier-claude-preflight-');
-    const fakeClaude = writeFakeClaudeBinary(tempDir, '  --effort <level>  Effort level for the current session (low, medium, high, xhigh, max)');
+  it('routes the request at the configured base url instead of the Anthropic host', async () => {
+    process.env.ANTHROPIC_BASE_URL = 'https://api.z.ai/api/anthropic';
+    process.env.ANTHROPIC_AUTH_TOKEN = 'zai-gateway-token';
+    fetchAnthropicModelsMock.mockResolvedValue([{ id: 'glm-4.6', displayName: 'GLM 4.6' }]);
 
-    process.env.PATH = '/usr/bin:/bin';
-    process.env.HAPPIER_CLAUDE_PATH = fakeClaude;
+    await runProbe();
 
-    const raw = await claudePreflightModelsProbeAdapter.probeModelsRaw?.({
-      cwd: tempDir,
+    expect(fetchAnthropicModelsMock).toHaveBeenCalledWith(expect.objectContaining({
+      baseUrl: 'https://api.z.ai/api/anthropic',
+      accessToken: 'zai-gateway-token',
+    }));
+  });
+
+  it('never sends the on-disk Claude credential to a non-Anthropic base url', async () => {
+    process.env.ANTHROPIC_BASE_URL = 'https://api.deepseek.com/anthropic';
+    readClaudeCodeNativeCredentialMock.mockResolvedValue({
+      payload: { claudeAiOauth: { accessToken: 'sk-ant-oat01-disk', scopes: [] } },
+      updatedAtMs: 0,
+      source: 'file',
+    });
+
+    const raw = await runProbe();
+
+    expect(raw).toBeNull();
+    expect(fetchAnthropicModelsMock).not.toHaveBeenCalled();
+  });
+
+  it('still uses the on-disk Claude credential when the base url is Anthropic', async () => {
+    process.env.ANTHROPIC_BASE_URL = 'https://api.anthropic.com';
+    readClaudeCodeNativeCredentialMock.mockResolvedValue({
+      payload: { claudeAiOauth: { accessToken: 'sk-ant-oat01-disk', scopes: [] } },
+      updatedAtMs: 0,
+      source: 'file',
+    });
+    fetchAnthropicModelsMock.mockResolvedValue([{ id: 'claude-opus-9', displayName: 'Opus 9' }]);
+
+    const raw = await runProbe();
+
+    expect(raw).not.toBeNull();
+    expect(fetchAnthropicModelsMock).toHaveBeenCalledWith(expect.objectContaining({ accessToken: 'sk-ant-oat01-disk' }));
+  });
+
+  it('preserves account-returned models from generations outside the curated catalog', async () => {
+    process.env.ANTHROPIC_API_KEY = 'sk-ant-key';
+    fetchAnthropicModelsMock.mockResolvedValue([
+      { id: 'claude-opus-9', displayName: 'Opus 9', capabilities: fullEffort() },
+      { id: 'claude-3-5-sonnet-20241022', displayName: 'Claude 3.5 Sonnet' },
+      { id: 'claude-3-5-sonnet-20240620', displayName: 'Claude 3.5 Sonnet' },
+      { id: 'claude-3-haiku-20240307', displayName: 'Claude 3 Haiku' },
+      { id: 'claude-2.1', displayName: 'Claude 2.1' },
+      { id: 'claude-instant-1.2', displayName: 'Claude Instant' },
+    ]);
+
+    const raw = await runProbe();
+    if (!raw) throw new Error('expected authoritative model list');
+
+    expect(raw.map((model) => model.id)).toEqual([
+      'claude-opus-9',
+      'claude-3-5-sonnet-20241022',
+      'claude-3-5-sonnet-20240620',
+      'claude-3-haiku-20240307',
+      'claude-2.1',
+      'claude-instant-1.2',
+    ]);
+  });
+
+  it('reads the selected connected account credential instead of the daemon own config dir', async () => {
+    setConnectedCredentialRecord(buildConnectedOauthRecord({
+      serviceId: 'claude-subscription',
+      profileId: 'profile-a',
+      accessToken: 'sk-ant-oat01-profile',
+    }));
+    fetchAnthropicModelsMock.mockResolvedValue([{ id: 'claude-opus-9', displayName: 'Opus 9' }]);
+
+    await claudePreflightModelsProbeAdapter.probeModelsRaw?.({
+      cwd: '/tmp',
       timeoutMs: 1_500,
       backendTarget: undefined,
       accountSettings: null,
+      credentials: probeCredentials,
+      connectedServices: {
+        v: 1,
+        bindingsByServiceId: {
+          'claude-subscription': { source: 'connected', selection: 'profile', profileId: 'profile-a' },
+        },
+      },
     });
 
-    expect(Array.isArray(raw)).toBe(true);
-
-    // Fable 5 is the newest highest-capability generally available Claude model and supports
-    // effort, including `xhigh` and `max`, with a `high` default.
-    expect(raw).toEqual(expect.arrayContaining([
-      expect.objectContaining({
-        id: 'claude-fable-5',
-        modelOptions: expect.arrayContaining([expect.objectContaining({
-          id: 'reasoning_effort',
-          currentValue: 'high',
-          options: expect.arrayContaining([
-            expect.objectContaining({ value: 'low' }),
-            expect.objectContaining({ value: 'medium' }),
-            expect.objectContaining({ value: 'high' }),
-            expect.objectContaining({ value: 'xhigh' }),
-            expect.objectContaining({ value: 'max' }),
-          ]),
-        })]),
-      }),
-    ]));
-
-    // Opus 4.8 supports effort, including `xhigh` and `max`, and defaults to `high`.
-    expect(raw).toEqual(expect.arrayContaining([
-      expect.objectContaining({
-        id: 'claude-opus-4-8',
-        modelOptions: expect.arrayContaining([expect.objectContaining({
-          id: 'reasoning_effort',
-          currentValue: 'high',
-          options: expect.arrayContaining([
-            expect.objectContaining({ value: 'low' }),
-            expect.objectContaining({ value: 'medium' }),
-            expect.objectContaining({ value: 'high' }),
-            expect.objectContaining({ value: 'xhigh' }),
-            expect.objectContaining({ value: 'max' }),
-          ]),
-        })]),
-      }),
-    ]));
-
-    // Opus 4.7 remains available and keeps its `xhigh` default.
-    expect(raw).toEqual(expect.arrayContaining([
-      expect.objectContaining({
-        id: 'claude-opus-4-7',
-        modelOptions: expect.arrayContaining([expect.objectContaining({
-          id: 'reasoning_effort',
-          currentValue: 'xhigh',
-          options: expect.arrayContaining([
-            expect.objectContaining({ value: 'low' }),
-            expect.objectContaining({ value: 'medium' }),
-            expect.objectContaining({ value: 'high' }),
-            expect.objectContaining({ value: 'xhigh' }),
-            expect.objectContaining({ value: 'max' }),
-          ]),
-        })]),
-      }),
-    ]));
-
-    // Opus 4.6 supports effort, including the special `max` level.
-    expect(raw).toEqual(expect.arrayContaining([
-      expect.objectContaining({
-        id: 'claude-opus-4-6',
-        modelOptions: expect.arrayContaining([expect.objectContaining({
-          id: 'reasoning_effort',
-          currentValue: 'high',
-          options: expect.arrayContaining([
-            expect.objectContaining({ value: 'low' }),
-            expect.objectContaining({ value: 'medium' }),
-            expect.objectContaining({ value: 'high' }),
-            expect.objectContaining({ value: 'max' }),
-          ]),
-        })]),
-      }),
-    ]));
-
-    // Sonnet 4.6 supports effort but does not accept `max`.
-    expect(raw).toEqual(expect.arrayContaining([
-      expect.objectContaining({
-        id: 'claude-sonnet-4-6',
-        modelOptions: expect.arrayContaining([expect.objectContaining({
-          id: 'reasoning_effort',
-          currentValue: 'high',
-          options: expect.arrayContaining([
-            expect.objectContaining({ value: 'low' }),
-            expect.objectContaining({ value: 'medium' }),
-            expect.objectContaining({ value: 'high' }),
-          ]),
-        })]),
-      }),
-    ]));
-
-    // Haiku does not support effort.
-    expect(raw).toEqual(expect.arrayContaining([
-      expect.objectContaining({
-        id: 'claude-haiku-4-5',
-        modelOptions: undefined,
-      }),
-    ]));
+    expect(fetchAnthropicModelsMock).toHaveBeenCalledWith(expect.objectContaining({
+      accessToken: 'sk-ant-oat01-profile',
+    }));
+    expect(readClaudeCodeNativeCredentialMock).not.toHaveBeenCalled();
   });
 
-  it('returns null when the installed Claude CLI does not expose --effort', async () => {
-    tempDir = makeTempDir('happier-claude-preflight-');
-    const fakeClaude = writeFakeClaudeBinary(tempDir, 'Claude Code help output without effort');
+  it('ignores ambient env auth when the session is bound to a Claude subscription account', async () => {
+    // The spawn path strips every CLAUDE_AUTH_ENV_KEY for a bound claude-subscription session
+    // (isolateClaudeRuntimeAuthEnv), so probing with an ambient token would report one account's
+    // models while the session runs as another — cached under the bound account's variant key.
+    process.env.ANTHROPIC_AUTH_TOKEN = 'ambient-token-other-account';
+    process.env.ANTHROPIC_API_KEY = 'sk-ant-ambient';
+    setConnectedCredentialRecord(buildConnectedOauthRecord({
+      serviceId: 'claude-subscription',
+      profileId: 'profile-a',
+      accessToken: 'sk-ant-oat01-bound',
+    }));
+    fetchAnthropicModelsMock.mockResolvedValue([{ id: 'claude-opus-9', displayName: 'Opus 9' }]);
 
-    process.env.PATH = '/usr/bin:/bin';
-    process.env.HAPPIER_CLAUDE_PATH = fakeClaude;
-
-    const raw = await claudePreflightModelsProbeAdapter.probeModelsRaw?.({
-      cwd: tempDir,
+    await claudePreflightModelsProbeAdapter.probeModelsRaw?.({
+      cwd: '/tmp',
       timeoutMs: 1_500,
       backendTarget: undefined,
       accountSettings: null,
+      credentials: probeCredentials,
+      connectedServices: {
+        v: 1,
+        bindingsByServiceId: {
+          'claude-subscription': { source: 'connected', selection: 'profile', profileId: 'profile-a' },
+        },
+      },
     });
+
+    expect(fetchAnthropicModelsMock).toHaveBeenCalledWith(expect.objectContaining({
+      accessToken: 'sk-ant-oat01-bound',
+    }));
+    const sent = fetchAnthropicModelsMock.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(sent.apiKey).toBeUndefined();
+  });
+
+  it('keeps ANTHROPIC_API_KEY for a bound anthropic account, matching the spawn allow-list', async () => {
+    process.env.ANTHROPIC_API_KEY = 'sk-ant-bound-key';
+    process.env.ANTHROPIC_AUTH_TOKEN = 'ambient-token-other-account';
+    setConnectedCredentialRecord(buildConnectedTokenRecord({
+      serviceId: 'anthropic',
+      profileId: 'profile-a',
+      token: 'sk-ant-bound-key',
+    }));
+    fetchAnthropicModelsMock.mockResolvedValue([{ id: 'claude-opus-9', displayName: 'Opus 9' }]);
+
+    await claudePreflightModelsProbeAdapter.probeModelsRaw?.({
+      cwd: '/tmp',
+      timeoutMs: 1_500,
+      backendTarget: undefined,
+      accountSettings: null,
+      credentials: probeCredentials,
+      connectedServices: {
+        v: 1,
+        bindingsByServiceId: {
+          anthropic: { source: 'connected', selection: 'profile', profileId: 'profile-a' },
+        },
+      },
+    });
+
+    expect(fetchAnthropicModelsMock).toHaveBeenCalledWith(expect.objectContaining({
+      apiKey: 'sk-ant-bound-key',
+    }));
+  });
+
+  it('returns null when the models fetch fails', async () => {
+    process.env.ANTHROPIC_API_KEY = 'sk-ant-key';
+    fetchAnthropicModelsMock.mockResolvedValue(null);
+
+    const raw = await runProbe();
 
     expect(raw).toBeNull();
   });

@@ -2,7 +2,11 @@ import { hashObject } from '@/utils/deterministicJson';
 
 import type { EnhancedMode } from '@/backends/claude/loop';
 import { resolveClaudeSdkPermissionModeFromEnhancedMode } from '@/backends/claude/utils/permissionMode';
-import { resolveClaudeEffortForModel, resolveClaudeUltracodeForModel } from '@/backends/claude/utils/claudeEffort';
+import {
+    resolveClaudeEffortForModel,
+    resolveClaudeUltracodeForModel,
+    resolveModeEffortLevelsForModel,
+} from '@/backends/claude/utils/claudeEffort';
 import { normalizeClaudeRemoteMode } from './normalizeClaudeRemoteMode';
 
 function resolveClaudeRemoteSettingSourcesOverrideForAgentSdk(mode: EnhancedMode): readonly ('user' | 'project' | 'local')[] | null {
@@ -59,13 +63,16 @@ function buildClaudeUnifiedTerminalLaunchOptionsHashInput(mode: EnhancedMode): R
         permissionMode: mode.permissionMode,
         agentModeId: effectiveAgentModeId,
     });
+    const supportedLevels = resolveModeEffortLevelsForModel(mode, mode.model);
     const resolvedEffort = resolveClaudeEffortForModel({
         modelId: mode.model,
         effort: mode.reasoningEffort,
+        supportedLevels,
     });
     const resolvedUltracode = resolveClaudeUltracodeForModel({
         modelId: mode.model,
         ultracode: mode.ultracode,
+        supportedLevels,
     });
     const debugCategories = normalizeClaudeRemoteDebugCategories(mode);
 
@@ -105,13 +112,16 @@ export function hashClaudeEnhancedModeForQueue(mode: EnhancedMode): string {
 
     // Spawn-only config for Claude: effort is a query-start option in the Agent SDK and has no dynamic setter.
     // We normalize effort to the effective value the provider would actually apply (treating "high" as default).
+    const supportedLevels = resolveModeEffortLevelsForModel(mode, mode.model);
     const resolvedEffort = resolveClaudeEffortForModel({
         modelId: mode.model,
         effort: mode.reasoningEffort,
+        supportedLevels,
     });
     const resolvedUltracode = resolveClaudeUltracodeForModel({
         modelId: mode.model,
         ultracode: mode.ultracode,
+        supportedLevels,
     });
 
     const debugCategories = normalizeClaudeRemoteDebugCategories(mode);

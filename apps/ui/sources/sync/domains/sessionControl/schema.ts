@@ -36,6 +36,7 @@ const SessionModelSchema = z.object({
     name: z.string().trim().min(1),
     description: z.string().trim().min(1).optional(),
     contextWindowTokens: z.number().int().positive().optional(),
+    extendedContextModelId: opaqueSessionControlIdentifierSchema.optional(),
     modelOptions: z.array(SessionModelOptionSchema).default([]),
 });
 

@@ -47,20 +47,37 @@ export type PreflightModelList = Readonly<{
         name: string;
         description?: string;
         contextWindowTokens?: number;
+        extendedContextModelId?: string;
         modelOptions?: readonly SessionConfigOption[];
     }>>;
     supportsFreeform: boolean;
 }>;
 
+type DynamicModelRowInput = Readonly<{
+    id: unknown;
+    name: unknown;
+    description?: unknown;
+    contextWindowTokens?: unknown;
+    extendedContextModelId?: unknown;
+    modelOptions?: unknown;
+}>;
+
 type SessionModelListState = Readonly<{
     provider?: string;
-    availableModels?: Array<{
-        id?: unknown;
-        name?: unknown;
-        description?: unknown;
-        modelOptions?: unknown;
-    }>;
+    availableModels?: DynamicModelRowInput[];
 }>;
+
+/**
+ * Normalize a catalog- or session-declared extended-context variant id.
+ *
+ * One owner for the rule, because the value now flows through the preflight parse, the probe cache,
+ * and both dynamic row builders — four places that must agree on what counts as present.
+ */
+export function readExtendedContextModelId(value: unknown): string | undefined {
+    if (typeof value !== 'string') return undefined;
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : undefined;
+}
 
 function dedupeModelOptionsByValue(options: readonly ModelOption[]): readonly ModelOption[] {
     const seen = new Set<string>();
@@ -68,6 +85,23 @@ function dedupeModelOptionsByValue(options: readonly ModelOption[]): readonly Mo
         if (seen.has(option.value)) return false;
         seen.add(option.value);
         return true;
+    });
+}
+
+function projectDynamicModelRows(rows: readonly DynamicModelRowInput[]): ModelOption[] {
+    return rows.flatMap((row) => {
+        if (!row || typeof row.id !== 'string' || typeof row.name !== 'string') return [];
+        const extendedContextModelId = readExtendedContextModelId(row.extendedContextModelId);
+        const modelOptions = Array.isArray(row.modelOptions) && row.modelOptions.length > 0
+            ? row.modelOptions as readonly SessionConfigOption[]
+            : null;
+        return [{
+            value: String(row.id),
+            label: String(row.name),
+            description: typeof row.description === 'string' ? row.description : '',
+            ...(extendedContextModelId ? { extendedContextModelId } : {}),
+            ...(modelOptions ? { modelOptions } : {}),
+        }];
     });
 }
 
@@ -79,10 +113,17 @@ function mergeDynamicModelOptionWithCatalog(
     if (!catalog) return option;
     const hasModelOptions = Array.isArray(option.modelOptions) && option.modelOptions.length > 0;
     const hasDescription = typeof option.description === 'string' && option.description.trim().length > 0;
+    const hasExtendedContext = typeof option.extendedContextModelId === 'string'
+        && option.extendedContextModelId.trim().length > 0;
     return {
         ...option,
         ...(!hasDescription && catalog.description ? { description: catalog.description } : {}),
         ...(!hasModelOptions && catalog.modelOptions ? { modelOptions: catalog.modelOptions } : {}),
+        // Without this a curated model arriving through the dynamic path loses its extended-context
+        // variant, and the 1M toggle disappears for a model that still supports it.
+        ...(!hasExtendedContext && catalog.extendedContextModelId
+            ? { extendedContextModelId: catalog.extendedContextModelId }
+            : {}),
     };
 }
 
@@ -135,14 +176,7 @@ function supportsDynamicSessionModelList(agentType: AgentType): boolean {
 }
 
 export function getModelOptionsForPreflightModelList(list: PreflightModelList): readonly ModelOption[] {
-    const dynamic = (list.availableModels ?? [])
-        .filter((m) => m && typeof m.id === 'string' && typeof m.name === 'string')
-        .map((m) => ({
-            value: String(m.id),
-            label: String(m.name),
-            description: typeof m.description === 'string' ? m.description : '',
-            ...(Array.isArray(m.modelOptions) && m.modelOptions.length > 0 ? { modelOptions: m.modelOptions } : {}),
-        }));
+    const dynamic = projectDynamicModelRows(list.availableModels ?? []);
 
     const withDefault: ModelOption[] = [
         { value: 'default', label: getModelLabel('default'), description: '' },
@@ -259,22 +293,7 @@ function resolveModelOptionsForSession(agentType: AgentType, metadata: Metadata 
     if (state && state.provider === agentType && Array.isArray(state.availableModels) && state.availableModels.length > 0) {
         const catalogOptions = getModelOptionsForAgentType(agentType);
 
-        const dynamic = state.availableModels
-            .filter((m) => m && typeof m.id === 'string' && typeof m.name === 'string')
-            .map((m) => {
-                const value = String(m.id);
-                const description = typeof m.description === 'string' ? m.description : '';
-                const modelOptionsRaw = Array.isArray(m.modelOptions) && m.modelOptions.length > 0
-                    ? (m.modelOptions as readonly SessionConfigOption[])
-                    : null;
-
-                return {
-                    value,
-                    label: String(m.name),
-                    description,
-                    ...(modelOptionsRaw ? { modelOptions: modelOptionsRaw } : {}),
-                };
-            });
+        const dynamic = projectDynamicModelRows(state.availableModels);
 
         return appendSelectedFreeformModelOption({
             options: mergeModelOptionsWithCatalog({

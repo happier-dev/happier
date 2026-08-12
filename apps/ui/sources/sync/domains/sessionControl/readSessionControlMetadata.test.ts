@@ -22,7 +22,11 @@ describe('readSessionControlMetadata', () => {
             },
             acpSessionModelsV1: {
                 v: 1, provider: 'grok', updatedAt: 20, currentModelId: 'legacy-model',
-                availableModels: [{ id: 'legacy-model', name: 'Legacy model' }],
+                availableModels: [{
+                    id: 'legacy-model',
+                    name: 'Legacy model',
+                    extendedContextModelId: 'legacy-model[1m]',
+                }],
             },
             sessionConfigOptionsV1: {
                 v: 1, provider: 'grok', updatedAt: 30,
@@ -34,7 +38,9 @@ describe('readSessionControlMetadata', () => {
             },
         });
 
-        expect(readSessionModelsState(value)?.currentModelId).toBe('legacy-model');
+        const models = readSessionModelsState(value);
+        expect(models?.currentModelId).toBe('legacy-model');
+        expect(models?.availableModels[0]?.extendedContextModelId).toBe('legacy-model[1m]');
         expect(readSessionConfigOptionsState(value)?.configOptions[0]?.currentValue).toBe('high');
     });
 

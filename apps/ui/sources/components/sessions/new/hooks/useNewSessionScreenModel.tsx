@@ -861,6 +861,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         selectedMachineId,
         capabilityServerId,
         cwd: selectedPath,
+        profileId: useProfiles ? selectedProfileId : null,
         probeContext: resolveNewSessionCapabilityProbeContext({ backendTarget, settings }),
         connectedServices: connectedServicesBindingsPayload,
     });

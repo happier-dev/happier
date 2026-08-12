@@ -96,13 +96,13 @@ describe('Claude unified pending-injection dialog routing', () => {
     const bridge = createClaudeUnifiedRuntimeControlBridge({
       controller,
       emitRuntimeConfigOutcome: () => undefined,
-      startupMode: mode({ reasoningEffort: 'high' }),
+      startupMode: mode({ model: 'sonnet', reasoningEffort: 'high' }),
     });
     const injectUserPrompt = vi.fn(async () => ({ status: 'injected', at: 1, bytesWritten: 11 } as const));
     const injector = createClaudeUnifiedPromptInjector({
       inputInjection: { hostKind: 'tmux', injectUserPrompt },
       beforeComposerDraftGuard: async () => {
-        const apply = await bridge.applyBeforePrompt(mode({ reasoningEffort: 'medium' }));
+        const apply = await bridge.applyBeforePrompt(mode({ model: 'sonnet', reasoningEffort: 'medium' }));
         return apply.promptMayProceed
           ? null
           : { status: 'deferred', reason: 'terminal_busy', retryAfterMs: 2_000 } as const;

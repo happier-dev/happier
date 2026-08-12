@@ -1,10 +1,152 @@
 import { describe, expect, it } from 'vitest';
 
 import type { Metadata } from '@/api/types';
+import { buildClaudeSessionModelsMetadataFromSupportedModels } from '@/backends/claude/remote/buildClaudeSessionModelsMetadataFromSupportedModels';
 
 import { publishClaudeSessionModelsMetadataBestEffort } from './publishClaudeSessionModelsMetadataBestEffort';
 
 describe('publishClaudeSessionModelsMetadataBestEffort', () => {
+  it('retires effort overrides the runtime can no longer apply', async () => {
+    const state: { metadata: Metadata } = {
+      metadata: {
+        sessionConfigOptionOverridesV1: {
+          v: 1,
+          updatedAt: 1,
+          overrides: {
+            reasoning_effort: { updatedAt: 1, value: 'max' },
+            ultracode: { updatedAt: 1, value: 'true' },
+            some_other_option: { updatedAt: 1, value: 'keep-me' },
+          },
+        },
+      } as unknown as Metadata,
+    };
+
+    await publishClaudeSessionModelsMetadataBestEffort({
+      cwd: '/',
+      timeoutMs: 250,
+      currentModelId: 'claude-sonnet-4-6',
+      nowMs: () => 999,
+      probeInstalledRuntimeCapabilities: async () => ({ supportsEffort: false, supportsUltracode: false }),
+      session: {
+        ensureMetadataSnapshot: async () => state.metadata,
+        updateMetadata: async (updater) => {
+          state.metadata = updater(state.metadata);
+        },
+      },
+    });
+
+    // Hiding the controls is not enough: the composer emits whatever overrides remain in metadata,
+    // so a stale ultracode would keep riding later prompts as an unsupported option.
+    const overrides = state.metadata.sessionConfigOptionOverridesV1?.overrides ?? {};
+    expect(overrides.reasoning_effort).toBeUndefined();
+    expect(overrides.ultracode).toBeUndefined();
+    expect(overrides.some_other_option).toEqual({ updatedAt: 1, value: 'keep-me' });
+    expect(state.metadata.sessionModelsV1?.availableModels.length).toBeGreaterThan(0);
+  });
+
+  it('keeps effort overrides when the runtime still supports --effort', async () => {
+    const state: { metadata: Metadata } = {
+      metadata: {
+        sessionConfigOptionOverridesV1: {
+          v: 1,
+          updatedAt: 1,
+          overrides: { reasoning_effort: { updatedAt: 1, value: 'high' } },
+        },
+      } as unknown as Metadata,
+    };
+
+    await publishClaudeSessionModelsMetadataBestEffort({
+      cwd: '/',
+      timeoutMs: 250,
+      currentModelId: 'claude-sonnet-4-6',
+      nowMs: () => 999,
+      probeInstalledRuntimeCapabilities: async () => ({ supportsEffort: true, supportsUltracode: false }),
+      session: {
+        ensureMetadataSnapshot: async () => state.metadata,
+        updateMetadata: async (updater) => {
+          state.metadata = updater(state.metadata);
+        },
+      },
+    });
+
+    expect(state.metadata.sessionConfigOptionOverridesV1?.overrides.reasoning_effort)
+      .toEqual({ updatedAt: 1, value: 'high' });
+  });
+
+  it('retires stale effort overrides when the selected model does not support reasoning effort', async () => {
+    const state: { metadata: Metadata } = {
+      metadata: {
+        acpConfigOptionOverridesV1: {
+          v: 1,
+          updatedAt: 1,
+          overrides: {
+            reasoning_effort: { updatedAt: 1, value: 'high' },
+            ultracode: { updatedAt: 1, value: 'true' },
+            some_other_option: { updatedAt: 1, value: 'keep-me' },
+          },
+        },
+      } as unknown as Metadata,
+    };
+
+    await publishClaudeSessionModelsMetadataBestEffort({
+      cwd: '/',
+      timeoutMs: 250,
+      currentModelId: 'claude-haiku-4-5',
+      nowMs: () => 999,
+      probeInstalledRuntimeCapabilities: async () => ({ supportsEffort: true, supportsUltracode: false }),
+      session: {
+        ensureMetadataSnapshot: async () => state.metadata,
+        updateMetadata: async (updater) => {
+          state.metadata = updater(state.metadata);
+        },
+      },
+    });
+
+    const overrides = state.metadata.acpConfigOptionOverridesV1?.overrides ?? {};
+    expect(overrides.reasoning_effort).toBeUndefined();
+    expect(overrides.ultracode).toBeUndefined();
+    expect(overrides.some_other_option).toEqual({ updatedAt: 1, value: 'keep-me' });
+    expect(state.metadata.sessionModelsV1?.currentModelId).toBe('claude-haiku-4-5');
+    expect(state.metadata.sessionModelsV1).toEqual(state.metadata.acpSessionModelsV1);
+  });
+
+  it('retires only stale ultracode when the selected model supports reasoning effort without ultracode', async () => {
+    const state: { metadata: Metadata } = {
+      metadata: {
+        sessionConfigOptionOverridesV1: {
+          v: 1,
+          updatedAt: 1,
+          overrides: {
+            reasoning_effort: { updatedAt: 1, value: 'high' },
+            ultracode: { updatedAt: 1, value: 'true' },
+            some_other_option: { updatedAt: 1, value: 'keep-me' },
+          },
+        },
+      } as unknown as Metadata,
+    };
+
+    await publishClaudeSessionModelsMetadataBestEffort({
+      cwd: '/',
+      timeoutMs: 250,
+      currentModelId: 'claude-sonnet-4-6[1m]',
+      nowMs: () => 999,
+      probeInstalledRuntimeCapabilities: async () => ({ supportsEffort: true, supportsUltracode: false }),
+      session: {
+        ensureMetadataSnapshot: async () => state.metadata,
+        updateMetadata: async (updater) => {
+          state.metadata = updater(state.metadata);
+        },
+      },
+    });
+
+    const overrides = state.metadata.sessionConfigOptionOverridesV1?.overrides ?? {};
+    expect(overrides.reasoning_effort).toEqual({ updatedAt: 1, value: 'high' });
+    expect(overrides.ultracode).toBeUndefined();
+    expect(overrides.some_other_option).toEqual({ updatedAt: 1, value: 'keep-me' });
+    expect(state.metadata.sessionModelsV1?.currentModelId).toBe('claude-sonnet-4-6[1m]');
+    expect(state.metadata.sessionModelsV1).toEqual(state.metadata.acpSessionModelsV1);
+  });
+
   it('publishes sessionModelsV1/acpSessionModelsV1 when --effort is supported', async () => {
     const state: { metadata: Metadata } = { metadata: {} as Metadata };
 
@@ -13,7 +155,7 @@ describe('publishClaudeSessionModelsMetadataBestEffort', () => {
       timeoutMs: 250,
       currentModelId: 'claude-sonnet-4-6',
       nowMs: () => 999,
-      probeHelpText: async () => '  --effort <level>  (low, medium, high, max)',
+      probeInstalledRuntimeCapabilities: async () => ({ supportsEffort: true, supportsUltracode: false }),
       session: {
         ensureMetadataSnapshot: async () => state.metadata,
         updateMetadata: async (updater) => {
@@ -42,7 +184,7 @@ describe('publishClaudeSessionModelsMetadataBestEffort', () => {
       timeoutMs: 250,
       currentModelId: '   ',
       nowMs: () => 999,
-      probeHelpText: async () => '  --effort <level>  (low, medium, high, max)',
+      probeInstalledRuntimeCapabilities: async () => ({ supportsEffort: true, supportsUltracode: false }),
       session: {
         ensureMetadataSnapshot: async () => state.metadata,
         updateMetadata: async (updater) => {
@@ -61,7 +203,7 @@ describe('publishClaudeSessionModelsMetadataBestEffort', () => {
       timeoutMs: 250,
       currentModelId: 'claude-sonnet-4-6',
       nowMs: () => 999,
-      probeHelpText: async () => '  --effort <level>  (low, medium, high, max)',
+      probeInstalledRuntimeCapabilities: async () => ({ supportsEffort: true, supportsUltracode: false }),
       session: {
         ensureMetadataSnapshot: async () => ({} as Metadata),
         updateMetadata: async () => {
@@ -69,5 +211,55 @@ describe('publishClaudeSessionModelsMetadataBestEffort', () => {
         },
       },
     })).resolves.toBeUndefined();
+  });
+
+  it('converges catalog and Agent SDK model publications in either order', async () => {
+    const publishSdkModels = (metadata: Metadata, nowMs: number): Metadata => {
+      const update = buildClaudeSessionModelsMetadataFromSupportedModels({
+        modelsRaw: [
+          { value: 'claude-fable-5', displayName: 'Sparse SDK Fable' },
+          { value: 'claude-sdk-only', displayName: 'SDK Only' },
+        ],
+        metadata,
+        nowMs: () => nowMs,
+      });
+      if (!update) throw new Error('expected Agent SDK model metadata');
+      return { ...metadata, ...update };
+    };
+    const publishCatalogModels = async (metadata: Metadata, nowMs: number): Promise<Metadata> => {
+      const state: { metadata: Metadata } = { metadata };
+      await publishClaudeSessionModelsMetadataBestEffort({
+        cwd: '/',
+        timeoutMs: 250,
+        currentModelId: 'claude-fable-5',
+        nowMs: () => nowMs,
+        probeInstalledRuntimeCapabilities: async () => ({ supportsEffort: true, supportsUltracode: true }),
+        session: {
+          ensureMetadataSnapshot: async () => state.metadata,
+          updateMetadata: async (updater) => {
+            state.metadata = updater(state.metadata);
+          },
+        },
+      });
+      return state.metadata;
+    };
+
+    const catalogThenSdk = publishSdkModels(
+      await publishCatalogModels({} as Metadata, 100),
+      200,
+    );
+    const sdkThenCatalog = await publishCatalogModels(
+      publishSdkModels({} as Metadata, 200),
+      100,
+    );
+
+    expect(catalogThenSdk.sessionModelsV1).toEqual(sdkThenCatalog.sessionModelsV1);
+    expect(catalogThenSdk.sessionModelsV1).toEqual(catalogThenSdk.acpSessionModelsV1);
+    expect(sdkThenCatalog.sessionModelsV1).toEqual(sdkThenCatalog.acpSessionModelsV1);
+    expect(catalogThenSdk.sessionModelsV1?.currentModelId).toBe('claude-fable-5');
+    expect(catalogThenSdk.sessionModelsV1?.availableModels.map((model) => model.id))
+      .toContain('claude-sdk-only');
+    expect(catalogThenSdk.sessionModelsV1?.availableModels.find((model) => model.id === 'claude-fable-5')?.modelOptions)
+      .toEqual(expect.arrayContaining([expect.objectContaining({ id: 'reasoning_effort' })]));
   });
 });

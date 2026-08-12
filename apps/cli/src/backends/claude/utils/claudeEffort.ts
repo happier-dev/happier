@@ -1,8 +1,65 @@
-import { providers as agentProviders } from '@happier-dev/agents';
+import { AGENT_MODEL_CONFIG, providers as agentProviders } from '@happier-dev/agents';
 
 export type ClaudeEffortLevel = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 
 const CLAUDE_EFFORT_LEVEL_PRIORITY: readonly ClaudeEffortLevel[] = ['low', 'medium', 'high', 'xhigh', 'max'];
+
+/** Normalize a Claude model id for the "is this a curated model?" check (strip `[1m]` + dated suffix). */
+function normalizeClaudeModelIdForKnownCheck(raw: unknown): string {
+    const value = typeof raw === 'string' ? raw.trim().toLowerCase() : '';
+    return value.replace(/\[[^\]]*\]$/u, '').replace(/-\d{8}$/u, '');
+}
+
+const KNOWN_STATIC_CLAUDE_MODEL_IDS: ReadonlySet<string> = new Set(
+    (AGENT_MODEL_CONFIG.claude.staticModels ?? []).map((model) => normalizeClaudeModelIdForKnownCheck(model.id)),
+);
+
+/**
+ * True when the id is a model Happier curates in the static catalog (or a known bare alias).
+ *
+ * Used to distinguish a curated model that intentionally has no effort control (e.g. Haiku —
+ * must never receive `--effort`) from a dynamically-discovered model, where a user-selected
+ * effort is trusted and passed through.
+ */
+export function isCuratedClaudeModelId(modelIdRaw: unknown): boolean {
+    const id = normalizeClaudeModelIdForKnownCheck(modelIdRaw);
+    if (!id) return false;
+    if (KNOWN_STATIC_CLAUDE_MODEL_IDS.has(id)) return true;
+    return id === 'opus' || id === 'sonnet' || id === 'haiku' || id === 'fable';
+}
+
+/** Narrow caller-supplied tiers (e.g. from the Anthropic Models API) to known effort levels. */
+function normalizeReportedClaudeEffortLevels(raw: unknown): readonly ClaudeEffortLevel[] {
+    if (!Array.isArray(raw)) return [];
+    const levels = raw
+        .map((value) => normalizeClaudeEffortLevel(value))
+        .filter((level): level is ClaudeEffortLevel => level !== null);
+    return CLAUDE_EFFORT_LEVEL_PRIORITY.filter((level) => levels.includes(level));
+}
+
+/**
+ * Effort levels we have evidence the model supports.
+ *
+ * The curated table wins for curated models — including curated models with NO effort support
+ * (Haiku), which must never be overridden by reported tiers. For a discovered model the only
+ * evidence is what the caller passes in; absent that, there is none. `reasoningEffort` is
+ * session-scoped and is not cleared when the model changes, so an unrecognised id is not by
+ * itself a reason to forward a carried level.
+ */
+function resolveEvidencedClaudeEffortLevels(
+    modelIdRaw: unknown,
+    reportedRaw: unknown,
+): readonly ClaudeEffortLevel[] {
+    // A discovered id is only ever evidenced by its own reported tiers. It may CONTAIN a curated
+    // alias (`claude-opus-5-preview` matches the `opus-5` substring rule) without being that model,
+    // so the curated table must not be consulted for it at all — otherwise a stale session effort
+    // would be clamped against another model's tiers and forwarded.
+    if (!isCuratedClaudeModelId(modelIdRaw)) return normalizeReportedClaudeEffortLevels(reportedRaw);
+
+    // Curated models own their table, including curated models with no effort support (Haiku),
+    // which reported tiers must never override.
+    return resolveClaudeEffortLevelsForKnownAliasOrModel(modelIdRaw);
+}
 
 function normalizeClaudeEffortLevel(raw: unknown): ClaudeEffortLevel | null {
     const value = typeof raw === 'string' ? raw.trim().toLowerCase() : '';
@@ -93,16 +150,48 @@ function resolveBestSupportedClaudeEffort(
     return null;
 }
 
-export function resolveClaudeEffortForModel(params: Readonly<{
+/**
+ * Tiers carried on the session mode, but only when they belong to `modelId`.
+ *
+ * A launch can override the model (`--model` in `claudeArgs`), and one model's reported tiers must
+ * never gate another model's effort or ultracode.
+ */
+export function resolveModeEffortLevelsForModel(
+    mode: Readonly<{ modelEffortLevels?: readonly string[]; modelEffortLevelsModelId?: string | null }>,
+    modelId: unknown,
+): readonly string[] | undefined {
+    const normalized = typeof modelId === 'string' ? modelId.trim() : '';
+    if (!normalized) return undefined;
+    return mode.modelEffortLevelsModelId === normalized ? mode.modelEffortLevels : undefined;
+}
+
+export function resolveClaudeEffectiveEffortForModel(params: Readonly<{
     modelId: unknown;
     effort: unknown;
+    /** Effort tiers the model reported (Anthropic Models API). Required for discovered models. */
+    supportedLevels?: readonly unknown[];
 }>): ClaudeEffortLevel | null {
     const effort = normalizeClaudeEffortLevel(params.effort);
     if (!effort) return null;
-    const supportedLevels = resolveClaudeEffortLevelsForKnownAliasOrModel(params.modelId);
+    // No explicit model means the CLI picks its own default; forwarding `--effort` would apply a
+    // level the user never chose for a model we cannot check support against.
+    const normalizedModelId = normalizeClaudeModelIdForKnownCheck(params.modelId);
+    if (!normalizedModelId || normalizedModelId === 'default') return null;
+
+    const supportedLevels = resolveEvidencedClaudeEffortLevels(params.modelId, params.supportedLevels);
     if (supportedLevels.length === 0) return null;
 
     const normalized = resolveBestSupportedClaudeEffort(effort, supportedLevels);
+    return normalized;
+}
+
+export function resolveClaudeEffortForModel(params: Readonly<{
+    modelId: unknown;
+    effort: unknown;
+    /** Effort tiers the model reported (Anthropic Models API). Required for discovered models. */
+    supportedLevels?: readonly unknown[];
+}>): ClaudeEffortLevel | null {
+    const normalized = resolveClaudeEffectiveEffortForModel(params);
     if (!normalized) return null;
     const defaultEffort = resolveClaudeDefaultEffortForKnownAliasOrModel(params.modelId);
 
@@ -112,6 +201,7 @@ export function resolveClaudeEffortForModel(params: Readonly<{
 export function buildClaudeEffortCliArgs(params: Readonly<{
     modelId: unknown;
     effort: unknown;
+    supportedLevels?: readonly unknown[];
 }>): string[] {
     const resolved = resolveClaudeEffortForModel(params);
     return resolved ? ['--effort', resolved] : [];
@@ -137,9 +227,17 @@ function normalizeUltracodeRequest(raw: unknown): boolean {
 export function resolveClaudeUltracodeForModel(params: Readonly<{
     modelId: unknown;
     ultracode: unknown;
+    /** Effort tiers the model reported (Anthropic Models API). Required for discovered models. */
+    supportedLevels?: readonly unknown[];
 }>): boolean {
     if (!normalizeUltracodeRequest(params.ultracode)) return false;
-    return resolveClaudeEffortLevelsForKnownAliasOrModel(params.modelId).includes('xhigh');
+
+    const normalizedModelId = normalizeClaudeModelIdForKnownCheck(params.modelId);
+    if (!normalizedModelId || normalizedModelId === 'default') return false;
+
+    // Ultracode forces xhigh, so it needs the same evidence as an xhigh effort selection. A
+    // discovered model qualifies only when the caller passes the tiers the API reported.
+    return resolveEvidencedClaudeEffortLevels(params.modelId, params.supportedLevels).includes('xhigh');
 }
 
 /** The `--settings` JSON overlay value that turns ultracode on for a spawned Claude CLI. */

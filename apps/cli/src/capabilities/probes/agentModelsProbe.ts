@@ -40,6 +40,7 @@ export type ProbedAgentModel = Readonly<{
   name: string;
   description?: string;
   contextWindowTokens?: number;
+  extendedContextModelId?: string;
   modelOptions?: ReadonlyArray<ProbedAgentModelOption>;
 }>;
 
@@ -48,6 +49,7 @@ export type ProbedAgentModelsResult = Readonly<{
   availableModels: ReadonlyArray<ProbedAgentModel>;
   supportsFreeform: boolean;
   source: 'dynamic' | 'static';
+  cacheable?: boolean;
 }>;
 
 const DEFAULT_PROBE_MODELS_TIMEOUT_MS = 15_000;
@@ -79,6 +81,7 @@ const ProbeDynamicModelInputSchema = z.object({
   name: ProbeNonEmptyStringSchema,
   description: ProbeDescriptionSchema.optional(),
   contextWindowTokens: z.unknown().optional(),
+  extendedContextModelId: ProbeNonEmptyStringSchema.optional(),
   modelOptions: z.array(z.unknown()).optional(),
 });
 const ProbeConfigOptionCandidateSchema = z.object({
@@ -107,6 +110,9 @@ function buildStatic(agentId: CatalogAgentId): ProbedAgentModelsResult {
         name: model.name,
         ...(typeof model.description === 'string' ? { description: model.description } : {}),
         ...(typeof model.contextWindowTokens === 'number' ? { contextWindowTokens: model.contextWindowTokens } : {}),
+        ...(typeof model.extendedContextModelId === 'string'
+          ? { extendedContextModelId: model.extendedContextModelId }
+          : {}),
         ...(Array.isArray(model.modelOptions) && model.modelOptions.length > 0 ? { modelOptions: model.modelOptions } : {}),
       })),
     ]
@@ -171,6 +177,9 @@ function normalizeProbeModel(modelRaw: unknown): ProbedAgentModel | null {
     id: parsed.data.id,
     name: parsed.data.name,
     ...(parsed.data.description ? { description: parsed.data.description } : {}),
+    ...(parsed.data.extendedContextModelId
+      ? { extendedContextModelId: parsed.data.extendedContextModelId }
+      : {}),
     ...(normalizeContextWindowTokens(parsed.data.contextWindowTokens) !== undefined
       ? { contextWindowTokens: normalizeContextWindowTokens(parsed.data.contextWindowTokens) }
       : {}),
@@ -180,6 +189,10 @@ function normalizeProbeModel(modelRaw: unknown): ProbedAgentModel | null {
 
 function normalizeDynamicModels(modelsRaw: unknown): ProbedAgentModel[] | null {
   if (!Array.isArray(modelsRaw)) return null;
+  // `null` is the adapter's failure signal. An actual empty array is a successful observation
+  // with no provider-listed rows, so preserve that distinction and suppress stale static
+  // membership while retaining Happier's explicit provider-default choice.
+  if (modelsRaw.length === 0) return [{ id: 'default', name: 'Default' }];
   const parsed = modelsRaw
     .map((model) => normalizeProbeModel(model))
     .filter((model): model is ProbedAgentModel => model !== null);
@@ -413,12 +426,16 @@ export async function probeAgentModelsBestEffort(params: {
   backendTarget?: BackendTargetRefV1;
   cwd: string;
   timeoutMs?: number;
+  profileId?: string | null;
   accountSettings?: Readonly<Record<string, unknown>> | null;
   credentials?: Credentials | null;
   connectedServices?: ConnectedServiceBindingsV1 | null;
 }): Promise<ProbedAgentModelsResult> {
   const nowMs = Date.now();
   const cwd = typeof params.cwd === 'string' && params.cwd.trim().length > 0 ? params.cwd.trim() : process.cwd();
+  const profileId = typeof params.profileId === 'string' && params.profileId.trim().length > 0
+    ? params.profileId.trim()
+    : null;
   const probeVariant = resolveAgentProbeVariant({
     agentId: params.agentId,
     backendTarget: params.backendTarget,
@@ -429,24 +446,30 @@ export async function probeAgentModelsBestEffort(params: {
     agentId: params.agentId,
     cwd,
     backendTarget: params.backendTarget,
-    variant: probeVariant,
+    variant: profileId ? `${probeVariant}|profile:${profileId}` : probeVariant,
   });
+  const entry = AGENTS[params.agentId];
+  const preflightModelsAdapter = entry?.getPreflightSessionControlsProbeAdapter
+    ? await entry.getPreflightSessionControlsProbeAdapter().catch(() => null)
+    : null;
+  const usesProviderOwnedCache = preflightModelsAdapter?.modelProbeCachePolicy === 'provider-owned';
 
   const cached = agentModelsProbeCache.get(cacheKey);
-  if (cached?.kind === 'success' && agentModelsProbeCache.isFresh(cached, nowMs)) return cached.value;
+  if (!usesProviderOwnedCache && cached?.kind === 'success' && agentModelsProbeCache.isFresh(cached, nowMs)) return cached.value;
 
-  return await agentModelsProbeCache.runDedupe(cacheKey, async () => {
+  const runProbe = async (): Promise<ProbedAgentModelsResult> => {
     const cached2 = agentModelsProbeCache.get(cacheKey);
     const nowMs2 = Date.now();
-    if (cached2?.kind === 'success' && agentModelsProbeCache.isFresh(cached2, nowMs2)) return cached2.value;
+    if (!usesProviderOwnedCache && cached2?.kind === 'success' && agentModelsProbeCache.isFresh(cached2, nowMs2)) return cached2.value;
 
     const fallback = buildStatic(params.agentId);
     const modelConfig = getAgentModelConfig(params.agentId);
     if (modelConfig.dynamicProbe === 'static-only') {
-      agentModelsProbeCache.setSuccess(cacheKey, fallback, { nowMs: nowMs2, ttlMs: PROBE_MODELS_SUCCESS_TTL_MS });
+      if (!usesProviderOwnedCache) {
+        agentModelsProbeCache.setSuccess(cacheKey, fallback, { nowMs: nowMs2, ttlMs: PROBE_MODELS_SUCCESS_TTL_MS });
+      }
       return fallback;
     }
-    const entry = AGENTS[params.agentId];
 
     const timeoutMs = typeof params.timeoutMs === 'number' ? params.timeoutMs : DEFAULT_PROBE_MODELS_TIMEOUT_MS;
 
@@ -463,14 +486,20 @@ export async function probeAgentModelsBestEffort(params: {
         const models = await probeModelsFromAcpBackend({ backend: configuredBackend, timeoutMs }).catch(() => null);
         if (models) {
           const res: ProbedAgentModelsResult = { ...fallback, availableModels: models, source: 'dynamic' };
-          agentModelsProbeCache.setSuccess(cacheKey, res, { nowMs: nowMs2, ttlMs: PROBE_MODELS_SUCCESS_TTL_MS });
+          if (!usesProviderOwnedCache) {
+            agentModelsProbeCache.setSuccess(cacheKey, res, { nowMs: nowMs2, ttlMs: PROBE_MODELS_SUCCESS_TTL_MS });
+          }
           return res;
         }
-        agentModelsProbeCache.setSuccess(cacheKey, fallback, { nowMs: nowMs2, ttlMs: PROBE_MODELS_FAILURE_TTL_MS });
+        if (!usesProviderOwnedCache) {
+          agentModelsProbeCache.setSuccess(cacheKey, fallback, { nowMs: nowMs2, ttlMs: PROBE_MODELS_FAILURE_TTL_MS });
+        }
         return fallback;
       }
     } catch {
-      agentModelsProbeCache.setSuccess(cacheKey, fallback, { nowMs: nowMs2, ttlMs: PROBE_MODELS_FAILURE_TTL_MS });
+      if (!usesProviderOwnedCache) {
+        agentModelsProbeCache.setSuccess(cacheKey, fallback, { nowMs: nowMs2, ttlMs: PROBE_MODELS_FAILURE_TTL_MS });
+      }
       return fallback;
     } finally {
       if (configuredBackend) {
@@ -478,16 +507,15 @@ export async function probeAgentModelsBestEffort(params: {
       }
     }
 
-    const preflightModelsAdapter = entry?.getPreflightSessionControlsProbeAdapter
-      ? await entry.getPreflightSessionControlsProbeAdapter().catch(() => null)
-      : null;
     if (preflightModelsAdapter?.probeModelsRaw) {
       const probePreflightModelsOnce = async (): Promise<ProbedAgentModel[] | null> => {
         const modelsRaw = await preflightModelsAdapter.probeModelsRaw!({
           backendTarget: params.backendTarget,
           cwd,
           timeoutMs,
+          profileId,
           accountSettings: params.accountSettings ?? null,
+          credentials: params.credentials ?? null,
           connectedServices: params.connectedServices ?? null,
         }).catch(() => null);
         return normalizeDynamicModels(modelsRaw);
@@ -501,13 +529,17 @@ export async function probeAgentModelsBestEffort(params: {
       }
       if (models) {
         const res: ProbedAgentModelsResult = { ...fallback, availableModels: models, source: 'dynamic' };
-        agentModelsProbeCache.setSuccess(cacheKey, res, { nowMs: nowMs2, ttlMs: PROBE_MODELS_SUCCESS_TTL_MS });
+        if (!usesProviderOwnedCache) {
+          agentModelsProbeCache.setSuccess(cacheKey, res, { nowMs: nowMs2, ttlMs: PROBE_MODELS_SUCCESS_TTL_MS });
+        }
         return res;
       }
       if (preflightModelsAdapter.failureCacheStrategy === 'retry') {
         // For providers where this probe is the primary/authoritative source (e.g. Codex app-server),
         // cache an error so subsequent calls retry instead of freezing the static fallback.
-        agentModelsProbeCache.setError(cacheKey, { nowMs: nowMs2, ttlMs: PROBE_MODELS_FAILURE_TTL_MS });
+        if (!usesProviderOwnedCache) {
+          agentModelsProbeCache.setError(cacheKey, { nowMs: nowMs2, ttlMs: PROBE_MODELS_FAILURE_TTL_MS });
+        }
         return fallback;
       }
     }
@@ -523,19 +555,25 @@ export async function probeAgentModelsBestEffort(params: {
       const models = await probeModelsFromCliModelsCommand({ command, args: cliProbeArgs, cwd, timeoutMs }).catch(() => null);
       if (models) {
         const res: ProbedAgentModelsResult = { ...fallback, availableModels: models, source: 'dynamic' };
-        agentModelsProbeCache.setSuccess(cacheKey, res, { nowMs: nowMs2, ttlMs: PROBE_MODELS_SUCCESS_TTL_MS });
+        if (!usesProviderOwnedCache) {
+          agentModelsProbeCache.setSuccess(cacheKey, res, { nowMs: nowMs2, ttlMs: PROBE_MODELS_SUCCESS_TTL_MS });
+        }
         return res;
       }
     }
 
     if (!entry?.getAcpBackendFactory) {
-      agentModelsProbeCache.setSuccess(cacheKey, fallback, { nowMs: nowMs2, ttlMs: PROBE_MODELS_FAILURE_TTL_MS });
+      if (!usesProviderOwnedCache) {
+        agentModelsProbeCache.setSuccess(cacheKey, fallback, { nowMs: nowMs2, ttlMs: PROBE_MODELS_FAILURE_TTL_MS });
+      }
       return fallback;
     }
 
     const spawnValidation = await validateCatalogAcpProbeSpawn(params.agentId);
     if (!spawnValidation.ok) {
-      agentModelsProbeCache.setSuccess(cacheKey, fallback, { nowMs: nowMs2, ttlMs: PROBE_MODELS_FAILURE_TTL_MS });
+      if (!usesProviderOwnedCache) {
+        agentModelsProbeCache.setSuccess(cacheKey, fallback, { nowMs: nowMs2, ttlMs: PROBE_MODELS_FAILURE_TTL_MS });
+      }
       return fallback;
     }
 
@@ -561,20 +599,31 @@ export async function probeAgentModelsBestEffort(params: {
 
       const models = await probeModelsFromAcpBackend({ backend, timeoutMs }).catch(() => null);
       if (!models) {
-        agentModelsProbeCache.setSuccess(cacheKey, fallback, { nowMs: nowMs2, ttlMs: PROBE_MODELS_FAILURE_TTL_MS });
+        if (!usesProviderOwnedCache) {
+          agentModelsProbeCache.setSuccess(cacheKey, fallback, { nowMs: nowMs2, ttlMs: PROBE_MODELS_FAILURE_TTL_MS });
+        }
         return fallback;
       }
 
       const res: ProbedAgentModelsResult = { ...fallback, availableModels: models, source: 'dynamic' };
-      agentModelsProbeCache.setSuccess(cacheKey, res, { nowMs: nowMs2, ttlMs: PROBE_MODELS_SUCCESS_TTL_MS });
+      if (!usesProviderOwnedCache) {
+        agentModelsProbeCache.setSuccess(cacheKey, res, { nowMs: nowMs2, ttlMs: PROBE_MODELS_SUCCESS_TTL_MS });
+      }
       return res;
     } catch {
-      agentModelsProbeCache.setSuccess(cacheKey, fallback, { nowMs: nowMs2, ttlMs: PROBE_MODELS_FAILURE_TTL_MS });
+      if (!usesProviderOwnedCache) {
+        agentModelsProbeCache.setSuccess(cacheKey, fallback, { nowMs: nowMs2, ttlMs: PROBE_MODELS_FAILURE_TTL_MS });
+      }
       return fallback;
     } finally {
       if (backend) {
         await backend.dispose().catch(() => {});
       }
     }
-  });
+  };
+
+  const result = usesProviderOwnedCache
+    ? await runProbe()
+    : await agentModelsProbeCache.runDedupe(cacheKey, runProbe);
+  return usesProviderOwnedCache ? { ...result, cacheable: false } : result;
 }
