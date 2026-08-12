@@ -16,6 +16,7 @@ import {
   createClaudeWorkflowJournalWrapper,
   createClaudeWorkflowScriptWrapper,
   parseClaudeWorkflowFact,
+  readClaudeRecordTimestampMs,
 } from './claudeWorkflowCorrelation';
 
 /**
@@ -33,6 +34,9 @@ import {
 
 /** A prompt head is a title source, not a payload: read a bounded prefix, never the whole transcript. */
 const AGENT_TRANSCRIPT_HEAD_MAX_BYTES = 512 * 1024;
+
+/** A death is proven by the LAST record alone: read a bounded suffix, never the whole transcript. */
+const AGENT_TRANSCRIPT_TAIL_MAX_BYTES = 64 * 1024;
 
 /**
  * What the sidecar directory has said about one agent so far, and which of those answers are FINAL.
@@ -52,6 +56,22 @@ type WorkflowAgentProfileFacts = {
   prompt: string | undefined;
   model: string | undefined;
   sidechainId: string | undefined;
+  /** The instant the agent's own first record carries — its real start, not the moment we looked. */
+  startedAt: number | undefined;
+  /** The agent's transcript ENDS in a terminal API error: it died while nothing was watching. */
+  endedByApiError: boolean;
+  /** The instant that final record carries. Absent when it carries none; never invented. */
+  endedAt: number | undefined;
+  /** File size at the last tail read, so an unchanged transcript costs a `stat` and no read. */
+  tailReadAtSize: number | undefined;
+  /**
+   * The journal reported this agent's own outcome.
+   *
+   * Its transcript has nothing left to add — a later error line cannot un-finish a finished agent —
+   * so it stops being re-read. This is also the bound on the drain sweep: only agents that have not
+   * reported are probed.
+   */
+  journalResolved: boolean;
   /** The transcript's first record parsed, so the prompt it declares (or declines to) is final. */
   promptSettled: boolean;
   /** `meta.json` was readable and parsed, so its model (or its absence) is final. */
@@ -108,6 +128,13 @@ function readJournalEntryAgentId(entry: unknown): string | null {
   return typeof agentId === 'string' && agentId.trim().length > 0 ? agentId.trim() : null;
 }
 
+/** The journal has exactly two entry types, `started` and `result`; only the second is an outcome. */
+function readJournalEntryType(entry: unknown): string | null {
+  if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return null;
+  const type = (entry as Record<string, unknown>).type;
+  return typeof type === 'string' ? type : null;
+}
+
 /**
  * The head of an agent's sidecar transcript, and whether the file was there at all.
  *
@@ -152,6 +179,72 @@ async function readFirstJsonlRecord(handle: Awaited<ReturnType<typeof open>>): P
       ? (parsed as Record<string, unknown>)
       : null;
   }
+}
+
+/**
+ * The LAST complete record of an agent's transcript, or nothing — plus the size it was read at.
+ *
+ * Nothing is returned unless the file ends with a whole, parseable record: while an agent is being
+ * appended to, the final line can be a fragment, and reading the record before it would report an
+ * ending to a transcript that is still going. A later probe re-reads it.
+ *
+ * `sinceSize` skips the read entirely when the file has not grown, so re-probing a run's silent
+ * agents on every sibling journal line costs one `stat` rather than a re-read: an append-only file
+ * of the same length has the same last record, and the previous verdict already accounts for it.
+ */
+type AgentTranscriptTail = Readonly<{ size: number; record: Record<string, unknown> | null }>;
+
+async function readAgentTranscriptTailRecord(
+  filePath: string,
+  sinceSize: number | undefined,
+): Promise<AgentTranscriptTail | null> {
+  let handle: Awaited<ReturnType<typeof open>>;
+  try {
+    handle = await open(filePath, 'r');
+  } catch {
+    return null;
+  }
+  try {
+    const { size } = await handle.stat();
+    if (sinceSize !== undefined && size === sinceSize) return null;
+    const length = Math.min(size, AGENT_TRANSCRIPT_TAIL_MAX_BYTES);
+    if (length <= 0) return null;
+    const buffer = Buffer.allocUnsafe(length);
+    const { bytesRead } = await handle.read(buffer, 0, length, size - length);
+    const lines = buffer.subarray(0, bytesRead).toString('utf8').split('\n');
+    while (lines.length > 0 && (lines[lines.length - 1] ?? '').trim().length === 0) lines.pop();
+    const last = lines[lines.length - 1];
+    if (!last) return { size, record: null };
+    try {
+      const parsed: unknown = JSON.parse(last);
+      return {
+        size,
+        record: parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+          ? (parsed as Record<string, unknown>)
+          : null,
+      };
+    } catch {
+      // A half-written final line: the file is mid-append, so it has not ended. Re-read it later.
+      return null;
+    }
+  } catch {
+    return null;
+  } finally {
+    await handle.close();
+  }
+}
+
+/**
+ * A transcript record Claude wrote because an API call terminally failed for that message — an
+ * expired token, a rate/session limit, an org policy refusal.
+ *
+ * The flag alone is the classification the rest of this backend already applies
+ * (`readClaudeTranscriptTurnSignal`, `sessionScanner`); what makes it TERMINAL for an agent here is
+ * the caller's rule that it is the transcript's last record. Measured over the 140 real workflow
+ * sidecars of session `15a64b1f`: 12 carry such a record, and in 12 of 12 it is the final one.
+ */
+function isTerminalApiErrorRecord(record: Record<string, unknown>): boolean {
+  return record.isApiErrorMessage === true;
 }
 
 function readAgentPromptText(record: Record<string, unknown> | null): string | undefined {
@@ -270,23 +363,52 @@ export function createClaudeWorkflowJournalFollower(params: Readonly<{
    * re-emitted with the ACCUMULATED facts rather than the delta, because the tracker merges them
    * and a partial second wrapper would read as a correction.
    */
-  function emitAgentProfile(entry: WorkflowJournalEntry, agentId: string): void {
-    let facts = entry.agentProfiles.get(agentId);
-    if (!facts) {
-      facts = {
-        prompt: undefined,
-        model: undefined,
-        sidechainId: undefined,
-        promptSettled: false,
-        modelSettled: false,
-        sidechainSettled: false,
-        reading: false,
-        retryRequested: false,
-      };
-      entry.agentProfiles.set(agentId, facts);
+  function ensureAgentFacts(entry: WorkflowJournalEntry, agentId: string): WorkflowAgentProfileFacts {
+    const existing = entry.agentProfiles.get(agentId);
+    if (existing) return existing;
+    const created: WorkflowAgentProfileFacts = {
+      prompt: undefined,
+      model: undefined,
+      sidechainId: undefined,
+      startedAt: undefined,
+      endedByApiError: false,
+      endedAt: undefined,
+      tailReadAtSize: undefined,
+      journalResolved: false,
+      promptSettled: false,
+      modelSettled: false,
+      sidechainSettled: false,
+      reading: false,
+      retryRequested: false,
+    };
+    entry.agentProfiles.set(agentId, created);
+    return created;
+  }
+
+  /**
+   * Re-read every agent of one run that has not reported an outcome, skipping `except`.
+   *
+   * The only way a death gets observed: the dead agent is by definition silent, so the trigger has
+   * to come from somewhere else in the run — a sibling's journal line, or a drain.
+   */
+  function sweepUnreportedAgents(entry: WorkflowJournalEntry, except?: string): void {
+    for (const [agentId, facts] of entry.agentProfiles) {
+      if (agentId === except) continue;
+      if (facts.journalResolved || facts.endedByApiError) continue;
+      emitAgentProfile(entry, agentId);
     }
-    const state = facts;
-    if (state.promptSettled && state.modelSettled && state.sidechainSettled) return;
+  }
+
+  /** Whether this agent's transcript can still tell us something we have not already asked it. */
+  function hasUnsettledFacts(state: WorkflowAgentProfileFacts): boolean {
+    if (!state.promptSettled || !state.modelSettled || !state.sidechainSettled) return true;
+    // An agent that has neither reported a result nor been proven dead may still be dying.
+    return !state.journalResolved && !state.endedByApiError;
+  }
+
+  function emitAgentProfile(entry: WorkflowJournalEntry, agentId: string): void {
+    const state = ensureAgentFacts(entry, agentId);
+    if (!hasUnsettledFacts(state)) return;
     if (state.reading) {
       state.retryRequested = true;
       return;
@@ -307,8 +429,11 @@ export function createClaudeWorkflowJournalFollower(params: Readonly<{
           } else {
             if (!state.promptSettled && head.record !== null) {
               state.prompt = readAgentPromptText(head.record);
+              // The same record carries the agent's own start. The journal carries no clock at all,
+              // so without this the row's elapsed time counts from the moment we happened to look.
+              state.startedAt = readClaudeRecordTimestampMs(head.record);
               state.promptSettled = true;
-              if (state.prompt !== undefined) learned = true;
+              if (state.prompt !== undefined || state.startedAt !== undefined) learned = true;
             }
             if (!state.sidechainSettled) {
               const imported = await importAgentTranscript(entry, agentId, `${base}.jsonl`);
@@ -330,6 +455,22 @@ export function createClaudeWorkflowJournalFollower(params: Readonly<{
           }
         }
 
+        // Did this agent die where nobody was looking? Only asked while the journal has not
+        // reported its outcome — a finished agent has nothing left to prove, and an unfinished one
+        // is exactly the row that hangs `running` forever. Never latched as "alive": a transcript
+        // that has not ended yet is re-read on the next journal entry or drain.
+        if (!state.journalResolved && !state.endedByApiError) {
+          const tail = await readAgentTranscriptTailRecord(`${base}.jsonl`, state.tailReadAtSize);
+          if (tail) {
+            state.tailReadAtSize = tail.size;
+            if (tail.record && isTerminalApiErrorRecord(tail.record)) {
+              state.endedByApiError = true;
+              state.endedAt = readClaudeRecordTimestampMs(tail.record);
+              learned = true;
+            }
+          }
+        }
+
         // Nothing new was proven about this agent, so there is nothing to say about it yet. The
         // unsettled facts above are what bring a later journal entry back here.
         if (!learned) return;
@@ -339,6 +480,9 @@ export function createClaudeWorkflowJournalFollower(params: Readonly<{
           ...(state.prompt !== undefined ? { prompt: state.prompt } : {}),
           ...(state.model !== undefined ? { model: state.model } : {}),
           ...(state.sidechainId !== undefined ? { sidechainId: state.sidechainId } : {}),
+          ...(state.startedAt !== undefined ? { startedAt: state.startedAt } : {}),
+          ...(state.endedByApiError ? { endedByApiError: true } : {}),
+          ...(state.endedAt !== undefined ? { endedAt: state.endedAt } : {}),
           ...(entry.sourceSessionId ? { sourceSessionId: entry.sourceSessionId } : {}),
         }));
       } finally {
@@ -406,7 +550,16 @@ export function createClaudeWorkflowJournalFollower(params: Readonly<{
         }));
         const registered = entriesByRunId.get(paramsForRun.workflowToolUseId);
         const agentId = readJournalEntryAgentId(entry);
-        if (registered && agentId) emitAgentProfile(registered, agentId);
+        if (registered && agentId) {
+          // An agent that reported its own outcome needs no death probe, now or on any later drain.
+          if (readJournalEntryType(entry) === 'result') ensureAgentFacts(registered, agentId).journalResolved = true;
+          emitAgentProfile(registered, agentId);
+          // A dead agent writes nothing more — not to its transcript, not to the journal — so its
+          // own entries can never bring us back to it. Its SIBLINGS still post while the run works,
+          // and that line is the proof the run is progressing without it. Bounded by the same rule
+          // as the drain sweep: only agents that have not reported are re-read.
+          sweepUnreportedAgents(registered, agentId);
+        }
       },
       onError: (error) => {
         logger.debug(`${logPrefix}: workflow journal follower error for ${paramsForRun.workflowToolUseId}`, error);
@@ -460,7 +613,10 @@ export function createClaudeWorkflowJournalFollower(params: Readonly<{
       for (const entry of entriesByRunId.values()) {
         await entry.controller.drainNow();
       }
-      // Sidecar reads are started BY the drain above, so they are awaited after it.
+      // A run whose remaining agents have ALL died goes silent on every channel, so no journal line
+      // is ever coming to trigger the sibling sweep above. A drain is the last trigger there is.
+      for (const entry of entriesByRunId.values()) sweepUnreportedAgents(entry);
+      // Sidecar reads are started BY the drain and the sweep above, so they are awaited after both.
       while (pendingSidecarReads.size > 0) {
         await Promise.allSettled([...pendingSidecarReads]);
       }

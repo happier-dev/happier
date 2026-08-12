@@ -104,10 +104,29 @@ function restoreTTY(stdinIsTTY: boolean | undefined, stdoutIsTTY: boolean | unde
   Object.defineProperty(process.stdout, 'isTTY', { value: stdoutIsTTY, configurable: true });
 }
 
-function createSessionScannerStub(): SessionScannerResult {
+function createSessionScannerStub(
+  subagentFileCollector: SessionScannerResult['subagentFileCollector'] = createSidechainImporterStub().collector,
+): SessionScannerResult {
   return {
     cleanup: vi.fn(async () => {}),
     onNewSession: vi.fn(),
+    subagentFileCollector,
+  };
+}
+
+/**
+ * The scanner's ONE sidechain importer, reduced to the single method a workflow-agent registration
+ * uses. Everything past registration (follow, dedupe, mark, emit) is the collector's own tested
+ * path; what matters here is that the launcher hands registrations to THIS object and to no other.
+ */
+function createSidechainImporterStub(): {
+  collector: SessionScannerResult['subagentFileCollector'];
+  registerSidechainFile: ReturnType<typeof vi.fn>;
+} {
+  const registerSidechainFile = vi.fn(async () => {});
+  return {
+    collector: { registerSidechainFile } as unknown as SessionScannerResult['subagentFileCollector'],
+    registerSidechainFile,
   };
 }
 
@@ -1336,5 +1355,55 @@ describe('claudeLocalLauncher', () => {
     } finally {
       process.env.HAPPIER_E2E_PROVIDERS = prev;
     }
+  });
+
+  // INV-R C-1. The wave-23 workflow-agent transcript import was wired on the remote launcher only,
+  // so on this launcher no registrar ever reached the journal follower and zero workflow-agent rows
+  // could open. The scanner already owns the ONE sidechain importer for this runtime; the launcher
+  // must hand workflow sidecars to that one rather than build a second. The source is constructed
+  // BEFORE the scanner exists, so the holder is briefly empty — and while it is, wave 25's rule
+  // stands: fail, so the follower withholds the id instead of stamping proof of a dead import.
+  it('registers workflow-agent sidecars with the scanner sidechain importer, fail-closed (INV-R C-1)', async () => {
+    const { session } = createLocalHarness();
+    const importer = createSidechainImporterStub();
+    mockCreateSessionScanner.mockImplementationOnce(async () => createSessionScannerStub(importer.collector));
+
+    const registration = {
+      sidechainId: 'workflow_agent_sidechain:toolu_1:agent-a',
+      agentId: 'agent-a',
+      filePath: '/tmp/wf/agent-agent-a.jsonl',
+    };
+    type RegisterWorkflowAgentTranscript = (input: typeof registration) => Promise<void>;
+    let register: RegisterWorkflowAgentTranscript | undefined;
+    let beforeScannerOutcome: unknown = 'never-attempted';
+    mockCreateClaudeWorkflowActivitySourceForSession.mockImplementationOnce(async (params: Readonly<{
+      registerWorkflowAgentTranscript?: RegisterWorkflowAgentTranscript;
+    }>) => {
+      register = params.registerWorkflowAgentTranscript;
+      if (register) {
+        beforeScannerOutcome = await register(registration).then(() => 'registered', (error) => error);
+      }
+      return null;
+    });
+
+    let afterScannerOutcome: unknown = 'never-attempted';
+    mockClaudeLocal.mockImplementationOnce(async () => {
+      if (!register) return;
+      afterScannerOutcome = await register(registration).then(() => 'registered', (error) => error);
+    });
+
+    const { claudeLocalLauncher } = await import('./claudeLocalLauncher');
+    await claudeLocalLauncher(session);
+
+    if (typeof register !== 'function') {
+      throw new Error('local launcher did not hand the workflow source a transcript registrar');
+    }
+    expect(beforeScannerOutcome).toBeInstanceOf(Error);
+    expect(String(beforeScannerOutcome)).toMatch(/no sidechain importer/i);
+    expect(afterScannerOutcome).toBe('registered');
+    expect(importer.registerSidechainFile).toHaveBeenCalledWith({
+      ...registration,
+      source: 'workflow-agent',
+    });
   });
 });

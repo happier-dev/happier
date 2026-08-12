@@ -82,7 +82,63 @@ export type ClaudeWorkflowActivitySessionBinding = Readonly<{
 export type WiredClaudeWorkflowActivitySource = ClaudeWorkflowActivitySource & Readonly<{
   /** Start the one-shot startup-absence grace window after the live observer is installed. */
   armStartupReconciliation(): void;
+  /**
+   * Resolve outstanding durable background-task records to `cancelled` — ORDERLY STOP ONLY.
+   *
+   * It lives on the WIRED source rather than inside `createClaudeWorkflowActivitySource` because
+   * this seam is what constructs the background-task publisher and therefore owns its lifecycle;
+   * the provider-clean source only forwards facts to it. Call it BEFORE the teardown's `flush()`,
+   * so the resolved state is what gets drained.
+   *
+   * The caller must have OBSERVED the kill (see `finalizeOutstandingOnOrderlyStop` for why a crash
+   * and a resume are both disqualifying). This seam cannot check that for itself, which is why the
+   * only production caller is the explicit-stop teardown that destroyed the host.
+   */
+  finalizeBackgroundTaskRecordsOnOrderlyStop(): void;
 }>;
+
+/**
+ * Say — once, at construction — whether the startup reconcile actually has anything to work with.
+ *
+ * The capture is ONE shot: `collectStartupReconcileCandidates` runs against the metadata snapshot
+ * that exists at wiring time and is never retried, and `armStartupReconciliation` returns
+ * immediately when it produced nothing. So an empty capture caused by MISSING EVIDENCE is not a 30
+ * second delay, it is a permanent one — a run left `active` by the previous process stays `active`
+ * until this session happens to publish again, and nothing anywhere says why.
+ *
+ * The two outcomes are reported at different levels because they are different facts:
+ *
+ * - **Fault** — no snapshot at all, or a headline value that will not parse. Rare, unrecoverable,
+ *   and reported on a signal that is on by default. `logger.debug` would NOT be: a session process
+ *   resolves its file log level to `info` (`resolveFileLogLevel`), so debug entries are opt-in via
+ *   `DEBUG`/`HAPPIER_LOG_LEVEL` and this would be an unobserved fallback in production. The console
+ *   line `warn` also writes is acceptable here and only here: wiring happens before the provider
+ *   terminal UI starts, so it cannot land inside a running TUI.
+ * - **Normal** — a readable snapshot with no non-terminal run. That is what a fresh session and a
+ *   settled session both look like, i.e. almost every session; warning on it would bury the fault.
+ */
+function reportStartupReconcileCapture(params: Readonly<{
+  logPrefix: string;
+  hasMetadataSnapshot: boolean;
+  hasHeadlineValue: boolean;
+  headlineReadable: boolean;
+  candidateCount: number;
+}>): void {
+  const fault = !params.hasMetadataSnapshot
+    ? 'no session metadata snapshot at wiring time'
+    : params.hasHeadlineValue && !params.headlineReadable
+      ? 'the persisted workflow activity headline could not be read'
+      : null;
+  if (fault) {
+    logger.warn(
+      `${params.logPrefix}: startup workflow reconciliation captured no candidates (${fault}); a run left running by a previous process will not be resolved by this session`,
+    );
+    return;
+  }
+  logger.debug(
+    `${params.logPrefix}: startup workflow reconciliation captured ${params.candidateCount} candidate(s)`,
+  );
+}
 
 export function wireClaudeWorkflowActivitySource(params: Readonly<{
   backendId: string;
@@ -208,6 +264,9 @@ export function wireClaudeWorkflowActivitySource(params: Readonly<{
     ...(params.onProviderTaskActivity
       ? { onProviderTaskActivity: params.onProviderTaskActivity }
       : {}),
+    // Forwarded UNWRAPPED, deliberately: the registrar is fail-closed and its rejection must reach
+    // the journal follower's catch. See the fail-closed pin in
+    // `createClaudeWorkflowActivitySourceForSession.test.ts`.
     ...(params.registerWorkflowAgentTranscript
       ? { registerWorkflowAgentTranscript: params.registerWorkflowAgentTranscript }
       : {}),
@@ -221,6 +280,13 @@ export function wireClaudeWorkflowActivitySource(params: Readonly<{
   const reconcileCandidates = parsedHeadline.success
     ? collectStartupReconcileCandidates(parsedHeadline.data)
     : [];
+  reportStartupReconcileCapture({
+    logPrefix: params.logPrefix ?? '[claude-workflow-source]',
+    hasMetadataSnapshot: currentMetadata != null,
+    hasHeadlineValue: startupMetadata?.sessionWorkflowActivityHeadlineV1 !== undefined,
+    headlineReadable: parsedHeadline.success,
+    candidateCount: reconcileCandidates.length,
+  });
   const graceMs = params.startupReconcileGraceMs ?? WORKFLOW_ACTIVITY_STARTUP_RECONCILE_GRACE_MS;
   let reconcileTimer: ReturnType<typeof setTimeout> | null = null;
   let reconciliationArmed = false;
@@ -228,6 +294,9 @@ export function wireClaudeWorkflowActivitySource(params: Readonly<{
 
   return {
     ...source,
+    finalizeBackgroundTaskRecordsOnOrderlyStop() {
+      backgroundTaskRecordPublisher.finalizeOutstandingOnOrderlyStop();
+    },
     armStartupReconciliation() {
       if (disposed || reconciliationArmed || reconcileCandidates.length === 0) return;
       reconciliationArmed = true;

@@ -303,6 +303,49 @@ describe('createClaudeWorkflowActivitySource', () => {
     source.dispose();
   });
 
+  /**
+   * A resumed session replays its whole transcript into the tracker. Stamping those rows with the
+   * wall clock made hours-old work look freshly updated, which is precisely the signal the surface's
+   * staleness hedge reads — so the one honest fact the roster had about age was falsified on every
+   * resume. Every record type that reaches this source carries its own instant (measured on the real
+   * 2 885-record transcript of session `15a64b1f`: `user`, `assistant` and `system` records are
+   * 100% timestamped), so nothing has to be invented to stop doing that.
+   */
+  it('keeps a replayed record’s own instant instead of stamping it with the resume clock', async () => {
+    vi.setSystemTime(new Date('2026-08-12T03:00:00.000Z'));
+    const committed: SessionWorkflowRunSnapshotV1[] = [];
+    const source = createClaudeWorkflowActivitySource({
+      backendId: 'claude',
+      agentId: 'claude',
+      getCurrentClaudeSessionId: () => 'claude-session-1',
+      commitRecord: async (snapshot) => { committed.push(snapshot); },
+      writeHeadlines: () => {},
+      debounceMs: 0,
+    });
+
+    const replayedTask = (id: string, timestamp: string) => ({
+      type: 'assistant',
+      session_id: 'claude-session-1',
+      uuid: `uuid-${id}`,
+      timestamp,
+      message: {
+        content: [{ type: 'tool_use', id, name: 'Task', input: { description: id, subagent_type: 'general-purpose' } }],
+      },
+    });
+
+    source.observeTranscriptMessage(replayedTask('task_1', '2026-08-11T22:00:00.000Z'), { historicalReplay: true });
+    source.observeTranscriptMessage(replayedTask('task_2', '2026-08-11T22:05:00.000Z'), { historicalReplay: true });
+    // Replay never publishes; the resolved state reaches the record through the teardown flush.
+    source.finalizeInterruptedActivityOnShutdown();
+    await source.flush();
+    source.dispose();
+
+    expect(committed.at(-1)?.agents.map((agent) => [agent.id, agent.startedAt, agent.completedAt])).toEqual([
+      ['task_1', Date.parse('2026-08-11T22:00:00.000Z'), Date.parse('2026-08-11T22:00:00.000Z')],
+      ['task_2', Date.parse('2026-08-11T22:05:00.000Z'), Date.parse('2026-08-11T22:05:00.000Z')],
+    ]);
+  });
+
   it('terminalizes a failed Workflow tool result so it leaves active workflow headlines', async () => {
     const committed: SessionWorkflowRunSnapshotV1[] = [];
     const headlines: SessionWorkflowActivityHeadlineV1[] = [];
@@ -477,5 +520,82 @@ describe('createClaudeWorkflowActivitySource', () => {
     expect(snapshot?.agents[0]?.resultPreview).toContain('Alpha lane finished.');
 
     source.dispose();
+  });
+
+  /**
+   * The fail-closed registration seam, pinned END TO END through this source.
+   *
+   * `registerWorkflowAgentTranscript` is handed straight to the journal follower with no wrapping
+   * today, so the registrar's rejection ("no importer is wired yet") reaches the follower's own
+   * catch and the agent keeps NO `sidechainId`. That is the whole guarantee: an id is a claim the
+   * row is pressable into a transcript, so it may only exist once an importer accepted the file.
+   *
+   * A `try/catch`, an optional-chain, or a `.catch(() => {})` anywhere on this forwarding path
+   * would turn the rejection back into a silent success and re-stamp the id — which is why the
+   * assertion is the published id, not the call. Both halves are load-bearing: the accepting case
+   * proves the path is genuinely exercised (a source that simply stopped forwarding would satisfy
+   * the rejecting case alone).
+   */
+  describe('workflow agent transcript registration (fail-closed)', () => {
+    async function publishOneAgentWithImporter(
+      registerWorkflowAgentTranscript: (registration: Readonly<{ sidechainId: string }>) => Promise<void>,
+    ): Promise<SessionWorkflowRunSnapshotV1 | undefined> {
+      const transcriptDir = await mkdtemp(join(tmpdir(), 'happier-workflow-register-'));
+      tempDirs.push(transcriptDir);
+      await writeFile(join(transcriptDir, 'agent-agent_alpha.jsonl'), `${JSON.stringify({
+        type: 'user',
+        isSidechain: true,
+        agentId: 'agent_alpha',
+        message: { role: 'user', content: 'LANE ALPHA\ndo the work' },
+      })}\n`);
+      await writeFile(join(transcriptDir, 'journal.jsonl'), `${JSON.stringify({
+        type: 'started',
+        key: 'lane-1',
+        agentId: 'agent_alpha',
+      })}\n`);
+
+      const committed: SessionWorkflowRunSnapshotV1[] = [];
+      const source = createClaudeWorkflowActivitySource({
+        backendId: 'claude',
+        agentId: 'claude',
+        getCurrentClaudeSessionId: () => 'claude-session-1',
+        commitRecord: async (snapshot) => { committed.push(snapshot); },
+        writeHeadlines: () => {},
+        registerWorkflowAgentTranscript,
+        debounceMs: 0,
+      });
+
+      source.observeTranscriptMessage(workflowToolUse('toolu_wf', 'sidecar-wf'));
+      await vi.advanceTimersByTimeAsync(0);
+      source.observeTranscriptMessage(workflowLaunchResult('toolu_wf', transcriptDir));
+      await source.flush();
+      source.dispose();
+      return committed.at(-1);
+    }
+
+    it('stamps the sidechain id an importer accepted', async () => {
+      const registered: string[] = [];
+      const snapshot = await publishOneAgentWithImporter(async ({ sidechainId }) => {
+        registered.push(sidechainId);
+      });
+
+      expect(registered).toHaveLength(1);
+      expect(snapshot?.agents[0]?.sidechainId).toBe(registered[0]);
+    });
+
+    it('withholds the sidechain id when the importer REJECTS the file', async () => {
+      const attempted: string[] = [];
+      const snapshot = await publishOneAgentWithImporter(async ({ sidechainId }) => {
+        attempted.push(sidechainId);
+        throw new Error(`no sidechain importer is wired yet; refusing to claim ${sidechainId}`);
+      });
+
+      // The registrar was reached — this is a withheld id, not an unexercised path. A rejection
+      // leaves the import unsettled, so the flush's re-read of every unreported agent tries the
+      // SAME id once more; a retry is not a second claim, and it is still refused.
+      expect(new Set(attempted).size).toBe(1);
+      expect(snapshot?.agents[0]?.id).toBe('agent_alpha');
+      expect(snapshot?.agents[0]?.sidechainId).toBeUndefined();
+    });
   });
 });

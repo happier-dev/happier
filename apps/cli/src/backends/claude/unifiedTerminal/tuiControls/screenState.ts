@@ -37,6 +37,8 @@ export type ClaudeScreenState = Readonly<{
   switchModelDialogVisible: boolean;
   /** Claude usage/session-limit prompt opened by `/rate-limit-options`; provider is unavailable. */
   usageLimitDialogVisible: boolean;
+  /** Safe bounded capture of the currently visible numbered block, including recognized dialogs. */
+  visibleNumberedDialog: ClaudeUnifiedGenericNumberedDialog | null;
   /** Heavy-session startup interstitial: "Resume from summary" / "Resume full session". */
   resumeChoiceDialogVisible: boolean;
   /** Proven option order for the heavy-session resume interstitial. */
@@ -126,7 +128,10 @@ const SAFEGUARD_PAUSE_DIALOG_HEAD = /\bsession paused\b/i;
 const SAFEGUARD_PAUSE_DIALOG_BODY = /\bsafeguards flagged this message\b/i;
 const SAFEGUARD_PAUSE_SWITCH_OPTION = /\bswitch to\s+(.+?)\s*$/i;
 const SAFEGUARD_PAUSE_RETRY_OPTION = /\bedit prompt and retry(?:\s+with\s+(.+?))?\s*$/i;
-const USAGE_LIMIT_DIALOG = /(?:\byou['’]ve hit your session limit\b|\/rate-limit-options)[\s\S]{0,900}\bwhat do you want to do\?[\s\S]{0,500}\bstop and wait for limit to reset\b[\s\S]{0,300}\bupgrade your plan\b/i;
+// The provider changes the paid alternatives across plans and releases. Recognize the stable
+// failure + chooser + wait semantics, then require the shared strict numbered-dialog parser below.
+// This stays tolerant of labels and option count without matching arbitrary numbered dialogs.
+const USAGE_LIMIT_DIALOG = /(?:\byou(?:['’]ve| have)\s+(?:hit|reached)\s+your\s+(?:session|usage)\s+limit\b|\/rate-limit-options)[\s\S]{0,1200}\bwhat do you want to do\?[\s\S]{0,700}\bwait\b[^\n]{0,120}\blimit\b[^\n]{0,120}\breset(?:s)?\b/i;
 // Live probe 2026-06-11 (Claude Code 2.1.173, tmux): `/effort <level>` on a conversation cached at a
 // different effort opens "Change effort level? … ❯ 1. Yes, switch to <level>  2. No, go back".
 // Escape / "No, go back" prints `Kept effort level as <current>` (incident cmq8y3nlx, L6).
@@ -558,9 +563,11 @@ function resolveGenericNumberedDialog(text: string): ClaudeUnifiedGenericNumbere
 
 export function parseClaudeScreenState(rawText: string, context?: ClaudeScreenParseContext): ClaudeScreenState {
   const text = normalizeCapturedScreen(rawText);
+  const visibleTail = tailLines(text, 30);
+  const visibleNumberedDialog = resolveGenericNumberedDialog(visibleTail);
 
   const switchModelDialogVisible = SWITCH_MODEL_DIALOG.test(text);
-  const usageLimitDialogVisible = USAGE_LIMIT_DIALOG.test(tailLines(text, 30));
+  const usageLimitDialogVisible = USAGE_LIMIT_DIALOG.test(visibleTail) && visibleNumberedDialog !== null;
   const resumeChoiceDialogOptions = resolveResumeChoiceDialogOptions(text);
   const resumeChoiceDialogVisible = resumeChoiceDialogOptions.length > 0;
   const safeguardPauseDialogOptions = resolveSafeguardPauseDialogOptions(text);
@@ -630,6 +637,7 @@ export function parseClaudeScreenState(rawText: string, context?: ClaudeScreenPa
     trustFolderPromptVisible,
     switchModelDialogVisible,
     usageLimitDialogVisible,
+    visibleNumberedDialog,
     resumeChoiceDialogVisible,
     resumeChoiceDialogOptions,
     safeguardPauseDialogVisible,

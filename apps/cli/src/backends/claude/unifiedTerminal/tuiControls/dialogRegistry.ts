@@ -139,10 +139,12 @@ export const CLAUDE_UNIFIED_RECOGNIZED_DIALOG_REGISTRY: readonly ClaudeUnifiedRe
     requestReason: 'claude_unified_terminal_usage_limit',
     header: 'Claude usage limit',
     question: 'Claude reached a usage limit. What should it do?',
-    options: () => [
-      option('wait_for_reset', 'Stop and wait', 'Wait for Claude\'s usage limit to reset.', '1'),
-      option('upgrade_plan', 'Upgrade plan', 'Continue with Claude\'s plan-upgrade flow.', '2'),
-    ],
+    options: (state) => state.visibleNumberedDialog?.options.map((dialogOption) => option(
+      dialogOption.choice,
+      dialogOption.label,
+      'Send this exact visible choice to Claude.',
+      dialogOption.choice,
+    )) ?? [],
   },
   {
     dialogId: 'resume_choice',

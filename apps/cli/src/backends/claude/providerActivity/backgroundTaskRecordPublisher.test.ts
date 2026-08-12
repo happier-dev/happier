@@ -324,4 +324,75 @@ describe('createBackgroundTaskRecordPublisher', () => {
 
     expect(committed).toEqual([]);
   });
+
+  describe('finalizeOutstandingOnOrderlyStop (RULING-14, orderly stop only)', () => {
+    it('resolves an outstanding command to cancelled with its last observed instant as the end', async () => {
+      // Without this the durable record stays `running` through the stop, the resume and forever:
+      // nothing else finalizes a background task, and the process that could observe it is gone.
+      const { publisher, committed } = createHarness();
+
+      publisher.observe(started());
+      publisher.observe({
+        type: 'progress',
+        sessionId: 'claude-session-1',
+        taskId: 'task_1',
+        detail: 'Reading logs',
+      });
+      await publisher.flush();
+      const lastObservedAt = committed.at(-1)!.updatedAt;
+
+      publisher.finalizeOutstandingOnOrderlyStop();
+      await publisher.flush();
+
+      const last = committed.at(-1);
+      expect(last?.status).toBe('cancelled');
+      // The end is the last instant we have evidence for, never a fabricated one — the same rule
+      // the workflow tracker applies to an agent's `completedAt`.
+      expect(last?.endedAt).toBe(lastObservedAt);
+      expect(last?.updatedAt).toBeGreaterThan(lastObservedAt);
+      expect(last?.startedAt).toBe(2_000);
+    });
+
+    it('never walks back a task that already reported its own outcome, and writes nothing twice', async () => {
+      const { publisher, committed } = createHarness();
+
+      publisher.observe(started({ taskId: 'task_done' }));
+      publisher.observe({
+        type: 'terminal',
+        sessionId: 'claude-session-1',
+        taskId: 'task_done',
+        status: 'completed',
+        summary: 'Build finished',
+        endedAt: null,
+      });
+      publisher.observe(started({ taskId: 'task_live' }));
+      await publisher.flush();
+      const writesBeforeStop = committed.length;
+
+      publisher.finalizeOutstandingOnOrderlyStop();
+      // Idempotent: a teardown that finalizes twice must not produce a second write, because the
+      // second pass finds nothing outstanding.
+      publisher.finalizeOutstandingOnOrderlyStop();
+      await publisher.flush();
+
+      expect(committed.slice(writesBeforeStop).map((record) => [record.taskId, record.status]))
+        .toEqual([['task_live', 'cancelled']]);
+      expect(committed.filter((record) => record.taskId === 'task_done').at(-1)?.status)
+        .toBe('succeeded');
+    });
+
+    it('does nothing after dispose, so a disposed publisher cannot resurrect a write', async () => {
+      const { publisher, committed } = createHarness();
+
+      publisher.observe(started());
+      await publisher.flush();
+      const writesBeforeDispose = committed.length;
+      publisher.dispose();
+
+      publisher.finalizeOutstandingOnOrderlyStop();
+      await publisher.flush();
+
+      expect(committed).toHaveLength(writesBeforeDispose);
+    });
+  });
 });

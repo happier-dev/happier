@@ -1203,6 +1203,23 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
     let loopError: unknown = null;
     try {
         activeLoopAbortController = new AbortController();
+        // Only the unified-terminal runtime is abortable, so only it may be awaited on termination.
+        //
+        // `loop()` forwards `signal` to `claudeUnifiedTerminalLauncher` alone; the local and remote
+        // launchers take no signal, so aborting the controller cannot make them return and the
+        // await in `cleanup()` would simply not settle. That await runs FIRST, so a runtime that
+        // cannot honour it would starve everything behind it — the metadata drain, the session
+        // archive, session death/flush/close, the runtime-activity dispose, and the hook settings
+        // + plugin-dir removal — until `registerRunnerTerminationHandlers` hard-exits at
+        // HAPPIER_RUNNER_TERMINATION_TIMEOUT_MS. Moving the await after that teardown is no better:
+        // the launcher's shutdown finalize would then write through a transport already closed.
+        //
+        // KNOWN RESIDUAL: on SIGINT/SIGTERM/uncaught under the local and remote runtimes, those
+        // launchers' `finally` blocks (RULING-14 workflow-activity finalize + flush) may not run,
+        // so live rows stay "Working" until the next session start reconciles them from the
+        // persisted headline. Closing it belongs to the launchers — give them an `opts.signal` the
+        // way the unified-terminal launcher has one, and this flag becomes unconditional with no
+        // new mechanism here.
         activeLoopShouldWaitOnTermination = unifiedTerminalRuntimeActive;
         activeLoopPromise = loop({
             path: workingDirectory,

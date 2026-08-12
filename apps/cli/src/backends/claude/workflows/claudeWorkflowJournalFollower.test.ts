@@ -469,4 +469,216 @@ describe('createClaudeWorkflowJournalFollower', () => {
       });
     });
   });
+
+  /**
+   * The two instants the sidecar directory can prove, and the journal cannot.
+   *
+   * A journal entry is `{type, key, agentId}` — no clock anywhere in the channel — so every time an
+   * agent row displays is otherwise the moment the CLI happened to look. The agent's own transcript
+   * carries a real timestamp on every record, and the follower already opens and parses the first
+   * one for the name.
+   */
+  describe('createClaudeWorkflowJournalFollower — the agent’s own clock', () => {
+    const profilesFrom = (values: readonly unknown[]) => values
+      .filter((value) => (value as { type?: string }).type === 'happier_workflow_agent_profile');
+
+    const apiErrorRecord = (agentId: string, timestamp: string) => JSON.stringify({
+      type: 'assistant',
+      isSidechain: true,
+      agentId,
+      timestamp,
+      message: {
+        role: 'assistant',
+        model: '<synthetic>',
+        content: [{ type: 'text', text: "You've hit your session limit · resets 2:40am (Europe/Zurich)" }],
+      },
+      error: 'rate_limit',
+      isApiErrorMessage: true,
+      apiErrorStatus: 429,
+    });
+
+    it('reports the start the agent’s own first record declares', async () => {
+      await writeFile(join(dir, 'agent-a1.jsonl'), `${JSON.stringify({
+        type: 'user',
+        timestamp: '2026-08-11T22:53:00.703Z',
+        message: { role: 'user', content: 'LANE A1 — do the work' },
+      })}\n`, 'utf8');
+      await writeFile(join(dir, 'journal.jsonl'), `${JSON.stringify({ type: 'started', key: 'k', agentId: 'a1' })}\n`, 'utf8');
+
+      const { values, follower } = collect();
+      follower.observeTranscriptMessage(launchResult({ withScriptPath: false }));
+      await follower.syncAll();
+      follower.dispose();
+
+      expect(profilesFrom(values).at(-1)).toMatchObject({
+        agentId: 'a1',
+        startedAt: Date.parse('2026-08-11T22:53:00.703Z'),
+      });
+    });
+
+    it('invents no start for a first record that carries no timestamp', async () => {
+      await writeFile(join(dir, 'agent-a1.jsonl'), `${JSON.stringify({
+        type: 'user',
+        message: { role: 'user', content: 'LANE A1 — do the work' },
+      })}\n`, 'utf8');
+      await writeFile(join(dir, 'journal.jsonl'), `${JSON.stringify({ type: 'started', key: 'k', agentId: 'a1' })}\n`, 'utf8');
+
+      const { values, follower } = collect();
+      follower.observeTranscriptMessage(launchResult({ withScriptPath: false }));
+      await follower.syncAll();
+      follower.dispose();
+
+      expect(profilesFrom(values).at(-1)).not.toHaveProperty('startedAt');
+    });
+
+    /**
+     * The death neither a stop nor a resume can reach: the process is alive, the run is open, and
+     * the agent's transcript simply ends in a terminal API error. Across the 140 real sidecar
+     * transcripts of session `15a64b1f`, 12 carry an `isApiErrorMessage` record and in 12 of 12 it
+     * is the FINAL record — which is why the END of the file, not its mere presence, is the signal.
+     */
+    it('reports an agent whose transcript ENDS in a terminal API error, with the instant it ended', async () => {
+      await writeFile(join(dir, 'agent-a1.jsonl'), [
+        JSON.stringify({ type: 'user', timestamp: '2026-08-11T22:00:00.000Z', message: { role: 'user', content: 'LANE A1' } }),
+        apiErrorRecord('a1', '2026-08-11T22:44:30.087Z'),
+        '',
+      ].join('\n'), 'utf8');
+      await writeFile(join(dir, 'journal.jsonl'), `${JSON.stringify({ type: 'started', key: 'k', agentId: 'a1' })}\n`, 'utf8');
+
+      const { values, follower } = collect();
+      follower.observeTranscriptMessage(launchResult({ withScriptPath: false }));
+      await follower.syncAll();
+      follower.dispose();
+
+      expect(profilesFrom(values).at(-1)).toMatchObject({
+        agentId: 'a1',
+        endedByApiError: true,
+        endedAt: Date.parse('2026-08-11T22:44:30.087Z'),
+      });
+    });
+
+    it('reports no death when the agent kept working past the error', async () => {
+      await writeFile(join(dir, 'agent-a1.jsonl'), [
+        JSON.stringify({ type: 'user', timestamp: '2026-08-11T22:00:00.000Z', message: { role: 'user', content: 'LANE A1' } }),
+        apiErrorRecord('a1', '2026-08-11T22:44:30.087Z'),
+        JSON.stringify({ type: 'assistant', timestamp: '2026-08-11T22:45:00.000Z', message: { role: 'assistant', content: [{ type: 'text', text: 'back to work' }] } }),
+        '',
+      ].join('\n'), 'utf8');
+      await writeFile(join(dir, 'journal.jsonl'), `${JSON.stringify({ type: 'started', key: 'k', agentId: 'a1' })}\n`, 'utf8');
+
+      const { values, follower } = collect();
+      follower.observeTranscriptMessage(launchResult({ withScriptPath: false }));
+      await follower.syncAll();
+      follower.dispose();
+
+      expect(profilesFrom(values).some((profile) => (profile as { endedByApiError?: boolean }).endedByApiError)).toBe(false);
+    });
+
+    /**
+     * The journal is silent precisely when an agent dies — that is what makes the row stale — so a
+     * probe driven only by journal entries would never see the death it exists to catch. A drain
+     * re-reads the transcript of every agent that has not yet reported a result.
+     */
+    it('finds a death that lands with no further journal entry, on the next drain', async () => {
+      await writeFile(join(dir, 'agent-a1.jsonl'), `${JSON.stringify({
+        type: 'user',
+        timestamp: '2026-08-11T22:00:00.000Z',
+        message: { role: 'user', content: 'LANE A1' },
+      })}\n`, 'utf8');
+      await writeFile(join(dir, 'journal.jsonl'), `${JSON.stringify({ type: 'started', key: 'k', agentId: 'a1' })}\n`, 'utf8');
+
+      const { values, follower } = collect();
+      follower.observeTranscriptMessage(launchResult({ withScriptPath: false }));
+      await follower.syncAll();
+      expect(profilesFrom(values).some((profile) => (profile as { endedByApiError?: boolean }).endedByApiError)).toBe(false);
+
+      await appendFile(join(dir, 'agent-a1.jsonl'), `${apiErrorRecord('a1', '2026-08-11T22:44:30.087Z')}\n`, 'utf8');
+      await follower.syncAll();
+      follower.dispose();
+
+      expect(profilesFrom(values).at(-1)).toMatchObject({ agentId: 'a1', endedByApiError: true });
+    });
+
+    /**
+     * The live trigger. A dead agent writes nothing more — not to its transcript, not to the
+     * journal — so its own entries can never bring us back to look at it. What DOES keep arriving
+     * while the process runs is the rest of the run: a sibling's `started` or `result`. That line is
+     * proof the run is still progressing, which is exactly the moment a silent sibling is worth
+     * re-reading.
+     */
+    it('finds a dead agent when a SIBLING posts to the journal', async () => {
+      await writeFile(join(dir, 'agent-a1.jsonl'), `${JSON.stringify({
+        type: 'user',
+        timestamp: '2026-08-11T22:00:00.000Z',
+        message: { role: 'user', content: 'LANE A1' },
+      })}\n`, 'utf8');
+      await writeFile(join(dir, 'agent-a2.jsonl'), `${JSON.stringify({
+        type: 'user',
+        timestamp: '2026-08-11T22:01:00.000Z',
+        message: { role: 'user', content: 'LANE A2' },
+      })}\n`, 'utf8');
+      // Only a1 has a journal line so far; nothing has ever named it since.
+      await writeFile(join(dir, 'journal.jsonl'), `${JSON.stringify({ type: 'started', key: 'k1', agentId: 'a1' })}\n`, 'utf8');
+
+      // Driven through the FILE WATCHER, never `syncAll()`: the drain sweep lives in `syncAll`, and
+      // in production that only runs at teardown. This is the live path.
+      const values: unknown[] = [];
+      const watchers: Array<(file: string) => void> = [];
+      const follower = createClaudeWorkflowJournalFollower({
+        onJournalValue: (value) => values.push(value),
+        watchFile: (_file, onFileChange) => { watchers.push(onFileChange); return () => {}; },
+      });
+
+      try {
+        follower.observeTranscriptMessage(launchResult({ withScriptPath: false }));
+        await follower.syncAll();
+        const beforeSibling = profilesFrom(values).length;
+
+        // a1 dies, silently. Then the sibling starts — a1 is not mentioned in that line, and
+        // nothing drains.
+        await appendFile(join(dir, 'agent-a1.jsonl'), `${apiErrorRecord('a1', '2026-08-11T22:44:30.087Z')}\n`, 'utf8');
+        await appendFile(join(dir, 'journal.jsonl'), `${JSON.stringify({ type: 'started', key: 'k2', agentId: 'a2' })}\n`, 'utf8');
+        for (const notify of watchers) notify(join(dir, 'journal.jsonl'));
+
+        const deadline = Date.now() + 2_000;
+        let a1Death: unknown;
+        while (Date.now() < deadline) {
+          a1Death = profilesFrom(values)
+            .slice(beforeSibling)
+            .find((profile) => (profile as { agentId?: string }).agentId === 'a1'
+              && (profile as { endedByApiError?: boolean }).endedByApiError === true);
+          if (a1Death) break;
+          await new Promise((resolve) => { setTimeout(resolve, 10); });
+        }
+        expect(a1Death).toMatchObject({ endedByApiError: true, endedAt: Date.parse('2026-08-11T22:44:30.087Z') });
+      } finally {
+        follower.dispose();
+      }
+    });
+
+    it('stops re-reading an agent that already reported its result', async () => {
+      await writeFile(join(dir, 'agent-a1.jsonl'), `${JSON.stringify({
+        type: 'user',
+        timestamp: '2026-08-11T22:00:00.000Z',
+        message: { role: 'user', content: 'LANE A1' },
+      })}\n`, 'utf8');
+      await writeFile(join(dir, 'journal.jsonl'), [
+        JSON.stringify({ type: 'started', key: 'k', agentId: 'a1' }),
+        JSON.stringify({ type: 'result', key: 'k', agentId: 'a1', result: { lane: 'A1' } }),
+        '',
+      ].join('\n'), 'utf8');
+
+      const { values, follower } = collect();
+      follower.observeTranscriptMessage(launchResult({ withScriptPath: false }));
+      await follower.syncAll();
+
+      // An agent that finished has said what happened to it; a later error line in its transcript
+      // cannot un-finish it, and re-reading N settled transcripts on every drain is pure cost.
+      await appendFile(join(dir, 'agent-a1.jsonl'), `${apiErrorRecord('a1', '2026-08-11T22:44:30.087Z')}\n`, 'utf8');
+      await follower.syncAll();
+      follower.dispose();
+
+      expect(profilesFrom(values).some((profile) => (profile as { endedByApiError?: boolean }).endedByApiError)).toBe(false);
+    });
+  });
 });

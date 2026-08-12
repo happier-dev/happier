@@ -28,6 +28,7 @@ import {
 } from './createClaudeUnifiedHookLifecycleBridge';
 import { createReplayableHookSubscription } from './createReplayableHookSubscription';
 import { createClaudeUnifiedTranscriptBridge } from './createClaudeUnifiedTranscriptBridge';
+import type { ClaudeRemoteSubagentFileCollector } from '../remote/sidechains/claudeRemoteSubagentFileCollector';
 import {
   createClaudeUnifiedTerminalReadinessBridge,
   type ClaudeUnifiedStartupDialogResolver,
@@ -286,6 +287,14 @@ export type ClaudeUnifiedTerminalSessionOptions<Mode extends EnhancedMode = Enha
   onPromptTurnTerminal?: ((event: ClaudeUnifiedPromptTurnTerminalEvent) => void | Promise<void>) | undefined;
   runtimeActivityAdapter?: ReturnType<typeof createClaudeProviderRuntimeActivityAdapter> | null | undefined;
   onWorkflowActivityObserverReady?: (() => void) | null | undefined;
+  /**
+   * Publishes this runtime's ONE sidechain importer (and `null` when it is torn down) so the
+   * launcher can hand workflow-agent sidecars to the same importer that already owns `Task`
+   * sub-agent transcripts, instead of standing up a second one with its own budget and dedupe.
+   */
+  onSubagentFileCollectorChanged?: ((
+    collector: ClaudeRemoteSubagentFileCollector | null,
+  ) => void) | undefined;
   providerActivityLedger?: ReturnType<typeof createClaudeProviderActivityLedger> | undefined;
   onMessage?: ((message: RawJSONLines) => void | Promise<void>) | undefined;
   onHistoricalMessage?: ((message: RawJSONLines) => void | Promise<void>) | undefined;
@@ -2331,6 +2340,7 @@ export async function runClaudeUnifiedTerminalSession<Mode extends EnhancedMode 
               opts.onRawTranscriptValue?.(value, observation);
             },
             proveAcceptedMainTranscript: (value) => confirmPromptAcceptedFromTranscript([value]),
+            onSubagentFileCollectorChanged: opts.onSubagentFileCollectorChanged,
             onSessionFound: opts.onSessionFound,
             validateSessionStart: (sessionInfo) => {
               if (

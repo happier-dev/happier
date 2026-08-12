@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { Metadata } from '@/api/types';
+import { logger } from '@/ui/logger';
 import { SESSION_WORKFLOW_RUN_SNAPSHOT_PROJECTION_VERSION } from '@happier-dev/protocol';
 
 import { wireClaudeWorkflowActivitySource as wireProductionClaudeWorkflowActivitySource, type ClaudeWorkflowActivitySessionBinding } from './wireClaudeWorkflowActivitySource';
@@ -605,5 +606,152 @@ describe('wireClaudeWorkflowActivitySource', () => {
       summary: 'Background command completed',
     });
     source.dispose();
+  });
+
+  it('resolves an outstanding background task on an orderly stop, and leaves a settled one alone', async () => {
+    // The wiring half of the fix: the publisher owns the rule, this seam owns the instance, and the
+    // teardown that observed the kill is what calls it. Without a call here, the durable record
+    // stays `running` for the life of the session and nothing ever revisits it.
+    let metadata: Metadata = {
+      path: '/x',
+      host: 'h',
+      homeDir: '/home/tester',
+      happyHomeDir: '/home/tester/.happier',
+      happyLibDir: '/home/tester/.happier/lib',
+      happyToolsDir: '/home/tester/.happier/tools',
+    };
+    const upserts: Array<{ namespace: string; kind: string; localId: string; content: unknown }> = [];
+    const binding: TestBinding = {
+      sessionId: 'sess',
+      metadataWriter: { updateMetadata: (updater) => { metadata = updater(metadata); } },
+      upsertSystemRecord: async (record) => { upserts.push(record as never); },
+      resolveEncryption: async () => ({ mode: 'plain' }),
+      getCurrentClaudeSessionId: () => 'claude-session-1',
+    };
+
+    const source = wireClaudeWorkflowActivitySource({ backendId: 'claude', agentId: 'claude', binding });
+
+    for (const taskId of ['task_live', 'task_done']) {
+      source.observeTranscriptMessage({
+        type: 'system',
+        subtype: 'task_started',
+        session_id: 'claude-session-1',
+        task_id: taskId,
+        description: 'sleep 600',
+        task_type: 'local_bash',
+      });
+    }
+    source.observeTranscriptMessage({
+      type: 'system',
+      subtype: 'task_notification',
+      session_id: 'claude-session-1',
+      task_id: 'task_done',
+      status: 'completed',
+      summary: 'Build finished',
+    });
+    await vi.runAllTimersAsync();
+    await source.flush();
+
+    source.finalizeBackgroundTaskRecordsOnOrderlyStop();
+    await vi.runAllTimersAsync();
+    await source.flush();
+
+    const latestByTaskId = new Map<string, Record<string, unknown>>();
+    for (const record of upserts) {
+      if (record.kind !== 'background_task.v1') continue;
+      const payload = (record.content as { v: Record<string, unknown> }).v;
+      latestByTaskId.set(String(payload.taskId), payload);
+    }
+    expect(latestByTaskId.get('task_live')).toMatchObject({ status: 'cancelled' });
+    // Evidence wins: a task that reported its own outcome is not walked back by the teardown.
+    expect(latestByTaskId.get('task_done')).toMatchObject({ status: 'succeeded' });
+    source.dispose();
+  });
+
+  describe('startup reconcile candidate capture is observable', () => {
+    /**
+     * The capture happens ONCE, at construction, and is never retried. When it comes up empty
+     * because the evidence was missing rather than because there was nothing to reconcile, the 30 s
+     * window becomes permanent — `armStartupReconciliation` returns immediately and no timer is ever
+     * scheduled. That has to be reported on a signal that is on by default: `logger.debug` is OFF in
+     * a session process (`resolveFileLogLevel` -> `info` unless `DEBUG`/`HAPPIER_LOG_LEVEL`), so a
+     * debug line here is an unobservable fallback, which is itself a defect.
+     */
+    function wireWithMetadata(snapshot: Metadata | null) {
+      const binding: TestBinding = {
+        sessionId: 'sess',
+        metadataWriter: {
+          updateMetadata: () => {},
+          getMetadataSnapshot: () => snapshot,
+        },
+        upsertSystemRecord: async () => {},
+        resolveEncryption: async () => ({ mode: 'plain' }),
+        getCurrentClaudeSessionId: () => 'claude-session-1',
+      };
+      return wireClaudeWorkflowActivitySource({ backendId: 'claude', agentId: 'claude', binding });
+    }
+
+    const baseMetadata: Metadata = {
+      path: '/x',
+      host: 'h',
+      homeDir: '/home/tester',
+      happyHomeDir: '/home/tester/.happier',
+      happyLibDir: '/home/tester/.happier/lib',
+      happyToolsDir: '/home/tester/.happier/tools',
+    };
+
+    it('reports an unusable startup snapshot on a signal that is on by default', () => {
+      const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+
+      const missingSnapshot = wireWithMetadata(null);
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(String(warn.mock.calls[0]?.[0])).toContain('startup workflow reconciliation');
+      missingSnapshot.dispose();
+
+      warn.mockClear();
+      const unreadableHeadline = wireWithMetadata({
+        ...baseMetadata,
+        sessionWorkflowActivityHeadlineV1: { v: 99, nonsense: true },
+      } as unknown as Metadata);
+      expect(warn).toHaveBeenCalledTimes(1);
+      unreadableHeadline.dispose();
+
+      warn.mockRestore();
+    });
+
+    it('stays quiet when a session simply has no interrupted run to reconcile', () => {
+      // The overwhelmingly common case: a brand-new session has no headline at all, and a session
+      // whose runs all finished has no non-terminal candidate. Neither is a fault, and warning on
+      // them would drown the one case that is.
+      const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+
+      const freshSession = wireWithMetadata(baseMetadata);
+      const settledRuns = wireWithMetadata({
+        ...baseMetadata,
+        sessionWorkflowActivityHeadlineV1: {
+          v: 1,
+          backendId: 'claude',
+          agentId: 'claude',
+          updatedAt: 1_000,
+          activeRuns: [],
+          recentRuns: [{
+            runId: 'wf_done',
+            workflowToolUseId: 'wf_done',
+            title: 'a workflow that finished',
+            status: 'complete',
+            updatedAt: 2_000,
+            recordRevision: '1',
+            recordUpdatedAt: 2_000,
+            totalAgents: 1,
+            completedAgents: 1,
+          }],
+        },
+      } as unknown as Metadata);
+
+      expect(warn).not.toHaveBeenCalled();
+      freshSession.dispose();
+      settledRuns.dispose();
+      warn.mockRestore();
+    });
   });
 });

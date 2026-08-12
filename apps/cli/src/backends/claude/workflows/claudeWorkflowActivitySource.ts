@@ -21,6 +21,7 @@ import {
   type ClaudeProviderTaskActivity,
 } from '../providerActivity/createClaudeProviderActivityLedger';
 import { createClaudeWorkflowActivityTracker } from './claudeWorkflowActivityTracker';
+import { readClaudeRecordTimestampMs } from './claudeWorkflowCorrelation';
 import {
   createClaudeWorkflowJournalFollower,
   type ClaudeWorkflowAgentTranscriptRegistration,
@@ -180,9 +181,15 @@ export function createClaudeWorkflowActivitySource(params: Readonly<{
     message: unknown,
     observationContext?: Readonly<{ historicalReplay?: boolean }>,
   ): void => {
+    const isHistoricalReplay = observationContext?.historicalReplay === true;
+    // A replayed record is not something happening now, and stamping it with the wall clock made
+    // every pre-restart row look freshly updated — falsifying the only age signal the surface's
+    // staleness hedge has, on every resume. The record carries its own instant; use it. A live value
+    // is observed as it arrives, so the clock IS its instant.
+    const observedAt = (isHistoricalReplay ? readClaudeRecordTimestampMs(message) : undefined) ?? Date.now();
     const observation = tracker.observe(message, {
-      updatedAt: Date.now(),
-      live: observationContext?.historicalReplay !== true,
+      updatedAt: observedAt,
+      live: !isHistoricalReplay,
     });
     if (observationContext?.historicalReplay !== true) {
       publishProviderTaskActivities(observation.providerTaskActivities);
@@ -205,6 +212,11 @@ export function createClaudeWorkflowActivitySource(params: Readonly<{
   journalFollower = createClaudeWorkflowJournalFollower({
     logPrefix,
     onJournalValue: observeTrackerValue,
+    // Forwarded UNWRAPPED, deliberately. The registrar is fail-closed (it throws when no importer
+    // is wired), and the follower's own catch is what turns that throw back into "no sidechain id
+    // yet, retry on a later journal entry". A try/catch, an optional-chain, or a `.catch()` here
+    // would restore the silent success this seam exists to prevent — pinned by
+    // "workflow agent transcript registration (fail-closed)" in this module's tests.
     ...(params.registerWorkflowAgentTranscript
       ? { registerAgentTranscript: params.registerWorkflowAgentTranscript }
       : {}),

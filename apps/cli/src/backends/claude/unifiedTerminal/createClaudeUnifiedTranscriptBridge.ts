@@ -1,4 +1,5 @@
 import { createSessionScanner, type SessionScanner } from '../utils/sessionScanner';
+import type { ClaudeRemoteSubagentFileCollector } from '../remote/sidechains/claudeRemoteSubagentFileCollector';
 import type { CommittedClaudeJsonlMessageBaseline } from '../utils/claudeJsonlMessageKey';
 import type { RawJSONLines } from '../types';
 import { readClaudeTranscriptTurnSignal } from '../localControl/readClaudeTranscriptTurnSignal';
@@ -159,6 +160,16 @@ export function createClaudeUnifiedTranscriptBridge(opts: Readonly<{
    * the canonical session metadata owner can re-check the now-materialized transcript path.
    */
   proveAcceptedMainTranscript?: ((value: unknown) => boolean) | undefined;
+  /**
+   * Publishes the scanner's ONE sidechain importer for as long as that scanner is alive, and `null`
+   * once it is gone. The bridge builds the scanner lazily (after the SessionStart subscription and
+   * the replay baseline), so a launcher cannot hold the importer up front; it subscribes instead.
+   * The `null` on teardown is load-bearing — a registration accepted after cleanup would attach a
+   * follower nothing will stop, and would claim a transcript that is no longer being imported.
+   */
+  onSubagentFileCollectorChanged?: ((
+    collector: ClaudeRemoteSubagentFileCollector | null,
+  ) => void) | undefined;
   onSessionFound?: ClaudeUnifiedTranscriptBridgeSessionFound | undefined;
   validateSessionStart?: ((info: Readonly<{
     sessionId: string;
@@ -476,6 +487,7 @@ export function createClaudeUnifiedTranscriptBridge(opts: Readonly<{
         return;
       }
       scanner = nextScanner;
+      opts.onSubagentFileCollectorChanged?.(nextScanner.subagentFileCollector);
       flushPendingSessionStarts();
     },
     async dispose() {
@@ -487,6 +499,7 @@ export function createClaudeUnifiedTranscriptBridge(opts: Readonly<{
       promotedDiscoveredMainSessionIds.clear();
       activeTrustedSessionStart = null;
       acceptedMainTranscriptProvenForSessionId = null;
+      if (scanner) opts.onSubagentFileCollectorChanged?.(null);
       await scanner?.cleanup();
       scanner = null;
       await knownResumeRawFollower?.stop();

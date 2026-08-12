@@ -798,6 +798,17 @@ export async function createSessionScanner(opts: {
 
     // Public interface
     return {
+        /**
+         * The ONE sidechain importer for this scanner's session.
+         *
+         * `Task`/`Agent` sub-agent transcripts are discovered here from tool uses. Workflow-agent
+         * sidecars cannot be: a workflow run has one `Workflow` tool call and many
+         * `agent-<id>.jsonl` files, so the journal follower is the only thing that knows they
+         * exist. It is exposed rather than duplicated so both kinds of sidechain share one follower
+         * budget, one dedupe and one marking rule (see `registerSidechainFile`). Launchers reach it
+         * through `createWorkflowAgentTranscriptRegistrar`, which fails closed while it is absent.
+         */
+        subagentFileCollector: subagentCollector,
         cleanup: async () => {
             closed = true;
             clearInterval(intervalId);

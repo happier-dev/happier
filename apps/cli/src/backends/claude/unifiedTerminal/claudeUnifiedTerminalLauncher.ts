@@ -6,6 +6,8 @@ import type { Session } from '../session';
 import type { LauncherResult } from '../claudeLocalLauncher';
 import { createClaudeSessionTranscriptProjector } from '../localControl/createClaudeSessionTranscriptProjector';
 import { createClaudeWorkflowActivitySourceForSession } from '../workflows/createClaudeWorkflowActivitySourceForSession';
+import { createWorkflowAgentTranscriptRegistrar } from '../remote/sidechains/createWorkflowAgentTranscriptRegistrar';
+import type { ClaudeRemoteSubagentFileCollector } from '../remote/sidechains/claudeRemoteSubagentFileCollector';
 import type { NormalizedProviderUsageLimitDetailsV1 } from '../connectedServices/mapClaudeRateLimitEventToUsageDetails';
 import { adoptClaudePermissionModeFromMetadata } from '../utils/syncPermissionModeFromMetadata';
 import {
@@ -317,15 +319,35 @@ export async function claudeUnifiedTerminalLauncher(
   // the SAME raw transcript channel as the goal source and applies its CWF4 owned-id filter at the
   // work-state merge chokepoint. Null when no credentials are available yet — the goal / work-state
   // path is unaffected.
+  // The runtime that owns this session's ONE sidechain importer is started further down (each
+  // dispatch builds its own scanner and may replace it), so the source reaches the importer through
+  // this holder, which the runtime keeps current and clears on teardown. The registrar FAILS while
+  // the holder is empty rather than assuming an importer: an id is a claim that a transcript is
+  // openable, so no importer must mean NO id — never a silent no-op.
+  let subagentFileCollectorRef: ClaudeRemoteSubagentFileCollector | null = null;
   const workflowActivitySource = await createClaudeWorkflowActivitySourceForSession({
     session,
     logPrefix: '[unified]',
+    // Workflow agent transcripts ride the SAME importer as `Task` sub-agent transcripts: one
+    // follower budget, one dedupe, one `isSidechain`/`sidechainId` marking rule.
+    registerWorkflowAgentTranscript: createWorkflowAgentTranscriptRegistrar({
+      getCollector: () => subagentFileCollectorRef,
+    }),
     getCurrentClaudeSessionId: () => {
       const claudeSessionId = session.client.getMetadataSnapshot?.()?.claudeSessionId;
       return typeof claudeSessionId === 'string' && claudeSessionId.trim().length > 0 ? claudeSessionId.trim() : null;
     },
   });
   const transcriptProjector = createClaudeSessionTranscriptProjector({ session, logPrefix: '[unified]', workflowActivitySource });
+  /**
+   * Did THIS launcher destroy the terminal host for an explicit user stop?
+   *
+   * The teardown below is reached by every exit — a provider crash, a runtime issue, a plain return,
+   * a CLI signal — and on this runtime the terminal host is DETACHED, so most of those leave Claude
+   * and its background shells running. Only the explicit-stop disposal is the kill we performed and
+   * watched, which is the sole condition under which a background-task record may be resolved.
+   */
+  let ownedTerminalHostDestroyedForExplicitStop = false;
   let lastSurfacedRuntimeAuthFailureAtMs: number | null = null;
   let recentPrimaryProviderUnavailableForPromptDelivery: ClaudeUnifiedProviderUnavailablePromptDeliveryWindow | null = null;
   let usageLimitDialogVisible = false;
@@ -933,6 +955,11 @@ export async function claudeUnifiedTerminalLauncher(
       },
       runtimeActivityAdapter: session.getProviderTaskRuntimeActivityAdapter(),
       onWorkflowActivityObserverReady: () => workflowActivitySource?.armStartupReconciliation(),
+      // Hands the workflow journal follower the same sidechain importer that already owns this
+      // runtime's `Task` sub-agent transcripts, for exactly as long as that importer is alive.
+      onSubagentFileCollectorChanged: (collector) => {
+        subagentFileCollectorRef = collector;
+      },
       providerActivityLedger: session.getProviderTaskActivityLedger() ?? undefined,
       registerTerminalComposerClearRuntimeControl: (clearTerminalComposer) =>
         session.client.registerSessionRuntimeControls?.({ clearTerminalComposer }) ?? (() => undefined),
@@ -1090,7 +1117,18 @@ export async function claudeUnifiedTerminalLauncher(
           terminal,
         });
         await session.publishUnifiedTerminalHostMetadata(terminal);
-        await opts.onTerminalHostReady?.({ handle, terminal, destroyOwnedHostForExplicitStop });
+        await opts.onTerminalHostReady?.({
+          handle,
+          terminal,
+          // Wrapped to RECORD the one observation the teardown cannot make for itself: that WE
+          // destroyed the host, so everything that was running inside it — including the detached
+          // background shells nothing else can report on — died with it. Set only after the
+          // disposal resolves: a failed destroy leaves the host, and its shells, alive.
+          destroyOwnedHostForExplicitStop: async () => {
+            await destroyOwnedHostForExplicitStop();
+            ownedTerminalHostDestroyedForExplicitStop = true;
+          },
+        });
       },
       }),
     });
@@ -1216,6 +1254,17 @@ export async function claudeUnifiedTerminalLauncher(
     // G-6 marks an active-but-unmet goal interrupted; RULING-14 resolves live workflow runs and
     // their agents so they stop reading as "Working" forever.
     transcriptProjector.finalizeInterruptedWorkOnShutdown();
+    // Background shells are the one kind that can OUTLIVE the provider, so they are resolved on a
+    // narrower fact than the rest: not "we are tearing down" but "we destroyed the host they lived
+    // in". After a crash the shell may genuinely still be writing, and nothing would ever correct a
+    // `cancelled` record — no startup reconcile reads this namespace.
+    if (ownedTerminalHostDestroyedForExplicitStop) {
+      try {
+        workflowActivitySource?.finalizeBackgroundTaskRecordsOnOrderlyStop();
+      } catch (error) {
+        logger.debug('[unified]: failed to resolve background task records on explicit stop (non-fatal)', error);
+      }
+    }
     // Drain any pending workflow-activity writes, then stop scheduling (dispose via reset()).
     await transcriptProjector.flushWorkflowActivity();
     transcriptProjector.reset();

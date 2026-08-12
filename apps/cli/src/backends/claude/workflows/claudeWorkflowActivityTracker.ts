@@ -305,7 +305,7 @@ export function createClaudeWorkflowActivityTracker(params: Readonly<{
     }
   }
 
-  function upsertAgent(run: MutableRun, agent: Readonly<{
+  function upsertAgent(run: MutableRun, incoming: Readonly<{
     id: string;
     title: string;
     /** Defaults to `journal`: a provider-given title outranks anything we derived ourselves. */
@@ -327,6 +327,20 @@ export function createClaudeWorkflowActivityTracker(params: Readonly<{
     attempt?: number;
     updatedAt: number;
   }>): void {
+    // A run that has already finished holds no running work — the same rule `terminalizeRunAgents`
+    // applies at the transition, applied to whatever arrives after it. The sweep runs once, but a
+    // journal `started` keeps arriving during the follower's post-completion grace drain, and a
+    // resumed process reads the sidecar only after replaying the transcript that closed the run:
+    // over the real 3 064-record session, 37 of 39 runs are terminal before their journals drain.
+    // An explicit run's status never reopens, so this cannot mislabel live work. The synthesized
+    // implicit run is excluded deliberately: it is closed BY its agents and reopens when new work
+    // joins it (`rollUpImplicitRunStatus`).
+    const closedByFinishedRun = run.explicit
+      && isTerminalRunStatus(run.status)
+      && !isTerminalAgentStatus(incoming.status);
+    const agent = closedByFinishedRun
+      ? { ...incoming, status: 'cancelled' as SessionWorkflowAgentStatusV1 }
+      : incoming;
     const existing = run.agentsById.get(agent.id);
     const titleSource = agent.titleSource ?? 'journal';
     if (!existing) {
@@ -335,6 +349,12 @@ export function createClaudeWorkflowActivityTracker(params: Readonly<{
       // fabricated elapsed figure — so it stays blank.
       const observedStartedAt = agent.startedAt
         ?? (isTerminalAgentStatus(agent.status) ? undefined : agent.updatedAt);
+      // The other half of the slot. A row shows an interval, not a start, and the channels that
+      // close an agent carry no time of their own (a journal `result` is `{type,key,agentId,result}`),
+      // so the instant we OBSERVED the terminal transition is the only end available. Without it
+      // every finished row is blank in both slots.
+      const observedCompletedAt = agent.completedAt
+        ?? (isTerminalAgentStatus(agent.status) ? agent.updatedAt : undefined);
       const created: MutableAgent = {
         id: agent.id,
         title: agent.title,
@@ -353,7 +373,7 @@ export function createClaudeWorkflowActivityTracker(params: Readonly<{
         ...(agent.toolCalls !== undefined ? { toolCalls: agent.toolCalls } : {}),
         ...(agent.timeUsedSeconds !== undefined ? { timeUsedSeconds: agent.timeUsedSeconds } : {}),
         ...(observedStartedAt !== undefined ? { startedAt: observedStartedAt } : {}),
-        ...(agent.completedAt !== undefined ? { completedAt: agent.completedAt } : {}),
+        ...(observedCompletedAt !== undefined ? { completedAt: observedCompletedAt } : {}),
         ...(agent.attempt !== undefined ? { attempt: agent.attempt } : {}),
       };
       run.agentsById.set(agent.id, created);
@@ -378,6 +398,15 @@ export function createClaudeWorkflowActivityTracker(params: Readonly<{
         delete existing.summary;
         delete existing.completedAt;
       }
+      // Same rule as the create path: the transition we just observed is the end, unless the fact
+      // carried a real one (applied below) or a retry just cleared it.
+      if (
+        isTerminalAgentStatus(agent.status)
+        && agent.completedAt === undefined
+        && existing.completedAt === undefined
+      ) {
+        existing.completedAt = agent.updatedAt;
+      }
     }
     if (agent.vendorRef) existing.vendorRef = agent.vendorRef;
     // First import wins. The id is composed from identifiers that do not change, so a SECOND value
@@ -392,11 +421,41 @@ export function createClaudeWorkflowActivityTracker(params: Readonly<{
     if (agent.tokensUsed !== undefined) existing.tokensUsed = agent.tokensUsed;
     if (agent.toolCalls !== undefined) existing.toolCalls = agent.toolCalls;
     if (agent.timeUsedSeconds !== undefined) existing.timeUsedSeconds = agent.timeUsedSeconds;
-    // First observation wins: moving a start time forward would silently shrink elapsed time.
-    if (agent.startedAt !== undefined && existing.startedAt === undefined) existing.startedAt = agent.startedAt;
+    // Earliest evidence wins. Moving a start time FORWARD would silently shrink an elapsed figure
+    // already on screen, so a re-observation is ignored; moving it BACK can only be the agent's own
+    // transcript proving it was already running before we noticed it, which is strictly better
+    // evidence than the moment we looked.
+    if (agent.startedAt !== undefined && (existing.startedAt === undefined || agent.startedAt < existing.startedAt)) {
+      existing.startedAt = agent.startedAt;
+    }
     if (agent.completedAt !== undefined) existing.completedAt = agent.completedAt;
     if (agent.attempt !== undefined) existing.attempt = agent.attempt;
     assignAgentToPhase(run, agent.id, agent.phaseIndex);
+  }
+
+  /**
+   * Resolve every agent a finished run left mid-flight. Returns whether anything changed.
+   *
+   * A run that is over holds no running work, and this is the one place that says so. Three
+   * different observations reach it — the run's own terminal lifecycle event, a reconcile from a
+   * stale headline, and process death (RULING-14) — and they must resolve an agent identically, or
+   * the roster contradicts itself depending on how the run ended.
+   *
+   * `cancelled`, never `failed`: the run contract already ruled that a run reconciled after a crash
+   * lands as a stop rather than a failure, and an agent that produced no result while its run closed
+   * did not fail — it was cut off. `completedAt` is the last instant that agent actually evidenced,
+   * never the moment of the sweep, so an elapsed figure stays honest.
+   */
+  function terminalizeRunAgents(run: MutableRun, updatedAt: number): boolean {
+    let touched = false;
+    for (const agent of run.agentsById.values()) {
+      if (isTerminalAgentStatus(agent.status)) continue;
+      agent.status = 'cancelled';
+      if (agent.completedAt === undefined) agent.completedAt = agent.updatedAt;
+      agent.updatedAt = updatedAt;
+      touched = true;
+    }
+    return touched;
   }
 
   /** Migrate an agent and its child tool-use routing off the implicit run onto an explicit run. */
@@ -608,23 +667,23 @@ export function createClaudeWorkflowActivityTracker(params: Readonly<{
     } else if (!isTerminalRunStatus(run.status)) {
       run.status = runSignal === 'unknown' ? run.status : runSignal;
     }
-    if (
-      !isTerminalRunStatus(priorStatus)
-      && isTerminalRunStatus(run.status)
-      && run.sourceSessionId
-      && run.providerTaskId
-    ) {
-      const terminalStatus = run.status === 'complete'
-        ? 'completed'
-        : run.status === 'failed'
-          ? 'failed'
-          : 'stopped';
-      providerTaskActivities.push({
-        type: 'terminal',
-        terminalStatus,
-        sessionId: run.sourceSessionId,
-        taskId: run.providerTaskId,
-      });
+    if (!isTerminalRunStatus(priorStatus) && isTerminalRunStatus(run.status)) {
+      // The run just ended, so nothing inside it is still running. The journal closes 81% of agents
+      // itself; the rest are cut off mid-flight and have no other terminal channel at all.
+      terminalizeRunAgents(run, updatedAt);
+      if (run.sourceSessionId && run.providerTaskId) {
+        const terminalStatus = run.status === 'complete'
+          ? 'completed'
+          : run.status === 'failed'
+            ? 'failed'
+            : 'stopped';
+        providerTaskActivities.push({
+          type: 'terminal',
+          terminalStatus,
+          sessionId: run.sourceSessionId,
+          taskId: run.providerTaskId,
+        });
+      }
     }
     return run.runId;
   }
@@ -778,7 +837,15 @@ export function createClaudeWorkflowActivityTracker(params: Readonly<{
   function applyWorkflowAgentProfile(fact: WorkflowAgentProfileFact, updatedAt: number): string | null {
     if (isForeignSource(fact.sourceSessionId)) return null;
     // An import with no readable prompt and no model is still evidence: it makes the agent openable.
-    if (!fact.title && !fact.model && !fact.sidechainId) return null;
+    // So is a start the agent's own transcript records, and so is that transcript ending in a
+    // terminal API error.
+    if (
+      !fact.title
+      && !fact.model
+      && !fact.sidechainId
+      && fact.startedAt === undefined
+      && !fact.endedByApiError
+    ) return null;
     const workflowRunId = runIdByWorkflowToolUseId.get(fact.workflowToolUseId) ?? fact.workflowToolUseId;
     const run = runs.get(workflowRunId);
     if (!run) return null;
@@ -794,14 +861,25 @@ export function createClaudeWorkflowActivityTracker(params: Readonly<{
 
     const existing = run.agentsById.get(fact.agentId);
     if (!existing) return run.runId;
+    // The agent's own transcript ended in a terminal API error while this process kept running and
+    // its run stayed open — the one death neither a stop nor a resume can ever observe. Per
+    // RULING-14 that is a STOP, not a failure, ending at the last instant the file evidences.
+    //
+    // An agent that reported its OWN outcome keeps it; one that a sweep resolved does not, because
+    // the sweep could only date it from the last journal line we happened to see while the
+    // transcript names the instant the agent actually stopped. Better evidence for the same event.
+    const reportedOwnOutcome = existing.status === 'complete' || existing.status === 'failed';
+    const died = fact.endedByApiError === true && !reportedOwnOutcome;
     upsertAgent(run, {
       id: existing.id,
       title: fact.title ?? existing.title,
       titleSource: fact.title ? 'prompt' : existing.titleSource,
-      status: existing.status,
-      updatedAt: existing.updatedAt,
+      status: died ? 'cancelled' : existing.status,
+      updatedAt: died ? updatedAt : existing.updatedAt,
       ...(fact.model ? { model: fact.model } : {}),
       ...(fact.sidechainId ? { sidechainId: fact.sidechainId } : {}),
+      ...(fact.startedAt !== undefined ? { startedAt: fact.startedAt } : {}),
+      ...(died ? { completedAt: fact.endedAt ?? existing.completedAt ?? existing.updatedAt } : {}),
     });
     run.updatedAt = updatedAt;
     return run.runId;
@@ -839,8 +917,15 @@ export function createClaudeWorkflowActivityTracker(params: Readonly<{
   // once >= threshold are seen, so a single plain subagent stays a task (CWF4). A buffered entry
   // keeps any terminal result observed while it waited, so a promotion later cannot resurrect a
   // finished subagent as `active`.
+  //
+  // `startedAt` is carried separately from `updatedAt` because the buffer is the only place that
+  // still remembers it: an entry that finished while waiting is created ALREADY TERMINAL at
+  // promotion, and `upsertAgent` deliberately defaults a start time only for an agent created
+  // alive. Without this the observation is simply dropped — and it is a real observation, not a
+  // guess, so carrying it does not weaken that rule.
   type PendingImplicitSubagent = SubagentStartFact & {
     updatedAt: number;
+    startedAt: number;
     status: SessionWorkflowAgentStatusV1;
     resultPreview?: string;
     timeUsedSeconds?: number;
@@ -855,11 +940,23 @@ export function createClaudeWorkflowActivityTracker(params: Readonly<{
         run.childToolUseIds.add(fact.toolUseId);
         runIdByChildToolUseId.set(fact.toolUseId, run.runId);
         run.updatedAt = updatedAt;
+        // The synthesized run has no lifecycle of its own: its agents decide its status in BOTH
+        // directions. Without this, a run closed when its last subagent finished stays `complete`
+        // around live work, and the new agent is drawn as a loose live row outside a finished card.
+        rollUpImplicitRunStatus(run);
         return run.runId;
       }
     }
 
-    pendingImplicitSubagents.set(fact.toolUseId, { ...fact, updatedAt, status: 'active' });
+    // Buffer it once. The raw transcript channel is not key-deduplicated (`sessionScanner` observes
+    // the raw value before `processedMessageKeys` is consulted) and every observation is stamped
+    // with the wall clock, so one `Task` line can arrive here twice. A re-observed start is not new
+    // evidence: overwriting would push the start time forward AND wipe a result recorded while the
+    // agent waited, resurrecting a finished subagent as `active` — the very thing this buffer
+    // exists to prevent. A duplicate does not grow the map, so it cannot promote on its own either.
+    if (!pendingImplicitSubagents.has(fact.toolUseId)) {
+      pendingImplicitSubagents.set(fact.toolUseId, { ...fact, updatedAt, startedAt: updatedAt, status: 'active' });
+    }
     if (pendingImplicitSubagents.size < CLAUDE_IMPLICIT_WORKFLOW_AGENT_THRESHOLD) {
       return null;
     }
@@ -878,6 +975,7 @@ export function createClaudeWorkflowActivityTracker(params: Readonly<{
         title: pending.title,
         status: pending.status,
         updatedAt: pending.updatedAt,
+        startedAt: pending.startedAt,
         ...(pending.resultPreview ? { resultPreview: pending.resultPreview } : {}),
         ...(pending.timeUsedSeconds !== undefined ? { timeUsedSeconds: pending.timeUsedSeconds } : {}),
       });
@@ -1208,6 +1306,9 @@ export function createClaudeWorkflowActivityTracker(params: Readonly<{
     run.statusReason = 'interrupted';
     run.completedAt = reconcileParams.updatedAt;
     run.updatedAt = reconcileParams.updatedAt;
+    // The run is resolved, so its agents are too. Without this an implicit run rebuilt by transcript
+    // replay publishes `active` agents underneath a `stopped` run — one card contradicting itself.
+    terminalizeRunAgents(run, reconcileParams.updatedAt);
     if (run.agentsById.size === 0) {
       run.reconciledCounts = {
         totalAgents: seed.totalAgents,
@@ -1228,12 +1329,16 @@ export function createClaudeWorkflowActivityTracker(params: Readonly<{
   /**
    * RULING-14 — terminal state on PROCESS DEATH, not on turn failure and never on inactivity.
    *
-   * Every kind this tracker holds — workflow runs, workflow agents, `Task` sidechains, background
-   * shells — runs INSIDE the Claude query. When that query is gone the work is over: that is a
-   * recorded observation, not an inference, so no timer and no turn outcome is consulted. A turn can
+   * Every kind this tracker holds — workflow runs, workflow agents, `Task` sidechains — runs INSIDE
+   * the Claude query. When that query is gone the work is over: that is a recorded observation, not
+   * an inference, so no timer and no turn outcome is consulted. A turn can
    * fail with the process alive and its children still working (an auth failure scoped to a subagent
    * is deliberately not surfaced as a primary-session failure), which is exactly why turn failure is
    * the wrong trigger.
+   *
+   * Background shells are NOT held here (this file has zero `backgroundTask` references). They are a
+   * genuinely different lifecycle — a detached OS process can outlive the query — and they resolve
+   * at `backgroundTaskRecordPublisher.finalizeOutstandingOnOrderlyStop`, on an orderly stop only.
    *
    * Never `failed`: the adapter contract already ruled that a run reconciled after a CLI crash lands
    * as a stop, never a failure. Agents inherit that ruling as `cancelled`, and each agent's
@@ -1252,15 +1357,11 @@ export function createClaudeWorkflowActivityTracker(params: Readonly<{
 
     for (const run of runs.values()) {
       const priorStatus = run.status;
-      let touched = false;
-
-      for (const agent of run.agentsById.values()) {
-        if (isTerminalAgentStatus(agent.status)) continue;
-        agent.status = 'cancelled';
-        if (agent.completedAt === undefined) agent.completedAt = agent.updatedAt;
-        agent.updatedAt = finalizeParams.updatedAt;
-        touched = true;
-      }
+      // Same resolution the run's own completion applies — one helper, so a crash and a clean finish
+      // cannot disagree about what happened to an agent. A run that already terminalized normally
+      // has nothing left here; what this still catches is an agent whose journal `started` landed
+      // during the follower's post-completion grace drain.
+      let touched = terminalizeRunAgents(run, finalizeParams.updatedAt);
 
       if (!isTerminalRunStatus(run.status)) {
         run.status = 'stopped';

@@ -28,7 +28,9 @@ const mocks = vi.hoisted(() => ({
   // Defaults to `null`, which is exactly what the real factory returns for this file's session stub
   // (it exposes no system-record writer). Cases that need to observe the source inject one per call;
   // the return type is widened here so an injected fake needs no cast at the call site.
-  createClaudeWorkflowActivitySourceForSession: vi.fn(async (): Promise<unknown> => null),
+  createClaudeWorkflowActivitySourceForSession: vi.fn(
+    async (_params: Readonly<Record<string, unknown>>): Promise<unknown> => null,
+  ),
 }));
 
 vi.mock('./runClaudeUnifiedTerminalSession', () => ({
@@ -4335,5 +4337,135 @@ describe('claudeUnifiedTerminalLauncher', () => {
 
     // Resolve BEFORE the drain, or the durable write carries the still-live state.
     expect(lifecycle).toEqual(['finalize', 'flush', 'dispose']);
+  });
+
+  // A background shell is the one kind nothing ever finalizes, and it is also the one kind that can
+  // OUTLIVE its parent — so it may only be resolved when the kill was ours and we watched it. The
+  // explicit-stop path destroys the terminal host the shell lives in, which is that observation.
+  // Every other way out of this launcher (a provider crash, a runtime issue, a plain exit that
+  // leaves the detached host running) is NOT, and must leave the record alone.
+  it('resolves background-task records only when it destroyed the host for an explicit stop', async () => {
+    setProcessTty(false);
+    const terminal = {
+      mode: 'tmux',
+      tmux: { target: 'happy:unified-window' },
+    } as NonNullable<TerminalAttachmentInfo['terminal']>;
+    const handle: TerminalHostHandle = {
+      kind: 'tmux',
+      sessionName: 'happy',
+      paneId: 'unified-window',
+      attachMetadata: {
+        attachStrategy: 'terminal_host',
+        topology: 'shared',
+        locality: 'same_machine',
+        liveProbe: 'required',
+      },
+    };
+
+    const runLauncher = async (explicitStop: boolean): Promise<string[]> => {
+      const lifecycle: string[] = [];
+      // The wrapper the launcher hands UP to its caller — the one `requestClaudeExplicitRunnerStop`
+      // actually invokes on a user stop.
+      let forwardedDestroyOwnedHost: (() => Promise<void>) | null = null;
+      mocks.createClaudeWorkflowActivitySourceForSession.mockResolvedValueOnce({
+        observeTranscriptMessage: vi.fn(),
+        getWorkflowOwnedAgentToolUseIds: vi.fn(() => new Set<string>()),
+        isWorkflowOwnedProviderTaskId: vi.fn(() => false),
+        isWorkflowOwnedTaskReference: vi.fn(() => false),
+        finalizeInterruptedActivityOnShutdown: vi.fn(),
+        finalizeBackgroundTaskRecordsOnOrderlyStop: vi.fn(() => { lifecycle.push('finalize-background'); }),
+        flush: vi.fn(async () => { lifecycle.push('flush'); }),
+        reconcileStartupInterruptedRuns: vi.fn(async () => {}),
+        armStartupReconciliation: vi.fn(),
+        dispose: vi.fn(),
+      });
+      mocks.runClaudeUnifiedTerminalSession.mockImplementationOnce(async (opts: {
+        onTerminalHostReady?: (params: Readonly<{
+          handle: TerminalHostHandle;
+          terminal: NonNullable<TerminalAttachmentInfo['terminal']>;
+          destroyOwnedHostForExplicitStop: () => Promise<void>;
+        }>) => void | Promise<void>;
+      }) => {
+        await opts.onTerminalHostReady?.({
+          handle,
+          terminal,
+          destroyOwnedHostForExplicitStop: async () => { lifecycle.push('destroy-host'); },
+        });
+        if (explicitStop) await forwardedDestroyOwnedHost?.();
+      });
+
+      await claudeUnifiedTerminalLauncher(createSession(), {
+        initialMode: { permissionMode: 'default', claudeUnifiedTerminalHost: 'tmux' },
+        onTerminalHostReady: ({ destroyOwnedHostForExplicitStop }) => {
+          forwardedDestroyOwnedHost = destroyOwnedHostForExplicitStop;
+        },
+      });
+      return lifecycle;
+    };
+
+    // Explicit stop: we destroyed the host, so the shells inside it died with it — a recorded
+    // observation, and the resolution must land BEFORE the drain that writes it.
+    expect(await runLauncher(true)).toEqual(['destroy-host', 'finalize-background', 'flush']);
+    // Same teardown, no explicit stop: the detached host may still be running the shell. Silence.
+    expect(await runLauncher(false)).toEqual(['flush']);
+  });
+
+  // INV-R C-1. Workflow-agent transcript import was built in wave 23 and wired on exactly ONE
+  // launcher — the remote one. This runtime is the one the reporting user actually runs, so the
+  // whole vertical was dormant here: no registrar reached the journal follower, no sidechain id was
+  // ever minted, and zero workflow-agent rows could open. Bind it to the SAME importer that already
+  // owns `Task` sub-agent transcripts (one follower budget, one dedupe, one marking rule), through
+  // the same late holder the remote launcher uses — and keep wave 25's fail-closed rule: with no
+  // importer the registration must FAIL so the follower withholds the id, never silently no-op.
+  it('registers workflow-agent sidecars with the session sidechain importer, fail-closed (INV-R C-1)', async () => {
+    setProcessTty(false);
+    let publishImporter: ((collector: unknown) => void) | null = null;
+    mocks.runClaudeUnifiedTerminalSession.mockImplementationOnce(async (opts: {
+      onSubagentFileCollectorChanged?: (collector: unknown) => void;
+    }) => {
+      publishImporter = opts.onSubagentFileCollectorChanged ?? null;
+    });
+
+    await claudeUnifiedTerminalLauncher(createSession(), {
+      initialMode: { permissionMode: 'default', claudeUnifiedTerminalHost: 'tmux' },
+    });
+
+    const sourceParams = mocks.createClaudeWorkflowActivitySourceForSession.mock.calls.at(-1)?.[0] as
+      | Readonly<{
+        registerWorkflowAgentTranscript?: (registration: Readonly<{
+          sidechainId: string;
+          agentId: string;
+          filePath: string;
+        }>) => Promise<void>;
+      }>
+      | undefined;
+    const register = sourceParams?.registerWorkflowAgentTranscript;
+    if (typeof register !== 'function') {
+      throw new Error('unified launcher did not hand the workflow source a transcript registrar');
+    }
+    const registration = {
+      sidechainId: 'workflow_agent_sidechain:toolu_1:agent-a',
+      agentId: 'agent-a',
+      filePath: '/tmp/wf/agent-agent-a.jsonl',
+    };
+
+    // No importer yet (the runtime never reached transcript observation): claim nothing.
+    await expect(register(registration)).rejects.toThrow(/no sidechain importer/i);
+
+    const registerSidechainFile = vi.fn(async () => {});
+    const publish = publishImporter as unknown as ((collector: unknown) => void) | null;
+    if (!publish) {
+      throw new Error('unified launcher did not subscribe to the session sidechain importer');
+    }
+    publish({ registerSidechainFile });
+    await register(registration);
+    expect(registerSidechainFile).toHaveBeenCalledWith({
+      ...registration,
+      source: 'workflow-agent',
+    });
+
+    // The importer dies with its scanner; a later journal entry must not attach a follower to it.
+    publish(null);
+    await expect(register(registration)).rejects.toThrow(/no sidechain importer/i);
   });
 });

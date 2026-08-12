@@ -1019,6 +1019,9 @@ await parallel([
       prompt?: string;
       model?: string;
       sidechainId?: string;
+      startedAt?: number;
+      endedByApiError?: boolean;
+      endedAt?: number;
       sessionId?: string;
     }>) => ({
       type: 'happier_workflow_agent_profile',
@@ -1028,6 +1031,9 @@ await parallel([
       ...(params.prompt !== undefined ? { prompt: params.prompt } : {}),
       ...(params.model !== undefined ? { model: params.model } : {}),
       ...(params.sidechainId !== undefined ? { sidechainId: params.sidechainId } : {}),
+      ...(params.startedAt !== undefined ? { startedAt: params.startedAt } : {}),
+      ...(params.endedByApiError !== undefined ? { endedByApiError: params.endedByApiError } : {}),
+      ...(params.endedAt !== undefined ? { endedAt: params.endedAt } : {}),
     });
 
     /**
@@ -1144,6 +1150,115 @@ await parallel([
       expect(obs.changedRunIds).toEqual([]);
       expect(tracker.getRunSnapshotMap().size).toBe(0);
     });
+
+    /**
+     * The agent's own transcript carries its true start; the journal does not carry one at all, so
+     * `startedAt` is otherwise the moment the CLI happened to notice. An EARLIER proven start is
+     * strictly better evidence, and moving the start backwards can only lengthen an elapsed figure
+     * towards the truth — the rule the later-stamp case below protects runs the other way.
+     */
+    it('prefers the start the agent’s own transcript records over the moment we noticed it', () => {
+      const tracker = createClaudeWorkflowActivityTracker({ backendId: 'claude' });
+      tracker.observe(workflowToolUse({ id: 'toolu_wf', name: 'plain' }), { updatedAt: 1000 });
+      tracker.observe(workflowJournal({ workflowToolUseId: 'toolu_wf', type: 'started', key: 'k1', agentId: 'raw-1' }), { updatedAt: 5000 });
+      tracker.observe(agentProfile({ workflowToolUseId: 'toolu_wf', agentId: 'raw-1', startedAt: 4200 }), { updatedAt: 5100 });
+
+      expect(tracker.getRunSnapshot('toolu_wf')?.agents[0]?.startedAt).toBe(4200);
+    });
+
+    it('never lets a later stamp shrink an elapsed figure already on screen', () => {
+      const tracker = createClaudeWorkflowActivityTracker({ backendId: 'claude' });
+      tracker.observe(workflowToolUse({ id: 'toolu_wf', name: 'plain' }), { updatedAt: 1000 });
+      tracker.observe(workflowJournal({ workflowToolUseId: 'toolu_wf', type: 'started', key: 'k1', agentId: 'raw-1' }), { updatedAt: 1100 });
+      tracker.observe(agentProfile({ workflowToolUseId: 'toolu_wf', agentId: 'raw-1', startedAt: 4200 }), { updatedAt: 5100 });
+
+      expect(tracker.getRunSnapshot('toolu_wf')?.agents[0]?.startedAt).toBe(1100);
+    });
+
+    /**
+     * The case neither a stop nor a resume can reach: the process is alive, the run is still open,
+     * and one agent died of a terminal API error whose proof is the last record of a file the CLI
+     * already reads. Measured over the 140 real sidecar transcripts of session `15a64b1f`: 12 carry
+     * an `isApiErrorMessage` record and in 12 of 12 it is the FINAL record — the error is the end of
+     * that agent's transcript, never something it recovered from.
+     */
+    it('resolves an agent whose own transcript ends in a terminal API error', () => {
+      const tracker = createClaudeWorkflowActivityTracker({ backendId: 'claude' });
+      tracker.observe(workflowToolUse({ id: 'toolu_wf', name: 'plain' }), { updatedAt: 1000 });
+      tracker.observe(workflowJournal({ workflowToolUseId: 'toolu_wf', type: 'started', key: 'k1', agentId: 'raw-1' }), { updatedAt: 1100 });
+      tracker.observe(agentProfile({
+        workflowToolUseId: 'toolu_wf',
+        agentId: 'raw-1',
+        endedByApiError: true,
+        endedAt: 4321,
+      }), { updatedAt: 9000 });
+
+      // A stop, never a failure (RULING-14), ending at the last instant the file evidences.
+      expect(tracker.getRunSnapshot('toolu_wf')?.agents[0]).toMatchObject({
+        status: 'cancelled',
+        completedAt: 4321,
+      });
+      // The run is NOT closed by one dead child — an explicit run's status is its own lifecycle's.
+      expect(tracker.getRunSnapshot('toolu_wf')?.status).toBe('active');
+    });
+
+    /**
+     * A swept row and a proven death are not equal evidence. The sweep can only say "the last thing
+     * we saw of this agent was its journal line"; the transcript says exactly when the agent stopped.
+     * When both land — the real ordering, since the sidecar is read after the run's own events — the
+     * proven instant wins, or the row reports the moment we looked as the moment it died.
+     */
+    it('replaces a swept end with the instant the transcript proves', () => {
+      const tracker = createClaudeWorkflowActivityTracker({ backendId: 'claude' });
+      tracker.observe(workflowToolUse({ id: 'toolu_wf', name: 'plain' }), { updatedAt: 1000 });
+      tracker.observe(taskStarted({ toolUseId: 'toolu_wf' }), { updatedAt: 1010 });
+      tracker.observe(workflowJournal({ workflowToolUseId: 'toolu_wf', type: 'started', key: 'k1', agentId: 'raw-1' }), { updatedAt: 1100 });
+      tracker.observe(taskUpdatedCompleted({}), { updatedAt: 3000 });
+      expect(tracker.getRunSnapshot('toolu_wf')?.agents[0]).toMatchObject({ status: 'cancelled', completedAt: 1100 });
+
+      tracker.observe(agentProfile({
+        workflowToolUseId: 'toolu_wf',
+        agentId: 'raw-1',
+        endedByApiError: true,
+        endedAt: 2222,
+      }), { updatedAt: 9000 });
+
+      expect(tracker.getRunSnapshot('toolu_wf')?.agents[0]).toMatchObject({ status: 'cancelled', completedAt: 2222 });
+    });
+
+    it('does not overwrite an agent that already reported its own outcome', () => {
+      const tracker = createClaudeWorkflowActivityTracker({ backendId: 'claude' });
+      tracker.observe(workflowToolUse({ id: 'toolu_wf', name: 'plain' }), { updatedAt: 1000 });
+      tracker.observe(workflowJournal({
+        workflowToolUseId: 'toolu_wf',
+        type: 'result',
+        key: 'k1',
+        agentId: 'raw-1',
+        result: { lane: 'finished-lane' },
+      }), { updatedAt: 1100 });
+      tracker.observe(agentProfile({
+        workflowToolUseId: 'toolu_wf',
+        agentId: 'raw-1',
+        endedByApiError: true,
+        endedAt: 4321,
+      }), { updatedAt: 9000 });
+
+      expect(tracker.getRunSnapshot('toolu_wf')?.agents[0]).toMatchObject({ status: 'complete', completedAt: 1100 });
+    });
+
+    it('creates no agent from a death observation alone', () => {
+      const tracker = createClaudeWorkflowActivityTracker({ backendId: 'claude' });
+      tracker.observe(workflowToolUse({ id: 'toolu_wf', name: 'plain' }), { updatedAt: 1000 });
+      tracker.observe(agentProfile({
+        workflowToolUseId: 'toolu_wf',
+        agentId: 'never-seen',
+        endedByApiError: true,
+        endedAt: 4321,
+      }), { updatedAt: 9000 });
+
+      // Reading a file is not evidence of a lifecycle transition for an agent nothing announced.
+      expect(tracker.getRunSnapshot('toolu_wf')?.agents).toEqual([]);
+    });
   });
 
   describe('agent start time (the elapsed-time slot)', () => {
@@ -1185,6 +1300,227 @@ await parallel([
         ['toolu_b', 1200],
       ]);
     });
+
+    /**
+     * A buffered subagent enters its run already terminal, so the create-time default (which fires
+     * only for a live agent) leaves the slot blank. But this one WAS observed alive — the tracker
+     * itself watched it start while it waited below the promotion threshold — so the blank is a
+     * dropped observation, not an unknowable one. The rule above is not relaxed: nothing is
+     * invented here, the instant we already saw is carried.
+     */
+    it('carries the observed start time of a buffered subagent that finished before promotion', () => {
+      const tracker = createClaudeWorkflowActivityTracker({ backendId: 'claude' });
+      tracker.observe(subagentTask({ id: 'task_1', description: 'first' }), { updatedAt: 1000 });
+      tracker.observe(subagentToolResult({ toolUseId: 'task_1' }), { updatedAt: 1500 });
+      tracker.observe(subagentTask({ id: 'task_2', description: 'second' }), { updatedAt: 2000 });
+
+      const agents = tracker.getRunSnapshot('implicit:agent-activity')?.agents ?? [];
+      expect(agents.find((agent) => agent.id === 'task_1')?.status).toBe('complete');
+      expect(agents.find((agent) => agent.id === 'task_1')?.startedAt).toBe(1000);
+      // The live sibling that triggered the promotion is unaffected.
+      expect(agents.find((agent) => agent.id === 'task_2')?.startedAt).toBe(2000);
+    });
+
+    /**
+     * The raw transcript channel is NOT key-deduplicated the way `onMessage` is
+     * (`sessionScanner.processSessionJsonValue` observes the raw value before `processedMessageKeys`
+     * is consulted), and every observation is stamped with `Date.now()` rather than the line's own
+     * time. So one `Task` line can reach the buffer twice — on a re-read, a resumed follow, or a
+     * replay pass over content the live pass also sees.
+     *
+     * Re-observing a start we already buffered teaches us nothing, and treating it as new evidence
+     * loses two things at once: the first-observation start time (shrinking the elapsed figure) and
+     * the recorded outcome, which resurrects a finished subagent as `active` — the exact resurrection
+     * the buffer's own contract says it exists to prevent.
+     */
+    it('ignores a replayed start for a subagent already buffered, keeping its outcome and its first start', () => {
+      const tracker = createClaudeWorkflowActivityTracker({ backendId: 'claude' });
+      tracker.observe(subagentTask({ id: 'task_1', description: 'first' }), { updatedAt: 1000 });
+      tracker.observe(subagentToolResult({ toolUseId: 'task_1' }), { updatedAt: 1500 });
+      tracker.observe(subagentTask({ id: 'task_1', description: 'first' }), { updatedAt: 1800 });
+      tracker.observe(subagentTask({ id: 'task_2', description: 'second' }), { updatedAt: 2000 });
+
+      const run = tracker.getRunSnapshot('implicit:agent-activity');
+      const replayed = run?.agents.find((agent) => agent.id === 'task_1');
+      expect(replayed?.status).toBe('complete');
+      expect(replayed?.startedAt).toBe(1000);
+      // A duplicate is not a second agent, and the run still has one live member.
+      expect(run?.totalAgents).toBe(2);
+      expect(run?.completedAgents).toBe(1);
+    });
+
+    /**
+     * The other half of the slot. `startedAt` alone renders nothing on a finished row: the row asks
+     * for an interval, and a journal `result` carries no timestamp of its own, so the instant we
+     * OBSERVED the terminal transition is the only end this channel can supply.
+     */
+    it('records when a finished agent finished, so a completed row can show a duration', () => {
+      const tracker = createClaudeWorkflowActivityTracker({ backendId: 'claude' });
+      tracker.observe(workflowToolUse({ id: 'toolu_wf', name: 'plain' }), { updatedAt: 1000 });
+      tracker.observe(workflowJournal({ workflowToolUseId: 'toolu_wf', type: 'started', key: 'k1', agentId: 'raw-1' }), { updatedAt: 1100 });
+      tracker.observe(workflowJournal({
+        workflowToolUseId: 'toolu_wf',
+        type: 'result',
+        key: 'k1',
+        agentId: 'raw-1',
+        result: { lane: 'W29' },
+      }), { updatedAt: 5000 });
+
+      expect(tracker.getRunSnapshot('toolu_wf')?.agents[0]).toMatchObject({
+        status: 'complete',
+        startedAt: 1100,
+        completedAt: 5000,
+      });
+    });
+
+    it('records the end of a plain subagent closed by its own tool_result', () => {
+      const tracker = createClaudeWorkflowActivityTracker({ backendId: 'claude' });
+      tracker.observe(subagentTask({ id: 'task_1', description: 'first' }), { updatedAt: 1000 });
+      tracker.observe(subagentTask({ id: 'task_2', description: 'second' }), { updatedAt: 1200 });
+      tracker.observe(subagentToolResult({ toolUseId: 'task_1' }), { updatedAt: 4000 });
+
+      const agents = tracker.getRunSnapshot('implicit:agent-activity')?.agents ?? [];
+      expect(agents.find((agent) => agent.id === 'task_1')).toMatchObject({ startedAt: 1000, completedAt: 4000 });
+      // The live sibling has no end, and none is invented for it.
+      expect(agents.find((agent) => agent.id === 'task_2')?.completedAt).toBeUndefined();
+    });
+  });
+
+  /**
+   * A run that is over holds no running work.
+   *
+   * The journal is the only per-agent terminal channel a workflow agent has, and it is silent for
+   * the ~19% of agents cut off mid-flight (measured across 33 real sidecar journals: 134 `started`,
+   * 109 `result`). Those agents used to keep `active` forever inside a `complete` run, and because
+   * the UI counter deliberately attributes a member only to a LIVE run, each one was promoted to a
+   * loose "subagent working" — nine of them in the reported screenshot. The input was poisoned, not
+   * the counter, so the resolution belongs here.
+   *
+   * This is NOT RULING-14: that triggers on process death, this triggers on run completion inside a
+   * living process. Two observations, one shared helper.
+   */
+  describe('run completion resolves the agents the run left behind', () => {
+    it('cancels every agent still mid-flight when the run reaches a terminal status', () => {
+      // The real wave-25 shape: four agents, ONE journal `result`, three `started`-only.
+      const tracker = createClaudeWorkflowActivityTracker({ backendId: 'claude' });
+      tracker.observe(workflowToolUse({ id: 'toolu_wf', name: 'aau-wave-25' }), { updatedAt: 1000 });
+      tracker.observe(taskStarted({ toolUseId: 'toolu_wf' }), { updatedAt: 1010 });
+      tracker.observe(workflowJournal({ workflowToolUseId: 'toolu_wf', type: 'started', key: 'k1', agentId: 'raw-1' }), { updatedAt: 1100 });
+      tracker.observe(workflowJournal({ workflowToolUseId: 'toolu_wf', type: 'started', key: 'k2', agentId: 'raw-2' }), { updatedAt: 1200 });
+      tracker.observe(workflowJournal({ workflowToolUseId: 'toolu_wf', type: 'started', key: 'k3', agentId: 'raw-3' }), { updatedAt: 1300 });
+      tracker.observe(workflowJournal({ workflowToolUseId: 'toolu_wf', type: 'started', key: 'k4', agentId: 'raw-4' }), { updatedAt: 1400 });
+      tracker.observe(workflowJournal({
+        workflowToolUseId: 'toolu_wf',
+        type: 'result',
+        key: 'k3',
+        agentId: 'raw-3',
+        result: { lane: 'W25-SEAMS' },
+      }), { updatedAt: 2000 });
+
+      tracker.observe(taskUpdatedCompleted({}), { updatedAt: 3000 });
+
+      const snapshot = tracker.getRunSnapshot('toolu_wf');
+      expect(snapshot?.status).toBe('complete');
+      expect(snapshot?.agents.map((agent) => [agent.id, agent.status, agent.completedAt])).toEqual([
+        // Cut off, not failed (RULING-14's vocabulary one level down), and each stops at the last
+        // instant we actually have evidence for rather than at the run's end.
+        ['raw-1', 'cancelled', 1100],
+        ['raw-2', 'cancelled', 1200],
+        ['raw-3', 'complete', 2000],
+        ['raw-4', 'cancelled', 1400],
+      ]);
+      expect(snapshot?.agents.some((agent) => agent.status === 'failed')).toBe(false);
+      expect(snapshot?.agents.every((agent) => agent.updatedAt === 3000 || agent.id === 'raw-3')).toBe(true);
+    });
+
+    it('leaves a run whose agents all reported results exactly as they were (wave-22 control)', () => {
+      const tracker = createClaudeWorkflowActivityTracker({ backendId: 'claude' });
+      tracker.observe(workflowToolUse({ id: 'toolu_wf', name: 'aau-wave-22' }), { updatedAt: 1000 });
+      tracker.observe(taskStarted({ toolUseId: 'toolu_wf' }), { updatedAt: 1010 });
+      for (const [index, agentId] of ['raw-1', 'raw-2'].entries()) {
+        tracker.observe(workflowJournal({ workflowToolUseId: 'toolu_wf', type: 'started', key: `k${index}`, agentId }), { updatedAt: 1100 + index });
+        tracker.observe(workflowJournal({
+          workflowToolUseId: 'toolu_wf',
+          type: 'result',
+          key: `k${index}`,
+          agentId,
+          result: { lane: `W22-${index}` },
+        }), { updatedAt: 2100 + index });
+      }
+
+      tracker.observe(taskUpdatedCompleted({}), { updatedAt: 3000 });
+
+      expect(tracker.getRunSnapshot('toolu_wf')?.agents.map((agent) => [agent.status, agent.completedAt, agent.updatedAt])).toEqual([
+        ['complete', 2100, 2100],
+        ['complete', 2101, 2101],
+      ]);
+    });
+
+    /**
+     * The completion sweep runs once, at the transition — but the journal follower keeps draining
+     * for a grace window after it, and a resumed process reads the sidecar only after replaying the
+     * whole transcript. Both deliver `started` entries for a run that has already finished.
+     *
+     * Measured on the real session: replaying its 3 064 records through this tracker leaves 37 of 39
+     * runs terminal BEFORE the sidecar journals are drained, so this is the ordering that actually
+     * occurs, not a hypothetical. An explicit run's status never reopens (nothing in this file moves
+     * a terminal explicit run back to `active`), so an agent arriving inside one is not running.
+     */
+    it('resolves an agent whose journal entry lands after its run already finished', () => {
+      const tracker = createClaudeWorkflowActivityTracker({ backendId: 'claude' });
+      tracker.observe(workflowToolUse({ id: 'toolu_wf', name: 'plain' }), { updatedAt: 1000 });
+      tracker.observe(taskStarted({ toolUseId: 'toolu_wf' }), { updatedAt: 1150 });
+      tracker.observe(taskUpdatedCompleted({}), { updatedAt: 1200 });
+      tracker.observe(workflowJournal({ workflowToolUseId: 'toolu_wf', type: 'started', key: 'k1', agentId: 'raw-late' }), { updatedAt: 1300 });
+
+      expect(tracker.getRunSnapshot('toolu_wf')?.agents[0]).toMatchObject({
+        id: 'raw-late',
+        status: 'cancelled',
+        completedAt: 1300,
+      });
+    });
+
+    /**
+     * The synthesized implicit run is the deliberate exception: it has no lifecycle of its own, so
+     * it is closed BY its agents — and it must reopen when new work joins it, or the very next plain
+     * subagent becomes a live row inside a finished card, which is the same lie from the other side.
+     */
+    it('reopens the implicit run when a new subagent joins it after it closed', () => {
+      const tracker = createClaudeWorkflowActivityTracker({ backendId: 'claude' });
+      tracker.observe(subagentTask({ id: 'task_1', description: 'first' }), { updatedAt: 1000 });
+      tracker.observe(subagentTask({ id: 'task_2', description: 'second' }), { updatedAt: 1100 });
+      tracker.observe(subagentToolResult({ toolUseId: 'task_1' }), { updatedAt: 1200 });
+      tracker.observe(subagentToolResult({ toolUseId: 'task_2' }), { updatedAt: 1300 });
+      expect(tracker.getRunSnapshot('implicit:agent-activity')?.status).toBe('complete');
+
+      tracker.observe(subagentTask({ id: 'task_3', description: 'third' }), { updatedAt: 1400 });
+
+      const snapshot = tracker.getRunSnapshot('implicit:agent-activity');
+      expect(snapshot?.status).toBe('active');
+      expect(snapshot?.agents.find((agent) => agent.id === 'task_3')?.status).toBe('active');
+      expect(snapshot?.completedAt).toBeUndefined();
+    });
+
+    it('resolves the agents of a run reconciled from a stale headline, so no live row hangs under a stopped run', () => {
+      const tracker = createClaudeWorkflowActivityTracker({ backendId: 'claude' });
+      tracker.observe(workflowToolUse({ id: 'toolu_wf', name: 'interrupted' }), { updatedAt: 1000, live: false });
+      tracker.observe(workflowJournal({ workflowToolUseId: 'toolu_wf', type: 'started', key: 'k1', agentId: 'raw-1' }), {
+        updatedAt: 1100,
+        live: false,
+      });
+
+      tracker.reconcileInterruptedRunFromHeadline({
+        runId: 'toolu_wf',
+        title: 'interrupted',
+        workflowToolUseId: 'toolu_wf',
+        totalAgents: 1,
+        completedAgents: 0,
+      }, { updatedAt: 9000 });
+
+      const snapshot = tracker.getRunSnapshot('toolu_wf');
+      expect(snapshot).toMatchObject({ status: 'stopped', statusReason: 'interrupted' });
+      expect(snapshot?.agents.map((agent) => [agent.status, agent.completedAt])).toEqual([['cancelled', 1100]]);
+    });
   });
 
   describe('finalizeInterruptedActivityOnShutdown (RULING-14: terminal state on process death)', () => {
@@ -1210,24 +1546,29 @@ await parallel([
       expect(snapshot?.agents.map((agent) => [agent.id, agent.status, agent.completedAt])).toEqual([
         // The live agent stops at the last instant we have evidence for, not at the teardown instant.
         ['raw-1', 'cancelled', 1100],
-        // An agent that already finished keeps its own outcome.
-        ['raw-2', 'complete', undefined],
+        // An agent that already finished keeps its own outcome, and the instant it reported it.
+        ['raw-2', 'complete', 1200],
       ]);
       expect(snapshot?.agents.every((agent) => agent.status !== 'failed')).toBe(true);
     });
 
-    it('resolves a live agent left behind inside an already-terminal run', () => {
+    /**
+     * The two sweeps must not fight. A finished run's agents are resolved when the run finishes —
+     * including the late journal arrivals the follower delivers during its grace drain — so by the
+     * time the process dies there is nothing of that run left to touch, and shutdown reports no
+     * change for it rather than re-stamping settled rows with the teardown instant.
+     */
+    it('leaves a finished run alone: its agents were already resolved when it finished', () => {
       const tracker = createClaudeWorkflowActivityTracker({ backendId: 'claude' });
       tracker.observe(workflowToolUse({ id: 'toolu_wf', name: 'plain' }), { updatedAt: 1000 });
-      tracker.observe(workflowJournal({ workflowToolUseId: 'toolu_wf', type: 'started', key: 'k1', agentId: 'raw-1' }), { updatedAt: 1100 });
       tracker.observe(taskStarted({ toolUseId: 'toolu_wf' }), { updatedAt: 1150 });
       tracker.observe(taskUpdatedCompleted({}), { updatedAt: 1200 });
+      tracker.observe(workflowJournal({ workflowToolUseId: 'toolu_wf', type: 'started', key: 'k1', agentId: 'raw-late' }), { updatedAt: 1300 });
+      expect(tracker.getRunSnapshot('toolu_wf')?.agents[0]).toMatchObject({ status: 'cancelled', completedAt: 1300 });
 
-      const before = tracker.getRunSnapshot('toolu_wf');
-      expect(before?.agents[0]?.status).toBe('active');
-
-      tracker.finalizeInterruptedActivityOnShutdown({ updatedAt: 9000 });
-      expect(tracker.getRunSnapshot('toolu_wf')?.agents[0]?.status).toBe('cancelled');
+      const observation = tracker.finalizeInterruptedActivityOnShutdown({ updatedAt: 9000 });
+      expect(observation.changedRunIds).toEqual([]);
+      expect(tracker.getRunSnapshot('toolu_wf')?.agents[0]).toMatchObject({ status: 'cancelled', completedAt: 1300, updatedAt: 1300 });
     });
 
     it('changes nothing when every run and agent already reached a terminal state', () => {

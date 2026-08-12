@@ -42,6 +42,23 @@ function readNumber(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
 }
 
+/**
+ * The instant a Claude transcript/sidecar record carries, in ms — the record's own clock rather than
+ * the moment something read it.
+ *
+ * One reader for the whole workflow corridor: the sidecar follower dates an agent's start and death
+ * from it, and the activity source dates a replayed row from it, so a resumed session cannot stamp
+ * hours-old work as fresh. Measured on the real 2 885-record transcript of session `15a64b1f`, every
+ * `user`, `assistant` and `system` record carries one; absent means absent, and nothing is invented.
+ */
+export function readClaudeRecordTimestampMs(value: unknown): number | undefined {
+  const raw = readRecord(value)?.timestamp;
+  if (typeof raw === 'number') return Number.isFinite(raw) && raw > 0 ? raw : undefined;
+  if (typeof raw !== 'string') return undefined;
+  const parsed = Date.parse(raw);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
 /** A `Workflow {script}` tool-use that starts an explicit workflow run. */
 export type WorkflowStartFact = Readonly<{
   kind: 'workflow-start';
@@ -170,6 +187,25 @@ export type WorkflowAgentProfileFact = Readonly<{
    * transcript was imported — never "not yet" — so a row built from this fact stays unopenable.
    */
   sidechainId?: string;
+  /**
+   * When the agent's own transcript says it started — its first record's timestamp.
+   *
+   * The journal carries no time at all, so without this a start time is only the moment the CLI
+   * happened to notice the agent. This is the agent's own clock, and the follower already parses
+   * exactly the record it comes from.
+   */
+  startedAt?: number;
+  /**
+   * The agent's transcript ENDS in a terminal API error (auth, rate limit, org policy).
+   *
+   * The one death that happens while the owning process is still alive and the run is still open,
+   * so neither a stop nor a resume can ever reach it. It is an observation — the last record of a
+   * file the follower already reads — which is what makes resolving the row honest rather than an
+   * inference from silence.
+   */
+  endedByApiError?: boolean;
+  /** The last instant that transcript evidences. Never a fabricated end. */
+  endedAt?: number;
   sourceSessionId?: string;
 }>;
 
@@ -677,13 +713,16 @@ export function createClaudeWorkflowScriptWrapper(params: Readonly<{
   };
 }
 
-/** Feed one workflow agent's own sidecar prompt/model into the tracker's naming chain. */
+/** Feed what one workflow agent's own sidecar directory proves about it into the tracker. */
 export function createClaudeWorkflowAgentProfileWrapper(params: Readonly<{
   workflowToolUseId: string;
   agentId: string;
   prompt?: string | undefined;
   model?: string | undefined;
   sidechainId?: string | undefined;
+  startedAt?: number | undefined;
+  endedByApiError?: boolean | undefined;
+  endedAt?: number | undefined;
   sourceSessionId?: string | undefined;
 }>): Record<string, unknown> {
   return {
@@ -693,6 +732,9 @@ export function createClaudeWorkflowAgentProfileWrapper(params: Readonly<{
     ...(params.prompt !== undefined ? { prompt: params.prompt } : {}),
     ...(params.model !== undefined ? { model: params.model } : {}),
     ...(params.sidechainId !== undefined ? { sidechainId: params.sidechainId } : {}),
+    ...(params.startedAt !== undefined ? { startedAt: params.startedAt } : {}),
+    ...(params.endedByApiError ? { endedByApiError: true } : {}),
+    ...(params.endedAt !== undefined ? { endedAt: params.endedAt } : {}),
     ...(params.sourceSessionId ? { sourceSessionId: params.sourceSessionId } : {}),
   };
 }
@@ -712,7 +754,35 @@ export const WORKFLOW_AGENT_PROMPT_TITLE_MAX = 160;
  * at `#`). Together they name 53% of agents and collide across siblings in 41 of 280 runs. Where a
  * prompt declares neither, this returns nothing and the caller keeps its stable ordinal.
  */
-const WORKFLOW_AGENT_PROMPT_LANE_MARKER = /^[#*_>\s-]*(?:YOUR\s+)?(?:LANE|UNIT|PACKET|TASK|ROLE|MISSION)\b/i;
+const WORKFLOW_AGENT_PROMPT_MARKER_WORDS = ['LANE', 'UNIT', 'PACKET', 'TASK', 'ROLE', 'MISSION'] as const;
+
+/** Any line opening with a marker word, in any case — the weakest evidence a prompt can offer. */
+const WORKFLOW_AGENT_PROMPT_LANE_MARKER = new RegExp(
+  `^[#*_>\\s-]*(?:YOUR\\s+)?(?:${WORKFLOW_AGENT_PROMPT_MARKER_WORDS.join('|')})\\b`,
+  'i',
+);
+
+/**
+ * A marker line written as a LABEL rather than as a sentence: the marker word as a word (`LANE`,
+ * `Lane` — never a mid-sentence `lane`), an optional short id run (`UI`, `L30`, `(G4)`, `IDS`), then
+ * a separator, then the name it declares.
+ *
+ * A sentence that merely begins with a marker word is not a self-declaration: over the same corpus
+ * (4 292 sidecar prompts re-derived) `Lane reports are in /Users/…`, `Lane docs to read: …` and
+ * `- Task↔PR: …` each titled rows with a truncated path or a quoted fact while the prompt's own
+ * heading sat unused. Prose fails this shape — its first token after the marker word is a
+ * lowercase English word — so a declared heading now wins instead. The id run rejects nothing on its
+ * own; it exists so `LANE UI — …` and `LANE (BLOCKER — G1): …` still read as declarations.
+ *
+ * Case matters here and the `i` flag must NOT come back: under `i`, `[^\s a-z]` folds to "not a
+ * letter" and would reject every uppercase id, which silently disables the whole id run.
+ */
+const WORKFLOW_AGENT_PROMPT_SELF_DECLARATION = new RegExp(
+  `^[#*_>\\s-]*(?:(?:YOUR|Your)\\s+)?(?:${WORKFLOW_AGENT_PROMPT_MARKER_WORDS
+    .flatMap((word) => [word, `${word.charAt(0)}${word.slice(1).toLowerCase()}`])
+    .join('|')})\\b(?:\\s+[^\\sa-z]\\S*){0,3}(?::|\\s+[:—–·|-])\\s*\\S`,
+);
+
 const WORKFLOW_AGENT_PROMPT_TOP_HEADING = /^#\s+\S/;
 
 function normalizeWorkflowAgentPromptTitle(line: string): string | undefined {
@@ -727,21 +797,30 @@ function normalizeWorkflowAgentPromptTitle(line: string): string | undefined {
     : cleaned;
 }
 
+/**
+ * Ranked, best first: a lane the prompt declares as a label, then the heading it declares, then any
+ * line merely opening with a marker word. The last rank keeps every title this ever produced — a
+ * prompt whose only evidence is prose still names its row rather than falling back to an ordinal.
+ */
 export function deriveWorkflowAgentPromptTitle(prompt: unknown): string | undefined {
   if (typeof prompt !== 'string') return undefined;
   let topHeading: string | undefined;
+  let markerLine: string | undefined;
   for (const rawLine of prompt.split('\n')) {
     const line = rawLine.trim();
     if (line.length === 0) continue;
-    if (WORKFLOW_AGENT_PROMPT_LANE_MARKER.test(line)) {
-      const marker = normalizeWorkflowAgentPromptTitle(line);
-      if (marker) return marker;
+    if (WORKFLOW_AGENT_PROMPT_SELF_DECLARATION.test(line)) {
+      const declared = normalizeWorkflowAgentPromptTitle(line);
+      if (declared) return declared;
+    }
+    if (markerLine === undefined && WORKFLOW_AGENT_PROMPT_LANE_MARKER.test(line)) {
+      markerLine = normalizeWorkflowAgentPromptTitle(line);
     }
     if (topHeading === undefined && WORKFLOW_AGENT_PROMPT_TOP_HEADING.test(line)) {
       topHeading = normalizeWorkflowAgentPromptTitle(line);
     }
   }
-  return topHeading;
+  return topHeading ?? markerLine;
 }
 
 function parseWorkflowScriptFact(message: Record<string, unknown>): WorkflowStartFact | null {
@@ -770,6 +849,9 @@ function parseWorkflowAgentProfileFact(message: Record<string, unknown>): Workfl
   const title = deriveWorkflowAgentPromptTitle(message.prompt);
   const model = readModel(message.model);
   const sidechainId = readString(message.sidechainId) ?? undefined;
+  const startedAt = readNumber(message.startedAt);
+  const endedByApiError = message.endedByApiError === true;
+  const endedAt = readNumber(message.endedAt);
   const sourceSessionId = readString(message.sourceSessionId) ?? undefined;
   return {
     kind: 'workflow-agent-profile',
@@ -778,6 +860,9 @@ function parseWorkflowAgentProfileFact(message: Record<string, unknown>): Workfl
     ...(title ? { title } : {}),
     ...(model ? { model } : {}),
     ...(sidechainId ? { sidechainId } : {}),
+    ...(startedAt !== undefined ? { startedAt } : {}),
+    ...(endedByApiError ? { endedByApiError } : {}),
+    ...(endedAt !== undefined ? { endedAt } : {}),
     ...(sourceSessionId ? { sourceSessionId } : {}),
   };
 }
@@ -795,11 +880,30 @@ function stringifyJournalResult(value: unknown): string | undefined {
   }
 }
 
+/**
+ * The journal outranks every title we derive ourselves (RULING-13), so its fields carry the same
+ * ceiling the prompt path already applies — an agent that reports a paragraph as its `lane` names
+ * its row, it does not dump into it. Observed: 14 of 3 671 real journal results exceed the bound,
+ * the longest at 2 266 characters.
+ *
+ * Only the length is corrected. Real journal titles are single-line (0 of 3 671 carry a newline
+ * inside their first {@link WORKFLOW_AGENT_PROMPT_TITLE_MAX} characters); a multi-line one would
+ * still reach a row, and is the observation that would justify collapsing whitespace here too.
+ */
+function readBoundedJournalTitle(value: unknown): string | undefined {
+  const text = readString(value);
+  if (!text) return undefined;
+  return text.length > WORKFLOW_AGENT_PROMPT_TITLE_MAX
+    ? text.slice(0, WORKFLOW_AGENT_PROMPT_TITLE_MAX).trimEnd()
+    : text;
+}
+
 function readJournalResultTitle(result: Record<string, unknown> | null, fallback: string): string {
-  return readString(result?.lane)
-    ?? readString(result?.label)
-    ?? readString(result?.item)
-    ?? readString(result?.message)
+  return readBoundedJournalTitle(result?.lane)
+    ?? readBoundedJournalTitle(result?.label)
+    ?? readBoundedJournalTitle(result?.item)
+    ?? readBoundedJournalTitle(result?.message)
+    // The fallback is the agent id: left verbatim so the tracker can still recognise an opaque title.
     ?? fallback;
 }
 

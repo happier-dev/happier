@@ -2231,4 +2231,72 @@ describe('createClaudeUnifiedTranscriptBridge', () => {
     await waitMs(50);
     expect(onMessage).not.toHaveBeenCalled();
   });
+
+  // INV-R C-1. A workflow agent has no tool call to discover it: the run has ONE `Workflow` tool use
+  // and many `agent-<id>.jsonl` sidecars, so the journal follower is the only thing that knows they
+  // exist and it must hand them to this runtime's importer rather than start a second one. That is
+  // only true if what the bridge publishes is the LIVE importer — registrations have to come out of
+  // this bridge's own message channel — and if teardown withdraws it, because a registration
+  // accepted after cleanup claims a transcript nobody is importing.
+  it('publishes the live sidechain importer, and withdraws it on dispose (INV-R C-1)', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'happier-claude-unified-transcript-'));
+    tempDirs.push(dir);
+    const transcriptPath = join(dir, 'sess_1.jsonl');
+    await writeFile(transcriptPath, '');
+    const sidecarPath = join(dir, 'agent-a7b1656e7.jsonl');
+    await appendRawJsonl(sidecarPath, {
+      type: 'user',
+      uuid: 'workflow_agent_record_1',
+      message: { role: 'user', content: [{ type: 'text', text: 'LANE WIRE — bind the registrar' }] },
+    });
+
+    const sidechainId = 'workflow_agent_sidechain:toolu_1:a7b1656e7';
+    const onMessage = vi.fn();
+    const published: Array<{
+      registerSidechainFile: (params: Readonly<{
+        sidechainId: string;
+        agentId: string;
+        filePath: string;
+        source: 'task-tool' | 'workflow-agent';
+      }>) => Promise<void>;
+    } | null> = [];
+    const bridge = createClaudeUnifiedTranscriptBridge({
+      sessionId: 'sess_1',
+      transcriptPath,
+      workingDirectory: dir,
+      onMessage,
+      onSubagentFileCollectorChanged: (collector) => {
+        published.push(collector);
+      },
+      transcriptMissingWarningMs: 0,
+    });
+
+    try {
+      await bridge.start({ abortSignal: new AbortController().signal });
+      const importer = published[0];
+      if (!importer) throw new Error('bridge published no sidechain importer after start');
+
+      await importer.registerSidechainFile({
+        sidechainId,
+        agentId: 'a7b1656e7',
+        filePath: sidecarPath,
+        source: 'workflow-agent',
+      });
+
+      await waitUntil(() => onMessage.mock.calls.some(
+        ([message]) => (message as Record<string, unknown>)?.uuid === 'workflow_agent_record_1',
+      ));
+      const imported = onMessage.mock.calls
+        .map(([message]) => message as Record<string, unknown>)
+        .find((message) => message?.uuid === 'workflow_agent_record_1');
+      // The prompt root survives for a workflow agent: nothing synthesises one from a tool use, so
+      // skipping it would drop the only record saying what the agent was asked to do.
+      expect(imported).toMatchObject({ isSidechain: true, sidechainId });
+    } finally {
+      await bridge.dispose();
+    }
+
+    expect(published).toHaveLength(2);
+    expect(published[1]).toBeNull();
+  });
 });

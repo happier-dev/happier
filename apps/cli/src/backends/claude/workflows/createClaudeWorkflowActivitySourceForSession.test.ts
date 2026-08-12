@@ -1,5 +1,9 @@
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
 import { describe, expect, it, vi } from 'vitest';
-import { buildSessionWorkflowActivityHeadline } from '@happier-dev/protocol';
+import { buildSessionWorkflowActivityHeadline, type SessionWorkflowRunSnapshotV1 } from '@happier-dev/protocol';
 
 import type { Session } from '../session';
 import { createClaudeProviderActivityLedger } from '../providerActivity/createClaudeProviderActivityLedger';
@@ -87,6 +91,7 @@ function workflowLaunch(params: Readonly<{
   toolUseId: string;
   taskId: string;
   providerRunId: string;
+  transcriptDir?: string;
 }>) {
   return {
     type: 'user',
@@ -103,6 +108,7 @@ function workflowLaunch(params: Readonly<{
       taskId: params.taskId,
       taskType: 'local_workflow',
       runId: params.providerRunId,
+      ...(params.transcriptDir ? { transcriptDir: params.transcriptDir } : {}),
     },
   };
 }
@@ -208,6 +214,69 @@ describe('createClaudeWorkflowActivitySourceForSession', () => {
       { state: 'idle', activeCount: 0 },
     ]);
     source?.dispose();
+  });
+
+  /**
+   * The fail-closed registration seam, pinned across the WHOLE composition.
+   *
+   * `registerWorkflowAgentTranscript` is handed down three hops (here ->
+   * `wireClaudeWorkflowActivitySource` -> `createClaudeWorkflowActivitySource` -> the journal
+   * follower) and every hop forwards the same reference unwrapped. A `try/catch`, an
+   * optional-chain, or a `.catch()` on ANY of them turns the registrar's "no importer is wired
+   * yet" rejection back into a silent success, and the agent gets stamped with a `sidechainId`
+   * that promises a transcript nobody imported. This asserts the published id, not the call, so
+   * it fails wherever on the chain the swallow is added.
+   */
+  it('withholds an agent sidechain id when the transcript importer REJECTS the file', async () => {
+    const transcriptDir = await mkdtemp(join(tmpdir(), 'happier-workflow-forsession-'));
+    try {
+      await writeFile(join(transcriptDir, 'agent-agent_alpha.jsonl'), `${JSON.stringify({
+        type: 'user',
+        isSidechain: true,
+        agentId: 'agent_alpha',
+        message: { role: 'user', content: 'LANE ALPHA\ndo the work' },
+      })}\n`);
+      await writeFile(join(transcriptDir, 'journal.jsonl'), `${JSON.stringify({
+        type: 'started',
+        key: 'lane-1',
+        agentId: 'agent_alpha',
+      })}\n`);
+
+      const session = createSessionStub();
+      const upserts: Array<{ content: { t: string; v?: SessionWorkflowRunSnapshotV1 } }> = [];
+      (session.client as unknown as Record<string, unknown>).upsertSessionSystemRecord =
+        vi.fn(async (record: { content: { t: string; v?: SessionWorkflowRunSnapshotV1 } }) => { upserts.push(record); });
+
+      const attempted: string[] = [];
+      const source = await createClaudeWorkflowActivitySourceForSession({
+        session,
+        logPrefix: '[test]',
+        getCurrentClaudeSessionId: () => 'claude-session-id',
+        registerWorkflowAgentTranscript: async ({ sidechainId }) => {
+          attempted.push(sidechainId);
+          throw new Error(`no sidechain importer is wired yet; refusing to claim ${sidechainId}`);
+        },
+      });
+      source?.observeTranscriptMessage(workflowToolUse('toolu_workflow'));
+      source?.observeTranscriptMessage(workflowLaunch({
+        toolUseId: 'toolu_workflow',
+        taskId: 'workflow-task-1',
+        providerRunId: 'workflow-provider-run-1',
+        transcriptDir,
+      }));
+      await source?.flush();
+      source?.dispose();
+
+      // The registrar was reached, so this is a WITHHELD id rather than an unexercised path. A
+      // rejection leaves the import unsettled, and the flush's own re-read of every unreported agent
+      // tries it once more — a retry, never a second claim: the id is identical and still withheld.
+      expect(new Set(attempted)).toEqual(new Set(['workflow_agent_sidechain:toolu_workflow:agent_alpha']));
+      const agents = upserts.at(-1)?.content.v?.agents ?? [];
+      expect(agents.map((agent) => agent.id)).toEqual(['agent_alpha']);
+      expect(agents[0]?.sidechainId).toBeUndefined();
+    } finally {
+      await rm(transcriptDir, { recursive: true, force: true });
+    }
   });
 
 });

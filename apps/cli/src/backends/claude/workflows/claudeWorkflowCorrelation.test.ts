@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  WORKFLOW_AGENT_PROMPT_TITLE_MAX,
   createClaudeWorkflowAgentProfileWrapper,
   createClaudeWorkflowScriptWrapper,
   parseClaudeWorkflowFact,
@@ -232,6 +233,70 @@ await parallel([
         kind: 'workflow-agent-profile',
         workflowToolUseId: 'toolu_wf',
         agentId: 'a48f516fb1d79d150',
+      });
+    });
+
+    it('prefers the heading a verifier prompt declares over prose that merely opens with the word “Lane”', () => {
+      // Real bytes. Session 15a64b1f, workflow agents a04c4191cf562bc86 + ad5c8caa0f0f62a26 (wave 22)
+      // and a3579e280a9aa7d6b + a02cf4b853f706b35 (wave 23): four rows titled with the 160-char
+      // truncation of this path line, while the SAME prompt declares the heading two lines above.
+      for (const wave of ['W22', 'W23'] as const) {
+        const fact = parseClaudeWorkflowFact(createClaudeWorkflowAgentProfileWrapper({
+          workflowToolUseId: 'toolu_wf',
+          agentId: `agent-${wave}-verifier`,
+          prompt: [
+            '## Program context',
+            '',
+            'The r4.2 agent-activity unification has landed (one work-state chip, one activity model behind the work-state',
+            'popover and the right-pane Agents tab, attention model deleted).',
+            '',
+            '# INDEPENDENT REVIEW — you authored none of this. Review to refute, not to confirm.',
+            `Lane reports are in /Users/leeroy/Documents/Development/happier/remote-dev/.project/plans/agent-activity-unification/subagents/${wave}-*.md. Inspect CURRENT bytes and the diff; do not trust the reports.`,
+          ].join('\n'),
+        }));
+
+        expect(fact).toMatchObject({
+          title: 'INDEPENDENT REVIEW — you authored none of this. Review to refute, not to confirm.',
+        });
+      }
+    });
+
+    it('lets the lane a prompt declares about itself win over an earlier prose line opening with a marker word', () => {
+      // Real bytes. Workflow agent a609311d862fabc1c: the bullet opening `Task↔PR:` sits ~40 lines
+      // above the only line that says what this agent was actually given, and titles the row today.
+      const fact = parseClaudeWorkflowFact(createClaudeWorkflowAgentProfileWrapper({
+        workflowToolUseId: 'toolu_wf',
+        agentId: 'a609311d862fabc1c',
+        prompt: [
+          'PROGRAM: Happier is adding "Review" — a provider-agnostic pull-request / issue / code-review inbox.',
+          '- Task↔PR: PRs are created per-TURN (`POST /wham/tasks/{task_id}/turns/{task_turn_id}/pr` with mode/add_codex_tag/hide_pr_title_and_body/additional_labels). Reverse PR→task link does not exist in the UI — a genuine Codex gap Happier closes for free via ask #3.',
+          '',
+          "LANE: **The integration design.** Produce the single coherent specification that answers the user's",
+          'three asks.',
+        ].join('\n'),
+      }));
+
+      expect(fact).toMatchObject({
+        title: "LANE: The integration design. Produce the single coherent specification that answers the user's",
+      });
+    });
+
+    it('still titles from a plain marker line when the prompt declares nothing better', () => {
+      // Real bytes. Workflow agent a1aecaf397f57ec70: its only marker-word line is prose and it
+      // declares no heading, so demoting prose must not silently turn a named row into an ordinal.
+      const fact = parseClaudeWorkflowFact(createClaudeWorkflowAgentProfileWrapper({
+        workflowToolUseId: 'toolu_wf',
+        agentId: 'a1aecaf397f57ec70',
+        prompt: [
+          'You are a senior pre-merge/pre-deploy reviewer auditing a colleague’s implementation of the "Runtime Unification v2 (RU2) finalization" plan.',
+          '',
+          'CONTEXT YOU MUST GROUND IN (read what is relevant to your lane):',
+          '- Lane execution narrative (optional): .project/plans/runtime-unification-v2-finalization/execution/LEDGER.md and execution/lanes/<LANE>.md.',
+        ].join('\n'),
+      }));
+
+      expect(fact).toMatchObject({
+        title: 'Lane execution narrative (optional): .project/plans/runtime-unification-v2-finalization/execution/LEDGER.md and execution/lanes/<LANE>.md.',
       });
     });
 
@@ -602,6 +667,31 @@ await parallel([
       summary: 'The shadcn chat components expose useful scroll concepts.',
       resultPreview: 'The shadcn chat components expose useful scroll concepts.',
     });
+  });
+
+  it('bounds a journal-declared title, which outranks every title we derive ourselves', () => {
+    // Real bytes: run wf_a9ea832c-768, agent ac8fa4bd7271c50e3. 14 of 3 671 real journal results
+    // declare a `result.lane` longer than a title (max observed 2 266 chars) — and RULING-13 gives
+    // the journal the HIGHEST authority, so an unbounded one overwrites the bounded prompt title.
+    const lane = 'protocol/actions approval SSOT + apps/cli plugin-trust consolidation + protocol surface-registry routing + coverage-matrix executor closure (read-only recon; TDD: each fix is a behavior change, write the closure test RED first). Validation lanes: `yarn workspace @happier-dev/protocol test` (approval + surfaceRegistry + coverageMatrix closure), `yarn workspace @happier-dev/cli typecheck` + targeted `apps/cli/src/plugins/projection/registry/ui` and `apps/cli/src/rpc/handlers` test slices.';
+
+    const fact = parseClaudeWorkflowFact({
+      type: 'happier_workflow_journal',
+      workflowToolUseId: 'toolu_wf',
+      entry: {
+        type: 'result',
+        key: 'v2:beaa2b1774f7ce5169d9641ffd2cd89cab789b82bc916008f6881ab886e29b2b',
+        agentId: 'ac8fa4bd7271c50e3',
+        result: { lane },
+      },
+    });
+
+    expect(fact).toMatchObject({
+      kind: 'workflow-journal',
+      agentId: 'ac8fa4bd7271c50e3',
+      title: 'protocol/actions approval SSOT + apps/cli plugin-trust consolidation + protocol surface-registry routing + coverage-matrix executor closure (read-only recon; TD',
+    });
+    expect((fact as { title: string }).title.length).toBeLessThanOrEqual(WORKFLOW_AGENT_PROMPT_TITLE_MAX);
   });
 
   it('returns null for a user message without a task-notification wrapper', () => {

@@ -10,6 +10,17 @@ import {
   resolveClaudeScreenInFlightSteerVeto,
 } from './screenState';
 
+const CLAUDE_2_1_228_USAGE_LIMIT_DIALOG = [
+  "You've hit your session limit · resets 2:40am (Europe/Zurich)",
+  '',
+  'What do you want to do?',
+  '❯ 1. Stop and wait for limit to reset',
+  '  2. Switch to usage credits',
+  '  3. Switch to Team plan',
+  '',
+  'Enter to confirm · Esc to cancel',
+].join('\n');
+
 /**
  * Fixtures are derived from the live probe captures documented in
  * `.reviews/20260610-claude-unified-independent-audit/probes/probe-log.md` (Claude Code 2.1.170, tmux).
@@ -105,6 +116,50 @@ const CLAUDE_2_1_170 = {
     '  ? for shortcuts',
   ].join('\n'),
 } as const;
+
+describe('parseClaudeScreenState — usage-limit chooser', () => {
+  it('recognizes the current chooser without pinning its paid alternatives', () => {
+    const state = parseClaudeScreenState(CLAUDE_2_1_228_USAGE_LIMIT_DIALOG);
+
+    expect(state.usageLimitDialogVisible).toBe(true);
+    expect(state.unrecognizedConfirmationDialogVisible).toBe(false);
+    expect(resolveClaudeScreenInFlightSteerVeto(state)).toBe('usage_limit_dialog');
+
+    const changedAlternatives = parseClaudeScreenState(
+      CLAUDE_2_1_228_USAGE_LIMIT_DIALOG
+        .replace('Switch to usage credits', 'Use another billing source')
+        .replace('Switch to Team plan', 'Choose an organization plan'),
+    );
+    expect(changedAlternatives.usageLimitDialogVisible).toBe(true);
+
+    const changedWaitLabel = parseClaudeScreenState(
+      CLAUDE_2_1_228_USAGE_LIMIT_DIALOG.replace(
+        'Stop and wait for limit to reset',
+        'Wait until your session limit resets',
+      ),
+    );
+    expect(changedWaitLabel.usageLimitDialogVisible).toBe(true);
+
+    const changedHeading = parseClaudeScreenState(
+      CLAUDE_2_1_228_USAGE_LIMIT_DIALOG.replace(
+        "You've hit your session limit",
+        'You have reached your usage limit',
+      ),
+    );
+    expect(changedHeading.usageLimitDialogVisible).toBe(true);
+  });
+
+  it('does not mistake an unrelated numbered chooser for a usage-limit dialog', () => {
+    const state = parseClaudeScreenState([
+      'What do you want to do?',
+      '❯ 1. Stop and wait for the build to finish',
+      '  2. Cancel the build',
+    ].join('\n'));
+
+    expect(state.usageLimitDialogVisible).toBe(false);
+    expect(state.unrecognizedConfirmationDialogVisible).toBe(true);
+  });
+});
 
 describe('parseClaudeScreenState — mode markers (default by absence)', () => {
   it('detects default mode by the absence of any cycle marker', () => {

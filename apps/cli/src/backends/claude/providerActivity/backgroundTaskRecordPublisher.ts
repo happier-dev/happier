@@ -2,6 +2,7 @@ import { homedir } from 'node:os';
 
 import {
   buildBackgroundTaskSystemRecordLocalId,
+  isTerminalAgentActivityStatus,
   redactBackgroundCommand,
   type AgentActivityStatusV1,
   type BackgroundTaskKindV1,
@@ -52,6 +53,29 @@ type TrackedBackgroundTask = {
 export type BackgroundTaskRecordPublisher = Readonly<{
   /** Observe one durable-record fact. Non-recorded kinds and unknown tasks are inert. */
   observe(fact: ClaudeBackgroundTaskFact): void;
+  /**
+   * Resolve every still-outstanding record to `cancelled`, for an ORDERLY STOP ONLY.
+   *
+   * **Nothing else ever finalizes one of these.** A background shell reports through the provider's
+   * transcript, so when the provider is gone the record's only reporter is gone with it: a durable
+   * `SessionBackgroundTaskRecordV1` left at `running` stays `running` through the stop, through the
+   * resume, and forever — no startup reconcile reads this namespace and the workflow tracker never
+   * held these tasks (`rg backgroundTask claudeWorkflowActivityTracker.ts` -> 0 hits).
+   *
+   * **Orderly stop only, and the distinction is the whole contract.** Call this when the kill was
+   * OURS and we watched it happen — the caller destroyed the process tree the shell lived in, so
+   * "it stopped" is a recorded observation. Do NOT call it after a provider crash: a detached shell
+   * survives its parent, may genuinely still be writing, and `cancelled` would be a durable lie
+   * about work nobody watched (RULING-14 forbids exactly that inference). Do NOT call it on resume:
+   * a new process has observed nothing about the old one's children.
+   *
+   * `cancelled`, never `failed`: a stop is a stop, and PLAN 4.2 forbids painting it danger. The end
+   * instant is the last one we actually observed, never a fabricated one — the same rule the
+   * workflow tracker applies to an interrupted agent's `completedAt`.
+   *
+   * Idempotent: a second call finds nothing outstanding and writes nothing.
+   */
+  finalizeOutstandingOnOrderlyStop(): void;
   /** Drain pending writes immediately (terminal flush / stream close / session finalization). */
   flush(): Promise<void>;
   /** Stop scheduling. */
@@ -273,6 +297,24 @@ export function createBackgroundTaskRecordPublisher(params: Readonly<{
     markDirty(fact.taskId, true);
   }
 
+  function finalizeOutstandingOnOrderlyStop(): void {
+    if (disposed) return;
+    for (const [taskId, tracked] of tasks) {
+      if (isTerminalAgentActivityStatus(tracked.status)) continue;
+      tasks.set(taskId, {
+        ...tracked,
+        status: 'cancelled',
+        // The last instant we have evidence for. `endedAt` is when the work stopped being observed,
+        // and the only observation we hold is `tracked.updatedAt`; `now()` would invent an end.
+        endedAt: tracked.endedAt ?? tracked.updatedAt,
+        updatedAt: now(),
+      });
+      // Immediate: this runs inside a teardown whose flush is already in progress behind it, and a
+      // debounced write would be cancelled by the `dispose()` that follows.
+      markDirty(taskId, true);
+    }
+  }
+
   async function flush(): Promise<void> {
     // Drain to quiescence: `markDirty` fires drains fire-and-forget, so awaiting once could return
     // while a terminal record is still in flight. Failures are NOT retried here (see `trackedDrain`),
@@ -297,5 +339,5 @@ export function createBackgroundTaskRecordPublisher(params: Readonly<{
     scheduler.dispose();
   }
 
-  return { observe, flush, dispose };
+  return { observe, finalizeOutstandingOnOrderlyStop, flush, dispose };
 }

@@ -37,6 +37,8 @@ import {
 } from './unifiedTerminal/telemetry';
 import { createClaudeSessionTranscriptProjector } from './localControl/createClaudeSessionTranscriptProjector';
 import { createClaudeWorkflowActivitySourceForSession } from './workflows/createClaudeWorkflowActivitySourceForSession';
+import { createWorkflowAgentTranscriptRegistrar } from './remote/sidechains/createWorkflowAgentTranscriptRegistrar';
+import type { ClaudeRemoteSubagentFileCollector } from './remote/sidechains/claudeRemoteSubagentFileCollector';
 import { loadClaudeJsonlReplayBaseline } from './utils/loadClaudeJsonlReplayBaseline';
 
 function upsertClaudePermissionModeArgs(
@@ -106,9 +108,20 @@ export async function claudeLocalLauncher(
         // it the SAME raw transcript channel as the goal source and applies its CWF4 owned-id filter at
         // the work-state merge chokepoint. Null when no credentials are available yet — the goal /
         // work-state path is unaffected.
+        // The scanner that owns this session's ONE sidechain importer is created further down (it
+        // needs the projector this source feeds), so the source reaches the importer through this
+        // holder rather than the other way round. A workflow run cannot start before the scanner
+        // exists — nothing observes a transcript until then — and the registrar FAILS rather than
+        // assuming it, so no agent is ever stamped with an id for an import that did not happen.
+        let subagentFileCollectorRef: ClaudeRemoteSubagentFileCollector | null = null;
         const workflowActivitySource = await createClaudeWorkflowActivitySourceForSession({
             session,
             logPrefix: '[local]',
+            // Workflow agent transcripts ride the SAME importer as `Task` sub-agent transcripts: one
+            // follower budget, one dedupe, one `isSidechain`/`sidechainId` marking rule.
+            registerWorkflowAgentTranscript: createWorkflowAgentTranscriptRegistrar({
+                getCollector: () => subagentFileCollectorRef,
+            }),
             getCurrentClaudeSessionId: () => {
                 const claudeSessionId = session.client.getMetadataSnapshot?.()?.claudeSessionId;
                 return typeof claudeSessionId === 'string' && claudeSessionId.trim().length > 0 ? claudeSessionId.trim() : null;
@@ -215,7 +228,10 @@ export async function claudeLocalLauncher(
         },
         transcriptMissingWarningMs: configuration.claudeTranscriptMissingWarningMs,
     });
-    
+    // The scanner owns this session's one sidechain importer; the workflow journal follower can now
+    // hand its `agent-<id>.jsonl` sidecars to it.
+    subagentFileCollectorRef = scanner.subagentFileCollector;
+
     // Register callback to notify scanner when session ID is found via hook
     // This is important for --continue/--resume where session ID is not known upfront
     const scannerSessionCallback = (info: SessionFoundInfo) => {
@@ -550,7 +566,9 @@ export async function claudeLocalLauncher(
         await transcriptProjector.flushWorkflowActivity();
         transcriptProjector.reset();
 
-        // Cleanup
+        // Cleanup. The importer dies with the scanner, so withdraw it first: a late journal entry
+        // must fail to register rather than attach a follower nothing will ever stop.
+        subagentFileCollectorRef = null;
         await scanner.cleanup();
     }
 
