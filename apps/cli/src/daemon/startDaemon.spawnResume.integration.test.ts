@@ -4234,6 +4234,80 @@ describe('startDaemon spawn resume wiring (integration)', () => {
     }
   });
 
+  it('joins a concurrent Stop to an in-flight Resume topology repair instead of running it twice', async () => {
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
+    const refreshEnvOriginal = process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED;
+    process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED = 'false';
+    let run: Promise<void> | null = null;
+
+    try {
+      const reattachModule = await import('./sessions/reattachFromMarkers');
+      vi.mocked(reattachModule.reattachTrackedSessionsFromMarkers).mockResolvedValue({
+        orphanedDeadDaemonSessions: [],
+        unresolvedTerminalHostSessionIds: ['sess_plain'],
+        connectedServiceRestartIntents: [],
+      });
+      let releaseRepair!: (result: StopSessionResult) => void;
+      const repairGate = new Promise<StopSessionResult>((resolve) => {
+        releaseRepair = resolve;
+      });
+      stopSessionMocks.stopSession.mockImplementation(async () => await repairGate);
+
+      const { startDaemon } = await import('./startDaemon');
+      run = startDaemon();
+      let spawnSession = harness.getSpawnSession();
+      for (let attempt = 0; attempt < 20 && (!spawnSession || !harness.getStopSession()); attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        spawnSession = harness.getSpawnSession();
+      }
+      const stopHandler = harness.getStopSession();
+      if (!spawnSession || !stopHandler) throw new Error('Expected spawnSession and stopSession to be registered');
+
+      const resumePromise = spawnSession({
+        directory: '/tmp',
+        backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+        existingSessionId: 'sess_plain',
+        token: 'token-from-spawn-options',
+        codexBackendMode: 'acp',
+      });
+      for (let attempt = 0; attempt < 50 && stopSessionMocks.stopSession.mock.calls.length === 0; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+      expect(stopSessionMocks.stopSession).toHaveBeenCalledTimes(1);
+
+      const concurrentStop = stopHandler('sess_plain');
+      // Give a (wrongly) unserialized concurrent stop the chance to start a second core stop.
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      releaseRepair({ status: 'not_found' });
+      const [resumeResult, stopResult] = await Promise.all([resumePromise, concurrentStop]);
+
+      expect(stopSessionMocks.stopSession).toHaveBeenCalledTimes(1);
+      expect(stopResult).toEqual({ status: 'not_found' });
+      expect(resumeResult).toMatchObject({ type: 'success' });
+      expect(spawnHappyCLI).toHaveBeenCalledTimes(1);
+
+      harness.requestShutdown('happier-cli');
+      await run;
+      run = null;
+    } finally {
+      if (run) {
+        harness.requestShutdown('happier-cli');
+        await run;
+      }
+      const reattachModule = await import('./sessions/reattachFromMarkers');
+      vi.mocked(reattachModule.reattachTrackedSessionsFromMarkers).mockResolvedValue({
+        orphanedDeadDaemonSessions: [],
+        connectedServiceRestartIntents: [],
+      });
+      stopSessionMocks.stopSession.mockReset();
+      stopSessionMocks.stopSession.mockResolvedValue({ status: 'stopped' });
+      if (refreshEnvOriginal === undefined) delete process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED;
+      else process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED = refreshEnvOriginal;
+      exitSpy.mockRestore();
+    }
+  });
+
   it('fences duplicate resume when process liveness is known but exact-session serviceability is unknown', async () => {
     const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
     const refreshEnvOriginal = process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED;

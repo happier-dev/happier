@@ -1,12 +1,11 @@
 import type { ApiSessionClient } from '@/api/session/sessionClient';
 import type { Metadata } from '@/api/types';
-import { configuration } from '@/configuration';
 import { notifyDaemonSessionStarted } from '@/daemon/controlClient';
-import { createTerminalAttachmentId, writeTerminalAttachmentInfo } from '@/terminal/attachment/terminalAttachmentInfo';
 import { buildTerminalFallbackMessage } from '@/terminal/attachment/terminalFallbackMessage';
-import { buildTerminalHostHandleFromAttachmentMetadata } from '@/agent/runtime/terminal/attachmentMetadata';
 import { logger } from '@/ui/logger';
 import { updateAgentStateBestEffort } from '@/api/session/sessionWritesBestEffort';
+
+export { persistTerminalAttachmentInfoIfNeeded } from '@/agent/runtime/terminal/persistTerminalAttachmentInfo';
 
 type DaemonReportDeps = {
     notifyDaemonSessionStartedFn?: typeof notifyDaemonSessionStarted;
@@ -66,28 +65,6 @@ export function primeAgentStateForUi(session: ApiSessionClient, logPrefix: strin
         logPrefix,
         'prime agent state for ui',
     );
-}
-
-export async function persistTerminalAttachmentInfoIfNeeded(opts: {
-    sessionId: string;
-    terminal: Metadata['terminal'] | undefined;
-}): Promise<void> {
-    if (!opts.terminal) return;
-    try {
-        // Derive a TerminalHostHandle from the terminal metadata so that bindable modes
-        // (tmux, zellij, windows_console) persist a version-2 record with an immutable
-        // attachmentId. Non-bindable modes (plain, windows_terminal) remain version-1.
-        const handle = buildTerminalHostHandleFromAttachmentMetadata(opts.terminal);
-        const attachmentId = handle ? createTerminalAttachmentId() : undefined;
-        await writeTerminalAttachmentInfo({
-            happyHomeDir: configuration.happyHomeDir,
-            sessionId: opts.sessionId,
-            ...(handle && attachmentId ? { attachmentId, handle } : {}),
-            terminal: opts.terminal,
-        });
-    } catch (error) {
-        logger.debug('[START] Failed to persist terminal attachment info', error);
-    }
 }
 
 export function sendTerminalFallbackMessageIfNeeded(opts: {

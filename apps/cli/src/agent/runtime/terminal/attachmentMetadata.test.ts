@@ -97,20 +97,16 @@ describe('buildTerminalAttachmentMetadataFromHostHandle', () => {
     });
   });
 
-  it('reconstructs a windows_console handle from persisted metadata', () => {
-    const handle = buildTerminalHostHandleFromAttachmentMetadata({
+  it('does not reconstruct a windows_console handle: persisted metadata carries no host identity', () => {
+    // The canonical PTY handle is keyed by the spawn-time session name (also its paneId),
+    // which windows_console terminal metadata does not persist. A fabricated identity would
+    // probe a nonexistent host, so reconstruction must refuse and leave the mode on the
+    // fail-closed legacy path.
+    expect(buildTerminalHostHandleFromAttachmentMetadata({
       mode: 'windows_console',
       requested: 'console',
       windows: { host: 'console' },
-    });
-    expect(handle).toMatchObject({
-      kind: 'windows_console',
-      sessionName: 'windows_console',
-      attachMetadata: {
-        attachStrategy: 'terminal_host',
-        topology: 'shared',
-      },
-    });
+    })).toBeNull();
   });
 
   it('builds non-focusable Windows console metadata from a PTY host handle', () => {

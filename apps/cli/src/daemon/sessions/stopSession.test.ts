@@ -1,9 +1,31 @@
 import { describe, expect, it, vi } from 'vitest';
 
+import type { TerminalHostAdapter } from '@/integrations/terminalHost/_types';
 import type {
   BoundTerminalAttachmentInfo,
   TerminalAttachmentInfo,
 } from '@/terminal/attachment/terminalAttachmentInfo';
+
+/** Legacy-retirement tests only probe liveness; every other adapter surface must stay unreached. */
+function createLivenessProbeAdapterFixture(
+  kind: TerminalHostAdapter['kind'],
+  evaluateLiveness: TerminalHostAdapter['evaluateLiveness'],
+): TerminalHostAdapter {
+  return {
+    kind,
+    createOrAttachHost: async () => {
+      throw new Error('createOrAttachHost must not be reached by legacy retirement');
+    },
+    injectUserPrompt: async () => {
+      throw new Error('injectUserPrompt must not be reached by legacy retirement');
+    },
+    interruptTurn: async () => {
+      throw new Error('interruptTurn must not be reached by legacy retirement');
+    },
+    evaluateLiveness,
+    dispose: async () => undefined,
+  };
+}
 
 const { spawnSyncMock } = vi.hoisted(() => ({
   spawnSyncMock: vi.fn(() => ({ status: 0, stdout: '', stderr: '' })),
@@ -427,14 +449,10 @@ describe('createStopSession', () => {
       removeAttachmentInfo: vi.fn(async () => true),
       waitForTrackedRunnersExit: vi.fn(async () => true),
       terminalHostAdapters: {
-        zellij: {
-          kind: 'zellij',
-          createOrAttachHost: vi.fn(),
-          injectUserPrompt: vi.fn(),
-          interruptTurn: vi.fn(),
-          evaluateLiveness: vi.fn(async () => ({ paneAlive: false, paneDead: true, observedAt: Date.now() })),
-          dispose: vi.fn(async () => undefined),
-        } as any,
+        zellij: createLivenessProbeAdapterFixture(
+          'zellij',
+          vi.fn(async () => ({ paneAlive: false, paneDead: true, observedAt: Date.now() })),
+        ),
       },
     });
     const ok = await stop('sess-zellij');
@@ -1149,14 +1167,10 @@ describe('createStopSession', () => {
       readAttachmentInfo: legacyReadAttachmentInfo,
       removeAttachmentInfo: legacyRemoveAttachmentInfo,
       terminalHostAdapters: {
-        tmux: {
-          kind: 'tmux',
-          createOrAttachHost: vi.fn(),
-          injectUserPrompt: vi.fn(),
-          interruptTurn: vi.fn(),
-          evaluateLiveness: vi.fn(async () => ({ paneAlive: false, paneDead: true, observedAt: Date.now() })),
-          dispose: vi.fn(async () => undefined),
-        } as any,
+        tmux: createLivenessProbeAdapterFixture(
+          'tmux',
+          vi.fn(async () => ({ paneAlive: false, paneDead: true, observedAt: Date.now() })),
+        ),
       },
     });
     const result = await stop('sess-legacy-tmux');
@@ -1195,14 +1209,10 @@ describe('createStopSession', () => {
       waitForTrackedRunnersExit: vi.fn(async () => true),
       readAttachmentInfo: vi.fn(async () => legacyAttachment),
       terminalHostAdapters: {
-        zellij: {
-          kind: 'zellij',
-          createOrAttachHost: vi.fn(),
-          injectUserPrompt: vi.fn(),
-          interruptTurn: vi.fn(),
-          evaluateLiveness: vi.fn(async () => ({ paneAlive: true, observedAt: Date.now() })),
-          dispose: vi.fn(async () => undefined),
-        } as any,
+        zellij: createLivenessProbeAdapterFixture(
+          'zellij',
+          vi.fn(async () => ({ paneAlive: true, observedAt: Date.now() })),
+        ),
       },
     });
     const ok = await stop('sess-zellij');
@@ -1246,14 +1256,7 @@ describe('createStopSession', () => {
       readAttachmentInfo: vi.fn(async () => legacyAttachment),
       removeAttachmentInfo: legacyRemoveAttachmentInfo,
       terminalHostAdapters: {
-        tmux: {
-          kind: 'tmux',
-          createOrAttachHost: vi.fn(),
-          injectUserPrompt: vi.fn(),
-          interruptTurn: vi.fn(),
-          evaluateLiveness,
-          dispose: vi.fn(async () => undefined),
-        } as any,
+        tmux: createLivenessProbeAdapterFixture('tmux', evaluateLiveness),
       },
     });
     const result = await stop('sess-inconclusive');
@@ -1317,14 +1320,10 @@ describe('createStopSession', () => {
       readAttachmentInfo: vi.fn(async () => legacyAttachment),
       removeAttachmentInfo: legacyRemoveAttachmentInfo,
       terminalHostAdapters: {
-        tmux: {
-          kind: 'tmux',
-          createOrAttachHost: vi.fn(),
-          injectUserPrompt: vi.fn(),
-          interruptTurn: vi.fn(),
-          evaluateLiveness: vi.fn(async () => ({ paneAlive: false, paneDead: true, observedAt: Date.now() })),
-          dispose: vi.fn(async () => undefined),
-        } as any,
+        tmux: createLivenessProbeAdapterFixture(
+          'tmux',
+          vi.fn(async () => ({ paneAlive: false, paneDead: true, observedAt: Date.now() })),
+        ),
       },
     });
     const result = await stop('sess-stale-tmux');
@@ -1355,14 +1354,10 @@ describe('createStopSession', () => {
       readAttachmentInfo: vi.fn(async () => legacyAttachment),
       removeAttachmentInfo: legacyRemoveAttachmentInfo,
       terminalHostAdapters: {
-        tmux: {
-          kind: 'tmux',
-          createOrAttachHost: vi.fn(),
-          injectUserPrompt: vi.fn(),
-          interruptTurn: vi.fn(),
-          evaluateLiveness: vi.fn(async () => ({ paneAlive: true, observedAt: Date.now() })),
-          dispose: vi.fn(async () => undefined),
-        } as any,
+        tmux: createLivenessProbeAdapterFixture(
+          'tmux',
+          vi.fn(async () => ({ paneAlive: true, observedAt: Date.now() })),
+        ),
       },
     });
     const result = await stop('sess-stale-alive');

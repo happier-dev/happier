@@ -95,20 +95,9 @@ export function buildTerminalHostHandleFromAttachmentMetadata(
     };
   }
 
-  if (terminal.mode === 'windows_console') {
-    return {
-      kind: 'windows_console',
-      sessionName: 'windows_console',
-      attachMetadata: {
-        attachStrategy: 'terminal_host',
-        topology: 'shared',
-        locality: 'same_machine',
-        maxClients: null,
-        requiresLocalAttachmentInfo: true,
-        liveProbe: 'required',
-      },
-    };
-  }
-
+  // windows_console is deliberately not reconstructable: the canonical PTY handle is keyed
+  // by the spawn-time session name (also its paneId), which this metadata does not persist.
+  // A fabricated identity would probe a nonexistent host, so that mode stays on the
+  // fail-closed legacy path until the metadata carries real host identity.
   return null;
 }

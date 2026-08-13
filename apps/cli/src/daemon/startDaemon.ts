@@ -401,8 +401,8 @@ import type { RuntimeAccountIdentitySelectionInput } from './connectedServices/q
 import { decodeJwtPayload } from '@/cloud/decodeJwtPayload';
 import { parseBooleanEnv, resolveConnectedServicesProviderStateSharingPolicyV1, type AccountSettings, type BackendTargetRefV1, type ConnectedServiceId } from '@happier-dev/protocol';
 import type { CatalogAgentId, ConnectedServiceSwitchEffectiveBinding } from '@/backends/types';
-import { createTerminalAttachmentId, readTerminalAttachmentInfo, writeTerminalAttachmentInfo } from '@/terminal/attachment/terminalAttachmentInfo';
-import { buildTerminalHostHandleFromAttachmentMetadata } from '@/agent/runtime/terminal/attachmentMetadata';
+import { readTerminalAttachmentInfo } from '@/terminal/attachment/terminalAttachmentInfo';
+import { persistTerminalAttachmentInfoIfNeeded } from '@/agent/runtime/terminal/persistTerminalAttachmentInfo';
 import {
   isAccountSettingsVersionAtLeast,
   normalizeAccountSettingsVersionHint,
@@ -2972,7 +2972,18 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
                 // canonical stop-path repair first: it retires a preserved legacy (v1) terminal
                 // record only when its host is provably dead and fails closed otherwise. Cold
                 // startup deliberately never probes terminal hosts; this is the probe point.
-                const topologyRepair = await stopSessionCore(normalizedExistingSessionId);
+                // Register the repair under the canonical in-flight key so a concurrent Stop
+                // joins this operation instead of racing it on the same session.
+                const repairOperation = stopSessionCore(normalizedExistingSessionId);
+                stopSessionInFlightBySessionId.set(normalizedExistingSessionId, repairOperation);
+                let topologyRepair: StopSessionResult;
+                try {
+                  topologyRepair = await repairOperation;
+                } finally {
+                  if (stopSessionInFlightBySessionId.get(normalizedExistingSessionId) === repairOperation) {
+                    stopSessionInFlightBySessionId.delete(normalizedExistingSessionId);
+                  }
+                }
                 if (topologyRepair.status === 'stopped' || topologyRepair.status === 'not_found') {
                   unresolvedTerminalHostSessionIds.delete(normalizedExistingSessionId);
                   logger.debug('[DAEMON RUN] Retired preserved legacy terminal topology before Resume', {
@@ -4028,20 +4039,11 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
                     const resolvedSessionId =
                       typeof resolved.sessionId === 'string' ? resolved.sessionId.trim() : '';
                     if (resolvedSessionId) {
-                      try {
-                        const windowsHandle = buildTerminalHostHandleFromAttachmentMetadata(params.terminal);
-                        const windowsAttachmentId = windowsHandle ? createTerminalAttachmentId() : undefined;
-                        await writeTerminalAttachmentInfo({
-                          happyHomeDir: configuration.happyHomeDir,
-                          sessionId: resolvedSessionId,
-                          ...(windowsHandle && windowsAttachmentId
-                            ? { attachmentId: windowsAttachmentId, handle: windowsHandle }
-                            : {}),
-                          terminal: params.terminal,
-                        });
-                      } catch (error) {
-                        logger.debug('[DAEMON RUN] Failed to persist Windows terminal attachment info', error);
-                      }
+                      await persistTerminalAttachmentInfoIfNeeded({
+                        sessionId: resolvedSessionId,
+                        terminal: params.terminal,
+                        logPrefix: '[DAEMON RUN]',
+                      });
                       try {
                         await publishCurrentTerminalControlServiceability({
                           credentials,
