@@ -3,6 +3,26 @@ import { describe, expect, it } from 'vitest';
 import { classifyPrimarySessionRuntimeIssue } from './classifyPrimarySessionRuntimeIssue';
 
 describe('classifyPrimarySessionRuntimeIssue', () => {
+  it('preserves a Pi-owned provider failure code and sanitized preview', () => {
+    const error = Object.assign(new Error('Pi provider reported provider failure after prompt acceptance'), {
+      piProviderFailure: {
+        code: 'provider_auth_failed',
+        sanitizedPreview: 'Pi provider reported provider failure after prompt acceptance: code=provider_auth_failed, message=Credential [REDACTED] was rejected',
+      },
+    });
+
+    expect(classifyPrimarySessionRuntimeIssue({
+      provider: 'pi',
+      cause: 'session_error',
+      error,
+      occurredAt: 123,
+    })).toMatchObject({
+      code: 'provider_auth_failed',
+      source: 'provider_session_error',
+      sanitizedPreview: 'Pi provider reported provider failure after prompt acceptance: code=provider_auth_failed, message=Credential [REDACTED] was rejected',
+    });
+  });
+
   it('maps connected-service runtime auth classifications into usage-limit details', () => {
     const error = new Error('provider limit reached') as Error & {
       runtimeAuthClassification: {

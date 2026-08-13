@@ -11,6 +11,8 @@ import { createTestAcpRuntime as createAcpRuntime } from '@/testkit/backends/acp
 import { createFakeAcpRuntimeBackend } from '@/testkit/backends/acpRuntimeBackend';
 import { createApprovedPermissionHandler } from '@/testkit/backends/permissionHandler';
 import { createBasicSessionClientWithOverrides } from '@/testkit/backends/sessionFixtures';
+import { AcpPromptSubmissionPhaseError } from '@/agent/acp/AcpBackend';
+import { ProviderPromptSubmissionRejectedBeforeEffectError } from '@/agent/runtime/providerPromptSubmission';
 
 describe('createAcpRuntime (status error surfacing)', () => {
   afterEach(() => {
@@ -233,6 +235,51 @@ describe('createAcpRuntime (status error surfacing)', () => {
         compatibilityMarkerSent: true,
       }),
     ]);
+  });
+
+  it('preserves a Pi provider failure through the live ACP submission wrapper chain', async () => {
+    const backend = createFakeAcpRuntimeBackend({ sessionId: 'sess_main' });
+    const sent: ACPMessageData[] = [];
+    const providerFailure = Object.assign(new Error(
+      'Pi provider reported provider failure after prompt acceptance: code=provider_auth_failed, message=Credential [REDACTED] was rejected',
+    ), {
+      piProviderFailure: {
+        classification: 'pi_provider_failure',
+        code: 'provider_auth_failed',
+        sanitizedPreview:
+          'Pi provider reported provider failure after prompt acceptance: code=provider_auth_failed, message=Credential [REDACTED] was rejected',
+      },
+    });
+    const wrapped = new ProviderPromptSubmissionRejectedBeforeEffectError(
+      'provider_rejected_before_acceptance',
+      new AcpPromptSubmissionPhaseError('rejected_before_effect', providerFailure),
+    );
+    const runtime = createAcpRuntime({
+      provider: 'pi',
+      directory: '/tmp',
+      session: createBasicSessionClientWithOverrides({
+        sendAgentMessage: (_provider, body) => sent.push(body),
+      }),
+      messageBuffer: new MessageBuffer(),
+      mcpServers: {},
+      permissionHandler: createApprovedPermissionHandler(),
+      onThinkingChange: () => {},
+      ensureBackend: async () => backend,
+    });
+
+    await runtime.startOrLoad({});
+    runtime.beginTurn();
+    await runtime.failTurn(wrapped);
+
+    expect(sent).toContainEqual(expect.objectContaining({
+      type: 'turn_failed',
+      issue: expect.objectContaining({
+        source: 'provider_session_error',
+        code: 'provider_auth_failed',
+        sanitizedPreview:
+          'Pi provider reported provider failure after prompt acceptance: code=provider_auth_failed, message=Credential [REDACTED] was rejected',
+      }),
+    }));
   });
 
   it('normalizes generic surfaced Pi prompt failures with wrapper raw errors after prompt acceptance', async () => {

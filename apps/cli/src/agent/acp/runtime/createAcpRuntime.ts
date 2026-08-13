@@ -166,6 +166,19 @@ function isGenericProviderSessionFailureRuntimeIssue(issue: SessionRuntimeIssueV
     && issue.sanitizedPreview === 'Provider session failed';
 }
 
+function findPiProviderFailureCarrier(error: unknown): unknown | null {
+  const seen = new Set<object>();
+  let current: unknown = error;
+  for (let depth = 0; depth < 8; depth += 1) {
+    if (!current || typeof current !== 'object' || seen.has(current)) return null;
+    seen.add(current);
+    const record = current as Record<string, unknown>;
+    if (record.piProviderFailure && typeof record.piProviderFailure === 'object') return current;
+    current = record.cause;
+  }
+  return null;
+}
+
 function normalizeAcpPromptFailureRuntimeIssueError(params: Readonly<{
   provider: string;
   error: unknown;
@@ -173,6 +186,8 @@ function normalizeAcpPromptFailureRuntimeIssueError(params: Readonly<{
 }>): unknown {
   if (params.provider !== 'pi') return params.error;
   if (!params.turnInFlight) return params.error;
+  const providerFailureCarrier = findPiProviderFailureCarrier(params.error);
+  if (providerFailureCarrier) return providerFailureCarrier;
   const issue = classifyPrimarySessionRuntimeIssue({
     cause: 'session_error',
     provider: params.provider,
