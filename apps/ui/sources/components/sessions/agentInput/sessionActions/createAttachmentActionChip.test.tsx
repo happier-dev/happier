@@ -141,65 +141,11 @@ describe('createAttachmentActionChip', () => {
         }
     });
 
-    it('on iOS it still opens the picker when InteractionManager never settles (JS-thread starvation fallback)', async () => {
-        const { createAttachmentActionChip } = await import('./createAttachmentActionChip');
-        const originalOs = Platform.OS;
-        (Platform as any).OS = 'ios';
-        type RunAfterInteractionsTask = Parameters<typeof InteractionManager.runAfterInteractions>[0];
-        const queuedTimeouts: Array<{ handler: () => void; timeout: number }> = [];
-        const runAfterInteractionsSpy = vi
-            .spyOn(InteractionManager, 'runAfterInteractions')
-            .mockImplementation((_task?: RunAfterInteractionsTask) => ({
-                // Starved JS thread: interactions never settle, the task callback never runs.
-                then: (onfulfilled, onrejected) => Promise.resolve().then(() => onfulfilled?.(), onrejected),
-                done: () => undefined,
-                cancel: () => undefined,
-            }));
-        const setTimeoutSpy = vi
-            .spyOn(globalThis, 'setTimeout')
-            .mockImplementation((handler: TimerHandler, timeout?: number) => {
-                if (typeof handler === 'function') {
-                    queuedTimeouts.push({ handler: handler as () => void, timeout: timeout ?? 0 });
-                }
-                return 0 as unknown as ReturnType<typeof setTimeout>;
-            });
-
-        try {
-            const onPickFile = vi.fn();
-            const onPickImage = vi.fn();
-            const chip = createAttachmentActionChip({ onPickFile, onPickImage } as any);
-            const renderContent = chip.collapsedContentPopover!.renderContent;
-            if (typeof renderContent !== 'function') {
-                throw new Error('Expected collapsedContentPopover.renderContent to be a function');
-            }
-            const requestClose = vi.fn();
-            const contentScreen = await renderScreen(
-                <React.Fragment>
-                    {renderContent({ requestClose, maxHeight: 420 }) as React.ReactNode}
-                </React.Fragment>,
-            );
-
-            await contentScreen.pressByTestIdAsync('attachments-action-add-image');
-            expect(requestClose).toHaveBeenCalled();
-            expect(runAfterInteractionsSpy).toHaveBeenCalled();
-            expect(onPickImage).not.toHaveBeenCalled();
-
-            // The interaction callback never fires; a non-250ms fallback timer must exist.
-            const fallback = queuedTimeouts.find((entry) => entry.timeout !== 250);
-            expect(fallback).toBeTruthy();
-            queuedTimeouts.length = 0;
-            fallback!.handler();
-
-            const dismissDelay = queuedTimeouts.find((entry) => entry.timeout === 250);
-            expect(dismissDelay).toBeTruthy();
-            dismissDelay!.handler();
-            expect(onPickImage).toHaveBeenCalledTimes(1);
-        } finally {
-            setTimeoutSpy.mockRestore();
-            runAfterInteractionsSpy.mockRestore();
-            (Platform as any).OS = originalOs;
-        }
-    });
+    // NOTE: a "JS-thread starvation fallback" case used to live here. It mocked
+    // `InteractionManager.runAfterInteractions` to never invoke its task, which RN 0.81's
+    // `InteractionManagerStub` cannot do (it always resolves on a microtask), and it asserted a
+    // timeout fallback that could therefore never fire. Both the fallback and the test were removed;
+    // the iOS case above covers the real contract (interaction task -> 250ms popover-dismiss delay).
 
     it('on web it keeps the attach chip as a direct action (no chooser popover)', async () => {
         const { createAttachmentActionChip } = await import('./createAttachmentActionChip');
