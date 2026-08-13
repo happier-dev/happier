@@ -1367,8 +1367,9 @@ export function useSessionListViewDataByServerId(
 
 type SessionListShellViewDataCache = Readonly<{
   source: SessionListViewItem[] | null;
-  signature: string;
   data: SessionListViewItem[] | null;
+  /** Row signatures aligned with `data`, so a cached row is never read again. */
+  signatures: ReadonlyArray<string> | null;
 }>;
 
 type SessionListShellViewDataByServerId = Record<string, SessionListViewItem[] | null>;
@@ -1376,7 +1377,6 @@ type SessionListShellViewDataByServerId = Record<string, SessionListViewItem[] |
 type SessionListShellViewDataByServerIdCache = Readonly<{
   source: SessionListShellViewDataByServerId;
   entries: ReadonlyArray<readonly [string, SessionListViewItem[] | null]>;
-  signature: string;
   dataByServerId: SessionListShellViewDataByServerId;
 }>;
 
@@ -1391,9 +1391,48 @@ let sessionListShellViewDataByServerIdCache: SessionListShellViewDataByServerIdC
 const sessionListShellViewDataPerServerCache = new Map<string, SessionListShellViewDataCache>();
 const selectedSessionListShellViewDataByServerIdCache = new Map<string, SelectedSessionListShellViewDataByServerIdCache>();
 
-function buildSessionListShellViewDataSignature(data: ReadonlyArray<SessionListViewItem> | null): string {
-  if (!data) return 'null';
-  return data.map(buildSessionListShellViewItemSignature).join('\u0002');
+type SessionListShellViewDataReconciliation = Readonly<{
+  equivalent: boolean;
+  signatures: ReadonlyArray<string> | null;
+}>;
+
+/**
+ * Reconcile a pushed session list against the cached one, carrying row signatures forward.
+ *
+ * A push rebuilds the array but carries every row it did not change by identity, so a row whose
+ * object survived inherits its cached signature and only genuinely new row objects are signed.
+ * The cached array's rows are never read again — the previous side of every comparison is a
+ * signature this cache already holds — which is the invariant the "must not be signed again"
+ * probes in `hooks.useSessions.test.tsx` pin. Signing the whole array to compare one string cost
+ * O(all rows) for a push that changed one session.
+ */
+function reconcileSessionListShellViewData(
+  cached: SessionListShellViewDataCache | null,
+  next: SessionListViewItem[] | null,
+): SessionListShellViewDataReconciliation {
+  const previousData = cached?.data ?? null;
+  const previousSignatures = cached?.signatures ?? null;
+  if (!next) {
+    return { equivalent: cached != null && previousData === null, signatures: null };
+  }
+
+  const signatures = new Array<string>(next.length);
+  let equivalent = cached != null
+    && previousData != null
+    && previousSignatures != null
+    && previousData.length === next.length;
+  for (let index = 0; index < next.length; index += 1) {
+    const nextItem = next[index];
+    const previousSignature = previousSignatures?.[index];
+    if (previousSignature != null && previousData?.[index] === nextItem) {
+      signatures[index] = previousSignature;
+      continue;
+    }
+    const signature = buildSessionListShellViewItemSignature(nextItem);
+    signatures[index] = signature;
+    if (equivalent && signature !== previousSignature) equivalent = false;
+  }
+  return { equivalent, signatures };
 }
 
 export function buildSessionListShellViewItemSignature(item: SessionListViewItem): string {
@@ -1531,18 +1570,16 @@ function hasSameSessionRecentPathEntries(
 }
 
 function getStableSessionListShellViewData(data: SessionListViewItem[] | null): SessionListViewItem[] | null {
-  if (sessionListShellViewDataCache?.source === data) {
-    return sessionListShellViewDataCache.data;
+  const cached = sessionListShellViewDataCache;
+  if (cached?.source === data) {
+    return cached.data;
   }
-  const signature = buildSessionListShellViewDataSignature(data);
-  if (sessionListShellViewDataCache?.signature === signature) {
-    sessionListShellViewDataCache = {
-      ...sessionListShellViewDataCache,
-      source: data,
-    };
-    return sessionListShellViewDataCache.data;
+  const reconciliation = reconcileSessionListShellViewData(cached, data);
+  if (cached && reconciliation.equivalent) {
+    sessionListShellViewDataCache = { ...cached, source: data };
+    return cached.data;
   }
-  sessionListShellViewDataCache = { source: data, signature, data };
+  sessionListShellViewDataCache = { source: data, data, signatures: reconciliation.signatures };
   return data;
 }
 
@@ -1550,31 +1587,17 @@ function getStableSessionListShellViewDataForServer(
   serverId: string,
   data: SessionListViewItem[] | null,
 ): SessionListViewItem[] | null {
-  const cached = sessionListShellViewDataPerServerCache.get(serverId);
+  const cached = sessionListShellViewDataPerServerCache.get(serverId) ?? null;
   if (cached?.source === data) {
     return cached.data;
   }
-  const signature = buildSessionListShellViewDataSignature(data);
-  if (cached?.signature === signature) {
-    sessionListShellViewDataPerServerCache.set(serverId, {
-      ...cached,
-      source: data,
-    });
+  const reconciliation = reconcileSessionListShellViewData(cached, data);
+  if (cached && reconciliation.equivalent) {
+    sessionListShellViewDataPerServerCache.set(serverId, { ...cached, source: data });
     return cached.data;
   }
-  sessionListShellViewDataPerServerCache.set(serverId, { source: data, signature, data });
+  sessionListShellViewDataPerServerCache.set(serverId, { source: data, data, signatures: reconciliation.signatures });
   return data;
-}
-
-function getSessionListShellViewDataSignatureForServer(
-  serverId: string,
-  data: SessionListViewItem[] | null,
-): string {
-  const cached = sessionListShellViewDataPerServerCache.get(serverId);
-  if (cached?.source === data) {
-    return cached.signature;
-  }
-  return buildSessionListShellViewDataSignature(data);
 }
 
 function getSortedSessionListShellViewDataByServerIdEntries(
@@ -1599,43 +1622,32 @@ function areSessionListShellViewDataByServerIdEntriesReferenceEqual(
 function getStableSessionListShellViewDataByServerId(
   dataByServerId: SessionListShellViewDataByServerId,
 ): SessionListShellViewDataByServerId {
-  if (sessionListShellViewDataByServerIdCache?.source === dataByServerId) {
-    return sessionListShellViewDataByServerIdCache.dataByServerId;
+  const cached = sessionListShellViewDataByServerIdCache;
+  if (cached?.source === dataByServerId) {
+    return cached.dataByServerId;
   }
   const entries = getSortedSessionListShellViewDataByServerIdEntries(dataByServerId);
-  if (
-    sessionListShellViewDataByServerIdCache
-    && areSessionListShellViewDataByServerIdEntriesReferenceEqual(
-      sessionListShellViewDataByServerIdCache.entries,
-      entries,
-    )
-  ) {
-    sessionListShellViewDataByServerIdCache = {
-      ...sessionListShellViewDataByServerIdCache,
-      source: dataByServerId,
-      entries,
-    };
-    return sessionListShellViewDataByServerIdCache.dataByServerId;
+  if (cached && areSessionListShellViewDataByServerIdEntriesReferenceEqual(cached.entries, entries)) {
+    sessionListShellViewDataByServerIdCache = { ...cached, source: dataByServerId, entries };
+    return cached.dataByServerId;
   }
-  const signature = entries
-    .map(([serverId, data]) => `${serverId}\u0001${getSessionListShellViewDataSignatureForServer(serverId, data)}`)
-    .join('\u0002');
-  if (sessionListShellViewDataByServerIdCache?.signature === signature) {
-    sessionListShellViewDataByServerIdCache = {
-      ...sessionListShellViewDataByServerIdCache,
-      source: dataByServerId,
-      entries,
-    };
-    return sessionListShellViewDataByServerIdCache.dataByServerId;
-  }
+  // Each server reconciles against its own cache, so an unchanged server contributes its previous
+  // stable array by identity. When every server does, the map itself is unchanged and the cached
+  // object is kept — no combined signature of every server's rows is needed to decide that.
   const next: Record<string, SessionListViewItem[] | null> = {};
+  let equivalent = cached != null && Object.keys(cached.dataByServerId).length === entries.length;
   for (const [serverId, data] of entries) {
-    next[serverId] = getStableSessionListShellViewDataForServer(serverId, data);
+    const stable = getStableSessionListShellViewDataForServer(serverId, data);
+    next[serverId] = stable;
+    if (equivalent && cached!.dataByServerId[serverId] !== stable) equivalent = false;
+  }
+  if (cached && equivalent) {
+    sessionListShellViewDataByServerIdCache = { ...cached, source: dataByServerId, entries };
+    return cached.dataByServerId;
   }
   sessionListShellViewDataByServerIdCache = {
     source: dataByServerId,
     entries,
-    signature,
     dataByServerId: next,
   };
   return next;
