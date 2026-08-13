@@ -436,6 +436,8 @@ describe('executionRuns protocol', () => {
     expect(ExecutionRunTransportErrorCodeSchema.parse('execution_run_busy')).toBe('execution_run_busy');
     expect(ExecutionRunTransportErrorCodeSchema.parse('execution_run_failed')).toBe('execution_run_failed');
     expect(ExecutionRunTransportErrorCodeSchema.parse('execution_run_budget_exceeded')).toBe('execution_run_budget_exceeded');
+    expect(ExecutionRunTransportErrorCodeSchema.parse('execution_run_protocol_unsupported')).toBe('execution_run_protocol_unsupported');
+    expect(ExecutionRunTransportErrorCodeSchema.parse('execution_run_target_unavailable')).toBe('execution_run_target_unavailable');
     expect(ExecutionRunTransportErrorCodeSchema.parse('run_depth_exceeded')).toBe('run_depth_exceeded');
     expect(ExecutionRunTransportErrorCodeSchema.parse('permission_denied')).toBe('permission_denied');
 

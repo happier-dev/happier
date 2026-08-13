@@ -80,6 +80,8 @@ export const ExecutionRunTransportErrorCodeSchema = z.enum([
   'execution_run_busy',
   'execution_run_failed',
   'execution_run_budget_exceeded',
+  'execution_run_protocol_unsupported',
+  'execution_run_target_unavailable',
   'run_depth_exceeded',
   'permission_denied',
 ]);

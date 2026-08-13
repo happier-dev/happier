@@ -52,6 +52,43 @@ describe('sessionControl contract exports', () => {
     expect(parsed.success).toBe(true);
   });
 
+  it('accepts current and legacy session_stop result shapes while rejecting mismatched outcomes', () => {
+    const schema = (protocol as any).SessionStopEnvelopeSchema;
+    const envelope = (data: unknown) => ({
+      v: 1,
+      ok: true,
+      kind: 'session_stop',
+      data,
+    });
+
+    expect(schema.safeParse(envelope({ sessionId: 'sess_123', stopped: true })).success).toBe(true);
+    expect(schema.safeParse(envelope({ sessionId: 'sess_123', stopped: false })).success).toBe(true);
+    expect(schema.safeParse(envelope({
+      sessionId: 'sess_123',
+      stopped: false,
+      stopOutcome: {
+        status: 'stopped_projection_unconfirmed',
+        reason: 'relay_inactive_not_observed',
+      },
+    })).success).toBe(true);
+
+    for (const reason of [
+      'terminal_control_serviceability_retirement_failed',
+      'terminal_attachment_descriptor_retirement_failed',
+    ]) {
+      expect(schema.safeParse(envelope({
+        sessionId: 'sess_123',
+        stopped: false,
+        stopOutcome: { status: 'stopped_cleanup_incomplete', reason },
+      })).success).toBe(true);
+      expect(schema.safeParse(envelope({
+        sessionId: 'sess_123',
+        stopped: false,
+        stopOutcome: { status: 'physical_stop_unconfirmed', reason },
+      })).success).toBe(false);
+    }
+  });
+
   it('validates primary turn status and sanitized runtime issue fields on session summaries', () => {
     expect(typeof (protocol as any).TurnTerminalStatusV1Schema?.safeParse).toBe('function');
     expect(typeof (protocol as any).PrimaryTurnStatusV1Schema?.safeParse).toBe('function');
