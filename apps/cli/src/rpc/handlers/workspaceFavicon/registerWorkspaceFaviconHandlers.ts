@@ -10,7 +10,10 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import type { RpcHandlerRegistrar } from '@/api/rpc/types';
 import type { FilesystemAccessPolicy } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
-import { authorizeFilesystemPath } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemPathAuthorization';
+import {
+  prepareFilesystemPathAuthorizer,
+  type FilesystemPathAuthorizer,
+} from '@/rpc/handlers/fileSystem/accessPolicy/filesystemPathAuthorization';
 
 const MAX_FAVICON_BYTES = 128 * 1024;
 const MAX_WORKSPACE_PACKAGE_ROOTS = 24;
@@ -62,7 +65,8 @@ const ICON_LINK_SOURCE_FILES = [
 ] as const;
 
 const HTML_ICON_LINK_PATTERN = /<link\b(?=[^>]*\brel=["'][^"']*\b(?:icon|shortcut icon)\b[^"']*["'])(?=[^>]*\bhref=["']([^"'?]+))[^>]*>/gi;
-const OBJECT_ICON_LINK_PATTERN = /(?=[^}]*\brel\s*:\s*["'][^"']*\b(?:icon|shortcut icon)\b[^"']*["'])(?=[^}]*\bhref\s*:\s*["']([^"'?]+))[^}]*/gi;
+const OBJECT_ICON_REL_PATTERN = /\brel\s*:\s*["'][^"']*\b(?:icon|shortcut icon)\b[^"']*["']/i;
+const OBJECT_ICON_HREF_PATTERN = /\bhref\s*:\s*["']([^"'?]+)["']/i;
 
 export function registerWorkspaceFaviconHandlers(
   rpcHandlerManager: RpcHandlerRegistrar,
@@ -79,19 +83,18 @@ export function registerWorkspaceFaviconHandlers(
         return { success: false, errorCode: 'INVALID_REQUEST', error: 'Invalid workspace favicon request' };
       }
 
-      const workspace = authorizeFilesystemPath({
-        targetPath: parsed.data.workspacePath,
+      const authorizePath = await prepareFilesystemPathAuthorizer({
         defaultDirectory: deps.defaultDirectory,
         accessPolicy: deps.accessPolicy,
       });
+      const workspace = await authorizePath(parsed.data.workspacePath);
       if (!workspace.valid) {
         return { success: false, errorCode: 'INVALID_WORKSPACE_PATH', error: workspace.error };
       }
 
       return resolveWorkspaceFavicon({
         workspacePath: workspace.resolvedPath,
-        defaultDirectory: deps.defaultDirectory,
-        accessPolicy: deps.accessPolicy,
+        authorizePath,
       });
     },
   );
@@ -99,41 +102,30 @@ export function registerWorkspaceFaviconHandlers(
 
 async function resolveWorkspaceFavicon(params: Readonly<{
   workspacePath: string;
-  defaultDirectory: string;
-  accessPolicy: FilesystemAccessPolicy;
+  authorizePath: FilesystemPathAuthorizer;
 }>): Promise<WorkspaceFaviconResolveResponseV1> {
-  for (const candidate of await buildFaviconCandidates(params)) {
-    const resolved = await readWorkspaceFaviconCandidate({
-      ...params,
-      relativePath: candidate,
-    });
-    if (resolved) return resolved;
+  const workspaceResult = await resolveFaviconForRoot({ ...params, rootRelativePath: '' });
+  if (workspaceResult) return workspaceResult;
+
+  for (const rootRelativePath of await readWorkspacePackageRoots(params)) {
+    const packageResult = await resolveFaviconForRoot({ ...params, rootRelativePath });
+    if (packageResult) return packageResult;
   }
+
   return { success: true, found: false };
 }
 
-async function buildFaviconCandidates(params: Readonly<{
-  workspacePath: string;
-  defaultDirectory: string;
-  accessPolicy: FilesystemAccessPolicy;
-}>): Promise<string[]> {
-  const candidates = new Set<string>();
-  await addFaviconCandidatesForRoot({ ...params, candidates, rootRelativePath: '' });
-  for (const rootRelativePath of await readWorkspacePackageRoots(params)) {
-    await addFaviconCandidatesForRoot({ ...params, candidates, rootRelativePath });
-  }
-  return Array.from(candidates);
-}
-
-async function addFaviconCandidatesForRoot(params: Readonly<{
+async function resolveFaviconForRoot(params: Readonly<{
   workspacePath: string;
   rootRelativePath: string;
-  candidates: Set<string>;
-  defaultDirectory: string;
-  accessPolicy: FilesystemAccessPolicy;
-}>): Promise<void> {
+  authorizePath: FilesystemPathAuthorizer;
+}>): Promise<WorkspaceFaviconResolveResponseV1 | null> {
   for (const candidate of DIRECT_FAVICON_CANDIDATES) {
-    params.candidates.add(prefixWorkspaceRelativePath(params.rootRelativePath, candidate));
+    const resolved = await readWorkspaceFaviconCandidate({
+      ...params,
+      relativePath: prefixWorkspaceRelativePath(params.rootRelativePath, candidate),
+    });
+    if (resolved) return resolved;
   }
 
   for (const sourceFile of ICON_LINK_SOURCE_FILES) {
@@ -144,10 +136,16 @@ async function addFaviconCandidatesForRoot(params: Readonly<{
     if (!content) continue;
     for (const linkedPath of readIconLinksFromSource(content)) {
       for (const normalized of normalizeWorkspaceRelativeIconHref(linkedPath)) {
-        params.candidates.add(prefixWorkspaceRelativePath(params.rootRelativePath, normalized));
+        const resolved = await readWorkspaceFaviconCandidate({
+          ...params,
+          relativePath: prefixWorkspaceRelativePath(params.rootRelativePath, normalized),
+        });
+        if (resolved) return resolved;
       }
     }
   }
+
+  return null;
 }
 
 function readIconLinksFromSource(content: string): string[] {
@@ -155,9 +153,20 @@ function readIconLinksFromSource(content: string): string[] {
   for (const match of content.matchAll(HTML_ICON_LINK_PATTERN)) {
     if (match[1]) out.push(match[1]);
   }
-  for (const match of content.matchAll(OBJECT_ICON_LINK_PATTERN)) {
-    if (match[1]) out.push(match[1]);
+
+  let runStart = 0;
+  while (runStart < content.length) {
+    const closingBrace = content.indexOf('}', runStart);
+    const runEnd = closingBrace < 0 ? content.length : closingBrace;
+    const objectRun = content.slice(runStart, runEnd);
+    if (OBJECT_ICON_REL_PATTERN.test(objectRun)) {
+      const match = OBJECT_ICON_HREF_PATTERN.exec(objectRun);
+      if (match?.[1]) out.push(match[1]);
+    }
+    if (closingBrace < 0) break;
+    runStart = closingBrace + 1;
   }
+
   return out;
 }
 
@@ -177,8 +186,7 @@ function normalizeWorkspaceRelativeIconHref(input: string): string[] {
 
 async function readWorkspacePackageRoots(params: Readonly<{
   workspacePath: string;
-  defaultDirectory: string;
-  accessPolicy: FilesystemAccessPolicy;
+  authorizePath: FilesystemPathAuthorizer;
 }>): Promise<string[]> {
   const content = await readWorkspaceTextFile({ ...params, relativePath: 'package.json' });
   if (!content) return [];
@@ -216,8 +224,7 @@ function readWorkspacePatterns(manifest: unknown): string[] {
 async function expandWorkspacePattern(params: Readonly<{
   workspacePath: string;
   pattern: string;
-  defaultDirectory: string;
-  accessPolicy: FilesystemAccessPolicy;
+  authorizePath: FilesystemPathAuthorizer;
 }>): Promise<string[]> {
   const pattern = normalizeWorkspacePattern(params.pattern);
   if (!pattern || pattern.startsWith('!')) return [];
@@ -248,8 +255,7 @@ function normalizeWorkspacePattern(pattern: string): string | null {
 async function hasWorkspacePackageManifest(params: Readonly<{
   workspacePath: string;
   relativePath: string;
-  defaultDirectory: string;
-  accessPolicy: FilesystemAccessPolicy;
+  authorizePath: FilesystemPathAuthorizer;
 }>): Promise<boolean> {
   return Boolean(await readWorkspaceTextFile({
     ...params,
@@ -260,10 +266,9 @@ async function hasWorkspacePackageManifest(params: Readonly<{
 async function readWorkspaceDirectoryNames(params: Readonly<{
   workspacePath: string;
   relativePath: string;
-  defaultDirectory: string;
-  accessPolicy: FilesystemAccessPolicy;
+  authorizePath: FilesystemPathAuthorizer;
 }>): Promise<string[]> {
-  const validation = resolveAuthorizedWorkspacePath(params);
+  const validation = await resolveAuthorizedWorkspacePath(params);
   if (!validation.ok) return [];
   try {
     const stats = await stat(validation.path);
@@ -294,10 +299,9 @@ function trimTrailingSlashes(value: string): string {
 async function readWorkspaceTextFile(params: Readonly<{
   workspacePath: string;
   relativePath: string;
-  defaultDirectory: string;
-  accessPolicy: FilesystemAccessPolicy;
+  authorizePath: FilesystemPathAuthorizer;
 }>): Promise<string | null> {
-  const validation = resolveAuthorizedWorkspacePath(params);
+  const validation = await resolveAuthorizedWorkspacePath(params);
   if (!validation.ok) return null;
   try {
     const stats = await stat(validation.path);
@@ -311,12 +315,11 @@ async function readWorkspaceTextFile(params: Readonly<{
 async function readWorkspaceFaviconCandidate(params: Readonly<{
   workspacePath: string;
   relativePath: string;
-  defaultDirectory: string;
-  accessPolicy: FilesystemAccessPolicy;
+  authorizePath: FilesystemPathAuthorizer;
 }>): Promise<WorkspaceFaviconResolveResponseV1 | null> {
   const mimeType = readMimeType(params.relativePath);
   if (!mimeType) return null;
-  const validation = resolveAuthorizedWorkspacePath(params);
+  const validation = await resolveAuthorizedWorkspacePath(params);
   if (!validation.ok) return null;
   try {
     const stats = await stat(validation.path);
@@ -336,23 +339,18 @@ async function readWorkspaceFaviconCandidate(params: Readonly<{
   }
 }
 
-function resolveAuthorizedWorkspacePath(params: Readonly<{
+async function resolveAuthorizedWorkspacePath(params: Readonly<{
   workspacePath: string;
   relativePath: string;
-  defaultDirectory: string;
-  accessPolicy: FilesystemAccessPolicy;
-}>): { ok: true; path: string } | { ok: false } {
+  authorizePath: FilesystemPathAuthorizer;
+}>): Promise<{ ok: true; path: string } | { ok: false }> {
   if (isAbsolute(params.relativePath) || params.relativePath.includes('\0')) return { ok: false };
   const absolutePath = resolve(params.workspacePath, params.relativePath);
   const relativeToWorkspace = relative(params.workspacePath, absolutePath);
   if (relativeToWorkspace === '..' || relativeToWorkspace.startsWith(`..${sep}`) || isAbsolute(relativeToWorkspace)) {
     return { ok: false };
   }
-  const validation = authorizeFilesystemPath({
-    targetPath: absolutePath,
-    defaultDirectory: params.defaultDirectory,
-    accessPolicy: params.accessPolicy,
-  });
+  const validation = await params.authorizePath(absolutePath);
   return validation.valid ? { ok: true, path: validation.resolvedPath } : { ok: false };
 }
 
