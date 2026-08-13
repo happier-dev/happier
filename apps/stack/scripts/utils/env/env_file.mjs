@@ -70,6 +70,21 @@ export async function compareAndSetEnvFileValue({ envPath, key, expectedValue = 
   });
 }
 
+export async function createEnvFileExclusive({ envPath, content }) {
+  return await withEnvFileLock(envPath, async () => {
+    await mkdir(dirname(envPath), { recursive: true });
+    const next = String(content ?? '');
+    const normalizedNext = next.endsWith('\n') ? next : `${next}\n`;
+    try {
+      await writeFile(envPath, normalizedNext, { encoding: 'utf-8', flag: 'wx' });
+      return true;
+    } catch (error) {
+      if (error?.code === 'EEXIST') return false;
+      throw error;
+    }
+  });
+}
+
 export async function replaceEnvFile({ envPath, content }) {
   return await withEnvFileLock(envPath, async () => {
     await mkdir(dirname(envPath), { recursive: true });

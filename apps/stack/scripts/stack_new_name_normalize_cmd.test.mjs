@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { join } from 'node:path';
 import { setupStackNewMonorepoFixture } from './testkit/stack_new_monorepo_testkit.mjs';
+import { ensureEnvFileUpdated } from './utils/env/env_file.mjs';
 
 test('hstack stack new normalizes stack names across valid and punctuation-heavy inputs', async (t) => {
   const fixture = await setupStackNewMonorepoFixture({
@@ -35,4 +37,33 @@ test('hstack stack new normalizes stack names across valid and punctuation-heavy
     const contents = await fixture.readStackEnv(testCase.normalized);
     assert.ok(contents.includes(`HAPPIER_STACK_STACK=${testCase.normalized}\n`), `${testCase.rawName}\n${contents}`);
   }
+});
+
+test('hstack stack new refuses an existing stack without changing its env', async (t) => {
+  const fixture = await setupStackNewMonorepoFixture({
+    importMetaUrl: import.meta.url,
+    t,
+    tmpPrefix: 'happier-stack-new-existing-guard-',
+  });
+  await fixture.createMonorepoCheckout('main', { includeServerPrisma: true });
+
+  const stackName = 'existing-stack';
+  const created = await fixture.runStackNew([stackName, '--no-copy-auth', '--json']);
+  assert.equal(created.code, 0, `initial stack new failed\nstdout:\n${created.stdout}\nstderr:\n${created.stderr}`);
+
+  const envPath = join(fixture.storageDir, stackName, 'env');
+  await ensureEnvFileUpdated({
+    envPath,
+    updates: [
+      { key: 'SENTINEL', value: 'preserve-me' },
+      { key: 'HAPPIER_STACK_RUNTIME_MODE', value: 'require' },
+      { key: 'HAPPIER_STACK_EXPO_SOURCE_STACK', value: 'repo-producer' },
+    ],
+  });
+  const before = await fixture.readStackEnv(stackName);
+
+  const repeated = await fixture.runStackNew([stackName, '--no-copy-auth', '--json']);
+  assert.notEqual(repeated.code, 0, `repeated stack new unexpectedly succeeded\nstdout:\n${repeated.stdout}`);
+  assert.match(repeated.stderr, /stack already exists/i);
+  assert.equal(await fixture.readStackEnv(stackName), before);
 });
