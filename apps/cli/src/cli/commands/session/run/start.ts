@@ -3,8 +3,8 @@ import chalk from 'chalk';
 import type { Credentials } from '@/persistence';
 import { type ExecutionRunIntent, ExecutionRunStartRequestSchema } from '@happier-dev/protocol';
 
-import { wantsJson, printJsonEnvelope } from '@/cli/output/jsonEnvelope';
-import { readFlagValue } from '@/cli/commands/shared/argvFlags';
+import { wantsJson, printJsonEnvelope, writeJsonStdout } from '@/cli/output/jsonEnvelope';
+import { readCommandPositionals, readFlagValue } from '@/cli/commands/shared/argvFlags';
 import {
   defaultIoModeForExecutionRunIntent,
   defaultPermissionModeForExecutionRunIntent,
@@ -25,7 +25,12 @@ export async function cmdSessionRunStart(
   deps: Readonly<{ readCredentialsFn: () => Promise<Credentials | null> }>,
 ): Promise<void> {
   const json = wantsJson(argv);
-  const idOrPrefix = String(argv[2] ?? '').trim();
+  const [idOrPrefix = ''] = readCommandPositionals(argv, {
+    startIndex: 2,
+    valueFlags: [
+      '--intent', '--backend', '--instructions', '--permission-mode', '--retention', '--run-class', '--io-mode',
+    ],
+  });
   if (!idOrPrefix) {
     throw new Error('Usage: happier session run start <session-id-or-prefix> --intent <intent> --backend <backend-target> [--json]');
   }
@@ -46,7 +51,7 @@ export async function cmdSessionRunStart(
   const credentials = await deps.readCredentialsFn();
   if (!credentials) {
     if (json) {
-      printJsonEnvelope({ ok: false, kind: 'session_run_start', error: { code: 'not_authenticated' } });
+      await printJsonEnvelope({ ok: false, kind: 'session_run_start', error: { code: 'not_authenticated' } });
       return;
     }
     console.error(chalk.red('Error:'), 'Not authenticated. Run "happier auth login" first.');
@@ -56,7 +61,7 @@ export async function cmdSessionRunStart(
   const resolved = await resolveSessionIdOrPrefix({ credentials, idOrPrefix });
   if (!resolved.ok) {
     if (json) {
-      printJsonEnvelope({
+      await printJsonEnvelope({
         ok: false,
         kind: 'session_run_start',
         error: { code: resolved.code, ...(resolved.candidates ? { candidates: resolved.candidates } : {}) },
@@ -70,7 +75,7 @@ export async function cmdSessionRunStart(
   const rawSession = await fetchSessionById({ token: credentials.token, sessionId });
   if (!rawSession) {
     if (json) {
-      printJsonEnvelope({ ok: false, kind: 'session_run_start', error: { code: 'session_not_found', sessionId } });
+      await printJsonEnvelope({ ok: false, kind: 'session_run_start', error: { code: 'session_not_found', sessionId } });
       return;
     }
     console.error(chalk.red('Error:'), `Session not found: ${sessionId}`);
@@ -103,7 +108,7 @@ export async function cmdSessionRunStart(
   const normalized = normalizeActionExecuteResult(actionRes);
   if (!normalized.ok) {
     if (json) {
-      printJsonEnvelope({
+      await printJsonEnvelope({
         ok: false,
         kind: 'session_run_start',
         error: { code: normalized.errorCode, ...(normalized.errorMessage ? { message: normalized.errorMessage } : {}) },
@@ -118,10 +123,10 @@ export async function cmdSessionRunStart(
 
   if (json) {
     const backendId = backendTarget.kind === 'builtInAgent' ? backendTarget.agentId : backendTarget.backendId;
-    printJsonEnvelope({ ok: true, kind: 'session_run_start', data: { sessionId, ...(runPayload as any), intent, backendId, backendTarget } });
+    await printJsonEnvelope({ ok: true, kind: 'session_run_start', data: { sessionId, ...(runPayload as any), intent, backendId, backendTarget } });
     return;
   }
 
   console.log(chalk.green('✓'), 'execution run started');
-  console.log(JSON.stringify(runPayload, null, 2));
+  await writeJsonStdout(runPayload, { pretty: true });
 }

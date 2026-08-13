@@ -1,8 +1,8 @@
 import chalk from 'chalk';
 
 import type { Credentials } from '@/persistence';
-import { wantsJson, printJsonEnvelope } from '@/cli/output/jsonEnvelope';
-import { readIntFlagValue } from '@/cli/commands/shared/argvFlags';
+import { wantsJson, printJsonEnvelope, writeJsonStdout } from '@/cli/output/jsonEnvelope';
+import { readCommandPositionals, readIntFlagValue } from '@/cli/commands/shared/argvFlags';
 import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
 import { normalizeActionExecuteResult } from './shared/normalizeActionExecuteResult';
 import { tryHandleApprovalRequestCreated } from './shared/tryHandleApprovalRequestCreated';
@@ -12,7 +12,10 @@ export async function cmdSessionWait(
   deps: Readonly<{ readCredentialsFn: () => Promise<Credentials | null> }>,
 ): Promise<void> {
   const json = wantsJson(argv);
-  const idOrPrefix = String(argv[1] ?? '').trim();
+  const [idOrPrefix = ''] = readCommandPositionals(argv, {
+    startIndex: 1,
+    valueFlags: ['--timeout'],
+  });
   if (!idOrPrefix) {
     throw new Error('Usage: happier session wait <session-id-or-prefix> [--timeout <seconds>] [--json]');
   }
@@ -26,7 +29,7 @@ export async function cmdSessionWait(
   const credentials = await deps.readCredentialsFn();
   if (!credentials) {
     if (json) {
-      printJsonEnvelope({ ok: false, kind: 'session_wait', error: { code: 'not_authenticated' } });
+      await printJsonEnvelope({ ok: false, kind: 'session_wait', error: { code: 'not_authenticated' } });
       return;
     }
     console.error(chalk.red('Error:'), 'Not authenticated. Run "happier auth login" first.');
@@ -42,7 +45,7 @@ export async function cmdSessionWait(
   const normalized = normalizeActionExecuteResult(actionRes as any);
   if (!normalized.ok) {
     if (json) {
-      printJsonEnvelope({
+      await printJsonEnvelope({
         ok: false,
         kind: 'session_wait',
         error: {
@@ -57,14 +60,14 @@ export async function cmdSessionWait(
   }
 
   const result = normalized.data as any;
-  if (tryHandleApprovalRequestCreated({ envelopeKind: 'session_wait', json, result })) {
+  if (await tryHandleApprovalRequestCreated({ envelopeKind: 'session_wait', json, result })) {
     return;
   }
 
   if (json) {
-    printJsonEnvelope({ ok: true, kind: 'session_wait', data: { sessionId: result.sessionId, idle: true, observedAt: result.observedAt } });
+    await printJsonEnvelope({ ok: true, kind: 'session_wait', data: { sessionId: result.sessionId, idle: true, observedAt: result.observedAt } });
     return;
   }
   console.log(chalk.green('✓'), 'session idle');
-  console.log(JSON.stringify({ sessionId: result.sessionId, idle: true, observedAt: result.observedAt }, null, 2));
+  await writeJsonStdout({ sessionId: result.sessionId, idle: true, observedAt: result.observedAt }, { pretty: true });
 }

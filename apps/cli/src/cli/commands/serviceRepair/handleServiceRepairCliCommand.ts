@@ -9,6 +9,7 @@ import type { DoctorSnapshot } from '@/ui/doctorSnapshot';
 import { formatReleaseChannel } from '@/ui/format/releaseChannel';
 import { bold, muted } from '@/ui/format/styles';
 import { configuration } from '@/configuration';
+import { writeJsonStdout } from '@/cli/output/jsonEnvelope';
 import { getServerProfile } from '@/server/serverProfiles';
 
 import { isInteractiveTerminal } from '../server/commandUtilities';
@@ -237,7 +238,7 @@ export async function handleServiceRepairCliCommand(params: Readonly<{
 
   if (parsed.asJson) {
     if (!parsed.execute) {
-      console.log(JSON.stringify({
+      await writeJsonStdout({
         ok: true,
         executed: false,
         report,
@@ -248,7 +249,7 @@ export async function handleServiceRepairCliCommand(params: Readonly<{
         manualWarnings: plan.manualWarnings,
         warning: ownershipWarningText,
         ...repairSnapshotJson,
-      }, null, 2));
+      }, { pretty: true });
       return;
     }
 
@@ -264,7 +265,7 @@ export async function handleServiceRepairCliCommand(params: Readonly<{
       userHomeDir: runtime.userHomeDir,
       happierHomeDir: runtime.happierHomeDir,
     });
-    console.log(JSON.stringify({
+    await writeJsonStdout({
       ok: true,
       executed: true,
       report,
@@ -274,7 +275,7 @@ export async function handleServiceRepairCliCommand(params: Readonly<{
       manualWarnings: plan.manualWarnings,
       warning: ownershipWarningText,
       ...repairSnapshotJson,
-    }, null, 2));
+    }, { pretty: true });
     return;
   }
 

@@ -4,7 +4,7 @@ import type { CommandContext } from '@/cli/commandRegistry';
 import { mapUnknownErrorToControlError } from '@/cli/control/controlErrorMapping';
 import type { Credentials } from '@/persistence';
 import { readCredentials } from '@/persistence';
-import { wantsJson, printJsonEnvelope } from '@/cli/output/jsonEnvelope';
+import { wantsJson, printJsonEnvelope, writeJsonStdout } from '@/cli/output/jsonEnvelope';
 import { bootstrapAccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
 import { initialMachineMetadata } from '@/daemon/machine/metadata';
 import { initializeBackendApiContext } from '@/agent/runtime/initializeBackendApiContext';
@@ -159,7 +159,7 @@ export async function handleToolsCommand(args: string[], overrides?: Partial<Too
       const { tools: customTools, warnings } = await deps.listResolvedCustomHappierTools({ mcpServers: context.mcpServers });
 
       if (json) {
-        printJsonEnvelope({
+        await printJsonEnvelope({
           ok: true,
           kind,
           data: {
@@ -221,7 +221,7 @@ export async function handleToolsCommand(args: string[], overrides?: Partial<Too
 
       if (json) {
         if (result.ok) {
-          printJsonEnvelope({
+          await printJsonEnvelope({
             ok: true,
             kind,
             data: {
@@ -235,7 +235,7 @@ export async function handleToolsCommand(args: string[], overrides?: Partial<Too
           const candidates = 'candidates' in result && Array.isArray(result.candidates)
             ? result.candidates
             : undefined;
-          printJsonEnvelope({
+          await printJsonEnvelope({
             ok: false,
             kind,
             error: {
@@ -249,7 +249,7 @@ export async function handleToolsCommand(args: string[], overrides?: Partial<Too
       }
 
       if (!result.ok) throw new Error(result.error);
-      console.log(JSON.stringify(result.result, null, 2));
+      await writeJsonStdout(result.result, { pretty: true });
       return;
     }
 
@@ -257,7 +257,7 @@ export async function handleToolsCommand(args: string[], overrides?: Partial<Too
   } catch (error) {
     if (!json) throw error;
     const mapped = mapUnknownErrorToControlError(error);
-    printJsonEnvelope(
+    await printJsonEnvelope(
       {
         ok: false,
         kind,
@@ -278,7 +278,7 @@ export async function handleToolsCliCommand(context: CommandContext): Promise<vo
   } catch (error) {
     if (json) {
       const mapped = mapUnknownErrorToControlError(error);
-      printJsonEnvelope(
+      await printJsonEnvelope(
         {
           ok: false,
           kind,

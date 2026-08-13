@@ -4,8 +4,8 @@ import { parsePermissionIntentAlias } from '@happier-dev/agents';
 import type { PermissionIntent } from '@happier-dev/agents';
 
 import type { Credentials } from '@/persistence';
-import { wantsJson, printJsonEnvelope } from '@/cli/output/jsonEnvelope';
-import { hasFlag, readIntFlagValue, readFlagValue } from '@/cli/commands/shared/argvFlags';
+import { wantsJson, printJsonEnvelope, writeJsonStdout } from '@/cli/output/jsonEnvelope';
+import { hasFlag, readCommandPositionals, readIntFlagValue, readFlagValue } from '@/cli/commands/shared/argvFlags';
 import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
 import { tryHandleApprovalRequestCreated } from './shared/tryHandleApprovalRequestCreated';
 
@@ -24,8 +24,10 @@ export async function cmdSessionSend(
   deps: Readonly<{ readCredentialsFn: () => Promise<Credentials | null> }>,
 ): Promise<void> {
   const json = wantsJson(argv);
-  const idOrPrefix = String(argv[1] ?? '').trim();
-  const message = String(argv[2] ?? '').trim();
+  const [idOrPrefix = '', message = ''] = readCommandPositionals(argv, {
+    startIndex: 1,
+    valueFlags: ['--permission-mode', '--model', '--timeout'],
+  });
   const wait = hasFlag(argv, '--wait');
   const timeoutSecondsRaw = readIntFlagValue(argv, '--timeout');
   const permissionModeFlag = (readFlagValue(argv, '--permission-mode') ?? '').trim();
@@ -44,7 +46,7 @@ export async function cmdSessionSend(
   const credentials = await deps.readCredentialsFn();
   if (!credentials) {
     if (json) {
-      printJsonEnvelope({ ok: false, kind: 'session_send', error: { code: 'not_authenticated' } });
+      await printJsonEnvelope({ ok: false, kind: 'session_send', error: { code: 'not_authenticated' } });
       return;
     }
     console.error(chalk.red('Error:'), 'Not authenticated. Run "happier auth login" first.');
@@ -79,7 +81,7 @@ export async function cmdSessionSend(
   );
   if (!actionRes.ok) {
     if (json) {
-      printJsonEnvelope({
+      await printJsonEnvelope({
         ok: false,
         kind: 'session_send',
         error: {
@@ -93,13 +95,13 @@ export async function cmdSessionSend(
   }
 
   const result = (actionRes as any).result as any;
-  if (tryHandleApprovalRequestCreated({ envelopeKind: 'session_send', json, result })) {
+  if (await tryHandleApprovalRequestCreated({ envelopeKind: 'session_send', json, result })) {
     return;
   }
   if (result && typeof result === 'object' && result.ok === false) {
     const code = typeof result.errorCode === 'string' ? result.errorCode : typeof result.code === 'string' ? result.code : 'action_failed';
     if (json) {
-      printJsonEnvelope({
+      await printJsonEnvelope({
         ok: false,
         kind: 'session_send',
         error: {
@@ -114,10 +116,10 @@ export async function cmdSessionSend(
   }
 
   if (json) {
-    printJsonEnvelope({ ok: true, kind: 'session_send', data: { sessionId: result.sessionId, localId: result.localId, waited: result.waited } });
+    await printJsonEnvelope({ ok: true, kind: 'session_send', data: { sessionId: result.sessionId, localId: result.localId, waited: result.waited } });
     return;
   }
 
   console.log(chalk.green('✓'), 'message sent');
-  console.log(JSON.stringify({ sessionId: result.sessionId, localId: result.localId }, null, 2));
+  await writeJsonStdout({ sessionId: result.sessionId, localId: result.localId }, { pretty: true });
 }

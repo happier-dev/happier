@@ -4,9 +4,9 @@ import type { Credentials } from '@/persistence';
 import { createCliActionExecutor } from '@/session/actions/createCliActionExecutor';
 
 import { fetchSessionById } from '@/session/transport/http/sessionsHttp';
-import { wantsJson, printJsonEnvelope } from '@/cli/output/jsonEnvelope';
+import { wantsJson, printJsonEnvelope, writeJsonStdout } from '@/cli/output/jsonEnvelope';
 import { resolveSessionEncryptionContextFromCredentials, resolveSessionStoredContentEncryptionMode } from '@/session/transport/encryption/sessionEncryptionContext';
-import { readFlagValue } from '@/cli/commands/shared/argvFlags';
+import { readCommandPositionals, readFlagValue } from '@/cli/commands/shared/argvFlags';
 import { resolveSessionIdOrPrefix } from '@/session/query/resolveSessionId';
 
 function splitCsv(value: string | null): string[] {
@@ -22,7 +22,13 @@ export async function cmdSessionReviewStart(
   deps: Readonly<{ readCredentialsFn: () => Promise<Credentials | null> }>,
 ): Promise<void> {
   const json = wantsJson(argv);
-  const idOrPrefix = String(argv[2] ?? '').trim();
+  const [idOrPrefix = ''] = readCommandPositionals(argv, {
+    startIndex: 2,
+    valueFlags: [
+      '--engines', '--engine', '--instructions', '--change-type', '--base-branch', '--base-commit',
+      '--coderabbit-config', '--permission-mode',
+    ],
+  });
   if (!idOrPrefix) {
     throw new Error('Usage: happier session review start <session-id-or-prefix> --engines <id1,id2> [--instructions <text>] [--json]');
   }
@@ -65,7 +71,7 @@ export async function cmdSessionReviewStart(
   const credentials = await deps.readCredentialsFn();
   if (!credentials) {
     if (json) {
-      printJsonEnvelope({ ok: false, kind: 'session_review_start', error: { code: 'not_authenticated' } });
+      await printJsonEnvelope({ ok: false, kind: 'session_review_start', error: { code: 'not_authenticated' } });
       return;
     }
     console.error(chalk.red('Error:'), 'Not authenticated. Run "happier auth login" first.');
@@ -75,7 +81,7 @@ export async function cmdSessionReviewStart(
   const resolved = await resolveSessionIdOrPrefix({ credentials, idOrPrefix });
   if (!resolved.ok) {
     if (json) {
-      printJsonEnvelope({
+      await printJsonEnvelope({
         ok: false,
         kind: 'session_review_start',
         error: { code: resolved.code, ...(resolved.candidates ? { candidates: resolved.candidates } : {}) },
@@ -89,7 +95,7 @@ export async function cmdSessionReviewStart(
   const rawSession = await fetchSessionById({ token: credentials.token, sessionId });
   if (!rawSession) {
     if (json) {
-      printJsonEnvelope({ ok: false, kind: 'session_review_start', error: { code: 'session_not_found', sessionId } });
+      await printJsonEnvelope({ ok: false, kind: 'session_review_start', error: { code: 'session_not_found', sessionId } });
       return;
     }
     console.error(chalk.red('Error:'), `Session not found: ${sessionId}`);
@@ -104,7 +110,7 @@ export async function cmdSessionReviewStart(
 
   if (!started.ok) {
     if (json) {
-      printJsonEnvelope({ ok: false, kind: 'session_review_start', error: { code: started.errorCode } });
+      await printJsonEnvelope({ ok: false, kind: 'session_review_start', error: { code: started.errorCode } });
       return;
     }
     console.error(chalk.red('Error:'), started.errorCode);
@@ -114,7 +120,7 @@ export async function cmdSessionReviewStart(
   const results = (started.result as any)?.results ?? [];
 
   if (json) {
-    printJsonEnvelope({
+    await printJsonEnvelope({
       ok: true,
       kind: 'session_review_start',
       data: { sessionId, results },
@@ -123,5 +129,5 @@ export async function cmdSessionReviewStart(
   }
 
   console.log(chalk.green('✓'), 'review started');
-  console.log(JSON.stringify({ sessionId, results }, null, 2));
+  await writeJsonStdout({ sessionId, results }, { pretty: true });
 }

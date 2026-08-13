@@ -44,7 +44,7 @@ export async function runProfilesListCommand(args: string[]): Promise<void> {
   if (!credentials) {
     const profiles = DEFAULT_BUILT_IN_BACKEND_PROFILES.map(mapProfileToListItem);
     if (json) {
-      printJsonEnvelope({ ok: true, kind: 'profiles_list', data: { authenticated: false, profiles } });
+      await printJsonEnvelope({ ok: true, kind: 'profiles_list', data: { authenticated: false, profiles } });
       return;
     }
     printProfilesHuman(profiles, false);
@@ -63,7 +63,7 @@ export async function runProfilesListCommand(args: string[]): Promise<void> {
     .sort((a, b) => a.name.localeCompare(b.name));
 
   if (json) {
-    printJsonEnvelope({ ok: true, kind: 'profiles_list', data: { authenticated: true, profiles } });
+    await printJsonEnvelope({ ok: true, kind: 'profiles_list', data: { authenticated: true, profiles } });
     return;
   }
 

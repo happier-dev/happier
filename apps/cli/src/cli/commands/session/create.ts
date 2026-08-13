@@ -4,7 +4,7 @@ import { AGENTS_CORE, resolveAgentIdFromFlavor, type AgentId } from '@happier-de
 import { parseBackendTargetKey } from '@happier-dev/protocol';
 
 import { hasFlag } from '@/cli/commands/shared/argvFlags';
-import { wantsJson, printJsonEnvelope } from '@/cli/output/jsonEnvelope';
+import { wantsJson, printJsonEnvelope, writeJsonStdout } from '@/cli/output/jsonEnvelope';
 import { mapUnknownErrorToControlError } from '@/cli/control/controlErrorMapping';
 import type { Credentials } from '@/persistence';
 import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
@@ -74,7 +74,7 @@ export async function cmdSessionCreate(
   const credentials = await deps.readCredentialsFn();
   if (!credentials) {
     if (json) {
-      printJsonEnvelope({ ok: false, kind: 'session_create', error: { code: 'not_authenticated' } });
+      await printJsonEnvelope({ ok: false, kind: 'session_create', error: { code: 'not_authenticated' } });
       return;
     }
     console.error(chalk.red('Error:'), 'Not authenticated. Run "happier auth login" first.');
@@ -105,7 +105,7 @@ export async function cmdSessionCreate(
   } catch (error) {
     const mapped = mapUnknownErrorToControlError(error);
     if (json) {
-      printJsonEnvelope({
+      await printJsonEnvelope({
         ok: false,
         kind: 'session_create',
         error: {
@@ -125,7 +125,7 @@ export async function cmdSessionCreate(
   if (!result.ok) {
     const isAmbiguousSpawn = hasSpawnNonce(result.details);
     if (json) {
-      printJsonEnvelope({
+      await printJsonEnvelope({
         ok: false,
         kind: 'session_create',
         error: {
@@ -147,7 +147,7 @@ export async function cmdSessionCreate(
     });
   }
   const created = result.data as any;
-  if (tryHandleApprovalRequestCreated({ envelopeKind: 'session_create', json, result: created })) {
+  if (await tryHandleApprovalRequestCreated({ envelopeKind: 'session_create', json, result: created })) {
     return;
   }
   if (!created || typeof created !== 'object') {
@@ -156,7 +156,7 @@ export async function cmdSessionCreate(
   if (created.type === 'error') {
     const code = typeof created.errorCode === 'string' ? created.errorCode : 'session_create_failed';
     if (json) {
-      printJsonEnvelope({
+      await printJsonEnvelope({
         ok: false,
         kind: 'session_create',
         error: {
@@ -171,10 +171,10 @@ export async function cmdSessionCreate(
   }
 
   if (json) {
-    printJsonEnvelope({ ok: true, kind: 'session_create', data: { session: created.session, created: created.created } });
+    await printJsonEnvelope({ ok: true, kind: 'session_create', data: { session: created.session, created: created.created } });
     return;
   }
 
   console.log(chalk.green('✓'), 'session created');
-  console.log(JSON.stringify({ created: true, session: created.session }, null, 2));
+  await writeJsonStdout({ created: true, session: created.session }, { pretty: true });
 }

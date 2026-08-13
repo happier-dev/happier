@@ -49,4 +49,18 @@ describe('happier session history (action executor)', () => {
       output.restore();
     }
   });
+
+  it('rejects unsupported formats as invalid arguments before reading credentials', async () => {
+    execute.mockClear();
+    const readCredentialsFn = vi.fn(async () => null);
+    const { cmdSessionHistory } = await import('./history');
+
+    await expect(cmdSessionHistory(
+      ['history', 'sess-1', '--format', 'definitely-invalid'],
+      { readCredentialsFn },
+    )).rejects.toThrow('Invalid --format value "definitely-invalid". Expected one of: compact, raw.');
+
+    expect(readCredentialsFn).not.toHaveBeenCalled();
+    expect(execute).not.toHaveBeenCalled();
+  });
 });

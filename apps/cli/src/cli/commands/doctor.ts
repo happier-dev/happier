@@ -4,6 +4,7 @@ import { buildDoctorSnapshot } from '@/ui/doctorSnapshot';
 import { handleServiceRepairCliCommand } from './serviceRepair/handleServiceRepairCliCommand';
 
 import type { CommandContext } from '@/cli/commandRegistry';
+import { writeJsonStdout } from '@/cli/output/jsonEnvelope';
 
 export async function handleDoctorCliCommand(context: CommandContext): Promise<void> {
   const args = context.args;
@@ -27,7 +28,7 @@ export async function handleDoctorCliCommand(context: CommandContext): Promise<v
 
   if (args.includes('--json')) {
     const snapshot = await buildDoctorSnapshot();
-    console.log(JSON.stringify(snapshot, null, 2));
+    await writeJsonStdout(snapshot, { pretty: true });
     return;
   }
 

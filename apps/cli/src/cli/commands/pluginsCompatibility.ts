@@ -21,7 +21,7 @@ export async function handlePluginsCompatibilityCliCommand(context: CommandConte
 
   if (subcommand === 'list') {
     if (json) {
-      printJsonEnvelope({ ok: true, kind: 'plugins_list', data: { plugins: [] } });
+      await printJsonEnvelope({ ok: true, kind: 'plugins_list', data: { plugins: [] } });
     } else {
       console.log('No plugins installed.');
     }
@@ -34,7 +34,7 @@ export async function handlePluginsCompatibilityCliCommand(context: CommandConte
   }
 
   if (json) {
-    printJsonEnvelope({
+    await printJsonEnvelope({
       ok: false,
       kind: 'plugins_unsupported',
       error: {

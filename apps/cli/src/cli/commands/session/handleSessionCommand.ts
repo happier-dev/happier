@@ -78,32 +78,88 @@ function inferSessionKind(argv: readonly string[]): string {
   return `session_${sub}`;
 }
 
-function printSessionSubcommandHelp(subcommand: string): boolean {
-  switch (subcommand) {
-    case 'list':
-      console.log('happier session list [--active] [--archived] [--limit N] [--cursor C] [--include-system] [--resumable] [--plain] [--json]');
-      return true;
-    case 'status':
-      console.log('happier session status <session-id-or-prefix> [--live] [--json]');
-      return true;
-    case 'create':
-      console.log(SESSION_CREATE_USAGE);
-      return true;
-    case 'send':
-      console.log('happier session send <session-id-or-prefix> <message> [--permission-mode <mode>] [--model <model-id>] [--wait] [--timeout <seconds>] [--json]');
-      return true;
-    case 'set-title':
-      console.log('happier session set-title <session-id-or-prefix> <title> [--json]');
-      return true;
-    case 'set-permission-mode':
-      console.log('happier session set-permission-mode <session-id-or-prefix> <mode> [--json]');
-      return true;
-    case 'set-model':
-      console.log('happier session set-model <session-id-or-prefix> <model-id> [--json]');
-      return true;
-    default:
-      return false;
+const SESSION_HELP_BY_COMMAND = {
+  list: 'happier session list [--active] [--archived] [--limit N] [--cursor C] [--include-system] [--resumable] [--plain] [--json]',
+  status: 'happier session status <session-id-or-prefix> [--live] [--json]',
+  create: SESSION_CREATE_USAGE,
+  send: 'happier session send <session-id-or-prefix> <message> [--permission-mode <mode>] [--model <model-id>] [--wait] [--timeout <seconds>] [--json]',
+  wait: 'happier session wait <session-id-or-prefix> [--timeout <seconds>] [--json]',
+  stop: 'happier session stop <session-id-or-prefix> [--json]',
+  history: 'happier session history <session-id-or-prefix> [--limit N] [--format compact|raw] [--include-meta] [--include-structured-payload] [--json]',
+  'set-title': 'happier session set-title <session-id-or-prefix> <title> [--json]',
+  'set-permission-mode': 'happier session set-permission-mode <session-id-or-prefix> <mode> [--json]',
+  'set-model': 'happier session set-model <session-id-or-prefix> <model-id> [--json]',
+  archive: 'happier session archive <session-id-or-prefix> [--json]',
+  unarchive: 'happier session unarchive <session-id-or-prefix> [--json]',
+  'review start': 'happier session review start <session-id> --engines <id1,id2> [--instructions <text>] [--json]',
+  'plan start': 'happier session plan start <session-id> --backends <id1,id2> --instructions <text> [--json]',
+  'delegate start': 'happier session delegate start <session-id> --backends <id1,id2> --instructions <text> [--json]',
+  'voice-agent start': 'happier session voice-agent start <session-id> --backends <id1,id2> --instructions <text> [--json]',
+  'actions list': 'happier session actions list [--json]',
+  'actions describe': 'happier session actions describe <action-id> [--json]',
+  'actions execute': 'happier session actions execute <session-id> <action-id> [--input-json <json>] [--action-request-id <id>] [--resume-action-request] [--json]',
+  'run start': 'happier session run start <session-id> --intent <intent> --backend <backend-target> [--json]',
+  'run list': 'happier session run list <session-id> [--json]',
+  'run get': 'happier session run get <session-id> <run-id> [--include-structured] [--json]',
+  'run send': 'happier session run send <session-id> <run-id> <message> [--resume] [--json]',
+  'run stop': 'happier session run stop <session-id> <run-id> [--json]',
+  'run action': 'happier session run action <session-id> <run-id> <action-id> [--input-json <json>] [--json]',
+  'run wait': 'happier session run wait <session-id> <run-id> [--timeout <seconds>] [--json]',
+  'run stream-start': 'happier session run stream-start <session-id> <run-id> <message> [--resume] [--json]',
+  'run stream-read': 'happier session run stream-read <session-id> <run-id> <stream-id> --cursor <n> [--max-events <n>] [--json]',
+  'run stream-cancel': 'happier session run stream-cancel <session-id> <run-id> <stream-id> [--json]',
+} as const;
+
+const SESSION_HELP_GROUPS: Readonly<Record<string, readonly (keyof typeof SESSION_HELP_BY_COMMAND)[]>> = {
+  review: ['review start'],
+  plan: ['plan start'],
+  delegate: ['delegate start'],
+  'voice-agent': ['voice-agent start'],
+  actions: ['actions list', 'actions describe', 'actions execute'],
+  run: [
+    'run start',
+    'run list',
+    'run get',
+    'run send',
+    'run stop',
+    'run action',
+    'run wait',
+    'run stream-start',
+    'run stream-read',
+    'run stream-cancel',
+  ],
+};
+
+function printSessionHelp(argv: readonly string[]): boolean {
+  const rawSubcommand = String(argv[0] ?? '').trim();
+  const subcommand = rawSubcommand === 'voice_agent' ? 'voice-agent' : rawSubcommand;
+  const isTopLevelHelp = !subcommand || subcommand === 'help' || subcommand === '--help' || subcommand === '-h';
+  if (isTopLevelHelp) {
+    for (const usage of Object.values(SESSION_HELP_BY_COMMAND)) console.log(usage);
+    return true;
   }
+
+  if (!hasFlag(argv, '--help') && !hasFlag(argv, '-h')) return false;
+
+  const nested = String(argv[1] ?? '').trim();
+  const groupedCommands = SESSION_HELP_GROUPS[subcommand];
+  if (groupedCommands) {
+    const command = nested && nested !== '--help' && nested !== '-h'
+      ? `${subcommand} ${nested}`
+      : null;
+    const commands = command && command in SESSION_HELP_BY_COMMAND
+      ? [command as keyof typeof SESSION_HELP_BY_COMMAND]
+      : groupedCommands;
+    for (const key of commands) console.log(SESSION_HELP_BY_COMMAND[key]);
+    return true;
+  }
+
+  if (subcommand in SESSION_HELP_BY_COMMAND) {
+    console.log(SESSION_HELP_BY_COMMAND[subcommand as keyof typeof SESSION_HELP_BY_COMMAND]);
+    return true;
+  }
+
+  return false;
 }
 
 export async function handleSessionCommand(
@@ -115,45 +171,9 @@ export async function handleSessionCommand(
   const json = wantsJson(argv);
   const kind = inferSessionKind(argv);
   const subcommand = String(argv[0] ?? '').trim();
-  const hasHelpFlag = hasFlag(argv, '--help') || hasFlag(argv, '-h');
 
   try {
-    if (!subcommand || subcommand === 'help' || subcommand === '--help' || subcommand === '-h') {
-      console.log('happier session list [--active] [--archived] [--limit N] [--cursor C] [--include-system] [--resumable] [--plain] [--json]');
-      console.log('happier session status <session-id-or-prefix> [--live] [--json]');
-      console.log(SESSION_CREATE_USAGE);
-      console.log('happier session send <session-id-or-prefix> <message> [--permission-mode <mode>] [--model <model-id>] [--wait] [--timeout <seconds>] [--json]');
-      console.log('happier session wait <session-id-or-prefix> [--timeout <seconds>] [--json]');
-      console.log('happier session stop <session-id-or-prefix> [--json]');
-      console.log('happier session history <session-id-or-prefix> [--limit N] [--format compact|raw] [--include-meta] [--include-structured-payload] [--json]');
-      console.log('happier session set-title <session-id-or-prefix> <title> [--json]');
-      console.log('happier session set-permission-mode <session-id-or-prefix> <mode> [--json]');
-      console.log('happier session set-model <session-id-or-prefix> <model-id> [--json]');
-      console.log('happier session archive <session-id-or-prefix> [--json]');
-      console.log('happier session unarchive <session-id-or-prefix> [--json]');
-      console.log('happier session review start <session-id> --engines <id1,id2> [--instructions <text>] [--json]');
-      console.log('happier session plan start <session-id> --backends <id1,id2> --instructions <text> [--json]');
-      console.log('happier session delegate start <session-id> --backends <id1,id2> --instructions <text> [--json]');
-      console.log('happier session voice-agent start <session-id> --backends <id1,id2> --instructions <text> [--json]');
-      console.log('happier session actions list [--json]');
-      console.log('happier session actions describe <action-id> [--json]');
-      console.log('happier session actions execute <session-id> <action-id> [--input-json <json>] [--action-request-id <id>] [--resume-action-request] [--json]');
-      console.log('happier session run start <session-id> --intent <intent> --backend <backend-target> [--json]');
-      console.log('happier session run list <session-id> [--json]');
-      console.log('happier session run get <session-id> <run-id> [--include-structured] [--json]');
-      console.log('happier session run send <session-id> <run-id> <message> [--resume] [--json]');
-      console.log('happier session run stop <session-id> <run-id> [--json]');
-      console.log('happier session run action <session-id> <run-id> <action-id> [--input-json <json>] [--json]');
-      console.log('happier session run wait <session-id> <run-id> [--timeout <seconds>] [--json]');
-      console.log('happier session run stream-start <session-id> <run-id> <message> [--resume] [--json]');
-      console.log('happier session run stream-read <session-id> <run-id> <stream-id> --cursor <n> [--max-events <n>] [--json]');
-      console.log('happier session run stream-cancel <session-id> <run-id> <stream-id> [--json]');
-      return;
-    }
-
-    if (hasHelpFlag && printSessionSubcommandHelp(subcommand)) {
-      return;
-    }
+    if (printSessionHelp(argv)) return;
 
     const baseReadCredentialsFn = deps?.readCredentialsFn ?? (async () => await readCredentials());
     const readCredentialsFn = async () => {
@@ -316,7 +336,7 @@ export async function handleSessionCommand(
   } catch (error) {
     if (!json) throw error;
     const mapped = mapUnknownErrorToControlError(error);
-    printJsonEnvelope(
+    await printJsonEnvelope(
       {
         ok: false,
         kind,

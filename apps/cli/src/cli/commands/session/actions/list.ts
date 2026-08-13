@@ -9,7 +9,7 @@ export async function cmdSessionActionsList(argv: string[]): Promise<void> {
   const actionSpecs = listActionSpecs().map(serializeActionSpec);
 
   if (json) {
-    printJsonEnvelope({ ok: true, kind: 'session_actions_list', data: { actionSpecs } });
+    await printJsonEnvelope({ ok: true, kind: 'session_actions_list', data: { actionSpecs } });
     return;
   }
 

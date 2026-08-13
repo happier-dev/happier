@@ -96,6 +96,21 @@ export function captureConsoleText(): {
   restore: () => void
 } {
   const lines: string[] = []
+  const writeSpy = vi.spyOn(process.stdout, 'write').mockImplementation(
+    ((
+      chunk: string | Uint8Array,
+      encoding?: BufferEncoding | WriteCallback,
+      callback?: WriteCallback,
+    ) => {
+      lines.push((typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString('utf8')).replace(/\n$/u, ''))
+      if (typeof encoding === 'function') {
+        encoding(null)
+      } else if (typeof callback === 'function') {
+        callback(null)
+      }
+      return true
+    }) as typeof process.stdout.write,
+  )
   const logSpy = vi.spyOn(console, 'log').mockImplementation((...args: unknown[]) => {
     lines.push(formatConsoleArgs(args))
   })
@@ -115,6 +130,7 @@ export function captureConsoleText(): {
       errorSpy.mockRestore()
       warnSpy.mockRestore()
       logSpy.mockRestore()
+      writeSpy.mockRestore()
     },
   }
 }
@@ -124,15 +140,34 @@ export function captureConsoleJsonOutput<T = any>(): {
   json: <TJson = T>() => TJson
   restore: () => void
 } {
-  const output = captureConsoleLogAndMuteStdout()
+  const logs: string[] = []
+  const writeSpy = vi.spyOn(process.stdout, 'write').mockImplementation(
+    ((
+      chunk: string | Uint8Array,
+      encoding?: BufferEncoding | WriteCallback,
+      callback?: WriteCallback,
+    ) => {
+      logs.push((typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString('utf8')).replace(/\n$/u, ''))
+      if (typeof encoding === 'function') {
+        encoding(null)
+      } else if (typeof callback === 'function') {
+        callback(null)
+      }
+      return true
+    }) as typeof process.stdout.write,
+  )
+  const logSpy = vi.spyOn(console, 'log').mockImplementation((...args: unknown[]) => {
+    logs.push(formatConsoleArgs(args))
+  })
 
   return {
-    logs: output.logs,
+    logs,
     json<TJson = T>(): TJson {
-      return JSON.parse(output.logs.join('\n').trim()) as TJson
+      return JSON.parse(logs.join('\n').trim()) as TJson
     },
     restore(): void {
-      output.restore()
+      logSpy.mockRestore()
+      writeSpy.mockRestore()
     },
   }
 }

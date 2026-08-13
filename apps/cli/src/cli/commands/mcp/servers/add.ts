@@ -17,7 +17,7 @@ export async function cmdMcpServersAdd(
   const credentials = await deps.readCredentials();
   if (!credentials) {
     if (opts.json) {
-      printJsonEnvelope({ ok: false, kind: 'mcp_servers_add', error: { code: 'not_authenticated' } }, { exitCode: 1 });
+      await printJsonEnvelope({ ok: false, kind: 'mcp_servers_add', error: { code: 'not_authenticated' } }, { exitCode: 1 });
       return;
     }
     console.error(chalk.red('Error:'), 'Not authenticated. Run "happier auth login" first.');
@@ -64,7 +64,7 @@ export async function cmdMcpServersAdd(
   });
 
   if (opts.json) {
-    printJsonEnvelope({ ok: true, kind: 'mcp_servers_add', data: { created: { id, name } } });
+    await printJsonEnvelope({ ok: true, kind: 'mcp_servers_add', data: { created: { id, name } } });
     return;
   }
 

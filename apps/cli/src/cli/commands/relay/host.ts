@@ -610,7 +610,7 @@ export async function runRelayHostSubcommand(args: string[]): Promise<void> {
     const status = await payload;
 
     if (json) {
-      printJsonEnvelope({
+      await printJsonEnvelope({
         ok: true,
         kind: 'relay_host_status',
         data: status,
@@ -786,7 +786,7 @@ export async function runRelayHostSubcommand(args: string[]): Promise<void> {
     reloadConfiguration();
 
     if (json) {
-      printJsonEnvelope({
+      await printJsonEnvelope({
         ok: true,
         kind: 'relay_host_install',
         data: payload,
@@ -830,7 +830,7 @@ export async function runRelayHostSubcommand(args: string[]): Promise<void> {
     await engine.control({ ...taskParams, action: op });
 
     if (json) {
-      printJsonEnvelope({
+      await printJsonEnvelope({
         ok: true,
         kind: `relay_host_${op}`,
         data: { ok: true },

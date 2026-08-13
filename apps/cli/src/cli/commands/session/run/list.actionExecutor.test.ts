@@ -1,12 +1,18 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { captureConsoleJsonOutput } from '@/testkit/logger/captureOutput';
-
 const execute = vi.fn();
 const createCliActionExecutorFromCredentials = vi.fn(() => ({ execute }));
+const resolveSessionTransportContext = vi.fn(async () => ({ ok: true, sessionId: 'sess-canonical' }));
+const printJsonEnvelope = vi.fn(async () => {});
 
 vi.mock('@/session/actions/createCliActionExecutorFromCredentials', () => ({
   createCliActionExecutorFromCredentials,
+}));
+vi.mock('@/session/services/resolveSessionTransportContext', () => ({ resolveSessionTransportContext }));
+vi.mock('@/cli/output/jsonEnvelope', () => ({
+  wantsJson: (argv: readonly string[]) => argv.includes('--json'),
+  printJsonEnvelope,
+  writeJsonStdout: vi.fn(async () => {}),
 }));
 
 describe('happier session run list (action executor)', () => {
@@ -16,12 +22,10 @@ describe('happier session run list (action executor)', () => {
       result: { ok: true, runs: [] },
     });
 
-    const { handleSessionCommand } = await import('../handleSessionCommand');
+    const { cmdSessionRunList } = await import('./list');
 
-    const output = captureConsoleJsonOutput();
-    try {
-      await handleSessionCommand(
-        ['run', 'list', 'sess-1', '--backend', 'agent:claude', '--status', 'running', '--limit', '5', '--json'],
+    await cmdSessionRunList(
+        ['session', 'run', 'sess-prefix', '--backend', 'agent:claude', '--status', 'running', '--limit', '5', '--json'],
         {
           readCredentialsFn: async () => ({
             token: 'token_test',
@@ -34,7 +38,7 @@ describe('happier session run list (action executor)', () => {
       expect(execute).toHaveBeenCalledWith(
         'execution.run.list',
         {
-          sessionId: 'sess-1',
+          sessionId: 'sess-canonical',
           backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
           status: 'running',
           limit: 5,
@@ -42,12 +46,10 @@ describe('happier session run list (action executor)', () => {
         { surface: 'cli', defaultSessionId: null },
       );
 
-      expect(output.json()).toEqual(expect.objectContaining({
+      expect(printJsonEnvelope).toHaveBeenCalledWith(expect.objectContaining({
         ok: true,
         kind: 'session_run_list',
+        data: expect.objectContaining({ sessionId: 'sess-canonical' }),
       }));
-    } finally {
-      output.restore();
-    }
   });
 });

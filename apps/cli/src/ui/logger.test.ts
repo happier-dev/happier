@@ -103,6 +103,18 @@ describe('logger', () => {
         expect(content).toContain('[WARN] [TEST] warn entry');
     });
 
+    it('writes file-only info diagnostics without polluting the interactive console', async () => {
+        const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+        const { logger } = (await import('@/ui/logger')) as typeof import('@/ui/logger');
+
+        logger.infoFile('[TEST] file-only incident', { queueName: 'test-queue' });
+        logger.flushSync();
+
+        expect(logSpy).not.toHaveBeenCalled();
+        expect(readFileSync(logger.getLogPath(), 'utf8')).toContain('[TEST] file-only incident');
+        logSpy.mockRestore();
+    });
+
     it('writes Error objects with message/stack instead of "{}" when DEBUG is set', async () => {
         process.env.DEBUG = '1';
 

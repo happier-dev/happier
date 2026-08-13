@@ -342,6 +342,11 @@ class Logger {
     this.logToFile(`[${this.localTimezoneTimestamp()}]`, message, ...args)
   }
 
+  infoFile(message: string, ...args: unknown[]): void {
+    if (!this.infoFileEnabled) return
+    this.logToFile(`[${this.localTimezoneTimestamp()}]`, message, ...args)
+  }
+
   infoDeveloper(message: string, ...args: unknown[]): void {
     // Developer diagnostics are debug-level file entries.
     this.debug(message, ...args)

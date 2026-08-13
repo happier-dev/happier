@@ -5,6 +5,7 @@ import axios from 'axios';
 import tweetnacl from 'tweetnacl';
 
 import { encodeBase64, encodeBase64Url } from '@/api/encryption';
+import { writeJsonStdout } from '@/cli/output/jsonEnvelope';
 import { configuration } from '@/configuration';
 import { applyServerSelectionFromArgs } from '@/server/serverSelection';
 import { buildConfigureServerLinks, buildTerminalConnectLinks } from '@happier-dev/cli-common/links';
@@ -94,28 +95,26 @@ export async function handleAuthRequest(args: string[]): Promise<void> {
     },
   });
 
-  console.log(
-    JSON.stringify({
-      publicKey: publicKeyB64,
-      publicKeyB64Url,
-      claimSecret: claimSecretB64Url,
-      pairing: {
-        secretB64Url: pairingSecretB64Url,
-        createdAtMs: pairing.createdAtMs,
-        expiresAtMs: pairing.expiresAtMs,
-      },
-      pairingRequirement: pairingRequirement ?? 'compatible',
-      serverId: configuration.activeServerId,
-      serverUrl: configuration.serverUrl,
-      publicServerUrl: configuration.publicServerUrl,
-      webappUrl: configuration.webappUrl,
-      links: {
-        configureWebUrl: configureLinks.webUrl,
-        configureMobileUrl: configureLinks.mobileUrl,
-        webUrl: terminalLinks.webUrl,
-        mobileUrl: terminalLinks.mobileUrl,
-      },
-      stateFile: statePath,
-    }),
-  );
+  await writeJsonStdout({
+    publicKey: publicKeyB64,
+    publicKeyB64Url,
+    claimSecret: claimSecretB64Url,
+    pairing: {
+      secretB64Url: pairingSecretB64Url,
+      createdAtMs: pairing.createdAtMs,
+      expiresAtMs: pairing.expiresAtMs,
+    },
+    pairingRequirement: pairingRequirement ?? 'compatible',
+    serverId: configuration.activeServerId,
+    serverUrl: configuration.serverUrl,
+    publicServerUrl: configuration.publicServerUrl,
+    webappUrl: configuration.webappUrl,
+    links: {
+      configureWebUrl: configureLinks.webUrl,
+      configureMobileUrl: configureLinks.mobileUrl,
+      webUrl: terminalLinks.webUrl,
+      mobileUrl: terminalLinks.mobileUrl,
+    },
+    stateFile: statePath,
+  });
 }

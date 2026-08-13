@@ -38,6 +38,7 @@ describe('dispatchCli root help', () => {
     expect(defaultHandlerSpy).not.toHaveBeenCalled();
     expect(output.logs).toContainEqual(expect.stringContaining('happier - AI CLI On the Go'));
     expect(output.logs).toContainEqual(expect.stringContaining('happier codex'));
+    expect(output.logs).toContainEqual(expect.stringContaining('happier session'));
     expect(output.logs).not.toContainEqual(expect.stringContaining('Claude Code Options'));
   });
 

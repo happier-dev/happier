@@ -15,7 +15,7 @@ export async function handleAuthStatus(argv: string[] = []): Promise<void> {
   const settings = await readSettings();
 
   if (json && !credentials) {
-    printJsonEnvelope({ ok: false, kind: 'auth_status', error: { code: 'not_authenticated' } });
+    await printJsonEnvelope({ ok: false, kind: 'auth_status', error: { code: 'not_authenticated' } });
     return;
   }
 
@@ -32,7 +32,7 @@ export async function handleAuthStatus(argv: string[] = []): Promise<void> {
   const authValidation = await validateStoredAuthTokenAgainstActiveServer(credentials.token);
   if (authValidation.state === 'invalid') {
     if (json) {
-      printJsonEnvelope({ ok: false, kind: 'auth_status', error: { code: 'not_authenticated' } });
+      await printJsonEnvelope({ ok: false, kind: 'auth_status', error: { code: 'not_authenticated' } });
       return;
     }
 
@@ -53,7 +53,7 @@ export async function handleAuthStatus(argv: string[] = []): Promise<void> {
   }
 
   if (json) {
-    printJsonEnvelope({
+    await printJsonEnvelope({
       ok: true,
       kind: 'auth_status',
       data: {

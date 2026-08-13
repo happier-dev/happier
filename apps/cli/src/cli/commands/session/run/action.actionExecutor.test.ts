@@ -1,12 +1,18 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { captureConsoleJsonOutput } from '@/testkit/logger/captureOutput';
-
 const execute = vi.fn();
 const createCliActionExecutorFromCredentials = vi.fn(() => ({ execute }));
+const resolveSessionTransportContext = vi.fn(async () => ({ ok: true, sessionId: 'sess-canonical' }));
+const printJsonEnvelope = vi.fn(async () => {});
 
 vi.mock('@/session/actions/createCliActionExecutorFromCredentials', () => ({
   createCliActionExecutorFromCredentials,
+}));
+vi.mock('@/session/services/resolveSessionTransportContext', () => ({ resolveSessionTransportContext }));
+vi.mock('@/cli/output/jsonEnvelope', () => ({
+  wantsJson: (argv: readonly string[]) => argv.includes('--json'),
+  printJsonEnvelope,
+  writeJsonStdout: vi.fn(async () => {}),
 }));
 
 describe('happier session run action (action executor)', () => {
@@ -16,12 +22,10 @@ describe('happier session run action (action executor)', () => {
       result: { ok: true, output: {} },
     });
 
-    const { handleSessionCommand } = await import('../handleSessionCommand');
+    const { cmdSessionRunAction } = await import('./action');
 
-    const output = captureConsoleJsonOutput();
-    try {
-      await handleSessionCommand(
-        ['run', 'action', 'sess-1', 'run-1', 'action-1', '--input-json', '{"a":1}', '--json'],
+    await cmdSessionRunAction(
+        ['session', 'run', 'sess-prefix', 'run-1', 'action-1', '--input-json', '{"a":1}', '--json'],
         {
           readCredentialsFn: async () => ({
             token: 'token_test',
@@ -33,16 +37,14 @@ describe('happier session run action (action executor)', () => {
       expect(createCliActionExecutorFromCredentials).toHaveBeenCalledTimes(1);
       expect(execute).toHaveBeenCalledWith(
         'execution.run.action',
-        { sessionId: 'sess-1', runId: 'run-1', actionId: 'action-1', input: { a: 1 } },
+        { sessionId: 'sess-canonical', runId: 'run-1', actionId: 'action-1', input: { a: 1 } },
         { surface: 'cli', defaultSessionId: null },
       );
 
-      expect(output.json()).toEqual(expect.objectContaining({
+      expect(printJsonEnvelope).toHaveBeenCalledWith(expect.objectContaining({
         ok: true,
         kind: 'session_run_action',
+        data: expect.objectContaining({ sessionId: 'sess-canonical', runId: 'run-1', actionId: 'action-1' }),
       }));
-    } finally {
-      output.restore();
-    }
   });
 });

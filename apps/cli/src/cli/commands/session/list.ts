@@ -29,7 +29,7 @@ export async function cmdSessionList(
   const credentials = await deps.readCredentialsFn();
   if (!credentials) {
     if (json) {
-      printJsonEnvelope({ ok: false, kind: 'session_list', error: { code: 'not_authenticated' } });
+      await printJsonEnvelope({ ok: false, kind: 'session_list', error: { code: 'not_authenticated' } });
       return;
     }
     console.error(chalk.red('Error:'), 'Not authenticated. Run "happier auth login" first.');
@@ -53,7 +53,7 @@ export async function cmdSessionList(
   const result = normalizeActionExecuteResult(actionRes);
   if (!result.ok) {
     if (json) {
-      printJsonEnvelope({
+      await printJsonEnvelope({
         ok: false,
         kind: 'session_list',
         error: {
@@ -67,7 +67,7 @@ export async function cmdSessionList(
     throw new Error(result.errorMessage ?? result.errorCode);
   }
   const payload = result.data as any;
-  if (tryHandleApprovalRequestCreated({ envelopeKind: 'session_list', json, result: payload })) {
+  if (await tryHandleApprovalRequestCreated({ envelopeKind: 'session_list', json, result: payload })) {
     return;
   }
   const sessions = Array.isArray(payload?.sessions) ? payload.sessions : [];
@@ -76,7 +76,7 @@ export async function cmdSessionList(
   const hasNext = payload?.hasNext === true;
 
   if (json) {
-    printJsonEnvelope({
+    await printJsonEnvelope({
       ok: true,
       kind: 'session_list',
       data: {
