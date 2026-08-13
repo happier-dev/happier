@@ -244,6 +244,53 @@ describe('terminalAttachmentInfo', () => {
     }
   });
 
+  it('removes a legacy v1 attachment by terminal metadata match when explicitly requested', async () => {
+    const dir = tmp.dirSync({ unsafeCleanup: true });
+    try {
+      const sessionId = 'sess_legacy_retire';
+      const terminal = { mode: 'tmux', tmux: { target: 'happy:legacy-window', tmpDir: '/tmp/tmux-root' } } as const;
+      await writeTerminalAttachmentInfo({
+        happyHomeDir: dir.name,
+        sessionId,
+        terminal,
+      });
+
+      await expect(removeTerminalAttachmentInfo({
+        happyHomeDir: dir.name,
+        sessionId,
+        expectedTerminal: terminal,
+        legacyTerminalMetadataRemoval: true,
+      })).resolves.toBe(true);
+      await expect(readTerminalAttachmentInfo({ happyHomeDir: dir.name, sessionId })).resolves.toBeNull();
+    } finally {
+      dir.removeCallback();
+    }
+  });
+
+  it('refuses legacy v1 removal when terminal metadata does not match', async () => {
+    const dir = tmp.dirSync({ unsafeCleanup: true });
+    try {
+      const sessionId = 'sess_legacy_mismatch';
+      await writeTerminalAttachmentInfo({
+        happyHomeDir: dir.name,
+        sessionId,
+        terminal: { mode: 'tmux', tmux: { target: 'happy:original' } },
+      });
+
+      await expect(removeTerminalAttachmentInfo({
+        happyHomeDir: dir.name,
+        sessionId,
+        expectedTerminal: { mode: 'tmux', tmux: { target: 'happy:different' } },
+        legacyTerminalMetadataRemoval: true,
+      })).resolves.toBe(false);
+      await expect(readTerminalAttachmentInfo({ happyHomeDir: dir.name, sessionId })).resolves.toMatchObject({
+        version: 1,
+      });
+    } finally {
+      dir.removeCallback();
+    }
+  });
+
   it('parks legacy v1 attachment removal even when its terminal metadata matches', async () => {
     const dir = tmp.dirSync({ unsafeCleanup: true });
     try {

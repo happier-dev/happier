@@ -78,10 +78,27 @@ export function buildTerminalHostHandleFromAttachmentMetadata(
     const sessionName = separatorIndex >= 0 ? target.slice(0, separatorIndex).trim() : target;
     const paneId = separatorIndex >= 0 ? target.slice(separatorIndex + 1).trim() : '';
     if (!sessionName) return null;
+    const socketDir = typeof terminal.tmux?.tmpDir === 'string' ? terminal.tmux.tmpDir.trim() : '';
     return {
       kind: 'tmux',
       sessionName,
       ...(paneId ? { paneId } : {}),
+      ...(socketDir ? { socketDir } : {}),
+      attachMetadata: {
+        attachStrategy: 'terminal_host',
+        topology: 'shared',
+        locality: 'same_machine',
+        maxClients: null,
+        requiresLocalAttachmentInfo: true,
+        liveProbe: 'required',
+      },
+    };
+  }
+
+  if (terminal.mode === 'windows_console') {
+    return {
+      kind: 'windows_console',
+      sessionName: 'windows_console',
       attachMetadata: {
         attachStrategy: 'terminal_host',
         topology: 'shared',

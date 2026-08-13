@@ -1,6 +1,16 @@
 import { describe, expect, it, vi } from 'vitest';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
-import { primeAgentStateForUi, reportSessionToDaemonIfRunning } from '@/agent/runtime/startupSideEffects';
+import {
+  persistTerminalAttachmentInfoIfNeeded,
+  primeAgentStateForUi,
+  reportSessionToDaemonIfRunning,
+} from '@/agent/runtime/startupSideEffects';
+import { configuration } from '@/configuration';
+import { readTerminalAttachmentState } from '@/terminal/attachment/terminalAttachmentInfo';
+import { executeTerminalHostDisposition } from '@/terminal/attachment/terminalHostDisposition';
 import type { Metadata } from '@/api/types';
 
 const metadataStub = {} as Metadata;
@@ -284,6 +294,45 @@ describe('startup side effects: daemon session reporting retry', () => {
     } finally {
       if (previousAutostart === undefined) delete process.env.HAPPIER_SESSION_AUTOSTART_DAEMON;
       else process.env.HAPPIER_SESSION_AUTOSTART_DAEMON = previousAutostart;
+    }
+  });
+});
+
+describe('startup side effects: terminal attachment persistence', () => {
+  it('persists a bound v2 record for a tmux spawn that the stop-path disposition retires instead of parking as legacy', async () => {
+    const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-attachment-'));
+    const originalHappyHomeDir = configuration.happyHomeDir;
+    // Narrow test-harness override: happyHomeDir is resolved from env once at process start.
+    (configuration as { happyHomeDir: string }).happyHomeDir = happyHomeDir;
+    try {
+      const sessionId = 'sess-tmux-spawn-v2';
+      await persistTerminalAttachmentInfoIfNeeded({
+        sessionId,
+        terminal: {
+          mode: 'tmux',
+          requested: 'tmux',
+          tmux: { target: 'happier:happy-window-1', tmpDir: '/tmp/happier-tmux' },
+        } as NonNullable<Metadata['terminal']>,
+      });
+
+      const state = await readTerminalAttachmentState({ happyHomeDir, sessionId });
+      if (state.status !== 'present' || state.info.version !== 2) {
+        throw new Error(`Expected a bound version-2 attachment record, got ${JSON.stringify(state)}`);
+      }
+      expect(state.info.handle.kind).toBe('tmux');
+      expect(state.info.handle.attachmentId).toBe(state.info.attachmentId);
+
+      const disposition = await executeTerminalHostDisposition({
+        happyHomeDir,
+        sessionId,
+        expectedAttachmentId: state.info.attachmentId,
+        intent: { kind: 'retire_confirmed_dead_attachment', reason: 'positive_dead_recovery' },
+      });
+      expect(disposition).toEqual({ status: 'retired', attachmentId: state.info.attachmentId });
+      await expect(readTerminalAttachmentState({ happyHomeDir, sessionId })).resolves.toEqual({ status: 'absent' });
+    } finally {
+      (configuration as { happyHomeDir: string }).happyHomeDir = originalHappyHomeDir;
+      await rm(happyHomeDir, { recursive: true, force: true });
     }
   });
 });

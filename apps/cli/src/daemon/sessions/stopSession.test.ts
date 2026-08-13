@@ -399,34 +399,51 @@ describe('createStopSession', () => {
     expect(pidToTrackedSession.has(333)).toBe(true);
   });
 
-  it('parks a legacy zellij attachment without signaling either host or runner', async () => {
+  it('stops a legacy zellij v1 session when host is confirmed dead after runner exit', async () => {
     const { createStopSession } = await import('./stopSession');
 
-    readTerminalAttachmentInfo.mockResolvedValueOnce({
-      version: 1,
-      sessionId: 'sess-zellij',
-      terminal: {
-        mode: 'zellij',
-        zellij: {
-          sessionName: 'happier-claude-unified-123',
-          paneId: 'terminal_1',
-        },
+    const terminal = {
+      mode: 'zellij' as const,
+      zellij: {
+        sessionName: 'happier-claude-unified-123',
+        paneId: 'terminal_1',
       },
+    };
+    const legacyAttachment = {
+      version: 1 as const,
+      sessionId: 'sess-zellij',
+      terminal,
       updatedAt: 1,
-    });
+    };
     const killSpy = vi.spyOn(process, 'kill').mockImplementation(() => true as any);
 
     const pidToTrackedSession = new Map<number, any>([
       [333, { startedBy: 'terminal', pid: 333, happySessionId: 'sess-zellij', processCommandHash: 'h3' }],
     ]);
 
-    const stop = createStopSession({ pidToTrackedSession });
+    const stop = createStopSession({
+      pidToTrackedSession,
+      readAttachmentInfo: vi.fn(async () => legacyAttachment),
+      removeAttachmentInfo: vi.fn(async () => true),
+      waitForTrackedRunnersExit: vi.fn(async () => true),
+      terminalHostAdapters: {
+        zellij: {
+          kind: 'zellij',
+          createOrAttachHost: vi.fn(),
+          injectUserPrompt: vi.fn(),
+          interruptTurn: vi.fn(),
+          evaluateLiveness: vi.fn(async () => ({ paneAlive: false, paneDead: true, observedAt: Date.now() })),
+          dispose: vi.fn(async () => undefined),
+        } as any,
+      },
+    });
     const ok = await stop('sess-zellij');
 
-    expect(ok).toEqual({ status: 'incomplete', reason: 'legacy_attachment' });
+    expect(ok).toEqual({ status: 'stopped' });
     expect(zellijKillSession).not.toHaveBeenCalled();
     expect(zellijDeleteSession).not.toHaveBeenCalled();
-    expect(killSpy).not.toHaveBeenCalled();
+    // Runners ARE signaled (v1 no longer blocks pre-signaling)
+    expect(killSpy).toHaveBeenCalledWith(333, 'SIGTERM');
   });
 
   it('does not destroy an exact host when no tracked runner exit can be proven', async () => {
@@ -1105,62 +1122,253 @@ describe('createStopSession', () => {
     expect(onExactTerminalAttachmentRetired).not.toHaveBeenCalled();
   });
 
-  it('parks a legacy attachment even when its old host is already missing', async () => {
+  it('stops a v1 tmux session whose runners have exited and attachment is confirmed dead', async () => {
     const { createStopSession } = await import('./stopSession');
 
-    readTerminalAttachmentInfo.mockResolvedValueOnce({
-      version: 1,
-      sessionId: 'sess-zellij',
-      terminal: {
-        mode: 'zellij',
-        zellij: {
-          sessionName: 'happier-claude-unified-123',
-          paneId: 'terminal_1',
-        },
-      },
+    const terminal = {
+      mode: 'tmux' as const,
+      tmux: { target: 'happy:legacy-window', tmpDir: '/tmp/happier-tmux' },
+    };
+    const legacyAttachment = {
+      version: 1 as const,
+      sessionId: 'sess-legacy-tmux',
+      terminal,
       updatedAt: 1,
-    });
+    };
+    const legacyReadAttachmentInfo = vi.fn(async () => legacyAttachment);
+    const legacyRemoveAttachmentInfo = vi.fn(async () => true);
     const killSpy = vi.spyOn(process, 'kill').mockImplementation(() => true as any);
 
     const pidToTrackedSession = new Map<number, any>([
-      [333, { startedBy: 'terminal', pid: 333, happySessionId: 'sess-zellij', processCommandHash: 'h3' }],
+      [444, { startedBy: 'terminal', pid: 444, happySessionId: 'sess-legacy-tmux', processCommandHash: 'h4' }],
     ]);
 
-    const stop = createStopSession({ pidToTrackedSession });
-    const ok = await stop('sess-zellij');
+    const stop = createStopSession({
+      pidToTrackedSession,
+      waitForTrackedRunnersExit: vi.fn(async () => true),
+      readAttachmentInfo: legacyReadAttachmentInfo,
+      removeAttachmentInfo: legacyRemoveAttachmentInfo,
+      terminalHostAdapters: {
+        tmux: {
+          kind: 'tmux',
+          createOrAttachHost: vi.fn(),
+          injectUserPrompt: vi.fn(),
+          interruptTurn: vi.fn(),
+          evaluateLiveness: vi.fn(async () => ({ paneAlive: false, paneDead: true, observedAt: Date.now() })),
+          dispose: vi.fn(async () => undefined),
+        } as any,
+      },
+    });
+    const result = await stop('sess-legacy-tmux');
 
-    expect(ok).toEqual({ status: 'incomplete', reason: 'legacy_attachment' });
-    expect(zellijKillSession).not.toHaveBeenCalled();
-    expect(killSpy).not.toHaveBeenCalled();
+    expect(result).toEqual({ status: 'stopped' });
+    expect(killSpy).toHaveBeenCalledWith(444, 'SIGTERM');
+    expect(legacyRemoveAttachmentInfo).toHaveBeenCalledWith(expect.objectContaining({
+      legacyTerminalMetadataRemoval: true,
+    }));
   });
 
-  it('does not fall through to runner signaling for a legacy zellij attachment', async () => {
+  it('refuses legacy v1 host retirement when the host is still alive', async () => {
     const { createStopSession } = await import('./stopSession');
 
-    readTerminalAttachmentInfo.mockResolvedValueOnce({
-      version: 1,
-      sessionId: 'sess-zellij',
-      terminal: {
-        mode: 'zellij',
-        zellij: {
-          sessionName: 'happier-claude-unified-123',
-          paneId: 'terminal_1',
-        },
+    const terminal = {
+      mode: 'zellij' as const,
+      zellij: {
+        sessionName: 'happier-claude-unified-123',
+        paneId: 'terminal_1',
       },
+    };
+    const legacyAttachment = {
+      version: 1 as const,
+      sessionId: 'sess-zellij',
+      terminal,
       updatedAt: 1,
-    });
+    };
     const killSpy = vi.spyOn(process, 'kill').mockImplementation(() => true as any);
 
     const pidToTrackedSession = new Map<number, any>([
       [333, { startedBy: 'terminal', pid: 333, happySessionId: 'sess-zellij', processCommandHash: 'h3' }],
     ]);
 
-    const stop = createStopSession({ pidToTrackedSession });
+    const stop = createStopSession({
+      pidToTrackedSession,
+      waitForTrackedRunnersExit: vi.fn(async () => true),
+      readAttachmentInfo: vi.fn(async () => legacyAttachment),
+      terminalHostAdapters: {
+        zellij: {
+          kind: 'zellij',
+          createOrAttachHost: vi.fn(),
+          injectUserPrompt: vi.fn(),
+          interruptTurn: vi.fn(),
+          evaluateLiveness: vi.fn(async () => ({ paneAlive: true, observedAt: Date.now() })),
+          dispose: vi.fn(async () => undefined),
+        } as any,
+      },
+    });
     const ok = await stop('sess-zellij');
 
     expect(ok).toEqual({ status: 'incomplete', reason: 'legacy_attachment' });
     expect(zellijKillSession).not.toHaveBeenCalled();
-    expect(killSpy).not.toHaveBeenCalled();
+    // Runners ARE signaled (v1 no longer blocks pre-signaling)
+    expect(killSpy).toHaveBeenCalledWith(333, 'SIGTERM');
+  });
+
+  it('refuses legacy v1 host retirement when liveness probe is inconclusive (not positively dead)', async () => {
+    const { createStopSession } = await import('./stopSession');
+
+    const terminal = {
+      mode: 'tmux' as const,
+      tmux: { target: 'happy:legacy-window', tmpDir: '/tmp/happier-tmux' },
+    };
+    const legacyAttachment = {
+      version: 1 as const,
+      sessionId: 'sess-inconclusive',
+      terminal,
+      updatedAt: 1,
+    };
+    const legacyRemoveAttachmentInfo = vi.fn(async () => true);
+    vi.spyOn(process, 'kill').mockImplementation(() => true as any);
+
+    const pidToTrackedSession = new Map<number, any>([
+      [445, { startedBy: 'terminal', pid: 445, happySessionId: 'sess-inconclusive', processCommandHash: 'h4' }],
+    ]);
+
+    // Both probes return inconclusive (paneAlive:false, probeInconclusive:true)
+    const evaluateLiveness = vi.fn(async () => ({
+      paneAlive: false,
+      probeInconclusive: true,
+      observedAt: Date.now(),
+    }));
+
+    const stop = createStopSession({
+      pidToTrackedSession,
+      waitForTrackedRunnersExit: vi.fn(async () => true),
+      readAttachmentInfo: vi.fn(async () => legacyAttachment),
+      removeAttachmentInfo: legacyRemoveAttachmentInfo,
+      terminalHostAdapters: {
+        tmux: {
+          kind: 'tmux',
+          createOrAttachHost: vi.fn(),
+          injectUserPrompt: vi.fn(),
+          interruptTurn: vi.fn(),
+          evaluateLiveness,
+          dispose: vi.fn(async () => undefined),
+        } as any,
+      },
+    });
+    const result = await stop('sess-inconclusive');
+
+    expect(result).toEqual({ status: 'incomplete', reason: 'legacy_attachment' });
+    // The descriptor must NOT be removed
+    expect(legacyRemoveAttachmentInfo).not.toHaveBeenCalled();
+  });
+
+  it('reports legacy_attachment when no adapter is available for legacy v1 host liveness probe', async () => {
+    const { createStopSession } = await import('./stopSession');
+
+    const terminal = {
+      mode: 'zellij' as const,
+      zellij: {
+        sessionName: 'happier-claude-unified-123',
+        paneId: 'terminal_1',
+      },
+    };
+    const legacyAttachment = {
+      version: 1 as const,
+      sessionId: 'sess-zellij-no-adapter',
+      terminal,
+      updatedAt: 1,
+    };
+    const killSpy = vi.spyOn(process, 'kill').mockImplementation(() => true as any);
+
+    const pidToTrackedSession = new Map<number, any>([
+      [334, { startedBy: 'terminal', pid: 334, happySessionId: 'sess-zellij-no-adapter', processCommandHash: 'h3' }],
+    ]);
+
+    const stop = createStopSession({
+      pidToTrackedSession,
+      waitForTrackedRunnersExit: vi.fn(async () => true),
+      readAttachmentInfo: vi.fn(async () => legacyAttachment),
+      terminalHostAdapters: {},
+    });
+    const ok = await stop('sess-zellij-no-adapter');
+
+    expect(ok).toEqual({ status: 'incomplete', reason: 'legacy_attachment' });
+    expect(killSpy).toHaveBeenCalledWith(334, 'SIGTERM');
+  });
+
+  it('retires a stale v1 tmux descriptor when zero runners are tracked and host is confirmed dead', async () => {
+    const { createStopSession } = await import('./stopSession');
+
+    const terminal = {
+      mode: 'tmux' as const,
+      tmux: { target: 'happy:stale-window', tmpDir: '/tmp/happier-tmux' },
+    };
+    const legacyAttachment = {
+      version: 1 as const,
+      sessionId: 'sess-stale-tmux',
+      terminal,
+      updatedAt: 1,
+    };
+    const legacyRemoveAttachmentInfo = vi.fn(async () => true);
+
+    const stop = createStopSession({
+      pidToTrackedSession: new Map(),
+      readAttachmentInfo: vi.fn(async () => legacyAttachment),
+      removeAttachmentInfo: legacyRemoveAttachmentInfo,
+      terminalHostAdapters: {
+        tmux: {
+          kind: 'tmux',
+          createOrAttachHost: vi.fn(),
+          injectUserPrompt: vi.fn(),
+          interruptTurn: vi.fn(),
+          evaluateLiveness: vi.fn(async () => ({ paneAlive: false, paneDead: true, observedAt: Date.now() })),
+          dispose: vi.fn(async () => undefined),
+        } as any,
+      },
+    });
+    const result = await stop('sess-stale-tmux');
+
+    expect(result).toEqual({ status: 'not_found' });
+    expect(legacyRemoveAttachmentInfo).toHaveBeenCalledWith(expect.objectContaining({
+      legacyTerminalMetadataRemoval: true,
+    }));
+  });
+
+  it('refuses stale v1 tmux descriptor retirement when zero runners are tracked and host is alive', async () => {
+    const { createStopSession } = await import('./stopSession');
+
+    const terminal = {
+      mode: 'tmux' as const,
+      tmux: { target: 'happy:stale-window', tmpDir: '/tmp/happier-tmux' },
+    };
+    const legacyAttachment = {
+      version: 1 as const,
+      sessionId: 'sess-stale-alive',
+      terminal,
+      updatedAt: 1,
+    };
+    const legacyRemoveAttachmentInfo = vi.fn(async () => true);
+
+    const stop = createStopSession({
+      pidToTrackedSession: new Map(),
+      readAttachmentInfo: vi.fn(async () => legacyAttachment),
+      removeAttachmentInfo: legacyRemoveAttachmentInfo,
+      terminalHostAdapters: {
+        tmux: {
+          kind: 'tmux',
+          createOrAttachHost: vi.fn(),
+          injectUserPrompt: vi.fn(),
+          interruptTurn: vi.fn(),
+          evaluateLiveness: vi.fn(async () => ({ paneAlive: true, observedAt: Date.now() })),
+          dispose: vi.fn(async () => undefined),
+        } as any,
+      },
+    });
+    const result = await stop('sess-stale-alive');
+
+    expect(result).toEqual({ status: 'incomplete', reason: 'legacy_attachment' });
+    expect(legacyRemoveAttachmentInfo).not.toHaveBeenCalled();
   });
 
   it('parks a tracked tmux host when no committed attachment identity exists', async () => {

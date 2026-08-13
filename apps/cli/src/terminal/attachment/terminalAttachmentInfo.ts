@@ -118,13 +118,26 @@ async function removeTerminalAttachmentInfoPath(params: {
   sessionId: string;
   expectedAttachmentId?: TerminalAttachmentId | string | undefined;
   expectedTerminal?: NonNullable<Metadata['terminal']> | undefined;
+  /** Allow removing a v1 record by terminal metadata match only (no attachmentId CAS). */
+  legacyTerminalMetadataRemoval?: boolean;
 }): Promise<boolean> {
   try {
     const raw = await readFile(params.path, 'utf8');
     const parsed = parseTerminalAttachmentInfo(raw, params.sessionId);
+    if (!parsed) return false;
+
+    if (params.legacyTerminalMetadataRemoval && parsed.version === 1) {
+      // For v1 (legacy) records: allow removal by terminal metadata deep-equality only.
+      // This is deliberately narrow — the caller must prove the host is dead before using this.
+      if (!params.expectedTerminal) return false;
+      if (!terminalMatchesExpected(parsed.terminal, params.expectedTerminal)) return false;
+      await unlink(params.path);
+      return true;
+    }
+
     if (!params.expectedAttachmentId) return false;
-    if (parsed?.version !== 2 || parsed.attachmentId !== params.expectedAttachmentId) return false;
-    if (!parsed || !terminalMatchesExpected(parsed.terminal, params.expectedTerminal)) return false;
+    if (parsed.version !== 2 || parsed.attachmentId !== params.expectedAttachmentId) return false;
+    if (!terminalMatchesExpected(parsed.terminal, params.expectedTerminal)) return false;
     await unlink(params.path);
     return true;
   } catch {
@@ -179,6 +192,8 @@ export async function removeTerminalAttachmentInfo(params: {
   sessionId: string;
   expectedAttachmentId?: TerminalAttachmentId | string | undefined;
   expectedTerminal?: NonNullable<Metadata['terminal']> | undefined;
+  /** Allow removing a v1 record by terminal metadata match only (no attachmentId CAS). */
+  legacyTerminalMetadataRemoval?: boolean;
 }): Promise<boolean> {
   const encodedPath = sessionFilePath(params.happyHomeDir, params.sessionId);
   if (await removeTerminalAttachmentInfoPath({
@@ -186,6 +201,7 @@ export async function removeTerminalAttachmentInfo(params: {
     sessionId: params.sessionId,
     expectedAttachmentId: params.expectedAttachmentId,
     expectedTerminal: params.expectedTerminal,
+    legacyTerminalMetadataRemoval: params.legacyTerminalMetadataRemoval,
   })) {
     return true;
   }
@@ -197,6 +213,7 @@ export async function removeTerminalAttachmentInfo(params: {
     sessionId: params.sessionId,
     expectedAttachmentId: params.expectedAttachmentId,
     expectedTerminal: params.expectedTerminal,
+    legacyTerminalMetadataRemoval: params.legacyTerminalMetadataRemoval,
   });
 }
 

@@ -81,6 +81,38 @@ describe('buildTerminalAttachmentMetadataFromHostHandle', () => {
     expect(legacyHandle?.socketDir).toBeUndefined();
   });
 
+  it('reconstructs a tmux handle with socketDir from persisted tmpDir', () => {
+    const handle = buildTerminalHostHandleFromAttachmentMetadata({
+      mode: 'tmux',
+      tmux: {
+        target: 'happy:unified-window',
+        tmpDir: '/tmp/happier-tmux-root',
+      },
+    });
+    expect(handle).toMatchObject({
+      kind: 'tmux',
+      sessionName: 'happy',
+      paneId: 'unified-window',
+      socketDir: '/tmp/happier-tmux-root',
+    });
+  });
+
+  it('reconstructs a windows_console handle from persisted metadata', () => {
+    const handle = buildTerminalHostHandleFromAttachmentMetadata({
+      mode: 'windows_console',
+      requested: 'console',
+      windows: { host: 'console' },
+    });
+    expect(handle).toMatchObject({
+      kind: 'windows_console',
+      sessionName: 'windows_console',
+      attachMetadata: {
+        attachStrategy: 'terminal_host',
+        topology: 'shared',
+      },
+    });
+  });
+
   it('builds non-focusable Windows console metadata from a PTY host handle', () => {
     const handle: TerminalHostHandle = {
       kind: 'windows_console',

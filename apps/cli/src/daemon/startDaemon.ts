@@ -401,7 +401,8 @@ import type { RuntimeAccountIdentitySelectionInput } from './connectedServices/q
 import { decodeJwtPayload } from '@/cloud/decodeJwtPayload';
 import { parseBooleanEnv, resolveConnectedServicesProviderStateSharingPolicyV1, type AccountSettings, type BackendTargetRefV1, type ConnectedServiceId } from '@happier-dev/protocol';
 import type { CatalogAgentId, ConnectedServiceSwitchEffectiveBinding } from '@/backends/types';
-import { readTerminalAttachmentInfo, writeTerminalAttachmentInfo } from '@/terminal/attachment/terminalAttachmentInfo';
+import { createTerminalAttachmentId, readTerminalAttachmentInfo, writeTerminalAttachmentInfo } from '@/terminal/attachment/terminalAttachmentInfo';
+import { buildTerminalHostHandleFromAttachmentMetadata } from '@/agent/runtime/terminal/attachmentMetadata';
 import {
   isAccountSettingsVersionAtLeast,
   normalizeAccountSettingsVersionHint,
@@ -2967,14 +2968,26 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
               // completed Stop make a racing or subsequently failed stop look successful.
               completedStopSessionIds.delete(normalizedExistingSessionId);
               if (unresolvedTerminalHostSessionIds.has(normalizedExistingSessionId)) {
-                logger.warn('[DAEMON RUN] Refusing Resume while preserved terminal topology is unreadable or legacy', {
-                  sessionId: normalizedExistingSessionId,
-                });
-                return {
-                  type: 'error',
-                  errorCode: SPAWN_SESSION_ERROR_CODES.UNEXPECTED,
-                  errorMessage: 'This session has preserved terminal topology that is unreadable or legacy. Repair or migrate that topology before trying Resume again.',
-                };
+                // Resume is the user's explicit intent to relaunch this session, so attempt the
+                // canonical stop-path repair first: it retires a preserved legacy (v1) terminal
+                // record only when its host is provably dead and fails closed otherwise. Cold
+                // startup deliberately never probes terminal hosts; this is the probe point.
+                const topologyRepair = await stopSessionCore(normalizedExistingSessionId);
+                if (topologyRepair.status === 'stopped' || topologyRepair.status === 'not_found') {
+                  unresolvedTerminalHostSessionIds.delete(normalizedExistingSessionId);
+                  logger.debug('[DAEMON RUN] Retired preserved legacy terminal topology before Resume', {
+                    sessionId: normalizedExistingSessionId,
+                  });
+                } else {
+                  logger.warn('[DAEMON RUN] Refusing Resume while preserved terminal topology is unreadable or legacy', {
+                    sessionId: normalizedExistingSessionId,
+                  });
+                  return {
+                    type: 'error',
+                    errorCode: SPAWN_SESSION_ERROR_CODES.UNEXPECTED,
+                    errorMessage: 'This session has preserved terminal topology that is unreadable or legacy. Repair or migrate that topology before trying Resume again.',
+                  };
+                }
               }
               const disconnectedHostCandidate = disconnectedTerminalHostCandidates.find(
                 (candidate) => candidate.sessionId === normalizedExistingSessionId
@@ -4016,9 +4029,14 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
                       typeof resolved.sessionId === 'string' ? resolved.sessionId.trim() : '';
                     if (resolvedSessionId) {
                       try {
+                        const windowsHandle = buildTerminalHostHandleFromAttachmentMetadata(params.terminal);
+                        const windowsAttachmentId = windowsHandle ? createTerminalAttachmentId() : undefined;
                         await writeTerminalAttachmentInfo({
                           happyHomeDir: configuration.happyHomeDir,
                           sessionId: resolvedSessionId,
+                          ...(windowsHandle && windowsAttachmentId
+                            ? { attachmentId: windowsAttachmentId, handle: windowsHandle }
+                            : {}),
                           terminal: params.terminal,
                         });
                       } catch (error) {

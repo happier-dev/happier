@@ -7,9 +7,12 @@ import {
   readTerminalAttachmentState,
   removeTerminalAttachmentInfo,
   type BoundTerminalAttachmentInfo,
+  type LegacyTerminalAttachmentInfo,
   type TerminalAttachmentReadState,
 } from '@/terminal/attachment/terminalAttachmentInfo';
 import { executeTerminalHostDisposition } from '@/terminal/attachment/terminalHostDisposition';
+import { buildTerminalHostHandleFromAttachmentMetadata } from '@/agent/runtime/terminal/attachmentMetadata';
+import { evaluateTerminalHostLivenessForRecovery } from '@/integrations/terminalHost/livenessPolicy';
 import { configuration } from '@/configuration';
 
 import { isPidSafeHappySessionProcess } from '../pidSafety';
@@ -78,6 +81,72 @@ async function taskkillWindowsDaemonChild(params: Readonly<{
   params.session.stopRequestedAtMs = Date.now();
   logger.debug(`[DAEMON RUN] taskkill requested for daemon-spawned session process tree ${params.normalizedSessionId} (pid=${params.pid})`);
   return true;
+}
+
+async function resolveLegacyHostAdapter(
+  attachmentInfo: LegacyTerminalAttachmentInfo,
+  terminalHostAdapters: TerminalHostRegistry | undefined,
+  loadTerminalHostAdapters: (() => Promise<TerminalHostRegistry>) | undefined,
+  logWarning: (message: string, ...args: unknown[]) => void,
+  sessionId: string,
+): Promise<TerminalHostAdapter | null> {
+  const kind = attachmentInfo.terminal.mode === 'tmux' ? 'tmux'
+    : attachmentInfo.terminal.mode === 'zellij' ? 'zellij'
+    : attachmentInfo.terminal.mode === 'windows_console' ? 'windows_console'
+    : null;
+  if (!kind) return null;
+  const adapters = terminalHostAdapters
+    ?? await loadTerminalHostAdapters?.().catch((error) => {
+      logWarning(`[DAEMON RUN] Failed to acquire terminal host cleanup adapters for legacy session ${sessionId}`, error);
+      return null;
+    });
+  return adapters?.[kind] ?? null;
+}
+
+/**
+ * Attempt to retire a legacy v1 terminal host record by probing the canonical liveness policy.
+ * Only retires on positive death (`status === 'dead'`); alive and inconclusive refuse.
+ * Returns the disposition result on success, or an incomplete reason on refusal.
+ */
+async function attemptLegacyHostRetirement(input: Readonly<{
+  attachmentInfo: LegacyTerminalAttachmentInfo;
+  adapter: TerminalHostAdapter;
+  normalizedSessionId: string;
+  readAttachmentInfo: typeof readTerminalAttachmentInfo;
+  removeAttachmentInfo: typeof removeTerminalAttachmentInfo;
+  logWarning: (message: string, ...args: unknown[]) => void;
+}>): Promise<StopSessionResult | null> {
+  const handle = buildTerminalHostHandleFromAttachmentMetadata(input.attachmentInfo.terminal);
+  if (!handle) return null;
+
+  try {
+    const probeResult = await evaluateTerminalHostLivenessForRecovery(input.adapter, handle);
+    if (probeResult.status === 'dead') {
+      const disposition = await executeTerminalHostDisposition({
+        happyHomeDir: configuration.happyHomeDir,
+        sessionId: input.normalizedSessionId,
+        expectedAttachmentId: 'legacy-v1-retirement',
+        intent: { kind: 'retire_confirmed_dead_attachment', reason: 'positive_dead_recovery' },
+        provenDeadLegacyTerminal: input.attachmentInfo.terminal,
+        readAttachmentInfo: input.readAttachmentInfo,
+        removeAttachmentInfo: input.removeAttachmentInfo,
+      });
+      if (disposition.status === 'retired_legacy') {
+        return { status: 'stopped' };
+      }
+      input.logWarning(`[DAEMON RUN] Legacy attachment retirement failed for session ${input.normalizedSessionId}`);
+      return incompleteStopSession('legacy_attachment');
+    }
+    if (probeResult.status === 'alive') {
+      input.logWarning(`[DAEMON RUN] Legacy terminal host is still alive for session ${input.normalizedSessionId}; refusing retirement`);
+    } else {
+      input.logWarning(`[DAEMON RUN] Legacy terminal host liveness probe was inconclusive for session ${input.normalizedSessionId}; refusing retirement`);
+    }
+    return incompleteStopSession('legacy_attachment');
+  } catch (error) {
+    input.logWarning(`[DAEMON RUN] Failed to probe legacy terminal host liveness for session ${input.normalizedSessionId}`, error);
+    return incompleteStopSession('legacy_attachment');
+  }
 }
 
 export function createStopSession(params: Readonly<{
@@ -185,14 +254,12 @@ export function createStopSession(params: Readonly<{
         logWarning(`[DAEMON RUN] Terminal attachment retired but provider artifacts could not be cleaned for session ${normalizedSessionId}`, error);
       });
     };
+    // Track whether a v1 legacy record with a terminal host needs dead-host retirement after runner exit.
+    const legacyHostRetirementNeeded = attachmentInfo?.version === 1
+      && (attachmentInfo.terminal.mode === 'tmux'
+        || attachmentInfo.terminal.mode === 'zellij'
+        || attachmentInfo.terminal.mode === 'windows_console');
     if (!isPidFallback) {
-      if (attachmentInfo) {
-        if (attachmentInfo.version !== 2) {
-          logWarning(`[DAEMON RUN] Refusing to destroy legacy terminal attachment without immutable identity for session ${normalizedSessionId}`);
-          return incompleteStopSession('legacy_attachment');
-        }
-      }
-
       const terminalModes = pidsToStop.map((pid) => {
         const provenTerminalHostKind = params.provenTerminalHostKindsByPid?.get(pid);
         if (provenTerminalHostKind) return provenTerminalHostKind;
@@ -233,6 +300,33 @@ export function createStopSession(params: Readonly<{
           return incompleteStopSession('missing_topology_proof');
         }
       }
+      // A stale v1 record can outlive its runners; retire it only on a provably dead host.
+      if (legacyHostRetirementNeeded && attachmentInfo?.version === 1) {
+        const legacyAdapter = await resolveLegacyHostAdapter(
+          attachmentInfo, params.terminalHostAdapters, params.loadTerminalHostAdapters, logWarning, normalizedSessionId,
+        );
+        if (legacyAdapter) {
+          const retirementResult = await attemptLegacyHostRetirement({
+            attachmentInfo,
+            adapter: legacyAdapter,
+            normalizedSessionId,
+            readAttachmentInfo,
+            removeAttachmentInfo: params.removeAttachmentInfo ?? removeTerminalAttachmentInfo,
+            logWarning,
+          });
+          if (retirementResult) {
+            // On successful retirement, return not_found (truthful: daemon never tracked these runners).
+            // On refusal, the retirementResult already carries the incomplete reason.
+            return retirementResult.status === 'stopped'
+              ? { status: 'not_found' }
+              : retirementResult;
+          }
+        }
+        // Cannot probe: refuse with legacy_attachment
+        logWarning(`[DAEMON RUN] Cannot probe legacy terminal host for untracked session ${normalizedSessionId}; refusing retirement`);
+        return incompleteStopSession('legacy_attachment');
+      }
+
       logger.debug(`[DAEMON RUN] Session ${normalizedSessionId} not found`);
       return { status: 'not_found' };
     }
@@ -418,6 +512,27 @@ export function createStopSession(params: Readonly<{
         ? incompleteStopSession(mapDispositionFailureReason(disposition.reason))
         : incompleteStopSession('destroy_failed');
     }
+
+    if (legacyHostRetirementNeeded && attachmentInfo?.version === 1) {
+      // After runners have exited, attempt to retire the legacy v1 terminal host record.
+      const legacyAdapter = await resolveLegacyHostAdapter(
+        attachmentInfo, params.terminalHostAdapters, params.loadTerminalHostAdapters, logWarning, normalizedSessionId,
+      );
+      if (legacyAdapter) {
+        const result = await attemptLegacyHostRetirement({
+          attachmentInfo,
+          adapter: legacyAdapter,
+          normalizedSessionId,
+          readAttachmentInfo,
+          removeAttachmentInfo: params.removeAttachmentInfo ?? removeTerminalAttachmentInfo,
+          logWarning,
+        });
+        if (result) return result;
+      }
+      logWarning(`[DAEMON RUN] Cannot probe legacy terminal host for session ${normalizedSessionId}; refusing retirement`);
+      return incompleteStopSession('legacy_attachment');
+    }
+
     return { status: 'stopped' };
   };
 }

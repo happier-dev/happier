@@ -24,6 +24,7 @@ export type TerminalHostDispositionIntent =
 export type TerminalHostDispositionResult =
   | Readonly<{ status: 'preserved'; attachmentId: TerminalAttachmentId }>
   | Readonly<{ status: 'retired'; attachmentId: TerminalAttachmentId }>
+  | Readonly<{ status: 'retired_legacy' }>
   | Readonly<{
       status: 'destroyed';
       attachmentId: TerminalAttachmentId;
@@ -43,12 +44,19 @@ export async function executeTerminalHostDisposition(input: Readonly<{
   expectedAttachmentId: TerminalAttachmentId | string;
   intent: TerminalHostDispositionIntent;
   adapter?: TerminalHostAdapter;
+  /**
+   * For legacy v1 retirement: the exact terminal metadata the caller probed and confirmed dead.
+   * The on-disk record is only removed when it deep-equals this value, preventing removal of
+   * a concurrently rewritten record whose liveness was never verified.
+   */
+  provenDeadLegacyTerminal?: TerminalAttachmentInfo['terminal'];
   readAttachmentInfo?: (input: Readonly<{ happyHomeDir: string; sessionId: string }>) => Promise<TerminalAttachmentInfo | null>;
   removeAttachmentInfo?: (input: Readonly<{
     happyHomeDir: string;
     sessionId: string;
     expectedAttachmentId: TerminalAttachmentId | string;
     expectedTerminal: TerminalAttachmentInfo['terminal'];
+    legacyTerminalMetadataRemoval?: boolean;
   }>) => Promise<boolean>;
   /** Runs after physical retirement is proven and before the local retry identity is removed. */
   beforeDescriptorRetirement?: (input: Readonly<{
@@ -63,8 +71,29 @@ export async function executeTerminalHostDisposition(input: Readonly<{
     happyHomeDir: input.happyHomeDir,
     sessionId: input.sessionId,
   });
-  if (!attachmentInfo || attachmentInfo.version === 1) {
+  if (!attachmentInfo) {
     return { status: 'parked', reason: 'legacy_attachment' };
+  }
+  if (attachmentInfo.version === 1) {
+    // Legacy v1 records can only be retired when the host is confirmed dead.
+    // For destroy or preserve intents, we cannot safely proceed without an immutable identity.
+    if (input.intent.kind !== 'retire_confirmed_dead_attachment') {
+      return { status: 'parked', reason: 'legacy_attachment' };
+    }
+    // Remove the v1 descriptor by terminal metadata match (no attachmentId CAS).
+    // Compare against the caller's proven-dead terminal, not the fresh read's own terminal,
+    // so a concurrent rewrite with different metadata is not silently removed.
+    const legacyExpectedTerminal = input.provenDeadLegacyTerminal ?? attachmentInfo.terminal;
+    const removed = await removeAttachment({
+      happyHomeDir: input.happyHomeDir,
+      sessionId: input.sessionId,
+      expectedAttachmentId: input.expectedAttachmentId,
+      expectedTerminal: legacyExpectedTerminal,
+      legacyTerminalMetadataRemoval: true,
+    });
+    return removed
+      ? { status: 'retired_legacy' }
+      : { status: 'parked', reason: 'legacy_attachment' };
   }
   if (attachmentInfo.attachmentId !== input.expectedAttachmentId) {
     return { status: 'parked', reason: 'attachment_mismatch' };

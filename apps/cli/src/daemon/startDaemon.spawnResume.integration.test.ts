@@ -4118,7 +4118,7 @@ describe('startDaemon spawn resume wiring (integration)', () => {
     }
   });
 
-  it('fences explicit Resume before spawn when preserved terminal topology is unreadable or legacy', async () => {
+  it('keeps fencing explicit Resume when preserved legacy terminal topology cannot be provably retired', async () => {
     const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
     const refreshEnvOriginal = process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED;
     process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED = 'false';
@@ -4131,6 +4131,7 @@ describe('startDaemon spawn resume wiring (integration)', () => {
         unresolvedTerminalHostSessionIds: ['sess_unresolved_terminal_topology'],
         connectedServiceRestartIntents: [],
       });
+      stopSessionMocks.stopSession.mockResolvedValue({ status: 'incomplete', reason: 'legacy_attachment' });
 
       const { startDaemon } = await import('./startDaemon');
       run = startDaemon();
@@ -4151,7 +4152,68 @@ describe('startDaemon spawn resume wiring (integration)', () => {
         errorCode: SPAWN_SESSION_ERROR_CODES.UNEXPECTED,
         errorMessage: 'This session has preserved terminal topology that is unreadable or legacy. Repair or migrate that topology before trying Resume again.',
       });
+      expect(stopSessionMocks.stopSession).toHaveBeenCalledWith('sess_unresolved_terminal_topology');
       expect(spawnHappyCLI).not.toHaveBeenCalled();
+
+      harness.requestShutdown('happier-cli');
+      await run;
+      run = null;
+    } finally {
+      if (run) {
+        harness.requestShutdown('happier-cli');
+        await run;
+      }
+      const reattachModule = await import('./sessions/reattachFromMarkers');
+      vi.mocked(reattachModule.reattachTrackedSessionsFromMarkers).mockResolvedValue({
+        orphanedDeadDaemonSessions: [],
+        connectedServiceRestartIntents: [],
+      });
+      if (refreshEnvOriginal === undefined) delete process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED;
+      else process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED = refreshEnvOriginal;
+      exitSpy.mockRestore();
+    }
+  });
+
+  it('repairs provably dead preserved legacy topology through the stop path and resumes', async () => {
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
+    const refreshEnvOriginal = process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED;
+    process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED = 'false';
+    let run: Promise<void> | null = null;
+
+    try {
+      const reattachModule = await import('./sessions/reattachFromMarkers');
+      vi.mocked(reattachModule.reattachTrackedSessionsFromMarkers).mockResolvedValue({
+        orphanedDeadDaemonSessions: [],
+        unresolvedTerminalHostSessionIds: ['sess_plain'],
+        connectedServiceRestartIntents: [],
+      });
+      // The stop path retires a legacy v1 record only on a provably dead host and, with no
+      // tracked runners, truthfully reports not_found. That is the repaired-topology signal.
+      stopSessionMocks.stopSession.mockResolvedValue({ status: 'not_found' });
+
+      const { startDaemon } = await import('./startDaemon');
+      run = startDaemon();
+      let spawnSession = harness.getSpawnSession();
+      for (let attempt = 0; attempt < 20 && !spawnSession; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        spawnSession = harness.getSpawnSession();
+      }
+      if (!spawnSession) throw new Error('Expected spawnSession to be registered');
+
+      const result = await spawnSession({
+        directory: '/tmp',
+        backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+        existingSessionId: 'sess_plain',
+        token: 'token-from-spawn-options',
+        codexBackendMode: 'acp',
+      });
+
+      expect(stopSessionMocks.stopSession).toHaveBeenCalledWith('sess_plain');
+      expect(result).toMatchObject({ type: 'success' });
+      expect(spawnHappyCLI).toHaveBeenCalledTimes(1);
+      const firstCall = spawnHappyCLI.mock.calls[0];
+      if (!firstCall) throw new Error('Expected spawnHappyCLI to be called');
+      expect(firstCall[0]).toEqual(expect.arrayContaining(['--existing-session', 'sess_plain']));
 
       harness.requestShutdown('happier-cli');
       await run;
