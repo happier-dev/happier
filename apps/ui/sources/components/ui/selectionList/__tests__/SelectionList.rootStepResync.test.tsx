@@ -26,7 +26,87 @@ function makeStep(id: string, optionId: string, optionLabel: string): SelectionL
     };
 }
 
+type FiredInput = { props: Record<string, ((arg?: unknown) => void) | undefined> };
+
 describe('SelectionList rootStep prop-change resync (Phase 1A)', () => {
+    /**
+     * A consumer that rebuilds `rootStep` is not asking to navigate. The worktree
+     * picker rebuilds its whole step tree once a minute (the relative-time clock is
+     * one of its memo inputs) and again on every SCM snapshot refresh, so a rebuild
+     * with the SAME step id is a CONTENT refresh of the root the user is already on.
+     * Draining the stack there threw the user out of a pushed step and cleared the
+     * name they were typing into it.
+     */
+    it('keeps a pushed sub-step and its in-progress input when the root is rebuilt for the same step', async () => {
+        const { act } = await import('react-test-renderer');
+        const { SelectionList } = await import('../SelectionList');
+
+        const onCommitInputValue = vi.fn();
+        // Mirrors the real worktree "name your worktree" step: a value-mode step whose
+        // synthesized row carries the live input into the commit.
+        const nameStep: SelectionListStep = {
+            id: 'worktree-name',
+            inputPlaceholder: 'Type a name',
+            inputMode: 'value',
+            disableInputFilter: true,
+            onCommitInputValue,
+            buildInputRow: (input) => ({
+                id: 'create',
+                label: `Create worktree: ${input}`,
+                onSelect: () => onCommitInputValue(input),
+            }),
+            sections: [],
+        };
+        const buildRoot = (): SelectionListStep => ({
+            id: 'worktree-root',
+            inputPlaceholder: 'Search',
+            sections: [
+                {
+                    kind: 'static',
+                    id: 's',
+                    options: [{ id: 'go', label: 'New worktree', openStep: nameStep }],
+                },
+            ],
+        });
+
+        function Host(props: Readonly<{ root: SelectionListStep }>): React.ReactElement {
+            return (
+                <SelectionList
+                    rootStep={props.root}
+                    onSelect={vi.fn()}
+                    onRequestClose={vi.fn()}
+                    keyboardHintsEnabled={false}
+                    disableTransitions
+                    testID="sl"
+                />
+            );
+        }
+
+        const screen = await renderScreen(<Host root={buildRoot()} />);
+        await screen.pressByTestIdAsync('sl:worktree-root:option:go');
+        expect(screen.findByTestId('sl:header:leading:back-chip')).not.toBeNull();
+
+        const input = screen.findByTestId('sl:header:input') as never as FiredInput;
+        await act(async () => {
+            input.props.onChangeText?.('half-typed-name');
+        });
+
+        // The minute tick: same root step, rebuilt object.
+        await act(async () => {
+            screen.update(<Host root={buildRoot()} />);
+        });
+
+        // Still on the pushed step (its back chip and its own placeholder)...
+        expect(screen.findByTestId('sl:header:leading:back-chip')).not.toBeNull();
+        const inputAfterTick = screen.findByTestId('sl:header:input') as never as FiredInput;
+        expect((inputAfterTick.props as never as Record<string, unknown>).placeholder).toBe('Type a name');
+        // ...and the half-typed name is still in the field, so the step's own commit
+        // still creates the worktree the user was naming.
+        expect((inputAfterTick.props as never as Record<string, unknown>).value).toBe('half-typed-name');
+        await screen.pressByTestIdAsync('sl:worktree-name:option:create');
+        expect(onCommitInputValue).toHaveBeenCalledWith('half-typed-name');
+    });
+
     it('resets the displayed step stack when rootStep identity changes after mount', async () => {
         const { act } = await import('react-test-renderer');
         const { SelectionList } = await import('../SelectionList');
