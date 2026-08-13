@@ -100,7 +100,8 @@ export function isClaudeUnifiedTerminalUnconfirmedSubmitFailureError(
 ): error is ClaudeUnifiedTerminalInjectionFailureError {
   return isClaudeUnifiedTerminalInjectionFailureError(error)
     && (error as { failureState?: unknown }).failureState === 'failed_ambiguous'
-    && (error as { reason?: unknown }).reason === 'host_unreachable'
+    && ((error as { reason?: unknown }).reason === 'host_unreachable'
+      || (error as { reason?: unknown }).reason === 'verification_failed')
     && (error as { phase?: unknown }).phase === 'after_enter_unknown';
 }
 

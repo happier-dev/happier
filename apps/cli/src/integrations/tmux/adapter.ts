@@ -17,7 +17,10 @@ import { resolveTmuxPromptSubmitDelayMs } from './env';
 import { evaluateTmuxPaneLiveness } from './paneLiveness';
 import { TmuxUtilities } from './TmuxUtilities';
 import { pasteTextViaTmuxBuffer } from './typeText';
-import type { TerminalPromptSubmitVerificationPolicy } from '../terminalHost/promptSubmitVerification';
+import {
+  resolveTerminalPromptSubmissionFailureReason,
+  type TerminalPromptSubmitVerificationPolicy,
+} from '../terminalHost/promptSubmitVerification';
 import { resolveTerminalPromptWriteTimeoutMs } from '@/agent/runtime/terminal/injection/promptWriteTimeout';
 
 /**
@@ -237,7 +240,7 @@ export function createTmuxTerminalHostAdapter(params?: Readonly<{
           });
         }
         return failedInjectionResult({
-          reason: result.reason === 'timeout' ? 'timeout' : 'host_unreachable',
+          reason: resolveTerminalPromptSubmissionFailureReason(result.reason),
           phase: writeAuthorized && result.phase === 'before_write' ? 'during_write' : result.phase,
           duplicateRisk: writeAuthorized && result.duplicateRisk === 'none' ? 'possible' : result.duplicateRisk,
           recoverable: true,

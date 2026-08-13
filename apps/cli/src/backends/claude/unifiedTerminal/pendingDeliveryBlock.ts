@@ -192,7 +192,7 @@ export function resolveClaudeUnifiedPendingDeliveryBlock(
 
   if (
     failureState === 'failed_ambiguous'
-    && reason === 'host_unreachable'
+    && (reason === 'host_unreachable' || reason === 'verification_failed')
     && phase === 'after_enter_unknown'
     && duplicateRisk !== 'none'
     && recoverable === true

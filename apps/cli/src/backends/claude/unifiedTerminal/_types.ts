@@ -43,6 +43,12 @@ export type ClaudeUnifiedPromptAcceptedHandler<Mode = unknown> = (
   acceptance: ClaudeUnifiedPromptAcceptance,
 ) => void | Promise<void>;
 
+export type ClaudeUnifiedPromptProviderAcceptancePendingHandler<Mode = unknown> = (
+  batch: ClaudeUnifiedPromptBatch<Mode>,
+  acceptance: ClaudeUnifiedPromptAcceptance,
+  observedAtMs?: number | undefined,
+) => void;
+
 export type ClaudeUnifiedPromptInjectedHandler<Mode = unknown> = (
   batch: ClaudeUnifiedPromptBatch<Mode>,
   acceptance: ClaudeUnifiedPromptAcceptance,

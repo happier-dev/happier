@@ -1905,10 +1905,6 @@ export async function runClaudeUnifiedTerminalSession<Mode extends EnhancedMode 
           );
         },
         onInjectionFailure: async (failure) => {
-          if (failure.failureState === 'failed_ambiguous') {
-            ambiguousPromptAcceptanceBatches.add(failure.batch);
-            recordPromptAcceptanceCorrelation(failure.batch);
-          }
           const error = new ClaudeUnifiedTerminalInjectionFailureError(failure);
           const notifyTerminalInjectionFailure = async (logContext: string) => {
             try {
@@ -1940,9 +1936,11 @@ export async function runClaudeUnifiedTerminalSession<Mode extends EnhancedMode 
           }
           return await notifyTerminalInjectionFailure('[unified]: failed to surface Claude unified terminal injection failure (non-fatal)');
         },
-        onPromptInjected: async (batch, acceptance, result) => {
+        onProviderAcceptancePending: (batch, _acceptance, observedAtMs) => {
+          recordPromptAcceptanceCorrelation(batch, observedAtMs);
+        },
+        onPromptInjected: async (batch, acceptance) => {
           steerWiring.observeInjectedPrompt(batch, acceptance);
-          recordPromptAcceptanceCorrelation(batch, result.at);
           if (batch.mode === undefined) return undefined;
           endStartupHostLivenessGrace();
           return opts.onTerminalPromptInjected?.({
@@ -2089,7 +2087,6 @@ export async function runClaudeUnifiedTerminalSession<Mode extends EnhancedMode 
         && confirmPromptAcceptedFromTranscript([...recentAcceptedTranscriptCandidates], { rememberUnmatched: false })
       );
       const promptAcceptanceCorrelationRecordedBatches = new WeakSet<object>();
-      const ambiguousPromptAcceptanceBatches = new WeakSet<object>();
       const recordPromptAcceptanceCorrelation = (
         batch: ClaudeUnifiedPromptBatch<Mode>,
         acceptedAtMs?: number | undefined,

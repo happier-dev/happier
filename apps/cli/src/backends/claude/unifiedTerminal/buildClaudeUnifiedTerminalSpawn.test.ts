@@ -162,6 +162,11 @@ describe('buildClaudeUnifiedTerminalSpawn', () => {
       '--permission-mode',
       'bypassPermissions',
     ]);
+    const settingsIndex = launchArgs.indexOf('--settings');
+    expect(settingsIndex).toBeGreaterThanOrEqual(0);
+    expect(JSON.parse(launchArgs[settingsIndex + 1]!)).toMatchObject({
+      skipDangerousModePermissionPrompt: true,
+    });
   });
 
   it('does not let bare --resume consume a following permission flag', async () => {
@@ -198,6 +203,10 @@ describe('buildClaudeUnifiedTerminalSpawn', () => {
       '--plugin-dir',
       '/tmp/hook-plugin',
     ]);
+    const settingsIndex = launchArgs.indexOf('--settings');
+    expect(JSON.parse(launchArgs[settingsIndex + 1]!)).toMatchObject({
+      skipDangerousModePermissionPrompt: true,
+    });
   });
 
   it('uses the managed JavaScript runtime wrapper when the resolved Claude CLI is a JavaScript file', async () => {
@@ -289,8 +298,48 @@ async function readOverlayFromArgs(args: readonly string[], hookSettingsPath: st
       const args = launchSpec.args ?? [];
       const overlay = await readOverlayFromArgs(args, hookSettingsPath);
       expect(overlay.ultracode).toBe(true);
+      expect(overlay).not.toHaveProperty('skipDangerousModePermissionPrompt');
       // The hook settings content survives the merge.
       expect(overlay.permissions).toEqual({ allow: ['mcp__happier__change_title'] });
+    } finally {
+      await rm(settingsDir, { recursive: true, force: true });
+    }
+  });
+
+  it('merges yolo acknowledgement into the trusted launch overlay without changing the source settings', async () => {
+    const { mkdtemp, readFile, writeFile } = await import('node:fs/promises');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const settingsDir = await mkdtemp(join(tmpdir(), 'happier-yolo-settings-'));
+    const hookSettingsPath = join(settingsDir, 'settings.json');
+    const sourceSettings = { permissions: { allow: ['mcp__happier__change_title'] } };
+    await writeFile(hookSettingsPath, JSON.stringify(sourceSettings));
+
+    try {
+      const spawn = await buildClaudeUnifiedTerminalSpawn({
+        path: '/workspace/project',
+        first: {
+          message: 'hello',
+          mode: { permissionMode: 'yolo' },
+        },
+        hookSettingsPath,
+        deps: {
+          resolveClaudeCliPath: () => '/usr/local/bin/claude',
+          isClaudeCliJavaScriptFile: () => false,
+          ensureClaudeJsRuntimeExecutable: async () => '/managed/node',
+          claudeLocalLauncherPath: '/happier/scripts/claude_local_launcher.cjs',
+          terminalLaunchSpecRunnerPath: '/happier/scripts/terminal_launch_spec_runner.cjs',
+          resolveCommandInvocation: ({ command, args }) => ({ command, args: [...args] }),
+        },
+      });
+
+      const launchSpec = await readLaunchSpecFromSpawn(spawn);
+      const overlay = await readOverlayFromArgs(launchSpec.args ?? [], hookSettingsPath);
+      expect(overlay).toMatchObject({
+        ...sourceSettings,
+        skipDangerousModePermissionPrompt: true,
+      });
+      expect(JSON.parse(await readFile(hookSettingsPath, 'utf8'))).toEqual(sourceSettings);
     } finally {
       await rm(settingsDir, { recursive: true, force: true });
     }
@@ -805,7 +854,7 @@ async function readOverlayFromArgs(args: readonly string[], hookSettingsPath: st
         first: {
           message: 'hello',
           mode: {
-            permissionMode: 'default',
+            permissionMode: 'yolo',
           },
         },
         deps: {
@@ -827,6 +876,11 @@ async function readOverlayFromArgs(args: readonly string[], hookSettingsPath: st
       expect(spawn.spawnEnv.CLAUDE_CODE_SETUP_TOKEN).toBeUndefined();
       expect(spawn.spawnEnv[HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY]).toBeUndefined();
       expect(spawn.spawnEnv[HAPPIER_CONNECTED_SERVICE_MATERIALIZED_ENV_KEYS_ENV_KEY]).toBeUndefined();
+      const launchArgs = launchSpec.args ?? [];
+      const settingsIndex = launchArgs.indexOf('--settings');
+      expect(JSON.parse(launchArgs[settingsIndex + 1]!)).toMatchObject({
+        skipDangerousModePermissionPrompt: true,
+      });
     });
   });
 

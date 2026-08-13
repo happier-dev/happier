@@ -25,6 +25,14 @@ export type TerminalPromptSubmissionResult =
     submitMayHaveReachedPane: boolean;
   }>;
 
+export function resolveTerminalPromptSubmissionFailureReason(
+  reason: Extract<TerminalPromptSubmissionResult, { success: false }>['reason'] | 'load_failed' | 'paste_failed',
+): 'verification_failed' | 'host_unreachable' | 'timeout' {
+  if (reason === 'timeout') return 'timeout';
+  if (reason === 'verification_failed') return 'verification_failed';
+  return 'host_unreachable';
+}
+
 function defaultWait(delayMs: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, delayMs));
 }

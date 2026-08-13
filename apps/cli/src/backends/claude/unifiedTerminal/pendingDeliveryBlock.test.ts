@@ -21,22 +21,25 @@ describe('resolveClaudeUnifiedPendingDeliveryBlock', () => {
     expect(resolveClaudeUnifiedPendingDeliveryBlock(error)).toBeNull();
   });
 
-  it('classifies recoverable after-enter host ambiguity as ambiguous blocked pending delivery', () => {
-    const error = Object.assign(new Error('Claude unified terminal prompt submission could not be confirmed'), {
-      code: 'claude_unified_terminal_injection_failed',
-      failureState: 'failed_ambiguous',
-      reason: 'host_unreachable',
-      phase: 'after_enter_unknown',
-      duplicateRisk: 'possible',
-      recoverable: true,
-      userMessageLocalIds: ['pending-local-visible-after-enter'],
-    });
+  it.each(['host_unreachable', 'verification_failed'] as const)(
+    'classifies recoverable after-enter %s ambiguity as ambiguous blocked pending delivery',
+    (reason) => {
+      const error = Object.assign(new Error('Claude unified terminal prompt submission could not be confirmed'), {
+        code: 'claude_unified_terminal_injection_failed',
+        failureState: 'failed_ambiguous',
+        reason,
+        phase: 'after_enter_unknown',
+        duplicateRisk: 'possible',
+        recoverable: true,
+        userMessageLocalIds: ['pending-local-visible-after-enter'],
+      });
 
-    expect(resolveClaudeUnifiedPendingDeliveryBlock(error)).toEqual({
-      localIds: ['pending-local-visible-after-enter'],
-      reason: 'ambiguous_terminal_delivery',
-    });
-  });
+      expect(resolveClaudeUnifiedPendingDeliveryBlock(error)).toEqual({
+        localIds: ['pending-local-visible-after-enter'],
+        reason: 'ambiguous_terminal_delivery',
+      });
+    },
+  );
 
   it('does not classify provider acceptance timeouts without pending local ids', () => {
     const error = Object.assign(new Error('Claude unified terminal prompt submission could not be confirmed'), {

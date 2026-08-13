@@ -133,7 +133,7 @@ describe('createClaudeUnifiedInputArbiter', () => {
       quietPeriodMs: 0,
       injectPrompt: vi.fn(async () => ({
         status: 'failed' as const,
-        reason: 'host_unreachable' as const,
+        reason: 'verification_failed' as const,
         phase: 'after_enter_unknown' as const,
         duplicateRisk: 'possible' as const,
         recoverable: true,
@@ -169,6 +169,43 @@ describe('createClaudeUnifiedInputArbiter', () => {
     expect(arbiter.snapshot()).toMatchObject({
       queuedCount: 0,
       terminalCustodyCount: 0,
+    });
+
+    await arbiter.dispose();
+  });
+
+  it('publishes acceptance correlation when a write may have reached Claude before Enter was verified', async () => {
+    const onProviderAcceptancePending = vi.fn();
+    const arbiter = createClaudeUnifiedInputArbiter({
+      nowMs: () => 10_000,
+      quietPeriodMs: 0,
+      injectPrompt: vi.fn(async () => ({
+        status: 'failed' as const,
+        reason: 'timeout' as const,
+        phase: 'after_write_before_enter' as const,
+        duplicateRisk: 'possible' as const,
+        recoverable: true,
+      })),
+      onProviderAcceptancePending,
+    });
+
+    arbiter.observeLifecycle({ type: 'turn_state', state: 'idle', observedAtMs: 10_000 });
+    arbiter.observeLifecycle({ type: 'output', observedAtMs: 10_000 });
+    await arbiter.enqueueUiMessage({
+      message: 'prompt accepted after terminal verification timed out',
+      origin: { kind: 'ui_pending' },
+      userMessageLocalIds: ['after-write-local'],
+    });
+    await arbiter.drainWhenSafe();
+
+    expect(onProviderAcceptancePending).toHaveBeenCalledOnce();
+    expect(onProviderAcceptancePending).toHaveBeenCalledWith(
+      expect.objectContaining({ userMessageLocalIds: ['after-write-local'] }),
+      expect.objectContaining({ acceptedAs: 'new_turn' }),
+    );
+    expect(arbiter.snapshot()).toMatchObject({
+      providerAcceptancePendingCount: 1,
+      headInputState: 'awaiting_provider_acceptance',
     });
 
     await arbiter.dispose();

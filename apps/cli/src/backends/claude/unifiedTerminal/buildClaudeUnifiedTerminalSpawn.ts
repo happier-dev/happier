@@ -1,4 +1,4 @@
-import { chmodSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, writeFileSync } from 'node:fs';
 import { chmod, mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -34,6 +34,10 @@ import {
   type ClaudeTerminalCliOptionsDiagnostic,
 } from '../cli/terminalOptions';
 import { claudeCliFlagCanConsumeNextArg } from '../cli/flagArity';
+import {
+  buildClaudePermissionModeLaunchSettings,
+  resolveClaudeLaunchSettingsOverlayArg,
+} from '../utils/resolveClaudeLaunchSettingsOverlay';
 
 export type ClaudeUnifiedTerminalSpawn = Readonly<{
   spawnArgv: readonly string[];
@@ -187,62 +191,6 @@ function assertNoUserSettingsArg(claudeArgs: readonly string[] | undefined): voi
   }
 }
 
-/**
- * Resolve the single `--settings` overlay value for the spawned Claude CLI.
- *
- * Claude Code keeps only the FIRST `--settings` overlay, so ultracode and the statusline
- * forwarder cannot ride a second flag next to the hook settings file: when either is needed,
- * the hook settings content is merged with `{"ultracode":true}` / `{"statusLine":{...}}` and
- * passed as one inline JSON overlay (`--settings` accepts a file path or a JSON string).
- * Otherwise the file path is passed through untouched.
- *
- * Merged overlays are written to a 0600 SIBLING FILE of the hook settings file and passed as a
- * path. The statusline forwarder secret rides in a separate 0600 sibling file; the command string
- * contains only that path, never the secret itself. If the sibling cannot be written, the
- * statusline overlay is dropped fail-open and the secret-free remainder is passed inline.
- */
-function resolveSettingsOverlayArg(params: Readonly<{
-  hookSettingsPath: string | undefined;
-  ultracodeEnabled: boolean;
-  statuslineSettings: ClaudeStatuslineOverlaySettings | undefined;
-}>): string | undefined {
-  if (!params.ultracodeEnabled && !params.statuslineSettings) return params.hookSettingsPath;
-
-  let base: Record<string, unknown> = {};
-  if (params.hookSettingsPath) {
-    try {
-      const parsed = JSON.parse(readFileSync(params.hookSettingsPath, 'utf8')) as unknown;
-      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-        base = parsed as Record<string, unknown>;
-      }
-    } catch {
-      // Unreadable hook settings: fall through to the merged-only overlay — passing the
-      // broken file path would lose the merged keys AND the hook settings alike.
-    }
-  }
-  const merged = {
-    ...base,
-    ...(params.ultracodeEnabled ? { ultracode: true } : {}),
-    ...(params.statuslineSettings ? { statusLine: params.statuslineSettings } : {}),
-  };
-  if (params.hookSettingsPath) {
-    const overlayPath = params.hookSettingsPath.replace(/\.json$/, '.overlay.json');
-    try {
-      writeFileSync(overlayPath, JSON.stringify(merged, null, 2), { mode: 0o600 });
-      chmodPrivateFileIfSupported(overlayPath);
-      return overlayPath;
-    } catch {
-      // Cannot write the 0600 sibling: never put the secret-bearing statusline command into
-      // argv — drop it (the user's own statusline stays in charge) and inline the remainder.
-      const { statusLine: _dropped, ...withoutStatusline } = merged;
-      return JSON.stringify(withoutStatusline);
-    }
-  }
-  // No hook settings file (hooks disabled) also means no hook server, hence no statusline
-  // forwarder/secret — the remaining ultracode-only overlay is safe inline.
-  return JSON.stringify(merged);
-}
-
 function writePrivateStatuslineSecretFile(params: Readonly<{
   hookSettingsPath: string;
   secret: string;
@@ -323,10 +271,15 @@ function buildClaudeArgs<Mode extends EnhancedMode>(
   if (input.hookPluginDir) {
     args.push('--plugin-dir', input.hookPluginDir);
   }
-  const settingsOverlay = resolveSettingsOverlayArg({
-    hookSettingsPath: input.hookSettingsPath,
-    ultracodeEnabled: terminalOptions.ultracodeEnabled,
-    statuslineSettings,
+  const permissionMode = resolveClaudeSdkPermissionModeFromEnhancedMode(input.first.mode);
+  const settingsOverlay = resolveClaudeLaunchSettingsOverlayArg({
+    settingsPath: input.hookSettingsPath,
+    launchSettings: {
+      ...(terminalOptions.ultracodeEnabled ? { ultracode: true } : {}),
+      ...(statuslineSettings ? { statusLine: statuslineSettings } : {}),
+      ...buildClaudePermissionModeLaunchSettings(permissionMode),
+    },
+    unsafeInlineKeys: ['statusLine'],
   });
   if (settingsOverlay) {
     args.push('--settings', settingsOverlay);
@@ -337,7 +290,6 @@ function buildClaudeArgs<Mode extends EnhancedMode>(
 
   args.push('--allow-dangerously-skip-permissions');
 
-  const permissionMode = resolveClaudeSdkPermissionModeFromEnhancedMode(input.first.mode);
   if (permissionMode !== 'default') {
     args.push('--permission-mode', permissionMode);
   }

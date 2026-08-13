@@ -1285,7 +1285,7 @@ describe('createZellijTerminalHostAdapter', () => {
       listPanes: async () => [{ id: 1, is_plugin: false, is_focused: true }],
       dumpScreen: async (params) => {
         calls.push(`dump:${params.paneId}`);
-        return '[Pasted text #1 +40 lines]';
+        return '> [Pasted text #1 +40 lines]';
       },
       closePane: async () => undefined,
       killSession: async () => ({ exitCode: 0, stdout: '', stderr: '' }),
@@ -1314,7 +1314,7 @@ describe('createZellijTerminalHostAdapter', () => {
       },
     )).resolves.toEqual({
       status: 'failed',
-      reason: 'host_unreachable',
+      reason: 'verification_failed',
       phase: 'after_enter_unknown',
       duplicateRisk: 'possible',
       recoverable: true,
@@ -1322,6 +1322,7 @@ describe('createZellijTerminalHostAdapter', () => {
 
     expect(calls).toEqual([
       'paste:terminal_1',
+      'dump:terminal_1',
       'enter:terminal_1',
       'dump:terminal_1',
       'enter:terminal_1',

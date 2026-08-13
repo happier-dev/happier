@@ -24,6 +24,7 @@ import {
 } from '../terminalHost/deadline';
 import {
   runTerminalPromptSubmission,
+  resolveTerminalPromptSubmissionFailureReason,
   type TerminalPromptSubmitVerificationPolicy,
 } from '../terminalHost/promptSubmitVerification';
 import { wrapBracketedPaste } from '@/agent/runtime/terminal/injection/bracketedPaste';
@@ -361,7 +362,7 @@ export function createPtyTerminalHostAdapter(params?: Readonly<{
       });
       if (!submission.success) {
         return failedInjectionResult({
-          reason: submission.reason === 'timeout' ? 'timeout' : 'host_unreachable',
+          reason: resolveTerminalPromptSubmissionFailureReason(submission.reason),
           phase: submission.phase,
           duplicateRisk: submission.duplicateRisk,
           recoverable: true,

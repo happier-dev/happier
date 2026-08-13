@@ -109,6 +109,31 @@ describe('createClaudePromptSubmitVerificationPolicy', () => {
     })).toBe(true);
   });
 
+  it('uses the canonical composer marker despite new footer content and presentation-only line counts', () => {
+    const policy = createClaudePromptSubmitVerificationPolicy();
+    const prompt = [
+      'The provider may collapse this prompt independently of logical newline count.',
+      'Claude line wrapping and paste rendering are presentation details.',
+    ].join('\n');
+    const capturedScreen = [
+      'previous assistant output',
+      '────────────────────────────────────────────────────────────────────────────────',
+      '❯\u00a0[Pasted text #1 +7 lines]',
+      '────────────────────────────────────────────────────────────────────────────────',
+      '                                                                     /rc active',
+      '  ⏵⏵ auto mode on (shift+tab to cycle)',
+    ].join('\n');
+
+    expect(policy.isPromptStagedBeforeSubmit?.({
+      promptText: prompt,
+      screenText: capturedScreen,
+    })).toBe(true);
+    expect(policy.isPromptStillPendingAfterSubmit({
+      promptText: prompt,
+      screenText: capturedScreen,
+    })).toBe(true);
+  });
+
   it('does not treat a stale submitted marker above an empty composer as pending after submit', () => {
     const policy = createClaudePromptSubmitVerificationPolicy();
     const prompt = Array.from({ length: 41 }, (_, index) => `line ${index}`).join('\n');

@@ -421,6 +421,46 @@ describe('createPtyTerminalHostAdapter', () => {
     });
   });
 
+  it('reports post-submit verification failure without claiming the live PTY host is unreachable', async () => {
+    const prompt = 'Prompt remains visible while Claude accepts it asynchronously.';
+    const fake = createFakeProviderWithProcess(() => new FakePtyProcess((process, data) => {
+      if (data === prompt) {
+        process.emitData(`\u001b[2J\u001b[H> ${prompt}`);
+      }
+    }));
+    const adapter = createPtyTerminalHostAdapter({
+      ptyProvider: fake.provider,
+      inputStabilityDelayMs: 0,
+      postWriteLivenessDelayMs: 0,
+      promptSubmitVerification: createClaudePromptSubmitVerificationPolicy(),
+    });
+    const handle = await adapter.createOrAttachHost({
+      sessionName: 'happier-claude-windows',
+      workingDirectory: 'C:\\repo',
+      spawnArgv: ['node.exe'],
+      spawnEnv: {},
+      isolatedEnv: true,
+    });
+
+    await expect(adapter.injectUserPrompt(handle, {
+      text: prompt,
+      multiline: false,
+      origin: { kind: 'ui_pending', nonce: 'n-verification-failed' },
+      scheduling: { timeoutMs: 1_000 },
+    })).resolves.toEqual({
+      status: 'failed',
+      reason: 'verification_failed',
+      phase: 'after_enter_unknown',
+      duplicateRisk: 'possible',
+      recoverable: true,
+    });
+    await expect(adapter.evaluateLiveness(handle)).resolves.toMatchObject({
+      paneAlive: true,
+      paneDead: false,
+    });
+    expect(fake.processes[0]?.writes).toEqual([prompt, '\r', '\r']);
+  });
+
   it('does not mistake Claude\'s submitted prompt row for an unsent Windows composer draft', async () => {
     const prompt = 'Reply exactly with WIN-CLAUDE-UNIFIED-CS-AFTERFIX2-FIRST-20260629T1535Z and nothing else.';
     const fake = createFakeProviderWithProcess(() => new FakePtyProcess((process) => {

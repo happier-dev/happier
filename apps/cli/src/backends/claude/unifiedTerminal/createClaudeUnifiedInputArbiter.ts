@@ -15,6 +15,7 @@ import type {
   ClaudeUnifiedPromptInjectionFailureHandling,
   ClaudeUnifiedPromptInjectionFailureHandler,
   ClaudeUnifiedPromptInjector,
+  ClaudeUnifiedPromptProviderAcceptancePendingHandler,
 } from './_types';
 import { classifyClaudeUnifiedInjectionFailure } from './injectionFailurePolicy';
 import { normalizeClaudeUnifiedPromptIdentityText } from './promptIdentity';
@@ -69,6 +70,11 @@ function isDeterministicPreProviderInputRejection(
 
 export function createClaudeUnifiedInputArbiter<Mode = unknown>(opts: Readonly<{
   injectPrompt: ClaudeUnifiedPromptInjector<Mode>['injectPrompt'];
+  /**
+   * Single correlation boundary for every attempt that now requires exact provider evidence.
+   * Injection UX and failure reporting remain separate outcomes; neither owns acceptance truth.
+   */
+  onProviderAcceptancePending?: ClaudeUnifiedPromptProviderAcceptancePendingHandler<Mode> | undefined;
   onPromptInjected?: ClaudeUnifiedPromptInjectedHandler<Mode> | undefined;
   onPromptAccepted?: ClaudeUnifiedPromptAcceptedHandler<Mode> | undefined;
   nowMs?: (() => number) | undefined;
@@ -506,7 +512,7 @@ export function createClaudeUnifiedInputArbiter<Mode = unknown>(opts: Readonly<{
   function isUnconfirmedSubmitFailure(
     result: Extract<TerminalInputInjectionResult, { status: 'failed' }>,
   ): boolean {
-    return result.reason === 'host_unreachable'
+    return (result.reason === 'host_unreachable' || result.reason === 'verification_failed')
       && result.phase === 'after_enter_unknown'
       && result.recoverable === true;
   }
@@ -871,6 +877,7 @@ export function createClaudeUnifiedInputArbiter<Mode = unknown>(opts: Readonly<{
         pendingProviderAcceptance = injectionAcceptance;
         pendingAcceptanceCompletedCompaction = false;
         headInputState = 'awaiting_provider_acceptance';
+        opts.onProviderAcceptancePending?.(next, acceptance, result.at);
         // Notify a successful injection at most once per batch. An ambiguous retry
         // re-injects the same batch; re-firing onPromptInjected would double-record
         // its accepted-echo bookkeeping and could suppress a later identical
@@ -930,6 +937,7 @@ export function createClaudeUnifiedInputArbiter<Mode = unknown>(opts: Readonly<{
         return;
       }
       if (failureAction.kind === 'await_provider_confirmation') {
+        opts.onProviderAcceptancePending?.(next, acceptance);
         if (isUnconfirmedSubmitFailure(result)) {
           if (providerAcceptedDuringInjection && queue[0] === next) {
             queue.shift();

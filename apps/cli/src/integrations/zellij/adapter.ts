@@ -38,6 +38,7 @@ import {
   type InspectZellijSessionSocketPresence,
 } from './socketPresence';
 import {
+  resolveTerminalPromptSubmissionFailureReason,
   runTerminalPromptSubmission,
   type TerminalPromptSubmitVerificationPolicy,
 } from '../terminalHost/promptSubmitVerification';
@@ -1566,7 +1567,7 @@ export function createZellijTerminalHostAdapter(params: Readonly<{
         });
         if (!submission.success) {
           return failedInjectionResult({
-            reason: submission.reason === 'timeout' ? 'timeout' : 'host_unreachable',
+            reason: resolveTerminalPromptSubmissionFailureReason(submission.reason),
             phase: submission.phase,
             duplicateRisk: submission.duplicateRisk,
             recoverable: true,
