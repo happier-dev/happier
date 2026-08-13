@@ -4679,6 +4679,7 @@ export const pt: TranslationStructure = {
       fileNotFound: "Arquivo não encontrado",
       invalidFormat: "Formato inválido",
       operationFailed: "Operação falhou",
+      signupDisabled: "Este servidor está com a criação de novas contas desativada. Inicie sessão com uma conta existente ou peça ao administrador do servidor para ativar os registos.",
       failedToForkSession: "Falha ao derivar sessão",
       daemonUnavailableTitle: "Daemon indisponível",
       daemonUnavailableBody:

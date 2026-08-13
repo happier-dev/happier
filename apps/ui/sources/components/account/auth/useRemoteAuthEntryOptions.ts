@@ -61,6 +61,7 @@ export type RemoteAuthEntryOptions = Readonly<{
     anonymousSignupTitle: string;
     primarySignupTitle: string;
     primarySignupKind: RemoteAuthEntryPrimaryKind;
+    showPrimarySignup: boolean;
     showTerminalConnectIntent: boolean;
     showSetupIntent: boolean;
     showAuthActions: boolean;
@@ -233,6 +234,12 @@ export function deriveRemoteAuthEntryOptions(input: RemoteAuthEntryOptionsInput)
           : showProviderSignup
             ? providerSignupTitle
             : anonymousSignupTitle;
+    // The primary slot only exists when some enabled method backs it. Without
+    // this, primarySignupKind falls through to 'anonymous' and a server with
+    // every signup method disabled (e.g. AUTH_ANONYMOUS_SIGNUP_ENABLED=0 and
+    // no OAuth/mTLS) would still get a Create account button that the server
+    // rejects with 403 signup-disabled.
+    const showPrimarySignup = showAnonymousSignup || showProviderSignup || mtlsPrimary || keylessPrimary;
 
     return {
         serverAvailability: input.serverAvailability,
@@ -252,6 +259,7 @@ export function deriveRemoteAuthEntryOptions(input: RemoteAuthEntryOptionsInput)
         anonymousSignupTitle,
         primarySignupTitle,
         primarySignupKind,
+        showPrimarySignup,
         showTerminalConnectIntent: input.hasPendingTerminalConnect,
         showSetupIntent: input.hasPendingSetupIntent,
         showAuthActions: input.serverAvailability === 'ready' || input.serverAvailability === 'legacy',

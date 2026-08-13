@@ -370,7 +370,9 @@ export function RemoteWelcomeDecisionPanel(props: RemoteWelcomeDecisionPanelProp
                         // almost certainly want to sign back into their existing
                         // account, so we give the filled black slot to Login and
                         // demote Start fresh to the bordered card below.
-                        const startFreshButton = options.showAnonymousSignup ? (
+                        // When the server disables every signup method, the
+                        // primary slot stays empty and Login carries the panel.
+                        const startFreshButton = !options.showPrimarySignup ? null : options.showAnonymousSignup ? (
                             <DecisionActionRow
                                 testID="welcome-primary-start"
                                 primary={!isReturningUser}
@@ -395,7 +397,7 @@ export function RemoteWelcomeDecisionPanel(props: RemoteWelcomeDecisionPanelProp
                         const loginButton = (
                             <DecisionActionRow
                                 testID="welcome-secondary-login"
-                                primary={isReturningUser && options.showAnonymousSignup}
+                                primary={(isReturningUser && options.showAnonymousSignup) || !options.showPrimarySignup}
                                 title={isReturningUser && options.showAnonymousSignup
                                     ? t('welcome.welcomeReturningLoginButton')
                                     : t('welcome.welcomeSecondaryButton')}

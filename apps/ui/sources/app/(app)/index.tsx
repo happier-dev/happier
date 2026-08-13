@@ -2,7 +2,7 @@ import { useAuth } from "@/auth/context/AuthContext";
 import { View, Platform, Linking } from 'react-native';
 import * as React from 'react';
 import { encodeBase64 } from "@/encryption/base64";
-import { authGetToken } from "@/auth/flows/getToken";
+import { authGetToken, AuthTokenRequestError } from "@/auth/flows/getToken";
 import { router, useRouter, useLocalSearchParams } from "expo-router";
 import { StyleSheet } from "react-native-unistyles";
 import { getRandomBytesAsync } from "@/platform/cryptoRandom";
@@ -252,6 +252,10 @@ function NotAuthenticated() {
                 trackAccountCreated();
             }
         } catch (error) {
+            if (error instanceof AuthTokenRequestError && error.code === 'signup-disabled') {
+                await Modal.alert(t('common.error'), t('errors.signupDisabled'));
+                return;
+            }
             const message = process.env.EXPO_PUBLIC_DEBUG
                 ? formatOperationFailedDebugMessage(t('errors.operationFailed'), error)
                 : t('errors.operationFailed');

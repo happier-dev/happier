@@ -49,6 +49,10 @@ const serverRuntimeState = vi.hoisted(() => ({
 
 const getServerFeaturesSnapshotMock = vi.hoisted(() => vi.fn());
 
+const authGetTokenMock = vi.hoisted(() => vi.fn(async () => 'account-token'));
+
+const modalAlertSpy = vi.hoisted(() => vi.fn());
+
 vi.mock('react-native-reanimated', async () => {
     const { createReanimatedModuleMock } = await import('@/dev/testkit/mocks/reanimated');
     return createReanimatedModuleMock();
@@ -137,7 +141,7 @@ vi.mock('@/components/navigation/shell/MainView', () => ({ MainView: () => null 
 
 vi.mock('@/modal', async () => {
     const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock().module;
+    return createModalModuleMock({ spies: { alert: modalAlertSpy } }).module;
 });
 
 vi.mock('@/auth/context/AuthContext', () => ({
@@ -163,9 +167,13 @@ vi.mock('@/platform/cryptoRandom', () => ({
     getRandomBytesAsync: vi.fn(async (size: number) => new Uint8Array(size).fill(7)),
 }));
 
-vi.mock('@/auth/flows/getToken', () => ({
-    authGetToken: vi.fn(async () => 'account-token'),
-}));
+vi.mock('@/auth/flows/getToken', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/auth/flows/getToken')>();
+    return {
+        ...actual,
+        authGetToken: authGetTokenMock,
+    };
+});
 
 vi.mock('@/auth/flows/qrStart', () => ({
     generateAuthKeyPair: () => ({ publicKey: new Uint8Array([1]), secretKey: new Uint8Array([2]) }),
@@ -364,6 +372,9 @@ describe('unauthenticated route shell integration', () => {
         authMock.isAuthenticated = false;
         authMock.login.mockClear();
         authMock.loginWithCredentials.mockClear();
+        authGetTokenMock.mockReset();
+        authGetTokenMock.mockResolvedValue('account-token');
+        modalAlertSpy.mockClear();
         routerMocks.push.mockClear();
         routerMocks.replace.mockClear();
         routerMocks.back.mockClear();
@@ -419,6 +430,24 @@ describe('unauthenticated route shell integration', () => {
 
         await screen.pressByTestIdAsync('welcome-footer-relay-action');
         expect(routerMocks.push).toHaveBeenCalledWith('/setup?openCustom=1');
+    });
+
+    it('shows a specific friendly message when account creation races a signup-disabled server', async () => {
+        const { AuthTokenRequestError } = await import('@/auth/flows/getToken');
+        authGetTokenMock.mockRejectedValueOnce(new AuthTokenRequestError(403, 'signup-disabled'));
+
+        const screen = await renderWelcomeScreen();
+        await act(async () => {
+            screen.pressByTestId('brand-hero-get-started');
+        });
+        await flushHookEffects();
+        expect(await waitForWelcomeTestId(screen, 'welcome-primary-start')).toBeGreaterThan(0);
+
+        await screen.pressByTestIdAsync('welcome-primary-start');
+        await flushHookEffects();
+
+        expect(authMock.login).not.toHaveBeenCalled();
+        expect(modalAlertSpy).toHaveBeenCalledWith('common.error', 'errors.signupDisabled');
     });
 
     it('renders welcome as a desktop split without consuming the mobile hero flag', async () => {

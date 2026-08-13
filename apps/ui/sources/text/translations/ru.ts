@@ -4510,6 +4510,7 @@ export const ru: TranslationStructure = {
       fileNotFound: "Файл не найден",
       invalidFormat: "Неверный формат",
       operationFailed: "Операция не выполнена",
+      signupDisabled: "На этом сервере отключено создание новых аккаунтов. Войдите в существующий аккаунт или попросите администратора сервера включить регистрацию.",
       failedToForkSession: "Не удалось создать ветку сессии",
       daemonUnavailableTitle: "Демон недоступен",
       daemonUnavailableBody:

@@ -4586,6 +4586,7 @@ export const pl: TranslationStructure = {
       fileNotFound: "Plik nie został znaleziony",
       invalidFormat: "Nieprawidłowy format",
       operationFailed: "Operacja nie powiodła się",
+      signupDisabled: "Ten serwer ma wyłączone zakładanie nowych kont. Zaloguj się na istniejące konto lub poproś administratora serwera o włączenie rejestracji.",
       failedToForkSession: "Nie udało się utworzyć gałęzi sesji",
       daemonUnavailableTitle: "Demon niedostępny",
       daemonUnavailableBody:

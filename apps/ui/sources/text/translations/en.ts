@@ -4236,6 +4236,7 @@ export const en = {
         fileNotFound: 'File not found',
         invalidFormat: 'Invalid format',
         operationFailed: 'Operation failed',
+        signupDisabled: 'This server has new account sign-ups disabled. Sign in with an existing account, or ask the server admin to enable sign-ups.',
         failedToForkSession: 'Failed to fork session',
         daemonUnavailableTitle: 'Daemon unavailable',
         daemonUnavailableBody:

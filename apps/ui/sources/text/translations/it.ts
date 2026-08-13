@@ -4897,6 +4897,7 @@ export const it: TranslationStructure = {
       fileNotFound: "File non trovato",
       invalidFormat: "Formato non valido",
       operationFailed: "Operazione non riuscita",
+      signupDisabled: "Questo server ha disattivato la creazione di nuovi account. Accedi con un account esistente o chiedi all'amministratore del server di attivare le registrazioni.",
       failedToForkSession: "Impossibile derivare la sessione",
       daemonUnavailableTitle: "Daemon non disponibile",
       daemonUnavailableBody:
