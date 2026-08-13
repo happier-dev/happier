@@ -24,8 +24,24 @@ describe('PROVIDER_CLI_RUNTIME_SPECS', () => {
         kind: 'github_release_binary',
         binaryName: 'codex',
         githubRepo: 'openai/codex',
+        archiveExtractionLimits: {
+          maxFileBytes: 384 * 1024 * 1024,
+          maxExpandedBytes: 384 * 1024 * 1024,
+        },
       },
     });
+
+    const managedInstall = getProviderCliRuntimeSpec('codex').managedInstall;
+    expect(managedInstall?.kind).toBe('github_release_binary');
+    if (managedInstall?.kind !== 'github_release_binary') return;
+    const archiveExtractionLimits = managedInstall.archiveExtractionLimits;
+    expect(archiveExtractionLimits).toBeDefined();
+    if (!archiveExtractionLimits) return;
+
+    // Checksum-pinned OpenAI release rust-v0.146.0 contains a 358,650,672-byte
+    // Codex executable and expands to 368,757,648 bytes across three files.
+    expect(archiveExtractionLimits.maxFileBytes).toBeGreaterThan(358_650_672);
+    expect(archiveExtractionLimits.maxExpandedBytes).toBeGreaterThan(368_757_648);
   });
 
   it('declares managed package sources for package-backed CLIs', () => {

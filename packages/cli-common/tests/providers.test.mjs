@@ -1034,6 +1034,7 @@ test('installProviderCli installs managed github-release CLIs into the managed p
     const homeDir = join(dir, 'home');
     const expectedScratchRoot = join(homeDir, 'tools', 'providers', 'codex', '.tmp');
     let downloadedArchivePath = null;
+    let receivedArchiveExtractionLimits = null;
     await mkdir(homeDir, { recursive: true });
 
     const result = await installProviderCli({
@@ -1058,7 +1059,8 @@ test('installProviderCli installs managed github-release CLIs into the managed p
           downloadedArchivePath = destinationPath;
           await writeFile(destinationPath, 'archive', 'utf8');
         },
-        extractGitHubReleaseAsset: async ({ outputPath }) => {
+        extractGitHubReleaseAsset: async ({ outputPath, archiveExtractionLimits }) => {
+          receivedArchiveExtractionLimits = archiveExtractionLimits;
           await mkdir(dirname(outputPath), { recursive: true });
           await writeFile(outputPath, '#!/bin/sh\necho codex\n', 'utf8');
           await chmod(outputPath, 0o755);
@@ -1069,6 +1071,10 @@ test('installProviderCli installs managed github-release CLIs into the managed p
     assert.equal(result.ok, true);
     assert.equal(result.plan.installMode, 'github_release_binary');
     assert.equal(downloadedArchivePath?.startsWith(expectedScratchRoot), true);
+    assert.deepEqual(receivedArchiveExtractionLimits, {
+      maxFileBytes: 384 * 1024 * 1024,
+      maxExpandedBytes: 384 * 1024 * 1024,
+    });
 
     const managedPath = resolveProviderCliManagedCommandPath('codex', { happyHomeDir: homeDir });
     const binary = await readFile(managedPath, 'utf8');

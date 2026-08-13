@@ -16,11 +16,17 @@ export type ProviderCliManualInstallRecipes =
   | Partial<Record<ProviderCliInstallPlatform, ReadonlyArray<ProviderCliInstallCommand>>>
   | null;
 
+export type ProviderCliArchiveExtractionLimits = Readonly<{
+  maxFileBytes: number;
+  maxExpandedBytes: number;
+}>;
+
 export type ProviderCliManagedInstallSpec =
   | Readonly<{
       kind: 'github_release_binary';
       githubRepo: string;
       binaryName: string;
+      archiveExtractionLimits?: ProviderCliArchiveExtractionLimits;
     }>
   | Readonly<{
       kind: 'managed_package';
@@ -122,6 +128,14 @@ export const PROVIDER_CLI_RUNTIME_SPECS: Readonly<Record<AgentId, ProviderCliRun
       kind: 'github_release_binary',
       githubRepo: 'openai/codex',
       binaryName: 'codex',
+      // OpenAI Codex rust-v0.146.0's checksum-pinned Windows ZIP expands to
+      // 368,757,648 bytes, including one 358,650,672-byte executable. A 384
+      // MiB ceiling leaves bounded headroom while retaining generic archive,
+      // entry-count, path, and compression-ratio protections.
+      archiveExtractionLimits: {
+        maxFileBytes: 384 * 1024 * 1024,
+        maxExpandedBytes: 384 * 1024 * 1024,
+      },
     },
     manualInstallKind: 'command',
     manualInstallRecipes: null,

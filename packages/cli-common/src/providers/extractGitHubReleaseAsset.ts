@@ -55,6 +55,10 @@ export async function extractGitHubReleaseAsset(params: Readonly<{
   archiveName: string;
   extractDir: string;
   outputPath: string;
+  archiveExtractionLimits?: Readonly<{
+    maxFileBytes: number;
+    maxExpandedBytes: number;
+  }>;
 }>): Promise<void> {
   const archiveName = params.archiveName.toLowerCase();
   await mkdir(params.extractDir, { recursive: true });
@@ -64,6 +68,7 @@ export async function extractGitHubReleaseAsset(params: Readonly<{
       archiveName: params.archiveName,
       archivePath: params.archivePath,
       extractDir: params.extractDir,
+      limits: params.archiveExtractionLimits,
     });
     await moveExtractedEntryIntoPlace({
       archiveName: params.archiveName,

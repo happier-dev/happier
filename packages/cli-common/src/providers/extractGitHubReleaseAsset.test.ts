@@ -64,4 +64,31 @@ describe('extractGitHubReleaseAsset', () => {
             outputPath: join(rootDir, 'current', 'bin', 'codex.exe'),
         })).rejects.toThrow(/expected exactly one extracted entry/i);
     });
+
+    it('forwards bounded provider archive limits to the shared extraction policy', async () => {
+        const rootDir = await mkdtemp(join(tmpdir(), 'happier-extract-github-release-'));
+        tempDirs.push(rootDir);
+        const extractDir = join(rootDir, 'extract');
+        const archiveExtractionLimits = {
+            maxFileBytes: 384 * 1024 * 1024,
+            maxExpandedBytes: 384 * 1024 * 1024,
+        };
+
+        extractArchivePayloadToDirectoryMock.mockImplementationOnce(async () => {
+            await mkdir(extractDir, { recursive: true });
+            await writeFile(join(extractDir, 'codex-x86_64-pc-windows-msvc.exe'), 'codex', 'utf8');
+        });
+
+        await extractGitHubReleaseAsset({
+            archivePath: join(rootDir, 'codex.zip'),
+            archiveName: 'codex-x86_64-pc-windows-msvc.exe.zip',
+            extractDir,
+            outputPath: join(rootDir, 'current', 'bin', 'codex.exe'),
+            archiveExtractionLimits,
+        });
+
+        expect(extractArchivePayloadToDirectoryMock).toHaveBeenCalledWith(expect.objectContaining({
+            limits: archiveExtractionLimits,
+        }));
+    });
 });

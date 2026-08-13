@@ -707,6 +707,7 @@ async function installManagedBinaryProviderCli(params: Readonly<{
       archiveName: asset.name,
       extractDir,
       outputPath: nextBinPath,
+      archiveExtractionLimits: params.managedInstall.archiveExtractionLimits,
     });
 
     appendLogLine(params.logPath, `# asset: ${asset.name}`);
