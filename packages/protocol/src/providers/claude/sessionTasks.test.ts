@@ -36,6 +36,19 @@ describe('normalizeClaudeActivityStatusSignal (canonical Claude status classifie
         expect(normalizeClaudeActivityStatusSignal('interrupted')).toBe('cancelled');
     });
 
+    /**
+     * `start` is the state Claude's live Dynamic Workflow stream gives an agent the moment it
+     * launches — OBSERVED on claude 2.1.231, where every `workflow_agent` entry arrives as
+     * `state: "start"` and only later becomes `progress`/`done`. Falling through to `unknown` left
+     * every freshly launched workflow agent classified as neither running nor finished, which for a
+     * short agent is its entire visible life.
+     */
+    it('treats a launching workflow agent (state "start") as active', () => {
+        expect(normalizeClaudeActivityStatusSignal('start')).toBe('active');
+        expect(normalizeClaudeActivityStatusSignal('START')).toBe('active');
+        expect(normalizeClaudeActivityStatusSignal(' start ')).toBe('active');
+    });
+
     it('treats task_started / task_progress event types as active when status is absent', () => {
         expect(normalizeClaudeActivityStatusSignal(undefined, 'task_started')).toBe('active');
         expect(normalizeClaudeActivityStatusSignal(null, 'task_progress')).toBe('active');

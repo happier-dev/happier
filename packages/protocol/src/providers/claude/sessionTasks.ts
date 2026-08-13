@@ -105,6 +105,9 @@ export function normalizeClaudeActivityStatusSignal(status: unknown, type?: stri
     || normalizedStatus === 'active'
     || normalizedStatus === 'in_progress'
     || normalizedStatus === 'progress'
+    // The state a Dynamic Workflow agent carries from launch until its first progress tick.
+    || normalizedStatus === 'start'
+    || normalizedStatus === 'started'
     || type === 'task_started'
     || type === 'task_progress'
   ) {
