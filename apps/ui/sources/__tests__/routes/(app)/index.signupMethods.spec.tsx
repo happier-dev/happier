@@ -240,7 +240,6 @@ describe('/ (welcome) signup methods', () => {
 
     it('hides every signup entry and keeps login when the server disables all signup methods', async () => {
         vi.resetModules();
-        const { t } = await import('@/text');
         // Mirrors a real self-hosted shape (AUTH_ANONYMOUS_SIGNUP_ENABLED=0, no
         // OAuth/mTLS): only key_challenge *login* is enabled, no provision
         // action anywhere. The welcome screen must not offer Create account.
@@ -283,15 +282,10 @@ describe('/ (welcome) signup methods', () => {
         getServerFeaturesSnapshotMock.mockResolvedValueOnce({ status: 'ready', features: loginOnly });
 
         const screen = await renderWelcomeScreen();
-        const loginTitle = t('welcome.welcomeSecondaryButton');
-        const textContent = await waitForWelcomeText(screen, loginTitle);
-
-        expect(textContent).toContain(loginTitle);
-        expect(textContent).not.toContain(t('welcome.createAccount'));
+        expect(await waitForWelcomeTestId(screen, 'welcome-secondary-login')).toBeGreaterThan(0);
         expect(screen.findAllByTestId('welcome-primary-start')).toHaveLength(0);
         expect(screen.findAllByTestId('welcome-create-account')).toHaveLength(0);
         expect(screen.findAllByTestId('welcome-signup-provider')).toHaveLength(0);
-        expect(screen.findAllByTestId('welcome-secondary-login').length).toBeGreaterThan(0);
     });
 
     it('shows mTLS login when signup methods are disabled but mTLS is enabled', async () => {

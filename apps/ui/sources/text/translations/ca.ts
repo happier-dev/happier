@@ -4301,7 +4301,7 @@ export const ca: TranslationStructure = {
         fileNotFound: 'Fitxer no trobat',
         invalidFormat: 'Format no vàlid',
         operationFailed: 'L\'operació ha fallat',
-        signupDisabled: 'Aquest servidor té la creació de comptes nous desactivada. Inicieu la sessió amb un compte existent o demaneu a l\'administrador del servidor que activi els registres.',
+        signupDisabled: 'Aquest servidor té la creació de comptes nous desactivada. Inicia sessió amb un compte existent o demana a l\'administrador del servidor que activi els registres.',
         failedToForkSession: 'No s’ha pogut bifurcar la sessió',
         daemonUnavailableTitle: 'Dimoni no disponible',
         daemonUnavailableBody:
