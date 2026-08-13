@@ -1,5 +1,8 @@
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { createFakeSocket, getSocketHandler } from "../testkit/socketHarness";
+import { LockAdmissionDeadlineExceededError } from "@/utils/runtime/lock";
+import type { CurrentPublisherResult, PublisherBinding } from "@/app/presence/sessionPublisherPresence";
+import type { Tx } from "@/storage/inTx";
 
 const createSessionMessage = vi.fn<(...args: unknown[]) => Promise<unknown>>(async () => ({ ok: false, error: "invalid-params" }));
 const updateSessionMetadata = vi.fn(async (): Promise<unknown> => ({ ok: false, error: "internal" }));
@@ -11,18 +14,30 @@ const materializeNextPendingMessageForCurrentPublisher = vi.fn(async (): Promise
 const readSessionPendingState = vi.fn(async (): Promise<unknown> => ({ ok: true, pendingCount: 0, pendingVersion: 0 }));
 const refreshSessionParticipantBadgePushes = vi.fn(async (): Promise<unknown> => undefined);
 const authorizeSessionRelayPublish = vi.fn(async (): Promise<readonly string[] | null> => ["user-1"]);
-const currentPublisher = {
+const currentPublisher: Extract<CurrentPublisherResult, { status: "current" }> = {
     status: "current" as const,
     runtimeActivityProjectionRead: { status: "invalid" as const, revision: null },
     committedFence: new Date(1_000),
     sessionUpdatedAt: new Date(1_000),
 };
+// The database transaction is the system boundary mocked by this socket-owner test; the
+// materialization service itself is mocked below and never reads from this fixture.
+const transactionClientFixture = {} as Tx;
 const resolveCurrentPublisher = vi.fn(async () => currentPublisher);
 const runAsCurrentPublisher = async <T>(params: {
     action: (publisher: typeof currentPublisher) => Promise<T>;
 }) => ({
     status: "current" as const,
     value: await params.action(currentPublisher),
+});
+const runAsCurrentPublisherInTx = async <T>(params: {
+    socket: object;
+    binding: PublisherBinding;
+    deadlineAtMs: number;
+    action: (publisher: typeof currentPublisher, tx: Tx) => Promise<T>;
+}) => ({
+    status: "current" as const,
+    value: await params.action(currentPublisher, transactionClientFixture),
 });
 const sessionMessageFindUnique = vi.fn(async (): Promise<unknown> => null);
 const coordinateAcceptedPendingSettlement = vi.fn(async (): Promise<unknown> => ({ ok: false, error: "internal" }));
@@ -73,6 +88,8 @@ vi.mock("@/app/session/pending/pendingMessageService", async (importOriginal) =>
         ...actual,
         materializeNextPendingMessage,
         materializeNextPendingMessageForCurrentPublisher,
+        materializeNextPendingMessageForCurrentPublisherInTx: materializeNextPendingMessageForCurrentPublisher,
+        mapPendingMaterializationError: (error: unknown) => ({ ok: false, error: "internal", cause: error }),
         readSessionPendingState,
     };
 });
@@ -189,7 +206,7 @@ describe("sessionUpdateHandler", () => {
         const socket = createFakeSocket();
         const connection = { connectionType: "session-scoped", socket, userId: "user-1", sessionId: "s-1" } as any;
         registerSessionUpdateHandler("user-1", socket as any, connection, {
-            presence: { resolveCurrentPublisher, runAsCurrentPublisher },
+            presence: { resolveCurrentPublisher, runAsCurrentPublisher, runAsCurrentPublisherInTx },
             binding: { accountId: "user-1", machineId: "machine-1", sessionId: "s-1" },
         });
         const callback = vi.fn();
@@ -1008,7 +1025,7 @@ describe("sessionUpdateHandler", () => {
             socket as any,
             { connectionType: "session-scoped", socket: socket as any, userId: "user-1", sessionId: "s-stale-provider" } as any,
             {
-                presence: { resolveCurrentPublisher, runAsCurrentPublisher },
+                presence: { resolveCurrentPublisher, runAsCurrentPublisher, runAsCurrentPublisherInTx },
                 binding: { accountId: "user-1", machineId: "machine-1", sessionId: "s-stale-provider" },
             },
         );
@@ -1077,7 +1094,7 @@ describe("sessionUpdateHandler", () => {
             socket as any,
             { connectionType: "session-scoped", socket: socket as any, userId: "user-1", sessionId: "s-provider" } as any,
             {
-                presence: { resolveCurrentPublisher, runAsCurrentPublisher },
+                presence: { resolveCurrentPublisher, runAsCurrentPublisher, runAsCurrentPublisherInTx },
                 binding: { accountId: "user-1", machineId: "machine-1", sessionId: "s-provider" },
             },
         );
@@ -1092,6 +1109,7 @@ describe("sessionUpdateHandler", () => {
         }, callback);
 
         expect(materializeNextPendingMessageForCurrentPublisher).toHaveBeenCalledWith({
+            tx: {},
             actorUserId: "user-1",
             sessionId: "s-provider",
             deliveryTiming: "after_foreground_ready",
@@ -1123,6 +1141,93 @@ describe("sessionUpdateHandler", () => {
         expect(buildNewMessageUpdate).not.toHaveBeenCalled();
     });
 
+    it("returns typed transaction unavailability before the ACK deadline when the socket mutation queue is held and never starts materialization later", async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(1_000);
+        try {
+            let releaseMessage!: () => void;
+            createSessionMessage.mockImplementationOnce(async () => await new Promise((resolve) => {
+                releaseMessage = () => resolve({ ok: false, error: "invalid-params" });
+            }));
+            const socket = createFakeSocket();
+            registerSessionUpdateHandler(
+                "user-1",
+                socket as any,
+                { connectionType: "session-scoped", socket: socket as any, userId: "user-1", sessionId: "s-budget" } as any,
+                {
+                    presence: { resolveCurrentPublisher, runAsCurrentPublisher, runAsCurrentPublisherInTx },
+                    binding: { accountId: "user-1", machineId: "machine-1", sessionId: "s-budget" },
+                },
+            );
+
+            const heldMessage = getSocketHandler(socket, "message")({
+                sid: "s-budget",
+                message: { t: "plain", v: { type: "agent", text: "held" } },
+            }, vi.fn());
+            await vi.advanceTimersByTimeAsync(0);
+
+            const callback = vi.fn();
+            const materialization = getSocketHandler(socket, "pending-materialize-next")({
+                sid: "s-budget",
+                deliveryState: "provider",
+                deliveryTiming: "after_foreground_ready",
+                foregroundState: "ready",
+            }, callback);
+
+            await vi.advanceTimersByTimeAsync(9_500);
+            const callbackAtDeadline = callback.mock.calls.map((call) => call[0]);
+            const materializerCallsAtDeadline = materializeNextPendingMessageForCurrentPublisher.mock.calls.length;
+
+            releaseMessage();
+            await vi.runAllTimersAsync();
+            await Promise.all([heldMessage, materialization]);
+            expect(callbackAtDeadline).toContainEqual({
+                ok: false,
+                error: "transaction-unavailable",
+                retryAfterMs: expect.any(Number),
+            });
+            expect(materializerCallsAtDeadline).toBe(0);
+            expect(materializeNextPendingMessageForCurrentPublisher).not.toHaveBeenCalled();
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it("returns typed transaction unavailability when the publisher queue admission deadline expires", async () => {
+        const deadlinePresence = {
+            resolveCurrentPublisher,
+            runAsCurrentPublisher,
+            runAsCurrentPublisherInTx: vi.fn(async () => {
+                throw new LockAdmissionDeadlineExceededError();
+            }),
+        };
+        const socket = createFakeSocket();
+        registerSessionUpdateHandler(
+            "user-1",
+            socket as any,
+            { connectionType: "session-scoped", socket: socket as any, userId: "user-1", sessionId: "s-publisher-budget" } as any,
+            {
+                presence: deadlinePresence,
+                binding: { accountId: "user-1", machineId: "machine-1", sessionId: "s-publisher-budget" },
+            },
+        );
+
+        const callback = vi.fn();
+        await getSocketHandler(socket, "pending-materialize-next")({
+            sid: "s-publisher-budget",
+            deliveryState: "provider",
+            deliveryTiming: "after_foreground_ready",
+            foregroundState: "ready",
+        }, callback);
+
+        expect(callback).toHaveBeenCalledWith({
+            ok: false,
+            error: "transaction-unavailable",
+            retryAfterMs: 1_000,
+        });
+        expect(materializeNextPendingMessageForCurrentPublisher).not.toHaveBeenCalled();
+    });
+
     it("passes runtime-idle delivery timing through socket pending materialization", async () => {
         materializeNextPendingMessageForCurrentPublisher.mockResolvedValueOnce({
             ok: true,
@@ -1139,7 +1244,7 @@ describe("sessionUpdateHandler", () => {
             socket as any,
             { connectionType: "session-scoped", socket: socket as any, userId: "user-1", sessionId: "s-runtime-idle" } as any,
             {
-                presence: { resolveCurrentPublisher, runAsCurrentPublisher },
+                presence: { resolveCurrentPublisher, runAsCurrentPublisher, runAsCurrentPublisherInTx },
                 binding: { accountId: "user-1", machineId: "machine-1", sessionId: "s-runtime-idle" },
             },
         );
@@ -1154,6 +1259,7 @@ describe("sessionUpdateHandler", () => {
         }, callback);
 
         expect(materializeNextPendingMessageForCurrentPublisher).toHaveBeenCalledWith({
+            tx: {},
             actorUserId: "user-1",
             sessionId: "s-runtime-idle",
             deliveryTiming: "after_runtime_idle",
@@ -1184,7 +1290,7 @@ describe("sessionUpdateHandler", () => {
                 socket as any,
                 { connectionType: "session-scoped", socket: socket as any, userId: "user-1", sessionId: "s-invalid-timing" } as any,
                 {
-                    presence: { resolveCurrentPublisher, runAsCurrentPublisher },
+                    presence: { resolveCurrentPublisher, runAsCurrentPublisher, runAsCurrentPublisherInTx },
                     binding: { accountId: "user-1", machineId: "machine-1", sessionId: "s-invalid-timing" },
                 },
             );
@@ -1210,7 +1316,7 @@ describe("sessionUpdateHandler", () => {
             socket as any,
             { connectionType: "session-scoped", socket: socket as any, userId: "user-1", sessionId: "s-missing-timing" } as any,
             {
-                presence: { resolveCurrentPublisher, runAsCurrentPublisher },
+                presence: { resolveCurrentPublisher, runAsCurrentPublisher, runAsCurrentPublisherInTx },
                 binding: { accountId: "user-1", machineId: "machine-1", sessionId: "s-missing-timing" },
             },
         );
@@ -1234,7 +1340,7 @@ describe("sessionUpdateHandler", () => {
             socket as any,
             { connectionType: "session-scoped", socket: socket as any, userId: "user-1", sessionId: "s-missing-foreground" } as any,
             {
-                presence: { resolveCurrentPublisher, runAsCurrentPublisher },
+                presence: { resolveCurrentPublisher, runAsCurrentPublisher, runAsCurrentPublisherInTx },
                 binding: { accountId: "user-1", machineId: "machine-1", sessionId: "s-missing-foreground" },
             },
         );
@@ -1269,7 +1375,7 @@ describe("sessionUpdateHandler", () => {
             socket as any,
             { connectionType: "session-scoped", socket: socket as any, userId: "user-1", sessionId: "s-head-blocked" } as any,
             {
-                presence: { resolveCurrentPublisher, runAsCurrentPublisher },
+                presence: { resolveCurrentPublisher, runAsCurrentPublisher, runAsCurrentPublisherInTx },
                 binding: { accountId: "user-1", machineId: "machine-1", sessionId: "s-head-blocked" },
             },
         );

@@ -7,7 +7,7 @@ import {
     ClientConnection,
     eventRouter,
 } from "@/app/events/eventRouter";
-import { AsyncLock } from "@/utils/runtime/lock";
+import { AsyncLock, isLockAdmissionDeadlineExceededError } from "@/utils/runtime/lock";
 import { log } from "@/utils/logging/log";
 import { randomKeyNaked } from "@/utils/keys/randomKeyNaked";
 import { Socket } from "socket.io";
@@ -18,7 +18,10 @@ import {
     updateSessionAgentState,
     updateSessionMetadata,
 } from "@/app/session/sessionWriteService";
-import { materializeNextPendingMessageForCurrentPublisher } from "@/app/session/pending/pendingMessageService";
+import {
+    mapPendingMaterializationError,
+    materializeNextPendingMessageForCurrentPublisherInTx,
+} from "@/app/session/pending/pendingMessageService";
 import {
     resolvePendingMaterializeDeliveryStateOptIn,
     parsePendingMaterializeDeliveryTiming,
@@ -52,6 +55,13 @@ import { publishSessionReadyProjectionUpdate } from "@/app/session/ready/publish
 import { db } from "@/storage/db";
 import type { createSessionPublisherPresence } from "@/app/presence/sessionPublisherPresence";
 import { coordinateAcceptedPendingSettlement } from "@/app/session/pending/acceptedPendingSettlementCoordinator";
+import {
+    isTransactionAcquisitionUnavailableError,
+    isTransactionDeadlineExceededError,
+} from "@/storage/inTx";
+
+const PENDING_MATERIALIZATION_REQUEST_BUDGET_MS = 9_000;
+const PENDING_MATERIALIZATION_RETRY_AFTER_MS = 1_000;
 
 const RELEASED_UI_V0_2_0_DIRECT_USER_MESSAGE_SENT_FROM = new Set(["web", "ios", "android", "mac", "pending_send_now", "retry"]);
 
@@ -97,7 +107,7 @@ function scheduleSessionParticipantBadgeRefresh(params: Parameters<typeof refres
 
 type TrustedTranscriptObservationPublisher = Readonly<{
     presence: Pick<ReturnType<typeof createSessionPublisherPresence>, "resolveCurrentPublisher">
-        & Partial<Pick<ReturnType<typeof createSessionPublisherPresence>, "runAsCurrentPublisher">>;
+        & Partial<Pick<ReturnType<typeof createSessionPublisherPresence>, "runAsCurrentPublisher" | "runAsCurrentPublisherInTx">>;
     binding: Readonly<{ accountId: string; machineId: string; sessionId: string }>;
 }>;
 
@@ -889,13 +899,14 @@ export function sessionUpdateHandler(
     });
 
     socket.on('pending-materialize-next', async (data: any, callback?: (response: any) => void) => {
-        await receiveMessageLock.inLock(async () => {
-            const respond = (response: any) => {
-                if (typeof callback === 'function') {
-                    callback(response);
-                }
-            };
-
+        const respond = (response: any) => {
+            if (typeof callback === 'function') {
+                callback(response);
+            }
+        };
+        const deadlineAtMs = Date.now() + PENDING_MATERIALIZATION_REQUEST_BUDGET_MS;
+        try {
+            await receiveMessageLock.inLock(async () => {
             try {
                 const sid = typeof data?.sid === 'string' ? data.sid : null;
                 if (!sid) {
@@ -950,19 +961,20 @@ export function sessionUpdateHandler(
                 if (
                     connection.connectionType !== "session-scoped"
                     || !trusted
-                    || !trusted.presence.runAsCurrentPublisher
+                    || !trusted.presence.runAsCurrentPublisherInTx
                     || trusted.binding.accountId !== userId
                     || trusted.binding.sessionId !== sid
-                    || !await authorizeSessionRelayPublish({ socket, connection, userId, sessionId: sid })
                 ) {
                     respond({ ok: false, error: "forbidden" });
                     return;
                 }
-                const current = await trusted.presence.runAsCurrentPublisher({
+                const current = await trusted.presence.runAsCurrentPublisherInTx({
                     socket,
                     binding: trusted.binding,
-                    action: async (publisher) => await materializeNextPendingMessageForCurrentPublisher({
+                    deadlineAtMs,
+                    action: async (publisher, tx) => await materializeNextPendingMessageForCurrentPublisherInTx({
                         ...commonMaterializeParams,
+                        tx,
                         trustedPublisherFence: {
                             ...trusted.binding,
                             committedFence: publisher.committedFence,
@@ -976,7 +988,11 @@ export function sessionUpdateHandler(
                 const result = current.value;
 
                 if (!result.ok) {
-                    respond({ ok: false, error: result.error });
+                    respond({
+                        ok: false,
+                        error: result.error,
+                        ...(result.error === "transaction-unavailable" ? { retryAfterMs: result.retryAfterMs } : {}),
+                    });
                     return;
                 }
 
@@ -1058,10 +1074,40 @@ export function sessionUpdateHandler(
                     participantCursors: result.participantCursorsPending,
                 });
             } catch (error) {
+                if (
+                    isLockAdmissionDeadlineExceededError(error)
+                    || isTransactionDeadlineExceededError(error)
+                    || isTransactionAcquisitionUnavailableError(error)
+                ) {
+                    throw error;
+                }
                 log({ module: 'websocket', level: 'error' }, `Error in pending-materialize-next: ${error}`);
-                respond({ ok: false, error: 'internal' });
+                const failure = mapPendingMaterializationError(error);
+                respond({
+                    ok: false,
+                    error: failure.ok ? "internal" : failure.error,
+                    ...(!failure.ok && failure.error === "transaction-unavailable"
+                        ? { retryAfterMs: failure.retryAfterMs }
+                        : {}),
+                });
             }
-        });
+            }, { deadlineAtMs });
+        } catch (error) {
+            if (
+                isLockAdmissionDeadlineExceededError(error)
+                || isTransactionDeadlineExceededError(error)
+                || isTransactionAcquisitionUnavailableError(error)
+            ) {
+                respond({
+                    ok: false,
+                    error: "transaction-unavailable",
+                    retryAfterMs: PENDING_MATERIALIZATION_RETRY_AFTER_MS,
+                });
+                return;
+            }
+            log({ module: 'websocket', level: 'error' }, `Error admitting pending-materialize-next: ${error}`);
+            respond({ ok: false, error: 'internal' });
+        }
     });
 
 }

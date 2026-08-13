@@ -48,6 +48,8 @@ const tx = {
 const inTx = vi.fn(async (run: (txArg: typeof tx) => Promise<unknown>) => await run(tx));
 vi.mock("@/storage/inTx", () => ({
     inTx,
+    isTransactionAcquisitionUnavailableError: () => false,
+    isTransactionDeadlineExceededError: () => false,
 }));
 
 let materializeNextPendingMessage: typeof import("./materializeNextPendingMessage").materializeNextPendingMessage;
@@ -74,6 +76,21 @@ const sessionRow = (overrides: Record<string, unknown> = {}) => ({
     updatedAt: new Date("2026-07-02T08:00:00.000Z"),
     ...overrides,
 });
+
+let selectedSessionRow = sessionRow({ pendingCount: 0, pendingVersion: 8 });
+
+function installSessionFindUniqueResponses(): void {
+    txSessionFindUnique.mockImplementation(async (args: { select?: Record<string, unknown> }) => (
+        args.select?.encryptionMode
+            ? selectedSessionRow
+            : {
+                accountId: trustedPublisherFence.accountId,
+                active: true,
+                archivedAt: null,
+                lastActiveAt: trustedPublisherFence.committedFence,
+            }
+    ));
+}
 
 const pendingRow = (
     kind: "enqueue" | "send_now",
@@ -108,6 +125,7 @@ describe("materializeNextPendingMessage current Pending owner", () => {
         txSessionPendingMessageCount.mockReset();
         txSessionPendingMessageUpdateMany.mockReset();
         txSessionMessageFindFirst.mockReset();
+        selectedSessionRow = sessionRow({ pendingCount: 0, pendingVersion: 8 });
         dbMocks.db.session.findUnique.mockResolvedValue(sessionRow({ pendingCount: 0, pendingVersion: 8 }));
         dbMocks.db.sessionPendingMessage.findFirst.mockResolvedValue(null);
         dbMocks.db.sessionPendingMessage.count.mockResolvedValue(0);
@@ -116,12 +134,7 @@ describe("materializeNextPendingMessage current Pending owner", () => {
         txSessionPendingMessageCount.mockResolvedValue(0);
         txSessionPendingMessageUpdateMany.mockResolvedValue({ count: 0 });
         txSessionMessageFindFirst.mockResolvedValue(null);
-        txSessionFindUnique.mockResolvedValue({
-            accountId: trustedPublisherFence.accountId,
-            active: true,
-            archivedAt: null,
-            lastActiveAt: trustedPublisherFence.committedFence,
-        });
+        installSessionFindUniqueResponses();
     });
 
     it("rejoins current-publisher claims before using pendingCount as a no-work hint", async () => {
@@ -131,8 +144,8 @@ describe("materializeNextPendingMessage current Pending owner", () => {
             trustedPublisherFence,
         });
 
-        expect(resolveSessionPendingOwnerAccess).toHaveBeenCalledTimes(1);
-        expect(dbMocks.db.sessionPendingMessage.findFirst).toHaveBeenCalledTimes(1);
+        expect(resolveSessionPendingOwnerAccess).not.toHaveBeenCalled();
+        expect(txSessionPendingMessageFindFirst).toHaveBeenCalledTimes(2);
         expect(inTx).toHaveBeenCalledTimes(1);
         expect(result).toEqual({
             ok: true,
@@ -151,7 +164,7 @@ describe("materializeNextPendingMessage current Pending owner", () => {
             runtimeActivityObservedAt: -1n,
             runtimeActivityRevision: -1n,
         });
-        dbMocks.db.session.findUnique.mockResolvedValue(malformedActivity);
+        selectedSessionRow = malformedActivity;
         txSessionFindUniqueOrThrow
             .mockResolvedValueOnce(malformedActivity)
             .mockResolvedValueOnce({ pendingCount: 1, pendingBlockedCount: 0, pendingVersion: 9 });
@@ -200,7 +213,7 @@ describe("materializeNextPendingMessage current Pending owner", () => {
         deferredReason,
     }) => {
         const before = sessionRow(projection);
-        dbMocks.db.session.findUnique.mockResolvedValue(before);
+        selectedSessionRow = before;
         txSessionFindUniqueOrThrow.mockResolvedValue(before);
         txSessionPendingMessageFindMany.mockResolvedValue([pendingRow("enqueue")]);
 
@@ -224,13 +237,7 @@ describe("materializeNextPendingMessage current Pending owner", () => {
             sessionId: "s1",
             committedFence,
         };
-        dbMocks.db.session.findUnique.mockResolvedValue(idle);
-        txSessionFindUnique.mockResolvedValue({
-            accountId: "u1",
-            active: true,
-            archivedAt: null,
-            lastActiveAt: committedFence,
-        });
+        selectedSessionRow = idle;
         txSessionPendingMessageFindFirst.mockResolvedValue(null);
         txSessionPendingMessageFindMany.mockResolvedValue([pendingRow("enqueue")]);
         txSessionFindUniqueOrThrow
@@ -260,13 +267,8 @@ describe("materializeNextPendingMessage current Pending owner", () => {
         txSessionPendingMessageUpdateMany.mockReset();
         resolveSessionPendingOwnerAccess.mockResolvedValue({ ok: true });
         hasCurrentSessionScopedMachineAccessInTx.mockResolvedValue(true);
-        dbMocks.db.session.findUnique.mockResolvedValue(idle);
-        txSessionFindUnique.mockResolvedValue({
-            accountId: "u1",
-            active: true,
-            archivedAt: null,
-            lastActiveAt: committedFence,
-        });
+        selectedSessionRow = idle;
+        installSessionFindUniqueResponses();
         txSessionPendingMessageFindFirst.mockResolvedValue(null);
         txSessionPendingMessageFindMany.mockResolvedValue([pendingRow("enqueue")]);
         txSessionFindUniqueOrThrow
@@ -288,14 +290,14 @@ describe("materializeNextPendingMessage current Pending owner", () => {
         expect(txSessionPendingMessageUpdateMany).toHaveBeenCalledWith(
             expect.objectContaining({ where: expect.objectContaining({ localId: "pending-enqueue" }) }),
         );
-        const preflightSelect = dbMocks.db.session.findUnique.mock.calls[0]?.[0]?.select as Record<string, unknown>;
-        const transactionSelect = txSessionFindUniqueOrThrow.mock.calls[1]?.[0]?.select as Record<string, unknown>;
-        expect(preflightSelect).not.toHaveProperty("runtimeActivitySourceClass");
+        const transactionPreflightSelect = txSessionFindUnique.mock.calls.find((call) => call[0]?.select?.encryptionMode)?.[0]?.select as Record<string, unknown>;
+        const transactionSelect = txSessionFindUniqueOrThrow.mock.calls[0]?.[0]?.select as Record<string, unknown>;
+        expect(transactionPreflightSelect).not.toHaveProperty("runtimeActivitySourceClass");
         expect(transactionSelect).not.toHaveProperty("runtimeActivitySourceClass");
     });
 
     it("repairs stale positive pending counters without clobbering a newer version", async () => {
-        dbMocks.db.session.findUnique.mockResolvedValue(sessionRow({ pendingCount: 2 }));
+        selectedSessionRow = sessionRow({ pendingCount: 2 });
         txSessionFindUniqueOrThrow
             .mockResolvedValueOnce({ pendingCount: 2, pendingBlockedCount: 0, pendingVersion: 9 })
             .mockResolvedValueOnce({ pendingCount: 3, pendingBlockedCount: 0, pendingVersion: 10 });
@@ -322,18 +324,8 @@ describe("materializeNextPendingMessage current Pending owner", () => {
         });
     });
 
-    it("retries a benign unique-message materialization race as an idempotent no-op", async () => {
-        dbMocks.db.session.findUnique.mockResolvedValue(sessionRow());
-        inTx
-            .mockImplementationOnce(async (run: (txArg: typeof tx) => Promise<unknown>) => await run(tx))
-            .mockRejectedValueOnce({ code: "P2002" })
-            .mockImplementationOnce(async (run: (txArg: typeof tx) => Promise<unknown>) => await run(tx));
-        txSessionFindUniqueOrThrow.mockResolvedValue({
-            pendingCount: 0,
-            pendingBlockedCount: 0,
-            pendingVersion: 10,
-        });
-        txSessionPendingMessageFindMany.mockResolvedValue([]);
+    it("does not start a second materialization transaction after an unexpected transaction failure", async () => {
+        inTx.mockRejectedValueOnce({ code: "P2002" });
 
         const result = await materializeNextPendingMessage({
             actorUserId: "u1",
@@ -341,14 +333,10 @@ describe("materializeNextPendingMessage current Pending owner", () => {
             trustedPublisherFence,
         });
 
-        expect(inTx).toHaveBeenCalledTimes(4);
+        expect(inTx).toHaveBeenCalledTimes(1);
         expect(result).toEqual({
-            ok: true,
-            didMaterialize: false,
-            pendingCount: 0,
-            pendingBlockedCount: 0,
-            pendingVersion: 10,
-            deliveryState: { mode: "provider", unresolved: false },
+            ok: false,
+            error: "internal",
         });
     });
 });
