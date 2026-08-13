@@ -45,6 +45,7 @@ import {
   SESSION_ACTION_MARK_READ_ID,
   SESSION_ACTION_MARK_UNREAD_ID,
   SESSION_ACTION_RENAME_ID,
+  SESSION_ACTION_RESUME_ID,
   SESSION_ACTION_STOP_ID,
   SESSION_ACTION_UNARCHIVE_ID,
 } from '@/components/sessions/actions/sessionActionIds';
@@ -52,6 +53,7 @@ import { buildSessionMetadataStabilitySignature } from '@/sync/domains/session/m
 import { getSessionName } from '@/utils/sessions/sessionUtils';
 import { SESSION_HEADER_ICON_SIZE_PX } from '@/components/sessions/actions/sessionHeaderIconMetrics';
 import { Icon } from '@/components/ui/icons/Icon';
+import { emitSessionResumeRequest } from '@/components/sessions/model/sessionResumeRequests';
 
 type SessionHeaderActionMenuProps = Readonly<{
   sessionId: string;
@@ -181,8 +183,9 @@ function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
       currentUserId: !session.accessLevel && typeof session.owner === 'string' ? session.owner : null,
       isConnected: session.active === true,
       isPinned: false,
+      resumeCapabilityOptions: { accountSettings: settings },
     }),
-    [readStateSignature, session, sessionServerId],
+    [readStateSignature, session, sessionServerId, settings],
   );
   const reachableMachineId = React.useMemo(
     () => readMachineTargetForSession(props.sessionId)?.machineId ?? null,
@@ -354,6 +357,18 @@ function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
               );
             }
           })(), { tag: 'SessionHeaderActionMenu.execute.sessionRename' });
+          return;
+        }
+        if (actionId === SESSION_ACTION_RESUME_ID) {
+          fireAndForget(executeSessionAction({
+            actionId: SESSION_ACTION_RESUME_ID,
+            target: sessionActionTarget,
+            context: {
+              operations: {
+                resumeSession: (sessionId) => emitSessionResumeRequest(sessionId),
+              },
+            },
+          }), { tag: 'SessionHeaderActionMenu.execute.sessionResume' });
           return;
         }
         if (actionId === SESSION_ACTION_STOP_ID || actionId === SESSION_ACTION_ARCHIVE_ID) {

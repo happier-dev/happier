@@ -23,6 +23,7 @@ import {
     SESSION_ACTION_MOVE_TO_FOLDER_ID,
     SESSION_ACTION_PIN_ID,
     SESSION_ACTION_RENAME_ID,
+    SESSION_ACTION_RESUME_ID,
     SESSION_ACTION_STOP_ID,
     SESSION_ACTION_UNARCHIVE_ID,
     SESSION_ACTION_UNPIN_ID,
@@ -57,6 +58,10 @@ function resolveRenameSession(context: SessionActionExecutionContext | undefined
 
 function resolveDeleteSession(context: SessionActionExecutionContext | undefined) {
     return context?.operations?.deleteSession ?? sessionDeleteWithServerScope;
+}
+
+function resolveResumeSession(context: SessionActionExecutionContext | undefined) {
+    return context?.operations?.resumeSession;
 }
 
 function resolveSetManualReadState(context: SessionActionExecutionContext | undefined) {
@@ -153,6 +158,12 @@ export async function executeSessionAction(params: Readonly<{
                 await resolveRenameSession(params.context)(params.target.sessionId, title, { serverId: params.target.serverId }),
                 t('sessionInfo.failedToRenameSession'),
             );
+            return;
+        }
+        case SESSION_ACTION_RESUME_ID: {
+            const resumeSession = resolveResumeSession(params.context);
+            if (!resumeSession) throwUnsupportedSingleTargetAction();
+            await resumeSession(params.target.sessionId);
             return;
         }
         case SESSION_ACTION_STOP_ID:

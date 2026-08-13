@@ -12,6 +12,7 @@ import {
   SESSION_ACTION_MARK_READ_ID,
   SESSION_ACTION_MARK_UNREAD_ID,
   SESSION_ACTION_RENAME_ID,
+  SESSION_ACTION_RESUME_ID,
   SESSION_ACTION_STOP_ID,
   SESSION_ACTION_UNARCHIVE_ID,
 } from './sessionActionIds';
@@ -31,6 +32,7 @@ const teleportVoiceAgentToSessionRootMock = vi.hoisted(() => vi.fn());
 const resolveSessionActionDefaultBackendMock = vi.hoisted(() => vi.fn());
 const readMachineTargetForSessionMock = vi.hoisted(() => vi.fn());
 const machineRpcWithServerScopeMock = vi.hoisted(() => vi.fn());
+const emitSessionResumeRequestMock = vi.hoisted(() => vi.fn());
 const archiveSessionMock = vi.hoisted(() =>
   vi.fn(async (
     _sessionId: string,
@@ -202,6 +204,10 @@ vi.mock('@/agents/hooks/useEnabledAgentIds', () => ({
   useEnabledAgentIds: () => ['claude'],
 }));
 
+vi.mock('@/components/sessions/model/sessionResumeRequests', () => ({
+  emitSessionResumeRequest: (sessionId: string) => emitSessionResumeRequestMock(sessionId),
+}));
+
 vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
   DropdownMenu: (props: any) => {
     dropdownRenderCount.current += 1;
@@ -335,6 +341,7 @@ describe('SessionHeaderActionMenu handoff', () => {
     resolveSessionActionDefaultBackendMock.mockReset();
     readMachineTargetForSessionMock.mockReset();
     machineRpcWithServerScopeMock.mockReset();
+    emitSessionResumeRequestMock.mockReset();
     archiveSessionMock.mockClear();
     renameSessionMock.mockClear();
     stopSessionMock.mockClear();
@@ -392,6 +399,58 @@ describe('SessionHeaderActionMenu handoff', () => {
     for (const binding of voiceSessionBindingStore.getState().list()) {
       voiceSessionBindingStore.getState().unbind(binding.conversationSessionId);
     }
+  });
+
+  it('offers one standalone resume request for an inactive resumable session', async () => {
+    const { SessionHeaderActionMenu } = await import('./SessionHeaderActionMenu');
+    const session = {
+      id: 'sess_resumable',
+      active: false,
+      owner: 'user_1',
+      accessLevel: undefined,
+      seq: 4,
+      metadata: {
+        flavor: 'claude',
+        claudeSessionId: 'claude_vendor_session',
+      },
+    } as any;
+
+    const screen = await renderScreen(<SessionHeaderActionMenu
+      sessionId={session.id}
+      session={session}
+    />);
+
+    const dropdown = screen.findByType('DropdownMenu' as any);
+    expect(dropdown.props.items.map((item: { id: string }) => item.id)).toContain(SESSION_ACTION_RESUME_ID);
+
+    await act(async () => {
+      dropdown.props.onSelect(SESSION_ACTION_RESUME_ID);
+    });
+
+    expect(emitSessionResumeRequestMock).toHaveBeenCalledTimes(1);
+    expect(emitSessionResumeRequestMock).toHaveBeenCalledWith(session.id);
+  });
+
+  it.each([
+    ['active', { active: true, metadata: { flavor: 'claude', claudeSessionId: 'claude_vendor_session' } }],
+    ['non-resumable', { active: false, metadata: { flavor: 'unknown-provider' } }],
+  ])('does not offer standalone resume for a %s session', async (_label, overrides) => {
+    const { SessionHeaderActionMenu } = await import('./SessionHeaderActionMenu');
+    const session = {
+      id: 'sess_without_resume',
+      owner: 'user_1',
+      accessLevel: undefined,
+      seq: 4,
+      ...overrides,
+    } as any;
+
+    const screen = await renderScreen(<SessionHeaderActionMenu
+      sessionId={session.id}
+      session={session}
+    />);
+
+    const dropdown = screen.findByType('DropdownMenu' as any);
+    expect(dropdown.props.items.map((item: { id: string }) => item.id)).not.toContain(SESSION_ACTION_RESUME_ID);
   });
 
   it('routes forked child session opens through the shared fork completion helper', async () => {
