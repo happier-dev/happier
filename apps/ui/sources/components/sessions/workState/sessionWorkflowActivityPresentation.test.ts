@@ -157,6 +157,33 @@ describe('buildWorkflowActivityRows', () => {
     });
 
     /**
+     * A declared phase plan that NO agent could be attributed to is not a grouping — it is a lie.
+     *
+     * OBSERVED on the user's `composer-target-shape-pressure-test` run: the workflow script declares
+     * `meta.phases: [{title:'Attack'}, {title:'Adjudicate'}]`, but its agents are launched with a
+     * COMPUTED label (`agent(…, { label: l.key, phase: 'Attack' })`), so the script scrape captures
+     * no agent spec to bind them by and the journal carries no phase at all. Every agent then lands
+     * in the `unassigned` bucket, and the card rendered two empty phase headings above a separate
+     * "Activity" list holding all six agents. When nothing at all could be attributed, the flat list
+     * is the whole truth — the phase headers add no information and contradict what is below them.
+     */
+    it('drops a phase plan no agent could be attributed to instead of rendering empty buckets', () => {
+        const snap = snapshot({
+            phases: [
+                { id: 'p1', title: 'Attack', order: 1, agentIds: [] },
+                { id: 'p2', title: 'Adjudicate', order: 2, agentIds: [] },
+            ],
+            agents: [
+                { id: 'a1', title: 'ATTACK R1', status: 'complete', updatedAt: 1 },
+                { id: 'a2', title: 'ATTACK R2', status: 'active', updatedAt: 1 },
+            ],
+        });
+        const rows = buildWorkflowActivityRows(snap);
+        expect(rows.every((row) => row.kind === 'agent')).toBe(true);
+        expect(rows.map((row) => row.rowId)).toEqual([agentRowId('a1'), agentRowId('a2')]);
+    });
+
+    /**
      * The open target a run panel's agent row is drawn from.
      *
      * `sidechainId` is the ONLY field that makes an agent inside a run panel openable — a workflow
@@ -255,5 +282,31 @@ describe('resolveActiveWorkflowPhasePosition', () => {
     it('returns null when there are no phases', () => {
         const snap = snapshot({ agents: [{ id: 'a', title: 'A', status: 'active', updatedAt: 1 }] });
         expect(resolveActiveWorkflowPhasePosition(snap)).toBeNull();
+    });
+
+    /**
+     * "Phase 2 of 2" must not be produced by the ABSENCE of evidence.
+     *
+     * The all-complete fallback above reads the last phase because every phase has agents and all of
+     * them finished. When no phase holds a single agent, that same fallback silently reports the
+     * final phase for a run whose position is simply unknown — which is how a card came to read
+     * `Phase 2 of 2 · 4/6 agents` directly above two empty phase headings.
+     */
+    it('returns null when the phase plan holds no agents at all', () => {
+        expect(resolveActiveWorkflowPhasePosition(snapshot({
+            phases: [
+                { id: 'p1', title: 'Attack', order: 1, agentIds: [] },
+                { id: 'p2', title: 'Adjudicate', order: 2, agentIds: [] },
+            ],
+            agents: [
+                { id: 'a1', title: 'ATTACK R1', status: 'complete', updatedAt: 1 },
+                { id: 'a2', title: 'ATTACK R2', status: 'active', updatedAt: 1 },
+            ],
+        }))).toBeNull();
+
+        expect(resolveActiveWorkflowPhasePosition(snapshot({
+            phases: [{ id: 'p1', title: 'Attack', order: 1, agentIds: [] }],
+            agents: [],
+        }))).toBeNull();
     });
 });
