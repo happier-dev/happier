@@ -100,6 +100,29 @@ export function createListMotionQuiet(
     });
 }
 
+/**
+ * The quiet window of the nearest scroller ABOVE a list, for the hosts that cannot hand it down.
+ *
+ * The pane owns its `ScrollView` in the same component that renders the roster and passes the
+ * window straight in. A popover cannot: its scroller belongs to the shared popover surface, and
+ * the roster is somewhere inside content the surface only receives as a node — the reason the
+ * compact surface went without the gate at all while the pane had it. Published rather than
+ * drilled, because the alternative is every future host remembering, and this one already forgot.
+ */
+const ListMotionQuietContext = React.createContext<ListMotionQuiet | null>(null);
+
+export function ListMotionQuietProvider(props: Readonly<{
+    quiet: ListMotionQuiet;
+    children: React.ReactNode;
+}>): React.ReactElement {
+    return React.createElement(ListMotionQuietContext.Provider, { value: props.quiet }, props.children);
+}
+
+/** The host scroller's quiet window, or `null` when nothing above this list scrolls. */
+export function useHostListMotionQuiet(): ListMotionQuiet | null {
+    return React.useContext(ListMotionQuietContext);
+}
+
 export type ListMotionQuietHandle = Readonly<{
     quiet: ListMotionQuiet;
     /**

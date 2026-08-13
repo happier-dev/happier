@@ -1,3 +1,4 @@
+import * as React from 'react';
 import { FadeIn, LinearTransition } from 'react-native-reanimated';
 
 import {
@@ -7,7 +8,7 @@ import {
 } from '@/components/ui/motion';
 
 /**
- * The two animations the agent roster runs, and the one rule that decides whether they run.
+ * The two animations the agent roster runs, and the rules that decide whether they run.
  *
  * This is the app's first and only layout animation, so it is deliberately contained: a row that
  * changes section travels to it on the shared `reflow` spring, and a row that genuinely arrives
@@ -88,11 +89,25 @@ export type AgentActivityListMotion = Readonly<{
 }>;
 
 let motionFull: AgentActivityListMotion | null = null;
+let motionArriving: AgentActivityListMotion | null = null;
 let motionReduced: AgentActivityListMotion | null = null;
 
 function resolveMotionFull(): AgentActivityListMotion {
     const builders = resolveSpringBuilders();
     return (motionFull ??= Object.freeze({ layout: builders.reflow, entering: builders.rowEnter }));
+}
+
+/**
+ * What a list that is still arriving may animate: an entrance, and nothing that MOVES.
+ *
+ * `entering` is kept because it answers a different question — "is this row new" — and the list
+ * already withholds it from the roster it opened with. It is opacity, so it cannot slide anything.
+ */
+function resolveMotionArriving(): AgentActivityListMotion {
+    return (motionArriving ??= Object.freeze({
+        layout: undefined,
+        entering: resolveSpringBuilders().rowEnter,
+    }));
 }
 
 function resolveMotionReduced(): AgentActivityListMotion {
@@ -105,18 +120,67 @@ function resolveMotionReduced(): AgentActivityListMotion {
 }
 
 /**
- * Which animations this render may attach. Returns one of two shared objects, because these go
+ * How long a freshly mounted list refuses to animate layout at all.
+ *
+ * **This is a WEB defect with a platform-agnostic fix.** A layout transition on web interpolates
+ * `getBoundingClientRect`s, so it cannot tell a row moving inside the list from the whole list
+ * being moved by the surface around it — and a portal popover renders its content before it has
+ * measured its anchor, then moves it there. The work-state popover therefore opened with every row
+ * sliding out of the portal's top-left corner, every time. Native is unaffected (a layout
+ * animation there sees the view's layout within its parent, which an ancestor move does not
+ * change), and the gate applies on both because "content that was already there is not arriving"
+ * is not a platform rule.
+ *
+ * **Why a window rather than "skip the first render".** On web the mount commit cannot animate
+ * layout at all — reanimated starts a layout transition only from `componentDidUpdate`, against
+ * the rect captured in `getSnapshotBeforeUpdate` — so the damaging delta always lands on an EARLY
+ * UPDATE, when the surface finally positions itself. A one-commit gate would suppress the one
+ * commit that was already inert. The window has to outlast the host's arrival: the popover
+ * measures its anchor synchronously, its content a frame later, and retries an invalid
+ * measurement for up to five frames.
+ *
+ * The ceiling this assumes: no reflow the list owns can come due inside it. The shortest is a
+ * section migration, and that one waits `AGENT_ACTIVITY_MIGRATION_DWELL_MS` (900) first.
+ */
+export const AGENT_ACTIVITY_LIST_ARRIVAL_MS = 250;
+
+/**
+ * Which animations this render may attach. Returns one of three shared objects, because these go
  * straight onto every item and a fresh object per render would defeat the rows' memoization.
  *
- * The reader's preference is the ONLY thing that switches these off. An earlier
- * `animationEnabled` gate — "nobody is looking, so do not animate" — was never wired to a host and
- * could not have been: the case it was written for is a retained-but-inactive tab, and a frozen
- * subtree cannot receive the prop that would quiet it, because the commit that delivers it IS the
- * commit that unfreezes the tab. Removed in W30 rather than left as a switch only a test could
- * throw.
+ * Two things switch layout off, and they are asked in this order: the reader's preference, then
+ * whether the list has been on screen long enough to believe its own geometry. Use
+ * `useAgentActivityListMotion` — arrival is a fact about THIS list's life, so it is decided inside
+ * the owner and cannot be passed in. An earlier `animationEnabled` prop learned the same lesson
+ * the harder way: the case it was written for is a retained-but-inactive tab, and a frozen subtree
+ * cannot receive the prop that would quiet it, because the commit that delivers it IS the commit
+ * that unfreezes the tab. Removed in W30 rather than left as a switch only a test could throw.
  */
 export function resolveAgentActivityListMotion(params: Readonly<{
     reducedMotion: boolean;
+    /** False until this list has outlasted the arrival of the surface hosting it. */
+    arrived: boolean;
 }>): AgentActivityListMotion {
-    return params.reducedMotion ? resolveMotionReduced() : resolveMotionFull();
+    if (params.reducedMotion) return resolveMotionReduced();
+    return params.arrived ? resolveMotionFull() : resolveMotionArriving();
+}
+
+/**
+ * The list's own answer to "may I move things yet".
+ *
+ * One timer per mounted list, armed once and never re-armed: a list that has settled stays
+ * settled, so a migration that comes due later registers its animation a long time before the
+ * layout it animates. Re-arming on later renders would put the gate back in front of a reflow the
+ * list genuinely owns.
+ */
+export function useAgentActivityListMotion(params: Readonly<{
+    reducedMotion: boolean;
+}>): AgentActivityListMotion {
+    const [arrived, setArrived] = React.useState(false);
+    React.useEffect(() => {
+        if (arrived) return;
+        const timer = setTimeout(() => setArrived(true), AGENT_ACTIVITY_LIST_ARRIVAL_MS);
+        return () => clearTimeout(timer);
+    }, [arrived]);
+    return resolveAgentActivityListMotion({ reducedMotion: params.reducedMotion, arrived });
 }

@@ -18,7 +18,7 @@ describe('agent roster list motion import isolation', () => {
     it('answers the reduced-motion case without reading one, because both animations settle instantly', async () => {
         const { resolveAgentActivityListMotion } = await import('./agentActivityListMotion');
 
-        const motion = resolveAgentActivityListMotion({ reducedMotion: true });
+        const motion = resolveAgentActivityListMotion({ reducedMotion: true, arrived: true });
 
         expect(motion.layout).toBeUndefined();
         expect(motion.entering).toBeUndefined();
@@ -34,7 +34,7 @@ describe('agent roster list motion import isolation', () => {
         const { resolveAgentActivityListMotion } = await import('./agentActivityListMotion');
         const { resolveMotionPresentation } = await import('@/components/ui/motion');
 
-        const motion = resolveAgentActivityListMotion({ reducedMotion: true });
+        const motion = resolveAgentActivityListMotion({ reducedMotion: true, arrived: true });
 
         expect(motion.layout === undefined)
             .toBe(resolveMotionPresentation('sectionMigration', true) === 'settleInstantly');

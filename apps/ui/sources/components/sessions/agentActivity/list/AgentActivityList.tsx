@@ -12,7 +12,7 @@ import { useAgentActivityStalenessResolver } from '../presentation/useAgentActiv
 import { AgentActivityDisclosure } from '../row/AgentActivityDisclosure';
 import { AgentActivityRow } from '../row/AgentActivityRow';
 import { AgentActivityEmptyState } from '../states/AgentActivityEmptyState';
-import { resolveAgentActivityListMotion } from './agentActivityListMotion';
+import { useAgentActivityListMotion } from './agentActivityListMotion';
 import {
     AGENT_ACTIVITY_FINISHED_IN_PANE_LIMIT,
     buildAgentActivitySectionModel,
@@ -20,7 +20,7 @@ import {
     type AgentActivityListItem,
 } from './agentActivitySectionModel';
 import { AgentActivitySectionHeader } from './AgentActivitySectionHeader';
-import { useListMotionQuiet, type ListMotionQuiet } from './listMotionQuiet';
+import { useHostListMotionQuiet, useListMotionQuiet, type ListMotionQuiet } from './listMotionQuiet';
 import { useAgentActivitySectionMigration } from './useAgentActivitySectionMigration';
 
 /**
@@ -110,8 +110,10 @@ export type AgentActivityListProps = Readonly<{
      * The quiet window of the scroller that owns this list, so a migration never lands mid-scroll.
      *
      * Optional because the list does not scroll itself: a host with a scroller creates one with
-     * `useListMotionQuiet()` and spreads its `scrollProps`; a host without one leaves this unset
-     * and the list still honours the pointer half of the gate on its own.
+     * `useListMotionQuiet()` and spreads its `scrollProps`; a host whose scroller is a shared
+     * surface it cannot reach publishes the same window with `ListMotionQuietProvider` instead;
+     * and a host with no scroller at all leaves both unset, where the list still honours the
+     * pointer half of the gate on its own.
      */
     motionQuiet?: ListMotionQuiet;
     testID?: string;
@@ -135,8 +137,14 @@ export const AgentActivityList = React.memo((props: AgentActivityListProps) => {
 
     const reducedMotion = useReducedMotionPreference();
     const ownQuiet = useListMotionQuiet();
-    const quiet = props.motionQuiet ?? ownQuiet.quiet;
-    const motion = resolveAgentActivityListMotion({ reducedMotion });
+    const hostQuiet = useHostListMotionQuiet();
+    // The host that renders the scroller itself hands its window in; a host whose scroller is a
+    // shared surface several levels up publishes it instead. Only when neither exists does the
+    // list fall back to its own, which still honours the pointer half of the gate.
+    const quiet = props.motionQuiet ?? hostQuiet ?? ownQuiet.quiet;
+    // Asked, not passed: whether this list is still arriving is a fact about its own life, and the
+    // commit that would deliver a host's answer is the commit it has to be true for already.
+    const motion = useAgentActivityListMotion({ reducedMotion });
     const placementById = useAgentActivitySectionMigration({ entries, quiet });
 
     const items = React.useMemo(() => {
