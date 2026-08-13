@@ -6,7 +6,11 @@ import { join } from 'node:path';
 
 import { ensureDevExpoServer } from './expo_dev.mjs';
 import { getExpoStatePaths } from '../expo/expo.mjs';
-import { isIntentionalExpoTermination } from './expo_dev_supervision.mjs';
+import {
+  isIntentionalExpoTermination,
+  resolveExpoRestartPolicy,
+  resolveNextExpoRestartAttempt,
+} from './expo_dev_supervision.mjs';
 import { buildStackFixtureEnv } from '../../testkit/core/env_scope.mjs';
 import { buildStackHarnessEnv, writeFakeBin } from '../../testkit/core/fake_bin_harness.mjs';
 
@@ -96,7 +100,7 @@ async function readRunCount(runCountPath) {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
-test('ensureDevExpoServer restarts Expo after a Node heap OOM abort', async () => {
+test('ensureDevExpoServer resets the consecutive crash budget after a healthy Expo generation', async () => {
   const tmp = await mkdtemp(join(tmpdir(), 'hstack-expo-oom-supervision-'));
   const children = [];
   try {
@@ -146,6 +150,7 @@ test('ensureDevExpoServer restarts Expo after a Node heap OOM abort', async () =
           HAPPIER_STACK_EXPO_RESTART_BASE_DELAY_MS: '10',
           HAPPIER_STACK_EXPO_RESTART_MAX_DELAY_MS: '10',
           HAPPIER_STACK_EXPO_RESTART_MAX_ATTEMPTS: '1',
+          HAPPIER_STACK_EXPO_RESTART_HEALTHY_RESET_MS: '2000',
       }),
       apiServerUrl: 'http://127.0.0.1:1',
       restart: false,
@@ -204,10 +209,33 @@ test('ensureDevExpoServer restarts Expo after a Node heap OOM abort', async () =
     const state = JSON.parse(await readFile(paths.statePath, 'utf-8'));
     assert.equal(state.pid, children[1].pid);
 
-    result.proc.kill('SIGTERM');
-    await waitForCondition(() => children[1].signalCode === 'SIGTERM');
+    // A certified generation that stays up for the policy's healthy interval starts a
+    // new crash episode instead of consuming the original OOM's retry forever.
+    await new Promise((resolve) => setTimeout(resolve, 2100));
+    await rm(join(tmp, `listener-${result.port}`), { force: true });
+    process.kill(children[1].pid, 'SIGABRT');
+    await waitForCondition(async () => (await readRunCount(runCountPath)) >= 3, { timeoutMs: 3000 });
+    await waitForCondition(() => result.pid === children[2]?.pid);
+    await waitForCondition(async () => {
+      try {
+        const replacementState = JSON.parse(await readFile(paths.statePath, 'utf-8'));
+        return replacementState.pid === children[2].pid;
+      } catch {
+        return false;
+      }
+    }, { timeoutMs: 3000 });
+    assert.equal(children[1].signalCode, 'SIGABRT');
+    assert.equal(children[2].exitCode, null);
+
+    // The replacement has only just become ready, so another immediate crash remains
+    // part of the same episode and must exhaust the single-retry budget.
+    await rm(join(tmp, `listener-${result.port}`), { force: true });
+    process.kill(children[2].pid, 'SIGABRT');
     await waitForCondition(() => result.proc.exitCode !== null || result.proc.signalCode !== null);
-    assert.equal(result.proc.signalCode, 'SIGTERM');
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    assert.equal(await readRunCount(runCountPath), 3);
+    assert.equal(children.length, 3);
+    assert.equal(result.proc.signalCode, 'SIGABRT');
   } finally {
     for (const child of children) {
       killProcessTreeByPid(child?.pid);
@@ -282,4 +310,32 @@ test('ensureDevExpoServer cancels a pending post-readiness restart when shutdown
 test('isIntentionalExpoTermination treats cleanup-style exit codes as intentional', () => {
   assert.equal(isIntentionalExpoTermination({ code: 130 }), true);
   assert.equal(isIntentionalExpoTermination({ code: 143 }), true);
+});
+
+test('restart attempt reset requires a certified healthy interval', () => {
+  assert.equal(resolveExpoRestartPolicy({ env: {} }).healthyResetMs, 5 * 60_000);
+  const policy = resolveExpoRestartPolicy({
+    env: {
+      HAPPIER_STACK_EXPO_RESTART_HEALTHY_RESET_MS: '2000',
+    },
+  });
+
+  assert.equal(resolveNextExpoRestartAttempt({
+    restartAttempt: 1,
+    certifiedAtMs: null,
+    exitedAtMs: 10_000,
+    policy,
+  }), 2);
+  assert.equal(resolveNextExpoRestartAttempt({
+    restartAttempt: 1,
+    certifiedAtMs: 1_000,
+    exitedAtMs: 2_999,
+    policy,
+  }), 2);
+  assert.equal(resolveNextExpoRestartAttempt({
+    restartAttempt: 1,
+    certifiedAtMs: 1_000,
+    exitedAtMs: 3_000,
+    policy,
+  }), 1);
 });
