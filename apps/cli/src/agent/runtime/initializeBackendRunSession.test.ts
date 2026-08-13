@@ -697,6 +697,7 @@ describe('initializeBackendRunSession', () => {
     vi.stubEnv('HAPPIER_DAEMON_PENDING_FIRST_INPUT', JSON.stringify({
       text: 'Commit me through Pending.',
       localId: 'spawn-first:stable-nonce',
+      meta: { model: 'opus', profileId: 'profile-work' },
     }))
     const metadata = {} as Metadata
     const state = { controlledByUser: false } as AgentState
@@ -735,9 +736,55 @@ describe('initializeBackendRunSession', () => {
       expect(enqueueSessionUserMessage).toHaveBeenCalledExactlyOnceWith({
         text: 'Commit me through Pending.',
         localId: 'spawn-first:stable-nonce',
-        meta: { source: 'ui', sentFrom: 'cli' },
+        meta: { model: 'opus', profileId: 'profile-work', source: 'ui', sentFrom: 'cli' },
       })
       expect(events).toEqual(['pending-committed', 'daemon-report'])
+      expect(process.env.HAPPIER_DAEMON_PENDING_FIRST_INPUT).toBeUndefined()
+    } finally {
+      vi.unstubAllEnvs()
+    }
+  })
+
+  it('retains daemon-carried first input for retry when the Pending commit fails', async () => {
+    vi.stubEnv('HAPPIER_DAEMON_PENDING_FIRST_INPUT', JSON.stringify({
+      text: 'Retry this exact turn.',
+      localId: 'spawn-first:retry-stable',
+    }))
+    const metadata = {} as Metadata
+    const state = { controlledByUser: false } as AgentState
+    const enqueueSessionUserMessage = vi.fn()
+      .mockRejectedValueOnce(new Error('temporary Pending failure'))
+      .mockResolvedValueOnce(undefined)
+    const session = createSessionStub({ enqueueSessionUserMessage })
+    const options = {
+      api: {
+        getOrCreateSession: async () => createSessionResponse('new-session-retry-first-input', metadata, state),
+        sessionSyncClient: () => session,
+      },
+      sessionTag: 'tag-retry-first-input',
+      metadata,
+      state,
+      uiLogPrefix: '[Codex]',
+      startupMetadataOverrides: {
+        permissionModeOverride: { mode: 'default' as const, updatedAt: 1 },
+      },
+    }
+    const deps = {
+      setupOfflineReconnectionFn: () => ({ session, reconnectionHandle: null, isOffline: false }),
+      primeAgentStateForUiFn: () => {},
+      reportSessionToDaemonIfRunningFn: async () => {},
+      persistTerminalAttachmentInfoIfNeededFn: async () => {},
+      sendTerminalFallbackMessageIfNeededFn: () => {},
+    }
+
+    try {
+      await expect(initializeBackendRunSession(options, deps)).rejects.toThrow('temporary Pending failure')
+      expect(process.env.HAPPIER_DAEMON_PENDING_FIRST_INPUT).toBeDefined()
+
+      await initializeBackendRunSession(options, deps)
+
+      expect(enqueueSessionUserMessage).toHaveBeenCalledTimes(2)
+      expect(enqueueSessionUserMessage.mock.calls[0]?.[0]).toEqual(enqueueSessionUserMessage.mock.calls[1]?.[0])
       expect(process.env.HAPPIER_DAEMON_PENDING_FIRST_INPUT).toBeUndefined()
     } finally {
       vi.unstubAllEnvs()
