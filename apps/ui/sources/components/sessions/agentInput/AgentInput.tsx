@@ -1965,9 +1965,9 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
     const selectedModelLabel = React.useMemo(() => {
         const found = findModelOptionForEffectiveModelId(modelOptions, effectiveModelPolicy.selectedModelId);
         if (found) {
-            return found.value === effectiveModelPolicy.selectedModelId
-                ? found.label
-                : t('agentInput.model.extendedContextLabel', { model: found.label });
+            return found.extendedContextModelId === effectiveModelPolicy.selectedModelId
+                ? t('agentInput.model.extendedContextLabel', { model: found.label })
+                : found.label;
         }
         return effectiveModelPolicy.selectedModelId === 'default'
             ? t('agentInput.model.useCliSettings')
@@ -1979,9 +1979,9 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         if (!appliedModelId) return null;
         const found = findModelOptionForEffectiveModelId(modelOptions, appliedModelId);
         const label = found
-            ? (found.value === appliedModelId
-                ? found.label
-                : t('agentInput.model.extendedContextLabel', { model: found.label }))
+            ? (found.extendedContextModelId === appliedModelId
+                ? t('agentInput.model.extendedContextLabel', { model: found.label })
+                : found.label)
             : appliedModelId;
         const status = props.sessionActive === true
             ? 'running'

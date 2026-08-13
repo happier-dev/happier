@@ -30,15 +30,50 @@ export type ModelOption = Readonly<{
  * id (e.g. `claude-sonnet-4-6[1m]`) as its base option so model-scoped controls stay visible
  * while the variant is selected.
  */
-export function findModelOptionForEffectiveModelId(
-    options: readonly ModelOption[],
+export function findModelOptionForEffectiveModelId<Option extends Readonly<{
+    value: string;
+    extendedContextModelId?: string;
+}>>(
+    options: readonly Option[],
     effectiveModelId: string,
-): ModelOption | null {
-    return (
+): Option | null {
+    const directMatch = (
         options.find((option) => option.value === effectiveModelId)
         ?? options.find((option) => option.extendedContextModelId === effectiveModelId)
         ?? null
     );
+    if (directMatch) return directMatch;
+
+    // Some runtimes accept an unqualified model id while advertising the canonical
+    // provider-qualified identity (for example `gpt-5.6-luna` versus
+    // `openai-codex/gpt-5.6-luna`). Resolve that shorthand only when exactly one
+    // option owns it. Ambiguous and genuinely custom ids must remain freeform values.
+    if (!effectiveModelId || effectiveModelId.includes('/')) return null;
+    let matched: Option | null = null;
+    for (const option of options) {
+        const separatorIndex = option.value.indexOf('/');
+        if (separatorIndex <= 0 || separatorIndex === option.value.length - 1) continue;
+        if (option.value.slice(separatorIndex + 1) !== effectiveModelId) continue;
+        if (matched) return null;
+        matched = option;
+    }
+    return matched;
+}
+
+/**
+ * Return the advertised identity for a uniquely resolved unqualified model alias.
+ * Exact ids and extended-context variants retain their original identity.
+ */
+export function resolveCanonicalModelOptionId(
+    options: readonly Readonly<{ value: string; extendedContextModelId?: string }>[],
+    selectedModelId: string,
+): string {
+    const option = findModelOptionForEffectiveModelId(options, selectedModelId);
+    if (!option) return selectedModelId;
+    if (option.value === selectedModelId || option.extendedContextModelId === selectedModelId) {
+        return selectedModelId;
+    }
+    return option.value;
 }
 
 export type PreflightModelList = Readonly<{
@@ -155,7 +190,7 @@ function appendSelectedFreeformModelOption(params: Readonly<{
 }>): readonly ModelOption[] {
     if (!params.supportsFreeform) return params.options;
     if (!params.selectedModelId) return params.options;
-    if (params.options.some((option) => option.value === params.selectedModelId)) return params.options;
+    if (findModelOptionForEffectiveModelId(params.options, params.selectedModelId)) return params.options;
     return [
         ...params.options,
         { value: params.selectedModelId, label: params.selectedModelId, description: '' },
@@ -326,8 +361,8 @@ export function isModelSelectableForSession(agentType: AgentType, metadata: Meta
     const normalized = readNonBlankSessionControlIdentifier(modelId) ?? '';
     if (!normalized) return false;
 
-    const allowed = getSelectableModelIdsForSession(agentType, metadata);
-    if ((allowed as readonly string[]).includes(normalized)) return true;
+    const options = resolveModelOptionsForSession(agentType, metadata);
+    if (findModelOptionForEffectiveModelId(options, normalized)) return true;
     return supportsFreeformModelSelectionForSession(agentType, metadata);
 }
 
