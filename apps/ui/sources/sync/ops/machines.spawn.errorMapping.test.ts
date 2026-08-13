@@ -1031,6 +1031,40 @@ describe('machineSpawnNewSession error mapping', () => {
     expect(result.errorMessage.length).toBeGreaterThan(0);
   });
 
+  it('reconciles a server-scoped machine RPC timeout through the accepted nonce without spawning twice', async () => {
+    machineRpcWithServerScopeMock
+      .mockRejectedValueOnce(Object.assign(new Error('scoped spawn exceeded its RPC budget'), {
+        code: 'MACHINE_RPC_TIMEOUT',
+      }))
+      .mockResolvedValueOnce({
+        status: 'success',
+        sessionId: 'session-after-scoped-timeout',
+      });
+
+    const { machineSpawnNewSession } = await import('./machines');
+    const result = await machineSpawnNewSession({
+      machineId: 'machine-1',
+      directory: '/tmp',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      serverId: 'server-b',
+      spawnNonce: 'spawn-nonce-scoped-timeout',
+    });
+
+    expect(result).toMatchObject({
+      type: 'success',
+      sessionId: 'session-after-scoped-timeout',
+      spawnAttemptCustody: {
+        status: 'completed',
+        spawnNonce: 'spawn-nonce-scoped-timeout',
+        createdSessionId: 'session-after-scoped-timeout',
+      },
+    });
+    expect(machineRpcWithServerScopeMock.mock.calls.map(([call]) => call.method)).toEqual([
+      RPC_METHODS.SPAWN_HAPPY_SESSION_PROVIDER_SAFE,
+      RPC_METHODS.DAEMON_SPAWN_SESSION_RESOLVE,
+    ]);
+  });
+
   it('maps legacy daemon error envelopes into a structured spawn error result', async () => {
     machineRpcWithServerScopeMock.mockResolvedValueOnce({
       success: false,

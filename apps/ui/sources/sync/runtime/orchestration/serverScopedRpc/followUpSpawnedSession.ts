@@ -3,6 +3,7 @@ import type { Session } from '@/sync/domains/state/storageTypes';
 import { storage } from '@/sync/domains/state/storage';
 import { sync } from '@/sync/sync';
 import { createNotAuthenticatedError, isAuthenticationResponseStatus } from '@/sync/runtime/connectivity/authErrors';
+import { delay } from '@/utils/timing/time';
 
 import { fetchSessionByIdWithServerScope } from './fetchSessionByIdWithServerScope';
 import { resolveServerScopedSessionContext } from './resolveServerScopedSessionContext';
@@ -12,6 +13,11 @@ import {
 } from './serverScopedSessionSendMessage';
 
 type AppliedSession = Omit<Session, 'presence'> & { presence?: 'online' | number };
+
+// This covers only bounded server-to-client sync propagation after spawn already resolved.
+// Provider startup remains owned by the spawn RPC and nonce-settlement budgets.
+const POST_SPAWN_SESSION_VISIBILITY_GRACE_MAX_MS = 10_000;
+const POST_SPAWN_SESSION_VISIBILITY_POLL_INTERVAL_MS = 250;
 
 export type RecoverableFollowUpPayload = Readonly<{
     draftText: string;
@@ -89,22 +95,41 @@ export function readRecoverableFollowUpPayload(error: unknown): RecoverableFollo
 async function ensureSessionHydratedForNavigation(params: Readonly<{
     sessionId: string;
     serverId?: string | null;
+    contextTimeoutMs: number;
     getStoredSession: (sessionId: string) => Session | null;
     ensureSessionVisibleForMessageRoute?: (
         sessionId: string,
         options?: Readonly<{ forceRefresh?: boolean; serverId?: string }>,
     ) => Promise<unknown>;
+    sleep: (ms: number) => Promise<void>;
+    now: () => number;
+    visibilityGraceMs: number;
 }>): Promise<void> {
-    if (typeof params.ensureSessionVisibleForMessageRoute === 'function') {
-        const serverId = String(params.serverId ?? '').trim();
-        await params.ensureSessionVisibleForMessageRoute(
-            params.sessionId,
-            serverId ? { forceRefresh: true, serverId } : { forceRefresh: true },
-        );
-    }
+    const graceMs = Math.max(0, Math.min(
+        params.visibilityGraceMs,
+        POST_SPAWN_SESSION_VISIBILITY_GRACE_MAX_MS,
+        params.contextTimeoutMs,
+    ));
+    const deadlineMs = params.now() + graceMs;
+    const serverId = String(params.serverId ?? '').trim();
 
-    if (!params.getStoredSession(params.sessionId)) {
-        throw new Error('Created session is not available locally yet');
+    while (true) {
+        if (typeof params.ensureSessionVisibleForMessageRoute === 'function') {
+            await params.ensureSessionVisibleForMessageRoute(
+                params.sessionId,
+                serverId ? { forceRefresh: true, serverId } : { forceRefresh: true },
+            );
+        }
+
+        if (params.getStoredSession(params.sessionId)) {
+            return;
+        }
+
+        const remainingMs = deadlineMs - params.now();
+        if (remainingMs <= 0) {
+            throw new Error('Created session is not available locally yet');
+        }
+        await params.sleep(Math.min(POST_SPAWN_SESSION_VISIBILITY_POLL_INTERVAL_MS, remainingMs));
     }
 }
 
@@ -161,6 +186,9 @@ export function createFollowUpSpawnedSessionWithServerScope(deps?: Readonly<{
     ) => Promise<unknown>;
     getStoredSession?: (sessionId: string) => Session | null;
     applySessions?: (sessions: AppliedSession[]) => void;
+    sleep?: (ms: number) => Promise<void>;
+    now?: () => number;
+    visibilityGraceMs?: number;
 }>): Readonly<{
     followUpSpawnedSessionWithServerScope: (params: Readonly<{
         sessionId: string;
@@ -179,6 +207,9 @@ export function createFollowUpSpawnedSessionWithServerScope(deps?: Readonly<{
         ?? activeSync.ensureSessionVisibleForMessageRoute;
     const getStoredSession = deps?.getStoredSession ?? ((sessionId: string) => storage.getState().sessions[sessionId] ?? null);
     const applySessions = deps?.applySessions ?? getDefaultApplySessions();
+    const sleep = deps?.sleep ?? delay;
+    const now = deps?.now ?? Date.now;
+    const visibilityGraceMs = deps?.visibilityGraceMs ?? POST_SPAWN_SESSION_VISIBILITY_GRACE_MAX_MS;
 
     const followUpSpawnedSessionWithServerScope = async (params: Readonly<{
         sessionId: string;
@@ -214,8 +245,12 @@ export function createFollowUpSpawnedSessionWithServerScope(deps?: Readonly<{
                         await ensureSessionHydratedForNavigation({
                             sessionId,
                             serverId: explicitTargetServerId,
+                            contextTimeoutMs: context.timeoutMs,
                             getStoredSession,
                             ensureSessionVisibleForMessageRoute,
+                            sleep,
+                            now,
+                            visibilityGraceMs,
                         });
                     }
 
@@ -240,8 +275,12 @@ export function createFollowUpSpawnedSessionWithServerScope(deps?: Readonly<{
                 await ensureSessionHydratedForNavigation({
                     sessionId,
                     serverId: explicitTargetServerId,
+                    contextTimeoutMs: context.timeoutMs,
                     getStoredSession,
                     ensureSessionVisibleForMessageRoute,
+                    sleep,
+                    now,
+                    visibilityGraceMs,
                 });
                 return;
             }

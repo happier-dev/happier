@@ -35,6 +35,7 @@ import { isPlainObject, normalizeSpawnSessionResult } from './_shared';
 import { isSocketIoAckTimeoutError } from '@/sync/runtime/socketIoAckTimeout';
 import { mergeMachineMetadataForVersionMismatch } from './machineMetadataMerge';
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
+import { isMachineRpcTimeoutError } from '@/sync/runtime/orchestration/serverScopedRpc/machineRpcTimeoutError';
 import { getSyncSingleton } from '@/sync/runtime/getSyncSingleton';
 import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 import { stopSessionViaDaemonMachineRpc } from './sessionStopStrategy';
@@ -120,8 +121,16 @@ function resolveSpawnAttemptTargetFingerprint(params: Readonly<{
     }, machineHomeDir);
 }
 
-function readMachineDaemonCliVersion(machineId: string): string | null {
-    const rawVersion = storage.getState().machines[machineId]?.daemonState?.startedWithCliVersion;
+function readMachineDaemonCliVersion(params: Readonly<{
+    machineId: string;
+    effectiveServerId: string;
+    activeServerId: string;
+}>): string | null {
+    const state = storage.getState();
+    const machine = params.effectiveServerId === params.activeServerId
+        ? state.machines[params.machineId]
+        : state.machineListByServerId[params.effectiveServerId]?.find((candidate) => candidate.id === params.machineId);
+    const rawVersion = machine?.daemonState?.startedWithCliVersion;
     return typeof rawVersion === 'string' && rawVersion.trim().length > 0 ? rawVersion.trim() : null;
 }
 
@@ -194,7 +203,20 @@ export async function machineSpawnNewSession(options: SpawnSessionOptions): Prom
         };
         const { machineId } = preparedOptions;
         const serverId = typeof preparedOptions.serverId === 'string' ? preparedOptions.serverId.trim() : null;
-        const daemonCliVersion = readMachineDaemonCliVersion(machineId);
+        const profileScope = storage.getState().profileScope;
+        if (!profileScope) {
+            return {
+                type: 'error',
+                errorCode: SPAWN_SESSION_ERROR_CODES.ACCOUNT_SCOPE_CHANGED,
+                errorMessage: 'Account scope is unavailable for durable session launch recovery.',
+            };
+        }
+        const effectiveServerId = serverId || profileScope.serverId;
+        const daemonCliVersion = readMachineDaemonCliVersion({
+            machineId,
+            effectiveServerId,
+            activeServerId: profileScope.serverId,
+        });
 
         if (
             shouldUseLegacySpawnHappySessionRpcParams(daemonCliVersion)
@@ -209,16 +231,6 @@ export async function machineSpawnNewSession(options: SpawnSessionOptions): Prom
                     `or newer on this machine (detected ${versionLabel}).`,
             };
         }
-
-        const profileScope = storage.getState().profileScope;
-        if (!profileScope) {
-            return {
-                type: 'error',
-                errorCode: SPAWN_SESSION_ERROR_CODES.ACCOUNT_SCOPE_CHANGED,
-                errorMessage: 'Account scope is unavailable for durable session launch recovery.',
-            };
-        }
-        const effectiveServerId = serverId || profileScope.serverId;
         const targetFingerprint = resolveSpawnAttemptTargetFingerprint({
             options: preparedOptions,
             effectiveServerId,
@@ -418,7 +430,7 @@ export async function machineSpawnNewSession(options: SpawnSessionOptions): Prom
                     `The daemon may be stopped, still starting, or not connected to the server.`,
             };
         }
-        if (isSocketIoAckTimeoutError(error)) {
+        if (isSocketIoAckTimeoutError(error) || isMachineRpcTimeoutError(error)) {
             if (custody) {
                 const resolved = await machineResolveSpawnSessionByNonceUntilSettled({
                     machineId: custody.machineId,
