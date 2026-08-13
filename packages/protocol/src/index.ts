@@ -1242,6 +1242,7 @@ export {
 } from './machineFileBrowser.js';
 
 export {
+  PendingFirstInputV1Schema,
   SPAWN_SESSION_ERROR_CODES,
   SPAWN_SESSION_ERROR_DETAIL_KINDS,
   SpawnSessionExecutionAuthorizationSchema,
@@ -1250,6 +1251,7 @@ export {
   isSpawnSessionErrorDetail,
   normalizeSpawnSessionErrorDetail,
   type ConnectedServiceResumeUnreachableContinuityCode,
+  type PendingFirstInputV1,
   type ConnectedServiceResumeUnreachableSpawnErrorDetail,
   type ConnectedServiceUxDiagnosticSpawnErrorDetail,
   type SpawnSessionErrorCode,
@@ -1443,6 +1445,8 @@ export {
   SessionStatusEnvelopeSchema,
   SessionStatusResultSchema,
   SessionStopEnvelopeSchema,
+  SessionStopCleanupIncompleteReasonSchema,
+  SessionStopOutcomeSchema,
   SessionStopResultSchema,
   SessionShareSchema,
   SessionTurnIdentifierV1Schema,
@@ -1530,6 +1534,8 @@ export {
   type SessionRunWaitResult,
   type SessionSendResult,
   type SessionStatusResult,
+  type SessionStopCleanupIncompleteReason,
+  type SessionStopOutcome,
   type SessionStopResult,
   type SessionShare,
   type SessionTurnLifecycleStatusV1,

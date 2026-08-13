@@ -17,6 +17,21 @@ export const SpawnSessionExecutionAuthorizationSchema = z.object({
 }).strict();
 export type SpawnSessionExecutionAuthorization = z.infer<typeof SpawnSessionExecutionAuthorizationSchema>;
 
+/**
+ * One-shot first user input carried by a fresh-session spawn until the runner can commit it to
+ * Pending. The opaque local id is the cross-boundary de-duplication identity.
+ */
+export const PendingFirstInputV1Schema = z.object({
+  text: z.string().refine((value) => value.trim().length > 0, {
+    message: 'Pending first input text must not be blank',
+  }),
+  localId: z.string().refine((value) => value.trim().length > 0, {
+    message: 'Pending first input local id must not be blank',
+  }),
+  meta: z.record(z.string(), z.unknown()).optional(),
+}).strict();
+export type PendingFirstInputV1 = z.infer<typeof PendingFirstInputV1Schema>;
+
 export const SPAWN_SESSION_ERROR_CODES = {
   INVALID_REQUEST: 'INVALID_REQUEST',
   INVALID_ENVIRONMENT_VARIABLES: 'INVALID_ENVIRONMENT_VARIABLES',
