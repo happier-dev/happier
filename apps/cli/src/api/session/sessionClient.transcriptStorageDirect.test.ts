@@ -498,6 +498,64 @@ describe('ApiSessionClient (HAPPIER_TRANSCRIPT_STORAGE=direct)', () => {
     }));
   });
 
+  it('reliably publishes an active turn without rewriting an idle foreground thinking state', async () => {
+    vi.resetModules();
+    sessionSocketStub = createApiSessionSocketStub({ connected: true });
+    userSocketStub = createApiSessionSocketStub({ connected: true });
+
+    vi.stubEnv('HAPPIER_TRANSCRIPT_STORAGE', 'direct');
+
+    const { ApiSessionClient } = await import('./sessionClient');
+
+    const client = new ApiSessionClient('tok', createPlainSessionFixture({
+      id: 's1',
+      latestTurnStatus: 'in_progress',
+      latestTurnStatusObservedAt: 1_000,
+    }));
+    createdClients.push(client);
+
+    sessionSocketStub.emit.mockClear();
+    sessionSocketStub.volatile.emit.mockClear();
+    client.keepAlive(false, 'remote');
+
+    expect(sessionSocketStub.emit).toHaveBeenCalledWith('session-alive', expect.objectContaining({
+      sid: 's1',
+      thinking: false,
+      mode: 'remote',
+      latestTurnStatus: 'in_progress',
+    }));
+    expect(sessionSocketStub.volatile.emit).not.toHaveBeenCalledWith('session-alive', expect.anything());
+  });
+
+  it('keeps terminal idle presence volatile without reviving foreground work', async () => {
+    vi.resetModules();
+    sessionSocketStub = createApiSessionSocketStub({ connected: true });
+    userSocketStub = createApiSessionSocketStub({ connected: true });
+
+    vi.stubEnv('HAPPIER_TRANSCRIPT_STORAGE', 'direct');
+
+    const { ApiSessionClient } = await import('./sessionClient');
+
+    const client = new ApiSessionClient('tok', createPlainSessionFixture({
+      id: 's1',
+      latestTurnStatus: 'completed',
+      latestTurnStatusObservedAt: 1_000,
+    }));
+    createdClients.push(client);
+
+    sessionSocketStub.emit.mockClear();
+    sessionSocketStub.volatile.emit.mockClear();
+    client.keepAlive(false, 'remote');
+
+    expect(sessionSocketStub.emit).not.toHaveBeenCalledWith('session-alive', expect.anything());
+    expect(sessionSocketStub.volatile.emit).toHaveBeenCalledWith('session-alive', expect.objectContaining({
+      sid: 's1',
+      thinking: false,
+      mode: 'remote',
+      latestTurnStatus: 'completed',
+    }));
+  });
+
   it('replays presence updated while the supervised session transport is reconnecting after a proxy disconnect', async () => {
     vi.resetModules();
     sessionSocketStub = createApiSessionSocketStub({ connected: true });

@@ -14,6 +14,7 @@ import {
   setActiveAccountSettingsSnapshot,
 } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import type { SessionMutationOutbox } from './mutations/createSessionMutationOutbox';
+import { logger } from '@/ui/logger';
 import {
   PendingQueueAcceptedSettlementError,
   PendingQueueMaterializationTransportAmbiguousError,
@@ -1641,6 +1642,7 @@ describe('ApiSessionClient pending-queue turn-end drain', () => {
   it('returns typed retryable transport without arming a client retry timer', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(10_000);
+    const infoFileSpy = vi.spyOn(logger, 'infoFile').mockImplementation(() => {});
     const client = await createClient({
       latestTurnStatus: 'in_progress',
       pendingCount: 1,
@@ -1687,6 +1689,19 @@ describe('ApiSessionClient pending-queue turn-end drain', () => {
     await expect(client.materializeNextPendingMessageSafely({
       activeTurnSteerability: 'steerable',
     })).resolves.toEqual({ type: 'retryable_transport', retryAfterMs: 250 });
+    expect(infoFileSpy).toHaveBeenCalledWith(
+      '[pendingQueue] materialize request failed',
+      expect.objectContaining({
+        sessionId: 's1',
+        error: expect.objectContaining({
+          code: 'pending_queue_materialization_transport_ambiguous',
+          diagnosticCode: 'pending_queue_materialization_transport_failure',
+          classification: 'transport_failure',
+          cause: expect.objectContaining({ message: 'materialize acknowledgement timed out' }),
+        }),
+      }),
+    );
+    expect(infoFileSpy).toHaveBeenCalledTimes(1);
     expect((client as unknown as { pendingMaterializeRetryWakeTimer?: unknown }).pendingMaterializeRetryWakeTimer)
       .toBeUndefined();
 
