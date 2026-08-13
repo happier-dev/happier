@@ -9,6 +9,7 @@ import { finalizeDist, normalizeCliBuildVersion, readCliDistBuildManifestFingerp
 import { withOptionalCliSharedDepsBuildLock } from './optionalWorkspaceBundleLock.mjs';
 import { main as rmDist } from './rmDist.mjs';
 import { collectPkgrollInputPaths, runPkgrollBuild } from './runPkgrollBuild.mjs';
+import { DEFAULT_CLI_RUNTIME_IMPORT_TIMEOUT_MS } from './runtimeImportProbePolicy.mjs';
 import { DEFAULT_CLI_NODE_HEAP_MB, upsertMaxOldSpaceSize } from './withNodeHeapLimit.mjs';
 
 function resolveBuildOutput(env = process.env) {
@@ -84,9 +85,18 @@ function runNodeScript(scriptPath, args, options = {}) {
   }
 }
 
-function probeDistRuntimeImport(entrypoint, options = {}) {
-  const timeoutMs = 30_000;
-  const source = `await import(${JSON.stringify(pathToFileURL(resolve(entrypoint)).href)});`;
+export function probeDistRuntimeImport(entrypoint, options = {}) {
+  const timeoutMsRaw = Number(options.timeoutMs ?? DEFAULT_CLI_RUNTIME_IMPORT_TIMEOUT_MS);
+  const timeoutMs = Number.isFinite(timeoutMsRaw) && timeoutMsRaw > 0
+    ? Math.trunc(timeoutMsRaw)
+    : DEFAULT_CLI_RUNTIME_IMPORT_TIMEOUT_MS;
+  const source = [
+    `await import(${JSON.stringify(pathToFileURL(resolve(entrypoint)).href)});`,
+    // Import admission proves that the ESM graph links and initializes. Some
+    // valid CLI entrypoints install process-lifetime handles at module scope;
+    // those belong to the real command-liveness probe, not this build check.
+    'process.exit(0);',
+  ].join('\n');
   const result = spawnSync(process.execPath, ['--input-type=module', '--eval', source], {
     cwd: options.cwd,
     env: {
@@ -203,6 +213,7 @@ async function buildCliDistUnlocked(options = {}) {
       probeDistRuntimeImportImpl(entrypoint, {
         cwd: immutableSource.packageRoot,
         env,
+        timeoutMs: DEFAULT_CLI_RUNTIME_IMPORT_TIMEOUT_MS,
       });
     }
     finalizeDistImpl({
