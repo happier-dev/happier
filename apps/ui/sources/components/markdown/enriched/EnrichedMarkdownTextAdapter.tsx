@@ -4,6 +4,7 @@ import { EnrichedMarkdownText, type EnrichedMarkdownTextProps } from 'react-nati
 
 import { ENRICHED_MARKDOWN_MD4C_FLAGS } from './enrichedMarkdownConstants';
 import { normalizeMarkdownLinkUrl, openMarkdownLinkUrl, sanitizeEnrichedMarkdownLinkTargets } from './enrichedMarkdownLinkHandling';
+import { normalizeEnrichedMarkdownMathDelimiters } from './normalizeEnrichedMarkdownMathDelimiters';
 import { useEnrichedMarkdownRuntimeStatus } from './preloadEnrichedMarkdownRuntime';
 import { resolveEnrichedMarkdownFlavor } from './resolveEnrichedMarkdownFlavor';
 import { useEnrichedMarkdownStyle } from './useEnrichedMarkdownStyle';
@@ -82,6 +83,7 @@ type EnrichedMarkdownTextAdapterProps = Readonly<{
     streamingRevealPreset?: StreamingTextRevealPreset;
     testID?: string;
     suppressLeadingTopMargin?: boolean;
+    fillContainer?: boolean;
 }>;
 
 export const EnrichedMarkdownTextAdapter = React.memo((props: EnrichedMarkdownTextAdapterProps) => {
@@ -91,7 +93,9 @@ export const EnrichedMarkdownTextAdapter = React.memo((props: EnrichedMarkdownTe
         textStyle: props.textStyle,
     });
     const sanitizedMarkdown = React.useMemo(
-        () => sanitizeEnrichedMarkdownLinkTargets(props.markdown),
+        () => sanitizeEnrichedMarkdownLinkTargets(
+            normalizeEnrichedMarkdownMathDelimiters(props.markdown),
+        ),
         [props.markdown],
     );
 
@@ -147,17 +151,20 @@ export const EnrichedMarkdownTextAdapter = React.memo((props: EnrichedMarkdownTe
     }, [flavor, props.streamingAnimated, props.suppressLeadingTopMargin, props.testID, runtimeStatus]);
 
     const containerStyle = React.useMemo(() => {
+        const baseContainerStyle = props.fillContainer === false
+            ? { ...styleBundle.containerStyle, width: undefined }
+            : styleBundle.containerStyle;
         if (Platform.OS !== 'web' || revealConfig == null) {
-            return styleBundle.containerStyle;
+            return baseContainerStyle;
         }
 
         return ({
-            ...styleBundle.containerStyle,
+            ...baseContainerStyle,
             [ENRICHED_REVEAL_DURATION_VAR]: `${revealConfig.durationMs}ms`,
             [ENRICHED_REVEAL_EASING_VAR]: revealConfig.easing,
             [ENRICHED_REVEAL_TRANSLATE_Y_VAR]: `${revealConfig.translateYPx}px`,
         } as unknown) as EnrichedMarkdownTextProps['containerStyle'];
-    }, [revealConfig, styleBundle.containerStyle]);
+    }, [props.fillContainer, revealConfig, styleBundle.containerStyle]);
 
     return (
         <EnrichedMarkdownText

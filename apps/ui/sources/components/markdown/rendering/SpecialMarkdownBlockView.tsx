@@ -36,6 +36,7 @@ export const SpecialMarkdownBlockView = React.memo((props: SpecialMarkdownBlockV
                     onOptionLongPress={props.onOptionLongPress}
                     onLinkPress={props.onLinkPress}
                     textStyle={props.textStyle}
+                    profile={props.profile}
                     variant={variant}
                     streamingReveal={props.streamingReveal}
                     streamingRevealPreset={props.streamingRevealPreset}
