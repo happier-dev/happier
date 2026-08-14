@@ -2,7 +2,11 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { createFakeSocket, getSocketHandler } from "../testkit/socketHarness";
 import { LockAdmissionDeadlineExceededError } from "@/utils/runtime/lock";
 import type { CurrentPublisherResult, PublisherBinding } from "@/app/presence/sessionPublisherPresence";
-import type { Tx } from "@/storage/inTx";
+import {
+    isTransactionAcquisitionUnavailableError,
+    TransactionAcquisitionUnavailableError,
+    type Tx,
+} from "@/storage/inTx";
 
 const createSessionMessage = vi.fn<(...args: unknown[]) => Promise<unknown>>(async () => ({ ok: false, error: "invalid-params" }));
 const updateSessionMetadata = vi.fn(async (): Promise<unknown> => ({ ok: false, error: "internal" }));
@@ -39,7 +43,7 @@ const runAsCurrentPublisherInTx = async <T>(params: {
     status: "current" as const,
     value: await params.action(currentPublisher, transactionClientFixture),
 });
-const sessionMessageFindUnique = vi.fn(async (): Promise<unknown> => null);
+const sessionMessageFindUnique = vi.hoisted(() => vi.fn(async (): Promise<unknown> => null));
 const coordinateAcceptedPendingSettlement = vi.fn(async (): Promise<unknown> => ({ ok: false, error: "internal" }));
 const emitEphemeral = vi.fn();
 const emitUpdate = vi.fn();
@@ -127,11 +131,16 @@ const isSessionValid = vi.fn(async () => true);
 vi.mock("@/app/presence/sessionCache", () => ({
     activityCache: { isSessionValid },
 }));
-vi.mock("@/storage/inTx", () => ({
+vi.mock("@/storage/inTx", async (importOriginal) => ({
+    ...await importOriginal<typeof import("@/storage/inTx")>(),
     inTx: vi.fn(async (fn: (tx: unknown) => Promise<unknown>) => await fn({})),
 }));
-const log = vi.fn();
-vi.mock("@/utils/logging/log", () => ({ log }));
+const { log, warn, errorLog } = vi.hoisted(() => ({
+    log: vi.fn(),
+    warn: vi.fn(),
+    errorLog: vi.fn(),
+}));
+vi.mock("@/utils/logging/log", () => ({ log, warn, error: errorLog }));
 
 describe("sessionUpdateHandler", () => {
     type TrustedPublisher = Parameters<typeof import("./sessionUpdateHandler").sessionUpdateHandler>[3];
@@ -180,6 +189,8 @@ describe("sessionUpdateHandler", () => {
         isSessionValid.mockClear();
         isSessionValid.mockResolvedValue(true);
         log.mockClear();
+        warn.mockClear();
+        errorLog.mockClear();
     });
 
     it("settles accepted Pending only through the exact current machine-bound publisher socket", async () => {
@@ -256,6 +267,78 @@ describe("sessionUpdateHandler", () => {
 
         expect(callback).toHaveBeenCalledWith({ ok: false, error: "forbidden" });
         expect(coordinateAcceptedPendingSettlement).not.toHaveBeenCalled();
+    });
+
+    it("returns one retry ACK and observably warns when accepted settlement cannot acquire publisher authority", async () => {
+        const transactionBodyError = Object.assign(
+            new Error("Transaction API error: Unable to start a transaction in the given time."),
+            { code: "P2028", meta: { error: "Unable to start a transaction in the given time." } },
+        );
+        const transactionAcquisitionError = new TransactionAcquisitionUnavailableError(transactionBodyError);
+        expect(isTransactionAcquisitionUnavailableError(transactionAcquisitionError)).toBe(true);
+        expect(isTransactionAcquisitionUnavailableError(transactionBodyError)).toBe(false);
+        const socket = createFakeSocket();
+        const connection = { connectionType: "session-scoped", socket, userId: "user-1", sessionId: "s-1" } as any;
+        registerSessionUpdateHandler("user-1", socket as any, connection, {
+            presence: {
+                resolveCurrentPublisher,
+                runAsCurrentPublisher: vi.fn(async () => { throw transactionAcquisitionError; }),
+            },
+            binding: { accountId: "user-1", machineId: "machine-1", sessionId: "s-1" },
+        });
+        const callback = vi.fn();
+
+        await expect(getSocketHandler(socket, "pending-delivery-accepted-v1")({
+            v: 1,
+            sessionId: "s-1",
+            localId: "pending-1",
+        }, callback)).resolves.toBeUndefined();
+
+        expect(callback).toHaveBeenCalledTimes(1);
+        expect(callback).toHaveBeenCalledWith({
+            ok: false,
+            error: "transaction-unavailable",
+            retryAfterMs: 1_000,
+        });
+        expect(warn).toHaveBeenCalledWith(
+            {
+                module: "websocket",
+                event: "pending-delivery-accepted-v1",
+                err: transactionAcquisitionError,
+            },
+            "Accepted pending settlement publisher authority transaction unavailable",
+        );
+    });
+
+    it("returns one internal ACK and observably logs unexpected accepted settlement errors", async () => {
+        const unexpectedError = new Error("unexpected settlement failure");
+        const socket = createFakeSocket();
+        const connection = { connectionType: "session-scoped", socket, userId: "user-1", sessionId: "s-1" } as any;
+        registerSessionUpdateHandler("user-1", socket as any, connection, {
+            presence: {
+                resolveCurrentPublisher,
+                runAsCurrentPublisher: vi.fn(async () => { throw unexpectedError; }),
+            },
+            binding: { accountId: "user-1", machineId: "machine-1", sessionId: "s-1" },
+        });
+        const callback = vi.fn();
+
+        await expect(getSocketHandler(socket, "pending-delivery-accepted-v1")({
+            v: 1,
+            sessionId: "s-1",
+            localId: "pending-1",
+        }, callback)).resolves.toBeUndefined();
+
+        expect(callback).toHaveBeenCalledTimes(1);
+        expect(callback).toHaveBeenCalledWith({ ok: false, error: "internal" });
+        expect(errorLog).toHaveBeenCalledWith(
+            {
+                module: "websocket",
+                event: "pending-delivery-accepted-v1",
+                err: unexpectedError,
+            },
+            "Error in accepted pending settlement handler",
+        );
     });
 
     it("positively negotiates transcript observation only for the current machine-bound session producer", async () => {
