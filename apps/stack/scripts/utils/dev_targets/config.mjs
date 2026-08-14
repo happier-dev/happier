@@ -14,6 +14,25 @@ function requireNonEmptyString(value, label) {
   return normalized;
 }
 
+function normalizeRemotePath(raw, platform, name) {
+  if (raw == null) return [];
+  if (!Array.isArray(raw)) {
+    throw new Error(`[dev-targets] target ${name}: remotePath must be an array`);
+  }
+  const normalized = [];
+  for (const entry of raw) {
+    const path = requireNonEmptyString(entry, `target ${name} remotePath entry`);
+    const valid = platform === 'windows'
+      ? (/^[A-Za-z]:[\\/]/.test(path) || path.startsWith('\\\\')) && !path.includes(';')
+      : path.startsWith('/') && !path.includes(':');
+    if (!valid) {
+      throw new Error(`[dev-targets] target ${name}: invalid remotePath entry: ${JSON.stringify(path)}`);
+    }
+    if (!normalized.includes(path)) normalized.push(path);
+  }
+  return normalized;
+}
+
 function normalizeTarget(raw, index) {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
     throw new Error(`[dev-targets] target ${index + 1} must be an object`);
@@ -66,6 +85,7 @@ function normalizeTarget(raw, index) {
     throw new Error(`[dev-targets] target ${name}: unsafe repoDir`);
   }
   const cliHomeDir = requireNonEmptyString(raw.cliHomeDir, `target ${name} cliHomeDir`);
+  const remotePath = normalizeRemotePath(raw.remotePath, platform, name);
   const remoteServerPortRaw = raw.remoteServerPort;
   const remoteServerPort =
     remoteServerPortRaw == null || String(remoteServerPortRaw).trim() === ''
@@ -85,15 +105,156 @@ function normalizeTarget(raw, index) {
     ...(limaInstance ? { limaInstance, limaHome } : {}),
     repoDir,
     cliHomeDir,
+    ...(remotePath.length ? { remotePath } : {}),
     remoteServerPort,
   };
+}
+
+const LOCAL_PLACEMENT = Object.freeze({ mode: 'local' });
+const DEFAULT_LOAD_PROBE_TTL_MS = 15_000;
+const DEFAULT_UNAVAILABLE_PROBE_TTL_MS = 120_000;
+
+function normalizePlacement(raw, { label, targetNames }) {
+  if (raw == null) return { ...LOCAL_PLACEMENT };
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    throw new Error(`[dev-targets] ${label} must be an object`);
+  }
+  const mode = requireNonEmptyString(raw.mode, `${label} mode`).toLowerCase();
+  if (mode === 'local') return { ...LOCAL_PLACEMENT };
+  if (mode !== 'prefer-target') {
+    throw new Error(`[dev-targets] ${label} mode must be "local" or "prefer-target"`);
+  }
+  const target = requireNonEmptyString(raw.target, `${label} target`).toLowerCase();
+  if (!targetNames.has(target)) {
+    throw new Error(`[dev-targets] ${label} references unknown target: ${target}`);
+  }
+  const fallback = String(raw.fallback ?? 'local').trim().toLowerCase();
+  if (fallback !== 'local') {
+    throw new Error(`[dev-targets] ${label} fallback must be "local"`);
+  }
+  return { mode, target, fallback };
+}
+
+function normalizeDaemonPlacement(raw, { targetNames }) {
+  if (raw?.mode !== 'local-and-targets') {
+    return normalizePlacement(raw, { label: 'runtimePlacement.daemon', targetNames });
+  }
+  if (!Array.isArray(raw.targets) || raw.targets.length === 0) {
+    throw new Error('[dev-targets] runtimePlacement.daemon targets must be a non-empty array');
+  }
+  const targets = [];
+  for (const rawTarget of raw.targets) {
+    const target = requireNonEmptyString(rawTarget, 'runtimePlacement.daemon target').toLowerCase();
+    if (!targetNames.has(target)) {
+      throw new Error(`[dev-targets] runtimePlacement.daemon references unknown target: ${target}`);
+    }
+    if (!targets.includes(target)) targets.push(target);
+  }
+  return { mode: 'local-and-targets', targets };
+}
+
+function normalizeDurationMs(raw, fallback, label) {
+  if (raw == null || String(raw).trim() === '') return fallback;
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value < 1_000 || value > 30 * 60_000) {
+    throw new Error(`[dev-targets] ${label} must be an integer from 1000 to 1800000`);
+  }
+  return value;
+}
+
+function automaticCommandExecution(targets, overrides = {}) {
+  return {
+    mode: 'auto',
+    targets: overrides.targets ?? targets.map((target) => target.name),
+    includeLocal: overrides.includeLocal === true,
+    fallback: overrides.fallback ?? 'local',
+    loadProbeTtlMs: overrides.loadProbeTtlMs ?? DEFAULT_LOAD_PROBE_TTL_MS,
+    unavailableProbeTtlMs:
+      overrides.unavailableProbeTtlMs ?? DEFAULT_UNAVAILABLE_PROBE_TTL_MS,
+  };
+}
+
+function normalizeCommandExecution(raw, { targets, targetNames }) {
+  if (raw == null) {
+    return targets.length > 0 ? automaticCommandExecution(targets) : { ...LOCAL_PLACEMENT };
+  }
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    throw new Error('[dev-targets] commandExecution must be an object');
+  }
+  const mode = requireNonEmptyString(raw.mode, 'commandExecution mode').toLowerCase();
+  if (mode === 'local') return { ...LOCAL_PLACEMENT };
+  if (mode === 'prefer-target') {
+    return normalizePlacement(raw, { label: 'commandExecution', targetNames });
+  }
+  if (mode !== 'auto') {
+    throw new Error('[dev-targets] commandExecution mode must be "local", "prefer-target", or "auto"');
+  }
+  const selectedTargets = raw.targets == null
+    ? targets.map((target) => target.name)
+    : (() => {
+        if (!Array.isArray(raw.targets) || raw.targets.length === 0) {
+          throw new Error('[dev-targets] commandExecution targets must be a non-empty array');
+        }
+        const result = [];
+        for (const rawTarget of raw.targets) {
+          const target = requireNonEmptyString(rawTarget, 'commandExecution target').toLowerCase();
+          if (!targetNames.has(target)) {
+            throw new Error(`[dev-targets] commandExecution references unknown target: ${target}`);
+          }
+          if (!result.includes(target)) result.push(target);
+        }
+        return result;
+      })();
+  const fallback = String(raw.fallback ?? 'local').trim().toLowerCase();
+  if (fallback !== 'local' && fallback !== 'error') {
+    throw new Error('[dev-targets] commandExecution fallback must be "local" or "error"');
+  }
+  return automaticCommandExecution(targets, {
+    targets: selectedTargets,
+    includeLocal: raw.includeLocal === true,
+    fallback,
+    loadProbeTtlMs: normalizeDurationMs(
+      raw.loadProbeTtlMs,
+      DEFAULT_LOAD_PROBE_TTL_MS,
+      'commandExecution loadProbeTtlMs',
+    ),
+    unavailableProbeTtlMs: normalizeDurationMs(
+      raw.unavailableProbeTtlMs,
+      DEFAULT_UNAVAILABLE_PROBE_TTL_MS,
+      'commandExecution unavailableProbeTtlMs',
+    ),
+  });
+}
+
+function normalizeVersion2Config(raw, targets) {
+  const targetNames = new Set(targets.map((target) => target.name));
+  const runtimePlacementRaw = raw.runtimePlacement;
+  if (
+    runtimePlacementRaw != null
+    && (!runtimePlacementRaw || typeof runtimePlacementRaw !== 'object' || Array.isArray(runtimePlacementRaw))
+  ) {
+    throw new Error('[dev-targets] runtimePlacement must be an object');
+  }
+  const runtimePlacement = {
+    server: normalizePlacement(runtimePlacementRaw?.server, {
+      label: 'runtimePlacement.server',
+      targetNames,
+    }),
+    expo: normalizePlacement(runtimePlacementRaw?.expo, {
+      label: 'runtimePlacement.expo',
+      targetNames,
+    }),
+    daemon: normalizeDaemonPlacement(runtimePlacementRaw?.daemon, { targetNames }),
+  };
+  const commandExecution = normalizeCommandExecution(raw.commandExecution, { targets, targetNames });
+  return { version: 2, targets, runtimePlacement, commandExecution };
 }
 
 export function parseDevTargetsConfig(raw) {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
     throw new Error('[dev-targets] configuration must be an object');
   }
-  if (raw.version !== 1) {
+  if (raw.version !== 1 && raw.version !== 2) {
     throw new Error(`[dev-targets] unsupported configuration version: ${String(raw.version)}`);
   }
   if (!Array.isArray(raw.targets)) {
@@ -107,7 +268,32 @@ export function parseDevTargetsConfig(raw) {
     }
     seen.add(target.name);
   }
-  return { version: 1, targets };
+  if (raw.version === 1) return { version: 1, targets };
+  return normalizeVersion2Config(raw, targets);
+}
+
+export function resolveDevTargetExecutionPolicy(config) {
+  if (config?.version === 1) {
+    return {
+      server: { mode: 'local' },
+      expo: { mode: 'local' },
+      daemons: config.targets.length
+        ? { mode: 'local-and-targets', targets: config.targets.map((target) => target.name) }
+        : { mode: 'local' },
+      commands: config.targets.length > 0
+        ? automaticCommandExecution(config.targets)
+        : { mode: 'local' },
+    };
+  }
+  if (config?.version !== 2) {
+    throw new Error(`[dev-targets] unsupported configuration version: ${String(config?.version)}`);
+  }
+  return {
+    server: { ...config.runtimePlacement.server },
+    expo: { ...config.runtimePlacement.expo },
+    daemons: { ...config.runtimePlacement.daemon },
+    commands: { ...config.commandExecution },
+  };
 }
 
 export function resolveDevTargetsConfigPath({ stackName, env = process.env }) {

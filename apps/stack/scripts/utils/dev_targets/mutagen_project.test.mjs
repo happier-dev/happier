@@ -51,6 +51,7 @@ test('renderMutagenProject creates one-way source replicas while retaining targe
     '.*.__sync_backup__.*',
     '.tmp.*',
     '.backup.*',
+    '.happier-plugin-ui-build-*',
     '.project',
     '.happier',
     'coverage',
@@ -74,6 +75,10 @@ test('renderMutagenProject creates one-way source replicas while retaining targe
     'package-dist',
     '.restore.*',
     '.dist.hstack-*',
+    '.dist.build.*',
+    '.dist.backup.*',
+    '.tsbuildinfo.build.*',
+    '*.tsbuildinfo',
     '.cxx',
     'apps/ui/ios/build',
     'apps/ui/android/app/build',
@@ -85,9 +90,44 @@ test('renderMutagenProject creates one-way source replicas while retaining targe
     'apps/cli/*:*',
     'subagents/dev-plugin-projection-runtime-closure',
     '*.trace',
+    '!apps/cli/src/plugins/testkit/fixtures/packed-external-voice-provider/dist',
+    '!apps/cli/src/plugins/testkit/fixtures/packed-external-voice-provider/dist/**',
+    '!/.project',
+    '/.project/*',
+    '!/.project/plans',
+    '!/.project/plans/**',
+    '!/.project/tasks',
+    '!/.project/tasks/**',
+    '!/.project/scripts',
+    '!/.project/scripts/**',
+    '!/.project/*.md',
+    '/.project/plans/runtime-unification-v2/_validation/source-reality-review/qa/lane-A/repo-importers-map.json',
+    '/.project/plans/plugin-sdk-author-surface-convergence/CLAUDE-AUDIT-JOURNAL.md',
+    '/.project/plans/**/*.har',
+    '/.project/plans/**/*.png',
+    '/.project/plans/**/*.webm',
+    '/.project/plans/**/*.pyc',
+    '/.project/plans/**/*.log',
+    '/.project/plans/**/*.trace',
+    '/.project/plans/**/.DS_Store',
   ]) {
     assert.ok(rendered.includes(`- "${ignored}"`));
   }
+  assert.ok(
+    rendered.indexOf('- "/.project/*"')
+      < rendered.indexOf('- "!/.project/plans"'),
+    'the project root must be traversable before searchable children are selected',
+  );
+  assert.ok(
+    rendered.indexOf('- "!/.project/plans/**"')
+      < rendered.indexOf('- "/.project/plans/**/*.har"'),
+    'binary and sensitive plan exclusions must be applied after the searchable plan exception',
+  );
+  assert.doesNotMatch(
+    rendered,
+    /^\s+- "!\.project"$/m,
+    'the root exception must not re-include nested package .project directories',
+  );
   assert.doesNotMatch(rendered, /beforeCreate|afterCreate|beforeTerminate|afterTerminate/);
 });
 

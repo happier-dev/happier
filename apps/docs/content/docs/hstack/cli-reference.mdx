@@ -35,8 +35,11 @@ Common run flags (root commands):
 Remote development targets:
 
 - Add: `hstack dev-targets add <name> --platform=posix|windows --ssh=<alias> --repo-dir=<path> --cli-home-dir=<path> [--ssh-config-file=<path>] [--stack=<name>]`
+- Provision macOS/Linux SSH and add: `hstack dev-targets add <name> --host=<host> --user=<user> [--repo-dir=<path>] [--cli-home-dir=<path>] [--stack=<name>]`
 - Inspect: `hstack dev-targets list|path [--stack=<name>]`, `hstack dev-targets show <name> [--stack=<name>]`
 - Preflight: `hstack dev-targets doctor [name] [--stack=<name>]`
+- Synchronization: `hstack dev-targets status|sync <name> [--stack=<name>]`, or `hstack dev-targets sync-service start [--detached]|status|stop [--stack=<name>]`
+- Remote execution: `hstack dev-targets exec <name>|auto [--cwd=<repo-relative-path>] [--env=KEY=VALUE]... [--flush] [--tty] [--stack=<name>] -- <command> [args...]`
 - Remove: `hstack dev-targets remove <name> [--stack=<name>]`
 
 See: `/docs/hstack/dev-targets`.
@@ -47,12 +50,13 @@ See: `/docs/hstack/dev-targets`.
 
 Lifecycle:
 
-- Create: `hstack stack new <name> [--interactive] [--db-provider=pglite|sqlite|postgres|mysql] [--database-url=<url>]`
+- Create: `hstack stack new <name> [--interactive|--non-interactive] [--db-provider=pglite|sqlite|postgres|mysql] [--database-url=<url>]`
 - Edit: `hstack stack edit <name> --interactive`
 - List/info: `hstack stack list`, `hstack stack info <name>`
 - Run: `hstack stack dev <name>`, `hstack stack start <name>`
 - Stop: `hstack stack stop <name>`
 - Build: `hstack stack build <name>`, `hstack stack build <name> --web|--server|--daemon|--all`, `hstack stack build <name> --activate-runtime`
+  - Named stacks pinned to the same repository publish/reuse artifacts through one repository build authority; selecting a snapshot does not restart a running consumer.
   - `--tauri` is still the legacy local `hstack build` flag, not a named-stack artifact/runtime target in v1.
 - Activate runtime from existing artifacts: `hstack stack runtime <name> activate --web|--server|--daemon|--all`
 - Diagnose: `hstack stack doctor <name>`
@@ -92,6 +96,30 @@ hstack stack service dev-built install
 hstack stack service dev-built enable
 hstack menubar install --stack=dev-built --mode=selfhost
 ```
+
+Controlled/manual-restart stack:
+
+```bash
+# Run from the checkout under test.
+node ./apps/stack/scripts/repo_local.mjs stack new agent-qa --repo=/absolute/path/to/checkout --server=happier-server-light --db-provider=sqlite --no-copy-auth --non-interactive
+node ./apps/stack/scripts/repo_local.mjs stack env agent-qa set HAPPIER_STACK_RUNTIME_MODE=require
+node ./apps/stack/scripts/repo_local.mjs stack env agent-qa set HAPPIER_STACK_EXPO_SOURCE_STACK=<repository-stack>
+node ./apps/stack/scripts/repo_local.mjs stack auth <approved-auth-source> -- status --json
+# Continue only when the approved source reports auth.ok: true.
+node ./apps/stack/scripts/repo_local.mjs stack auth agent-qa -- copy-from <approved-auth-source>
+# Select the active complete snapshot already published by the repository producer.
+# Do not build or activate a runtime from the controlled consumer.
+node ./apps/stack/scripts/repo_local.mjs stack info <repository-stack> --json
+node ./apps/stack/scripts/repo_local.mjs stack runtime agent-qa select --json
+node ./apps/stack/scripts/repo_local.mjs tui stack start agent-qa --runtime --mobile
+```
+
+- Inspect selected versus loaded bytes: `node ./apps/stack/scripts/repo_local.mjs stack info agent-qa --json`
+- Load a newly selected snapshot: press `r` in that stack's TUI, or explicitly restart its stack/service.
+- Borrowing the repository stack's existing Expo process is the controlled-stack default. Unset `HAPPIER_STACK_EXPO_SOURCE_STACK` only for explicitly strict snapshot-UI QA.
+- The first full candidate may still build one shared static web artifact because the server snapshot consumes it; consumers reuse it and do not start or copy their own Expo process.
+- `HAPPIER_STACK_RUNTIME_BUILD_AUTHORITY_STACK=<stack>` overrides the repository-derived build authority for an advanced managed-stack setup.
+- `--force` is not a general recovery switch: it replaces target auth files only after Account seed compatibility succeeds and rejects conflicting target Account data. Do not use it to repair a controlled stack; re-authenticate an approved source or obtain human direction instead.
 
 Component-only runtime refreshes:
 

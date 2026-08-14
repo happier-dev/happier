@@ -1,4 +1,4 @@
-const DEFAULT_IGNORES = [
+export const DEV_TARGET_MUTAGEN_IGNORE_PATHS = [
   'node_modules',
   'dist',
   'dist.staging.*',
@@ -11,6 +11,7 @@ const DEFAULT_IGNORES = [
   '.*.__sync_backup__.*',
   '.tmp.*',
   '.backup.*',
+  '.happier-plugin-ui-build-*',
   '.project',
   '.happier',
   '.happier-stack',
@@ -35,6 +36,10 @@ const DEFAULT_IGNORES = [
   'package-dist',
   '.restore.*',
   '.dist.hstack-*',
+  '.dist.build.*',
+  '.dist.backup.*',
+  '.tsbuildinfo.build.*',
+  '*.tsbuildinfo',
   '.cxx',
   'apps/ui/ios/build',
   'apps/ui/android/app/build',
@@ -50,6 +55,26 @@ const DEFAULT_IGNORES = [
   '*.log',
   '*.trace',
   '.DS_Store',
+  '!apps/cli/src/plugins/testkit/fixtures/packed-external-voice-provider/dist',
+  '!apps/cli/src/plugins/testkit/fixtures/packed-external-voice-provider/dist/**',
+  '!/.project',
+  '/.project/*',
+  '!/.project/plans',
+  '!/.project/plans/**',
+  '!/.project/tasks',
+  '!/.project/tasks/**',
+  '!/.project/scripts',
+  '!/.project/scripts/**',
+  '!/.project/*.md',
+  '/.project/plans/runtime-unification-v2/_validation/source-reality-review/qa/lane-A/repo-importers-map.json',
+  '/.project/plans/plugin-sdk-author-surface-convergence/CLAUDE-AUDIT-JOURNAL.md',
+  '/.project/plans/**/*.har',
+  '/.project/plans/**/*.png',
+  '/.project/plans/**/*.webm',
+  '/.project/plans/**/*.pyc',
+  '/.project/plans/**/*.log',
+  '/.project/plans/**/*.trace',
+  '/.project/plans/**/.DS_Store',
 ];
 
 function yamlString(value) {
@@ -75,7 +100,7 @@ export function isMutagenProjectOwnedBy(contents, ownerId) {
   return String(contents ?? '').split(/\r?\n/, 2)[0] === mutagenProjectOwnerHeader(ownerId);
 }
 
-function withoutMutagenProjectOwner(contents) {
+export function withoutMutagenProjectOwner(contents) {
   return String(contents ?? '').replace(/^# hstack-owner: [^\r\n]*(?:\r?\n|$)/, '');
 }
 
@@ -97,7 +122,7 @@ export function renderMutagenProject({ sourceDir, targets, ownerId = null }) {
     '    ignore:',
     '      vcs: true',
     '      paths:',
-    ...DEFAULT_IGNORES.map((entry) => `        - ${yamlString(entry)}`),
+    ...DEV_TARGET_MUTAGEN_IGNORE_PATHS.map((entry) => `        - ${yamlString(entry)}`),
   ];
   for (const target of targets) {
     lines.push(

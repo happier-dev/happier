@@ -1,11 +1,13 @@
 ---
 title: Remote development targets
-description: Mirror one checkout to Linux, macOS, or Windows machines and run native development daemons from yarn dev or yarn tui.
+description: Mirror one checkout to Linux, macOS, or Windows machines and place development services or commands on a selected target.
 ---
 
-Remote development targets let one local Stack checkout drive native Happier daemon builds on other
-machines. Stack uses [Mutagen](https://mutagen.io/) for one-way source synchronization and reuses
-the existing Stack development lifecycle on every target.
+Remote development targets let one local Stack checkout drive Happier builds, tests, daemons,
+Expo/Metro, and optionally the development server on other machines. Stack uses
+[Mutagen](https://mutagen.io/) for one-way source synchronization and reuses the existing Stack
+development lifecycle on every target. The local checkout, TUI, Mutagen process, and stable
+localhost ports remain on the editing machine.
 
 This is intended for maintainers who want macOS, Linux, and Windows daemons connected to the same
 development server while editing one checkout.
@@ -21,7 +23,8 @@ On the computer running `yarn dev` or `yarn tui`:
 On every target:
 
 - run an OpenSSH server;
-- install Node.js and Corepack;
+- install Node.js 22 or newer and Corepack;
+- install any native developer tools remote commands will use, such as ripgrep (`rg`);
 - allow enough disk space for a source mirror, target-local dependencies, and build output.
 
 Stack deliberately does not install or update the host's SSH server, Node.js, Corepack, or Mutagen
@@ -35,7 +38,8 @@ hstack dev-targets doctor linux --stack=repo-dev
 ```
 
 `doctor` checks the local Mutagen CLI, passwordless SSH, and remote Node.js/Corepack availability.
-Omit the target name to check every target configured for the stack.
+It does not provision or inventory optional developer tools. Omit the target name to check every
+target configured for the stack.
 
 ## Add and manage targets
 
@@ -52,6 +56,51 @@ hstack dev-targets path --stack=repo-dev
 hstack dev-targets list --stack=repo-dev
 hstack dev-targets show linux --stack=repo-dev
 ```
+
+### One-command macOS or Linux setup
+
+For a macOS or Linux target reachable over SSH, `add --host` owns the complete connection setup:
+
+```bash
+node ./apps/stack/scripts/repo_local.mjs dev-targets add mac --host=100.98.30.76 --user=leeroy
+```
+
+The command:
+
+- creates a dedicated ed25519 key under the selected Stack's private state directory;
+- uses a target-specific `known_hosts` file and accepts only a previously unseen host key (a changed
+  key still fails closed);
+- checks whether that dedicated key already works;
+- when necessary, runs `ssh-copy-id` through that same isolated target configuration so the remote
+  account password can be entered once;
+- verifies non-interactive dedicated-key authentication;
+- discovers the remote home, operating system, login-shell `PATH`, Node.js, and Corepack;
+- rewrites the target config from first-contact `accept-new` to strict host-key checking, proves the
+  strict connection, and registers the target only after those checks pass.
+
+By default the mirror is `<remote-home>/happier-dev` and target-local state is
+`<remote-home>/.happier/dev-targets/<name>`. Override either when needed:
+
+```bash
+node ./apps/stack/scripts/repo_local.mjs dev-targets add mac \
+  --host=100.98.30.76 \
+  --user=leeroy \
+  --repo-dir=/Volumes/Work/happier-dev \
+  --cli-home-dir=/Volumes/Work/.happier-mac
+```
+
+The discovered PATH is persisted with the target, so non-interactive commands can use installations
+managed by tools such as NVM or Volta even when the SSH daemon's default PATH cannot see them. If a
+version-manager shim exposes Node but omits `corepack`, provisioning also discovers the Corepack
+binary beside Node's actual `process.execPath`. Rerunning the
+same command reuses the target-specific key and refreshes the connection facts. This provisioning
+shortcut currently supports macOS and Linux targets; configure Windows targets explicitly as below.
+
+The local machine needs `ssh`, `ssh-keygen`, and `ssh-copy-id`. Provisioning never installs Node.js,
+Corepack, package managers, or system services on the remote host; it diagnoses missing prerequisites
+and stops before registering a target.
+
+### Explicit setup
 
 Add a Linux or macOS target:
 
@@ -99,48 +148,274 @@ Adding a target with an existing name replaces that target's configuration. Remo
 hstack dev-targets remove windows --stack=repo-dev
 ```
 
-From a source checkout, the equivalent repo-local shortcuts are:
+From a source checkout, use its direct repo-local launcher so target management is pinned to that
+checkout without a package-manager startup:
 
 ```bash
-yarn dev-targets list
-yarn dev-targets add ...
-yarn dev-targets show linux
-yarn dev-targets doctor
-yarn dev-targets remove linux
+node ./apps/stack/scripts/repo_local.mjs dev-targets list
+node ./apps/stack/scripts/repo_local.mjs dev-targets add ...
+node ./apps/stack/scripts/repo_local.mjs dev-targets show linux
+node ./apps/stack/scripts/repo_local.mjs dev-targets doctor
+node ./apps/stack/scripts/repo_local.mjs dev-targets remove linux
 ```
 
 The repo-local wrapper selects that checkout's Stack automatically.
 
+## Choose where work runs
+
+New placement settings are version 2 of the stack-scoped target configuration. Use the command
+owner instead of editing JSON:
+
+```bash
+# Keep the server and daemon local, but run Expo/Metro on the Mac target.
+node ./apps/stack/scripts/repo_local.mjs dev-targets placement set expo mac
+
+# Route common commands across the least-loaded healthy Mac.
+node ./apps/stack/scripts/repo_local.mjs dev-targets placement set commands auto --targets=mac,mac2 --fallback=local
+
+# Optional capabilities; keep the server local until its persistence is target-ready.
+node ./apps/stack/scripts/repo_local.mjs dev-targets placement set daemon mac
+node ./apps/stack/scripts/repo_local.mjs dev-targets placement set server mac
+
+node ./apps/stack/scripts/repo_local.mjs dev-targets placement show
+```
+
+Runtime surfaces accept `local` or one configured target name. `commands` additionally accepts
+`auto`, optionally with `--targets`, `--include-local`, `--fallback=local|error`,
+`--load-probe-ttl-ms`, and `--unavailable-probe-ttl-ms`. The available surfaces are:
+
+| Surface | What moves to the target | What stays local |
+|---|---|---|
+| `commands` | Common test, Vitest, and typecheck script processes | Source edits and Git |
+| `expo` | Metro/Expo watch, bundle, and restart work | TUI, Mutagen, stable Expo port/tunnel |
+| `daemon` | CLI build/watch and daemon process | TUI, Mutagen, server tunnel |
+| `server` | Server watch/build/restart and its selected database | TUI, Mutagen, stable server port/tunnel |
+
+Setting any placement upgrades the existing version 1 file without losing configured targets.
+The old version 1 behavior is local server + local Expo + local daemon, with an additional daemon
+on every configured target. To deliberately restore exactly that behavior:
+
+```bash
+node ./apps/stack/scripts/repo_local.mjs dev-targets placement clear --downgrade-v1
+```
+
+Removing a target that still owns an exclusive runtime or fixed command placement is rejected. An
+automatic all-target command pool follows target additions and removals.
+
+Placement is best-effort. Before starting an exclusively placed service, Stack checks Mutagen and
+the target host/toolchain. If that preflight cannot reach the host, the service starts locally for
+that Stack generation. A service process exiting is not treated as host unreachability: in
+particular, Expo/Metro is restarted on its configured target while the independent SSH tunnel keeps
+the local port stable. This prevents a normal Expo crash from creating a competing local Metro
+process.
+
+Reachability of the SSH worker is not service readiness. Stack verifies Expo through the local
+tunnel and verifies a remote daemon from that server identity's daemon state plus its live process.
+Runtime status records those results per service, so a healthy Expo endpoint remains available when
+the colocated daemon is rebuilding or degraded, and the TUI never labels the daemon running merely
+because the remote worker is connected.
+
+When the server or Expo is remote, SSH local forwards preserve the selected local ports. When the
+server stays local but Expo or a daemon is remote, an SSH reverse forward gives the remote process
+the same server endpoint. Browsers, local tools, and installed development clients therefore keep
+using the local URL. For phones, the tunnel listens on the configured LAN bind and Expo advertises a
+LAN-reachable URL; set `HAPPIER_STACK_LAN_IP` when automatic interface selection is not the address
+the device should use.
+
+Other named stacks can borrow that Expo endpoint by setting
+`HAPPIER_STACK_EXPO_SOURCE_STACK=<producer-stack>`. The producer remains the only process owner:
+the consumer TUI tails the producer's local or remote tee log but cannot stop or restart Expo. If a
+remote Expo worker crashes while its host is still reachable, the producer supervisor retries it on
+that target instead of starting a competing local Metro process. Local fallback is reserved for a
+target that fails the reachability preflight. The stable local tunnel/port therefore remains the URL
+used by browsers and installed development clients.
+
+This borrowed endpoint is the default UI mode for controlled QA stacks. Their server and daemon
+still load shared runtime snapshots; static snapshot UI is reserved for explicitly strict or
+reproducible UI QA.
+
+The default light server uses a SQLite file owned by the machine running the server. Stack does not
+mount or proxy a local SQLite file over SSH. Keep `server` local until the development database is
+deliberately moved to the target, or use a network database such as PostgreSQL before placing the
+server remotely.
+
+## Run heavy commands on a target
+
+Once synchronization is active—either through Stack or the independent synchronization
+service—use the same continuously synchronized `repoDir` for searches, tests, typechecks, and
+builds:
+
+```bash
+node ./apps/stack/scripts/repo_local.mjs dev-targets status linux
+node ./apps/stack/scripts/repo_local.mjs dev-targets exec linux -- rg -n "RunnerAgentExecutionGrant" apps packages .project/plans
+node ./apps/stack/scripts/repo_local.mjs dev-targets exec linux --cwd=apps/cli -- corepack yarn test
+node ./apps/stack/scripts/repo_local.mjs dev-targets exec linux --env=CI=1 -- corepack yarn typecheck
+```
+
+For ordinary work, internal workspace scripts choose among configured healthy targets automatically:
+
+```bash
+corepack yarn -s typecheck
+corepack yarn --cwd apps/cli -s test
+corepack yarn --cwd packages/plugins/claude -s typecheck
+corepack yarn --cwd apps/server -s vitest run sources/example.spec.ts
+```
+
+Do not invoke a `*:local` script directly. Those scripts are implementation targets for
+`hstack-exec`, which owns target selection and local fallback.
+
+The repository root and every internal workspace route their ordinary `test`, `test:unit`,
+`typecheck`, and `vitest` entry points when present. Their `*:local` counterparts are the canonical
+local implementations.
+For a broad command without a public package entry point, use the launcher directly:
+
+```bash
+./apps/stack/bin/hstack-exec -- rg -n "RunnerAgentExecutionGrant" apps packages .project/plans
+```
+
+`./apps/stack/bin/hstack-exec --local -- <command> [args...]` keeps one invocation local without
+pinning later descendant commands to the local host.
+The checkout-local `./apps/stack/bin/hstack-exec -- ...` launcher exposes that same owner for
+potentially broad read-only repository work (`rg`, `find`, inventories/counts), tests, typechecks,
+lint/static analysis, and builds that write only ignored artifacts. Keep tracked-source or Git
+mutations, generators/codemods/formatters, databases/migrations, Stack lifecycle, devices,
+simulators, and unforwarded secrets local.
+
+Automatic routing is also best-effort. It probes configured targets concurrently, normalizes load
+by CPU count, adds a low-memory penalty, and randomly distributes commands among near-equal hosts.
+Healthy samples are cached briefly (15 seconds by default); unavailable samples are cached longer
+(2 minutes by default). Refreshes are coalesced with a lightweight filesystem lock, so concurrent
+agents do not each probe the same host. The selector excludes a target that cannot launch the
+requested top-level executable and adjusts each cached score for commands already dispatched there
+but not yet visible in its next load sample. Pass the executable directly when practical: wrapping
+it in `sh -lc` hides inner tool requirements from this preflight. If the selected host cannot
+establish its command connection, the launcher temporarily excludes it and tries another configured
+target before applying `fallback=local|error`. Once a command starts, its result is authoritative
+and is never replayed elsewhere. `includeLocal` controls whether local load normally competes; it is
+independent from allowing local fallback.
+
+On POSIX, the checkout-local launcher first performs a conservative filesystem check. If no
+repository target configuration can exist, it replaces itself with the requested command without
+starting Node, Yarn, Mutagen, SSH, or a load probe. Node validates configuration and publishes a
+private shell-safe execution projection only when target configuration changes. Steady-state sync
+health checks, cached load probes, host selection, SSH execution, cancellation, and fallback are
+native shell operations. A `--script` invocation starts Yarn only on the selected execution host
+because Yarn owns package-script semantics. Windows deliberately executes locally for this
+POSIX-only routing feature.
+
+A running Stack is not required when the independent synchronization service owns a healthy mirror.
+If no remote is usable, the launcher follows the configured fallback. After the actual remote command has
+started, its result is authoritative: a failing remote test is never replayed locally and replaced
+with different evidence. A local fallback marks nested workspace scripts local as well, so one
+command cannot oscillate between machines.
+
+Everything after `--` belongs to the remote command, so child flags such as `--json` are preserved.
+`--cwd` is relative to the synchronized repository root and cannot escape it. `--env=KEY=VALUE` can
+be repeated; local environment variables are not forwarded implicitly. The remote command's exit
+status is returned by `hstack`. On `Ctrl-C`/termination, `hstack` cancels the execution-scoped remote
+process tree and then stops its local SSH client. Use `--tty` only for a command that genuinely needs
+an interactive terminal.
+
+Ordinary `exec` does **not** flush Mutagen. It accepts an active scanning, reconciliation, staging,
+transition, saving, or watching state only after that session has completed at least one successful
+cycle and has no error, pause, or conflict. It then runs against the bytes already present in the
+same moving mirror used by remote services. Continuous synchronization remains active while the
+command runs, exactly as it would if the command had been started locally during edits.
+
+When a command must start after all changes observed locally so far have reached the target, choose
+one of the explicit barriers:
+
+```bash
+node ./apps/stack/scripts/repo_local.mjs dev-targets sync linux
+node ./apps/stack/scripts/repo_local.mjs dev-targets exec linux --flush -- corepack yarn test
+```
+
+A flush is a point-in-time barrier before launch, not a snapshot: later local edits can still arrive
+while the command is running. It is therefore useful for a deliberate integration boundary, but is
+not the default for searches or normal RED/GREEN loops.
+
+`hstack` does not queue or globally cap `exec` commands. Separate invocations launch in parallel so
+a dedicated target can use all of its CPU and memory. The invoked tools may still contend for their
+own package locks, generated directories, ports, databases, simulators, or other exclusive
+resources. Partition agent lanes by package or output ownership when those resources overlap; file
+sync itself is not a command scheduler.
+
+The remote repository is an execution mirror, not a second authoring checkout. Keep source edits,
+formatting, source-generating codemods, Git mutations, and commits on the authoritative computer.
+Remote tests and builds may write ignored target-local outputs such as `node_modules`, build
+directories, coverage, and caches. Mutagen's `one-way-replica` mode can overwrite source changes
+made directly in the remote mirror.
+
+## Keep synchronization independent of Stack
+
+For remote commands to remain available while Stack starts, stops, or rebuilds, start the canonical
+Mutagen project independently:
+
+```bash
+# Start synchronization in the background. Mutagen remains the only resident owner.
+node ./apps/stack/scripts/repo_local.mjs dev-targets sync-service start --detached
+
+# Or keep this command attached and see live Mutagen activity.
+node ./apps/stack/scripts/repo_local.mjs dev-targets sync-service start
+
+node ./apps/stack/scripts/repo_local.mjs dev-targets sync-service status
+node ./apps/stack/scripts/repo_local.mjs dev-targets sync-service stop
+```
+
+Detached mode does not leave a Stack or Node wrapper running. Mutagen's daemon owns the live
+sessions. `start` resumes and checks each configured synchronization session; it does not install
+dependencies or build outputs. Command and service preflight own executable/dependency readiness.
+A configured Windows mirror remains sync-only because the native automatic execution launcher does
+not select Windows. `status` reports synchronization transport separately from command readiness.
+When Stack starts, it renders synchronization from every
+configured target—even when only a subset runs commands or services—detects the equivalent
+independent project, borrows it, and shows
+the same synchronization activity in the TUI without pausing, resuming, replacing, or terminating
+it. Stopping Stack therefore leaves independent synchronization active. `sync-service stop` pauses
+and releases that independent project so a later Stack generation can own its lifecycle again.
+
 ## What starts automatically
 
-When at least one target is configured, `yarn dev` and `yarn tui` start the local server, daemon,
-and Expo first. Remote preparation then runs independently in the background:
+`yarn dev` and `yarn tui` resolve one service plan for the Stack generation. Version 1 configuration
+keeps all local services and adds remote daemons. Version 2 starts each requested service at its
+configured placement, after the best-effort target preflight described above. Remote preparation
+runs independently by target:
 
 1. validate the locally installed Mutagen CLI;
-2. create the Mutagen `one-way-replica` project with every session paused;
+2. borrow the equivalent all-configured-target independent Mutagen project when one exists,
+   otherwise create the canonical `one-way-replica` project with every session paused;
 3. independently start any target's configured Lima instance and create its directories over SSH;
-4. resume and flush that target's Mutagen session;
+4. resume that target's Mutagen session when Stack owns the project;
 5. install its target-local dependencies with the synchronized lockfile;
-6. copy the current Stack daemon access key into a target-specific CLI home;
-7. open an SSH reverse tunnel to the already-running local Stack server;
-8. start the remote checkout through the existing daemon-only `hstack dev --watch` lifecycle.
+6. when the target owns a daemon, copy the current Stack daemon access key into its target-specific
+   CLI home;
+7. open the required local and/or reverse SSH forwards for that target's services;
+8. start one nested `hstack dev --watch` lifecycle containing exactly the target's server, Expo,
+   and/or daemon services.
 
-An unavailable or slow target does not delay Expo, stop the local Stack, or delay another ready
-target. Its failure is reported in the target pane while the local Stack and other targets remain
-available. Windows dependency installation retries transient package-manager failures before
-reporting the target as failed.
+An unavailable target selected during preflight falls back locally rather than making the Stack
+unbootable. Version 1's extra target daemons remain background best-effort and do not gate local
+services. After remote startup, a worker exit restarts the target lifecycle and reuses a healthy
+tunnel; a tunnel exit rebuilds the transport. A slow or retrying target does not delay another ready
+target. Windows dependency installation retries transient package-manager failures before reporting
+the target as failed.
 
 Each remote daemon builds from source on its own operating system and receives its own machine
 identity. It connects to the same Stack server as the local daemon; Stack does not copy the local
 machine identity or general settings.
 
-The TUI adds:
+The TUI adds and reports:
 
 - a `mutagen sync` pane for synchronization output and status;
 - one `remote <name>` pane per target for dependency, build, daemon, and reconnect output.
+- service placement plus each remote target's `starting`, `running`, or `retrying` status. Remote
+  processes are not represented as local PIDs.
 
-Stopping the TUI stops its remote workers and terminates the generated Mutagen project. Target-local
-dependencies and build caches remain for the next run.
+Stopping the TUI stops its remote workers and pauses only a Stack-owned Mutagen project. An
+independently owned project continues synchronizing. Target-local dependencies and build caches
+remain for the next run. `status`, `sync`, and `exec` work with either lifecycle owner; a paused,
+missing, conflicted, first-cycle-incomplete, or unhealthy session fails with a diagnostic instead
+of silently executing against an abandoned mirror.
 
 To run only the local Stack:
 
@@ -155,8 +430,22 @@ The local checkout is authoritative. Do not edit the remote mirror: Mutagen may 
 changes.
 
 Stack excludes source-control metadata and target-local artifacts such as `.git`, `node_modules`,
-`dist`, `.project`, `.happier`, coverage output, Rust targets, CocoaPods, and known review/build
-artifacts. Dependencies and build output are produced independently on every operating system.
+ordinary `dist` directories, `.happier`, coverage output, Rust targets, CocoaPods, and known
+review/build artifacts. Dependencies and build output are produced independently on every operating
+system. Tracked `dist` content used by the packed external-plugin test fixture is explicitly retained.
+
+The whole `.project` tree is not synchronized because this checkout can contain extremely large
+generated maps, transient state, binary QA evidence, and sensitive local journals. The searchable,
+source-like surfaces agents need are retained selectively:
+
+- `.project/*.md`;
+- `.project/plans/**`;
+- `.project/tasks/**`;
+- `.project/scripts/**`.
+
+Known giant generated maps, the local audit journal, images, recordings, HAR files, bytecode, logs,
+traces, and Finder metadata inside plans remain excluded. This keeps plan and task discovery usable
+on the remote machine without turning transient or sensitive project state into part of the mirror.
 
 The initial synchronization and dependency installation can take time. After startup, source
 changes are incremental and every remote daemon watches and builds its own target-local mirror.
@@ -193,5 +482,6 @@ QA.
   answer password or host-key prompts.
 - **Node.js/Corepack check fails:** install them on the target, then rerun `doctor`.
 - **A target should not start today:** use `--no-dev-targets`, or remove it from this stack's config.
-- **Synchronization diagnostics:** inspect the `mutagen sync` TUI pane and use the normal `mutagen`
-  CLI. Stack intentionally leaves Mutagen under user control.
+- **Synchronization diagnostics:** inspect the `mutagen sync` TUI pane, run
+  `hstack dev-targets status <name>`, and use the normal `mutagen` CLI when deeper inspection is
+  needed. Stack intentionally leaves Mutagen under user control.

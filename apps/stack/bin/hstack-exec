@@ -1,0 +1,577 @@
+#!/bin/sh
+
+# Native preferred-execution owner. Node validates configuration and publishes
+# its shell-safe projection only when configuration changes.
+
+script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P) || exit 1
+projection_generator="$script_dir/../scripts/utils/dev_targets/native_execution_projection.mjs"
+repo_root=$(CDPATH= cd -- "$script_dir/../../.." && pwd -P) || exit 1
+invoked_cwd=$(pwd -P) || exit 1
+
+case "$invoked_cwd" in
+  "$repo_root"|"$repo_root"/*) ;;
+  *) printf '%s\n' '[preferred-execution] command working directory must stay inside the repository' >&2; exit 1 ;;
+esac
+
+run_local() {
+  case "${1-}" in
+    --script=*)
+      local_script=${1#--script=}
+      shift
+      if [ "${1-}" = "--" ]; then shift; fi
+      if [ -n "${npm_node_execpath-}" ] && [ -n "${npm_execpath-}" ]; then
+        exec "$npm_node_execpath" "$npm_execpath" -s "$local_script" "$@"
+      fi
+      exec corepack yarn -s "$local_script" "$@"
+      ;;
+  esac
+
+  if [ "${1-}" = "--" ]; then shift; fi
+  if [ "$#" -eq 0 ]; then
+    printf '%s\n' '[preferred-execution] provide --script=NAME or COMMAND [ARG...] after --' >&2
+    exit 1
+  fi
+  exec "$@"
+}
+
+if [ "${1-}" = --local ]; then
+  shift
+  run_local "$@"
+fi
+
+storage_root=${HAPPIER_STACK_STORAGE_DIR-}
+if [ -z "$storage_root" ]; then
+  if [ -z "${HOME-}" ]; then run_local "$@"; fi
+  storage_root="$HOME/.happier/stacks"
+else
+  case "$storage_root" in
+    '~')
+      if [ -z "${HOME-}" ]; then run_local "$@"; fi
+      storage_root=$HOME
+      ;;
+    '~/'*)
+      if [ -z "${HOME-}" ]; then run_local "$@"; fi
+      storage_root="$HOME/${storage_root#'~/'}"
+      ;;
+  esac
+fi
+
+repo_token=$(basename -- "$repo_root" \
+  | LC_ALL=C tr '[:upper:]' '[:lower:]' \
+  | sed 's/[^a-z0-9-][^a-z0-9-]*/-/g; s/-\{1,\}/-/g; s/^-//; s/-$//') || \
+  run_local "$@"
+[ -n "$repo_token" ] || repo_token=repo
+
+if [ -d "$storage_root" ] && [ ! -r "$storage_root" ]; then
+  run_local "$@"
+fi
+
+config_path=
+projection_path=
+if [ -n "${HAPPIER_EXEC_CONFIG_PATH-}" ]; then
+  candidate_config=$HAPPIER_EXEC_CONFIG_PATH
+  candidate_projection=$(dirname -- "$candidate_config")/dev-target-exec-v1.sh
+  if [ -f "$candidate_config" ] && [ -r "$candidate_projection" ] && [ ! "$candidate_config" -nt "$candidate_projection" ]; then
+    . "$candidate_projection" || run_local "$@"
+    [ "${HSTACK_EXEC_PROJECTION_VERSION-}" = 1 ] || run_local "$@"
+    [ "${projection_repo_root-}" = "$repo_root" ] || run_local "$@"
+    config_path=$candidate_config
+    projection_path=$candidate_projection
+  elif [ -f "$candidate_config" ]; then
+    node "$projection_generator" "$candidate_config" "$candidate_projection" "$repo_root" || exit $?
+    exec "$0" "$@"
+  fi
+fi
+for candidate_config in "$storage_root"/repo-"$repo_token"-*/dev-targets.json; do
+  [ -z "$projection_path" ] || break
+  [ -f "$candidate_config" ] || continue
+  candidate_projection=$(dirname -- "$candidate_config")/dev-target-exec-v1.sh
+  if [ -r "$candidate_projection" ] && [ ! "$candidate_config" -nt "$candidate_projection" ]; then
+    # The projection is generated from the validated canonical config and is
+    # private to the stack directory. It is data for this native dispatcher.
+    . "$candidate_projection" || run_local "$@"
+    if [ "${HSTACK_EXEC_PROJECTION_VERSION-}" = 1 ] && [ "${projection_repo_root-}" = "$repo_root" ]; then
+      config_path=$candidate_config
+      projection_path=$candidate_projection
+      break
+    fi
+  fi
+done
+
+# The first invocation after configuration changes pays one Node configuration
+# parse. It only refreshes this native projection; it never selects or executes.
+if [ -z "$projection_path" ]; then
+  if [ -n "${HAPPIER_EXEC_CONFIG_PATH-}" ] && [ -f "$HAPPIER_EXEC_CONFIG_PATH" ]; then
+    candidate_projection=$(dirname -- "$HAPPIER_EXEC_CONFIG_PATH")/dev-target-exec-v1.sh
+    node "$projection_generator" "$HAPPIER_EXEC_CONFIG_PATH" "$candidate_projection" "$repo_root" || exit $?
+    exec "$0" "$@"
+  fi
+  for candidate_config in "$storage_root"/repo-"$repo_token"-*/dev-targets.json; do
+    [ -f "$candidate_config" ] || continue
+    candidate_projection=$(dirname -- "$candidate_config")/dev-target-exec-v1.sh
+    node "$projection_generator" "$candidate_config" "$candidate_projection" "$repo_root" || exit $?
+    exec "$0" "$@"
+  done
+  run_local "$@"
+fi
+
+if [ "${HAPPIER_DEV_TARGET_EXECUTION-}" = 1 ] ||
+   [ -n "${CI-}" ] ||
+   [ "${command_mode-}" = local ]; then
+  run_local "$@"
+fi
+
+# Command routing is intentionally POSIX-target-only. The Windows launcher is
+# local-only, and Windows remote targets are omitted from the projection.
+if [ "${target_count-0}" -eq 0 ]; then
+  if [ "${fallback_mode-local}" = error ]; then
+    printf '%s\n' '[preferred-execution] no POSIX execution target is configured' >&2
+    exit 1
+  fi
+  run_local "$@"
+fi
+
+case "${1-}" in
+  --script=*)
+    local_script=${1#--script=}
+    shift
+    [ "${1-}" = -- ] && shift
+    set -- corepack yarn -s "$local_script" "$@"
+    ;;
+  --) shift ;;
+esac
+[ "$#" -gt 0 ] || { printf '%s\n' '[preferred-execution] command is required' >&2; exit 1; }
+requested_command=$1
+relative_cwd=${invoked_cwd#"$repo_root"}
+relative_cwd=${relative_cwd#/}
+
+stack_dir=$(dirname -- "$config_path")
+cache_dir="$stack_dir/dev-target-command-load-native"
+mkdir -p -- "$cache_dir" || run_local "$@"
+
+value_for_target() {
+  field=$1
+  number=$2
+  eval "printf '%s' \"\${target_${number}_${field}-}\""
+}
+
+quote_remote() {
+  printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\"'\"'/g")"
+}
+
+sync_is_ready() {
+  target_name=$1
+  MUTAGEN_DATA_DIRECTORY="$stack_dir/mutagen/data"
+  export MUTAGEN_DATA_DIRECTORY
+  if [ -d "$stack_dir/mutagen/openssh" ]; then
+    MUTAGEN_SSH_PATH="$stack_dir/mutagen/openssh"
+    export MUTAGEN_SSH_PATH
+  fi
+  status_line=$(mutagen sync list "happier-$target_name" \
+    --template='{{range .}}{{printf "%s|%s|%d|%s|%t|%d\n" .Name .Status .SuccessfulCycles .LastError .Paused (len .Conflicts)}}{{end}}' \
+    2>/dev/null || true)
+  IFS='|' read -r session_name session_status successful_cycles last_error paused conflict_count <<EOF
+$status_line
+EOF
+  [ "$session_name" = "happier-$target_name" ] || return 1
+  [ "$paused" = false ] || return 1
+  [ -z "$last_error" ] || return 1
+  [ "${conflict_count-0}" = 0 ] || return 1
+  case "${successful_cycles-}" in ''|*[!0-9]*) return 1 ;; esac
+  [ "$successful_cycles" -gt 0 ] || return 1
+  case "$session_status" in
+    Watching|Scanning|Waiting-for-rescan|Reconciling|Staging-alpha|Staging-beta|Transitioning|Saving) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+remote_load_probe() {
+  number=$1
+  ssh_target=$(value_for_target ssh "$number")
+  ssh_config=$(value_for_target ssh_config "$number")
+  remote_path=$(value_for_target remote_path "$number")
+  path_setup=
+  if [ -n "$remote_path" ]; then
+    path_setup="PATH=$(quote_remote "$remote_path"):\$PATH; export PATH; "
+  fi
+  probe='cpu=$(getconf _NPROCESSORS_ONLN 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || printf 1); case $(uname -s) in Darwin) load=$(sysctl -n vm.loadavg | awk '\''{print $2}'\''); free=$(memory_pressure -Q 2>/dev/null | awk '\''/free percentage/ {gsub(/%/,"",$5); print $5/100; exit}'\'') ;; *) load=$(awk '\''{print $1}'\'' /proc/loadavg 2>/dev/null || uptime | awk -F'\''load average: '\'' '\''{print $2}'\'' | cut -d, -f1); free=$(awk '\''/MemTotal:/ {t=$2} /MemAvailable:/ {a=$2} END {if(t>0) print a/t}'\'' /proc/meminfo 2>/dev/null) ;; esac; [ -n "$free" ] || free=1; printf "%s %s %s\\n" "$cpu" "$load" "$free"'
+  remote_command="${path_setup}bash -lc $(quote_remote "$probe")"
+  if [ -n "$ssh_config" ]; then
+    ssh -T -F "$ssh_config" -o ControlMaster=no -o BatchMode=yes -o ConnectTimeout=5 "$ssh_target" "$remote_command"
+  else
+    ssh -T -o ControlMaster=no -o BatchMode=yes -o ConnectTimeout=5 "$ssh_target" "$remote_command"
+  fi
+}
+
+remote_command_probe() {
+  number=$1
+  ssh_target=$(value_for_target ssh "$number")
+  ssh_config=$(value_for_target ssh_config "$number")
+  remote_repo=$(value_for_target repo_dir "$number")
+  remote_path=$(value_for_target remote_path "$number")
+  remote_cwd=$remote_repo
+  [ -n "$relative_cwd" ] && remote_cwd="$remote_repo/$relative_cwd"
+  path_setup=
+  if [ -n "$remote_path" ]; then
+    path_setup="PATH=$(quote_remote "$remote_path"):\$PATH; export PATH; "
+  fi
+  case "$requested_command" in
+    */*) availability="[ -x $(quote_remote "$requested_command") ]" ;;
+    *) availability="command -v $(quote_remote "$requested_command") >/dev/null 2>&1" ;;
+  esac
+  remote_command="${path_setup}cd -- $(quote_remote "$remote_cwd") && $availability"
+  if [ -n "$ssh_config" ]; then
+    ssh -T -F "$ssh_config" -o ControlMaster=no -o BatchMode=yes -o ConnectTimeout=5 "$ssh_target" "$remote_command" >/dev/null 2>&1
+  else
+    ssh -T -o ControlMaster=no -o BatchMode=yes -o ConnectTimeout=5 "$ssh_target" "$remote_command" >/dev/null 2>&1
+  fi
+}
+
+command_is_available() {
+  number=$1
+  name=$2
+  command_key=$(printf '%s' "$requested_command" | cksum | awk '{print $1}')
+  cache_path="$cache_dir/$name.command.$command_key.cache"
+  now=$(date +%s)
+  if [ -r "$cache_path" ]; then
+    IFS=' ' read -r sampled available < "$cache_path" || true
+    case "$sampled:$available" in
+      *[!0-9:]*|'':*) ;;
+      *)
+        if [ "$available" = 1 ]; then ttl=300; else ttl=${unavailable_ttl_seconds-120}; fi
+        if [ $((now - sampled)) -lt "$ttl" ]; then [ "$available" = 1 ]; return; fi
+        ;;
+    esac
+  fi
+  temporary="$cache_path.$$.tmp"
+  if remote_command_probe "$number"; then
+    printf '%s 1\n' "$now" > "$temporary" && mv -f -- "$temporary" "$cache_path"
+    return 0
+  fi
+  printf '%s 0\n' "$now" > "$temporary" && mv -f -- "$temporary" "$cache_path"
+  return 1
+}
+
+read_fresh_cache() {
+  cache_path=$1
+  now=$2
+  [ -r "$cache_path" ] || return 1
+  IFS=' ' read -r sampled available score capacity < "$cache_path" || return 1
+  case "$sampled:$available" in *[!0-9:]*|'':*) return 1 ;; esac
+  case "$capacity" in ''|*[!0-9]*|0) return 1 ;; esac
+  if [ "$available" = 1 ]; then ttl=${load_ttl_seconds-15}; else ttl=${unavailable_ttl_seconds-120}; fi
+  [ $((now - sampled)) -lt "$ttl" ] || return 1
+  printf '%s %s %s\n' "$available" "$score" "$capacity"
+}
+
+probe_target() {
+  number=$1
+  name=$(value_for_target name "$number")
+  if ! command_is_available "$number" "$name"; then
+    printf '%s %s 0 - 1 command-unavailable\n' "$number" "$name"
+    return
+  fi
+  cache_path="$cache_dir/$name.cache"
+  lock_path="$cache_path.lock"
+  now=$(date +%s)
+  cached=$(read_fresh_cache "$cache_path" "$now" 2>/dev/null || true)
+  if [ -n "$cached" ]; then
+    printf '%s %s %s cached\n' "$number" "$name" "$cached"
+    return
+  fi
+  lock_acquired=0
+  if mkdir "$lock_path" 2>/dev/null; then
+    lock_acquired=1
+  else
+    lock_mtime=$(stat -f %m "$lock_path" 2>/dev/null || stat -c %Y "$lock_path" 2>/dev/null || true)
+    case "$lock_mtime" in
+      ''|*[!0-9]*) ;;
+      *)
+        if [ $((now - lock_mtime)) -ge 20 ]; then
+          rmdir "$lock_path" 2>/dev/null || true
+          mkdir "$lock_path" 2>/dev/null && lock_acquired=1
+        fi
+        ;;
+    esac
+  fi
+  if [ "$lock_acquired" -ne 1 ]; then
+    attempt=0
+    while [ "$attempt" -lt 40 ]; do
+      sleep 0.05
+      now=$(date +%s)
+      cached=$(read_fresh_cache "$cache_path" "$now" 2>/dev/null || true)
+      if [ -n "$cached" ]; then
+        printf '%s %s %s cached\n' "$number" "$name" "$cached"
+        return
+      fi
+      attempt=$((attempt + 1))
+    done
+    printf '%s %s 0 - 1 unavailable\n' "$number" "$name"
+    return
+  fi
+  trap 'rmdir "$lock_path" 2>/dev/null || true' EXIT HUP INT TERM
+  if sync_is_ready "$name"; then
+    sample=$(remote_load_probe "$number" 2>/dev/null || true)
+  else
+    sample=
+  fi
+  now=$(date +%s)
+  score=
+  capacity=
+  if [ -n "$sample" ]; then
+    score=$(printf '%s\n' "$sample" | awk '{if ($1 > 0 && $2 >= 0) printf "%.6f", ($2 / $1) + (($3 < 0.1) ? 1 : 0)}')
+    capacity=$(printf '%s\n' "$sample" | awk '{if ($1 ~ /^[0-9]+$/ && $1 > 0) print $1}')
+  fi
+  temporary="$cache_path.$$.tmp"
+  if [ -n "$score" ] && [ -n "$capacity" ]; then
+    printf '%s 1 %s %s\n' "$now" "$score" "$capacity" > "$temporary" && mv -f -- "$temporary" "$cache_path"
+    printf '%s %s 1 %s %s fresh\n' "$number" "$name" "$score" "$capacity"
+  else
+    printf '%s 0 - 1\n' "$now" > "$temporary" && mv -f -- "$temporary" "$cache_path"
+    printf '%s %s 0 - 1 fresh\n' "$number" "$name"
+  fi
+  rmdir "$lock_path" 2>/dev/null || true
+  trap - EXIT HUP INT TERM
+}
+
+probe_tmp=$(mktemp -d "${TMPDIR:-/tmp}/hstack-exec.XXXXXX") || run_local "$@"
+cleanup_probe_tmp() { rm -rf -- "$probe_tmp"; }
+trap cleanup_probe_tmp EXIT HUP INT TERM
+number=1
+while [ "$number" -le "$target_count" ]; do
+  (probe_target "$number" > "$probe_tmp/$number") &
+  number=$((number + 1))
+done
+wait
+
+if [ "${include_local-0}" = 1 ]; then
+  cpu=$(getconf _NPROCESSORS_ONLN 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || printf 1)
+  load=$(sysctl -n vm.loadavg 2>/dev/null | awk '{print $2}')
+  [ -n "$load" ] || load=$(awk '{print $1}' /proc/loadavg 2>/dev/null || printf 999999)
+  free=$(memory_pressure -Q 2>/dev/null | awk '/free percentage/ {gsub(/%/,"",$5); print $5/100; exit}')
+  [ -n "$free" ] || free=$(awk '/MemTotal:/ {t=$2} /MemAvailable:/ {a=$2} END {if(t>0) print a/t}' /proc/meminfo 2>/dev/null)
+  [ -n "$free" ] || free=1
+  local_score=$(awk -v load="$load" -v cpu="$cpu" -v free="$free" 'BEGIN {if(cpu>0) printf "%.6f", (load/cpu)+((free<0.1)?1:0); else print "999999"}')
+  printf '0 local 1 %s %s local\n' "$local_score" "$cpu" > "$probe_tmp/local"
+fi
+
+dispatch_lock="$cache_dir/dispatch.lock"
+dispatch_lock_acquired=0
+dispatch_attempt=0
+while [ "$dispatch_attempt" -lt 200 ]; do
+  if mkdir "$dispatch_lock" 2>/dev/null; then
+    dispatch_lock_acquired=1
+    break
+  fi
+  now=$(date +%s)
+  lock_mtime=$(stat -f %m "$dispatch_lock" 2>/dev/null || stat -c %Y "$dispatch_lock" 2>/dev/null || true)
+  case "$lock_mtime" in
+    ''|*[!0-9]*) ;;
+    *)
+      if [ $((now - lock_mtime)) -ge 20 ]; then
+        rmdir "$dispatch_lock" 2>/dev/null || true
+      fi
+      ;;
+  esac
+  sleep 0.05
+  dispatch_attempt=$((dispatch_attempt + 1))
+done
+if [ "$dispatch_lock_acquired" -ne 1 ]; then
+  if [ "${fallback_mode-local}" = error ]; then
+    printf '%s\n' '[preferred-execution] command dispatch is temporarily unavailable' >&2
+    exit 1
+  fi
+  printf '%s\n' '[preferred-execution] command dispatch is temporarily unavailable; running locally' >&2
+  run_local "$@"
+fi
+
+count_active_dispatches() {
+  target_name=$1
+  active_count=0
+  for reservation in "$cache_dir/$target_name.active."*; do
+    [ -f "$reservation" ] || continue
+    reservation_pid=$(sed -n '1p' "$reservation" 2>/dev/null || true)
+    case "$reservation_pid" in
+      ''|*[!0-9]*) rm -f -- "$reservation" 2>/dev/null || true ;;
+      *)
+        if kill -0 "$reservation_pid" 2>/dev/null; then
+          active_count=$((active_count + 1))
+        else
+          rm -f -- "$reservation" 2>/dev/null || true
+        fi
+        ;;
+    esac
+  done
+  printf '%s\n' "$active_count"
+}
+
+candidates="$probe_tmp/candidates"
+: > "$candidates"
+for result_path in "$probe_tmp"/[0-9]* "$probe_tmp/local"; do
+  [ -f "$result_path" ] || continue
+  IFS=' ' read -r candidate_number candidate_name candidate_available candidate_score candidate_capacity candidate_cache < "$result_path" || continue
+  if [ "$candidate_available" = 1 ]; then
+    candidate_active=$(count_active_dispatches "$candidate_name")
+    candidate_effective=$(awk -v score="$candidate_score" -v active="$candidate_active" -v capacity="$candidate_capacity" 'BEGIN {printf "%.6f", score + (active / capacity)}')
+  else
+    candidate_active=0
+    candidate_effective=$candidate_score
+  fi
+  printf '%s %s %s %s %s %s %s %s\n' \
+    "$candidate_number" "$candidate_name" "$candidate_available" "$candidate_effective" \
+    "$candidate_cache" "$candidate_score" "$candidate_active" "$candidate_capacity" >> "$candidates"
+done
+
+selected=$(awk '
+  $3 == 1 {
+    count += 1
+    lines[count] = $0
+    scores[count] = $4
+    if (!found || $4 < minimum) { found = 1; minimum = $4 }
+  }
+  END {
+    if (!found) exit
+    srand()
+    peer_count = 0
+    for (i = 1; i <= count; i += 1) {
+      if (scores[i] <= minimum + 0.1) peers[++peer_count] = lines[i]
+    }
+    print peers[1 + int(rand() * peer_count)]
+  }
+' "$candidates")
+if [ -z "$selected" ]; then
+  rmdir "$dispatch_lock" 2>/dev/null || true
+  if [ "${fallback_mode-local}" = error ]; then
+    printf '%s\n' '[preferred-execution] no healthy execution target is available' >&2
+    exit 1
+  fi
+  printf '%s\n' '[preferred-execution] no healthy execution target is available; running locally' >&2
+  run_local "$@"
+fi
+IFS=' ' read -r selected_number selected_name _selected_available selected_score selected_cache selected_base_score selected_active selected_capacity <<EOF
+$selected
+EOF
+if [ "$selected_number" = 0 ]; then
+  rmdir "$dispatch_lock" 2>/dev/null || true
+  run_local "$@"
+fi
+reservation_path="$cache_dir/$selected_name.active.$$"
+if ! printf '%s\n' "$$" > "$reservation_path.$$.tmp" || ! mv -f -- "$reservation_path.$$.tmp" "$reservation_path"; then
+  rm -f -- "$reservation_path.$$.tmp" 2>/dev/null || true
+  rmdir "$dispatch_lock" 2>/dev/null || true
+  if [ "${fallback_mode-local}" = error ]; then
+    printf '%s\n' '[preferred-execution] command dispatch reservation failed' >&2
+    exit 1
+  fi
+  printf '%s\n' '[preferred-execution] command dispatch reservation failed; running locally' >&2
+  run_local "$@"
+fi
+rmdir "$dispatch_lock" 2>/dev/null || true
+printf '[preferred-execution] selected %s (load=%s, active=%s, effective=%s, %s)\n' \
+  "$selected_name" "$selected_base_score" "$selected_active" "$selected_score" "$selected_cache" >&2
+
+ssh_target=$(value_for_target ssh "$selected_number")
+ssh_config=$(value_for_target ssh_config "$selected_number")
+remote_repo=$(value_for_target repo_dir "$selected_number")
+remote_home=$(value_for_target cli_home "$selected_number")
+remote_path=$(value_for_target remote_path "$selected_number")
+remote_cwd=$remote_repo
+[ -n "$relative_cwd" ] && remote_cwd="$remote_repo/$relative_cwd"
+
+execution_id="native-$$-${selected_number}-$(date +%s)"
+pid_file="$remote_home/remote-exec/$execution_id.pid"
+remote_script="set -euo pipefail; execution_id=$(quote_remote "$execution_id"); pid_file=$(quote_remote "$pid_file"); mkdir -p -- \"\$(dirname -- \"\$pid_file\")\"; printf '%s\\n' \"\$\$\" > \"\$pid_file\"; trap 'rm -f -- \"\$pid_file\"' EXIT; cd -- $(quote_remote "$remote_cwd"); export HAPPIER_DEV_TARGET_EXECUTION=1;"
+if [ -n "$remote_path" ]; then remote_script="$remote_script PATH=$(quote_remote "$remote_path"):\$PATH; export PATH;"; fi
+for argument in "$@"; do remote_script="$remote_script $(quote_remote "$argument")"; done
+remote_script="$remote_script; exit \$?"
+remote_command="bash -lc $(quote_remote "$remote_script")"
+
+control_dir=$(mktemp -d /tmp/hstack-ssh.XXXXXX) || {
+  release_reservation
+  if [ "${fallback_mode-local}" = error ]; then
+    printf '%s\n' '[preferred-execution] could not allocate the SSH control connection' >&2
+    exit 1
+  fi
+  printf '%s\n' '[preferred-execution] could not allocate the SSH control connection; running locally' >&2
+  run_local "$@"
+}
+control_path="$control_dir/control"
+
+open_selected_control() {
+  if [ -n "$ssh_config" ]; then
+    ssh -MNf -F "$ssh_config" -S "$control_path" \
+      -o ControlMaster=yes -o ControlPersist=60 -o BatchMode=yes -o ConnectTimeout=5 \
+      "$ssh_target" >/dev/null
+  else
+    ssh -MNf -S "$control_path" \
+      -o ControlMaster=yes -o ControlPersist=60 -o BatchMode=yes -o ConnectTimeout=5 \
+      "$ssh_target" >/dev/null
+  fi
+}
+
+close_selected_control() {
+  if [ -n "$ssh_config" ]; then
+    ssh -F "$ssh_config" -S "$control_path" -O exit "$ssh_target" >/dev/null 2>&1 || true
+  else
+    ssh -S "$control_path" -O exit "$ssh_target" >/dev/null 2>&1 || true
+  fi
+  rm -f -- "$control_path" 2>/dev/null || true
+  rmdir -- "$control_dir" 2>/dev/null || true
+}
+
+if ! open_selected_control; then
+  release_reservation
+  rm -f -- "$control_path" 2>/dev/null || true
+  rmdir -- "$control_dir" 2>/dev/null || true
+  now=$(date +%s)
+  unavailable_cache="$cache_dir/$selected_name.cache"
+  unavailable_temporary="$unavailable_cache.$$.tmp"
+  printf '%s 0 - 1\n' "$now" > "$unavailable_temporary" && \
+    mv -f -- "$unavailable_temporary" "$unavailable_cache"
+  retry_count=${HSTACK_EXEC_PRE_DISPATCH_RETRY_COUNT-0}
+  case "$retry_count" in ''|*[!0-9]*) retry_count=0 ;; esac
+  retry_count=$((retry_count + 1))
+  if [ "$retry_count" -lt "$target_count" ]; then
+    HSTACK_EXEC_PRE_DISPATCH_RETRY_COUNT=$retry_count exec "$0" -- "$@"
+  fi
+  unset HSTACK_EXEC_PRE_DISPATCH_RETRY_COUNT
+  if [ "${fallback_mode-local}" = error ]; then
+    printf '%s\n' '[preferred-execution] no execution target accepted a command connection' >&2
+    exit 1
+  fi
+  printf '%s\n' '[preferred-execution] no execution target accepted a command connection; running locally' >&2
+  run_local "$@"
+fi
+
+run_selected_ssh() {
+  if [ -n "$ssh_config" ]; then
+    ssh -T -F "$ssh_config" -S "$control_path" -o ControlMaster=no -o BatchMode=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=3 "$ssh_target" "$remote_command"
+  else
+    ssh -T -S "$control_path" -o ControlMaster=no -o BatchMode=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=3 "$ssh_target" "$remote_command"
+  fi
+}
+
+cleanup_probe_tmp
+trap - EXIT HUP INT TERM
+release_reservation() { rm -f -- "$reservation_path" 2>/dev/null || true; }
+run_selected_ssh &
+ssh_pid=$!
+cancel_remote() {
+  cancel_script="execution_id=$(quote_remote "$execution_id"); pid_file=$(quote_remote "$pid_file"); [ -f \"\$pid_file\" ] || exit 0; pid=\$(sed -n '1p' \"\$pid_file\"); case \"\$pid\" in ''|*[!0-9]*) exit 0;; esac; command=\$(ps -p \"\$pid\" -o command= 2>/dev/null || true); case \"\$command\" in *\"\$execution_id\"*) ;; *) rm -f -- \"\$pid_file\"; exit 0;; esac; descendants() { for child in \$(ps -eo pid=,ppid= | awk -v p=\"\$1\" '\$2 == p {print \$1}'); do descendants \"\$child\"; done; printf '%s\\n' \"\$1\"; }; for pid in \$(descendants \"\$pid\"); do kill -TERM \"\$pid\" 2>/dev/null || true; done; rm -f -- \"\$pid_file\""
+  cancel_command="bash -lc $(quote_remote "$cancel_script")"
+  if [ -n "$ssh_config" ]; then
+    ssh -T -F "$ssh_config" -o ControlMaster=no -o BatchMode=yes -o ConnectTimeout=5 "$ssh_target" "$cancel_command" >/dev/null 2>&1 || true
+  else
+    ssh -T -o ControlMaster=no -o BatchMode=yes -o ConnectTimeout=5 "$ssh_target" "$cancel_command" >/dev/null 2>&1 || true
+  fi
+  kill -TERM "$ssh_pid" 2>/dev/null || true
+  close_selected_control
+  release_reservation
+}
+trap 'cancel_remote; exit 130' INT TERM
+wait "$ssh_pid"
+status=$?
+trap - INT TERM
+close_selected_control
+release_reservation
+exit "$status"

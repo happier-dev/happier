@@ -6,15 +6,210 @@ function powershellQuote(value) {
   return `'${String(value).replace(/'/g, "''")}'`;
 }
 
+function powershellNativeArgument(value) {
+  const escaped = String(value).replace(/(\\*)"/g, (_match, backslashes) => (
+    `${backslashes}${backslashes}\\"`
+  ));
+  return powershellQuote(escaped);
+}
+
 function encodePowerShell(script) {
   return Buffer.from(String(script), 'utf16le').toString('base64');
 }
 
-function wrapRemoteScript(target, script) {
+function prependRemotePath(target, script) {
+  const entries = Array.isArray(target.remotePath) ? target.remotePath.map(String) : [];
+  if (entries.length === 0) return script;
   if (target.platform === 'windows') {
-    return `powershell.exe -NoProfile -NonInteractive -EncodedCommand ${encodePowerShell(script)}`;
+    return `$env:PATH = ${powershellQuote(entries.join(';'))} + [IO.Path]::PathSeparator + $env:PATH; ${script}`;
   }
-  return `bash -lc ${posixQuote(script)}`;
+  return `export PATH=${posixQuote(entries.join(':'))}:"$PATH"; ${script}`;
+}
+
+function requireRemoteRelativeWorkingDirectory(target, cwd) {
+  const raw = String(cwd ?? '.').trim() || '.';
+  if (/\0|\r|\n/.test(raw)) {
+    throw new Error('[dev-targets] invalid remote working directory');
+  }
+  const slashNormalized = raw.replace(/\\/g, '/');
+  if (
+    slashNormalized.startsWith('/')
+    || /^[A-Za-z]:\//.test(slashNormalized)
+    || slashNormalized.split('/').some((segment) => segment === '..')
+  ) {
+    throw new Error('[dev-targets] remote working directory must stay inside the synchronized repository');
+  }
+  const segments = slashNormalized.split('/').filter((segment) => segment && segment !== '.');
+  const root = String(target.repoDir).replace(/[\\/]+$/, '');
+  return segments.length ? `${root}/${segments.join('/')}` : root;
+}
+
+function normalizeRemoteEnvironment(environment) {
+  const result = [];
+  for (const [key, value] of Object.entries(environment ?? {})) {
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) {
+      throw new Error(`[dev-targets] invalid remote environment key: ${key}`);
+    }
+    const normalized = String(value ?? '');
+    if (normalized.includes('\0')) {
+      throw new Error(`[dev-targets] invalid remote environment value for ${key}`);
+    }
+    result.push([key, normalized]);
+  }
+  return result;
+}
+
+function requireRemoteExecutionId(executionId) {
+  const normalized = String(executionId ?? '').trim();
+  if (!/^[A-Za-z0-9][A-Za-z0-9_-]{7,127}$/.test(normalized)) {
+    throw new Error('[dev-targets] remote execution id must be a path-safe opaque identifier');
+  }
+  return normalized;
+}
+
+function resolveRemoteExecutionPidFile(target, executionId) {
+  const normalizedHome = String(target.cliHomeDir).replace(/[\\/]+$/, '');
+  return `${normalizedHome}/remote-exec/${requireRemoteExecutionId(executionId)}.pid`;
+}
+
+export function buildRemoteExecCommand(
+  target,
+  { executionId, cwd = '.', commandArgs, environment = {} } = {},
+) {
+  const args = Array.isArray(commandArgs) ? commandArgs.map(String) : [];
+  if (args.length === 0 || !args[0]) {
+    throw new Error('[dev-targets] remote command is required');
+  }
+  if (args.some((value) => value.includes('\0'))) {
+    throw new Error('[dev-targets] remote command arguments cannot contain NUL bytes');
+  }
+  const workingDirectory = requireRemoteRelativeWorkingDirectory(target, cwd);
+  const environmentEntries = normalizeRemoteEnvironment(environment);
+  const normalizedExecutionId = requireRemoteExecutionId(executionId);
+  const pidFile = resolveRemoteExecutionPidFile(target, normalizedExecutionId);
+  if (target.platform === 'windows') {
+    return wrapRemoteScript(
+      target,
+      [
+        '$ErrorActionPreference = "Stop"',
+        "$ProgressPreference = 'SilentlyContinue'",
+        `$pidFile = ${powershellQuote(pidFile)}`,
+        'New-Item -ItemType Directory -Force -Path (Split-Path -Parent $pidFile) | Out-Null',
+        '$selfProcess = Get-Process -Id $PID',
+        '"$PID|$($selfProcess.StartTime.ToUniversalTime().Ticks)" | Set-Content -LiteralPath $pidFile -Encoding Ascii -NoNewline',
+        'try { '
+          + `Set-Location -LiteralPath ${powershellQuote(workingDirectory)}; `
+          + environmentEntries.map(([key, value]) => `$env:${key} = ${powershellQuote(value)}; `).join('')
+          + `& ${args.map(powershellNativeArgument).join(' ')}; `
+          + '$commandStatus = $LASTEXITCODE; '
+          + 'if ($null -eq $commandStatus) { $commandStatus = 0 }; '
+          + 'exit $commandStatus '
+          + '} finally { Remove-Item -Force -ErrorAction SilentlyContinue -LiteralPath $pidFile }',
+      ].join('; '),
+    );
+  }
+  return wrapRemoteScript(
+    target,
+    [
+      'set -euo pipefail',
+      `execution_id=${posixQuote(normalizedExecutionId)}`,
+      `pid_file=${posixQuote(pidFile)}`,
+      'mkdir -p -- "$(dirname -- "$pid_file")"',
+      'printf \'%s\\n\' "$$" > "$pid_file"',
+      'cleanup_remote_exec_pid_file() { rm -f -- "$pid_file"; }',
+      'trap cleanup_remote_exec_pid_file EXIT',
+      `cd -- ${posixQuote(workingDirectory)}`,
+      ...environmentEntries.map(([key, value]) => `export ${key}=${posixQuote(value)}`),
+      'set +e',
+      `${args.map(posixQuote).join(' ')}`,
+      'command_status=$?',
+      'exit "$command_status"',
+    ].join('; '),
+  );
+}
+
+export function buildRemoteCancelCommand(target, { executionId } = {}) {
+  const normalizedExecutionId = requireRemoteExecutionId(executionId);
+  const pidFile = resolveRemoteExecutionPidFile(target, normalizedExecutionId);
+  if (target.platform === 'windows') {
+    return wrapRemoteScript(
+      target,
+      [
+        '$ErrorActionPreference = "Stop"',
+        "$ProgressPreference = 'SilentlyContinue'",
+        `$pidFile = ${powershellQuote(pidFile)}`,
+        'if (-not (Test-Path -LiteralPath $pidFile)) { exit 0 }',
+        'try { '
+          + '$identity = (Get-Content -Raw -LiteralPath $pidFile).Trim().Split(\'|\'); '
+          + 'if ($identity.Count -ne 2) { exit 0 }; '
+          + '[int]$remoteProcessId = 0; [long]$remoteStartTicks = 0; '
+          + 'if (-not [int]::TryParse($identity[0], [ref]$remoteProcessId)) { exit 0 }; '
+          + 'if (-not [long]::TryParse($identity[1], [ref]$remoteStartTicks)) { exit 0 }; '
+          + '$remoteProcess = Get-Process -Id $remoteProcessId -ErrorAction SilentlyContinue; '
+          + 'if ($null -eq $remoteProcess) { exit 0 }; '
+          + 'if ($remoteProcess.StartTime.ToUniversalTime().Ticks -ne $remoteStartTicks) { exit 0 }; '
+          + 'taskkill.exe /PID $remoteProcessId /T /F | Out-Null; '
+          + 'exit 0 '
+          + '} finally { Remove-Item -Force -ErrorAction SilentlyContinue -LiteralPath $pidFile }',
+      ].join('; '),
+    );
+  }
+  return wrapRemoteScript(
+    target,
+    [
+      'set -u',
+      `execution_id=${posixQuote(normalizedExecutionId)}`,
+      `pid_file=${posixQuote(pidFile)}`,
+      '[ -f "$pid_file" ] || exit 0',
+      'remote_pid=$(sed -n \'1p\' "$pid_file" 2>/dev/null || true)',
+      'case "$remote_pid" in \'\'|*[!0-9]*) rm -f -- "$pid_file"; exit 0 ;; esac',
+      'remote_command=$(ps -p "$remote_pid" -o command= 2>/dev/null || true)',
+      'case "$remote_command" in *"$execution_id"*) ;; *) rm -f -- "$pid_file"; exit 0 ;; esac',
+      'collect_descendants() { '
+        + 'for child_pid in $(ps -eo pid=,ppid= | awk -v parent="$1" \'$2 == parent { print $1 }\'); do '
+        + 'collect_descendants "$child_pid"; '
+        + 'done; '
+        + 'printf \'%s\\n\' "$1"; '
+        + '}',
+      'process_ids=$(collect_descendants "$remote_pid")',
+      'for process_id in $process_ids; do kill -TERM "$process_id" 2>/dev/null || true; done',
+      'attempt=0',
+      'while [ "$attempt" -lt 20 ]; do '
+        + 'remaining=0; '
+        + 'for process_id in $process_ids; do kill -0 "$process_id" 2>/dev/null && remaining=1; done; '
+        + '[ "$remaining" -eq 0 ] && break; '
+        + 'sleep 0.1; '
+        + 'attempt=$((attempt + 1)); '
+        + 'done',
+      'for process_id in $process_ids; do kill -KILL "$process_id" 2>/dev/null || true; done',
+      'rm -f -- "$pid_file"',
+      'exit 0',
+    ].join('; '),
+  );
+}
+
+function wrapRemoteScript(target, script) {
+  const wrappedScript = prependRemotePath(target, script);
+  if (target.platform === 'windows') {
+    return `powershell.exe -NoProfile -NonInteractive -EncodedCommand ${encodePowerShell(wrappedScript)}`;
+  }
+  return `bash -lc ${posixQuote(wrappedScript)}`;
+}
+
+function buildWindowsOrphanedMutagenCleanupScript() {
+  return [
+    'try {',
+    `  $mutagenAgents = @(Get-CimInstance -ClassName Win32_Process -Filter "Name = 'mutagen-agent.exe'" -ErrorAction SilentlyContinue);`,
+    '  foreach ($agent in $mutagenAgents) {',
+    '    $launcher = Get-CimInstance -ClassName Win32_Process -Filter ("ProcessId = {0}" -f $agent.ParentProcessId) -ErrorAction SilentlyContinue;',
+    "    if ($null -eq $launcher -or $launcher.Name -ne 'cmd.exe') { continue };",
+    '    $sshParentPid = [int]$launcher.ParentProcessId;',
+    '    if (-not (Get-Process -Id $sshParentPid -ErrorAction SilentlyContinue)) {',
+    '      & taskkill.exe /PID ([string]$launcher.ProcessId) /T /F | Out-Null',
+    '    }',
+    '  }',
+    '} catch { }',
+  ].join(' ');
 }
 
 export function buildRemoteEnsureDirectoriesCommand(target) {
@@ -23,6 +218,8 @@ export function buildRemoteEnsureDirectoriesCommand(target) {
       target,
       [
         '$ErrorActionPreference = "Stop"',
+        "$ProgressPreference = 'SilentlyContinue'",
+        buildWindowsOrphanedMutagenCleanupScript(),
         `New-Item -ItemType Directory -Force -Path ${powershellQuote(target.repoDir)} | Out-Null`,
         `New-Item -ItemType Directory -Force -Path ${powershellQuote(target.cliHomeDir)} | Out-Null`,
       ].join('; '),
@@ -31,34 +228,6 @@ export function buildRemoteEnsureDirectoriesCommand(target) {
   return wrapRemoteScript(
     target,
     `set -euo pipefail; mkdir -p -- ${posixQuote(target.repoDir)} ${posixQuote(target.cliHomeDir)}`,
-  );
-}
-
-export function buildRemoteBootstrapCommand(target) {
-  if (target.platform === 'windows') {
-    return wrapRemoteScript(
-      target,
-      [
-        '$ErrorActionPreference = "Stop"',
-        `Set-Location -LiteralPath ${powershellQuote(target.repoDir)}`,
-        'if (-not (Get-Command node -ErrorAction SilentlyContinue)) { throw "Node.js is required on the remote target" }',
-        'if (-not (Get-Command corepack -ErrorAction SilentlyContinue)) { throw "Corepack is required on the remote target" }',
-        `$env:HAPPIER_STACK_PM_CACHE_BASE_DIR = Join-Path $env:USERPROFILE '.cache'`,
-        'corepack yarn node ./apps/stack/scripts/utils/dev_targets/remote_dependency_bootstrap.mjs',
-        'if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }',
-      ].join('; '),
-    );
-  }
-  return wrapRemoteScript(
-    target,
-    [
-      'set -euo pipefail',
-      `cd -- ${posixQuote(target.repoDir)}`,
-      'command -v node >/dev/null || { echo "Node.js is required on the remote target" >&2; exit 127; }',
-      'command -v corepack >/dev/null || { echo "Corepack is required on the remote target" >&2; exit 127; }',
-      'export HAPPIER_STACK_PM_CACHE_BASE_DIR="$HOME/.cache"',
-      'corepack yarn node ./apps/stack/scripts/utils/dev_targets/remote_dependency_bootstrap.mjs',
-    ].join('; '),
   );
 }
 
@@ -89,6 +258,28 @@ export function buildRemoteDoctorCommand(target) {
   );
 }
 
+const REMOTE_LOAD_PROBE_SCRIPT = [
+  'const os = require("node:os")',
+  'const cpuCount = Math.max(1, os.availableParallelism())',
+  'const load1 = Number(os.loadavg()[0])',
+  'const totalMemory = Number(os.totalmem())',
+  'const freeMemory = Number(os.freemem())',
+  'process.stdout.write("__HAPPIER_LOAD__=" + JSON.stringify({ cpuCount, load1, normalizedLoad: Number.isFinite(load1) ? load1 / cpuCount : null, totalMemory, freeMemory, platform: process.platform }) + "\\n")',
+].join('; ');
+
+export function buildRemoteLoadProbeCommand(target) {
+  if (target.platform === 'windows') {
+    return wrapRemoteScript(
+      target,
+      `$ErrorActionPreference = "Stop"; node -e ${powershellNativeArgument(REMOTE_LOAD_PROBE_SCRIPT)}; exit $LASTEXITCODE`,
+    );
+  }
+  return wrapRemoteScript(
+    target,
+    `set -euo pipefail; node -e ${posixQuote(REMOTE_LOAD_PROBE_SCRIPT)}`,
+  );
+}
+
 export function buildRemoteInstallCredentialCommand(target, { stagedPath, finalPath }) {
   if (target.platform === 'windows') {
     return wrapRemoteScript(
@@ -112,7 +303,66 @@ export function buildRemoteInstallCredentialCommand(target, { stagedPath, finalP
   );
 }
 
-export function buildRemoteDaemonCommand(target, { serverUrl, activeServerId, stackName }) {
+function requireServicePort(value, label, { optional = false } = {}) {
+  if (optional && value == null) return null;
+  const port = Number(value);
+  if (!Number.isInteger(port) || port < 1024 || port > 65535) {
+    throw new Error(`[dev-targets] ${label} must be an integer from 1024 to 65535`);
+  }
+  return port;
+}
+
+function buildRemoteDevArgs({ services, serverUrl, publicServerUrl, startMobile }) {
+  const args = [];
+  if (!services.server) args.push('--no-server');
+  if (!services.expo) args.push('--no-ui');
+  if (!services.daemon) args.push('--no-daemon');
+  args.push('--no-browser', '--no-dev-targets', '--watch');
+  if (services.expo && startMobile) args.push('--mobile');
+  if (!services.server) {
+    args.push(`--server-url=${serverUrl}`);
+    if (publicServerUrl) args.push(`--server-public-url=${publicServerUrl}`);
+  }
+  return args;
+}
+
+function formatPosixDevArg(arg) {
+  const separator = arg.indexOf('=');
+  if (separator < 0) return arg;
+  return `${arg.slice(0, separator + 1)}${posixQuote(arg.slice(separator + 1))}`;
+}
+
+function formatPowerShellDevArg(arg) {
+  const separator = arg.indexOf('=');
+  if (separator < 0) return arg;
+  return `${arg.slice(0, separator + 1)}${powershellQuote(arg.slice(separator + 1))}`;
+}
+
+function resolveRemoteStackInvocation(target, {
+  services,
+  serverUrl,
+  publicServerUrl = '',
+  activeServerId,
+  stackName,
+  remoteServerPort = null,
+  remoteExpoPort = null,
+  expoPublicUrl = '',
+  startMobile = false,
+}) {
+  const normalizedServices = {
+    server: services?.server === true,
+    expo: services?.expo === true,
+    daemon: services?.daemon === true,
+  };
+  if (!Object.values(normalizedServices).some(Boolean)) {
+    throw new Error('[dev-targets] remote Stack command requires at least one service');
+  }
+  const serverPort = normalizedServices.server
+    ? requireServicePort(remoteServerPort, 'remote server port')
+    : null;
+  const expoPort = normalizedServices.expo
+    ? requireServicePort(remoteExpoPort, 'remote Expo port')
+    : null;
   const stackStorageDir = `${String(target.cliHomeDir).replace(/[\\/]+$/, '')}/stack-state`;
   const stackBaseDir = `${stackStorageDir}/${stackName}`;
   const stackEnvPath = `${stackBaseDir}/env`;
@@ -121,24 +371,75 @@ export function buildRemoteDaemonCommand(target, { serverUrl, activeServerId, st
     `HAPPIER_STACK_CLI_HOME_DIR=${target.cliHomeDir}`,
     'HAPPIER_STACK_SERVER_COMPONENT=happier-server-light',
     'HAPPIER_CLI_PKGROLL_TIMEOUT_MS=1800000',
+    'HAPPIER_DEV_TARGET_EXECUTION=1',
+    ...(serverPort ? [`HAPPIER_STACK_SERVER_PORT=${serverPort}`] : []),
+    ...(expoPort ? [
+      `HAPPIER_STACK_EXPO_DEV_PORT=${expoPort}`,
+      'HAPPIER_STACK_EXPO_DEV_PORT_STRATEGY=stable',
+      'HAPPIER_STACK_EXPO_HOST=localhost',
+    ] : []),
+    ...(expoPublicUrl ? [`EXPO_PACKAGER_PROXY_URL=${expoPublicUrl}`] : []),
   ];
+  const devArgs = buildRemoteDevArgs({
+    services: normalizedServices,
+    serverUrl,
+    publicServerUrl,
+    startMobile,
+  });
+  return {
+    activeServerId,
+    devArgs,
+    stackBaseDir,
+    stackEnvLines,
+    stackEnvPath,
+    stackName,
+    stackStorageDir,
+  };
+}
+
+function buildWindowsRemoteStackPrelude(target, invocation) {
+  return [
+    '$ErrorActionPreference = "Stop"',
+    `$env:HAPPIER_HOME_DIR = ${powershellQuote(target.cliHomeDir)}`,
+    `$env:HAPPIER_STACK_CLI_HOME_DIR = ${powershellQuote(target.cliHomeDir)}`,
+    `$env:HAPPIER_STACK_STORAGE_DIR = ${powershellQuote(invocation.stackStorageDir)}`,
+    `$env:HAPPIER_STACK_PM_CACHE_BASE_DIR = ${powershellQuote(`${String(target.cliHomeDir).replace(/[\\/]+$/, '')}/cache`)}`,
+    `$env:HAPPIER_STACK_STACK = ${powershellQuote(invocation.stackName)}`,
+    `$env:HAPPIER_ACTIVE_SERVER_ID = ${powershellQuote(invocation.activeServerId)}`,
+    `$env:HAPPIER_DAEMON_LIFECYCLE_SCOPE_ID = ${powershellQuote(invocation.activeServerId)}`,
+    `New-Item -ItemType Directory -Force -Path ${powershellQuote(invocation.stackBaseDir)} | Out-Null`,
+    `$stackEnvPath = ${powershellQuote(invocation.stackEnvPath)}`,
+    `@(${invocation.stackEnvLines.map(powershellQuote).join(', ')}) | Set-Content -LiteralPath $stackEnvPath -Encoding Ascii`,
+    `Set-Location -LiteralPath ${powershellQuote(target.repoDir)}`,
+  ];
+}
+
+function buildPosixRemoteStackPrelude(target, invocation) {
+  return [
+    'set -euo pipefail',
+    `export HAPPIER_HOME_DIR=${posixQuote(target.cliHomeDir)}`,
+    `export HAPPIER_STACK_CLI_HOME_DIR=${posixQuote(target.cliHomeDir)}`,
+    `export HAPPIER_STACK_STORAGE_DIR=${posixQuote(invocation.stackStorageDir)}`,
+    `export HAPPIER_STACK_PM_CACHE_BASE_DIR=${posixQuote(`${String(target.cliHomeDir).replace(/[\\/]+$/, '')}/cache`)}`,
+    `export HAPPIER_STACK_STACK=${posixQuote(invocation.stackName)}`,
+    `export HAPPIER_ACTIVE_SERVER_ID=${posixQuote(invocation.activeServerId)}`,
+    `export HAPPIER_DAEMON_LIFECYCLE_SCOPE_ID=${posixQuote(invocation.activeServerId)}`,
+    `install -d -m 700 -- ${posixQuote(invocation.stackBaseDir)}`,
+    `printf '%s\\n' ${invocation.stackEnvLines.map(posixQuote).join(' ')} > ${posixQuote(invocation.stackEnvPath)}`,
+    `cd -- ${posixQuote(target.repoDir)}`,
+  ];
+}
+
+export function buildRemoteStackStopCommand(target, options) {
+  const invocation = resolveRemoteStackInvocation(target, options);
   if (target.platform === 'windows') {
     return wrapRemoteScript(
       target,
       [
-        '$ErrorActionPreference = "Stop"',
-        `$env:HAPPIER_HOME_DIR = ${powershellQuote(target.cliHomeDir)}`,
-        `$env:HAPPIER_STACK_CLI_HOME_DIR = ${powershellQuote(target.cliHomeDir)}`,
-        `$env:HAPPIER_STACK_STORAGE_DIR = ${powershellQuote(stackStorageDir)}`,
-        `$env:HAPPIER_STACK_PM_CACHE_BASE_DIR = Join-Path $env:USERPROFILE '.cache'`,
-        `$env:HAPPIER_STACK_STACK = ${powershellQuote(stackName)}`,
-        `$env:HAPPIER_ACTIVE_SERVER_ID = ${powershellQuote(activeServerId)}`,
-        `$env:HAPPIER_DAEMON_LIFECYCLE_SCOPE_ID = ${powershellQuote(activeServerId)}`,
-        `New-Item -ItemType Directory -Force -Path ${powershellQuote(stackBaseDir)} | Out-Null`,
-        `$stackEnvPath = ${powershellQuote(stackEnvPath)}`,
-        `@(${stackEnvLines.map(powershellQuote).join(', ')}) | Set-Content -LiteralPath $stackEnvPath -Encoding Ascii`,
-        `Set-Location -LiteralPath ${powershellQuote(target.repoDir)}`,
-        `corepack yarn workspace @happier-dev/stack stack dev ${powershellQuote(stackName)} --no-server --no-ui --no-browser --no-dev-targets --watch --server-url=${powershellQuote(serverUrl)}`,
+        ...buildWindowsRemoteStackPrelude(target, invocation),
+        "$env:HAPPIER_STACK_SYNC_BUNDLED_WORKSPACES = '0'",
+        "$env:HAPPIER_STACK_UPDATE_CHECK = '0'",
+        `corepack yarn workspace @happier-dev/stack stack stop ${powershellQuote(invocation.stackName)} --yes --no-docker`,
         'exit $LASTEXITCODE',
       ].join('; '),
     );
@@ -146,20 +447,42 @@ export function buildRemoteDaemonCommand(target, { serverUrl, activeServerId, st
   return wrapRemoteScript(
     target,
     [
-      'set -euo pipefail',
-      `export HAPPIER_HOME_DIR=${posixQuote(target.cliHomeDir)}`,
-      `export HAPPIER_STACK_CLI_HOME_DIR=${posixQuote(target.cliHomeDir)}`,
-      `export HAPPIER_STACK_STORAGE_DIR=${posixQuote(stackStorageDir)}`,
-      'export HAPPIER_STACK_PM_CACHE_BASE_DIR="$HOME/.cache"',
-      `export HAPPIER_STACK_STACK=${posixQuote(stackName)}`,
-      `export HAPPIER_ACTIVE_SERVER_ID=${posixQuote(activeServerId)}`,
-      `export HAPPIER_DAEMON_LIFECYCLE_SCOPE_ID=${posixQuote(activeServerId)}`,
-      `install -d -m 700 -- ${posixQuote(stackBaseDir)}`,
-      `printf '%s\\n' ${stackEnvLines.map(posixQuote).join(' ')} > ${posixQuote(stackEnvPath)}`,
-      `cd -- ${posixQuote(target.repoDir)}`,
-      `exec corepack yarn workspace @happier-dev/stack stack dev ${posixQuote(stackName)} --no-server --no-ui --no-browser --no-dev-targets --watch --server-url=${posixQuote(serverUrl)}`,
+      ...buildPosixRemoteStackPrelude(target, invocation),
+      'export HAPPIER_STACK_SYNC_BUNDLED_WORKSPACES=0',
+      'export HAPPIER_STACK_UPDATE_CHECK=0',
+      `exec corepack yarn workspace @happier-dev/stack stack stop ${posixQuote(invocation.stackName)} --yes --no-docker`,
     ].join('; '),
   );
+}
+
+export function buildRemoteStackCommand(target, options) {
+  const invocation = resolveRemoteStackInvocation(target, options);
+  if (target.platform === 'windows') {
+    return wrapRemoteScript(
+      target,
+      [
+        ...buildWindowsRemoteStackPrelude(target, invocation),
+        `corepack yarn workspace @happier-dev/stack stack dev ${powershellQuote(invocation.stackName)} ${invocation.devArgs.map(formatPowerShellDevArg).join(' ')}`,
+        'exit $LASTEXITCODE',
+      ].join('; '),
+    );
+  }
+  return wrapRemoteScript(
+    target,
+    [
+      ...buildPosixRemoteStackPrelude(target, invocation),
+      `exec corepack yarn workspace @happier-dev/stack stack dev ${posixQuote(invocation.stackName)} ${invocation.devArgs.map(formatPosixDevArg).join(' ')}`,
+    ].join('; '),
+  );
+}
+
+export function buildRemoteDaemonCommand(target, { serverUrl, activeServerId, stackName }) {
+  return buildRemoteStackCommand(target, {
+    services: { server: false, expo: false, daemon: true },
+    serverUrl,
+    activeServerId,
+    stackName,
+  });
 }
 
 export function buildRemoteForwardProbeCommand(target, { remoteServerPort }) {
@@ -180,6 +503,37 @@ export function buildRemoteForwardProbeCommand(target, { remoteServerPort }) {
       'set -euo pipefail',
       `exec 3<>/dev/tcp/127.0.0.1/${port}`,
       'exec 3>&-',
+    ].join('; '),
+  );
+}
+
+export function buildRemoteDaemonReadinessProbeCommand(target, { activeServerId }) {
+  const cliHomeDir = String(target.cliHomeDir).replace(/[\\/]+$/, '');
+  const statePath = `${cliHomeDir}/servers/${String(activeServerId)}/daemon.state.json`;
+  if (target.platform === 'windows') {
+    return wrapRemoteScript(
+      target,
+      [
+        '$ErrorActionPreference = "Stop"',
+        `$statePath = ${powershellQuote(statePath)}`,
+        'if (-not (Test-Path -LiteralPath $statePath)) { exit 1 }',
+        '$state = Get-Content -Raw -LiteralPath $statePath | ConvertFrom-Json',
+        'if ($null -eq $state.pid) { exit 1 }',
+        '$daemonProcess = Get-Process -Id ([int]$state.pid) -ErrorAction SilentlyContinue',
+        'if ($null -eq $daemonProcess) { exit 1 }',
+        'exit 0',
+      ].join('; '),
+    );
+  }
+  return wrapRemoteScript(
+    target,
+    [
+      'set -euo pipefail',
+      `state_path=${posixQuote(statePath)}`,
+      '[ -f "$state_path" ] || exit 1',
+      'daemon_pid=$(sed -n \'s/.*"pid"[[:space:]]*:[[:space:]]*\\([0-9][0-9]*\\).*/\\1/p\' "$state_path" | head -n 1)',
+      'case "$daemon_pid" in \'\'|*[!0-9]*) exit 1 ;; esac',
+      'kill -0 "$daemon_pid" 2>/dev/null',
     ].join('; '),
   );
 }
@@ -206,12 +560,54 @@ export function buildSshTunnelArgs(
   ];
 }
 
+function formatSshForward(forward) {
+  const direction = forward?.direction;
+  if (direction !== 'local' && direction !== 'reverse') {
+    throw new Error('[dev-targets] SSH forward direction must be local or reverse');
+  }
+  const listenHost = String(forward.listenHost ?? '127.0.0.1').trim();
+  const targetHost = String(forward.targetHost ?? '127.0.0.1').trim();
+  if (!/^[A-Za-z0-9.:[\]-]+$/.test(listenHost) || !/^[A-Za-z0-9.:[\]-]+$/.test(targetHost)) {
+    throw new Error('[dev-targets] invalid SSH forward host');
+  }
+  const listenPort = requireServicePort(forward.listenPort, 'SSH forward listen port');
+  const targetPort = requireServicePort(forward.targetPort, 'SSH forward target port');
+  return {
+    flag: direction === 'local' ? '-L' : '-R',
+    specification: `${listenHost}:${listenPort}:${targetHost}:${targetPort}`,
+  };
+}
+
+export function buildSshForwardArgs(target, { forwards, sshArgs = [] } = {}) {
+  if (!Array.isArray(forwards) || forwards.length === 0) {
+    throw new Error('[dev-targets] at least one SSH forward is required');
+  }
+  return [
+    '-T',
+    ...sshArgs,
+    '-o',
+    'BatchMode=yes',
+    '-o',
+    'ExitOnForwardFailure=yes',
+    '-o',
+    'ServerAliveInterval=15',
+    '-o',
+    'ServerAliveCountMax=3',
+    ...forwards.flatMap((forward) => {
+      const formatted = formatSshForward(forward);
+      return [formatted.flag, formatted.specification];
+    }),
+    '-N',
+    target.ssh,
+  ];
+}
+
 export function buildSshWorkerArgs(
   target,
-  { remoteCommand, sshArgs = [] },
+  { remoteCommand, sshArgs = [], tty = target.platform !== 'windows' },
 ) {
   return [
-    target.platform === 'windows' ? '-T' : '-tt',
+    tty ? '-tt' : '-T',
     ...sshArgs,
     '-o',
     'BatchMode=yes',

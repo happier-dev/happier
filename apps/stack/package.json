@@ -73,8 +73,10 @@
     "menubar:uninstall": "node ./scripts/menubar.mjs uninstall",
     "menubar:open": "bash -lc 'DIR=\"$(defaults read com.ameba.SwiftBar PluginDirectory 2>/dev/null)\"; if [[ -z \"$DIR\" ]]; then DIR=\"$HOME/Library/Application Support/SwiftBar/Plugins\"; fi; open \"$DIR\"'",
     "prepack": "node ./scripts/bundleWorkspaceDeps.mjs",
-    "test": "yarn -s test:unit",
-    "test:unit": "node ./scripts/test_ci.mjs",
+    "test": "./bin/hstack-exec --script=test:local",
+    "test:local": "yarn -s test:unit",
+    "test:unit": "./bin/hstack-exec --script=test:unit:local",
+    "test:unit:local": "node ./scripts/test_ci.mjs",
     "test:integration": "node ./scripts/test_integration.mjs",
     "test:ci": "yarn -s test:unit"
   },

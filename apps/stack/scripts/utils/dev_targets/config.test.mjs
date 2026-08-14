@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import {
   parseDevTargetsConfig,
+  resolveDevTargetExecutionPolicy,
   resolveDevTargetsConfigPath,
 } from './config.mjs';
 
@@ -43,6 +44,7 @@ test('parseDevTargetsConfig accepts the minimal POSIX and Windows target contrac
           limaHome: '/tmp/lima-happier',
           repoDir: '/home/dev/happier',
           cliHomeDir: '/home/dev/.happier-stack/dev-targets/linux',
+          remotePath: ['/home/dev/.nvm/versions/node/v22/bin', '/opt/homebrew/bin'],
         },
         {
           name: 'windows',
@@ -66,6 +68,7 @@ test('parseDevTargetsConfig accepts the minimal POSIX and Windows target contrac
           limaHome: '/tmp/lima-happier',
           repoDir: '/home/dev/happier',
           cliHomeDir: '/home/dev/.happier-stack/dev-targets/linux',
+          remotePath: ['/home/dev/.nvm/versions/node/v22/bin', '/opt/homebrew/bin'],
           remoteServerPort: null,
         },
         {
@@ -129,5 +132,182 @@ test('parseDevTargetsConfig rejects duplicate targets and unsafe SSH/path input'
         ],
       }),
     /limaInstance and limaHome must be configured together/i,
+  );
+  assert.throws(
+    () => parseDevTargetsConfig({
+      version: 1,
+      targets: [{
+        name: 'linux',
+        platform: 'posix',
+        ssh: 'host',
+        repoDir: '/repo',
+        cliHomeDir: '/home',
+        remotePath: ['/safe/bin', '../unsafe'],
+      }],
+    }),
+    /remotePath/i,
+  );
+});
+
+test('version 1 configuration preserves service placement while augmenting commands across configured targets', () => {
+  const config = parseDevTargetsConfig({
+    version: 1,
+    targets: [
+      { name: 'mac', platform: 'posix', ssh: 'mac', repoDir: '/repo', cliHomeDir: '/home' },
+      { name: 'linux', platform: 'posix', ssh: 'linux', repoDir: '/repo', cliHomeDir: '/home' },
+    ],
+  });
+
+  assert.deepEqual(resolveDevTargetExecutionPolicy(config), {
+    server: { mode: 'local' },
+    expo: { mode: 'local' },
+    daemons: {
+      mode: 'local-and-targets',
+      targets: ['mac', 'linux'],
+    },
+    commands: {
+      mode: 'auto',
+      targets: ['mac', 'linux'],
+      includeLocal: false,
+      fallback: 'local',
+      loadProbeTtlMs: 15_000,
+      unavailableProbeTtlMs: 120_000,
+    },
+  });
+});
+
+test('version 2 configuration normalizes best-effort target placement and command execution', () => {
+  const config = parseDevTargetsConfig({
+    version: 2,
+    targets: [
+      { name: 'mac', platform: 'posix', ssh: 'mac', repoDir: '/repo', cliHomeDir: '/home' },
+    ],
+    runtimePlacement: {
+      server: { mode: 'local' },
+      expo: { mode: 'prefer-target', target: 'MAC' },
+      daemon: { mode: 'prefer-target', target: 'mac', fallback: 'local' },
+    },
+    commandExecution: { mode: 'prefer-target', target: 'mac' },
+  });
+
+  assert.deepEqual(config.runtimePlacement, {
+    server: { mode: 'local' },
+    expo: { mode: 'prefer-target', target: 'mac', fallback: 'local' },
+    daemon: { mode: 'prefer-target', target: 'mac', fallback: 'local' },
+  });
+  assert.deepEqual(config.commandExecution, {
+    mode: 'prefer-target',
+    target: 'mac',
+    fallback: 'local',
+  });
+  assert.deepEqual(resolveDevTargetExecutionPolicy(config), {
+    server: { mode: 'local' },
+    expo: { mode: 'prefer-target', target: 'mac', fallback: 'local' },
+    daemons: { mode: 'prefer-target', target: 'mac', fallback: 'local' },
+    commands: { mode: 'prefer-target', target: 'mac', fallback: 'local' },
+  });
+});
+
+test('version 2 configuration defaults every execution surface to local', () => {
+  const config = parseDevTargetsConfig({ version: 2, targets: [] });
+
+  assert.deepEqual(resolveDevTargetExecutionPolicy(config), {
+    server: { mode: 'local' },
+    expo: { mode: 'local' },
+    daemons: { mode: 'local' },
+    commands: { mode: 'local' },
+  });
+});
+
+test('configured targets default bounded commands to automatic least-load execution', () => {
+  const targets = [
+    { name: 'mac', platform: 'posix', ssh: 'mac', repoDir: '/repo-mac', cliHomeDir: '/home-mac' },
+    { name: 'mac2', platform: 'posix', ssh: 'mac2', repoDir: '/repo-mac2', cliHomeDir: '/home-mac2' },
+  ];
+
+  assert.deepEqual(resolveDevTargetExecutionPolicy(parseDevTargetsConfig({
+    version: 1,
+    targets,
+  })).commands, {
+    mode: 'auto',
+    targets: ['mac', 'mac2'],
+    includeLocal: false,
+    fallback: 'local',
+    loadProbeTtlMs: 15_000,
+    unavailableProbeTtlMs: 120_000,
+  });
+
+  assert.deepEqual(parseDevTargetsConfig({
+    version: 2,
+    targets,
+  }).commandExecution, {
+    mode: 'auto',
+    targets: ['mac', 'mac2'],
+    includeLocal: false,
+    fallback: 'local',
+    loadProbeTtlMs: 15_000,
+    unavailableProbeTtlMs: 120_000,
+  });
+});
+
+test('automatic command execution normalizes target selection, local participation, and fallback independently', () => {
+  const targets = [
+    { name: 'mac', platform: 'posix', ssh: 'mac', repoDir: '/repo-mac', cliHomeDir: '/home-mac' },
+    { name: 'mac2', platform: 'posix', ssh: 'mac2', repoDir: '/repo-mac2', cliHomeDir: '/home-mac2' },
+  ];
+  const config = parseDevTargetsConfig({
+    version: 2,
+    targets,
+    commandExecution: {
+      mode: 'auto',
+      targets: ['MAC2', 'mac'],
+      includeLocal: true,
+      fallback: 'error',
+      loadProbeTtlMs: 20_000,
+      unavailableProbeTtlMs: 300_000,
+    },
+  });
+
+  assert.deepEqual(config.commandExecution, {
+    mode: 'auto',
+    targets: ['mac2', 'mac'],
+    includeLocal: true,
+    fallback: 'error',
+    loadProbeTtlMs: 20_000,
+    unavailableProbeTtlMs: 300_000,
+  });
+});
+
+test('version 2 rejects unknown target references and unsupported fallback modes', () => {
+  const target = {
+    name: 'mac',
+    platform: 'posix',
+    ssh: 'mac',
+    repoDir: '/repo',
+    cliHomeDir: '/home',
+  };
+  assert.throws(
+    () => parseDevTargetsConfig({
+      version: 2,
+      targets: [target],
+      runtimePlacement: { expo: { mode: 'prefer-target', target: 'missing' } },
+    }),
+    /unknown target/i,
+  );
+  assert.throws(
+    () => parseDevTargetsConfig({
+      version: 2,
+      targets: [target],
+      commandExecution: { mode: 'prefer-target', target: 'mac', fallback: 'error' },
+    }),
+    /fallback must be "local"/i,
+  );
+  assert.throws(
+    () => parseDevTargetsConfig({
+      version: 2,
+      targets: [target],
+      commandExecution: { mode: 'auto', targets: ['missing'] },
+    }),
+    /unknown target/i,
   );
 });

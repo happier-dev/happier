@@ -1,0 +1,7 @@
+interface:
+  display_name: "Happier Remote Work"
+  short_description: "Run heavy checks on a synchronized dev target"
+  default_prompt: "Use $happier-remote-work to run the requested heavy checks on a configured remote dev target."
+
+policy:
+  allow_implicit_invocation: false
