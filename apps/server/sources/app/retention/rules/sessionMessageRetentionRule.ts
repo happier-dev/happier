@@ -50,22 +50,25 @@ function staleInactiveSessionWhere(cutoff: Date): Prisma.SessionWhereInput {
     };
 }
 
-export async function pruneSessionMessagesOnce(params: {
+async function pruneSessionMessagePage(params: {
     cutoff: Date;
-    batchSize: number;
+    sessionPageSize: number;
+    deleteLimit: number;
     dryRun: boolean;
     minTailMessages?: number;
-}): Promise<{ deleted: number }> {
-    const limit = positiveIntOrDefault(params.batchSize, 1);
+    afterSessionId?: string | null;
+}): Promise<{ deleted: number; lastSessionId: string | null; hasMoreSessions: boolean }> {
+    const sessionPageSize = positiveIntOrDefault(params.sessionPageSize, 1);
+    const deleteLimit = positiveIntOrDefault(params.deleteLimit, 1);
     const minTailMessages = positiveIntOrDefault(params.minTailMessages, DEFAULT_MIN_TAIL_MESSAGES);
     const sessionWhere = staleInactiveSessionWhere(params.cutoff);
     const sessions = await db.session.findMany({
-        where: sessionWhere,
-        orderBy: [
-            { lastActiveAt: 'asc' },
-            { updatedAt: 'asc' },
-        ],
-        take: limit,
+        where: {
+            ...sessionWhere,
+            ...(params.afterSessionId ? { id: { gt: params.afterSessionId } } : {}),
+        },
+        orderBy: { id: 'asc' },
+        take: sessionPageSize,
         select: {
             id: true,
             seq: true,
@@ -76,7 +79,7 @@ export async function pruneSessionMessagesOnce(params: {
 
     let deleted = 0;
     for (const session of sessions) {
-        if (deleted >= limit) break;
+        if (deleted >= deleteLimit) break;
         if (activityCache.isSessionObservedActive(session.id)) {
             continue;
         }
@@ -86,7 +89,7 @@ export async function pruneSessionMessagesOnce(params: {
             continue;
         }
 
-        const remaining = limit - deleted;
+        const remaining = deleteLimit - deleted;
         const rows = await db.sessionMessage.findMany({
             where: {
                 sessionId: session.id,
@@ -117,7 +120,28 @@ export async function pruneSessionMessagesOnce(params: {
         deleted += result.count;
     }
 
-    return { deleted };
+    return {
+        deleted,
+        lastSessionId: sessions[sessions.length - 1]?.id ?? null,
+        hasMoreSessions: sessions.length === sessionPageSize,
+    };
+}
+
+export async function pruneSessionMessagesOnce(params: {
+    cutoff: Date;
+    batchSize: number;
+    dryRun: boolean;
+    minTailMessages?: number;
+}): Promise<{ deleted: number }> {
+    const limit = positiveIntOrDefault(params.batchSize, 1);
+    const result = await pruneSessionMessagePage({
+        cutoff: params.cutoff,
+        sessionPageSize: limit,
+        deleteLimit: limit,
+        dryRun: params.dryRun,
+        minTailMessages: params.minTailMessages,
+    });
+    return { deleted: result.deleted };
 }
 
 export async function runSessionMessageRetentionRule(params: {
@@ -126,10 +150,23 @@ export async function runSessionMessageRetentionRule(params: {
     dryRun: boolean;
     maxDeletesPerRulePerRun: number;
 }): Promise<{ deleted: number }> {
-    const limit = Math.max(1, Math.min(params.batchSize, params.maxDeletesPerRulePerRun));
-    return await pruneSessionMessagesOnce({
-        cutoff: params.cutoff,
-        batchSize: limit,
-        dryRun: params.dryRun,
-    });
+    const sessionPageSize = positiveIntOrDefault(params.batchSize, 1);
+    const maxDeletes = positiveIntOrDefault(params.maxDeletesPerRulePerRun, sessionPageSize);
+    let deleted = 0;
+    let afterSessionId: string | null = null;
+
+    while (deleted < maxDeletes) {
+        const page = await pruneSessionMessagePage({
+            cutoff: params.cutoff,
+            sessionPageSize,
+            deleteLimit: maxDeletes - deleted,
+            dryRun: params.dryRun,
+            afterSessionId,
+        });
+        deleted += page.deleted;
+        if (!page.hasMoreSessions || !page.lastSessionId) break;
+        afterSessionId = page.lastSessionId;
+    }
+
+    return { deleted };
 }

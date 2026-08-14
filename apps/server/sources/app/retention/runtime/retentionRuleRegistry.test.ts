@@ -9,6 +9,7 @@ describe('retention/createRetentionRuleRegistry', () => {
         expect(registry.map((rule) => rule.id)).toEqual([
             'sessions',
             'sessionMessages',
+            'sessionSidechainMessages',
             'accountChanges',
             'voiceSessionLeases',
             'userFeedItems',

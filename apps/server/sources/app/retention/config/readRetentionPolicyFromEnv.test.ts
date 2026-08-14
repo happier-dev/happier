@@ -15,6 +15,7 @@ describe('retention/readRetentionPolicyFromEnv', () => {
             domains: {
                 sessions: { mode: 'keep_forever' },
                 sessionMessages: { mode: 'keep_forever' },
+                sessionSidechainMessages: { mode: 'keep_forever' },
                 accountChanges: { mode: 'keep_forever' },
                 voiceSessionLeases: { mode: 'keep_forever' },
                 userFeedItems: { mode: 'keep_forever' },
@@ -34,6 +35,7 @@ describe('retention/readRetentionPolicyFromEnv', () => {
             domains: {
                 sessions: { mode: 'keep_forever' },
                 sessionMessages: { mode: 'keep_forever' },
+                sessionSidechainMessages: { mode: 'keep_forever' },
                 accountChanges: { mode: 'keep_forever' },
                 voiceSessionLeases: { mode: 'keep_forever' },
                 userFeedItems: { mode: 'keep_forever' },
@@ -52,6 +54,8 @@ describe('retention/readRetentionPolicyFromEnv', () => {
             HAPPIER_SERVER_RETENTION__SESSIONS__INACTIVITY_DAYS: '30',
             HAPPIER_SERVER_RETENTION__SESSION_MESSAGES__MODE: 'delete_older_than',
             HAPPIER_SERVER_RETENTION__SESSION_MESSAGES__DAYS: '30',
+            HAPPIER_SERVER_RETENTION__SESSION_SIDECHAIN_MESSAGES__MODE: 'delete_older_than',
+            HAPPIER_SERVER_RETENTION__SESSION_SIDECHAIN_MESSAGES__DAYS: '7',
             HAPPIER_SERVER_RETENTION__ACCOUNT_CHANGES__MODE: 'delete_older_than',
             HAPPIER_SERVER_RETENTION__ACCOUNT_CHANGES__DAYS: '14',
             HAPPIER_SERVER_RETENTION__VOICE_SESSION_LEASES__MODE: 'delete_older_than',
@@ -67,6 +71,7 @@ describe('retention/readRetentionPolicyFromEnv', () => {
             domains: {
                 sessions: { mode: 'delete_inactive', inactivityDays: 30 },
                 sessionMessages: { mode: 'delete_older_than', days: 30 },
+                sessionSidechainMessages: { mode: 'delete_older_than', days: 7 },
                 accountChanges: { mode: 'delete_older_than', days: 14 },
                 voiceSessionLeases: { mode: 'delete_older_than', days: 7 },
             },
@@ -77,6 +82,10 @@ describe('retention/readRetentionPolicyFromEnv', () => {
         expect(() => readRetentionPolicyFromEnv({
             HAPPIER_SERVER_RETENTION__SESSIONS__MODE: 'delete_inactive',
         })).toThrow(/SESSIONS__INACTIVITY_DAYS/i);
+
+        expect(() => readRetentionPolicyFromEnv({
+            HAPPIER_SERVER_RETENTION__SESSION_SIDECHAIN_MESSAGES__MODE: 'delete_older_than',
+        })).toThrow(/SESSION_SIDECHAIN_MESSAGES__DAYS/i);
     });
 
     it('rejects non-integer numeric values for positive integer settings', () => {

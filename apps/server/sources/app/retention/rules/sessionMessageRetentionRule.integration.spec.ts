@@ -162,4 +162,29 @@ describe('sessionMessageRetentionRule', () => {
         await expect(db.sessionMessage.count({ where: { sessionId: 'recent-inactive' } })).resolves.toBe(1);
         await expect(db.sessionMessage.count({ where: { sessionId: 'recent-message' } })).resolves.toBe(1);
     });
+
+    it('paginates past empty stale sessions and uses the full per-rule delete allowance', async () => {
+        const old = new Date('2025-01-01T00:00:00.000Z');
+        const cutoff = new Date('2026-01-01T00:00:00.000Z');
+
+        await createSession({ id: 'a-empty', active: false, lastActiveAt: old, updatedAt: old, seq: 0 });
+        for (const id of ['b-target', 'c-target', 'd-target']) {
+            await createSession({ id, active: false, lastActiveAt: old, updatedAt: old, seq: 501 });
+            await createMessage({
+                sessionId: id,
+                seq: 1,
+                createdAt: old,
+                content: { t: 'plain', v: { text: id } },
+            });
+        }
+
+        const { runSessionMessageRetentionRule } = await import('./sessionMessageRetentionRule');
+        await expect(runSessionMessageRetentionRule({
+            cutoff,
+            batchSize: 1,
+            dryRun: false,
+            maxDeletesPerRulePerRun: 3,
+        })).resolves.toEqual({ deleted: 3 });
+        await expect(db.sessionMessage.count()).resolves.toBe(0);
+    });
 });

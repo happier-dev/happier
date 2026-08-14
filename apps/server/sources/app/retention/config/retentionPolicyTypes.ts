@@ -18,6 +18,7 @@ export type SessionRetentionPolicy = KeepForeverRetentionPolicy | DeleteInactive
 export type RetentionDomainPolicies = Readonly<{
     sessions: SessionRetentionPolicy;
     sessionMessages: RetentionAgePolicy;
+    sessionSidechainMessages: RetentionAgePolicy;
     accountChanges: RetentionAgePolicy;
     voiceSessionLeases: RetentionAgePolicy;
     userFeedItems: RetentionAgePolicy;

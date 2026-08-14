@@ -9,6 +9,7 @@ import { createGlobalLockRetentionRule } from '@/app/retention/rules/globalLockR
 import { createPublicShareAccessLogRetentionRule } from '@/app/retention/rules/publicShareAccessLogRetentionRule';
 import { createRepeatKeyRetentionRule } from '@/app/retention/rules/repeatKeyRetentionRule';
 import { runSessionMessageRetentionRule } from '@/app/retention/rules/sessionMessageRetentionRule';
+import { runSessionSidechainMessageRetentionRule } from '@/app/retention/rules/sessionSidechainMessageRetentionRule';
 import { createSessionShareAccessLogRetentionRule } from '@/app/retention/rules/sessionShareAccessLogRetentionRule';
 import { runSessionRetentionRule } from '@/app/retention/rules/sessionRetentionRule';
 import { createTerminalAuthRequestRetentionRule } from '@/app/retention/rules/terminalAuthRequestRetentionRule';
@@ -53,6 +54,27 @@ export function createRetentionRuleRegistry(): readonly RetentionRule[] {
                 return {
                     id: 'sessionMessages',
                     ...(await runSessionMessageRetentionRule({ cutoff, batchSize, dryRun, maxDeletesPerRulePerRun })),
+                };
+            },
+        },
+        {
+            id: 'sessionSidechainMessages',
+            run: async ({ policy, batchSize, dryRun, maxDeletesPerRulePerRun, now }) => {
+                const domains = resolveEffectiveRetentionDomains(policy);
+                if (domains.sessionSidechainMessages.mode === 'keep_forever') {
+                    return { id: 'sessionSidechainMessages', deleted: 0 };
+                }
+                const cutoff = new Date(
+                    now.getTime() - domains.sessionSidechainMessages.days * 24 * 60 * 60 * 1000,
+                );
+                return {
+                    id: 'sessionSidechainMessages',
+                    ...(await runSessionSidechainMessageRetentionRule({
+                        cutoff,
+                        batchSize,
+                        dryRun,
+                        maxDeletesPerRulePerRun,
+                    })),
                 };
             },
         },

@@ -74,6 +74,11 @@ function readDomainPolicies(env: NodeJS.ProcessEnv): RetentionDomainPolicies {
             modeKey: 'HAPPIER_SERVER_RETENTION__SESSION_MESSAGES__MODE',
             daysKey: 'HAPPIER_SERVER_RETENTION__SESSION_MESSAGES__DAYS',
         }),
+        sessionSidechainMessages: readAgePolicy({
+            env,
+            modeKey: 'HAPPIER_SERVER_RETENTION__SESSION_SIDECHAIN_MESSAGES__MODE',
+            daysKey: 'HAPPIER_SERVER_RETENTION__SESSION_SIDECHAIN_MESSAGES__DAYS',
+        }),
         accountChanges: readAgePolicy({
             env,
             modeKey: 'HAPPIER_SERVER_RETENTION__ACCOUNT_CHANGES__MODE',

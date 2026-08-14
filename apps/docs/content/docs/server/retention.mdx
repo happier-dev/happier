@@ -13,6 +13,7 @@ Retention is implemented as one server-side sweep worker with per-domain rules. 
 
 - Sessions
 - Session messages inside stale inactive sessions
+- Sidechain messages, with an independently configurable shorter lifetime
 - Account changes
 - Voice session leases
 - User feed items
@@ -51,6 +52,16 @@ The session message rule is separate from whole-session deletion. When `HAPPIER_
 - owned by a session that the runtime does not currently observe as active in memory
 
 The final delete rechecks the same old-inactive session guard. The rule treats message content as opaque JSON, so encrypted and plaintext-at-rest sessions use the same retention path.
+
+### Sidechain message retention
+
+Sidechain retention is an additional policy for subagent, nested-tool, and workflow-agent transcripts. It does not change the main transcript and does not require the parent session to be inactive. A sidechain becomes eligible only when its newest stored message is older than the configured cutoff, so a recently active sidechain is retained in full. Eligible rows are removed in bounded transactions.
+
+The general `SESSION_MESSAGES` policy keeps its existing meaning and can still prune both main and sidechain rows in stale inactive sessions. Configure `SESSION_MESSAGES=keep_forever` with a finite `SESSION_SIDECHAIN_MESSAGES` policy when main transcripts should remain available indefinitely while old sidechains expire.
+
+The released v1 server capability does not represent message-level retention. General and sidechain
+message policies therefore remain operator-visible configuration and are omitted from the v1 response
+so independently upgraded servers remain parseable by released strict v1 clients.
 
 ## Default behavior
 
@@ -124,6 +135,7 @@ Supported age-based modes:
 Supported domain names:
 
 - `SESSION_MESSAGES`
+- `SESSION_SIDECHAIN_MESSAGES`
 - `ACCOUNT_CHANGES`
 - `VOICE_SESSION_LEASES`
 - `USER_FEED_ITEMS`
@@ -165,6 +177,8 @@ HAPPIER_SERVER_RETENTION__SESSIONS__MODE=delete_inactive
 HAPPIER_SERVER_RETENTION__SESSIONS__INACTIVITY_DAYS=30
 HAPPIER_SERVER_RETENTION__SESSION_MESSAGES__MODE=delete_older_than
 HAPPIER_SERVER_RETENTION__SESSION_MESSAGES__DAYS=30
+HAPPIER_SERVER_RETENTION__SESSION_SIDECHAIN_MESSAGES__MODE=delete_older_than
+HAPPIER_SERVER_RETENTION__SESSION_SIDECHAIN_MESSAGES__DAYS=14
 HAPPIER_SERVER_RETENTION__ACCOUNT_CHANGES__MODE=delete_older_than
 HAPPIER_SERVER_RETENTION__ACCOUNT_CHANGES__DAYS=30
 HAPPIER_SERVER_RETENTION__TERMINAL_AUTH_REQUESTS__MODE=delete_older_than
@@ -175,7 +189,10 @@ HAPPIER_SERVER_RETENTION__ACCOUNT_AUTH_REQUESTS__DAYS=7
 
 ## What users see in the app
 
-When a client is connected to a server with a finite retention policy, Happier surfaces that policy in the UI so users understand what the server keeps and what it eventually deletes.
+When a client is connected to a server with a finite policy represented by the released v1 capability,
+Happier surfaces that policy in the UI so users understand what the server keeps and what it eventually
+deletes. Message-level policies are not represented by v1 and therefore are not currently shown in the
+app; operators should communicate those policies separately.
 
 Today that information is exposed in:
 
@@ -201,6 +218,10 @@ Light-server SQLite deployments run two background maintenance loops when `HAPPI
 - Incremental vacuum every `HAPPIER_SQLITE_INCREMENTAL_VACUUM_INTERVAL_MS` milliseconds, default `21600000` (6 hours), using `PRAGMA incremental_vacuum(N)` with `HAPPIER_SQLITE_INCREMENTAL_VACUUM_PAGES` pages per batch, default `1000`.
 
 Both loops use a separate maintenance database client and the SQLite busy timeout controlled by `HAPPIER_SQLITE_WAL_CHECKPOINT_BUSY_TIMEOUT_MS`, default `5000`. Set an interval to `0` to disable that loop. The server intentionally does not run full `VACUUM` in the live process because it rewrites the database and can block writes for too long; use offline full `VACUUM` only during an explicit maintenance window.
+
+Incremental vacuum can return pages to the filesystem only when the database was created with SQLite
+incremental auto-vacuum enabled. Otherwise deleted pages become reusable inside the existing database
+file, but reducing the file itself still requires an offline full `VACUUM` maintenance window.
 
 ## Keep-forever example
 

@@ -13,6 +13,7 @@ function createPolicy(overrides?: Partial<RetentionPolicy>): RetentionPolicy {
         domains: {
             sessions: { mode: 'keep_forever' },
             sessionMessages: { mode: 'keep_forever' },
+            sessionSidechainMessages: { mode: 'keep_forever' },
             accountChanges: { mode: 'keep_forever' },
             voiceSessionLeases: { mode: 'keep_forever' },
             userFeedItems: { mode: 'keep_forever' },
@@ -37,6 +38,7 @@ describe('retention/retentionPolicyToCapabilities', () => {
             domains: {
                 sessions: { mode: 'delete_inactive', inactivityDays: 30 },
                 sessionMessages: { mode: 'delete_older_than', days: 30 },
+                sessionSidechainMessages: { mode: 'delete_older_than', days: 7 },
                 accountChanges: { mode: 'delete_older_than', days: 14 },
                 voiceSessionLeases: { mode: 'keep_forever' },
                 userFeedItems: { mode: 'keep_forever' },
@@ -56,9 +58,9 @@ describe('retention/retentionPolicyToCapabilities', () => {
             policyVersion: 1,
             enabled: false,
             sessions: { mode: 'keep_forever' },
-            sessionMessages: { mode: 'keep_forever' },
             accountChanges: { mode: 'keep_forever' },
         });
+        expect(capabilities).not.toHaveProperty('sessionMessages');
     });
 
     it('maps finite retention policies to capability payload contracts', () => {
@@ -66,6 +68,7 @@ describe('retention/retentionPolicyToCapabilities', () => {
             domains: {
                 sessions: { mode: 'delete_inactive', inactivityDays: 30 },
                 sessionMessages: { mode: 'delete_older_than', days: 30 },
+                sessionSidechainMessages: { mode: 'keep_forever' },
                 accountChanges: { mode: 'delete_older_than', days: 14 },
                 voiceSessionLeases: { mode: 'delete_older_than', days: 7 },
                 userFeedItems: { mode: 'keep_forever' },
@@ -89,11 +92,24 @@ describe('retention/retentionPolicyToCapabilities', () => {
                 inactivityDays: 30,
                 requires: ['updatedAt', 'lastActiveAt'],
             },
-            sessionMessages: { mode: 'delete_older_than', days: 30 },
             accountChanges: { mode: 'delete_older_than', days: 14 },
             voiceSessionLeases: { mode: 'delete_older_than', days: 7 },
             automationRuns: { mode: 'delete_older_than', days: 45 },
             automationRunEvents: { mode: 'delete_older_than', days: 45 },
         });
+        expect(capabilities).not.toHaveProperty('sessionMessages');
+    });
+
+    it('does not add message policies to the stable strict v1 wire shape', () => {
+        const capabilities = retentionPolicyToCapabilities(createPolicy({
+            domains: {
+                ...createPolicy().domains,
+                sessionMessages: { mode: 'delete_older_than', days: 30 },
+                sessionSidechainMessages: { mode: 'delete_older_than', days: 7 },
+            },
+        }));
+
+        expect(capabilities).not.toHaveProperty('sessionMessages');
+        expect(capabilities).not.toHaveProperty('sessionSidechainMessages');
     });
 });
