@@ -92,6 +92,11 @@
       "import": "./dist/agents/index.js",
       "default": "./dist/agents/index.js"
     },
+    "./path": {
+      "types": "./dist/path/index.d.ts",
+      "import": "./dist/path/index.js",
+      "default": "./dist/path/index.js"
+    },
     "./agents/managedJavaScriptRuntime": {
       "types": "./dist/agents/managedJavaScriptRuntime.d.ts",
       "import": "./dist/agents/managedJavaScriptRuntime.js",
