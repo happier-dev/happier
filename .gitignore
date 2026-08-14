@@ -137,12 +137,31 @@ _.env.pipeline.production.local
 
 # Local probe/debug scratch files
 /apps/cli/tmp-*
+/apps/cli/.tmp-*
 /apps/cli/-
 /apps/cli/vitest.*.temp.config.ts
 /apps/cli/vitest.*-composed.config.ts
+/apps/cli/src/plugins/discovery/sources/zzdbg.test.ts
+/packages/plugins/codex/src/agent/rollout/discovery/*.tmp.test.ts
+/packages/tests/.eu8-*-entry.mjs
 /--fullpage
 
+# Reproducible fixture compiler output and one-off migration tooling
+/packages/plugin-ui/fixtures/external-authoring/dist-node/
+/apps/ui/scripts/icons/codemod*.mjs
+/apps/ui/scripts/icons/fix*.mjs
+/apps/ui/scripts/icons/inventory.mjs
+/apps/ui/scripts/icons/migrate.mjs
+/apps/ui/scripts/icons/scanner.mjs
+/apps/ui/scripts/icons/snapSizes.mjs
+
+# Local research/evidence dumps
+/triage-plan-research/
+
 # Local QA screenshots
+/apps/ui/onboard1.png
+/apps/ui/setup1.png
+/apps/ui/shot-01-relay.png
 /authoring-qa-*.png
 /authenticated-*-connected-services.png
 /browser-qa-*.png
