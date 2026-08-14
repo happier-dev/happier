@@ -1592,10 +1592,7 @@ export class PiRpcBackend implements AgentBackend {
         this.tracePiRpcFailureBoundary('pending_prompt_failure_response', response, { detail: rawDetail });
         const failure = normalizePiProviderFailure('prompt_rejected', { error: rawDetail });
         this.logPiProviderFailure(failure);
-        this.emitMessage({
-          type: 'terminal-output',
-          data: failure.sanitizedPreview,
-        });
+        this.emitPiProviderFailureDiagnostic(failure.sanitizedPreview);
         pending.reject(Object.assign(
           new PiRpcPromptRejectedBeforeEffectError(failure.sanitizedPreview),
           { piProviderFailure: failure },
@@ -1792,7 +1789,7 @@ export class PiRpcBackend implements AgentBackend {
       if (this.pendingTurn) {
         if (!this.pendingTurn.agentStartObserved && this.pendingTurn.preStartTerminalFailure) {
           const failure = this.pendingTurn.preStartTerminalFailure;
-          this.emitMessage({ type: 'terminal-output', data: failure.message });
+          this.emitPiProviderFailureDiagnostic(failure.message);
           this.emitMessage({ type: 'status', status: 'error', detail: failure.message });
           this.rejectPendingTurn(failure);
           return;
@@ -2064,12 +2061,22 @@ export class PiRpcBackend implements AgentBackend {
     runtimeAuthClassification: ConnectedServiceRuntimeFailureClassification | null = null,
   ): void {
     this.logPiProviderFailure(failure);
-    this.emitMessage({ type: 'terminal-output', data: failure.sanitizedPreview });
+    this.emitPiProviderFailureDiagnostic(failure.sanitizedPreview);
     this.emitMessage({ type: 'status', status: 'error', detail: failure.sanitizedPreview });
     this.rejectPendingTurn(Object.assign(
       createPiProviderFailureError(failure),
       runtimeAuthClassification ? { runtimeAuthClassification } : {},
     ));
+  }
+
+  private emitPiProviderFailureDiagnostic(result: string): void {
+    this.emitMessage({
+      type: 'tool-result',
+      callId: randomUUID(),
+      toolName: 'terminal-output',
+      result,
+      isError: true,
+    });
   }
 
   private logPiProviderFailure(failure: PiProviderFailureDiagnostic): void {
