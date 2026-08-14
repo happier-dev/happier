@@ -7,27 +7,11 @@ test('resolveOptionalDockerBuildArgs omits SENTRY_AUTH_TOKEN when unset', () => 
   assert.deepEqual(resolveOptionalDockerBuildArgs({}), []);
 });
 
-test('resolveOptionalDockerBuildArgs includes SENTRY_AUTH_TOKEN when set', () => {
-  assert.deepEqual(resolveOptionalDockerBuildArgs({ SENTRY_AUTH_TOKEN: 'token' }), [
-    '--build-arg',
-    'SENTRY_AUTH_TOKEN=token',
-  ]);
-});
-
-test('resolveOptionalDockerBuildArgs includes SENTRY_URL when set', () => {
-  assert.deepEqual(resolveOptionalDockerBuildArgs({ SENTRY_URL: 'https://sentry.example' }), [
-    '--build-arg',
-    'SENTRY_URL=https://sentry.example',
-  ]);
-});
-
-test('resolveOptionalDockerBuildArgs includes SENTRY_AUTH_TOKEN and SENTRY_URL when set', () => {
-  assert.deepEqual(resolveOptionalDockerBuildArgs({ SENTRY_AUTH_TOKEN: 'token', SENTRY_URL: 'https://sentry.example' }), [
-    '--build-arg',
-    'SENTRY_AUTH_TOKEN=token',
-    '--build-arg',
-    'SENTRY_URL=https://sentry.example',
-  ]);
+test('resolveOptionalDockerBuildArgs never forwards Sentry upload credentials to candidate builds', () => {
+  assert.deepEqual(resolveOptionalDockerBuildArgs({
+    SENTRY_AUTH_TOKEN: 'must-not-reach-build',
+    SENTRY_URL: 'https://sentry.example',
+  }), []);
 });
 
 test('resolveOptionalDockerBuildArgs includes SENTRY_DSN when set', () => {

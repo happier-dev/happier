@@ -150,8 +150,6 @@ ARG POSTHOG_API_KEY=""
 ARG POSTHOG_HOST=""
 ARG SENTRY_DSN=""
 ARG SENTRY_RELEASE=""
-ARG SENTRY_AUTH_TOKEN=""
-ARG SENTRY_URL=""
 ARG REVENUE_CAT_STRIPE=""
 ARG EXPO_PUBLIC_HAPPIER_SERVER_URL=""
 ARG EXPO_PUBLIC_HAPPY_SERVER_URL=""
@@ -188,7 +186,6 @@ RUN yarn workspace @happier-dev/protocol postinstall:real \
 RUN yarn workspace @happier-dev/app postinstall:real
 RUN rm -rf apps/ui/dist
 RUN yarn workspace @happier-dev/app expo export --platform web --output-dir dist --max-workers 1
-RUN if [ -n "$SENTRY_AUTH_TOKEN" ]; then cd apps/ui && SENTRY_AUTH_TOKEN="$SENTRY_AUTH_TOKEN" SENTRY_URL="$SENTRY_URL" SENTRY_RELEASE="$SENTRY_RELEASE" npx --yes sentry-expo-upload-sourcemaps dist; else echo "[docker] SENTRY_AUTH_TOKEN not set; skipping Sentry source maps upload"; fi
 RUN node scripts/pipeline/release/precompress-ui-web-assets.mjs --dir apps/ui/dist --gzip-only
 
 FROM nginxinc/nginx-unprivileged:alpine AS webapp

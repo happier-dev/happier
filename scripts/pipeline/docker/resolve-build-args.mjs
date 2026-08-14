@@ -16,16 +16,6 @@ export function resolveOptionalDockerBuildArgs(env, opts) {
     return '';
   };
 
-  const sentryToken = String(env.SENTRY_AUTH_TOKEN ?? '').trim();
-  if (sentryToken) {
-    args.push('--build-arg', `SENTRY_AUTH_TOKEN=${sentryToken}`);
-  }
-
-  const sentryUrl = String(env.SENTRY_URL ?? '').trim();
-  if (sentryUrl) {
-    args.push('--build-arg', `SENTRY_URL=${sentryUrl}`);
-  }
-
   const sentryDsn = String(env.SENTRY_DSN ?? '').trim();
   if (sentryDsn) {
     args.push('--build-arg', `SENTRY_DSN=${sentryDsn}`);
