@@ -1,7 +1,7 @@
 import { Stack, router } from 'expo-router';
 import 'react-native-reanimated';
 import * as React from 'react';
-import { Keyboard, Platform, Pressable, TouchableOpacity } from 'react-native';
+import { Keyboard, Platform, Pressable, TouchableOpacity, useWindowDimensions } from 'react-native';
 import { isRunningOnMac } from '@/utils/platform/platform';
 import { useUnistyles } from 'react-native-unistyles';
 import { t } from '@/text';
@@ -28,6 +28,7 @@ import { SessionCockpitChromeRegistryProvider } from '@/components/workspaceCock
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
 import { RootLayoutNavigationEffects } from '@/components/navigation/root/RootLayoutNavigationEffects';
 import { RootLayoutRedirectGate } from '@/components/navigation/root/RootLayoutRedirectGate';
+import { isMobileLayoutWidth } from '@/components/sessions/layout/isMobileLayoutWidth';
 
 const DESKTOP_PET_OVERLAY_SCREEN_OPTIONS = { headerShown: false } as const;
 const MAIN_TAB_STACK_SCREEN_OPTIONS = { animation: 'none' } as const;
@@ -37,6 +38,42 @@ const SESSION_COCKPIT_SURFACE_STACK_SCREEN_OPTIONS = {
 } as const;
 const UNAUTH_SHELL_STACK_SCREEN_OPTIONS = { headerShown: false } as const;
 const NEW_SESSION_HEADER_TITLE_TYPOGRAPHY = Typography.header();
+
+type ModalRouteNavigation = Readonly<{
+    canGoBack?: () => boolean;
+    goBack?: () => void;
+    getState?: () => Readonly<{
+        index?: number;
+        routes?: ReadonlyArray<unknown>;
+    }> | undefined;
+}>;
+
+function hasPriorModalStackRoute(navigation: ModalRouteNavigation): boolean {
+    const state = navigation.getState?.();
+    return typeof state?.index === 'number'
+        && state.index > 0
+        && Array.isArray(state.routes)
+        && state.routes.length > 1;
+}
+
+function canDismissNewSessionWithGesture(navigation: ModalRouteNavigation): boolean {
+    return Platform.OS !== 'web' || hasPriorModalStackRoute(navigation);
+}
+
+function NewSessionModalHeaderCloseButton(props: Readonly<{ navigation: ModalRouteNavigation }>): React.ReactElement | null {
+    const { width: windowWidth } = useWindowDimensions();
+
+    if (Platform.OS === 'web' && isMobileLayoutWidth(windowWidth)) {
+        return null;
+    }
+
+    return (
+        <AppHeaderCloseButton
+            testID="new-session-cancel"
+            onPress={() => safeRouterBack({ router, navigation: props.navigation, fallbackHref: '/' })}
+        />
+    );
+}
 
 function NewSessionKeyboardDismissHeaderTitle(): React.ReactElement {
     const { theme } = useUnistyles();
@@ -500,22 +537,26 @@ const RootLayoutShell = React.memo(function RootLayoutShell(): React.ReactElemen
             />
             <Stack.Screen
                 name="new/index"
-                options={({ navigation }) => ({
-                    headerShown: true,
-                    headerBackTitle: t('common.cancel'),
-                    presentation: Platform.OS === 'ios' ? 'pageSheet' : 'modal',
-                    gestureEnabled: true,
-                    fullScreenGestureEnabled: true,
-                    // Swipe-to-dismiss is not consistently available across platforms; always provide a close button.
-                    headerBackVisible: false,
-                    headerTitle: Platform.OS === 'web'
-                        ? t('newSession.title')
-                        : NewSessionKeyboardDismissHeaderTitle,
-                    headerLeft: () => null,
-                    headerRight: Platform.OS === 'web'
-                        ? undefined
-                        : () => <AppHeaderCloseButton testID="new-session-cancel" onPress={() => safeRouterBack({ router, navigation, fallbackHref: '/' })} />,
-                })}
+                options={({ navigation }) => {
+                    const canDismissWithGesture = canDismissNewSessionWithGesture(navigation);
+                    return {
+                        headerShown: true,
+                        headerBackTitle: t('common.cancel'),
+                        presentation: Platform.OS === 'ios' ? 'pageSheet' : 'modal',
+                        // Expo Router's web modal closes its Vaul drawer before calling goBack().
+                        // With a direct /new entry there is no route to pop, so keep the drawer open
+                        // and use the explicit close affordance's deterministic fallback instead.
+                        gestureEnabled: canDismissWithGesture,
+                        fullScreenGestureEnabled: canDismissWithGesture,
+                        // Swipe-to-dismiss is not consistently available across platforms; always provide a close button.
+                        headerBackVisible: false,
+                        headerTitle: Platform.OS === 'web'
+                            ? t('newSession.title')
+                            : NewSessionKeyboardDismissHeaderTitle,
+                        headerLeft: () => null,
+                        headerRight: () => <NewSessionModalHeaderCloseButton navigation={navigation} />,
+                    };
+                }}
             />
             <Stack.Screen
                 name="direct/browse"

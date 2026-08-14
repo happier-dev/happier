@@ -3,10 +3,9 @@
  */
 import React from 'react';
 import { act } from 'react';
-import { createPortal } from 'react-dom';
 import { createRoot } from 'react-dom/client';
+import { createRequire } from 'node:module';
 import { describe, expect, it, vi } from 'vitest';
-import { Drawer } from 'vaul';
 
 import { installPopoverCommonModuleMocks } from './popoverTestHelpers';
 
@@ -26,26 +25,51 @@ installPopoverCommonModuleMocks({
 });
 
 const safeAreaInsets = { top: 0, right: 0, bottom: 0, left: 0 };
+const requireForTest = createRequire(import.meta.url);
+const { Drawer: CjsDrawer } = requireForTest('vaul') as typeof import('vaul');
 
 describe('PopoverPortalTargetProvider (web dom)', () => {
-    it('keeps portaled interactions inside an Expo Router drawer without disabling outside dismissal', async () => {
+    it('keeps portaled popovers inside an Expo Router drawer without disabling outside dismissal', async () => {
         const { PopoverPortalTargetProvider } = await import('./PopoverPortalTargetProvider');
-        const { useModalPortalTarget } = await import('@/modal/portal/ModalPortalTarget');
+        const { Popover } = await import('./Popover');
         const openChanges: boolean[] = [];
-        const selections: string[] = [];
+        const originalGetComputedStyle = window.getComputedStyle.bind(window);
+        const computedStyleSpy = vi.spyOn(window, 'getComputedStyle').mockImplementation((element) => {
+            const style = originalGetComputedStyle(element);
+            return new Proxy(style, {
+                get(target, property, receiver) {
+                    if (property === 'overflow' || property === 'overflowX' || property === 'overflowY') {
+                        return 'visible';
+                    }
+                    return Reflect.get(target, property, receiver);
+                },
+            });
+        });
 
-        function PortaledChoice() {
-            const target = useModalPortalTarget();
-            if (!target) return null;
-
-            return createPortal(
-                <button
-                    data-testid="portaled-choice"
-                    onClick={() => selections.push('selected')}
-                >
-                    Choice
-                </button>,
-                target,
+        function NewSessionAutomationHarness() {
+            const anchorRef = React.useRef<HTMLButtonElement | null>(null);
+            const [open, setOpen] = React.useState(false);
+            return (
+                <>
+                    <button
+                        ref={anchorRef}
+                        data-testid="automation-trigger"
+                        onClick={() => setOpen(true)}
+                    >
+                        Automate
+                    </button>
+                    {open ? (
+                        <Popover
+                            open
+                            anchorRef={anchorRef}
+                            backdrop={false}
+                            portal={{ web: true, native: true }}
+                            onRequestClose={() => setOpen(false)}
+                        >
+                            {() => <button data-testid="automation-content">Automation settings</button>}
+                        </Popover>
+                    ) : null}
+                </>
             );
         }
 
@@ -55,42 +79,59 @@ describe('PopoverPortalTargetProvider (web dom)', () => {
         try {
             await act(async () => {
                 root.render(
-                    <Drawer.Root open onOpenChange={(open) => openChanges.push(open)}>
-                        <Drawer.Portal>
-                            <Drawer.Overlay data-testid="drawer-overlay" />
-                            <Drawer.Content>
-                                <Drawer.Title>New session</Drawer.Title>
-                                <Drawer.Description>Configure a session</Drawer.Description>
-                                <PopoverPortalTargetProvider>
-                                    <PortaledChoice />
-                                </PopoverPortalTargetProvider>
-                            </Drawer.Content>
-                        </Drawer.Portal>
-                    </Drawer.Root>,
+                    <CjsDrawer.Root open handleOnly onOpenChange={(open) => openChanges.push(open)}>
+                        <CjsDrawer.Portal>
+                            <CjsDrawer.Overlay data-testid="drawer-overlay" />
+                            <CjsDrawer.Content>
+                                <CjsDrawer.Title>New session</CjsDrawer.Title>
+                                <CjsDrawer.Description>Configure a session</CjsDrawer.Description>
+                                <div data-testid="new-session-screen">
+                                    <PopoverPortalTargetProvider>
+                                        <NewSessionAutomationHarness />
+                                    </PopoverPortalTargetProvider>
+                                </div>
+                            </CjsDrawer.Content>
+                        </CjsDrawer.Portal>
+                    </CjsDrawer.Root>,
                 );
             });
             await act(async () => {
                 await new Promise((resolve) => setTimeout(resolve, 0));
             });
 
-            const choice = document.querySelector('[data-testid="portaled-choice"]');
-            expect(choice).toBeInstanceOf(HTMLButtonElement);
+            const trigger = document.querySelector('[data-testid="automation-trigger"]');
+            expect(trigger).toBeInstanceOf(HTMLButtonElement);
 
             await act(async () => {
-                choice?.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }));
-                choice?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+                trigger?.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }));
+                trigger?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
             });
 
-            expect(selections).toEqual(['selected']);
+            expect(document.querySelector('[data-testid="automation-content"]')).not.toBeNull();
+            expect(
+                document.querySelector('[data-testid="automation-content"]')?.closest('[data-vaul-drawer]'),
+            ).not.toBeNull();
+            expect(document.querySelector('[data-vaul-drawer]')?.getAttribute('data-state')).toBe('open');
             expect(openChanges).not.toContain(false);
 
             await act(async () => {
-                document.querySelector('[data-testid="drawer-overlay"]')
-                    ?.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }));
+                document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
             });
 
+            expect(document.querySelector('[data-testid="automation-content"]')).toBeNull();
+            expect(document.querySelector('[data-vaul-drawer]')?.getAttribute('data-state')).toBe('open');
+
+            await act(async () => {
+                const overlay = document.querySelector('[data-testid="drawer-overlay"]');
+                overlay?.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }));
+                overlay?.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+                overlay?.dispatchEvent(new MouseEvent('pointerup', { bubbles: true }));
+                overlay?.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+                overlay?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+            });
             expect(openChanges).toContain(false);
         } finally {
+            computedStyleSpy.mockRestore();
             await act(async () => {
                 root.unmount();
             });

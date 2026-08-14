@@ -28,7 +28,11 @@ export function PopoverPortalTargetProvider(props: { children: React.ReactNode }
             const resolveDialogContentTarget = (): HTMLElement | null => {
                 const anchor = anchorRef.current;
                 if (anchor && typeof (anchor as any).closest === 'function') {
-                    const dialogContent = anchor.closest('[data-radix-dialog-content]') as HTMLElement | null;
+                    // Expo Router web modals use Vaul for the dismissable boundary. Resolve it by
+                    // DOM ownership before style-based clipping heuristics, which can run before styles load.
+                    const dialogContent = anchor.closest(
+                        '[data-vaul-drawer], [data-radix-dialog-content]',
+                    ) as HTMLElement | null;
                     if (dialogContent) return dialogContent;
                 }
 

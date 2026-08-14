@@ -5,11 +5,19 @@ import { pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
 const routerBackSpy = vi.hoisted(() => vi.fn());
 const safeRouterBackSpy = vi.hoisted(() => vi.fn());
 const keyboardDismissSpy = vi.hoisted(() => vi.fn());
+const windowState = vi.hoisted(() => ({
+    width: 800,
+    height: 600,
+}));
+const stackNavigationState = vi.hoisted(() => ({
+    index: 0,
+    routes: [{ key: 'current-route' }],
+}));
 const stackNavigationMock = vi.hoisted(() => ({
     navigate: vi.fn(),
     canGoBack: vi.fn(() => false),
     goBack: vi.fn(),
-    getState: vi.fn(() => ({ index: 0, routes: [{ key: 'current-route' }] })),
+    getState: vi.fn(() => stackNavigationState),
 }));
 const platformState = vi.hoisted(() => ({
     os: 'ios' as 'ios' | 'web',
@@ -19,7 +27,9 @@ vi.mock('react-native-reanimated', () => ({}));
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    const reactNative = await createReactNativeWebMock();
+    const reactNative = await createReactNativeWebMock({
+        useWindowDimensions: () => ({ width: windowState.width, height: windowState.height }),
+    });
     return {
         ...reactNative,
         Keyboard: {
@@ -197,6 +207,10 @@ describe('app stack modal header close buttons', () => {
         stackNavigationMock.getState.mockClear();
         keyboardDismissSpy.mockReset();
         platformState.os = 'ios';
+        windowState.width = 800;
+        windowState.height = 600;
+        stackNavigationState.index = 0;
+        stackNavigationState.routes = [{ key: 'current-route' }];
     });
 
     it('exposes a native close affordance for the new-session modal', async () => {
@@ -225,14 +239,60 @@ describe('app stack modal header close buttons', () => {
         });
     });
 
-    it('does not duplicate the route-level new-session close button on web', async () => {
+    it('prevents a direct desktop-web modal backdrop dismissal and exposes a deterministic close', async () => {
         platformState.os = 'web';
         const { default: RootLayout } = await import('@/app/(app)/_layout');
 
         const screen = await renderScreen(<RootLayout />);
 
         const options = getStackScreenOptions(screen, 'new/index');
-        expect(options.headerRight).toBeUndefined();
+        expect(options.gestureEnabled).toBe(false);
+
+        const headerRight = options.headerRight as (() => React.ReactNode) | undefined;
+        expect(headerRight).toBeTypeOf('function');
+
+        const renderedHeader = await renderScreen(<>{headerRight?.()}</>);
+        const closeButton = renderedHeader.tree.root
+            .findAllByProps({ testID: 'new-session-cancel' })
+            .find((node) => node.props.accessibilityRole === 'button');
+        expect(closeButton).toBeTruthy();
+
+        await pressTestInstanceAsync(closeButton!);
+        expect(safeRouterBackSpy).toHaveBeenCalledWith({
+            router: expect.objectContaining({
+                back: routerBackSpy,
+            }),
+            navigation: stackNavigationMock,
+            fallbackHref: '/',
+        });
+    });
+
+    it('keeps desktop-web modal backdrop dismissal enabled when /new has a prior stack route', async () => {
+        platformState.os = 'web';
+        stackNavigationState.index = 1;
+        stackNavigationState.routes = [{ key: 'index-route' }, { key: 'new-route' }];
+        stackNavigationMock.canGoBack.mockReturnValue(true);
+        const { default: RootLayout } = await import('@/app/(app)/_layout');
+
+        const screen = await renderScreen(<RootLayout />);
+
+        const options = getStackScreenOptions(screen, 'new/index');
+        expect(options.gestureEnabled).toBe(true);
+    });
+
+    it('does not duplicate the route-level new-session close button on mobile web', async () => {
+        platformState.os = 'web';
+        windowState.width = 390;
+        const { default: RootLayout } = await import('@/app/(app)/_layout');
+
+        const screen = await renderScreen(<RootLayout />);
+
+        const options = getStackScreenOptions(screen, 'new/index');
+        const headerRight = options.headerRight as (() => React.ReactNode) | undefined;
+        expect(headerRight).toBeTypeOf('function');
+
+        const renderedHeader = await renderScreen(<>{headerRight?.()}</>);
+        expect(renderedHeader.tree.root.findAllByProps({ testID: 'new-session-cancel' })).toHaveLength(0);
     });
 
     it('dismisses the keyboard when the native new-session header title is pressed', async () => {
