@@ -135,3 +135,5 @@ Use precise conclusions:
 - **Blocked:** name the exact ambiguity, conflict, environment prerequisite, or failing owner behavior.
 
 Never say "clean" when only the shared index is clean. Never say "all changes committed" when current bytes landed after the last snapshot.
+
+`More valid work remains` is a continuation state, not a closeout, unless the user explicitly pauses. Return to the rolling-wave pipeline and keep committing independent green packets. An unresolved or infrastructure-blocked path does not justify stopping while other commit-ready work remains.

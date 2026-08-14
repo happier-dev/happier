@@ -47,7 +47,7 @@ Optimize for review cost and throughput together:
 - Split a large domain program by canonical owner, behavior boundary, migration phase, provider family, or independently revertible outcome.
 - Never use a file target as a quota. A 200-file coherent migration is better than ten arbitrary directory batches; a 20-file mixed dump is still wrong.
 
-Accelerate by analyzing several disjoint domains in parallel, preparing manifests and messages in batches, and running independent checks concurrently. Keep HEAD mutation serial unless every writer uses disjoint scope, private indexes, CAS, and stale-parent recovery.
+Accelerate by analyzing several disjoint domains in parallel, preparing manifests and messages in rolling waves, and running independent checks concurrently. Keep enough packets ready that serial HEAD mutation is not waiting on avoidable reconnaissance. Keep HEAD mutation serial unless every writer uses disjoint scope, private indexes, CAS, and stale-parent recovery. See [campaign-throughput.md](campaign-throughput.md) for the required lane accounting and liveness gates.
 
 ## 4. Artifact and provenance decisions
 
@@ -138,3 +138,4 @@ Before staging, answer:
 - Can the subject distinguish this commit from every neighboring commit?
 - Does the body explain ownership and non-obvious semantics?
 - Which focused checks decide whether the group is sound?
+- Has every path assigned to this reconnaissance lane been placed in a packet, excluded with evidence, or reported with an exact unresolved fact?
