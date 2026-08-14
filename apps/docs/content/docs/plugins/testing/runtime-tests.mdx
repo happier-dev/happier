@@ -7,7 +7,9 @@ Agent runtime tests should prove that the Agent-specific leaf maps its native be
 
 ## Registration and creation
 
-Cover the factory registered by `api.agents.register` and the native `AgentRuntime` it returns. A runtime supplies `sessions`, `executionRuns`, or both.
+Cover the factory supplied as `agents.<id>.factory` to `definePlugin(...)` and
+the native `AgentRuntime` it returns. Generated activation performs the
+registration. A runtime supplies `sessions`, `executionRuns`, or both.
 
 For session-backed Agents, exercise `AgentSessionRuntimeFactory.open(...)` and the resulting `AgentSessionRuntime`:
 

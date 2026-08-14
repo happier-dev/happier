@@ -5,10 +5,32 @@ description: Example plugin shapes for common extension points.
 
 These examples describe common plugin shapes. Prefer repo fixtures and public SDK examples when copying runnable code.
 
+## Maintained Plugin UI references
+
+`happier plugins create` and `definePlugin(...)` remain the normal authoring path. The
+packages below are maintained, focused references for an already-created plugin; they exercise
+specific host contracts rather than define alternate starter workflows.
+
+| Need | Maintained package | Use it for |
+| --- | --- | --- |
+| Host-rendered declarative UI | [`descriptor-only`](https://github.com/happier-dev/happier/tree/main/packages/plugin-sdk/examples/descriptor-only) | Settings and app-page descriptors, semantic host controls, and unavailable runtime actions. |
+| Installed React Native artifact | [`react-native-installed`](https://github.com/happier-dev/happier/tree/main/packages/plugin-sdk/examples/react-native-installed) | A React Native surface, declarative fallback, and the public UI build input. |
+| Development source replacement | [`react-native-dev-hot-reload`](https://github.com/happier-dev/happier/tree/main/packages/plugin-sdk/examples/react-native-dev-hot-reload) | Development entrypoints, source updates, and last-known-good behavior through the normal dev loop. |
+| Collection Data and semantic List | [`projects-tasks`](https://github.com/happier-dev/happier/tree/main/packages/plugin-sdk/examples/projects-tasks) | A statically declared UI query, Data client, and host-owned paging/currentness. |
+| Resource reads and wider public authoring | [`public-authoring`](https://github.com/happier-dev/happier/tree/main/packages/plugin-sdk/examples/public-authoring) | Public SDK/package boundaries, Resource reads/live invalidation, and the semantic `createPluginUiTestkit` companion. |
+| Hosted-web source/compile reference | [`hosted-web`](https://github.com/happier-dev/happier/tree/main/packages/plugin-sdk/examples/hosted-web) | The held hosted-web reference shape; it does not advertise an available mounted runtime. |
+| Production-shaped hosted artifact | [`production-hosted-reference`](https://github.com/happier-dev/happier/tree/main/packages/plugin-sdk/examples/production-hosted-reference) | Host-issued context/launch input, artifact lifecycle, and declarative unavailable fallback. |
+| Renderer fallback selection | [`multi-mode-fallback`](https://github.com/happier-dev/happier/tree/main/packages/plugin-sdk/examples/multi-mode-fallback) | React Native, hosted-web, and declarative selection without claiming blocked hosted-web availability. |
+
+Several of these packages deliberately retain a checked-in `.happier-plugin/plugin.json` as a
+cold-manifest, protocol, or artifact-conformance input. That does not create a second
+handwritten-manifest path: ordinary authors declare through `definePlugin(...)`, and the
+canonical author build projects the cold manifest.
+
 <Cards>
-  <Card title="Action plugin" href="/docs/plugins/examples/action-plugin" />
-  <Card title="Agent runtime plugin" href="/docs/plugins/examples/agent-runtime-plugin" />
-  <Card title="ACP agent runtime" href="/docs/plugins/examples/acp-agent-runtime" />
-  <Card title="External session source" href="/docs/plugins/examples/external-session-source" />
-  <Card title="Managed server agent runtime" href="/docs/plugins/examples/managed-server-agent-runtime" />
+  <Card title="Action plugin" href="/plugins/examples/action-plugin" />
+  <Card title="Agent runtime plugin" href="/plugins/examples/agent-runtime-plugin" />
+  <Card title="ACP agent runtime" href="/plugins/examples/acp-agent-runtime" />
+  <Card title="External session source" href="/plugins/examples/external-session-source" />
+  <Card title="Managed service Agent runtime" href="/plugins/examples/managed-server-agent-runtime" />
 </Cards>

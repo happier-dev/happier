@@ -6,7 +6,13 @@ description: Use public SDK examples and runtime fixtures as plugin validation r
 Useful fixture families live in the repo:
 
 - public SDK examples under `packages/plugin-sdk/examples/public-authoring/`
+- advanced `definePlugin` package-root reference under
+  `packages/plugin-sdk/examples/advanced-package-root/`
 - CLI plugin authoring examples under `apps/cli/src/plugins/testkit/fixtures/authoring-examples/`
 - first-party plugins under `packages/plugins/<pluginId>/`
 
-Use public SDK examples for author-facing imports. Use CLI fixtures to validate host runtime behavior.
+Use public SDK examples for author-facing imports. The advanced package-root
+reference covers a custom Session Agent's distinct runner leaf, External
+Sessions facet, Connected Account purpose, managed Provider, and background
+service through the existing public-example testkit and out-of-workspace
+compile owner. Use CLI fixtures to validate host runtime behavior.

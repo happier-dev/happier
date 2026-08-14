@@ -10,9 +10,10 @@ CLI command:
 happier plugins test .
 ```
 
-The default delegates to the managed author-test owner and runs
-`test/index.test.mjs`. The generated suite imports `dist/index.js`, activates
-it through `createPluginTestkit`, and invokes the declared `save-note` action.
+The default delegates to the plugin author-test owner and runs
+`test/index.test.mjs`. The generated suite imports `dist/index.js`, passes its
+exported `manifest` and `activate` through `createPluginTestkit`, and invokes
+the declared `save-note` action.
 It does not start a daemon or mutate installed plugin state. Plugin manifests
 have no reserved test target; the package's source-controlled test suite owns
 which declared contributions it exercises. Use
@@ -31,12 +32,14 @@ installed plugin state is never read or mutated.
 
 ## Plugin testkit
 
-`createPluginTestkit` validates the cold manifest, activates the module through `PluginApi`, enforces manifest-declared registration ids, invokes registered actions, and disposes registration plus activation cleanup.
+`createPluginTestkit` validates the module's canonical manifest projection,
+activates its generated `definePlugin` module through `PluginApi`, enforces
+manifest-declared registration ids, invokes registered actions, and disposes
+registration plus activation cleanup.
 
 ```ts
 import { afterEach, expect, test } from 'vitest';
 import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
-import manifest from '../.happier-plugin/plugin.json';
 import * as module from '../src/index';
 
 let plugin: Awaited<ReturnType<typeof createPluginTestkit>> | undefined;
@@ -47,14 +50,48 @@ afterEach(async () => {
 });
 
 test('runs the declared echo action', async () => {
-  plugin = await createPluginTestkit({ manifest, module });
+  plugin = await createPluginTestkit({ manifest: module.manifest, module });
 
   await expect(plugin.invokeAction('echo', { text: 'hello' }))
     .resolves.toEqual({ text: 'hello' });
 });
 ```
 
-Pass explicit `services` or `ui` fixtures only for real host boundaries the handler uses. The defaults fail closed instead of silently faking those services.
+Pass explicit `services` or `presentation` fixtures only for real host
+boundaries the handler uses. The defaults fail closed instead of silently
+faking those boundaries.
+
+## Semantic UI fixture
+
+`createPluginUiTestkit` from `@happier-dev/plugin-sdk/testing` drives the same
+public host-API client that an authored surface receives through a supplied
+semantic adapter. Use its role/text queries, `press`, context updates, Resource
+invalidation, `retire`, and `dispose` operations to test author-visible state,
+cancellation, and stale-target handling. Provide handlers only for genuine host
+boundaries; a handler may return a typed `PluginError`.
+
+This fixture does not expose a raw React or React Native tree. It does not prove
+layout, styling, native reconciliation, CSP/origin, platform navigation,
+accessibility-runtime behavior, or a packaged artifact. It also does not prove
+installed discovery, on-demand activation, generation replacement, machine
+routing, trust, installation, or Surface Registry admission. Use the packed
+test and the appropriate loaded-host lane for those claims.
+
+### Mount and refusal diagnostics
+
+The normal no-`mount` call returns a `PluginUiTestkit`. A test that has already
+received the host's canonical availability fact may instead pass
+`mount: { availability }`. `PluginUiTestkitMountAvailability` is that exact
+host fact, with an admission state, a nonempty reason, and diagnostics; the
+fixture does not calculate destination, platform, policy, renderer, or
+hosted-web admission.
+
+For a non-available fact, the result is
+`{ kind: 'refused', availability }`: the exact reason and diagnostics are
+preserved and the semantic adapter is never mounted. For an available fact, the
+result is `{ kind: 'mounted', fixture }`. Test the branch your host supplied;
+do not turn a fixture refusal into a second destination resolver or fallback
+policy.
 
 ## Test layers
 
