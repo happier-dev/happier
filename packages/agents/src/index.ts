@@ -407,6 +407,7 @@ export {
   type RuntimeCheckpointToolProtocolV1,
 } from './session/controls/checkpoints.js';
 export {
+  resolvePersistedProviderSessionBackendMode,
   resolveProviderSessionBackendMode,
 } from './session/controls/providerBackendModes.js';
 export {

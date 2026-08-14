@@ -184,8 +184,175 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
       "source": "./agent/runtime/runtimeDescriptor"
     },
     "runtimeDescriptorReader": {
-  },
-  "sessionModeDescriptor": {
+      "generatedReader": {
+        "backendModeKey": "runtimeMode",
+        "fields": [
+          {
+            "key": "runtimeMode",
+            "kind": "runtimeKind",
+            "runtimeHandle": "whenPresent"
+          },
+          {
+            "key": "providerSessionId",
+            "kind": "trimmedString",
+            "runtimeHandle": "whenPresent"
+          },
+          {
+            "key": "agyConversationId",
+            "kind": "trimmedString",
+            "runtimeHandle": "whenPresent"
+          },
+          {
+            "key": "localharnessSessionId",
+            "kind": "trimmedString",
+            "runtimeHandle": "whenPresent"
+          }
+        ],
+        "legacy": {
+          "fields": [
+            {
+              "key": "runtimeMode",
+              "kind": "runtimeKind",
+              "runtimeHandle": "whenPresent",
+              "sourceKey": "antigravityRuntimeMode"
+            },
+            {
+              "key": "providerSessionId",
+              "kind": "trimmedString",
+              "runtimeHandle": "whenPresent"
+            },
+            {
+              "key": "agyConversationId",
+              "kind": "trimmedString",
+              "runtimeHandle": "whenPresent"
+            },
+            {
+              "key": "localharnessSessionId",
+              "kind": "trimmedString",
+              "runtimeHandle": "whenPresent"
+            }
+          ],
+          "requireRuntimeKind": true
+        },
+        "providerId": "antigravity",
+        "runtimeKind": {
+          "aliases": [
+            {
+              "input": "cliPrint",
+              "runtimeKind": "cliPrint"
+            },
+            {
+              "input": "sdk",
+              "runtimeKind": "sdk"
+            }
+          ]
+        }
+      },
+      "kind": "providerRuntimeDescriptorReader",
+      "providerId": "antigravity"
+    },
+    "sessionControlAdapter": {
+      "generatedAdapter": {
+        "configuredRuntimeKind": {
+          "accountSettingsField": "antigravityRuntimeMode",
+          "aliases": [
+            {
+              "input": "cliPrint",
+              "runtimeKind": "cliPrint"
+            },
+            {
+              "input": "sdk",
+              "runtimeKind": "sdk"
+            }
+          ]
+        },
+        "providerId": "antigravity",
+        "runtimeDescriptor": {
+          "backendModeKey": "runtimeMode",
+          "fields": [
+            {
+              "key": "runtimeMode",
+              "kind": "runtimeKind",
+              "runtimeHandle": "whenPresent"
+            },
+            {
+              "key": "providerSessionId",
+              "kind": "trimmedString",
+              "runtimeHandle": "whenPresent"
+            },
+            {
+              "key": "agyConversationId",
+              "kind": "trimmedString",
+              "runtimeHandle": "whenPresent"
+            },
+            {
+              "key": "localharnessSessionId",
+              "kind": "trimmedString",
+              "runtimeHandle": "whenPresent"
+            }
+          ],
+          "legacy": {
+            "fields": [
+              {
+                "key": "runtimeMode",
+                "kind": "runtimeKind",
+                "runtimeHandle": "whenPresent",
+                "sourceKey": "antigravityRuntimeMode"
+              },
+              {
+                "key": "providerSessionId",
+                "kind": "trimmedString",
+                "runtimeHandle": "whenPresent"
+              },
+              {
+                "key": "agyConversationId",
+                "kind": "trimmedString",
+                "runtimeHandle": "whenPresent"
+              },
+              {
+                "key": "localharnessSessionId",
+                "kind": "trimmedString",
+                "runtimeHandle": "whenPresent"
+              }
+            ],
+            "requireRuntimeKind": true
+          },
+          "providerId": "antigravity",
+          "runtimeKind": {
+            "aliases": [
+              {
+                "input": "cliPrint",
+                "runtimeKind": "cliPrint"
+              },
+              {
+                "input": "sdk",
+                "runtimeKind": "sdk"
+              }
+            ]
+          }
+        },
+        "runtimeKindOverride": {
+          "accountSettingsField": "antigravityRuntimeMode",
+          "aliases": [
+            {
+              "input": "cliPrint",
+              "runtimeKind": "cliPrint"
+            },
+            {
+              "input": "sdk",
+              "runtimeKind": "sdk"
+            }
+          ]
+        },
+        "vendorResumeId": {
+          "descriptorField": "providerSessionId",
+          "legacyField": "antigravitySessionId"
+        }
+      },
+      "kind": "providerSessionControlAdapter",
+      "providerId": "antigravity"
+    }
+  },  "sessionModeDescriptor": {
     "runtimeSwitch": "none",
     "semantics": "none",
     "source": "none"

@@ -5,6 +5,54 @@ import {
 } from './install/cliRuntime.js';
 import { ANTIGRAVITY_AGENT_MODEL_CONFIG } from './models.js';
 
+const ANTIGRAVITY_RUNTIME_KIND_ALIASES = [
+  { input: 'cliPrint', runtimeKind: 'cliPrint' },
+  { input: 'sdk', runtimeKind: 'sdk' },
+] as const;
+
+const ANTIGRAVITY_RUNTIME_DESCRIPTOR_READER_PROJECTION = {
+  providerId: 'antigravity',
+  backendModeKey: 'runtimeMode',
+  runtimeKind: { aliases: ANTIGRAVITY_RUNTIME_KIND_ALIASES },
+  fields: [
+    { key: 'runtimeMode', kind: 'runtimeKind', runtimeHandle: 'whenPresent' },
+    { key: 'providerSessionId', kind: 'trimmedString', runtimeHandle: 'whenPresent' },
+    { key: 'agyConversationId', kind: 'trimmedString', runtimeHandle: 'whenPresent' },
+    { key: 'localharnessSessionId', kind: 'trimmedString', runtimeHandle: 'whenPresent' },
+  ],
+  legacy: {
+    requireRuntimeKind: true,
+    fields: [
+      {
+        key: 'runtimeMode',
+        sourceKey: 'antigravityRuntimeMode',
+        kind: 'runtimeKind',
+        runtimeHandle: 'whenPresent',
+      },
+      { key: 'providerSessionId', kind: 'trimmedString', runtimeHandle: 'whenPresent' },
+      { key: 'agyConversationId', kind: 'trimmedString', runtimeHandle: 'whenPresent' },
+      { key: 'localharnessSessionId', kind: 'trimmedString', runtimeHandle: 'whenPresent' },
+    ],
+  },
+} as const;
+
+const ANTIGRAVITY_SESSION_CONTROL_ADAPTER_PROJECTION = {
+  providerId: 'antigravity',
+  runtimeDescriptor: ANTIGRAVITY_RUNTIME_DESCRIPTOR_READER_PROJECTION,
+  runtimeKindOverride: {
+    aliases: ANTIGRAVITY_RUNTIME_KIND_ALIASES,
+    accountSettingsField: 'antigravityRuntimeMode',
+  },
+  configuredRuntimeKind: {
+    aliases: ANTIGRAVITY_RUNTIME_KIND_ALIASES,
+    accountSettingsField: 'antigravityRuntimeMode',
+  },
+  vendorResumeId: {
+    descriptorField: 'providerSessionId',
+    legacyField: 'antigravitySessionId',
+  },
+} as const;
+
 export const AGENT_DEFINITION = Object.freeze({
   id: ANTIGRAVITY_AGENT_ID,
   core: {
@@ -43,6 +91,16 @@ export const AGENT_DEFINITION = Object.freeze({
     agentCatalogEntry: {
       importName: 'ANTIGRAVITY_AGENT_RUNTIME_CONTRIBUTION',
       source: './agent/contributions/runtime',
+    },
+    sessionControlAdapter: {
+      kind: 'providerSessionControlAdapter',
+      providerId: 'antigravity',
+      generatedAdapter: ANTIGRAVITY_SESSION_CONTROL_ADAPTER_PROJECTION,
+    },
+    runtimeDescriptorReader: {
+      kind: 'providerRuntimeDescriptorReader',
+      providerId: 'antigravity',
+      generatedReader: ANTIGRAVITY_RUNTIME_DESCRIPTOR_READER_PROJECTION,
     },
     protocolRuntimeDescriptor: {
       kind: 'providerRuntimeDescriptorV1',

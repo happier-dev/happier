@@ -18,7 +18,9 @@ export type GenericProviderRuntimeDescriptor = Readonly<{
 type SharedRuntimeKindForDescriptor<TDescriptor> =
   TDescriptor extends Readonly<{ backendMode: infer TBackendMode }>
     ? TBackendMode
-    : null;
+    : TDescriptor extends Readonly<{ runtimeMode: infer TRuntimeMode }>
+      ? TRuntimeMode
+      : null;
 
 type SharedRuntimeDescriptorForProviderId<
   TProviderId extends SupportedRuntimeDescriptorProviderId,
@@ -28,6 +30,10 @@ type SharedRuntimeDescriptorForProviderId<
       GeneratedCanonicalRuntimeDescriptorByProviderIdV1[TProviderId]
     >;
     runtimeHandle: SharedRuntimeDescriptorRuntimeHandle | null;
+    home?: 'user' | 'connectedService' | null;
+    connectedServiceId?: string | null;
+    connectedServiceProfileId?: string | null;
+    connectedServiceGroupId?: string | null;
   }
 >;
 

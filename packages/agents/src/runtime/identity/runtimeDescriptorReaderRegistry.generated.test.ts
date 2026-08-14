@@ -56,10 +56,35 @@ describe('runtimeDescriptorReaderRegistry', () => {
   });
 
   it('exposes only the providers that own runtime descriptor readers', () => {
-    expect(RUNTIME_DESCRIPTOR_PROVIDER_IDS).toEqual(['codex', 'opencode', 'pi']);
+    expect(RUNTIME_DESCRIPTOR_PROVIDER_IDS).toEqual(['antigravity', 'codex', 'opencode', 'pi']);
   });
 
   it('routes each supported provider id to its generated reader', () => {
+    expect(getRuntimeDescriptorReader('antigravity')?.({
+      agentRuntimeDescriptorV1: {
+        v: 1,
+        providerId: 'antigravity',
+        provider: {
+          runtimeMode: 'sdk',
+          providerSessionId: 'localharness-session-1',
+          agyConversationId: 'agy-conversation-1',
+          localharnessSessionId: 'localharness-session-1',
+        },
+      },
+    })).toEqual({
+      agentId: 'antigravity',
+      runtimeKind: 'sdk',
+      runtimeMode: 'sdk',
+      providerSessionId: 'localharness-session-1',
+      agyConversationId: 'agy-conversation-1',
+      localharnessSessionId: 'localharness-session-1',
+      runtimeHandle: {
+        runtimeMode: 'sdk',
+        providerSessionId: 'localharness-session-1',
+        agyConversationId: 'agy-conversation-1',
+        localharnessSessionId: 'localharness-session-1',
+      },
+    });
     expect(getRuntimeDescriptorReader('codex')?.({
       codexBackendMode: 'appServer',
       codexSessionId: ' thread-1 ',

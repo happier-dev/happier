@@ -14,6 +14,106 @@ import {
 } from '../runtime/controlSurface/runtimeDescriptorResume.js';
 import type { ProviderSessionControlAdapter } from '../runtime/controlSurface/types.js';
 
+const ANTIGRAVITY_GENERATED_SESSION_CONTROL_ADAPTER = createGeneratedRuntimeProjectionSessionControlAdapter(
+{
+  "configuredRuntimeKind": {
+    "accountSettingsField": "antigravityRuntimeMode",
+    "aliases": [
+      {
+        "input": "cliPrint",
+        "runtimeKind": "cliPrint"
+      },
+      {
+        "input": "sdk",
+        "runtimeKind": "sdk"
+      }
+    ]
+  },
+  "providerId": "antigravity",
+  "runtimeDescriptor": {
+    "backendModeKey": "runtimeMode",
+    "fields": [
+      {
+        "key": "runtimeMode",
+        "kind": "runtimeKind",
+        "runtimeHandle": "whenPresent"
+      },
+      {
+        "key": "providerSessionId",
+        "kind": "trimmedString",
+        "runtimeHandle": "whenPresent"
+      },
+      {
+        "key": "agyConversationId",
+        "kind": "trimmedString",
+        "runtimeHandle": "whenPresent"
+      },
+      {
+        "key": "localharnessSessionId",
+        "kind": "trimmedString",
+        "runtimeHandle": "whenPresent"
+      }
+    ],
+    "legacy": {
+      "fields": [
+        {
+          "key": "runtimeMode",
+          "kind": "runtimeKind",
+          "runtimeHandle": "whenPresent",
+          "sourceKey": "antigravityRuntimeMode"
+        },
+        {
+          "key": "providerSessionId",
+          "kind": "trimmedString",
+          "runtimeHandle": "whenPresent"
+        },
+        {
+          "key": "agyConversationId",
+          "kind": "trimmedString",
+          "runtimeHandle": "whenPresent"
+        },
+        {
+          "key": "localharnessSessionId",
+          "kind": "trimmedString",
+          "runtimeHandle": "whenPresent"
+        }
+      ],
+      "requireRuntimeKind": true
+    },
+    "providerId": "antigravity",
+    "runtimeKind": {
+      "aliases": [
+        {
+          "input": "cliPrint",
+          "runtimeKind": "cliPrint"
+        },
+        {
+          "input": "sdk",
+          "runtimeKind": "sdk"
+        }
+      ]
+    }
+  },
+  "runtimeKindOverride": {
+    "accountSettingsField": "antigravityRuntimeMode",
+    "aliases": [
+      {
+        "input": "cliPrint",
+        "runtimeKind": "cliPrint"
+      },
+      {
+        "input": "sdk",
+        "runtimeKind": "sdk"
+      }
+    ]
+  },
+  "vendorResumeId": {
+    "descriptorField": "providerSessionId",
+    "legacyField": "antigravitySessionId"
+  }
+} satisfies GeneratedRuntimeProjectionSessionControlAdapterConfig<'antigravity'>,
+);
+
 const CODEX_GENERATED_SESSION_CONTROL_ADAPTER = createGeneratedRuntimeProjectionSessionControlAdapter(
 {
   "configuredRuntimeKind": {
@@ -425,6 +525,7 @@ const OPENCODE_GENERATED_SESSION_CONTROL_ADAPTER = createGeneratedRuntimeProject
 );
 
 export const GENERATED_PROVIDER_SESSION_CONTROL_ADAPTER_PROVIDER_IDS = [
+  'antigravity',
   'codex',
   'opencode',
   'pi',
@@ -434,6 +535,7 @@ export type GeneratedProviderSessionControlAdapterProviderId =
   (typeof GENERATED_PROVIDER_SESSION_CONTROL_ADAPTER_PROVIDER_IDS)[number];
 
 export const GENERATED_PROVIDER_SESSION_CONTROL_ADAPTERS: Readonly<Record<GeneratedProviderSessionControlAdapterProviderId, ProviderSessionControlAdapter>> = Object.freeze({
+  antigravity: ANTIGRAVITY_GENERATED_SESSION_CONTROL_ADAPTER,
   codex: CODEX_GENERATED_SESSION_CONTROL_ADAPTER,
   opencode: OPENCODE_GENERATED_SESSION_CONTROL_ADAPTER,
   pi: createRuntimeDescriptorResumeIdSessionControlAdapter({

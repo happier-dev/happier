@@ -1,8 +1,9 @@
 import {
   readCanonicalRuntimeDescriptorV1ForAgent,
-  readRawRuntimeDescriptorV1FromMetadata,
+} from '@happier-dev/protocol/sessions/metadata/runtime-descriptor';
+import {
   readRuntimeDescriptorV1FromMetadata,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/sessions/metadata/runtime-descriptor-compat';
 
 import type { AgentRuntimeKind } from '../../runtimeKinds.js';
 import type { ProviderSessionControlAdapter } from '../controlSurface/types.js';
@@ -277,7 +278,7 @@ export function readGeneratedRuntimeDescriptorFromMetadata<
   const sharedDescriptor = {
     agentId: config.providerId,
     runtimeKind: backendMode,
-    ...(backendModeKey ? { backendMode } : {}),
+    ...(backendModeKey === 'backendMode' ? { backendMode } : {}),
     ...values,
     providerSessionId,
     runtimeHandle: collectRuntimeHandle(config.fields, values),
@@ -310,7 +311,7 @@ function readRawDescriptorProviderControlKind(
   metadataRecord: Record<string, unknown>,
   config: ControlRuntimeKindConfig,
 ): AgentRuntimeKind | null {
-  const descriptor = asRecord(readRawRuntimeDescriptorV1FromMetadata(metadataRecord));
+  const descriptor = asRecord(readRuntimeDescriptorV1FromMetadata(metadataRecord));
   if (!descriptor) return null;
   for (const pathConfig of config.rawDescriptorPaths ?? []) {
     if (pathConfig.providerId && descriptor.agentId !== pathConfig.providerId) continue;

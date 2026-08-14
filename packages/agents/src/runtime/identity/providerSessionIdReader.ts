@@ -1,7 +1,9 @@
 import {
   readRuntimeDescriptorV1ForAgent,
+} from '@happier-dev/protocol/sessions/metadata/runtime-descriptor';
+import {
   readRuntimeDescriptorV1FromMetadata,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/sessions/metadata/runtime-descriptor-compat';
 
 import {
   asRecord,

@@ -26,10 +26,20 @@ describe('sessionControlAdapterRegistry', () => {
   });
 
   it('exposes only the providers that own session-control adapters', () => {
-    expect(PROVIDER_SESSION_CONTROL_ADAPTER_PROVIDER_IDS).toEqual(['codex', 'opencode', 'pi']);
+    expect(PROVIDER_SESSION_CONTROL_ADAPTER_PROVIDER_IDS).toEqual(['antigravity', 'codex', 'opencode', 'pi']);
   });
 
   it('routes each supported provider id to its generated adapter and nothing else', () => {
+    expect(getProviderSessionControlAdapter('antigravity')?.resolvePersistedSessionRuntimeKind?.({
+      runtimeDescriptorV1: {
+        v: 1,
+        agentId: 'antigravity',
+        agent: { runtimeMode: 'cliPrint', providerSessionId: 'agy-conversation-1' },
+      },
+    })).toBe('cliPrint');
+    expect(getProviderSessionControlAdapter('antigravity')?.resolveVendorResumeId?.({
+      antigravitySessionId: ' legacy-conversation-1 ',
+    })).toBe('legacy-conversation-1');
     expect(getProviderSessionControlAdapter('codex')?.normalizeRuntimeKindOverride?.(' appServer ')).toBe('appServer');
     expect(getProviderSessionControlAdapter('codex')?.normalizeRuntimeKindOverride?.(' mcp ')).toBe('appServer');
     expect(getProviderSessionControlAdapter('codex')?.resolvePersistedSessionRuntimeKind?.({

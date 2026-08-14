@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
 import * as providerBackendModes from './providerBackendModes.js';
-import { resolveProviderSessionBackendMode } from './providerBackendModes.js';
+import {
+  resolvePersistedProviderSessionBackendMode,
+  resolveProviderSessionBackendMode,
+} from './providerBackendModes.js';
 
 describe('providerBackendModes', () => {
   it('defaults the configured Codex backend mode to appServer when no override is present', () => {
@@ -22,5 +25,36 @@ describe('providerBackendModes', () => {
       metadata: null,
       accountSettings: { opencodeBackendMode: 'server' },
     })).toBe('server');
+  });
+
+  it('resolves Antigravity runtime mode from a persisted compatibility descriptor', () => {
+    expect(resolveProviderSessionBackendMode({
+      agentId: 'antigravity',
+      metadata: {
+        agentRuntimeDescriptorV1: {
+          v: 1,
+          providerId: 'antigravity',
+          provider: { runtimeMode: 'sdk', providerSessionId: 'localharness-session-1' },
+        },
+      },
+      accountSettings: { antigravityRuntimeMode: 'cliPrint' },
+    })).toBe('sdk');
+  });
+
+  it('projects persisted Codex compatibility shapes without applying the account default', () => {
+    expect(resolvePersistedProviderSessionBackendMode({
+      agentId: 'codex',
+      metadata: {
+        agentRuntimeDescriptorV1: {
+          v: 1,
+          providerId: 'codex',
+          provider: { backendMode: 'mcp_resume' },
+        },
+      },
+    })).toBe('acp');
+    expect(resolvePersistedProviderSessionBackendMode({
+      agentId: 'codex',
+      metadata: null,
+    })).toBeNull();
   });
 });
