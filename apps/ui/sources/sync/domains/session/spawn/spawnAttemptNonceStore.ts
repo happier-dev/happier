@@ -82,10 +82,12 @@ async function withSpawnAttemptMutationLock<T>(
     if (webLockManager) {
         const abortController = new AbortController();
         let mayMutate = true;
+        let lockAcquired = false;
         try {
             return await withTimeout(
                 webLockManager.request(lockName(scope), { signal: abortController.signal }, async () => {
                     if (!mayMutate) return { status: 'lock_unavailable' as const };
+                    lockAcquired = true;
                     return {
                         status: 'completed' as const,
                         value: mutate(),
@@ -94,7 +96,8 @@ async function withSpawnAttemptMutationLock<T>(
                 SPAWN_ATTEMPT_MUTATION_LOCK_TIMEOUT_MS,
                 'session spawn custody mutation lock',
             );
-        } catch {
+        } catch (error) {
+            if (lockAcquired) throw error;
             return { status: 'lock_unavailable' };
         } finally {
             mayMutate = false;

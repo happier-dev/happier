@@ -442,7 +442,9 @@ describe('spawnAttemptNonceStore persistence', () => {
         const originalWindow = Object.getOwnPropertyDescriptor(globalThis, 'window');
         const originalDocument = Object.getOwnPropertyDescriptor(globalThis, 'document');
         const originalNavigator = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
-        let invokeBlockedCallback: (() => Promise<unknown>) | null = null;
+        const blockedCallback = {
+            invoke: undefined as (() => Promise<unknown>) | undefined,
+        };
         const blockedLockManager = {
             request: <T>(
                 _name: string,
@@ -455,7 +457,7 @@ describe('spawnAttemptNonceStore persistence', () => {
                     ? undefined
                     : optionsOrCallback.signal;
                 signal?.addEventListener('abort', () => reject(signal.reason), { once: true });
-                invokeBlockedCallback = async () => {
+                blockedCallback.invoke = async () => {
                     const value = await callback();
                     resolve(value);
                     return value;
@@ -496,8 +498,8 @@ describe('spawnAttemptNonceStore persistence', () => {
             await vi.advanceTimersByTimeAsync(60_000);
 
             await expect(finiteResult).resolves.toBe(false);
-            expect(invokeBlockedCallback).not.toBeNull();
-            await invokeBlockedCallback?.();
+            if (!blockedCallback.invoke) throw new Error('expected a blocked Web Lock callback');
+            await blockedCallback.invoke();
             expect(store.readSpawnAttemptCustodyState(scope)).toMatchObject({
                 status: 'valid',
                 attempts: {

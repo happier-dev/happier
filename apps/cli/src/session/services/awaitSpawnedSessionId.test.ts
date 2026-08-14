@@ -36,7 +36,7 @@ describe('awaitSpawnedSessionId', () => {
       pollIntervalMs: 25,
     });
     expect(result).toEqual({ type: 'success', sessionId: 'sess_resolved' });
-    expect(resolver).toHaveBeenCalledWith('nonce-1');
+    expect(resolver).toHaveBeenCalledWith('nonce-1', expect.any(Number));
   });
 
   it('times out with SESSION_WEBHOOK_TIMEOUT when the nonce never resolves', async () => {
