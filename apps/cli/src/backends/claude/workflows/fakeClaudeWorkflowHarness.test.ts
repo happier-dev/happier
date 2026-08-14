@@ -116,14 +116,16 @@ describe('fake Claude workflow harness builder drives the real CWF2 tracker', ()
     const beta = runs.get('toolu_wf_b')!;
     expect(alpha.title).toBe('workflow-alpha');
     expect(beta.title).toBe('workflow-beta');
-    // Agent ids are run-local; isolation is proven by distinct per-run rows/statuses, not by global ids.
+    // Rows carry the concrete agent id the stream supplied — the identity the sidecar sources also
+    // use, so the two never file separate rows for one agent. Isolation is still proven by distinct
+    // per-run rows/statuses rather than by the ids happening to differ.
     expect(alpha.agents.map((a) => [a.id, a.title, a.status])).toEqual([
-      ['workflow-agent:1', 'alpha_search', 'complete'],
-      ['workflow-agent:2', 'alpha_coder', 'complete'],
+      ['agent_a1', 'alpha_search', 'complete'],
+      ['agent_a2', 'alpha_coder', 'complete'],
     ]);
     expect(beta.agents.map((a) => [a.id, a.title, a.status])).toEqual([
-      ['workflow-agent:1', 'beta_coder', 'complete'],
-      ['workflow-agent:2', 'beta_tester', 'failed'],
+      ['agent_b1', 'beta_coder', 'complete'],
+      ['agent_b2', 'beta_tester', 'failed'],
     ]);
     expect(alpha.status).toBe('complete');
     expect(beta.status).toBe('failed');

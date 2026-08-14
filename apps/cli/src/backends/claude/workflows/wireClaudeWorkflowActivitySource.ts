@@ -1,4 +1,5 @@
 import {
+  readSessionAgentActivityHeadlineFromMetadata,
   SESSION_AGENT_ACTIVITY_HEADLINE_METADATA_KEY,
   SessionWorkflowActivityHeadlineV1Schema,
   type SessionWorkflowRunSnapshotV1,
@@ -124,11 +125,17 @@ function reportStartupReconcileCapture(params: Readonly<{
   headlineReadable: boolean;
   candidateCount: number;
 }>): void {
-  const fault = !params.hasMetadataSnapshot
-    ? 'no session metadata snapshot at wiring time'
-    : params.hasHeadlineValue && !params.headlineReadable
-      ? 'the persisted workflow activity headline could not be read'
-      : null;
+  // A fault only matters when it actually cost us the capture. The roster half of the metadata can
+  // still name agents a dead process left running when the workflow half is unreadable, and warning
+  // that nothing was captured while candidates were in hand would report a failure that did not
+  // happen.
+  const fault = params.candidateCount > 0
+    ? null
+    : !params.hasMetadataSnapshot
+      ? 'no session metadata snapshot at wiring time'
+      : params.hasHeadlineValue && !params.headlineReadable
+        ? 'the persisted workflow activity headline could not be read'
+        : null;
   if (fault) {
     logger.warn(
       `${params.logPrefix}: startup workflow reconciliation captured no candidates (${fault}); a run left running by a previous process will not be resolved by this session`,
@@ -277,8 +284,15 @@ export function wireClaudeWorkflowActivitySource(params: Readonly<{
   const parsedHeadline = SessionWorkflowActivityHeadlineV1Schema.safeParse(
     startupMetadata?.sessionWorkflowActivityHeadlineV1,
   );
-  const reconcileCandidates = parsedHeadline.success
-    ? collectStartupReconcileCandidates(parsedHeadline.data)
+  // Read through the protocol owner rather than the raw key: the roster half of what the previous
+  // process published is what names the agents it left running, and this build must tolerate an
+  // entry a newer producer wrote instead of dropping the whole roster on one unparseable row.
+  const startupAgentHeadline = readSessionAgentActivityHeadlineFromMetadata(startupMetadata);
+  const reconcileCandidates = parsedHeadline.success || startupAgentHeadline
+    ? collectStartupReconcileCandidates(
+      parsedHeadline.success ? parsedHeadline.data : null,
+      startupAgentHeadline,
+    )
     : [];
   reportStartupReconcileCapture({
     logPrefix: params.logPrefix ?? '[claude-workflow-source]',

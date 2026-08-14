@@ -22,6 +22,7 @@ import {
   type WorkflowJournalAgentSpecFact,
   type WorkflowLaunchFact,
   type WorkflowProgressAgentFact,
+  type WorkflowRunRecordFact,
   type WorkflowStartFact,
 } from './claudeWorkflowCorrelation';
 import {
@@ -30,6 +31,7 @@ import {
   CLAUDE_IMPLICIT_WORKFLOW_RUN_TITLE,
   type WorkflowActivityObservation,
 } from './claudeWorkflowActivityTypes';
+import type { WorkflowStartupReconcileCandidate } from './workflowActivityStartupReconcile';
 
 /**
  * CWF2 in-memory workflow activity tracker.
@@ -216,15 +218,14 @@ export type ClaudeWorkflowActivityTracker = Readonly<{
   isWorkflowOwnedTaskReference(reference: ClaudeWorkflowTaskReference): boolean;
 }>;
 
-export type WorkflowInterruptedRunSeed = Readonly<{
-  runId: string;
-  title: string;
-  workflowToolUseId?: string;
-  totalAgents: number;
-  completedAgents: number;
-  failedAgents?: number;
-  blockedAgents?: number;
-}>;
+/**
+ * What startup recovery knows about a run the previous process left behind.
+ *
+ * The candidate collector owns this shape. A second declaration here was structurally identical and
+ * therefore invisible when only one of the two grew a field — which is exactly what happened: the
+ * collector learned to carry agent identities while this copy still described a run by its counts.
+ */
+export type WorkflowInterruptedRunSeed = WorkflowStartupReconcileCandidate;
 
 const TERMINAL_RUN_STATUSES: ReadonlySet<SessionWorkflowRunStatusV1> = new Set([
   'complete',
@@ -358,6 +359,62 @@ export function createClaudeWorkflowActivityTracker(params: Readonly<{
     }
   }
 
+  /**
+   * Resolve the ONE roster row an incoming agent fact belongs to, adopting the concrete agent id.
+   *
+   * The live `task_progress` stream and the on-disk sidecar are BOTH active on the SDK transport,
+   * and they name the same agent differently: the stream keys by position (it can emit an agent
+   * before that agent has a provider id at all — OBSERVED on claude 2.1.231, where the second lane
+   * of a `parallel()` arrived with no `agentId` one tick before it had one), while the journal, the
+   * agent's own sidecar profile, and the durable run record all key by the concrete hex id. Left
+   * alone that files `workflow-agent:1` BESIDE `ad8e4a14a9b6f6b01` — two rows, one agent, on every
+   * agent of every SDK-path run.
+   *
+   * The concrete id wins, because it is the identity every other source already uses: adopting it
+   * here is what lets `applyAgentProfileMemo`, the sidechain import and the run-record backfill find
+   * the row they are talking about instead of creating a third one. The provisional row is RENAMED
+   * rather than duplicated, so an agent that was already on screen keeps its position, its start
+   * time and its phase.
+   *
+   * This is the same rule the durable run record already applies (`WorkflowProgressAgentIdentity`
+   * = `agentId`), extended to the live stream — one identity policy, not a second implementation.
+   */
+  function adoptConcreteAgentId(run: MutableRun, id: string, vendorRef: string | undefined): string {
+    if (!vendorRef || vendorRef === id) return id;
+    // The concrete row already exists. If a provisional sibling was filed before the id arrived,
+    // fold it away now so the run stops carrying both.
+    if (run.agentsById.has(vendorRef)) {
+      if (run.agentsById.has(id)) dropProvisionalAgentRow(run, id);
+      return vendorRef;
+    }
+    const provisional = run.agentsById.get(id);
+    if (!provisional) return vendorRef;
+    // Rename in place: same row object, same order slot, same phase membership.
+    run.agentsById.delete(id);
+    run.agentsById.set(vendorRef, provisional);
+    provisional.id = vendorRef;
+    run.agentOrder = run.agentOrder.map((agentId) => (agentId === id ? vendorRef : agentId));
+    for (const phase of run.phasesByIndex.values()) {
+      phase.agentIds = phase.agentIds.map((agentId) => (agentId === id ? vendorRef : agentId));
+    }
+    // The provisional id stays an OWNED child id: it is what the CWF4 work-state filter and any
+    // in-flight lifecycle event still address this agent by.
+    run.childToolUseIds.add(id);
+    run.childToolUseIds.add(vendorRef);
+    runIdByChildToolUseId.set(id, run.runId);
+    runIdByChildToolUseId.set(vendorRef, run.runId);
+    return vendorRef;
+  }
+
+  /** Retire a provisional row whose concrete row already holds the agent. */
+  function dropProvisionalAgentRow(run: MutableRun, id: string): void {
+    run.agentsById.delete(id);
+    run.agentOrder = run.agentOrder.filter((agentId) => agentId !== id);
+    for (const phase of run.phasesByIndex.values()) {
+      phase.agentIds = phase.agentIds.filter((agentId) => agentId !== id);
+    }
+  }
+
   function upsertAgent(run: MutableRun, incoming: Readonly<{
     id: string;
     title: string;
@@ -391,9 +448,12 @@ export function createClaudeWorkflowActivityTracker(params: Readonly<{
     const closedByFinishedRun = run.explicit
       && isTerminalRunStatus(run.status)
       && !isTerminalAgentStatus(incoming.status);
-    const agent = closedByFinishedRun
+    const resolved = closedByFinishedRun
       ? { ...incoming, status: 'cancelled' as SessionWorkflowAgentStatusV1 }
       : incoming;
+    // One roster row per agent, whichever source named it first (see `adoptConcreteAgentId`).
+    const agentRowId = adoptConcreteAgentId(run, resolved.id, resolved.vendorRef);
+    const agent = agentRowId === resolved.id ? resolved : { ...resolved, id: agentRowId };
     const existing = run.agentsById.get(agent.id);
     const titleSource = agent.titleSource ?? 'journal';
     if (!existing) {
@@ -499,6 +559,48 @@ export function createClaudeWorkflowActivityTracker(params: Readonly<{
    * did not fail — it was cut off. `completedAt` is the last instant that agent actually evidenced,
    * never the moment of the sweep, so an elapsed figure stays honest.
    */
+  /**
+   * Re-attach the agents a dead process published as running but this process never observed.
+   *
+   * The counterpart to `terminalizeRunAgents`, and the reason crash recovery can reach the roster at
+   * all. A restarted process rebuilds a run from evidence that outlived it — a transcript, or a
+   * headline seed — and that evidence names agents only when it happens to. Everything else the
+   * previous process had already published about them (their names, their starts, the sidechains
+   * their transcripts were filed under) lives in the roster it left behind, and the seed carries it
+   * back so those rows are REPLACED with a truthful ending instead of either spinning forever or
+   * disappearing from the session's history.
+   *
+   * Only agents this process has no record of are added: an agent already held here has been
+   * observed by something with better evidence than a headline, and the sweep resolves it.
+   */
+  function materializeInterruptedAgents(
+    run: MutableRun,
+    seed: WorkflowInterruptedRunSeed,
+    updatedAt: number,
+  ): void {
+    for (const orphan of seed.orphanAgents ?? []) {
+      if (run.agentsById.has(orphan.agentId)) continue;
+      upsertAgent(run, {
+        id: orphan.agentId,
+        title: orphan.title,
+        // The published roster's title already IS the best name the previous process resolved, so it
+        // outranks an ordinal a later read might otherwise install over it.
+        titleSource: 'journal',
+        status: 'cancelled',
+        // The agent's own last evidence, not the moment recovery ran: `upsertAgent` reads the end
+        // off this, and stamping the sweep clock here would inflate every rebuilt row's elapsed time
+        // by however long the session was down.
+        updatedAt: orphan.updatedAt,
+        parentId: run.workflowToolUseId ?? run.runId,
+        ...(orphan.startedAt !== undefined ? { startedAt: orphan.startedAt } : {}),
+        ...(orphan.sidechainId ? { sidechainId: orphan.sidechainId } : {}),
+      });
+      run.childToolUseIds.add(orphan.agentId);
+      runIdByChildToolUseId.set(orphan.agentId, run.runId);
+    }
+    if (seed.orphanAgents?.length) run.updatedAt = updatedAt;
+  }
+
   function terminalizeRunAgents(run: MutableRun, updatedAt: number): boolean {
     let touched = false;
     for (const agent of run.agentsById.values()) {
@@ -741,12 +843,18 @@ export function createClaudeWorkflowActivityTracker(params: Readonly<{
     return run.runId;
   }
 
-  function applyWorkflowProgressAgent(run: MutableRun, entry: WorkflowProgressAgentFact, updatedAt: number): void {
+  function applyWorkflowProgressAgent(
+    run: MutableRun,
+    entry: WorkflowProgressAgentFact,
+    updatedAt: number,
+    titleSource?: AgentTitleSource,
+  ): void {
     // Explicit-wins: if this agent currently lives on the implicit run, migrate it here.
     migrateImplicitAgentToExplicit(entry.id, run);
     upsertAgent(run, {
       id: entry.id,
       title: entry.title,
+      ...(titleSource ? { titleSource } : {}),
       status: entry.status,
       updatedAt,
       ...(entry.vendorRef ? { vendorRef: entry.vendorRef } : {}),
@@ -816,6 +924,43 @@ export function createClaudeWorkflowActivityTracker(params: Readonly<{
     if (fact.journalKey) run.journalSpecIndexByKey.set(fact.journalKey, matchingIndex);
     run.journalSpecIndexByAgentId.set(fact.agentId, matchingIndex);
     return spec;
+  }
+
+  /**
+   * Fold the run's durable on-disk record: phases, and each agent's phase, label and metrics.
+   *
+   * This is the ONLY source on the sidecar path that knows which phase an agent belonged to. The
+   * journal carries `{type, key, agentId}` and nothing else, and a `{scriptPath}` launch binds a
+   * script label only when the script wrote that label as a STRING LITERAL — a script that computes
+   * it (`agent(…, { label: l.key, phase: 'Attack' })`) leaves every agent unattributable. The record
+   * has `phaseIndex`/`phaseTitle`/`label` for all of them.
+   *
+   * It never touches the run's status. The record is read at an arbitrary later moment, and an
+   * explicit run's status belongs to its own lifecycle events; `upsertAgent`'s finished-run guard
+   * already resolves anything that arrives after the run closed.
+   */
+  function applyWorkflowRunRecord(fact: WorkflowRunRecordFact, updatedAt: number): string | null {
+    if (isForeignSource(fact.sourceSessionId)) return null;
+    const workflowRunId = runIdByWorkflowToolUseId.get(fact.workflowToolUseId) ?? fact.workflowToolUseId;
+    const run = runs.get(workflowRunId);
+    // Never synthesizes a run: the record is discovered from a run we already observed launching.
+    if (!run) return null;
+    if (fact.sourceSessionId && !run.sourceSessionId) run.sourceSessionId = fact.sourceSessionId;
+    for (const entry of fact.workflowProgress) {
+      if (entry.kind === 'phase') {
+        upsertPhase(run, entry.index, entry.title);
+        continue;
+      }
+      // RULING-13 rank 2, deliberately NOT rank 1. The record's `label` is the SCRIPT's name for the
+      // agent (`r3-r4-extensions`); the journal title is the name the agent published for itself
+      // ("R3 (chips static → stateful) + R4 (regions lines → renderer bindings)"). Promoting the
+      // slug above it would replace a descriptive title with an identifier on exactly the rows that
+      // already read well. It still outranks a prompt guess and an ordinal, which is what turns
+      // `Workflow agent 3` into a real name.
+      applyWorkflowProgressAgent(run, entry, updatedAt, 'label');
+    }
+    run.updatedAt = updatedAt;
+    return run.runId;
   }
 
   function applyWorkflowJournal(fact: WorkflowJournalFact, updatedAt: number): string | null {
@@ -1267,6 +1412,8 @@ export function createClaudeWorkflowActivityTracker(params: Readonly<{
       touchedRunId = applyWorkflowLaunch(fact, observeParams.updatedAt, providerTaskActivities);
     } else if (fact.kind === 'task-lifecycle') {
       touchedRunId = applyTaskLifecycle(fact, observeParams.updatedAt, providerTaskActivities);
+    } else if (fact.kind === 'workflow-run-record') {
+      touchedRunId = applyWorkflowRunRecord(fact, observeParams.updatedAt);
     } else if (fact.kind === 'workflow-journal') {
       touchedRunId = applyWorkflowJournal(fact, observeParams.updatedAt);
     } else if (fact.kind === 'workflow-agent-profile') {
@@ -1357,6 +1504,11 @@ export function createClaudeWorkflowActivityTracker(params: Readonly<{
       return { changedRunIds: [], startedRunIds: [], terminalRunIds: [], statusChangedRunIds: [] };
     }
     if (existing && isTerminalRunStatus(existing.status)) {
+      // A finished run can still owe the roster rows: the previous process published agents that
+      // never reported, and this process rebuilt the run from a transcript that closed it without
+      // ever naming them. They are re-attached here so the republish REPLACES those rows rather
+      // than leaving the metadata roster's copy of them spinning.
+      materializeInterruptedAgents(existing, seed, reconcileParams.updatedAt);
       projectRun(existing);
       return {
         changedRunIds: [existing.runId],
@@ -1365,18 +1517,26 @@ export function createClaudeWorkflowActivityTracker(params: Readonly<{
         statusChangedRunIds: [existing.runId],
       };
     }
+    // The run's own end is only restated when it is genuinely unknown. A run the headline already
+    // reported terminal keeps that ending; only the agents it left behind are resolved, so one
+    // unreported agent cannot demote a workflow that really completed to an interrupted stop.
+    const reconciledRunStatus = seed.runTerminalStatus ?? 'stopped';
     const run = existing ?? ensureRun(seed.runId, {
       title: seed.title,
       explicit: true,
-      status: 'stopped',
+      status: reconciledRunStatus,
       updatedAt: reconcileParams.updatedAt,
       startedAt: reconcileParams.updatedAt,
       ...(seed.workflowToolUseId ? { workflowToolUseId: seed.workflowToolUseId } : {}),
     });
-    run.status = 'stopped';
-    run.statusReason = 'interrupted';
+    run.status = reconciledRunStatus;
+    if (seed.runTerminalStatus) delete run.statusReason;
+    else run.statusReason = 'interrupted';
     run.completedAt = reconcileParams.updatedAt;
     run.updatedAt = reconcileParams.updatedAt;
+    // Attached BEFORE the sweep, so the agents the previous process left running are resolved by the
+    // same rule as any other agent inside a finished run instead of quietly vanishing from the roster.
+    materializeInterruptedAgents(run, seed, reconcileParams.updatedAt);
     // The run is resolved, so its agents are too. Without this an implicit run rebuilt by transcript
     // replay publishes `active` agents underneath a `stopped` run — one card contradicting itself.
     terminalizeRunAgents(run, reconcileParams.updatedAt);
