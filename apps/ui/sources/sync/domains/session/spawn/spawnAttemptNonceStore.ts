@@ -3,11 +3,13 @@ import {
     serverAccountScopedStorageKey,
     type ServerAccountScope,
 } from '@/sync/domains/scope/serverAccountScope';
+import { withTimeout } from '@/utils/timing/time';
 
 import { createUiSessionSpawnNonce, normalizeSpawnSessionNonce } from './spawnSessionNonce';
 
 const STORAGE_KEY_PREFIX = 'session-spawn-attempts-v1';
 const LOCK_NAME_PREFIX = 'happier:session-spawn-attempts-v2';
+const SPAWN_ATTEMPT_MUTATION_LOCK_TIMEOUT_MS = 5_000;
 
 export type PersistedSpawnAttempt = Readonly<{
     v: 2;
@@ -78,10 +80,26 @@ async function withSpawnAttemptMutationLock<T>(
 ): Promise<Readonly<{ status: 'completed'; value: T }> | Readonly<{ status: 'lock_unavailable' }>> {
     const webLockManager = readWebLockManager();
     if (webLockManager) {
-        return await webLockManager.request(lockName(scope), async () => ({
-            status: 'completed' as const,
-            value: mutate(),
-        }));
+        const abortController = new AbortController();
+        let mayMutate = true;
+        try {
+            return await withTimeout(
+                webLockManager.request(lockName(scope), { signal: abortController.signal }, async () => {
+                    if (!mayMutate) return { status: 'lock_unavailable' as const };
+                    return {
+                        status: 'completed' as const,
+                        value: mutate(),
+                    };
+                }),
+                SPAWN_ATTEMPT_MUTATION_LOCK_TIMEOUT_MS,
+                'session spawn custody mutation lock',
+            );
+        } catch {
+            return { status: 'lock_unavailable' };
+        } finally {
+            mayMutate = false;
+            abortController.abort();
+        }
     }
     if (isWebRuntime()) {
         return { status: 'lock_unavailable' };

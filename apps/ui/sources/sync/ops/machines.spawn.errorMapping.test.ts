@@ -306,6 +306,39 @@ describe('machineSpawnNewSession error mapping', () => {
     expect(resolveCall?.payload).toEqual({ spawnNonce: spawnCall?.payload?.spawnNonce });
   });
 
+  it('returns a terminal child-exit failure and clears launch custody without waiting for timeout', async () => {
+    const errorMessage = 'Child process exited before session webhook (pid=8892, code=1, signal=null)';
+    machineRpcWithServerScopeMock
+      .mockResolvedValueOnce({
+        type: 'success',
+        spawnNonce: 'spawn-nonce-child-exit',
+        sessionIdStatus: 'pending',
+      })
+      .mockResolvedValueOnce({
+        status: 'error',
+        errorCode: SPAWN_SESSION_ERROR_CODES.CHILD_EXITED_BEFORE_WEBHOOK,
+        errorMessage,
+      });
+
+    const { machineSpawnNewSessionUntilResolved } = await import('./machines');
+    await expect(machineSpawnNewSessionUntilResolved({
+      machineId: 'machine-1',
+      directory: '/tmp',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      serverId: 'server-b',
+      accountSettingsVersionHint: 12,
+      spawnNonce: 'spawn-nonce-child-exit',
+      userAttemptId: 'attempt-child-exit',
+    })).resolves.toEqual({
+      type: 'error',
+      errorCode: SPAWN_SESSION_ERROR_CODES.CHILD_EXITED_BEFORE_WEBHOOK,
+      errorMessage,
+    });
+
+    expect(machineRpcWithServerScopeMock).toHaveBeenCalledTimes(2);
+    expect(getPersistenceStorage().getString(spawnCustodyStorageKey)).toBeUndefined();
+  });
+
   it('keeps settling the accepted nonce across a transient resolver transport failure', async () => {
     machineRpcWithServerScopeMock
       .mockResolvedValueOnce({
@@ -676,7 +709,13 @@ describe('machineSpawnNewSession error mapping', () => {
       value: {
         ...originalNavigator,
         locks: {
-          request: async <T>(_name: string, callback: () => Promise<T>): Promise<T> => {
+          request: async <T>(
+            _name: string,
+            optionsOrCallback: LockOptions | (() => T | Promise<T>),
+            optionalCallback?: () => T | Promise<T>,
+          ): Promise<T> => {
+            const callback = optionalCallback
+              ?? optionsOrCallback as () => T | Promise<T>;
             const prior = tail;
             let release!: () => void;
             tail = new Promise<void>((resolve) => { release = resolve; });
@@ -938,6 +977,47 @@ describe('machineSpawnNewSession error mapping', () => {
 
     expect(result).toEqual({ status: 'success', sessionId: 'session-after-pending' });
     expect(machineRpcWithServerScopeMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('bounds a hanging resolver probe by the remaining settlement deadline', async () => {
+    vi.useFakeTimers();
+    try {
+      machineRpcWithServerScopeMock.mockImplementation((params: Readonly<{ timeoutMs?: number }>) => (
+        new Promise((_resolve, reject) => {
+          if (typeof params.timeoutMs === 'number') {
+            setTimeout(() => reject(new Error('resolver transport timed out')), params.timeoutMs);
+          }
+        })
+      ));
+
+      const { machineResolveSpawnSessionByNonceUntilSettled } = await import('./machines');
+      const resultPromise = machineResolveSpawnSessionByNonceUntilSettled({
+        machineId: 'machine-1',
+        serverId: 'server-b',
+        spawnNonce: 'spawn-nonce-ui-hanging-resolver',
+        timeoutMs: 10,
+        pollIntervalMs: 1_000,
+      });
+      const finiteResult = Promise.race([
+        resultPromise,
+        new Promise<{ status: 'test_timeout' }>((resolve) => {
+          setTimeout(() => resolve({ status: 'test_timeout' }), 100);
+        }),
+      ]);
+
+      await vi.advanceTimersByTimeAsync(100);
+
+      await expect(finiteResult).resolves.toEqual({ status: 'pending' });
+      expect(machineRpcWithServerScopeMock).toHaveBeenCalledTimes(1);
+      expect(machineRpcWithServerScopeMock).toHaveBeenCalledWith(expect.objectContaining({
+        timeoutMs: expect.any(Number),
+      }));
+      const probeTimeoutMs = machineRpcWithServerScopeMock.mock.calls[0]?.[0]?.timeoutMs;
+      expect(probeTimeoutMs).toBeGreaterThan(0);
+      expect(probeTimeoutMs).toBeLessThanOrEqual(10);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('waits one second between spawn nonce probes by default', async () => {

@@ -85,7 +85,7 @@ export async function resolveDaemonSpawnSessionId(params: Readonly<{
     spawnNonce,
     timeoutMs,
     pollIntervalMs: 50,
-    resolve: async (nonce): Promise<SpawnSessionNonceResolution> => {
+    resolve: async (nonce, remainingTimeoutMs): Promise<SpawnSessionNonceResolution> => {
       const resolved = await daemonControlPostJson<{
         success: true;
         status: 'success' | 'pending' | 'not_found' | 'unsupported';
@@ -95,7 +95,7 @@ export async function resolveDaemonSpawnSessionId(params: Readonly<{
         path: '/spawn-session/resolve',
         controlToken: params.controlToken,
         body: { spawnNonce: nonce },
-        timeoutMs: 5_000,
+        timeoutMs: Math.min(5_000, remainingTimeoutMs),
       });
       if (resolved.status !== 200 || resolved.data.success !== true) {
         throw new Error(`spawn-session/resolve failed (status=${resolved.status})`);
