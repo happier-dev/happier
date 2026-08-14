@@ -19,6 +19,50 @@ test('buildTerminalConnectLinks adds server param to web + mobile links', () => 
   );
 });
 
+test('buildTerminalConnectLinks carries authenticated pairing context in both links', () => {
+  const out = buildTerminalConnectLinks({
+    webappUrl: 'https://app.happier.dev',
+    serverUrl: 'https://api.happier.dev',
+    publicKeyB64Url: 'terminal-key',
+    pairing: {
+      secretB64Url: 'pairing-secret',
+      createdAtMs: 1_000,
+      expiresAtMs: 61_000,
+    },
+  });
+
+  for (const value of [out.webUrl, out.mobileUrl]) {
+    assert.match(value, /pairingSecret=pairing-secret/);
+    assert.match(value, /createdAt=1000/);
+    assert.match(value, /expiresAt=61000/);
+  }
+});
+
+test('buildTerminalConnectLinks advertises token-only reader support only with authenticated pairing context', () => {
+  const paired = buildTerminalConnectLinks({
+    webappUrl: 'https://app.happier.dev',
+    serverUrl: 'https://api.happier.dev',
+    publicKeyB64Url: 'terminal-key',
+    pairing: {
+      secretB64Url: 'pairing-secret',
+      createdAtMs: 1_000,
+      expiresAtMs: 61_000,
+    },
+    supportsTokenOnly: true,
+  });
+  assert.match(paired.webUrl, /supportsTokenOnly=1/);
+  assert.match(paired.mobileUrl, /supportsTokenOnly=1/);
+
+  const unauthenticated = buildTerminalConnectLinks({
+    webappUrl: 'https://app.happier.dev',
+    serverUrl: 'https://api.happier.dev',
+    publicKeyB64Url: 'terminal-key',
+    supportsTokenOnly: true,
+  });
+  assert.doesNotMatch(unauthenticated.webUrl, /supportsTokenOnly/);
+  assert.doesNotMatch(unauthenticated.mobileUrl, /supportsTokenOnly/);
+});
+
 test('buildConfigureServerLinks encodes server URL', () => {
   const webappUrl = 'https://app.happier.dev';
   const serverUrl = 'https://stack.example.test';

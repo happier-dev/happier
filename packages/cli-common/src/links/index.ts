@@ -8,6 +8,12 @@ export type ConfigureServerLinks = Readonly<{
   mobileUrl: string;
 }>;
 
+export type TerminalConnectPairingContext = Readonly<{
+  secretB64Url: string;
+  createdAtMs: number;
+  expiresAtMs: number;
+}>;
+
 function stripTrailingSlash(url: string): string {
   return url.endsWith('/') ? url.slice(0, -1) : url;
 }
@@ -64,6 +70,8 @@ export function buildTerminalConnectLinks(params: Readonly<{
   webappUrl: string;
   serverUrl: string;
   publicKeyB64Url: string;
+  pairing?: TerminalConnectPairingContext | null;
+  supportsTokenOnly?: boolean;
 }>): TerminalConnectLinks {
   const webappUrl = stripTrailingSlash(String(params.webappUrl ?? '').trim());
   const webServerUrl = sanitizeServerUrlForWebLink(params.serverUrl, webappUrl);
@@ -71,14 +79,29 @@ export function buildTerminalConnectLinks(params: Readonly<{
   const publicKeyB64Url = String(params.publicKeyB64Url ?? '').trim();
   const encodedWebServerUrl = webServerUrl ? encodeURIComponent(webServerUrl) : '';
   const encodedMobileServerUrl = mobileServerUrl ? encodeURIComponent(mobileServerUrl) : '';
+  const pairingSuffix =
+    params.pairing
+    && String(params.pairing.secretB64Url ?? '').trim()
+    && Number.isSafeInteger(params.pairing.createdAtMs)
+    && Number.isSafeInteger(params.pairing.expiresAtMs)
+    && params.pairing.createdAtMs >= 0
+    && params.pairing.expiresAtMs > params.pairing.createdAtMs
+      ? `&pairingSecret=${encodeURIComponent(params.pairing.secretB64Url.trim())}`
+        + `&createdAt=${params.pairing.createdAtMs}`
+        + `&expiresAt=${params.pairing.expiresAtMs}`
+      : '';
+  const tokenOnlyCapabilitySuffix =
+    pairingSuffix && params.supportsTokenOnly === true
+      ? '&supportsTokenOnly=1'
+      : '';
 
   return {
     webUrl: webServerUrl
-      ? `${webappUrl}/terminal/connect#key=${publicKeyB64Url}&server=${encodedWebServerUrl}`
-      : `${webappUrl}/terminal/connect#key=${publicKeyB64Url}`,
+      ? `${webappUrl}/terminal/connect#key=${publicKeyB64Url}&server=${encodedWebServerUrl}${pairingSuffix}${tokenOnlyCapabilitySuffix}`
+      : `${webappUrl}/terminal/connect#key=${publicKeyB64Url}${pairingSuffix}${tokenOnlyCapabilitySuffix}`,
     mobileUrl: mobileServerUrl
-      ? `happier://terminal?key=${publicKeyB64Url}&server=${encodedMobileServerUrl}`
-      : `happier://terminal?key=${publicKeyB64Url}`,
+      ? `happier://terminal?key=${publicKeyB64Url}&server=${encodedMobileServerUrl}${pairingSuffix}${tokenOnlyCapabilitySuffix}`
+      : `happier://terminal?key=${publicKeyB64Url}${pairingSuffix}${tokenOnlyCapabilitySuffix}`,
   };
 }
 
