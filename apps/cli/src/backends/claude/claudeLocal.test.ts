@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { basename, dirname, join } from 'node:path';
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { PassThrough } from 'node:stream';
 import { logger } from '@/ui/logger';
@@ -632,7 +632,7 @@ describe('claudeLocal --continue handling', () => {
         const spawnArgs = mockSpawn.mock.calls[0]?.[1] as unknown;
         const spawnOpts = mockSpawn.mock.calls[0]?.[2] as Record<string, unknown>;
 
-        expect(spawnCommand).toBe('cmd.exe');
+        expect(String(spawnCommand)).toMatch(/(?:^|[\\/])?cmd\.exe$/i);
         expect((spawnArgs as any)?.slice?.(0, 3)).toEqual(['/d', '/s', '/c']);
         expect(String((spawnArgs as any)?.[3])).toContain('claude.cmd');
         expect(spawnOpts.shell).not.toBe(true);
@@ -732,24 +732,40 @@ describe('claudeLocal --continue handling', () => {
     });
 
     it('normalizes equals-form permission mode so resumed launches keep --resume before the permission flag', async () => {
-        await claudeLocal({
-            abort: new AbortController().signal,
-            sessionId: null,
-            path: '/tmp',
-            onSessionFound,
-            hookSettingsPath: '/tmp/hooks.json',
-            claudeArgs: ['--permission-mode=bypassPermissions', '--resume'],
-        });
+        const root = mkdtempSync(join(tmpdir(), 'happier-claude-local-yolo-'));
+        const hookSettingsPath = join(root, 'hooks.json');
+        writeFileSync(hookSettingsPath, JSON.stringify({ permissions: { allow: ['mcp__happier__change_title'] } }));
 
-        const spawnArgs = mockSpawn.mock.calls[0][1] as string[];
-        const resumeIndex = spawnArgs.indexOf('--resume');
-        const permissionIndex = spawnArgs.indexOf('--permission-mode');
+        try {
+            await claudeLocal({
+                abort: new AbortController().signal,
+                sessionId: null,
+                path: '/tmp',
+                onSessionFound,
+                hookSettingsPath,
+                claudeArgs: ['--permission-mode=bypassPermissions', '--resume'],
+            });
 
-        expect(spawnArgs).not.toContain('--permission-mode=bypassPermissions');
-        expect(resumeIndex).toBeGreaterThan(-1);
-        expect(permissionIndex).toBeGreaterThan(-1);
-        expect(permissionIndex).toBeGreaterThan(resumeIndex);
-        expect(spawnArgs[permissionIndex + 1]).toBe('bypassPermissions');
+            const spawnArgs = mockSpawn.mock.calls[0][1] as string[];
+            const resumeIndex = spawnArgs.indexOf('--resume');
+            const permissionIndex = spawnArgs.indexOf('--permission-mode');
+            const settingsIndex = spawnArgs.indexOf('--settings');
+
+            expect(spawnArgs).not.toContain('--permission-mode=bypassPermissions');
+            expect(resumeIndex).toBeGreaterThan(-1);
+            expect(permissionIndex).toBeGreaterThan(-1);
+            expect(permissionIndex).toBeGreaterThan(resumeIndex);
+            expect(spawnArgs[permissionIndex + 1]).toBe('bypassPermissions');
+            expect(settingsIndex).toBeGreaterThan(-1);
+            expect(spawnArgs[settingsIndex + 1]).toBe(hookSettingsPath.replace(/\.json$/, '.overlay.json'));
+            expect(JSON.parse(readFileSync(spawnArgs[settingsIndex + 1]!, 'utf8'))).toEqual({
+                permissions: { allow: ['mcp__happier__change_title'] },
+                skipDangerousModePermissionPrompt: true,
+            });
+            expect(JSON.parse(readFileSync(hookSettingsPath, 'utf8'))).not.toHaveProperty('skipDangerousModePermissionPrompt');
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
     });
 
     it('does not let bare --resume consume a following permission flag', async () => {

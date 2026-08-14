@@ -24,6 +24,10 @@ import { isolateClaudeRuntimeAuthEnv } from './spawn/isolateClaudeRuntimeAuthEnv
 import { logClaudeRuntimeAuthEnvDiagnostic } from './spawn/logClaudeRuntimeAuthEnvDiagnostic';
 import { HAPPIER_SPAWN_EXPLICIT_ENV_KEYS_JSON_ENV_VAR } from '@/daemon/spawn/spawnExplicitEnvKeysMarker';
 import { claudeCliFlagCanConsumeNextArg } from './cli/flagArity';
+import {
+    buildClaudePermissionModeLaunchSettings,
+    resolveClaudeLaunchSettingsOverlayArg,
+} from './utils/resolveClaudeLaunchSettingsOverlay';
 
 /**
  * Error thrown when the Claude process exits with a non-zero exit code.
@@ -366,9 +370,16 @@ export async function claudeLocal(opts: {
                 flagArgs.push('--plugin-dir', opts.hookPluginDir);
                 logger.debug(`[ClaudeLocal] Using hook plugin dir: ${opts.hookPluginDir}`);
             }
-            if (opts.hookSettingsPath) {
-                flagArgs.push('--settings', opts.hookSettingsPath);
-                logger.debug(`[ClaudeLocal] Using hook settings: ${opts.hookSettingsPath}`);
+            const permissionMode = trailingPermissionFlagArgs[0] === '--permission-mode'
+                ? trailingPermissionFlagArgs[1]
+                : undefined;
+            const settingsOverlay = resolveClaudeLaunchSettingsOverlayArg({
+                settingsPath: opts.hookSettingsPath,
+                launchSettings: buildClaudePermissionModeLaunchSettings(permissionMode),
+            });
+            if (settingsOverlay) {
+                flagArgs.push('--settings', settingsOverlay);
+                logger.debug(`[ClaudeLocal] Using launch settings: ${settingsOverlay}`);
             }
             if (typeof opts.happierMcpConfigJson === 'string' && opts.happierMcpConfigJson.trim().length > 0) {
                 flagArgs.push('--mcp-config', opts.happierMcpConfigJson.trim());
