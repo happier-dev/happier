@@ -17,6 +17,7 @@ import {
   probeSessionPendingQueueWakeCapabilityV1,
   requestSessionPendingQueueWakeV1,
 } from './sessions/pendingQueueWake';
+import { publishSessionPendingQueueWake } from './sessions/publishSessionPendingQueueWake';
 import { createRuntimeAuthRecoverySchedulerForDaemon } from './connectedServices/runtimeAuth/createRuntimeAuthRecoverySchedulerForDaemon';
 import { deriveConnectedServiceBrokerRefreshToken } from './connectedServices/broker/brokerRefreshCapabilityToken';
 import { createConnectedServiceCredentialApi } from '@/api/connectedServices/connectedServiceCredentialApi';
@@ -1479,25 +1480,6 @@ async function probePendingQueueServiceability(params: Readonly<{
   });
 }
 
-function publishSessionPendingQueueWakeV1(params: Readonly<{
-  sessionId: string;
-  credentials: Credentials;
-  isShutdownRequested: () => boolean;
-  logLabel: string;
-}>): void {
-  if (params.isShutdownRequested()) return;
-  void requestPendingQueueWake({
-    sessionId: params.sessionId,
-    credentials: params.credentials,
-    isShutdownRequested: params.isShutdownRequested,
-  }).catch((error) => {
-    logger.debug(`[DAEMON RUN] ${params.logLabel} pending queue wake failed`, {
-      sessionId: params.sessionId,
-      error: serializeAxiosErrorForLog(error),
-    });
-  });
-}
-
 export async function sleepMsOrShutdown(delayMs: number, shutdownPromise: Promise<unknown>): Promise<'elapsed' | 'shutdown'> {
   if (delayMs <= 0) return 'elapsed';
   return await new Promise<'elapsed' | 'shutdown'>((resolveSleep) => {
@@ -1542,11 +1524,15 @@ async function nudgeAttachedExistingSessionPendingQueue(params: Readonly<{
     return params.resolved;
   }
 
-  publishSessionPendingQueueWakeV1({
+  publishSessionPendingQueueWake({
     sessionId: resolvedSessionId,
-    credentials: params.credentials,
     isShutdownRequested: params.isShutdownRequested,
     logLabel: 'attach',
+    requestWake: async () => await requestPendingQueueWake({
+      sessionId: resolvedSessionId,
+      credentials: params.credentials,
+      isShutdownRequested: params.isShutdownRequested,
+    }),
   });
   return params.resolved;
 }
