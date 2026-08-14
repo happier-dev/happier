@@ -2,6 +2,7 @@ import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join, resolve, win32 } from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import type { AgentToolsDeliveryRuntimeContext } from '@/agent/tools/happierTools/runtime/resolveAgentToolsDelivery';
 
 export type PiShellBridgeAvailability =
@@ -31,6 +32,7 @@ function buildPiWindowsShellBridgeErrorMessage(searchedPaths: readonly string[])
 export function resolvePiShellBridgeAvailability(params: Readonly<{
   platform: NodeJS.Platform;
   env: PiShellBridgeEnvironment;
+  directory?: string | null;
   configuredShellPath: string | null;
   pathExists: (candidate: string) => boolean;
   findBashOnPath: () => string | null;
@@ -40,10 +42,16 @@ export function resolvePiShellBridgeAvailability(params: Readonly<{
   }
 
   if (params.configuredShellPath) {
-    if (params.pathExists(params.configuredShellPath)) {
+    const configuredShellPath = params.directory
+      ? (params.platform === 'win32' ? win32 : { resolve }).resolve(
+        params.directory,
+        params.configuredShellPath,
+      )
+      : params.configuredShellPath;
+    if (params.pathExists(configuredShellPath)) {
       return {
         available: true,
-        shellPath: params.configuredShellPath,
+        shellPath: configuredShellPath,
         source: 'configured_shell_path',
       };
     }
@@ -89,11 +97,9 @@ function readJsonRecord(filePath: string): Record<string, unknown> | null {
   }
 }
 
-function readSettingsShellPath(settings: Record<string, unknown> | null): string | null {
+export function resolvePiSettingsShellPath(settings: Record<string, unknown> | null): string | null {
   const value = settings?.shellPath;
-  if (typeof value !== 'string') return null;
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : null;
+  return typeof value === 'string' ? value : null;
 }
 
 export function resolveEffectivePiConfiguredShellPath(params: Readonly<{
@@ -101,7 +107,7 @@ export function resolveEffectivePiConfiguredShellPath(params: Readonly<{
   projectShellPath: string | null;
   projectTrusted: boolean;
 }>): string | null {
-  return params.projectTrusted && params.projectShellPath
+  return params.projectTrusted && params.projectShellPath !== null
     ? params.projectShellPath
     : params.globalShellPath;
 }
@@ -133,7 +139,7 @@ function resolvePiProjectTrusted(params: Readonly<{
   return params.globalSettings?.defaultProjectTrust === 'always';
 }
 
-function normalizePiShellPath(
+export function normalizePiShellPath(
   shellPath: string,
   platform: NodeJS.Platform,
   homeDir: string,
@@ -149,6 +155,9 @@ function normalizePiShellPath(
   if (normalized.startsWith('~/') || (platform === 'win32' && normalized.startsWith('~\\'))) {
     const suffix = normalized.slice(2);
     return platform === 'win32' ? win32.join(homeDir, suffix) : join(homeDir, suffix);
+  }
+  if (/^file:\/\//.test(normalized)) {
+    return fileURLToPath(normalized, { windows: platform === 'win32' });
   }
   return normalized;
 }
@@ -185,11 +194,11 @@ export function resolvePiShellBridgeAvailabilityForRuntime(params: Readonly<{
   const explicitAgentDir = env.PI_CODING_AGENT_DIR?.trim();
   const agentDir = explicitAgentDir || pathApi.join(homeDir, '.pi', 'agent');
   const globalSettings = readJsonRecord(pathApi.join(agentDir, 'settings.json'));
-  const globalShellPath = readSettingsShellPath(globalSettings);
+  const globalShellPath = resolvePiSettingsShellPath(globalSettings);
   const projectSettings = params.includeProjectSettings === true && params.directory
     ? readJsonRecord(pathApi.join(params.directory, '.pi', 'settings.json'))
     : null;
-  const projectShellPath = readSettingsShellPath(projectSettings);
+  const projectShellPath = resolvePiSettingsShellPath(projectSettings);
   const projectTrusted = projectShellPath !== null && params.directory
     ? resolvePiProjectTrusted({
       agentDir,
@@ -207,6 +216,7 @@ export function resolvePiShellBridgeAvailabilityForRuntime(params: Readonly<{
   return resolvePiShellBridgeAvailability({
     platform,
     env,
+    directory: params.directory,
     configuredShellPath: configuredShellPath
       ? normalizePiShellPath(configuredShellPath, platform, homeDir)
       : null,

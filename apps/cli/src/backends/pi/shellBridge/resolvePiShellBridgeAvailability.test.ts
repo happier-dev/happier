@@ -2,7 +2,9 @@ import { describe, expect, it, vi } from 'vitest';
 
 import {
   resolveEffectivePiConfiguredShellPath,
+  normalizePiShellPath,
   resolvePiShellBridgeAvailability,
+  resolvePiSettingsShellPath,
   resolvePiToolsDeliveryAvailability,
 } from './resolvePiShellBridgeAvailability';
 
@@ -68,6 +70,58 @@ describe('resolvePiShellBridgeAvailability', () => {
       configuredShellPath: 'D:\\missing\\bash.exe',
     });
     expect(findBashOnPath).not.toHaveBeenCalled();
+  });
+
+  it('resolves a relative configured shellPath from the selected workspace', () => {
+    const pathExists = vi.fn((candidate: string) => candidate === 'C:\\workspace\\tools\\bash.exe');
+
+    expect(resolvePiShellBridgeAvailability({
+      platform: 'win32',
+      env: {},
+      directory: 'C:\\workspace',
+      configuredShellPath: 'tools\\bash.exe',
+      pathExists,
+      findBashOnPath: () => null,
+    })).toEqual({
+      available: true,
+      shellPath: 'C:\\workspace\\tools\\bash.exe',
+      source: 'configured_shell_path',
+    });
+    expect(pathExists).toHaveBeenCalledWith('C:\\workspace\\tools\\bash.exe');
+  });
+
+  it('preserves Pi settings string values exactly for deep-merge precedence', () => {
+    expect(resolvePiSettingsShellPath({ shellPath: '  ' })).toBe('  ');
+    expect(resolvePiSettingsShellPath({ shellPath: '' })).toBe('');
+  });
+
+  it('normalizes file URLs with the target platform semantics used by Pi', () => {
+    expect(normalizePiShellPath(
+      'file:///C:/Program%20Files/Git/bin/bash.exe',
+      'win32',
+      'C:\\Users\\alice',
+    )).toBe('C:\\Program Files\\Git\\bin\\bash.exe');
+  });
+
+  it('lets a trusted empty project shellPath override a configured global path and select Bash fallback', () => {
+    const configuredShellPath = resolveEffectivePiConfiguredShellPath({
+      globalShellPath: 'D:\\global\\bash.exe',
+      projectShellPath: '',
+      projectTrusted: true,
+    });
+
+    expect(configuredShellPath).toBe('');
+    expect(resolvePiShellBridgeAvailability({
+      platform: 'win32',
+      env: { ProgramFiles: 'C:\\Program Files' },
+      configuredShellPath,
+      pathExists: (candidate) => candidate === 'C:\\Program Files\\Git\\bin\\bash.exe',
+      findBashOnPath: () => null,
+    })).toEqual({
+      available: true,
+      shellPath: 'C:\\Program Files\\Git\\bin\\bash.exe',
+      source: 'git_bash',
+    });
   });
 
   it('accepts Pi-recognized Git Bash and PATH Bash candidates', () => {
