@@ -1,0 +1,541 @@
+import {
+    AGENTS,
+    setupLinkFor,
+    type AgentRecord,
+    type ConnectedServiceId,
+} from '../data/agents';
+import { P, PageHeader, PageShell, Prose } from '../components/PageShell';
+import { InstallCommand } from '../components/InstallCommand';
+import { DOCS_URL, GUIDES_URL, WEB_APP_URL } from '../data/downloads';
+
+/**
+ * /agents/<slug>
+ *
+ * The page answers one question — "does this run MY agent, on MY computer, from
+ * MY phone?" — and refuses the second job it used to have, which was ranking
+ * thirteen vendors against each other in a nine-column matrix. See the docblock
+ * in src/data/agents.ts for why that matrix was removed rather than corrected.
+ *
+ * WHY THIRTEEN PAGES ARE NOT ONE PAGE THIRTEEN TIMES
+ * --------------------------------------------------
+ * The obvious fix for thirteen near-identical pages is to reword them. That is
+ * the wrong fix: reworded identical content is still identical content, and the
+ * pattern it produces is the doorway set search engines discount. So the
+ * variation is carried by branches on facts that genuinely differ, each read
+ * off the shipped manifest, and each changing what the reader can do:
+ *
+ *   lead                  authored per agent, first on the page, and now the
+ *                         section that carries most of the weight: 200-350
+ *                         words about what happens when Happier starts THIS
+ *                         binary. It was one 55-120 word paragraph, which left
+ *                         the page one paragraph of difference followed by five
+ *                         sections of shared argument.
+ *   InstallReality        four shapes, from `install.managed`/`install.manual`.
+ *   RunsOnAccount         rendered for the five agents that can consume a
+ *                         connected service; absent for the other eight.
+ *   TerminalHandoff       three shapes, from `runtime.localControl` — see its
+ *                         own docblock for the sentence it replaced.
+ *   tool delivery         native MCP or the `happier tools` shell bridge.
+ *
+ * What remains shared is shared on purpose. One app, one session list, one
+ * install command — repeating that is not duplication, it is the product.
+ */
+
+const OTHER_AGENT_COUNT = AGENTS.length - 1;
+
+/**
+ * How a connected service reads inside a sentence, keyed by the protocol id.
+ *
+ * THE ARTICLE IS PART OF THE LABEL, and that is what broke. These strings carry
+ * "a"/"an" because the sentence that introduced them needed one — "It accepts a
+ * Claude subscription" — but a second sentence dropped the same string in after
+ * "the same", and the flagship page's second paragraph shipped reading "the same
+ * a Claude subscription is selectable", on all five connected-service pages.
+ * Anywhere the sentence supplies its own determiner, use `withoutArticle`.
+ * copyClaims.test.ts renders every route and fails on a doubled article.
+ */
+const CONNECTED_SERVICE_LABELS: Record<ConnectedServiceId, string> = {
+    'openai-codex': 'a Codex subscription',
+    openai: 'an OpenAI API key',
+    'claude-subscription': 'a Claude subscription',
+    anthropic: 'an Anthropic API key',
+    gemini: 'a Gemini login',
+};
+
+/** The same label with its leading article removed, for slots that carry one. */
+function withoutArticle(label: string): string {
+    return label.replace(/^(?:an?|the)\s+/i, '');
+}
+
+function joinWithOr(parts: ReadonlyArray<string>): string {
+    if (parts.length <= 1) return parts[0] ?? '';
+    return `${parts.slice(0, -1).join(', ')} or ${parts[parts.length - 1]}`;
+}
+
+function docsHref(path: string): string {
+    return `${DOCS_URL.replace(/\/$/, '')}${path}`;
+}
+
+/**
+ * `backticks` in an authored string become real <code> spans.
+ *
+ * The copy in src/data/agents.ts writes commands and package names the way
+ * anyone writing them down does — `happier codex`, `@google/gemini-cli` — and
+ * the old page rendered those backticks as literal punctuation, so every page
+ * shipped visible grave accents. Doing it here rather than storing JSX keeps
+ * the data file a data file: agents.test.ts reads those strings for the
+ * superlative and duplicate-sentence gates, and it cannot read React nodes.
+ */
+function Ticks({ text }: { text: string }) {
+    const parts = text.split('`');
+    return (
+        <>
+            {parts.map((part, index) =>
+                index % 2 === 1 ? (
+                    // eslint-disable-next-line react/no-array-index-key -- positional by construction
+                    <code key={index} className="font-mono text-[0.94em]">
+                        {part}
+                    </code>
+                ) : (
+                    // eslint-disable-next-line react/no-array-index-key -- positional by construction
+                    <span key={index}>{part}</span>
+                ),
+            )}
+        </>
+    );
+}
+
+/**
+ * The install sentence, per agent, from `install.managed` and
+ * `install.manual.kind` in the definition.
+ *
+ * The old page rendered "It does not bundle {name} and does not update it for
+ * you" on all thirteen. Eight of the thirteen declare a managed install path,
+ * so on eight pages that sentence was simply false. These four are what the
+ * definitions actually say.
+ */
+function InstallReality({ agent }: { agent: AgentRecord }) {
+    const managedPath = (
+        <>
+            <code className="font-mono">~/.happier/tools/providers/{agent.id}/</code>
+        </>
+    );
+
+    switch (agent.installKind) {
+        case 'happier-managed-package':
+            return (
+                <P>
+                    Happier looks for <code className="font-mono">{agent.binary}</code> on your PATH
+                    first and runs the copy you installed. If there is not one, it can install{' '}
+                    <code className="font-mono">{agent.managedSource}</code> into {managedPath} — its
+                    own directory, not your global npm prefix. A copy you manage yourself is never
+                    replaced or upgraded behind your back.
+                </P>
+            );
+        case 'happier-managed-release':
+            return (
+                <P>
+                    Happier looks for <code className="font-mono">{agent.binary}</code> on your PATH
+                    first and runs the copy you installed. If there is not one, it can download the{' '}
+                    <code className="font-mono">{agent.managedSource}</code> release binary into{' '}
+                    {managedPath} and keep it there. Your own install always takes priority.
+                </P>
+            );
+        case 'vendor-script':
+            return (
+                <P>
+                    Happier looks for <code className="font-mono">{agent.binary}</code> on your PATH
+                    and runs the copy you installed. {agent.vendor} distributes it with an install
+                    script rather than a package; Happier can show you that command, and it will not
+                    execute a vendor install script on its own — vendor recipes are refused unless
+                    you explicitly allow them.
+                </P>
+            );
+        case 'you-install-it':
+            return (
+                <P>
+                    Happier looks for <code className="font-mono">{agent.binary}</code> on your PATH
+                    and runs the copy you installed. There is no install path for it inside Happier
+                    at all: install it the way {agent.vendor} documents, and Happier picks it up
+                    from there.
+                </P>
+            );
+    }
+}
+
+/**
+ * The hand-off sentence, per agent, from `runtime.localControl`.
+ *
+ * The old page rendered one template on all thirteen: "Typing happier {id}
+ * gives you {vendor}'s own interface … and the same session is simultaneously
+ * in the app." Both halves were wrong nearly everywhere.
+ *
+ *   • `happier <id>` draws HAPPIER's display, not the vendor's TUI. The shipped
+ *     backends ship their own renderers — apps/cli/src/backends/claude/ui/
+ *     RemoteModeDisplay.tsx, backends/codex/ui/CodexTerminalDisplay.tsx and the
+ *     equivalents for the rest — and the ACP providers launch a stdio process
+ *     with no TUI at all.
+ *   • The vendor TUI is reached through local control, and the shipped manifest
+ *     (remote-dev/packages/agents/src/manifest.ts) declares a usable strategy
+ *     for exactly three: claude (:56, tmux), codex (:140, tmux) and opencode
+ *     (:196, provider_attach). Kiro, Cursor and Grok declare
+ *     `attachStrategy: 'unsupported'`; the other seven declare nothing.
+ *   • "Simultaneously in the app" is wrong for the tmux pair as well: their
+ *     topology is `exclusive`, so app messages queue while the TUI holds the
+ *     session — "If you send a message from the app while Claude is locally
+ *     controlled, Happier stores it in the pending queue first"
+ *     (apps/docs/content/docs/providers/claude.mdx:32).
+ *   • OpenCode is not exclusive, and the shipped docs say so outright: "the
+ *     session stays writable from the app even when a terminal is attached"
+ *     (apps/docs/content/docs/providers/opencode.mdx:120-127). It used to be
+ *     introduced as the ONLY agent that behaves that way, which stopped being
+ *     true: Claude Code's unified terminal runtime publishes `topology: 'shared'`
+ *     with `remoteWritable: true` (remote-dev/apps/cli/src/backends/claude/
+ *     localControl/buildClaudeAgentState.ts:31-48). What is still only true of
+ *     OpenCode is that it needs no multiplexer and no setting turned on, so that
+ *     is what the sentence says now.
+ *   • For the ten with no strategy, `happier attach` still runs — it lists what
+ *     is on that computer and leaves what it cannot reattach disabled, with the
+ *     reason (apps/docs/content/docs/features/attach-to-session.mdx:47-52).
+ */
+function TerminalHandoff({ agent }: { agent: AgentRecord }) {
+    const attach = (
+        <code className="font-mono">happier attach &lt;session-id&gt;</code>
+    );
+
+    switch (agent.runtime.localControl.kind) {
+        case 'tmux':
+            return (
+                <P>
+                    When you want {agent.name}’s own TUI, {attach} on the computer that owns the
+                    session hands it to you inside tmux, with the history already there. On the
+                    default runtime that hand-off is exclusive: while the terminal has the session,
+                    a message you send from the app waits in the queue rather than being typed
+                    underneath you, and it goes through when you hand control back.
+                    {agent.runtime.terminalPromptInjection ? (
+                        <>
+                            {' '}
+                            The unified terminal runtime is the other arrangement — one{' '}
+                            {agent.name} process in a shared terminal host, writable from the
+                            terminal and the app at the same time.
+                        </>
+                    ) : null}
+                </P>
+            );
+        case 'provider-attach':
+            return (
+                <P>
+                    {attach} opens {agent.name}’s own TUI on that same session through {agent.name}’s
+                    attach flow. Both ends stay writable, with no multiplexer involved and nothing
+                    to switch on first — type in the TUI and it appears in the app, send from the
+                    app and it appears in the TUI.
+                </P>
+            );
+        case 'none':
+            return (
+                <P>
+                    There is no hand-off to {agent.name}’s own TUI. That exists for Claude Code,
+                    Codex and OpenCode, and for {agent.name} the session stays Happier’s on both
+                    ends. {attach} lists the sessions on that computer and marks the ones it cannot
+                    reattach, rather than failing after you pick one.
+                </P>
+            );
+    }
+}
+
+/**
+ * Which credentials this agent can be pointed at, for the five that can be
+ * pointed at one.
+ *
+ * A connected service is keyed by CREDENTIAL, not by agent
+ * (packages/protocol/src/connect/connectedServiceBindings.ts), so a Claude
+ * subscription you connected for Claude Code is the same object OpenCode and Pi
+ * can run on. Eight of the thirteen consume none of them and get no section —
+ * an empty "supported credentials: none" row would read as a missing feature
+ * rather than as the ordinary case it is.
+ */
+function RunsOnAccount({ agent }: { agent: AgentRecord }) {
+    const services = agent.runtime.connectedServices;
+    if (services.length === 0) return null;
+
+    const list = joinWithOr(services.map((id) => CONNECTED_SERVICE_LABELS[id]));
+
+    return (
+        <Prose heading="Which account it runs on" data-section="agent-accounts">
+            <P>
+                {agent.name} is one of the agents Happier can point at a credential you connected
+                once instead of at whatever that computer is logged into. It accepts {list}.
+            </P>
+            <P>
+                Connected services are keyed by the credential, not by the agent, so the same{' '}
+                {withoutArticle(CONNECTED_SERVICE_LABELS[services[0]])} is selectable for every agent that can take
+                it, on every computer you have connected — which is also what makes a pool of your
+                own accounts useful across more than one of them. The credential is encrypted and
+                decrypted on your own devices;{' '}
+                <a
+                    href={docsHref('/features/connected-services')}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="underline underline-offset-2"
+                    style={{ color: 'var(--fg)' }}
+                >
+                    the docs page
+                </a>{' '}
+                carries the per-profile rules, because which kinds of profile each agent accepts is
+                exactly the sort of detail that moves between releases.
+            </P>
+        </Prose>
+    );
+}
+
+export function AgentDetail({ agent }: { agent: AgentRecord }) {
+    const setupLink = setupLinkFor(agent);
+    const hasSetupGuide = agent.vendorSetupGuide !== null;
+
+    return (
+        <PageShell>
+            <nav aria-label="Breadcrumb" className="mx-auto max-w-[1400px] px-6 pt-8 md:px-10">
+                <a href="/agents" className="text-[13px] underline underline-offset-2" style={{ color: 'var(--muted)' }}>
+                    ← Every agent Happier runs
+                </a>
+            </nav>
+
+            <PageHeader
+                eyebrow={`${agent.vendor} · ${agent.binary}`}
+                title={agent.h1}
+                standfirst={agent.standfirst}
+            />
+
+            {/*
+              * The lead is the section that makes this page worth arriving at,
+              * and the only one written from scratch for this agent. It used to
+              * be a single paragraph of 55-120 words; it is now three of
+              * 200-350 in total, drawn from what the released tree actually
+              * does when it starts this particular binary — the launch, the
+              * permission mapping, the sign-in flow, the vendor's own words.
+              * See the docblock on `lead` in src/data/agents.ts for why the
+              * extra words could not come from anywhere else without turning
+              * thirteen pages into a doorway set.
+              */}
+            <Prose heading={`${agent.name} in particular`} data-section="agent-lead">
+                {agent.lead.map((paragraph) => (
+                    <P key={paragraph.slice(0, 32)}>
+                        <Ticks text={paragraph} />
+                    </P>
+                ))}
+            </Prose>
+
+            <Prose heading="What it does" data-section="agent-what-it-does">
+                {agent.whatItDoes.map((paragraph) => (
+                    <P key={paragraph.slice(0, 32)}>
+                        <Ticks text={paragraph} />
+                    </P>
+                ))}
+                <div className="pt-2" data-cta-location="get-started">
+                    <div
+                        className="inline-flex items-center gap-2.5 rounded-2xl border px-4 py-3 font-mono text-[13px]"
+                        style={{ borderColor: 'var(--card-border)', color: 'var(--fg)' }}
+                    >
+                        <span aria-hidden style={{ color: 'var(--muted)' }}>
+                            $
+                        </span>
+                        <code>happier {agent.id}</code>
+                    </div>
+                </div>
+            </Prose>
+
+            {/*
+              * Deliberately short, and deliberately the same on all thirteen.
+              *
+              * This is the one section that is genuinely identical per agent —
+              * the clients do not vary by which CLI is running — so it says the
+              * thing once and links out rather than restating the whole product
+              * on every page. Thirteen copies of a long paragraph is how a page
+              * set ends up 33% identical to itself.
+              */}
+            <Prose heading="On your phone, laptop and browser" data-section="agent-devices">
+                <P>
+                    The iOS and Android apps, the desktop app for macOS, Windows and Linux, and{' '}
+                    <a
+                        href={WEB_APP_URL}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="underline underline-offset-2"
+                        style={{ color: 'var(--fg)' }}
+                    >
+                        app.happier.dev
+                    </a>{' '}
+                    are all clients onto the {agent.name} process running on your computer — not
+                    read-only mirrors. Answer a permission request, send the next instruction, browse
+                    the repository, read the diff. The transcript is end-to-end encrypted before it
+                    leaves your computer, so the server carrying it holds ciphertext.
+                </P>
+            </Prose>
+
+            <Prose heading="Runs on your own computer" data-section="agent-your-computer">
+                <P>
+                    Happier installs on the computer that already holds your repository, and{' '}
+                    <code className="font-mono">happier {agent.id}</code> starts {agent.name} there
+                    as an ordinary subprocess, in the directory you point it at, signed in the way
+                    you signed it in. There is no gateway between the agent and {agent.vendor}, and
+                    no copy of your source anywhere else.
+                </P>
+                <InstallReality agent={agent} />
+                {/*
+                    Only call it a guide when the definition carries a real
+                    `install.guideUrl`. Five of the thirteen fall back to
+                    `docsUrl`, and two of those are not install documentation at
+                    all: Auggie's is augmentcode.com, a product homepage with no
+                    install steps on it, and Kiro's is kiro.dev/docs/cli/acp/,
+                    an ACP protocol page that assumes the CLI is already there —
+                    on the one agent Happier cannot install for you. Introducing
+                    either as "the install and sign-in guide" is the class of
+                    sentence a reader disproves in one click.
+                */}
+                {setupLink ? (
+                    <P>
+                        {hasSetupGuide
+                            ? `${agent.vendor}’s own install and sign-in guide is at `
+                            : `${agent.vendor}’s own page for ${agent.name} is at `}
+                        <a
+                            href={setupLink}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="underline underline-offset-2"
+                            style={{ color: 'var(--fg)' }}
+                        >
+                            {setupLink.replace(/^https?:\/\//, '')}
+                        </a>
+                        . Happier does not mirror it, because a copy of someone else’s install
+                        instructions is a copy that goes stale.
+                    </P>
+                ) : null}
+                {agent.happierDocsPath ? (
+                    <P>
+                        Configuration reference for the Happier side —{' '}
+                        <a
+                            href={docsHref(agent.happierDocsPath)}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="underline underline-offset-2"
+                            style={{ color: 'var(--fg)' }}
+                        >
+                            {agent.name} in the Happier docs
+                        </a>
+                        .
+                    </P>
+                ) : null}
+            </Prose>
+
+            <RunsOnAccount agent={agent} />
+
+            <Prose heading={`Works with the other ${OTHER_AGENT_COUNT} too`} data-section="agent-other-agents">
+                <P>
+                    {agent.name} is one of {AGENTS.length} command-line coding agents Happier runs,
+                    and they share one session list, one permission inbox, one set of keyboard
+                    shortcuts and one MCP configuration.
+                </P>
+                <P>
+                    {agent.runtime.toolsDelivery === 'native-mcp' ? (
+                        <>
+                            You define an MCP server once and {agent.name} receives it as native MCP
+                            inventory, next to whatever MCP servers it already had of its own.
+                        </>
+                    ) : (
+                        <>
+                            You define an MCP server once, and because {agent.name} does not consume
+                            MCP directly, Happier hands the same tool surface to it through the{' '}
+                            <code className="font-mono">happier tools</code> shell bridge instead —
+                            the same tools, delivered as commands it can run. The app previews the
+                            effective tool surface before a session starts, so which one you got is
+                            visible rather than inferred.
+                        </>
+                    )}
+                </P>
+                <P>
+                    That matters most on the days you are running more than one: sessions from
+                    different vendors side by side, and a notification tap opening the session that
+                    raised the request rather than the app’s front door.{' '}
+                    <a href="/agents" className="underline underline-offset-2" style={{ color: 'var(--fg)' }}>
+                        The full list is here
+                    </a>
+                    .
+                </P>
+            </Prose>
+
+            <Prose heading="Terminal or UI" data-section="agent-terminal">
+                <P>
+                    Typing <code className="font-mono">happier {agent.id}</code> in a terminal starts
+                    the session right where you are standing, and the same session is in the app at
+                    the same time. What you read in that shell is Happier’s own display of the
+                    session — the transcript, the permission prompts, the tool output — rather than{' '}
+                    {agent.name}’s interface. Nobody has to give up the terminal to get a phone
+                    client.
+                </P>
+                <TerminalHandoff agent={agent} />
+                <P>
+                    The{' '}
+                    <a
+                        href={docsHref('/features/attach-to-session')}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="underline underline-offset-2"
+                        style={{ color: 'var(--fg)' }}
+                    >
+                        attach guide
+                    </a>{' '}
+                    lists the cases instead of promising all of them.
+                </P>
+            </Prose>
+
+            <section className="relative" data-section="agent-faq">
+                <div className="mx-auto max-w-[1400px] px-6 py-10 md:px-10 md:py-14">
+                    <div className="max-w-[760px]">
+                        <h2 className="font-display text-[26px] font-normal leading-[1.14] tracking-[-0.025em] md:text-[34px]">
+                            {agent.name} in Happier — questions
+                        </h2>
+                        <dl className="mt-6 space-y-7">
+                            {agent.faq.map((item) => (
+                                <div key={item.q}>
+                                    <dt className="text-[17px] font-semibold" style={{ color: 'var(--fg)' }}>
+                                        {item.q}
+                                    </dt>
+                                    <dd
+                                        className="mt-2 text-[16px] leading-[1.68]"
+                                        style={{ color: 'var(--muted)' }}
+                                    >
+                                        <Ticks text={item.a} />
+                                    </dd>
+                                </div>
+                            ))}
+                        </dl>
+                    </div>
+                </div>
+            </section>
+
+            <Prose heading={`Getting ${agent.name} onto your phone`} data-section="agent-cta">
+                <P>
+                    One command on the computer that holds your code, then{' '}
+                    <code className="font-mono">happier {agent.id}</code> in the repository you want
+                    to work in.
+                </P>
+                <div data-cta-location="call-to-action">
+                    <InstallCommand />
+                </div>
+                <P>
+                    Walkthroughs are in the{' '}
+                    <a
+                        href={GUIDES_URL}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="underline underline-offset-2"
+                        style={{ color: 'var(--fg)' }}
+                    >
+                        guides
+                    </a>
+                    . All of it is MIT-licensed, and the relay is one you can run yourself.
+                </P>
+            </Prose>
+        </PageShell>
+    );
+}

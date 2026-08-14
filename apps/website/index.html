@@ -2,20 +2,301 @@
 <html lang="en" class="dark">
     <head>
         <meta charset="UTF-8" />
-        <link rel="icon" type="image/png" href="/images/favicon.png" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-        <meta name="description" content="Happier is the cross-device control room for your AI coding agents. Run Claude Code, Codex, OpenCode and more — on every device, in one inbox, with your own subscriptions." />
-        <meta property="og:title" content="Happier — One session. Every device." />
-        <meta property="og:description" content="The mobile-native control layer for AI coding agents. See the UI. Act on it. No hacks." />
+
+        <!--
+          PER-ROUTE HEAD. Everything between the head markers below is
+          REPLACED WHOLESALE by scripts/prerender.mjs, once per route, from the
+          tags src/routes.tsx generates. The homepage's own tags are what sits
+          here in source, so `vite dev` and `vite preview` still serve a page
+          with a title, a canonical and a card — and so a diff of this file shows
+          what a visitor to happier.dev/ actually gets.
+
+          Anything that is the same on every page — icons, manifest, viewport,
+          theme-color, the fonts, and the site-scoped JSON-LD graph below —
+          belongs OUTSIDE the markers. Nothing inside them is shared.
+
+          On the title: every token has verified US search demand (Semrush,
+          Aug 2026). "Remote" is deliberately absent even though `claude code
+          remote` (260) is the highest-CPC term in the set — it belongs to
+          /vs/claude-code-remote-control, and fighting for one term on two URLs
+          loses both. "11 more" replaced "OpenCode" (40,500/mo) because that
+          query is navigational and owned by sst: the slot yielded structurally
+          zero, and "11 more" spends the same characters on the one claim no
+          vendor can copy.
+        -->
+
+        <link rel="icon" type="image/png" sizes="96x96" href="/icons/favicon-96.png" />
+        <link rel="icon" type="image/png" sizes="32x32" href="/images/favicon.png" />
+        <link rel="apple-touch-icon" sizes="180x180" href="/icons/apple-touch-icon.png" />
+        <link rel="manifest" href="/manifest.webmanifest" />
+
+        <!-- ONE theme-color, deliberately. The obvious thing to write here is a
+             prefers-color-scheme pair, and it would be wrong: ThemeContext.readInitial()
+             (src/components/ThemeContext.tsx:16-21) returns 'dark' unless the visitor has
+             previously toggled, and <html> ships with class="dark" — the page does NOT
+             follow the OS. Emitting #F5F5F7 under prefers-color-scheme:light would paint
+             the mobile browser chrome pale above a black page. Restore the pair here the
+             day readInitial() starts consulting matchMedia:
+               <meta name="theme-color" content="#050507" media="(prefers-color-scheme: dark)" />
+               <meta name="theme-color" content="#F5F5F7" media="(prefers-color-scheme: light)" />
+             (#F5F5F7 is html.light --bg, src/styles/globals.css:92 — not #FAFAF7.) -->
+        <meta name="theme-color" content="#050507" />
+        <meta name="color-scheme" content="dark light" />
+
+        <!-- Identity tags that are true of every page on the origin. Shared on
+             purpose, and therefore outside the per-route markers below. -->
+        <meta property="og:site_name" content="Happier" />
         <meta property="og:type" content="website" />
-        <meta name="twitter:card" content="summary_large_image" />
-        <title>Happier — One session. Every device.</title>
-        <link rel="preconnect" href="https://fonts.googleapis.com" />
-        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-        <link
-            href="https://fonts.googleapis.com/css2?family=Inter+Tight:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
-            rel="stylesheet"
+        <meta property="og:locale" content="en_US" />
+        <meta name="author" content="Happier" />
+
+        <!-- Self-hosted fonts. src/styles/fonts.css is imported by
+             src/styles/globals.css, so the @font-face rules land in the hashed
+             stylesheet the page already blocks on: no fonts.googleapis.com
+             request, no fonts.gstatic.com request, no third-party origin in the
+             critical path, and nothing for a consent regime to argue about.
+             scripts/vendor-fonts.mjs copies the same latin-subset variable files
+             Google serves into public/fonts/.
+
+             Only the two families the first viewport actually uses are
+             preloaded. JetBrains Mono is deliberately not: it renders inside the
+             install command, which is below the headline, and preloading a font
+             the first paint does not need competes with the one it does. -->
+        <link rel="preload" as="font" type="font/woff2" href="/fonts/inter-tight-latin-var.woff2" crossorigin />
+        <link rel="preload" as="font" type="font/woff2" href="/fonts/inter-latin-var.woff2" crossorigin />
+
+        <!--head-->
+        <title>Happier — open-source app for Claude Code, Codex &amp; 11 more</title>
+        <meta
+            name="description"
+            content="Run Claude Code, Codex and 11 more agents from your phone, browser or desktop. Open-source, end-to-end encrypted, self-hostable. Your own subscriptions."
         />
+        <link rel="canonical" href="https://happier.dev/" />
+        <meta name="robots" content="index, follow, max-snippet:-1, max-image-preview:large, max-video-preview:-1" />
+
+        <meta property="og:url" content="https://happier.dev/" />
+        <!-- og:title is the social headline, not the SERP title: shared links are read
+             by humans, so it matches the words rendered in og.png rather than the
+             keyword-bearing <title>. -->
+        <meta property="og:title" content="Happier — One client for every AI coding agent." />
+        <meta
+            property="og:description"
+            content="Claude Code, Codex, OpenCode, Cursor and 9 more — in one end-to-end encrypted app, on every device, on your own subscriptions. Open-source and self-hostable."
+        />
+        <meta property="og:image" content="https://happier.dev/images/og.png" />
+        <meta property="og:image:type" content="image/png" />
+        <meta property="og:image:width" content="1200" />
+        <meta property="og:image:height" content="630" />
+        <!-- alt describes the card that scripts/generate-social-assets.mjs actually
+             renders. Keep the two in sync if the card is redrawn. -->
+        <meta
+            property="og:image:alt"
+            content="The Happier wordmark over the words: One client for every AI coding agent. Claude Code, Codex, OpenCode, Cursor, Gemini, Copilot and 7 more."
+        />
+        <meta name="twitter:card" content="summary_large_image" />
+        <meta name="twitter:title" content="Happier — One client for every AI coding agent." />
+        <meta
+            name="twitter:description"
+            content="Claude Code, Codex, OpenCode, Cursor and 9 more — in one end-to-end encrypted app, on every device, on your own subscriptions. Open-source and self-hostable."
+        />
+        <meta name="twitter:image" content="https://happier.dev/images/og.png" />
+        <meta
+            name="twitter:image:alt"
+            content="The Happier wordmark over the words: One client for every AI coding agent."
+        />
+        <!--/head-->
+        <!-- twitter:site / twitter:creator are INTENTIONALLY ABSENT. No X account has
+             been verified for this project: x.com returns HTTP 200 for handles that do
+             not exist, so a 200 is not evidence. Pointing twitter:site at a handle
+             someone else owns hands them the attribution byline on every shared link.
+             Uncomment ONLY after loading the profile in a browser and confirming
+             ownership:
+               <meta name="twitter:site" content="@yourhandle" />
+               <meta name="twitter:creator" content="@yourhandle" /> -->
+
+        <!--
+          THE PROGRESSIVE-ENHANCEMENT FLAG, and it has to be inline and here.
+
+          Every headline on this site is a <RevealText>, which ships its words in
+          the prerendered HTML with class `reveal-word-idle`. That class used to
+          be `opacity: 0`, which meant the prerendered page — the whole point of
+          the prerender — rendered INVISIBLE to anything that reads pixels rather
+          than raw HTML, and stayed invisible for as long as the JS bundle took
+          to arrive. Anyone screenshotting happier.dev on a slow connection got a
+          blank page with a planet on it.
+
+          So `.reveal-word-idle` now defaults to `opacity: 1` and the animation
+          is opt-IN: this one line adds `js` to <html>, and only `html.js`
+          re-hides the words for the reveal. It runs synchronously in <head>,
+          before first paint, so a JS visitor still sees the animation from its
+          start and there is no flash of already-visible text.
+
+          Do not move this to a bundle. A deferred module runs after first paint,
+          which is exactly the flash it exists to prevent.
+        -->
+        <script>
+            document.documentElement.classList.add('js');
+        </script>
+
+        <!--
+          STRUCTURED DATA — every URL below was resolved with curl on 2026-08-08.
+
+          Deliberate omissions, each one a manual-action risk if added back:
+
+          * aggregateRating. The iOS listing has 10 ratings at 4.4. Google's
+            structured-data policy requires review markup to describe ratings that
+            are VISIBLE ON THE PAGE CARRYING THE MARKUP. happier.dev shows no
+            ratings, so this would be self-serving markup for content that isn't
+            there — the textbook trigger for a "Structured data issue" manual
+            action, and it would cost the star snippet everywhere, not just here.
+            10 ratings is also below the threshold at which Google shows stars at
+            all. Add it only once real, visible, user-submitted reviews live on
+            this page.
+          * Google Play. play.google.com/store/apps/details?id=dev.happier answers
+            HTTP 404 (verified) — there is no listing. A downloadUrl to a 404 is a
+            broken-link signal and misleads the 762 Android visitors PostHog saw in
+            90 days. The Android build is therefore declared against its real
+            artifact, the GitHub release APK.
+          * FAQPage. Google restricted FAQ rich results to authoritative
+            government/health sites in 2023 and deprecated the feature outright on
+            2026-05-07 — the markup is no longer used for search results at all,
+            for anyone. There is no SERP feature left to win, so the twenty-three
+            answers in src/data/faq.ts ship as plain prose in the DOM and nothing
+            else. Do not add it back when the FAQ grows: the answers earn their
+            traffic through passage ranking, and passage ranking reads the text,
+            not the JSON-LD.
+          * SearchAction on WebSite. There is no site search endpoint. Declaring a
+            sitelinks searchbox that 404s is a false claim about the site.
+
+          sameAs lists only profiles verified to resolve AND to be owned by this
+          project. No X/Twitter entry — see the twitter:site note above.
+        -->
+        <script type="application/ld+json">
+            {
+                "@context": "https://schema.org",
+                "@graph": [
+                    {
+                        "@type": "Organization",
+                        "@id": "https://happier.dev/#org",
+                        "name": "Happier",
+                        "url": "https://happier.dev/",
+                        "logo": {
+                            "@type": "ImageObject",
+                            "url": "https://happier.dev/icons/icon-512.png",
+                            "width": 512,
+                            "height": 512
+                        },
+                        "description": "Happier is an open-source, end-to-end encrypted client for AI coding agents. It runs Claude Code, Codex, OpenCode, Cursor and 9 more agents from one app on phone, web, desktop and terminal, using the subscriptions the developer already pays for.",
+                        "foundingDate": "2026",
+                        "sameAs": [
+                            "https://github.com/happier-dev",
+                            "https://github.com/happier-dev/happier",
+                            "https://discord.gg/W6Pb8KuHfg",
+                            "https://apps.apple.com/us/app/happier-claude-codex-opencode/id6758554297"
+                        ]
+                    },
+                    {
+                        "@type": "WebSite",
+                        "@id": "https://happier.dev/#site",
+                        "url": "https://happier.dev/",
+                        "name": "Happier",
+                        "inLanguage": "en",
+                        "publisher": { "@id": "https://happier.dev/#org" }
+                    },
+                    {
+                        "@type": "SoftwareApplication",
+                        "@id": "https://happier.dev/#app",
+                        "name": "Happier",
+                        "alternateName": "Happier: Claude Codex OpenCode",
+                        "applicationCategory": "DeveloperApplication",
+                        "applicationSubCategory": "AI coding agent client",
+                        "operatingSystem": "iOS 15.1+, macOS, Windows, Linux, Web",
+                        "url": "https://happier.dev/",
+                        "downloadUrl": "https://happier.dev/#get-started",
+                        "installUrl": "https://happier.dev/#get-started",
+                        "softwareVersion": "0.2",
+                        "license": "https://github.com/happier-dev/happier/blob/main/LICENCE",
+                        "isAccessibleForFree": true,
+                        "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+                        "featureList": [
+                            "Run Claude Code, Codex, OpenCode, Cursor, Gemini, Copilot, Qwen, Kimi, Auggie, Kilo, Kiro, Pi and Grok from one client",
+                            "End-to-end encrypted sessions",
+                            "Bring your own agent subscriptions and API keys",
+                            "Self-hostable runtime",
+                            "Phone, web, desktop and terminal clients"
+                        ],
+                        "publisher": { "@id": "https://happier.dev/#org" },
+                        "isRelatedTo": { "@id": "https://happier.dev/#source" }
+                    },
+                    {
+                        "@type": "MobileApplication",
+                        "@id": "https://happier.dev/#app-ios",
+                        "name": "Happier: Claude Codex OpenCode",
+                        "applicationCategory": "DeveloperApplication",
+                        "operatingSystem": "iOS 15.1+",
+                        "url": "https://apps.apple.com/us/app/happier-claude-codex-opencode/id6758554297",
+                        "downloadUrl": "https://apps.apple.com/us/app/happier-claude-codex-opencode/id6758554297",
+                        "isAccessibleForFree": true,
+                        "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+                        "publisher": { "@id": "https://happier.dev/#org" }
+                    },
+                    {
+                        "@type": "MobileApplication",
+                        "@id": "https://happier.dev/#app-android",
+                        "name": "Happier for Android",
+                        "applicationCategory": "DeveloperApplication",
+                        "operatingSystem": "Android",
+                        "url": "https://github.com/happier-dev/happier/releases",
+                        "downloadUrl": "https://github.com/happier-dev/happier/releases/download/ui-mobile-preview/happier-preview.apk",
+                        "isAccessibleForFree": true,
+                        "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+                        "publisher": { "@id": "https://happier.dev/#org" }
+                    },
+                    {
+                        "@type": "SoftwareSourceCode",
+                        "@id": "https://happier.dev/#source",
+                        "name": "happier",
+                        "description": "Source for Happier — an open-source client for AI coding agents.",
+                        "codeRepository": "https://github.com/happier-dev/happier",
+                        "url": "https://github.com/happier-dev/happier",
+                        "programmingLanguage": ["TypeScript", "Rust"],
+                        "runtimePlatform": "Node.js",
+                        "license": "https://spdx.org/licenses/MIT.html",
+                        "author": { "@id": "https://happier.dev/#org" }
+                    }
+                ]
+            }
+        </script>
+
+        <noscript>
+            <!--
+              Belt and braces. The `js` class above already means a no-JS visitor
+              never gets the hidden entrance state — `.reveal-word-idle` and
+              `.fpanel` are visible by default now, and only `html.js` hides them.
+              These rules stay because they also cover the case the class cannot:
+              JS enabled, bundle failed to load, class applied, animation never
+              armed. `!important` is required to beat the inline styles React
+              emits.
+            -->
+            <style>
+                .reveal-word,
+                .reveal-word-idle {
+                    opacity: 1 !important;
+                    filter: none !important;
+                    transform: none !important;
+                    animation: none !important;
+                }
+                .fpanel {
+                    opacity: 1 !important;
+                    transform: none !important;
+                }
+                [data-reveal] {
+                    opacity: 1 !important;
+                    transform: none !important;
+                }
+            </style>
+        </noscript>
     </head>
     <body>
         <div id="root"></div>

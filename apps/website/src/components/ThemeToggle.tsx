@@ -1,11 +1,25 @@
 import { useTheme } from './ThemeContext';
+import { trackThemeToggled } from '../analytics/events';
 
 export function ThemeToggle() {
     const { theme, toggle } = useTheme();
     const isDark = theme === 'dark';
+
+    /**
+     * `theme` is the state BEFORE the toggle, so the event carries where the
+     * visitor is going, not where they were. A `theme_toggled { to: 'light' }`
+     * rate is the only evidence this site has about whether the dark-by-default
+     * decision (ThemeContext.readInitial never consults matchMedia) is costing
+     * anyone anything.
+     */
+    const onToggle = () => {
+        trackThemeToggled({ to: isDark ? 'light' : 'dark' });
+        toggle();
+    };
+
     return (
         <button
-            onClick={toggle}
+            onClick={onToggle}
             className="inline-flex h-9 w-9 items-center justify-center rounded-full border"
             style={{ borderColor: 'var(--card-border)', background: 'var(--card)' }}
             aria-label={isDark ? 'Switch to light theme' : 'Switch to dark theme'}

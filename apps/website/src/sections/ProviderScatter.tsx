@@ -29,10 +29,14 @@ const PLACEMENTS: ReadonlyArray<Placement> = [
     { providerId: 'copilot', top: '59%', left: '79%', size: 31, tilt: -7, delay: 920, duration: 7100 },
     { providerId: 'kimi', top: '53%', left: '57%', size: 32, tilt: -5, delay: 1080, duration: 7800 },
     { providerId: 'qwen', top: '60%', left: '30%', size: 28, tilt: 5, delay: 760, duration: 6900 },
-    { providerId: 'auggie', top: '88%', left: '36%', size: 34, tilt: -3, delay: 1320, duration: 8100 },
+    { providerId: 'auggie', top: '88%', left: '28%', size: 34, tilt: -3, delay: 1320, duration: 8100 },
     { providerId: 'gemini', top: '80%', left: '67%', size: 28, tilt: -8, delay: 1180, duration: 6500 },
     { providerId: 'kilo', top: '32%', left: '69%', size: 32, tilt: 2, delay: 460, duration: 8300 },
     { providerId: 'kiro', top: '72%', left: '45%', size: 26, tilt: 3, delay: 560, duration: 7400 },
+    // Grok sits low and just right of centre; nearest neighbours are kiro at
+    // 72%/45% and gemini at 80%/67%, so it reads as part of the lower band
+    // rather than a stray mark.
+    { providerId: 'grok', top: '95%', left: '56%', size: 29, tilt: -5, delay: 880, duration: 7300 },
 ];
 
 const PROVIDER_BY_ID = new Map(PROVIDERS.map((p) => [p.id, p]));

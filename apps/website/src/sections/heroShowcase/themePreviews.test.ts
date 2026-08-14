@@ -3,15 +3,15 @@ import { MOBILE_THEME_PREVIEWS, resolveNextThemePreviewIndex } from './themePrev
 
 describe('mobile theme previews', () => {
     it('declares the eight iOS theme screenshots in display order', () => {
-        expect(MOBILE_THEME_PREVIEWS.map((preview) => preview.src)).toEqual([
-            '/images/demo/screenshots/ios-themes/1.png',
-            '/images/demo/screenshots/ios-themes/2.png',
-            '/images/demo/screenshots/ios-themes/3.png',
-            '/images/demo/screenshots/ios-themes/4.png',
-            '/images/demo/screenshots/ios-themes/5.png',
-            '/images/demo/screenshots/ios-themes/6.png',
-            '/images/demo/screenshots/ios-themes/7.png',
-            '/images/demo/screenshots/ios-themes/8.png',
+        expect(MOBILE_THEME_PREVIEWS.map((preview) => preview.imageId)).toEqual([
+            'iosTheme1',
+            'iosTheme2',
+            'iosTheme3',
+            'iosTheme4',
+            'iosTheme5',
+            'iosTheme6',
+            'iosTheme7',
+            'iosTheme8',
         ]);
         expect(MOBILE_THEME_PREVIEWS.map((preview) => preview.swatch)).toEqual([
             '#131111',

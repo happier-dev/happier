@@ -1,0 +1,323 @@
+import { P, PageHeader, PageShell, Prose } from '../components/PageShell';
+import {
+    SECURITY_DIAGRAM_CAPTION,
+    SECURITY_DOCS_URL,
+    SECURITY_HOPS,
+    SECURITY_INVISIBLE,
+    SECURITY_KEYS,
+    SECURITY_NOTIFICATIONS,
+    SECURITY_PAIRING,
+    SECURITY_SELF_HOST,
+    SECURITY_SOURCE,
+    SECURITY_STORAGE,
+    SECURITY_VISIBLE,
+} from '../data/security';
+
+/**
+ * /security
+ *
+ * The footer link "Security & encryption" pointed straight at the docs, which
+ * sent the one visitor most likely to be evaluating us off the site before they
+ * had read a sentence we wrote. Encryption is load-bearing for this product; it
+ * gets a page.
+ *
+ * WHO THIS IS FOR, and the line against /enterprise: this page is one developer
+ * asking "what does the relay see". /enterprise is a buyer with a compliance
+ * team asking "what can I enforce". So the storage policy appears on both and
+ * is written twice from opposite ends — what changes for you here, which
+ * variable sets it there — and neither page repeats the other's half. They link
+ * to each other once, in each direction, and nowhere else.
+ *
+ * Every claim is anchored in src/data/security.ts, including the one anchor
+ * that was checked and deliberately produced no sentence.
+ */
+
+const CIPHER_SAMPLE = 'hQx2Vb9k4Tn1Rm7c…';
+const PLAIN_SAMPLE = 'push the hotfix branch';
+
+export function SecurityPage() {
+    return (
+        <PageShell>
+            <PageHeader
+                eyebrow="Security"
+                title="The relay carries your session. It cannot read it."
+                standfirst="Happier keeps one coding session in sync between the computer it runs on and every device you watch it from, and a relay server sits in the middle of that. This page is the architecture under that sentence: which key is made where, what the relay actually holds, what it can still see, and what changes on a server configured to turn encryption off."
+            />
+
+            <MessagePath />
+
+            <Ledger />
+
+            <Prose heading="One secret, and a tree under it" data-section="security-keys">
+                {SECURITY_KEYS.map((paragraph) => (
+                    <P key={paragraph.slice(0, 32)}>{paragraph}</P>
+                ))}
+            </Prose>
+
+            <Prose heading="The moment a key moves" data-section="security-pairing">
+                {SECURITY_PAIRING.map((paragraph) => (
+                    <P key={paragraph.slice(0, 32)}>{paragraph}</P>
+                ))}
+            </Prose>
+
+            <Prose heading="What a server can change" data-section="security-storage">
+                {SECURITY_STORAGE.map((paragraph) => (
+                    <P key={paragraph.slice(0, 32)}>{paragraph}</P>
+                ))}
+                <P>
+                    The variables that set all three, the at-rest options underneath them and the
+                    identity controls around them are the operator’s half of this, and they live on{' '}
+                    <a
+                        href="/enterprise"
+                        className="underline underline-offset-2"
+                        style={{ color: 'var(--fg)' }}
+                    >
+                        the self-hosting page for teams
+                    </a>
+                    .
+                </P>
+            </Prose>
+
+            <Prose heading="Notifications, which leave the model behind" data-section="security-notifications">
+                {SECURITY_NOTIFICATIONS.map((paragraph) => (
+                    <P key={paragraph.slice(0, 32)}>{paragraph}</P>
+                ))}
+            </Prose>
+
+            <Prose heading="What running it yourself adds" data-section="security-selfhost">
+                {SECURITY_SELF_HOST.map((paragraph) => (
+                    <P key={paragraph.slice(0, 32)}>{paragraph}</P>
+                ))}
+            </Prose>
+
+            <Prose heading="Where to check all of this" data-section="security-source">
+                {SECURITY_SOURCE.map((paragraph) => (
+                    <P key={paragraph.slice(0, 32)}>{paragraph}</P>
+                ))}
+                <P>
+                    The{' '}
+                    <a
+                        href={SECURITY_DOCS_URL}
+                        className="underline underline-offset-2"
+                        style={{ color: 'var(--fg)' }}
+                    >
+                        encryption model reference
+                    </a>{' '}
+                    covers the same ground as procedure — what restore asks of you, what each
+                    storage mode means for an account, which flow to reach for when a device cannot
+                    read a session yet.
+                </P>
+            </Prose>
+        </PageShell>
+    );
+}
+
+/**
+ * The diagram, and the only animated thing on the page.
+ *
+ * It says one thing: the words are readable at both ends and ciphertext in the
+ * middle. Nothing on the page is illustrated twice, and nothing is animated
+ * that a still frame could not have said — this one needs the motion because
+ * the argument IS the transition between the two states.
+ *
+ * The node row is <div className="stackrow">, the same primitive the homepage
+ * self-host diagram uses, so the two pictures of these three nodes agree.
+ */
+function MessagePath() {
+    return (
+        <section className="relative" data-section="security-path">
+            <div className="mx-auto max-w-[1400px] px-6 py-10 md:px-10 md:py-14">
+                <div className="max-w-[880px]">
+                    <h2 className="font-display text-[26px] font-normal leading-[1.14] tracking-[-0.025em] md:text-[34px]">
+                        What happens to a message
+                    </h2>
+                    <p
+                        className="mt-4 max-w-[720px] text-[16px] leading-[1.65]"
+                        style={{ color: 'var(--muted)' }}
+                    >
+                        {SECURITY_DIAGRAM_CAPTION}
+                    </p>
+                </div>
+
+                <div className="wire mx-auto mt-12 max-w-[720px]">
+                    <div className="wire__lane" aria-hidden>
+                        <div className="wire__carrier">
+                            <div className="wire__packet">
+                                <span className="wire__text wire__text--plain">{PLAIN_SAMPLE}</span>
+                                <span className="wire__text wire__text--cipher font-mono">
+                                    {CIPHER_SAMPLE}
+                                </span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div className="stackrow">
+                        {SECURITY_HOPS.map((hop) => (
+                            <div key={hop.id} className="text-center">
+                                <span className="stackrow__icon" style={{ color: 'var(--fg)' }}>
+                                    <HopIcon id={hop.id} />
+                                </span>
+                                <span
+                                    className="mt-3.5 block text-[13px] font-semibold leading-tight sm:text-[15px]"
+                                    style={{ color: 'var(--fg)' }}
+                                >
+                                    {hop.label}
+                                </span>
+                                <span
+                                    className="stackrow__detail mt-1 block text-[12.5px] leading-[1.45]"
+                                    style={{ color: 'var(--muted)' }}
+                                >
+                                    {hop.verb}
+                                </span>
+                            </div>
+                        ))}
+
+                        {/* Siblings of the cells, not gutter items, so both rails
+                            are anchored to the icon centres at every width. */}
+                        <div className="wire__rail wire__rail--1" aria-hidden />
+                        <div className="wire__rail wire__rail--2" aria-hidden />
+                    </div>
+                </div>
+
+                <dl className="mx-auto mt-12 grid max-w-[1080px] gap-4 md:grid-cols-3">
+                    {SECURITY_HOPS.map((hop) => (
+                        <div
+                            key={hop.id}
+                            className="rounded-2xl border p-6"
+                            style={{ borderColor: 'var(--card-border)', background: 'var(--card)' }}
+                        >
+                            <dt
+                                className="text-[11px] font-semibold uppercase tracking-[0.14em]"
+                                style={{ color: 'var(--muted)' }}
+                            >
+                                {hop.label}
+                            </dt>
+                            <dd
+                                className="mt-3 text-[14.5px] leading-[1.6]"
+                                style={{ color: 'var(--muted)' }}
+                            >
+                                <strong className="font-semibold" style={{ color: 'var(--fg)' }}>
+                                    {hop.verb}.
+                                </strong>{' '}
+                                {hop.body}
+                            </dd>
+                        </div>
+                    ))}
+                </dl>
+            </div>
+        </section>
+    );
+}
+
+/**
+ * The two columns of the ledger. Green and red would be a value judgement about
+ * a design decision, so both columns are the same colour and only the headings
+ * differ — the reader is being handed a fact to weigh, not a scorecard.
+ */
+function Ledger() {
+    return (
+        <section className="relative" data-section="security-ledger">
+            <div className="mx-auto max-w-[1400px] px-6 py-10 md:px-10 md:py-14">
+                <div className="max-w-[880px]">
+                    <h2 className="font-display text-[26px] font-normal leading-[1.14] tracking-[-0.025em] md:text-[34px]">
+                        What the relay ends up holding
+                    </h2>
+                    <p
+                        className="mt-4 max-w-[720px] text-[16px] leading-[1.65]"
+                        style={{ color: 'var(--muted)' }}
+                    >
+                        Encryption is a claim about content, and a claim about content is only half
+                        an answer. Here is the other half, at the same level of detail: the columns
+                        a server operating this relay can read without a key.
+                    </p>
+                </div>
+
+                <div className="mt-10 grid gap-10 md:grid-cols-2 md:gap-14">
+                    <LedgerColumn heading="It holds" items={SECURITY_VISIBLE} />
+                    <LedgerColumn heading="It does not hold" items={SECURITY_INVISIBLE} />
+                </div>
+            </div>
+        </section>
+    );
+}
+
+function LedgerColumn({
+    heading,
+    items,
+}: {
+    heading: string;
+    items: ReadonlyArray<{ id: string; title: string; body: string }>;
+}) {
+    return (
+        <div>
+            <div
+                className="mb-6 border-b pb-3 text-[12px] font-semibold uppercase tracking-[0.16em]"
+                style={{ color: 'var(--muted)', borderColor: 'var(--card-border)' }}
+            >
+                {heading}
+            </div>
+            <dl className="space-y-6">
+                {items.map((item) => (
+                    <div key={item.id}>
+                        <dt className="text-[16px] font-semibold" style={{ color: 'var(--fg)' }}>
+                            {item.title}
+                        </dt>
+                        <dd
+                            className="mt-1.5 text-[15px] leading-[1.62]"
+                            style={{ color: 'var(--muted)' }}
+                        >
+                            {item.body}
+                        </dd>
+                    </div>
+                ))}
+            </dl>
+        </div>
+    );
+}
+
+/**
+ * Same construction as the self-host stack glyphs — 24-unit box, 1.3 stroke at
+ * 36px — so the two diagrams read as one icon set. The relay carries a padlock
+ * because that is the one node whose state the page is about.
+ */
+function HopIcon({ id }: { id: (typeof SECURITY_HOPS)[number]['id'] }) {
+    const props = {
+        width: 36,
+        height: 36,
+        viewBox: '0 0 24 24',
+        fill: 'none',
+        stroke: 'currentColor',
+        strokeWidth: 1.3,
+        strokeLinecap: 'round' as const,
+        strokeLinejoin: 'round' as const,
+        'aria-hidden': true,
+    };
+
+    if (id === 'device') {
+        return (
+            <svg {...props}>
+                <rect x="7" y="2.5" width="10" height="19" rx="2.6" />
+                <path d="M10.9 5.5h2.2" />
+            </svg>
+        );
+    }
+
+    if (id === 'relay') {
+        return (
+            <svg {...props}>
+                <rect x="2.5" y="4" width="19" height="6" rx="2" />
+                <path d="M6 7h.01" />
+                <rect x="8.5" y="14" width="7" height="5.5" rx="1.4" />
+                <path d="M10.2 14v-1.6a1.8 1.8 0 0 1 3.6 0V14" />
+            </svg>
+        );
+    }
+
+    return (
+        <svg {...props}>
+            <rect x="2.5" y="4" width="19" height="13" rx="2.4" />
+            <path d="m6.8 8.7 2.5 1.8-2.5 1.8M12 12.9h4.6" />
+            <path d="M9 20.5h6" />
+        </svg>
+    );
+}

@@ -1,3 +1,15 @@
+/*
+ * Self-hosted @font-face rules, first, before @tailwind base.
+ *
+ * `@import` must precede every other rule in a stylesheet, and this one has to
+ * be here rather than in index.html for the reason fonts.css itself documents:
+ * the faces then land in the SAME hashed stylesheet the page already blocks on,
+ * so there is no second request and no third-party origin in the critical path.
+ * index.html previously loaded them from fonts.googleapis.com while this file
+ * sat unimported and public/fonts/ shipped three unused woff2 files.
+ */
+@import './fonts.css';
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -266,6 +278,168 @@ body {
     }
 }
 
+/* ---------------------------------------------------------------------------
+   The wire (see src/pages/SecurityPage.tsx).
+
+   THE ANIMATION HAS TO CARRY AN ARGUMENT, NOT DECORATE ONE. It reuses .stackrow
+   above for the node row on purpose — /security and the homepage self-host
+   section draw the same three nodes, and two diagrams of one topology that do
+   not line up are two topologies as far as a reader is concerned. What is new
+   here is the lane above the row: one chip travelling device → relay → computer
+   carrying a message that is READABLE at the ends and CIPHERTEXT in the middle.
+   That is the claim of the page, drawn, and it is the claim the code makes.
+
+   The carrier is inset to the two RAIL ENDS, not to the outer icon centres —
+   the same percentage-carrier trick .stackflow__dot uses (a percentage
+   translate is relative to the element, so the element has to BE the distance),
+   with the insets moved in by half a glyph plus the clearance. Two things fall
+   out of that, and both are the reason it is done this way. The midpoint of a
+   symmetric inset is still exactly 50%, so translateX(50%) lands the chip dead
+   centre on the relay. And the chip stops where the line stops instead of
+   overhanging a phone-width column, which is what kept it inside the viewport
+   at 320px — a chip that overflows is a page that scrolls sideways.
+
+   Both texts occupy one grid cell, so the chip is sized by the wider of the two
+   and the crossfade cannot reflow the lane.
+
+   REDUCED MOTION FREEZES OVER THE RELAY, showing the ciphertext. That frame is
+   chosen rather than the start frame: it is the one that states the thing the
+   section exists to state, so a reader who never sees the motion still gets the
+   argument rather than a decoration with the movement removed. */
+.wire {
+    --wire-glyph: 36px;
+    --wire-clear: 13px;
+}
+
+.wire__lane {
+    position: relative;
+    height: 30px;
+    margin-bottom: 14px;
+}
+
+/* Same insets as .wire__rail--1's left and --2's right: the chip travels the
+   line, and its midpoint is still exactly 50% because the inset is symmetric. */
+.wire__carrier {
+    position: absolute;
+    left: calc(16.6667% + var(--wire-glyph) / 2 + var(--wire-clear));
+    right: calc(16.6667% + var(--wire-glyph) / 2 + var(--wire-clear));
+    top: 0;
+    animation: wire-travel 9s linear infinite;
+    will-change: transform;
+}
+
+.wire__packet {
+    position: absolute;
+    left: 0;
+    top: 0;
+    display: grid;
+    transform: translateX(-50%);
+    white-space: nowrap;
+    border-radius: 999px;
+    border: 1px solid var(--card-border);
+    background: var(--bg);
+    padding: 5px 11px;
+}
+
+.wire__text {
+    grid-area: 1 / 1;
+    font-size: 12px;
+    line-height: 18px;
+}
+
+.wire__text--plain {
+    color: var(--fg);
+    animation: wire-plain 9s linear infinite;
+}
+
+/* --muted, not --accent. The amber is a 4px decorative dot everywhere else it
+   appears and it is one value across both themes, which puts it at roughly
+   1.7:1 on the light page — unreadable at 11px. Muted mono clears 6:1 in both,
+   and it happens to say the right thing anyway: the scrambled state should read
+   as less legible than the words, because it is. */
+.wire__text--cipher {
+    color: var(--muted);
+    animation: wire-cipher 9s linear infinite;
+}
+
+/* A phone column is narrower than the chip is wide at 12px, and the chip is
+   centred on a travelling point rather than on the box — so at the ends it
+   would hang past the edge and put a horizontal scrollbar on the document.
+   The type comes down instead of the diagram being cut. */
+@media (max-width: 639px) {
+    .wire {
+        --wire-clear: 9px;
+    }
+    .wire__packet {
+        padding: 4px 9px;
+    }
+    .wire__text {
+        font-size: 11px;
+        line-height: 16px;
+    }
+}
+
+/* The two rail segments, anchored off the icon centres exactly as .stackflow is,
+   so the line stops clear of every glyph instead of running under it. */
+.wire__rail {
+    position: absolute;
+    top: calc(var(--stack-icon) / 2);
+    height: 1px;
+    background: linear-gradient(90deg,
+        transparent 0%,
+        var(--card-border) 10%,
+        var(--card-border) 90%,
+        transparent 100%);
+}
+
+.wire__rail--1 {
+    left: calc(16.6667% + var(--wire-glyph) / 2 + var(--wire-clear));
+    right: calc(50% + var(--wire-glyph) / 2 + var(--wire-clear));
+}
+
+.wire__rail--2 {
+    left: calc(50% + var(--wire-glyph) / 2 + var(--wire-clear));
+    right: calc(16.6667% + var(--wire-glyph) / 2 + var(--wire-clear));
+}
+
+/* Pauses at both ends and over the relay: the chip is carrying words, and words
+   that never stop moving are words nobody reads. */
+@keyframes wire-travel {
+    0% { transform: translateX(0); }
+    9% { transform: translateX(0); }
+    41% { transform: translateX(50%); }
+    59% { transform: translateX(50%); }
+    91% { transform: translateX(100%); }
+    100% { transform: translateX(100%); }
+}
+
+@keyframes wire-plain {
+    0%, 20% { opacity: 1; }
+    27%, 73% { opacity: 0; }
+    80%, 100% { opacity: 1; }
+}
+
+@keyframes wire-cipher {
+    0%, 20% { opacity: 0; }
+    27%, 73% { opacity: 1; }
+    80%, 100% { opacity: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .wire__carrier {
+        animation: none;
+        transform: translateX(50%);
+    }
+    .wire__text--plain {
+        animation: none;
+        opacity: 0;
+    }
+    .wire__text--cipher {
+        animation: none;
+        opacity: 1;
+    }
+}
+
 /* Rolling counter (see RollingNumber.tsx). Every dimension is derived from the
    inherited type — 1ch wide, 1lh tall — so the component needs no size props and
    cannot drift from the text it sits in. `cv01`/`cv02` are Inter's disambiguated
@@ -341,6 +515,29 @@ body {
     font-family: 'Inter Tight', Inter, system-ui, sans-serif;
     letter-spacing: -0.035em;
     line-height: 1.02;
+}
+
+/* The pre-armed state of <RevealText>, and therefore the state every section
+   heading ships in inside the prerendered HTML — IntersectionObserver only arms
+   the words once JS runs.
+
+   DEFAULT IS VISIBLE, and that is the fix rather than an oversight. This used to
+   be `opacity: 0` unconditionally, which meant the prerendered page — the entire
+   point of prerendering — was blank to anything that reads rendered pixels, and
+   stayed blank for as long as the JS bundle took to arrive. The reveal is now
+   opt-in: the inline script in index.html adds `js` to <html> synchronously in
+   <head>, before first paint, and only then do the words hide themselves to be
+   animated in. A JS visitor sees no flash; everyone else sees the text.
+
+   Named class rather than Tailwind's `opacity-0` so index.html can target
+   exactly these words without touching every other use of that utility. */
+.reveal-word-idle {
+    display: inline-block;
+    opacity: 1;
+}
+
+html.js .reveal-word-idle {
+    opacity: 0;
 }
 
 /* Word-reveal animation, applied per-word with custom CSS delays. */
@@ -513,10 +710,12 @@ html {
             var(--fp-edge-4) 100%) border-box;
     box-shadow: var(--fp-shadow);
     contain: paint;
-    /* entrance state; --ty/--tsc are animated by .is-in and nudged by :hover */
-    --ty: 32px;
-    --tsc: 0.99;
-    opacity: 0;
+    /* entrance state; --ty/--tsc are animated by .is-in and nudged by :hover.
+       Visible by default for the same reason as .reveal-word-idle above: the
+       prerendered HTML must not render blank. `html.js` below re-arms it. */
+    --ty: 0px;
+    --tsc: 1;
+    opacity: 1;
     transform: translate3d(0, var(--ty), 0) scale(var(--tsc));
     transition:
         opacity 900ms cubic-bezier(0.16, 1, 0.3, 1),
@@ -524,7 +723,14 @@ html {
         box-shadow 750ms cubic-bezier(0.32, 0.72, 0, 1);
 }
 
-.fpanel.is-in {
+html.js .fpanel {
+    --ty: 32px;
+    --tsc: 0.99;
+    opacity: 0;
+}
+
+.fpanel.is-in,
+html.js .fpanel.is-in {
     opacity: 1;
     --ty: 0px;
     --tsc: 1;
@@ -584,7 +790,7 @@ html {
     /* art is transparent now, so CSS owns its shadow — cast down-LEFT, away from
        the light the panel's star brings in from the top-right */
     --fp-art-shadow: drop-shadow(-10px 16px 26px rgba(0, 0, 0, 0.5)) drop-shadow(-2px 4px 8px rgba(0, 0, 0, 0.4));
-    --fp-star: url('/images/background5_black_jpg60.jpg');
+    --fp-star: url('/images/_opt/background5_black_jpg60-640.avif');
     --fp-blend: screen;
     --fp-star-filter: saturate(1.05) brightness(0.7);
     /* The veil is the page colour laid back over the art, so it reads var(--bg)
@@ -617,7 +823,7 @@ html.light {
     --fp-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8), -8px 16px 40px -34px rgba(38, 38, 48, 0.2);
     --fp-shadow-hover: inset 0 1px 0 rgba(255, 255, 255, 0.95), -10px 22px 52px -34px rgba(38, 38, 48, 0.3);
     --fp-art-shadow: drop-shadow(-5px 9px 16px rgba(38, 38, 48, 0.15)) drop-shadow(-1px 2px 4px rgba(38, 38, 48, 0.1));
-    --fp-star: url('/images/background5_white_jpg60.jpg');
+    --fp-star: url('/images/_opt/background5_white_jpg60-640.avif');
     --fp-blend: multiply;
     --fp-star-filter: saturate(1.02) brightness(1.04);
     --fp-veil: linear-gradient(202deg,

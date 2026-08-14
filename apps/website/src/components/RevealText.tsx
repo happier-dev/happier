@@ -89,7 +89,13 @@ export function RevealText({
                             return (
                                 <Fragment key={`${lineIdx}-${wordIdx}`}>
                                     <span
-                                        className={armed ? 'reveal-word' : 'opacity-0'}
+                                        // `reveal-word-idle`, not Tailwind's `opacity-0`: this is
+                                        // the state the PRERENDERED html ships with (effects never
+                                        // run on the server), so it needs a named hook the
+                                        // <noscript> stylesheet in index.html can force visible.
+                                        // A shared utility class cannot be overridden that way
+                                        // without hitting every other use of it.
+                                        className={armed ? 'reveal-word' : 'reveal-word-idle'}
                                         style={armed ? ({ ['--delay' as string]: `${delay + flatIdx * stagger}ms` } as never) : undefined}
                                     >
                                         {word}

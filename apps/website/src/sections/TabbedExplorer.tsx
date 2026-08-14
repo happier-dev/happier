@@ -1,26 +1,28 @@
 import { useState } from 'react';
+import { trackDemoPlayed } from '../analytics/events';
 import { RevealText } from '../components/RevealText';
+import { Picture } from '../components/Picture';
 
 const TABS = [
     {
         id: 'chat',
         label: 'Chat',
-        screenshot: '/images/demo/screenshots/desktop.png',
+        screenshot: 'showcaseDesktop',
     },
     {
         id: 'editor',
         label: 'Editor',
-        screenshot: '/images/demo/screenshots/desktop.png',
+        screenshot: 'showcaseDesktop',
     },
     {
         id: 'git',
         label: 'Git',
-        screenshot: '/images/demo/screenshots/desktop.png',
+        screenshot: 'showcaseDesktop',
     },
     {
         id: 'terminal',
         label: 'Terminal',
-        screenshot: '/images/demo/screenshots/desktop.png',
+        screenshot: 'showcaseDesktop',
     },
 ] as const;
 
@@ -31,7 +33,7 @@ export function TabbedExplorer() {
     const active = TABS.find((t) => t.id === activeTab) ?? TABS[0];
 
     return (
-        <section className="relative">
+        <section className="relative" data-section="explorer">
             <div className="section-y mx-auto max-w-[1400px] px-6 md:px-10">
                 <div className="section-head mx-auto max-w-[760px] text-center">
                     <div
@@ -56,7 +58,19 @@ export function TabbedExplorer() {
                         {TABS.map((tab) => (
                             <button
                                 key={tab.id}
-                                onClick={() => setActiveTab(tab.id)}
+                                /* `demo_played` had no call site. The tab strip is
+                                   the only interactive demo surface on the page, so
+                                   this is the whole of "did anyone actually look at
+                                   the product?" — and the answer is what decides
+                                   whether this section keeps its place. */
+                                onClick={() => {
+                                    setActiveTab(tab.id);
+                                    trackDemoPlayed({
+                                        demo: 'tabbed-explorer',
+                                        action: 'tab',
+                                        detail: tab.id,
+                                    });
+                                }}
                                 className="rounded-full px-5 py-2 text-[14px] font-medium transition-all"
                                 style={{
                                     background: tab.id === activeTab ? 'var(--fg)' : 'transparent',
@@ -73,11 +87,12 @@ export function TabbedExplorer() {
                     rounded corners, and a baked drop-shadow — so we render them
                     directly with no wrapper chrome (which would duplicate it). */}
                 <div className="mx-auto max-w-[1100px]">
-                    <img
+                    <Picture
                         key={active.id}
-                        src={active.screenshot}
+                        id={active.screenshot}
                         alt={`Happier ${active.label} view`}
-                        className="block w-full select-none"
+                        className="block w-full"
+                        imgClassName="w-full select-none"
                         draggable={false}
                     />
                 </div>

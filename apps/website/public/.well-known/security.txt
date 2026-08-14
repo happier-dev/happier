@@ -1,0 +1,73 @@
+# Happier — security contact information (RFC 9116).
+# Canonical location: https://happier.dev/.well-known/security.txt
+#
+# NOTE ON RENEWAL: `Expires` below is a hard requirement of RFC 9116 and must be
+# under one year out. Scanners treat an expired file as no file at all. Put a
+# calendar reminder for 2027-07-01 to bump it.
+
+Contact: https://github.com/happier-dev/happier/security/advisories/new
+Contact: https://github.com/happier-dev/happier/security/policy
+
+Expires: 2027-08-08T00:00:00.000Z
+
+Preferred-Languages: en
+
+Canonical: https://happier.dev/.well-known/security.txt
+
+Policy: https://github.com/happier-dev/happier/security/policy
+
+Acknowledgments: https://github.com/happier-dev/happier/security/advisories
+
+# ---------------------------------------------------------------------------
+# WHAT IS DELIBERATELY NOT HERE
+# ---------------------------------------------------------------------------
+#
+# `Encryption:` is absent, and the release key must NOT be put there.
+#
+#   https://happier.dev/happier-release.pub is a MINISIGN key
+#   (untrusted comment: minisign public key 91AE28177BF6E43C). RFC 9116's
+#   Encryption field is for a key a researcher can ENCRYPT A REPORT TO.
+#   minisign only signs and verifies — it has no encryption operation at all.
+#   Listing it would advertise a capability that does not exist and send
+#   researchers into a dead end. If encrypted reports are wanted, publish a real
+#   OpenPGP or age key and reference that instead.
+#
+#   The minisign key's actual job is release-artifact verification: install.sh
+#   fetches it from HAPPIER_MINISIGN_PUBKEY_URL (default
+#   https://happier.dev/happier-release.pub) and verifies every downloaded
+#   artifact with it — see apps/website/public/install.sh:26-32 and the
+#   ensure_minisign() bootstrap at :2118. RFC 9116 has no field for a release
+#   signing key, so it is documented here in prose rather than mislabelled.
+#
+# `Contact: mailto:` is absent because no security mailbox has been verified to
+# exist for this domain. A security.txt that names an address which bounces is
+# worse than one that names none — the report is lost silently and the reporter
+# assumes it landed. GitHub's private vulnerability reporting is used instead:
+# it is authenticated, private, gives the reporter a receipt, and is already
+# enabled on the repository (verified: /security/policy returns 200).
+#
+# RECOMMENDED FOLLOW-UP: create security@happier.dev, then add it as the FIRST
+# Contact line (RFC 9116 orders by preference) and drop this paragraph:
+#
+#   Contact: mailto:security@happier.dev
+#
+# ---------------------------------------------------------------------------
+# SCOPE NOTES FOR RESEARCHERS
+# ---------------------------------------------------------------------------
+#
+# Source (MIT):        https://github.com/happier-dev/happier
+# Encryption design:   https://docs.happier.dev/security/encryption
+# Self-hosting:        https://docs.happier.dev/deployment/self-host-runtime
+#
+# Happier is end-to-end encrypted and self-hostable. Reports about the relay
+# being able to read session content, about key handling, or about the installer
+# signature chain are the highest-value findings here.
+#
+# ---------------------------------------------------------------------------
+# OPTIONAL HARDENING
+# ---------------------------------------------------------------------------
+# RFC 9116 says this file SHOULD carry an OpenPGP cleartext signature so a
+# reader can confirm the contacts were not tampered with in transit. It is not
+# required and nothing rejects an unsigned file. If you later publish a PGP key:
+#   gpg --clearsign -o security.txt.asc security.txt
+# and serve the signed version at this path.

@@ -1,7 +1,6 @@
 import type { ReactNode } from 'react';
 import { RevealText } from '../components/RevealText';
 import { InstallCommand } from '../components/InstallCommand';
-import { DownloadBadges } from '../components/DownloadBadges';
 
 type Step = {
     number: number;
@@ -14,30 +13,47 @@ type Step = {
  * Each step owns the call-to-action it describes, so the flow reads as a
  * self-contained checklist: download here, install here, pair here, run here.
  */
+/**
+ * Order matters here and it was backwards.
+ *
+ * The old step 1 was "download the app" — which sends someone to a phone store
+ * before they have a machine for the phone to talk to, and that is precisely the
+ * cohort that churns: 56% of installs open the app on exactly one day, median
+ * lifetime two minutes. Happier does nothing until a computer is set up, so the
+ * computer goes first and the phone comes third, once there is something for it
+ * to connect to.
+ *
+ * The old step 4 read "Run happier instead of claude or codex", which is not the
+ * CLI's syntax. `happier` wraps the agent, it does not replace it —
+ * `happier claude`, `happier codex` (clients/cli.mdx:539-540).
+ */
 const STEPS: ReadonlyArray<Step> = [
     {
         number: 1,
-        title: 'Download the app',
-        description: 'Grab Happier from the App Store, Google Play, or as a desktop app.',
-        cta: <DownloadBadges />,
-    },
-    {
-        number: 2,
-        title: 'Install the CLI',
-        description: 'One command. Works on macOS, Linux, and Windows.',
+        title: 'Install on the computer with your code',
+        description: 'One command. macOS, Linux, and Windows. Signed and checksum-verified.',
         cta: <InstallCommand />,
     },
     {
+        number: 2,
+        title: 'Run setup',
+        description:
+            'Signs you in and installs the background service that keeps this machine reachable while you are away from it.',
+        cta: <CommandChip command="happier setup" />,
+    },
+    {
         number: 3,
-        title: 'Pair your device',
-        description: 'Scan the QR code in your terminal to connect your phone or browser.',
+        title: 'Pair a device',
+        description:
+            'happier auth login prints a QR code. Scan it with the app, or open the URL it prints in any browser.',
         cta: <QrChip />,
     },
     {
         number: 4,
-        title: 'Start coding',
-        description: 'Run happier instead of claude or codex. Your sessions sync everywhere instantly.',
-        cta: <RunChip />,
+        title: 'Start a session',
+        description:
+            'Launch any of the 13 agents through Happier and it is live on every signed-in device at once.',
+        cta: <CommandChip command="happier claude" />,
     },
 ];
 
@@ -45,7 +61,7 @@ export const GET_STARTED_SECTION_ID = 'get-started';
 
 export function GetStarted() {
     return (
-        <section id={GET_STARTED_SECTION_ID} className="relative">
+        <section id={GET_STARTED_SECTION_ID} data-section="get-started" className="relative">
             <div className="section-y mx-auto max-w-[1400px] px-6 md:px-10">
                 <div className="section-head mx-auto max-w-[760px] text-center">
                     <div
@@ -165,26 +181,17 @@ function QrChip() {
     );
 }
 
-/** The run command for the "start coding" step. */
-function RunChip() {
+/** A literal command, shown as the CTA for a step that is just "type this". */
+function CommandChip({ command }: { command: string }) {
     return (
         <div
-            role="img"
-            aria-label="Run happier instead of claude"
             className="inline-flex items-center gap-2 rounded-2xl border px-4 py-3 font-mono text-[13px]"
             style={{ borderColor: 'var(--card-border)', color: 'var(--fg)' }}
         >
             <span aria-hidden style={{ color: 'var(--muted)' }}>
                 $
             </span>
-            <span aria-hidden>happier</span>
-            <span
-                aria-hidden
-                className="ml-1.5 line-through decoration-1"
-                style={{ color: 'var(--muted)' }}
-            >
-                claude
-            </span>
+            <code>{command}</code>
         </div>
     );
 }

@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import type { CSSProperties } from 'react';
 import { PRIMARY_FEATURES, type Feature } from '../data/features';
-import { featureImageSrcSets } from '../data/featureImageSources';
 import { RevealText } from '../components/RevealText';
+import { Picture } from '../components/Picture';
 import clsx from 'clsx';
 
 /**
@@ -88,7 +88,7 @@ const SPAN_CLASS: Record<Span, string> = {
 
 export function AlternatingFeatures() {
     return (
-        <section id="features" className="relative">
+        <section id="features" data-section="features" className="relative">
             <div className="section-y mx-auto max-w-[1400px] px-6 md:px-10">
                 <div className="section-head mx-auto max-w-[760px] text-center">
                     <div
@@ -251,13 +251,7 @@ function PanelArt({
     visible: boolean;
 }) {
     const image = feature.image;
-    // Art for some features has not been produced yet; a referenced file that is
-    // missing falls back to the generic device mockup instead of a broken image.
-    const [failed, setFailed] = useState(false);
     if (!image) return null;
-
-    const fallbackSrc = feature.visual === 'mobile' ? '/images/mobile.png' : '/images/desktop.png';
-    const srcSets = featureImageSrcSets(image);
 
     return (
         <div
@@ -268,6 +262,7 @@ function PanelArt({
                 wide && 'fpanel__art--wide',
                 wide && floor && 'fpanel__art--floor',
             )}
+            data-reveal
             style={{
                 opacity: visible ? 1 : 0,
                 transform: visible ? 'translate3d(0,0,0)' : 'translate3d(0,20px,0)',
@@ -275,28 +270,7 @@ function PanelArt({
                     'opacity 1150ms cubic-bezier(0.16,1,0.3,1) 140ms, transform 1250ms cubic-bezier(0.16,1,0.3,1) 140ms',
             }}
         >
-            {failed ? (
-                <img
-                    src={fallbackSrc}
-                    alt={feature.title}
-                    loading="lazy"
-                    decoding="async"
-                    draggable={false}
-                />
-            ) : (
-                <picture>
-                    <source type="image/webp" srcSet={srcSets.webp} />
-                    <img
-                        src={image.src}
-                        srcSet={srcSets.png}
-                        alt={feature.title}
-                        loading="lazy"
-                        decoding="async"
-                        draggable={false}
-                        onError={() => setFailed(true)}
-                    />
-                </picture>
-            )}
+            <Picture id={image.id} alt={feature.title} draggable={false} />
         </div>
     );
 }

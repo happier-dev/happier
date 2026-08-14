@@ -1,6 +1,9 @@
 import { useEffect, useState } from 'react';
 import { HappierMark } from '../components/HappierMark';
 import { ThemeToggle } from '../components/ThemeToggle';
+// Same-origin anchors are deliberately ignored by useLinkClicks (an in-page jump
+// is not an exit), so the nav CTA needs its own emitter or it is invisible.
+import { trackCtaClicked } from '../analytics/events';
 
 function useGitHubStars(): string | null {
     const [stars, setStars] = useState<string | null>(null);
@@ -22,12 +25,40 @@ function useGitHubStars(): string | null {
     return stars;
 }
 
-export function Nav() {
+type NavProps = {
+    /**
+     * `overlay` floats the nav over the hero image (homepage). `static` gives it
+     * its own band at the top of a content route, where there is no hero to
+     * float over and an absolutely-positioned header would sit on the H1.
+     */
+    variant?: 'overlay' | 'static';
+    /**
+     * Homepage-only anchors have to become absolute links everywhere else:
+     * `#get-started` on /agents scrolls to nothing, `/#get-started` goes home.
+     * This is the bug every one-page site ships the day it grows a second page.
+     */
+    isHome?: boolean;
+};
+
+export function Nav({ variant = 'overlay', isHome = true }: NavProps) {
     const stars = useGitHubStars();
 
     return (
-        <header className="absolute inset-x-0 top-0 z-30">
-            <div className="mx-auto flex max-w-[1400px] items-center justify-between px-6 pt-5 md:px-3 md:pt-7">
+        <header
+            className={variant === 'overlay' ? 'absolute inset-x-0 top-0 z-30' : 'relative z-30 border-b'}
+            style={variant === 'static' ? { borderColor: 'var(--card-border)' } : undefined}
+            /* Not a `data-section`: the nav is chrome, not a step in the scroll
+               funnel, and counting it would make every visit "reach" section 1.
+               `data-cta-location` is what useLinkClicks reads. */
+            data-cta-location="hero-nav"
+        >
+            <div
+                className={
+                    variant === 'overlay'
+                        ? 'mx-auto flex max-w-[1400px] items-center justify-between px-6 pt-5 md:px-3 md:pt-7'
+                        : 'mx-auto flex max-w-[1400px] items-center justify-between px-6 py-4 md:px-10'
+                }
+            >
                 <HappierMark />
 
                 <div className="flex items-center gap-4 md:gap-5">
@@ -52,6 +83,40 @@ export function Nav() {
                             </span>
                         )}
                     </a>
+                    {/* /agents is the hub for the thirteen per-agent pages, which
+                        are what people arrive on from "remote claude code app"
+                        and "mobile codex app". It earns the first nav slot
+                        because it answers the first question a visitor has:
+                        does this run mine? (It used to be pitched
+                        here as a capability matrix; that matrix was removed —
+                        see src/data/agents.ts.) */}
+                    <a
+                        href="/agents"
+                        className="hidden text-[14px] font-medium transition-opacity hover:opacity-100 md:inline-flex"
+                        style={{ color: 'var(--fg)', opacity: 0.85 }}
+                    >
+                        Agents
+                    </a>
+                    {/* Enterprise takes the slot Guides used to hold. The link
+                        equity that put Guides here in the first place — 53 guides
+                        at guides.happier.dev with no inbound link from any Happier
+                        surface — is preserved by the Resources column in
+                        src/sections/Footer.tsx, which is on every page and is
+                        crawled from every one of them. What the nav slot is for is
+                        the visitor a footer link never reaches: the one evaluating
+                        this for a team, who leaves before they scroll. /enterprise
+                        is the only page written for them, and it was reachable from
+                        one footer link under Open source.
+
+                        Same md: breakpoint as the rest, so the phone nav stays
+                        GitHub + CTA + toggle. */}
+                    <a
+                        href="/enterprise"
+                        className="hidden text-[14px] font-medium transition-opacity hover:opacity-100 md:inline-flex"
+                        style={{ color: 'var(--fg)', opacity: 0.85 }}
+                    >
+                        Enterprise
+                    </a>
                     <a
                         href="https://docs.happier.dev"
                         target="_blank"
@@ -61,14 +126,19 @@ export function Nav() {
                     >
                         Docs
                     </a>
+                    {/* The primary nav CTA is the install command, not the web app.
+                        The web app is a destination for people who already paired a
+                        machine; a first-time desktop visitor needs the CLI on the
+                        machine that runs the code (see funnel: 58% reach pairing,
+                        36% reach a session). #get-started scrolls to the stepper
+                        whose first action is the copyable install line. */}
                     <a
-                        href="https://app.happier.dev/"
-                        target="_blank"
-                        rel="noreferrer"
+                        onClick={() => trackCtaClicked({ location: 'hero-nav', label: 'Install Happier' })}
+                        href={isHome ? '#get-started' : '/#get-started'}
                         className="hidden items-center gap-2 rounded-full px-4 py-2 text-[14px] font-medium transition-transform hover:-translate-y-[1px] md:inline-flex"
                         style={{ background: 'var(--fg)', color: 'var(--bg)' }}
                     >
-                        Open the web app
+                        Install Happier
                     </a>
                     <span className="hidden md:inline-flex">
                         <ThemeToggle />

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { PhoneFrame } from './PhoneFrame';
 import { MOBILE_THEME_PREVIEWS, resolveNextThemePreviewIndex } from './themePreviews';
+import { Picture } from '../../components/Picture';
 
 const REVEAL_DURATION_MS = 600;
 
@@ -42,19 +43,21 @@ export function MobileThemePreview() {
                 onClick={advancePreview}
             >
                 <PhoneFrame>
-                    <img
-                        src={committedPreview.src}
+                    <Picture
+                        id={committedPreview.imageId}
                         alt={committedPreview.label}
-                        className="block h-full w-full select-none"
+                        className="block h-full w-full"
+                        imgClassName="h-full w-full select-none"
                         draggable={false}
                     />
                     {revealingPreview ? (
-                        <img
+                        <Picture
                             key={revealingPreview.id}
-                            src={revealingPreview.src}
+                            id={revealingPreview.imageId}
                             alt=""
                             aria-hidden
-                            className="theme-preview-reveal absolute inset-0 block h-full w-full select-none"
+                            className="theme-preview-reveal absolute inset-0 block h-full w-full"
+                            imgClassName="h-full w-full select-none"
                             draggable={false}
                         />
                     ) : null}

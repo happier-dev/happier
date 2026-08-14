@@ -5041,12 +5041,32 @@
   dependencies:
     playwright "1.58.2"
 
+"@posthog/browser-common@^0.4.0":
+  version "0.4.0"
+  resolved "https://registry.npmjs.org/@posthog/browser-common/-/browser-common-0.4.0.tgz#b25c5af2aed27a5c2ddc2d4b2244e26dee710356"
+  integrity sha512-W9DCGVks15docUMPvJ2nd8NS16Gn74bsGWuaeg31beEKFSjdW8wvnQ1ETY6WSql5pYxZb3GdJmEUZVVstKSrBQ==
+  dependencies:
+    "@posthog/core" "^1.46.8"
+    "@posthog/types" "^1.402.0"
+
 "@posthog/core@1.14.1":
   version "1.14.1"
   resolved "https://registry.npmjs.org/@posthog/core/-/core-1.14.1.tgz"
   integrity sha512-DtmJ1y1IDauX8yAZtIotRAYDRkgCCMLk5S9vFFRX7vufhWblQuRUOgn9WYSJrocJlZKm1aEjDzGQ0uyL7HcdLw==
   dependencies:
     cross-spawn "^7.0.6"
+
+"@posthog/core@^1.46.8", "@posthog/core@^1.46.9":
+  version "1.46.9"
+  resolved "https://registry.npmjs.org/@posthog/core/-/core-1.46.9.tgz#c76ee98638ce263efec83e1dc974552a02b9674e"
+  integrity sha512-EXO6y5ih+jBkTCpUCuYgQmajuDZuvy6vMvflkub6pLQyi0GPlCPWVSvZZkOeQw9e2MxoD5GteeGCt9R8+UJ/yQ==
+  dependencies:
+    "@posthog/types" "^1.402.2"
+
+"@posthog/types@^1.402.0", "@posthog/types@^1.402.2":
+  version "1.402.2"
+  resolved "https://registry.npmjs.org/@posthog/types/-/types-1.402.2.tgz#13a82f000a76b2ca9265d2e880f16cf9376a1b16"
+  integrity sha512-ZZTiS4dLwF4/D0YTzS3gGSLFnhuNOY5yu4d9VGS9trGe5GW6FjIXo20p18K5BPW2RZSYSld8sdnSAY3AUXleUQ==
 
 "@prisma/client@^6.11.1":
   version "6.19.2"
@@ -10233,6 +10253,11 @@ core-js-compat@^3.43.0:
   dependencies:
     browserslist "^4.28.1"
 
+core-js@^3.49.0:
+  version "3.50.0"
+  resolved "https://registry.npmjs.org/core-js/-/core-js-3.50.0.tgz#a18646fcb0097650189b4504c803e887bcae4c0a"
+  integrity sha512-BRWgOLKkFeCgRudR6zrs8p9XJZcE14grzKMMssoYrk6krtuEZ7MTKPIY5RzOnqsEKIR9kst7wNzphttraT+Yqw==
+
 core-util-is@~1.0.0:
   version "1.0.3"
   resolved "https://registry.npmjs.org/core-util-is/-/core-util-is-1.0.3.tgz"
@@ -11025,6 +11050,13 @@ domhandler@^5.0.2, domhandler@^5.0.3:
   integrity sha512-cgwlv/1iFQiFnU96XXgROh8xTeetsnJiDsTc7TYCLFd9+/WNkIqPTxiM/8pSd8VIrhXGTf1Ny1q1hquVqDJB5w==
   dependencies:
     domelementtype "^2.3.0"
+
+dompurify@^3.4.12:
+  version "3.4.13"
+  resolved "https://registry.npmjs.org/dompurify/-/dompurify-3.4.13.tgz#fc28949d59f92d62e28a3a764bcbeee35897a1be"
+  integrity sha512-2vmYIoqjze2d+kakP8S/nS5shfsl587kzwEjcGlTdiksUVgFHnFCsLYDVj/JNqJVOQZGSYBTmuycv0PodwmnMQ==
+  optionalDependencies:
+    "@types/trusted-types" "^2.0.7"
 
 dompurify@3.2.7:
   version "3.2.7"
@@ -12587,6 +12619,11 @@ fetch-nodeshim@^0.4.6:
   resolved "https://registry.npmjs.org/fetch-nodeshim/-/fetch-nodeshim-0.4.10.tgz"
   integrity sha512-m6I8ALe4L4XpdETy7MJZWs6L1IVMbjs99bwbpIKphxX+0CTns4IKDWJY0LWfr4YsFjfg+z1TjzTMU8lKl8rG0w==
 
+fflate@^0.4.8:
+  version "0.4.9"
+  resolved "https://registry.npmjs.org/fflate/-/fflate-0.4.9.tgz#b5d1fd9776e4d3cbcd1a83a1f163b984a0972e21"
+  integrity sha512-zdxgIEddhfsyCaWpJ2SdXEP8ZMrKJ6+5jl4OupODcywU0IhRk6gdXuVGcPICyfx2H97hVK7xmJtRLPjkxAX8Vw==
+
 ffmpeg-static@5.2.0:
   version "5.2.0"
   resolved "https://registry.npmjs.org/ffmpeg-static/-/ffmpeg-static-5.2.0.tgz"
@@ -12849,15 +12886,6 @@ fractional-indexing@3.2.0:
   version "3.2.0"
   resolved "https://registry.npmjs.org/fractional-indexing/-/fractional-indexing-3.2.0.tgz"
   integrity sha512-PcOxmqwYCW7O2ovKRU8OoQQj2yqTfEB/yeTYk4gPid6dN5ODRfU1hXd9tTVZzax/0NkO7AxpHykvZnT1aYp/BQ==
-
-framer-motion@^11.11.17:
-  version "11.18.2"
-  resolved "https://registry.npmjs.org/framer-motion/-/framer-motion-11.18.2.tgz"
-  integrity sha512-5F5Och7wrvtLVElIpclDT0CBzMVg3dL22B64aZwHtsIY8RB4mXICLrkajK4G9R+ieSAGcgrLeae2SeUTg2pr6w==
-  dependencies:
-    motion-dom "^11.18.1"
-    motion-utils "^11.18.1"
-    tslib "^2.4.0"
 
 freeport-async@^2.0.0:
   version "2.0.0"
@@ -17897,12 +17925,33 @@ postgres-interval@^1.1.0:
   dependencies:
     xtend "^4.0.0"
 
+posthog-js@1.414.0:
+  version "1.414.0"
+  resolved "https://registry.npmjs.org/posthog-js/-/posthog-js-1.414.0.tgz#90632db9d40ee9811294f09b9c4fd69b2aba3d20"
+  integrity sha512-dtZd4asdskr8lNyltAEX6zyn48uO1pO0EMvx6AXJU65PFhu6yn2LPbKtQcyLysjcN57FJPNT9QYL6St5SBJHqw==
+  dependencies:
+    "@posthog/browser-common" "^0.4.0"
+    "@posthog/core" "^1.46.9"
+    "@posthog/types" "^1.402.2"
+    core-js "^3.49.0"
+    dompurify "^3.4.12"
+    fflate "^0.4.8"
+    preact "^10.29.3"
+    query-selector-shadow-dom "^1.0.1"
+    web-vitals "^5.3.0"
+    web-vitals-soft-navs "npm:web-vitals@6.0.0"
+
 posthog-react-native@^4.16.2:
   version "4.24.1"
   resolved "https://registry.npmjs.org/posthog-react-native/-/posthog-react-native-4.24.1.tgz"
   integrity sha512-/JoU65K0OzuPMPuF6SPckXRJxPcS+TwQAT5KJYyfeAAK3t1VetQN+nLOIL033ExzUdfY7YxD0NptwdMIlMlrEA==
   dependencies:
     "@posthog/core" "1.14.1"
+
+preact@^10.29.3:
+  version "10.29.8"
+  resolved "https://registry.npmjs.org/preact/-/preact-10.29.8.tgz#fc85b82dc2474e245b1430b51781d417361f5fc3"
+  integrity sha512-ej2aVZ+vZ8WO7tvlQWRM9N63A0KzF9q4mWJfDUHgYaIofWY9hu74QdnQrjoPMmZi2/nZ5gN0bJCQF49xQqx09Q==
 
 prebuild-install@^7.1.2:
   version "7.1.3"
@@ -18301,6 +18350,11 @@ qs@^6.15.2:
   dependencies:
     es-define-property "^1.0.1"
     side-channel "^1.1.1"
+
+query-selector-shadow-dom@^1.0.1:
+  version "1.0.1"
+  resolved "https://registry.npmjs.org/query-selector-shadow-dom/-/query-selector-shadow-dom-1.0.1.tgz#1c7b0058eff4881ac44f45d8f84ede32e9a2f349"
+  integrity sha512-lT5yCqEBgfoMYpf3F2xQRK7zEr1rhIIZuceDK6+xRkJQ4NMbHTwXqk4NkwDwQMNqXgG9r9fyHnzwNVs6zV5KRw==
 
 query-string@^7.1.3:
   version "7.1.3"
@@ -21446,6 +21500,20 @@ vite-tsconfig-paths@^5.1.4:
     globrex "^0.1.2"
     tsconfck "^3.0.3"
 
+vite@^6.4.1:
+  version "6.4.3"
+  resolved "https://registry.npmjs.org/vite/-/vite-6.4.3.tgz#85a164db7ce706f2a776812efa2b340f1721858e"
+  integrity sha512-NTKlcQjlAK7MlQoyb6LgaqHc8sso/pVyUJYWMws3jg21uTJw/LddqIFPcPqP6PzpgbIcZyKI85sFE4HBrQDA8A==
+  dependencies:
+    esbuild "^0.25.0"
+    fdir "^6.4.4"
+    picomatch "^4.0.2"
+    postcss "^8.5.3"
+    rollup "^4.34.9"
+    tinyglobby "^0.2.13"
+  optionalDependencies:
+    fsevents "~2.3.3"
+
 vite@7.3.1, "vite@^5.0.0 || ^6.0.0 || ^7.0.0-0":
   version "7.3.1"
   resolved "https://registry.npmjs.org/vite/-/vite-7.3.1.tgz"
@@ -21457,20 +21525,6 @@ vite@7.3.1, "vite@^5.0.0 || ^6.0.0 || ^7.0.0-0":
     postcss "^8.5.6"
     rollup "^4.43.0"
     tinyglobby "^0.2.15"
-  optionalDependencies:
-    fsevents "~2.3.3"
-
-vite@^6.0.7:
-  version "6.4.1"
-  resolved "https://registry.npmjs.org/vite/-/vite-6.4.1.tgz"
-  integrity sha512-+Oxm7q9hDoLMyJOYfUYBuHQo+dkAloi33apOPP56pzj+vsdJDzr+j1NISE5pyaAuKL4A3UD34qd0lx5+kfKp2g==
-  dependencies:
-    esbuild "^0.25.0"
-    fdir "^6.4.4"
-    picomatch "^4.0.2"
-    postcss "^8.5.3"
-    rollup "^4.34.9"
-    tinyglobby "^0.2.13"
   optionalDependencies:
     fsevents "~2.3.3"
 
@@ -21637,6 +21691,16 @@ web-streams-polyfill@^4.1.0:
   version "4.2.0"
   resolved "https://registry.npmjs.org/web-streams-polyfill/-/web-streams-polyfill-4.2.0.tgz"
   integrity sha512-0rYDzGOh9EZpig92umN5g5D/9A1Kff7k0/mzPSSCY8jEQeYkgRMoY7LhbXtUCWzLCMX0TUE9aoHkjFNB7D9pfA==
+
+"web-vitals-soft-navs@npm:web-vitals@6.0.0":
+  version "6.0.0"
+  resolved "https://registry.npmjs.org/web-vitals/-/web-vitals-6.0.0.tgz#05c7c10e7c4bba4acfe35c59767bd52894e22350"
+  integrity sha512-Guaibvy/+uNtL6Bsu4jmMJGzuSl91oeRH5iO9pPRbYftnFUr3yqT1TUNX/OE4o9HexuEMU3Kb/Wg7iKhlffZUA==
+
+web-vitals@^5.3.0:
+  version "5.3.0"
+  resolved "https://registry.npmjs.org/web-vitals/-/web-vitals-5.3.0.tgz#a67f57f229fdf68be99eb99d3725946def284ff3"
+  integrity sha512-q6LWsLatGYZp5VGBIOvbTj6JBV2nOmC8KvWztXBmwJcfFAzhwKwbOxhUH306XY3CcaZDUlSmSuNPBsCn0bFu+g==
 
 webidl-conversions@^3.0.0:
   version "3.0.1"

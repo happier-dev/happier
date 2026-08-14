@@ -3,7 +3,7 @@ import { RevealText } from '../components/RevealText';
 
 export function FeatureGrid() {
     return (
-        <section className="relative">
+        <section className="relative" data-section="feature-grid">
             <div className="section-y mx-auto max-w-[1400px] px-6 md:px-10">
                 <div className="section-head mx-auto max-w-[760px] text-center">
                     <div

@@ -1,32 +1,31 @@
-import { ThemeProvider } from './components/ThemeContext';
-import { TerminalBackground } from './components/TerminalBackground';
-import { Hero } from './sections/Hero';
-import { HeroShowcase } from './sections/HeroShowcase';
-import { GetStarted } from './sections/GetStarted';
-import { AlternatingFeatures } from './sections/AlternatingFeatures';
-import { FeatureGrid } from './sections/FeatureGrid';
-import { TabbedExplorer } from './sections/TabbedExplorer';
-import { SelfHost } from './sections/SelfHost';
-import { CallToAction } from './sections/CallToAction';
-import { Footer } from './sections/Footer';
+import { findRoute } from './routes';
+import { useSiteAnalytics } from './analytics/useSiteAnalytics';
 
-export function App() {
-    return (
-        <ThemeProvider>
-            <div className="relative min-h-screen">
-                <TerminalBackground />
-                <main className="relative z-[2]">
-                    <Hero />
-                    <HeroShowcase />
-                    <GetStarted />
-                    <AlternatingFeatures />
-                    <FeatureGrid />
-                    <TabbedExplorer />
-                    <SelfHost />
-                    <CallToAction />
-                </main>
-                <Footer />
-            </div>
-        </ThemeProvider>
-    );
+/**
+ * The router, and nothing else.
+ *
+ * `path` is passed in rather than read from `location` so the same component
+ * renders under the build-time prerenderer (src/entry-server.tsx), which has no
+ * `window`, and in the browser (src/main.tsx), which does. Both hand it the same
+ * string, which is what keeps hydration matching.
+ *
+ * An unknown path throws. That is deliberate: the only caller that can produce
+ * one is the prerenderer looping over ROUTES, so a throw here is a BUILD
+ * failure. In the browser the path always came from a file Pages served, and if
+ * that file exists the route exists. A visitor never sees this.
+ */
+export function App({ path }: { path: string }) {
+    // Effect-only: never runs in src/entry-server.tsx, so the prerendered HTML
+    // is byte-identical with and without analytics.
+    useSiteAnalytics();
+
+    const route = findRoute(path);
+    if (!route) {
+        throw new Error(
+            `No route for "${path}". Add it to ROUTES in src/routes.tsx, or the build ` +
+                'will keep emitting a page nothing links to.',
+        );
+    }
+
+    return route.render();
 }

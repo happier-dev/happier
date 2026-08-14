@@ -1,6 +1,24 @@
 import { useState } from 'react';
 import { RevealText } from '../components/RevealText';
 
+/**
+ * The three self-host claims, and the one that was false.
+ *
+ * "Auto-updates, health checks, and monitoring built in. Set it and forget it."
+ * is contradicted four times in our own shipped documentation:
+ *   deployment/docker.mdx:41    "Docker images do **not** update themselves."
+ *   deployment/docker.mdx:72    "It does not install a managed host service."
+ *   advanced/updates.mdx:156    "Installers and binary installs do **not**
+ *                                auto-update in the background."
+ *   hstack/remote-server.mdx:86 "Auto-update is opt-in."
+ * /enterprise already had this right (src/data/enterprise.ts). What the managed
+ * relay runtime genuinely gives you is a service with a lifecycle —
+ * `happier relay host status | start | stop | restart` — and an install command
+ * that is also the update command
+ * (deployment/self-host-runtime.mdx:36-49, advanced/updates.mdx:185-199).
+ * "Set it and forget it" was an unverifiable flourish besides, which the
+ * anti-polish rule rules out on its own.
+ */
 const HIGHLIGHTS = [
     {
         title: 'One-command install',
@@ -8,7 +26,8 @@ const HIGHLIGHTS = [
     },
     {
         title: 'Daily operation',
-        description: 'Auto-updates, health checks, and monitoring built in. Set it and forget it.',
+        description:
+            'A managed service you start, stop and check with happier relay host status. Nothing on the host updates itself — you update by rerunning the install command, when you decide to.',
     },
     {
         title: 'Remote access',
@@ -55,7 +74,7 @@ type StackNode = (typeof SELF_HOST_STACK_NODES)[number];
 
 export function SelfHost() {
     return (
-        <section className="relative">
+        <section className="relative" data-section="self-host">
             <div className="section-y mx-auto max-w-[1400px] px-6 md:px-10">
                 <div className="grid items-center gap-16 md:grid-cols-2 lg:gap-24">
                     <div>

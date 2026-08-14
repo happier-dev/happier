@@ -6,7 +6,7 @@ import { useTheme } from './ThemeContext';
 /**
  * Download badges row.
  *
- * App Store + Google Play render as simple links. The Desktop badge is a
+ * App Store + Android render as simple links. The Desktop badge is a
  * split button:
  *   • Click the main area → direct-download the smart-detected variant
  *     (or open the popover if arch detection is uncertain — e.g. Safari
@@ -15,15 +15,24 @@ import { useTheme } from './ThemeContext';
  *     variants (macOS Apple Silicon / Intel, Windows, Linux). The
  *     detected one is highlighted with a "Detected" chip.
  *
- * Filenames target the rolling `ui-desktop-stable` tag with version-less
- * names, so URLs remain valid across future releases.
+ * Every URL comes from data/downloads.ts. It used to build them here from
+ * version-less filenames on the rolling `ui-desktop-stable` tag, on the
+ * assumption that the tag published version-less assets. It does not — every
+ * asset under that tag carries `-v0.2.0` — so all four desktop downloads were
+ * 404 in production, and the Google Play badge pointed at a listing
+ * (`id=dev.happier`) that has never existed.
  */
+
+import {
+    ANDROID_APK_URL,
+    APP_STORE_URL,
+    DESKTOP_PLATFORMS,
+    DESKTOP_RELEASES_PAGE,
+    type DesktopPlatformId,
+} from '../data/downloads';
 
 type Os = 'mac' | 'win' | 'linux' | 'unknown';
 type Arch = 'arm64' | 'x86_64' | 'unknown';
-
-const ASSET_BASE = 'https://github.com/happier-dev/happier/releases/download/ui-desktop-stable';
-const RELEASES_PAGE = 'https://github.com/happier-dev/happier/releases/tag/ui-desktop-stable';
 
 const DESKTOP_LABEL: Record<Os, string> = {
     mac: 'macOS',
@@ -32,19 +41,7 @@ const DESKTOP_LABEL: Record<Os, string> = {
     unknown: 'Desktop',
 };
 
-type PlatformOption = {
-    id: string;
-    label: string;
-    sublabel: string;
-    file: string;
-};
-
-const PLATFORM_OPTIONS: ReadonlyArray<PlatformOption> = [
-    { id: 'mac-arm64', label: 'macOS', sublabel: 'Apple Silicon', file: 'happier-ui-desktop-darwin-aarch64.dmg' },
-    { id: 'mac-x86_64', label: 'macOS', sublabel: 'Intel', file: 'happier-ui-desktop-darwin-x86_64.dmg' },
-    { id: 'win-x86_64', label: 'Windows', sublabel: 'x64 · .exe installer', file: 'happier-ui-desktop-windows-x86_64.exe' },
-    { id: 'linux-x86_64', label: 'Linux', sublabel: 'x64 · AppImage', file: 'happier-ui-desktop-linux-x86_64.AppImage' },
-];
+const PLATFORM_OPTIONS = DESKTOP_PLATFORMS;
 
 function detectOs(): Os {
     if (typeof navigator === 'undefined') return 'unknown';
@@ -65,11 +62,11 @@ function detectArchFromUserAgent(): Arch {
 }
 
 function buildDesktopHref(os: Os, arch: Arch): string {
-    if (os === 'unknown') return RELEASES_PAGE;
+    if (os === 'unknown') return DESKTOP_RELEASES_PAGE;
     const resolvedArch = arch !== 'unknown' ? arch : os === 'mac' ? 'arm64' : 'x86_64';
-    const key = `${os}-${resolvedArch}`;
+    const key = `${os}-${resolvedArch}` as DesktopPlatformId;
     const platform = PLATFORM_OPTIONS.find((p) => p.id === key);
-    return platform ? `${ASSET_BASE}/${platform.file}` : RELEASES_PAGE;
+    return platform ? platform.href : DESKTOP_RELEASES_PAGE;
 }
 
 type BadgeSpec = {
@@ -85,12 +82,33 @@ const AppleIcon = (
     </svg>
 );
 
-const PlayIcon = (
+/**
+ * Android is a direct APK download, not a store badge.
+ *
+ * There is no Google Play listing to link to: `dev.happier` 404s and has never
+ * existed, and `dev.happier.app` is a closed testing track that 404s for
+ * everyone who is not already an opted-in tester. Shipping a Play badge that
+ * dead-ends is worse than shipping no badge — so this reads "Android APK ·
+ * Direct download", which is exactly what it is, and what the 2,056 people who
+ * have already downloaded it did.
+ */
+const AndroidIcon = (
     <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden className="h-7 w-7">
-        <path d="M3 2.6c-.3.2-.5.5-.5 1V20.4c0 .4.2.8.5 1l10.1-9.4L3 2.6Z" />
-        <path d="m13.1 12 3.1-2.9-3.1-2.9 3.7 2.1c1.1.7 1.1 2.7 0 3.4l-3.7 2.3Z" opacity="0.7" />
-        <path d="M3.3 21.4 13.1 12l3.1 2.9-9.3 5.4c-1 .6-2.3.1-3-.7l-.6-.2Z" opacity="0.85" />
-        <path d="M3.3 2.6 13.1 12l3.1-2.9-9.3-5.4c-1-.6-2.3-.1-3 .7l-.6.2Z" opacity="0.9" />
+        <path d="M6.8 8.2h10.4a.6.6 0 0 1 .6.6v7.4a1.4 1.4 0 0 1-1.4 1.4H7.6a1.4 1.4 0 0 1-1.4-1.4V8.8a.6.6 0 0 1 .6-.6Z" />
+        <rect x="3" y="8.6" width="2.3" height="6.6" rx="1.15" />
+        <rect x="18.7" y="8.6" width="2.3" height="6.6" rx="1.15" />
+        <rect x="8" y="17.8" width="2.3" height="4.4" rx="1.15" />
+        <rect x="13.7" y="17.8" width="2.3" height="4.4" rx="1.15" />
+        <path
+            d="M8.4 7.1a4.2 4.2 0 0 1 7.2 0"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.5"
+            strokeLinecap="round"
+        />
+        <circle cx="9.6" cy="5.4" r="0.62" />
+        <circle cx="14.4" cy="5.4" r="0.62" />
+        <path d="M8.5 3 7.8 1.9M15.5 3l.7-1.1" fill="none" stroke="currentColor" strokeWidth="1.1" strokeLinecap="round" />
     </svg>
 );
 
@@ -230,16 +248,16 @@ export function DownloadBadges({ webApp = false }: { webApp?: boolean } = {}) {
 
     const storeBadges: ReadonlyArray<BadgeSpec> = [
         {
-            href: 'https://apps.apple.com/app/happier-claude-codex-opencode/id6758554297',
+            href: APP_STORE_URL,
             eyebrow: 'Download on',
             label: 'App Store',
             icon: AppleIcon,
         },
         {
-            href: 'https://play.google.com/store/apps/details?id=dev.happier',
-            eyebrow: 'Get it on',
-            label: 'Google Play',
-            icon: PlayIcon,
+            href: ANDROID_APK_URL,
+            eyebrow: 'Direct download',
+            label: 'Android APK',
+            icon: AndroidIcon,
         },
     ];
 
@@ -343,7 +361,7 @@ export function DownloadBadges({ webApp = false }: { webApp?: boolean } = {}) {
                             return (
                                 <a
                                     key={p.id}
-                                    href={`${ASSET_BASE}/${p.file}`}
+                                    href={p.href}
                                     target="_blank"
                                     rel="noreferrer"
                                     onClick={() => setPopoverOpen(false)}

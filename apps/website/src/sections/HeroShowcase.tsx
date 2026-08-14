@@ -1,8 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { MobileThemePreview } from './heroShowcase/MobileThemePreview';
-
-const DESKTOP_SRC = '/images/demo/screenshots/desktop.png';
-const MOBILE_SRC = '/images/demo/screenshots/mobile.png';
+import { Picture } from '../components/Picture';
 
 /**
  * Product showcase below the hero.
@@ -46,6 +44,7 @@ export function HeroShowcase() {
     return (
         <div
             ref={sectionRef}
+            data-section="hero-showcase"
             className="section-y-end relative mx-auto w-full max-w-[1460px] px-0 pt-0 sm:px-10"
         >
             {/* Ambient glow (static — does not repaint on scroll) */}
@@ -69,11 +68,13 @@ export function HeroShowcase() {
                     the page content, and clip the small left bleed. The shadow is
                     baked into the screenshot, so no CSS drop-shadow is added. */}
                 <div className="relative z-[1] w-full" style={{ overflowX: 'clip' }}>
-                    <img
-                        src={DESKTOP_SRC}
+                    <Picture
+                        id="showcaseDesktop"
                         alt="Happier desktop app"
-                        className="block w-full select-none"
+                        className="block w-full"
+                        imgClassName="w-full select-none"
                         draggable={false}
+                        data-reveal
                         style={{
                             opacity: visible ? 1 : 0,
                             transform: visible
@@ -133,6 +134,7 @@ function DesktopScrollable({ visible }: { visible: boolean }) {
     return (
         <div
             className="px-4 sm:px-6"
+            data-reveal
             style={{
                 opacity: visible ? 1 : 0,
                 transform: visible ? 'translateY(0)' : 'translateY(36px)',
@@ -154,10 +156,12 @@ function DesktopScrollable({ visible }: { visible: boolean }) {
                     boxShadow: '0 32px 60px rgba(0,0,0,0.28), 0 8px 20px rgba(0,0,0,0.18)',
                 }}
             >
-                <img
-                    src={DESKTOP_SRC}
+                <Picture
+                    id="showcaseDesktop"
                     alt="Happier desktop app — scroll horizontally to explore"
-                    className="block h-full w-auto max-w-none select-none"
+                    className="block h-full w-max max-w-none"
+                    imgClassName="h-full w-auto max-w-none select-none"
+                    sizes="auto 180vw"
                     draggable={false}
                 />
             </div>
@@ -219,6 +223,7 @@ function PhoneParallax({ visible }: { visible: boolean }) {
     return (
         <div
             className="mx-auto w-full max-w-[460px] px-4"
+            data-reveal
             style={{
                 opacity: visible ? 1 : 0,
                 transform: visible ? 'translateY(0)' : 'translateY(48px)',
@@ -233,12 +238,13 @@ function PhoneParallax({ visible }: { visible: boolean }) {
                     boxShadow: '0 44px 90px rgba(0,0,0,0.5), 0 10px 26px rgba(0,0,0,0.32)',
                 }}
             >
-                <img
-                    ref={imgRef}
-                    src={MOBILE_SRC}
+                <Picture
+                    id="showcaseMobile"
+                    imgRef={imgRef}
                     alt="Happier mobile app"
                     onLoad={onScroll}
-                    className="block w-full select-none"
+                    className="block w-full"
+                    imgClassName="w-full select-none"
                     draggable={false}
                     style={{ willChange: 'transform' }}
                 />

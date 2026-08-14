@@ -4,6 +4,7 @@ import { FOOTER_COLUMNS } from './Footer';
 import { GET_STARTED_SECTION_ID } from './GetStarted';
 import { SELF_HOST_STACK_NODES, SELF_HOST_TERMINAL_LINES } from './SelfHost';
 import { DISCORD_INVITE_URL } from '../data/community';
+import { GUIDES_URL } from '../data/downloads';
 
 describe('website public surface links', () => {
     it('keeps the footer get-started link aligned with the section anchor', () => {
@@ -12,6 +13,20 @@ describe('website public surface links', () => {
         expect(productLinks).toContainEqual(expect.objectContaining({
             label: 'Get started',
             href: `#${GET_STARTED_SECTION_ID}`,
+        }));
+    });
+
+    // The nav slot Guides used to hold now belongs to Enterprise
+    // (src/sections/Nav.tsx), which makes this footer entry the only link to
+    // guides.happier.dev anywhere on the site. Those 53 guides were orphaned
+    // once already — crawlable by sitemap and by nothing else — and this is the
+    // check that stops the next tidy-up doing it again.
+    it('keeps guides.happier.dev linked from the footer, its last inbound link', () => {
+        const resourceLinks = FOOTER_COLUMNS.find((column) => column.title === 'Resources')?.links ?? [];
+
+        expect(resourceLinks).toContainEqual(expect.objectContaining({
+            label: 'Guides',
+            href: GUIDES_URL,
         }));
     });
 

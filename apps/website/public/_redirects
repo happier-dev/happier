@@ -1,0 +1,78 @@
+# Cloudflare Pages `_redirects`. Lives in public/ so Vite copies it to the root
+# of dist/, where Pages reads it. Format: <from> <to> [status]. First match wins.
+#
+# ###########################################################################
+# #  DO NOT ADD  `/*  /index.html  200`  TO THIS FILE.                      #
+# ###########################################################################
+#
+# That single line is what makes happier.dev answer HTTP 200 for every URL that
+# does not exist. Verified on 2026-08-08:
+#
+#   curl -sI https://happier.dev/zzz-nope-123   ->  HTTP/2 200, the homepage HTML
+#   curl -sI https://happier.dev/robots.txt     ->  HTTP/2 200, the homepage HTML
+#
+# That is a "soft 404", and it is actively harmful, not merely untidy:
+#
+#   * Google classifies soft 404s as a crawl-quality defect and reports them in
+#     Search Console. Infinite distinct URLs all returning the same 200 page is
+#     the canonical duplicate-content pattern.
+#   * It silently breaks every well-known-file convention. /robots.txt returning
+#     HTML with a 200 means crawlers parse the homepage as robots directives —
+#     which is why this site has effectively had NO robots.txt at all. The same
+#     applies to /sitemap.xml, /.well-known/security.txt and /llms.txt: they
+#     cannot work until this is fixed. This file and the 404 fix are therefore a
+#     prerequisite for every other SEO artifact here, not a polish item.
+#   * A mistyped link becomes a real-looking page instead of an honest error.
+#
+# THE FIX, and why it needs no rule here:
+#
+#   Cloudflare Pages serves `/404.html` from the build output for any request
+#   that matches neither a static asset nor a rule in this file — and it serves
+#   it with a real HTTP 404 status. public/404.html supplies that page. So the
+#   correct catch-all behaviour is achieved by having NO catch-all rule.
+#
+#   This site is a single page with no client-side router (src/App.tsx renders
+#   one document; navigation is anchor-only, #features / #get-started). Anchors
+#   never reach the server. There has never been a reason for the SPA rewrite.
+#
+# IF A REAL ROUTER IS EVER ADDED: still do not add the catch-all. Prerender each
+# route to its own file (dist/agents/index.html, …) so Pages serves each one as
+# a genuine 200 asset, add the route to ROUTES in src/routes.tsx so the sitemap
+# and the prerender stay in step, and leave /404.html to catch everything else.
+# The catch-all trades a correct 404 for a convenience you do not need.
+#
+# THAT MIGRATION HAS NOW HAPPENED. /agents, /agents/<slug> and
+# /vs/claude-code-remote-control are prerendered files, not rewrites, and they
+# need no rule here — which is the point. The only rules below are short links
+# and aliases for URLs that exist elsewhere in the world.
+#
+# ---------------------------------------------------------------------------
+# Short links. These are the only rules that belong in this file: finite,
+# explicit, one destination each.
+# ---------------------------------------------------------------------------
+/docs        https://docs.happier.dev/                                      301
+/docs/*      https://docs.happier.dev/:splat                                301
+/guides      https://guides.happier.dev/                                    301
+/guides/*    https://guides.happier.dev/:splat                              301
+/app         https://app.happier.dev/                                       301
+/github      https://github.com/happier-dev/happier                         301
+/discord     https://discord.gg/W6Pb8KuHfg                                  301
+/releases    https://github.com/happier-dev/happier/releases                301
+/license     https://github.com/happier-dev/happier/blob/main/LICENCE       301
+/security    https://github.com/happier-dev/happier/security/policy         301
+/self-host   https://docs.happier.dev/deployment/self-host-runtime          301
+
+# ---------------------------------------------------------------------------
+# Aliases for real pages. These are shapes people (and competitors' sitemaps)
+# already use for this kind of content, and each would otherwise land on a
+# correct-but-useless 404.
+#
+# `/compare` goes to /agents rather than to a comparison hub, and that is the
+# standing answer to "should the two /vs pages have a parent?": a page whose
+# only content is two links sits between the query and the answer. The pair
+# cross-links directly instead. Revisit when there is a third comparison.
+# ---------------------------------------------------------------------------
+/compare                                 /agents                            301
+/alternatives/claude-code-remote-control  /vs/claude-code-remote-control     301
+/alternatives/codex-remote               /vs/codex-remote                   301
+/vs/codex                                /vs/codex-remote                   301
