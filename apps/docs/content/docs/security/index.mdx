@@ -1,15 +1,22 @@
 ---
 title: Security
-description: Privacy and threat model.
+description: Storage modes, privacy boundaries, and threat model.
 ---
 
-## End-to-end encryption (E2EE)
+## Explicit storage modes
 
-Messages and sensitive session payloads are encrypted on-device. The server stores encrypted blobs and sync metadata, but cannot read content.
+- **E2EE**: Messages and sensitive Session payloads are encrypted on-device. The
+  server stores ciphertext and sync metadata but cannot decrypt the E2EE content.
+- **Plaintext**: Plaintext-account and plaintext-Session content is intentionally
+  readable by the authorized sync server. Deployments may optionally seal selected
+  plaintext values with a server-owned key at rest; the live server can still open
+  them, so this is not E2EE.
+- **Device-local**: Local caches and daemon secrets may use a device-local key. That
+  key is not an Account key and does not make server-shared plaintext content E2EE.
 
 ## What the server can see
 
 - Account identifiers and basic metadata needed to route sync.
-- Encrypted blobs (ciphertext).
+- Ciphertext for content stored in E2EE mode.
+- Content stored in plaintext mode.
 - Operational metadata for running the service (timestamps, sizes).
-

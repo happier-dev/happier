@@ -1,9 +1,12 @@
 ---
 title: Happier Docs
-description: End-to-end encrypted sync for CLI + mobile/web clients.
+description: Sync with explicit E2EE and plaintext storage modes.
 ---
 
-Happier is an end-to-end encrypted sync system for CLI + mobile/web clients. The server stores encrypted data blobs and sync metadata, but cannot read your conversations.
+Happier is a sync system for CLI + mobile/web clients with explicit storage modes.
+E2EE content remains opaque to the sync server. Plaintext-account and plaintext-Session
+content is intentionally server-readable and may optionally be sealed by the server at
+rest; that sealing is not end-to-end encryption.
 
 ## Start here
 
