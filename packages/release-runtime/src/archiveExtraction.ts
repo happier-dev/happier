@@ -1,6 +1,7 @@
-import { createReadStream, createWriteStream } from 'node:fs';
+import { constants, createWriteStream } from 'node:fs';
 import type { EventEmitter } from 'node:events';
 import { lstat, mkdir, mkdtemp, open, readdir, rename, rm, rmdir } from 'node:fs/promises';
+import type { FileHandle } from 'node:fs/promises';
 import { basename, dirname, join, resolve } from 'node:path';
 import { Readable, Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
@@ -53,6 +54,26 @@ function mergeArchiveExtractionLimits(
 type ArchiveBudget = Readonly<{
   account: (kind: ArchiveBudgetEntryKind, byteLength: number) => void;
 }>;
+
+function createOpenArchiveRangeStream(
+  archiveFile: FileHandle,
+  start: number,
+  endExclusive: number,
+): Readable {
+  async function* readRange() {
+    let position = start;
+    while (position < endExclusive) {
+      const buffer = Buffer.allocUnsafe(Math.min(64 * 1024, endExclusive - position));
+      const { bytesRead } = await archiveFile.read(buffer, 0, buffer.byteLength, position);
+      if (bytesRead === 0) {
+        throw new Error('[release-runtime] archive source was truncated during extraction');
+      }
+      position += bytesRead;
+      yield bytesRead === buffer.byteLength ? buffer : buffer.subarray(0, bytesRead);
+    }
+  }
+  return Readable.from(readRange());
+}
 
 function createArchiveBudget(params: Readonly<{
   archiveBytes: number;
@@ -312,7 +333,7 @@ function createTarEntryValidator(
     accept: (entry) => {
       try {
         if (entry.meta) return true;
-        if (entry.type === 'Directory' || entry.type === 'GNUDumpDir') {
+        if (entry.type === 'Directory') {
           budget.account('directory', 0);
           const path = validatePath(entry.path, 'directory');
           if (path !== null) {
@@ -364,16 +385,19 @@ export async function inspectTarArchiveEntries(params: Readonly<{
   signal?: AbortSignal;
 }>): Promise<readonly InspectedTarArchiveEntry[]> {
   const limits = mergeArchiveExtractionLimits(params.limits);
-  const archiveStats = await readArchiveStats({
-    archivePath: params.archivePath,
-    limits,
-  });
-  const abortContext = createArchiveAbortContext({
-    externalSignal: params.signal,
-    timeoutMs: limits.timeoutMs,
-  });
+  const { archiveFile, archiveBytes } = await openArchiveSource(params.archivePath, limits);
+  let abortContext: ArchiveAbortContext;
+  try {
+    abortContext = createArchiveAbortContext({
+      externalSignal: params.signal,
+      timeoutMs: limits.timeoutMs,
+    });
+  } catch (error) {
+    await archiveFile.close().catch(() => undefined);
+    throw error;
+  }
   const entries: InspectedTarArchiveEntry[] = [];
-  const budget = createArchiveBudget({ archiveBytes: archiveStats.size, limits });
+  const budget = createArchiveBudget({ archiveBytes, limits });
   const validateEntry = createTarEntryValidator(
     'reject',
     budget,
@@ -390,7 +414,11 @@ export async function inspectTarArchiveEntries(params: Readonly<{
     };
     const parser = tar.t(parserOptions);
     attachTarMetadataBudget({ parser, budget, abort: abortContext.abort });
-    await pipeline(createReadStream(params.archivePath), parser, { signal: abortContext.signal });
+    await pipeline(
+      createOpenArchiveRangeStream(archiveFile, 0, archiveBytes),
+      parser,
+      { signal: abortContext.signal },
+    );
     abortContext.throwIfAborted();
     validateEntry.assertValid();
     return entries;
@@ -400,6 +428,7 @@ export async function inspectTarArchiveEntries(params: Readonly<{
     throw error;
   } finally {
     abortContext.dispose();
+    await archiveFile.close().catch(() => undefined);
   }
 }
 
@@ -423,6 +452,19 @@ type ValidatedZipArchiveEntry = ZipArchiveEntry & Readonly<{
   mode: number;
   path: string | null;
 }>;
+
+class OpenFileZipReader extends yauzl.RandomAccessReader {
+  readonly #archiveFile: FileHandle;
+
+  constructor(archiveFile: FileHandle) {
+    super();
+    this.#archiveFile = archiveFile;
+  }
+
+  _readStreamForRange(start: number, end: number) {
+    return createOpenArchiveRangeStream(this.#archiveFile, start, end);
+  }
+}
 
 const CRC32_TABLE = Uint32Array.from({ length: 256 }, (_, index) => {
   let value = index;
@@ -610,22 +652,38 @@ async function resolveXzReadableStreamConstructor(): Promise<XzReadableStreamCon
   return await xzReadableStreamConstructorPromise;
 }
 
-async function readArchiveStats(params: Readonly<{
-  archivePath: string;
-  limits: ArchiveExtractionLimits;
-}>) {
-  const archiveStats = await lstat(params.archivePath).catch((error: unknown) => {
+async function openArchiveSource(archivePath: string, limits: ArchiveExtractionLimits): Promise<{
+  archiveFile: FileHandle;
+  archiveBytes: number;
+}> {
+  const sourceStats = await lstat(archivePath).catch((error: unknown) => {
     throw new Error('[release-runtime] archive source is unavailable', {
       cause: error instanceof Error ? error : undefined,
     });
   });
-  if (!archiveStats.isFile() || archiveStats.isSymbolicLink()) {
+  if (!sourceStats.isFile() || sourceStats.isSymbolicLink()) {
     throw new Error('[release-runtime] archive source must be a regular file');
   }
-  if (archiveStats.size > params.limits.maxArchiveBytes) {
-    throw new Error('[release-runtime] archive exceeds compressed-byte limit');
+  const noFollow = process.platform === 'win32' ? 0 : constants.O_NOFOLLOW;
+  const archiveFile = await open(archivePath, constants.O_RDONLY | noFollow);
+  try {
+    const openedStats = await archiveFile.stat();
+    if (
+      !openedStats.isFile()
+      || openedStats.size < 1
+      || openedStats.dev !== sourceStats.dev
+      || openedStats.ino !== sourceStats.ino
+    ) {
+      throw new Error('[release-runtime] archive source changed before it could be opened safely');
+    }
+    if (openedStats.size > limits.maxArchiveBytes) {
+      throw new Error('[release-runtime] archive exceeds compressed-byte limit');
+    }
+    return { archiveFile, archiveBytes: openedStats.size };
+  } catch (error) {
+    await archiveFile.close().catch(() => undefined);
+    throw error;
   }
-  return archiveStats;
 }
 
 async function assertEmptyExtractionDestination(extractDir: string): Promise<boolean> {
@@ -683,7 +741,7 @@ async function extractTarArchiveToDirectory(params: Readonly<{
   abortContext: ArchiveAbortContext;
   allowedEntryRoots?: readonly string[];
   archiveBytes: number;
-  archivePath: string;
+  archiveFile: FileHandle;
   extractDir: string;
   isXz: boolean;
   limits: ArchiveExtractionLimits;
@@ -712,7 +770,7 @@ async function extractTarArchiveToDirectory(params: Readonly<{
 
   try {
     if (params.isXz) {
-      const source = createReadStream(params.archivePath);
+      const source = createOpenArchiveRangeStream(params.archiveFile, 0, params.archiveBytes);
       const XzReadableStream = await resolveXzReadableStreamConstructor();
       const decompressedStream = new XzReadableStream(Readable.toWeb(source));
       await pipeline(
@@ -723,7 +781,7 @@ async function extractTarArchiveToDirectory(params: Readonly<{
       );
     } else {
       await pipeline(
-        createReadStream(params.archivePath),
+        createOpenArchiveRangeStream(params.archiveFile, 0, params.archiveBytes),
         unpack,
         { signal: params.abortContext.signal },
       );
@@ -739,7 +797,8 @@ async function extractTarArchiveToDirectory(params: Readonly<{
 
 async function readValidatedZipEntries(params: Readonly<{
   abortContext: ArchiveAbortContext;
-  archivePath: string;
+  archiveBytes: number;
+  archiveFile: FileHandle;
   validateEntry: (entry: ZipArchiveEntry) => ValidatedZipArchiveEntry;
 }>): Promise<readonly ValidatedZipArchiveEntry[]> {
   const entries: ValidatedZipArchiveEntry[] = [];
@@ -776,8 +835,9 @@ async function readValidatedZipEntries(params: Readonly<{
     const onAbort = () => settle(params.abortContext.signal.reason);
     params.abortContext.signal.addEventListener('abort', onAbort, { once: true });
 
-    yauzl.open(
-      params.archivePath,
+    yauzl.fromRandomAccessReader(
+      new OpenFileZipReader(params.archiveFile),
+      params.archiveBytes,
       {
         autoClose: false,
         decodeStrings: false,
@@ -1208,7 +1268,7 @@ function createZipPayloadVerifier(params: Readonly<{
 
 async function extractValidatedZipEntry(params: Readonly<{
   abortContext: ArchiveAbortContext;
-  archivePath: string;
+  archiveFile: FileHandle;
   entry: ValidatedZipArchiveEntry & Readonly<{ dataOffset: number }>;
   extractDir: string;
 }>): Promise<void> {
@@ -1226,10 +1286,11 @@ async function extractValidatedZipEntry(params: Readonly<{
   await mkdir(dirname(outputPath), { recursive: true });
   const payloadSource = params.entry.compressedSize === 0
     ? Readable.from([])
-    : createReadStream(params.archivePath, {
-        start: params.entry.dataOffset,
-        end: params.entry.dataOffset + params.entry.compressedSize - 1,
-      });
+    : createOpenArchiveRangeStream(
+        params.archiveFile,
+        params.entry.dataOffset,
+        params.entry.dataOffset + params.entry.compressedSize,
+      );
   const verifier = createZipPayloadVerifier(params);
   const output = createWriteStream(outputPath, {
     flags: 'wx',
@@ -1264,7 +1325,7 @@ async function extractZipArchiveToDirectory(params: Readonly<{
   abortContext: ArchiveAbortContext;
   allowedEntryRoots?: readonly string[];
   archiveBytes: number;
-  archivePath: string;
+  archiveFile: FileHandle;
   extractDir: string;
   limits: ArchiveExtractionLimits;
 }>): Promise<void> {
@@ -1279,15 +1340,14 @@ async function extractZipArchiveToDirectory(params: Readonly<{
   });
   const entries = await readValidatedZipEntries({
     abortContext: params.abortContext,
-    archivePath: params.archivePath,
+    archiveBytes: params.archiveBytes,
+    archiveFile: params.archiveFile,
     validateEntry,
   });
-  const archiveFile = await open(params.archivePath, 'r');
-  try {
-    const centralDirectory = await readZipCentralDirectory({
+  const centralDirectory = await readZipCentralDirectory({
       abortContext: params.abortContext,
       archiveBytes: params.archiveBytes,
-      archiveFile,
+      archiveFile: params.archiveFile,
     });
     const entriesWithOffsets: Array<ValidatedZipArchiveEntry & Readonly<{ dataOffset: number }>> = [];
     const ranges: Array<ValidatedZipEntryRange & Readonly<{ fileName: string }>> = [];
@@ -1296,7 +1356,7 @@ async function extractZipArchiveToDirectory(params: Readonly<{
       const range = await readZipEntryDataOffset({
         abortContext: params.abortContext,
         archiveBytes: params.archiveBytes,
-        archiveFile,
+        archiveFile: params.archiveFile,
         centralDirectoryOffset: centralDirectory.offset,
         entry,
       });
@@ -1316,18 +1376,13 @@ async function extractZipArchiveToDirectory(params: Readonly<{
         );
       }
     }
-    await archiveFile.close();
-
-    for (const entry of entriesWithOffsets) {
-      await extractValidatedZipEntry({
-        abortContext: params.abortContext,
-        archivePath: params.archivePath,
-        entry,
-        extractDir: params.extractDir,
-      });
-    }
-  } finally {
-    await archiveFile.close().catch(() => undefined);
+  for (const entry of entriesWithOffsets) {
+    await extractValidatedZipEntry({
+      abortContext: params.abortContext,
+      archiveFile: params.archiveFile,
+      entry,
+      extractDir: params.extractDir,
+    });
   }
 }
 
@@ -1353,14 +1408,17 @@ export async function extractArchivePayloadToDirectory(params: Readonly<{
   }
 
   const limits = mergeArchiveExtractionLimits(params.limits);
-  const archiveStats = await readArchiveStats({
-    archivePath: params.archivePath,
-    limits,
-  });
-  const abortContext = createArchiveAbortContext({
-    externalSignal: params.signal,
-    timeoutMs: limits.timeoutMs,
-  });
+  const { archiveFile, archiveBytes } = await openArchiveSource(params.archivePath, limits);
+  let abortContext: ArchiveAbortContext;
+  try {
+    abortContext = createArchiveAbortContext({
+      externalSignal: params.signal,
+      timeoutMs: limits.timeoutMs,
+    });
+  } catch (error) {
+    await archiveFile.close().catch(() => undefined);
+    throw error;
+  }
   const extractDir = resolve(params.extractDir);
   let stagingDir: string | null = null;
 
@@ -1376,8 +1434,8 @@ export async function extractArchivePayloadToDirectory(params: Readonly<{
       await extractZipArchiveToDirectory({
         abortContext,
         allowedEntryRoots: params.allowedEntryRoots,
-        archiveBytes: archiveStats.size,
-        archivePath: params.archivePath,
+        archiveBytes,
+        archiveFile,
         extractDir: stagingDir,
         limits,
       });
@@ -1385,8 +1443,8 @@ export async function extractArchivePayloadToDirectory(params: Readonly<{
       await extractTarArchiveToDirectory({
         abortContext,
         allowedEntryRoots: params.allowedEntryRoots,
-        archiveBytes: archiveStats.size,
-        archivePath: params.archivePath,
+        archiveBytes,
+        archiveFile,
         extractDir: stagingDir,
         isXz: archiveType === 'tar.xz',
         limits,
@@ -1426,5 +1484,6 @@ export async function extractArchivePayloadToDirectory(params: Readonly<{
     throw failure;
   } finally {
     abortContext.dispose();
+    await archiveFile.close().catch(() => undefined);
   }
 }

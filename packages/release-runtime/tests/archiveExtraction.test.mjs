@@ -12,6 +12,13 @@ import {
   inspectTarArchiveEntries,
 } from '../dist/archiveExtraction.js';
 
+test('archive extraction keeps every format bound to one opened source handle', async () => {
+  const source = await readFile(new URL('../src/archiveExtraction.ts', import.meta.url), 'utf8');
+  assert.doesNotMatch(source, /createReadStream\(params\.archivePath/);
+  assert.doesNotMatch(source, /yauzl\.open\(\s*params\.archivePath/);
+  assert.equal((source.match(/openArchiveSource\(/g) ?? []).length, 3);
+});
+
 function writeTarString(header, offset, length, value) {
   Buffer.from(value, 'utf8').copy(header, offset, 0, length);
 }
@@ -1228,6 +1235,7 @@ test('inspectTarArchiveEntries rejects traversal, links, and special entries bef
       { label: 'symlink', entries: [{ name: 'package/link', type: '2', linkpath: '../outside' }], pattern: /link/iu },
       { label: 'hardlink', entries: [{ name: 'package/hardlink', type: '1', linkpath: 'package/target' }], pattern: /link/iu },
       { label: 'fifo', entries: [{ name: 'package/fifo', type: '6' }], pattern: /not supported/iu },
+      { label: 'gnu-dump-dir', entries: [{ name: 'package', type: 'D', contents: 'unbudgeted metadata' }], pattern: /not supported/iu },
       {
         label: 'file-prefix',
         entries: [
