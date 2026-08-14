@@ -302,6 +302,7 @@ export {
   readAcpSessionModeIntentFromMetadata,
   readModelIntentFromMetadata,
   readPermissionModeIntentFromMetadata,
+  readSessionStateFieldFromMetadata,
   readStringOverrideIntentFromMetadata,
   SESSION_CONFIG_OPTION_OVERRIDES_KEY,
   SESSION_MODE_OVERRIDE_KEY,

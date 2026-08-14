@@ -1,4 +1,4 @@
-import { SESSION_RUNNER_RUNTIME_METADATA_KEY, type SessionMetadata, type SessionStateFieldId } from '@happier-dev/protocol';
+import { SESSION_RUNNER_RUNTIME_METADATA_KEY, type SessionMetadata, type SessionStateFieldId, type SessionStateFieldValue } from '@happier-dev/protocol';
 
 import type {
   MetadataUpdatePort,
@@ -45,6 +45,14 @@ function getBinding<F extends SessionStateFieldId>(fieldId: F): SessionStateBind
 
 export function hasSessionStateFieldMetadataBinding(fieldId: SessionStateFieldId): boolean {
   return fieldId in SESSION_STATE_METADATA_BINDINGS;
+}
+
+export function readSessionStateFieldFromMetadata<F extends SessionStateFieldId>(
+  metadata: SessionMetadata,
+  fieldId: F,
+): SessionStateFieldValue<F> | undefined {
+  const value = getBinding(fieldId)?.read(metadata).value;
+  return value === null || value === undefined ? undefined : value;
 }
 
 export function writeSessionStateFieldToMetadata<F extends SessionStateFieldId>(

@@ -48,6 +48,7 @@ export {
   clearSessionStateFieldFromMetadata,
   createSessionStateFieldMetadataUpdater,
   hasSessionStateFieldMetadataBinding,
+  readSessionStateFieldFromMetadata,
   writeSessionStateFieldToMetadata,
   publishSessionStateFieldMutationToMetadata,
   publishSessionStateFieldToMetadata,
