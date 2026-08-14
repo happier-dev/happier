@@ -1,4 +1,5 @@
-import { createHash } from 'node:crypto';
+import { sha256 } from '@noble/hashes/sha2';
+import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils';
 
 import { z } from 'zod';
 
@@ -67,7 +68,7 @@ export function normalizeMarketplaceSourceUrlV1(sourceUrl: string): string {
 }
 
 export function deriveMarketplaceSourceId(sourceUrl: string): string {
-  return `marketplace:${createHash('sha256').update(String(sourceUrl ?? '').trim()).digest('hex').slice(0, 12)}`;
+  return `marketplace:${bytesToHex(sha256(utf8ToBytes(String(sourceUrl ?? '').trim()))).slice(0, 12)}`;
 }
 
 export function deriveMarketplaceSourceTitle(sourceUrl: string): string {

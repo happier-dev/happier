@@ -22,6 +22,10 @@
       "types": "./dist/rpc/index.d.ts",
       "default": "./dist/rpc/index.js"
     },
+    "./marketplace": {
+      "types": "./dist/marketplace/index.d.ts",
+      "default": "./dist/marketplace/index.js"
+    },
     "./marketplace/internal": {
       "types": "./dist/marketplace/internal.d.ts",
       "default": "./dist/marketplace/internal.js"

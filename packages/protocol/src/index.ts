@@ -135,7 +135,7 @@ export {
   type ConnectedAccountQuotaFailureRequestV1,
   type RequestAuthFailureOutcomeV1,
 } from './connect/connectedAccountRequestAuth.js';
-export * from './marketplace/marketplaceIndexV1.js';
+export * from './marketplace/index.js';
 export * from './connect/connectedAccountUiProjectionV1.js';
 export * from './sessions/pending/sessionPendingQueueWakeV1.js';
 export * from './sessions/pending/pendingRequestedActionV1.js';
@@ -4722,26 +4722,6 @@ export {
   type PromptRegistrySourceDescriptorV1,
   type PromptRegistrySourcesV1,
 } from './prompts/library/promptRegistriesV1.js';
-export {
-  MarketplaceSourceOriginV1Schema,
-  MarketplaceSourceRegistryV1Schema,
-  MarketplaceSourceV1Schema,
-  createCuratedMarketplaceSourceV1,
-  createMarketplaceSourceV1,
-  createDefaultCuratedMarketplaceSourceRegistryV1,
-  deriveMarketplaceSourceId,
-  deriveMarketplaceSourceTitle,
-  seedCuratedMarketplaceSourceRegistryV1,
-  normalizeMarketplaceSourceUrlV1,
-  resolvePreferredMarketplaceSource,
-  DEFAULT_CURATED_MARKETPLACE_SOURCE_DESCRIPTION,
-  DEFAULT_CURATED_MARKETPLACE_SOURCE_TITLE,
-  type MarketplaceSourceOriginV1,
-  type MarketplaceSourceRecordInputV1,
-  type MarketplaceSourceRegistryV1,
-  type MarketplaceSourceV1,
-} from './marketplace/marketplaceSourceRegistryV1.js';
-
 export {
   PromptPlacementV1Schema,
   type PromptPlacementV1,

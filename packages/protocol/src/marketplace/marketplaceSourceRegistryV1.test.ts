@@ -1,3 +1,6 @@
+import { resolve } from 'node:path';
+
+import { build } from 'vite';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -9,7 +12,14 @@ import {
   seedCuratedMarketplaceSourceRegistryV1,
   resolvePreferredMarketplaceSource,
   createMarketplaceSourceV1,
+  deriveMarketplaceSourceId,
 } from './marketplaceSourceRegistryV1.js';
+
+const MARKETPLACE_BROWSER_EXPORTS = [
+  'createMarketplaceSourceV1',
+  'resolvePreferredMarketplaceSource',
+  'MarketplaceIndexQueryResultV1Schema',
+] as const;
 
 describe('marketplaceSourceRegistryV1 schemas', () => {
   it('bounds configured sources', () => {
@@ -153,6 +163,62 @@ describe('marketplaceSourceRegistryV1 schemas', () => {
       sources: [source],
     });
   });
+
+  it('retains the stable SHA-256 source identity used by persisted marketplace records', () => {
+    expect(deriveMarketplaceSourceId('https://marketplace.example.test/catalog.json'))
+      .toBe('marketplace:eb6d4c94505d');
+  });
+
+  it('bundles the public marketplace source projection without Node built-ins', async () => {
+    const marketplaceEntry = resolve(import.meta.dirname, 'index.ts');
+    const moduleIds = new Set<string>();
+    const nodeImports = new Set<string>();
+    const browserExternalImporters = new Set<string>();
+
+    await build({
+      configFile: false,
+      logLevel: 'silent',
+      plugins: [{
+        name: 'marketplace-source-registry-browser-projection',
+        resolveId(id, importer) {
+          if (id.startsWith('node:')) {
+            nodeImports.add(`${id} from ${importer ?? '<entry>'}`);
+          }
+          return id === 'virtual:marketplace-source-registry-browser-projection' ? `\0${id}` : null;
+        },
+        load(id) {
+          if (id !== '\0virtual:marketplace-source-registry-browser-projection') return null;
+          return `export { ${MARKETPLACE_BROWSER_EXPORTS.join(', ')} } from ${JSON.stringify(marketplaceEntry)};`;
+        },
+        generateBundle() {
+          for (const id of this.getModuleIds()) {
+            moduleIds.add(id);
+            if (id.includes('__vite-browser-external')) {
+              for (const importer of this.getModuleInfo(id)?.importers ?? []) {
+                browserExternalImporters.add(importer);
+              }
+            }
+          }
+        },
+      }],
+      build: {
+        minify: false,
+        target: 'es2022',
+        write: false,
+        rollupOptions: {
+          input: 'virtual:marketplace-source-registry-browser-projection',
+          preserveEntrySignatures: 'strict',
+          output: { format: 'es', inlineDynamicImports: true },
+        },
+      },
+    });
+
+    expect({
+      nodeImports: [...nodeImports],
+      browserExternalImporters: [...browserExternalImporters],
+      forbiddenModuleIds: [...moduleIds].filter((id) => id.startsWith('node:') || id.includes('__vite-browser-external')),
+    }).toEqual({ nodeImports: [], browserExternalImporters: [], forbiddenModuleIds: [] });
+  }, 60_000);
 
   it('normalizes blank marketplace source descriptions to null', () => {
     expect(createMarketplaceSourceV1({
