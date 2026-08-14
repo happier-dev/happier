@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { Metadata, PermissionMode } from '@/api/types';
-import type { CatalogAcpRuntimeCreateCall } from '@/testkit/backends/catalogAcpRuntime';
+import type { CatalogAcpRuntimeCreateCall, CatalogAcpSessionOpenCall } from '@/testkit/backends/catalogAcpRuntime';
 import { createCatalogAcpBackendSpy, createMessageBufferFixture, createSessionProviderInputConsumerFixture } from '@/testkit/backends/catalogAcpRuntime';
 import { createApprovedPermissionHandler } from '@/testkit/backends/permissionHandler';
 import { createApiSessionClientFixture, createMutableApiSessionClientFixture } from '@/testkit/backends/sessionFixtures';
@@ -77,6 +77,32 @@ describe('Pi ACP runtime permission mode wiring', () => {
         process.env.HAPPIER_PI_BROKER_SELECTIONS = previousSelections;
       }
     }
+  });
+
+  it('binds Pi session open to the enclosing runner cancellation signal', async () => {
+    const createCalls: CatalogAcpRuntimeCreateCall[] = [];
+    const sessionOpenCalls: CatalogAcpSessionOpenCall[] = [];
+    createCatalogAcpBackendSpy(createCalls, sessionOpenCalls);
+    const controller = new AbortController();
+
+    const runtime = createPiAcpRuntime({
+      directory: '/tmp',
+      machineId: 'machine-1',
+      session: createApiSessionClientFixture(),
+      messageBuffer: createMessageBufferFixture(),
+      mcpServers: {},
+      permissionHandler: createApprovedPermissionHandler(),
+      onThinkingChange() {},
+      getSessionOpenAbortSignal: () => controller.signal,
+      providerInputConsumer: createSessionProviderInputConsumerFixture(),
+    });
+
+    await runtime.startOrLoad({});
+
+    expect(sessionOpenCalls).toEqual([{
+      initialPrompt: undefined,
+      options: { signal: controller.signal },
+    }]);
   });
 
   it('forwards permissionMode to createCatalogAcpBackend and recreates backend after reset', async () => {

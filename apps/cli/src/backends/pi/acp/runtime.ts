@@ -18,6 +18,7 @@ export function createPiAcpRuntime(params: {
   mcpServers: Record<string, McpServerConfig>;
   permissionHandler: AcpPermissionHandler;
   onThinkingChange: (thinking: boolean) => void;
+  getSessionOpenAbortSignal?: () => AbortSignal | undefined;
   memoryRecallGuidanceEnabled?: boolean;
   getPermissionMode?: () => PermissionMode | null | undefined;
   pendingQueueDrainMaxPopPerWake?: number;
@@ -54,6 +55,7 @@ export function createPiAcpRuntime(params: {
     },
     resolveExpectedVendorSessionIdForResume: resolvePiSessionIdFromResumeReference,
     onThinkingChange: params.onThinkingChange,
+    getSessionOpenAbortSignal: params.getSessionOpenAbortSignal,
     memoryRecallGuidance: {
       enabled: params.memoryRecallGuidanceEnabled === true,
       machineId: params.machineId,

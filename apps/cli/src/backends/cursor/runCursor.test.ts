@@ -70,6 +70,7 @@ describe('runCursor', () => {
       mcpServers: {},
       permissionHandler: { requestPermission: vi.fn() } as never,
       getPermissionMode: () => 'default',
+      getAbortSignal: () => new AbortController().signal,
       setThinking: vi.fn(),
       memoryRecallGuidanceEnabled: false,
       turnAssistantPreviewTracker: {} as never,

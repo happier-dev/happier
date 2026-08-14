@@ -2,7 +2,7 @@ import { mkdtemp, readFile, readdir, writeFile, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   PI_BROKER_LOAD_NONCE_ENV,
@@ -53,7 +53,7 @@ describe('verifyPiBrokerReadyForConnectedSession (fail-closed preflight)', () =>
     }), 'utf8');
   });
   afterEach(() => {
-    // no shared global state
+    vi.useRealTimers();
   });
 
   const brokeredEnv = (overrides: Record<string, string> = {}): Record<string, string> => ({
@@ -70,6 +70,7 @@ describe('verifyPiBrokerReadyForConnectedSession (fail-closed preflight)', () =>
   it('is ready when the extension file exists, the bridge is reachable, and the handshake is observed', async () => {
     await ensurePiBrokerExtensionAsset(agentDir);
     const readiness = await verifyPiBrokerReadyForConnectedSession(brokeredEnv(), {
+      deadlineMs: Date.now() + 60_000,
       verifyLoadHandshake: async (selectionIdentity, loadNonce) =>
         selectionIdentity === 'pi|connected|broker:1|anthropic:c:' && loadNonce === 'pi-spawn-ready',
     });
@@ -77,12 +78,16 @@ describe('verifyPiBrokerReadyForConnectedSession (fail-closed preflight)', () =>
   });
 
   it('is a strict no-op (ready) for native sessions (no selection identity)', async () => {
-    const readiness = await verifyPiBrokerReadyForConnectedSession({ PI_CODING_AGENT_DIR: agentDir });
+    const readiness = await verifyPiBrokerReadyForConnectedSession(
+      { PI_CODING_AGENT_DIR: agentDir },
+      { deadlineMs: Date.now() + 60_000 },
+    );
     expect(readiness).toEqual({ ready: true });
   });
 
   it('fails closed when the extension file is missing', async () => {
     const readiness = await verifyPiBrokerReadyForConnectedSession(brokeredEnv(), {
+      deadlineMs: Date.now() + 60_000,
       verifyLoadHandshake: async () => true,
     });
     expect(readiness).toEqual({ ready: false, reason: 'broker_extension_file_missing' });
@@ -92,7 +97,7 @@ describe('verifyPiBrokerReadyForConnectedSession (fail-closed preflight)', () =>
     await ensurePiBrokerExtensionAsset(agentDir);
     const readiness = await verifyPiBrokerReadyForConnectedSession(
       brokeredEnv({ HAPPIER_PI_BROKER_STATE_PATH: join(agentDir, 'missing.json') }),
-      { verifyLoadHandshake: async () => true },
+      { deadlineMs: Date.now() + 60_000, verifyLoadHandshake: async () => true },
     );
     expect(readiness).toEqual({ ready: false, reason: 'broker_daemon_bridge_unreachable' });
   });
@@ -102,7 +107,7 @@ describe('verifyPiBrokerReadyForConnectedSession (fail-closed preflight)', () =>
     await writeFile(brokerStatePath, JSON.stringify({ httpPort: 5 }), 'utf8');
     const readiness = await verifyPiBrokerReadyForConnectedSession(
       brokeredEnv(),
-      { verifyLoadHandshake: async () => true },
+      { deadlineMs: Date.now() + 60_000, verifyLoadHandshake: async () => true },
     );
     expect(readiness).toEqual({ ready: false, reason: 'broker_daemon_bridge_unreachable' });
   });
@@ -110,10 +115,87 @@ describe('verifyPiBrokerReadyForConnectedSession (fail-closed preflight)', () =>
   it('fails closed with broker_extension_not_loaded when the handshake never arrives', async () => {
     await ensurePiBrokerExtensionAsset(agentDir);
     const readiness = await verifyPiBrokerReadyForConnectedSession(brokeredEnv(), {
-      handshakeWaitMs: 0,
+      deadlineMs: Date.now(),
       verifyLoadHandshake: async () => false,
     });
     expect(readiness).toEqual({ ready: false, reason: 'broker_extension_not_loaded' });
+  });
+
+  it('allows a handshake after four seconds when it remains inside the session-open deadline', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000);
+    await ensurePiBrokerExtensionAsset(agentDir);
+    const options = {
+      deadlineMs: Date.now() + 60_000,
+      verifyLoadHandshake: async (
+        _selectionIdentity: string,
+        _loadNonce: string,
+        _providers: readonly string[],
+        _pluginVersion: string,
+        deadlineMs: number,
+      ) => {
+        vi.setSystemTime(Date.now() + 4_500);
+        return Date.now() <= deadlineMs;
+      },
+    };
+
+    await expect(verifyPiBrokerReadyForConnectedSession(brokeredEnv(), options)).resolves.toEqual({ ready: true });
+  });
+
+  it('fails closed when the owning session-open signal is cancelled during the handshake', async () => {
+    vi.useFakeTimers();
+    const controller = new AbortController();
+    await ensurePiBrokerExtensionAsset(agentDir);
+    const options = {
+      deadlineMs: Date.now() + 60_000,
+      signal: controller.signal,
+      verifyLoadHandshake: async () => {
+        controller.abort('session-open-cancelled');
+        return true;
+      },
+    };
+
+    await expect(verifyPiBrokerReadyForConnectedSession(brokeredEnv(), options)).resolves.toEqual({
+      ready: false,
+      reason: 'broker_readiness_cancelled',
+    });
+  });
+
+  it('fails closed when the spawned Pi process stops owning the handshake wait', async () => {
+    vi.useFakeTimers();
+    let processActive = true;
+    await ensurePiBrokerExtensionAsset(agentDir);
+    const options = {
+      deadlineMs: Date.now() + 60_000,
+      isProcessActive: () => processActive,
+      verifyLoadHandshake: async () => {
+        processActive = false;
+        return true;
+      },
+    };
+
+    await expect(verifyPiBrokerReadyForConnectedSession(brokeredEnv(), options)).resolves.toEqual({
+      ready: false,
+      reason: 'broker_process_exited',
+    });
+  });
+
+  it('fails closed when the shared session-open deadline expires before the handshake', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000);
+    await ensurePiBrokerExtensionAsset(agentDir);
+    const options = {
+      deadlineMs: Date.now() + 100,
+      verifyLoadHandshake: async () => {
+        vi.setSystemTime(Date.now() + 101);
+        return true;
+      },
+    };
+
+    await expect(verifyPiBrokerReadyForConnectedSession(brokeredEnv(), options)).resolves.toEqual({
+      ready: false,
+      reason: 'broker_extension_not_loaded',
+    });
   });
 });
 

@@ -13,6 +13,7 @@ import { createApprovedPermissionHandler } from '@/testkit/backends/permissionHa
 import { createBasicSessionClientWithOverrides } from '@/testkit/backends/sessionFixtures';
 import { AcpPromptSubmissionPhaseError } from '@/agent/acp/AcpBackend';
 import { ProviderPromptSubmissionRejectedBeforeEffectError } from '@/agent/runtime/providerPromptSubmission';
+import { PiRpcBackend } from '@/backends/pi/rpc/PiRpcBackend';
 
 describe('createAcpRuntime (status error surfacing)', () => {
   afterEach(() => {
@@ -235,6 +236,85 @@ describe('createAcpRuntime (status error surfacing)', () => {
         compatibilityMarkerSent: true,
       }),
     ]);
+  });
+
+  it('preserves a Pi broker readiness failure before provider send through the ACP failure surface', async () => {
+    const backend = new PiRpcBackend({
+      cwd: '/tmp',
+      command: process.execPath,
+      args: [],
+      env: {},
+    });
+    const providerCommands: string[] = [];
+    const brokerHarness = backend as unknown as {
+      connectedBrokerPreflight: Promise<
+        | Readonly<{ ready: true }>
+        | Readonly<{ ready: false; reason: string }>
+      > | null;
+      ensureProcess: () => Promise<void>;
+      sendCommand: (command: Readonly<{ type: string }>) => Promise<unknown>;
+    };
+    brokerHarness.ensureProcess = async () => {};
+    brokerHarness.sendCommand = async (command) => {
+      providerCommands.push(command.type);
+      if (command.type === 'get_state') {
+        return {
+          type: 'response',
+          command: command.type,
+          success: true,
+          data: { sessionId: 'pi-broker-readiness-session' },
+        };
+      }
+      return {
+        type: 'response',
+        command: command.type,
+        success: true,
+        data: command.type === 'get_available_models' ? { models: [] } : { commands: [] },
+      };
+    };
+    brokerHarness.connectedBrokerPreflight = Promise.resolve({ ready: true });
+
+    const sent: ACPMessageData[] = [];
+    const runtime = createAcpRuntime({
+      provider: 'pi',
+      directory: '/tmp',
+      session: createBasicSessionClientWithOverrides({
+        sendAgentMessage: (_provider, body) => sent.push(body),
+      }),
+      messageBuffer: new MessageBuffer(),
+      mcpServers: {},
+      permissionHandler: createApprovedPermissionHandler(),
+      onThinkingChange: () => {},
+      ensureBackend: async () => backend,
+    });
+
+    await runtime.startOrLoad({});
+    providerCommands.length = 0;
+    brokerHarness.connectedBrokerPreflight = Promise.resolve({
+      ready: false,
+      reason: 'broker_extension_not_loaded',
+    });
+    runtime.beginTurn();
+
+    const promptError = await runtime.sendPromptWithMeta({ text: 'hello' }).then(
+      () => null,
+      (error: unknown) => error,
+    );
+    expect(promptError).not.toBeNull();
+    await runtime.failTurn(promptError);
+
+    expect(providerCommands).toEqual([]);
+    expect(sent).toContainEqual(expect.objectContaining({
+      type: 'turn_failed',
+      issue: expect.objectContaining({
+        provider: 'pi',
+        source: 'dependency_failure',
+        code: 'pi_broker_readiness_failure',
+        sanitizedPreview: 'Pi connected-service broker was not ready before provider send',
+      }),
+    }));
+    expect(JSON.stringify(sent)).not.toContain('after prompt acceptance');
+    expect(JSON.stringify(sent)).not.toContain('broker_extension_not_loaded');
   });
 
   it('preserves a Pi provider failure through the live ACP submission wrapper chain', async () => {

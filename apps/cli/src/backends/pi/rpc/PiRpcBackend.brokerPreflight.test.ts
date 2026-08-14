@@ -1,14 +1,16 @@
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   PI_BROKER_STATE_PATH_ENV,
   PI_BROKER_LOAD_NONCE_ENV,
   PI_BROKER_SELECTIONS_ENV,
   PI_BROKER_SELECTION_IDENTITY_ENV,
+  PiBrokerReadinessError,
+  ensurePiBrokerExtensionAsset,
   serializePiBrokerSelections,
 } from '@/backends/pi/brokerExtension';
 
@@ -42,6 +44,7 @@ describe('PiRpcBackend connected-service broker preflight (fail-closed)', () => 
   const tempDirs: string[] = [];
 
   afterEach(() => {
+    vi.useRealTimers();
     for (const dir of tempDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
   });
 
@@ -76,7 +79,7 @@ describe('PiRpcBackend connected-service broker preflight (fail-closed)', () => 
   }
 
   async function waitForHook(label: string, resolveHook: () => unknown): Promise<void> {
-    for (let attempt = 0; attempt < 10; attempt += 1) {
+    for (let attempt = 0; attempt < 100; attempt += 1) {
       if (resolveHook()) return;
       await Promise.resolve();
     }
@@ -135,6 +138,106 @@ describe('PiRpcBackend connected-service broker preflight (fail-closed)', () => 
     expect(trackers.ensureProcessReached).toBe(true);
     expect(trackers.rpcCommandCount).toBe(0);
   });
+
+  it('fails the broker readiness wait when the exact spawned Pi child exits', async () => {
+    const workDir = mkdtempSync(join(tmpdir(), 'happier-pi-broker-process-exit-'));
+    tempDirs.push(workDir);
+    const agentDir = join(workDir, 'pi-agent');
+    const brokerStatePath = join(workDir, 'connected-service-broker.state.json');
+    writeFileSync(brokerStatePath, JSON.stringify({
+      httpPort: 5,
+      connectedServiceBrokerRefreshToken: 'scoped',
+    }));
+    await ensurePiBrokerExtensionAsset(agentDir);
+
+    const backend = new PiRpcBackend({
+      cwd: workDir,
+      command: process.execPath,
+      args: ['-e', 'setTimeout(() => process.exit(0), 50)'],
+      env: {
+        PI_CODING_AGENT_DIR: agentDir,
+        [PI_BROKER_STATE_PATH_ENV]: brokerStatePath,
+        [PI_BROKER_SELECTION_IDENTITY_ENV]: 'pi|connected|broker:1|anthropic:claude-pro:',
+        [PI_BROKER_SELECTIONS_ENV]: serializePiBrokerSelections({
+          anthropic: {
+            serviceId: 'claude-subscription',
+            profileId: 'claude-pro',
+            accountId: null,
+            planType: null,
+          },
+        }),
+      },
+    });
+
+    try {
+      await expect(backend.startSession()).rejects.toThrow(/broker_process_exited/);
+    } finally {
+      await backend.dispose();
+    }
+  });
+
+  it.each([
+    { pendingCommand: 'get_state' as const, answerInitialState: false },
+    { pendingCommand: 'new_session' as const, answerInitialState: true },
+  ])(
+    'cancels a pending session-open $pendingCommand RPC after readiness without leaking its request timer',
+    async ({ pendingCommand, answerInitialState }) => {
+      vi.useFakeTimers();
+      const workDir = mkdtempSync(join(tmpdir(), 'happier-pi-session-open-cancel-'));
+      tempDirs.push(workDir);
+      const backend = new PiRpcBackend({ cwd: workDir, command: process.execPath, args: [], env: {} });
+      const controller = new AbortController();
+      const observedCommands: string[] = [];
+      const priv = backend as unknown as {
+        connectedBrokerPreflight: Promise<unknown> | null;
+        ensureProcess: () => Promise<void>;
+        process: { stdin: { write: (chunk: string, callback?: (error?: Error | null) => void) => boolean } } | null;
+        pendingRequests: Map<string, unknown>;
+        handleResponse: (response: Record<string, unknown>) => void;
+      };
+
+      priv.connectedBrokerPreflight = Promise.resolve({ ready: true });
+      priv.ensureProcess = async () => undefined;
+      priv.process = {
+        stdin: {
+          write: (chunk, callback) => {
+            callback?.(null);
+            const command = JSON.parse(chunk) as { id: string; type: string };
+            observedCommands.push(command.type);
+            if (answerInitialState && command.type === 'get_state') {
+              priv.handleResponse({
+                id: command.id,
+                type: 'response',
+                command: 'get_state',
+                success: true,
+                data: {},
+              });
+            }
+            return true;
+          },
+        },
+      };
+
+      const openPromise = backend.startSession(undefined, { signal: controller.signal });
+      await waitForHook(`${pendingCommand} request`, () => (
+        observedCommands.at(-1) === pendingCommand && priv.pendingRequests.size === 1
+      ));
+      expect(vi.getTimerCount()).toBe(1);
+
+      controller.abort('session-open-cancelled');
+
+      const failure = await openPromise.catch((error: unknown) => error);
+      expect(failure).toBeInstanceOf(PiBrokerReadinessError);
+      expect((failure as PiBrokerReadinessError).piBrokerReadinessFailure).toEqual({
+        classification: 'pi_broker_readiness_failure',
+        reason: 'broker_readiness_cancelled',
+        code: 'pi_broker_readiness_failure',
+        sanitizedPreview: 'Pi connected-service broker was not ready before provider send',
+      });
+      expect(priv.pendingRequests.size).toBe(0);
+      expect(vi.getTimerCount()).toBe(0);
+    },
+  );
 
   it('is a strict no-op for a native session (no broker env): the prompt proceeds past the preflight', async () => {
     const { priv, trackers, sendPrompt } = createGatedBackend({});
@@ -286,6 +389,6 @@ describe('PiRpcBackend connected-service broker preflight (fail-closed)', () => 
     expect(secondNonce).not.toBe(firstNonce);
     expect(priv.connectedBrokerPreflight).toBeNull();
 
-    priv.process?.kill('SIGKILL');
+    await priv.stopRpcProcessForRestart();
   });
 });

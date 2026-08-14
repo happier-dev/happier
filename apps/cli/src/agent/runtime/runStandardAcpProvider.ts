@@ -134,6 +134,7 @@ export type StandardAcpProviderConfig = {
     mcpServers: Record<string, import('@/agent').McpServerConfig>;
     permissionHandler: ProviderEnforcedPermissionHandler;
     getPermissionMode: () => PermissionMode;
+    getAbortSignal: () => AbortSignal;
     setThinking: (value: boolean) => void;
     memoryRecallGuidanceEnabled: boolean;
     pendingQueueDrainMaxPopPerWake?: number;
@@ -481,6 +482,7 @@ export async function runStandardAcpProvider(
     mcpServers,
     permissionHandler,
     getPermissionMode: () => permissionModeState.getCurrentPermissionMode() ?? 'default',
+    getAbortSignal: () => abortController.signal,
     setThinking: setThinkingState,
     memoryRecallGuidanceEnabled,
     pendingQueueDrainMaxPopPerWake,

@@ -22,6 +22,7 @@ export type {
   AgentTransport,
   AgentId,
   StartSessionResult,
+  AgentSessionOpenOptions,
 } from './AgentBackend';
 
 export type { AgentPromptPayload } from './AgentPromptPayload';
