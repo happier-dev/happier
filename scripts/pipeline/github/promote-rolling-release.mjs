@@ -8,8 +8,6 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 
-import { buildRollingReleaseEditArgs } from './lib/gh-release-commands.mjs';
-
 const FULL_SHA = /^[a-f0-9]{40}$/;
 
 function fail(message) {
@@ -23,6 +21,11 @@ function parseBool(value, name) {
   fail(`${name} must be true or false.`);
 }
 
+/**
+ * @param {string} cmd
+ * @param {string[]} args
+ * @param {{ env?: Record<string, string>; dryRun?: boolean; allowNotFound?: boolean; cwd?: string }} [opts]
+ */
 function run(cmd, args, opts = {}) {
   const printable = `${cmd} ${args.map((arg) => (arg.includes(' ') ? JSON.stringify(arg) : arg)).join(' ')}`;
   if (opts.dryRun) {
@@ -38,11 +41,24 @@ function run(cmd, args, opts = {}) {
       timeout: 10 * 60_000,
     });
   } catch (error) {
-    if (opts.allowFailure) return '';
+    if (opts.allowNotFound && isExplicitHttpNotFound(error)) return '';
     throw error;
   }
 }
 
+/** @param {unknown} error */
+function isExplicitHttpNotFound(error) {
+  if (!error || typeof error !== 'object') return false;
+  const commandError = /** @type {{ stdout?: unknown; stderr?: unknown }} */ (error);
+  const output = `${String(commandError.stdout ?? '')}\n${String(commandError.stderr ?? '')}`;
+  return /\(HTTP 404\)(?:\s|$)/.test(output) || /HTTP\/\S+\s+404(?:\s|$)/.test(output);
+}
+
+/**
+ * @param {string} cmd
+ * @param {string[]} args
+ * @param {{ env?: Record<string, string>; dryRun?: boolean; cwd?: string }} [opts]
+ */
 function runBuffer(cmd, args, opts = {}) {
   const printable = `${cmd} ${args.map((arg) => (arg.includes(' ') ? JSON.stringify(arg) : arg)).join(' ')}`;
   if (opts.dryRun) {
@@ -106,7 +122,9 @@ async function assertDirectoriesEqual(leftDir, rightDir) {
       fileSha256(join(leftDir, name)),
       fileSha256(join(rightDir, name)),
     ]);
-    if (leftSha !== rightSha) fail(`Rolling release asset differs from immutable source bytes: ${name}`);
+    if (leftSha !== rightSha) {
+      fail(`Rolling release asset differs from immutable source bytes: ${name}`);
+    }
   }
 }
 
@@ -114,7 +132,7 @@ function readTagSha({ repo, tag, env, dryRun }) {
   return run('gh', ['api', `repos/${repo}/git/ref/tags/${tag}`, '--jq', '.object.sha'], {
     env,
     dryRun,
-    allowFailure: true,
+    allowNotFound: true,
   }).trim().toLowerCase();
 }
 
@@ -129,8 +147,130 @@ function findDraftReleaseId({ repo, tag, env, dryRun }) {
   ], {
     env,
     dryRun,
-    allowFailure: true,
   }).trim().split(/\r?\n/).map((line) => line.trim()).find(Boolean) ?? '';
+}
+
+function parseRelease(raw, label) {
+  const value = String(raw ?? '').trim();
+  if (!value) return null;
+  try {
+    const release = JSON.parse(value);
+    return {
+      id: String(release.id ?? '').trim(),
+      tagName: String(release.tag_name ?? '').trim(),
+      name: String(release.name ?? ''),
+      body: String(release.body ?? ''),
+      prerelease: release.prerelease === true,
+      draft: release.draft === true,
+    };
+  } catch {
+    fail(`GitHub returned invalid release metadata for ${label}.`);
+  }
+}
+
+function readReleaseByTag({ repo, tag, env, dryRun }) {
+  return parseRelease(run('gh', ['api', `repos/${repo}/releases/tags/${tag}`], {
+    env,
+    dryRun,
+    allowNotFound: true,
+  }), tag);
+}
+
+function readReleaseById({ repo, releaseId, env, dryRun }) {
+  return parseRelease(run('gh', ['api', `repos/${repo}/releases/${releaseId}`], {
+    env,
+    dryRun,
+    allowNotFound: true,
+  }), `release ${releaseId}`);
+}
+
+function sanitizeTagSegment(value) {
+  const sanitized = String(value ?? '').trim().replace(/[^0-9A-Za-z._-]+/g, '-').replace(/^-+|-+$/g, '');
+  if (!sanitized) fail('Unable to derive a safe rolling release staging tag.');
+  return sanitized;
+}
+
+function backupReleaseName(name, backupTag) {
+  return `[backup:${backupTag}] ${name}`;
+}
+
+function originalReleaseName(name, backupTag) {
+  const prefix = `[backup:${backupTag}] `;
+  return name.startsWith(prefix) ? name.slice(prefix.length) : name;
+}
+
+function readReleaseAssetRows({ repo, releaseId, env, dryRun }) {
+  const raw = run('gh', [
+    'api', `repos/${repo}/releases/${releaseId}`,
+    '--jq', '.assets[] | [.id, .name] | @tsv',
+  ], { env, dryRun }).trim();
+  return raw.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).map((line) => {
+    const separator = line.indexOf('\t');
+    if (separator <= 0) fail(`Invalid release asset row: ${line}`);
+    return { id: line.slice(0, separator), name: line.slice(separator + 1) };
+  });
+}
+
+function runMutationAndConfirm({ args, env, dryRun, confirm, failureMessage }) {
+  if (dryRun) {
+    run('gh', args, { env, dryRun: true });
+    return;
+  }
+  let mutationError = null;
+  try {
+    run('gh', args, { env });
+  } catch (error) {
+    mutationError = error;
+  }
+  if (confirm()) return;
+  if (mutationError) throw mutationError;
+  fail(failureMessage);
+}
+
+function ensureRefAtSha({ repo, tag, sha, env, dryRun }) {
+  const current = readTagSha({ repo, tag, env, dryRun });
+  if (!dryRun && current === sha) return;
+  const args = current
+    ? ['api', '-X', 'PATCH', `repos/${repo}/git/refs/tags/${tag}`, '-f', `sha=${sha}`, '-F', 'force=true']
+    : ['api', '-X', 'POST', `repos/${repo}/git/refs`, '-f', `ref=refs/tags/${tag}`, '-f', `sha=${sha}`];
+  runMutationAndConfirm({
+    args,
+    env,
+    dryRun,
+    confirm: () => readTagSha({ repo, tag, env, dryRun: false }) === sha,
+    failureMessage: `GitHub did not move tag ${tag} to ${sha}.`,
+  });
+}
+
+function deleteRefIfPresent({ repo, tag, env, dryRun }) {
+  const current = readTagSha({ repo, tag, env, dryRun });
+  if (!current && !dryRun) return;
+  runMutationAndConfirm({
+    args: ['api', '-X', 'DELETE', `repos/${repo}/git/refs/tags/${tag}`],
+    env,
+    dryRun,
+    confirm: () => !readTagSha({ repo, tag, env, dryRun: false }),
+    failureMessage: `GitHub did not delete temporary tag ${tag}.`,
+  });
+}
+
+function patchReleaseAndConfirm({ repo, releaseId, fields, env, dryRun, confirm, failureMessage }) {
+  const args = ['api', '-X', 'PATCH', `repos/${repo}/releases/${releaseId}`];
+  for (const [name, value] of Object.entries(fields)) {
+    args.push(typeof value === 'boolean' ? '-F' : '-f', `${name}=${value}`);
+  }
+  runMutationAndConfirm({ args, env, dryRun, confirm, failureMessage });
+}
+
+function deleteReleaseIfPresent({ repo, releaseId, env, dryRun }) {
+  if (!releaseId) return;
+  runMutationAndConfirm({
+    args: ['api', '-X', 'DELETE', `repos/${repo}/releases/${releaseId}`],
+    env,
+    dryRun,
+    confirm: () => !readReleaseById({ repo, releaseId, env, dryRun: false }),
+    failureMessage: `GitHub did not delete backup release ${releaseId}.`,
+  });
 }
 
 async function downloadReleaseAssetsById({ repo, releaseId, destination, env, dryRun }) {
@@ -152,6 +292,24 @@ async function downloadReleaseAssetsById({ repo, releaseId, destination, env, dr
       'Accept: application/octet-stream',
     ], { env, dryRun });
     if (!dryRun) await writeFile(join(destination, name), bytes);
+  }
+}
+
+async function auditReleaseByTag({ repo, tag, expectedDir, publicKey, env }) {
+  const destination = await mkdtemp(join(tmpdir(), 'happier-visible-release-audit-'));
+  try {
+    run('gh', ['release', 'download', tag, '--repo', repo, '--dir', destination], { env });
+    const { checksumsName } = await assertSignedBundle(destination);
+    await assertDirectoriesEqual(expectedDir, destination);
+    run(process.execPath, [
+      'scripts/pipeline/release/verify-artifacts.mjs',
+      '--artifacts-dir', destination,
+      '--checksums', join(destination, checksumsName),
+      '--public-key', publicKey,
+      '--skip-smoke',
+    ]);
+  } finally {
+    await rm(destination, { recursive: true, force: true });
   }
 }
 
@@ -213,71 +371,121 @@ async function main() {
       ]);
     }
 
-    const oldRollingSha = readTagSha({ repo, tag: rollingTag, env: ghEnv, dryRun });
-    const publishedReleaseId = run('gh', [
-      'api', `repos/${repo}/releases/tags/${rollingTag}`, '--jq', '.id',
-    ], {
-      env: ghEnv,
-      dryRun,
-      allowFailure: true,
-    }).trim();
-    if (!dryRun && !publishedReleaseId && oldRollingSha && oldRollingSha !== targetSha) {
-      fail(`Existing rolling draft tag ${rollingTag} does not resolve to authorized SHA ${targetSha}.`);
-    }
-    let draftReleaseId = publishedReleaseId
-      ? ''
-      : findDraftReleaseId({ repo, tag: rollingTag, env: ghEnv, dryRun });
-    if (!publishedReleaseId && !draftReleaseId && !dryRun) {
-      draftReleaseId = run('gh', [
-        'api', '-X', 'POST', `repos/${repo}/releases`,
-        '-f', `tag_name=${rollingTag}`,
-        '-f', `target_commitish=${targetSha}`,
-        '-f', `name=${title}`,
-        '-f', 'body=',
-        '-F', 'draft=true',
-        '-F', `prerelease=${prerelease}`,
-        '--jq', '.id',
-      ], { env: ghEnv }).trim();
-      if (!draftReleaseId) fail(`GitHub did not return an id for rolling draft release ${rollingTag}.`);
+    const body = releaseMessage && notes ? `${releaseMessage}\n\n${notes}` : releaseMessage || notes;
+    const safeRollingTag = sanitizeTagSegment(rollingTag);
+    const stagingTag = `happier-rolling-staging-${safeRollingTag}-${targetSha}`;
+    const backupTag = `happier-rolling-backup-${safeRollingTag}`;
+    const stagingName = `[staging:${rollingTag}] ${title}`;
+
+    let rollingRelease = readReleaseByTag({ repo, tag: rollingTag, env: ghEnv, dryRun });
+    let rollingSha = readTagSha({ repo, tag: rollingTag, env: ghEnv, dryRun });
+    let backupRelease = readReleaseByTag({ repo, tag: backupTag, env: ghEnv, dryRun });
+
+    if (!dryRun && !rollingRelease && backupRelease) {
+      const backupSha = readTagSha({ repo, tag: backupTag, env: ghEnv, dryRun: false });
+      if (!backupSha) fail(`Interrupted rolling promotion backup ${backupTag} has no tag ref.`);
+      ensureRefAtSha({ repo, tag: rollingTag, sha: backupSha, env: ghEnv, dryRun: false });
+      const restoredName = originalReleaseName(backupRelease.name, backupTag);
+      patchReleaseAndConfirm({
+        repo,
+        releaseId: backupRelease.id,
+        fields: { tag_name: rollingTag, name: restoredName },
+        env: ghEnv,
+        dryRun: false,
+        confirm: () => readReleaseByTag({ repo, tag: rollingTag, env: ghEnv, dryRun: false })?.id === backupRelease.id,
+        failureMessage: `Failed to restore interrupted predecessor release ${backupRelease.id}.`,
+      });
+      deleteRefIfPresent({ repo, tag: backupTag, env: ghEnv, dryRun: false });
+      rollingRelease = readReleaseByTag({ repo, tag: rollingTag, env: ghEnv, dryRun: false });
+      rollingSha = backupSha;
+      backupRelease = null;
     }
 
-    const releaseAssetEndpoint = draftReleaseId
-      ? `repos/${repo}/releases/${draftReleaseId}`
-      : `repos/${repo}/releases/tags/${rollingTag}`;
-    const assetIds = run('gh', ['api', releaseAssetEndpoint, '--jq', '.assets[].id'], {
-      env: ghEnv,
-      dryRun,
-    }).trim();
-    for (const id of assetIds.split(/\r?\n/).map((line) => line.trim()).filter(Boolean)) {
-      run('gh', ['api', '-X', 'DELETE', `repos/${repo}/releases/assets/${id}`], { env: ghEnv, dryRun });
+    if (!dryRun && rollingRelease && rollingSha === targetSha) {
+      let alreadyExact = false;
+      try {
+        await auditReleaseByTag({ repo, tag: rollingTag, expectedDir: sourceDir, publicKey, env: ghEnv });
+        alreadyExact = true;
+      } catch {
+        // The ref alone is not admission; replace a stale or incomplete release object below.
+      }
+      if (alreadyExact) {
+        if (backupRelease) deleteReleaseIfPresent({ repo, releaseId: backupRelease.id, env: ghEnv, dryRun: false });
+        const staleDraftId = findDraftReleaseId({ repo, tag: stagingTag, env: ghEnv, dryRun: false });
+        if (staleDraftId) deleteReleaseIfPresent({ repo, releaseId: staleDraftId, env: ghEnv, dryRun: false });
+        deleteRefIfPresent({ repo, tag: backupTag, env: ghEnv, dryRun: false });
+        deleteRefIfPresent({ repo, tag: stagingTag, env: ghEnv, dryRun: false });
+        console.log(`[pipeline] rolling release ${rollingTag} already exposes exact immutable release ${sourceTag}.`);
+        return;
+      }
+    }
+    if (!dryRun && rollingRelease && backupRelease) {
+      fail(`Both rolling release ${rollingTag} and backup release ${backupTag} exist; refusing ambiguous recovery.`);
+    }
+
+    ensureRefAtSha({ repo, tag: stagingTag, sha: targetSha, env: ghEnv, dryRun });
+    let draftReleaseId = findDraftReleaseId({ repo, tag: stagingTag, env: ghEnv, dryRun });
+    if (!draftReleaseId && !dryRun) {
+      let createError = null;
+      try {
+        run('gh', [
+          'api', '-X', 'POST', `repos/${repo}/releases`,
+          '-f', `tag_name=${stagingTag}`,
+          '-f', `target_commitish=${targetSha}`,
+          '-f', `name=${stagingName}`,
+          '-f', 'body=',
+          '-F', 'draft=true',
+          '-F', `prerelease=${prerelease}`,
+        ], { env: ghEnv });
+      } catch (error) {
+        createError = error;
+      }
+      draftReleaseId = findDraftReleaseId({ repo, tag: stagingTag, env: ghEnv, dryRun: false });
+      if (!draftReleaseId) {
+        if (createError) throw createError;
+        fail(`GitHub did not create staging draft release ${stagingTag}.`);
+      }
+    }
+    if (dryRun) draftReleaseId = '<staging-release-id>';
+
+    for (const asset of readReleaseAssetRows({ repo, releaseId: draftReleaseId, env: ghEnv, dryRun })) {
+      runMutationAndConfirm({
+        args: ['api', '-X', 'DELETE', `repos/${repo}/releases/assets/${asset.id}`],
+        env: ghEnv,
+        dryRun,
+        confirm: () => !readReleaseAssetRows({ repo, releaseId: draftReleaseId, env: ghEnv, dryRun: false })
+          .some((entry) => entry.id === asset.id),
+        failureMessage: `GitHub did not delete stale staging asset ${asset.name}.`,
+      });
     }
 
     if (!dryRun) {
       const { names } = await assertSignedBundle(sourceDir);
       for (const name of names) {
-        if (draftReleaseId) {
+        let uploadError = null;
+        try {
           run('gh', [
-            'api',
-            '--hostname', 'uploads.github.com',
-            '-X', 'POST',
+            'api', '--hostname', 'uploads.github.com', '-X', 'POST',
             `repos/${repo}/releases/${draftReleaseId}/assets?name=${encodeURIComponent(name)}`,
             '-H', 'Content-Type: application/octet-stream',
             '--input', join(sourceDir, name),
             '--silent',
           ], { env: ghEnv });
-        } else {
-          run('gh', ['release', 'upload', rollingTag, join(sourceDir, name), '--repo', repo], { env: ghEnv });
+        } catch (error) {
+          uploadError = error;
+        }
+        const uploaded = readReleaseAssetRows({ repo, releaseId: draftReleaseId, env: ghEnv, dryRun: false })
+          .some((entry) => entry.name === name);
+        if (!uploaded) {
+          if (uploadError) throw uploadError;
+          fail(`GitHub did not upload staging asset ${name}.`);
         }
       }
     } else {
-      console.log(`[dry-run] upload every verified asset from ${sourceTag} to ${rollingTag}`);
+      console.log(`[dry-run] upload every verified asset from ${sourceTag} to staging release ${stagingTag}`);
     }
 
-    if (draftReleaseId) {
-      await downloadReleaseAssetsById({ repo, releaseId: draftReleaseId, destination: auditDir, env: ghEnv, dryRun });
-    } else {
-      run('gh', ['release', 'download', rollingTag, '--repo', repo, '--dir', auditDir], { env: ghEnv, dryRun });
-    }
+    await downloadReleaseAssetsById({ repo, releaseId: draftReleaseId, destination: auditDir, env: ghEnv, dryRun });
     if (!dryRun) {
       const { checksumsName } = await assertSignedBundle(auditDir);
       await assertDirectoriesEqual(sourceDir, auditDir);
@@ -290,41 +498,103 @@ async function main() {
       ]);
     }
 
-    if (!draftReleaseId) {
-      if (oldRollingSha) {
-        run('gh', [
-          'api', '-X', 'PATCH', `repos/${repo}/git/refs/tags/${rollingTag}`,
-          '-f', `sha=${targetSha}`, '-F', 'force=true',
-        ], { env: ghEnv, dryRun });
-      } else {
-        run('gh', [
-          'api', '-X', 'POST', `repos/${repo}/git/refs`,
-          '-f', `ref=refs/tags/${rollingTag}`, '-f', `sha=${targetSha}`,
-        ], { env: ghEnv, dryRun });
+    const predecessor = rollingRelease;
+    const predecessorSha = rollingSha;
+    const predecessorName = predecessor?.name ?? '';
+    let predecessorRenamed = false;
+    try {
+      if (predecessor) {
+        if (!predecessorSha) fail(`Published rolling release ${rollingTag} has no tag ref.`);
+        ensureRefAtSha({ repo, tag: backupTag, sha: predecessorSha, env: ghEnv, dryRun });
+        patchReleaseAndConfirm({
+          repo,
+          releaseId: predecessor.id,
+          fields: { tag_name: backupTag, name: backupReleaseName(predecessorName, backupTag) },
+          env: ghEnv,
+          dryRun,
+          confirm: () => readReleaseById({ repo, releaseId: predecessor.id, env: ghEnv, dryRun: false })?.tagName === backupTag,
+          failureMessage: `GitHub did not preserve predecessor release ${predecessor.id} under ${backupTag}.`,
+        });
+        predecessorRenamed = true;
       }
-    }
 
-    const body = releaseMessage && notes ? `${releaseMessage}\n\n${notes}` : releaseMessage || notes;
-    if (draftReleaseId) {
-      run('gh', [
-        'api', '-X', 'PATCH', `repos/${repo}/releases/${draftReleaseId}`,
-        '-f', `tag_name=${rollingTag}`,
-        '-f', `target_commitish=${targetSha}`,
-        '-f', `name=${title}`,
-        '-f', `body=${body}`,
-        '-F', 'draft=false',
-        '-F', `prerelease=${prerelease}`,
-      ], { env: ghEnv, dryRun });
-      const publishedRollingSha = readTagSha({ repo, tag: rollingTag, env: ghEnv, dryRun });
-      if (!dryRun && publishedRollingSha !== targetSha) {
-        fail(`Published rolling tag ${rollingTag} did not resolve to audited target ${targetSha}.`);
-      }
-    } else {
-      run('gh', [...buildRollingReleaseEditArgs({ tag: rollingTag, title, notes: body }), '--repo', repo], {
+      ensureRefAtSha({ repo, tag: rollingTag, sha: targetSha, env: ghEnv, dryRun });
+      patchReleaseAndConfirm({
+        repo,
+        releaseId: draftReleaseId,
+        fields: {
+          tag_name: rollingTag,
+          target_commitish: targetSha,
+          name: title,
+          body,
+          draft: false,
+          prerelease,
+        },
         env: ghEnv,
         dryRun,
+        confirm: () => {
+          const byId = readReleaseById({ repo, releaseId: draftReleaseId, env: ghEnv, dryRun: false });
+          const byTag = readReleaseByTag({ repo, tag: rollingTag, env: ghEnv, dryRun: false });
+          return byId?.tagName === rollingTag && byId.draft === false && byTag?.id === draftReleaseId;
+        },
+        failureMessage: `GitHub did not publish audited replacement release ${draftReleaseId} as ${rollingTag}.`,
       });
+      if (!dryRun && readTagSha({ repo, tag: rollingTag, env: ghEnv, dryRun: false }) !== targetSha) {
+        fail(`Published rolling tag ${rollingTag} did not resolve to audited target ${targetSha}.`);
+      }
+      if (!dryRun) {
+        await auditReleaseByTag({ repo, tag: rollingTag, expectedDir: sourceDir, publicKey, env: ghEnv });
+      }
+    } catch (switchError) {
+      if (!dryRun) {
+        const restoreErrors = [];
+        const replacement = readReleaseById({ repo, releaseId: draftReleaseId, env: ghEnv, dryRun: false });
+        if (replacement?.tagName === rollingTag) {
+          try {
+            patchReleaseAndConfirm({
+              repo,
+              releaseId: draftReleaseId,
+              fields: { tag_name: stagingTag, name: stagingName, body: '', draft: true, prerelease },
+              env: ghEnv,
+              dryRun: false,
+              confirm: () => readReleaseById({ repo, releaseId: draftReleaseId, env: ghEnv, dryRun: false })?.tagName === stagingTag,
+              failureMessage: `Failed to return replacement release ${draftReleaseId} to staging.`,
+            });
+          } catch (error) {
+            restoreErrors.push(error);
+          }
+        }
+        try {
+          if (predecessorSha) ensureRefAtSha({ repo, tag: rollingTag, sha: predecessorSha, env: ghEnv, dryRun: false });
+          else deleteRefIfPresent({ repo, tag: rollingTag, env: ghEnv, dryRun: false });
+        } catch (error) {
+          restoreErrors.push(error);
+        }
+        if (predecessor && predecessorRenamed) {
+          try {
+            patchReleaseAndConfirm({
+              repo,
+              releaseId: predecessor.id,
+              fields: { tag_name: rollingTag, name: predecessorName },
+              env: ghEnv,
+              dryRun: false,
+              confirm: () => readReleaseByTag({ repo, tag: rollingTag, env: ghEnv, dryRun: false })?.id === predecessor.id,
+              failureMessage: `Failed to restore predecessor release ${predecessor.id}.`,
+            });
+          } catch (error) {
+            restoreErrors.push(error);
+          }
+        }
+        if (restoreErrors.length > 0) {
+          fail(`Rolling replacement failed and predecessor restoration was incomplete: ${restoreErrors.map(String).join('; ')}`);
+        }
+      }
+      throw switchError;
     }
+
+    if (predecessor) deleteReleaseIfPresent({ repo, releaseId: predecessor.id, env: ghEnv, dryRun });
+    deleteRefIfPresent({ repo, tag: backupTag, env: ghEnv, dryRun });
+    deleteRefIfPresent({ repo, tag: stagingTag, env: ghEnv, dryRun });
     console.log(`[pipeline] promoted immutable release ${sourceTag} to ${rollingTag} after exact remote audit.`);
   } finally {
     await Promise.all([
