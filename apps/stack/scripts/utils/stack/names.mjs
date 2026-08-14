@@ -25,3 +25,11 @@ export function normalizeStackNameOrNull(raw, { maxLen = 63 } = {}) {
   if (Number.isFinite(maxLen) && maxLen > 0 && normalized.length > maxLen) return null;
   return normalized;
 }
+
+export function assertCanonicalManagedStackName(value, label = 'managed') {
+  const normalizedValue = String(value ?? '').trim();
+  if (normalizeStackNameOrNull(normalizedValue) !== normalizedValue) {
+    throw new Error(`[runtime] invalid ${label} stack name: ${normalizedValue || String(value ?? '')}`);
+  }
+  return normalizedValue;
+}
