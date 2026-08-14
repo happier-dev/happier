@@ -245,6 +245,32 @@ function readOpenCodePromptAsyncCall(
   return call[0];
 }
 
+function useCompletedProviderErrorInventory(
+  client: ReturnType<typeof createFakeClient>,
+  error: unknown,
+  messageId = 'msg_completed_provider_error',
+): void {
+  const promptMessageId = readOpenCodePromptAsyncCall(client, 0).messageId;
+  if (!promptMessageId) throw new Error('Expected prompt_async to include the current user message id');
+  client.sessionMessagesList = vi.fn(async () => [
+    {
+      info: { id: promptMessageId, role: 'user', sessionID: 'ses_1', time: { created: 10 } },
+      parts: [{ id: `part_${promptMessageId}`, type: 'text', text: 'hello' }],
+    },
+    {
+      info: {
+        id: messageId,
+        role: 'assistant',
+        sessionID: 'ses_1',
+        parentID: promptMessageId,
+        time: { created: 11, completed: 12 },
+        error,
+      },
+      parts: [],
+    },
+  ]);
+}
+
 function createFakeSession(sessionId = 'happy_sess_opencode') {
   const meta: Record<string, unknown> = {};
   let lastSeq = 0;
@@ -2468,32 +2494,6 @@ describe('createOpenCodeServerRuntime', () => {
     await expect(promptPromise).resolves.toBeUndefined();
   });
 
-  it('resolves bare OpenCode model overrides against the active default provider before prompt_async', async () => {
-    const client = createFakeClient();
-    client.globalConfigGet = vi.fn(async () => ({ model: 'openai/gpt-5.5-pro' }));
-    client.providersList = vi.fn(async () => ([
-      {
-        id: 'openai',
-        env: ['OPENAI_API_KEY'],
-        models: ({
-          'gpt-5.5-pro': { id: 'gpt-5.5-pro', name: 'GPT-5.5 Pro', status: 'active', capabilities: { input: { text: true } } },
-          'gpt-5.4-mini': { id: 'gpt-5.4-mini', name: 'GPT-5.4 Mini', status: 'active', capabilities: { input: { text: true } } },
-        }) as Record<string, unknown>,
-      },
-    ]));
-    const session = createFakeSession();
-    const runtime = createOpenCodeServerRuntime({
-      directory: '/tmp',
-      session,
-      messageBuffer: new MessageBuffer(),
-      mcpServers: {},
-      permissionHandler: createFakePermissionHandler() as unknown as ProviderEnforcedPermissionHandler,
-      onThinkingChange: vi.fn(),
-    }, {
-      createClient: async () => client as unknown as OpenCodeServerRuntimeClient,
-    });
-
-    await runtime.startOrLoad({});
   it('rejects a qualified model absent from an authoritative provider inventory before prompt_async', async () => {
     const client = createFakeClient();
     client.providersList = vi.fn(async () => ([
@@ -2659,6 +2659,32 @@ describe('createOpenCodeServerRuntime', () => {
     await expect(promptPromise).resolves.toBeUndefined();
   });
 
+  it('resolves bare OpenCode model overrides against the active default provider before prompt_async', async () => {
+    const client = createFakeClient();
+    client.globalConfigGet = vi.fn(async () => ({ model: 'openai/gpt-5.5-pro' }));
+    client.providersList = vi.fn(async () => ([
+      {
+        id: 'openai',
+        env: ['OPENAI_API_KEY'],
+        models: ({
+          'gpt-5.5-pro': { id: 'gpt-5.5-pro', name: 'GPT-5.5 Pro', status: 'active', capabilities: { input: { text: true } } },
+          'gpt-5.4-mini': { id: 'gpt-5.4-mini', name: 'GPT-5.4 Mini', status: 'active', capabilities: { input: { text: true } } },
+        }) as Record<string, unknown>,
+      },
+    ]));
+    const session = createFakeSession();
+    const runtime = createOpenCodeServerRuntime({
+      directory: '/tmp',
+      session,
+      messageBuffer: new MessageBuffer(),
+      mcpServers: {},
+      permissionHandler: createFakePermissionHandler() as unknown as ProviderEnforcedPermissionHandler,
+      onThinkingChange: vi.fn(),
+    }, {
+      createClient: async () => client as unknown as OpenCodeServerRuntimeClient,
+    });
+
+    await runtime.startOrLoad({});
     await runtime.setSessionModel('gpt-5.4-mini');
     runtime.beginTurn();
 
@@ -5995,6 +6021,177 @@ describe('createOpenCodeServerRuntime', () => {
     }
   });
 
+  it('defers live session.error adjudication until idle confirms an exact-parent terminal provider error', async () => {
+    const restoreEnv = withEnvForTest({
+      HAPPIER_OPENCODE_SERVER_STATUS_POLL_ENABLED: '0',
+      HAPPIER_OPENCODE_SERVER_IDLE_WITHOUT_TERMINAL_ASSISTANT_TIMEOUT_MS: '1000',
+      HAPPIER_OPENCODE_SERVER_TURN_INACTIVITY_TIMEOUT_MS: '10000',
+    });
+    let runtime: ReturnType<typeof createOpenCodeServerRuntime> | null = null;
+    let promptPromise: Promise<void> | null = null;
+    try {
+      const client = createFakeClient();
+      let promptUserMessageId = '';
+      let terminalInventoryReady = false;
+      client.sessionPromptAsync = vi.fn(async (input) => {
+        promptUserMessageId = input.messageId ?? '';
+      });
+      client.sessionMessagesList = vi.fn(async () => terminalInventoryReady
+        ? [
+            {
+              info: { id: promptUserMessageId, role: 'user', sessionID: 'ses_1', time: { created: 10 } },
+              parts: [{ id: 'part_current_user', type: 'text', text: 'hello' }],
+            },
+            {
+              info: {
+                id: 'msg_current_provider_error',
+                role: 'assistant',
+                sessionID: 'ses_1',
+                parentID: promptUserMessageId,
+                time: { created: 11, completed: 12 },
+                error: {
+                  name: 'ProviderModelNotFoundError',
+                  data: { message: 'Model not found: openai-codex/gpt-5.6-luna' },
+                },
+              },
+              parts: [],
+            },
+          ]
+        : []);
+
+      const started = await beginOpenCodePromptForTest({
+        client,
+        session: mirrorLifecycleMarkersForTest(createFakeSession()),
+        localId: 'local-live-provider-error',
+      });
+      runtime = started.runtime;
+      promptPromise = started.promptPromise;
+      const outcome = observePromiseSettlement(promptPromise);
+
+      const liveError = {
+        directory: '/tmp',
+        payload: {
+          type: 'session.error',
+          properties: {
+            sessionID: 'ses_1',
+            error: {
+              name: 'ProviderModelNotFoundError',
+              data: { message: 'Model not found: openai-codex/gpt-5.6-luna' },
+            },
+          },
+        },
+      } satisfies OpenCodeGlobalEvent;
+      await client.__emit({
+        directory: '/tmp',
+        payload: { type: 'session.status', properties: { sessionID: 'ses_1', status: { type: 'busy' } } },
+      });
+      await client.__emit(liveError);
+      await client.__emit(liveError);
+      await flushTranscriptCommitMicrotasks();
+
+      expect(outcome.status).toBe('pending');
+      expect(started.session.sessionTurnLifecycle.failTurn).not.toHaveBeenCalled();
+      expect(sentAgentMessagesOfType(started.session, 'task_complete')).toHaveLength(0);
+
+      terminalInventoryReady = true;
+      await client.__emit({
+        directory: '/tmp',
+        payload: { type: 'session.status', properties: { sessionID: 'ses_1', status: { type: 'idle' } } },
+      });
+
+      await expect(promptPromise).rejects.toThrow('Model not found: openai-codex/gpt-5.6-luna');
+      await expect.poll(() => started.session.sessionTurnLifecycle.failTurn.mock.calls.length).toBe(1);
+      expect(sentAgentMessagesOfType(started.session, 'task_complete')).toHaveLength(0);
+
+      await emitAssistantMessageUpdated(client, {
+        messageId: 'msg_late_success_after_error',
+        finish: 'stop',
+        completed: 20,
+      });
+      expect(sentAgentMessagesOfType(started.session, 'task_complete')).toHaveLength(0);
+    } finally {
+      await runtime?.cancel().catch(() => {});
+      await promptPromise?.catch(() => undefined);
+      await runtime?.reset().catch(() => {});
+      restoreEnv();
+    }
+  });
+
+  it('does not let an uncorrelated live session.error fail a valid current assistant completion', async () => {
+    const restoreEnv = withEnvForTest({
+      HAPPIER_OPENCODE_SERVER_STATUS_POLL_ENABLED: '0',
+      HAPPIER_OPENCODE_SERVER_TURN_INACTIVITY_TIMEOUT_MS: '10000',
+    });
+    let runtime: ReturnType<typeof createOpenCodeServerRuntime> | null = null;
+    let promptPromise: Promise<void> | null = null;
+    try {
+      const client = createFakeClient();
+      let promptUserMessageId = '';
+      client.sessionPromptAsync = vi.fn(async (input) => {
+        promptUserMessageId = input.messageId ?? '';
+      });
+      client.sessionMessagesList = vi.fn(async () => [
+        {
+          info: { id: promptUserMessageId, role: 'user', sessionID: 'ses_1', time: { created: 10 } },
+          parts: [{ id: 'part_current_user', type: 'text', text: 'hello' }],
+        },
+        {
+          info: {
+            id: 'msg_current_success',
+            role: 'assistant',
+            sessionID: 'ses_1',
+            parentID: promptUserMessageId,
+            time: { created: 11, completed: 12 },
+            finish: 'stop',
+          },
+          parts: [{ id: 'part_current_success', type: 'text', text: 'ok' }],
+        },
+      ]);
+
+      const started = await beginOpenCodePromptForTest({
+        client,
+        session: mirrorLifecycleMarkersForTest(createFakeSession()),
+        localId: 'local-ignore-uncorrelated-live-error',
+      });
+      runtime = started.runtime;
+      promptPromise = started.promptPromise;
+      const outcome = observePromiseSettlement(promptPromise);
+
+      await client.__emit({
+        directory: '/tmp',
+        payload: {
+          type: 'session.error',
+          properties: {
+            sessionID: 'ses_1',
+            error: { name: 'UnknownError', data: { message: 'failure from another author' } },
+          },
+        },
+      });
+      await flushTranscriptCommitMicrotasks();
+      expect(outcome.status).toBe('pending');
+
+      await emitAssistantMessageUpdated(client, {
+        messageId: 'msg_current_success',
+        finish: 'stop',
+        completed: 12,
+        extraInfo: { parentID: promptUserMessageId },
+      });
+      await client.__emit({
+        directory: '/tmp',
+        payload: { type: 'session.idle', properties: { sessionID: 'ses_1' } },
+      });
+
+      await expect(promptPromise).resolves.toBeUndefined();
+      expect(sentAgentMessagesOfType(started.session, 'task_complete')).toHaveLength(1);
+      expect(started.session.sessionTurnLifecycle.failTurn).not.toHaveBeenCalled();
+    } finally {
+      await runtime?.cancel().catch(() => {});
+      await promptPromise?.catch(() => undefined);
+      await runtime?.reset().catch(() => {});
+      restoreEnv();
+    }
+  });
+
   it('rejects stale and wrong-parent terminal inventory instead of satisfying idle completion', async () => {
     const restoreEnv = withEnvForTest({
       HAPPIER_OPENCODE_SERVER_STATUS_POLL_ENABLED: '0',
@@ -7881,18 +8078,25 @@ describe('createOpenCodeServerRuntime', () => {
     const promptPromise = (runtime as any).sendPromptWithMeta({ text: 'hello', localId: 'local-error' });
     await expect.poll(() => client.sessionPromptAsync.mock.calls.length).toBe(1);
 
+    const providerError = {
+      name: 'UnknownError',
+      data: { message: 'Model not found: openai/does_not_exist.' },
+    };
+    useCompletedProviderErrorInventory(client, providerError);
+
     client.__emit({
       directory: '/tmp',
       payload: {
         type: 'session.error',
         properties: {
           sessionID: 'ses_1',
-          error: {
-            name: 'UnknownError',
-            data: { message: 'Model not found: openai/does_not_exist.' },
-          },
+          error: providerError,
         },
       },
+    });
+    await client.__emit({
+      directory: '/tmp',
+      payload: { type: 'session.status', properties: { sessionID: 'ses_1', status: { type: 'idle' } } },
     });
 
     await expect(promptPromise).rejects.toThrow('Model not found');
@@ -7949,21 +8153,28 @@ describe('createOpenCodeServerRuntime', () => {
     const promptPromise = (runtime as any).sendPromptWithMeta({ text: 'hello', localId: 'local-limit' });
     await expect.poll(() => client.sessionPromptAsync.mock.calls.length).toBe(1);
 
+    const providerError = {
+      name: 'GoUsageLimitError',
+      message: 'OpenCode account rate limit',
+      headers: { 'retry-after': '5' },
+      metadata: { workspace: 'team-a', limitName: 'daily_tokens' },
+      action: { url: 'https://opencode.ai/billing' },
+    };
+    useCompletedProviderErrorInventory(client, providerError);
+
     client.__emit({
       directory: '/tmp',
       payload: {
         type: 'session.error',
         properties: {
           sessionID: 'ses_1',
-          error: {
-            name: 'GoUsageLimitError',
-            message: 'OpenCode account rate limit',
-            headers: { 'retry-after': '5' },
-            metadata: { workspace: 'team-a', limitName: 'daily_tokens' },
-            action: { url: 'https://opencode.ai/billing' },
-          },
+          error: providerError,
         },
       },
+    });
+    await client.__emit({
+      directory: '/tmp',
+      payload: { type: 'session.status', properties: { sessionID: 'ses_1', status: { type: 'idle' } } },
     });
 
     await expect(promptPromise).rejects.toThrow('OpenCode account rate limit');
@@ -8613,18 +8824,25 @@ describe('createOpenCodeServerRuntime', () => {
     const promptPromise = (runtime as any).sendPromptWithMeta({ text: 'hello', localId: 'local-session-abort' });
     await expect.poll(() => client.sessionPromptAsync.mock.calls.length).toBe(1);
 
+    const providerError = {
+      name: 'AbortError',
+      message: 'The operation was aborted.',
+    };
+    useCompletedProviderErrorInventory(client, providerError);
+
     client.__emit({
       directory: '/tmp',
       payload: {
         type: 'session.error',
         properties: {
           sessionID: 'ses_1',
-          error: {
-            name: 'AbortError',
-            message: 'The operation was aborted.',
-          },
+          error: providerError,
         },
       },
+    });
+    await client.__emit({
+      directory: '/tmp',
+      payload: { type: 'session.status', properties: { sessionID: 'ses_1', status: { type: 'idle' } } },
     });
 
     await expect(promptPromise).rejects.toBeTruthy();
@@ -11151,6 +11369,14 @@ describe('createOpenCodeServerRuntime', () => {
             error: { name: 'UnknownError', message: 'first turn failed' },
           },
         },
+      });
+      useCompletedProviderErrorInventory(client, {
+        name: 'UnknownError',
+        message: 'first turn failed',
+      }, 'msg_first_turn_failed');
+      await client.__emit({
+        directory: '/tmp',
+        payload: { type: 'session.status', properties: { sessionID: 'ses_1', status: { type: 'idle' } } },
       });
       await expect(firstPromptPromise).rejects.toThrow('first turn failed');
 

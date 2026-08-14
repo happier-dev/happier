@@ -2486,7 +2486,11 @@ export function createOpenCodeServerRuntime(params: {
         reason: 'abort',
         interruptedReason: 'provider_session_error',
       });
-      surfaceOpenCodeRuntimeFailure('session_error', candidate.providerError, terminalMarkerId);
+      if (isAbortLikeError(failureError)) {
+        params.session.sendAgentMessage(provider, { type: 'turn_aborted', id: terminalMarkerId });
+      } else {
+        surfaceOpenCodeRuntimeFailure('session_error', candidate.providerError, terminalMarkerId);
+      }
       rejectTurn(failureError);
       return false;
     }
@@ -3793,6 +3797,13 @@ export function createOpenCodeServerRuntime(params: {
         });
         return;
       }
+      if (turnPromptActive && !isExpectedExplicitCancelError) {
+        // OpenCode publishes session.error before it marks the assistant message terminal and then
+        // publishes idle. Treat this live frame as a nonterminal hint: the exact-parent authoritative
+        // message inventory in maybeResolveTurnOnIdleSignal owns success/error adjudication. This
+        // also prevents an unrelated same-session error from failing the current Happier turn.
+        return;
+      }
       const failureError = detail ? new Error(detail) : rec.error ?? new Error('OpenCode session error');
       const isAbortLikeSessionError = isAbortLikeError(failureError);
       const terminalMarkerId = ensureActiveLifecycleMarkerId();
@@ -4190,17 +4201,6 @@ export function createOpenCodeServerRuntime(params: {
         );
       }
 
-      const controlAbort = new AbortController();
-      turnControlAbort = controlAbort;
-      const deadlockGuardLoop = runTurnDeadlockGuard(controlAbort.signal).catch((error) => {
-        logger.debug('[OpenCodeServer] turn deadlock guard failed (non-fatal)', error);
-      });
-      let prePromptMessageIdsForBackfill: Set<string> | null = null;
-
-      if (controlAbort.signal.aborted) {
-        // Abort handling (runtime.cancel) will reject the turn; do not attempt to send another prompt.
-        await awaitPreDispatchTurnSettlement(thisTurnDeferred, 'control abort fired before prompt_async');
-      }
       let model: OpenCodeModelRef | undefined;
       try {
         model = await resolvePromptModelOverride(paramsWithMeta.meta);
@@ -4215,6 +4215,17 @@ export function createOpenCodeServerRuntime(params: {
         throw error;
       }
 
+      const controlAbort = new AbortController();
+      turnControlAbort = controlAbort;
+      const deadlockGuardLoop = runTurnDeadlockGuard(controlAbort.signal).catch((error) => {
+        logger.debug('[OpenCodeServer] turn deadlock guard failed (non-fatal)', error);
+      });
+      let prePromptMessageIdsForBackfill: Set<string> | null = null;
+
+      if (controlAbort.signal.aborted) {
+        // Abort handling (runtime.cancel) will reject the turn; do not attempt to send another prompt.
+        await awaitPreDispatchTurnSettlement(thisTurnDeferred, 'control abort fired before prompt_async');
+      }
       if (!isActivePromptTurn(thisTurnDeferred, promptSessionId)) {
         await awaitPreDispatchTurnSettlement(thisTurnDeferred, 'active prompt turn ended before prompt_async');
       }
@@ -4506,6 +4517,7 @@ export function createOpenCodeServerRuntime(params: {
       foregroundToolTracker.resetForProviderSession(null);
       selectedAgent = null;
       selectedModel = null;
+      selectedModelWasQualifiedOverride = false;
       currentContextWindowTokens = null;
       omitCustomMessageIdForResumedSession = false;
       suppressSessionErrorAbortNotificationForSessionId = null;
@@ -4517,7 +4529,6 @@ export function createOpenCodeServerRuntime(params: {
           const c = await ensureClient();
           const names = [...ensuredMcpServerNames];
           ensuredMcpServerNames.clear();
-      selectedModelWasQualifiedOverride = false;
           await Promise.all(names.map(async (name) => await c.mcpDisconnect({ name }).catch(() => {})));
         } catch {
           ensuredMcpServerNames.clear();
@@ -4574,13 +4585,13 @@ export function createOpenCodeServerRuntime(params: {
       const trimmed = typeof modelId === 'string' ? modelId.trim() : '';
       if (!trimmed) {
         selectedModel = null;
+        selectedModelWasQualifiedOverride = false;
         publishDynamicSessionOptionsBestEffort();
         return;
       }
       selectedModel = await resolveModelOverride(trimmed);
+      selectedModelWasQualifiedOverride = parseOpenCodeModelId(trimmed) !== null;
       publishDynamicSessionOptionsBestEffort();
     },
   };
 }
-        selectedModelWasQualifiedOverride = false;
-      selectedModelWasQualifiedOverride = parseOpenCodeModelId(trimmed) !== null;
