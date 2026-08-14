@@ -1,8 +1,15 @@
 import type { PermissionIntent } from '../../types.js';
 import {
+  parseBackendTargetKeyV2,
+} from '@happier-dev/protocol/plugins/agents';
+import {
   resolveSessionModelSelectionIntentV1,
+  type ProviderBoundModelRef,
   type SessionModelSelectionIntentV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/providers/model-selection';
+import {
+  readExactSessionActiveModelSelectionV1,
+} from '@happier-dev/protocol/providers/active-model-selection';
 import {
   readPermissionModeIntentFromMetadata,
   readStringOverrideIntentFromMetadata,
@@ -12,6 +19,37 @@ import { MODEL_OVERRIDE_KEY, MODEL_SELECTION_INTENT_KEY } from './bindings/metad
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   return value as Record<string, unknown>;
+}
+
+/**
+ * Returns model selection only when the Protocol owner proves it against the
+ * exact current physical runner and, for Provider-bound selections, the exact
+ * applied binding. Persisted intent and fallback catalogs are excluded.
+ */
+export function readActiveSessionModelSelectionFromMetadata(
+  metadata: unknown,
+  agentTargetKey: string,
+  currentRunnerProcessIdentity: Readonly<{
+    pid: number;
+    processStartTimeMs: number;
+  }> | null,
+): ProviderBoundModelRef | null {
+  const record = asRecord(metadata);
+  if (!record) return null;
+
+  let targetAgentId: string;
+  try {
+    targetAgentId = parseBackendTargetKeyV2(agentTargetKey).backendId;
+  } catch {
+    return null;
+  }
+
+  return readExactSessionActiveModelSelectionV1({
+    metadata: record,
+    agentId: targetAgentId,
+    agentTargetKey,
+    currentRunnerProcessIdentity,
+  })?.selection ?? null;
 }
 
 /** Resolve canonical and deployed model intent once the session's canonical target is known. */

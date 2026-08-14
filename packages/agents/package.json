@@ -34,6 +34,10 @@
       "types": "./dist/runtime/session/preAdmissionBuffer.d.ts",
       "default": "./dist/runtime/session/preAdmissionBuffer.js"
     },
+    "./session/state/metadataReaders": {
+      "types": "./dist/session/state/metadataReaders.d.ts",
+      "default": "./dist/session/state/metadataReaders.js"
+    },
     "./permissions/privilege": {
       "types": "./dist/permissions/privilege.d.ts",
       "default": "./dist/permissions/privilege.js"

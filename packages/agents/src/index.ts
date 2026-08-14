@@ -314,6 +314,7 @@ export {
   reduceExternalAgentObservationEvidenceV1,
   readExternalAgentObservationSessionState,
   writeExternalAgentObservationSessionState,
+  readActiveSessionModelSelectionFromMetadata,
   resolveModelSelectionIntentFromSessionMetadata,
   resolveMetadataStringOverrideV1,
   resolvePermissionIntentFromSessionMetadata,
