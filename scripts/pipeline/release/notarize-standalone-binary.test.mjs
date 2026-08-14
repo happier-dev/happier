@@ -15,10 +15,13 @@ import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 import {
+  finalizeDarwinReleaseArchive,
   listDarwinPayloadMachOCode,
   notarizeDarwinPayload,
   repairAdHocDarwinPayloadSignatures,
+  resolveGatekeeperAssessmentCommand,
   resolveDarwinPayloadNotarizationCommands,
+  runGatekeeperAssessment,
   snapshotDarwinPayload,
   verifyDarwinPayloadNotarizationEvidence,
 } from './notarize-standalone-binary.mjs';
@@ -143,6 +146,9 @@ test('Darwin payload notarization signs and strictly verifies every Mach-O leaf 
       '/tmp/happier-v1.2.3-darwin-arm64/happier',
     ],
   );
+  assert.equal(commands.assess.every(([, args]) => (
+    args.includes('--ignore-cache') && args.includes('--no-cache')
+  )), true, 'Gatekeeper propagation retries must bypass and not repopulate stale assessment results');
   assert.deepEqual(commands.submit, [
     'xcrun',
     [
@@ -182,6 +188,80 @@ test('Darwin payload notarization signs and strictly verifies every Mach-O leaf 
   assert.equal(Object.values(commands).flat(Infinity).includes('stapler'), false);
 });
 
+test('Gatekeeper assessment retries only transient online-ticket propagation failures', () => {
+  const command = ['spctl', ['--assess', '--type', 'execute', '/tmp/happier']];
+  const retryDelays = [];
+  let attempts = 0;
+  const ticketPropagationError = new Error('spctl rejected the payload');
+  ticketPropagationError.stderr = 'source=Unnotarized Developer ID\n';
+
+  assert.equal(
+    runGatekeeperAssessment(command, {
+      attempts: 4,
+      retryDelayMs: 10,
+      runCommand: () => {
+        attempts += 1;
+        if (attempts < 3) throw ticketPropagationError;
+      },
+      sleep: (delayMs) => retryDelays.push(delayMs),
+      logger: { warn: () => {} },
+    }),
+    true,
+  );
+  assert.equal(attempts, 3);
+  assert.deepEqual(retryDelays, [10, 20]);
+
+  const policyError = new Error('spctl rejected the payload');
+  policyError.stderr = 'source=Insufficient Context\n';
+  let policyAttempts = 0;
+
+  assert.throws(
+    () => runGatekeeperAssessment(command, {
+      attempts: 4,
+      retryDelayMs: 10,
+      runCommand: () => {
+        policyAttempts += 1;
+        throw policyError;
+      },
+      sleep: () => assert.fail('non-transient Gatekeeper errors must not sleep'),
+      logger: { warn: () => {} },
+    }),
+    policyError,
+  );
+  assert.equal(policyAttempts, 1);
+});
+
+test('every Gatekeeper assessment bypasses and does not repopulate stale cached results', () => {
+  const [, args] = resolveGatekeeperAssessmentCommand('/tmp/happier');
+  assert.equal(args.includes('--ignore-cache'), true);
+  assert.equal(args.includes('--no-cache'), true);
+});
+
+test('Gatekeeper assessment keeps a bounded thirty-minute window for accepted ticket propagation', () => {
+  const command = ['spctl', ['--assess', '--type', 'execute', '/tmp/happier']];
+  const retryDelays = [];
+  let attempts = 0;
+  const ticketPropagationError = new Error('spctl rejected the payload');
+  ticketPropagationError.stderr = 'source=Unnotarized Developer ID\n';
+
+  assert.throws(
+    () => runGatekeeperAssessment(command, {
+      runCommand: () => {
+        attempts += 1;
+        throw ticketPropagationError;
+      },
+      sleep: (delayMs) => retryDelays.push(delayMs),
+      logger: { warn: () => {} },
+    }),
+    ticketPropagationError,
+  );
+  assert.equal(attempts, 18);
+  assert.deepEqual(retryDelays.slice(0, 4), [15_000, 30_000, 60_000, 120_000]);
+  assert.equal(retryDelays.length, 17);
+  assert.equal(retryDelays.slice(3).every((delayMs) => delayMs === 120_000), true);
+  assert.equal(retryDelays.reduce((total, delayMs) => total + delayMs, 0), 29 * 60_000 + 45_000);
+});
+
 test('Darwin payload evidence binds every staged byte, mode, symlink, and discovered Mach-O path', () => {
   const workDir = mkdtempSync(path.join(os.tmpdir(), 'happier-darwin-payload-evidence-'));
   const payloadDir = path.join(workDir, 'happier-v1.2.3-darwin-arm64');
@@ -202,7 +282,7 @@ test('Darwin payload evidence binds every staged byte, mode, symlink, and discov
       payloadSha256: snapshot.payloadSha256,
       entryCount: snapshot.entryCount,
       machO: snapshot.machO,
-      signingIdentity: 'Developer ID Application: Happier Dev (TEAMID)',
+      signingIdentity: '0123456789ABCDEF0123456789ABCDEF01234567',
       notarization: {
         submissionId: '00000000-0000-0000-0000-000000000000',
         status: 'Accepted',
@@ -275,7 +355,7 @@ test('Darwin payload execution completes every sign and strict verification befo
 
     const evidence = notarizeDarwinPayload({
       payloadPath: payloadDir,
-      identity: 'Developer ID Application: Happier Dev (TEAMID)',
+      identity: '0123456789ABCDEF0123456789ABCDEF01234567',
       outPath: evidencePath,
       githubOutput: '',
       environment: {
@@ -387,6 +467,86 @@ test('rejected Darwin notarization reports its log without exposing the absolute
     rmSync(workDir, { recursive: true, force: true });
   }
 });
+
+test('Darwin release archive replacement is atomic and verifies the exact repackaged payload evidence first', async () => {
+  const workDir = mkdtempSync(path.join(os.tmpdir(), 'happier-darwin-release-archive-'));
+  const archivePath = path.join(workDir, 'hstack-v1.2.3-darwin-arm64.tar.gz');
+  const evidencePath = path.join(workDir, 'darwin-arm64.hstack.json');
+  const expectedPayloadName = 'hstack-v1.2.3-darwin-arm64';
+  const events = [];
+  try {
+    writeFileSync(archivePath, 'unsigned-archive', 'utf8');
+    const result = await finalizeDarwinReleaseArchive({
+      archivePath,
+      expectedPayloadName,
+      identity: '0123456789ABCDEF0123456789ABCDEF01234567',
+      evidencePath,
+      platform: 'darwin',
+      extractArchiveImpl: async ({ extractDir }) => {
+        const payloadDir = path.join(extractDir, expectedPayloadName);
+        mkdirSync(payloadDir, { recursive: true });
+        writeMachOFixture(path.join(payloadDir, 'hstack'), 'signed-payload');
+        events.push(`extract:${path.basename(extractDir)}`);
+      },
+      notarizePayloadImpl: (argv, { finalizePayloadBeforeSnapshot }) => {
+        events.push('notarize');
+        assert.deepEqual(argv, [
+          '--payload',
+          path.join(resultWorkDir(events), 'source', expectedPayloadName),
+          '--identity',
+          '0123456789ABCDEF0123456789ABCDEF01234567',
+          '--out',
+          evidencePath,
+        ]);
+        finalizePayloadBeforeSnapshot();
+        writeFileSync(evidencePath, '{}\n', 'utf8');
+      },
+      finalizePayloadBeforeSnapshot: (payloadPath) => {
+        events.push('refresh');
+        assert.equal(path.basename(payloadPath), expectedPayloadName);
+      },
+      createArchiveImpl: async ({ artifactPath, sourceName }) => {
+        events.push(`archive:${sourceName}`);
+        assert.equal(readFileSync(archivePath, 'utf8'), 'unsigned-archive');
+        writeFileSync(artifactPath, 'signed-archive', 'utf8');
+      },
+      verifyEvidenceImpl: ({ payloadPath, evidencePath: observedEvidencePath }) => {
+        events.push('verify');
+        assert.equal(path.basename(payloadPath), expectedPayloadName);
+        assert.equal(observedEvidencePath, evidencePath);
+        assert.equal(readFileSync(archivePath, 'utf8'), 'unsigned-archive');
+        return { payload: expectedPayloadName };
+      },
+      makeWorkDirImpl: () => {
+        const deterministicWorkDir = path.join(workDir, 'work');
+        mkdirSync(deterministicWorkDir, { recursive: true });
+        events.push(`work:${deterministicWorkDir}`);
+        return deterministicWorkDir;
+      },
+    });
+
+    assert.deepEqual(events.map((event) => event.split(':')[0]), [
+      'work',
+      'extract',
+      'notarize',
+      'refresh',
+      'archive',
+      'extract',
+      'verify',
+    ]);
+    assert.equal(readFileSync(archivePath, 'utf8'), 'signed-archive');
+    assert.equal(result.archivePath, archivePath);
+    assert.equal(result.payload, expectedPayloadName);
+  } finally {
+    rmSync(workDir, { recursive: true, force: true });
+  }
+});
+
+function resultWorkDir(events) {
+  const event = events.find((entry) => entry.startsWith('work:'));
+  assert.ok(event);
+  return event.slice('work:'.length);
+}
 
 test('local payload repair signs every nested Mach-O while preserving executable scripts', {
   skip: process.platform !== 'darwin',

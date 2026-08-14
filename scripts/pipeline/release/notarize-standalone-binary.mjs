@@ -9,6 +9,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
 
+import cliDistBuildManifest from '../../../packages/cli-common/cliDistBuildManifest.cjs';
+import { createNodeArchive, extractNodeArchive } from './node-archive.mjs';
+
 const THIN_MACH_O_MAGICS = new Set([
   'feedface',
   'cefaedfe',
@@ -27,6 +30,14 @@ const PRESERVED_CODESIGN_METADATA = [
   'launch-constraints',
   'library-constraints',
 ].join(',');
+const DEFAULT_GATEKEEPER_ATTEMPTS = 18;
+const DEFAULT_GATEKEEPER_RETRY_DELAY_MS = 15_000;
+const DEFAULT_GATEKEEPER_MAX_RETRY_DELAY_MS = 120_000;
+
+function isDeveloperIdApplicationSigningSelector(value) {
+  const selector = String(value ?? '').trim();
+  return selector.startsWith('Developer ID Application:') || /^[0-9a-f]{40}$/iu.test(selector);
+}
 
 function comparePaths(left, right) {
   return left < right ? -1 : left > right ? 1 : 0;
@@ -182,6 +193,21 @@ export function snapshotDarwinPayload(rawPayloadPath) {
   };
 }
 
+export function resolveGatekeeperAssessmentCommand(entryPath) {
+  return [
+    'spctl',
+    [
+      '--assess',
+      '--ignore-cache',
+      '--no-cache',
+      '--type',
+      'execute',
+      '--verbose=4',
+      entryPath,
+    ],
+  ];
+}
+
 /**
  * Standalone payload Mach-O files receive their notarization tickets from Apple
  * when Gatekeeper checks them online. There is no container to which a ticket
@@ -241,10 +267,7 @@ export function resolveDarwinPayloadNotarizationCommands({
     ],
     assess: machOCode
       .filter((entry) => entry.executable)
-      .map((entry) => [
-        'spctl',
-        ['--assess', '--type', 'execute', '--verbose=4', entry.path],
-      ]),
+      .map((entry) => resolveGatekeeperAssessmentCommand(entry.path)),
     ticketDelivery: 'online',
     stapled: false,
   };
@@ -275,6 +298,51 @@ function run([command, args], options = {}) {
     stdio: options.capture ? ['ignore', 'pipe', 'pipe'] : 'inherit',
     timeout: options.timeoutMs ?? 10 * 60_000,
   });
+}
+
+function commandFailureOutput(error) {
+  return [error?.message, error?.stdout, error?.stderr]
+    .map((value) => Buffer.isBuffer(value) ? value.toString('utf8') : String(value ?? ''))
+    .join('\n');
+}
+
+function sleepSync(ms) {
+  if (!Number.isFinite(ms) || ms <= 0) return;
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, Math.trunc(ms));
+}
+
+export function runGatekeeperAssessment(
+  command,
+  {
+    attempts = DEFAULT_GATEKEEPER_ATTEMPTS,
+    retryDelayMs = DEFAULT_GATEKEEPER_RETRY_DELAY_MS,
+    maxRetryDelayMs = DEFAULT_GATEKEEPER_MAX_RETRY_DELAY_MS,
+    runCommand = run,
+    sleep = sleepSync,
+    logger = console,
+  } = {},
+) {
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      runCommand(command, { capture: true });
+      return true;
+    } catch (error) {
+      const onlineTicketPending = /source\s*=\s*Unnotarized Developer ID/iu.test(
+        commandFailureOutput(error),
+      );
+      if (!onlineTicketPending || attempt >= attempts) {
+        throw error;
+      }
+      const nextAttempt = attempt + 1;
+      const delayMs = Math.min(retryDelayMs * (2 ** (attempt - 1)), maxRetryDelayMs);
+      logger.warn?.(
+        `[release] accepted notarization ticket is not visible to Gatekeeper yet; `
+        + `retrying spctl (${nextAttempt}/${attempts})`,
+      );
+      sleep(delayMs);
+    }
+  }
+  throw new Error('[release] Gatekeeper assessment retry loop exhausted unexpectedly');
 }
 
 export function repairAdHocDarwinPayloadSignatures(
@@ -317,10 +385,9 @@ export function verifyDarwinPayloadNotarizationEvidence({
     'codesign',
     ['--verify', '--strict=all', '--verbose=2', entryPath],
   ]),
-  assessCode = (entryPath) => run([
-    'spctl',
-    ['--assess', '--type', 'execute', '--verbose=4', entryPath],
-  ]),
+  assessCode = (entryPath) => runGatekeeperAssessment(
+    resolveGatekeeperAssessmentCommand(entryPath),
+  ),
 }) {
   const payloadPath = path.resolve(requireValue(rawPayloadPath, 'payload path'));
   const evidencePath = path.resolve(requireValue(rawEvidencePath, 'notarization evidence path'));
@@ -352,7 +419,7 @@ export function verifyDarwinPayloadNotarizationEvidence({
       || !/^[a-f0-9]{64}$/u.test(String(entry?.sha256 ?? ''))
       || typeof entry?.executable !== 'boolean'
     ))
-    || !String(evidence?.signingIdentity ?? '').startsWith('Developer ID Application:')
+    || !isDeveloperIdApplicationSigningSelector(evidence?.signingIdentity)
     || !String(evidence?.notarization?.submissionId ?? '').trim()
     || evidence?.notarization?.status !== 'Accepted'
     || !/^[a-f0-9]{64}$/u.test(String(evidence?.notarization?.archiveSha256 ?? ''))
@@ -425,7 +492,7 @@ export function finalizeMacOSPayloadForArchive({
     return null;
   }
   if (platform !== 'darwin') {
-    throw new Error('[release] Darwin CLI archive signing must run on macOS');
+    throw new Error('[release] Darwin payload signing must run on macOS');
   }
 
   if (!identity) {
@@ -443,6 +510,128 @@ export function finalizeMacOSPayloadForArchive({
   ], {
     finalizePayloadBeforeSnapshot: refreshRuntimeAssetManifest,
   });
+}
+
+function assertExactExtractedPayload(extractDir, expectedPayloadName) {
+  const entries = fs.readdirSync(extractDir).filter((entry) => !entry.startsWith('._')).sort();
+  if (entries.length !== 1 || entries[0] !== expectedPayloadName) {
+    throw new Error(
+      `[release] Darwin archive must contain exactly ${expectedPayloadName} (found: ${entries.join(', ') || '<empty>'})`,
+    );
+  }
+  const payloadPath = path.join(extractDir, expectedPayloadName);
+  if (!fs.statSync(payloadPath, { throwIfNoEntry: false })?.isDirectory()) {
+    throw new Error(`[release] Darwin archive payload is not a directory: ${expectedPayloadName}`);
+  }
+  return payloadPath;
+}
+
+export async function finalizeDarwinReleaseArchive({
+  archivePath: rawArchivePath,
+  expectedPayloadName: rawExpectedPayloadName,
+  identity: rawIdentity,
+  evidencePath: rawEvidencePath,
+  platform = process.platform,
+  extractArchiveImpl = extractNodeArchive,
+  createArchiveImpl = createNodeArchive,
+  notarizePayloadImpl = notarizeDarwinPayloadMain,
+  verifyEvidenceImpl = verifyDarwinPayloadNotarizationEvidence,
+  finalizePayloadBeforeSnapshot = () => {},
+  makeWorkDirImpl = () => fs.mkdtempSync(
+    path.join(path.dirname(path.resolve(rawArchivePath)), `.${path.basename(rawArchivePath)}.notary-`),
+  ),
+}) {
+  if (platform !== 'darwin') {
+    throw new Error('[release] Darwin archive finalization must run on macOS');
+  }
+  const archivePath = path.resolve(requireValue(rawArchivePath, 'Darwin archive path'));
+  const expectedPayloadName = requireValue(rawExpectedPayloadName, 'Darwin archive payload name');
+  if (path.basename(expectedPayloadName) !== expectedPayloadName || expectedPayloadName === '.' || expectedPayloadName === '..') {
+    throw new Error('[release] Darwin archive payload name must be one directory name');
+  }
+  const identity = requireValue(rawIdentity, 'Darwin signing identity');
+  if (!isDeveloperIdApplicationSigningSelector(identity)) {
+    throw new Error('[release] Darwin signing identity must be a Developer ID Application identity');
+  }
+  const evidencePath = path.resolve(requireValue(rawEvidencePath, 'Darwin notarization evidence path'));
+  if (!fs.statSync(archivePath, { throwIfNoEntry: false })?.isFile()) {
+    throw new Error(`[release] Darwin archive does not exist: ${archivePath}`);
+  }
+
+  const workDir = makeWorkDirImpl();
+  const sourceDir = path.join(workDir, 'source');
+  const verificationDir = path.join(workDir, 'verification');
+  const finalizedArchivePath = path.join(workDir, path.basename(archivePath));
+  try {
+    fs.mkdirSync(sourceDir, { recursive: true });
+    fs.mkdirSync(verificationDir, { recursive: true });
+    await extractArchiveImpl({ archivePath, extractDir: sourceDir });
+    const sourcePayloadPath = assertExactExtractedPayload(sourceDir, expectedPayloadName);
+    notarizePayloadImpl(
+      [
+        '--payload',
+        sourcePayloadPath,
+        '--identity',
+        identity,
+        '--out',
+        evidencePath,
+      ],
+      {
+        finalizePayloadBeforeSnapshot: () => finalizePayloadBeforeSnapshot(sourcePayloadPath),
+      },
+    );
+    await createArchiveImpl({
+      sourcePath: sourceDir,
+      sourceName: expectedPayloadName,
+      artifactPath: finalizedArchivePath,
+    });
+    await extractArchiveImpl({ archivePath: finalizedArchivePath, extractDir: verificationDir });
+    const verificationPayloadPath = assertExactExtractedPayload(verificationDir, expectedPayloadName);
+    const evidence = verifyEvidenceImpl({
+      payloadPath: verificationPayloadPath,
+      evidencePath,
+    });
+    fs.renameSync(finalizedArchivePath, archivePath);
+    return {
+      archivePath,
+      payload: evidence.payload,
+      payloadSha256: evidence.payloadSha256,
+      signingIdentity: evidence.signingIdentity,
+      notarizationStatus: evidence.notarization?.status,
+    };
+  } finally {
+    fs.rmSync(workDir, { recursive: true, force: true });
+  }
+}
+
+export async function finalizeDarwinReleaseArchiveMain(argv = process.argv.slice(2)) {
+  const { values } = parseArgs({
+    args: argv,
+    options: {
+      archive: { type: 'string' },
+      'expected-payload': { type: 'string' },
+      identity: { type: 'string' },
+      out: { type: 'string' },
+      'refresh-cli-runtime-asset-manifest': { type: 'boolean', default: false },
+    },
+    allowPositionals: false,
+  });
+  const result = await finalizeDarwinReleaseArchive({
+    archivePath: values.archive,
+    expectedPayloadName: values['expected-payload'],
+    identity: values.identity,
+    evidencePath: values.out,
+    finalizePayloadBeforeSnapshot: values['refresh-cli-runtime-asset-manifest'] === true
+      ? (payloadPath) => {
+        cliDistBuildManifest.refreshCliRuntimeAssetBuildManifest({
+          runtimeRoot: payloadPath,
+          entrypoint: path.join(payloadPath, 'package-dist', 'index.mjs'),
+        });
+      }
+      : undefined,
+  });
+  console.log(JSON.stringify(result));
+  return result;
 }
 
 function writePrivateKey(pathname, rawValue) {
@@ -528,7 +717,7 @@ export function notarizeDarwinPayload({
     if (status !== 'Accepted') {
       throw new Error(`[release] Apple notarization was not accepted (${status}); log: ${logFileName}`);
     }
-    commands.assess.forEach((command) => runCommand(command));
+    commands.assess.forEach((command) => runGatekeeperAssessment(command, { runCommand, logger }));
     assertMatchingPayloadSnapshot(signedSnapshot, snapshotDarwinPayload(payloadPath));
 
     const evidence = {
@@ -575,7 +764,7 @@ export function notarizeDarwinPayloadMain(
   const payloadPath = path.resolve(requireValue(values.payload, '--payload'));
   const identity = requireValue(values.identity, '--identity');
   const outPath = path.resolve(requireValue(values.out, '--out'));
-  if (!identity.startsWith('Developer ID Application:')) {
+  if (!isDeveloperIdApplicationSigningSelector(identity)) {
     throw new Error('[release] --identity must be a Developer ID Application identity');
   }
   return notarizeDarwinPayload({
@@ -594,14 +783,17 @@ const isEntrypoint = (() => {
 })();
 
 if (isEntrypoint) {
-  try {
+  Promise.resolve().then(async () => {
     if (process.argv.slice(2).includes('--verify-evidence')) {
-      verifyDarwinPayloadNotarizationEvidenceMain();
-    } else {
-      notarizeDarwinPayloadMain();
+      return verifyDarwinPayloadNotarizationEvidenceMain();
     }
-  } catch (error) {
+    if (process.argv.slice(2).includes('--archive')) {
+      return await finalizeDarwinReleaseArchiveMain();
+    } else {
+      return notarizeDarwinPayloadMain();
+    }
+  }).catch((error) => {
     console.error(error instanceof Error ? error.message : String(error));
     process.exit(1);
-  }
+  });
 }

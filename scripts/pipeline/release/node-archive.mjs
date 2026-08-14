@@ -41,8 +41,34 @@ function shouldExcludeArchiveEntry(pathLike) {
   return false;
 }
 
-async function main() {
-  const kv = parseArgs(process.argv.slice(2));
+export async function extractNodeArchive({ archivePath, extractDir }) {
+  const resolvedArchivePath = resolve(archivePath);
+  await extractArchivePayloadToDirectory({
+    archivePath: resolvedArchivePath,
+    archiveName: basename(resolvedArchivePath),
+    extractDir: resolve(extractDir),
+  });
+}
+
+export async function createNodeArchive({ sourcePath, sourceName, artifactPath }) {
+  const resolvedSourcePath = resolve(sourcePath);
+  const resolvedArtifactPath = resolve(artifactPath);
+  await mkdir(dirname(resolvedArtifactPath), { recursive: true });
+  await tar.c(
+    {
+      cwd: resolvedSourcePath,
+      file: resolvedArtifactPath,
+      gzip: { level: 6 },
+      portable: true,
+      mtime: new Date(0),
+      filter: (entryPath) => !shouldExcludeArchiveEntry(entryPath),
+    },
+    [sourceName],
+  );
+}
+
+export async function main(argv = process.argv.slice(2)) {
+  const kv = parseArgs(argv);
   const extractArchivePathInput = String(kv.get('--extract-archive-path') ?? '').trim();
   const extractDirInput = String(kv.get('--extract-dir') ?? '').trim();
   if (extractArchivePathInput || extractDirInput) {
@@ -51,11 +77,9 @@ async function main() {
         '[release] node archive extraction requires --extract-archive-path and --extract-dir',
       );
     }
-    const extractArchivePath = resolve(extractArchivePathInput);
-    await extractArchivePayloadToDirectory({
-      archivePath: extractArchivePath,
-      archiveName: basename(extractArchivePath),
-      extractDir: resolve(extractDirInput),
+    await extractNodeArchive({
+      archivePath: extractArchivePathInput,
+      extractDir: extractDirInput,
     });
     return;
   }
@@ -68,23 +92,22 @@ async function main() {
     throw new Error('[release] node archive helper requires --source-path, --source-name, and --artifact-path');
   }
 
-  const sourcePath = resolve(sourcePathInput);
-  const artifactPath = resolve(artifactPathInput);
-  await mkdir(dirname(artifactPath), { recursive: true });
-  await tar.c(
-    {
-      cwd: sourcePath,
-      file: artifactPath,
-      gzip: { level: 6 },
-      portable: true,
-      mtime: new Date(0),
-      filter: (entryPath) => !shouldExcludeArchiveEntry(entryPath),
-    },
-    [sourceName],
-  );
+  await createNodeArchive({
+    sourcePath: sourcePathInput,
+    sourceName,
+    artifactPath: artifactPathInput,
+  });
 }
 
-main().catch((error) => {
-  console.error(error instanceof Error ? error.message : String(error));
-  process.exit(1);
-});
+const isEntrypoint = (() => {
+  const entry = String(process.argv[1] ?? '');
+  return entry.endsWith('/scripts/pipeline/release/node-archive.mjs')
+    || entry.endsWith('\\scripts\\pipeline\\release\\node-archive.mjs');
+})();
+
+if (isEntrypoint) {
+  main().catch((error) => {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exit(1);
+  });
+}
