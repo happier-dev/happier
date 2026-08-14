@@ -4,6 +4,7 @@ import { existsSync } from 'node:fs';
 import { chmod, lstat, mkdir, readFile, readdir, realpath, rm, stat, unlink, writeFile } from 'node:fs/promises';
 
 import { pathExists } from '../fs/fs.mjs';
+import { writeJsonAtomic } from '../fs/json.mjs';
 import { run, spawnProc } from './proc.mjs';
 import { commandExists } from './commands.mjs';
 import {
@@ -25,6 +26,8 @@ import {
   ensureWorkspacePackagesBuiltByName as ensureWorkspacePackagesBuiltByNameOwner,
   ensureWorkspacePackagesBuiltForComponent as ensureWorkspacePackagesBuiltForComponentOwner,
 } from '../../../../../scripts/workspaces/ensureWorkspacePackagesBuilt.mjs';
+
+const HSTACK_CLI_INPUT_FRESHNESS_NS_FIELD = 'hstackInputFreshnessNs';
 
 async function readJson(path) {
   return JSON.parse(await readFile(path, 'utf-8'));
@@ -179,7 +182,21 @@ async function readUsableCliDistFreshness(distEntrypoint) {
     if (!entryStat.isFile() || entryStat.size === 0n) return null;
     await assertNoMissingLocalImports({ distDir: dirname(distEntrypoint), entryPath: distEntrypoint });
     const manifestStat = await stat(integrity.manifestPath, { bigint: true });
-    return manifestStat.mtimeNs;
+    const hasRecordedInputFreshness = Object.prototype.hasOwnProperty.call(
+      integrity.manifest ?? {},
+      HSTACK_CLI_INPUT_FRESHNESS_NS_FIELD,
+    );
+    const recordedInputFreshness = String(
+      integrity.manifest?.[HSTACK_CLI_INPUT_FRESHNESS_NS_FIELD] ?? '',
+    ).trim();
+    return {
+      publicationMtimeNs: manifestStat.mtimeNs,
+      inputFreshnessNs: !hasRecordedInputFreshness
+        ? manifestStat.mtimeNs
+        : /^\d+$/.test(recordedInputFreshness)
+        ? BigInt(recordedInputFreshness)
+        : null,
+    };
   } catch {
     return null;
   }
@@ -188,7 +205,30 @@ async function readUsableCliDistFreshness(distEntrypoint) {
 async function isCliDistFreshForInputs(distEntrypoint, inputFreshness) {
   const distFreshness = await readUsableCliDistFreshness(distEntrypoint);
   if (distFreshness === null) return false;
-  return inputFreshness === null || inputFreshness <= distFreshness;
+  return inputFreshness === null || (
+    distFreshness.inputFreshnessNs !== null
+    && inputFreshness <= distFreshness.inputFreshnessNs
+  );
+}
+
+async function writeCliDistInputFreshnessProvenance(distEntrypoint, value) {
+  const integrity = readCliDistIntegrity(distEntrypoint);
+  if (!integrity.ok || !integrity.manifestPath || !integrity.manifest) {
+    throw new Error('[local] cannot record happier-cli build input freshness on an unusable dist');
+  }
+  await writeJsonAtomic(integrity.manifestPath, {
+    ...integrity.manifest,
+    [HSTACK_CLI_INPUT_FRESHNESS_NS_FIELD]: value,
+  });
+}
+
+async function recordCliDistInputFreshness(distEntrypoint, inputFreshness) {
+  if (inputFreshness === null) return;
+  await writeCliDistInputFreshnessProvenance(distEntrypoint, inputFreshness.toString());
+}
+
+async function invalidateCliDistInputFreshness(distEntrypoint) {
+  await writeCliDistInputFreshnessProvenance(distEntrypoint, null);
 }
 
 async function getComponentPm(dir, env = process.env) {
@@ -644,7 +684,7 @@ export async function ensureWorkspacePackagesBuiltForComponent(componentDir, opt
 export async function ensureCliBuilt(cliDir, { buildCli, quiet = false, env: envIn = process.env } = {}) {
   const invocationInputFreshness = await readCliRuntimeInputFreshness(cliDir);
   const distEntrypoint = join(cliDir, 'dist', 'index.mjs');
-  const invocationDistFreshness = await readUsableCliDistFreshness(distEntrypoint);
+  const invocationDistState = await readUsableCliDistFreshness(distEntrypoint);
   const repoRoot = coerceHappyMonorepoRootFromPath(cliDir);
   const lockPath = repoRoot
     ? join(repoRoot, '.project', 'tmp', 'cli-dist-build.lock')
@@ -683,8 +723,12 @@ export async function ensureCliBuilt(cliDir, { buildCli, quiet = false, env: env
     const distDir = join(cliDir, 'dist');
     const legacyDistBackupDir = join(cliDir, '.dist.hstack-backup');
     const inputFreshness = await readCliRuntimeInputFreshness(cliDir);
-    const currentDistFreshness = await readUsableCliDistFreshness(distEntrypoint);
-    const buildCompletedSinceInvocation = currentDistFreshness !== invocationDistFreshness;
+    const currentDistState = await readUsableCliDistFreshness(distEntrypoint);
+    const buildCompletedSinceInvocation = (
+      currentDistState?.publicationMtimeNs ?? null
+    ) !== (
+      invocationDistState?.publicationMtimeNs ?? null
+    );
     const inputsChangedWhileWaiting = invocationInputFreshness !== null
       && inputFreshness !== null
       && invocationInputFreshness !== inputFreshness;
@@ -693,8 +737,10 @@ export async function ensureCliBuilt(cliDir, { buildCli, quiet = false, env: env
 
     if (buildCompletedSinceInvocation) {
       if (!inputsChangedWhileWaiting && await isCliDistFreshForInputs(distEntrypoint, inputFreshness)) {
+        await recordCliDistInputFreshness(distEntrypoint, inputFreshness);
         return skip('concurrent_build_already_completed', true);
       }
+      await invalidateCliDistInputFreshness(distEntrypoint);
       return skip('concurrent_build_superseded', false);
     }
 
@@ -754,6 +800,7 @@ export async function ensureCliBuilt(cliDir, { buildCli, quiet = false, env: env
       throw new Error(`[local] happier-cli dist build is not usable: ${integrity.reason}`);
     }
     await probeCliDistRuntimeImport(distEntrypoint, { cwd: cliDir, env: buildEnv });
+    await recordCliDistInputFreshness(distEntrypoint, inputFreshness);
 
     const nowFreshness = await readCliRuntimeInputFreshness(cliDir);
     const inputsStayedCurrent = inputFreshness === null
