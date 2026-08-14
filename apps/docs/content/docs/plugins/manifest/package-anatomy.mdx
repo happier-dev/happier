@@ -3,21 +3,24 @@ title: Package anatomy
 description: Source and npm-compatible artifact layout for Happier plugins.
 ---
 
-## Development source
+## Authoring source
 
 ```text
 my-plugin/
-  .happier-plugin/
-    plugin.json
-    plugin.schema.json
   src/
     index.ts
+    ui/                       # when the selected UI mode needs it
+  test/
+    index.test.mjs
   package.json
   tsconfig.json
 ```
 
-Development source may have ordinary dependencies managed by
-`happier plugins dev`. It is not itself the installable production artifact.
+`src/index.ts` is code-defined authoring source. It exports the `manifest` and
+`activate` projection from `definePlugin(...)`; authors do not maintain a
+second checked-in `.happier-plugin/plugin.json`. Development source may have
+ordinary dependencies managed by `happier plugins dev`. It is not itself the
+installable production artifact.
 
 ## Installable package
 
@@ -29,28 +32,44 @@ An installable plugin is an npm-compatible tarball. Its `package.json` contains:
 - a deliberate `files` inventory;
 - compiled, self-contained daemon and declared UI artifacts.
 
-The default scaffold uses `files: [".happier-plugin", "dist"]`. Production
-plugins must not depend on lifecycle scripts, runtime dependency installation,
-or a system package manager on the target machine.
+The default scaffold uses a deliberate runtime `dist` inventory and includes
+its generated `.agents/skills/happier-plugin-authoring` guide as authoring
+documentation. The canonical pack owner derives and stages
+`.happier-plugin/plugin.json` into the archive from the author module.
+Production plugins must not depend on lifecycle scripts, runtime dependency
+installation, or a system package manager on the target machine.
 
 ## Daemon entry
 
-The daemon module has a named activation export:
+The daemon module uses the code-defined author helper, which emits the named
+activation export consumed by the host:
 
 ```ts
-import type { PluginApi } from '@happier-dev/plugin-sdk';
+import { definePlugin } from '@happier-dev/plugin-sdk';
+import {
+  defineProtocolObject,
+} from '@happier-dev/plugin-sdk/protocol-authoring';
 
-export function activate(api: PluginApi): void {
-  // Bind manifest-declared local ids here.
-}
+export const { manifest, activate } = definePlugin({
+  id: 'com.example.my-plugin',
+  version: '0.1.0',
+  displayName: 'My plugin',
+  actions: {
+    'save-note': {
+      title: 'Save note',
+      inputSchema: defineProtocolObject({}, { policy: 'closed' }),
+      async run() { return {}; },
+    },
+  },
+});
 ```
 
 ## UI choices
 
 - React Native is trusted executable package code and is the default
   cross-platform renderer.
-- Hosted web is an isolated UI-only web surface that talks to Happier through
-  `@happier-dev/plugin-sdk/ui/client`.
+- Packaged hosted web is currently unavailable because no Artifact-backed frame
+  adapter has passed its platform feasibility gate.
 - Declarative settings, status, and actions are rendered entirely by the host.
 
 Generated UI artifacts belong in the selected `dist` tree. Authors do not

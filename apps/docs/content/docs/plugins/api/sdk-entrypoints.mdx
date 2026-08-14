@@ -1,0 +1,163 @@
+---
+title: SDK entrypoints
+description: Choose the public Plugin SDK import path for a capability, type annotation, build, test, or host integration.
+---
+
+This maintained task map is derived from the author-owned `index.public.ts`
+sources and the current package export map. It gives each import path a purpose
+without reproducing a symbol-level API dump. The publisher generates a
+symbol-level inventory from those same sources when an SDK artifact is ready;
+that generated output is not a second authoring owner.
+
+Every author-facing source export is currently marked experimental, and the
+package is private at `0.0.0` on a prepublication hold. Treat these paths as
+**Developer Preview** source contracts, not as an offer to install a published
+package or a released-semver stability promise.
+
+## Import rules
+
+- Start with `@happier-dev/plugin-sdk` and `definePlugin(...)` for an ordinary
+  author module.
+- Import a final domain path when you need an explicit type annotation or a
+  value that lives outside the root. Most host services are called through
+  `context.services`; their type-only paths remain useful for annotations.
+- The table's namespace examples identify a type-heavy module without forcing a
+  runtime import. In production code, import the specific type or value you
+  need from the same path.
+- `host/*` paths are intentionally public to Happier host packages, not to
+  installed plugins. `ui/build` is only for a build configuration, and
+  `ui/client` is only for a hosted-web client.
+- A normal target or contributor imports a feature-owned protocol package. Only
+  a reusable feature-protocol package imports the advanced browser-safe
+  `/protocol-authoring` constructors.
+
+## Choose a route by task
+
+| You are trying to… | Start here | Follow-on route when needed |
+| --- | --- | --- |
+| Define a normal Plugin | package root and `definePlugin(...)` | `/actions`, `/hooks`, `/agents`, or the capability family it declares |
+| Call host behavior from an invoked handler | `/actions` through `context.services.actions` | use the exact action contract documented by the feature that owns it |
+| Build a daemon integration | the final daemon capability path | `/exec`, `/fs`, `/http`, `/storage`, or `/connected-accounts` |
+| Add a custom Agent | `/agents` | `/agents/runtime`, `/sessions`, and `/sessions/work-state` |
+| Render Plugin UI | `/ui` | `/ui/build` for packaging or `/ui/client` only in hosted-web code |
+| Declare and use data | `/settings`, `/collections`, or `/resources` | `/storage` for daemon persistence contracts |
+| Test a Plugin module | `/testing` | use the source owner’s capability path for precise types |
+| Work on Happier host code | `/host/registration` or `/host/fs/json-owner-file-lock` | never import these paths from an installed Plugin |
+
+## Entrypoint route map
+
+| Import | Purpose | Example |
+| --- | --- | --- |
+| `@happier-dev/plugin-sdk` | Define a plugin and use the root authoring, identity, lifecycle, and error contracts. | `import { definePlugin } from '@happier-dev/plugin-sdk';` |
+| `@happier-dev/plugin-sdk/actions` | Action, tool, command, and action-service contracts. | `import type * as Actions from '@happier-dev/plugin-sdk/actions';` |
+| `@happier-dev/plugin-sdk/agents` | Cold Agent contribution and model configuration contracts. | `import type * as Agents from '@happier-dev/plugin-sdk/agents';` |
+| `@happier-dev/plugin-sdk/agents/runtime` | Daemon-realm custom Agent runtime, factory, and session contracts. | `import type * as AgentRuntime from '@happier-dev/plugin-sdk/agents/runtime';` |
+| `@happier-dev/plugin-sdk/async` | Cancellation-aware asynchronous utility types. | `import type * as Async from '@happier-dev/plugin-sdk/async';` |
+| `@happier-dev/plugin-sdk/automations` | Experimental Automation admission and result-delivery contracts; it does not provide an Automation scheduler or run store. | `import type * as Automations from '@happier-dev/plugin-sdk/automations';` |
+| `@happier-dev/plugin-sdk/background-services` | Generation-scoped background-service declaration and runtime types; it is not a scheduler API. | `import type * as BackgroundServices from '@happier-dev/plugin-sdk/background-services';` |
+| `@happier-dev/plugin-sdk/browser` | Public toolchain compatibility packet only; it does not declare browser targets or browser Actions. | `import type * as Browser from '@happier-dev/plugin-sdk/browser';` |
+| `@happier-dev/plugin-sdk/collections` | Daemon-realm Account collection definitions, references, queries, and collection service types. | `import type * as Collections from '@happier-dev/plugin-sdk/collections';` |
+| `@happier-dev/plugin-sdk/connected-accounts` | Daemon-realm Connected Account references, purpose bindings, health, and materialization result types. | `import type * as ConnectedAccounts from '@happier-dev/plugin-sdk/connected-accounts';` |
+| `@happier-dev/plugin-sdk/events` | Event contribution and event-service types. | `import type * as Events from '@happier-dev/plugin-sdk/events';` |
+| `@happier-dev/plugin-sdk/exec` | Host-mediated executable and process-service types for daemon code. | `import type * as Exec from '@happier-dev/plugin-sdk/exec';` |
+| `@happier-dev/plugin-sdk/exec/protocol-clients` | Typed process-protocol client contracts used with the host exec service. | `import type * as ProtocolClients from '@happier-dev/plugin-sdk/exec/protocol-clients';` |
+| `@happier-dev/plugin-sdk/fs` | Daemon-realm host-mediated filesystem service types. | `import type * as FileSystem from '@happier-dev/plugin-sdk/fs';` |
+| `@happier-dev/plugin-sdk/hooks` | Daemon-realm hook contribution and handler contracts. | `import type * as Hooks from '@happier-dev/plugin-sdk/hooks';` |
+| `@happier-dev/plugin-sdk/host/fs/json-owner-file-lock` | Host-only: do not import from an installed plugin. Happier daemon packages use this scoped JSON owner-file-lock seam. | `import type * as HostFileLock from '@happier-dev/plugin-sdk/host/fs/json-owner-file-lock';` |
+| `@happier-dev/plugin-sdk/host/registration` | Host-only: do not import from an installed plugin. Happier host packages use this registration-rights seam. | `import type * as HostRegistration from '@happier-dev/plugin-sdk/host/registration';` |
+| `@happier-dev/plugin-sdk/host/targeted-contributions` | Host-only: decode exact targeted contribution-point semantics. Do not import from an installed plugin. | `import { decodeTargetedContributionPointSemantics } from '@happier-dev/plugin-sdk/host/targeted-contributions';` |
+| `@happier-dev/plugin-sdk/http` | Host-mediated HTTP service types and outcomes. | `import type * as Http from '@happier-dev/plugin-sdk/http';` |
+| `@happier-dev/plugin-sdk/interactions` | Typed questions, confirmations, approvals, and present-user interaction results. | `import type * as Interactions from '@happier-dev/plugin-sdk/interactions';` |
+| `@happier-dev/plugin-sdk/managed-services` | Daemon-realm host-managed service declaration and lifecycle types. | `import type * as ManagedServices from '@happier-dev/plugin-sdk/managed-services';` |
+| `@happier-dev/plugin-sdk/manifest` | Plugin Manifest V2 parsing, validation, and declaration types. | `import type * as Manifest from '@happier-dev/plugin-sdk/manifest';` |
+| `@happier-dev/plugin-sdk/mcp` | Daemon-realm MCP server, client, discovery, tool, prompt, and resource contracts. | `import type * as Mcp from '@happier-dev/plugin-sdk/mcp';` |
+| `@happier-dev/plugin-sdk/notifications` | Host-mediated notification service and preference result types. | `import type * as Notifications from '@happier-dev/plugin-sdk/notifications';` |
+| `@happier-dev/plugin-sdk/protocol-authoring` | Browser-safe reusable feature-protocol schemas and typed contribution-point constructors. | `import { defineContributionProtocol } from '@happier-dev/plugin-sdk/protocol-authoring';` |
+| `@happier-dev/plugin-sdk/providers` | Model-provider contribution, binding, and projection types. | `import type * as Providers from '@happier-dev/plugin-sdk/providers';` |
+| `@happier-dev/plugin-sdk/resources` | Prompt-asset, prompt-registry, and manifest-declared Resource contracts; see the workflow guide below. | `import type * as Resources from '@happier-dev/plugin-sdk/resources';` |
+| `@happier-dev/plugin-sdk/reviews` | Daemon-realm review contribution, comment, and scope types. | `import type * as Reviews from '@happier-dev/plugin-sdk/reviews';` |
+| `@happier-dev/plugin-sdk/scm` | Daemon-realm source-control contribution and service types. | `import type * as Scm from '@happier-dev/plugin-sdk/scm';` |
+| `@happier-dev/plugin-sdk/scm/backend` | Daemon-realm SCM backend adapter contracts. | `import type * as ScmBackend from '@happier-dev/plugin-sdk/scm/backend';` |
+| `@happier-dev/plugin-sdk/scm/hosting` | Daemon-realm SCM hosting-provider adapter contracts. | `import type * as ScmHosting from '@happier-dev/plugin-sdk/scm/hosting';` |
+| `@happier-dev/plugin-sdk/secrets` | Secret declaration, binding, and host-mediated service types. | `import type * as Secrets from '@happier-dev/plugin-sdk/secrets';` |
+| `@happier-dev/plugin-sdk/sessions` | Session handles, transcript projections, and session-service types. | `import type * as Sessions from '@happier-dev/plugin-sdk/sessions';` |
+| `@happier-dev/plugin-sdk/sessions/external` | Daemon-realm external-session source, observation, and takeover contracts. | `import type * as ExternalSessions from '@happier-dev/plugin-sdk/sessions/external';` |
+| `@happier-dev/plugin-sdk/sessions/file-stores` | Daemon-realm bounded session-file-store record and reader types. | `import type * as SessionFileStores from '@happier-dev/plugin-sdk/sessions/file-stores';` |
+| `@happier-dev/plugin-sdk/sessions/subagents` | Subagent observation, summary, and service types. | `import type * as Subagents from '@happier-dev/plugin-sdk/sessions/subagents';` |
+| `@happier-dev/plugin-sdk/sessions/work-state` | Agent work-state publication and summary types. | `import type * as WorkState from '@happier-dev/plugin-sdk/sessions/work-state';` |
+| `@happier-dev/plugin-sdk/settings` | Settings descriptor, snapshot, mutation, and service types. | `import type * as Settings from '@happier-dev/plugin-sdk/settings';` |
+| `@happier-dev/plugin-sdk/storage` | Key-value storage and manifest-declared daemon database contracts; there is no `/database` entrypoint. | `import type * as Storage from '@happier-dev/plugin-sdk/storage';` |
+| `@happier-dev/plugin-sdk/testing` | Daemon-independent testkit for manifest/activation/handler cleanup and bounded semantic UI fixtures; use its context fixture rather than hand-writing host snapshots. | `import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';` |
+| `@happier-dev/plugin-sdk/ui` | UI contribution descriptors plus host-API, Resource-content, and surface-context types. | `import type * as PluginUi from '@happier-dev/plugin-sdk/ui';` |
+| `@happier-dev/plugin-sdk/ui/build` | Build-realm only: define the managed Plugin UI build configuration and use its compatibility packet. | `import { defineBuildConfig } from '@happier-dev/plugin-sdk/ui/build';` |
+| `@happier-dev/plugin-sdk/ui/client` | Browser-realm hosted-web bootstrap client; do not import it from a React Native renderer. | `import type * as PluginUiClient from '@happier-dev/plugin-sdk/ui/client';` |
+| `@happier-dev/plugin-sdk/voice` | Voice contribution, catalog, credential, and runtime contracts. | `import type * as Voice from '@happier-dev/plugin-sdk/voice';` |
+| `@happier-dev/plugin-sdk/voice/client` | Client-realm Voice conversation and media contracts. | `import type * as VoiceClient from '@happier-dev/plugin-sdk/voice/client';` |
+| `@happier-dev/plugin-sdk/voice/speech` | Speech-provider contract types. | `import type * as VoiceSpeech from '@happier-dev/plugin-sdk/voice/speech';` |
+| `@happier-dev/plugin-sdk/webhooks` | Daemon-realm webhook endpoint declarations, verification, and test fixtures. | `import type * as Webhooks from '@happier-dev/plugin-sdk/webhooks';` |
+
+## Advanced feature-protocol authoring
+
+`@happier-dev/plugin-sdk/protocol-authoring` is the browser-safe authoring
+boundary for a feature package that defines a reusable cross-plugin contribution
+protocol. It exports `defineContributionProtocol`,
+`defineContributionPoint`, and the protocol-schema helpers. It does not export
+host services, admitted snapshots, or runtime controls.
+
+```ts
+import {
+  defineContributionPoint,
+  defineContributionProtocol,
+} from '@happier-dev/plugin-sdk/protocol-authoring';
+```
+
+Everyday plugin authors should instead import the feature-owned value, call
+`.point()` for a target or `.contribute()` for a contributor, and derive normal
+Action facts from an operation's immutable `.declaration`. `.bind(localId)`
+only pairs a named role with an existing same-plugin Action; it is not an Action
+search, registry, or second dispatcher. See
+[Cross-plugin contributions](/plugins/guides/cross-plugin-contributions).
+
+## One `/resources` path, three resource workflows
+
+`@happier-dev/plugin-sdk/resources` is one retained public path, not an alias
+or a second Resource owner. Its exports serve three related author workflows:
+
+1. **Manifest-declared Resources:** use `PluginResourceDefinition`, packaged
+   Resource contribution types, and `PluginDynamicResourceRuntime` when a
+   plugin publishes bytes through a declared packaged or dynamic Resource. The
+   host owns byte admission, digest/currentness, and `readResource` as the
+   snapshot authority. `ResourcesService` is the daemon invocation-service
+   type for describing, reading, and watching one declared Resource.
+2. **Prompt assets and registries:** `PromptAsset*` and `PromptRegistry*`
+   types describe prompt-library content, adapters, discovery, and mutation.
+   They are not UI Resource subscriptions and do not create a parallel content
+   reader.
+3. **Runtime UI Resource consumption:** UI code uses its bound host API's
+   `readResource` and, for genuinely dynamic Resources, `watchResource`. The
+   UI-side `ResourceContent` and `ResourceSubscriptionEvent` types live at
+   `@happier-dev/plugin-sdk/ui`; a watch is an invalidation signal, so UI code
+   re-reads rather than treating it as a bytes channel.
+
+This naming guide keeps the established `./resources` contract intact while
+making the prompt-asset and UI-consumer vocabulary explicit. Do not introduce a
+new import alias or import `/resources` into client UI merely to obtain its host
+Resource API.
+
+## What `/testing` proves
+
+`@happier-dev/plugin-sdk/testing` is for deterministic author-facing contracts:
+manifest validation, activation and handler behavior, cancellation/cleanup, and
+the bounded semantic UI fixture, including selectable `option` targets. It does
+not prove installed discovery, on-demand activation, generation replacement,
+machine routing, native reconciliation, Account encryption, or packaged-artifact
+behavior; use the
+real CLI, daemon, and UI validation paths for those lifecycle claims.
+
+## Detailed reference and examples
+
+When the publisher produces an SDK artifact, its generated `API.md` is the
+symbol-level index for that artifact. It is not an authoring tutorial and does
+not make the currently private package publicly available. Start with the
+[quickstart](/plugins/quickstart), then use the route map above for explicit
+types and the relevant concept guide for lifecycle and product behavior.

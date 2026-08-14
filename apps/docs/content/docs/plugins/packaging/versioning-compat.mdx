@@ -9,45 +9,57 @@ Plugin compatibility has three independent axes:
 | --- | --- | --- |
 | Manifest schema | `schemaVersion` | Selects the strict JSON manifest contract. |
 | Happier host | `engines.happier` | Selects compatible host releases. |
-| Runtime API | `runtime.apiVersion` | Selects the host/plugin ABI generation; every manifest must declare the currently supported value, `1`. |
+| Runtime API | `runtime.apiVersion` | Selects the host/plugin ABI generation; every manifest must declare the generated current value. |
 
 Package semver does not replace the host and runtime compatibility fields.
 
-## `0.1.0` Developer Preview policy
+{/* public-toolchain-compatibility:versioning-facts:start */}
 
-The entire `@happier-dev/plugin-sdk` package is Developer Preview until
-`1.0.0`.
+- Current host build provenance: `@happier-dev/cli@0.2.10`.
+- `engines.happier` is optional. Declare a non-wildcard compatible range only when your plugin owns one.
+- Current runtime API: `1`.
 
-- The eight normal package paths are the candidate supported-preview author
-  surface pending the consolidated G5 approval.
-- `experimental/*` is a separate incubation tier for APIs with incomplete
-  consumer proof or a higher expectation of redesign/removal.
-- Patch releases should not intentionally break authored plugins.
-- Documented `0.x` minor releases may make breaking public API changes and
-  include migration notes.
-- Developer Preview relaxes long-term compatibility promises. It does not
-  relax correctness, install safety, lifecycle behavior, documentation, or
-  evidence requirements.
+{/* public-toolchain-compatibility:versioning-facts:end */}
 
-The normal paths are:
+## Current Developer Preview source contract
+
+Every current author-owned SDK export is marked experimental. The workspace
+package is private at `0.0.0` on a prepublication hold, so this documentation
+uses **Developer Preview** to describe the source contract; it does not claim
+that an external package can be installed or that a released semver policy is
+already in effect.
+
+- Author-owned `index.public.ts` sources and the package export map define the
+  current intended import paths. Publisher-generated inventories are derived
+  artifacts, not a parallel authoring authority.
+- Author imports use the root or the final capability domain path. Public
+  author specifiers do not use `experimental/*` or `internal/*`.
+- Do not infer a future release's semver or compatibility promise from a source
+  path resolving inside this workspace.
+- Preview status never relaxes correctness, install safety, lifecycle behavior,
+  documentation, or evidence requirements.
+
+Representative final paths include:
 
 ```text
 @happier-dev/plugin-sdk
-@happier-dev/plugin-sdk/manifest
-@happier-dev/plugin-sdk/runtime
-@happier-dev/plugin-sdk/agent-runtime
+@happier-dev/plugin-sdk/actions
+@happier-dev/plugin-sdk/http
+@happier-dev/plugin-sdk/interactions
+@happier-dev/plugin-sdk/agents/runtime
 @happier-dev/plugin-sdk/ui
 @happier-dev/plugin-sdk/ui/client
 @happier-dev/plugin-sdk/ui/build
 @happier-dev/plugin-sdk/testing
 ```
 
-Normal and `experimental/*` paths are disjoint. Do not import internal source
-files or rely on an undocumented package subpath.
+Use the maintained [SDK entrypoint map](/plugins/api/sdk-entrypoints) for the
+current route set. Do not import internal source files or rely on an
+undocumented package subpath.
 
 ## Current publication status
 
-The workspace package is still private at `0.0.0` on a prepublication hold.
-That current implementation fact does not change the approved policy for its
-first public `0.1.0` release. Publication requires the consolidated public API,
-packed external consumer, platform, compatibility, and human approval gates.
+The workspace package is private at `0.0.0` on a prepublication hold.
+Publication requires the consolidated public API, packed external consumer,
+platform, compatibility, and human approval gates. This guide does not promise
+when that work will make an artifact available.

@@ -20,9 +20,21 @@ change before approval is applied, the operation fails and must be reviewed
 again.
 
 For local authoring, use `happier plugins dev`. The daemon owns replacement and
-validation while the author command observes the source.
+validation while the author command automatically observes the source. For an
+intentional watcher-free refresh of a package root, use the same development
+source and reload from that root:
 
-Plugin cleanup is an author callback returned by a successful `activate(api)`.
+```bash
+happier plugins install . --dev
+happier plugins reload
+```
+
+When the package root is ambiguous or the command runs elsewhere, select the
+plugin explicitly: `happier plugins reload com.example.my-plugin`. Both routes
+preserve the last accepted generation when validation rejects a change.
+
+Plugin cleanup is an author callback returned by `setup` in a successful
+`definePlugin(...)` module; generated activation returns it after registration.
 Happier calls it when that activation is no longer serving. Plugin code does
 not persist or select installed state.
 

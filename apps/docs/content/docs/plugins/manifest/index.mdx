@@ -1,30 +1,42 @@
 ---
 title: Plugin manifest
-description: The strict cold JSON source of truth for plugin identity and contributions.
+description: The strict cold JSON projection used for plugin identity and contributions.
 ---
 
-Every external plugin is described by:
+Every installed or packed plugin is described to no-execute discovery by the
+generated cold projection:
 
 ```text
 .happier-plugin/plugin.json
 ```
 
-Happier reads and validates this file before importing plugin code. The same
-canonical schema is used by the scaffold, development loop, build, pack, and
-install paths. Unknown behavior keys reject with a path-specific diagnostic;
-only an explicitly documented metadata extension point may accept unknown JSON.
+Happier reads and validates this file before importing plugin code. It is
+projected from the code-defined `definePlugin(...)` author module during pack
+and development preparation; authors do not maintain a second manifest source.
+The cold host/install envelope and the public author boundary are related but
+not identical: the host validates the retained Protocol schema, while
+`definePlugin(...)`, the public `PluginManifest` type, and public manifest
+parsing apply the current author-availability fences before projection. Unknown
+behavior keys reject with a path-specific diagnostic; only an explicitly
+documented metadata extension point may accept unknown JSON.
 
-The canonical publication URL for editors and authoring tools is the
+The canonical publication URL for the cold host/install envelope is the
 [Plugin Manifest v2 JSON Schema](https://happier.dev/schemas/plugin-manifest-v2.json).
 The repository's website artifact is generated from the same Protocol owner,
-but deployment of that route remains a preview release gate. Until it is live,
-use the scaffolded protocol-generated copy beside `plugin.json` at
-`plugin.schema.json`.
+so it may include retained host-private or deferred declarations and is not an
+author-availability catalog. Public authors use `definePlugin(...)` or the
+public `PluginManifest` type; the package's generated capability matrix records
+which families are currently available. Deployment of the schema route remains
+a preview release gate. Until it is live, host tooling may use a
+Protocol-generated local schema artifact from the same owner; the scaffold
+does not create a second hand-maintained schema or manifest source.
 
 ## Minimal shape
 
-The default scaffold emits one action and two executable entrypoints:
+The default scaffold projects one action and two executable entrypoints from
+its `definePlugin(...)` source:
 
+{/* public-toolchain-compatibility:manifest-example:start */}
 ```json
 {
   "schemaVersion": 2,
@@ -32,7 +44,6 @@ The default scaffold emits one action and two executable entrypoints:
   "version": "0.1.0",
   "displayName": "Example plugin",
   "description": "Local Happier plugin scaffold for Example plugin.",
-  "engines": { "happier": "^0.2.0" },
   "runtime": { "apiVersion": 1 },
   "entrypoints": {
     "daemon": "./dist/index.js",
@@ -65,8 +76,11 @@ The default scaffold emits one action and two executable entrypoints:
   }
 }
 ```
+{/* public-toolchain-compatibility:manifest-example:end */}
 
-Ordinary contributions activate on demand.
+The JSON above is the cold installed projection. Ordinary contributions bind
+their executable handlers through the generated named `activate(api)` export
+on demand; it is not an author-maintained second declaration.
 
 ## Authority and identity
 
@@ -83,5 +97,6 @@ import either module.
 ## TypeScript
 
 `PluginManifest` is exported from `@happier-dev/plugin-sdk/manifest` for typed
-fixtures and tools. External discovery still reads JSON; there is no supported
-executable TypeScript manifest path.
+fixtures and tools. External discovery still reads the generated JSON; the
+supported author path is the executable `definePlugin(...)` module, whose cold
+projection is serialized for discovery.

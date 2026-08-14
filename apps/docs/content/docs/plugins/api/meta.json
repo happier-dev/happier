@@ -2,12 +2,12 @@
   "title": "API",
   "pages": [
     "index",
+    "sdk-entrypoints",
     "activation",
     "context",
     "actions-tools-commands",
     "hooks",
     "events",
-    "lifecycle",
-    "request-interceptors"
+    "lifecycle"
   ]
 }

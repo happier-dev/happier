@@ -3,14 +3,14 @@ title: Plugin quickstart
 description: Create, develop, test, build, pack, and install a minimal Happier plugin.
 ---
 
-The default scaffold contains one strict JSON manifest, one action, one named
-activation module, one focused test, and the package metadata needed by the
-current author tools.
+The default scaffold contains one code-defined plugin module, one action, one
+focused test, and the package metadata needed by the current author tools.
 
-> Release status: the workspace SDK is still private at `0.0.0`. The full
+> Release status: the author packages are not publicly installable yet. The
 > empty-directory flow remains a packed/live release gate until an approved
-> `0.1.0` preview artifact is available. Source and schema checks in this
-> repository do not prove public installation.
+> Preview artifact is published. Source and schema checks in this repository do
+> not prove public installation; do not substitute workspace resolution or a
+> locally served registry for that release proof.
 
 ## Create and develop
 
@@ -24,10 +24,41 @@ happier plugins dev
 directory name. Use `--id com.example.my-plugin` when you need a durable
 publisher-owned id.
 
-`plugins dev` validates `.happier-plugin/plugin.json`, installs the declared
+For an executable UI, keep the same journey and choose one mode:
+
+```bash
+happier plugins create my-native-plugin --ui reactNative
+happier plugins create my-hosted-plugin --ui hostedWeb
+```
+
+The React Native scaffold declares web, iOS, and Android artifacts through the
+public build contract. The hosted scaffold emits its isolated artifact and
+bootstrap client, but its packaged browser/desktop, iOS, and Android runtime
+paths remain unavailable until their respective frame adapters are verified.
+
+`plugins dev` is the automatic watcher flow: after trust it evaluates the
+selected author module, validates its projected manifest, installs declared
 development dependencies with Happier's managed toolchain, observes the source
-closure, and sends each valid change to the daemon. The daemon is the only
-process that imports the development module and calls `activate(api)`.
+closure, and sends each valid change to the daemon. The daemon imports the
+development module only as the activation entry and calls its generated
+`activate(api)` export.
+
+This normal create-to-dev loop prepares dependencies automatically; do not run
+`happier plugins author install .` first. That command prepares an
+external-author fixture. If the SDK must resolve through an approved registry
+origin, use `happier plugins dev --sdk-registry <origin>`. Installed SDK
+packages include copyable public patterns under
+`node_modules/@happier-dev/plugin-sdk/examples/`; choose the smallest matching
+example and verify imports against the maintained
+[SDK entrypoint map](/plugins/api/sdk-entrypoints). A future publisher artifact
+may include a generated symbol index, but that is not the teaching path and
+does not change the current prepublication hold.
+
+For a custom Session Agent, that activation entry is not the runner entry. The
+runner imports only the exact named factory leaf in the Agent's
+`sessionRunnerFactory` locator; it never calls `activate`. Keep that leaf
+separate and import-safe, because activation and runner execution can be
+different realms with no shared process-global singleton.
 
 The first use asks you to **Install & Trust** the local source. Normal edits
 under that approved source identity do not create a new trust prompt. A source
@@ -38,9 +69,6 @@ again.
 
 ```text
 my-plugin/
-  .happier-plugin/
-    plugin.json
-    plugin.schema.json
   src/
     index.ts
   test/
@@ -49,29 +77,45 @@ my-plugin/
   tsconfig.json
 ```
 
-The external source of truth is `.happier-plugin/plugin.json`. It is plain JSON
-and can be inspected without importing `src/index.ts`.
+During development, `src/index.ts` is the authoring source of truth. Packing
+evaluates that module once, validates the canonical projection, and writes
+`.happier-plugin/plugin.json` into the archive. Installed and marketplace
+discovery read that generated JSON without executing author code.
 
-The generated activation entry uses a named export:
+The generated entry uses the code-defined authoring helper and exports the
+ordinary named `manifest` and `activate` ABI:
 
 ```ts
-import type { PluginApi } from '@happier-dev/plugin-sdk';
-import type { ActionHandler } from '@happier-dev/plugin-sdk/runtime';
+import { definePlugin } from '@happier-dev/plugin-sdk';
+import {
+  defineProtocolObject,
+  defineProtocolString,
+} from '@happier-dev/plugin-sdk/protocol-authoring';
 
-export const saveNote: ActionHandler = async (input) => {
-  const note = typeof input === 'object' && input !== null && 'note' in input
-    && typeof input.note === 'string' ? input.note : '';
-  return { note };
-};
-
-export function activate(api: PluginApi): void {
-  api.actions.register('save-note', saveNote);
-}
+export const { manifest, activate } = definePlugin({
+  id: 'com.example.my-plugin',
+  version: '0.1.0',
+  displayName: 'My plugin',
+  actions: {
+    'save-note': {
+      title: 'Save note',
+      inputSchema: defineProtocolObject({
+        note: defineProtocolString(),
+      }, { policy: 'closed' }),
+      resultSchema: defineProtocolObject({
+        note: defineProtocolString(),
+      }, { policy: 'closed' }),
+      async run(input) {
+        return { note: input.note };
+      },
+    },
+  },
+});
 ```
 
 The action id is local to the plugin. Happier owns its structured global
-identity and renders it as `com.example.my-plugin/save-note` only where a
-global CLI, wire, or display boundary needs qualification.
+identity and renders it as `com.example.my-plugin/actions/save-note` only where
+a global CLI, wire, or display boundary needs qualification.
 
 ## Test, build, and pack
 
@@ -88,7 +132,8 @@ happier plugins pack .
 You can also use `npm run typecheck`, `npm test`, `npm run build`, and
 `npm run pack:plugin` from the scaffold. `plugins test .` runs the generated
 `test/index.test.mjs` suite through Happier's managed JavaScript runtime. It
-activates `dist/index.js` with the public testkit and invokes the declared
+loads `dist/index.js`, passes its exported `manifest` and `activate` through the
+public testkit, and invokes the declared
 `save-note` action without starting a daemon or mutating installed plugin
 state. The reserved
 `happier plugins test . --packed` mode packs the project, installs and trusts
@@ -109,15 +154,41 @@ executable realms, contributions, requested host integration, and source facts
 before asking for **Install & Trust**. Use the archive path printed by
 `plugins pack`; the example filename above is illustrative.
 
+## Development without a watcher
+
+`plugins dev` is the normal automatic edit loop. For an intentional
+watcher-free update, install the package-root development source and reload
+from that root:
+
+```bash
+happier plugins install . --dev
+happier plugins reload
+```
+
+The `--dev` installation and reload use the same daemon-owned trust,
+validation, generation replacement, and cleanup path as the watcher. When the
+current directory has more than one development plugin, or when you reload from
+another directory, select one explicitly: `happier plugins reload
+com.example.my-plugin`. An invalid reload leaves the last accepted generation
+serving.
+
 ## Next steps
 
-- Add contribution descriptors to the JSON manifest before registering their
-  executable local ids in `activate(api)`.
+- Add declarations and their handlers or runtimes to the matching
+  `definePlugin(...)` family.
 - Use `PluginInvocationContext.services` and `context.ui` inside invoked
   handlers.
-- Use native `AgentRuntime` factories for executable Agents; the host retains
-  session, turn, input, transcript, activity, persistence, and process
-  lifecycle ownership.
-- Choose React Native for trusted cross-platform plugin UI, hosted web for an
-  isolated web surface, or declarative settings/status/actions for UI rendered
-  entirely by Happier.
+- Choose the smallest [task guide](/plugins/guides): Agent mode, Provider,
+  SCM, Voice, background service, or invocation service.
+- For a feature-owned integration, use the
+  [cross-plugin contribution guide](/plugins/guides/cross-plugin-contributions).
+  Ordinary contributors import the feature protocol, derive role facts from an
+  operation's `.declaration`, and bind their existing Action with `.bind()`;
+  they do not create a generic protocol or scan Actions.
+- Use native `AgentRuntime` factories only for custom executable Agents; the
+  host retains session, turn, input, transcript, activity, persistence, and
+  process lifecycle ownership.
+- Choose React Native for trusted cross-platform plugin UI, hosted web for its
+  isolated artifact source contract, or declarative settings/status/actions for
+  UI rendered entirely by Happier. Do not advertise hosted runtime support
+  until the relevant Artifact-backed frame adapter passes verification.

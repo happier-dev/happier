@@ -49,7 +49,11 @@ The `git-cli` reference must resolve to a declared `contributes.systemTools[]` e
 
 ## Authority versus declarations
 
-Actions, tools, commands, hooks, notifications, Agents, UI, and other contribution families are derived from `contributes`. Declaring or registering one does not create privileged host authority. Contribution-local capabilities describe support only.
+Actions, tools, commands, hooks, notifications, Agents, UI, and other
+contribution families are projected from `definePlugin(...)` declarations.
+Declaring one or accepting its generated registration does not create
+privileged host authority. Contribution-local capabilities describe support
+only.
 
 ## Safety rules
 

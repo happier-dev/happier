@@ -32,17 +32,31 @@ scope, and a user-readable reason:
 }
 ```
 
-Current capability families are `network`, `network.intercept`, `network.client`, `filesystem`, `process`, `environment`, `secrets`, `connectedAccounts`, `sessions`, `terminal`, `browser`, `clipboard`, `externalLinks`, `storage.synced`, and `mcp`. Their `scope` objects are capability-specific and strict.
+Current public required HostAccess families are `network`, `network.client`,
+`filesystem`, `process`, `environment`, `connectedAccounts`, `sessions`,
+`terminal`, `storage.account`, and `mcp`. Their `scope` objects are
+capability-specific and strict. Only `connectedAccounts`, `sessions`,
+`storage.account`, and `mcp` may be optional.
+
+`terminal` is available only through the host-owned Agent-session terminal
+lifecycle. The Protocol retains `network.intercept`, `browser`, `clipboard`,
+and `externalLinks` as internal declarations, but they are not public HostAccess
+capabilities or `definePlugin(...)` input. The public SDK rejects them until a
+named maintained product consumer proves the complete owner and lifecycle. The
+publication pipeline records each family's current disposition in
+`packages/plugin-sdk/capability-matrix.json`; consult the matrix emitted with the
+package rather than treating an internal Protocol declaration as author
+availability.
 
 These declarations do not all mean the same thing:
 
 - filesystem, process, environment, and ordinary network rows disclose trusted
   executable behavior and configure cooperative host facilities; they do not
   sandbox equivalent direct Node or native access;
-- connected accounts, remote sessions, synced secrets, projects, repositories,
-  and MCP resources can be real host-owned selectable resources;
-- destructive or user-visible effects may require present intent or an OS
-  authorization at the operation boundary.
+- connected accounts, sessions, Account storage, and MCP resources can be real
+  host-owned selectable resources;
+- the Agent-session terminal is a user-visible effect and may require present
+  intent or an OS authorization at the operation boundary.
 
 Contribution declarations reference a host-access request by its id when the operation needs that authority. For example, an action can declare `"hostAccess": ["service-api"]`.
 

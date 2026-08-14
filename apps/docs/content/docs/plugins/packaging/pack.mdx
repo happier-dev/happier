@@ -9,22 +9,25 @@ Packing creates an installable archive from a local plugin directory.
 happier plugins pack /absolute/path/to/plugin --out ./plugin.happier-plugin.tgz
 ```
 
-The package must identify the manifest in `package.json`:
+The package metadata identifies the generated cold manifest in `package.json`:
 
 ```json
 {
   "keywords": ["happier-plugin"],
   "happier": { "manifest": ".happier-plugin/plugin.json" },
-  "files": [".happier-plugin", "dist"]
+  "files": [".agents/skills/happier-plugin-authoring", "dist"]
 }
 ```
 
-Use a deliberate `files` inventory. Packing includes only selected regular
-files and rejects unsafe archive paths and package lifecycle assumptions.
+Use a deliberate `files` inventory. The pack owner stages
+`.happier-plugin/plugin.json` from the `definePlugin(...)` projection into the
+archive even though authors do not keep that file in the source tree. Packing
+includes only selected regular files and rejects unsafe archive paths and
+package lifecycle assumptions.
 
 ## Include
 
-- `.happier-plugin/plugin.json`
+- the generated `.happier-plugin/plugin.json` cold projection
 - the compiled, self-contained daemon entry
 - runtime resources
 - built UI artifact tree

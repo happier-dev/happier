@@ -15,6 +15,18 @@ happier plugins dev
 closure, and asks the daemon to apply valid changes. It is the normal author
 loop; authors do not manage daemon replacement or recovery state.
 
+For a watcher-free development refresh, install the package root in
+development mode and reload from that root:
+
+```bash
+happier plugins install . --dev
+happier plugins reload
+```
+
+When the package root maps to multiple development plugins, or you reload from
+another directory, use `happier plugins reload com.example.my-plugin` to select
+one. Invalid candidate source preserves the last accepted generation.
+
 ## Validation and artifact flow
 
 ```bash

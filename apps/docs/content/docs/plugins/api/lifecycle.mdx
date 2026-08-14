@@ -3,14 +3,21 @@ title: Activation cleanup
 description: Release resources created by a successful plugin activation.
 ---
 
-Return at most one cleanup function from `activate(api)`:
+Return at most one cleanup function from `setup` in a `definePlugin(...)`
+author module. The generated `activate` export returns that cleanup after its
+registration-only work completes:
 
 ```ts
-export async function activate(api) {
-  const resource = await acquirePluginOwnedResource();
-  api.actions.register('use-resource', (input) => resource.use(input));
-  return async () => resource.close();
-}
+import { definePlugin } from '@happier-dev/plugin-sdk';
+
+export const { manifest, activate } = definePlugin({
+  id: 'com.example.resource',
+  version: '0.1.0',
+  setup: async () => {
+    const resource = await acquirePluginOwnedResource();
+    return async () => resource.close();
+  },
+});
 ```
 
 The callback owns only resources the plugin acquired after activation began

@@ -12,7 +12,9 @@ Plugins are trusted executable packages. Happier keeps their behavior reviewable
 - Keep permissions explicit and scoped.
 - Keep secrets out of settings and logs.
 - Keep agent-specific logic in agent leaves.
-- Treat hosted web as isolated UI and React Native as trusted client code.
+- Treat React Native as trusted client code. Packaged hosted web is currently
+  unavailable until an Artifact-backed frame adapter passes its platform
+  feasibility gate.
 - Use host services for mediated process, network, filesystem, and session operations.
 
 Host access declarations constrain host-mediated services; they are not an operating-system sandbox for arbitrary trusted code. Review source and dependencies before trusting a package.

@@ -14,6 +14,7 @@ Happier should project these from manifest/protocol data:
 - settings forms
 - agent settings forms
 - action, tool, and command catalogs
+- target-owned cross-plugin contribution points and contributor role bindings
 - hook declarations
 - event declarations and payload schema metadata
 - agent catalogs
@@ -36,8 +37,24 @@ No-execute projection lets Happier:
 
 ## Handler binding happens later
 
-Executable handlers are bound during daemon activation or runtime invocation. For example, an action is declared in the manifest, then `api.actions.register(id, handler)` binds behavior for that id.
+Executable handlers are bound during daemon activation or runtime invocation.
+For an ordinary author module, `definePlugin({ actions: { ... } })` projects the
+action and generates the matching activation binding from the same local id.
+
+Cross-plugin contribution authoring follows the same rule: a feature protocol's
+`.point()` and `.contribute()` helpers project the target point and contributor
+role bindings as cold data. The host-normalized catalog owns later admission,
+currentness, and execution. A target does not scan contributor Actions, and a
+contributor does not create a callback registry or another dispatcher.
 
 ## Avoid split-brain declarations
 
-Do not declare the same static contribution in both manifest data and activation-time code. The manifest owns projected identity; activation owns executable behavior.
+Do not declare the same static contribution in both manifest data and a
+handwritten activation module. `definePlugin` owns both the projected identity
+and generated executable binding; the host-owned low-level ABI exists only for
+conformance fixtures.
+
+Likewise, do not handwrite raw `contributes` or copy a role's Action facts into
+a second manifest-shaped map. The source author API is `contributionPoints` and
+`contributesTo`; an operation's immutable `.declaration` and `.bind(localId)`
+keep ordinary Action declarations and their role binding aligned.

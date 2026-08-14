@@ -3,32 +3,44 @@ title: Activation
 description: Bind executable plugin behavior to manifest-declared local ids.
 ---
 
-Every executable daemon module exports a named `activate` function:
+Ordinary plugin modules use `definePlugin(...)`. It is the single authoring
+path: one declaration produces the cold manifest and the matching named
+`activate` ABI without maintaining a second handwritten module.
 
 ```ts
-import type { PluginApi } from '@happier-dev/plugin-sdk';
+import { definePlugin } from '@happier-dev/plugin-sdk';
 
-export function activate(api: PluginApi): void {
-  api.actions.register('echo', async (input, context) => {
-    await context.ui.notify('Echoed', { severity: 'info' });
-    return input;
-  });
-}
+export const { manifest, activate } = definePlugin({
+  id: 'com.example.echo',
+  version: '0.1.0',
+  actions: {
+    echo: {
+      title: 'Echo',
+      run: async (input) => input,
+    },
+  },
+});
 ```
 
-Activation is registration-only. It receives `PluginApi`, not invocation or
-session services, and binds only ids declared in the matching manifest family.
-Missing, undeclared, duplicate, or wrong-family registrations fail validation.
+The generated activation is registration-only. It receives `PluginApi`, not
+invocation or session services, and binds only ids declared in the matching
+manifest family. Missing, undeclared, duplicate, or wrong-family registrations
+fail validation.
 
 Static manifest-declared registration methods return `void`. Dynamic watches
 or subscriptions may return `Disposable` when their documented lifetime is
 genuinely author-owned.
 
-## Cleanup
+## Low-level ABI conformance
 
-`activate` may return one cleanup function after successful registration:
+Handwriting `activate` is only for low-level ABI conformance or host-owned test
+fixtures. It is not a second normal authoring path. A conforming module still
+uses the same registration-only contract and may return one cleanup function
+after successful registration:
 
 ```ts
+import type { PluginApi } from '@happier-dev/plugin-sdk';
+
 export async function activate(api: PluginApi) {
   const connection = await openPluginOwnedConnection();
   api.actions.register('query', (input) => connection.query(input));
@@ -36,12 +48,12 @@ export async function activate(api: PluginApi) {
 }
 ```
 
-Happier calls the returned function at most once when that successful
+Happier calls a returned cleanup function at most once when that successful
 activation is retired or later validation fails. If activation throws before
 returning, no cleanup function exists yet. Protect directly acquired timers,
-sockets, processes, and other trusted-code resources with local
-`try`/`finally`; Happier can automatically unwind only registrations and
-resources acquired through host APIs.
+sockets, processes, and other trusted-code resources with local `try`/`finally`;
+Happier can automatically unwind only registrations and resources acquired
+through host APIs.
 
 Do not perform user-visible effects, start Agent sessions, read secrets, or
 write transcripts during activation. Those operations belong to invoked
