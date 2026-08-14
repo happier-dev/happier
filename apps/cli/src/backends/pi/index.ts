@@ -11,6 +11,7 @@ import { resolvePiConnectedServiceCandidatePersistedSessionFile } from '@/backen
 import { resolvePiConnectedServiceSwitchContinuity } from '@/backends/pi/connectedServices/resolvePiConnectedServiceSwitchContinuity';
 import type { AgentCatalogEntry } from '../types';
 import type { ConnectedServiceCredentialLifecycleDescriptor } from '@/daemon/connectedServices/credentials/lifecycleTypes';
+import { piDaemonSpawnHooks } from '@/backends/pi/daemon/spawnHooks';
 
 const piConnectedServiceCredentialLifecycleDescriptor: ConnectedServiceCredentialLifecycleDescriptor = {
   providerId: 'pi',
@@ -54,6 +55,7 @@ export const agent = {
   verifyResumeReachable: async (input) =>
     await (await import('@/backends/pi/connectedServices/verifyResumeReachablePi')).verifyResumeReachablePi(input),
   getSessionUsageLimitRecoveryControlAdapter: async () => piUsageLimitRecoveryControlAdapter,
+  getDaemonSpawnHooks: async () => piDaemonSpawnHooks,
   vendorResumeSupport: AGENTS_CORE.pi.resume.vendorResume,
   getPreflightSessionControlsProbeAdapter: async () =>
     (await import('@/backends/pi/preflight/piPreflightModelsProbeAdapter')).piPreflightModelsProbeAdapter,

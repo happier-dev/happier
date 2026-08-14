@@ -48,6 +48,7 @@ import { applyRunnerMcpSessionContext } from '@/mcp/runtime/applyRunnerMcpSessio
 import { resolveCliFeatureDecision } from '@/features/featureDecisionService';
 import { resolveCliMemoryRecallGuidanceEnabled } from '@/agent/promptLibrary/resolveCliMemoryRecallGuidanceEnabled';
 import { resolveAgentToolsDelivery } from '@/agent/tools/happierTools/runtime/resolveAgentToolsDelivery';
+import type { AgentToolsDeliveryAvailabilityResolver } from '@/agent/tools/happierTools/runtime/resolveAgentToolsDelivery';
 import { resolveAttachedRunRuntimeContext } from '@/agent/runtime/resolveAttachedRunRuntimeContext';
 import { archiveAndCloseRuntimeSession } from '@/session/services/archiveAndCloseRuntimeSession';
 import { resolveTerminationArchiveDecision } from '@/agent/runtime/terminationArchivePolicy';
@@ -159,6 +160,7 @@ export type StandardAcpProviderConfig = {
   onTerminalDisplayControllerReady?: (controller: TerminalDisplayController) => void;
   shouldRenderTerminalDisplay?: (params: { opts: StandardAcpProviderRunOptions; session: ApiSessionClient; metadata: Metadata }) => boolean;
   resolveKeepAliveMode?: () => KeepAliveMode;
+  resolveToolsDeliveryAvailability?: AgentToolsDeliveryAvailabilityResolver;
 };
 
 type StandardAcpProviderDeps = {
@@ -437,7 +439,11 @@ export async function runStandardAcpProvider(
   keepAliveInterval.unref?.();
 
   const runtimeDirectory = runtimeContext.runtimeDirectory;
-  const supportsMcpServers = (config.supportsMcpServers ?? true) && resolveAgentToolsDelivery(policyAgentId) === 'native_mcp';
+  const toolDelivery = resolveAgentToolsDelivery(policyAgentId, {
+    directory: runtimeDirectory,
+    environmentVariables: process.env,
+  }, config.resolveToolsDeliveryAvailability);
+  const supportsMcpServers = (config.supportsMcpServers ?? true) && toolDelivery === 'native_mcp';
   const mcpSession = applyRunnerMcpSessionContext(session, {
     getPermissionMode: () => permissionModeState.getCurrentPermissionMode() ?? 'default',
     getBackendTarget: () => opts.backendTarget ?? null,
@@ -626,7 +632,6 @@ export async function runStandardAcpProvider(
     });
 
   const initialResumeId = typeof opts.resume === 'string' ? opts.resume.trim() : '';
-  const toolDelivery = resolveAgentToolsDelivery(policyAgentId);
   const toolDeliverySessionId = toolDelivery === 'shell_bridge'
     ? session.sessionId
     : runtime.getSessionId();

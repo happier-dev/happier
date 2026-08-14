@@ -7,6 +7,7 @@ import { runStandardAcpProvider, type StandardAcpProviderRunOptions } from '@/ag
 import { createPiAcpRuntime } from '@/backends/pi/acp/runtime';
 import { buildPiToolsForPermissionMode } from '@/backends/pi/acp/backend';
 import { PiTerminalDisplay } from '@/backends/pi/ui/PiTerminalDisplay';
+import { resolvePiToolsDeliveryAvailability } from '@/backends/pi/shellBridge/resolvePiShellBridgeAvailability';
 
 export async function runPi(opts: StandardAcpProviderRunOptions & {
   credentials: Credentials;
@@ -20,6 +21,7 @@ export async function runPi(opts: StandardAcpProviderRunOptions & {
     waitingForCommandLabel: 'Pi',
     agentMessageType: 'pi',
     supportsMcpServers: false,
+    resolveToolsDeliveryAvailability: resolvePiToolsDeliveryAvailability,
     machineMetadata: initialMachineMetadata,
     terminalDisplay: PiTerminalDisplay,
     resolvePermissionModeQueueKey: (permissionMode) => buildPiToolsForPermissionMode(permissionMode)?.join(',') ?? 'native',

@@ -172,9 +172,14 @@ export async function resolveSpawnChildEnvironment(params: {
   }
 
   if (params.daemonSpawnHooks?.validateSpawn) {
+    const validationContext = {
+      directory: params.options.directory,
+      environmentVariables: { ...params.processEnv, ...extraEnv },
+    };
     const validation = await params.daemonSpawnHooks.validateSpawn({
       experimentalCodexAcp: effectiveExperimentalCodexAcp,
       codexBackendMode: effectiveCodexBackendMode,
+      ...validationContext,
     });
     if (!validation.ok) {
       const shouldFallbackToMcp =
@@ -204,6 +209,7 @@ export async function resolveSpawnChildEnvironment(params: {
       const validationAfterFallback = await params.daemonSpawnHooks.validateSpawn({
         experimentalCodexAcp: effectiveExperimentalCodexAcp,
         codexBackendMode: effectiveCodexBackendMode,
+        ...validationContext,
       });
       if (!validationAfterFallback.ok) {
         return {
