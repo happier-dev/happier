@@ -17,6 +17,10 @@ describe("accessKeysRoutes PUT /v1/access-keys/:sessionId/:machineId", () => {
     beforeEach(() => {
         vi.clearAllMocks();
         dbMocks.reset();
+        dbMocks.db.machine.findFirst.mockResolvedValue({
+            revokedAt: null,
+            replacedByMachineId: null,
+        });
     });
 
     it("updates with updateMany CAS and returns success", async () => {
@@ -117,5 +121,30 @@ describe("accessKeysRoutes PUT /v1/access-keys/:sessionId/:machineId", () => {
 
         expect(reply.statusCode).toBe(404);
         expect(res).toEqual({ error: "Access key not found" });
+    });
+
+    it("does not update an access key for a replaced machine", async () => {
+        dbMocks.db.machine.findFirst.mockResolvedValueOnce({
+            revokedAt: null,
+            replacedByMachineId: "m2",
+        });
+
+        const { accessKeysRoutes } = await import("./accessKeysRoutes");
+        const route = createRouteTestBuilder({
+            method: "PUT",
+            path: "/v1/access-keys/:sessionId/:machineId",
+            registerRoutes(app) {
+                accessKeysRoutes(app as any);
+            },
+        });
+
+        const { response: res, reply } = await route.invoke(
+            { userId: "u1", params: { sessionId: "s1", machineId: "m1" }, body: { data: "d3", expectedVersion: 2 } },
+        );
+
+        expect(reply.statusCode).toBe(404);
+        expect(res).toEqual({ error: "Access key not found" });
+        expect(dbMocks.db.accessKey.findUnique).not.toHaveBeenCalled();
+        expect(dbMocks.db.accessKey.updateMany).not.toHaveBeenCalled();
     });
 });
