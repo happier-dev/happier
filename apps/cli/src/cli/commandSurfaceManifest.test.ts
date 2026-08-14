@@ -19,6 +19,8 @@ describe('CLI command-surface manifest', () => {
       'service',
       'daemon',
       'doctor',
+      'session',
+      'resume',
     ]);
 
     for (const entry of entries) {

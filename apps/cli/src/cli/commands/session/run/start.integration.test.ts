@@ -222,7 +222,31 @@ describe('happier session run start (integration)', () => {
       expect(parsed.ok).toBe(false);
       expect(parsed.kind).toBe('session_run_start');
       expect(parsed.error?.code).toBe('invalid_arguments');
-      expect(parsed.error?.message).toBe('Usage: happier session run start <session-id> --intent <intent> --backend <backend-target> [--json]');
+      expect(parsed.error?.message).toBe('Usage: happier session run start <session-id-or-prefix-or-tag> --intent <review|plan|delegate|voice_agent|memory_hints> --backend <backend-target> [--json]');
+    } finally {
+      output.restore();
+    }
+  });
+
+  it('returns a stable invalid_arguments error for an unsupported intent', async () => {
+    const { handleSessionCommand } = await import('../index');
+    const output = captureConsoleJsonOutput();
+    const readCredentialsFn = vi.fn(async () => null);
+
+    try {
+      await handleSessionCommand(
+        ['run', 'start', 'sess_integration_run_start_123', '--intent', 'qa_cli_run', '--backend', 'codex', '--json'],
+        { readCredentialsFn },
+      );
+
+      const parsed = output.json();
+      expect(parsed.ok).toBe(false);
+      expect(parsed.kind).toBe('session_run_start');
+      expect(parsed.error).toEqual({
+        code: 'invalid_arguments',
+        message: 'Invalid --intent "qa_cli_run". Expected one of: review, plan, delegate, voice_agent, memory_hints.',
+      });
+      expect(readCredentialsFn).not.toHaveBeenCalled();
     } finally {
       output.restore();
     }
@@ -394,7 +418,13 @@ describe('happier session run start (integration)', () => {
     try {
       const machineKeySeed = new Uint8Array(32).fill(8);
       await handleSessionCommand(
-        ['run', 'start', 'sess_integration_run_start_123', '--intent', 'delegate', '--backend', 'acpBackend:review-bot', '--json'],
+        [
+          'run', 'start', 'sess_integration_run_start_123',
+          '--intent', 'delegate',
+          '--backend', 'acpBackend:review-bot',
+          '--permission-mode', 'read_only',
+          '--json',
+        ],
         {
           readCredentialsFn: async () => ({
             token: 'token_test',

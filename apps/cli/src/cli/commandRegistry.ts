@@ -73,6 +73,7 @@ export const commandRegistry: Readonly<Record<string, CommandHandler>> = {
   resume: handleResumeCliCommand,
   service: handleServiceCliCommand,
   session: handleSessionCliCommand,
+  // Backwards-compatible plural alias; keep the singular command canonical in help.
   sessions: handleSessionCliCommand,
   server: handleServerCliCommand,
   self: handleSelfCliCommand,

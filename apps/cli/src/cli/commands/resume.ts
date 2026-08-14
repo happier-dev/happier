@@ -17,6 +17,7 @@ import {
 import { canUseInkSelector, runSessionActionSelector } from '@/ui/ink/runSessionActionSelector';
 import { buildCliSessionRowModel } from '@/cli/output/session/buildCliSessionRowModel';
 import { buildResumeSelectionModel, formatResumeSelectionFooter } from '@/cli/commands/resumeInteractiveSelection';
+import { RESUME_COMMAND_USAGE } from '@/cli/commandSurfaceManifest';
 import {
   overlayDirectConnectedServiceEnvironment,
   resolveDirectConnectedServiceEnvironment,
@@ -100,8 +101,7 @@ export async function handleResumeCommand(
     return trimmed === '--help' || trimmed === '-h';
   });
   if (hasHelpFlag) {
-    console.log('happier resume');
-    console.log('happier resume <session-id-or-prefix>');
+    console.log(RESUME_COMMAND_USAGE);
     console.log('');
     console.log('Resumes an inactive session (vendor-resume) from the CLI.');
     return;

@@ -1,7 +1,7 @@
 import chalk from 'chalk';
 
 import type { Credentials } from '@/persistence';
-import { type ExecutionRunIntent, ExecutionRunStartRequestSchema } from '@happier-dev/protocol';
+import { type ExecutionRunIntent, ExecutionRunIntentSchema, ExecutionRunStartRequestSchema } from '@happier-dev/protocol';
 
 import { wantsJson, printJsonEnvelope, writeJsonStdout } from '@/cli/output/jsonEnvelope';
 import { readCommandPositionals, readFlagValue } from '@/cli/commands/shared/argvFlags';
@@ -20,6 +20,22 @@ import {
 } from '@/session/transport/encryption/sessionEncryptionContext';
 import { resolveSessionIdOrPrefix } from '@/session/query/resolveSessionId';
 
+const EXECUTION_RUN_INTENT_VALUES = ExecutionRunIntentSchema.options;
+const EXECUTION_RUN_INTENT_USAGE = EXECUTION_RUN_INTENT_VALUES.join('|');
+
+export const SESSION_RUN_START_USAGE = `happier session run start <session-id-or-prefix-or-tag> --intent <${EXECUTION_RUN_INTENT_USAGE}> --backend <backend-target> [--json]`;
+
+function parseExecutionRunIntent(rawIntent: string): ExecutionRunIntent {
+  const parsed = ExecutionRunIntentSchema.safeParse(rawIntent);
+  if (parsed.success) return parsed.data;
+
+  const error = new Error(
+    `Invalid --intent "${rawIntent}". Expected one of: ${EXECUTION_RUN_INTENT_VALUES.join(', ')}.`,
+  ) as Error & { code?: string };
+  error.code = 'invalid_arguments';
+  throw error;
+}
+
 export async function cmdSessionRunStart(
   argv: string[],
   deps: Readonly<{ readCredentialsFn: () => Promise<Credentials | null> }>,
@@ -32,20 +48,22 @@ export async function cmdSessionRunStart(
     ],
   });
   if (!idOrPrefix) {
-    throw new Error('Usage: happier session run start <session-id-or-prefix> --intent <intent> --backend <backend-target> [--json]');
+    throw new Error(`Usage: ${SESSION_RUN_START_USAGE}`);
   }
 
-  const intent = (readFlagValue(argv, '--intent') ?? '').trim() as ExecutionRunIntent;
+  const intentRaw = (readFlagValue(argv, '--intent') ?? '').trim();
   const backendTargetRaw = (readFlagValue(argv, '--backend') ?? '').trim();
   const instructions = readFlagValue(argv, '--instructions') ?? undefined;
 
-  if (!intent || !backendTargetRaw) {
-    throw new Error('Usage: happier session run start <session-id> --intent <intent> --backend <backend-target> [--json]');
+  if (!intentRaw || !backendTargetRaw) {
+    throw new Error(`Usage: ${SESSION_RUN_START_USAGE}`);
   }
+
+  const intent = parseExecutionRunIntent(intentRaw);
 
   const backendTarget = parseSingleBackendTargetFromFlag(backendTargetRaw);
   if (!backendTarget) {
-    throw new Error('Usage: happier session run start <session-id> --intent <intent> --backend <backend-target> [--json]');
+    throw new Error(`Usage: ${SESSION_RUN_START_USAGE}`);
   }
 
   const credentials = await deps.readCredentialsFn();
