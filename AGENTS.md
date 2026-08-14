@@ -22,6 +22,7 @@ This file is the canonical cross-tool constitution for this repository.
    - CLI: `apps/cli/AGENTS.md`
    - Server: `apps/server/AGENTS.md`
    - Stack: `apps/stack/AGENTS.md`
+   - Docs: `apps/docs/AGENTS.md`
    If the relevant instructions are not already present in active context, read them before changing that package. Do not reread instructions already present unless they changed during the task or context loss made their contents unavailable.
 2. Use repository skills when relevant:
    - `skills/happier-plan` only when the user explicitly asks to create, replace, or materially refine a repository plan. Do not invoke it merely because work is complex or multi-step.
@@ -30,6 +31,7 @@ This file is the canonical cross-tool constitution for this repository.
    - `skills/happier-commit-worktree` when the user asks to reconnoiter, classify, group, validate, and commit a large or continuously changing uncommitted worktree. It owns coherent commit formation, private-index/CAS safety, artifact exclusion, recovery, and residual auditing; it is not the workflow for an ordinary already-scoped single commit.
    - `skills/happier-review` as the only general Happier review/QA orchestrator for plans, session changes, worktrees, branches/PRs, features, affected code corridors, and review-fix loops. The superseded generic `review-protocol` and `code-reviewer` skills are archived and must not be invoked for this repository.
    - `skills/happier-testing` for TDD, test quality, lane selection, and live validation.
+   - `skills/happier-docs` for internal technical docs and published user/operator/contributor documentation, including evidence, release status, voice, editing discipline, and validation.
    - `skills/happier-issue-triage` for retrieving, normalizing, relating, clustering, and routing one or many GitHub issues before deep diagnosis. It owns execution topology and presentation ownership, not root-cause conclusions.
    - `skills/happier-issue-diagnose` for deep read-only diagnosis of one GitHub issue or coherent issue bundle, including report-quality handling, private evidence capability checks, version/release basis, and an issue-specific disposition. It composes the runtime, compatibility, testing, release, and claim-verification skills rather than replacing them.
    - `skills/happier-diagnose` for read-only runtime/support diagnosis of daemon, session, provider, auth, or connectivity incidents. A requested repository fix proceeds through `happier-implement` after the evidence is established.
@@ -106,6 +108,15 @@ Before changing production behavior:
   - why the proposed change belongs at that owner.
 - If one of those remains materially unknown, keep investigating. Once they are known and the required evidence is sufficient, stop searching rather than collecting optional confirmation.
 - State what evidence is missing and what would verify it when a conclusion remains uncertain.
+
+## Documentation ownership
+
+- `docs/**` owns internal technical and product-architecture documentation: protocols, canonical owners, data flows, compatibility, persistence, encryption, deployment internals, and contributor-facing architecture.
+- `apps/docs/content/docs/**` owns published documentation for users, operators, self-hosters, providers, and public contributors.
+- A behavior or contract change updates every materially affected canonical documentation page in the same coherent change, or the handoff explains why no documentation change was needed.
+- Search for and update the existing canonical page before creating another. Do not leave similar-but-different explanations of the same concept.
+- Documentation is a claim, not proof of implementation. Verify Happier behavior against the implementing code and the target release/channel before documenting it.
+- Distinguish shipped, preview, development-only, experimental, deprecated, and planned behavior explicitly. Do not present an unreleased intermediate as available.
 
 ## Risk-weighted execution
 
