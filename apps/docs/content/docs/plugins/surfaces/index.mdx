@@ -7,9 +7,9 @@ Agent plugins can contribute two adjacent optional capability families:
 
 - `AgentRuntime.surfaces.terminal` resolves an Agent-specific terminal launch
   plan.
-- `api.agents.registerExternalSessions(...)` registers the six-method
-  External Sessions auxiliary for Agent-native sessions created outside
-  Happier.
+- `agents.<id>.externalSessions` supplies the six-method External Sessions
+  auxiliary for Agent-native sessions created outside Happier; generated
+  activation performs the matching registration.
 
 External Sessions is not an `AgentRuntime.surfaces` field. Both capabilities
 use the same manifest-declared Agent identity, while the host owns product

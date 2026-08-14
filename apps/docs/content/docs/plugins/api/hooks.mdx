@@ -9,17 +9,34 @@ Hooks are host-invoked extension points. They let plugins observe or influence s
 
 Declare hook contributions in the manifest. Include the hook id, scope, filters, priority, and execution kind when the hook family supports them.
 
-## Hook binding
+## Code-defined hook binding
 
-Bind the executable handler during activation:
+Declare the hook and handler together with `definePlugin(...)`. Its generated
+activation binds the matching handler; ordinary author modules do not handwrite
+`api.hooks.register(...)`.
 
 ```ts
-export async function activate(api) {
-  api.hooks.register('transform-session-input', async (payload, context) => {
-    if (context.signal.aborted) return;
-    return payload;
-  });
-}
+import { definePlugin } from '@happier-dev/plugin-sdk';
+
+export const { manifest, activate } = definePlugin({
+  id: 'com.example.hooks',
+  version: '0.1.0',
+  hooks: {
+    'session-spawned': {
+      declaration: {
+        on: 'session.spawned',
+        hookApiVersion: 1,
+        category: 'lifecycle',
+        scope: 'session',
+        executionKind: 'observe',
+        priority: 50,
+      },
+      handler: async (_payload, context) => {
+        if (context.signal.aborted) return;
+      },
+    },
+  },
+});
 ```
 
 ## Hook result classes

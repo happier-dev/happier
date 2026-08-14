@@ -3,21 +3,53 @@ title: Agent runtimes
 description: The executable object that binds agent code to Happier runtime contracts.
 ---
 
-`AgentRuntime` is the executable integration object for a manifest-declared agent.
+`AgentRuntime` is the executable integration object for a custom
+manifest-declared Agent. A declarative ACP Agent has no plugin-owned runtime
+factory; start with [the Agent-mode guide](/plugins/guides/agent-modes) to
+choose the correct shape.
 
 An `AgentRuntime` owns at least one of `sessions` or `executionRuns`. Optional
 typed capabilities and message adapters expose only behavior declared by that
 Agent. Separately owned auxiliary features do not move into the primary runtime.
 
-## Registering a runtime
+## Code-defined runtime binding
 
 ```ts
-export async function activate(api) {
-  api.agents.register('example', createExampleAgentRuntime);
-}
+import { definePlugin } from '@happier-dev/plugin-sdk';
+
+export const { manifest, activate } = definePlugin({
+  id: 'com.example.runtime',
+  version: '0.1.0',
+  agents: {
+    example: {
+      declaration: {
+        title: 'Example runtime',
+        runtime: { kind: 'custom' },
+        primary: 'sessions',
+        capabilities: {
+          sessions: {
+            open: ['create'],
+            delivery: ['newTurn'],
+            cancel: true,
+          },
+        },
+      },
+      factory: createExampleAgentRuntime,
+      sessionRunnerFactory: {
+        module: './agentRuntime.js',
+        export: 'createExampleAgentRuntime',
+        runtimeApiVersion: 1,
+      },
+    },
+  },
+});
 ```
 
-The registration id references an entry declared in `manifest.contributes.agents[]`.
+The `agents.example` local id projects the matching
+`manifest.contributes.agents[]` entry and generated activation binding. For a
+Session-capable custom Agent, it also needs a distinct named
+`sessionRunnerFactory` leaf; execution-run-only custom Agents must not declare
+one.
 
 ## Runtime contents
 
@@ -31,7 +63,7 @@ Not every Agent needs every optional field. It must expose `sessions`,
 ## Example pattern
 
 ```ts
-import type { AgentRuntimeFactory } from '@happier-dev/plugin-sdk/agent-runtime';
+import type { AgentRuntimeFactory } from '@happier-dev/plugin-sdk/agents/runtime';
 
 export const createExampleAgentRuntime: AgentRuntimeFactory = () => {
   return {

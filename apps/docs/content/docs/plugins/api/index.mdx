@@ -5,13 +5,15 @@ description: Public daemon-side API surfaces for activating plugins and running 
 
 The plugin runtime has three principal public contexts:
 
-- `PluginApi`: nested, registration-only API passed to `activate(api)`.
+- `PluginApi`: nested, registration-only ABI consumed by the generated
+  `activate(api)` export from `definePlugin(...)`.
 - `PluginInvocationContext`: invocation-scoped identity, cancellation, and services passed to action and hook handlers.
 - `AgentRuntimeFactoryContext`: factory-scoped identity and lifecycle data passed to Agent runtime factories.
 
 ## Activation API
 
-Use `PluginApi` to register executable handlers for manifest-declared contributions through the matching nested family:
+`definePlugin(...)` projects executable handlers into the matching nested
+`PluginApi` family for manifest-declared contributions:
 
 - agent runtimes
 - actions
@@ -19,9 +21,8 @@ Use `PluginApi` to register executable handlers for manifest-declared contributi
 - notification channels
 - SCM hosting and repository integrations
 - MCP servers and discovery contributions
-- request interceptors
 - supported Voice contributions declared by the installed SDK version
-- activation cleanup returned from the named `activate` function
+- activation cleanup returned from the code-defined `setup` callback
 
 ## Runtime context
 
@@ -35,4 +36,15 @@ Use the services and `context.ui` on `PluginInvocationContext` from invoked hand
 
 ## Rule of thumb
 
-If it declares an identity, put it in the manifest. If it binds executable behavior, use the matching nested activation family. Tools and commands reference actions declaratively. Invoked handlers use their bounded invocation services; Agent runtime factories use their factory context.
+If it declares an identity, put it in the `definePlugin(...)` source. If it
+binds executable behavior, use the matching code-defined family rather than a
+handwritten activation module. Tools and commands reference actions
+declaratively. Invoked handlers use their bounded invocation services; Agent
+runtime factories use their factory context.
+
+A feature-owned cross-plugin contribution protocol is the exception to a
+single-plugin declaration: a target calls `.point()`, while a contributor binds
+an existing Action with `.contribute()` and `.bind(localId)`. The role's
+immutable `.declaration` supplies Action facts; neither side scans Actions or
+adds another dispatcher. See
+[Cross-plugin contributions](/plugins/guides/cross-plugin-contributions).

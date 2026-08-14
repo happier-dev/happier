@@ -3,6 +3,7 @@
   "pages": [
     "index",
     "quickstart",
+    "guides",
     "glossary",
     "concepts",
     "manifest",

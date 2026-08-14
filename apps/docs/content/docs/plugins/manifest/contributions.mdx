@@ -7,37 +7,97 @@ description: Contribution families that a plugin can declare for projection and 
 
 ## Common contribution families
 
-| Family | Purpose | Executable binding |
+| Family | Purpose | Code-defined author field |
 | --- | --- | --- |
-| `actions` | User, CLI, MCP, and session-agent operations | `api.actions.register` |
+| `actions` | User, CLI, MCP, and session-agent operations | `actions.<id>.run` |
 | `tools` | Declarative tool-facing wrappers around actions | manifest action reference |
 | `commands` | Declarative CLI entries around actions | manifest action reference |
-| `hooks` | Host extension points | `api.hooks.register` |
-| activation cleanup | Plugin-owned resources from a successful activation | cleanup function returned by `activate` |
+| `hooks` | Host extension points | `hooks.<id>.handler` |
+| activation cleanup | Plugin-owned resources from a successful activation | cleanup function returned by `setup` |
 | `events` | Plugin-authored event ids and payload schemas | `context.services.events` in invoked handlers |
-| `agents` | AI agent declarations and runtime metadata | `api.agents.register` |
+| `agents` | AI agent declarations and runtime metadata | custom Agents: `agents.<id>.factory`; declarative ACP: host-owned |
+| `providers` | Model-provider declarations, catalogs, connection facts, and an optional cold managed-runtime facet | ordinary Providers are descriptor-only; a managed Provider uses `providers.<id>.runtime` |
+| `connectedAccountDescriptors` | A plugin-produced account service and authentication modes | `connectedAccountDescriptors.<id>.runtime` |
+| `backgroundServices` | Daemon-generation background work | `backgroundServices[].runner` |
+| `scmHostingProviders` | Remote forge and hosting-service integration | `scmHostingProviders.<id>.runtime` |
+| `scmBackends` | Local repository and working-tree integration | `scmBackends.<id>.runtime` |
 | `settings` | Typed settings descriptors | `context.services.settings` in invoked handlers |
-| MCP servers | Hosted or managed MCP server descriptors | `api.mcp.registerServer` |
-| MCP discovery | Runtime MCP discovery | `api.mcp.registerDiscoveryProvider` |
-| UI | Host-rendered descriptors, hosted web, or React Native surfaces | generated artifact tree where executable UI is declared |
-| request interceptors | Policy over plugin-authored fetch calls | `api.interceptors.register` |
+| `openableContentViewers` | Declarative matching for host-opened content and its plugin-owned viewer | direct same-plugin `contributes.ui.views` destination |
+| MCP servers | Hosted or managed MCP server descriptors | `mcp.servers.<id>.runtime` when dynamic |
+| MCP discovery | Runtime MCP discovery | `mcp.discoverySources.<id>.discover` |
+| UI | Host-rendered descriptors or React Native surfaces; hosted web is currently unavailable pending an Artifact-backed frame adapter | generated artifact tree where executable UI is declared |
 | `managedDependencies` | Host-managed tool/runtime dependencies | dependency installer/validator |
 | `voiceModelPacks` | Immutable STT/TTS model and voice assets for host-owned engines | none; declarative data only |
-| `voiceProviders` | Conversation provider leaf with optional account-mediated client auth and catalog actions (supported preview) | generated client `activate` → `api.voiceProviders.register` |
+| `voiceProviders` | Conversation, STT, and TTS providers with strict settings, catalogs, limits, and credential declarations (supported preview) | `voiceProviders.<id>.runtime` when the declared realm needs one |
 
 The exact availability of a family depends on the current Happier version. Runtime demand is derived from the contribution declarations; Manifest V2 has no separate `uses[]` owner.
+
+## Cross-plugin contribution points
+
+A target declares `contributionPoints` with a feature-owned protocol's
+`.point()` value. A contributor uses `contributesTo` and that same feature
+protocol's `.contribute()` value to bind its existing plugin-local Actions to
+the protocol's named roles. The operation's `.bind(localId)` retains the
+ordinary qualified Action identity; it does not register a new handler or let
+the target search Actions by local id.
+
+An operation's immutable `.declaration` supplies the required input mode,
+result schema, Action surfaces, and danger level for its ordinary Action
+declaration. Do not duplicate those facts in a feature-owned table or infer
+them from a raw manifest. Required roles must be bound; optional roles may be
+absent. The host admits compatible current target and contributor generations,
+so a contributor remains otherwise usable when its target is absent.
+
+The first public author route is operation-only. Descriptor and embedded-renderer
+contribution roles are not a current external-author product. Do not infer a
+renderer, route, container, `appPage`, or callback registration from a generic
+feature-protocol constructor.
+
+`contributes` is the host-normalized manifest shape. Source authors do not
+write it directly: use `contributionPoints` and `contributesTo` so the typed
+feature protocol remains the one authoring owner. See
+[Cross-plugin contributions](/plugins/guides/cross-plugin-contributions) for
+the ordinary target and contributor workflow.
 
 ## Descriptor-first families
 
 Settings, UI surfaces, managed dependencies, notification categories, agent runtime capabilities, and projected display metadata should be descriptor-first. The manifest describes them; executable code only handles the dynamic behavior the descriptor references.
 
+## Openable content viewers (experimental)
+
+`contributes.openableContentViewers` declares a plugin-owned viewer for content
+the host can open. Each row has a local `id`, a required `destination`, and one
+or more `contentClasses`; it can further narrow matching with normalized
+`mimeTypes` and `extensions`.
+
+`destination` is a same-plugin local reference to `contributes.ui.views`. It is
+not a renderer, route, placement, or host-projection binding. The referenced
+view independently declares its direct V2 `container`, `target`, and `renderer`;
+the viewer only associates matching openable content with that existing view.
+
 ## Handler id matching
 
-Registration methods bind executable handlers to manifest-declared ids. Invalid, missing, duplicate, or undeclared ids are authoring errors. Happier should fail closed rather than silently accepting a no-op registration for a declared required contribution.
+`definePlugin` generates the registration methods that bind executable handlers
+to manifest-declared ids. Invalid, missing, duplicate, or undeclared ids are
+authoring errors. Happier should fail closed rather than silently accepting a
+no-op registration for a declared required contribution.
 
 ## Dynamic runtime state is not a contribution
 
 Agent-native commands, model lists, active account state, transcript lines, runtime status, and native session ids are runtime state. They flow through the native `AgentRuntime` and host-owned services, not through new static contribution identities.
+
+## Task guides
+
+- [Agent modes](/plugins/guides/agent-modes) distinguishes declarative ACP,
+  execution-run-only, persistent Session, and composite Agents.
+- [Model Providers](/plugins/guides/providers) distinguishes descriptor-only
+  sources from a managed local Provider lifecycle.
+- [SCM integration](/plugins/guides/scm) keeps remote hosting and local
+  repository backends distinct.
+- [Voice](/plugins/guides/voice) splits client conversation from daemon STT
+  and TTS.
+- [Background services](/plugins/guides/background-services) covers
+  daemon-generation work.
 
 ## Voice model packs
 
@@ -54,156 +114,207 @@ The host independently checks installed-plugin trust and source digest, signatur
 
 This family can add data for an inference family already compiled into Happier. It cannot register a voice provider, connection factory, protocol parser, transcript mapper, credential callback, native module, daemon worker, codec, server adapter, UI callback, or executable inference engine. Use the existing generic `contributes.settings` for plugin-local host-rendered settings and the existing documented voice hook ids for lifecycle/transcript observation; there is no `voiceSettings` family.
 
-## Voice conversation providers (supported preview)
+## Voice providers (supported preview)
 
-`contributes.voiceProviders` accepts a narrow client conversation contract on
-`web`, `ios`, and `android`. A declaration lists only the platforms actually
-present in its generated client artifact, names a relative module path and the
-fixed `activate` export, and registers the same local id exactly once through
-`api.voiceProviders.register(id, runtime)`. `desktop` is not a valid Voice
-provider platform in this contract.
+`contributes.voiceProviders` is one strict discriminated family for browser or
+mobile conversations and daemon speech. Every row has one plugin-local `id`;
+the host derives its only qualified identity as `(pluginId, id)`. Catalogs,
+settings, credentials, and runtime registration use that identity. Do not add a
+nested provider id.
 
-The runtime supplies only its provider-native protocol codec and connection
-leaf. Happier owns the conversation controller, microphone/playback session,
-transcript, tools, privacy, cancellation, and resource lifecycle around it.
-
-### Account-owned credential mediation
-
-A credentialed conversation provider declares `credential` readiness together
-with `accountMediation`. The current contract has one host-owned account
-`SavedSecret` slot and two optional, distinct operations:
-
-| Operation | Declared request | Result owned by the action |
+| `kind` | Declaration | Runtime realm and import |
 | --- | --- | --- |
-| `clientAuth` | Exact `POST` to one canonical HTTPS URL | A bounded `sdk_token`, `subprotocol_token`, `bearer_token`, or `signed_url` client artifact with an expiry and placement |
-| `catalog` | Exact read-only `GET` to one canonical HTTPS URL | The canonical bounded Voice catalog result |
+| `conversation` | `roles`, client `platforms`, turn `capabilities`, and a required `client` leaf | generated client leaf; `RealtimeVoiceProviderRuntime` from `@happier-dev/plugin-sdk/voice/client` |
+| `speech` | STT/TTS `roles`, `platforms`, optional bounded settings/catalogs/limits | daemon leaf; `SpeechProviderRuntime` from `@happier-dev/plugin-sdk/voice/speech` |
 
-At least one operation is required when `accountMediation` is present. Each
-operation references its declared account slot and a different manifest action.
-The action must be `safe`, limited to the `ui` surface and `global` scope, and
-have strict bounded input and result schemas. It binds exactly one `network`
-host-access declaration with one fixed origin and exactly the operation's
-method. Credential headers are limited to the declared supported header names
-and `raw` or `bearer` formatting.
+Realm-neutral declarations, credential access, and the discriminated
+`VoiceProviderRuntime` live at `@happier-dev/plugin-sdk/voice`. Voice code does
+not import Voice contracts from `/runtime` or `/ui/client`.
+
+### Credentials and readiness
+
+A contribution may declare one `credentials` slot with one effective source:
+`none`, one SavedSecret, or one of up to four qualified Connected Account
+services. Sources are alternatives, never credentials combined at runtime.
+Readiness follows the slot's `requirement`, current non-secret settings, the
+selected source, binding, and grant.
+
+`credentials.hostMediated.operations` declares exact bounded provider requests.
+Each source maps a supported operation through one `operationProjections` row:
+SavedSecret uses `recipientCredential`; Connected Accounts uses
+`materializedHttpHeaders`. Provider code receives the already-bound
+`credentials.mediated` service for that operation and phase.
+
+Raw materialization is explicit. Each `rawGrants` row names one exact source,
+realm, phase, and headers/environment/files request. There are no independent
+realm or phase arrays and no implicit combinations. Raw access requires the
+current selection/resource grant and explicit credential-disclosure approval;
+plugin code can copy returned material, so install and update UI must say so.
+
+This complete SavedSecret example permits one host-mediated mint during
+`prepare` and one separately approved raw browser-header projection during
+`connection`:
 
 ```json
 {
-  "id": "credentialed-browser",
-  "kind": "conversation",
-  "roles": ["realtime_conversation"],
-  "platforms": ["web"],
-  "capabilities": {
-    "readiness": { "requirements": ["credential"] },
-    "turn": { "cancelResponse": false, "bargeIn": false }
-  },
-  "accountMediation": {
-    "credentialSlots": [{ "id": "api_key", "scope": "account" }],
-    "operations": {
-      "clientAuth": {
-        "action": "mint-voice-session",
-        "credentialSlotId": "api_key",
-        "request": {
-          "url": "https://voice.example.test/v1/session",
-          "method": "POST",
-          "credential": {
-            "kind": "httpHeader",
-            "name": "authorization",
+  "credentials": {
+    "slot": {
+      "id": "api_key",
+      "purpose": "voice.client-auth",
+      "title": "API key"
+    },
+    "requirement": { "kind": "always" },
+    "sources": [
+      {
+        "kind": "savedSecret",
+        "secretKinds": ["apiKey"],
+        "operationProjections": [
+          {
+            "kind": "recipientCredential",
+            "operation": "client-auth",
+            "phase": "prepare",
             "format": "bearer"
           }
-        }
-      },
-      "catalog": {
-        "action": "list-voice-catalog",
-        "credentialSlotId": "api_key",
-        "request": {
-          "url": "https://voice.example.test/v1/catalog",
-          "method": "GET",
-          "credential": {
-            "kind": "httpHeader",
-            "name": "authorization",
-            "format": "bearer"
+        ],
+        "rawGrants": [
+          {
+            "realm": "web",
+            "phase": "connection",
+            "request": {
+              "kind": "httpHeaders",
+              "origin": "https://voice.example.test",
+              "headerNames": ["authorization"]
+            }
           }
-        }
+        ]
       }
+    ],
+    "hostMediated": {
+      "operations": [
+        {
+          "id": "client-auth",
+          "purpose": "voice.client-auth",
+          "credentialSlotId": "api_key",
+          "effect": "read",
+          "request": {
+            "origin": "https://voice.example.test",
+            "pathTemplate": "/v1/session",
+            "queryTemplate": [],
+            "headerTemplate": [],
+            "bodyTemplate": { "kind": "none" },
+            "method": "POST",
+            "credential": {
+              "kind": "httpHeader",
+              "name": "authorization",
+              "format": "bearer"
+            },
+            "redirect": "error",
+            "maxBodyBytes": 0,
+            "contentTypes": []
+          },
+          "parameters": {
+            "schema": {
+              "type": "object",
+              "properties": {},
+              "additionalProperties": false
+            },
+            "mapping": []
+          },
+          "response": {
+            "maxBytes": 32768,
+            "contentTypes": ["application/json"]
+          }
+        }
+      ]
     }
-  },
-  "client": {
-    "artifactId": "voice-runtime-web",
-    "modulePath": "./voiceProvider",
-    "exportName": "activate"
   }
 }
 ```
 
-The Voice settings UI saves the user's value into the declared account
-`SavedSecret` slot. Plugin code does not read that secret. When the exact
-declared action calls `context.services.fetch.request`, the host resolves the
-slot just in time, injects the credential only into the exact declared request,
-and returns a bounded, sanitized provider response. The action—not a generic
-mapping DSL—parses that provider's response and returns its strict canonical
-Voice result:
+The host constructs `VoiceCredentialAccess` for the exact `settings`,
+`prepare`, `connection`, or `speech` phase. Provider code cannot select an
+account, SavedSecret, slot, or qualified contribution. Async materialization is
+fenced before and after the source call; a stale result is discarded rather
+than retried against a new selection.
+
+### Settings, catalogs, actions, and limits
+
+Voice settings are bounded non-secret text, number, static-select,
+catalog-select, switch, or JSON fields. Speech can declare at most one `models`
+catalog and one `voices` catalog, each bound to a declared setting field.
+Provider limits only tighten the host's input/output limits.
+
+Settings operations that perform provider work use the generic declarative
+settings-action contract and the runtime's `settingsActions.execute`. The host
+owns confirmation, cancellation, busy state, result validation, and the atomic
+patch to that contribution's allowed fields. There is no public provisioning
+method or Voice-specific settings writer.
+
+### One code-defined runtime field
+
+Both runtime kinds use the same non-disposable
+`voiceProviders.<id>.runtime` author field when their declared realm needs a
+runtime. `definePlugin(...)` generates the matching low-level registration. The
+local id and runtime kind must match the cold declaration. Missing, duplicate,
+extra, wrong-kind, or wrong-realm registrations fail before graph publication.
+
+The next two snippets are low-level ABI equivalents for host conformance; an
+ordinary author keeps the same declaration and runtime in one
+`definePlugin({ voiceProviders: { ... } })` source owner.
+
+Conversation client leaf:
 
 ```ts
-api.actions.register('mint-voice-session', async (_input, context) => {
-  const response = await context.services.fetch.request({
-    url: 'https://voice.example.test/v1/session',
-    method: 'POST',
-    credentialBinding: {
-      kind: 'voiceAccountOperation',
-      provider: {
-        pluginId: context.plugin.id,
-        localId: 'credentialed-browser',
-      },
-      operation: 'clientAuth',
-    },
-    redirect: 'error',
-  }, { signal: context.signal });
+import type { PluginApi } from '@happier-dev/plugin-sdk';
+import type { VoiceProviderRuntime } from '@happier-dev/plugin-sdk/voice';
+import type { RealtimeVoiceProviderRuntime } from '@happier-dev/plugin-sdk/voice/client';
 
-  // Plugin-owned strict parser for this provider's response shape.
-  const providerResponse = parseSyntheticSessionResponse(response.body);
-  return {
-    kind: 'bearer_token',
-    value: providerResponse.sessionToken,
-    expiresAtMs: providerResponse.expiresAtMs,
-    placement: 'authorization_header',
-  };
-});
+declare const browserConversation: RealtimeVoiceProviderRuntime;
+const runtime: VoiceProviderRuntime = browserConversation;
+
+export function activate(api: Pick<PluginApi, 'voiceProviders'>): void {
+  api.voiceProviders.register(
+    'browser-conversation',
+    runtime,
+  );
+}
 ```
 
-The generated provider client receives only that action result through its
-operation-bound AppShell host:
+Daemon speech leaf with independently selectable STT and TTS contributions:
 
 ```ts
-const artifact = await ui.executeAction(
-  'mint-voice-session',
-  {},
-  { signal },
-);
+import type { PluginApi } from '@happier-dev/plugin-sdk';
+import type { VoiceProviderRuntime } from '@happier-dev/plugin-sdk/voice';
+import type { SpeechProviderRuntime } from '@happier-dev/plugin-sdk/voice/speech';
+
+const stt = {
+  kind: 'speech',
+  async transcribe(request, context) {
+    context.signal.throwIfAborted();
+    return { requestId: request.requestId, text: 'transcript' };
+  },
+} satisfies SpeechProviderRuntime;
+
+const tts = {
+  kind: 'speech',
+  async synthesize(request, context) {
+    context.signal.throwIfAborted();
+    return {
+      requestId: request.requestId,
+      bytes: new Uint8Array([82, 73, 70, 70]),
+      mimeType: 'audio/wav',
+    };
+  },
+} satisfies VoiceProviderRuntime;
+
+export function bindSpeech(api: Pick<PluginApi, 'voiceProviders'>): void {
+  api.voiceProviders.register('speech-stt', stt);
+  api.voiceProviders.register('speech-tts', tts);
+}
 ```
 
-The source account credential is never returned to the action or client,
-included in provider media configuration, or replaced by a connected-account
-materialization. The generic host also does not assume that vendor responses
-already use Happier's canonical Voice schemas: provider-specific normalization
-stays in the provider action.
-
-The current packed AppShell path executes account-mediated actions through the
-selected daemon. The credential remains account-owned, but a credentialed
-external provider is not ready unless a selected daemon is available to execute
-the action. Missing credentials, missing daemon selection, undeclared or
-mismatched URL/method/action/scope, response-bound violations, cancellation,
-and timeout all fail closed.
-
-Action and fetch signals are bound to the current invocation. Cancellation
-settles the operation and prevents a superseded invocation from publishing a
-result. A reconnect requests a fresh short-lived artifact; plugins must not
-cache it as a reusable account key. A catalog action follows the same
-cancellation rules, and must normalize its provider response to at most 500
-canonical items with no more than 32 bounded scalar metadata properties per
-item.
-
-Credentialless providers keep `readiness.requirements` empty and omit
-`accountMediation`. Account provisioning is not part of the public contract and
-remains unavailable pending an approved contract amendment. Do not declare a
-`provision` operation, expose raw secret access, use connected accounts as a
-substitute, or invent another Voice registration family.
+The public-authoring fixture in
+`packages/plugin-sdk/examples/public-authoring/` contains full strict
+conversation, raw-credential, STT, and TTS declarations. External, development,
+and bundled plugins use the same declaration, registration, credential, and
+lifecycle owners.

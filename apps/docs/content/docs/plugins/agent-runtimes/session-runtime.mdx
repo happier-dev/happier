@@ -4,7 +4,7 @@ description: Implement native Agent sessions with AgentSessionRuntime.
 ---
 
 `AgentSessionRuntime` is the public live-session contract from
-`@happier-dev/plugin-sdk/agent-runtime`.
+`@happier-dev/plugin-sdk/agents/runtime`.
 
 ```ts
 interface AgentSessionRuntime extends Disposable {
@@ -28,3 +28,9 @@ unavailable result rather than silently dropping behavior.
 
 `dispose` is idempotent and releases only Agent-owned session resources. It
 does not delete host session state, queued input, or transcript state.
+
+For a custom Session Agent, this runtime is created from a distinct named
+runner leaf identified by `sessionRunnerFactory`. The `agents.<id>.factory`
+author field generates the binding for the same factory object, while the
+runner imports only the leaf and never calls `activate`. Do not rely on
+process-global singleton state across those realms.

@@ -3,11 +3,22 @@ title: ACP Agent runtime example
 description: A native AgentRuntime that composes an ACP session.
 ---
 
-Use the public ACP composer when the Agent speaks Agent Client Protocol.
+Use ACP in one of two modes; they must not be blended.
 
-1. Declare the Agent under `contributes.agents` in the cold manifest.
-2. Register its factory with `api.agents.register(localId, factory)`.
-3. Return an `AgentRuntime` with a `sessions.open(request, context)` method.
-4. Inside `open`, call `context.protocols.acp.open(request, options)` and return the resulting `AgentSessionRuntime`.
+## Declarative ACP
+
+Declare `runtime.kind: 'acp'` with the cold transport, Session primary, and
+capabilities. The host constructs this runtime. Do not add a plugin factory,
+activation registration, runner locator, or runner module.
+
+## Custom ACP composition
+
+Use a custom Agent when a plugin leaf must adapt protocol behavior before it
+opens ACP. Its declaration is `runtime.kind: 'custom'`; its
+`agents.<id>.factory` field generates registration, and a Session-capable Agent
+provides the exact distinct runner factory leaf/locator.
+
+1. Return an `AgentRuntime` with a `sessions.open(request, context)` method.
+2. Inside `open`, call `context.protocols.acp.open(request, options)` and return the resulting `AgentSessionRuntime`.
 
 Put Agent-specific transport, authentication, model, timeout, tool, stderr, and extension behavior in the ACP options. The host retains shared session, input, transcript, activity, and persistence ownership.

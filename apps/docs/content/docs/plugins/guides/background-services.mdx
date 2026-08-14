@@ -1,0 +1,26 @@
+---
+title: Run background work
+description: Register daemon-generation background work without adding a second lifecycle owner.
+---
+
+Use `backgroundServices` for daemon/machine work that is not an action,
+Session turn, Agent factory, or event handler. A `definePlugin` declaration
+pairs a cold row with one runner; manual ABI authors register the same local id
+through `api.backgroundServices.register(...)`.
+
+```ts
+backgroundServices: [{
+  declaration: { id: 'catalog-refresh', title: 'Refresh catalog' },
+  async runner(context) {
+    context.signal.throwIfAborted();
+    // Do bounded work with context.services.
+  },
+}],
+```
+
+The host starts the runner after generation commit and retires it on
+replacement, disable/uninstall, or daemon shutdown. Subscribe to declared
+events through the existing events service; do not use event activation as a
+background scheduler. Honor `context.signal`, let failures surface as
+diagnostics, and avoid a plugin-owned watcher, timer registry, or service
+lifecycle cache.

@@ -4,21 +4,25 @@ description: Contribute Agent-native discovery and transcript access for session
 ---
 
 External Sessions is an auxiliary Agent contribution. It is not an
-`AgentRuntime.surfaces` member. Declare `externalSessions` in the Agent's
-manifest `capabilities.surfaces`, declare its
-`surfaces.externalSession.sources`, and register the contribution for the same
-Agent local ID:
+`AgentRuntime.surfaces` member. Ordinary author modules declare
+`externalSessions` in the Agent's `capabilities.surfaces`, declare its
+`surfaces.externalSession.sources`, and place the implementation on the same
+`definePlugin({ agents: { <id>: { externalSessions } } })` entry. Generated
+activation binds that exact local id.
 
-> Incubation status: this authoring surface is exported only from
-> `@happier-dev/plugin-sdk/experimental/sessions`. It is not one of the eight
-> normal supported-preview paths and may be redesigned or removed in a
-> documented `0.x` release.
+Import the authoring contract from its final capability path,
+`@happier-dev/plugin-sdk/sessions/external`.
+
+## Low-level ABI equivalent
+
+The following direct `PluginApi` shape explains the generated binding for host
+conformance fixtures. It is not a second ordinary authoring path:
 
 ```ts
 import type { PluginApi } from '@happier-dev/plugin-sdk';
 import type {
   AgentExternalSessionsContribution,
-} from '@happier-dev/plugin-sdk/experimental/sessions';
+} from '@happier-dev/plugin-sdk/sessions/external';
 
 declare const externalSessions: AgentExternalSessionsContribution;
 
@@ -35,6 +39,130 @@ The contribution has exactly six required methods:
 - `resolveLinkedIdentity`
 - `pageTranscript`
 - `readAfterTranscript`
+
+## Transcript records
+
+`pageTranscript` and `readAfterTranscript` return
+`AgentExternalSessionTranscriptItem`s. Every item's `raw` must be the canonical
+repository-wide transcript record `AgentExternalSessionTranscriptRawRecord` —
+the same declaration the host persists and every transcript reader parses:
+
+```ts
+import type {
+  AgentExternalSessionTranscriptRawRecord,
+} from '@happier-dev/plugin-sdk/sessions/external';
+
+const userTurn: AgentExternalSessionTranscriptRawRecord = {
+  role: 'user',
+  content: { type: 'text', text: 'Review the staged diff.' },
+};
+
+const agentTurn: AgentExternalSessionTranscriptRawRecord = {
+  role: 'agent',
+  content: {
+    type: 'acp',
+    agentId: 'example',
+    data: { type: 'message', message: 'Reviewed the staged diff.' },
+  },
+};
+```
+
+A user record is `{ role: 'user', content: { type: 'text', text } }`. An agent
+record wraps the provider-native body in an agent record; `{ type: 'acp',
+agentId, data }` is the general form for an Agent without a first-party content
+dialect. Both accept additional provider-native fields alongside the required
+ones.
+
+Decode source rows into that record rather than returning a provider-native
+envelope. The host admits the contract once, when it accepts the transcript
+result, so a non-record `raw` fails the whole page with the `agent_error`
+contribution failure instead of reaching a reader that cannot render it. Keep
+source-derived routing facts such as `messageRole` and `localId` beside `raw`,
+never inside it, so `raw` never has to be loosened to carry routing.
+
+`raw` is the Agent-direction producer facet. A consuming plugin reading
+`SessionsService.external.readTranscript` receives
+`ExternalSessionTranscriptItem`, whose recipient-safe projection of this record
+is named `data` and typed as plain JSON, because the projection is free to omit
+host-private facts. Reading `.raw` off a consumer item yields `undefined`.
+
+## Contextual host service
+
+The contribution above is the Agent-to-host direction. It is distinct from
+the host service available to an authorized plugin invocation at
+`context.services.sessions.external`. That service exposes exactly six
+operations:
+
+- `capabilities`
+- `list`
+- `attach`
+- `readTranscript`
+- `followTranscript`
+- `takeover`
+
+Import its public DTOs from the same final capability path. Plugins pass only
+an opaque `ExternalSessionRef`; they never choose a machine, plugin generation,
+resolved source, storage path, link record, or runtime lease.
+
+```ts
+import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import type {
+  ExternalSessionTranscriptFollowEvent,
+} from '@happier-dev/plugin-sdk/sessions/external';
+
+export async function inspectExternalSessions(
+  context: PluginInvocationContext,
+) {
+  const external = context.services.sessions.external;
+  const page = await external.list(
+    { limit: 20 },
+    { signal: context.signal },
+  );
+  const candidate = page.items[0];
+  if (!candidate) return;
+
+  const transcript = await external.readTranscript(
+    candidate.ref,
+    { mode: 'page', direction: 'newer', limit: 50 },
+    { signal: context.signal },
+  );
+
+  const follow = await external.followTranscript(
+    candidate.ref,
+    { signal: context.signal },
+    async (event: ExternalSessionTranscriptFollowEvent) => {
+      // Settle this callback only after the event is durably consumed.
+      void event;
+    },
+  );
+  if (follow.status === 'following') {
+    await follow.subscription.dispose();
+  }
+
+  return transcript;
+}
+```
+
+`list`, `attach`, transcript reads, public follow, and `takeover` resolve the
+current configured Agent/source authority for each new call. A cursor or
+subscription from a superseded public generation fails stale rather than
+silently invoking replacement callbacks. The private exact-generation follow
+used by an already-running native Agent session is host composition and is not
+part of this public service.
+
+`takeover(ref, request, options)` starts a durable operation. The request
+selects `targetStorageMode: 'external-linked' | 'persisted'` and includes a
+caller-stable, nonempty `idempotencyKey`. Reuse the same key after timeout,
+cancellation, or an unknown response for the same intent. The result is the
+operation reference `{ sessionId, operationId, revision }`, not a claim that
+the takeover has already finished. Use the public External Sessions Actions
+for status and recovery; plugins do not call the private raw Start RPC or read
+complete operation records.
+
+Public candidates, transcript items, operation references, and the strict
+shared operation presentation omit machine/account/generation identity,
+qualified sources, link metadata, runtime descriptors, private progress,
+credentials, claims, and staging paths.
 
 An auxiliary-only Agent may register this contribution without a primary
 runtime factory. When an Agent also has a native runtime, both registrations
@@ -59,7 +187,7 @@ import type {
   AgentExternalSessionHooksContribution,
   AgentExternalSessionHookResolveInstallationRequest,
   AgentExternalSessionsContribution,
-} from '@happier-dev/plugin-sdk/experimental/sessions';
+} from '@happier-dev/plugin-sdk/sessions/external';
 
 declare const externalSessions: AgentExternalSessionsContribution;
 declare function resolveAgentSettingsPath(): string;
@@ -129,11 +257,12 @@ export function activate(api: PluginApi) {
 }
 ```
 
-`registerExternalSessionHooks` is optional to call, duplicate-rejecting, and
-may be called in any order relative to other same-Agent registrations. The
-same activation must register the exact-six External Sessions contribution and
-have its existing `externalSessions` manifest right. Hook registration adds no
-capability, manifest declaration, or separate contribution family.
+`externalSessionHooks` is optional, duplicate-rejecting, and may accompany
+other same-Agent author fields in any order. The same `definePlugin` Agent entry
+must provide the exact-six External Sessions contribution and have its existing
+`externalSessions` manifest right. Hook registration adds no capability,
+manifest declaration, or separate contribution family. The direct ABI binding
+shown above is for conformance only.
 
 `installationVariants` is the complete registration-time snapshot. Each
 variant declares its configuration targets and every event the host must
@@ -177,7 +306,7 @@ import type { PluginApi } from '@happier-dev/plugin-sdk';
 import type {
   AgentExternalSessionsContribution,
   AgentExternalSessionTakeoverContribution,
-} from '@happier-dev/plugin-sdk/experimental/sessions';
+} from '@happier-dev/plugin-sdk/sessions/external';
 
 declare const externalSessions: AgentExternalSessionsContribution;
 
@@ -206,15 +335,16 @@ export function activate(api: PluginApi) {
 }
 ```
 
-`registerExternalSessionTakeover` is optional, duplicate-rejecting, and may be
-called in either order relative to the other same-Agent registrations. It uses
-the existing `externalSessions` manifest right: there is no takeover
-capability, contribution family, or additional manifest declaration. The same
-activation must also register that Agent's exact-six External Sessions
+`externalSessionTakeover` is optional, duplicate-rejecting, and may accompany
+the other same-Agent author fields in either order. It uses the existing
+`externalSessions` manifest right: there is no takeover capability,
+contribution family, or additional manifest declaration. The same code-defined
+Agent entry must also provide that Agent's exact-six External Sessions
 contribution or the complete activation is rejected. A primary runtime factory
-is not required at activation, so auxiliary-only and declarative ACP Agents can
-register the facet; an actual takeover still requires a current spawnable
-primary runtime immediately before spawn.
+is not required for the declaration, so auxiliary-only and declarative ACP
+Agents can provide the facet; an actual takeover still requires a current
+spawnable primary runtime immediately before spawn. The direct ABI binding
+shown above is for conformance only.
 
 Immediately before `resolveLaunch`, the host calls the same current
 generation's `resolveLinkedIdentity` and uses that fresh successful result.
@@ -284,15 +414,16 @@ contract and consumed host fence.
 
 ## Optional observation facet
 
-An Agent with the six-method contribution may also register one observation
-facet on the same Agent aggregate:
+An Agent with the six-method contribution may also provide one
+`externalSessionObservation` facet on the same `definePlugin` Agent aggregate.
+The direct ABI equivalent is:
 
 ```ts
 import type { PluginApi } from '@happier-dev/plugin-sdk';
 import type {
   AgentExternalSessionObservationContribution,
   AgentExternalSessionsContribution,
-} from '@happier-dev/plugin-sdk/experimental/sessions';
+} from '@happier-dev/plugin-sdk/sessions/external';
 
 declare const externalSessions: AgentExternalSessionsContribution;
 declare const observation: AgentExternalSessionObservationContribution;

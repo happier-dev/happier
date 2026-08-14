@@ -5,52 +5,88 @@ description: Build Happier plugins, agents, UI surfaces, tools, hooks, and runti
 
 Happier plugins extend the local runtime without changing Happier core source code. A plugin can contribute actions, tools, commands, hooks, UI surfaces, settings, MCP integrations, SCM integrations, and AI Agents.
 
-The plugin system is manifest-first. Static facts live in `.happier-plugin/plugin.json` so Happier can project catalogs, settings, requested host access, installation review, and UI surfaces without executing plugin code. Executable plugin code is trusted code, not sandboxed code.
+Code-defined authoring source is the development authority. `definePlugin(...)`
+projects the cold `.happier-plugin/plugin.json` manifest during packing, so
+installed discovery can read catalogs, settings, requested host access,
+installation review, and UI surfaces without executing plugin code. Executable
+plugin code is trusted code, not sandboxed code.
 
 ## Core model
 
-- **Manifest**: cold JSON declaring identity, entrypoints, host access, and contribution descriptors.
-- **Activation API**: `activate(api)` binds executable handlers through nested capability families.
+- **Author module**: `definePlugin(...)` declares identity, entrypoints, host
+  access, contribution descriptors, and executable handlers in one typed
+  source owner.
+- **Manifest projection**: pack writes the cold JSON required for installed
+  discovery from that author module.
+- **Activation API**: the generated `activate(api)` binds the declared
+  executable handlers through nested capability families.
 - **Invocation context**: action and hook handlers receive bounded identity, cancellation, and services.
-- **Agent runtime**: a plugin-owned `AgentRuntime` registered with `api.agents.register(agentId, factory)`.
+- **Cross-plugin contribution protocol**: a feature-owned value lets a target
+  declare points and a contributor bind existing Actions to operation roles;
+  the host retains admission, currentness, and dispatch.
+- **Agent runtime**: a plugin-owned `AgentRuntime` for a custom Agent, supplied
+  as `agents.<id>.factory` in `definePlugin(...)`. Generated activation binds
+  it; declarative ACP Agents are host-owned and do not register a factory.
 - **Runtime host**: Happier-owned session and execution-run orchestration. Agent leaves map Agent-specific behavior into shared runtime contracts.
+
+## Choose a task
+
+Start from the thing you need to add, not from a broad API inventory:
+
+<Cards>
+  <Card title="Compose across plugins" href="/plugins/guides/cross-plugin-contributions" />
+  <Card title="Add an Agent" href="/plugins/guides/agent-modes" />
+  <Card title="Add a model Provider" href="/plugins/guides/providers" />
+  <Card title="Add SCM integration" href="/plugins/guides/scm" />
+  <Card title="Add Voice" href="/plugins/guides/voice" />
+  <Card title="Run background work" href="/plugins/guides/background-services" />
+  <Card title="Use invocation services" href="/plugins/guides/invocation-services" />
+</Cards>
 
 ## Start here
 
 <Cards>
-  <Card title="Quickstart" href="/docs/plugins/quickstart" />
-  <Card title="Glossary" href="/docs/plugins/glossary" />
-  <Card title="Manifest" href="/docs/plugins/manifest" />
-  <Card title="Activation API" href="/docs/plugins/api/activation" />
-  <Card title="Runtime context" href="/docs/plugins/api/context" />
-  <Card title="Agent runtimes" href="/docs/plugins/agent-runtimes/agent-runtime" />
-  <Card title="Hooks and lifecycle" href="/docs/plugins/api/hooks" />
-  <Card title="Events" href="/docs/plugins/api/events" />
-  <Card title="Security and permissions" href="/docs/plugins/security" />
+  <Card title="Quickstart" href="/plugins/quickstart" />
+  <Card title="Choose a task" href="/plugins/guides" />
+  <Card title="Glossary" href="/plugins/glossary" />
+  <Card title="Manifest" href="/plugins/manifest" />
+  <Card title="Activation API" href="/plugins/api/activation" />
+  <Card title="Runtime context" href="/plugins/api/context" />
+  <Card title="Agent runtimes" href="/plugins/agent-runtimes/agent-runtime" />
+  <Card title="Hooks and lifecycle" href="/plugins/api/hooks" />
+  <Card title="Events" href="/plugins/api/events" />
+  <Card title="Security and permissions" href="/plugins/security" />
 </Cards>
 
 ## Preview authoring rules
 
-- The candidate public surface uses eight normal paths: the package root,
-  `/manifest`, `/runtime`, `/agent-runtime`, `/ui`, `/ui/client`, `/ui/build`,
-  and `/testing`. This checkout remains on prepublication hold pending the
-  consolidated API approval.
+- The author-owned `index.public.ts` sources and current package export map
+  define intended author paths. Use the root or final capability path, such as
+  `/agents/runtime`; do not use `experimental/*`, `internal/*`, or
+  undocumented source paths. Publisher-generated inventories are derived
+  artifacts, not a second authoring owner.
 - Do not import Happier internal packages from a plugin.
-- Keep static projected facts in the manifest.
-- Bind executable code through `activate(api)` and manifest-declared ids.
+- Keep projected facts and executable declarations together in
+  `definePlugin(...)`; let pack produce the installed manifest.
+- Bind executable code through the generated `activate(api)` and declared ids.
 - Use host-provided invocation and Agent runtime contexts. Do not shell out or read host internals directly when a service exists.
 - Keep Agent-specific behavior inside the plugin-owned Agent runtime leaf.
 - Do not write Happier transcript rows, session rows, or execution-run state directly from agent code.
 
-Every public path is Developer Preview until 1.0. Patch releases should not intentionally break documented contracts. A documented 0.x minor may break them when accompanied by migration notes. Preview status does not waive correctness, installability, lifecycle cleanup, security disclosure, or documentation.
+Every current author-facing export is marked experimental, and the workspace
+package is private at `0.0.0` on a prepublication hold. Treat this as a
+Developer Preview source contract, not an installable public release or a
+released-semver compatibility promise. Preview status does not waive
+correctness, install safety, lifecycle cleanup, security disclosure, or
+documentation.
 
 ## Where plugin code runs
 
-Daemon plugin code runs through `entrypoints.daemon` or, in the development loop, `entrypoints.development`. React Native plugin UI runs as trusted code in a supported client realm. Hosted web UI runs behind an isolated public bridge. Declarative UI is rendered by the host. Installation is a whole-package trust decision across these surfaces.
+Daemon plugin code runs through `entrypoints.daemon` or, in the development loop, `entrypoints.development`. React Native plugin UI runs as trusted code in a supported client realm. Packaged hosted web is currently unavailable because no Artifact-backed frame adapter has passed its platform feasibility gate. Declarative UI is rendered by the host. Installation is a whole-package trust decision across these surfaces.
 
 ## Related docs
 
-- [Runtime architecture](/docs/architecture/runtime)
-- [Happier tools and actions](/docs/features/happier-tools)
-- [MCP servers](/docs/features/mcp-servers)
-- [Permissions](/docs/features/permissions)
+- [Runtime architecture](/architecture/runtime)
+- [Happier tools and actions](/features/happier-tools)
+- [MCP servers](/features/mcp-servers)
+- [Permissions](/features/permissions)

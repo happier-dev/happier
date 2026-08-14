@@ -1,15 +1,14 @@
 ---
 title: Notifications
-description: Send host-mediated notifications and register declared delivery channels.
+description: Send host-mediated notifications through the public preview service.
 ---
 
-Invoked handlers send notifications through `context.services.notifications`. Activation registers executable delivery channels through `api.notifications.registerChannel(localId, sender)` for matching manifest-declared ids.
+Invoked handlers send notifications through `context.services.notifications`. The host-mediated notification service is available in the public preview; author-facing channel contribution and registration remain deferred until a maintained plugin channel proves the complete product flow.
 
 Use the service to send or inspect the supported notification categories, channels, and preferences exposed by the installed SDK version. Use `context.ui.notify(...)` instead when the intent belongs to the current present-user invocation rather than the notification system.
 
 ## Rules
 
-- Declare categories and channels in the cold manifest.
 - Respect user preferences and host availability results.
 - Do not call platform notification APIs directly from an Agent leaf.
 - Keep titles, bodies, and data free of secrets and raw Provider tokens.

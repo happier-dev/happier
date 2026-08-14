@@ -1,0 +1,29 @@
+---
+title: Add Voice
+description: Choose a conversation runtime or independent STT and TTS speech contributions.
+---
+
+Voice is one discriminated contribution family with three common tasks.
+
+| Task | Declaration and realm | Runtime import |
+| --- | --- | --- |
+| Realtime conversation | `kind: 'conversation'`; client leaf | `@happier-dev/plugin-sdk/voice/client` |
+| Speech-to-text | `kind: 'speech'` with STT roles; daemon leaf | `@happier-dev/plugin-sdk/voice/speech` |
+| Text-to-speech | `kind: 'speech'` with TTS roles; daemon leaf | `@happier-dev/plugin-sdk/voice/speech` |
+
+Realm-neutral declarations and the discriminated runtime contract live at
+`@happier-dev/plugin-sdk/voice`. Every runtime is supplied through the same
+`voiceProviders.<id>.runtime` author field when its declared realm needs one;
+generated activation performs the low-level registration. Give STT and TTS
+their own contribution ids when they can be selected independently; do not
+recreate the retired `registerSpeech` path or a Voice-local credential/settings
+owner.
+
+Credentials declare one slot, effective source, exact host-mediated operation
+or raw grant. The host retains source selection, current binding/grant checks,
+disclosure approval, cancellation, and materialization. Conversation code must
+not use the hosted-web `ui/client` path as a Voice runtime import.
+
+The [contribution reference](/plugins/manifest/contributions#voice-providers-supported-preview)
+and the public-authoring example contain full conversation, STT, and TTS
+shapes.

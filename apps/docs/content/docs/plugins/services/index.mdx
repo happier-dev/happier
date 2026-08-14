@@ -21,13 +21,19 @@ than a security sandbox.
   access.
 - Keep session, transcript, queued-input, activity, and process lifecycle with
   the host.
-- Use `context.ui` for present-user questions and presentation intent.
+- Use `context.services.interactions` for questions, confirmations, and
+  approval requests or queues.
+- Use `context.ui` only for presentation: notifications, status, widgets,
+  title, and composer intent.
 
 <Cards>
-  <Card title="Exec" href="/docs/plugins/services/exec" />
-  <Card title="Managed servers" href="/docs/plugins/services/managed-servers" />
-  <Card title="Settings" href="/docs/plugins/services/settings" />
-  <Card title="Secrets" href="/docs/plugins/services/secrets" />
-  <Card title="Sessions and transcripts" href="/docs/plugins/services/sessions-transcripts" />
-  <Card title="Auth and connected services" href="/docs/plugins/services/auth-connected-services" />
+  <Card title="Exec" href="/plugins/services/exec" />
+  <Card title="Managed services" href="/plugins/services/managed-servers" />
+  <Card title="Settings" href="/plugins/services/settings" />
+  <Card title="Secrets" href="/plugins/services/secrets" />
+  <Card title="Sessions and transcripts" href="/plugins/services/sessions-transcripts" />
+  <Card title="Auth and connected services" href="/plugins/services/auth-connected-services" />
+  <Card title="Invocation services" href="/plugins/guides/invocation-services" />
+  <Card title="Model Provider lifecycle" href="/plugins/guides/providers" />
+  <Card title="Background services" href="/plugins/guides/background-services" />
 </Cards>

@@ -1,0 +1,13 @@
+{
+  "title": "Choose a task",
+  "pages": [
+    "index",
+    "cross-plugin-contributions",
+    "agent-modes",
+    "providers",
+    "scm",
+    "voice",
+    "background-services",
+    "invocation-services"
+  ]
+}

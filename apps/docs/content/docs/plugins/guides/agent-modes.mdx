@@ -1,0 +1,62 @@
+---
+title: Add an Agent
+description: Pick the Agent mode that matches the work the host should own.
+---
+
+Start with the user task. `AgentRuntime` is not a session-lifecycle owner: the
+host owns session creation, turns, queued input, transcripts, activity,
+persistence, and the process-terminal fact.
+
+## 1. Host-owned declarative ACP
+
+Use this when the Agent is an ACP process described completely by its cold
+transport. Declare `runtime.kind: 'acp'`, its transport, and Session
+capabilities in `agents.<id>.declaration`. This mode has **no** plugin factory,
+generated registration, runner locator, or runner module. The host opens and
+owns the ACP runtime from the declaration.
+
+See [declarative ACP versus custom ACP](/plugins/agent-runtimes/acp).
+
+## 2. Custom execution-run-only Agent
+
+Use this for bounded tasks that are not interactive Sessions. Declare
+`runtime.kind: 'custom'`, `primary: 'executionRuns'`, and an
+`executionRuns` factory. Supply the factory through the one code-defined
+`agents.<id>` entry so generated activation can register it. It must not
+declare a Session runner locator, because no Session runner needs to import it.
+
+## 3. Custom persistent Session Agent
+
+Use this for an Agent that maintains interactive Session behavior. Declare
+`runtime.kind: 'custom'`, `primary: 'sessions'`, and Session capabilities.
+The code-defined `agents.<id>` entry supplies both:
+
+- the factory bound by generated daemon activation; and
+- a distinct named, import-safe factory leaf named by
+`sessionRunnerFactory`.
+
+The locator is `{ module, export, runtimeApiVersion: 1 }`. It identifies the
+same factory object that activation registered; it is not process custody or a
+second activation route. A runner imports only that leaf and never invokes
+`activate`. Activation and runner execution can be separate realms, so do not
+put mutable process-global singleton state in either module.
+
+The maintained `packages/plugin-sdk/examples/advanced-package-root/` reference
+shows the activation entry, the distinct leaf, and a same-module External
+Sessions companion.
+
+## 4. Composite Agent
+
+Use this only when one Agent genuinely supports both persistent Sessions and
+bounded execution runs. Its custom factory exposes `sessions` and
+`executionRuns`; because it is Session-capable, it still requires the distinct
+runner leaf and locator. Do not create two competing Agent identities merely
+to model the two facets.
+
+## Related capabilities
+
+External Sessions is a separate Agent facet. Declare its surface and source
+descriptor, then supply the matching auxiliary contribution on the same
+`agents.<id>` author entry. It does not make a second Session runtime owner.
+[External Sessions](/plugins/surfaces/external-sessions) has the public service
+contract.

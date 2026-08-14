@@ -51,8 +51,20 @@ Register the exact six-method contribution on that same local ID:
 ```ts
 import type { PluginApi } from '@happier-dev/plugin-sdk';
 import type {
+  AgentExternalSessionTranscriptRawRecord,
   AgentExternalSessionsContribution,
-} from '@happier-dev/plugin-sdk/experimental/sessions';
+} from '@happier-dev/plugin-sdk/sessions/external';
+
+// Decode each source row into the canonical transcript record. A
+// provider-native envelope fails the whole page with `agent_error`.
+const agentTurn: AgentExternalSessionTranscriptRawRecord = {
+  role: 'agent',
+  content: {
+    type: 'acp',
+    agentId: 'example',
+    data: { type: 'message', message: 'Reviewed the staged diff.' },
+  },
+};
 
 const externalSessions = {
   resolveSource: ({ source }) => ({ ok: true, value: { source } }),
@@ -70,7 +82,15 @@ const externalSessions = {
   }),
   pageTranscript: () => ({
     ok: true,
-    value: { items: [], nextCursor: null },
+    value: {
+      items: [{
+        id: 'example-1',
+        createdAtMs: 1_700_000_000_000,
+        messageRole: 'agent',
+        raw: agentTurn,
+      }],
+      nextCursor: null,
+    },
   }),
   readAfterTranscript: () => ({
     ok: true,
@@ -78,6 +98,8 @@ const externalSessions = {
   }),
 } satisfies AgentExternalSessionsContribution;
 
+// Low-level ABI equivalent only: ordinary author modules put this value on
+// `definePlugin({ agents: { example: { externalSessions } } })`.
 export function activate(api: PluginApi): void {
   api.agents.registerExternalSessions('example', externalSessions);
 }
@@ -86,5 +108,4 @@ export function activate(api: PluginApi): void {
 ## Host boundary
 
 See the [External Sessions guide](../surfaces/external-sessions) for the
-incubation status, operation contract, optional sibling facets, and host
-ownership boundaries.
+operation contract, optional sibling facets, and host ownership boundaries.

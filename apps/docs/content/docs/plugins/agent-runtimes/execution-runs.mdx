@@ -6,7 +6,7 @@ description: Implement bounded Agent execution through AgentExecutionRunRuntime.
 An `AgentRuntime` can expose an `executionRuns` factory for host-owned tasks that are not ordinary interactive sessions.
 
 ```ts
-import type { AgentRuntime } from '@happier-dev/plugin-sdk/agent-runtime';
+import type { AgentRuntime } from '@happier-dev/plugin-sdk/agents/runtime';
 
 export const runtime: AgentRuntime = {
   executionRuns: {
@@ -27,3 +27,7 @@ export const runtime: AgentRuntime = {
 Events carry a monotonically increasing sequence and one of the public run-start, progress, output, checkpoint, complete, failed, or cancelled shapes. Keep raw Agent protocol messages inside the adapter.
 
 The host owns public run state, cancellation admission, status projection, and persistence. When sessions and execution-runs use the same Agent protocol, share the native adapter and parsing logic rather than maintaining competing protocol implementations.
+
+An execution-run-only custom Agent has no Session runner locator. A composite
+Agent that also exposes `sessions` does: follow the persistent Session rules in
+[Add an Agent](/plugins/guides/agent-modes).

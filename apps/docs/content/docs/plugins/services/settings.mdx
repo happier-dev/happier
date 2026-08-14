@@ -24,8 +24,20 @@ Plugin code can:
 - describe fields
 - project a settings form
 
-`settings.watch(listener)` returns a `Disposable`. Dispose it when its owning
-activation or runtime stops. A watcher is a live observation, not a history API.
+Choose the declaration scope before reading, writing, or watching settings.
+There is no unscoped settings operation and no merged Account/daemon view:
+
+```ts
+const accountSettings = context.services.settings.forScope({ kind: 'account' });
+const watcher = accountSettings.watch((change) => {
+  // `change.scope` is always `{ kind: 'account' }` here.
+});
+```
+
+Use `{ kind: 'daemon' }` only for fields declared with daemon scope.
+`ScopedSettingsService.watch(listener)` returns a `Disposable`. Dispose it when
+its owning activation or runtime stops. A watcher is a live observation, not a
+history API.
 
 ## Design rules
 

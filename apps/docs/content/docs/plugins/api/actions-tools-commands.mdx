@@ -7,12 +7,21 @@ Actions are the canonical executable operation model. Tools and commands are con
 
 ## Actions
 
-Declare actions in the manifest, then bind handlers with `api.actions.register(...)`.
+Declare actions and their handlers together with `definePlugin(...)`.
 
 ```ts
-export async function activate(api) {
-  api.actions.register('echo', async (input) => ({ input }));
-}
+import { definePlugin } from '@happier-dev/plugin-sdk';
+
+export const { manifest, activate } = definePlugin({
+  id: 'com.example.echo',
+  version: '0.1.0',
+  actions: {
+    echo: {
+      title: 'Echo',
+      run: async (input) => ({ input }),
+    },
+  },
+});
 ```
 
 Action handlers return JSON-safe values. Throw a typed plugin error when the operation cannot complete:
@@ -22,6 +31,25 @@ Action handlers return JSON-safe values. Throw a typed plugin error when the ope
 ```
 
 Prefer stable error codes over parsing text.
+
+## Calling host Actions
+
+The generated activation from `actions.<id>.run` binds a Plugin's own
+manifest-declared handlers (the low-level ABI method is
+`api.actions.register(...)`). When a handler needs an existing host operation,
+call the same canonical Action through `context.services.actions.execute(...)`;
+do not create a parallel RPC or duplicate host handler. Use an exact action id
+documented by the feature that owns that operation; the SDK deliberately does
+not maintain a second author-facing dump of every host action id, safety rule,
+or input shape. The owning action contract remains the source of truth.
+
+```ts
+const result = await context.services.actions.execute('action.spec.get', {
+  id: 'session.status.get',
+}, {
+  signal: context.signal,
+});
+```
 
 ## Tools
 
@@ -58,23 +86,30 @@ Declare the tool under `contributes.tools[]`. The `surfaces` list makes it avail
 }
 ```
 
-Bind the referenced action during activation. Action handlers receive JSON-safe input and a `PluginInvocationContext` with plugin-scoped services.
+Define the referenced action in the same `definePlugin(...)` declaration. Action
+handlers receive JSON-safe input and a `PluginInvocationContext` with
+plugin-scoped services.
 
 ```ts
-import type { PluginApi } from '@happier-dev/plugin-sdk';
+import { definePlugin } from '@happier-dev/plugin-sdk';
 
-const ADD_NOTE_ACTION_ID = 'notes.add';
-
-export function activate(api: PluginApi): void {
-  api.actions.register(ADD_NOTE_ACTION_ID, async (input, context) => {
-    const note = String((input as { note?: unknown }).note ?? '');
-    const existing = await context.services.storage.local.get<string[]>('notes');
-    const notes = [...(existing ?? []), note];
-    await context.services.storage.local.set('notes', notes);
-    context.services.logger.info('Stored session note', { count: notes.length });
-    return { note, count: notes.length };
-  });
-}
+export const { manifest, activate } = definePlugin({
+  id: 'com.example.notes',
+  version: '0.1.0',
+  actions: {
+    'notes.add': {
+      title: 'Add session note',
+      run: async (input, context) => {
+        const note = String((input as { note?: unknown }).note ?? '');
+        const existing = await context.services.storage.daemon.get<string[]>('notes');
+        const notes = [...(existing ?? []), note];
+        await context.services.storage.daemon.set('notes', notes);
+        context.services.logger.info('Stored session note', { count: notes.length });
+        return { note, count: notes.length };
+      },
+    },
+  },
+});
 ```
 
 ## Commands

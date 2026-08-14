@@ -1,26 +1,62 @@
 ---
-title: Managed servers
-description: Supervise plugin-owned local servers through context.services.managed.
+title: Managed services
+description: Supervise plugin-owned local services through context.services.managedServices.
 ---
 
-Use `context.services.managed.servers.supervise(...)` for plugin-owned loopback services. Declare managed dependencies and executable access in the cold manifest first.
+Use `context.services.managedServices.supervise(...)` for plugin-owned loopback services. For managed-spawn mode, declare the consumed managed dependencies and executable access in the cold manifest first. External-attach mode uses its declared endpoint and applicable host-access policy without inventing a launch dependency.
 
-The service can own process launch, explicit managed-spawn or external-attach mode, port and base URL projection, health checks, startup timeout, bounded credentials, durable log policy, snapshots, and cleanup.
+A managed model Provider uses this same exact-handle lifecycle from its runtime
+context. The Provider adapts its protocol; the host owns connection/adoption,
+credential materialization, currentness, and child retirement. See
+[Add a model Provider](/plugins/guides/providers) before creating a
+Provider-local supervisor or credential cache.
+
+The service can own process launch, explicit managed-spawn or external-attach mode, port allocation, health checks, startup timeout, bounded credentials, durable log policy, snapshots, exact-handle requests, and cleanup.
 
 ```ts
-const server = await context.services.managed.servers.supervise(spec, {
+const service = await context.services.managedServices.supervise(spec, {
   signal: context.signal
 });
 
-await server.waitUntilHealthy({ signal: context.signal });
+await service.waitUntilHealthy({ signal: context.signal });
+
+const response = await service.request({
+  pathAndQuery: '/v1/events',
+  signal: context.signal
+});
 ```
 
-Dispose the returned handle with its activation, Agent runtime, or session owner.
+`request(...)` resolves only against this exact handle's validated loopback
+endpoint. Its optional 1–300,000 ms timeout (default 300,000 ms) bounds request
+establishment through validated response headers only; it is not a
+whole-response or streaming-body deadline. After headers arrive, the caller
+signal, exact handle scope and currentness, hard retirement, and explicit
+disposal own the streaming body lifetime. The host rejects redirects, absolute
+URLs, caller authorization headers, path ambiguity, stale handles, and retired
+invocation scopes before exposing a response.
+
+The snapshot may expose the validated `baseUrl` needed by declaration contracts
+such as MCP discovery, but not a separate host, port, PID, token, password, or
+custody identity. `clientAccess` defaults to `{ kind: 'none' }`. Generated access
+is spawn-only: `{ kind: 'hostBearer', ... }` is limited to a canonical
+managed-Provider start, while `{ kind: 'hostBasic', ... }` is limited to an
+owned Session-runner spawn. Attach accepts only `{ kind: 'none' }` (or
+omission). Authors declare only the child environment destination. The host
+generates and injects the value and applies the matching request header
+internally; plugin code receives no generated bearer, password, or encoded
+`Authorization` header.
+
+Use the exact handle's `request(...)` method for authenticated service traffic
+rather than adding a second HTTP transport or reconstructing endpoint and
+authentication state from `baseUrl`.
+
+Dispose the returned handle with its owning invocation, Agent runtime, or Session.
 
 ## Good practices
 
-- Bind managed servers to loopback.
-- Generate narrow credentials for local HTTP services.
+- Bind managed services to loopback.
+- Prefer exact-handle `request(...)`; reserve `baseUrl` for contracts that must return an absolute endpoint.
+- Declare only the narrow child authentication injection needed by an owned spawn.
 - Keep external-attach and managed-spawn modes explicit.
 - Redact durable logs.
 - Fail closed when post-start health or authentication validation fails.

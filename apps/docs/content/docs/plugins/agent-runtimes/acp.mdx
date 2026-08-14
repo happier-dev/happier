@@ -3,12 +3,35 @@ title: ACP Agent runtimes
 description: Compose a native AgentSessionRuntime for an Agent Client Protocol process.
 ---
 
-Use the ACP composer when an Agent speaks Agent Client Protocol. The composer returns the same native `AgentSessionRuntime` used by any other session implementation; it does not introduce another public runtime layer.
+ACP has two deliberately different authoring modes. Choose one; do not add a
+custom factory or locator to a declarative ACP contribution.
+
+| | Declarative ACP | Custom ACP composition |
+| --- | --- | --- |
+| Choose it when | Cold transport data completely describes the Agent | The plugin must adapt Agent-specific behavior before opening ACP |
+| Manifest runtime | `runtime.kind: 'acp'` with `transport` | `runtime.kind: 'custom'` |
+| Factory / registration | None | One `AgentRuntimeFactory` supplied as `agents.<id>.factory`; generated activation registers it |
+| Session runner locator | None | Required for a Session-capable custom Agent; names a distinct exact leaf |
+| ACP opening | Host-owned | Leaf calls `context.protocols.acp.open(...)` |
+
+## Declarative ACP
+
+Declare `runtime.kind: 'acp'`, the transport, Session primary, and capabilities
+in the code-defined Agent declaration. This has no `factory`, generated
+registration, `sessionRunnerFactory`, or runner module. The host constructs the
+runtime directly from the declaration.
+
+## Custom ACP composition
+
+Use a custom Agent only when a plugin-owned leaf must compose ACP with
+Agent-specific rules. The `agents.<id>.factory` entry generates the daemon
+registration; a distinct import-safe runner leaf exports the exact same factory
+and is named by the locator. That leaf, not `activate`, calls the composer.
 
 The `AgentSessionRuntimeContext` exposes protocol composers through `context.protocols`:
 
 ```ts
-import type { AgentRuntime } from '@happier-dev/plugin-sdk/agent-runtime';
+import type { AgentRuntime } from '@happier-dev/plugin-sdk/agents/runtime';
 
 export const runtime: AgentRuntime = {
   sessions: {
@@ -32,4 +55,7 @@ Use the exact transport and definition types exported by the installed SDK versi
 
 Agent-specific authentication, model projection, timeouts, verified image input, tool-name shaping, stderr rules, and protocol extensions belong in the ACP definition. Happier still owns session and turn lifecycle, input custody, transcript persistence, activity, and terminal process facts.
 
-If the Agent also supports execution-runs, expose the native `executionRuns` factory on the same `AgentRuntime`. Do not create a second public session or run state machine.
+If the custom Agent also supports execution-runs, expose the native
+`executionRuns` factory on the same `AgentRuntime`. Do not create a second
+public session or run state machine. [Add an Agent](/plugins/guides/agent-modes)
+maps the four valid Agent modes.

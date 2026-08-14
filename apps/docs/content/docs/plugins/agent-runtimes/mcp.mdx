@@ -9,12 +9,12 @@ MCP support is split between static manifest descriptors and runtime registratio
 
 Declare MCP servers and discovery contributions in the manifest when they should be projected or discovered before executable plugin code runs.
 
-## Runtime registration
+## Code-defined runtime binding
 
-Bind executable MCP behavior during activation:
+Bind executable MCP behavior through `definePlugin(...)`:
 
-- `api.mcp.registerServer(...)`
-- `api.mcp.registerDiscoveryProvider(...)`
+- `mcp.servers.<id>.runtime` for a dynamic MCP server
+- `mcp.discoverySources.<id>.discover` for a discovery contribution
 
 Runtime-discovered per-session servers should be returned through the MCP runtime/discovery APIs, not promoted into the static plugin catalog by side effect.
 

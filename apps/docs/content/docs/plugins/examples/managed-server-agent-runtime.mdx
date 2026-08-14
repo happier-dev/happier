@@ -1,14 +1,27 @@
 ---
-title: Managed server Agent runtime example
-description: Supervise an Agent-owned loopback server through public services.
+title: Managed service Agent runtime example
+description: Supervise an Agent-owned loopback service through the public managed-services API.
 ---
 
-Use `context.services.managed.servers` when an Agent needs a local HTTP or protocol server.
+Use `context.services.managedServices` when an Agent needs a local HTTP or protocol service.
 
-1. Declare the managed dependency and required host access in the cold manifest.
-2. Resolve external-attach or managed-spawn mode.
-3. Call `context.services.managed.servers.supervise(spec, { signal })`.
+1. Resolve external-attach or managed-spawn mode.
+2. For managed spawn, declare the consumed managed dependency, executable access, and required host access in the cold manifest; attach mode declares only its applicable endpoint and host-access policy.
+3. Call `context.services.managedServices.supervise(spec, { signal })`.
 4. Wait for `handle.waitUntilHealthy(...)` before creating the Agent client.
-5. Dispose the handle with the owning Agent runtime or session.
+5. Use `handle.request(...)` for authenticated REST or streaming traffic bound to that exact service instance.
+6. Dispose the handle with the owning Agent runtime or Session.
 
-Use loopback binding, narrow generated credentials, startup timeouts, redacted durable logs, and fail-closed health validation. The returned handle is the lifecycle owner for the supervised instance; do not build a second watcher or process registry.
+Use loopback binding, startup timeouts, redacted durable logs, and fail-closed
+health validation. Client access defaults to `none`; an owned Session-runner
+spawn may use `hostBasic`, while `hostBearer` is reserved for managed-Provider
+spawn. Attach accepts only `none`, and plugin code receives neither the raw
+generated `hostBasic` password nor its encoded `Authorization` header. A
+request timeout covers establishment through validated response headers only;
+it does not limit the streaming body after headers. The caller signal, exact
+scope/currentness, hard retirement, and explicit disposal own that body. The
+snapshot retains `baseUrl` for absolute-endpoint contracts but exposes no
+separate host or port. The returned handle is the lifecycle owner for the
+supervised instance; use `context.services.managedServices` and its exact-handle
+`request(...)` method instead of adding an alias, second HTTP transport,
+watcher, or process registry.

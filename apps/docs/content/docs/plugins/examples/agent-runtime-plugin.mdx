@@ -3,29 +3,60 @@ title: Agent runtime plugin example
 description: A plugin that contributes a custom AI agent runtime.
 ---
 
-An agent runtime plugin declares an agent and registers a runtime.
+An Agent runtime plugin declares an Agent and, only for `runtime.kind: 'custom'`,
+supplies a runtime factory. Generated activation binds it. Declarative ACP has
+no factory or registration; use the
+[Agent-mode guide](/plugins/guides/agent-modes) first.
 
-## Manifest
+## Declaration
 
 Declare:
 
-- `contributes.agents[]`
+- `agents.<id>.declaration`
 - agent id
 - catalog ids when applicable
 - `runtime.kind`
 - agent runtime capabilities
 
-## Activation
+## Code-defined declaration
 
 ```ts
-export async function activate(api) {
-  api.agents.register('example', () => ({
-    sessions: {
-      open: (request, context) => createSessionRuntime(request, context)
-    }
-  }));
-}
+import { definePlugin } from '@happier-dev/plugin-sdk';
+
+export const { manifest, activate } = definePlugin({
+  id: 'com.example.runtime',
+  version: '0.1.0',
+  agents: {
+    example: {
+      declaration: {
+        title: 'Example runtime',
+        runtime: { kind: 'custom' },
+        primary: 'sessions',
+        capabilities: {
+          sessions: {
+            open: ['create'],
+            delivery: ['newTurn'],
+            cancel: true,
+          },
+        },
+      },
+      factory: createExampleAgentRuntime,
+      sessionRunnerFactory: {
+        module: './agentRuntime.js',
+        export: 'createExampleAgentRuntime',
+        runtimeApiVersion: 1,
+      },
+    },
+  },
+});
 ```
+
+A Session-capable custom Agent also requires a `sessionRunnerFactory` locator
+that names a distinct import-safe leaf exporting this exact factory. An
+execution-run-only Agent does not have that locator. `definePlugin` generates
+the matching registration-only `activate` ABI. The runner imports its leaf and
+never calls `activate`, so neither relies on a process-global singleton shared
+with activation.
 
 ## Host boundary
 

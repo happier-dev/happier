@@ -1,0 +1,22 @@
+---
+title: Add SCM integration
+description: Keep forge hosting and local repository backend behavior separate.
+---
+
+Choose the contribution by the system it represents.
+
+| Need | Contribution | Owns |
+| --- | --- | --- |
+| A forge or hosting service such as a code-hosting API | `scmHostingProviders` | Remote identity, repository and pull-request operations, and hosting URLs. |
+| A local repository implementation such as Git or another VCS | `scmBackends` | Working-tree inspection, repository operations, commands, and checkout behavior. |
+
+These are not two names for the same runtime. A repository backend must not
+become a remote forge client, and a hosting Provider must not take ownership of
+local checkout, command, or filesystem policy. Each contribution has its own
+descriptor and exactly matching activation runtime through the `api.scm`
+family.
+
+Use public contracts from `@happier-dev/plugin-sdk/scm/hosting` for hosting
+work and `@happier-dev/plugin-sdk/scm/backend` for repository work. Keep host
+credentials, account selection, process policy, and workspace lifecycle with
+the host-provided context/services rather than creating a parallel registry.

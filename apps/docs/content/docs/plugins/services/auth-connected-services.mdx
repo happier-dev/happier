@@ -33,7 +33,8 @@ An action or hook uses the ID of its existing `connectedAccounts` HostAccess req
 Raw credential materialization additionally requires the declaration or
 HostAccess scope to list the exact requested `materializationKinds` value:
 `httpHeaders`, `environment`, or `files`. A `connectedAccounts` HostAccess
-scope may list these kinds only when its operations include `use`. Omitting
+scope may list these kinds only when its operations include `use`. When
+present, the list must be nonempty and contain no duplicates. Omitting
 `materializationKinds` still permits binding inspection and observation, but
 permits no raw credential materialization.
 
@@ -43,7 +44,13 @@ permits no raw credential materialization.
 
 `requestSelection({ purpose, reason }, options?)` opens the host-owned selection flow and returns the resulting binding. A purpose whose request lists several compatible services still selects exactly one service and one account or group. Declare separate purposes when one operation needs multiple services.
 
-Only `requestSelection()` requires an available current-session interaction owner. If the user cancels, it fails with `plugin_ui_cancelled`; if no interaction owner is available, it fails with `plugin_ui_unavailable`. An already-bound, currently authorized purpose can still use `getBinding()` and `watch()` outside a session, and can use `materialize()` there when its exact requested kind is authorized. The selection flow never returns the host-private account inventory to the plugin.
+Only `requestSelection()` requires an available current-session interaction
+owner. If the user cancels, it fails with `plugin_interaction_cancelled`; if no
+interaction owner is available, it fails with `plugin_interaction_unavailable`.
+An already-bound, currently authorized purpose can still use `getBinding()` and
+`watch()` outside a session, and can use `materialize()` there when its exact
+requested kind is authorized. The selection flow never returns the host-private
+account inventory to the plugin.
 
 ## Credential materialization
 
@@ -123,32 +130,38 @@ host; it does not create a separate service or account namespace:
 }
 ```
 
-Register exactly the same mode IDs and kinds under the existing activation
-API:
+In an ordinary author module, put the same descriptor (without its `id`) and
+runtime under `connectedAccountDescriptors.forge`; `definePlugin(...)`
+generates the matching activation binding:
 
 ```ts
-api.connectedAccounts.register('forge', {
-  authentication: {
-    modes: {
-      device: {
-        kind: 'oauthDeviceCode',
-        begin,
-        poll,
-        cancel,
-        reconcile,
+connectedAccountDescriptors: {
+  forge: {
+    declaration: forgeDeclaration,
+    runtime: {
+      authentication: {
+        modes: {
+          device: {
+            kind: 'oauthDeviceCode',
+            begin,
+            poll,
+            cancel,
+            reconcile,
+          },
+          token: {
+            kind: 'manual',
+            complete,
+          },
+        },
       },
-      token: {
-        kind: 'manual',
-        complete,
-      },
+      refresh,
+      revoke,
+      status,
+      quota,
+      materialize,
     },
   },
-  refresh,
-  revoke,
-  status,
-  quota,
-  materialize,
-});
+},
 ```
 
 The host rejects missing or extra runtime modes, kind mismatches, and
@@ -219,6 +232,6 @@ account target.
 
 Public producer descriptors do not declare host adapters, origins,
 permissions, purposes, or HostAccess IDs. Network calls use
-`context.services.fetch` only when the plugin's existing `network` HostAccess
-request authorizes the exact `connectedAccountOrigin`; final-fetch policy
+`context.services.http` only when the plugin's existing `network` HostAccess
+request authorizes the exact `connectedAccountOrigin`; final HTTP policy
 remains authoritative.

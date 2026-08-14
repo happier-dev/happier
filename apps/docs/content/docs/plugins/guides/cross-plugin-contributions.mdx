@@ -1,0 +1,163 @@
+---
+title: Cross-plugin contributions
+description: Bind ordinary plugin Actions through a feature-owned contribution protocol.
+---
+
+A **cross-plugin contribution protocol** lets one plugin declare bounded
+operation roles and lets another plugin bind its existing Actions to those
+roles. The host owns discovery, admission, currentness, and execution. A
+contributor does not self-register with the target, and the target does not scan Actions
+or build a second Action map.
+
+Use a feature-owned protocol value in ordinary plugin code. Only a package that
+defines a reusable feature protocol imports the generic constructors.
+
+## Everyday target and contributor authors
+
+Channels publishes its provider protocol as a feature-owned value. An ordinary
+target calls `.point()` on that value:
+
+```ts
+import { definePlugin } from '@happier-dev/plugin-sdk';
+import {
+  ConversationProvidersContributionProtocolV1,
+} from '@happier-dev/channels-protocol/v1';
+
+export const { manifest, activate } = definePlugin({
+  id: 'com.example.channels-target',
+  version: '0.1.0',
+  contributionPoints: {
+    providers: ConversationProvidersContributionProtocolV1.point(),
+  },
+});
+```
+
+A provider plugin imports that same feature protocol, derives each ordinary
+Action's role-owned facts from its immutable `.declaration`, and binds its own
+local Action id with `.bind()`:
+
+```ts
+import {
+  ConversationProvidersContributionProtocolV1,
+} from '@happier-dev/channels-protocol/v1';
+
+const connectionTest = ConversationProvidersContributionProtocolV1.operations.connectionTest;
+const declaration = connectionTest.declaration;
+
+if (declaration.input.kind !== 'protocolDefined') {
+  throw new TypeError('connectionTest must use its protocol-defined input');
+}
+
+export const connectionTestAction = {
+  inputSchema: declaration.input.schema.jsonSchema,
+  resultSchema: declaration.resultSchema.jsonSchema,
+  surfaces: declaration.surfaces,
+  dangerLevel: declaration.dangerLevel,
+};
+
+export const connectionTestBinding = connectionTest.bind('acme/connection-test');
+```
+
+`declaration` is frozen authoring evidence. It owns the role's input mode,
+result schema, required Action surfaces, and danger level. For a
+`contributorDefined` input, the contributor supplies its own input schema; it
+still uses the role's result, surface, and danger facts. Do not copy those
+facts into a second table, reach through a raw manifest, or discover a role by
+searching Actions.
+
+The contributor then binds every required feature role in one
+`.contribute()` value. The local ids remain arbitrary plugin-local Action ids:
+
+```ts
+const providers = ConversationProvidersContributionProtocolV1;
+
+const channelProvider = providers.contribute({
+  operations: {
+    setup: providers.operations.setup.bind('acme/setup'),
+    connectionTest: providers.operations.connectionTest.bind('acme/connection-test'),
+    messageDeliver: providers.operations.messageDeliver.bind('acme/message-deliver'),
+  },
+});
+```
+
+Place that value under the target plugin id, target point id, and the
+contributor's own local contribution id in `contributesTo`. The source author
+API is `contributionPoints` plus `contributesTo`; raw `contributes` remains the
+host-normalized manifest form and is not author input.
+
+## Feature-protocol authors (advanced)
+
+Only the independently published feature-protocol package owns its protocol
+schema and generic constructors. Define one only when a real feature has its
+own domain vocabulary, public `/v1` contract, maintained target, and maintained
+contributor proof. Ordinary plugins consume that feature-owned value instead.
+
+The first public author route is operation-only. Descriptor and embedded-renderer
+contribution roles are not a current external-author product, so do not turn a
+generic constructor into a product tutorial for them.
+
+```ts
+import {
+  defineContributionPoint,
+  defineContributionProtocol,
+  defineProtocolLiteral,
+  defineProtocolObject,
+  defineProtocolUnion,
+} from '@happier-dev/plugin-sdk/protocol-authoring';
+
+const inspectResult = defineProtocolObject({
+  inspected: defineProtocolUnion([
+    defineProtocolLiteral(true),
+    defineProtocolLiteral(false),
+  ]),
+}, { policy: 'closed' });
+
+export const externalReviewersV1 = defineContributionProtocol({
+  id: 'external-reviewers',
+  version: 1,
+  operations: {
+    inspect: {
+      required: true,
+      input: { kind: 'contributorDefined' },
+      resultSchema: inspectResult,
+      action: { surface: 'plugin', dangerLevel: 'safe' },
+    },
+  },
+});
+
+export const externalReviewersPointV1 = defineContributionPoint([externalReviewersV1], {
+  maxContributionsPerContributor: 1,
+});
+```
+
+`defineContributionPoint([v1, v2], options?)` is for a target that accepts
+multiple compatible protocol epochs. `protocol.point()` is the ordinary
+single-protocol shortcut. Neither constructor belongs in an everyday provider
+plugin that merely consumes a feature-owned value.
+
+Feature protocol values are strict JSON-shaped contracts, not arbitrary
+JavaScript objects. Compose them with the validator-neutral constructors, such
+as `defineProtocolObject`, `defineProtocolLiteral`, and
+`defineProtocolUnion`, and pass the resulting `ProtocolComposableSchema`
+directly to the protocol declaration. Each value owns its executable parser and
+its `.jsonSchema` projection; `.jsonSchema` is a plain projection and carries
+no hidden inference or second validation owner. SDK data constructors cover
+bounded UTF-8 strings, strict ordinary JSON with an owner-declared aggregate
+serialized-byte ceiling, and unique JSON arrays. Generic public node, depth,
+string, key, array, or object-count quotas are not part of this authoring
+surface.
+
+## Trust and ownership
+
+Cross-plugin protocol schemas, bounds, role typing, and exact-generation
+currentness make interoperability deterministic. They do not sandbox a plugin
+or make a child semantically read-only. Daemon and React Native code remain
+trusted package code under the one whole-package **Install & Trust** decision;
+review the package and its dependencies before enabling it. See the
+[trust model](/plugins/security/trust-model) for the security boundary.
+
+The host's normalized catalog is the only admission and observation owner.
+Targets consume admitted current snapshots; contributors keep their unrelated
+Actions usable when a target is absent or incompatible. Do not add a callback
+registry, polling loop, Action dispatcher, catalog cache, or compatibility
+fallback around this contract.

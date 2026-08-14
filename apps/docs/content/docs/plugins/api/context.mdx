@@ -7,122 +7,140 @@ Action, hook, event, MCP, notification, SCM, and interceptor handlers receive a
 bounded `PluginInvocationContext` for the current operation:
 
 ```ts
-import type { ActionHandler } from '@happier-dev/plugin-sdk/runtime';
+import type { ActionHandler } from '@happier-dev/plugin-sdk/actions';
 
 export const publish: ActionHandler = async (input, context) => {
-  const confirmed = await context.ui.confirm('Publish this result?', {
+  const confirmation = await context.services.interactions.confirm({
+    kind: 'confirmation',
     title: 'Confirm publish',
-  });
-  if (!confirmed) return;
+    message: 'Publish this result?',
+  }, { signal: context.signal });
+  if (confirmation.status !== 'approved') return;
 
-  await context.ui.status.set('publish', 'Publishing…');
-  try {
-    context.signal.throwIfAborted();
-    return await publishWith(context.services.fetch, input);
-  } finally {
-    await context.ui.status.set('publish', null);
-  }
+  return publishWith(context.services.http, input);
 };
 ```
 
-The context contains structured plugin/contribution identity, an optional
-surface and session identity, `AbortSignal`, `services`, and `ui`.
+The context contains structured plugin/contribution identity, optional surface
+and session identity, an `AbortSignal`, `services`, and an optional `ui`
+presentation facade.
 
-## `context.ui`
+## `context.services.interactions`
 
-The supported-preview UI-intent facade provides tool approval, structured questions,
-confirmation, notification, status, widget, title, and composer operations. The host
-owns the target, request identity, correlation, cancellation, currentness, reconnect
-state, and present-user custody. Authors supply UI intent and typed answers rather
-than transport or provider-specific interaction metadata.
+Present-user requests and approval-queue operations live on
+`context.services.interactions`. The host owns the target, request identity,
+correlation, cancellation, currentness, reconnect state, and present-user custody.
+Authors supply only typed intent; host request stamps (`requestId`, `sessionId`,
+`requester`, `createdAtMs`, and `expiresAtMs`) are not author inputs.
 
 | Operation | Author-visible result |
 | --- | --- |
-| `requestApproval(request)` | `approved` with `once` or `session` persistence, `denied`, `cancelled`, or `unavailable` |
-| `askQuestions(questions, { title? })` | `answered` with typed answers, `cancelled`, or `unavailable` |
-| `confirm(message, { title? })` | resolves to `boolean`, or rejects with `PluginError` code `plugin_ui_cancelled` or `plugin_ui_unavailable` |
-| `notify(message, { severity? })` | completion or `PluginError` |
-| `status.set(key, textOrNull)` | completion or `PluginError` |
-| `widget.set(key, widgetOrNull)` | completion or `PluginError` |
-| `title.set(titleOrNull)` | completion or `PluginError` |
-| `composer.replace(text)` | completion or `PluginError` |
+| `requestApproval({ kind: 'approval', … })` | `InteractionTransientApprovalResultV1` |
+| `askQuestions({ kind: 'questions', … })` | `InteractionTransientQuestionsResultV1` |
+| `confirm({ kind: 'confirmation', … })` | `InteractionTransientConfirmationResultV1` |
+| `approvals.request/get/list/watch` | host-stamped access to the canonical approval queue |
 
-Tool approvals use exactly this author-visible contract:
+Every transient result has the host-generated `requestId` and its matching
+`kind`. Approval and confirmation decisions are `approved` or `declined`;
+only an approved approval may additionally carry `persistence: 'once' | 'session'`.
+Questions return `answered` and an answer map. Each operation can instead return
+exactly one terminal status:
 
 ```ts
-type PluginUiApprovalRequest = Readonly<{
-  title: string;
-  description?: string;
-  subject: Readonly<{
-    kind: 'tool';
-    name: string;
-    input: JsonValue;
-  }>;
-  allowSessionPersistence?: boolean;
-}>;
+type InteractionTerminalStatusV1 =
+  | 'userCancelled'
+  | 'requesterAborted'
+  | 'timedOut'
+  | 'sessionEnded'
+  | 'generationRetired'
+  | 'hostRestarted'
+  | 'unavailable';
+```
 
-type PluginUiApprovalResult =
-  | Readonly<{ status: 'approved'; persistence: 'once' | 'session' }>
-  | Readonly<{ status: 'denied'; rationale?: string }>
-  | Readonly<{ status: 'cancelled'; diagnostic?: PluginDiagnosticData }>
-  | Readonly<{ status: 'unavailable'; diagnostic: PluginDiagnosticData }>;
+These terminal outcomes are returned as the result; confirmation is not a
+boolean, and cancellation or unavailability is not remapped into a legacy
+`PluginError` contract.
+
+Tool approvals use the exact `InteractionTransientApprovalAuthorRequestV1`
+input shape:
+
+```ts
+const approval = await context.services.interactions.requestApproval({
+  kind: 'approval',
+  title: 'Publish result',
+  description: 'This sends the current result to its selected destination.',
+  subject: {
+    kind: 'tool';
+    name: 'publish',
+    input: { operation: 'publish' },
+  },
+  allowSessionPersistence: true,
+}, { signal: context.signal });
+
+if (approval.status === 'approved') {
+  // `approval.persistence` is `once`, or `session` when it was allowed.
+}
 ```
 
 `allowSessionPersistence` is a ceiling, not a request for a particular decision.
 Without it, the host can approve only once. With it, the host may still approve
-once, deny, cancel, or report unavailability. Workspace/account persistence,
+once, decline, or return a terminal status. Workspace/account persistence,
 provider request/session/turn identifiers, correlation, replay, currentness, and
-cancellation plumbing are not author inputs. Provider-specific decisions such as
+cancellation plumbing remain host-owned. Provider-specific decisions such as
 OpenCode `always` are translated at the provider boundary.
 
-`askQuestions` accepts a non-empty question tuple. A question is exactly one of:
+`askQuestions` takes `InteractionTransientQuestionsAuthorRequestV1`: an explicit
+`kind: 'questions'` and a non-empty `questions` array. The author-level question
+shape has optional `required`, `allowCustom`, and choice labels:
 
 ```ts
-type PluginUiQuestion =
-  | Readonly<{
-      id: string;
-      prompt: string;
-      type: 'text';
-      required?: boolean;
-    }>
-  | Readonly<{
-      id: string;
-      prompt: string;
-      type: 'single' | 'multiple';
-      required?: boolean;
-      choices: readonly [
-        Readonly<{ id: string; label?: string; description?: string }>,
-        ...Readonly<{ id: string; label?: string; description?: string }>[],
-      ];
-      allowCustom?: boolean;
-    }>;
+const questions = await context.services.interactions.askQuestions({
+  kind: 'questions',
+  title: 'Choose a destination',
+  questions: [{
+    id: 'destination',
+    prompt: 'Where should this publish?',
+    type: 'singleChoice',
+    required: true,
+    allowCustom: false,
+    choices: [
+      { id: 'staging', label: 'Staging' },
+      { id: 'production', label: 'Production' },
+    ],
+  }],
+}, { signal: context.signal });
 
-type Questions = readonly [PluginUiQuestion, ...PluginUiQuestion[]];
+if (questions.status === 'answered') {
+  const answer = questions.answers.destination;
+  if (answer?.kind === 'singleChoice' && answer.answer.kind === 'choice') {
+    await publishTo(answer.answer.choiceId);
+  }
+}
 ```
 
-Text answers are `{ type: 'text', value }`. A single-choice answer is
-`{ type: 'single', answer }`; a multiple-choice answer contains a non-empty
-`answers` tuple. Each choice answer is either
-`{ type: 'choice', choiceId }` or `{ type: 'custom', value }`. The latter is
-the provider-neutral “Other” answer.
+Text answers are `{ kind: 'text', value }`. A single-choice answer is
+`{ kind: 'singleChoice', answer }`; a multiple-choice answer is
+`{ kind: 'multipleChoice', answers }`. Each choice selection is either
+`{ kind: 'choice', choiceId }` or `{ kind: 'custom', value }`.
 
-An answered result is
-`{ status: 'answered', answers: Readonly<Record<string, PluginUiQuestionAnswer>> }`,
-keyed by question `id`. Cancellation is
-`{ status: 'cancelled', diagnostic?: PluginDiagnosticData }`; unavailability is
-`{ status: 'unavailable', diagnostic: PluginDiagnosticData }`.
+## `context.ui`
 
-Some one-shot effects can fail with `PluginError` when the host cannot know
-whether an effect was applied. Do not blindly replay them.
+When present, `context.ui` is presentation-only. It provides `notify`, `status.set`,
+`widget.set`, `title.set`, and `composer.replace` for the current invocation's
+present user. It contains no approval, question, confirmation, or interaction
+forwarding methods. When it is absent, the invocation has no present-user
+presentation path; it does not fall back to the notification service.
 
 ## Services
 
 Use `context.services.availability(serviceId)` when a host or lifetime may not
 provide a service. The normal roster includes logging, storage, settings,
-secrets, events, fetch, filesystem, execution, managed dependencies, sessions,
-resources, MCP, notifications, and connected accounts. Exact methods
-and availability come from `@happier-dev/plugin-sdk/runtime`.
+secrets, events, HTTP, filesystem, execution, managed services, providers,
+sessions, resources, MCP, notifications, connected accounts, actions, and
+interactions. Import each service contract from its final domain path, such as
+`@happier-dev/plugin-sdk/actions`, `@happier-dev/plugin-sdk/http`, or
+`@happier-dev/plugin-sdk/interactions`.
 
 Agent runtime factories receive an immutable `AgentRuntimeFactoryContext`, not
 invocation services. Session and execution-run operations receive their own
-bounded native runtime contexts from `@happier-dev/plugin-sdk/agent-runtime`.
+bounded native runtime contexts from `@happier-dev/plugin-sdk/agents/runtime`.

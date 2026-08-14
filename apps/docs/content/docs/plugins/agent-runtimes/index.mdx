@@ -11,18 +11,25 @@ Sessions remain separate contributions with host-owned lifecycles.
 ## Runtime layers
 
 1. The manifest declares `contributes.agents[]` entries. The declaration key is `id`.
-2. Activation registers an agent runtime factory with `api.agents.register(agentId, create, options)`.
-3. The factory returns `AgentRuntime`.
-4. The host resolves that runtime for sessions, execution-runs, and declared typed capabilities.
-5. Host bridges run the product lifecycle.
+2. A declarative ACP entry (`runtime.kind: 'acp'`) stops there: the host owns
+   construction, with no plugin factory, registration, or locator.
+3. A custom entry (`runtime.kind: 'custom'`) supplies one factory through its
+   `agents.<id>.factory` code-defined field; generated activation registers it.
+4. A Session-capable custom entry also names a distinct exact factory leaf in
+   `sessionRunnerFactory`; an execution-run-only entry must not.
+5. The host resolves the chosen runtime, owns its lifecycle, and runs product
+   bridges.
 
 ## Native Agent contribution
 
-The cold manifest owns Agent identity, runtime kind, primary facility,
-capabilities, and optional provider-neutral CLI/install/auth facts. The
-activation module owns only the matching runtime factory.
+The code-defined declaration owns Agent identity, runtime kind, primary
+facility, capabilities, optional provider-neutral CLI/install/auth facts, and
+the matching *custom* runtime factory. Its generated activation binds that
+factory. Declarative ACP has no plugin runtime leaf at all.
 
-A custom session Agent that launches a declared system tool can use this shape:
+A custom session Agent that launches a declared system tool projects this cold
+shape. Ordinary author modules express it with `definePlugin(...)`, rather than
+hand-authoring the JSON:
 
 ```json
 {
@@ -112,11 +119,13 @@ raw installer, shell, credential store, or login-command registry:
   safe;
 - `auth.loginLaunches` supplies arguments for the already resolved executable.
 
-For an ACP Agent, use
+For a declarative ACP Agent, use
 `runtime: { "kind": "acp", "transport": ... }` and declare a strict
-`systemTool` or `managedDependency` executable reference for stdio. A custom
-runtime keeps `runtime: { "kind": "custom" }` and implements the behavior in
-its registered native `AgentRuntime`.
+`systemTool` or `managedDependency` executable reference for stdio. Do not add
+a factory, registration, or locator. A custom runtime keeps
+`runtime: { "kind": "custom" }`, implements behavior in its registered native
+`AgentRuntime`, and uses `context.protocols.acp.open(...)` only when its own
+leaf composes ACP.
 
 Declare only capabilities the runtime actually implements. Unsupported
 create/resume/fork, delivery, configuration, compaction, rollback, goal,

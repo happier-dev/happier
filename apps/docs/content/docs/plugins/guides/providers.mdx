@@ -1,0 +1,40 @@
+---
+title: Add a model Provider
+description: Choose descriptor-only metadata or a managed local Provider runtime.
+---
+
+A Provider is a model source, not an executable Agent. It declares catalog,
+endpoint, compatibility, credential-requirement, and connection-facing facts.
+The host owns connections, account selection, grants, model selection, and
+credential materialization.
+
+## Descriptor-only Provider
+
+Choose this for a remotely reachable or otherwise host-consumed model source.
+Declare the `providers` row with its endpoint templates and catalog facts. Do
+not supply a runtime and do not call `api.providers.register(...)`: the
+descriptor itself is the contribution.
+
+## Managed Provider
+
+Choose this only when the Provider needs one host-supervised local service.
+Add the declaration's cold `managedRuntime` facet and one matching runtime.
+`definePlugin` registers that runtime; manual ABI authors use exactly one
+`api.providers.register(localId, runtime)` call for the same local id.
+
+The runtime uses its `context.managedServices` service to supervise or attach
+the exact service handle, waits for health, and returns service-path endpoints.
+It adapts Provider protocol behavior. The host owns child adoption, connection
+and Connected Account binding, health policy, credential injection, endpoint
+leases, update/currentness, hard revocation, and cleanup. Never create a
+Provider-local process registry, port allocator, credential cache, or second
+adoption lifecycle.
+
+Use [managed services](/plugins/services/managed-servers) for the exact
+handle and request boundary. A managed Provider is still not a Session Agent;
+the persistent Session execution owner remains the Agent runner when a
+Provider is used from an Agent Session.
+
+The maintained advanced package-root reference contains a compile-checked
+managed Provider declaration and `context.managedServices.supervise(...)`
+runtime shape.

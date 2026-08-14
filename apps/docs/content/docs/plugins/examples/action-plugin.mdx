@@ -5,13 +5,26 @@ description: A plugin that exposes one manifest-declared action.
 
 Use this shape for a simple operation that can be called from CLI, MCP, or a session-agent surface.
 
-## Manifest
+## Code-defined declaration
 
-Declare the action under `contributes.actions[]`.
+Declare the action and its handler together with `definePlugin(...)`. The
+generated `activate` export binds the handler to the same local id, so an
+author does not maintain a separate manifest row and activation module.
 
-## Activation
+```ts
+import { definePlugin } from '@happier-dev/plugin-sdk';
 
-Bind the handler with `api.actions.register(id, handler)`.
+export const { manifest, activate } = definePlugin({
+  id: 'com.example.echo',
+  version: '0.1.0',
+  actions: {
+    echo: {
+      title: 'Echo',
+      run: async (input) => ({ input }),
+    },
+  },
+});
+```
 
 ## Runtime services
 

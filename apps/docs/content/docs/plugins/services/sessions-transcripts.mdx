@@ -5,7 +5,22 @@ description: Observe and interact with sessions through host-owned services.
 
 Use `context.services.sessions` for host-mediated session access. The root service can list, resolve, and watch session summaries. `sessions.current` exposes the current invocation session when available; `sessions.get(id)` returns a bounded service for another authorized session.
 
-Supported session services can send user text, events, or structured messages; watch live summary, message, and activity events; manage declared subagent state; and work with external Agent sessions. Availability is explicit and calls remain subject to host access and encryption policy.
+`SessionHandle.send(...)` accepts only user text: `{ kind: 'userText', text }`.
+`SessionHandle.watch(...)` separately observes summary changes, message events
+(including structured message parts), and activity events. Those observed
+event shapes are not additional `send(...)` variants.
+
+The published handle also exposes `listSystemRecords`, `upsertSystemRecord`,
+`readSystemRecord`, and `deleteSystemRecord`. Publication does not make plugin
+system records active: these operations fail closed with typed unavailable
+`plugin_session_records_unavailable` until the host advertises canonical
+`capabilities.session.systemRecords.protocolVersions: [1]` support. Protocol
+version 1 is a wire capability, not a product feature gate, and there is no
+fallback to host `memory`/`activity` records, plugin storage, or local files.
+
+Supported session services can manage declared subagent state and work with
+external Agent sessions. Availability is explicit and calls remain subject to
+host access and encryption policy.
 
 Agent session operations additionally receive `AgentSessionRuntimeContext.session.services` for Agent-specific hooks, bounded transcript file following, account usage, authentication refresh, and MCP resolution.
 

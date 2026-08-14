@@ -1,0 +1,29 @@
+---
+title: Use invocation services
+description: Select the bounded host service for an invoked action, hook, event, or runtime operation.
+---
+
+Activation is registration-only. Invoked handlers receive
+`PluginInvocationContext`, including `context.signal`, `context.services`, and
+presentation-only `context.ui`. Use the service that owns the capability:
+
+| Task | Owner |
+| --- | --- |
+| Invoke a declared action or inspect action availability | `context.services.actions` |
+| Emit or subscribe to declared plugin/host events | `context.services.events` |
+| Make a host-authorized HTTP request | `context.services.http` |
+| Ask a question, request approval, or confirm with a present user | `context.services.interactions` |
+| Work with Provider connections, catalogs, or model selection | `context.services.providers` |
+| Discover/read plugin resources or prompt assets | `context.services.resources` |
+| Use MCP server/client and discovery capabilities | `context.services.mcp` |
+
+The context also supplies filesystem, exec, settings, storage, secrets,
+notifications, sessions, managed services, and Connected Accounts where their
+declarations and current availability permit them. Check
+`context.services.availability(...)` when an owner can be absent, pass the
+invocation signal to asynchronous calls, and treat typed unavailable/denial
+results as outcomes—not as prompts to rebuild the host facility locally.
+
+Use `context.ui` only for invocation-local presentation such as status and
+notifications. Interactions belong to `context.services.interactions`; neither
+service is a way to persist host state or bypass its lifecycle.

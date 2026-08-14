@@ -14,7 +14,7 @@ Declare published events and subscriptions in the cold manifest. Each event has 
 `emit` accepts the current plugin's local event id:
 
 ```ts
-await context.services.events.emit('build.completed', {
+await context.services.events.plugin.emit('build.completed', {
   status: 'ok'
 });
 ```
@@ -26,7 +26,7 @@ The event must be declared by the current plugin. Reserved host names, undeclare
 Dynamic subscriptions use a structured contribution reference:
 
 ```ts
-const subscription = context.services.events.subscribe(
+const subscription = context.services.events.plugin.subscribe(
   { pluginId: 'com.example.build', localId: 'build.completed' },
   async (event) => {
     const payload = event.payload;
@@ -36,13 +36,15 @@ const subscription = context.services.events.subscribe(
 subscription.dispose();
 ```
 
-The target event and the caller's subscription must be declared. Cross-plugin observation also requires scoped `events.plugin.subscribe` host access for the target plugin.
+The target event and the caller's exact subscription target must be declared and active. No second host-access entitlement is required.
 
-Manifest-declared subscription handlers bind during activation with `api.events.register(subscriptionLocalId, handler)`. The registered id is the subscription contribution's local id, not the publisher's event id.
+Manifest-declared subscription handlers use the `events.<subscriptionId>.handler`
+field in `definePlugin(...)`; generated activation binds the same local id, not
+the publisher's event id.
 
-## Agent session events
+## Host events
 
-Agent session evidence uses `AgentSessionRuntime.watch(...)` and its native strict event union. Do not publish raw Agent protocol messages on the general plugin event service.
+Strict semantic host lifecycle events use `context.services.events.host.subscribe(...)` with a catalog-defined event id and either a current-session or explicit-session target. Raw Agent/provider messages are not exposed through this service.
 
 ## Delivery
 
