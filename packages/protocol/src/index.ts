@@ -983,6 +983,7 @@ export {
   SESSION_TRANSCRIPT_OBSERVATION_CAPABILITY_V1,
   SESSION_TRANSCRIPT_OBSERVATION_CAPABILITY_EVENT_V1,
   SESSION_TRANSCRIPT_OBSERVATION_EVENT_V1,
+  isRecoveredHistoryTranscriptObservationProvenance,
   SessionTranscriptObservationProvenanceV1Schema,
   SessionTranscriptObservationV1Schema,
   SessionTranscriptObservationCapabilityAckV1Schema,

@@ -1,5 +1,5 @@
 import type { Message } from '../../domains/messages/messageTypes';
-import { isRecoveredHistoryTranscriptObservation } from '../../domains/messages/transcriptObservationProvenance';
+import { isRecoveredHistoryTranscriptObservationProvenance } from '@happier-dev/protocol';
 import type { DiscardedPendingMessage, PendingMessage } from '../../domains/state/storageTypes';
 import { shouldPreservePendingProjectionAfterCommittedUserLocalId } from '../../domains/pending/pendingTranscriptProjection';
 
@@ -47,7 +47,7 @@ function collectCommittedUserLocalIds<S extends PendingDomainDependencies>(
     for (const message of Object.values(messagesById)) {
         if (
             message?.kind !== 'user-text'
-            || isRecoveredHistoryTranscriptObservation(message)
+            || isRecoveredHistoryTranscriptObservationProvenance(message.transcriptObservationProvenance)
         ) continue;
         const localId = typeof message.localId === 'string' ? message.localId : '';
         if (localId && candidateLocalIds.has(localId)) {

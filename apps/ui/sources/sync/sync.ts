@@ -6,6 +6,7 @@ import {
     ClientVersionCheckRequestV1Schema,
     ClientVersionCheckResponseV1Schema,
     SESSION_USER_MESSAGE_DELIVERY_INTENT_META_KEY,
+    isRecoveredHistoryTranscriptObservationProvenance,
     readPendingLocalId,
     type DirectTranscriptRawMessageV1,
     type PendingDeliveryBlockedReason,
@@ -227,7 +228,6 @@ import { registerSessionTranscriptDerivedCacheClear } from './runtime/sessionTra
 import { voiceHooks } from '@/voice/context/voiceHooks';
 import { notifyActivityReady } from '@/activity/notifications/runtime/activityLocalNotificationBus';
 import { Message } from './domains/messages/messageTypes';
-import { isRecoveredHistoryTranscriptObservation } from './domains/messages/transcriptObservationProvenance';
 import { EncryptionCache } from './encryption/encryptionCache';
 import { nowServerMs } from './runtime/time';
 import { getAgentCore, resolveAgentIdFromFlavor } from '@/agents/catalog/catalog';
@@ -7273,7 +7273,9 @@ class Sync {
                     m.push(message);
                 }
             }
-            const liveEffectMessages = m.filter((message) => !isRecoveredHistoryTranscriptObservation(message));
+            const liveEffectMessages = m.filter((message) => (
+                !isRecoveredHistoryTranscriptObservationProvenance(message.transcriptObservationProvenance)
+            ));
             if (notifyVoice && liveEffectMessages.length > 0) {
                 voiceHooks.onMessages(sessionId, liveEffectMessages);
             }

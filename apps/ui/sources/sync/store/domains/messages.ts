@@ -1,5 +1,6 @@
 import type { PermissionMode } from '@/sync/domains/permissions/permissionTypes';
 import { parsePermissionIntentAlias } from '@happier-dev/agents';
+import { isRecoveredHistoryTranscriptObservationProvenance } from '@happier-dev/protocol';
 
 import { createReducer, reducer, type ReducerState } from '../../reducer/reducer';
 import type { Message } from '../../domains/messages/messageTypes';
@@ -39,8 +40,6 @@ import {
     isTranscriptRenderableAggregate,
     type TranscriptRenderableAggregate,
 } from '@/sync/domains/messages/transcriptRenderableAggregate';
-import { isRecoveredHistoryTranscriptObservation } from '@/sync/domains/messages/transcriptObservationProvenance';
-
 import { clearSessionTranscriptDerivedCachesForSession } from '../../runtime/sessionTranscriptDerivedCaches';
 
 import { areSessionValuesDeepEqual } from './areStoredSessionsEqual';
@@ -287,7 +286,7 @@ function inferLatestUserPermissionModeFromChangedMessages(
     let best: { mode: PermissionMode; updatedAt: number } | null = null;
 
     for (const message of messages) {
-        if (isRecoveredHistoryTranscriptObservation(message)) continue;
+        if (isRecoveredHistoryTranscriptObservationProvenance(message.transcriptObservationProvenance)) continue;
         if (message.kind !== 'user-text') continue;
         const rawMode = message.meta?.permissionMode;
         const modeStr = typeof rawMode === 'string' ? rawMode : null;
@@ -321,7 +320,7 @@ function findLatestThinkingMessageId(params: Readonly<{
         const id = params.idsOldestFirst[i]!;
         const message = params.messagesById[id];
         if (!message) continue;
-        if (isRecoveredHistoryTranscriptObservation(message)) continue;
+        if (isRecoveredHistoryTranscriptObservationProvenance(message.transcriptObservationProvenance)) continue;
         if (message.kind !== 'agent-text') continue;
         if (message.isThinking === true) return message.id;
     }
@@ -611,7 +610,7 @@ export function createMessagesDomain<S extends MessagesDomain & MessagesDomainDe
                 // Messages are already normalized, no need to process them again
                 const normalizedMessages = messages;
                 const didSeeThinkingUpdateFromInput = normalizedMessages.some((m) => {
-                    if (isRecoveredHistoryTranscriptObservation(m)) return false;
+                    if (isRecoveredHistoryTranscriptObservationProvenance(m.transcriptObservationProvenance)) return false;
                     if (!m || (m as any).role !== 'agent') return false;
                     const content = (m as any).content;
                     if (!Array.isArray(content)) return false;
@@ -718,7 +717,7 @@ export function createMessagesDomain<S extends MessagesDomain & MessagesDomainDe
                     }
 
                     if (
-                        !isRecoveredHistoryTranscriptObservation(message)
+                        !isRecoveredHistoryTranscriptObservationProvenance(message.transcriptObservationProvenance)
                         && message.kind === 'agent-text'
                         && message.isThinking === true
                     ) {
@@ -732,7 +731,7 @@ export function createMessagesDomain<S extends MessagesDomain & MessagesDomainDe
                     messageRevisionsById[message.id] = (messageRevisionsById[message.id] ?? 0) + 1;
 
                     if (
-                        !isRecoveredHistoryTranscriptObservation(message)
+                        !isRecoveredHistoryTranscriptObservationProvenance(message.transcriptObservationProvenance)
                         && message.kind === 'agent-text'
                         && message.isThinking === true
                     ) {
@@ -844,7 +843,7 @@ export function createMessagesDomain<S extends MessagesDomain & MessagesDomainDe
                     const localIdsToClear = new Set<string>();
                     for (const m of processedMessages) {
                         if (
-                            !isRecoveredHistoryTranscriptObservation(m)
+                            !isRecoveredHistoryTranscriptObservationProvenance(m.transcriptObservationProvenance)
                             && m.kind === 'user-text'
                             && m.localId
                         ) {

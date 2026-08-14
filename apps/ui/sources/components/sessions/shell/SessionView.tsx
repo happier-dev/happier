@@ -1,4 +1,5 @@
 import Color from 'color';
+import { isRecoveredHistoryTranscriptObservationProvenance } from '@happier-dev/protocol';
 
 import { AgentContentView } from '@/components/sessions/transcript/AgentContentView';
 import { AgentInput, type AgentInputSendOptions } from '@/components/sessions/agentInput';
@@ -20,7 +21,6 @@ import type { AttachmentFilePickerHandle, PickedAttachment } from '@/components/
 import { openAttachmentFilePickerFiles, openAttachmentFilePickerImages } from '@/components/sessions/attachments/attachmentFilePickerActions';
 import { resolveReviewCommentDraftAnchorsForPrompt } from '@/components/sessions/reviews/comments/resolveReviewCommentDraftAnchorsForPrompt';
 import { readNonBlankSessionControlIdentifier } from '@/sync/domains/sessionControl/opaqueIdentifiers';
-import { isRecoveredHistoryTranscriptObservation } from '@/sync/domains/messages/transcriptObservationProvenance';
 import { useSessionFileUploadAvailability } from '@/components/sessions/files/useSessionFileUploadAvailability';
 import { useSessionAgentInputExtraActionChips } from '@/components/sessions/agentInput/sessionActions/useSessionAgentInputExtraActionChips';
 import {
@@ -323,7 +323,7 @@ function hasCanonicalOutboundHandoffForLocalId(sessionId: string, localId: strin
     return Object.values(messagesById).some((message) => (
         message.kind === 'user-text'
         && message.localId === localId
-        && !isRecoveredHistoryTranscriptObservation(message)
+        && !isRecoveredHistoryTranscriptObservationProvenance(message.transcriptObservationProvenance)
     ));
 }
 import {

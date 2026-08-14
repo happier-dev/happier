@@ -1,4 +1,5 @@
 import type { TracedMessage } from '../reducerTracer';
+import { isRecoveredHistoryTranscriptObservationProvenance } from '@happier-dev/protocol';
 import type { UsageData } from '../../typesRaw';
 import type { ReducerState } from '../reducer';
 import type { ToolCall } from '../../domains/messages/messageTypes';
@@ -10,7 +11,6 @@ import { upsertStreamSegmentSnapshotMessage } from '../helpers/upsertStreamSegme
 import { markRunningToolsUnavailable } from '../helpers/markRunningToolsUnavailable';
 import { hasSyntheticNoResponseMeta } from '../../domains/messages/syntheticNoResponseMessageMeta';
 import { normalizeTranscriptSeq, transcriptBlockIndexFromContentIndex } from '../../domains/messages/transcriptOrdering';
-import { isRecoveredHistoryTranscriptObservation } from '../../domains/messages/transcriptObservationProvenance';
 
 export function runUserAndTextPhase(params: Readonly<{
     state: ReducerState;
@@ -60,7 +60,9 @@ export function runUserAndTextPhase(params: Readonly<{
     //
 
     for (let msg of nonSidechainMessages) {
-        const isRecoveredHistory = isRecoveredHistoryTranscriptObservation(msg);
+        const isRecoveredHistory = isRecoveredHistoryTranscriptObservationProvenance(
+            msg.transcriptObservationProvenance,
+        );
         const retainedThinkingMessageId = lastMainThinkingMessageId;
         const retainedStreamMessageId = lastMainStreamMessageId;
         const retainedStreamKey = lastMainStreamKey;

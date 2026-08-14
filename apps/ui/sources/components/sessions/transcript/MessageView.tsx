@@ -1,5 +1,6 @@
 import * as React from "react";
 import { View, Pressable, Platform } from 'react-native';
+import { isRecoveredHistoryTranscriptObservationProvenance } from '@happier-dev/protocol';
 import { Modal } from '@/modal';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { MarkdownView } from '@/components/markdown/MarkdownView';
@@ -92,7 +93,6 @@ import {
   type TranscriptInteraction,
 } from '@/utils/sessions/deriveTranscriptInteraction';
 import { useSessionInteractionSource } from '@/sync/domains/state/storage';
-import { isRecoveredHistoryTranscriptObservation } from '@/sync/domains/messages/transcriptObservationProvenance';
 import { Icon } from '@/components/ui/icons/Icon';
 
 type StreamSegmentStateForRendering = 'streaming' | 'complete' | 'interrupted';
@@ -201,7 +201,7 @@ function formatTranscriptMessageTimestamp(createdAt: number): string | null {
 }
 
 function RecoveredHistoryIndicator(props: Readonly<{ message: Message }>) {
-  if (!isRecoveredHistoryTranscriptObservation(props.message)) return null;
+  if (!isRecoveredHistoryTranscriptObservationProvenance(props.message.transcriptObservationProvenance)) return null;
   const label = t('message.recoveredHistory');
   const sourceTimestamp = props.message.sourceCreatedAt === undefined
     ? null

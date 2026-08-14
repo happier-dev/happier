@@ -1,4 +1,5 @@
 import type { AgentEvent, NormalizedMessage } from '../../typesRaw';
+import { isRecoveredHistoryTranscriptObservationProvenance } from '@happier-dev/protocol';
 import type { ReducerState } from '../reducer';
 import { parseMessageAsEvent } from '../messageToEvent';
 import { setThinkingMergeCursor } from '../helpers/mergeCursors';
@@ -7,7 +8,6 @@ import {
   readAcpToolCallSnapshotRevision,
   readMessageToolSnapshotRevision,
 } from '../helpers/toolCallSnapshotRevision';
-import { isRecoveredHistoryTranscriptObservation } from '../../domains/messages/transcriptObservationProvenance';
 
 export function runMessageToEventConversion({
   state,
@@ -44,7 +44,9 @@ export function runMessageToEventConversion({
   let readyAt: number | null = null;
 
   for (const msg of nonSidechainMessages) {
-    const isRecoveredHistory = isRecoveredHistoryTranscriptObservation(msg);
+    const isRecoveredHistory = isRecoveredHistoryTranscriptObservationProvenance(
+      msg.transcriptObservationProvenance,
+    );
     // Check if we've already processed this message
     if (!isRecoveredHistory && msg.role === 'user' && msg.localId && state.localIds.has(msg.localId)) {
       continue;
@@ -133,7 +135,11 @@ export function runMessageToEventConversion({
       convertedEvents.push({ message: msg, event });
       // Mark as processed to prevent duplication
       state.messageIds.set(msg.id, msg.id);
-      if (!isRecoveredHistoryTranscriptObservation(msg) && msg.role === 'user' && msg.localId) {
+      if (
+        !isRecoveredHistoryTranscriptObservationProvenance(msg.transcriptObservationProvenance)
+        && msg.role === 'user'
+        && msg.localId
+      ) {
         state.localIds.set(msg.localId, msg.id);
       }
     } else {
@@ -156,7 +162,7 @@ export function runMessageToEventConversion({
       text: null,
 	      meta: message.meta,
 	    });
-	    if (!isRecoveredHistoryTranscriptObservation(message)) {
+	    if (!isRecoveredHistoryTranscriptObservationProvenance(message.transcriptObservationProvenance)) {
 	      setThinkingMergeCursor(state, null, 'message-to-event');
 	    }
 	    changed.add(mid);

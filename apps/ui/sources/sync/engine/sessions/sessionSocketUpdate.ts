@@ -3,6 +3,7 @@ import { normalizeRawMessage } from '@/sync/typesRaw';
 import { computeNextSessionSeqFromUpdate } from '@/sync/domains/session/sequence/realtimeSessionSeq';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import type { ApiMessage } from '@/sync/api/types/apiTypes';
+import { isRecoveredHistoryTranscriptObservationProvenance } from '@happier-dev/protocol';
 import { readStoredSessionMessage } from '@/sync/runtime/readStoredSessionContent';
 import { markStreamingMessagesAppliedForSessionUiTelemetry } from '@/sync/runtime/performance/sessionUiTelemetry';
 import { recordRealtimeFanoutSocketMessageRoute } from '@/sync/runtime/performance/realtimeFanoutTelemetry';
@@ -18,10 +19,7 @@ import type {
 import { decideDurableSessionRealtimeRoute } from '@/sync/domains/session/realtime/sessionRealtimeRouting';
 import { getTaskLifecycleEventFromRawContent, type TaskLifecycleEvent } from './taskLifecycle';
 import { isLegacyMemoryArtifactTranscriptRow } from './legacyMemoryArtifactTranscriptRows';
-import {
-    applyTranscriptObservationMetadata,
-    isRecoveredHistoryTranscriptObservation,
-} from '@/sync/domains/messages/transcriptObservationProvenance';
+import { applyTranscriptObservationMetadata } from '@/sync/domains/messages/transcriptObservationProvenance';
 
 type SessionMessageEncryption = {
     decryptMessage: (message: any) => Promise<any>;
@@ -302,7 +300,9 @@ function buildMessageSessionProjectionPatch(params: Readonly<{
     updateType: 'new-message' | 'message-updated';
 }>): SessionProjectionPatch {
     const currentSeq = params.session.seq ?? 0;
-    const isRecoveredHistory = isRecoveredHistoryTranscriptObservation(params.rawMessage);
+    const isRecoveredHistory = isRecoveredHistoryTranscriptObservationProvenance(
+        params.rawMessage?.transcriptObservationProvenance,
+    );
     const attentionImpact = storedSessionMessageAttentionImpact(params.rawMessage);
     const nextSessionSeq = computeNextSessionSeqFromUpdate({
         currentSessionSeq: currentSeq,
@@ -371,7 +371,9 @@ async function handleSessionMessageSocketUpdate(params: HandleSessionMessageSock
     const rawMessage = 'message' in body
         ? (body as { message?: ApiMessage }).message
         : undefined;
-    const isRecoveredHistory = isRecoveredHistoryTranscriptObservation(rawMessage);
+    const isRecoveredHistory = isRecoveredHistoryTranscriptObservationProvenance(
+        rawMessage?.transcriptObservationProvenance,
+    );
     const updateType = inferLifecycle ? 'new-message' : 'message-updated';
     const prevMaterializedMaxSeq = getSessionMaterializedMaxSeq(sessionId);
     const sessionMessagesLoaded = isSessionMessagesLoaded(sessionId);

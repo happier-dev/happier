@@ -1,4 +1,8 @@
-import type { SessionMessageDeliveryResolutionV1, SessionTranscriptObservationProvenanceV1 } from '@happier-dev/protocol';
+import {
+    isRecoveredHistoryTranscriptObservationProvenance,
+    type SessionMessageDeliveryResolutionV1,
+    type SessionTranscriptObservationProvenanceV1,
+} from '@happier-dev/protocol';
 
 export type TranscriptObservationMetadata = {
     sourceCreatedAt?: number;
@@ -28,6 +32,5 @@ export function applyTranscriptObservationMetadata(
 export function isRecoveredHistoryTranscriptObservation(
     message: Readonly<Pick<TranscriptObservationMetadata, 'transcriptObservationProvenance'>> | null | undefined,
 ): boolean {
-    const provenance = message?.transcriptObservationProvenance;
-    return provenance?.kind === 'non_dependent' && provenance.source === 'history';
+    return isRecoveredHistoryTranscriptObservationProvenance(message?.transcriptObservationProvenance);
 }
