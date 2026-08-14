@@ -71,6 +71,9 @@ __pycache__/
 
 # local build/log artifacts
 apps/cli/.dist.hstack-backup/
+apps/cli/.dist.hstack-snapshot-*/
+apps/cli/dist.staging.*/
+/apps/cli/scripts/*.tmp.mjs
 apps/stack/resume-invocations.log
 apps/stack/*.tgz
 packages/relay-server/*.tgz
