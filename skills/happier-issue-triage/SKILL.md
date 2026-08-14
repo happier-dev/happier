@@ -16,7 +16,7 @@ Resolve four independent facts:
 - **Issue set:** explicit issue URLs/numbers, query, label, milestone, or backlog scope.
 - **Depth:** triage only, triage plus diagnosis, or triage plus proposed fixes. None authorizes implementation.
 - **Topology:** main lane, native subagents, independent Happier sessions, or not specified.
-- **Authority:** read-only by default; GitHub write-back and repository changes require separate explicit authority.
+- **Authority:** read-only by default; GitHub write-back and repository changes require separate explicit authority. A broad request to triage, organize, update, or clean up issues does not authorize a GitHub mutation without the exact preview and human approval required by `skills/happier-github-ops`.
 
 If the issue set is ambiguous, resolve it before retrieval. If only one issue is requested, use `skills/happier-issue-diagnose` directly unless corpus-level duplicate or relationship analysis is material.
 
@@ -120,6 +120,6 @@ When the main lane diagnoses one bundle, report through `skills/happier-issue-di
 
 ## 9. Keep mutations separate
 
-Triage findings may propose labels, comments, duplicate links, assignments, or state changes, but do not apply them without explicit authority. Follow the deterministic preflight and human safeguards in `skills/happier-github-ops`; never auto-close, auto-lock, or let a duplicate chain remove the only open canonical issue.
+Triage findings may propose labels, comments, duplicate links, assignments, or state changes, but do not apply them without the mandatory two-phase protocol in `skills/happier-github-ops`: show the user the complete exact payload, obtain explicit approval for that payload, then re-read the live targets before applying it. Re-preview and request renewed approval when a target or payload changes. Never auto-close, auto-lock, or let a duplicate chain remove the only open canonical issue.
 
 Do not create a local triage ledger. GitHub is the durable store when write-back is authorized; the user-facing report is the record otherwise.

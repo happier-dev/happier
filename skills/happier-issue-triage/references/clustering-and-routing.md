@@ -64,7 +64,7 @@ The subagent reports to the parent. It does not address the user independently a
 Use a self-contained message shaped like:
 
 ```text
-Use $happier-issue-diagnose to diagnose this coherent GitHub issue bundle and present the complete report directly to the user in this session.
+Use `skills/happier-issue-diagnose` to diagnose this coherent GitHub issue bundle and present the complete report directly to the user in this session.
 
 Goal and depth: <diagnosis / diagnosis plus proposed fixes>
 Issues: <URLs and compact structured claims>
