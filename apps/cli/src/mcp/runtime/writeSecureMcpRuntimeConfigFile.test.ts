@@ -1,6 +1,6 @@
-import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -93,6 +93,83 @@ describe('writeSecureMcpRuntimeConfigFile', () => {
       await expect(readdir(join(rejectingRoot, 'secured'))).resolves.toEqual([]);
     } finally {
       await rm(rejectingRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('uses a fresh protected default directory without touching an unsafe deterministic sibling', async () => {
+    const prefix = `happier-mcp-stdio-launcher-windows-${process.pid}-${Date.now()}`;
+    const unsafeDeterministicRoot = join(tmpdir(), prefix);
+    const unsafeMarkerPath = join(unsafeDeterministicRoot, 'administrator-owned.marker');
+    const events: string[] = [];
+    const windowsAclBoundary: WindowsProtectedLocalStateAclBoundary = {
+      applyAndVerify: vi.fn(async ({ path, kind }) => {
+        events.push(`apply:${kind}`);
+        if (kind === 'file') {
+          expect(await readFile(path, 'utf8')).toBe('');
+        }
+      }),
+      verify: vi.fn(async ({ path, kind }) => {
+        events.push(`verify:${kind}`);
+        if (path === unsafeDeterministicRoot) {
+          throw new Error('unsafe inherited administrator ACL');
+        }
+      }),
+    };
+
+    await rm(unsafeDeterministicRoot, { recursive: true, force: true });
+    await mkdir(unsafeDeterministicRoot, { recursive: true });
+    await writeFile(unsafeMarkerPath, 'must-remain');
+
+    let configPath: string | null = null;
+    try {
+      configPath = await writeSecureMcpRuntimeConfigFile({
+        prefix,
+        tmpDir: null,
+        payload: { token: 'protected-after-directory-acl' },
+      }, {
+        protectedLocalStateOptions: { platform: 'win32', windowsAclBoundary },
+      });
+
+      expect(dirname(configPath)).not.toBe(unsafeDeterministicRoot);
+      await expect(readFile(unsafeMarkerPath, 'utf8')).resolves.toBe('must-remain');
+      expect(events.indexOf('apply:directory')).toBeGreaterThanOrEqual(0);
+      expect(events.indexOf('apply:file')).toBeGreaterThan(events.indexOf('apply:directory'));
+      await expect(readFile(configPath, 'utf8')).resolves.toBe('{"token":"protected-after-directory-acl"}');
+    } finally {
+      if (configPath) await rm(dirname(configPath), { recursive: true, force: true });
+      await rm(unsafeDeterministicRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('removes only its fresh default directory when Windows ACL protection fails', async () => {
+    const prefix = `happier-mcp-stdio-launcher-windows-failure-${process.pid}-${Date.now()}`;
+    const unsafeDeterministicRoot = join(tmpdir(), prefix);
+    const unsafeMarkerPath = join(unsafeDeterministicRoot, 'administrator-owned.marker');
+    await mkdir(unsafeDeterministicRoot, { recursive: true });
+    await writeFile(unsafeMarkerPath, 'must-remain');
+
+    try {
+      await expect(writeSecureMcpRuntimeConfigFile({
+        prefix,
+        tmpDir: null,
+        payload: { token: 'must-not-be-written' },
+      }, {
+        protectedLocalStateOptions: {
+          platform: 'win32',
+          windowsAclBoundary: {
+            async applyAndVerify({ kind }) {
+              if (kind === 'directory') throw new Error('synthetic directory ACL rejection');
+            },
+            async verify() {},
+          },
+        },
+      })).rejects.toThrow('synthetic directory ACL rejection');
+
+      await expect(readFile(unsafeMarkerPath, 'utf8')).resolves.toBe('must-remain');
+      const siblingNames = await readdir(tmpdir());
+      expect(siblingNames.filter((name) => name.startsWith(`${prefix}-`))).toEqual([]);
+    } finally {
+      await rm(unsafeDeterministicRoot, { recursive: true, force: true });
     }
   });
 });

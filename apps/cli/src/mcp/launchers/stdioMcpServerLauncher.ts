@@ -1,9 +1,9 @@
 import { spawn } from 'node:child_process';
-import { readFile, unlink } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 
 import { z } from 'zod';
 
-import { isSafeTmpMcpConfigFilePath } from '../runtime/isSafeTmpMcpConfigFilePath';
+import { removeConsumedMcpRuntimeConfigFile } from '../runtime/isSafeTmpMcpConfigFilePath';
 
 const STDIO_LAUNCHER_CONFIG_PREFIX = 'happier-mcp-stdio-launcher';
 
@@ -30,8 +30,7 @@ async function readLauncherConfig(configPath: string): Promise<StdioMcpServerLau
 }
 
 async function deleteLauncherConfigFile(configPath: string): Promise<void> {
-  if (!isSafeTmpMcpConfigFilePath(configPath, STDIO_LAUNCHER_CONFIG_PREFIX)) return;
-  await unlink(configPath).catch(() => {});
+  await removeConsumedMcpRuntimeConfigFile(configPath, STDIO_LAUNCHER_CONFIG_PREFIX);
 }
 
 export async function runStdioMcpServerLauncher(): Promise<void> {

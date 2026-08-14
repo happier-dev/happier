@@ -3,6 +3,7 @@ import {
   chmod,
   lstat,
   mkdir,
+  mkdtemp,
   open,
   readdir,
   rename,
@@ -139,6 +140,26 @@ export async function ensureProtectedLocalStateDirectory(
   await assertProtectedPath(path, 'directory', options);
   if (!existed) {
     await fsyncDirectory(dirname(path), resolvePlatform(options));
+  }
+}
+
+export async function createProtectedLocalStateDirectory(
+  pathPrefix: string,
+  options: ProtectedLocalStateOptions = {},
+): Promise<string> {
+  const path = await mkdtemp(pathPrefix);
+  try {
+    if (resolvePlatform(options) === 'win32') {
+      await resolveWindowsAclBoundary(options).applyAndVerify({ path, kind: 'directory' });
+    } else {
+      await chmod(path, 0o700);
+    }
+    await assertProtectedPath(path, 'directory', options);
+    await fsyncDirectory(dirname(path), resolvePlatform(options));
+    return path;
+  } catch (error) {
+    await rm(path, { recursive: true, force: true }).catch(() => {});
+    throw error;
   }
 }
 
