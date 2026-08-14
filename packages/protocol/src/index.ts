@@ -144,8 +144,10 @@ export * from './sessions/pending/pendingProviderAction.js';
 export * from './sessions/pending/acceptedPendingSettlementV1.js';
 
 export {
+  isBaseCredentialDiagnosticKey,
   isUnsafeTelemetryDataKey,
   normalizeTelemetryDataKey,
+  splitSensitiveDiagnosticKeySegments,
 } from './common/sensitiveKeys.js';
 export * from './local/services/index.js';
 export * from './ssh/tunnels.js';
