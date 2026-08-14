@@ -21,7 +21,7 @@ export async function cmdSessionHistory(
     throw new Error('Usage: happier session history <session-id-or-prefix> [--limit <n>] [--format <compact|raw>] [--json]');
   }
 
-  const limitRaw = readIntFlagValue(argv, '--limit');
+  const limitRaw = readIntFlagValue(argv, '--limit', { min: 1 });
   const limit = typeof limitRaw === 'number' && Number.isFinite(limitRaw) && limitRaw > 0 ? Math.min(limitRaw, 250) : 50;
   const format = (readFlagValue(argv, '--format') ?? 'compact').trim();
   if (format !== 'compact' && format !== 'raw') {

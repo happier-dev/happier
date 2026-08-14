@@ -43,4 +43,42 @@ describe('happier session wait (action executor)', () => {
       output.restore();
     }
   });
+
+  it('rejects an explicit invalid timeout before reading credentials', async () => {
+    const readCredentialsFn = vi.fn(async () => null);
+    const { cmdSessionWait } = await import('./wait');
+    await expect(cmdSessionWait(['wait', 'sess-1', '--timeout', '0'], { readCredentialsFn }))
+      .rejects.toMatchObject({ code: 'invalid_arguments' });
+
+    expect(readCredentialsFn).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['uses the default timeout when --timeout is omitted', ['wait', 'sess-1', '--json'], 300],
+    ['clamps an explicit timeout to the supported maximum', ['wait', 'sess-1', '--timeout', '9999', '--json'], 3600],
+  ])('%s', async (_label, argv, expectedTimeoutSeconds) => {
+    execute.mockResolvedValueOnce({
+      ok: true,
+      result: { ok: true, sessionId: 'sess-1', observedAt: 123 },
+    });
+    const { cmdSessionWait } = await import('./wait');
+
+    const output = captureConsoleJsonOutput();
+    try {
+      await cmdSessionWait(argv, {
+        readCredentialsFn: async () => ({
+          token: 'token_test',
+          encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
+        }),
+      });
+
+      expect(execute).toHaveBeenLastCalledWith(
+        'session.wait.idle',
+        { sessionId: 'sess-1', timeoutSeconds: expectedTimeoutSeconds },
+        { surface: 'cli', defaultSessionId: null },
+      );
+    } finally {
+      output.restore();
+    }
+  });
 });

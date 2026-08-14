@@ -34,4 +34,32 @@ describe('handleSessionCommand required positionals', () => {
       output.restore();
     }
   });
+
+  it.each([
+    ['unknown list options', ['list', '--definitely-invalid', '--json']],
+    ['invalid list limits', ['list', '--limit', '0', '--json']],
+  ] as const)('rejects %s with a truthful JSON error and exit code', async (_label, argv) => {
+    const { handleSessionCommand } = await import('./handleSessionCommand');
+    const readCredentialsFn = vi.fn(async () => {
+      throw new Error('credentials must not be read for invalid arguments');
+    });
+    const output = captureConsoleJsonOutput();
+
+    try {
+      await handleSessionCommand([...argv], { readCredentialsFn });
+
+      expect(output.json()).toMatchObject({
+        ok: false,
+        kind: 'session_list',
+        error: {
+          code: 'invalid_arguments',
+          message: expect.stringContaining('Usage: happier session list'),
+        },
+      });
+      expect(process.exitCode).toBe(1);
+      expect(readCredentialsFn).not.toHaveBeenCalled();
+    } finally {
+      output.restore();
+    }
+  });
 });

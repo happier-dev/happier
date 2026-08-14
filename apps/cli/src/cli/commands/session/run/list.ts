@@ -24,6 +24,7 @@ export async function cmdSessionRunList(
   if (!idOrPrefix) {
     throw new Error('Usage: happier session run list <session-id-or-prefix> [--backend <backend-target>] [--status <status>] [--limit <count>] [--json]');
   }
+  const limit = readIntFlagValue(argv, '--limit', { min: 1, max: 200 });
 
   const credentials = await deps.readCredentialsFn();
   if (!credentials) {
@@ -56,7 +57,6 @@ export async function cmdSessionRunList(
   }
   const statusRaw = (readFlagValue(argv, '--status') ?? '').trim();
   const status = statusRaw ? ExecutionRunStatusSchema.parse(statusRaw) : undefined;
-  const limit = readIntFlagValue(argv, '--limit');
   const executor = createCliActionExecutorFromCredentials({ credentials });
   const actionRes = await executor.execute(
     'execution.run.list',

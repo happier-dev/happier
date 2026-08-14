@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const execute = vi.fn();
 const createCliActionExecutorFromCredentials = vi.fn(() => ({ execute }));
@@ -16,6 +16,12 @@ vi.mock('@/cli/output/jsonEnvelope', () => ({
 }));
 
 describe('happier session run list (action executor)', () => {
+  beforeEach(() => {
+    execute.mockReset();
+    createCliActionExecutorFromCredentials.mockClear();
+    resolveSessionTransportContext.mockClear();
+  });
+
   it('routes through ActionExecutor with the expected action id and args', async () => {
     execute.mockResolvedValueOnce({
       ok: true,
@@ -51,5 +57,15 @@ describe('happier session run list (action executor)', () => {
         kind: 'session_run_list',
         data: expect.objectContaining({ sessionId: 'sess-canonical' }),
       }));
+  });
+
+  it('rejects an out-of-range limit before reading credentials', async () => {
+    const readCredentialsFn = vi.fn(async () => null);
+    const { cmdSessionRunList } = await import('./list');
+    await expect(cmdSessionRunList(['session', 'run', 'sess-prefix', '--limit', '201'], { readCredentialsFn }))
+      .rejects.toMatchObject({ code: 'invalid_arguments' });
+
+    expect(readCredentialsFn).not.toHaveBeenCalled();
+    expect(resolveSessionTransportContext).not.toHaveBeenCalled();
   });
 });

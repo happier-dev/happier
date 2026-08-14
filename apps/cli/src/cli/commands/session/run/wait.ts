@@ -21,7 +21,7 @@ export async function cmdSessionRunWait(
     throw new Error('Usage: happier session run wait <session-id-or-prefix> <run-id> [--timeout <seconds>] [--json]');
   }
 
-  const timeoutSecondsRaw = readIntFlagValue(argv, '--timeout');
+  const timeoutSecondsRaw = readIntFlagValue(argv, '--timeout', { min: 1 });
   const timeoutSeconds =
     typeof timeoutSecondsRaw === 'number' && Number.isFinite(timeoutSecondsRaw) && timeoutSecondsRaw > 0
       ? timeoutSecondsRaw

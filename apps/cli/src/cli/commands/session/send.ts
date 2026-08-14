@@ -29,7 +29,7 @@ export async function cmdSessionSend(
     valueFlags: ['--permission-mode', '--model', '--timeout'],
   });
   const wait = hasFlag(argv, '--wait');
-  const timeoutSecondsRaw = readIntFlagValue(argv, '--timeout');
+  const timeoutSecondsRaw = readIntFlagValue(argv, '--timeout', { min: 1 });
   const permissionModeFlag = (readFlagValue(argv, '--permission-mode') ?? '').trim();
   const modelFlagRaw = readFlagValue(argv, '--model');
   const hasModelFlag = modelFlagRaw !== null;

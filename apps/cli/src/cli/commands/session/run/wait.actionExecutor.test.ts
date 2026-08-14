@@ -18,6 +18,7 @@ describe('happier session run wait (action executor)', () => {
   beforeEach(() => {
     execute.mockReset();
     createCliActionExecutorFromCredentials.mockClear();
+    resolveSessionTransportContext.mockClear();
   });
 
   it('does not add a default timeout when --timeout is omitted', async () => {
@@ -69,5 +70,17 @@ describe('happier session run wait (action executor)', () => {
         kind: 'session_run_wait',
         data: { sessionId: 'sess-canonical', runId: 'run-1', status: 'succeeded' },
       }));
+  });
+
+  it('rejects an explicit invalid timeout before reading credentials', async () => {
+    const readCredentialsFn = vi.fn(async () => null);
+    const { cmdSessionRunWait } = await import('./wait');
+    await expect(cmdSessionRunWait(
+      ['session', 'run', 'sess-prefix', 'run-1', '--timeout', '0'],
+      { readCredentialsFn },
+    )).rejects.toMatchObject({ code: 'invalid_arguments' });
+
+    expect(readCredentialsFn).not.toHaveBeenCalled();
+    expect(resolveSessionTransportContext).not.toHaveBeenCalled();
   });
 });

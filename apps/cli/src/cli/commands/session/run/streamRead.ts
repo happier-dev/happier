@@ -17,8 +17,9 @@ export async function cmdSessionRunStreamRead(
     startIndex: 2,
     valueFlags: ['--cursor', '--max-events', '--maxEvents'],
   });
-  const cursor = readIntFlagValue(argv, '--cursor');
-  const maxEvents = readIntFlagValue(argv, '--max-events') ?? readIntFlagValue(argv, '--maxEvents');
+  const cursor = readIntFlagValue(argv, '--cursor', { min: 0 });
+  const maxEvents = readIntFlagValue(argv, '--max-events', { min: 1, max: 256 })
+    ?? readIntFlagValue(argv, '--maxEvents', { min: 1, max: 256 });
 
   if (!idOrPrefix || !runId || !streamId || cursor === null) {
     throw new Error(
