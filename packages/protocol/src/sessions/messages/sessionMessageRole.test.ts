@@ -39,4 +39,32 @@ describe('session message role schema', () => {
       body: { type: 'agent_message', role: 'user', text: 'user text' },
     })).toBe('user');
   });
+
+  it('classifies canonical raw external-session bodies without host-side wrapper parsing', () => {
+    expect(protocol.resolveTranscriptBodySessionMessageRole({
+      protocol: 'acp',
+      body: { type: 'text', text: 'assistant text' },
+    })).toBe('agent');
+    expect(protocol.resolveTranscriptBodySessionMessageRole({
+      protocol: 'acp',
+      body: {
+        type: 'codex',
+        data: { type: 'message', message: 'assistant text' },
+      },
+    })).toBe('agent');
+    expect(protocol.resolveTranscriptBodySessionMessageRole({
+      protocol: 'acp',
+      body: {
+        type: 'event',
+        data: { type: 'tool-call', callId: 'call-1', name: 'read', input: {} },
+      },
+    })).toBe('event');
+    expect(protocol.resolveTranscriptBodySemanticEvent({
+      protocol: 'acp',
+      body: { type: 'text', text: 'assistant text' },
+    })).toEqual({
+      role: 'agent',
+      body: { type: 'message', message: 'assistant text' },
+    });
+  });
 });

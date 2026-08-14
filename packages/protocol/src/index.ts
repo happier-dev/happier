@@ -1533,8 +1533,10 @@ export {
 
 export {
   SESSION_MESSAGE_ROLES,
+  resolveTranscriptBodySemanticEvent,
   SessionMessageRoleSchema,
   resolveTranscriptBodySessionMessageRole,
+  type ResolvedTranscriptBodySemanticEvent,
   type ResolveTranscriptBodySessionMessageRoleInput,
   type SessionMessageRole,
   type TranscriptBodySessionMessageProtocol,
