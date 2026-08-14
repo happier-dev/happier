@@ -642,7 +642,9 @@ export function syncBundledWorkspacePackages(opts = {}) {
           destDir: destPackageDir,
           dereferenceRootDir: repoRoot,
           preserveDestinationPath: true,
-          pruneStale: false,
+          // Currentness-bearing callers opt into exact reconciliation. Presence-only preflight
+          // refreshes intentionally retain prior targets for in-flight module resolution.
+          pruneStale: opts.pruneStale === true,
         });
         continue;
       }

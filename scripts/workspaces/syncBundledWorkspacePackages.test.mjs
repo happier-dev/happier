@@ -688,33 +688,49 @@ test('syncBundledWorkspacePackages uses mounted canonical publication for presen
   }
 });
 
-test('syncBundledWorkspacePackages retains prior bundled targets during a live refresh', () => {
+test('syncBundledWorkspacePackages exactly reconciles generated plugin artifacts when requested', () => {
   const repoRoot = mkdtempSync(join(tmpdir(), 'happier-sync-bundled-workspaces-'));
   try {
-    const srcDist = resolve(repoRoot, 'packages', 'protocol', 'dist');
-    const srcPackageJsonPath = resolve(repoRoot, 'packages', 'protocol', 'package.json');
-    const destDist = resolve(repoRoot, 'apps', 'cli', 'node_modules', '@happier-dev', 'protocol', 'dist');
+    const srcDist = resolve(repoRoot, 'packages', 'plugins', 'codex', 'dist');
+    const srcPackageJsonPath = resolve(repoRoot, 'packages', 'plugins', 'codex', 'package.json');
+    const destPackageDir = resolve(repoRoot, 'apps', 'cli', 'node_modules', '@happier-dev', 'plugins-codex');
+    const destDist = resolve(destPackageDir, 'dist');
+    const staleRootPath = resolve(destPackageDir, 'obsolete-runtime-root.js');
+    const staleChunkPath = resolve(destDist, '.happier-chunks', 'chunk-2DIVYW5Y.js');
 
     mkdirSync(srcDist, { recursive: true });
+    mkdirSync(resolve(srcDist, '.happier-chunks'), { recursive: true });
     mkdirSync(destDist, { recursive: true });
     writeFileSync(srcPackageJsonPath, JSON.stringify({
-      name: '@happier-dev/protocol',
+      name: '@happier-dev/plugins-codex',
       version: '0.0.0',
       type: 'module',
       exports: { '.': { default: './dist/index.js' } },
     }));
     writeFileSync(resolve(srcDist, 'index.js'), 'export const fresh = true;\n', 'utf8');
+    writeFileSync(
+      resolve(srcDist, '.happier-chunks', 'chunk-ZIDEGITN.js'),
+      'export const currentChunk = true;\n',
+      'utf8',
+    );
     writeFileSync(resolve(destDist, 'index.js'), 'export const staleVersion = true;\n', 'utf8');
-    writeFileSync(resolve(destDist, 'removed.js'), 'export const shouldDisappear = true;\n', 'utf8');
+    mkdirSync(resolve(destDist, '.happier-chunks'), { recursive: true });
+    writeFileSync(staleRootPath, 'export const staleRoot = true;\n', 'utf8');
+    writeFileSync(staleChunkPath, 'export const staleChunk = true;\n', 'utf8');
+    const liveDirectoryInode = statSync(destPackageDir).ino;
 
     syncBundledWorkspacePackages({
       repoRoot,
-      packages: ['protocol'],
+      packages: ['plugins-codex'],
       hostApps: ['cli'],
+      pruneStale: true,
     });
 
+    assert.equal(statSync(destPackageDir).ino, liveDirectoryInode);
     assert.equal(readFileSync(resolve(destDist, 'index.js'), 'utf8'), 'export const fresh = true;\n');
-    assert.equal(existsSync(resolve(destDist, 'removed.js')), true);
+    assert.equal(existsSync(resolve(destDist, '.happier-chunks', 'chunk-ZIDEGITN.js')), true);
+    assert.equal(existsSync(staleRootPath), false);
+    assert.equal(existsSync(staleChunkPath), false);
   } finally {
     rmSync(repoRoot, { recursive: true, force: true });
   }

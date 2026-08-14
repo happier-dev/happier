@@ -38,6 +38,21 @@ function collectInternalDependencyNames(
   return [...dependencies];
 }
 
+function collectAdmittedInternalPeerDependencyNames(pkgJson, currentPackageName, admittedWorkspaceNames) {
+  const dependencies = new Set();
+  const field = pkgJson?.peerDependencies;
+  if (!field || typeof field !== 'object') return [];
+  for (const dependencyName of Object.keys(field)) {
+    if (!dependencyName.startsWith('@happier-dev/')) continue;
+    if (dependencyName === currentPackageName) continue;
+    const normalized = normalizeWorkspacePackageName(dependencyName);
+    if (normalized && admittedWorkspaceNames.has(normalized)) {
+      dependencies.add(normalized);
+    }
+  }
+  return [...dependencies];
+}
+
 function resolveWorkspacePackageJsonPath({ repoRoot, workspaceName, existsSync }) {
   const standard = resolve(repoRoot, 'packages', workspaceName, 'package.json');
   if (existsSync(standard)) return standard;
@@ -63,15 +78,51 @@ export function resolveWorkspaceDependencyBuildOrder({
   const ordered = [];
   const visited = new Set();
   const visiting = new Set();
+  const admitted = new Set();
+  const packageJsonByWorkspaceName = new Map();
+
+  const loadPackageJson = (workspaceName) => {
+    if (packageJsonByWorkspaceName.has(workspaceName)) {
+      return packageJsonByWorkspaceName.get(workspaceName);
+    }
+    const packageJsonPath = resolveWorkspacePackageJsonPath({ repoRoot, workspaceName, existsSync });
+    if (!packageJsonPath) {
+      packageJsonByWorkspaceName.set(workspaceName, null);
+      return null;
+    }
+    try {
+      const packageJson = readJson(packageJsonPath, { readFileSync });
+      packageJsonByWorkspaceName.set(workspaceName, packageJson);
+      return packageJson;
+    } catch {
+      packageJsonByWorkspaceName.set(workspaceName, null);
+      return null;
+    }
+  };
+
+  const admit = (rawName) => {
+    const workspaceName = normalizeWorkspacePackageName(rawName);
+    if (!workspaceName || admitted.has(workspaceName)) return;
+    const packageJson = loadPackageJson(workspaceName);
+    if (!packageJson) return;
+    admitted.add(workspaceName);
+    const currentPackageName = typeof packageJson?.name === 'string' ? packageJson.name : '';
+    for (const dependencyName of collectInternalDependencyNames(
+      packageJson,
+      currentPackageName,
+      { includeDevDependencies },
+    )) {
+      admit(dependencyName);
+    }
+  };
+
+  for (const seedName of Array.isArray(seedPackageNames) ? seedPackageNames : []) {
+    admit(seedName);
+  }
 
   const visit = (rawName) => {
     const workspaceName = normalizeWorkspacePackageName(rawName);
-    if (!workspaceName || visited.has(workspaceName)) {
-      return;
-    }
-
-    const packageJsonPath = resolveWorkspacePackageJsonPath({ repoRoot, workspaceName, existsSync });
-    if (!packageJsonPath) {
+    if (!workspaceName || !admitted.has(workspaceName) || visited.has(workspaceName)) {
       return;
     }
 
@@ -80,20 +131,24 @@ export function resolveWorkspaceDependencyBuildOrder({
     }
 
     visiting.add(workspaceName);
-    let packageJson;
-    try {
-      packageJson = readJson(packageJsonPath, { readFileSync });
-    } catch {
+    const packageJson = loadPackageJson(workspaceName);
+    if (!packageJson) {
       visiting.delete(workspaceName);
       return;
     }
 
     const currentPackageName = typeof packageJson?.name === 'string' ? packageJson.name : '';
-    for (const dependencyName of collectInternalDependencyNames(
+    const dependencyNames = collectInternalDependencyNames(
       packageJson,
       currentPackageName,
       { includeDevDependencies },
-    )) {
+    );
+    const admittedPeerDependencyNames = collectAdmittedInternalPeerDependencyNames(
+      packageJson,
+      currentPackageName,
+      admitted,
+    );
+    for (const dependencyName of [...dependencyNames, ...admittedPeerDependencyNames]) {
       visit(dependencyName);
     }
 

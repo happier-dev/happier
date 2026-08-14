@@ -1,16 +1,24 @@
 #!/usr/bin/env node
 import { spawnSync } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { chmod, mkdir, rename, rm, stat } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { assertNoMissingLocalImports } from './distLocalImports.mjs';
+import {
+  collectPackageBuildOutputTargets,
+  isLocalPackageBuildOutputTarget,
+  resolvePackageBuildOutputTargetMatches,
+  resolvePackageBuildOutputTargetPath,
+} from './packageBuildOutputTargets.mjs';
+import { resolveYarnCommandInvocation } from './execYarnCommand.mjs';
 import { resolveTypeScriptCliInvocation } from './resolveTypeScriptCliInvocation.mjs';
 import { withWorkspaceBundleLock } from './workspaceBundleLock.mjs';
 import { resolveWorkspacePackageBuildLockPath } from './workspacePackageBuildLock.mjs';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
+const STAGED_OUTPUT_SCRIPT_FLAG = '--happier-staged-output-script';
 
 function rand() {
   return Math.random().toString(16).slice(2);
@@ -18,31 +26,6 @@ function rand() {
 
 function readJson(path) {
   return JSON.parse(readFileSync(path, 'utf8'));
-}
-
-function collectTargetStrings(value, acc) {
-  if (typeof value === 'string') {
-    acc.push(value);
-    return;
-  }
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    return;
-  }
-  for (const nested of Object.values(value)) {
-    collectTargetStrings(nested, acc);
-  }
-}
-
-function collectExpectedPackageTargets(packageJson) {
-  const targets = [];
-  for (const key of ['main', 'module', 'types']) {
-    const value = packageJson?.[key];
-    if (typeof value === 'string' && value.trim()) {
-      targets.push(value.trim());
-    }
-  }
-  collectTargetStrings(packageJson?.exports ?? {}, targets);
-  return [...new Set(targets.map((target) => String(target).trim()).filter(Boolean))];
 }
 
 function collectBinTargets(packageJson) {
@@ -69,7 +52,7 @@ function collectBinTargets(packageJson) {
 // packed and the file: install paths agree.
 async function markBinTargetsExecutable({ packageDir, outputDir, packageJson }) {
   for (const target of collectBinTargets(packageJson)) {
-    const path = resolveTargetPath({ packageDir, outputDir, target });
+    const path = resolvePackageBuildOutputTargetPath({ packageDir, outputDir, target });
     try {
       const info = await stat(path);
       await chmod(path, info.mode | 0o111);
@@ -79,25 +62,15 @@ async function markBinTargetsExecutable({ packageDir, outputDir, packageJson }) 
   }
 }
 
-function resolveTargetPath({ packageDir, outputDir, target }) {
-  const normalized = String(target ?? '').replace(/^\.\//, '');
-  if (normalized === 'dist') {
-    return outputDir;
-  }
-  if (normalized.startsWith('dist/')) {
-    return join(outputDir, normalized.slice('dist/'.length));
-  }
-  return resolve(packageDir, normalized);
-}
-
 function verifyStagedExportTargets({ packageDir, outputDir, packageJson }) {
-  const missing = collectExpectedPackageTargets(packageJson)
-    .filter((target) => target.startsWith('./') || target.startsWith('dist/'))
-    .map((target) => ({
+  const missing = collectPackageBuildOutputTargets(packageJson)
+    .filter(isLocalPackageBuildOutputTarget)
+    .filter((target) => resolvePackageBuildOutputTargetMatches({
+      packageDir,
+      outputDir,
       target,
-      path: resolveTargetPath({ packageDir, outputDir, target }),
-    }))
-    .filter(({ path }) => !existsSync(path));
+    }).length === 0)
+    .map((target) => ({ target }));
 
   if (missing.length === 0) return;
 
@@ -108,16 +81,81 @@ function verifyStagedExportTargets({ packageDir, outputDir, packageJson }) {
 }
 
 async function verifyStagedRuntimeImportClosure({ packageDir, outputDir, packageJson }) {
-  const entryTargets = collectExpectedPackageTargets(packageJson)
-    .filter((target) => target.startsWith('./') || target.startsWith('dist/'))
+  const entryTargets = collectPackageBuildOutputTargets(packageJson)
+    .filter(isLocalPackageBuildOutputTarget)
+    .filter((target) => !target.includes('*'))
     .filter((target) => /\.(?:mjs|cjs|js)$/.test(target));
 
   for (const target of entryTargets) {
     await assertNoMissingLocalImports({
       distDir: outputDir,
-      entryPath: resolveTargetPath({ packageDir, outputDir, target }),
+      entryPath: resolvePackageBuildOutputTargetPath({ packageDir, outputDir, target }),
       label: `${packageJson?.name ?? packageDir} staged dist build`,
     });
+  }
+}
+
+function parseBuildArgs(args) {
+  const compilerArgs = [];
+  const stagedOutputScripts = [];
+  const values = Array.isArray(args) ? args : [];
+  for (let index = 0; index < values.length; index += 1) {
+    const value = values[index];
+    if (value !== STAGED_OUTPUT_SCRIPT_FLAG) {
+      compilerArgs.push(value);
+      continue;
+    }
+
+    const scriptName = String(values[index + 1] ?? '').trim();
+    if (!scriptName) {
+      throw new Error(`${STAGED_OUTPUT_SCRIPT_FLAG} requires a package script name`);
+    }
+    stagedOutputScripts.push(scriptName);
+    index += 1;
+  }
+  return { compilerArgs, stagedOutputScripts: [...new Set(stagedOutputScripts)] };
+}
+
+function validateStagedOutputScripts({ packageJson, stagedOutputScripts }) {
+  const scripts = packageJson?.scripts;
+  for (const scriptName of stagedOutputScripts) {
+    if (scriptName === 'build') {
+      throw new Error(`${STAGED_OUTPUT_SCRIPT_FLAG} cannot invoke the package build script recursively`);
+    }
+    if (typeof scripts?.[scriptName] !== 'string' || !scripts[scriptName].trim()) {
+      throw new Error(
+        `${STAGED_OUTPUT_SCRIPT_FLAG} references missing package script "${scriptName}"`,
+      );
+    }
+  }
+}
+
+function runStagedOutputScripts({
+  packageDir,
+  stagedOutputScripts,
+  env,
+  stdio,
+  runCommandImpl,
+  resolveYarnCommandInvocationImpl,
+}) {
+  for (const scriptName of stagedOutputScripts) {
+    const invocation = resolveYarnCommandInvocationImpl(['-s', scriptName], {
+      npmExecPath: env.npm_execpath,
+    });
+    const result = runCommandImpl(invocation.command, invocation.args, {
+      cwd: packageDir,
+      env,
+      stdio,
+      ...(invocation.windowsVerbatimArguments
+        ? { windowsVerbatimArguments: invocation.windowsVerbatimArguments }
+        : {}),
+    });
+    if (result?.error) throw result.error;
+    if ((result?.status ?? 0) !== 0) {
+      throw new Error(
+        `Staged package output script "${scriptName}" failed with code ${result?.status ?? 'unknown'}`,
+      );
+    }
   }
 }
 
@@ -175,10 +213,16 @@ export async function buildTypeScriptPackageDist({
   stdio = 'inherit',
   runCommandImpl = spawnSync,
   resolveTypeScriptCliInvocationImpl = resolveTypeScriptCliInvocation,
+  resolveYarnCommandInvocationImpl = resolveYarnCommandInvocation,
   withWorkspaceBundleLockImpl = withWorkspaceBundleLock,
 } = {}) {
   const resolvedPackageDir = resolve(packageDir);
   const packageJson = readJson(join(resolvedPackageDir, 'package.json'));
+  const parsedArgs = parseBuildArgs(args);
+  validateStagedOutputScripts({
+    packageJson,
+    stagedOutputScripts: parsedArgs.stagedOutputScripts,
+  });
   const explicitOutputDir = typeof outputDir === 'string' && outputDir.trim();
   const distDir = join(resolvedPackageDir, 'dist');
   const buildId = `${Date.now()}.${process.pid}.${rand()}`;
@@ -192,7 +236,15 @@ export async function buildTypeScriptPackageDist({
     await mkdir(stagedDistDir, { recursive: true });
     await rm(backupDir, { recursive: true, force: true });
     try {
-      const compilerArgs = withOutputCompilerArgs(Array.isArray(args) ? args : [], stagedDistDir, tsBuildInfoFile);
+      const stagedBuildEnv = {
+        ...buildEnv,
+        HAPPIER_WORKSPACE_DIST_OUTPUT_DIR: stagedDistDir,
+      };
+      const compilerArgs = withOutputCompilerArgs(
+        parsedArgs.compilerArgs,
+        stagedDistDir,
+        tsBuildInfoFile,
+      );
       const invocation = resolveTypeScriptCliInvocationImpl({
         repoRoot,
         workspaceDir: resolvedPackageDir,
@@ -203,7 +255,7 @@ export async function buildTypeScriptPackageDist({
         [...(invocation.argsPrefix ?? []), ...compilerArgs],
         {
           cwd: resolvedPackageDir,
-          env: buildEnv,
+          env: stagedBuildEnv,
           stdio,
           ...(invocation.windowsVerbatimArguments
             ? { windowsVerbatimArguments: invocation.windowsVerbatimArguments }
@@ -211,6 +263,15 @@ export async function buildTypeScriptPackageDist({
         },
         runCommandImpl,
       );
+
+      runStagedOutputScripts({
+        packageDir: resolvedPackageDir,
+        stagedOutputScripts: parsedArgs.stagedOutputScripts,
+        env: stagedBuildEnv,
+        stdio,
+        runCommandImpl,
+        resolveYarnCommandInvocationImpl,
+      });
 
       verifyStagedExportTargets({ packageDir: resolvedPackageDir, outputDir: stagedDistDir, packageJson });
       await verifyStagedRuntimeImportClosure({ packageDir: resolvedPackageDir, outputDir: stagedDistDir, packageJson });

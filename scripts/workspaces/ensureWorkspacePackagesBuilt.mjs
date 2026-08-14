@@ -10,7 +10,14 @@ import { collectWorkspacePackageJsonPaths } from '../../apps/stack/scripts/utils
 import { resolveWorkspaceToolBinDirs } from '../../apps/stack/scripts/utils/proc/workspace_tool_bins.mjs';
 import { assertNoMissingLocalImports } from './distLocalImports.mjs';
 import { resolveYarnCommandInvocation } from './execYarnCommand.mjs';
+import {
+  collectPackageBuildOutputTargets,
+  isPackageBuildDistOutputTarget,
+  resolvePackageBuildOutputTargetMatches,
+  resolvePackageBuildOutputTargetPath,
+} from './packageBuildOutputTargets.mjs';
 import { resolveWorkspacePackageBuildLockPath } from './workspacePackageBuildLock.mjs';
+import { WORKSPACE_PACKAGE_PREREQUISITES_READY_ENV_VAR } from './workspaceChildBuildEnv.mjs';
 
 const GENERATED_PLUGIN_UI_ARTIFACTS_MANIFEST_RELATIVE_PATH =
   'dist/happier-plugin-ui/ui-artifacts.json';
@@ -40,48 +47,29 @@ async function collectWorkspacePackageDirsByName(monorepoRoot) {
 function collectInternalWorkspaceDependencyNames(
   packageJson,
   currentPackageName,
-  { includeDevDependencies = true } = {},
+  { includeDevDependencies = true, workspacePackageNames = null } = {},
 ) {
+  const knownWorkspacePackageNames = workspacePackageNames
+    ? new Set(workspacePackageNames)
+    : null;
   const names = [];
   const dependencyFields = [packageJson?.dependencies, packageJson?.optionalDependencies];
   if (includeDevDependencies) dependencyFields.push(packageJson?.devDependencies);
   for (const dependencies of dependencyFields) {
     if (!dependencies || typeof dependencies !== 'object' || Array.isArray(dependencies)) continue;
     for (const name of Object.keys(dependencies)) {
-      if (!name.startsWith('@happier-dev/') || name === currentPackageName) continue;
+      const isInternalWorkspace = knownWorkspacePackageNames
+        ? knownWorkspacePackageNames.has(name)
+        : name.startsWith('@happier-dev/');
+      if (!isInternalWorkspace || name === currentPackageName) continue;
       names.push(name);
     }
   }
   return names;
 }
 
-function collectExpectedExportFileTargets(exportsField) {
-  const targets = [];
-  const visit = (value) => {
-    if (!value) return;
-    if (typeof value === 'string') {
-      targets.push(value);
-      return;
-    }
-    if (Array.isArray(value)) {
-      for (const nested of value) visit(nested);
-      return;
-    }
-    if (typeof value === 'object') {
-      for (const nested of Object.values(value)) visit(nested);
-    }
-  };
-  visit(exportsField);
-  return targets;
-}
-
-function collectExpectedPackageFilesFromPackageJson(packageJson) {
-  const candidates = [];
-  for (const key of ['main', 'module', 'types']) {
-    const value = packageJson?.[key];
-    if (typeof value === 'string' && value.trim()) candidates.push(value.trim());
-  }
-  candidates.push(...collectExpectedExportFileTargets(packageJson?.exports));
+function collectExpectedPackageOutputTargets(packageJson) {
+  const candidates = collectPackageBuildOutputTargets(packageJson);
   // A declared plugin UI build is part of the package's atomic dist contract,
   // even though its generated graph is not a JavaScript export target.
   if (
@@ -91,11 +79,18 @@ function collectExpectedPackageFilesFromPackageJson(packageJson) {
     candidates.push(GENERATED_PLUGIN_UI_ARTIFACTS_MANIFEST_RELATIVE_PATH);
   }
 
-  return [...new Set(candidates)].filter((path) => {
-    if (typeof path !== 'string') return false;
-    const normalized = path.startsWith('./') ? path.slice(2) : path;
-    return normalized === 'dist' || normalized.startsWith('dist/');
-  });
+  return [...new Set(candidates)].filter(isPackageBuildDistOutputTarget);
+}
+
+function resolveExpectedPackageOutputTargetMatches({ packageDir, distDir, expectedTargets }) {
+  return expectedTargets.map((target) => ({
+    target,
+    paths: resolvePackageBuildOutputTargetMatches({
+      packageDir,
+      outputDir: distDir,
+      target,
+    }),
+  }));
 }
 
 function remapDistPathToDir(path, { packageDir, distDir }) {
@@ -291,25 +286,51 @@ async function assertNoMissingLocalImportsWithRetry({
 async function inspectWorkspacePackageOutput(packageDir, packageJson, {
   env = process.env,
   retryImports = false,
+  admitPriorOutputsImmediately = false,
 } = {}) {
-  const expectedFiles = collectExpectedPackageFilesFromPackageJson(packageJson)
-    .map((path) => join(packageDir, path));
-  const missing = expectedFiles.filter((path) => !existsSync(path));
+  const expectedTargets = collectExpectedPackageOutputTargets(packageJson);
   const distDir = join(packageDir, 'dist');
+  const expectedTargetMatches = resolveExpectedPackageOutputTargetMatches({
+    packageDir,
+    distDir,
+    expectedTargets,
+  });
+  const expectedFiles = [...new Set(expectedTargetMatches.flatMap(({ paths }) => paths))];
+  const missing = expectedTargetMatches
+    .filter(({ paths }) => paths.length === 0)
+    .map(({ target }) => target);
   const distRoot = resolve(distDir);
-  const distEntrypoints = expectedFiles
-    .filter((path) => /\.(?:mjs|cjs|js)$/.test(path))
+  const distEntrypoints = expectedTargets
+    .filter((target) => !target.includes('*'))
+    .filter((target) => /\.(?:mjs|cjs|js)$/.test(target))
+    .map((target) => resolvePackageBuildOutputTargetPath({
+      packageDir,
+      outputDir: distDir,
+      target,
+    }))
     .filter((path) => {
       const absolutePath = resolve(path);
       return absolutePath === distRoot || absolutePath.startsWith(distRoot + sep);
     });
   const label = packageJson?.name ? `${packageJson.name} dist build` : 'dist build';
 
-  if (missing.length === 0 && distEntrypoints.length === 0) {
-    return { complete: true, expectedFiles, missing, distDir, distEntrypoints, label };
+  if (expectedTargets.length === 0 || (missing.length === 0 && distEntrypoints.length === 0)) {
+    return {
+      complete: true,
+      expectedTargets,
+      expectedFiles,
+      missing,
+      distDir,
+      distEntrypoints,
+      label,
+    };
   }
 
-  if (missing.length === 0 && await workspaceOutputsAppearCurrent(packageDir, expectedFiles)) {
+  const outputsAreAdmissible = missing.length === 0 && (
+    admitPriorOutputsImmediately
+    || await workspaceOutputsAppearCurrent(packageDir, expectedFiles)
+  );
+  if (outputsAreAdmissible) {
     try {
       for (const entryPath of distEntrypoints) {
         if (
@@ -321,13 +342,29 @@ async function inspectWorkspacePackageOutput(packageDir, packageJson, {
           await assertNoMissingLocalImports({ distDir, entryPath, label });
         }
       }
-      return { complete: true, expectedFiles, missing, distDir, distEntrypoints, label };
+      return {
+        complete: true,
+        expectedTargets,
+        expectedFiles,
+        missing,
+        distDir,
+        distEntrypoints,
+        label,
+      };
     } catch {
       // A partial import graph is stale even when every package.json target exists.
     }
   }
 
-  return { complete: false, expectedFiles, missing, distDir, distEntrypoints, label };
+  return {
+    complete: false,
+    expectedTargets,
+    expectedFiles,
+    missing,
+    distDir,
+    distEntrypoints,
+    label,
+  };
 }
 
 function prependPathEntry(env, entry) {
@@ -355,7 +392,14 @@ async function prepareWorkspaceBuildEnv(packageDir, envIn) {
   return env;
 }
 
-async function runYarn(args, { cwd, env, quiet, input = null, timeoutMs = null }) {
+async function runYarn(args, {
+  cwd,
+  env,
+  quiet,
+  input = null,
+  timeoutMs = null,
+  captureFailureDiagnostic = false,
+}) {
   const invocation = resolveYarnCommandInvocation(args, { npmExecPath: env?.npm_execpath });
   const outputMode = quiet ? 'ignore' : 'inherit';
   const stdio = input === null ? outputMode : ['pipe', outputMode, outputMode];
@@ -365,6 +409,7 @@ async function runYarn(args, { cwd, env, quiet, input = null, timeoutMs = null }
     stdio,
     ...(input === null ? {} : { input }),
     ...(timeoutMs === null ? {} : { timeoutMs }),
+    ...(captureFailureDiagnostic ? { captureFailureDiagnostic: true } : {}),
     ...(invocation.windowsVerbatimArguments
       ? { windowsVerbatimArguments: invocation.windowsVerbatimArguments }
       : {}),
@@ -384,7 +429,13 @@ async function runWorkspacePackageBuild(packageDir, { env, quiet, timeoutMs }) {
       `[local] yarn is required for component at ${packageDir}. Install it via Corepack: \`corepack enable\``,
     );
   }
-  await runYarn(['-s', 'build'], { cwd: packageDir, env, quiet, timeoutMs });
+  await runYarn(['-s', 'build'], {
+    cwd: packageDir,
+    env,
+    quiet,
+    timeoutMs,
+    captureFailureDiagnostic: quiet,
+  });
 }
 
 const defaultWorkspaceBuildBoundary = {
@@ -411,14 +462,14 @@ async function ensureWorkspacePackageBuiltUnderLock({
     retryImports: true,
   });
   const {
-    expectedFiles,
+    expectedTargets,
     missing: missingBefore,
     distDir,
     distEntrypoints,
     label,
   } = state;
   const reportImportRetry = createWorkspaceBuildWaitNotifier({ env, label, kind: 'imports' });
-  if (expectedFiles.length === 0) return { built: false, reason: 'no-expected-files' };
+  if (expectedTargets.length === 0) return { built: false, reason: 'no-expected-files' };
   if (!force && state.complete) {
     return {
       built: false,
@@ -443,6 +494,7 @@ async function ensureWorkspacePackageBuiltUnderLock({
       ...env,
       HAPPIER_WORKSPACE_DIST_BUILD_LOCK_HELD: heldLockValue,
       HAPPIER_WORKSPACE_DIST_OUTPUT_DIR: tmpDistDir,
+      [WORKSPACE_PACKAGE_PREREQUISITES_READY_ENV_VAR]: '1',
     };
     await workspaceBuildBoundary.runPackageBuild(packageDir, {
       env: buildEnv,
@@ -450,11 +502,14 @@ async function ensureWorkspacePackageBuiltUnderLock({
       timeoutMs,
     });
 
-    const stagedExpectedFiles = expectedFiles.map((path) => remapDistPathToDir(path, {
+    const stagedExpectedTargetMatches = resolveExpectedPackageOutputTargetMatches({
       packageDir,
       distDir: tmpDistDir,
-    }));
-    const missingStaged = stagedExpectedFiles.filter((path) => !existsSync(path));
+      expectedTargets,
+    });
+    const missingStaged = stagedExpectedTargetMatches
+      .filter(({ paths }) => paths.length === 0)
+      .map(({ target }) => target);
     if (missingStaged.length > 0) {
       throw new Error(
         `[local] build completed but expected staged outputs are still missing for ${packageJson?.name ?? packageDir}:\n`
@@ -489,13 +544,17 @@ async function ensureWorkspacePackageBuilt(packageDir, {
   onPackageBuildStart,
   onPackageBuildDone,
   workspaceBuildBoundary,
+  admitPriorOutputsImmediately,
 }) {
   const packageJsonPath = join(packageDir, 'package.json');
   if (!existsSync(packageJsonPath)) return { built: false, reason: 'missing-package-json' };
 
   const packageJson = await readJson(packageJsonPath);
-  const initial = await inspectWorkspacePackageOutput(packageDir, packageJson, { env: envIn });
-  if (initial.expectedFiles.length === 0) return { built: false, reason: 'no-expected-files' };
+  const initial = await inspectWorkspacePackageOutput(packageDir, packageJson, {
+    env: envIn,
+    admitPriorOutputsImmediately,
+  });
+  if (initial.expectedTargets.length === 0) return { built: false, reason: 'no-expected-files' };
   if (!force && initial.complete) return { built: false, reason: 'already-built' };
 
   const env = await workspaceBuildBoundary.prepareEnv(packageDir, envIn);
@@ -505,6 +564,21 @@ async function ensureWorkspacePackageBuilt(packageDir, {
     label: initial.label,
     kind: 'lock',
   });
+  const tryResolveWaiter = force
+    ? undefined
+    : async () => {
+      const currentPackageJson = await readJson(packageJsonPath);
+      const current = await inspectWorkspacePackageOutput(packageDir, currentPackageJson, {
+        env,
+        retryImports: true,
+      });
+      return current.complete
+        ? {
+          resolved: true,
+          value: { built: false, reason: 'concurrent_build_already_completed' },
+        }
+        : { resolved: false };
+    };
   return await withCliDistBuildLock(
     ({ waited, heldLockValue }) => ensureWorkspacePackageBuiltUnderLock({
       packageDir,
@@ -519,7 +593,7 @@ async function ensureWorkspacePackageBuilt(packageDir, {
       heldLockValue,
       workspaceBuildBoundary,
     }),
-    { lockPath, env, onWait: reportLockWait },
+    { lockPath, env, onWait: reportLockWait, tryResolveWaiter },
   );
 }
 
@@ -533,12 +607,16 @@ async function ensureWorkspacePackageNamesBuilt(monorepoRoot, packageNames, {
   onPackageBuildDone,
   visitedNames = [],
   includeDevDependencies,
+  packageDirsByName: packageDirsByNameIn = null,
   workspaceBuildBoundary,
+  admitPriorOutputsImmediately,
 }) {
   const built = [];
   const visited = new Set(visitedNames);
   const forced = new Set(forcePackageNames);
-  const packageDirsByName = await collectWorkspacePackageDirsByName(monorepoRoot);
+  const packageDirsByName = packageDirsByNameIn
+    ?? await collectWorkspacePackageDirsByName(monorepoRoot);
+  const workspacePackageNames = new Set(packageDirsByName.keys());
 
   const buildWorkspaceClosure = async (packageDir) => {
     const packageJsonPath = join(packageDir, 'package.json');
@@ -552,7 +630,7 @@ async function ensureWorkspacePackageNamesBuilt(monorepoRoot, packageNames, {
     for (const dependencyName of collectInternalWorkspaceDependencyNames(
       packageJson,
       packageName,
-      { includeDevDependencies },
+      { includeDevDependencies, workspacePackageNames },
     )) {
       const dependencyDir = packageDirsByName.get(dependencyName);
       if (dependencyDir) await buildWorkspaceClosure(dependencyDir);
@@ -567,6 +645,7 @@ async function ensureWorkspacePackageNamesBuilt(monorepoRoot, packageNames, {
       onPackageBuildStart,
       onPackageBuildDone,
       workspaceBuildBoundary,
+      admitPriorOutputsImmediately,
     });
     if (result.built && packageName) built.push(packageName);
   };
@@ -589,6 +668,7 @@ export async function ensureWorkspacePackagesBuiltByName(monorepoPath, packageNa
   onPackageBuildDone = null,
   includeDevDependencies = true,
   workspaceBuildBoundary = defaultWorkspaceBuildBoundary,
+  admitPriorOutputsImmediately = false,
 } = {}) {
   const monorepoRoot = coerceHappyMonorepoRootFromPath(monorepoPath);
   if (!monorepoRoot) return { ok: true, built: [], skipped: ['not-monorepo'] };
@@ -608,6 +688,7 @@ export async function ensureWorkspacePackagesBuiltByName(monorepoPath, packageNa
     onPackageBuildDone,
     includeDevDependencies,
     workspaceBuildBoundary,
+    admitPriorOutputsImmediately,
   });
   return { ok: true, built, skipped: [] };
 }
@@ -616,6 +697,7 @@ export async function ensureWorkspacePackagesBuiltForComponent(componentDir, {
   quiet = false,
   env = process.env,
   workspaceBuildBoundary = defaultWorkspaceBuildBoundary,
+  admitPriorOutputsImmediately = false,
 } = {}) {
   const monorepoRoot = coerceHappyMonorepoRootFromPath(componentDir);
   if (!monorepoRoot) return { ok: true, built: [], skipped: ['not-monorepo'] };
@@ -629,13 +711,18 @@ export async function ensureWorkspacePackagesBuiltForComponent(componentDir, {
   const componentName = typeof componentPackageJson?.name === 'string'
     ? componentPackageJson.name
     : '';
-  const packageNames = collectInternalWorkspaceDependencyNames(componentPackageJson, componentName);
+  const packageDirsByName = await collectWorkspacePackageDirsByName(monorepoRoot);
+  const packageNames = collectInternalWorkspaceDependencyNames(componentPackageJson, componentName, {
+    workspacePackageNames: packageDirsByName.keys(),
+  });
   const built = await ensureWorkspacePackageNamesBuilt(monorepoRoot, packageNames, {
     quiet,
     env,
     visitedNames: [componentName].filter(Boolean),
     includeDevDependencies: true,
+    packageDirsByName,
     workspaceBuildBoundary,
+    admitPriorOutputsImmediately,
   });
   return { ok: true, built, skipped: [] };
 }

@@ -12,11 +12,11 @@ import {
   renameSync,
   statSync,
   unlinkSync,
+  watch,
   writeFileSync,
 } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { basename, dirname, join, resolve, win32 } from 'node:path';
-import { setTimeout as sleep } from 'node:timers/promises';
 
 import {
   createWorkspaceLockLeaseValue,
@@ -25,11 +25,83 @@ import {
 import { readProcessInstanceFingerprintSync } from './processInstance.mjs';
 
 export const WORKSPACE_BUNDLE_LOCK_TIMEOUT_ERROR_CODE = 'EWORKSPACEBUNDLELOCKTIMEOUT';
+export const DEFAULT_WORKSPACE_BUNDLE_LOCK_TIMEOUT_MS = 30 * 60_000;
 
 function sleepSync(ms) {
   if (!ms || ms <= 0) return;
   const buffer = new SharedArrayBuffer(4);
   Atomics.wait(new Int32Array(buffer), 0, 0, ms);
+}
+
+function lockSnapshotUnchanged(left, right) {
+  return Boolean(left?.exists) === Boolean(right?.exists)
+    && Boolean(left?.readable) === Boolean(right?.readable)
+    && left?.raw === right?.raw;
+}
+
+async function waitForWorkspaceBundleLockChange({
+  lockPath,
+  claimPath,
+  lockSnapshot,
+  claimSnapshot,
+  maxWaitMs,
+}) {
+  await new Promise((resolve) => {
+    let settled = false;
+    let watcher = null;
+    let timer = null;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      watcher?.close();
+      resolve();
+    };
+
+    timer = setTimeout(finish, Math.max(1, maxWaitMs));
+    try {
+      const lockName = basename(lockPath);
+      const claimName = basename(claimPath);
+      watcher = watch(dirname(lockPath), { persistent: false }, (_event, filename) => {
+        const changedName = filename == null ? '' : String(filename);
+        if (!changedName || changedName === lockName || changedName === claimName) finish();
+      });
+      watcher.on('error', finish);
+      const currentLock = readLockOwnerSnapshot(lockPath);
+      const currentClaim = readLockOwnerSnapshot(claimPath);
+      if (
+        !lockSnapshotUnchanged(currentLock, lockSnapshot)
+        || !lockSnapshotUnchanged(currentClaim, claimSnapshot)
+      ) {
+        queueMicrotask(finish);
+      }
+    } catch {
+      // The timer remains the portable fallback when directory watching is unavailable.
+    }
+  });
+}
+
+function resolveWorkspaceBundleLockWaitMs({
+  options,
+  startedAt,
+  timeoutMs,
+  initializationGraceMs,
+}) {
+  const remainingTimeoutMs = Math.max(1, timeoutMs - (Date.now() - startedAt));
+  const configuredFallbackMs = Number(options.watchFallbackMs);
+  const fallbackMs = Number.isFinite(configuredFallbackMs) && configuredFallbackMs > 0
+    ? configuredFallbackMs
+    : 1_000;
+  const configuredClaimStaleAfterMs = Number(options.priorityClaimStaleAfterMs);
+  const claimRecheckMs = Number.isFinite(configuredClaimStaleAfterMs) && configuredClaimStaleAfterMs > 0
+    ? configuredClaimStaleAfterMs
+    : fallbackMs;
+  return Math.max(1, Math.min(
+    fallbackMs,
+    remainingTimeoutMs,
+    Math.max(1, initializationGraceMs),
+    claimRecheckMs,
+  ));
 }
 
 export function resolveWorkspaceBundleLockPath(repoRoot) {
@@ -116,6 +188,34 @@ function shouldReclaimLockSnapshot(snapshot, staleAfterMs, nowMs, options = {}) 
   return updatedAtMs > 0 && nowMs - updatedAtMs > initializationGraceMs;
 }
 
+function shouldReclaimPriorityClaimSnapshot(snapshot, staleAfterMs, nowMs, options = {}) {
+  if (snapshot.exists && snapshot.readable) {
+    const updatedAtMs = Number(
+      snapshot.owner?.updatedAtMs
+        ?? snapshot.owner?.createdAtMs
+        ?? snapshot.mtimeMs
+        ?? 0,
+    );
+    const initializationGraceMs = Math.max(
+      0,
+      Number(options.initializationGraceMs ?? Math.min(5_000, staleAfterMs)) || 0,
+    );
+    const configuredClaimStaleAfterMs = Number(
+      options.priorityClaimStaleAfterMs ?? Math.min(staleAfterMs, 30_000),
+    );
+    const claimStaleAfterMs = Math.max(
+      initializationGraceMs,
+      Number.isFinite(configuredClaimStaleAfterMs) && configuredClaimStaleAfterMs >= 0
+        ? configuredClaimStaleAfterMs
+        : Math.min(staleAfterMs, 30_000),
+    );
+    if (updatedAtMs > 0 && nowMs - updatedAtMs > claimStaleAfterMs) {
+      return true;
+    }
+  }
+  return shouldReclaimLockSnapshot(snapshot, staleAfterMs, nowMs, options);
+}
+
 export function isWorkspaceBundleLockActive(lockPath, options = {}) {
   return observeWorkspaceBundleLock(lockPath, options).active;
 }
@@ -124,7 +224,7 @@ export function observeWorkspaceBundleLock(lockPath, options = {}) {
   const snapshot = readLockOwnerSnapshot(lockPath);
   const active = snapshot.exists && !shouldReclaimLockSnapshot(
     snapshot,
-    options.staleAfterMs ?? 240_000,
+    options.staleAfterMs ?? DEFAULT_WORKSPACE_BUNDLE_LOCK_TIMEOUT_MS,
     options.nowMs ?? Date.now(),
     options,
   );
@@ -346,8 +446,9 @@ function tryAcquirePriorityClaim({
     if (ownerSnapshotMatchesCurrentProcess(snapshot, { ownerToken, processInstanceFingerprint })) {
       return { acquired: true, raw: snapshot.raw };
     }
-    if (shouldReclaimLockSnapshot(snapshot, staleAfterMs, Date.now(), {
+    if (shouldReclaimPriorityClaimSnapshot(snapshot, staleAfterMs, Date.now(), {
       initializationGraceMs,
+      priorityClaimStaleAfterMs: options.priorityClaimStaleAfterMs,
       readProcessInstanceFingerprintSyncImpl: options.readProcessInstanceFingerprintSyncImpl,
     })) {
       const reclaimed = reclaimLockSnapshot(claimPath, snapshot.raw);
@@ -464,7 +565,7 @@ export async function withWorkspaceBundleLock(fn, options = {}) {
   }
 
   mkdirSync(dirname(lockPath), { recursive: true });
-  const timeoutMs = options.timeoutMs ?? 240_000;
+  const timeoutMs = options.timeoutMs ?? DEFAULT_WORKSPACE_BUNDLE_LOCK_TIMEOUT_MS;
   const pollIntervalMs = options.pollIntervalMs ?? 250;
   const staleAfterMs = options.staleAfterMs ?? timeoutMs;
   const initializationGraceMs = options.initializationGraceMs ?? Math.min(5_000, staleAfterMs);
@@ -482,9 +583,21 @@ export async function withWorkspaceBundleLock(fn, options = {}) {
   let fd = null;
   let heartbeat = null;
   let waited = false;
+  let tryResolveWaiterOnNextIteration = false;
+  const waitForLockChange = options.waitForLockChangeImpl ?? waitForWorkspaceBundleLockChange;
 
   try {
     while (true) {
+      if (tryResolveWaiterOnNextIteration && typeof options.tryResolveWaiter === 'function') {
+        tryResolveWaiterOnNextIteration = false;
+        const resolution = await options.tryResolveWaiter();
+        if (resolution?.resolved === true) {
+          clearPriorityClaimIfOwned(claimPath, ownClaimRaw);
+          ownClaimRaw = null;
+          return resolution.value;
+        }
+      }
+
       if (ownClaimRaw !== null) {
         ownClaimRaw = refreshPriorityClaim({
           claimPath,
@@ -497,31 +610,41 @@ export async function withWorkspaceBundleLock(fn, options = {}) {
       if (ownClaimRaw === null) {
         const lockSnapshot = readLockOwnerSnapshot(lockPath);
         const claimSnapshot = readLockOwnerSnapshot(claimPath);
-        if (claimSnapshot.exists && shouldReclaimLockSnapshot(claimSnapshot, staleAfterMs, Date.now(), {
+        if (claimSnapshot.exists && shouldReclaimPriorityClaimSnapshot(claimSnapshot, staleAfterMs, Date.now(), {
           initializationGraceMs,
+          priorityClaimStaleAfterMs: options.priorityClaimStaleAfterMs,
           readProcessInstanceFingerprintSyncImpl: options.readProcessInstanceFingerprintSyncImpl,
         })) {
           if (reclaimLockSnapshot(claimPath, claimSnapshot.raw)) continue;
         }
-        if (
-          claimSnapshot.exists
-          && lockSnapshot.exists
-          && !shouldReclaimLockSnapshot(lockSnapshot, staleAfterMs, Date.now(), {
-            initializationGraceMs,
-            readProcessInstanceFingerprintSyncImpl: options.readProcessInstanceFingerprintSyncImpl,
-          })
-        ) {
+        if (claimSnapshot.exists) {
+          const waitSnapshot = lockSnapshot.exists ? lockSnapshot : claimSnapshot;
           if (Date.now() - startedAt > timeoutMs) {
             const errorLabel = options.errorLabel ?? 'workspace bundle lock';
             throw createWorkspaceBundleLockTimeoutError({
               errorLabel,
               lockPath,
-              snapshot: lockSnapshot,
+              snapshot: waitSnapshot,
             });
           }
           waited = true;
-          notifyWaiter(options, lockPath, lockSnapshot, startedAt, staleAfterMs, timeoutMs);
-          await sleep(Math.max(pollIntervalMs, 25));
+          notifyWaiter(options, lockPath, waitSnapshot, startedAt, staleAfterMs, timeoutMs);
+          const waitedOwnerToken = String(waitSnapshot.owner?.token ?? '');
+          await waitForLockChange({
+            lockPath,
+            claimPath,
+            lockSnapshot,
+            claimSnapshot,
+            maxWaitMs: resolveWorkspaceBundleLockWaitMs({
+              options,
+              startedAt,
+              timeoutMs,
+              initializationGraceMs,
+            }),
+          });
+          const currentSnapshot = readLockOwnerSnapshot(lockPath);
+          tryResolveWaiterOnNextIteration = !currentSnapshot.exists
+            || String(currentSnapshot.owner?.token ?? '') !== waitedOwnerToken;
           continue;
         }
       }
@@ -614,7 +737,22 @@ export async function withWorkspaceBundleLock(fn, options = {}) {
         }
         waited = true;
         notifyWaiter(options, lockPath, snapshot, startedAt, staleAfterMs, timeoutMs);
-        await sleep(ownClaimRaw !== null ? Math.min(pollIntervalMs, 5) : pollIntervalMs);
+        const waitedOwnerToken = String(snapshot.owner?.token ?? '');
+        await waitForLockChange({
+          lockPath,
+          claimPath,
+          lockSnapshot: snapshot,
+          claimSnapshot: readLockOwnerSnapshot(claimPath),
+          maxWaitMs: resolveWorkspaceBundleLockWaitMs({
+            options,
+            startedAt,
+            timeoutMs,
+            initializationGraceMs,
+          }),
+        });
+        const currentSnapshot = readLockOwnerSnapshot(lockPath);
+        tryResolveWaiterOnNextIteration = !currentSnapshot.exists
+          || String(currentSnapshot.owner?.token ?? '') !== waitedOwnerToken;
       }
     }
   } catch (error) {
@@ -671,7 +809,7 @@ export function withWorkspaceBundleLockSync(fn, options = {}) {
   }
 
   mkdirSync(dirname(lockPath), { recursive: true });
-  const timeoutMs = options.timeoutMs ?? 240_000;
+  const timeoutMs = options.timeoutMs ?? DEFAULT_WORKSPACE_BUNDLE_LOCK_TIMEOUT_MS;
   const pollIntervalMs = options.pollIntervalMs ?? 250;
   const staleAfterMs = options.staleAfterMs ?? timeoutMs;
   const initializationGraceMs = options.initializationGraceMs ?? Math.min(5_000, staleAfterMs);
@@ -703,30 +841,25 @@ export function withWorkspaceBundleLockSync(fn, options = {}) {
       if (ownClaimRaw === null) {
         const lockSnapshot = readLockOwnerSnapshot(lockPath);
         const claimSnapshot = readLockOwnerSnapshot(claimPath);
-        if (claimSnapshot.exists && shouldReclaimLockSnapshot(claimSnapshot, staleAfterMs, Date.now(), {
+        if (claimSnapshot.exists && shouldReclaimPriorityClaimSnapshot(claimSnapshot, staleAfterMs, Date.now(), {
           initializationGraceMs,
+          priorityClaimStaleAfterMs: options.priorityClaimStaleAfterMs,
           readProcessInstanceFingerprintSyncImpl: options.readProcessInstanceFingerprintSyncImpl,
         })) {
           if (reclaimLockSnapshot(claimPath, claimSnapshot.raw)) continue;
         }
-        if (
-          claimSnapshot.exists
-          && lockSnapshot.exists
-          && !shouldReclaimLockSnapshot(lockSnapshot, staleAfterMs, Date.now(), {
-            initializationGraceMs,
-            readProcessInstanceFingerprintSyncImpl: options.readProcessInstanceFingerprintSyncImpl,
-          })
-        ) {
+        if (claimSnapshot.exists) {
+          const waitSnapshot = lockSnapshot.exists ? lockSnapshot : claimSnapshot;
           if (Date.now() - startedAt > timeoutMs) {
             const errorLabel = options.errorLabel ?? 'workspace bundle lock';
             throw createWorkspaceBundleLockTimeoutError({
               errorLabel,
               lockPath,
-              snapshot: lockSnapshot,
+              snapshot: waitSnapshot,
             });
           }
           waited = true;
-          notifyWaiter(options, lockPath, lockSnapshot, startedAt, staleAfterMs, timeoutMs);
+          notifyWaiter(options, lockPath, waitSnapshot, startedAt, staleAfterMs, timeoutMs);
           sleepSync(Math.max(pollIntervalMs, 25));
           continue;
         }

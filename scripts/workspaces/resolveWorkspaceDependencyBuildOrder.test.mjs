@@ -74,6 +74,41 @@ test('resolveBundledWorkspaceDependencyBuildOrder walks internal workspace depen
   assert.equal(ordered.includes('tests'), false);
 });
 
+test('resolveBundledWorkspaceDependencyBuildOrder orders admitted workspace peers before their consumers', async (t) => {
+  const repoRoot = await mkdtemp(join(tmpdir(), 'happier-workspace-build-order-admitted-peers-'));
+  t.after(async () => {
+    await rm(repoRoot, { recursive: true, force: true });
+  });
+
+  await mkdir(join(repoRoot, 'apps', 'cli'), { recursive: true });
+  await writeJson(join(repoRoot, 'apps', 'cli', 'package.json'), {
+    bundledDependencies: [
+      '@happier-dev/channels-protocol',
+      '@happier-dev/plugin-sdk',
+    ],
+  });
+
+  await mkdir(join(repoRoot, 'packages', 'channels-protocol'), { recursive: true });
+  await writeJson(join(repoRoot, 'packages', 'channels-protocol', 'package.json'), {
+    name: '@happier-dev/channels-protocol',
+    peerDependencies: {
+      '@happier-dev/plugin-sdk': '>=0.0.0 <1.0.0',
+    },
+  });
+
+  await mkdir(join(repoRoot, 'packages', 'plugin-sdk'), { recursive: true });
+  await writeJson(join(repoRoot, 'packages', 'plugin-sdk', 'package.json'), {
+    name: '@happier-dev/plugin-sdk',
+  });
+
+  const ordered = resolveBundledWorkspaceDependencyBuildOrder({
+    repoRoot,
+    hostPackageDir: join(repoRoot, 'apps', 'cli'),
+  });
+
+  assert.deepEqual(ordered, ['plugin-sdk', 'channels-protocol']);
+});
+
 test('resolveWorkspaceDependencyBuildOrder deduplicates shared internal dependencies', async (t) => {
   const repoRoot = await mkdtemp(join(tmpdir(), 'happier-workspace-build-order-dedupe-'));
   t.after(async () => {

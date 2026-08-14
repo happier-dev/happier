@@ -45,6 +45,33 @@ async function createPackageFixture(t, name) {
   return root;
 }
 
+async function createPackageFixtureWithUiArtifacts(t, name) {
+  const packageDir = await createPackageFixture(t, name);
+  const packageJsonPath = join(packageDir, 'package.json');
+  const packageJson = JSON.parse(await readFile(packageJsonPath, 'utf-8'));
+  packageJson.exports['./happier-plugin-ui/*'] = './dist/happier-plugin-ui/*';
+  packageJson.scripts = {
+    build: 'fixture-build',
+    'build:ui': 'fixture-build-ui',
+  };
+  await writeJson(packageJsonPath, packageJson);
+  await mkdir(join(packageDir, 'dist', 'happier-plugin-ui'), { recursive: true });
+  await writeFile(
+    join(packageDir, 'dist', 'happier-plugin-ui', 'ui-artifacts.json'),
+    '{"version":1,"entries":["known-good"]}\n',
+    'utf-8',
+  );
+  return packageDir;
+}
+
+function writeTypeScriptFixtureOutput(args) {
+  const outDir = args[args.indexOf('--outDir') + 1];
+  mkdirSync(outDir, { recursive: true });
+  writeFileSync(join(outDir, 'index.js'), 'export const built = true;\n', 'utf-8');
+  writeFileSync(join(outDir, 'index.d.ts'), 'export declare const built: boolean;\n', 'utf-8');
+  return outDir;
+}
+
 test('buildTypeScriptPackageDist preserves previous dist when TypeScript compilation fails', async (t) => {
   const packageDir = await createPackageFixture(t, 'build-ts-package-fail');
   await writeFile(join(packageDir, 'src', 'index.ts'), 'export const built: string = 1;\n', 'utf-8');
@@ -62,6 +89,135 @@ test('buildTypeScriptPackageDist preserves previous dist when TypeScript compila
   );
 
   assert.equal(await readFile(join(packageDir, 'dist', 'index.js'), 'utf-8'), 'export const stable = true;\n');
+});
+
+test('buildTypeScriptPackageDist composes an explicit staged UI producer before validating wildcard exports', async (t) => {
+  const packageDir = await createPackageFixtureWithUiArtifacts(t, 'build-ts-package-ui-composition');
+  await writeFile(join(packageDir, 'src', 'index.ts'), 'export const built = true;\n', 'utf-8');
+  let uiBuildCalls = 0;
+
+  await buildTypeScriptPackageDist({
+    packageDir,
+    args: ['-p', 'tsconfig.json', '--happier-staged-output-script', 'build:ui'],
+    stdio: 'ignore',
+    resolveTypeScriptCliInvocationImpl: () => ({ command: 'tsc', argsPrefix: [] }),
+    resolveYarnCommandInvocationImpl: () => ({ command: 'yarn', args: ['-s', 'build:ui'] }),
+    runCommandImpl: (_command, args, options) => {
+      if (args.includes('tsconfig.json')) {
+        writeTypeScriptFixtureOutput(args);
+        return { status: 0 };
+      }
+      if (args.includes('build:ui')) {
+        uiBuildCalls += 1;
+        const outputDir = options.env.HAPPIER_WORKSPACE_DIST_OUTPUT_DIR;
+        assert.equal(typeof outputDir, 'string');
+        mkdirSync(join(outputDir, 'happier-plugin-ui'), { recursive: true });
+        writeFileSync(
+          join(outputDir, 'happier-plugin-ui', 'ui-artifacts.json'),
+          '{"version":1,"entries":["rebuilt"]}\n',
+          'utf-8',
+        );
+        return { status: 0 };
+      }
+      throw new Error(`Unexpected command: ${args.join(' ')}`);
+    },
+  });
+
+  assert.equal(uiBuildCalls, 1);
+  assert.equal(await readFile(join(packageDir, 'dist', 'index.js'), 'utf-8'), 'export const built = true;\n');
+  assert.equal(
+    await readFile(join(packageDir, 'dist', 'happier-plugin-ui', 'ui-artifacts.json'), 'utf-8'),
+    '{"version":1,"entries":["rebuilt"]}\n',
+  );
+});
+
+test('buildTypeScriptPackageDist preserves the complete prior dist when the staged UI producer fails', async (t) => {
+  const packageDir = await createPackageFixtureWithUiArtifacts(t, 'build-ts-package-ui-failure');
+  await writeFile(join(packageDir, 'src', 'index.ts'), 'export const built = true;\n', 'utf-8');
+  let uiBuildCalls = 0;
+
+  await assert.rejects(
+    () => buildTypeScriptPackageDist({
+      packageDir,
+      args: ['-p', 'tsconfig.json', '--happier-staged-output-script', 'build:ui'],
+      stdio: 'ignore',
+      resolveTypeScriptCliInvocationImpl: () => ({ command: 'tsc', argsPrefix: [] }),
+      resolveYarnCommandInvocationImpl: () => ({ command: 'yarn', args: ['-s', 'build:ui'] }),
+      runCommandImpl: (_command, args) => {
+        if (args.includes('tsconfig.json')) {
+          writeTypeScriptFixtureOutput(args);
+          return { status: 0 };
+        }
+        if (args.includes('build:ui')) {
+          uiBuildCalls += 1;
+          return { status: 1 };
+        }
+        throw new Error(`Unexpected command: ${args.join(' ')}`);
+      },
+    }),
+    /staged package output script "build:ui" failed/i,
+  );
+
+  assert.equal(uiBuildCalls, 1);
+  assert.equal(await readFile(join(packageDir, 'dist', 'index.js'), 'utf-8'), 'export const stable = true;\n');
+  assert.equal(
+    await readFile(join(packageDir, 'dist', 'happier-plugin-ui', 'ui-artifacts.json'), 'utf-8'),
+    '{"version":1,"entries":["known-good"]}\n',
+  );
+});
+
+test('buildTypeScriptPackageDist rejects a wildcard export whose staged output has no matching file', async (t) => {
+  const packageDir = await createPackageFixtureWithUiArtifacts(t, 'build-ts-package-ui-missing-output');
+  await writeFile(join(packageDir, 'src', 'index.ts'), 'export const built = true;\n', 'utf-8');
+
+  await assert.rejects(
+    () => buildTypeScriptPackageDist({
+      packageDir,
+      args: ['-p', 'tsconfig.json'],
+      stdio: 'ignore',
+      resolveTypeScriptCliInvocationImpl: () => ({ command: 'tsc', argsPrefix: [] }),
+      runCommandImpl: (_command, args) => {
+        writeTypeScriptFixtureOutput(args);
+        return { status: 0 };
+      },
+    }),
+    /happier-plugin-ui\/\*/,
+  );
+
+  assert.equal(await readFile(join(packageDir, 'dist', 'index.js'), 'utf-8'), 'export const stable = true;\n');
+  assert.equal(
+    await readFile(join(packageDir, 'dist', 'happier-plugin-ui', 'ui-artifacts.json'), 'utf-8'),
+    '{"version":1,"entries":["known-good"]}\n',
+  );
+});
+
+test('buildTypeScriptPackageDist does not invoke a staged output producer when TypeScript fails', async (t) => {
+  const packageDir = await createPackageFixtureWithUiArtifacts(t, 'build-ts-package-ui-ts-failure');
+  await writeFile(join(packageDir, 'src', 'index.ts'), 'export const built: string = 1;\n', 'utf-8');
+  let uiBuildCalls = 0;
+
+  await assert.rejects(
+    () => buildTypeScriptPackageDist({
+      packageDir,
+      args: ['-p', 'tsconfig.json', '--happier-staged-output-script', 'build:ui'],
+      stdio: 'ignore',
+      resolveTypeScriptCliInvocationImpl: () => ({ command: 'tsc', argsPrefix: [] }),
+      resolveYarnCommandInvocationImpl: () => ({ command: 'yarn', args: ['-s', 'build:ui'] }),
+      runCommandImpl: (_command, args) => {
+        if (args.includes('tsconfig.json')) return { status: 1 };
+        if (args.includes('build:ui')) uiBuildCalls += 1;
+        return { status: 0 };
+      },
+    }),
+    /TypeScript package build failed/,
+  );
+
+  assert.equal(uiBuildCalls, 0);
+  assert.equal(await readFile(join(packageDir, 'dist', 'index.js'), 'utf-8'), 'export const stable = true;\n');
+  assert.equal(
+    await readFile(join(packageDir, 'dist', 'happier-plugin-ui', 'ui-artifacts.json'), 'utf-8'),
+    '{"version":1,"entries":["known-good"]}\n',
+  );
 });
 
 test('buildTypeScriptPackageDist can write to an explicit staged output directory without mutating live dist', async (t) => {

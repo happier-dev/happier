@@ -52,6 +52,11 @@
       "import": "./workspaceRuntimeDependencies.mjs",
       "default": "./workspaceRuntimeDependencies.mjs"
     },
+    "./packageBuildOutputTargets": {
+      "types": "./packageBuildOutputTargets.d.mts",
+      "import": "./packageBuildOutputTargets.mjs",
+      "default": "./packageBuildOutputTargets.mjs"
+    },
     "./processInstance": {
       "types": "./processInstance.d.mts",
       "import": "./processInstance.mjs",

@@ -6,8 +6,9 @@ export interface WorkspaceBundleLockContext {
 }
 
 export const WORKSPACE_BUNDLE_LOCK_TIMEOUT_ERROR_CODE: 'EWORKSPACEBUNDLELOCKTIMEOUT';
+export const DEFAULT_WORKSPACE_BUNDLE_LOCK_TIMEOUT_MS: number;
 
-export interface WorkspaceBundleLockOptions {
+export interface WorkspaceBundleLockOptions<T = unknown> {
   lockPath: string;
   heldLockValue?: string;
   heldLockPath?: string;
@@ -27,6 +28,10 @@ export interface WorkspaceBundleLockOptions {
     stderr?: unknown;
   };
   errorLabel?: string;
+  tryResolveWaiter?: () =>
+    | Promise<{ resolved: true; value: T } | { resolved: false }>
+    | { resolved: true; value: T }
+    | { resolved: false };
   onWait?: (event: {
     lockPath: string;
     owner: Record<string, unknown> | null;
@@ -47,7 +52,7 @@ export function observeWorkspaceBundleLock(
 ): { active: boolean; ownerId: string | null };
 export function withWorkspaceBundleLock<T>(
   fn: (context: WorkspaceBundleLockContext) => Promise<T> | T,
-  options: WorkspaceBundleLockOptions,
+  options: WorkspaceBundleLockOptions<T>,
 ): Promise<T>;
 export function withWorkspaceBundleLockSync<T>(
   fn: (context: WorkspaceBundleLockContext) => T,

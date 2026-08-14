@@ -36,3 +36,35 @@ for (const packagePath of [
     }
   });
 }
+
+test('packages/privacy-kit build honors the workspace staged output directory', () => {
+  const packagePath = 'packages/privacy-kit';
+  const outputRoot = mkdtempSync(join(tmpdir(), 'privacy-kit-staged-dist-'));
+  try {
+    const result = spawnSync('yarn', ['-s', 'build'], {
+      cwd: join(repoRoot, packagePath),
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        HAPPIER_WORKSPACE_DIST_OUTPUT_DIR: outputRoot,
+      },
+      timeout: 120_000,
+    });
+
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    for (const outputFile of ['index.cjs', 'index.d.cts', 'index.d.mts', 'index.mjs']) {
+      assert.equal(
+        existsSync(join(outputRoot, outputFile)),
+        true,
+        `privacy-kit staged build must emit ${outputFile}`,
+      );
+    }
+    assert.equal(
+      existsSync(join(outputRoot, 'package.json')),
+      false,
+      'privacy-kit staged build must remove its temporary stage manifest',
+    );
+  } finally {
+    rmSync(outputRoot, { force: true, recursive: true });
+  }
+});

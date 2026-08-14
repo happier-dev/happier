@@ -6,7 +6,68 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 
-import { withCliDistBuildLock } from './cliDistBuildLock.mjs';
+import {
+  DEFAULT_CLI_DIST_BUILD_LOCK_TIMEOUT_MS,
+  loadWorkspaceBundleLockModule,
+  withCliDistBuildLock,
+} from './cliDistBuildLock.mjs';
+
+test('default CLI dist lock budget covers long current-byte workspace publishers', () => {
+  assert.ok(
+    DEFAULT_CLI_DIST_BUILD_LOCK_TIMEOUT_MS >= 30 * 60_000,
+    'source-dev workspace publishers can legitimately hold the shared CLI dist lock for more than four minutes under concurrent load',
+  );
+});
+
+test('workspace lock loader rejects mounted modules without the canonical timeout owner', async () => {
+  const canonicalSourceModule = {
+    DEFAULT_WORKSPACE_BUNDLE_LOCK_TIMEOUT_MS: 30 * 60_000,
+    WORKSPACE_BUNDLE_LOCK_TIMEOUT_ERROR_CODE: 'EWORKSPACEBUNDLELOCKTIMEOUT',
+    observeWorkspaceBundleLock() {},
+  };
+  const mountedBase = {
+    WORKSPACE_BUNDLE_LOCK_TIMEOUT_ERROR_CODE: 'EWORKSPACEBUNDLELOCKTIMEOUT',
+    isWorkspaceBundleLockActive() {},
+    observeWorkspaceBundleLock() {},
+    resolveWorkspaceBundleLockPath() {},
+    withWorkspaceBundleLock() {},
+  };
+
+  for (const invalidTimeout of [undefined, 0, -1, Number.NaN, Number.POSITIVE_INFINITY]) {
+    let sourceLoads = 0;
+    const mountedModule = {
+      ...mountedBase,
+      ...(invalidTimeout === undefined
+        ? {}
+        : { DEFAULT_WORKSPACE_BUNDLE_LOCK_TIMEOUT_MS: invalidTimeout }),
+    };
+    const selected = await loadWorkspaceBundleLockModule({
+      importPackageModule: async () => mountedModule,
+      sourceModulePath: '/canonical/workspaceBundleLock.mjs',
+      existsSyncImpl: () => true,
+      importModule: async () => {
+        sourceLoads += 1;
+        return canonicalSourceModule;
+      },
+    });
+    assert.equal(selected, canonicalSourceModule);
+    assert.equal(sourceLoads, 1);
+  }
+
+  const validMountedModule = {
+    ...mountedBase,
+    DEFAULT_WORKSPACE_BUNDLE_LOCK_TIMEOUT_MS: 30 * 60_000,
+  };
+  const selected = await loadWorkspaceBundleLockModule({
+    importPackageModule: async () => validMountedModule,
+    sourceModulePath: '/canonical/workspaceBundleLock.mjs',
+    existsSyncImpl: () => true,
+    importModule: async () => {
+      throw new Error('valid mounted owner must not fall back to source');
+    },
+  });
+  assert.equal(selected, validMountedModule);
+});
 
 test('withCliDistBuildLock permits reentry only with the current owner lease', async () => {
   const root = await mkdtemp(join(tmpdir(), 'happier-cli-dist-lock-reentry-'));

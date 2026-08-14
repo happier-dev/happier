@@ -30,15 +30,22 @@ export function resolveYarnInvocation(npmExecPath = process.env.npm_execpath, op
   const normalizedNpmExecPath = String(npmExecPath ?? '').trim();
   const platform = options.platform ?? process.platform;
   const processExecPath = options.processExecPath ?? process.execPath;
-  const yarnCommand = platform === 'win32' ? 'yarn.cmd' : 'yarn';
+  const corepackCommand = platform === 'win32' ? 'corepack.cmd' : 'corepack';
+
+  if (options.preferCorepack === true) {
+    return {
+      command: corepackCommand,
+      args: ['yarn'],
+    };
+  }
 
   if (!normalizedNpmExecPath) {
-    return { command: yarnCommand, args: [] };
+    return { command: corepackCommand, args: ['yarn'] };
   }
 
   const isNpmCliPath = /(^|[\\/])npm-cli\.js$/i.test(normalizedNpmExecPath);
   if (isNpmCliPath) {
-    return { command: yarnCommand, args: [] };
+    return { command: corepackCommand, args: ['yarn'] };
   }
 
   return { command: processExecPath, args: [normalizedNpmExecPath] };
@@ -49,6 +56,7 @@ export function resolveYarnCommandInvocation(args = [], options = {}) {
   const invocation = resolveYarnInvocation(options.npmExecPath, {
     platform,
     processExecPath: options.processExecPath,
+    preferCorepack: options.preferCorepack,
   });
   const commandArgs = [...invocation.args, ...args];
 
@@ -84,11 +92,20 @@ export function resolveNpmCommandInvocation(args = [], options = {}) {
 
 export function execYarn(args, options = {}) {
   const execFileSync = options.execFileSync ?? defaultExecFileSync;
-  const { execFileSync: _execFileSync, npmExecPath, platform: _platform, comspec, processExecPath: _processExecPath, ...childOptions } = options;
+  const {
+    execFileSync: _execFileSync,
+    npmExecPath,
+    platform: _platform,
+    comspec,
+    processExecPath: _processExecPath,
+    preferCorepack,
+    ...childOptions
+  } = options;
   const invocation = resolveYarnCommandInvocation(args, {
     npmExecPath,
     platform: options.platform,
     processExecPath: options.processExecPath,
+    preferCorepack,
     comspec,
   });
 

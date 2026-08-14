@@ -179,6 +179,9 @@ test('declared plugin UI artifacts participate in atomic workspace build admissi
         name: '@happier-dev/plugins-inspector',
         type: 'module',
         main: './dist/index.js',
+        exports: {
+          './happier-plugin-ui/*': './dist/happier-plugin-ui/*',
+        },
         scripts: {
           build: 'fixture-build',
           'build:ui': 'happier-plugin-build-ui',
@@ -201,6 +204,7 @@ test('declared plugin UI artifacts participate in atomic workspace build admissi
             buildCalls += 1;
             const outputDir = env.HAPPIER_WORKSPACE_DIST_OUTPUT_DIR;
             assert.equal(typeof outputDir, 'string');
+            assert.equal(env.HAPPIER_WORKSPACE_PACKAGE_PREREQUISITES_READY, '1');
             await writeFile(join(outputDir, 'index.js'), 'export const inspector = "rebuilt";\n');
             mkdirSync(join(outputDir, 'happier-plugin-ui'), { recursive: true });
             await writeFile(
@@ -610,7 +614,10 @@ test('workspace build timeout kills descendant writers before releasing the pack
     ensureWorkspacePackagesBuiltByName(
       repoRoot,
       ['@happier-dev/timeout-tree'],
-      { env, force: true, quiet: true, timeoutMs: 500 },
+      // The remote validation hosts can be heavily loaded. Keep the deadline short enough to
+      // exercise timeout cleanup, but long enough for the fixture's descendant to start and
+      // publish its process identity before cleanup is assessed.
+      { env, force: true, quiet: true, timeoutMs: 5_000 },
     ),
     (error) => {
       timeoutError = error;
@@ -639,6 +646,81 @@ test('workspace build timeout kills descendant writers before releasing the pack
     heartbeatAtRejection,
     'a timed-out descendant must not keep writing after lock release',
   );
+});
+
+test('quiet workspace builds retain bounded child diagnostics when the build fails', async (t) => {
+  const repoRoot = mkdtempSync(join(tmpdir(), 'happier-workspace-build-quiet-diagnostic-'));
+  t.after(() => {
+    rmSync(repoRoot, { recursive: true, force: true });
+  });
+
+  for (const appName of ['ui', 'cli', 'server']) {
+    const appDir = join(repoRoot, 'apps', appName);
+    mkdirSync(appDir, { recursive: true });
+    writeFileSync(
+      join(appDir, 'package.json'),
+      JSON.stringify({ name: `@fixture/${appName}`, private: true }),
+      'utf8',
+    );
+  }
+  writeFileSync(
+    join(repoRoot, 'package.json'),
+    JSON.stringify({ private: true, workspaces: ['apps/*', 'packages/*'] }),
+    'utf8',
+  );
+  writeFileSync(join(repoRoot, 'yarn.lock'), '# fixture\n', 'utf8');
+
+  const packageDir = join(repoRoot, 'packages', 'quiet-diagnostic');
+  mkdirSync(join(packageDir, 'src'), { recursive: true });
+  writeFileSync(join(packageDir, 'src', 'index.ts'), 'export const value = true;\n', 'utf8');
+  writeFileSync(
+    join(packageDir, 'package.json'),
+    JSON.stringify({
+      name: '@happier-dev/quiet-diagnostic',
+      type: 'module',
+      main: './dist/index.js',
+      scripts: { build: 'fixture-build' },
+    }),
+    'utf8',
+  );
+
+  const yarnEntrypointPath = join(repoRoot, 'fixture-quiet-failure-yarn.cjs');
+  writeFileSync(
+    yarnEntrypointPath,
+    [
+      'const args = process.argv.slice(2);',
+      "if (args.length === 1 && args[0] === '--version') { process.stdout.write('quiet-version-output\\n'); process.exit(0); }",
+      "if (args[0] !== '-s' || args[1] !== 'build') process.exit(91);",
+      "process.stdout.write('stdout-head\\n' + 'x'.repeat(10_000) + 'stdout-tail\\n');",
+      "process.stderr.write('stderr-head\\n' + 'y'.repeat(10_000) + 'stderr-tail\\n');",
+      'process.exit(37);',
+    ].join('\n') + '\n',
+    'utf8',
+  );
+
+  let failure = null;
+  await assert.rejects(
+    ensureWorkspacePackagesBuiltByName(
+      repoRoot,
+      ['@happier-dev/quiet-diagnostic'],
+      {
+        env: { ...process.env, npm_execpath: yarnEntrypointPath },
+        force: true,
+        quiet: true,
+      },
+    ),
+    (error) => {
+      failure = error;
+      return error?.code === 'EEXIT';
+    },
+  );
+
+  assert.match(failure?.message ?? '', /failed \(code=37, sig=null\)/);
+  assert.match(failure?.message ?? '', /Child output \(tail; earlier output omitted\):/);
+  assert.match(failure?.message ?? '', /\[stdout\]\n[\s\S]*stdout-tail/);
+  assert.match(failure?.message ?? '', /\[stderr\]\n[\s\S]*stderr-tail/);
+  assert.doesNotMatch(failure?.message ?? '', /stdout-head|stderr-head/);
+  assert.ok((failure?.message.length ?? 0) < 17_000, 'expected a bounded failure diagnostic');
 });
 
 test('Stack workspace build boundary propagates timeoutMs to the package-manager build', async (t) => {

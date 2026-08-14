@@ -2,14 +2,22 @@ import { existsSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-async function loadWorkspaceBundleLockModule() {
+function workspaceBundleLockModuleOwnsDefault(module) {
+  return typeof module?.observeWorkspaceBundleLock === 'function'
+    && typeof module?.WORKSPACE_BUNDLE_LOCK_TIMEOUT_ERROR_CODE === 'string'
+    && Number.isFinite(module?.DEFAULT_WORKSPACE_BUNDLE_LOCK_TIMEOUT_MS)
+    && module.DEFAULT_WORKSPACE_BUNDLE_LOCK_TIMEOUT_MS > 0;
+}
+
+export async function loadWorkspaceBundleLockModule(options = {}) {
+  const importPackageModule = options.importPackageModule
+    ?? (() => import('@happier-dev/cli-common/workspaceBundleLock'));
+  const existsSyncImpl = options.existsSyncImpl ?? existsSync;
+  const importModule = options.importModule ?? ((moduleUrl) => import(moduleUrl));
   let packageModule = null;
   try {
-    packageModule = await import('@happier-dev/cli-common/workspaceBundleLock');
-    if (
-      typeof packageModule.observeWorkspaceBundleLock === 'function'
-      && typeof packageModule.WORKSPACE_BUNDLE_LOCK_TIMEOUT_ERROR_CODE === 'string'
-    ) {
+    packageModule = await importPackageModule();
+    if (workspaceBundleLockModuleOwnsDefault(packageModule)) {
       return packageModule;
     }
   } catch (packageImportError) {
@@ -18,18 +26,23 @@ async function loadWorkspaceBundleLockModule() {
   // Source-dev upgrades may execute this stack file before the mounted cli-common copy has been
   // refreshed with a newly-added export. Fall back only to the canonical source module; packed
   // stacks resolve the bundled package export above.
-  const sourceModulePath = resolve(
+  const sourceModulePath = options.sourceModulePath ?? resolve(
     dirname(fileURLToPath(import.meta.url)),
     '../../../../../packages/cli-common/workspaceBundleLock.mjs',
   );
-  if (!existsSync(sourceModulePath)) {
+  if (!existsSyncImpl(sourceModulePath)) {
     if (packageModule?.packageImportError) throw packageModule.packageImportError;
-    return packageModule;
+    throw new Error('Workspace bundle lock module is missing its canonical timeout default');
   }
-  return await import(pathToFileURL(sourceModulePath).href);
+  const sourceModule = await importModule(pathToFileURL(sourceModulePath).href);
+  if (!workspaceBundleLockModuleOwnsDefault(sourceModule)) {
+    throw new Error('Canonical workspace bundle lock source is missing its timeout default');
+  }
+  return sourceModule;
 }
 
 const {
+  DEFAULT_WORKSPACE_BUNDLE_LOCK_TIMEOUT_MS,
   WORKSPACE_BUNDLE_LOCK_TIMEOUT_ERROR_CODE,
   isWorkspaceBundleLockActive,
   observeWorkspaceBundleLock,
@@ -39,7 +52,11 @@ const {
 
 export { WORKSPACE_BUNDLE_LOCK_TIMEOUT_ERROR_CODE };
 
-export const DEFAULT_CLI_DIST_BUILD_LOCK_TIMEOUT_MS = 240_000;
+// Source-dev publishers can legitimately hold this lock while they rebuild and
+// republish a large workspace closure. Four minutes was shorter than observed
+// healthy publishers under concurrent local agent load, causing stack startup
+// to fail even though the owner was alive and heartbeating.
+export const DEFAULT_CLI_DIST_BUILD_LOCK_TIMEOUT_MS = DEFAULT_WORKSPACE_BUNDLE_LOCK_TIMEOUT_MS;
 
 export function resolveCliDistBuildLockPath(repoRoot) {
   return resolveWorkspaceBundleLockPath(repoRoot);
@@ -80,6 +97,7 @@ export async function withCliDistBuildLock(fn, options = {}) {
       pollIntervalMs,
       staleAfterMs,
       errorLabel: 'CLI dist build lock',
+      tryResolveWaiter: options.tryResolveWaiter,
       onWait: typeof options.onWait === 'function'
         ? (event) => options.onWait({
           lockPath,

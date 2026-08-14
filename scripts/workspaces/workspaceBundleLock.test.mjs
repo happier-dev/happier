@@ -4,10 +4,60 @@ import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { fileURLToPath } from 'node:url';
 
-import { withWorkspaceBundleLock, withWorkspaceBundleLockSync } from './workspaceBundleLock.mjs';
+import {
+  DEFAULT_WORKSPACE_BUNDLE_LOCK_TIMEOUT_MS,
+  withWorkspaceBundleLock,
+  withWorkspaceBundleLockSync,
+} from './workspaceBundleLock.mjs';
 
-async function waitForCondition(predicate, label, timeoutMs = 2_000) {
+test('workspace publishers get a default contention budget sized for concurrent source-dev builds', () => {
+  assert.ok(DEFAULT_WORKSPACE_BUNDLE_LOCK_TIMEOUT_MS >= 30 * 60_000);
+});
+
+test('workspace bundle lock declarations expose result reuse to production consumers', () => {
+  const cliCommonDir = fileURLToPath(new URL('../../packages/cli-common/', import.meta.url));
+  const fixtureDir = mkdtempSync(join(cliCommonDir, '.workspace-bundle-lock-types-'));
+  try {
+    const fixturePath = join(fixtureDir, 'consumer.mts');
+    writeFileSync(fixturePath, `
+import { withWorkspaceBundleLock } from '../workspaceBundleLock.mjs';
+
+const result: string = await withWorkspaceBundleLock(
+  async () => 'built',
+  {
+    lockPath: '/tmp/workspace-bundle.lock',
+    tryResolveWaiter: async () => ({ resolved: true, value: 'reused' }),
+  },
+);
+void result;
+`, 'utf8');
+    const compiler = fileURLToPath(new URL('./runTypeScriptCli.mjs', import.meta.url));
+    const result = spawnSync(
+      process.execPath,
+      [
+        compiler,
+        '--ignoreConfig',
+        '--noEmit',
+        '--strict',
+        '--target',
+        'ES2022',
+        '--module',
+        'ESNext',
+        '--moduleResolution',
+        'Bundler',
+        fixturePath,
+      ],
+      { cwd: cliCommonDir, encoding: 'utf8' },
+    );
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+  } finally {
+    rmSync(fixtureDir, { recursive: true, force: true });
+  }
+});
+
+async function waitForCondition(predicate, label, timeoutMs = 10_000) {
   const startedAt = Date.now();
   while (!predicate()) {
     if (Date.now() - startedAt > timeoutMs) throw new Error(`Timed out waiting for ${label}`);
@@ -463,6 +513,91 @@ test('withWorkspaceBundleLock serializes concurrent workspace bundling through a
   }
 });
 
+test('withWorkspaceBundleLock waits on lock-state changes instead of hot polling', async () => {
+  const tempRoot = mkdtempSync(join(tmpdir(), 'happier-workspace-bundle-lock-change-wait-'));
+  try {
+    const lockPath = join(tempRoot, 'workspace-bundling.lock');
+    let releaseOwner;
+    const owner = withWorkspaceBundleLock(
+      async () => await new Promise((resolve) => {
+        releaseOwner = resolve;
+      }),
+      { lockPath, timeoutMs: 2_000, staleAfterMs: 5_000 },
+    );
+    await waitForCondition(() => typeof releaseOwner === 'function', 'initial lock owner');
+
+    const waits = [];
+    let releaseWait;
+    const waiter = withWorkspaceBundleLock(
+      async () => 'acquired',
+      {
+        lockPath,
+        timeoutMs: 2_000,
+        staleAfterMs: 5_000,
+        waitForLockChangeImpl: async (context) => {
+          waits.push(context);
+          await new Promise((resolve) => {
+            releaseWait = resolve;
+          });
+        },
+      },
+    );
+    await waitForCondition(() => waits.length > 0, 'event-driven lock wait');
+    assert.ok(waits[0].maxWaitMs >= 1_000);
+
+    releaseOwner();
+    releaseWait();
+    assert.equal(await waiter, 'acquired');
+    await owner;
+  } finally {
+    rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test('withWorkspaceBundleLock lets waiters reuse a result published by the prior owner', async () => {
+  const tempRoot = mkdtempSync(join(tmpdir(), 'happier-workspace-bundle-lock-reuse-'));
+  try {
+    const lockPath = join(tempRoot, 'workspace-bundling.lock');
+    let releaseOwner;
+    let published = false;
+    const owner = withWorkspaceBundleLock(
+      async () => await new Promise((resolve) => {
+        releaseOwner = () => {
+          published = true;
+          resolve();
+        };
+      }),
+      { lockPath, timeoutMs: 2_000, staleAfterMs: 5_000 },
+    );
+    await waitForCondition(() => typeof releaseOwner === 'function', 'initial lock owner');
+
+    let enteredWaiterOwner = false;
+    const waiter = withWorkspaceBundleLock(
+      async () => {
+        enteredWaiterOwner = true;
+        return 'rebuilt';
+      },
+      {
+        lockPath,
+        timeoutMs: 2_000,
+        staleAfterMs: 5_000,
+        tryResolveWaiter: async () => published
+          ? { resolved: true, value: 'reused' }
+          : { resolved: false },
+      },
+    );
+
+    await waitForCondition(() => existsSync(`${lockPath}.priority-claim`), 'waiter priority claim');
+    releaseOwner();
+    assert.equal(await waiter, 'reused');
+    assert.equal(enteredWaiterOwner, false);
+    await owner;
+    assert.equal(existsSync(`${lockPath}.priority-claim`), false);
+  } finally {
+    rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
 test('withWorkspaceBundleLock gives a continuous waiter priority over rotating newer contenders', async () => {
   const tempRoot = mkdtempSync(join(tmpdir(), 'happier-workspace-bundle-lock-fairness-'));
   const children = new Set();
@@ -507,7 +642,7 @@ try {
 }
 `;
 
-    const startWorker = (id, { mode = 'hold', timeoutMs = 3_000, pollIntervalMs = 2 } = {}) => {
+    const startWorker = (id, { mode = 'hold', timeoutMs = 10_000, pollIntervalMs = 2 } = {}) => {
       const child = spawn(
         process.execPath,
         [
@@ -539,14 +674,14 @@ try {
     startWorker('owner-0');
     await waitForCondition(() => existsSync(join(tempRoot, 'acquired-owner-0')), 'initial owner');
 
-    startWorker('old-waiter', { mode: 'return', timeoutMs: 3_000, pollIntervalMs: 200 });
+    startWorker('old-waiter', { mode: 'return', timeoutMs: 10_000, pollIntervalMs: 200 });
     await waitForCondition(() => waitCount('old-waiter') >= 1, 'old waiter to observe initial owner');
 
     let currentOwner = 'owner-0';
     let oldWaitCount = 1;
     for (let generation = 1; generation <= 6; generation += 1) {
       const contender = `contender-${generation}`;
-      startWorker(contender, { timeoutMs: 2_000, pollIntervalMs: 1 });
+      startWorker(contender, { timeoutMs: 10_000, pollIntervalMs: 1 });
       await waitForCondition(() => existsSync(join(tempRoot, `ready-${contender}`)), `${contender} to wait`);
 
       release(currentOwner);
@@ -578,7 +713,7 @@ try {
       await waitForCondition(
         () => existsSync(join(tempRoot, 'failed-old-waiter')),
         'starved old waiter timeout',
-        3_500,
+        10_500,
       );
     }
     if (currentOwner) release(currentOwner);
@@ -828,8 +963,8 @@ test('workspace bundle lock priority claims do not affect unrelated lock paths',
   }
 });
 
-test('workspace bundle lock priority claims do not exclude acquisition while the live lock is absent', async () => {
-  const tempRoot = mkdtempSync(join(tmpdir(), 'happier-workspace-bundle-lock-claim-metadata-only-'));
+test('workspace bundle lock priority claims fence newer contenders while the live lock is absent', async () => {
+  const tempRoot = mkdtempSync(join(tmpdir(), 'happier-workspace-bundle-lock-claim-handoff-'));
   try {
     const lockPath = join(tempRoot, 'workspace-bundling.lock');
     const claimPath = `${lockPath}.priority-claim`;
@@ -842,34 +977,72 @@ test('workspace bundle lock priority claims do not exclude acquisition while the
     };
     writeFileSync(claimPath, JSON.stringify(liveClaim), 'utf8');
 
-    const asyncResult = await withWorkspaceBundleLock(
-      async () => {
-        assert.equal(existsSync(lockPath), true);
-        return 'async-acquired';
-      },
-      {
-        lockPath,
-        timeoutMs: 50,
-        pollIntervalMs: 5,
-        staleAfterMs: 5_000,
-      },
+    let asyncEntered = false;
+    await assert.rejects(
+      withWorkspaceBundleLock(
+        async () => {
+          asyncEntered = true;
+        },
+        {
+          lockPath,
+          timeoutMs: 40,
+          pollIntervalMs: 5,
+          staleAfterMs: 5_000,
+        },
+      ),
+      (error) => error?.code === 'EWORKSPACEBUNDLELOCKTIMEOUT',
     );
-    const syncResult = withWorkspaceBundleLockSync(
-      () => {
-        assert.equal(existsSync(lockPath), true);
-        return 'sync-acquired';
-      },
+    assert.equal(asyncEntered, false);
+
+    let syncEntered = false;
+    assert.throws(
+      () => withWorkspaceBundleLockSync(
+        () => {
+          syncEntered = true;
+        },
+        {
+          lockPath,
+          timeoutMs: 40,
+          pollIntervalMs: 5,
+          staleAfterMs: 5_000,
+        },
+      ),
+      (error) => error?.code === 'EWORKSPACEBUNDLELOCKTIMEOUT',
+    );
+    assert.equal(syncEntered, false);
+    assert.deepEqual(JSON.parse(readFileSync(claimPath, 'utf8')), liveClaim);
+  } finally {
+    rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test('workspace bundle lock priority claims expire when a live process stops refreshing the handoff', () => {
+  const tempRoot = mkdtempSync(join(tmpdir(), 'happier-workspace-bundle-lock-claim-stale-live-'));
+  try {
+    const lockPath = join(tempRoot, 'workspace-bundling.lock');
+    const claimPath = `${lockPath}.priority-claim`;
+    writeFileSync(claimPath, JSON.stringify({
+      pid: process.pid,
+      createdAtMs: Date.now() - 10_000,
+      updatedAtMs: Date.now() - 10_000,
+      token: 'abandoned-live-process-claim',
+      processInstanceFingerprint: null,
+    }), 'utf8');
+
+    const result = withWorkspaceBundleLockSync(
+      () => 'acquired',
       {
         lockPath,
-        timeoutMs: 50,
+        timeoutMs: 200,
         pollIntervalMs: 5,
         staleAfterMs: 5_000,
+        initializationGraceMs: 5,
+        priorityClaimStaleAfterMs: 20,
       },
     );
 
-    assert.equal(asyncResult, 'async-acquired');
-    assert.equal(syncResult, 'sync-acquired');
-    assert.deepEqual(JSON.parse(readFileSync(claimPath, 'utf8')), liveClaim);
+    assert.equal(result, 'acquired');
+    assert.equal(existsSync(claimPath), false);
   } finally {
     rmSync(tempRoot, { recursive: true, force: true });
   }
