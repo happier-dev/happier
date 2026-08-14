@@ -96,9 +96,27 @@ export const AccountPetCreateResponseV1Schema = z.union([
 
 export type AccountPetCreateResponseV1 = z.infer<typeof AccountPetCreateResponseV1Schema>;
 
+export const ACCOUNT_PET_SYNC_UNAVAILABLE_ERROR_CODE_V1 = 'custom_pet_sync_unavailable' as const;
+
+export const AccountPetSyncUnavailableResponseV1Schema = z
+  .object({
+    ok: z.literal(false),
+    errorCode: z.literal(ACCOUNT_PET_SYNC_UNAVAILABLE_ERROR_CODE_V1),
+    error: z.string().min(1),
+  })
+  .passthrough();
+
+export type AccountPetSyncUnavailableResponseV1 = z.infer<typeof AccountPetSyncUnavailableResponseV1Schema>;
+
 export const AccountPetListResponseV1Schema = z.union([
   z.object({ ok: z.literal(true), pets: z.array(AccountPetLibraryEntryV1Schema) }).passthrough(),
-  z.object({ ok: z.literal(false), errorCode: z.enum(['feature_disabled', 'internal_error']), error: z.string().min(1) }).passthrough(),
+  z
+    .object({
+      ok: z.literal(false),
+      errorCode: z.enum(['feature_disabled', 'custom_pet_sync_unavailable', 'internal_error']),
+      error: z.string().min(1),
+    })
+    .passthrough(),
 ]);
 
 export type AccountPetListResponseV1 = z.infer<typeof AccountPetListResponseV1Schema>;
@@ -157,7 +175,14 @@ export const AccountPetAssetReadResponseV1Schema = z.union([
   z
     .object({
       ok: z.literal(false),
-      errorCode: z.enum(['not_found', 'forbidden', 'feature_disabled', 'payload_too_large', 'internal_error']),
+      errorCode: z.enum([
+        'not_found',
+        'forbidden',
+        'feature_disabled',
+        'payload_too_large',
+        'custom_pet_sync_unavailable',
+        'internal_error',
+      ]),
       error: z.string().min(1),
     })
     .passthrough(),

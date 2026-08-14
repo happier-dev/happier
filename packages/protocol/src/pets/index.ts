@@ -44,6 +44,7 @@ export {
   type PetPackageSourceV1,
 } from './source.js';
 export {
+  ACCOUNT_PET_SYNC_UNAVAILABLE_ERROR_CODE_V1,
   AccountPetAssetReadResponseV1Schema,
   AccountPetAssetRefV1Schema,
   AccountPetChangeHintV1Schema,
@@ -54,6 +55,7 @@ export {
   AccountPetLibraryEntryV1Schema,
   AccountPetListResponseV1Schema,
   AccountPetOriginV1Schema,
+  AccountPetSyncUnavailableResponseV1Schema,
   PetAssetMediaTypeV1Schema,
   type AccountPetAssetReadResponseV1,
   type AccountPetAssetRefV1,
@@ -65,6 +67,7 @@ export {
   type AccountPetLibraryEntryV1,
   type AccountPetListResponseV1,
   type AccountPetOriginV1,
+  type AccountPetSyncUnavailableResponseV1,
   type PetAssetMediaTypeV1,
 } from './accountLibrary.js';
 export {

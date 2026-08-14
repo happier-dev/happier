@@ -447,5 +447,30 @@ describe('pet protocol contract', () => {
       ok: false,
       errorCode: 'custom_pet_sync_requires_plaintext',
     });
+    expect(pets.AccountPetCreateResponseV1Schema.safeParse({
+      ok: false,
+      errorCode: 'custom_pet_sync_unavailable',
+      error: 'custom_pet_sync_unavailable',
+    }).success).toBe(false);
+
+    expect(pets.AccountPetListResponseV1Schema.parse({
+      ok: false,
+      errorCode: 'custom_pet_sync_unavailable',
+      error: 'custom_pet_sync_unavailable',
+    })).toEqual({
+      ok: false,
+      errorCode: 'custom_pet_sync_unavailable',
+      error: 'custom_pet_sync_unavailable',
+    });
+
+    expect(pets.AccountPetAssetReadResponseV1Schema.parse({
+      ok: false,
+      errorCode: 'custom_pet_sync_unavailable',
+      error: 'custom_pet_sync_unavailable',
+    })).toEqual({
+      ok: false,
+      errorCode: 'custom_pet_sync_unavailable',
+      error: 'custom_pet_sync_unavailable',
+    });
   });
 });
