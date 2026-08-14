@@ -13,7 +13,7 @@ Happier always follows the same high-level flow:
    - **Remote machine**: bootstrap it over SSH from the app, and optionally save the SSH target as a reusable Remote host.
 5. **Optionally enable private access** (for example Tailscale) for self-hosted/local Relay access from other devices.
 
-User guide: [Relay access](/docs/clients/relay-access).
+User guide: [Relay access](/clients/relay-access).
 
 ## Choose your setup
 
@@ -41,7 +41,7 @@ The app-first setup is the recommended control-panel flow. The CLI is a great fa
 
 Notes:
 - The desktop app and the installer-installed CLI are self-contained; you do not need system Node/Yarn installed.
-- If you prefer an npm workflow, see [CLI install](/docs/clients/cli) (requires Node).
+- If you prefer an npm workflow, see [CLI install](/clients/cli) (requires Node).
 
 ### Option B — Self-host Relay only (background service on your laptop)
 You run your own Relay (remote machine, LAN box, or even your own computer), but keep the background service on another machine.
@@ -75,7 +75,7 @@ If you want to bootstrap a *remote machine* over SSH instead, use:
 ```bash
 happier machine setup --ssh user@host
 ```
-If you want to save a reusable Relay profile for future CLI commands, see [CLI → Server profiles](/docs/clients/cli#server-profiles).
+If you want to save a reusable Relay profile for future CLI commands, see [CLI → Server profiles](/clients/cli#server-profiles).
 
 ### Option C — Devbox (Relay + background service on the same machine)
 You install both the Relay and the background service on one box.
@@ -120,4 +120,4 @@ happier --server personal service status
 happier --server company service status
 ```
 
-For complete profile/switching behavior and CLI reference, see [Features → Multi-server](/docs/features/multi-server).
+For complete profile/switching behavior and CLI reference, see [Features → Multi-server](/features/multi-server).
