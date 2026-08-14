@@ -2326,6 +2326,7 @@ export {
   createRpcCallError,
   isRpcMethodNotAvailableError,
   isRpcMethodNotFoundError,
+  isRpcSessionMachineControlUnavailableError,
   readRpcErrorCode,
   type RpcErrorCarrier,
 } from './rpc/errors.js';

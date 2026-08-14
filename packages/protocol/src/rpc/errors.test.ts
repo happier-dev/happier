@@ -6,6 +6,7 @@ import {
   isRpcError,
   isRpcMethodNotAvailableError,
   isRpcMethodNotFoundError,
+  isRpcSessionMachineControlUnavailableError,
   RpcError,
   readRpcErrorCode,
 } from './errors.js';
@@ -48,6 +49,15 @@ describe('rpcErrors', () => {
 	    expect(isRpcMethodNotFoundError({ message: `${RPC_ERROR_MESSAGES.METHOD_NOT_FOUND}: daemon.transfer.download.init` })).toBe(false);
 	    expect(isRpcMethodNotFoundError({ message: 'rpc method not found ' })).toBe(false);
 	  });
+
+  it('detects unavailable session machine control only from its typed error code', () => {
+    expect(isRpcSessionMachineControlUnavailableError({
+      rpcErrorCode: RPC_ERROR_CODES.SESSION_MACHINE_CONTROL_UNAVAILABLE,
+    })).toBe(true);
+    expect(isRpcSessionMachineControlUnavailableError({
+      message: RPC_ERROR_MESSAGES.SESSION_MACHINE_CONTROL_UNAVAILABLE,
+    })).toBe(false);
+  });
 
   it('detects RpcError instances', () => {
     expect(isRpcError(new RpcError('x', RPC_ERROR_CODES.METHOD_NOT_FOUND))).toBe(true);
