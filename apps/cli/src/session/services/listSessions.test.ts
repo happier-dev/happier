@@ -40,7 +40,7 @@ describe('listSessions', () => {
     getSessionTranscript.mockReset();
   });
 
-  it('omits terminal rows and hasNext from the default action result', async () => {
+  it('propagates a non-terminal server page without terminal rows by default', async () => {
     fetchSessionsPage.mockResolvedValue(createSessionListResponseFixture([
       createSessionRecordFixture({
         id: 'sess-1',
@@ -65,9 +65,31 @@ describe('listSessions', () => {
         }),
       ],
       nextCursor: 'cursor-2',
+      hasNext: true,
     });
     expect('rows' in result).toBe(false);
-    expect('hasNext' in result).toBe(false);
+  });
+
+  it('propagates a terminal server page', async () => {
+    fetchSessionsPage.mockResolvedValue(createSessionListResponseFixture([], {
+      nextCursor: null,
+      hasNext: false,
+    }));
+
+    const { listSessions } = await import('./listSessions');
+    const result = await listSessions({
+      credentials,
+      activeOnly: false,
+      archivedOnly: false,
+      includeSystem: false,
+      resumableOnly: false,
+    });
+
+    expect(result).toEqual({
+      sessions: [],
+      nextCursor: null,
+      hasNext: false,
+    });
   });
 
   it('includes terminal rows with deterministic session cardinality when requested', async () => {

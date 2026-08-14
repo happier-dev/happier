@@ -4,7 +4,15 @@ import { notifyTerminalAttachmentRetiredThroughCatalog } from '@/backends/catalo
 import { stopDaemonSession } from '@/daemon/controlClient';
 import { listSessionMarkers, removeSessionMarker } from '@/daemon/sessionRegistry';
 import { createStopSession } from '@/daemon/sessions/stopSession';
-import type { StopSessionResult } from '@/daemon/sessions/stopSessionContract';
+import {
+  SessionStopCleanupIncompleteReasonSchema,
+  SessionStopOutcomeSchema,
+  type SessionStopOutcome,
+  type SessionStopResult as SessionStopCommandResult,
+} from '@happier-dev/protocol';
+import type {
+  StopSessionResult,
+} from '@/daemon/sessions/stopSessionContract';
 import { waitForTrackedRunnerProcessesExit } from '@/daemon/sessions/waitForTrackedRunnerProcessesExit';
 import { retireExactTerminalControlServiceability } from '@/daemon/sessions/retireTerminalControlServiceability';
 import type { TrackedSession } from '@/daemon/types';
@@ -23,6 +31,31 @@ type StopSessionAttemptResult = StopSessionResult | Readonly<{
   status: 'incomplete';
   reason: 'transport_ambiguous' | 'marker_fallback_failed';
 }>;
+
+function stopOutcomeFromAttemptResult(
+  result: Exclude<StopSessionAttemptResult, { status: 'stopped' }>,
+): SessionStopOutcome {
+  if (result.status === 'incomplete') {
+    const cleanupReason = SessionStopCleanupIncompleteReasonSchema.safeParse(result.reason);
+    if (cleanupReason.success) {
+      return SessionStopOutcomeSchema.parse({
+        status: 'stopped_cleanup_incomplete',
+        reason: cleanupReason.data,
+      });
+    }
+    return SessionStopOutcomeSchema.parse({ status: 'physical_stop_unconfirmed', reason: result.reason });
+  }
+  if (result.status === 'not_found') {
+    return SessionStopOutcomeSchema.parse({
+      status: 'physical_stop_unconfirmed',
+      reason: 'local_session_not_found',
+    });
+  }
+  return SessionStopOutcomeSchema.parse({
+    status: 'physical_stop_unconfirmed',
+    reason: 'daemon_stop_requested',
+  });
+}
 
 async function waitForSessionStopResult(params: Readonly<{
   token: string;
@@ -141,7 +174,7 @@ export async function requestSessionStop(params: Readonly<{
   credentials: Credentials;
   idOrPrefix: string;
 }>): Promise<
-  | Readonly<{ ok: true; sessionId: string; stopped: boolean }>
+  | (Readonly<{ ok: true }> & SessionStopCommandResult)
   | Readonly<{ ok: false; code: 'session_not_found' | 'session_id_ambiguous' | 'unsupported'; candidates?: string[] }>
 > {
   const resolved = await resolveSessionIdOrPrefix({
@@ -181,25 +214,44 @@ export async function requestSessionStop(params: Readonly<{
         (): StopSessionAttemptResult => ({ status: 'incomplete', reason: 'marker_fallback_failed' }),
       );
     }
-    const stopped = physicalStopResult.status === 'stopped'
-      ? await waitForSessionStopResult({
-          token: params.credentials.token,
-          sessionId: resolved.sessionId,
-        })
-      : false;
+    if (physicalStopResult.status !== 'stopped') {
+      return {
+        ok: true,
+        sessionId: resolved.sessionId,
+        stopped: false,
+        stopOutcome: stopOutcomeFromAttemptResult(physicalStopResult),
+      };
+    }
+    const stopped = await waitForSessionStopResult({
+      token: params.credentials.token,
+      sessionId: resolved.sessionId,
+    });
     if (stopped) {
       await cleanupStoppedSessionMarkersBestEffort(resolved.sessionId).catch(() => undefined);
+      return {
+        ok: true,
+        sessionId: resolved.sessionId,
+        stopped: true,
+      };
     }
     return {
       ok: true,
       sessionId: resolved.sessionId,
-      stopped,
+      stopped: false,
+      stopOutcome: {
+        status: 'stopped_projection_unconfirmed',
+        reason: 'relay_inactive_not_observed',
+      },
     };
   } catch {
     return {
       ok: true,
       sessionId: resolved.sessionId,
       stopped: false,
+      stopOutcome: {
+        status: 'physical_stop_unconfirmed',
+        reason: 'unexpected_error',
+      },
     };
   }
 }

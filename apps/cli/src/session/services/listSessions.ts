@@ -28,6 +28,7 @@ export type ListSessionsJsonSession = SessionSummary & Readonly<{
 export type ListSessionsResult = Readonly<{
   sessions: readonly ListSessionsJsonSession[];
   nextCursor: string | null;
+  hasNext: boolean;
   rows?: readonly CliSessionRowModel[];
 }>;
 
@@ -139,6 +140,7 @@ export async function listSessions(params: Readonly<{
   return {
     sessions,
     nextCursor: page.nextCursor,
+    hasNext: page.hasNext,
     ...(params.includeRows === true ? { rows: limitedRows } : {}),
   };
 }
