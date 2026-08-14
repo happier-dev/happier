@@ -80,10 +80,24 @@ test('prints help without requiring a token', () => {
   assert.match(res.stdout, /\.happier\/local\/ghops\/gh/);
 });
 
+test('forwards nested subcommand help to gh', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'ghops-nested-help-test-'));
+  const { fakeGh } = createFakeBotAuthTools(dir);
+
+  const res = runGhop(['issue', 'edit', '--help'], {
+    HAPPIER_GITHUB_BOT_TOKEN: 'nested-help-secret',
+    HAPPIER_GHOPS_GH_PATH: fakeGh,
+    GHOPS_TEST_LOGIN: 'happier-bot',
+  });
+
+  assert.equal(res.status, 0, res.stderr);
+  assert.deepEqual(JSON.parse(res.stdout).argv, ['issue', 'edit', '--help']);
+});
+
 test('fails closed when token is missing', () => {
   const dir = mkdtempSync(join(tmpdir(), 'ghops-missing-token-test-'));
   const { keychainStore } = createFakeBotAuthTools(dir);
-  const res = runGhop(['api', 'user'], {
+  const res = runGhop(['api', 'repos/happier-dev/happier'], {
     PATH: `${dir}:${process.env.PATH ?? ''}`,
     GHOPS_TEST_KEYCHAIN_STORE: keychainStore,
     HAPPIER_GITHUB_BOT_TOKEN: '',
@@ -94,6 +108,22 @@ test('fails closed when token is missing', () => {
   assert.match(res.stderr, /HAPPIER_GITHUB_BOT_TOKEN/);
 });
 
+test('rejects an ordinary command when the token belongs to a different GitHub identity', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'ghops-command-wrong-user-test-'));
+  const { fakeGh } = createFakeBotAuthTools(dir);
+  const token = 'wrong-command-user-secret';
+
+  const res = runGhop(['issue', 'list'], {
+    HAPPIER_GITHUB_BOT_TOKEN: token,
+    HAPPIER_GHOPS_GH_PATH: fakeGh,
+    GHOPS_TEST_LOGIN: 'not-happier-bot',
+  });
+
+  assert.notEqual(res.status, 0);
+  assert.match(res.stderr, /not-happier-bot/);
+  assert.doesNotMatch(`${res.stdout}\n${res.stderr}`, new RegExp(token));
+});
+
 test('forwards args and forces gh auth via HAPPIER_GITHUB_BOT_TOKEN', () => {
   const dir = mkdtempSync(join(tmpdir(), 'ghops-test-'));
   const fakeGh = join(dir, 'fake-gh');
@@ -102,8 +132,13 @@ test('forwards args and forces gh auth via HAPPIER_GITHUB_BOT_TOKEN', () => {
   writeFileSync(
     fakeGh,
     `#!/usr/bin/env node
+const args = process.argv.slice(2);
+if (args[0] === 'api' && args[1] === 'user') {
+  process.stdout.write((process.env.GHOPS_TEST_LOGIN || 'happier-bot') + '\\n');
+  process.exit(0);
+}
 const payload = {
-  argv: process.argv.slice(2),
+  argv: args,
   env: {
     GH_TOKEN: process.env.GH_TOKEN ?? null,
     GH_HOST: process.env.GH_HOST ?? null,
@@ -145,8 +180,13 @@ test('expands ~/ overrides for gh binary and config dir against HOME', () => {
   writeFileSync(
     fakeGh,
     `#!/usr/bin/env node
+const args = process.argv.slice(2);
+if (args[0] === 'api' && args[1] === 'user') {
+  process.stdout.write((process.env.GHOPS_TEST_LOGIN || 'happier-bot') + '\\n');
+  process.exit(0);
+}
 const payload = {
-  argv: process.argv.slice(2),
+  argv: args,
   env: {
     GH_TOKEN: process.env.GH_TOKEN ?? null,
     GH_PROMPT_DISABLED: process.env.GH_PROMPT_DISABLED ?? null,
@@ -160,7 +200,7 @@ process.stdout.write(JSON.stringify(payload));
   chmodSync(fakeGh, 0o755);
 
   const token = 'test-bot-token';
-  const res = runGhop(['api', 'user'], {
+  const res = runGhop(['api', 'repos/happier-dev/happier'], {
     HOME: homeDir,
     USERPROFILE: homeDir,
     HAPPIER_GITHUB_BOT_TOKEN: token,
@@ -170,7 +210,7 @@ process.stdout.write(JSON.stringify(payload));
 
   assert.equal(res.status, 0, res.stderr);
   const out = JSON.parse(res.stdout);
-  assert.deepEqual(out.argv, ['api', 'user']);
+  assert.deepEqual(out.argv, ['api', 'repos/happier-dev/happier']);
   assert.equal(out.env.GH_TOKEN, token);
   assert.equal(out.env.GH_PROMPT_DISABLED, '1');
   assert.equal(out.env.GH_CONFIG_DIR, configDir);
