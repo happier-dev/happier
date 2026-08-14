@@ -368,6 +368,43 @@ describe('RpcHandlerManager.handleRequest (encrypted)', () => {
 });
 
 describe('RpcHandlerManager in-flight request tracking', () => {
+  it('exposes only safe method timing for active handler executions', async () => {
+    const handlerStarted = createDeferredVoid();
+    let nowMs = 1_000;
+
+    const rpc = new RpcHandlerManager({
+      scopePrefix: 'machine-secret-scope',
+      encryptionKey: new Uint8Array(32),
+      encryptionVariant: 'dataKey',
+      encryptionMode: 'plain',
+      logger: () => {},
+      nowMs: () => nowMs,
+    });
+
+    rpc.registerHandler('scm.status.snapshot', async () => {
+      await handlerStarted.promise;
+      return { secretPayload: 'must-not-appear-in-diagnostics' };
+    });
+
+    const requestPromise = rpc.handleRequest({
+      method: 'machine-secret-scope:scm.status.snapshot',
+      params: { secretInput: 'must-not-appear-in-diagnostics' },
+    });
+    await Promise.resolve();
+    nowMs = 2_250;
+
+    expect(rpc.getActiveHandlerExecutions()).toEqual([
+      {
+        method: 'scm.status.snapshot',
+        activeForMs: 1_250,
+      },
+    ]);
+
+    handlerStarted.resolve();
+    await requestPromise;
+    expect(rpc.getActiveHandlerExecutions()).toEqual([]);
+  });
+
   it('waits for an active request to settle before reporting idle', async () => {
     const handlerStarted = createDeferredVoid();
 

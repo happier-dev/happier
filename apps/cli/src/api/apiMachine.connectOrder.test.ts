@@ -245,6 +245,102 @@ describe('ApiMachineClient connect ordering', () => {
     expect(updateDaemonState).not.toHaveBeenCalled();
   });
 
+  it('publishes running when the current transport receives every required registration after the initial deadline', async () => {
+    const socket = createApiSessionSocketStub({ id: 'machine-socket-1' });
+    bindApiSessionSocketSequenceMock(ioMock, [socket]);
+    const client = new ApiMachineClient('token', {
+      id: 'machine-1',
+      encryptionKey: new Uint8Array(32).fill(1),
+      encryptionVariant: 'legacy',
+      metadata: null,
+      metadataVersion: 0,
+      daemonState: null,
+      daemonStateVersion: 0,
+    });
+    Object.defineProperty(client, 'startKeepAlive', { value: () => undefined });
+    Object.defineProperty(client, 'syncChangesOnConnect', { value: async () => undefined });
+    const rpcHandlerManager = Reflect.get(client, 'rpcHandlerManager') as RpcHandlerManager;
+    registerRequiredMachineControlHandlers(rpcHandlerManager);
+    const waitForRegisteredHandlers = rpcHandlerManager.waitForRegisteredHandlers.bind(rpcHandlerManager);
+    vi.spyOn(rpcHandlerManager, 'waitForRegisteredHandlers')
+      .mockResolvedValueOnce({
+        status: 'timeout',
+        missingMethods: [
+          RPC_METHODS.SPAWN_HAPPY_SESSION,
+          RPC_METHODS.SPAWN_HAPPY_SESSION_PROVIDER_SAFE,
+          RPC_METHODS.DAEMON_SPAWN_SESSION_RESOLVE,
+          RPC_METHODS.STOP_SESSION,
+        ],
+      })
+      .mockImplementation(waitForRegisteredHandlers);
+    const updateDaemonState = vi.spyOn(client, 'updateDaemonState').mockResolvedValue();
+
+    client.connect();
+    await vi.waitFor(() => expect(rpcHandlerManager.waitForRegisteredHandlers).toHaveBeenCalled());
+    expect(updateDaemonState).not.toHaveBeenCalled();
+
+    for (const method of [
+      RPC_METHODS.SPAWN_HAPPY_SESSION,
+      RPC_METHODS.SPAWN_HAPPY_SESSION_PROVIDER_SAFE,
+      RPC_METHODS.DAEMON_SPAWN_SESSION_RESOLVE,
+      RPC_METHODS.STOP_SESSION,
+    ]) {
+      socket.trigger(SOCKET_RPC_EVENTS.REGISTERED, { method: `machine-1:${method}` });
+    }
+    await vi.waitFor(() => expect(updateDaemonState).toHaveBeenCalledTimes(1));
+  });
+
+  it('ignores late registration acknowledgements from a superseded transport', async () => {
+    const firstSocket = createApiSessionSocketStub({ id: 'machine-socket-1' });
+    const secondSocket = createApiSessionSocketStub({ id: 'machine-socket-2' });
+    bindApiSessionSocketSequenceMock(ioMock, [firstSocket, secondSocket]);
+    const client = new ApiMachineClient('token', {
+      id: 'machine-1',
+      encryptionKey: new Uint8Array(32).fill(1),
+      encryptionVariant: 'legacy',
+      metadata: null,
+      metadataVersion: 0,
+      daemonState: null,
+      daemonStateVersion: 0,
+    });
+    Object.defineProperty(client, 'startKeepAlive', { value: () => undefined });
+    Object.defineProperty(client, 'syncChangesOnConnect', { value: async () => undefined });
+    const rpcHandlerManager = Reflect.get(client, 'rpcHandlerManager') as RpcHandlerManager;
+    registerRequiredMachineControlHandlers(rpcHandlerManager);
+    const waitForRegisteredHandlers = rpcHandlerManager.waitForRegisteredHandlers.bind(rpcHandlerManager);
+    vi.spyOn(rpcHandlerManager, 'waitForRegisteredHandlers')
+      .mockResolvedValueOnce({ status: 'timeout', missingMethods: [RPC_METHODS.STOP_SESSION] })
+      .mockResolvedValueOnce({ status: 'timeout', missingMethods: [RPC_METHODS.STOP_SESSION] })
+      .mockImplementation(waitForRegisteredHandlers);
+    const updateDaemonState = vi.spyOn(client, 'updateDaemonState').mockResolvedValue();
+
+    client.connect();
+    await vi.waitFor(() => expect(rpcHandlerManager.waitForRegisteredHandlers).toHaveBeenCalledTimes(1));
+    await connectionHarness.connectNextTransport();
+    await vi.waitFor(() => expect(rpcHandlerManager.waitForRegisteredHandlers).toHaveBeenCalledTimes(2));
+
+    for (const method of [
+      RPC_METHODS.SPAWN_HAPPY_SESSION,
+      RPC_METHODS.SPAWN_HAPPY_SESSION_PROVIDER_SAFE,
+      RPC_METHODS.DAEMON_SPAWN_SESSION_RESOLVE,
+      RPC_METHODS.STOP_SESSION,
+    ]) {
+      firstSocket.trigger(SOCKET_RPC_EVENTS.REGISTERED, { method: `machine-1:${method}` });
+    }
+    await Promise.resolve();
+    expect(updateDaemonState).not.toHaveBeenCalled();
+
+    for (const method of [
+      RPC_METHODS.SPAWN_HAPPY_SESSION,
+      RPC_METHODS.SPAWN_HAPPY_SESSION_PROVIDER_SAFE,
+      RPC_METHODS.DAEMON_SPAWN_SESSION_RESOLVE,
+      RPC_METHODS.STOP_SESSION,
+    ]) {
+      secondSocket.trigger(SOCKET_RPC_EVENTS.REGISTERED, { method: `machine-1:${method}` });
+    }
+    await vi.waitFor(() => expect(updateDaemonState).toHaveBeenCalledTimes(1));
+  });
+
   it('fails closed when the server rejects a provider-starting RPC registration as upgrade-required', async () => {
     const socket = createApiSessionSocketStub({ id: 'machine-socket-1' });
     bindApiSessionSocketSequenceMock(ioMock, [socket]);

@@ -106,6 +106,7 @@ import {
   type RuntimeAuthRecoveryProofKind,
 } from './connectedServices/runtimeAuth/resolveRuntimeAuthRecoveryOutcome';
 import { buildConnectedServiceRuntimeAuthSwitchAttemptLogContext } from './connectedServices/runtimeAuth/buildConnectedServiceRuntimeAuthSwitchAttemptLogContext';
+import { registerDaemonControlRequestTiming } from './diagnostics/registerDaemonControlRequestTiming';
 import {
   ConnectedServiceTurnLifecycleRequestBodySchema,
   ConnectedServiceTurnLifecycleResultSchema,
@@ -520,6 +521,9 @@ export function createDaemonControlApp({
   const app = fastify({
     logger: false, // We use our own logger
     bodyLimit: resolveDaemonControlBodyLimitBytes(),
+  });
+  registerDaemonControlRequestTiming(app, {
+    debug: (message, data) => logger.debug(message, data),
   });
 
   // Set up Zod type provider

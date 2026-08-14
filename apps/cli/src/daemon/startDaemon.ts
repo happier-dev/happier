@@ -221,6 +221,7 @@ import { resolveWaitForAuthConfig } from './startup/waitForAuthConfig';
 import { ensureSessionDirectory } from './startup/ensureSessionDirectory';
 import { waitForInitialCredentials } from './startup/waitForInitialCredentials';
 import { resolveDaemonDiagnosticSubsystemGates } from './startup/diagnosticSubsystemGates';
+import { createDaemonEventLoopStallMonitor } from './diagnostics/daemonEventLoopStallMonitor';
 import { resolveStartDaemonMachinePreflightDecision } from './startup/machinePreflightDecision';
 import { waitForSessionWebhook } from './spawn/waitForSessionWebhook';
 import { resolveSpawnChildEnvironment } from './spawn/resolveSpawnChildEnvironment';
@@ -2097,6 +2098,11 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
       let automationWorker: AutomationWorkerHandle | null = null;
       let memoryWorker: MemoryWorkerHandle | null = null;
       let apiMachine: ApiMachineClient | null = null;
+      const eventLoopStallMonitor = createDaemonEventLoopStallMonitor({
+        getActiveRpcOperations: () => apiMachineForSessions?.getActiveRpcHandlerExecutions() ?? [],
+        warn: (message, data) => logger.warn(message, data),
+      });
+      eventLoopStallMonitor.start();
 	      let machineConnectionStateCleanup: (() => void) | null = null;
 	      let shutdownInitiated = false;
 	      let connectedServiceQuotaProducersQuiesced = false;
@@ -8376,6 +8382,7 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
             // Setup signal handlers
                 const cleanupAndShutdown = async (source: 'happier-app' | 'happier-cli' | 'os-signal' | 'exception', errorMessage?: string) => {
           shutdownInitiated = true;
+          eventLoopStallMonitor.stop();
           connectedServiceTurnDeferralQueue.cancelAll('daemon_shutdown');
           // Lane F: stop exposing turn-in-flight state once the queue is torn down so a tearing-down
           // daemon never reports a stale in-flight turn to the managed-server release path.

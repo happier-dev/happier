@@ -55,6 +55,8 @@ export interface RpcHandlerConfig {
     encryptionMode?: 'e2ee' | 'plain';
     logger?: (message: string, data?: any) => void;
     onRegistrationError?: (error: unknown) => void;
+    onRegistrationAcknowledged?: (method: string) => void;
+    nowMs?: () => number;
     authorizeRequest?: (request: Readonly<{
         method: string;
         params: unknown;
@@ -67,6 +69,11 @@ export interface RpcHandlerConfig {
         authorization?: SocketRpcAuthorizationContext;
     }>) => SocketRpcTransportAcknowledgementV1 | null;
 }
+
+export type RpcHandlerActiveExecution = Readonly<{
+    method: string;
+    activeForMs: number;
+}>;
 
 export type RpcAuthorizationResult =
     | { ok: true }

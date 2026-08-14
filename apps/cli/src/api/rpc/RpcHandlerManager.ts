@@ -10,6 +10,7 @@ import {
     RpcHandlerMap,
     RpcRequest,
     RpcHandlerConfig,
+    type RpcHandlerActiveExecution,
     type RpcAuthorizationResult,
 } from './types';
 import { Socket } from 'socket.io-client';
@@ -47,13 +48,20 @@ export class RpcHandlerManager {
     private readonly encryptionMode: 'e2ee' | 'plain';
     private readonly logger: (message: string, data?: any) => void;
     private readonly onRegistrationError: RpcHandlerConfig['onRegistrationError'];
+    private readonly onRegistrationAcknowledged: RpcHandlerConfig['onRegistrationAcknowledged'];
     private readonly authorizeRequest: RpcHandlerConfig['authorizeRequest'];
     private readonly projectTransportAcknowledgement: RpcHandlerConfig['projectTransportAcknowledgement'];
+    private readonly nowMs: () => number;
     private socket: Socket | null = null;
     private acknowledgedRegistrationMethods = new Set<string>();
     private registrationReadinessWaiters = new Set<RegistrationReadinessWaiter>();
     private inFlightRequestCount = 0;
     private idleResolvers = new Set<() => void>();
+    private nextHandlerExecutionId = 1;
+    private activeHandlerExecutions = new Map<number, Readonly<{
+        method: string;
+        startedAtMs: number;
+    }>>();
 
     constructor(config: RpcHandlerConfig) {
         this.scopePrefix = config.scopePrefix;
@@ -62,8 +70,10 @@ export class RpcHandlerManager {
         this.encryptionMode = config.encryptionMode ?? 'e2ee';
         this.logger = config.logger || ((msg, data) => defaultLogger.debug(msg, data));
         this.onRegistrationError = config.onRegistrationError;
+        this.onRegistrationAcknowledged = config.onRegistrationAcknowledged;
         this.authorizeRequest = config.authorizeRequest;
         this.projectTransportAcknowledgement = config.projectTransportAcknowledgement;
+        this.nowMs = config.nowMs ?? (() => performance.now());
     }
 
     private encodeResponse(response: unknown): unknown {
@@ -100,6 +110,7 @@ export class RpcHandlerManager {
         request: RpcRequest,
     ): Promise<any> {
         this.beginInFlightRequest();
+        let handlerExecutionId: number | null = null;
         try {
             const handler = this.handlers.get(request.method);
 
@@ -138,6 +149,7 @@ export class RpcHandlerManager {
 
             // Call the handler
             this.logger('[RPC] Calling handler', { method: request.method });
+            handlerExecutionId = this.beginHandlerExecution(this.readUnprefixedMethod(request.method));
             const result = await handler(decryptedParams);
             this.logger('[RPC] Handler returned', { method: request.method, hasResult: result !== undefined });
 
@@ -165,6 +177,9 @@ export class RpcHandlerManager {
             };
             return this.encodeTransportResponse(request, errorResponse);
         } finally {
+            if (handlerExecutionId !== null) {
+                this.activeHandlerExecutions.delete(handlerExecutionId);
+            }
             this.finishInFlightRequest();
         }
     }
@@ -182,9 +197,11 @@ export class RpcHandlerManager {
             return { error: RPC_ERROR_MESSAGES.METHOD_NOT_FOUND, errorCode: RPC_ERROR_CODES.METHOD_NOT_FOUND };
         }
         this.beginInFlightRequest();
+        const handlerExecutionId = this.beginHandlerExecution(method);
         try {
             return await handler(params as any);
         } finally {
+            this.activeHandlerExecutions.delete(handlerExecutionId);
             this.finishInFlightRequest();
         }
     }
@@ -220,6 +237,7 @@ export class RpcHandlerManager {
             }
             this.acknowledgedRegistrationMethods.add(method);
             this.settleReadyRegistrationWaiters();
+            this.onRegistrationAcknowledged?.(method);
         });
         for (const [prefixedMethod] of this.handlers) {
             socket.emit(SOCKET_RPC_EVENTS.REGISTER, { method: prefixedMethod });
@@ -279,6 +297,14 @@ export class RpcHandlerManager {
         return this.inFlightRequestCount;
     }
 
+    getActiveHandlerExecutions(): readonly RpcHandlerActiveExecution[] {
+        const observedAtMs = this.nowMs();
+        return Array.from(this.activeHandlerExecutions.values(), (execution) => ({
+            method: execution.method,
+            activeForMs: Math.max(0, Math.round(observedAtMs - execution.startedAtMs)),
+        }));
+    }
+
     async waitForIdle(): Promise<void> {
         if (this.inFlightRequestCount === 0) {
             return;
@@ -312,6 +338,21 @@ export class RpcHandlerManager {
      */
     private getPrefixedMethod(method: string): string {
         return `${this.scopePrefix}:${method}`;
+    }
+
+    private readUnprefixedMethod(method: string): string {
+        const prefix = `${this.scopePrefix}:`;
+        return method.startsWith(prefix) ? method.slice(prefix.length) : method;
+    }
+
+    private beginHandlerExecution(method: string): number {
+        const id = this.nextHandlerExecutionId;
+        this.nextHandlerExecutionId += 1;
+        this.activeHandlerExecutions.set(id, {
+            method,
+            startedAtMs: this.nowMs(),
+        });
+        return id;
     }
 
     private areRegistrationMethodsAcknowledged(methods: ReadonlySet<string>): boolean {
