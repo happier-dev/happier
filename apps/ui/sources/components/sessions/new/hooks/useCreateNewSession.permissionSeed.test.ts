@@ -32,6 +32,11 @@ type SpawnPayloadCapture = {
     transcriptStorage?: 'persisted' | 'direct';
     windowsRemoteSessionLaunchMode?: 'hidden' | 'windows_terminal' | 'console';
     windowsTerminalWindowName?: string;
+    pendingFirstInput?: {
+        text: string;
+        localId: string;
+        meta?: Record<string, unknown>;
+    };
 } | null;
 
 type AutomationCreateCapture = {
@@ -508,14 +513,18 @@ describe('useCreateNewSession permission seeding', () => {
         expect(prefetchMachineCapabilitiesSpy).toHaveBeenCalledTimes(0);
     });
 
-    it('passes the selected model as initial message metaOverrides so next-prompt model backends can apply it on the first turn', async () => {
+    it('hands a plain first turn to a compatible daemon without relying on post-spawn UI follow-up', async () => {
         const {
             useCreateNewSession,
+            captured,
             followUpSpawnedSessionWithServerScopeSpy,
             machineSpawnNewSessionSpy,
         } = await setupUseCreateNewSessionHarness();
 
-        machineSpawnNewSessionSpy.mockResolvedValueOnce({ type: 'success', sessionId: 'sess_target' });
+        machineSpawnNewSessionSpy.mockImplementationOnce(async (options: unknown) => {
+            captured.value = options as SpawnPayloadCapture;
+            return { type: 'success', sessionId: 'sess_target' };
+        });
 
         let handleCreateSession: null | (() => Promise<void>) = null;
         const settings = { experiments: false } as unknown as Settings;
@@ -533,7 +542,10 @@ describe('useCreateNewSession permission seeding', () => {
                 router: { push: vi.fn(), replace: vi.fn() },
                 selectedMachineId: 'm1',
                 selectedPath: '/tmp',
-                selectedMachine: { metadata: {} },
+                selectedMachine: {
+                    metadata: {},
+                    daemonState: { startedWithCliVersion: '0.2.10' },
+                },
                 setIsCreating: vi.fn(),
                 setIsResumeSupportChecking: vi.fn(),
                 settings,
@@ -567,11 +579,14 @@ describe('useCreateNewSession permission seeding', () => {
             await handleCreateSession?.();
         });
 
-        expect(followUpSpawnedSessionWithServerScopeSpy).toHaveBeenCalledWith(expect.objectContaining({
-            sessionId: 'sess_target',
-            initialMessageText: 'hello',
-            metaOverrides: { model: 'gpt' },
+        expect(captured.value).toEqual(expect.objectContaining({
+            pendingFirstInput: {
+                text: 'hello',
+                localId: expect.stringMatching(/^first-turn-/),
+                meta: { model: 'gpt' },
+            },
         }));
+        expect(followUpSpawnedSessionWithServerScopeSpy).not.toHaveBeenCalled();
     });
 
     it('carries the composer structured-input envelope into the first turn, merged with the model seed', async () => {
