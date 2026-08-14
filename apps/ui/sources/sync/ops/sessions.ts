@@ -220,6 +220,20 @@ export async function resumeSession(options: ResumeSessionOptions): Promise<Resu
     // post-attach activity (or a bounded decay); we only clear it eagerly when the resume fails.
     storage.getState().markSessionResuming(options.sessionId);
     try {
+        const serverId = typeof options.serverId === 'string' ? options.serverId.trim() : null;
+        const session = storage.getState().sessions[options.sessionId];
+        if (session?.archivedAt != null) {
+            const unarchiveResult = await sessionUnarchiveWithServerScope(options.sessionId, { serverId });
+            if (!unarchiveResult.success) {
+                storage.getState().clearSessionResuming(options.sessionId);
+                return {
+                    type: 'error',
+                    errorCode: SPAWN_SESSION_ERROR_CODES.UNEXPECTED,
+                    errorMessage: unarchiveResult.message ?? 'Failed to unarchive session',
+                };
+            }
+        }
+
         const accountSettingsPreparation = typeof options.accountSettingsVersionHint === 'number'
             ? {}
             : await prepareAccountSettingsForDaemonSpawnIfNeeded(options.accountSettingsVersionHint);
@@ -254,7 +268,6 @@ export async function resumeSession(options: ResumeSessionOptions): Promise<Resu
             preferRequestedMachineTarget,
             preferScopedMachineRpc,
         } = preparedOptions;
-        const serverId = typeof preparedOptions.serverId === 'string' ? preparedOptions.serverId.trim() : null;
 
         const machineTarget = readMachineControlTargetForSession(sessionId);
         const machineId = preferRequestedMachineTarget ? rawMachineId.trim() : machineTarget?.machineId ?? rawMachineId.trim();
@@ -456,8 +469,8 @@ export async function forkSession(options: ForkSessionOptions): Promise<SessionF
             },
             serverId,
             // Fork can block on the provider-side fork plus an accept-then-async
-            // spawn resolution; keep the ack budget above the daemon's resolution
-            // window (90s default) so a slow-but-healthy fork does not trigger
+            // spawn resolution; keep the outer acknowledgement budget above the
+            // canonical spawn budget so a slow-but-healthy fork does not trigger
             // timeout-driven retries.
             timeoutMs: readForkSessionRpcTimeoutMsFromEnv(),
         });
