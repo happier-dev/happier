@@ -172,11 +172,10 @@ function isOpenCodeSseReadIdleTimeoutError(error: unknown): boolean {
 
 export type OpenCodeGlobalEventDelivery = Readonly<{
   /**
-   * `server.connected` is a route-local connection boundary, not a replay cursor. OpenCode
-   * v1.14.41 can publish replayed original bus events after that boundary without attaching replay
-   * provenance, so this client exposes those frames as observation-only. `accepted-live` remains
-   * reserved for a future provider-owned source with immutable live provenance; this client does
-   * not produce it from arrival order, SSE ids, or the connection boundary.
+   * OpenCode's directory-scoped `/event` route installs its instance-bus subscription after its
+   * route-local `server.connected` frame. Frames after that boundary are therefore accepted live;
+   * frames before it are ignored. `untrusted-observation` remains available to compatibility
+   * callers, but this client does not produce it from the instance stream.
    */
   provenance: 'connection-boundary' | 'untrusted-observation' | 'accepted-live';
   connectionGeneration: number;
@@ -213,7 +212,8 @@ function readOpenCodeMcpStatus(response: unknown, serverName: string): OpenCodeM
 }
 
 export type OpenCodeServerRuntimeClient = Readonly<{
-  setDirectoryOverride: (directory: string) => void;
+  /** Returns true when changing directory restarted the directory-scoped event stream. */
+  setDirectoryOverride: (directory: string) => boolean;
   sessionList: () => Promise<unknown[]>;
   sessionCreate: (opts?: { permission?: unknown[] }) => Promise<OpenCodeSession>;
   sessionGet: (opts: { sessionId: string }) => Promise<OpenCodeSession>;
@@ -524,7 +524,13 @@ export async function createOpenCodeServerRuntimeClient(params: Readonly<{
 
   const client: OpenCodeServerRuntimeClient = {
     setDirectoryOverride: (directory) => {
+      const previousDirectory = resolveDirectory();
       directoryOverride = typeof directory === 'string' ? directory : '';
+      if (resolveDirectory() === previousDirectory) return false;
+      // `/event` is directory-scoped. Closing the active stream lets the subscription loop reopen
+      // it with the new directory before the runtime admits another prompt.
+      subscription?.close();
+      return true;
     },
     sessionList: async () => {
       const raw = await fetchJson<unknown>({
@@ -799,27 +805,38 @@ export async function createOpenCodeServerRuntimeClient(params: Readonly<{
           localAbort.signal.addEventListener('abort', onAbort, { once: true });
 
           try {
-            const url = buildUrl(baseUrl, '/global/event');
+            const streamDirectory = resolveDirectory();
+            const url = buildUrl(baseUrl, '/event', { directory: streamDirectory });
             const nextHeaders: Record<string, string> = { ...headers };
-            subscription = await subscribeSseJson<OpenCodeGlobalEvent>({
+            subscription = await subscribeSseJson<unknown>({
               url,
               headers: nextHeaders,
               signal: combinedAbort.signal,
               readIdleTimeoutMs,
               onMessage: (msg) => {
                 if (currentConnectionGeneration !== connectionGeneration) return;
-                const eventType = typeof msg?.payload?.type === 'string' ? msg.payload.type : '';
+                if (!msg || typeof msg !== 'object' || Array.isArray(msg)) return;
+                const rawEvent = msg as Record<string, unknown>;
+                const eventType = typeof rawEvent.type === 'string' ? rawEvent.type : '';
+                if (!eventType) return;
+                const event: OpenCodeGlobalEvent = {
+                  directory: streamDirectory,
+                  payload: {
+                    type: eventType,
+                    properties: rawEvent.properties,
+                  },
+                };
                 if (eventType === 'server.connected') {
                   providerConnectionBoundarySeen = true;
-                  onEvent(msg, {
+                  onEvent(event, {
                     provenance: 'connection-boundary',
                     connectionGeneration: currentConnectionGeneration,
                   });
                   return;
                 }
                 if (!providerConnectionBoundarySeen) return;
-                onEvent(msg, {
-                  provenance: 'untrusted-observation',
+                onEvent(event, {
+                  provenance: 'accepted-live',
                   connectionGeneration: currentConnectionGeneration,
                 });
               },

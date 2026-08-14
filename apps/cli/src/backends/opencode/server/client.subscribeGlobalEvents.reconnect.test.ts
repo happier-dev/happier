@@ -75,7 +75,7 @@ describe('createOpenCodeServerRuntimeClient.subscribeGlobalEvents', () => {
     }
   });
 
-  it('keeps original bus events observation-only even when sync replay emits them after server.connected', async () => {
+  it('uses the instance event stream and accepts only post-boundary events as live', async () => {
     const fetchSpy = vi.fn(async (url: any) => {
       if (String(url).includes('/global/health')) return createOkJsonResponse({ healthy: true, version: 'test' }) as any;
       return createOkJsonResponse({}) as any;
@@ -95,20 +95,16 @@ describe('createOpenCodeServerRuntimeClient.subscribeGlobalEvents', () => {
     subscribeMock
       .mockImplementationOnce(async (params: any) => {
         firstParams = params;
-        // A reconnecting transport may yield buffered/history-shaped frames before OpenCode's
-        // provider-owned boundary. Arrival and an SSE id are not evidence that they are live.
-        params.onMessage({ directory: '/tmp', payload: { type: 'message.part.updated', properties: { part: { id: 'part_history_1', type: 'tool' } } } }, { id: 'evt_history_1' });
-        params.onMessage({ directory: '/tmp', payload: { type: 'server.connected', properties: {} } }, { id: 'evt_boundary_1' });
-        // OpenCode v1.14.41 SyncEvent.replay publishes historical original bus events after the
-        // route-local server.connected boundary. Their original ids do not carry replay provenance.
-        params.onMessage({ directory: '/tmp', payload: { type: 'session.status', properties: { sessionID: 'ses_1', status: { type: 'busy' } } } }, { id: 'evt_original_historical_1' });
+        params.onMessage({ type: 'session.error', properties: { sessionID: 'ses_1', error: { message: 'stale' } } }, { id: 'evt_before_boundary_1' });
+        params.onMessage({ type: 'server.connected', properties: {} }, { id: 'evt_boundary_1' });
+        params.onMessage({ type: 'session.status', properties: { sessionID: 'ses_1', status: { type: 'busy' } } }, { id: 'evt_live_1' });
         return { close: vi.fn(), done: firstDone };
       })
       .mockImplementationOnce(async (params: any) => {
         secondParams = params;
-        params.onMessage({ directory: '/tmp', payload: { type: 'message.part.updated', properties: { part: { id: 'part_history_2', type: 'tool' } } } }, { id: 'evt_history_2' });
-        params.onMessage({ directory: '/tmp', payload: { type: 'server.connected', properties: {} } }, { id: 'evt_boundary_2' });
-        params.onMessage({ directory: '/tmp', payload: { type: 'session.idle', properties: { sessionID: 'ses_1' } } }, { id: 'evt_original_historical_2' });
+        params.onMessage({ type: 'session.error', properties: { sessionID: 'ses_1', error: { message: 'stale' } } }, { id: 'evt_before_boundary_2' });
+        params.onMessage({ type: 'server.connected', properties: {} }, { id: 'evt_boundary_2' });
+        params.onMessage({ type: 'session.idle', properties: { sessionID: 'ses_1' } }, { id: 'evt_live_2' });
         let resolveDone!: () => void;
         const done = new Promise<void>((resolve) => {
           resolveDone = resolve;
@@ -126,25 +122,77 @@ describe('createOpenCodeServerRuntimeClient.subscribeGlobalEvents', () => {
     await client.subscribeGlobalEvents({ signal: controller.signal, onEvent });
 
     expect(subscribeMock).toHaveBeenCalledTimes(1);
+    expect(String(firstParams?.url ?? '')).toContain('/event?directory=%2Ftmp');
+    expect(String(firstParams?.url ?? '')).not.toContain('/global/event');
     expect(firstParams?.headers?.['Last-Event-ID']).toBeUndefined();
     expect(onEvent.mock.calls).toEqual([
       [expect.objectContaining({ payload: expect.objectContaining({ type: 'server.connected' }) }), expect.objectContaining({ provenance: 'connection-boundary' })],
-      [expect.objectContaining({ payload: expect.objectContaining({ type: 'session.status' }) }), expect.objectContaining({ provenance: 'untrusted-observation' })],
+      [expect.objectContaining({ directory: '/tmp', payload: expect.objectContaining({ type: 'session.status' }) }), expect.objectContaining({ provenance: 'accepted-live' })],
     ]);
 
     // Simulate an SSE disconnect.
     rejectFirstDone(new Error('socket hang up'));
 
     await expect.poll(() => subscribeMock.mock.calls.length).toBeGreaterThan(1);
-    // OpenCode's global event endpoint does not define Last-Event-ID replay semantics. Reusing an
-    // opaque transport id would make an eventual replay indistinguishable from current activity.
+    // OpenCode's instance event endpoint does not define Last-Event-ID replay semantics.
     expect(secondParams?.headers?.['Last-Event-ID']).toBeUndefined();
 
     await expect.poll(() => onEvent.mock.calls.length).toBe(4);
     expect(onEvent.mock.calls.slice(2)).toEqual([
       [expect.objectContaining({ payload: expect.objectContaining({ type: 'server.connected' }) }), expect.objectContaining({ provenance: 'connection-boundary' })],
-      [expect.objectContaining({ payload: expect.objectContaining({ type: 'session.idle' }) }), expect.objectContaining({ provenance: 'untrusted-observation' })],
+      [expect.objectContaining({ directory: '/tmp', payload: expect.objectContaining({ type: 'session.idle' }) }), expect.objectContaining({ provenance: 'accepted-live' })],
     ]);
+
+    controller.abort();
+    await client.dispose();
+  });
+
+  it('reopens the instance event stream and requires a fresh boundary when the directory changes', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => createOkJsonResponse({ healthy: true, version: 'test' })) as any);
+
+    const { subscribeSseJson } = await import('./openCodeSse');
+    const subscribeMock = subscribeSseJson as unknown as ReturnType<typeof vi.fn>;
+    let firstClose: ReturnType<typeof vi.fn> | null = null;
+
+    subscribeMock
+      .mockImplementationOnce(async (params: any) => {
+        params.onMessage({ type: 'server.connected', properties: {} });
+        let resolveDone!: () => void;
+        const done = new Promise<void>((resolve) => {
+          resolveDone = resolve;
+        });
+        firstClose = vi.fn(resolveDone);
+        return { close: firstClose, done };
+      })
+      .mockImplementationOnce(async (params: any) => {
+        params.onMessage({ type: 'session.error', properties: { sessionID: 'ses_1', error: { message: 'stale' } } });
+        params.onMessage({ type: 'server.connected', properties: {} });
+        params.onMessage({ type: 'session.idle', properties: { sessionID: 'ses_1' } });
+        let resolveDone!: () => void;
+        const done = new Promise<void>((resolve) => {
+          resolveDone = resolve;
+        });
+        return { close: vi.fn(resolveDone), done };
+      });
+
+    const { createOpenCodeServerRuntimeClient } = await import('./client');
+    const client = await createOpenCodeServerRuntimeClient({ directory: '/tmp/left', messageBuffer: { push: () => {} } as any });
+    const onEvent = vi.fn();
+    const controller = new AbortController();
+    await client.subscribeGlobalEvents({ signal: controller.signal, onEvent });
+
+    expect(client.setDirectoryOverride('/tmp/right')).toBe(true);
+    expect(firstClose).toHaveBeenCalledTimes(1);
+    await expect.poll(() => subscribeMock.mock.calls.length).toBe(2);
+    expect(String(subscribeMock.mock.calls[1]?.[0]?.url ?? '')).toContain('/event?directory=%2Ftmp%2Fright');
+    await expect.poll(() => onEvent.mock.calls.length).toBe(3);
+    expect(onEvent.mock.calls.map(([event, delivery]) => [event.payload.type, event.directory, delivery.provenance])).toEqual([
+      ['server.connected', '/tmp/left', 'connection-boundary'],
+      ['server.connected', '/tmp/right', 'connection-boundary'],
+      ['session.idle', '/tmp/right', 'accepted-live'],
+    ]);
+    expect(client.setDirectoryOverride('/tmp/right')).toBe(false);
+    expect(subscribeMock).toHaveBeenCalledTimes(2);
 
     controller.abort();
     await client.dispose();

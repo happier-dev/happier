@@ -10,7 +10,8 @@
  * in `.cjs`, see `providerCliPathRequiresJavaScriptRuntime`). It implements only the
  * HTTP surface the Happier OpenCode server runtime/client touch:
  *   - GET  /global/health        readiness probe
- *   - GET  /global/event         SSE event stream (OpenCodeGlobalEvent JSON frames)
+ *   - GET  /event                directory-scoped SSE event stream (raw instance events)
+ *   - GET  /global/event         replayable global SSE observation stream
  *   - GET  /global/config
  *   - POST /session              create the (single) fake session
  *   - GET  /session              list sessions
@@ -244,20 +245,24 @@ function globalEvent(directory, type, properties) {
   return { directory: directory || '', payload: { type, properties: properties || {} } };
 }
 
-function messageUpdatedEvent(directory, message) {
-  return globalEvent(directory, 'message.updated', { info: message.info });
+function instanceEvent(type, properties) {
+  return { type, properties: properties || {} };
 }
 
-function messagePartUpdatedEvent(directory, message) {
+function messageUpdatedEvent(message) {
+  return instanceEvent('message.updated', { info: message.info });
+}
+
+function messagePartUpdatedEvent(message) {
   const part = Array.isArray(message.parts) ? message.parts[0] : null;
-  return globalEvent(directory, 'message.part.updated', { part });
+  return instanceEvent('message.part.updated', { part });
 }
 
 // ---------------------------------------------------------------------------
 // SSE subscribers
 // ---------------------------------------------------------------------------
 
-/** @type {Set<import('node:http').ServerResponse>} */
+/** @type {Set<{res: import('node:http').ServerResponse, mode: 'global' | 'instance', directory: string}>} */
 const sseClients = new Set();
 
 function sseWrite(res, event) {
@@ -269,8 +274,17 @@ function sseWrite(res, event) {
   }
 }
 
-function sseBroadcast(event) {
-  for (const res of sseClients) sseWrite(res, event);
+function eventForSubscriber(client, directory, event) {
+  if (client.mode === 'global') return globalEvent(directory, event.type, event.properties);
+  if (client.directory !== directory) return null;
+  return event;
+}
+
+function sseBroadcast(directory, event) {
+  for (const client of sseClients) {
+    const delivered = eventForSubscriber(client, directory, event);
+    if (delivered) sseWrite(client.res, delivered);
+  }
 }
 
 function replayRunningTurnTo(res) {
@@ -279,9 +293,10 @@ function replayRunningTurnTo(res) {
   const directory = state.directory || '';
   for (const message of state.messages) {
     if (!message || typeof message !== 'object') continue;
-    sseWrite(res, messageUpdatedEvent(directory, message));
+    sseWrite(res, globalEvent(directory, 'message.updated', { info: message.info }));
     if (Array.isArray(message.parts) && message.parts.some((p) => p && p.type === 'tool')) {
-      sseWrite(res, messagePartUpdatedEvent(directory, message));
+      const part = Array.isArray(message.parts) ? message.parts[0] : null;
+      sseWrite(res, globalEvent(directory, 'message.part.updated', { part }));
     }
   }
   if (state.sessionId) {
@@ -315,10 +330,10 @@ function emitRunningTurnAndMaybeCrash(body) {
   }));
 
   // Live events to currently-open SSE subscribers.
-  sseBroadcast(messageUpdatedEvent(directory, userMessage));
-  sseBroadcast(messageUpdatedEvent(directory, assistantMessage));
-  sseBroadcast(messagePartUpdatedEvent(directory, assistantMessage));
-  sseBroadcast(globalEvent(directory, 'session.status', { sessionID: sessionId, status: { type: 'busy' } }));
+  sseBroadcast(directory, messageUpdatedEvent(userMessage));
+  sseBroadcast(directory, messageUpdatedEvent(assistantMessage));
+  sseBroadcast(directory, messagePartUpdatedEvent(assistantMessage));
+  sseBroadcast(directory, instanceEvent('session.status', { sessionID: sessionId, status: { type: 'busy' } }));
 
   logEvent({ type: 'running_tool_emitted', sessionId, tool: toolName, teardownMode });
 
@@ -396,7 +411,7 @@ async function handleRequest(req, res) {
   const pathname = url.pathname;
   const directory = url.searchParams.get('directory') || '';
 
-  // --- Global ---------------------------------------------------------------
+  // --- Global and instance event streams -----------------------------------
   if (pathname === '/global/health') {
     sendJson(res, 200, { healthy: true, version: `fake-opencode-gen${readState().generation}` });
     return;
@@ -405,18 +420,22 @@ async function handleRequest(req, res) {
     sendJson(res, 200, { model: 'fake/fake-model' });
     return;
   }
-  if (pathname === '/global/event') {
+  if (pathname === '/global/event' || pathname === '/event') {
+    const mode = pathname === '/global/event' ? 'global' : 'instance';
     res.writeHead(200, {
       'content-type': 'text/event-stream',
       'cache-control': 'no-cache',
       connection: 'keep-alive',
     });
-    sseClients.add(res);
-    logEvent({ type: 'sse_open', generation: readState().generation });
-    // Initial connect frame + replay of any in-flight running tool (so a replacement
-    // process re-surfaces the orphaned tool to a reconnecting client).
-    sseWrite(res, globalEvent(directory, 'server.connected', {}));
-    replayRunningTurnTo(res);
+    const client = { res, mode, directory };
+    sseClients.add(client);
+    logEvent({ type: 'sse_open', generation: readState().generation, mode, directory });
+    // The instance stream boundary precedes only future instance-bus events. Global observation
+    // retains replay behavior for external-session consumers and generation-wait test helpers.
+    sseWrite(res, mode === 'global'
+      ? globalEvent(directory, 'server.connected', {})
+      : instanceEvent('server.connected', {}));
+    if (mode === 'global') replayRunningTurnTo(res);
     const heartbeat = setInterval(() => {
       try {
         res.write(': ping\n\n');
@@ -427,7 +446,7 @@ async function handleRequest(req, res) {
     heartbeat.unref?.();
     const cleanup = () => {
       clearInterval(heartbeat);
-      sseClients.delete(res);
+      sseClients.delete(client);
     };
     req.on('close', cleanup);
     req.on('error', cleanup);

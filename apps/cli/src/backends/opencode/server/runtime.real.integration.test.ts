@@ -297,7 +297,7 @@ function createFakeSession() {
 
 describe('OpenCode server runtime (real integration)', () => {
   it.skipIf(!shouldRunOpenCodeServerIntegration())(
-    'starts a managed server and receives global SSE events (no LLM calls)',
+    'starts a managed server and receives instance SSE events (no LLM calls)',
     async () => {
       const client = await createOpenCodeServerRuntimeClient({
         directory: process.cwd(),

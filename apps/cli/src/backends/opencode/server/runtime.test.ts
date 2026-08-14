@@ -159,7 +159,9 @@ function createFakeClient(opts: Readonly<{
     sessionTodo: vi.fn(async () => ([] as unknown[])),
     sessionStatusList: vi.fn(async () => ({ ses_1: { type: statusType } })),
     setDirectoryOverride: vi.fn((next: string) => {
+      const changed = directoryOverride !== null && directoryOverride !== next;
       directoryOverride = next;
+      return changed;
     }),
     globalConfigGet: vi.fn(async () => ({ model: 'openai/gpt-5.2' })),
     agentsList: vi.fn(async () => ([{ name: 'build', description: 'Build agent' }])),

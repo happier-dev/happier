@@ -3991,7 +3991,9 @@ export function createOpenCodeServerRuntime(params: {
         const sessionDirectory = normalizeString(existing.directory).trim();
         if (sessionDirectory) {
           try {
-            c.setDirectoryOverride(sessionDirectory);
+            if (c.setDirectoryOverride(sessionDirectory)) {
+              resetServerConnectedReadiness();
+            }
           } catch {
             // non-fatal
           }
@@ -4056,7 +4058,9 @@ export function createOpenCodeServerRuntime(params: {
       const createdDirectory = normalizeString(created.directory).trim();
       if (createdDirectory) {
         try {
-          c.setDirectoryOverride(createdDirectory);
+          if (c.setDirectoryOverride(createdDirectory)) {
+            resetServerConnectedReadiness();
+          }
         } catch {
           // non-fatal
         }
