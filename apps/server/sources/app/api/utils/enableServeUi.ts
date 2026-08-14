@@ -195,6 +195,14 @@ export function enableServeUi(app: AnyFastifyInstance, ui: UiConfig) {
         return reply.send(html);
     }
 
+    app.get('/.well-known/happier-ui-deployment', async (_request, reply) => {
+        reply.header('cache-control', 'no-store');
+        if (!ui.deploymentId) {
+            return reply.code(204).send();
+        }
+        return reply.send({ deploymentId: ui.deploymentId });
+    });
+
     if (ui.mountRoot) {
         app.get('/', async (_request, reply) => await sendIndexHtml(reply));
         // SPA deep links (e.g. /terminal/connect) should render the same index.html bundle.

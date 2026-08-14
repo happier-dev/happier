@@ -26,6 +26,36 @@ async function withApp(run: (app: ReturnType<typeof Fastify>) => Promise<void>) 
 }
 
 describe('enableServeUi (mountRoot)', () => {
+  it('serves an opaque no-store deployment identity and stays silent when it is absent', async () => {
+    await withTempDir('happier-ui-deployment-', async (dir) => {
+      await writeFile(join(dir, 'index.html'), '<!doctype html><html><body>ok</body></html>\n', 'utf-8');
+
+      await withApp(async (app) => {
+        enableServeUi(app, {
+          dir,
+          prefix: '/',
+          mountRoot: true,
+          required: false,
+          deploymentId: 'j6mhK5tE-2mV_8YwQ9fZaA',
+        });
+        await app.ready();
+
+        const res = await app.inject({ method: 'GET', url: '/.well-known/happier-ui-deployment' });
+        expect(res.statusCode).toBe(200);
+        expect(res.headers['cache-control']).toBe('no-store');
+        expect(res.json()).toEqual({ deploymentId: 'j6mhK5tE-2mV_8YwQ9fZaA' });
+      });
+
+      await withApp(async (app) => {
+        enableServeUi(app, { dir, prefix: '/', mountRoot: true, required: false });
+        await app.ready();
+        const res = await app.inject({ method: 'GET', url: '/.well-known/happier-ui-deployment' });
+        expect(res.statusCode).toBe(204);
+        expect(res.body).toBe('');
+      });
+    });
+  });
+
   it('serves index.html for SPA routes when mounted at root', async () => {
     await withTempDir('happier-ui-root-', async (dir) => {
       await writeFile(join(dir, 'index.html'), '<!doctype html><html><body>ok</body></html>\n', 'utf-8');

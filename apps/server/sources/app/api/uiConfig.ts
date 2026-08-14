@@ -2,6 +2,7 @@ import { parseBooleanEnv } from "../../config/env";
 
 export type UiConfig = {
     dir: string | null;
+    deploymentId?: string | null;
     /**
      * UI mount prefix for route registration (no trailing slash).
      * - "/" means "mounted at root"
@@ -31,6 +32,10 @@ export function resolveUiConfig(env: NodeJS.ProcessEnv = process.env): UiConfig 
 
     const requiredRaw = env.HAPPIER_SERVER_UI_REQUIRED ?? env.HAPPIER_SERVER_LIGHT_UI_REQUIRED;
     const required = parseBooleanEnv(requiredRaw, false);
+    const deploymentIdRaw = String(env.HAPPIER_SERVER_UI_DEPLOYMENT_ID ?? '').trim();
+    const deploymentId = /^[A-Za-z0-9_-]{16,128}$/.test(deploymentIdRaw)
+        ? deploymentIdRaw
+        : null;
 
-    return { dir, prefix, mountRoot, required };
+    return { dir, prefix, mountRoot, required, deploymentId };
 }

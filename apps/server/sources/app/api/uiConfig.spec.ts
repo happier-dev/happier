@@ -37,6 +37,17 @@ describe('resolveUiConfig', () => {
         expect(cfg.required).toBe(true);
     });
 
+    it('accepts only opaque UI deployment identifiers', () => {
+        expect(resolveUiConfig({
+            HAPPIER_SERVER_UI_DIR: '/tmp/ui',
+            HAPPIER_SERVER_UI_DEPLOYMENT_ID: 'j6mhK5tE-2mV_8YwQ9fZaA',
+        }).deploymentId).toBe('j6mhK5tE-2mV_8YwQ9fZaA');
+        expect(resolveUiConfig({
+            HAPPIER_SERVER_UI_DIR: '/tmp/ui',
+            HAPPIER_SERVER_UI_DEPLOYMENT_ID: 'version=0.2.10-dev.52',
+        }).deploymentId).toBeNull();
+    });
+
     it('treats HAPPIER_SERVER_UI_REQUIRED=false as false', () => {
         const cfg = resolveUiConfig({ HAPPIER_SERVER_UI_DIR: '/tmp/ui', HAPPIER_SERVER_UI_REQUIRED: 'false' });
         expect(cfg.required).toBe(false);
