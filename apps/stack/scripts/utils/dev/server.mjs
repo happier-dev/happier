@@ -336,7 +336,7 @@ async function assertServerPortOwnedBySpawnedProcessGroup({
   );
 }
 
-async function isServerPortOwnedByProcessGroup({
+async function resolveServerPortListenerPidInProcessGroup({
   serverPort,
   rootPid,
   listListenPidsImpl = listListenPids,
@@ -347,7 +347,7 @@ async function isServerPortOwnedByProcessGroup({
   listenerOwnershipRetryDelayMs,
 }) {
   try {
-    await assertServerPortOwnedBySpawnedProcessGroup({
+    return await assertServerPortOwnedBySpawnedProcessGroup({
       serverPort,
       spawnedPid: rootPid,
       listListenPidsImpl,
@@ -357,10 +357,9 @@ async function isServerPortOwnedByProcessGroup({
       listenerOwnershipTimeoutMs,
       listenerOwnershipRetryDelayMs,
     });
-    return true;
   } catch (error) {
     if (error?.code === 'ELISTENERDISCOVERYINCONCLUSIVE') throw error;
-    return false;
+    return null;
   }
 }
 
@@ -467,18 +466,18 @@ export async function stopStackOwnedServerForRestart(
   if (pid > 1 && isPidAliveImpl(pid)) {
     const owned = await isPidOwnedByStackImpl(pid, { stackName, envPath }).catch(() => false);
     recordedPidAliveAndOwned = owned;
-    if (
-      owned &&
-      (await isServerPortOwnedByProcessGroup({
+    if (owned) {
+      const listenerPid = await resolveServerPortListenerPidInProcessGroup({
         serverPort,
         rootPid: pid,
         listListenPidsImpl,
         listListenPidsWithStatusImpl,
         getProcessGroupIdImpl,
         listenerObservationScope: observationScope,
-      }))
-    ) {
-      stopPid = pid;
+      });
+      if (Number.isFinite(Number(listenerPid)) && Number(listenerPid) > 1) {
+        stopPid = Number(listenerPid);
+      }
     }
   }
 
@@ -631,6 +630,7 @@ async function waitForChildExit(child, timeoutMs) {
 async function killServerProcessGroupForPlannedReload({
   child,
   pid,
+  terminationPid = pid,
   stackName,
   envPath,
   serverEnv,
@@ -641,7 +641,7 @@ async function killServerProcessGroupForPlannedReload({
   let result = null;
   try {
     onTerminationRequested?.();
-    result = await killProcessGroupOwnedByStackImpl(pid, {
+    result = await killProcessGroupOwnedByStackImpl(terminationPid, {
       stackName,
       envPath,
       label: 'server',
@@ -1486,20 +1486,15 @@ export function createDevServerReloadExecutor({
       listListenPidsWithStatusImpl,
       probeTcpPortBindingImpl,
     });
-    let ownsCurrentListener = false;
-    try {
-      await assertServerPortOwnedBySpawnedProcessGroup({
-        serverPort: oldBackendPort,
-        spawnedPid: pid,
-        listListenPidsImpl,
-        listListenPidsWithStatusImpl,
-        getProcessGroupIdImpl,
-        listenerObservationScope: precheckObservationScope,
-      });
-      ownsCurrentListener = true;
-    } catch (error) {
-      if (error?.code === 'ELISTENERDISCOVERYINCONCLUSIVE') throw error;
-    }
+    const currentListenerPid = await resolveServerPortListenerPidInProcessGroup({
+      serverPort: oldBackendPort,
+      rootPid: pid,
+      listListenPidsImpl,
+      listListenPidsWithStatusImpl,
+      getProcessGroupIdImpl,
+      listenerObservationScope: precheckObservationScope,
+    });
+    const ownsCurrentListener = Number.isFinite(Number(currentListenerPid)) && Number(currentListenerPid) > 1;
     if (!ownsCurrentListener) {
       const free = await isServerPortProvenFree({
         serverPort: oldBackendPort,
@@ -1543,6 +1538,7 @@ export function createDevServerReloadExecutor({
       const killResult = await killServerProcessGroupForPlannedReload({
         child: currentServerProc,
         pid,
+        terminationPid: Number(currentListenerPid),
         stackName,
         envPath,
         serverEnv,
@@ -1997,7 +1993,7 @@ export function createDevServerReloadExecutor({
       listListenPidsWithStatusImpl,
       probeTcpPortBindingImpl,
     });
-    const ownsCurrentListener = await isServerPortOwnedByProcessGroup({
+    const currentListenerPid = await resolveServerPortListenerPidInProcessGroup({
       serverPort,
       rootPid: pid,
       listListenPidsImpl,
@@ -2007,12 +2003,14 @@ export function createDevServerReloadExecutor({
       listenerOwnershipRetryDelayMs,
       listenerObservationScope: precheckObservationScope,
     });
+    const ownsCurrentListener = Number.isFinite(Number(currentListenerPid)) && Number(currentListenerPid) > 1;
     if (typeof context.revalidateGeneration === 'function' && !await context.revalidateGeneration()) return false;
     if (ownsCurrentListener) {
       disarmActiveChildExit(currentServerProc);
       const killResult = await killServerProcessGroupForPlannedReload({
         child: currentServerProc,
         pid,
+        terminationPid: Number(currentListenerPid),
         stackName,
         envPath,
         serverEnv,
