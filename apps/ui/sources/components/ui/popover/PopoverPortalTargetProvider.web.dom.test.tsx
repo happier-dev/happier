@@ -3,8 +3,10 @@
  */
 import React from 'react';
 import { act } from 'react';
+import { createPortal } from 'react-dom';
 import { createRoot } from 'react-dom/client';
 import { describe, expect, it, vi } from 'vitest';
+import { Drawer } from 'vaul';
 
 import { installPopoverCommonModuleMocks } from './popoverTestHelpers';
 
@@ -26,6 +28,76 @@ installPopoverCommonModuleMocks({
 const safeAreaInsets = { top: 0, right: 0, bottom: 0, left: 0 };
 
 describe('PopoverPortalTargetProvider (web dom)', () => {
+    it('keeps portaled interactions inside an Expo Router drawer without disabling outside dismissal', async () => {
+        const { PopoverPortalTargetProvider } = await import('./PopoverPortalTargetProvider');
+        const { useModalPortalTarget } = await import('@/modal/portal/ModalPortalTarget');
+        const openChanges: boolean[] = [];
+        const selections: string[] = [];
+
+        function PortaledChoice() {
+            const target = useModalPortalTarget();
+            if (!target) return null;
+
+            return createPortal(
+                <button
+                    data-testid="portaled-choice"
+                    onClick={() => selections.push('selected')}
+                >
+                    Choice
+                </button>,
+                target,
+            );
+        }
+
+        const container = document.createElement('div');
+        document.body.appendChild(container);
+        const root = createRoot(container);
+        try {
+            await act(async () => {
+                root.render(
+                    <Drawer.Root open onOpenChange={(open) => openChanges.push(open)}>
+                        <Drawer.Portal>
+                            <Drawer.Overlay data-testid="drawer-overlay" />
+                            <Drawer.Content>
+                                <Drawer.Title>New session</Drawer.Title>
+                                <Drawer.Description>Configure a session</Drawer.Description>
+                                <PopoverPortalTargetProvider>
+                                    <PortaledChoice />
+                                </PopoverPortalTargetProvider>
+                            </Drawer.Content>
+                        </Drawer.Portal>
+                    </Drawer.Root>,
+                );
+            });
+            await act(async () => {
+                await new Promise((resolve) => setTimeout(resolve, 0));
+            });
+
+            const choice = document.querySelector('[data-testid="portaled-choice"]');
+            expect(choice).toBeInstanceOf(HTMLButtonElement);
+
+            await act(async () => {
+                choice?.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }));
+                choice?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+            });
+
+            expect(selections).toEqual(['selected']);
+            expect(openChanges).not.toContain(false);
+
+            await act(async () => {
+                document.querySelector('[data-testid="drawer-overlay"]')
+                    ?.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }));
+            });
+
+            expect(openChanges).toContain(false);
+        } finally {
+            await act(async () => {
+                root.unmount();
+            });
+            container.remove();
+        }
+    });
+
     it('does not churn the web modal portal target across parent re-renders', async () => {
         const { PopoverPortalTargetProvider } = await import('./PopoverPortalTargetProvider');
         const { useModalPortalTarget } = await import('@/modal/portal/ModalPortalTarget');
