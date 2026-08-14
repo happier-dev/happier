@@ -45,7 +45,7 @@ Do not create a separate truth/artifact matrix when the plan's intent, target-st
 
 Include a constraint only when it excludes or materially changes a plausible implementation. Convert vague qualities such as “robust,” “clean,” “premium,” or “scalable” into an observable contract, deciding principle, or acceptance signal; otherwise omit the decorative wording.
 
-For every mechanism-sized topology or reliability decision, name the approved requirement, constitution rule, external contract, reproduced failure, or reachable derived risk it serves. Do not manufacture coordination, exactly-once semantics, fencing, generations, new identities, timers, cross-restart durability, or similar machinery as generic hardening; apply the deletion test and remove the mechanism when its requirement disappears.
+Do not promote an architectural possibility, speculative future consumer, generalized reuse opportunity, another proposed mechanism, or unsupported robustness/scalability target into a requirement. For every mechanism-sized topology or reliability decision, identify the approved outcome, constitution rule, external contract, reproduced failure, or reachable derived risk at the root of its justification. Do not manufacture coordination, exactly-once semantics, fencing, generations, new identities, timers, cross-restart durability, or similar machinery as generic hardening; remove the whole dependent mechanism chain when its root requirement disappears.
 
 ## 3. Investigate the current system
 
@@ -63,7 +63,9 @@ Search broadly enough to establish these facts, then stop. Do not turn optional 
 
 ## 4. Select the smallest coherent target design
 
-Compare plausible designs when the work changes ownership, crosses packages, introduces persistence/concurrency, changes a public contract, or adds a protocol, state machine, registry, table, lease, credential, generation, gate, or parallel path. For each mechanism, name the reproduced failure or live consumer it serves and apply the deletion test.
+Compare plausible designs when the work changes ownership, crosses packages, introduces persistence/concurrency, changes a public contract, or adds a protocol, state machine, registry, table, lease, credential, generation, gate, or parallel path. For each mechanism, trace its justification through any proposed dependencies to an approved outcome, required invariant, released or external contract, reproduced failure, or reachable material risk. Apply the deletion test recursively: remove the mechanism and everything that exists only to support it, then name the required outcome that fails. Another proposed mechanism, future consumer, generalized reuse, or architectural completeness is not a terminal justification.
+
+Treat every new limit, quota, timeout, retry budget, or guard as product behavior. Name the resource or contract it protects, derive it from that boundary rather than a nearby number, and define what happens when it fires; preserve useful valid data when safe rather than turning a safety backstop into an ordinary product filter.
 
 Apply scope-preserving solution economy only after fixing the complete target boundary. For a mechanism-sized decision, consider whether the outcome can be satisfied by adding nothing, correcting or consolidating the canonical owner, using the language/standard library, using a platform-native capability that satisfies every affected surface, using an existing package-owned dependency, or finally adding a new custom mechanism. Choose the earliest option that satisfies the complete contract and minimizes total lifetime complexity; never use this ordering to reduce required behavior, migration, removals, compatibility, UX, security, accessibility, platform support, testing, or validation.
 
@@ -114,7 +116,7 @@ Before presenting a draft, attack it once at the plan-design phase:
 
 - re-derive whether it solves the real intent;
 - look for missing consumers, dependencies, removals, failure/recovery behavior, and half-wired verticals;
-- test whether any proposed mechanism survives the deletion test;
+- apply the recursive deletion test to each proposed mechanism, tracing through dependent machinery to the required outcome and checking the consequence, observability, recovery, and reversibility without it;
 - check split-brains, wrong-layer ownership, compatibility provenance, test value, and scope creep;
 - ensure every required outcome has a deciding check and no task can be marked complete from code presence alone.
 
@@ -150,7 +152,7 @@ Never use `SUPERSEDED_BY_EVIDENCE`: evidence may challenge the plan but does not
 
 ## 9. Amend rather than silently deviate
 
-If primary evidence shows an approved requirement is unsafe, contradictory, impossible, based on a materially changed contract, or unable to serve the approved intent:
+If primary evidence shows an approved requirement is unsafe, contradictory, impossible, based on a materially changed contract, unable to serve the approved intent, or requires a materially different topology, canonical owner, external dependency, compatibility transition, or product tradeoff than the approved plan disclosed, pause for amendment. Increased effort alone is not a material amendment.
 
 1. pause the affected work;
 2. record the exact evidence and affected requirements;

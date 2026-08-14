@@ -14,10 +14,12 @@ Do not merge distinct plan activities:
 
 Only in pre-approval plan review, re-derive the user-visible problem and desired invariant independently of the draft's chosen mechanism. For every proposed protocol, state machine, table, registry, lease, credential, generation, feature gate, or parallel path, require:
 
-- the reproduced defect, reachable failure, or named live consumer it serves;
+- the complete justification chain through dependent mechanisms to an approved outcome, required invariant, released or external contract, reproduced failure, or reachable material risk—not another proposed mechanism, future consumer, generalized reuse, or architectural completeness;
+- the reachable consequence without the mechanism, authority and state affected, observability, existing recovery, and reversibility;
 - why the current canonical owner cannot enforce the contract more directly;
 - the producer, entry point, activation step, and composed live recipe;
-- the deletion test and the old/parallel paths that must contract;
+- the recursive deletion result and the old, parallel, or dependent paths that must contract;
+- for each new limit, quota, timeout, retry budget, or guard, the actual resource or contract basis and what happens when it fires;
 - any released/persistence compatibility direction that genuinely requires staged coexistence.
 
 Treat a refactor-behind-a-gate as a split-brain candidate under `docs/feature-gating.md`, not as automatic rollout safety. Resolve material design flaws before approval rather than delegating architecture adjudication to implementation agents.
