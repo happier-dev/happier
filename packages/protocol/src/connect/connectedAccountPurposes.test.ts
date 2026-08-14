@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  type ConnectedAccountMaterializationRequest,
+  ConnectedAccountMaterializationRequestSchema,
   type PluginConnectedAccountMaterializationKind,
   ConnectedAccountPurposeDeclarationV1Schema,
   ConnectedAccountPurposeDeclarationsV1Schema,
@@ -8,6 +10,87 @@ import {
 } from './connectedAccountPurposes.js';
 
 describe('connected-account consumer purposes', () => {
+  it('owns the strict bounded materialization request contract for every branch', () => {
+    expect(ConnectedAccountMaterializationRequestSchema.parse({
+      kind: 'httpHeaders',
+      origin: 'https://api.example.com',
+      headerNames: ['Authorization', 'X-Account-Id'],
+    })).toEqual({
+      kind: 'httpHeaders',
+      origin: 'https://api.example.com',
+      headerNames: ['authorization', 'x-account-id'],
+    });
+    expect(ConnectedAccountMaterializationRequestSchema.parse({
+      kind: 'environment',
+      keys: ['ACCESS_TOKEN'],
+    })).toEqual({
+      kind: 'environment',
+      keys: ['ACCESS_TOKEN'],
+    });
+    expect(ConnectedAccountMaterializationRequestSchema.parse({
+      kind: 'files',
+      fileIds: ['service-account'],
+    })).toEqual({
+      kind: 'files',
+      fileIds: ['service-account'],
+    });
+
+    for (const request of [
+      { kind: 'httpHeaders', origin: 'https://api.example.com', headerNames: ['authorization'], extra: true },
+      { kind: 'environment', keys: ['ACCESS_TOKEN'], extra: true },
+      { kind: 'files', fileIds: ['service-account'], extra: true },
+    ]) {
+      expect(ConnectedAccountMaterializationRequestSchema.safeParse(request).success).toBe(false);
+    }
+  });
+
+  it('accepts only canonical HTTPS origins and unique bounded destinations', () => {
+    for (const origin of [
+      'http://api.example.com',
+      'https://user:secret@api.example.com',
+      'https://api.example.com/path',
+      'https://api.example.com?query=1',
+      'https://api.example.com#fragment',
+      'https://api.example.com/',
+      `https://${'a'.repeat(2_048)}.example.com`,
+    ]) {
+      expect(ConnectedAccountMaterializationRequestSchema.safeParse({
+        kind: 'httpHeaders',
+        origin,
+        headerNames: ['authorization'],
+      }).success).toBe(false);
+    }
+
+    expect(ConnectedAccountMaterializationRequestSchema.safeParse({
+      kind: 'httpHeaders',
+      origin: 'https://api.example.com',
+      headerNames: ['Authorization', 'authorization'],
+    }).success).toBe(false);
+    expect(ConnectedAccountMaterializationRequestSchema.safeParse({
+      kind: 'environment',
+      keys: ['ACCESS_TOKEN', 'ACCESS_TOKEN'],
+    }).success).toBe(false);
+    expect(ConnectedAccountMaterializationRequestSchema.safeParse({
+      kind: 'files',
+      fileIds: ['service-account', 'service-account'],
+    }).success).toBe(false);
+
+    const destinations = Array.from({ length: 33 }, (_, index) => `DESTINATION_${index}`);
+    for (const request of [
+      { kind: 'httpHeaders', origin: 'https://api.example.com', headerNames: destinations },
+      { kind: 'environment', keys: destinations },
+      { kind: 'files', fileIds: destinations },
+    ] satisfies readonly ConnectedAccountMaterializationRequest[]) {
+      const destinationsAtLimit = request.kind === 'httpHeaders'
+        ? { ...request, headerNames: request.headerNames.slice(0, 32) }
+        : request.kind === 'environment'
+          ? { ...request, keys: request.keys.slice(0, 32) }
+          : { ...request, fileIds: request.fileIds.slice(0, 32) };
+      expect(ConnectedAccountMaterializationRequestSchema.safeParse(destinationsAtLimit).success).toBe(true);
+      expect(ConnectedAccountMaterializationRequestSchema.safeParse(request).success).toBe(false);
+    }
+  });
+
   it('keeps declarations strict and permits local or qualified service references', () => {
     expect(ConnectedAccountPurposeDeclarationV1Schema.parse({
       purpose: 'primary',

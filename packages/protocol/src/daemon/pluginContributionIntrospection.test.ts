@@ -205,4 +205,33 @@ describe('plugin contribution introspection wire contract', () => {
       activation: { state: 'dormant' },
     }).success).toBe(false);
   });
+
+  it('rejects diagnostic and lifecycle reason text beyond the wire UTF-8 bound', () => {
+    const oversized = '🙂'.repeat(513);
+    const record = {
+      version: 1,
+      id: 'diag-oversized',
+      data: { code: 'broken', severity: 'error', message: oversized },
+      plugin: { id: 'acme.example', version: '1.0.0', source: 'development' },
+      stage: 'activation',
+      host: 'cli',
+      platform: 'darwin',
+      occurredAtMs: 1,
+      resolution: { state: 'current' },
+    } as const;
+
+    expect(PluginDiagnosticRecordV1Schema.safeParse(record).success).toBe(false);
+    expect(PluginContributionLifecycleRecordV1Schema.safeParse({
+      version: 1,
+      contribution,
+      stability: 'stable',
+      progression: { declared: true, normalized: true, merged: true },
+      registration: { requirement: 'required', state: 'unavailable', reason: oversized },
+      activation: { state: 'dormant' },
+      projection: { state: 'projected' },
+      consumer: 'test-consumer',
+      platforms: ['cli'],
+      diagnostics: [],
+    }).success).toBe(false);
+  });
 });

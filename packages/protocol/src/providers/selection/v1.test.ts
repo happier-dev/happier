@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   ProviderBoundModelRefSchema,
+  SessionActiveModelSelectionV1Schema,
   SessionAppliedModelV1Schema,
   SessionModelSelectionV1Schema,
   ModelVisibilityRefV1Schema,
@@ -20,8 +21,363 @@ import {
   serializeModelVisibilityRefV1,
   withSessionMessageModelSelectionV1,
 } from './v1.js';
+import { readExactSessionActiveModelSelectionV1 } from './activeSelectionValidationV1.js';
+import { createProviderBindingSecurityFingerprintV1 } from '../securityFingerprintsV1.js';
 
 describe('provider model selection contracts', () => {
+  it('joins active model proof to the exact current runner and rejects fallback or mismatched binding facts', () => {
+    const runtime = {
+      v: 1,
+      sessionId: 'session-1',
+      machineId: 'machine-1',
+      daemonId: 'daemon-1',
+      observedAtMs: 1,
+      runner: {
+        pid: 123,
+        processStartTimeMs: 1_000,
+        runtimeId: 'runner-generation-1',
+        cliVersion: '1.0.0',
+        entrypointVersion: '1.0.0',
+        processCommandHash: 'command-hash',
+        entrypointSource: 'launch_spec',
+        startedBy: 'daemon',
+        startingMode: 'remote',
+      },
+      daemon: {
+        cliVersion: '1.0.0',
+        startedWithCliVersion: '1.0.0',
+        currentEntrypointVersion: 'runner-generation-1',
+        currentEntrypointSource: 'launch_spec',
+      },
+      versionState: 'current',
+      statusSource: 'daemon_tracking',
+      plannedRestart: {
+        supported: true,
+        eligible: true,
+        disabledReason: null,
+      },
+    } as const;
+    const activeSelectionV1 = {
+      v: 1,
+      selection: {
+        agentTargetKey: 'backend:qwen',
+        providerConnectionId: null,
+        modelId: 'native-model',
+      },
+      source: 'runtime_apply',
+      runner: {
+        pid: 123,
+        processStartTimeMs: 1_000,
+      },
+    } as const;
+    const metadata = {
+      sessionRunnerRuntimeV1: runtime,
+      sessionModelsV1: {
+        v: 1,
+        agentId: 'qwen',
+        updatedAt: 1,
+        currentModelId: 'native-model',
+        availableModels: [{ id: 'native-model', name: 'Native model' }],
+        activeSelectionV1,
+      },
+    };
+
+    expect(readExactSessionActiveModelSelectionV1({
+      metadata,
+      agentId: 'qwen',
+      agentTargetKey: 'backend:qwen',
+      currentRunnerProcessIdentity: {
+        pid: 123,
+        processStartTimeMs: 1_000,
+      },
+    })).toEqual(activeSelectionV1);
+    const {
+      sessionRunnerRuntimeV1: _unusedRuntimeStatus,
+      ...metadataWithoutRuntimeStatus
+    } = metadata;
+    expect(readExactSessionActiveModelSelectionV1({
+      metadata: metadataWithoutRuntimeStatus,
+      agentId: 'qwen',
+      agentTargetKey: 'backend:qwen',
+      currentRunnerProcessIdentity: {
+        pid: 123,
+        processStartTimeMs: 1_000,
+      },
+    })).toEqual(activeSelectionV1);
+    expect(readExactSessionActiveModelSelectionV1({
+      metadata,
+      agentId: 'qwen',
+      agentTargetKey: 'backend:qwen',
+      currentRunnerProcessIdentity: null,
+    })).toBeNull();
+    expect(readExactSessionActiveModelSelectionV1({
+      metadata: {
+        ...metadata,
+        sessionRunnerRuntimeV1: {
+          ...runtime,
+          daemonId: 'replacement-daemon',
+        },
+      },
+      agentId: 'qwen',
+      agentTargetKey: 'backend:qwen',
+      currentRunnerProcessIdentity: {
+        pid: 123,
+        processStartTimeMs: 1_000,
+      },
+    })).toEqual(activeSelectionV1);
+    expect(readExactSessionActiveModelSelectionV1({
+      metadata: {
+        ...metadata,
+        sessionRunnerRuntimeV1: {
+          ...runtime,
+          runner: {
+            ...runtime.runner,
+            runtimeId: 'runner-generation-2',
+          },
+        },
+      },
+      agentId: 'qwen',
+      agentTargetKey: 'backend:qwen',
+      currentRunnerProcessIdentity: {
+        pid: 123,
+        processStartTimeMs: 1_000,
+      },
+    })).toEqual(activeSelectionV1);
+    expect(readExactSessionActiveModelSelectionV1({
+      metadata: {
+        ...metadata,
+        sessionRunnerRuntimeV1: {
+          ...runtime,
+          runner: {
+            ...runtime.runner,
+            pid: 124,
+            processStartTimeMs: 2_000,
+          },
+        },
+      },
+      agentId: 'qwen',
+      agentTargetKey: 'backend:qwen',
+      currentRunnerProcessIdentity: {
+        pid: 124,
+        processStartTimeMs: 2_000,
+      },
+    })).toBeNull();
+    expect(readExactSessionActiveModelSelectionV1({
+      metadata: {
+        ...metadata,
+        providerBindingV1: {
+          connectionId: 'pc_wrong',
+        },
+      },
+      agentId: 'qwen',
+      agentTargetKey: 'backend:qwen',
+      currentRunnerProcessIdentity: {
+        pid: 123,
+        processStartTimeMs: 1_000,
+      },
+    })).toBeNull();
+    expect(readExactSessionActiveModelSelectionV1({
+      metadata: {
+        ...metadata,
+        sessionModelsV1: {
+          ...metadata.sessionModelsV1,
+          activeSelectionV1: undefined,
+        },
+      },
+      agentId: 'qwen',
+      agentTargetKey: 'backend:qwen',
+      currentRunnerProcessIdentity: {
+        pid: 123,
+        processStartTimeMs: 1_000,
+      },
+    })).toBeNull();
+  });
+
+  it('accepts Provider-bound active proof only when every persisted runtime-basis dimension is coherent', () => {
+    const runtimeBindingBasis = {
+      v: 1,
+      deployment: { kind: 'external' },
+      agentTargetKey: 'backend:codex',
+      connectionId: 'pc_work',
+      contributionKey: 'plugin.openrouter/openrouter',
+      endpoint: {
+        endpointTemplateId: 'responses',
+        normalizedUrl: 'https://provider.example/v1',
+        protocol: 'openai-responses',
+        publicHeaders: { 'x-provider': 'openrouter' },
+      },
+      runtimeCredentialTransport: {
+        id: 'runtime-bearer',
+        protocols: ['openai-responses'],
+        uses: ['runtime'],
+        destination: {
+          kind: 'httpHeader',
+          name: 'authorization',
+          format: 'bearer',
+        },
+      },
+      prepared: {
+        v: 1,
+        materialization: 'engineConfig',
+        adapterBindingKey: 'openrouter',
+      },
+      adapterVersion: 1,
+      credentialAuthorization: {
+        connectionSecurityFingerprint: 'connection-security-v1',
+        grantFingerprint: 'grant-v1',
+        selectedSecretBindingId: 'binding-v1',
+        selectedSecretRecordFingerprint: 'record-v1',
+      },
+      agentSupport: {
+        acceptsProtocols: ['openai-responses'],
+        required: { streaming: true },
+        credentialSupport: {
+          supportsNoAuth: false,
+          apiKeyTransports: [{
+            protocol: 'openai-responses',
+            destination: {
+              kind: 'httpHeader',
+              names: ['authorization'],
+              formats: ['bearer'],
+            },
+          }],
+        },
+        authIsolation: {
+          suppressConnectedServiceIds: [],
+          ownedEnvKeys: ['OPENAI_API_KEY'],
+        },
+        materialization: 'engineConfig',
+        applyPolicy: 'live',
+        supportsFreeformModelIds: true,
+      },
+    } as const;
+    const model = {
+      id: 'openrouter/model',
+      name: 'Provider model',
+      capabilities: { reasoningControls: 'supported' as const },
+    };
+    const bindingSecurityFingerprint =
+      createProviderBindingSecurityFingerprintV1({
+        agentTargetKey: runtimeBindingBasis.agentTargetKey,
+        connectionId: runtimeBindingBasis.connectionId,
+        modelId: model.id,
+        modelCapabilities: model.capabilities,
+        endpointTemplateId: runtimeBindingBasis.endpoint.endpointTemplateId,
+        endpointUrl: runtimeBindingBasis.endpoint.normalizedUrl,
+        protocol: runtimeBindingBasis.endpoint.protocol,
+        publicHeaders: runtimeBindingBasis.endpoint.publicHeaders,
+        materialization: runtimeBindingBasis.prepared.materialization,
+        adapterBindingKey: runtimeBindingBasis.prepared.adapterBindingKey,
+        credentialDestination:
+          runtimeBindingBasis.runtimeCredentialTransport.destination,
+        compatibilityFingerprint: 'compatibility-v1',
+        adapterVersion: runtimeBindingBasis.adapterVersion,
+      });
+    const activeSelectionV1 = {
+      v: 1,
+      selection: {
+        agentTargetKey: 'backend:codex',
+        providerConnectionId: 'pc_work',
+        modelId: model.id,
+      },
+      source: 'runtime_apply',
+      runner: { pid: 123, processStartTimeMs: 1_000 },
+    } as const;
+    const providerBindingV1 = {
+      v: 1,
+      connectionId: 'pc_work',
+      contributionKey: 'plugin.openrouter/openrouter',
+      connectionRevision: 3,
+      model,
+      protocol: 'openai-responses',
+      materialization: 'engineConfig',
+      adapterBindingKey: 'openrouter',
+      compatibilityFingerprint: 'compatibility-v1',
+      bindingSecurityFingerprint,
+      runtimeBindingBasis,
+      displaySnapshot: {
+        providerName: 'OpenRouter',
+        connectionName: 'Work',
+        connectionRole: 'named',
+        connectionDisplayNameMode: 'custom',
+      },
+    } as const;
+    const metadata = {
+      providerBindingV1,
+      sessionModelsV1: {
+        v: 1,
+        agentId: 'codex',
+        updatedAt: 1,
+        currentModelId: model.id,
+        availableModels: [model],
+        activeSelectionV1,
+      },
+    };
+    const read = (binding: unknown) =>
+      readExactSessionActiveModelSelectionV1({
+        metadata: { ...metadata, providerBindingV1: binding },
+        agentId: 'codex',
+        agentTargetKey: 'backend:codex',
+        currentRunnerProcessIdentity: {
+          pid: 123,
+          processStartTimeMs: 1_000,
+        },
+      });
+
+    expect(read(providerBindingV1)).toEqual(activeSelectionV1);
+    for (const incoherent of [
+      { ...providerBindingV1, contributionKey: null },
+      { ...providerBindingV1, protocol: 'anthropic' },
+      { ...providerBindingV1, materialization: 'spawnEnv' },
+      { ...providerBindingV1, adapterBindingKey: undefined },
+      { ...providerBindingV1, compatibilityFingerprint: 'stale' },
+      { ...providerBindingV1, bindingSecurityFingerprint: 'stale' },
+    ]) {
+      expect(read(incoherent)).toBeNull();
+    }
+  });
+
+  it('requires exact runtime provenance for an active structured model selection', () => {
+    expect(SessionActiveModelSelectionV1Schema.parse({
+      v: 1,
+      selection: {
+        agentTargetKey: 'backend:codex',
+        providerConnectionId: 'pc_work',
+        modelId: 'openrouter/model',
+      },
+      source: 'runtime_apply',
+      runner: {
+        pid: 123,
+        processStartTimeMs: 1_000,
+      },
+    })).toEqual({
+      v: 1,
+      selection: {
+        agentTargetKey: 'backend:codex',
+        providerConnectionId: 'pc_work',
+        modelId: 'openrouter/model',
+      },
+      source: 'runtime_apply',
+      runner: {
+        pid: 123,
+        processStartTimeMs: 1_000,
+      },
+    });
+    expect(SessionActiveModelSelectionV1Schema.safeParse({
+      v: 1,
+      selection: {
+        agentTargetKey: 'backend:codex',
+        providerConnectionId: null,
+        modelId: 'native-model',
+      },
+      source: 'runtime_apply',
+      runner: {
+        pid: 123,
+        processStartTimeMs: null,
+      },
+    }).success).toBe(false);
+  });
+
   it('accepts the Remote Dev applied-model fact and the structured Dev extension', () => {
     expect(SessionAppliedModelV1Schema.parse({
       v: 1,

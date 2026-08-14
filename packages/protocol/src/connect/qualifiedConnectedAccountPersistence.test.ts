@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest';
 
-import { QualifiedConnectedAccountRefSchema } from './qualifiedConnectedAccountPersistence.js';
+import { compilePluginJsonSchema } from '../plugins/actions/jsonSchemaValidation.js';
+import * as qualifiedConnectedAccountPersistence from './qualifiedConnectedAccountPersistence.js';
+
+const {
+  QualifiedConnectedAccountIdSchema,
+  QualifiedConnectedAccountRefJsonSchema,
+  QualifiedConnectedAccountRefSchema,
+} = qualifiedConnectedAccountPersistence;
 
 describe('qualified connected-account identity', () => {
   it('retains the exact qualified service and account id', () => {
@@ -13,7 +20,7 @@ describe('qualified connected-account identity', () => {
     });
   });
 
-  it('rejects extra authority and hostile accessor-bearing identity objects', () => {
+  it('keeps direct identity parsing structural while strict JSON boundaries own hostile-object rejection', () => {
     expect(QualifiedConnectedAccountRefSchema.safeParse({
       service: { pluginId: 'acme.accounts', localId: 'git' },
       accountId: 'work',
@@ -28,10 +35,46 @@ describe('qualified connected-account identity', () => {
         return 'acme.accounts';
       },
     });
-    expect(QualifiedConnectedAccountRefSchema.safeParse({
+    const parsed = QualifiedConnectedAccountRefSchema.safeParse({
       service,
       accountId: 'work',
-    }).success).toBe(false);
-    expect(reads).toBe(0);
+    });
+    expect(parsed).toEqual({
+      success: true,
+      data: {
+        service: { pluginId: 'acme.accounts', localId: 'git' },
+        accountId: 'work',
+      },
+    });
+    expect(reads).toBeGreaterThan(0);
   });
+
+  it('keeps the Account ID boundary at Unicode code points without a callback parser', () => {
+    const service = { pluginId: 'acme.accounts', localId: 'git/hosting' };
+    const atLimit = '😀'.repeat(256);
+    const overLimit = '😀'.repeat(257);
+
+    for (const [accountId, accepted] of [[atLimit, true], [overLimit, false]] as const) {
+      expect(QualifiedConnectedAccountIdSchema.safeParse(accountId).success).toBe(accepted);
+      expect(QualifiedConnectedAccountRefSchema.safeParse({ service, accountId }).success).toBe(accepted);
+    }
+  });
+
+  it('projects the same acceptance contract as the canonical Zod owner', () => {
+    const validate = compilePluginJsonSchema(QualifiedConnectedAccountRefJsonSchema);
+    const service = { pluginId: 'acme.accounts', localId: 'git/hosting' };
+    const cases = [
+      [{ service, accountId: 'team/primary' }, true],
+      [{ service, accountId: ' team/primary' }, false],
+      [{ service, accountId: `${'a'.repeat(256)}` }, true],
+      [{ service, accountId: `${'a'.repeat(257)}` }, false],
+      [{ service, accountId: 'team/primary', extra: true }, false],
+    ] as const;
+
+    for (const [value, accepted] of cases) {
+      expect(QualifiedConnectedAccountRefSchema.safeParse(value).success).toBe(accepted);
+      expect(validate(value), JSON.stringify(value)).toBe(accepted);
+    }
+  });
+
 });

@@ -1,10 +1,9 @@
-import { EncryptedStringV1Schema, type EncryptedStringV1 } from '../crypto/settingsSecretStringsV1.js';
 import {
-  ConnectedAccountPurposeDeclarationsV1Schema,
-  QualifiedConnectedAccountPurposeV1Schema,
-} from '../connect/connectedAccountPurposes.js';
+  EncryptedStringV1Schema,
+  type EncryptedStringV1,
+} from '../crypto/settingsSecretStringSchemasV1.js';
+import { QualifiedConnectedAccountPurposeV1Schema } from '../connect/connectedAccountPurposes.js';
 import {
-  ConnectedAccountRequestAuthUsesV1Schema,
   type ConnectedAccountRequestAuthUseV1,
 } from '../connect/connectedAccountRequestAuth.js';
 import {
@@ -22,8 +21,16 @@ import {
   type ProviderCatalogParserV1,
 } from './catalog/descriptorV1.js';
 import { PROVIDER_CATALOG_LIMITS_V1 } from './catalog/limits.js';
-import type { ProviderModelLoadDescriptorV1 } from './contributions/v1.js';
-import { ProviderModelLoadDescriptorV1Schema } from './contributions/v1.js';
+import type {
+  ProviderManagedRuntimeDeclarationV1,
+  ProviderModelLoadDescriptorV1,
+  ResolvedProviderManagedRuntimeDeclarationV1,
+} from './contributions/v1.js';
+import {
+  ProviderManagedRuntimeDeclarationV1Schema,
+  ProviderModelLoadDescriptorV1Schema,
+  resolveProviderManagedRuntimeDeclarationV1,
+} from './contributions/v1.js';
 import type { ProviderCatalogCommandFallbackV1 } from './detection/v1.js';
 import { ProviderCatalogCommandFallbackV1Schema } from './detection/v1.js';
 import type { ProviderCredentialDestinationV1, ProviderCredentialTransportV1 } from './credentials/v1.js';
@@ -74,116 +81,9 @@ type ProviderSecurityEndpointV1 = Readonly<{
   publicHeaders?: Readonly<Record<string, string>>;
 }>;
 
-const ManagedProviderLocalServiceDeclarationV1Schema = z.object({
-  id: z.string().trim().min(1).max(256),
-  launch: z.object({
-    kind: z.literal('packaged-runtime-binary'),
-    directorySegments: z.array(
-      z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/u),
-    ).min(1).max(8),
-    executableBaseName: z.string()
-      .regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/u),
-    privateConfigPathFlag: z.string()
-      .regex(/^--[a-z0-9][a-z0-9-]*$/u),
-  }).strict(),
-  launchMode: z.object({
-    kind: z.literal('assignAndInject'),
-    portPolicy: z.object({
-      kind: z.literal('allocated'),
-      preferredPort: z.number().int().min(1).max(65_535).optional(),
-      onCollision: z.enum(['fail', 'fallback']).optional(),
-    }).strict(),
-    environment: z.object({
-      inject: z.array(z.string().trim().min(1).max(1_024)).optional(),
-    }).strict().optional(),
-  }).strict(),
-  hostPolicy: z.object({
-    kind: z.literal('loopback'),
-    host: z.string().trim().min(1).max(256).optional(),
-  }).strict(),
-  name: z.discriminatedUnion('strategy', [
-    z.object({ strategy: z.literal('derived'), base: z.string().trim().min(1).max(1_024) }).strict(),
-    z.object({ strategy: z.literal('fixed'), name: z.string().trim().min(1).max(1_024) }).strict(),
-  ]),
-  healthCheck: z.object({
-    kind: z.literal('http'),
-    path: z.string().trim().min(1).max(1_024),
-    timeoutMs: z.number().int().positive().optional(),
-  }).strict(),
-  restart: z.object({ kind: z.literal('never') }).strict(),
-  cleanup: z.object({
-    staleAfterMs: z.number().int().nonnegative(),
-  }).strict(),
-}).strict();
-
-export const ManagedProviderEndpointSecurityFactsV1Schema = z.object({
-  localService: ManagedProviderLocalServiceDeclarationV1Schema,
-  protocols: z.array(ProviderWireProtocolSchema).min(1).max(4),
-}).strict().superRefine((value, context) => {
-  if (new Set(value.protocols).size !== value.protocols.length) {
-    context.addIssue({
-      code: 'custom',
-      path: ['protocols'],
-      message: 'Managed Provider protocols must be unique',
-    });
-  }
-});
-export type ManagedProviderEndpointSecurityFactsV1 = z.infer<
-  typeof ManagedProviderEndpointSecurityFactsV1Schema
->;
-
-export const ProviderManagedDeploymentSecurityFactsV1Schema = z.object({
-  implementationIdentity: PluginContributionIdentityV1Schema,
-  managedEndpoint: ManagedProviderEndpointSecurityFactsV1Schema,
-  connectedAccounts: ConnectedAccountPurposeDeclarationsV1Schema,
-  requestAuthUses: ConnectedAccountRequestAuthUsesV1Schema,
-}).strict().superRefine((value, context) => {
-  const declarationsByPurpose = new Map(
-    value.connectedAccounts.map((declaration) => [
-      declaration.purpose,
-      declaration,
-    ]),
-  );
-  const declaredPurposes = new Set(declarationsByPurpose.keys());
-  const requestAuthPurposes = new Set(
-    value.requestAuthUses.map((use) => use.purpose),
-  );
-  if (
-    declaredPurposes.size !== requestAuthPurposes.size
-    || [...declaredPurposes].some((purpose) => !requestAuthPurposes.has(purpose))
-  ) {
-    context.addIssue({
-      code: 'custom',
-      path: ['requestAuthUses'],
-      message: 'Managed Provider request-auth uses must exactly match declared connected-account purposes',
-    });
-  }
-  for (const [index, use] of value.requestAuthUses.entries()) {
-    const declaration = declarationsByPurpose.get(use.purpose);
-    if (
-      declaration !== undefined
-      && declaration.materializationKinds?.includes(use.materialization.kind) !== true
-    ) {
-      context.addIssue({
-        code: 'custom',
-        path: ['requestAuthUses', index, 'materialization', 'kind'],
-        message: 'Managed Provider request-auth materialization kind must be explicitly declared by its connected-account purpose',
-      });
-    }
-  }
-});
-export type ProviderManagedDeploymentSecurityFactsV1 = Readonly<{
-  implementationIdentity: z.infer<typeof PluginContributionIdentityV1Schema>;
-  managedEndpoint: ManagedProviderEndpointSecurityFactsV1;
-  connectedAccounts: ReadonlyArray<
-    z.infer<typeof ConnectedAccountPurposeDeclarationsV1Schema>[number]
-  >;
-  requestAuthUses: readonly ConnectedAccountRequestAuthUseV1[];
-}>;
-
 function canonicalManagedConnectedAccountsV1(
-  connectedAccounts: ProviderManagedDeploymentSecurityFactsV1['connectedAccounts'],
-): ProviderManagedDeploymentSecurityFactsV1['connectedAccounts'] {
+  connectedAccounts: ResolvedProviderManagedRuntimeDeclarationV1['connectedAccounts'],
+): ResolvedProviderManagedRuntimeDeclarationV1['connectedAccounts'] {
   // Purpose ids are unique within one consumer by schema, so purpose is the
   // complete canonical order key while the full declaration remains identity.
   return connectedAccounts.map((declaration) => ({
@@ -255,7 +155,12 @@ export function createProviderConnectionSecurityFingerprintV1(input: Readonly<{
   catalogFallback?: ProviderCatalogCommandFallbackV1;
   credentialTransports: readonly ProviderCredentialTransportV1[];
   modelLoad?: ProviderModelLoadDescriptorV1;
-  managedDeployment?: ProviderManagedDeploymentSecurityFactsV1;
+  managedDeployment?: Readonly<{
+    implementationIdentity: Readonly<{ pluginId: string; localId: string }>;
+    managedRuntime:
+      | ProviderManagedRuntimeDeclarationV1
+      | ResolvedProviderManagedRuntimeDeclarationV1;
+  }>;
 }>): string {
   const credentialTransports = input.credentialTransports.map(normalizeTransport).sort((a, b) => {
     const left = JSON.stringify(a);
@@ -288,24 +193,31 @@ export function createProviderConnectionSecurityFingerprintV1(input: Readonly<{
   if (input.endpoints.length !== 0) {
     throw new TypeError('Managed Provider connection security facts must not contain durable endpoints');
   }
-  const managedDeployment = ProviderManagedDeploymentSecurityFactsV1Schema.parse(
-    input.managedDeployment,
+  const implementationIdentity = PluginContributionIdentityV1Schema.parse(
+    input.managedDeployment.implementationIdentity,
   );
+  const managedRuntime = resolveProviderManagedRuntimeDeclarationV1({
+    implementationIdentity,
+    managedRuntime: input.managedDeployment.managedRuntime,
+  });
   return createProviderFingerprintV1('connection-security', {
     ...normalizedSharedFacts,
     deployment: {
       kind: 'managedLocal',
-      implementationIdentity: managedDeployment.implementationIdentity,
-      managedEndpoint: {
-        ...managedDeployment.managedEndpoint,
-        protocols: [...managedDeployment.managedEndpoint.protocols].sort(),
+      implementationIdentity,
+      managedRuntime: {
+        kind: 'managed',
+        dependencies: [...managedRuntime.dependencies].sort(
+          compareProviderCanonicalStringsV1,
+        ),
+        endpointTemplateIds: [...managedRuntime.endpointTemplateIds],
+        connectedAccounts: canonicalManagedConnectedAccountsV1(
+          managedRuntime.connectedAccounts,
+        ),
+        requestAuthUses: canonicalManagedRequestAuthUsesV1(
+          managedRuntime.requestAuthUses,
+        ),
       },
-      connectedAccounts: canonicalManagedConnectedAccountsV1(
-        managedDeployment.connectedAccounts,
-      ),
-      requestAuthUses: canonicalManagedRequestAuthUsesV1(
-        managedDeployment.requestAuthUses,
-      ),
     },
   });
 }
@@ -335,7 +247,10 @@ type ProviderBindingExternalEndpointIdentityV1 = Readonly<{
 type ProviderBindingManagedEndpointIdentityV1 = Readonly<{
   deployment: Readonly<{
     kind: 'managedLocal';
-    securityFacts: ProviderManagedDeploymentSecurityFactsV1;
+    implementationIdentity: Readonly<{ pluginId: string; localId: string }>;
+    managedRuntime:
+      | ProviderManagedRuntimeDeclarationV1
+      | ResolvedProviderManagedRuntimeDeclarationV1;
   }>;
   endpointTemplateId: string;
   endpointUrl?: never;
@@ -394,21 +309,26 @@ export function createProviderBindingSecurityFingerprintV1(
     ...normalizedSharedFacts,
     endpointIdentity: {
       kind: 'managedLocal',
-      securityFacts: (() => {
-        const securityFacts = ProviderManagedDeploymentSecurityFactsV1Schema.parse(
-          input.deployment.securityFacts,
-        );
+      implementationIdentity: PluginContributionIdentityV1Schema.parse(
+        input.deployment.implementationIdentity,
+      ),
+      managedRuntime: (() => {
+        const managedRuntime = resolveProviderManagedRuntimeDeclarationV1({
+          implementationIdentity:
+            input.deployment.implementationIdentity,
+          managedRuntime: input.deployment.managedRuntime,
+        });
         return {
-          ...securityFacts,
-          managedEndpoint: {
-            ...securityFacts.managedEndpoint,
-            protocols: [...securityFacts.managedEndpoint.protocols].sort(),
-          },
+          kind: 'managed' as const,
+          dependencies: [...managedRuntime.dependencies].sort(
+            compareProviderCanonicalStringsV1,
+          ),
+          endpointTemplateIds: [...managedRuntime.endpointTemplateIds],
           connectedAccounts: canonicalManagedConnectedAccountsV1(
-            securityFacts.connectedAccounts,
+            managedRuntime.connectedAccounts,
           ),
           requestAuthUses: canonicalManagedRequestAuthUsesV1(
-            securityFacts.requestAuthUses,
+            managedRuntime.requestAuthUses,
           ),
         };
       })(),
@@ -606,36 +526,18 @@ export function createProviderProbeRequestFingerprintV1(input: Readonly<{
   }));
 }
 
-export type ProviderManagedCatalogSourceIdentityV1 = Readonly<{
-  kind: 'transientModelEndpoint';
-  contractVersion: string;
-  sdkVersion: string;
-}>;
-
-function canonicalManagedCatalogSourceVersion(value: string, name: string): string {
-  if (value.length < 1 || value.length > 256 || value !== value.trim()) {
-    throw new TypeError(`${name} must be a canonical non-empty string`);
-  }
-  return value;
-}
-
 /**
  * Managed catalog requests have no durable or realized endpoint URL. Their
- * identity is the authorized bundled implementation, immutable wrapper
- * contract, declared request, and purpose-binding snapshot. Launch-local
- * ports and downstream bearers are intentionally absent.
+ * identity is the authorized public managed declaration, declared request,
+ * and purpose-binding snapshot. Launch-local endpoints and client access are
+ * intentionally absent.
  */
 export function createProviderManagedProbeRequestFingerprintV1(input: Readonly<{
   implementationIdentity: Readonly<{ pluginId: string; localId: string }>;
-  managedFacet: Readonly<{
-    managedEndpoint: ManagedProviderEndpointSecurityFactsV1;
-    connectedAccounts: ReadonlyArray<Readonly<
-      z.infer<typeof ConnectedAccountPurposeDeclarationsV1Schema>[number]
-    >>;
-    requestAuthUses: readonly ConnectedAccountRequestAuthUseV1[];
-  }>;
+  managedRuntime:
+    | ProviderManagedRuntimeDeclarationV1
+    | ResolvedProviderManagedRuntimeDeclarationV1;
   purposeBindings: QualifiedConnectedAccountPurposeBindingsV1;
-  catalogSource: ProviderManagedCatalogSourceIdentityV1;
   endpointTemplateId: string;
   protocol: ProviderWireProtocol;
   method: 'GET';
@@ -647,11 +549,9 @@ export function createProviderManagedProbeRequestFingerprintV1(input: Readonly<{
   const implementationIdentity = PluginContributionIdentityV1Schema.parse(
     input.implementationIdentity,
   );
-  const managedFacet = ProviderManagedDeploymentSecurityFactsV1Schema.parse({
+  const managedRuntime = resolveProviderManagedRuntimeDeclarationV1({
     implementationIdentity,
-    managedEndpoint: input.managedFacet.managedEndpoint,
-    connectedAccounts: input.managedFacet.connectedAccounts,
-    requestAuthUses: input.managedFacet.requestAuthUses,
+    managedRuntime: input.managedRuntime,
   });
   const purposeBindings = QualifiedConnectedAccountPurposeBindingsV1Schema.parse(
     input.purposeBindings,
@@ -660,34 +560,32 @@ export function createProviderManagedProbeRequestFingerprintV1(input: Readonly<{
     compareProviderCanonicalStringsV1(JSON.stringify(left), JSON.stringify(right)));
   const path = ProviderOriginRelativePathSchema.parse(input.path);
   const parser = ProviderCatalogParserV1Schema.parse(input.parser);
-  if (input.catalogSource.kind !== 'transientModelEndpoint') {
-    throw new TypeError('Managed Provider catalog source kind is invalid');
+  const endpointTemplateId = ProviderLocalIdSchema.parse(
+    input.endpointTemplateId,
+  );
+  if (!managedRuntime.endpointTemplateIds.includes(endpointTemplateId)) {
+    throw new TypeError(
+      'Managed Provider catalog endpoint is outside the public declaration',
+    );
   }
   return ProviderProbeRequestFingerprintV1Schema.parse(createProviderFingerprintV1('probe-request', {
     deployment: 'managedLocal',
     implementationIdentity,
-    managedFacet: {
-      managedEndpoint: managedFacet.managedEndpoint,
+    managedRuntime: {
+      kind: 'managed',
+      dependencies: [...managedRuntime.dependencies].sort(
+        compareProviderCanonicalStringsV1,
+      ),
       connectedAccounts: canonicalManagedConnectedAccountsV1(
-        managedFacet.connectedAccounts,
+        managedRuntime.connectedAccounts,
       ),
       requestAuthUses: canonicalManagedRequestAuthUsesV1(
-        managedFacet.requestAuthUses,
+        managedRuntime.requestAuthUses,
       ),
+      endpointTemplateIds: [...managedRuntime.endpointTemplateIds],
     },
     purposeBindings: { v: 1, bindings: canonicalBindings },
-    catalogSource: {
-      kind: 'transientModelEndpoint',
-      contractVersion: canonicalManagedCatalogSourceVersion(
-        input.catalogSource.contractVersion,
-        'Managed Provider catalog contract version',
-      ),
-      sdkVersion: canonicalManagedCatalogSourceVersion(
-        input.catalogSource.sdkVersion,
-        'Managed Provider catalog SDK version',
-      ),
-    },
-    endpointTemplateId: ProviderLocalIdSchema.parse(input.endpointTemplateId),
+    endpointTemplateId,
     protocol: ProviderWireProtocolSchema.parse(input.protocol),
     method: 'GET',
     path,

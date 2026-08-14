@@ -27,9 +27,15 @@ describe('provider origin-relative executable path syntax', () => {
     ['models', 'invalid_url'],
     ['//evil.example/models', 'invalid_url'],
     ['/\\evil.example/models', 'invalid_url'],
+    ['/service/session%2fadmin', 'invalid_url'],
+    ['/service/session%255cadmin', 'invalid_url'],
+    ['/service/%2e%2e/outside', 'invalid_url'],
+    ['/service/%2e%2e%2foutside', 'invalid_url'],
+    ['/service/%252e%252e%252foutside', 'invalid_url'],
     [' /models', 'control_character'],
     ['/models#fragment', 'fragment_forbidden'],
     ['/models%0aadmin', 'control_character'],
+    ['/models%250aadmin', 'control_character'],
     ['/models?api%0akey=value', 'control_character'],
     ['/models?api-key=secret', 'secret_in_url'],
     ['/models?api-version=Bearer%20secret', 'secret_in_url'],
@@ -38,6 +44,13 @@ describe('provider origin-relative executable path syntax', () => {
     expect(() => normalizeProviderOriginRelativePathSyntax(rawPath, { allowQuery: true })).toThrowError(
       expect.objectContaining({ code }),
     );
+  });
+
+  it('allows ordinary encoded path data and encoded separators in query values', () => {
+    expect(normalizeProviderOriginRelativePathSyntax(
+      '/service/session%20one?cursor=part%2Fnext',
+      { allowQuery: true },
+    )).toBe('/service/session%20one?cursor=part%2Fnext');
   });
 });
 

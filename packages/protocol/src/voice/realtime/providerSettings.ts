@@ -5,14 +5,10 @@ import {
   PluginContributionIdentityV1Schema,
   buildQualifiedPluginContributionKey,
 } from '../../plugins/contributionIdentity.js';
+import { VoiceCredentialSlotIdSchema } from '../../plugins/contributions/voiceProviders.js';
 
 const RESERVED_PROVIDER_IDS = new Set(['constructor', 'prototype']);
 
-/**
- * Stable voice-conversation provider identity shared by persistence, registry,
- * and runtime projections. The open domain keeps existing underscore IDs valid
- * while excluding object-prototype keys at every record boundary.
- */
 const LegacyVoiceProviderIdSchema = z
   .string()
   .min(1)
@@ -22,7 +18,7 @@ const LegacyVoiceProviderIdSchema = z
     message: 'Reserved provider identifier',
   });
 
-const QualifiedExternalVoiceProviderIdSchema = z.string().min(3).max(256).refine((providerId) => {
+export const VoiceProviderIdSchema = z.string().min(3).max(256).refine((providerId) => {
   const separator = providerId.indexOf('/');
   if (separator <= 0 || separator === providerId.length - 1) return false;
   const identity = PluginContributionIdentityV1Schema.safeParse({
@@ -30,22 +26,52 @@ const QualifiedExternalVoiceProviderIdSchema = z.string().min(3).max(256).refine
     localId: providerId.slice(separator + 1),
   });
   return identity.success && buildQualifiedPluginContributionKey(identity.data) === providerId;
-}, { message: 'External Voice provider ids must be canonical qualified Plugin contribution keys' });
-
-export const VoiceProviderIdSchema = z.union([
-  LegacyVoiceProviderIdSchema,
-  QualifiedExternalVoiceProviderIdSchema,
-]);
+}, { message: 'Voice provider ids must be canonical qualified Plugin contribution keys' });
 
 export type VoiceProviderId = z.infer<typeof VoiceProviderIdSchema>;
 
-export const VoiceCredentialBindingV1Schema = z.object({
-  providerId: VoiceProviderIdSchema,
+export const LegacyVoiceCredentialBindingV1Schema = z.object({
+  providerId: LegacyVoiceProviderIdSchema,
   credentialBindings: SavedSecretSlotBindingsV1Schema,
   approvedRecipientContractDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/u).optional(),
 }).strict();
 
-export type VoiceCredentialBindingV1 = Readonly<z.infer<typeof VoiceCredentialBindingV1Schema>>;
+/** Canonical current Voice credential binding keyed only by contribution and slot. */
+export const VoiceCredentialBindingV1Schema = z.object({
+  contribution: PluginContributionIdentityV1Schema,
+  credentialSlotId: VoiceCredentialSlotIdSchema,
+  credentialSource: z.object({
+    kind: z.enum(['none', 'savedSecret', 'connectedAccount']),
+  }).strict(),
+  credentialBindings: SavedSecretSlotBindingsV1Schema,
+  approvedRecipientContractDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/u).optional(),
+}).strict().superRefine((value, context) => {
+  const accountSlotIds = Object.keys(value.credentialBindings.account ?? {});
+  const machineSlotIds = Object.entries(value.credentialBindings.byMachineId ?? {})
+    .flatMap(([machineId, bindings]) => Object.keys(bindings).map((slotId) => ({ machineId, slotId })));
+  accountSlotIds.forEach((slotId) => {
+    if (slotId !== value.credentialSlotId) {
+      context.addIssue({
+        code: 'custom',
+        path: ['credentialBindings', 'account', slotId],
+        message: 'Qualified Voice credential bindings may contain only their declared slot.',
+      });
+    }
+  });
+  machineSlotIds.forEach(({ machineId, slotId }) => {
+    if (slotId !== value.credentialSlotId) {
+      context.addIssue({
+        code: 'custom',
+        path: ['credentialBindings', 'byMachineId', machineId, slotId],
+        message: 'Qualified Voice credential bindings may contain only their declared slot.',
+      });
+    }
+  });
+});
+
+export type VoiceCredentialBindingV1 = Readonly<
+  z.infer<typeof VoiceCredentialBindingV1Schema>
+>;
 
 export type VoiceProviderSettingsJsonValueV1 =
   | null

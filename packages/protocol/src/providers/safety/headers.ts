@@ -1,5 +1,9 @@
 import { PROVIDER_ENDPOINT_SAFETY_LIMITS } from './limits.js';
-import { isUnsafeTelemetryDataKey } from '../../common/sensitiveKeys.js';
+import {
+  isBaseCredentialDiagnosticKey,
+  isUnsafeTelemetryDataKey,
+  splitSensitiveDiagnosticKeySegments,
+} from '../../common/sensitiveKeys.js';
 import { compareProviderCanonicalStringsV1 } from '../canonicalOrderV1.js';
 
 const HEADER_NAME_PATTERN = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/u;
@@ -36,8 +40,8 @@ function normalizeHeaderName(name: string): string {
 }
 
 function isSecretBearingHeaderName(name: string): boolean {
-  if (isUnsafeTelemetryDataKey(name)) return true;
-  const tokens = name.split(/[-_]+/u);
+  if (isBaseCredentialDiagnosticKey(name) || isUnsafeTelemetryDataKey(name)) return true;
+  const tokens = splitSensitiveDiagnosticKeySegments(name);
   return tokens.some((token) => [
     'auth',
     'authentication',

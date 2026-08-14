@@ -36,15 +36,16 @@ const NonNegativeIntSchema = z.number().int().nonnegative();
 
 /**
  * Resume handle parsing stays tolerant: a structurally invalid handle must not
- * invalidate the whole record (it is a best-effort resume hint). Prefer the
- * canonical schema, but fall back to the raw value when it does not validate.
+ * invalidate the whole record (it is a best-effort resume hint). Canonicalize
+ * supported predecessor shapes and drop an invalid hint instead of exposing
+ * unvalidated data as a typed execution-run handle.
  */
 const TolerantResumeHandleSchema = z
   .unknown()
   .transform((value) => {
     if (value == null) return null;
     const parsed = ExecutionRunResumeHandleSchema.safeParse(value);
-    return parsed.success ? parsed.data : (value as ExecutionRunResumeHandle);
+    return parsed.success ? parsed.data : null;
   });
 
 /**

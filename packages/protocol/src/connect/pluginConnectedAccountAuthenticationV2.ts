@@ -122,6 +122,7 @@ export const PluginConnectedAccountAuthenticationModeV2Schema =
       id: PluginContributionLocalIdSchema,
       kind: z.literal('oauthAuthorizationCode'),
       title: PluginLocalizedStringV2Schema.optional(),
+      callbackUrl: z.url().max(2_048).optional(),
       scopes: z.array(z.string().trim().min(1)).optional(),
       pkce: z.literal('required'),
       outcomeReconciliation: PluginConnectedAccountOutcomeReconciliationV2Schema,

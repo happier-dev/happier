@@ -116,6 +116,11 @@ function createSnapshot(overrides: Partial<ProviderAccountUsageSnapshotV1> = {})
 }
 
 describe('provider account usage protocol', () => {
+    it('preserves the canonical quota-scope schema identity through the existing root export', () => {
+        expect(protocol.ProviderAccountUsageQuotaScopeV1Schema)
+            .toBe(accountUsageModule.ProviderAccountUsageQuotaScopeV1Schema);
+    });
+
     it('builds opaque stable record ids from canonical record keys', () => {
         const buildRecordId = requireExport<(...args: readonly unknown[]) => unknown>(
             'buildProviderAccountUsageRecordId',

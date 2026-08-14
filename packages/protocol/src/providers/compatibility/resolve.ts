@@ -21,6 +21,8 @@ import {
   type ProviderCompatibilityReasonCodeV1,
 } from './v1.js';
 
+export type { AgentProviderRequirementsV1 } from './v1.js';
+
 const CAPABILITY_REASON_CODES = {
   streaming: {
     unsupported: 'capability_streaming_unsupported',

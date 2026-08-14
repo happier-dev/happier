@@ -68,6 +68,22 @@ describe('ConnectedServiceUxDiagnosticV1', () => {
     }
   });
 
+  it('keeps count and prose keys that merely contain credential substrings', () => {
+    const parsed = ConnectedServiceUxDiagnosticV1Schema.safeParse({
+      code: CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.recoveryRetryScheduled,
+      failurePhase: 'runtime_auth_recovery',
+      source: 'runtime_auth_recovery',
+      retryable: true,
+      diagnostics: {
+        sessionCount: 3,
+        tokenCount: 4,
+        secretary: 'meeting-notes',
+      },
+    });
+
+    expect(parsed.success).toBe(true);
+  });
+
   it('normalizes omitted suggested actions while keeping the guard runtime-sound', () => {
     const payload = {
       code: CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.recoveryRetryScheduled,
@@ -99,6 +115,33 @@ describe('ConnectedServiceUxDiagnosticV1', () => {
     });
 
     expect(diagnostic.source).toBe('usage_limit_recovery');
+  });
+
+  it('accepts a retryable connected-service credential refresh diagnostic', () => {
+    const diagnostic = ConnectedServiceUxDiagnosticV1Schema.parse({
+      code: 'connected_service_credential_refresh_unavailable',
+      failurePhase: 'materialization',
+      source: 'spawn_resume',
+      serviceId: 'openai-codex',
+      agentId: 'codex',
+      profileId: 'voice-profile',
+      retryable: true,
+      suggestedActions: [
+        CONNECTED_SERVICE_UX_DIAGNOSTIC_ACTIONS.retry,
+        CONNECTED_SERVICE_UX_DIAGNOSTIC_ACTIONS.openConnectedAccounts,
+      ],
+      diagnostics: {
+        reason: 'spawn_preflight',
+        status: 'refresh_failed',
+        category: 'network_error',
+      },
+    });
+
+    expect(diagnostic).toMatchObject({
+      code: 'connected_service_credential_refresh_unavailable',
+      retryable: true,
+      suggestedActions: ['retry', 'open_connected_accounts'],
+    });
   });
 
   it.each([

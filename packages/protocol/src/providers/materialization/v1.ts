@@ -115,13 +115,17 @@ const SupplementalRedactionValuesV1Schema = boundedArrayPreflight(
   }));
 
 type CanonicalJsonPrimitive = null | boolean | number | string;
-export type ProviderBindingCanonicalJsonObject = Readonly<{
-  [key: string]: ProviderBindingCanonicalJsonValue;
-}>;
 export type ProviderBindingCanonicalJsonValue =
-  | CanonicalJsonPrimitive
+  | null
+  | boolean
+  | number
+  | string
   | readonly ProviderBindingCanonicalJsonValue[]
-  | ProviderBindingCanonicalJsonObject;
+  | Readonly<{ [key: string]: ProviderBindingCanonicalJsonValue }>;
+export type ProviderBindingCanonicalJsonObject = Exclude<
+  ProviderBindingCanonicalJsonValue,
+  CanonicalJsonPrimitive | readonly ProviderBindingCanonicalJsonValue[]
+>;
 
 function validateCanonicalJsonObject(
   value: unknown,

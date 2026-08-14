@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
-import { ProviderContributionV1Schema } from './v1.js';
+import {
+  ProviderContributionV1Schema,
+  resolveProviderManagedRuntimeDeclarationV1,
+} from './v1.js';
 
 const unknownCapabilities = {
   streaming: 'unknown',
@@ -39,6 +42,208 @@ function validContribution() {
 }
 
 describe('ProviderContributionV1Schema', () => {
+  it('resolves relative managed connected-account references once at the public declaration owner', () => {
+    const relative = resolveProviderManagedRuntimeDeclarationV1({
+      implementationIdentity: {
+        pluginId: 'acme.gateway',
+        localId: 'gateway',
+      },
+      managedRuntime: {
+        kind: 'managed',
+        dependencies: ['gateway-service'],
+        connectedAccounts: [{
+          purpose: 'upstream',
+          service: 'openai',
+          required: true,
+          materializationKinds: ['httpHeaders'],
+        }],
+        requestAuthUses: [{
+          purpose: 'upstream',
+          materialization: {
+            kind: 'httpHeaders',
+            origin: 'https://api.openai.com',
+            headerNames: ['authorization'],
+          },
+        }],
+        endpointTemplateIds: ['responses'],
+      },
+    });
+    const qualified = resolveProviderManagedRuntimeDeclarationV1({
+      implementationIdentity: {
+        pluginId: 'acme.gateway',
+        localId: 'gateway',
+      },
+      managedRuntime: {
+        ...relative,
+        connectedAccounts: [{
+          ...relative.connectedAccounts[0]!,
+          service: { pluginId: 'acme.gateway', localId: 'openai' },
+        }],
+      },
+    });
+
+    expect(relative).toEqual(qualified);
+    expect(relative.connectedAccounts[0]?.service).toEqual({
+      pluginId: 'acme.gateway',
+      localId: 'openai',
+    });
+    expect(Object.isFrozen(relative)).toBe(true);
+    expect(Object.isFrozen(relative.connectedAccounts)).toBe(true);
+    expect(Object.isFrozen(relative.connectedAccounts[0]?.service)).toBe(true);
+  });
+
+  it('accepts the cold managed-runtime declaration and rejects endpoint/dependency bound violations', () => {
+    const managedRuntime = {
+      kind: 'managed',
+      dependencies: ['gateway-runtime'],
+      connectedAccounts: [],
+      endpointTemplateIds: ['responses'],
+    } as const;
+    const value = { ...validContribution(), managedRuntime };
+    expect(ProviderContributionV1Schema.safeParse(value).success).toBe(true);
+    expect(ProviderContributionV1Schema.safeParse({
+      ...value, managedRuntime: { ...managedRuntime, endpointTemplateIds: [] },
+    }).success).toBe(false);
+    expect(ProviderContributionV1Schema.safeParse({
+      ...value, managedRuntime: { ...managedRuntime, endpointTemplateIds: ['missing'] },
+    }).success).toBe(false);
+    expect(ProviderContributionV1Schema.safeParse({
+      ...value,
+      managedRuntime: {
+        ...managedRuntime,
+        dependencies: Array.from({ length: 17 }, (_, index) => `dep-${index}`),
+      },
+    }).success).toBe(false);
+  });
+
+  it('accepts 32 unique managed connected-account purposes and rejects 33 or duplicate purposes', () => {
+    const connectedAccounts = Array.from({ length: 32 }, (_, index) => ({
+      purpose: `purpose-${index}`,
+      service: `account-${index}`,
+      materializationKinds: ['httpHeaders'] as const,
+    }));
+    const value = { ...validContribution(), managedRuntime: {
+      kind: 'managed',
+      endpointTemplateIds: ['responses'],
+      connectedAccounts,
+    } } as const;
+    expect(ProviderContributionV1Schema.safeParse(value).success).toBe(true);
+    expect(ProviderContributionV1Schema.safeParse({
+      ...value,
+      managedRuntime: {
+        ...value.managedRuntime,
+        connectedAccounts: [...connectedAccounts, {
+          purpose: 'purpose-32', service: 'account-32', materializationKinds: ['httpHeaders'],
+        }],
+      },
+    }).success).toBe(false);
+    expect(ProviderContributionV1Schema.safeParse({
+      ...value,
+      managedRuntime: {
+        ...value.managedRuntime,
+        connectedAccounts: connectedAccounts.map((entry, index) => index === 31
+          ? { ...entry, purpose: 'purpose-0' }
+          : entry),
+      },
+    }).success).toBe(false);
+  });
+
+  it('binds managed request-auth uses to declared connected-account purposes and materialization kinds', () => {
+    const managedRuntime = {
+      kind: 'managed',
+      endpointTemplateIds: ['responses'],
+      connectedAccounts: [{
+        purpose: 'provider.inference',
+        service: 'openai',
+        materializationKinds: ['httpHeaders'],
+      }, {
+        purpose: 'provider.bootstrap',
+        service: 'openai',
+        materializationKinds: ['environment'],
+      }],
+      requestAuthUses: [{
+        purpose: 'provider.inference',
+        materialization: {
+          kind: 'httpHeaders',
+          origin: 'https://api.openai.com',
+          headerNames: ['authorization'],
+        },
+      }],
+    } as const;
+    const value = { ...validContribution(), managedRuntime };
+
+    expect(ProviderContributionV1Schema.safeParse(value).success).toBe(true);
+    expect(ProviderContributionV1Schema.safeParse({
+      ...value,
+      managedRuntime: {
+        ...managedRuntime,
+        requestAuthUses: [{
+          ...managedRuntime.requestAuthUses[0],
+          purpose: 'provider.undeclared',
+        }],
+      },
+    }).success).toBe(false);
+    expect(ProviderContributionV1Schema.safeParse({
+      ...value,
+      managedRuntime: {
+        ...managedRuntime,
+        connectedAccounts: managedRuntime.connectedAccounts.map((entry) => (
+          entry.purpose === 'provider.inference'
+            ? { ...entry, materializationKinds: ['environment'] as const }
+            : entry
+        )),
+      },
+    }).success).toBe(false);
+  });
+
+  it('bounds managed request-auth uses and rejects duplicate purpose authority', () => {
+    const connectedAccounts = Array.from({ length: 32 }, (_, index) => ({
+      purpose: `provider.request-${index}`,
+      service: 'openai',
+      materializationKinds: ['httpHeaders'] as const,
+    }));
+    const requestAuthUses = connectedAccounts.map(({ purpose }, index) => ({
+      purpose,
+      materialization: {
+        kind: 'httpHeaders' as const,
+        origin: `https://api-${index}.example.com`,
+        headerNames: ['authorization'],
+      },
+    }));
+    const managedRuntime = {
+      kind: 'managed' as const,
+      endpointTemplateIds: ['responses'],
+      connectedAccounts,
+      requestAuthUses,
+    };
+    const value = { ...validContribution(), managedRuntime };
+
+    expect(ProviderContributionV1Schema.safeParse(value).success).toBe(true);
+    expect(ProviderContributionV1Schema.safeParse({
+      ...value,
+      managedRuntime: {
+        ...managedRuntime,
+        requestAuthUses: [...requestAuthUses, {
+          purpose: 'provider.request-32',
+          materialization: {
+            kind: 'httpHeaders',
+            origin: 'https://api-32.example.com',
+            headerNames: ['authorization'],
+          },
+        }],
+      },
+    }).success).toBe(false);
+    expect(ProviderContributionV1Schema.safeParse({
+      ...value,
+      managedRuntime: {
+        ...managedRuntime,
+        requestAuthUses: requestAuthUses.map((use, index) => index === 31
+          ? { ...use, purpose: 'provider.request-0' }
+          : use),
+      },
+    }).success).toBe(false);
+  });
+
   it('accepts a bounded contribution-owned legacy profile migration descriptor and validates its credential slot', () => {
     const value = structuredClone(validContribution()) as any;
     value.legacyProfileMigrations = [{

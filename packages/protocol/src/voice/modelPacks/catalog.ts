@@ -74,10 +74,7 @@ export const MODEL_PACK_CATALOG = [
     archiveUrl: null,
     streamingCapable: false,
     sizeBytes: null,
-    // The manifest is reachable, but its `espeak-ng-data/voices/!v/**`
-    // release assets are not. Keep the identity stable and fail closed until
-    // the canonical publication is replaced with fully reachable exact bytes.
-    publicationStatus: 'unavailable',
+    publicationStatus: 'published',
   },
   {
     packId: 'sherpa-onnx-streaming-zipformer-en-20M-2023-02-17',

@@ -1,8 +1,19 @@
 import { z } from 'zod';
 
+import { utf8ByteLength } from '../bugs/reports/utf8.js';
 import { PluginJsonValueV2Schema } from '../plugins/contributions/publicTypes.js';
+import {
+  PluginComposerReferenceProviderPresentationV1Schema,
+} from '../plugins/contributions/composerReferenceProviders.js';
 import { PluginContributionIdentityV1Schema } from '../plugins/contributionIdentity.js';
 import { PluginIdSchema } from '../plugins/pluginId.js';
+
+export const PLUGIN_DIAGNOSTIC_TEXT_MAX_UTF8_BYTES_V1 = 2_048;
+
+export const PluginDiagnosticTextV1Schema = z.string().trim().min(1).refine(
+  (value) => utf8ByteLength(value) <= PLUGIN_DIAGNOSTIC_TEXT_MAX_UTF8_BYTES_V1,
+  `Plugin diagnostic text must not exceed ${PLUGIN_DIAGNOSTIC_TEXT_MAX_UTF8_BYTES_V1} UTF-8 bytes`,
+);
 
 export const PluginDiagnosticRemediationV1Schema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('retry') }).strict(),
@@ -19,7 +30,7 @@ export type PluginDiagnosticRemediationV1 = z.infer<typeof PluginDiagnosticRemed
 export const PluginDiagnosticDataV1Schema = z.object({
   code: z.string().trim().min(1),
   severity: z.enum(['info', 'warning', 'error']),
-  message: z.string().trim().min(1).optional(),
+  message: PluginDiagnosticTextV1Schema.optional(),
   details: PluginJsonValueV2Schema.optional(),
   remediation: PluginDiagnosticRemediationV1Schema.optional(),
 }).strict();
@@ -95,6 +106,18 @@ export const PluginDiagnosticRecordV1Schema = z.object({
 }).strict();
 export type PluginDiagnosticRecordV1 = z.infer<typeof PluginDiagnosticRecordV1Schema>;
 
+/**
+ * Static presentation is projection evidence, not a UI catalog. It is present
+ * only for the contribution family whose manifest owns these facts.
+ */
+export const PluginContributionIntrospectionPresentationV1Schema =
+  PluginComposerReferenceProviderPresentationV1Schema.extend({
+    kind: z.literal('composerReference'),
+  }).strict();
+export type PluginContributionIntrospectionPresentationV1 = z.infer<
+  typeof PluginContributionIntrospectionPresentationV1Schema
+>;
+
 export const PluginContributionLifecycleRecordV1Schema = z.object({
   version: z.literal(1),
   contribution: PluginContributionIntrospectionIdentityV1Schema,
@@ -111,7 +134,7 @@ export const PluginContributionLifecycleRecordV1Schema = z.object({
       requirement: z.literal('required'),
       state: z.enum(['unbound', 'bound', 'unavailable']),
       generation: z.string().trim().min(1).optional(),
-      reason: z.string().trim().min(1).optional(),
+      reason: PluginDiagnosticTextV1Schema.optional(),
     }).strict(),
     z.object({ requirement: z.literal('notRequired'), state: z.literal('notRequired') }).strict(),
   ]),
@@ -119,12 +142,13 @@ export const PluginContributionLifecycleRecordV1Schema = z.object({
     z.object({ state: z.literal('notRequired') }).strict(),
     z.object({ state: z.literal('dormant') }).strict(),
     z.object({ state: z.literal('active'), generation: z.string().trim().min(1) }).strict(),
-    z.object({ state: z.literal('unavailable'), reason: z.string().trim().min(1) }).strict(),
+    z.object({ state: z.literal('unavailable'), reason: PluginDiagnosticTextV1Schema }).strict(),
   ]),
   projection: z.discriminatedUnion('state', [
     z.object({ state: z.literal('projected') }).strict(),
-    z.object({ state: z.literal('unavailable'), reason: z.string().trim().min(1) }).strict(),
+    z.object({ state: z.literal('unavailable'), reason: PluginDiagnosticTextV1Schema }).strict(),
   ]),
+  presentation: PluginContributionIntrospectionPresentationV1Schema.optional(),
   consumer: z.string().trim().min(1),
   platforms: z.array(z.enum(['cli', 'web', 'ios', 'android', 'desktop'])),
   diagnostics: z.array(PluginDiagnosticRecordV1Schema),
@@ -152,6 +176,19 @@ export const PluginContributionLifecycleRecordV1Schema = z.object({
       code: 'custom',
       path: ['activation'],
       message: 'an active contribution must be bound',
+    });
+  }
+  if (
+    value.presentation
+    && (
+      value.contribution.kind !== 'localId'
+      || value.contribution.family !== 'composerReferences'
+    )
+  ) {
+    context.addIssue({
+      code: 'custom',
+      path: ['presentation'],
+      message: 'composer reference presentation is valid only for composer reference contributions',
     });
   }
 });

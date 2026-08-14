@@ -2,10 +2,7 @@ import { z } from 'zod';
 
 import {
   ProviderModelDescriptorV1Schema,
-  type AgentModelDescriptor,
 } from '../../models/descriptor.js';
-import type { AgentProviderBindingLaunchMaterialization } from '../materialization/v1.js';
-import type { ProviderConnectionId } from '../ids.js';
 import { ProviderWireProtocolSchema } from '../capabilities/v1.js';
 import {
   ProviderAgentTargetKeySchema,
@@ -13,26 +10,30 @@ import {
   ProviderContributionKeySchema,
   ProviderLocalIdSchema,
 } from '../ids.js';
-import { AgentProviderBindingLaunchMaterializationV1Schema } from '../materialization/v1.js';
-import { QualifiedConnectedAccountPurposeBindingsV1Schema } from '../../connect/connectedAccountPurposeBindings.js';
+import {
+  QualifiedConnectedAccountPurposeBindingsV1Schema,
+  type QualifiedConnectedAccountPurposeBindingsV1,
+} from '../../connect/connectedAccountPurposeBindings.js';
 import { ProviderAdapterBindingKeyV1Schema } from './adapterBindingKeyV1.js';
 import { ProviderEndpointUrlSyntaxSchema } from '../endpointUrlSchema.js';
 import { ProviderPublicHeadersV1Schema } from '../publicHeadersSchema.js';
 import { ProviderCredentialTransportV1Schema } from '../credentials/v1.js';
 import { AgentProviderRequirementsV1Schema } from '../compatibility/v1.js';
-import { ProviderManagedDeploymentSecurityFactsV1Schema } from '../securityFingerprintsV1.js';
+import {
+  createProviderBindingSecurityFingerprintV1,
+} from '../securityFingerprintsV1.js';
+import {
+  ProviderManagedRuntimeDeclarationV1Schema,
+  resolveProviderManagedRuntimeDeclarationV1,
+} from '../contributions/v1.js';
+import { PluginContributionIdentityV1Schema } from '../../plugins/contributionIdentity.js';
+import { compareProviderCanonicalStringsV1 } from '../canonicalOrderV1.js';
 
-export const AgentSessionProviderBindingV1Schema = z.object({
-  connectionId: ProviderConnectionIdSchema,
-  model: ProviderModelDescriptorV1Schema,
-  materialization: AgentProviderBindingLaunchMaterializationV1Schema,
-}).strict() satisfies z.ZodType<AgentSessionProviderBindingV1>;
-export type AgentSessionProviderBinding = Readonly<{
-  connectionId: ProviderConnectionId;
-  model: AgentModelDescriptor;
-  materialization: AgentProviderBindingLaunchMaterialization;
-}>;
-export type AgentSessionProviderBindingV1 = AgentSessionProviderBinding;
+export {
+  AgentSessionProviderBindingV1Schema,
+  type AgentSessionProviderBinding,
+  type AgentSessionProviderBindingV1,
+} from './agentSessionProviderBindingV1.js';
 
 export const ProviderConnectionDisplaySnapshotV1Schema = z.object({
   providerName: z.string().trim().min(1).max(128),
@@ -82,9 +83,16 @@ const ProviderRuntimeManagedBindingBasisV1Schema =
   ProviderRuntimeBindingBasisCommonV1Schema.extend({
     deployment: z.object({
       kind: z.literal('managedLocal'),
-      securityFacts: ProviderManagedDeploymentSecurityFactsV1Schema,
+      implementationIdentity: PluginContributionIdentityV1Schema,
+      managedRuntime: ProviderManagedRuntimeDeclarationV1Schema,
       purposeBindings: QualifiedConnectedAccountPurposeBindingsV1Schema,
-    }).strict(),
+    }).strict().transform((deployment) => ({
+      ...deployment,
+      managedRuntime: resolveProviderManagedRuntimeDeclarationV1({
+        implementationIdentity: deployment.implementationIdentity,
+        managedRuntime: deployment.managedRuntime,
+      }),
+    })),
     endpoint: z.object({
       endpointTemplateId: ProviderLocalIdSchema,
       protocol: ProviderWireProtocolSchema,
@@ -152,6 +160,97 @@ export function readSessionProviderBindingMetadataStateV1(
   return parsed.success
     ? { kind: 'valid', binding: parsed.data }
     : { kind: 'invalid' };
+}
+
+function canonicalPurposeBindings(
+  purposeBindings: QualifiedConnectedAccountPurposeBindingsV1 | undefined,
+): string | null {
+  return purposeBindings
+    ? JSON.stringify(
+        [...purposeBindings.bindings].sort((left, right) =>
+          compareProviderCanonicalStringsV1(
+            JSON.stringify(left),
+            JSON.stringify(right),
+          )),
+      )
+    : null;
+}
+
+export function sessionProviderBindingMetadataMatchesRuntimeBasisV1(
+  input: Readonly<{
+    selection: Readonly<{
+      agentTargetKey: string;
+      providerConnectionId: string | null;
+    }>;
+    binding: SessionProviderBindingMetadataV1;
+  }>,
+): boolean {
+  const basis = input.binding.runtimeBindingBasis;
+  const model = input.binding.model;
+  if (!basis || !model) return false;
+  const structuralFactsMatch = input.selection.agentTargetKey === basis.agentTargetKey
+    && input.selection.providerConnectionId === basis.connectionId
+    && input.binding.connectionId === basis.connectionId
+    && input.binding.contributionKey === basis.contributionKey
+    && input.binding.protocol === basis.endpoint.protocol
+    && input.binding.materialization === basis.prepared.materialization
+    && (input.binding.adapterBindingKey ?? null)
+      === (basis.prepared.adapterBindingKey ?? null)
+    && canonicalPurposeBindings(input.binding.managedPurposeBindings)
+      === (
+        basis.deployment.kind === 'managedLocal'
+          ? canonicalPurposeBindings(basis.deployment.purposeBindings)
+          : null
+      );
+  if (!structuralFactsMatch) return false;
+
+  try {
+    const sharedFingerprintInput = {
+      agentTargetKey: basis.agentTargetKey,
+      connectionId: basis.connectionId,
+      modelId: model.id,
+      modelCapabilities: {
+        ...(model.capabilities?.reasoningControls
+          ? { reasoningControls: model.capabilities.reasoningControls }
+          : {}),
+      },
+      endpointTemplateId: basis.endpoint.endpointTemplateId,
+      protocol: basis.endpoint.protocol,
+      publicHeaders: basis.endpoint.publicHeaders,
+      materialization: basis.prepared.materialization,
+      ...(basis.prepared.adapterBindingKey
+        ? { adapterBindingKey: basis.prepared.adapterBindingKey }
+        : {}),
+      ...(basis.runtimeCredentialTransport
+        ? {
+            credentialDestination:
+              basis.runtimeCredentialTransport.destination,
+          }
+        : {}),
+      compatibilityFingerprint: input.binding.compatibilityFingerprint,
+      adapterVersion: basis.adapterVersion,
+    };
+    const expectedFingerprint = basis.deployment.kind === 'managedLocal'
+      ? createProviderBindingSecurityFingerprintV1({
+          ...sharedFingerprintInput,
+          deployment: {
+            kind: 'managedLocal',
+            implementationIdentity:
+              basis.deployment.implementationIdentity,
+            managedRuntime: basis.deployment.managedRuntime,
+          },
+        })
+      : 'normalizedUrl' in basis.endpoint
+        ? createProviderBindingSecurityFingerprintV1({
+            ...sharedFingerprintInput,
+            endpointUrl: basis.endpoint.normalizedUrl,
+          })
+        : null;
+    if (expectedFingerprint === null) return false;
+    return input.binding.bindingSecurityFingerprint === expectedFingerprint;
+  } catch {
+    return false;
+  }
 }
 
 export function readSessionProviderBindingMetadataV1(

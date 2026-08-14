@@ -1,8 +1,8 @@
 export * from './capabilities/v1.js';
+export * from './codex/oauth.js';
 export * from './catalog/descriptorV1.js';
 export * from './catalog/limits.js';
 export * from './catalog/merge.js';
-export * from './claude/flagshipModel.js';
 export * from './compatibility/resolve.js';
 export * from './compatibility/v1.js';
 export * from './connections/customTemplateV1.js';
@@ -35,6 +35,7 @@ export * from './safety/index.js';
 export * from './securityFingerprintsV1.js';
 export * from './selection/applyPolicy.js';
 export * from './selection/v1.js';
+export * from './selection/activeSelectionValidationV1.js';
 export * from './sessions/bindingMetadataV1.js';
 export * from './sessions/adapterBindingKeyV1.js';
 export * from './sessions/lifecycle.js';

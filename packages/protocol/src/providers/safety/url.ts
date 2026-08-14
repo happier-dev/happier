@@ -5,7 +5,12 @@ import {
 } from './locality.js';
 import { PROVIDER_ENDPOINT_SAFETY_LIMITS } from './limits.js';
 import { isProviderMetadataHostname } from './metadataDestinations.js';
-import { isUnsafeTelemetryDataKey, normalizeTelemetryDataKey } from '../../common/sensitiveKeys.js';
+import {
+  isBaseCredentialDiagnosticKey,
+  isUnsafeTelemetryDataKey,
+  normalizeTelemetryDataKey,
+  splitSensitiveDiagnosticKeySegments,
+} from '../../common/sensitiveKeys.js';
 
 export type ProviderEndpointSafetyErrorCode =
   | 'invalid_url'
@@ -80,8 +85,9 @@ function validateProviderQuery(searchParams: URLSearchParams): void {
   for (const [key, value] of searchParams.entries()) {
     const normalizedKey = normalizeTelemetryDataKey(key);
     if (
-      isUnsafeTelemetryDataKey(normalizedKey)
-      || normalizedKey.split('-').some((part) => ['auth', 'credential', 'credentials', 'key', 'secret'].includes(part))
+      isBaseCredentialDiagnosticKey(key)
+      || isUnsafeTelemetryDataKey(normalizedKey)
+      || splitSensitiveDiagnosticKeySegments(key).some((part) => ['auth', 'credential', 'credentials', 'key', 'secret'].includes(part))
       || CREDENTIAL_LIKE_QUERY_VALUE_PATTERN.test(value)
       || CONTROL_CHARACTER_PATTERN.test(key)
       || CONTROL_CHARACTER_PATTERN.test(value)
@@ -100,7 +106,10 @@ function validateProviderRawSearchSyntax(search: string, context: 'endpoint' | '
   }
 }
 
-function validateAndDecodeProviderPathname(pathname: string): string {
+function validateAndDecodeProviderPathname(
+  pathname: string,
+  options: Readonly<{ allowLiteralTraversalSegments?: boolean }> = {},
+): string {
   if (ENCODED_CONTROL_CHARACTER_PATTERN.test(pathname)) {
     fail('control_character', 'Provider endpoint path contains an encoded control character.');
   }
@@ -115,6 +124,36 @@ function validateAndDecodeProviderPathname(pathname: string): string {
   }
   if (CONTROL_CHARACTER_PATTERN.test(decodedPath)) {
     fail('control_character', 'Provider endpoint path contains an encoded control character.');
+  }
+  for (const segment of pathname.split('/')) {
+    let decodedSegment = segment;
+    for (let depth = 0; depth < segment.length; depth += 1) {
+      let next: string;
+      try {
+        next = decodeURIComponent(decodedSegment);
+      } catch {
+        break;
+      }
+      const changed = next !== decodedSegment;
+      if (
+        next.includes('/')
+        || next.includes('\\')
+        || (
+          (next === '.' || next === '..')
+          && (changed || options.allowLiteralTraversalSegments !== true)
+        )
+      ) {
+        fail(
+          'invalid_url',
+          'Provider endpoint path must not encode path separators or traversal segments.',
+        );
+      }
+      if (CONTROL_CHARACTER_PATTERN.test(next)) {
+        fail('control_character', 'Provider endpoint path contains an encoded control character.');
+      }
+      if (next === decodedSegment) break;
+      decodedSegment = next;
+    }
   }
   if (decodedPath.startsWith('//') || decodedPath.includes('\\')) {
     fail('invalid_url', 'Provider endpoint path must not encode an authority escape.');
@@ -135,6 +174,15 @@ export function normalizeProviderOriginRelativePathSyntax(
   if (!rawPath.startsWith('/') || rawPath.startsWith('//') || rawPath.includes('\\')) {
     fail('invalid_url', 'Provider executable paths must be single-leading-slash origin-relative paths.');
   }
+
+  // WHATWG URL parsing removes encoded dot segments before exposing
+  // `pathname`. Inspect the caller's raw path first so `%2e%2e/` cannot be
+  // normalized into an apparently safe path. Literal `.`/`..` segments stay
+  // supported and are canonicalized by URL below.
+  validateAndDecodeProviderPathname(
+    rawPath.split(/[?#]/u, 1)[0] ?? rawPath,
+    { allowLiteralTraversalSegments: true },
+  );
 
   let parsed: URL;
   try {

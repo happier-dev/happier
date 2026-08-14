@@ -28,7 +28,7 @@ describe('ProviderConnectionV1Schema endpoint overrides', () => {
     expect(ProviderConnectionV1Schema.safeParse({
       ...contribution,
       deployment: { kind: 'managedLocal' },
-    }).success).toBe(false);
+    }).success).toBe(true);
     expect(ProviderConnectionV1Schema.safeParse({
       ...contribution,
       purposeBindingDefaults: {

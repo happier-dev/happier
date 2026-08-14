@@ -1,34 +1,19 @@
 import { z } from 'zod';
 
 import { BackendTargetKeyV2InputSchema } from '../backends/targets/backendTargetRefV2.js';
-import { SecretStringV1Schema } from '../crypto/settingsSecretStringsV1.js';
+import { SecretStringV1Schema } from '../crypto/settingsSecretStringSchemasV1.js';
 import { SESSION_PERMISSION_MODES } from '../sessions/metadata/sessionPermissionModes.js';
+import {
+  EnvironmentVariableSchema,
+  EnvVarRequirementSchema,
+} from './environmentVariables.js';
 
-const ENV_VAR_NAME_REGEX = /^[A-Z_][A-Z0-9_]*$/;
-
-export const EnvironmentVariableSchema = z.object({
-  name: z.string().regex(ENV_VAR_NAME_REGEX, 'Invalid environment variable name'),
-  value: z.string(),
-  // User override:
-  // - true: force secret handling in UI (and hint daemon)
-  // - false: force non-secret handling in UI (unless daemon enforces)
-  // - undefined: auto classification
-  isSecret: z.boolean().optional(),
-});
-
-export type EnvironmentVariable = z.infer<typeof EnvironmentVariableSchema>;
-
-const RequiredEnvVarKindSchema = z.enum(['secret', 'config']);
-
-export const EnvVarRequirementSchema = z.object({
-  name: z.string().regex(ENV_VAR_NAME_REGEX, 'Invalid environment variable name'),
-  kind: RequiredEnvVarKindSchema.default('secret'),
-  // Required=true blocks session creation when unsatisfied.
-  // Required=false is “optional” (still useful for vault binding, but does not block).
-  required: z.boolean().default(true),
-});
-
-export type EnvVarRequirement = z.infer<typeof EnvVarRequirementSchema>;
+export {
+  EnvironmentVariableSchema,
+  EnvVarRequirementSchema,
+  type EnvironmentVariable,
+  type EnvVarRequirement,
+} from './environmentVariables.js';
 
 const RequiresMachineLoginSchema = z.string().min(1);
 const RequiresMachineLoginTargetKeySchema = BackendTargetKeyV2InputSchema;

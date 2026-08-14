@@ -12,8 +12,8 @@ import {
   VOICE_RUNTIME_ACCEPTED_STT_INPUT_FORMATS,
   VOICE_RUNTIME_DAEMON_STT_PCM_FORMAT,
   VOICE_RUNTIME_STT_PCM_FORMAT,
-  VOICE_RUNTIME_MEMORY_BUDGET_DEFAULTS,
-  VOICE_RUNTIME_MEMORY_BUDGET_BYTES_BOUNDS,
+  VOICE_RUNTIME_LOADED_ARTIFACT_BUDGET_DEFAULTS,
+  VOICE_RUNTIME_LOADED_ARTIFACT_BUDGET_BYTES_BOUNDS,
 } from './runtimeConfig.js';
 
 describe('voice runtime config defaults', () => {
@@ -57,9 +57,9 @@ describe('voice runtime config bounds', () => {
     expect(VOICE_RUNTIME_STT_MAX_UPLOAD_BYTES_BOUNDS).toEqual({ min: 1, max: 1024 * 1024 * 1024 });
   });
 
-  it('captures the memory budget bounds', () => {
-    expect(VOICE_RUNTIME_MEMORY_BUDGET_BYTES_BOUNDS.min).toBeGreaterThan(0);
-    expect(VOICE_RUNTIME_MEMORY_BUDGET_BYTES_BOUNDS.max).toBeGreaterThan(VOICE_RUNTIME_MEMORY_BUDGET_BYTES_BOUNDS.min);
+  it('captures the declared loaded-artifact budget bounds', () => {
+    expect(VOICE_RUNTIME_LOADED_ARTIFACT_BUDGET_BYTES_BOUNDS.min).toBeGreaterThan(0);
+    expect(VOICE_RUNTIME_LOADED_ARTIFACT_BUDGET_BYTES_BOUNDS.max).toBeGreaterThan(VOICE_RUNTIME_LOADED_ARTIFACT_BUDGET_BYTES_BOUNDS.min);
   });
 });
 
@@ -78,8 +78,8 @@ describe('canonical STT PCM format', () => {
   });
 });
 
-describe('voice runtime memory budget defaults', () => {
-  it('disables the resident-model memory budget by default (0 = unbounded)', () => {
-    expect(VOICE_RUNTIME_MEMORY_BUDGET_DEFAULTS.maxResidentBytes).toBe(0);
+describe('voice runtime loaded-artifact budget defaults', () => {
+  it('disables the declared loaded-artifact budget by default (0 = unbounded)', () => {
+    expect(VOICE_RUNTIME_LOADED_ARTIFACT_BUDGET_DEFAULTS.maxLoadedArtifactBytes).toBe(0);
   });
 });

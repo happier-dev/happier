@@ -7,7 +7,9 @@ import {
   readSessionProviderBindingMetadataV1,
   readSessionProviderBindingMetadataStateV1,
   SESSION_PROVIDER_BINDING_METADATA_KEY_V1,
+  sessionProviderBindingMetadataMatchesRuntimeBasisV1,
 } from './bindingMetadataV1.js';
+import { createProviderBindingSecurityFingerprintV1 } from '../securityFingerprintsV1.js';
 
 const binding = {
   v: 1 as const,
@@ -27,66 +29,66 @@ const binding = {
   },
 };
 
-describe('session provider binding metadata', () => {
-  it('strictly validates a bounded non-secret active runtime binding basis', () => {
-    const runtimeBindingBasis = {
-      v: 1,
-      deployment: { kind: 'external' },
-      agentTargetKey: 'backend:codex',
-      connectionId: 'pc_work',
-      contributionKey: 'plugin.openrouter/openrouter',
-      endpoint: {
-        endpointTemplateId: 'responses',
-        normalizedUrl: 'https://provider.example/v1',
+const runtimeBindingBasis = {
+  v: 1,
+  deployment: { kind: 'external' },
+  agentTargetKey: 'backend:codex',
+  connectionId: 'pc_work',
+  contributionKey: 'plugin.openrouter/openrouter',
+  endpoint: {
+    endpointTemplateId: 'responses',
+    normalizedUrl: 'https://provider.example/v1',
+    protocol: 'openai-responses',
+    publicHeaders: { 'x-provider': 'openrouter' },
+  },
+  runtimeCredentialTransport: {
+    id: 'runtime-bearer',
+    protocols: ['openai-responses'],
+    uses: ['runtime'],
+    destination: {
+      kind: 'httpHeader',
+      name: 'authorization',
+      format: 'bearer',
+    },
+  },
+  prepared: {
+    v: 1,
+    materialization: 'engineConfig',
+    adapterBindingKey: 'openrouter',
+  },
+  adapterVersion: 1,
+  credentialAuthorization: {
+    connectionSecurityFingerprint: 'connection-security-v1',
+    grantFingerprint: 'grant-v1',
+    selectedSecretBindingId: 'binding-v1',
+    selectedSecretRecordFingerprint: 'record-v1',
+  },
+  agentSupport: {
+    acceptsProtocols: ['openai-responses'],
+    required: { streaming: true },
+    credentialSupport: {
+      supportsNoAuth: false,
+      apiKeyTransports: [{
         protocol: 'openai-responses',
-        publicHeaders: { 'x-provider': 'openrouter' },
-      },
-      runtimeCredentialTransport: {
-        id: 'runtime-bearer',
-        protocols: ['openai-responses'],
-        uses: ['runtime'],
         destination: {
           kind: 'httpHeader',
-          name: 'authorization',
-          format: 'bearer',
+          names: ['authorization'],
+          formats: ['bearer'],
         },
-      },
-      prepared: {
-        v: 1,
-        materialization: 'engineConfig',
-        adapterBindingKey: 'openrouter',
-      },
-      adapterVersion: 1,
-      credentialAuthorization: {
-        connectionSecurityFingerprint: 'connection-security-v1',
-        grantFingerprint: 'grant-v1',
-        selectedSecretBindingId: 'binding-v1',
-        selectedSecretRecordFingerprint: 'record-v1',
-      },
-      agentSupport: {
-        acceptsProtocols: ['openai-responses'],
-        required: { streaming: true },
-        credentialSupport: {
-          supportsNoAuth: false,
-          apiKeyTransports: [{
-            protocol: 'openai-responses',
-            destination: {
-              kind: 'httpHeader',
-              names: ['authorization'],
-              formats: ['bearer'],
-            },
-          }],
-        },
-        authIsolation: {
-          suppressConnectedServiceIds: [],
-          ownedEnvKeys: ['OPENAI_API_KEY'],
-        },
-        materialization: 'engineConfig',
-        applyPolicy: 'live',
-        supportsFreeformModelIds: true,
-      },
-    } as const;
+      }],
+    },
+    authIsolation: {
+      suppressConnectedServiceIds: [],
+      ownedEnvKeys: ['OPENAI_API_KEY'],
+    },
+    materialization: 'engineConfig',
+    applyPolicy: 'live',
+    supportsFreeformModelIds: true,
+  },
+} as const;
 
+describe('session provider binding metadata', () => {
+  it('strictly validates a bounded non-secret active runtime binding basis', () => {
     expect(
       ProviderRuntimeBindingBasisV1Schema.parse(runtimeBindingBasis),
     ).toEqual(runtimeBindingBasis);
@@ -94,6 +96,70 @@ describe('session provider binding metadata', () => {
       ...runtimeBindingBasis,
       credential: 'secret',
     }).success).toBe(false);
+  });
+
+  it('rejects a model-specific binding fingerprint that does not match the runtime basis', () => {
+    const model = {
+      id: 'gpt-5',
+      name: 'GPT-5',
+      capabilities: { reasoningControls: 'supported' as const },
+    };
+    const bindingSecurityFingerprint =
+      createProviderBindingSecurityFingerprintV1({
+        agentTargetKey: runtimeBindingBasis.agentTargetKey,
+        connectionId: runtimeBindingBasis.connectionId,
+        modelId: model.id,
+        modelCapabilities: model.capabilities,
+        endpointTemplateId: runtimeBindingBasis.endpoint.endpointTemplateId,
+        endpointUrl: runtimeBindingBasis.endpoint.normalizedUrl,
+        protocol: runtimeBindingBasis.endpoint.protocol,
+        publicHeaders: runtimeBindingBasis.endpoint.publicHeaders,
+        materialization: runtimeBindingBasis.prepared.materialization,
+        adapterBindingKey: runtimeBindingBasis.prepared.adapterBindingKey,
+        credentialDestination:
+          runtimeBindingBasis.runtimeCredentialTransport.destination,
+        compatibilityFingerprint: 'compatibility-v1',
+        adapterVersion: runtimeBindingBasis.adapterVersion,
+      });
+    const coherentBinding = {
+      ...binding,
+      model,
+      bindingSecurityFingerprint,
+      runtimeBindingBasis,
+    };
+
+    expect(sessionProviderBindingMetadataMatchesRuntimeBasisV1({
+      selection: {
+        agentTargetKey: runtimeBindingBasis.agentTargetKey,
+        providerConnectionId: runtimeBindingBasis.connectionId,
+      },
+      binding: coherentBinding,
+    })).toBe(true);
+    expect(sessionProviderBindingMetadataMatchesRuntimeBasisV1({
+      selection: {
+        agentTargetKey: runtimeBindingBasis.agentTargetKey,
+        providerConnectionId: runtimeBindingBasis.connectionId,
+      },
+      binding: {
+        ...coherentBinding,
+        bindingSecurityFingerprint: createProviderBindingSecurityFingerprintV1({
+          agentTargetKey: runtimeBindingBasis.agentTargetKey,
+          connectionId: runtimeBindingBasis.connectionId,
+          modelId: 'gpt-4',
+          modelCapabilities: model.capabilities,
+          endpointTemplateId: runtimeBindingBasis.endpoint.endpointTemplateId,
+          endpointUrl: runtimeBindingBasis.endpoint.normalizedUrl,
+          protocol: runtimeBindingBasis.endpoint.protocol,
+          publicHeaders: runtimeBindingBasis.endpoint.publicHeaders,
+          materialization: runtimeBindingBasis.prepared.materialization,
+          adapterBindingKey: runtimeBindingBasis.prepared.adapterBindingKey,
+          credentialDestination:
+            runtimeBindingBasis.runtimeCredentialTransport.destination,
+          compatibilityFingerprint: 'compatibility-v1',
+          adapterVersion: runtimeBindingBasis.adapterVersion,
+        }),
+      },
+    })).toBe(false);
   });
 
   it('carries the exact authorized model descriptor with the launch materialization', () => {

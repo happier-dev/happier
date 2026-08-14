@@ -77,6 +77,18 @@ describe('parseVoiceAgentRunMetadataV1', () => {
     expect(parsed?.transcriptContractVersion).toBe(VOICE_AGENT_RUN_TRANSCRIPT_CONTRACT_VERSION);
   });
 
+  it('drops an invalid best-effort resume handle instead of exposing it as canonical', () => {
+    const parsed = parseVoiceAgentRunMetadataV1({
+      v: 1,
+      runId: 'run-1',
+      backendId: 'claude',
+      resumeHandle: { kind: 'malformed-best-effort-hint' },
+      updatedAtMs: 1000,
+    });
+
+    expect(parsed?.resumeHandle).toBeNull();
+  });
+
   it('preserves a non-negative welcomedEpoch and drops invalid ones', () => {
     expect(
       parseVoiceAgentRunMetadataV1({

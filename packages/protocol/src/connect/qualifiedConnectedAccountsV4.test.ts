@@ -183,6 +183,7 @@ describe('qualified connected-account V4 wire contract', () => {
         ref: { service, accountId: 'team/primary' },
       },
       authenticationModeId: 'oauth',
+      revisionSemantics: 'revisioned',
       credentialRevision,
       configurationRevision: 'config-revision-3',
       configurationContent: {
@@ -199,6 +200,7 @@ describe('qualified connected-account V4 wire contract', () => {
     const ref = { service, accountId: 'team/legacy' };
     const publicRead = {
       authenticationModeId: null,
+      revisionSemantics: 'revisioned',
       credentialRevision,
       configurationRevision: 'config-revision-3',
     } as const;
@@ -613,6 +615,10 @@ describe('qualified connected-account V4 wire contract', () => {
       expectedRef: ref,
       material,
     })).toEqual(projected);
+    expect(openQualifiedConnectedAccountQuotaResponseV4({
+      response: plain,
+      expectedRef: ref,
+    })).toEqual(projected);
 
     const encrypted = QualifiedConnectedAccountQuotaResponseV4Schema.parse({
       ref,
@@ -632,6 +638,10 @@ describe('qualified connected-account V4 wire contract', () => {
       expectedRef: ref,
       material,
     })).toEqual(projected);
+    expect(openQualifiedConnectedAccountQuotaResponseV4({
+      response: encrypted,
+      expectedRef: ref,
+    })).toBeNull();
   });
 
   it('fails qualified quota opening closed on outer, inner, or ciphertext identity loss', () => {
@@ -787,6 +797,7 @@ describe('qualified connected-account V4 wire contract', () => {
       ref,
       status: 'connected',
       authenticationModeId: 'api-key',
+      revisionSemantics: 'revisioned',
       credentialRevision,
       configurationReady: true,
       configurationRevision: 'cscr_revision',

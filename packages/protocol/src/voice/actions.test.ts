@@ -121,6 +121,21 @@ describe('extractVoiceActionsFromAssistantText', () => {
   });
 
   it('supports session navigation + lifecycle actions', () => {
+    const spawnArgs = {
+      executionTarget: {
+        serverId: 'server-a',
+        machineId: 'machine-1',
+      },
+      directory: '/workspace/project',
+      agentTarget: {
+        kind: 'agent',
+        identity: {
+          pluginId: 'happier.agent.claude',
+          localId: 'claude',
+        },
+      },
+      initialMessage: 'Start a new session.',
+    };
     const input = [
       'Ok.',
       '',
@@ -128,7 +143,7 @@ describe('extractVoiceActionsFromAssistantText', () => {
       JSON.stringify({
         actions: [
           { t: 'openSession', args: { sessionId: 's_other' } },
-          { t: 'spawnSession', args: { tag: 't1' } },
+          { t: 'spawnSession', args: spawnArgs },
           { t: 'resetGlobalVoiceAgent', args: {} },
         ],
       }),
@@ -139,8 +154,32 @@ describe('extractVoiceActionsFromAssistantText', () => {
     expect(result.assistantText).toBe('Ok.');
     expect(result.actions).toEqual([
       { t: 'openSession', args: { sessionId: 's_other' } },
-      { t: 'spawnSession', args: { tag: 't1' } },
+      { t: 'spawnSession', args: spawnArgs },
       { t: 'resetGlobalVoiceAgent', args: {} },
+    ]);
+  });
+
+  it('admits the canonical Session-associated execution-run start action for Voice', () => {
+    const startArgs = {
+      intent: 'voice_agent',
+      backendTarget: {
+        kind: 'backend',
+        backendId: 'codex',
+        sourceKind: 'built_in',
+      },
+      permissionMode: 'read_only',
+      retentionPolicy: 'ephemeral',
+      runClass: 'bounded',
+      ioMode: 'request_response',
+    };
+    const input = [
+      '<voice_actions>',
+      JSON.stringify({ actions: [{ t: 'startExecutionRun', args: startArgs }] }),
+      '</voice_actions>',
+    ].join('\n');
+
+    expect(extractVoiceActionsFromAssistantText(input).actions).toEqual([
+      { t: 'startExecutionRun', args: startArgs },
     ]);
   });
 

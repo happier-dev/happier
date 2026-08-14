@@ -6,7 +6,7 @@ import {
 } from '../../backends/targets/backendTargetRefV2.js';
 import { SessionModelSelectionV1Schema } from '../../providers/selection/v1.js';
 import { SESSION_PERMISSION_MODES } from '../../sessions/metadata/sessionPermissionModes.js';
-import { EnvironmentVariableSchema, EnvVarRequirementSchema } from '../backendProfileSchema.js';
+import { EnvironmentVariableSchema, EnvVarRequirementSchema } from '../environmentVariables.js';
 
 /**
  * Canonical minimum of routing/auth/model selectors that a launch profile may

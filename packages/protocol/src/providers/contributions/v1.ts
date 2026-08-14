@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { ProviderCompatibilityCapabilitiesV1Schema, ProviderCompatibilityOverridesV1Schema, ProviderWireProtocolSchema } from '../capabilities/v1.js';
 import { ProviderCatalogDeclarationV1Schema } from '../catalog/descriptorV1.js';
 import { ProviderApiKeyCredentialRequirementV1Schema } from '../credentials/v1.js';
-import { ProviderDetectionDescriptorV1Schema } from '../detection/v1.js';
+import { ProviderDetectionDescriptorV1Schema } from '../detection/descriptorV1.js';
 import { ProviderLocalIdSchema } from '../ids.js';
 import { ProviderOriginRelativePathSchema } from '../originRelativePathSchema.js';
 import { ProviderEndpointUrlSyntaxSchema } from '../endpointUrlSchema.js';
@@ -11,7 +11,21 @@ import { ProviderHttpsUrlSchema } from '../httpsUrlSchema.js';
 import { ProviderPublicHeadersV1Schema } from '../publicHeadersSchema.js';
 import { ProviderModelIdSchema } from '../ids.js';
 import { ProviderAgentTargetKeySchema } from '../ids.js';
-import { EnvironmentVariableSchema } from '../../profiles/backendProfileSchema.js';
+import { EnvironmentVariableSchema } from '../../profiles/environmentVariables.js';
+import {
+  PluginContributionIdentityV1Schema,
+  PluginContributionLocalIdSchema,
+  type PluginContributionIdentityV1,
+} from '../../plugins/contributionIdentity.js';
+import {
+  ConnectedAccountPurposeDeclarationsV1Schema,
+  type ConnectedAccountPurposeDeclarationV1,
+  type PluginConnectedAccountMaterializationKind,
+} from '../../connect/connectedAccountPurposes.js';
+import {
+  ConnectedAccountRequestAuthUsesV1Schema,
+  type ConnectedAccountRequestAuthUseV1,
+} from '../../connect/connectedAccountRequestAuth.js';
 
 const LegacyProfileEnvironmentNameSchema = z.string().regex(/^[A-Z_][A-Z0-9_]*$/u).max(128);
 
@@ -77,6 +91,135 @@ export const ProviderModelLoadDescriptorV1Schema = z.object({
 }).strict();
 export type ProviderModelLoadDescriptorV1 = z.infer<typeof ProviderModelLoadDescriptorV1Schema>;
 
+export const ProviderManagedRuntimeDeclarationV1Schema = z.object({
+  kind: z.literal('managed'),
+  dependencies: z.array(PluginContributionLocalIdSchema).max(16).optional(),
+  connectedAccounts: ConnectedAccountPurposeDeclarationsV1Schema.optional(),
+  requestAuthUses: ConnectedAccountRequestAuthUsesV1Schema.optional(),
+  endpointTemplateIds: z.array(ProviderLocalIdSchema).min(1).max(4),
+}).strict().superRefine((value, context) => {
+  const dependencies = value.dependencies ?? [];
+  if (new Set(dependencies).size !== dependencies.length) {
+    context.addIssue({ code: 'custom', path: ['dependencies'], message: 'Managed Provider dependencies must be unique' });
+  }
+  if (new Set(value.endpointTemplateIds).size !== value.endpointTemplateIds.length) {
+    context.addIssue({ code: 'custom', path: ['endpointTemplateIds'], message: 'Managed Provider endpoint-template ids must be unique' });
+  }
+  const declarationsByPurpose = new Map(
+    (value.connectedAccounts ?? []).map((declaration) => [
+      declaration.purpose,
+      declaration,
+    ]),
+  );
+  for (const [index, use] of (value.requestAuthUses ?? []).entries()) {
+    const declaration = declarationsByPurpose.get(use.purpose);
+    if (!declaration) {
+      context.addIssue({
+        code: 'custom',
+        path: ['requestAuthUses', index, 'purpose'],
+        message: 'Managed Provider request-auth purpose must be declared by connectedAccounts',
+      });
+      continue;
+    }
+    if (declaration.materializationKinds?.includes(use.materialization.kind) !== true) {
+      context.addIssue({
+        code: 'custom',
+        path: ['requestAuthUses', index, 'materialization', 'kind'],
+        message: 'Managed Provider request-auth materialization kind must be explicitly declared by its connected-account purpose',
+      });
+    }
+  }
+});
+export type ProviderManagedRuntimeDeclarationV1 = z.infer<
+  typeof ProviderManagedRuntimeDeclarationV1Schema
+>;
+
+export type ResolvedProviderManagedConnectedAccountPurposeDeclarationV1 =
+  Readonly<{
+    purpose: string;
+    service: PluginContributionIdentityV1;
+    required?: boolean;
+    materializationKinds?: PluginConnectedAccountMaterializationKind[];
+  }>;
+
+export type ResolvedProviderManagedRuntimeDeclarationV1 = Readonly<{
+  kind: 'managed';
+  dependencies: string[];
+  connectedAccounts:
+    ResolvedProviderManagedConnectedAccountPurposeDeclarationV1[];
+  requestAuthUses: ConnectedAccountRequestAuthUseV1[];
+  endpointTemplateIds: string[];
+}>;
+
+/**
+ * Canonical resolution boundary for a public managed Provider declaration.
+ * Contribution-local Connected Account references become immutable qualified
+ * identities here so registry, authorization, fingerprints, and invocation
+ * custody cannot interpret the same declaration differently.
+ */
+export function resolveProviderManagedRuntimeDeclarationV1(input: Readonly<{
+  implementationIdentity: PluginContributionIdentityV1;
+  managedRuntime:
+    | ProviderManagedRuntimeDeclarationV1
+    | ResolvedProviderManagedRuntimeDeclarationV1;
+}>): ResolvedProviderManagedRuntimeDeclarationV1 {
+  const implementationIdentity = PluginContributionIdentityV1Schema.parse(
+    input.implementationIdentity,
+  );
+  const parsed = ProviderManagedRuntimeDeclarationV1Schema.parse(
+    input.managedRuntime,
+  );
+  const dependencies = [...(parsed.dependencies ?? [])];
+  const endpointTemplateIds = [...parsed.endpointTemplateIds];
+  const connectedAccounts:
+    ResolvedProviderManagedConnectedAccountPurposeDeclarationV1[] = (
+      parsed.connectedAccounts ?? []
+    ).map((declaration: ConnectedAccountPurposeDeclarationV1) => {
+      const service = PluginContributionIdentityV1Schema.parse(
+        typeof declaration.service === 'string'
+          ? {
+              pluginId: implementationIdentity.pluginId,
+              localId: declaration.service,
+            }
+          : declaration.service,
+      );
+      const materializationKinds = declaration.materializationKinds
+        ? [...declaration.materializationKinds]
+        : undefined;
+      if (materializationKinds) Object.freeze(materializationKinds);
+      return Object.freeze({
+        purpose: declaration.purpose,
+        service: Object.freeze(service),
+        ...(declaration.required === undefined
+          ? {}
+          : { required: declaration.required }),
+        ...(materializationKinds === undefined
+          ? {}
+          : { materializationKinds }),
+      });
+    });
+  const requestAuthUses: ConnectedAccountRequestAuthUseV1[] = (
+    parsed.requestAuthUses ?? []
+  ).map((use) => Object.freeze({
+    purpose: use.purpose,
+    materialization: Object.freeze({
+      ...use.materialization,
+      headerNames: Object.freeze([...use.materialization.headerNames]),
+    }),
+  }));
+  Object.freeze(dependencies);
+  Object.freeze(connectedAccounts);
+  Object.freeze(requestAuthUses);
+  Object.freeze(endpointTemplateIds);
+  return Object.freeze({
+    kind: 'managed',
+    dependencies,
+    connectedAccounts,
+    requestAuthUses,
+    endpointTemplateIds,
+  });
+}
+
 export const ProviderContributionV1Schema = z.object({
   v: z.literal(1),
   id: ProviderLocalIdSchema,
@@ -89,6 +232,7 @@ export const ProviderContributionV1Schema = z.object({
   catalog: ProviderCatalogDeclarationV1Schema,
   modelLoad: ProviderModelLoadDescriptorV1Schema.optional(),
   discovery: ProviderDetectionDescriptorV1Schema.optional(),
+  managedRuntime: ProviderManagedRuntimeDeclarationV1Schema.optional(),
   compatibilityOverrides: ProviderCompatibilityOverridesV1Schema.optional(),
   legacyProfileMigrations: z.array(ProviderLegacyProfileMigrationDescriptorV1Schema).max(8).optional(),
 }).strict().superRefine((value, ctx) => {
@@ -148,6 +292,15 @@ export const ProviderContributionV1Schema = z.object({
         code: 'custom',
         path: ['compatibilityOverrides', index, 'protocol'],
         message: 'Compatibility override protocol is not declared by an endpoint',
+      });
+    }
+  });
+  value.managedRuntime?.endpointTemplateIds.forEach((endpointTemplateId, index) => {
+    if (!endpointIds.has(endpointTemplateId)) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['managedRuntime', 'endpointTemplateIds', index],
+        message: 'Managed Provider endpoint template is not declared',
       });
     }
   });

@@ -2,19 +2,147 @@ import { describe, expect, it } from 'vitest';
 
 import {
   DaemonExecutionRunListResponseSchema,
+  DaemonExecutionRunMarkerPersistenceReadSchema,
   DaemonExecutionRunMarkerSchema,
   normalizePersistedExecutionRunConnectedServicesLaunchV1,
 } from './executionRuns.js';
 
 describe('DaemonExecutionRunMarkerSchema', () => {
-  it('accepts and normalizes the exact remote-dev persisted launch shape without retaining predecessor-only identity fields', () => {
+  it('accepts an explicit detached execution-run marker without inventing a Session id', () => {
+    const parsed = DaemonExecutionRunMarkerSchema.safeParse({
+      happyHomeDir: '/tmp/happy',
+      pid: 123,
+      happySessionId: null,
+      runId: 'run_detached_1',
+      callId: 'call_detached_1',
+      sidechainId: 'side_detached_1',
+      intent: 'memory_hints',
+      backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+      runClass: 'bounded',
+      ioMode: 'request_response',
+      retentionPolicy: 'ephemeral',
+      status: 'running',
+      startedAtMs: 0,
+      updatedAtMs: 1,
+    });
+
+    expect(parsed.success).toBe(true);
+    if (parsed.success) expect(parsed.data.happySessionId).toBeNull();
+  });
+
+  it('keeps bounded public execution-run facts while stripping private marker payloads', () => {
+    const parsed = DaemonExecutionRunMarkerSchema.parse({
+      happyHomeDir: '/private/happy-home',
+      pid: 123,
+      happySessionId: null,
+      runId: 'run_terminal_1',
+      callId: 'call_terminal_1',
+      sidechainId: 'side_terminal_1',
+      intent: 'memory_hints',
+      backendTarget: {
+        kind: 'backend',
+        backendId: 'codex',
+        configuredBackendId: 'private-configured-target',
+        sourceKind: 'configured',
+      },
+      display: { title: 'private prompt-derived label' },
+      permissionMode: 'full_access',
+      runClass: 'bounded',
+      ioMode: 'request_response',
+      retentionPolicy: 'ephemeral',
+      status: 'failed',
+      startedAtMs: 0,
+      updatedAtMs: 2,
+      finishedAtMs: 2,
+      errorCode: 'execution_run_output_limit_exceeded',
+      resultSizeBytes: 1024,
+      resumeHandle: {
+        kind: 'provider_session.v1',
+        backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+        providerSessionId: 'private-provider-session',
+      },
+      summary: 'unbounded output summary must not reach the marker',
+      diagnostics: { livenessProbe: { rawOutput: 'must-not-persist' } },
+      arbitraryProducerField: 'must-not-persist',
+    });
+
+    expect(parsed).toEqual({
+      pid: 123,
+      happySessionId: null,
+      runId: 'run_terminal_1',
+      callId: 'call_terminal_1',
+      sidechainId: 'side_terminal_1',
+      intent: 'memory_hints',
+      backendTarget: { kind: 'backend', backendId: 'codex' },
+      permissionMode: 'full_access',
+      runClass: 'bounded',
+      ioMode: 'request_response',
+      retentionPolicy: 'ephemeral',
+      status: 'failed',
+      startedAtMs: 0,
+      updatedAtMs: 2,
+      finishedAtMs: 2,
+      errorCode: 'execution_run_output_limit_exceeded',
+      resultSizeBytes: 1024,
+    });
+    expect(JSON.stringify(parsed)).not.toContain('/private/happy-home');
+    expect(JSON.stringify(parsed)).not.toContain('private-configured-target');
+    expect(JSON.stringify(parsed)).not.toContain('private prompt-derived label');
+    expect(JSON.stringify(parsed)).not.toContain('private-provider-session');
+  });
+
+  it('drops connected-services launch configuration from canonical marker writes', () => {
+    const parsed = DaemonExecutionRunMarkerSchema.parse({
+      happyHomeDir: '/tmp/happy',
+      pid: 123,
+      happySessionId: 'session_1',
+      runId: 'run_marker_privacy',
+      callId: 'call_marker_privacy',
+      sidechainId: 'side_marker_privacy',
+      intent: 'review',
+      backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+      runClass: 'bounded',
+      ioMode: 'request_response',
+      retentionPolicy: 'resumable',
+      status: 'running',
+      startedAtMs: 0,
+      updatedAtMs: 1,
+      executionRunConnectedServicesLaunchV1: {
+        v: 1,
+        runKey: 'run_marker_privacy',
+        agentId: 'codex',
+        materializationKey: 'run_marker_privacy',
+        connectedServicesBindings: {
+          v: 1,
+          bindingsByServiceId: {
+            'openai-codex': { source: 'connected', selection: 'profile', profileId: 'private-profile' },
+          },
+        },
+        connectedServiceSelectionsEnv: {
+          HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON: JSON.stringify([{
+            kind: 'profile',
+            serviceId: 'openai-codex',
+            profileId: 'private-profile',
+          }]),
+        },
+        sessionDirectory: '/private/workspace',
+        materializedRoot: '/private/materialized',
+      },
+    });
+
+    expect(parsed).not.toHaveProperty('executionRunConnectedServicesLaunchV1');
+    expect(JSON.stringify(parsed)).not.toContain('/private/workspace');
+    expect(JSON.stringify(parsed)).not.toContain('private-profile');
+  });
+
+  it('accepts and normalizes the exact remote-dev persisted launch shape only on the compatibility read path', () => {
     const connectedServiceSelectionsJson = JSON.stringify([{
       kind: 'profile',
       serviceId: 'openai-codex',
       profileId: 'team',
       credentialRevision: 'csr_bbbbbbbbbbbbbbbbbbbbbb',
     }]);
-    const parsed = DaemonExecutionRunMarkerSchema.parse({
+    const parsed = DaemonExecutionRunMarkerPersistenceReadSchema.parse({
       happyHomeDir: '/tmp/happy',
       pid: 123,
       happySessionId: 'session_1',
@@ -82,7 +210,7 @@ describe('DaemonExecutionRunMarkerSchema', () => {
     });
     expect(parsed.executionRunConnectedServicesLaunchV1).not.toHaveProperty('materializationKey');
     expect(parsed.executionRunConnectedServicesLaunchV1).not.toHaveProperty('connectedServiceSelectionsEnv');
-    expect(DaemonExecutionRunMarkerSchema.safeParse({
+    expect(DaemonExecutionRunMarkerPersistenceReadSchema.safeParse({
       ...parsed,
       executionRunConnectedServicesLaunchV1: {
         ...parsed.executionRunConnectedServicesLaunchV1,
@@ -94,7 +222,7 @@ describe('DaemonExecutionRunMarkerSchema', () => {
         }]),
       },
     }).success).toBe(false);
-    expect(DaemonExecutionRunMarkerSchema.safeParse({
+    expect(DaemonExecutionRunMarkerPersistenceReadSchema.safeParse({
       ...parsed,
       executionRunConnectedServicesLaunchV1: {
         ...parsed.executionRunConnectedServicesLaunchV1,
@@ -113,7 +241,7 @@ describe('DaemonExecutionRunMarkerSchema', () => {
     }).success).toBe(false);
   });
 
-  it('retains a strict non-secret execution-run connected-services launch fact', () => {
+  it('accepts a strict legacy launch fact only on the compatibility read path', () => {
     const launch = {
       v: 1,
       activationId: '11111111-1111-4111-8111-111111111111',
@@ -136,7 +264,7 @@ describe('DaemonExecutionRunMarkerSchema', () => {
       sessionDirectory: '/tmp/project',
       materializedRoot: '/tmp/materialized/run_1/codex',
     };
-    const parsed = DaemonExecutionRunMarkerSchema.parse({
+    const parsed = DaemonExecutionRunMarkerPersistenceReadSchema.parse({
       happyHomeDir: '/tmp/happy',
       pid: 123,
       happySessionId: 'session_1',
@@ -155,7 +283,7 @@ describe('DaemonExecutionRunMarkerSchema', () => {
     });
 
     expect(parsed.executionRunConnectedServicesLaunchV1).toEqual(launch);
-    expect(DaemonExecutionRunMarkerSchema.safeParse({
+    expect(DaemonExecutionRunMarkerPersistenceReadSchema.safeParse({
       ...parsed,
       executionRunConnectedServicesLaunchV1: {
         ...launch,
@@ -163,7 +291,7 @@ describe('DaemonExecutionRunMarkerSchema', () => {
       },
     }).success).toBe(false);
 
-    expect(DaemonExecutionRunMarkerSchema.safeParse({
+    expect(DaemonExecutionRunMarkerPersistenceReadSchema.safeParse({
       ...parsed,
       executionRunConnectedServicesLaunchV1: {
         ...launch,
@@ -175,11 +303,11 @@ describe('DaemonExecutionRunMarkerSchema', () => {
         },
       },
     }).success).toBe(false);
-    expect(DaemonExecutionRunMarkerSchema.safeParse({
+    expect(DaemonExecutionRunMarkerPersistenceReadSchema.safeParse({
       ...parsed,
       executionRunConnectedServicesLaunchV1: { ...launch, credential: 'must-not-persist' },
     }).success).toBe(false);
-    expect(DaemonExecutionRunMarkerSchema.safeParse({
+    expect(DaemonExecutionRunMarkerPersistenceReadSchema.safeParse({
       ...parsed,
       executionRunConnectedServicesLaunchV1: {
         ...launch,
@@ -193,7 +321,7 @@ describe('DaemonExecutionRunMarkerSchema', () => {
         },
       },
     }).success).toBe(false);
-    expect(DaemonExecutionRunMarkerSchema.safeParse({
+    expect(DaemonExecutionRunMarkerPersistenceReadSchema.safeParse({
       ...parsed,
       executionRunConnectedServicesLaunchV1: {
         ...launch,
@@ -203,7 +331,7 @@ describe('DaemonExecutionRunMarkerSchema', () => {
         },
       },
     }).success).toBe(false);
-    expect(DaemonExecutionRunMarkerSchema.safeParse({
+    expect(DaemonExecutionRunMarkerPersistenceReadSchema.safeParse({
       ...parsed,
       executionRunConnectedServicesLaunchV1: {
         ...launch,
@@ -221,8 +349,8 @@ describe('DaemonExecutionRunMarkerSchema', () => {
       },
     }).success).toBe(false);
   });
-  it('rejects invalid resumeHandle shapes', () => {
-    const parsed = DaemonExecutionRunMarkerSchema.safeParse({
+  it('drops provider resume handles from canonical marker bytes', () => {
+    const parsed = DaemonExecutionRunMarkerSchema.parse({
       happyHomeDir: '/tmp/happy',
       pid: 123,
       happySessionId: 'session_1',
@@ -244,33 +372,7 @@ describe('DaemonExecutionRunMarkerSchema', () => {
       },
     });
 
-    expect(parsed.success).toBe(false);
-  });
-
-  it('accepts a valid resumeHandle', () => {
-    const parsed = DaemonExecutionRunMarkerSchema.safeParse({
-      happyHomeDir: '/tmp/happy',
-      pid: 123,
-      happySessionId: 'session_1',
-      runId: 'run_1',
-      callId: 'call_1',
-      sidechainId: 'side_1',
-      intent: 'plan',
-      backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
-      runClass: 'bounded',
-      ioMode: 'request_response',
-      retentionPolicy: 'resumable',
-      status: 'succeeded',
-      startedAtMs: 0,
-      updatedAtMs: 1,
-      resumeHandle: {
-        kind: 'provider_session.v1',
-        backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
-        providerSessionId: 'vendor-session-123',
-      },
-    });
-
-    expect(parsed.success).toBe(true);
+    expect(parsed).not.toHaveProperty('resumeHandle');
   });
 
   it('reads legacy backend target fields in list responses and preserves additive transport fields', () => {
@@ -300,12 +402,11 @@ describe('DaemonExecutionRunMarkerSchema', () => {
     expect(parsed.runs[0]?.backendTarget).toEqual({
       kind: 'backend',
       backendId: 'codex',
-      sourceKind: 'built_in',
     });
     expect((parsed.runs[0] as any).extraTransportField).toBe('keep-me');
   });
 
-  it('accepts legacy backendId fields in markers and resume handles', () => {
+  it('reduces legacy backendId marker input to bounded backend identity', () => {
     const parsed = DaemonExecutionRunMarkerSchema.safeParse({
       happyHomeDir: '/tmp/happy',
       pid: 123,
@@ -332,15 +433,11 @@ describe('DaemonExecutionRunMarkerSchema', () => {
     if (!parsed.success) {
       throw parsed.error;
     }
-    expect(parsed.data.backendTarget).toEqual({ kind: 'backend', backendId: 'codex', sourceKind: 'built_in' });
-    expect(parsed.data.resumeHandle).toMatchObject({
-      kind: 'provider_session.v1',
-      backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
-      providerSessionId: 'vendor-session-123',
-    });
+    expect(parsed.data.backendTarget).toEqual({ kind: 'backend', backendId: 'codex' });
+    expect(parsed.data).not.toHaveProperty('resumeHandle');
   });
 
-  it('accepts legacy configured backend provenance in markers and resume handles', () => {
+  it('drops legacy configured backend provenance and resume configuration from markers', () => {
     const parsed = DaemonExecutionRunMarkerSchema.safeParse({
       happyHomeDir: '/tmp/happy',
       pid: 123,
@@ -374,19 +471,8 @@ describe('DaemonExecutionRunMarkerSchema', () => {
     expect(parsed.data.backendTarget).toEqual({
       kind: 'backend',
       backendId: 'review-bot',
-      configuredBackendId: 'review-bot',
-      sourceKind: 'configured',
     });
-    expect(parsed.data.resumeHandle).toMatchObject({
-      kind: 'provider_session.v1',
-      backendTarget: {
-        kind: 'backend',
-        backendId: 'review-bot',
-        configuredBackendId: 'review-bot',
-        sourceKind: 'configured',
-      },
-      providerSessionId: 'vendor-session-123',
-    });
+    expect(parsed.data).not.toHaveProperty('resumeHandle');
   });
 
   it('accepts canonical V2 backendTarget input in markers and list responses', () => {
@@ -419,8 +505,6 @@ describe('DaemonExecutionRunMarkerSchema', () => {
     expect(markerParsed.data.backendTarget).toEqual({
       kind: 'backend',
       backendId: 'review-bot',
-      configuredBackendId: 'review-bot',
-      sourceKind: 'configured',
     });
 
     const listParsed = DaemonExecutionRunListResponseSchema.parse({
@@ -452,8 +536,6 @@ describe('DaemonExecutionRunMarkerSchema', () => {
     expect(listParsed.runs[0]?.backendTarget).toEqual({
       kind: 'backend',
       backendId: 'review-bot',
-      configuredBackendId: 'review-bot',
-      sourceKind: 'configured',
     });
   });
 

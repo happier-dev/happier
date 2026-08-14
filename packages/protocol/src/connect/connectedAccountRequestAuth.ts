@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { ProviderAccountUsageQuotaScopeV1Schema } from './accountUsage.js';
+import { ProviderAccountUsageQuotaScopeV1Schema } from './providerAccountUsageQuotaScopeV1.js';
 import {
   ConnectedAccountPurposeIdSchema,
   QualifiedConnectedAccountPurposeV1Schema,

@@ -23,6 +23,19 @@ export const SessionModelSelectionV1Schema = z.object({
 }).strict();
 export type SessionModelSelectionV1 = z.infer<typeof SessionModelSelectionV1Schema>;
 
+export const SessionActiveModelSelectionV1Schema = z.object({
+  v: z.literal(1),
+  selection: ProviderBoundModelRefSchema,
+  source: z.enum(['runtime_readback', 'runtime_apply']),
+  runner: z.object({
+    pid: z.number().int().positive(),
+    processStartTimeMs: z.number().int().nonnegative(),
+  }).strict(),
+}).strict();
+export type SessionActiveModelSelectionV1 = z.infer<
+  typeof SessionActiveModelSelectionV1Schema
+>;
+
 export const SESSION_APPLIED_MODEL_V1_METADATA_KEY = 'sessionAppliedModelV1';
 
 /**

@@ -1,9 +1,5 @@
 import { z } from 'zod';
 
-import {
-  PluginContributionIdentityV1Schema,
-  PluginContributionLocalIdSchema,
-} from '../plugins/contributionIdentity.js';
 import { StoredJsonContentEnvelopeSchema } from '../storage/storedJsonContentEnvelope.js';
 import type { AccountScopedCryptoMaterial } from '../crypto/accountScopedCipher.js';
 import {
@@ -30,14 +26,46 @@ import {
   QualifiedConnectedAccountRefSchema,
   type QualifiedConnectedAccountRef,
 } from './qualifiedConnectedAccountPersistence.js';
+import {
+  QualifiedConnectedAccountConfigurationSnapshotV4Schema,
+  QualifiedConnectedAccountConfigurationTargetV4Schema,
+  QualifiedConnectedAccountGroupMemberV4Schema,
+  QualifiedConnectedAccountGroupRefSchema,
+  QualifiedConnectedAccountGroupV4Schema,
+  QualifiedConnectedAccountListResponseV4Schema,
+  QualifiedConnectedAccountConfigurationRevisionV4Schema,
+  QualifiedConnectedAccountCredentialMetadataV4Schema,
+  QualifiedConnectedAccountCredentialSnapshotV4Schema,
+  QualifiedConnectedAccountModeIdV4Schema,
+  QualifiedConnectedAccountPresentationMetadataV4Schema,
+  QualifiedConnectedAccountProfileV4Schema,
+  QualifiedConnectedAccountProviderIdentityV4Schema,
+  QualifiedConnectedAccountServiceRefSchema,
+} from './qualifiedConnectedAccountProjectionsV4.js';
+
+export {
+  QualifiedConnectedAccountConfigurationSnapshotV4Schema,
+  QualifiedConnectedAccountConfigurationTargetV4Schema,
+  QualifiedConnectedAccountCredentialMetadataV4Schema,
+  QualifiedConnectedAccountCredentialSnapshotV4Schema,
+  QualifiedConnectedAccountGroupMemberV4Schema,
+  QualifiedConnectedAccountGroupRefSchema,
+  QualifiedConnectedAccountGroupV4Schema,
+  QualifiedConnectedAccountListResponseV4Schema,
+  QualifiedConnectedAccountPresentationMetadataV4Schema,
+  QualifiedConnectedAccountProfileV4Schema,
+  QualifiedConnectedAccountProviderIdentityV4Schema,
+  QualifiedConnectedAccountServiceRefSchema,
+} from './qualifiedConnectedAccountProjectionsV4.js';
 
 export {
   QualifiedConnectedAccountIdSchema,
   QualifiedConnectedAccountRefSchema,
 } from './qualifiedConnectedAccountPersistence.js';
 
-const RevisionSchema = z.string().trim().min(1).max(128);
-const ModeIdSchema = PluginContributionLocalIdSchema;
+const RevisionSchema =
+  QualifiedConnectedAccountConfigurationRevisionV4Schema;
+const ModeIdSchema = QualifiedConnectedAccountModeIdV4Schema;
 
 export const CONNECTED_ACCOUNT_V4_PROTOCOL_VERSION = 4 as const;
 
@@ -70,18 +98,6 @@ export const QUALIFIED_CONNECTED_ACCOUNT_V4_ROUTES = Object.freeze([
   ['POST', '/v4/connect/qualified/provider-account-usage/record/refresh'],
 ] as const);
 
-export const QualifiedConnectedAccountServiceRefSchema = PluginContributionIdentityV1Schema;
-
-export const QualifiedConnectedAccountGroupRefSchema = z.object({
-  service: QualifiedConnectedAccountServiceRefSchema,
-  groupId: ConnectedServiceAuthGroupIdSchema,
-}).strict();
-
-export const QualifiedConnectedAccountConfigurationTargetV4Schema = z.object({
-  kind: z.literal('account'),
-  ref: QualifiedConnectedAccountRefSchema,
-}).strict();
-
 export const QualifiedConnectedAccountConfigurationPatchV4Schema = z.object({
   target: QualifiedConnectedAccountConfigurationTargetV4Schema,
   expectedConfigurationRevision: RevisionSchema.nullable(),
@@ -91,62 +107,9 @@ export const QualifiedConnectedAccountConfigurationPatchV4Schema = z.object({
     z.literal(true).optional(),
 }).strict();
 
-export const QualifiedConnectedAccountConfigurationSnapshotV4Schema = z.object({
-  target: QualifiedConnectedAccountConfigurationTargetV4Schema,
-  authenticationModeId: ModeIdSchema.nullable(),
-  credentialRevision: ConnectedServiceCredentialRevisionV1Schema,
-  configurationRevision: RevisionSchema,
-  configurationContent: StoredJsonContentEnvelopeSchema,
-}).strict();
-
 export const QualifiedConnectedAccountListQueryV4Schema = z.object({
   service: QualifiedConnectedAccountServiceRefSchema,
 }).strict();
-
-export const QualifiedConnectedAccountProviderIdentityV4Schema = z.object({
-  accountId: z.string().trim().min(1).max(256).nullable().optional(),
-  email: z.string().trim().min(1).max(512).nullable().optional(),
-}).strict();
-
-const QualifiedConnectedAccountScopesV4Schema = z
-  .array(z.string().trim().min(1).max(256))
-  .max(128)
-  .refine(
-    (scopes) => new Set(scopes).size === scopes.length,
-    'Qualified Connected Account scopes must be unique',
-  )
-  .default([]);
-
-export const QualifiedConnectedAccountPresentationMetadataV4Schema = z.object({
-  providerIdentity: QualifiedConnectedAccountProviderIdentityV4Schema.optional(),
-  displayName: z.string().trim().min(1).max(512).optional(),
-  scopes: QualifiedConnectedAccountScopesV4Schema,
-}).strict();
-
-export const QualifiedConnectedAccountProfileV4Schema = z.object({
-  ref: QualifiedConnectedAccountRefSchema,
-  status: z.enum([
-    'connected',
-    'refreshing',
-    'needs_reauth',
-    'refresh_failed_retryable',
-  ]),
-  authenticationModeId: ModeIdSchema.nullable(),
-  credentialRevision: ConnectedServiceCredentialRevisionV1Schema,
-  configurationReady: z.boolean(),
-  configurationRevision: RevisionSchema.nullable(),
-  kind: z.enum(['oauth', 'token']).nullable().optional(),
-  expiresAt: z.number().int().nonnegative().nullable().optional(),
-  lastUsedAt: z.number().int().nonnegative().nullable().optional(),
-}).extend(QualifiedConnectedAccountPresentationMetadataV4Schema.shape).strict();
-
-export const QualifiedConnectedAccountListResponseV4Schema = z.object({
-  service: QualifiedConnectedAccountServiceRefSchema,
-  accounts: z.array(QualifiedConnectedAccountProfileV4Schema).max(500),
-}).strict();
-
-export const QualifiedConnectedAccountCredentialMetadataV4Schema =
-  QualifiedConnectedAccountPresentationMetadataV4Schema;
 
 const QualifiedConnectedAccountCredentialMutationCommonV4Shape = {
   ref: QualifiedConnectedAccountRefSchema,
@@ -189,15 +152,6 @@ export const QualifiedConnectedAccountCredentialDeleteV4Schema = z.object({
   cleanupGroupReferences: z.boolean(),
 }).strict();
 
-export const QualifiedConnectedAccountCredentialSnapshotV4Schema = z.object({
-  ref: QualifiedConnectedAccountRefSchema,
-  authenticationModeId: ModeIdSchema.nullable(),
-  credentialRevision: ConnectedServiceCredentialRevisionV1Schema,
-  configurationRevision: RevisionSchema.nullable(),
-  content: StoredJsonContentEnvelopeSchema,
-  metadata: QualifiedConnectedAccountCredentialMetadataV4Schema,
-}).strict();
-
 export const QualifiedConnectedAccountCredentialMutationSuccessV4Schema =
   z.object({
     success: z.literal(true),
@@ -222,6 +176,9 @@ export const QualifiedConnectedAccountCredentialMutationSupersededV4Schema =
 export const QualifiedConnectedAccountCredentialErrorV4Schema = z.union([
   z.object({ error: z.literal('invalid-params') }).strict(),
   z.object({ error: z.literal('connect_credential_not_found') }).strict(),
+  z.object({
+    error: z.literal('connect_credential_unsupported_format'),
+  }).strict(),
   z.object({
     error: z.literal('connect_reconnect_provider_identity_mismatch'),
   }).strict(),
@@ -324,30 +281,6 @@ export const QualifiedConnectedAccountGroupActiveAccountV4Schema = z.object({
     configurationRevision: RevisionSchema.nullable(),
   }).strict().optional(),
   overrideRuntimeCooldown: z.boolean().optional(),
-}).strict();
-
-export const QualifiedConnectedAccountGroupMemberV4Schema = z.object({
-  v: z.literal(1),
-  connectedAccountId: QualifiedConnectedAccountIdSchema,
-  priority: z.number().int().default(100),
-  enabled: z.boolean().default(true),
-  state: ConnectedServiceAuthGroupMemberStateV1Schema,
-  createdAt: z.number().int().nonnegative(),
-  updatedAt: z.number().int().nonnegative(),
-}).strict();
-
-export const QualifiedConnectedAccountGroupV4Schema = z.object({
-  v: z.literal(1),
-  ref: QualifiedConnectedAccountGroupRefSchema,
-  displayName: z.string().trim().min(1).nullable(),
-  policy: ConnectedServiceAuthGroupPolicyV1Schema,
-  activeConnectedAccountId: QualifiedConnectedAccountIdSchema.nullable(),
-  generation: z.number().int().nonnegative(),
-  runtimeStateRevision: ConnectedServiceAuthGroupRuntimeStateRevisionV1Schema,
-  state: ConnectedServiceAuthGroupStateV1Schema,
-  createdAt: z.number().int().nonnegative(),
-  updatedAt: z.number().int().nonnegative(),
-  members: z.array(QualifiedConnectedAccountGroupMemberV4Schema).default([]),
 }).strict();
 
 export const QualifiedConnectedAccountGroupListResponseV4Schema = z.object({
@@ -518,7 +451,7 @@ export function openQualifiedConnectedAccountQuotaResponseV4(
   params: Readonly<{
     response: QualifiedConnectedAccountQuotaResponseV4;
     expectedRef: QualifiedConnectedAccountRef;
-    material: AccountScopedCryptoMaterial;
+    material?: AccountScopedCryptoMaterial | null;
   }>,
 ): QualifiedConnectedAccountQuotaSnapshotV4 | null {
   const response =
@@ -544,6 +477,7 @@ export function openQualifiedConnectedAccountQuotaResponseV4(
   if (response.data.content.t === 'plain') {
     return response.data.content.v;
   }
+  if (!params.material) return null;
   const opened = openProviderAccountUsageSnapshotCiphertext({
     material: params.material,
     ciphertext: response.data.content.c,

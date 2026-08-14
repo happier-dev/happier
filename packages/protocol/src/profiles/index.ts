@@ -1,14 +1,17 @@
 export {
   AIBackendProfileSchema,
-  EnvVarRequirementSchema,
-  EnvironmentVariableSchema,
   SavedSecretSchema,
   getProfileEnvironmentVariables,
   type AIBackendProfile,
-  type EnvVarRequirement,
-  type EnvironmentVariable,
   type SavedSecret,
 } from './backendProfileSchema.js';
+
+export {
+  EnvVarRequirementSchema,
+  EnvironmentVariableSchema,
+  type EnvVarRequirement,
+  type EnvironmentVariable,
+} from './environmentVariables.js';
 
 export * from './read.js';
 export * from './v2/schema.js';

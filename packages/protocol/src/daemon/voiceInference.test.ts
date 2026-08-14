@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
     DaemonVoiceInferenceErrorSchema,
     DaemonVoiceInferenceModelRuntimeStateSchema,
+    DaemonVoiceInferenceModelLicenseAcceptRequestSchema,
     DaemonVoiceInferenceModelStatusSchema,
     DaemonVoiceInferenceModelsInstallRequestSchema,
     DaemonVoiceInferenceModelsInstallResponseSchema,
@@ -41,9 +42,69 @@ import {
     DaemonVoiceInferenceSttStreamStartRequestSchema,
     DaemonVoiceInferenceSttStreamStartResponseSchema,
     DaemonVoiceInferenceSttStreamStatusResponseSchema,
+    DaemonVoiceModelPackLicenseReviewV1Schema,
 } from './voiceInference.js';
 
 describe('daemonVoiceInference schemas', () => {
+    it('round-trips a strict Voice artifact binding and rejects retired digest aliases', () => {
+        const review = {
+            pluginId: 'acme.speech',
+            packId: 'english-small',
+            pluginVersion: '1.2.3',
+            packVersion: '2026.7.0',
+            licenseId: 'acme-model-license-v1',
+            licenseTitle: 'Acme model license',
+            licenseText: 'Review these exact model terms.',
+            licenseSourceUrl: 'https://example.test/licenses/acme-v1',
+            licenseTextDigest: `sha256:${'a'.repeat(64)}`,
+            artifactBinding: {
+                kind: 'sourceIntegrity' as const,
+                integrity: `sha512-${'b'.repeat(86)}==`,
+            },
+            accepted: false,
+        };
+
+        expect(DaemonVoiceModelPackLicenseReviewV1Schema.parse(review).artifactBinding)
+            .toEqual(review.artifactBinding);
+        const materializationBinding = {
+            kind: 'materialization' as const,
+            immutableGenerationId: 'generation-local-1',
+        };
+        expect(DaemonVoiceModelPackLicenseReviewV1Schema.parse({
+            ...review,
+            artifactBinding: materializationBinding,
+        }).artifactBinding).toEqual(materializationBinding);
+        const {
+            licenseTitle: _licenseTitle,
+            licenseText: _licenseText,
+            accepted: _accepted,
+            ...licenseAcceptance
+        } = review;
+        expect(DaemonVoiceInferenceModelLicenseAcceptRequestSchema.parse({
+            ...licenseAcceptance,
+            qualifiedPackId: 'acme.speech/english-small',
+        }).artifactBinding).toEqual(review.artifactBinding);
+        expect(DaemonVoiceModelPackLicenseReviewV1Schema.safeParse({
+            ...review,
+            artifactDigest: `sha256:${'b'.repeat(64)}`,
+        }).success).toBe(false);
+        expect(DaemonVoiceModelPackLicenseReviewV1Schema.safeParse({
+            ...review,
+            artifactBinding: {
+                kind: 'materialization',
+                immutableGenerationId: 'generation-local-1',
+                integrity: 'not-permitted',
+            },
+        }).success).toBe(false);
+        expect(DaemonVoiceModelPackLicenseReviewV1Schema.safeParse({
+            ...review,
+            artifactBinding: {
+                kind: 'sourceIntegrity',
+                integrity: ` ${review.artifactBinding.integrity}`,
+            },
+        }).success).toBe(false);
+    });
+
     it('parses and preserves the daemon WAV TTS synthesize contract', () => {
         const request = DaemonVoiceInferenceTtsSynthesizeRequestSchema.parse({
             requestId: 'tts-1',
@@ -80,6 +141,14 @@ describe('daemonVoiceInference schemas', () => {
             sizeBytes: 2048,
             name: 'tts.wav',
         });
+    });
+
+    it('publishes an over-ceiling direct TTS result as a typed error', () => {
+        expect(DaemonVoiceInferenceErrorSchema.parse({
+            ok: false,
+            errorCode: 'output_too_large',
+            error: 'voice_inference_output_too_large',
+        })).toMatchObject({ errorCode: 'output_too_large' });
     });
 
     it('threads diagnostics capture context only when a caller explicitly opts in', () => {
@@ -238,7 +307,7 @@ describe('daemonVoiceInference schemas', () => {
         expect(status.outstandingSegmentCount).toBe(1);
     });
 
-    it('additively carries the readiness runtimeState and resident memory snapshot when present', () => {
+    it('additively carries the readiness runtimeState and declared loaded-artifact bytes when present', () => {
         const parsed = DaemonVoiceInferenceModelStatusSchema.parse({
             packId: 'kokoro-tts-en-v1',
             kind: 'tts_sherpa',
@@ -250,11 +319,11 @@ describe('daemonVoiceInference schemas', () => {
             lastError: null,
             updatedAtMs: 1,
             runtimeState: 'ready',
-            residentMemoryBytes: 64 * 1024 * 1024,
+            loadedArtifactBytes: 64 * 1024 * 1024,
         });
 
         expect(parsed.runtimeState).toBe('ready');
-        expect(parsed.residentMemoryBytes).toBe(64 * 1024 * 1024);
+        expect(parsed.loadedArtifactBytes).toBe(64 * 1024 * 1024);
     });
 
     it('omits the additive readiness fields entirely when not provided so existing callers stay unaffected', () => {

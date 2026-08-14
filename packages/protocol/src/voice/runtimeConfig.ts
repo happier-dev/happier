@@ -88,17 +88,17 @@ export const VOICE_RUNTIME_DAEMON_STT_PCM_FORMAT = VOICE_RUNTIME_STT_PCM_FORMAT;
 export type VoiceRuntimeDaemonSttPcmFormat = typeof VOICE_RUNTIME_DAEMON_STT_PCM_FORMAT;
 
 /**
- * Resident-model memory budget defaults. `maxResidentBytes === 0` means the budget
- * is disabled (no LRU eviction by memory). Hosts apply their own env override against
- * these defaults and bounds; the daemon evicts the least-recently-used loaded model
- * when the resident footprint exceeds the budget.
+ * Declared loaded-artifact byte budget defaults. `maxLoadedArtifactBytes === 0` means
+ * the budget is disabled. Hosts apply their own env override against these defaults and
+ * bounds; the daemon evicts the least-recently-used loaded model when the sum of its
+ * declared artifact files exceeds the budget. This is not a process-memory measurement.
  */
-export const VOICE_RUNTIME_MEMORY_BUDGET_DEFAULTS = {
-  maxResidentBytes: 0,
+export const VOICE_RUNTIME_LOADED_ARTIFACT_BUDGET_DEFAULTS = {
+  maxLoadedArtifactBytes: 0,
 } as const;
 
-/** Bounds for the env-overridable resident-model memory budget (bytes). */
-export const VOICE_RUNTIME_MEMORY_BUDGET_BYTES_BOUNDS: VoiceRuntimeBounds = {
+/** Bounds for the env-overridable declared loaded-artifact byte budget. */
+export const VOICE_RUNTIME_LOADED_ARTIFACT_BUDGET_BYTES_BOUNDS: VoiceRuntimeBounds = {
   min: 16 * 1024 * 1024,
   max: 256 * 1024 * 1024 * 1024,
 };

@@ -81,6 +81,37 @@ function managedDeploymentWithPurposes(purposes: readonly string[]) {
   } as const;
 }
 
+function publicManagedDeploymentWithPurposes(purposes: readonly string[]) {
+  return {
+    implementationIdentity: {
+      pluginId: 'happier.provider.gateway',
+      localId: 'gateway',
+    },
+    managedRuntime: {
+      kind: 'managed',
+      dependencies: ['gateway-runtime'],
+      endpointTemplateIds: ['responses'],
+      connectedAccounts: purposes.map((purpose) => ({
+        purpose,
+        service: {
+          pluginId: 'happier.connected-account.example',
+          localId: 'example',
+        },
+        required: true,
+        materializationKinds: ['httpHeaders'],
+      })),
+      requestAuthUses: purposes.map((purpose) => ({
+        purpose,
+        materialization: {
+          kind: 'httpHeaders',
+          origin: 'https://api.example.test',
+          headerNames: ['authorization'],
+        },
+      })),
+    },
+  } as const;
+}
+
 describe('typed provider security fingerprints', () => {
   it('binds draft probe authorization to the exact credential destination', () => {
     const bearer = createProviderCredentialDestinationFingerprintV1({
@@ -144,7 +175,7 @@ describe('typed provider security fingerprints', () => {
   });
 
   it('uses stable managed declaration facts without accepting a durable endpoint URL', () => {
-    const managedDeployment = managedDeploymentWithPurposes(['upstream']);
+    const managedDeployment = publicManagedDeploymentWithPurposes(['upstream']);
     const input = {
       securityContractVersion: 1,
       endpoints: [],
@@ -159,15 +190,9 @@ describe('typed provider security fingerprints', () => {
       ...input,
       managedDeployment: {
         ...managedDeployment,
-        managedEndpoint: {
-          ...managedDeployment.managedEndpoint,
-          localService: {
-            ...managedDeployment.managedEndpoint.localService,
-            launch: {
-              ...managedDeployment.managedEndpoint.localService.launch,
-              executableBaseName: 'gateway-managed-v2',
-            },
-          },
+        managedRuntime: {
+          ...managedDeployment.managedRuntime,
+          dependencies: ['gateway-runtime-v2'],
         },
       },
     })).not.toBe(fingerprint);
@@ -175,67 +200,85 @@ describe('typed provider security fingerprints', () => {
       ...input,
       managedDeployment: {
         ...managedDeployment,
-        connectedAccounts: [{
-          ...managedDeployment.connectedAccounts[0],
-          purpose: 'different-upstream',
-        }],
-        requestAuthUses: [{
-          ...managedDeployment.requestAuthUses[0],
-          purpose: 'different-upstream',
-        }],
+        managedRuntime: {
+          ...managedDeployment.managedRuntime,
+          connectedAccounts: [{
+            ...managedDeployment.managedRuntime.connectedAccounts[0],
+            purpose: 'different-upstream',
+          }],
+          requestAuthUses: [{
+            ...managedDeployment.managedRuntime.requestAuthUses[0],
+            purpose: 'different-upstream',
+          }],
+        },
       },
     })).not.toBe(fingerprint);
     expect(createProviderConnectionSecurityFingerprintV1({
       ...input,
       managedDeployment: {
         ...managedDeployment,
-        connectedAccounts: [{
-          ...managedDeployment.connectedAccounts[0],
-          materializationKinds: ['httpHeaders', 'environment'],
-        }],
+        managedRuntime: {
+          ...managedDeployment.managedRuntime,
+          connectedAccounts: [{
+            ...managedDeployment.managedRuntime.connectedAccounts[0],
+            materializationKinds: ['httpHeaders', 'environment'],
+          }],
+        },
+      },
+    })).not.toBe(fingerprint);
+    expect(createProviderConnectionSecurityFingerprintV1({
+      ...input,
+      managedDeployment: {
+        ...managedDeployment,
+        managedRuntime: {
+          ...managedDeployment.managedRuntime,
+          requestAuthUses: [],
+        },
       },
     })).not.toBe(fingerprint);
     expect(() => createProviderConnectionSecurityFingerprintV1({
       ...input,
       managedDeployment: {
         ...managedDeployment,
-        requestAuthUses: [],
-      },
-    })).toThrowError(/must exactly match/u);
-    expect(() => createProviderConnectionSecurityFingerprintV1({
-      ...input,
-      managedDeployment: {
-        ...managedDeployment,
-        connectedAccounts: [{
-          ...managedDeployment.connectedAccounts[0],
-          materializationKinds: ['files'],
-        }],
+        managedRuntime: {
+          ...managedDeployment.managedRuntime,
+          connectedAccounts: [{
+            ...managedDeployment.managedRuntime.connectedAccounts[0],
+            materializationKinds: ['files'],
+          }],
+        },
       },
     })).toThrowError(/materialization kind/u);
     expect(createProviderConnectionSecurityFingerprintV1({
       ...input,
       managedDeployment: {
         ...managedDeployment,
-        requestAuthUses: [{
-          ...managedDeployment.requestAuthUses[0],
-          materialization: {
-            ...managedDeployment.requestAuthUses[0].materialization,
-            origin: 'https://different.example.test',
-          },
-        }],
+        managedRuntime: {
+          ...managedDeployment.managedRuntime,
+          requestAuthUses: [{
+            ...managedDeployment.managedRuntime.requestAuthUses[0],
+            materialization: {
+              ...managedDeployment.managedRuntime.requestAuthUses[0].materialization,
+              origin: 'https://different.example.test',
+            },
+          }],
+        },
       },
     })).not.toBe(fingerprint);
     expect(createProviderConnectionSecurityFingerprintV1({
       ...input,
       managedDeployment: {
         ...managedDeployment,
-        connectedAccounts: [{
-          ...managedDeployment.connectedAccounts[0],
-          service: {
-            ...managedDeployment.connectedAccounts[0].service,
-            localId: 'different-service',
-          },
-        }],
+        managedRuntime: {
+          ...managedDeployment.managedRuntime,
+          connectedAccounts: [{
+            ...managedDeployment.managedRuntime.connectedAccounts[0],
+            service: {
+              ...managedDeployment.managedRuntime.connectedAccounts[0].service,
+              localId: 'different-service',
+            },
+          }],
+        },
       },
     })).not.toBe(fingerprint);
     expect(() => createProviderConnectionSecurityFingerprintV1({
@@ -250,11 +293,11 @@ describe('typed provider security fingerprints', () => {
       endpoints: [],
       catalogProbes: [],
       credentialTransports: [],
-      managedDeployment: managedDeploymentWithPurposes(['ä-upstream', 'Z-upstream']),
+      managedDeployment: publicManagedDeploymentWithPurposes(['ä-upstream', 'Z-upstream']),
     } as const;
     const reversed = {
       ...forward,
-      managedDeployment: managedDeploymentWithPurposes(['Z-upstream', 'ä-upstream']),
+      managedDeployment: publicManagedDeploymentWithPurposes(['Z-upstream', 'ä-upstream']),
     } as const;
     const originalLocaleCompare = String.prototype.localeCompare;
     String.prototype.localeCompare = () => {
@@ -291,6 +334,7 @@ describe('typed provider security fingerprints', () => {
   });
 
   it('binds managed sessions to a logical implementation identity and never a realized URL', () => {
+    const managedDeployment = managedDeploymentWithPurposes(['upstream']);
     const base = {
       agentTargetKey: 'agent:codex',
       connectionId: 'pc_a',
@@ -298,7 +342,13 @@ describe('typed provider security fingerprints', () => {
       modelCapabilities: {},
       deployment: {
         kind: 'managedLocal',
-        securityFacts: managedDeploymentWithPurposes(['upstream']),
+        implementationIdentity: managedDeployment.implementationIdentity,
+        managedRuntime: {
+          kind: 'managed',
+          endpointTemplateIds: ['responses'],
+          connectedAccounts: managedDeployment.connectedAccounts,
+          requestAuthUses: managedDeployment.requestAuthUses,
+        },
       },
       endpointTemplateId: 'responses',
       protocol: 'openai-responses',
@@ -314,12 +364,13 @@ describe('typed provider security fingerprints', () => {
       ...base,
       deployment: {
         kind: 'managedLocal',
-        securityFacts: {
-          ...base.deployment.securityFacts,
+        implementationIdentity: base.deployment.implementationIdentity,
+        managedRuntime: {
+          ...base.deployment.managedRuntime,
           requestAuthUses: [{
-            ...base.deployment.securityFacts.requestAuthUses[0],
+            ...base.deployment.managedRuntime.requestAuthUses[0],
             materialization: {
-              ...base.deployment.securityFacts.requestAuthUses[0].materialization,
+              ...base.deployment.managedRuntime.requestAuthUses[0].materialization,
               origin: 'https://different.example.test',
             },
           }],
@@ -503,34 +554,16 @@ describe('typed provider security fingerprints', () => {
     expect(catalog).toMatch(/^catalog:v1:/);
   });
 
-  it('binds managed catalog requests to stable source authority without a realized port or bearer', () => {
+  it('binds managed catalog requests to the immutable public declaration without a realized port or bearer', () => {
     const input = {
       implementationIdentity: {
         pluginId: 'happier.provider.cliproxyapi',
         localId: 'cliproxyapi',
       },
-      managedFacet: {
-        managedEndpoint: {
-          localService: {
-            id: 'cliproxyapi',
-            launch: {
-              kind: 'packaged-runtime-binary',
-              directorySegments: ['tools', 'unpacked'],
-              executableBaseName: 'cliproxyapi-managed',
-              privateConfigPathFlag: '--config',
-            },
-            launchMode: {
-              kind: 'assignAndInject',
-              portPolicy: { kind: 'allocated' },
-            },
-            hostPolicy: { kind: 'loopback' },
-            name: { strategy: 'fixed', name: 'CLIProxyAPI' },
-            healthCheck: { kind: 'http', path: '/healthz' },
-            restart: { kind: 'never' },
-            cleanup: { staleAfterMs: 60_000 },
-          },
-          protocols: ['openai-responses'],
-        },
+      managedRuntime: {
+        kind: 'managed',
+        dependencies: ['cliproxyapi-runtime'],
+        endpointTemplateIds: ['cliproxyapi-openai-responses'],
         connectedAccounts: [
           {
             purpose: 'ä-upstream',
@@ -613,11 +646,6 @@ describe('typed provider security fingerprints', () => {
           },
         ],
       },
-      catalogSource: {
-        kind: 'transientModelEndpoint',
-        contractVersion: 'happier.cliproxyapi-managed/v1',
-        sdkVersion: 'v7.2.95',
-      },
       endpointTemplateId: 'cliproxyapi-openai-responses',
       protocol: 'openai-responses',
       method: 'GET',
@@ -629,13 +657,50 @@ describe('typed provider security fingerprints', () => {
 
     expect(fingerprint).toMatch(/^probe-request:v1:/);
     expect(createProviderManagedProbeRequestFingerprintV1(input)).toBe(fingerprint);
+    const contributionLocalService = {
+      ...input,
+      managedRuntime: {
+        ...input.managedRuntime,
+        connectedAccounts: input.managedRuntime.connectedAccounts.map(
+          (declaration, index) => index === 0
+            ? {
+                ...declaration,
+                service: {
+                  pluginId: input.implementationIdentity.pluginId,
+                  localId: 'openai-account',
+                },
+              }
+            : declaration,
+        ),
+      },
+    } as const;
+    expect(createProviderManagedProbeRequestFingerprintV1({
+      ...contributionLocalService,
+      managedRuntime: {
+        ...contributionLocalService.managedRuntime,
+        connectedAccounts:
+          contributionLocalService.managedRuntime.connectedAccounts.map(
+            (declaration, index) => index === 0
+              ? { ...declaration, service: 'openai-account' }
+              : declaration,
+          ),
+      },
+    })).toBe(createProviderManagedProbeRequestFingerprintV1(
+      contributionLocalService,
+    ));
     expect(createProviderManagedProbeRequestFingerprintV1({
       ...input,
-      catalogSource: { ...input.catalogSource, sdkVersion: 'v7.2.96' },
+      managedRuntime: {
+        ...input.managedRuntime,
+        dependencies: ['cliproxyapi-runtime-v2'],
+      },
     })).not.toBe(fingerprint);
     expect(createProviderManagedProbeRequestFingerprintV1({
       ...input,
-      catalogSource: { ...input.catalogSource, contractVersion: 'happier.cliproxyapi-managed/v2' },
+      managedRuntime: {
+        ...input.managedRuntime,
+        endpointTemplateIds: ['cliproxyapi-openai-responses', 'cliproxyapi-chat'],
+      },
     })).not.toBe(fingerprint);
     const originalLocaleCompare = String.prototype.localeCompare;
     String.prototype.localeCompare = () => {
@@ -654,13 +719,13 @@ describe('typed provider security fingerprints', () => {
       expect(createProviderManagedProbeRequestFingerprintV1(input)).toBe(
         createProviderManagedProbeRequestFingerprintV1({
           ...input,
-          managedFacet: {
-            ...input.managedFacet,
+          managedRuntime: {
+            ...input.managedRuntime,
             connectedAccounts: [
-              ...input.managedFacet.connectedAccounts,
+              ...input.managedRuntime.connectedAccounts,
             ].reverse(),
             requestAuthUses: [
-              ...input.managedFacet.requestAuthUses,
+              ...input.managedRuntime.requestAuthUses,
             ].reverse(),
           },
         }),
@@ -692,9 +757,9 @@ describe('typed provider security fingerprints', () => {
     })).not.toBe(fingerprint);
     expect(createProviderManagedProbeRequestFingerprintV1({
       ...input,
-      managedFacet: {
-        ...input.managedFacet,
-        requestAuthUses: input.managedFacet.requestAuthUses.map((use, index) => (
+      managedRuntime: {
+        ...input.managedRuntime,
+        requestAuthUses: input.managedRuntime.requestAuthUses.map((use, index) => (
           index === 0
             ? {
                 ...use,

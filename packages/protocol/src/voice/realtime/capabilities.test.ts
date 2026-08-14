@@ -22,7 +22,7 @@ describe('voice realtime capability contracts', () => {
     expect(VoiceBundledUiDescriptorV1Schema.parse({
       kind: 'voice.conversation-provider.v1',
       pluginId: 'happier.voice.example',
-      providerId: 'example_realtime',
+      providerId: 'happier.voice.example/example-realtime',
       settingsSectionId: 'voice.provider.example',
       roles: ['realtime_conversation', 'conversation_stt', 'conversation_tts'],
       requirements: [],
@@ -35,34 +35,34 @@ describe('voice realtime capability contracts', () => {
         { id: 'byo', modeId: 'byo', order: 20, titleKey: 'voice.byo', subtitleKey: 'voice.byo.subtitle', configPatch: { billingMode: 'byo' } },
       ],
       supportedPlatforms: ['web', 'ios', 'android'],
-    })).toMatchObject({ providerId: 'example_realtime' });
+    })).toMatchObject({ providerId: 'happier.voice.example/example-realtime' });
 
     expect(VoiceBundledUiDescriptorV1Schema.parse({
       kind: 'voice.speech-engine.v1',
       pluginId: 'happier.voice.example',
-      providerId: 'example_stt',
+      providerId: 'happier.voice.example/example-stt',
       role: 'both',
       settingsSectionId: 'voice.stt.example',
       roles: ['dictation_stt', 'conversation_stt'],
       requirements: ['execution_machine', 'credential', 'runtime'],
-    })).toMatchObject({ providerId: 'example_stt', role: 'both' });
+    })).toMatchObject({ providerId: 'happier.voice.example/example-stt', role: 'both' });
 
     expect(VoiceBundledUiDescriptorV1Schema.parse({
       kind: 'voice.turn-support.v1',
       pluginId: 'happier.voice.builtin',
-      providerId: 'host_turn_detection',
+      providerId: 'happier.voice.builtin/host-turn-detection',
       settingsSectionId: 'voice.turnDetection',
       roles: ['vad', 'endpointing'],
       requirements: ['runtime'],
       supportedPlatforms: ['web', 'ios', 'android'],
-    })).toMatchObject({ providerId: 'host_turn_detection' });
+    })).toMatchObject({ providerId: 'happier.voice.builtin/host-turn-detection' });
   });
 
   it('rejects duplicate semantic capabilities and invalid mode identifiers', () => {
     expect(VoiceBundledUiDescriptorV1Schema.safeParse({
       kind: 'voice.conversation-provider.v1',
       pluginId: 'happier.voice.example',
-      providerId: 'example_realtime',
+      providerId: 'happier.voice.example/example-realtime',
       settingsSectionId: 'voice.provider.example',
       roles: ['realtime_conversation', 'realtime_conversation'],
       requirements: [],
@@ -71,7 +71,7 @@ describe('voice realtime capability contracts', () => {
     expect(VoiceBundledUiDescriptorV1Schema.safeParse({
       kind: 'voice.conversation-provider.v1',
       pluginId: 'happier.voice.example',
-      providerId: 'example_realtime',
+      providerId: 'happier.voice.example/example-realtime',
       settingsSectionId: 'voice.provider.example',
       roles: ['realtime_conversation'],
       requirements: [],
@@ -83,13 +83,13 @@ describe('voice realtime capability contracts', () => {
     expect(VoiceBundledUiDescriptorV1Schema.safeParse({
       kind: 'voice.conversation-provider.v1',
       pluginId: 'happier.voice.example',
-      providerId: 'example_realtime',
+      providerId: 'happier.voice.example/example-realtime',
     }).success).toBe(false);
 
     expect(VoiceBundledUiDescriptorV1Schema.safeParse({
       kind: 'voice.speech-engine.v1',
       pluginId: 'happier.voice.example',
-      providerId: 'example_stt',
+      providerId: 'happier.voice.example/example-stt',
       role: 'stt',
       settingsSectionId: 'voice.stt.example',
       roles: ['dictation_stt'],

@@ -7,19 +7,13 @@ const JSON_MAX_DEPTH = 16;
 const JSON_MAX_COLLECTION_ITEMS = 256;
 const JSON_MAX_STRING_LENGTH = 64 * 1024;
 
-export interface VoiceRealtimeJsonArray extends ReadonlyArray<VoiceRealtimeJsonValue> {}
-
-export interface VoiceRealtimeJsonObject {
-  readonly [key: string]: VoiceRealtimeJsonValue;
-}
-
 export type VoiceRealtimeJsonValue =
   | null
   | boolean
   | number
   | string
-  | VoiceRealtimeJsonArray
-  | VoiceRealtimeJsonObject;
+  | readonly VoiceRealtimeJsonValue[]
+  | { readonly [key: string]: VoiceRealtimeJsonValue };
 
 function createJsonValueSchema(depthRemaining: number): z.ZodType<VoiceRealtimeJsonValue> {
   const scalarSchema = z.union([

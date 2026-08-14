@@ -11,10 +11,26 @@ import {
 } from './catalog.js';
 
 describe('MODEL_PACK_CATALOG', () => {
-  it('retains the canonical q8 Kokoro identity but marks its broken publication unavailable', () => {
+  it('publishes only the exact canonical q8 Kokoro pack after normalized asset publication', () => {
     expect(KOKORO_DEFAULT_TTS_PACK_ID).toBe('kokoro-82m-v1.0-onnx-q8-wasm');
-    expect(getModelPackCatalogEntry(KOKORO_DEFAULT_TTS_PACK_ID)?.defaultFor).toBe('tts_sherpa');
-    expect(getModelPackCatalogEntry(KOKORO_DEFAULT_TTS_PACK_ID)?.publicationStatus).toBe('unavailable');
+    expect(getModelPackCatalogEntry(KOKORO_DEFAULT_TTS_PACK_ID)).toMatchObject({
+      packId: KOKORO_DEFAULT_TTS_PACK_ID,
+      kind: 'tts_sherpa',
+      model: 'kokoro-82m-v1.0',
+      runtimeFamily: 'sherpa_kokoro_offline',
+      defaultFor: 'tts_sherpa',
+      publicationStatus: 'published',
+      runtimeArtifacts: {
+        model: { type: 'file', path: 'model.onnx' },
+        voices: { type: 'file', path: 'voices.bin' },
+        tokens: { type: 'file', path: 'tokens.txt' },
+        data: { type: 'directory_prefix', path: 'espeak-ng-data' },
+      },
+    });
+    expect(getModelPackCatalogEntry('kokoro-en-v0_19')?.publicationStatus).toBe('unavailable');
+    expect(
+      getModelPackCatalogEntry('sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8')?.publicationStatus,
+    ).toBe('unavailable');
   });
 
   it('declares an explicit runtime family for every catalog entry', () => {

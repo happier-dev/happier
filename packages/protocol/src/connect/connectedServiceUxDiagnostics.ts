@@ -5,6 +5,10 @@ import {
   ConnectedServiceIdSchema,
   ConnectedServiceProfileIdSchema,
 } from './connectedServiceSchemas.js';
+import {
+  isBaseCredentialDiagnosticKey,
+  splitSensitiveDiagnosticKeySegments,
+} from '../common/sensitiveKeys.js';
 
 export const CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES = {
   providerSessionStateUnavailableForResume: 'provider_session_state_unavailable_for_resume',
@@ -17,6 +21,7 @@ export const CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES = {
   providerAccountAdoptionMismatch: 'provider_account_adoption_mismatch',
   postSwitchVerificationFailed: 'post_switch_verification_failed',
   connectedServiceCredentialReconnectRequired: 'connected_service_credential_reconnect_required',
+  connectedServiceCredentialRefreshUnavailable: 'connected_service_credential_refresh_unavailable',
   claudeSubscriptionMissingClaudeCodeScope: 'claude_subscription_missing_claude_code_scope',
   claudeSubscriptionNativeAuthMaterializationFailed: 'claude_subscription_native_auth_materialization_failed',
   claudeSubscriptionSetupTokenNotSupportedForUnified: 'claude_subscription_setup_token_not_supported_for_unified',
@@ -33,6 +38,7 @@ export const ConnectedServiceUxDiagnosticCodeV1Schema = z.enum([
   CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.providerAccountAdoptionMismatch,
   CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.postSwitchVerificationFailed,
   CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.connectedServiceCredentialReconnectRequired,
+  CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.connectedServiceCredentialRefreshUnavailable,
   CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.claudeSubscriptionMissingClaudeCodeScope,
   CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.claudeSubscriptionNativeAuthMaterializationFailed,
   CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.claudeSubscriptionSetupTokenNotSupportedForUnified,
@@ -103,8 +109,21 @@ export const CONNECTED_SERVICE_UX_DIAGNOSTIC_MAX_DIAGNOSTIC_KEYS = 16;
 export const CONNECTED_SERVICE_UX_DIAGNOSTIC_MAX_DIAGNOSTIC_KEY_LENGTH = 64;
 export const CONNECTED_SERVICE_UX_DIAGNOSTIC_MAX_STRING_LENGTH = 512;
 
-const CONNECTED_SERVICE_UX_DIAGNOSTIC_SENSITIVE_KEY_PATTERN =
-  /(?:^token$|[a-z0-9_-]+[_-]?token$|access[_-]?token|refresh[_-]?token|id[_-]?token|auth(?:orization)?|bearer|secret|credential|password|private[_-]?key|api[_-]?key)/i;
+const CONNECTED_SERVICE_UX_DIAGNOSTIC_CREDENTIAL_SUFFIXES = new Set([
+  'auth',
+  'authentication',
+  'bearer',
+  'credential',
+  'credentials',
+  'secret',
+  'token',
+]);
+
+function isConnectedServiceUxDiagnosticCredentialKey(key: string): boolean {
+  if (isBaseCredentialDiagnosticKey(key)) return true;
+  const segments = splitSensitiveDiagnosticKeySegments(key);
+  return CONNECTED_SERVICE_UX_DIAGNOSTIC_CREDENTIAL_SUFFIXES.has(segments.at(-1) ?? '');
+}
 
 const ConnectedServiceUxDiagnosticKeyV1Schema = z
   .string()
@@ -112,7 +131,7 @@ const ConnectedServiceUxDiagnosticKeyV1Schema = z
   .min(1)
   .max(CONNECTED_SERVICE_UX_DIAGNOSTIC_MAX_DIAGNOSTIC_KEY_LENGTH)
   .refine(
-    (key) => !CONNECTED_SERVICE_UX_DIAGNOSTIC_SENSITIVE_KEY_PATTERN.test(key),
+    (key) => !isConnectedServiceUxDiagnosticCredentialKey(key),
     'diagnostic keys must not identify secrets or tokens',
   );
 

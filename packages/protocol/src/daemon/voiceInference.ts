@@ -84,6 +84,23 @@ export const DaemonVoiceInferenceModelRuntimeStateSchema = z.enum([
 ]);
 export type DaemonVoiceInferenceModelRuntimeState = z.infer<typeof DaemonVoiceInferenceModelRuntimeStateSchema>;
 
+/**
+ * Voice-owned binding to the admitted plugin artifact. External acquisition
+ * integrity and local immutable materialization are intentionally distinct:
+ * neither is a substitute for the other.
+ */
+export const DaemonVoiceModelPackArtifactBindingV1Schema = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('sourceIntegrity'),
+    integrity: z.string().min(1).max(1024).refine((value) => value.trim() === value),
+  }).strict(),
+  z.object({
+    kind: z.literal('materialization'),
+    immutableGenerationId: z.string().min(1).max(512).refine((value) => value.trim() === value),
+  }).strict(),
+]);
+export type DaemonVoiceModelPackArtifactBindingV1 = z.infer<typeof DaemonVoiceModelPackArtifactBindingV1Schema>;
+
 export const DaemonVoiceModelPackLicenseReviewV1Schema = z.object({
   pluginId: VoiceModelPackIdentityV1Schema.shape.pluginId,
   packId: VoiceModelPackIdentityV1Schema.shape.packId,
@@ -94,7 +111,7 @@ export const DaemonVoiceModelPackLicenseReviewV1Schema = z.object({
   licenseText: z.string().min(1).max(128 * 1024),
   licenseSourceUrl: z.string().url().max(2048),
   licenseTextDigest: z.string().regex(/^(?:sha256:)?[0-9a-f]{64}$/i),
-  artifactDigest: z.string().regex(/^(?:sha256:)?[0-9a-f]{64}$/i),
+  artifactBinding: DaemonVoiceModelPackArtifactBindingV1Schema,
   accepted: z.boolean(),
 }).strict();
 export type DaemonVoiceModelPackLicenseReviewV1 = z.infer<typeof DaemonVoiceModelPackLicenseReviewV1Schema>;
@@ -117,7 +134,8 @@ export const DaemonVoiceInferenceModelStatusSchema = z.object({
   // Additive readiness telemetry. Optional (not defaulted) so omitted input stays
   // omitted in output and existing callers/payloads are byte-for-byte unaffected.
   runtimeState: DaemonVoiceInferenceModelRuntimeStateSchema.optional(),
-  residentMemoryBytes: z.number().int().nonnegative().optional(),
+  /** Declared bytes of the model-pack artifact whose runtime is currently loaded; not RSS. */
+  loadedArtifactBytes: z.number().int().nonnegative().optional(),
   /** Exact external-pack consent binding. Absent for built-in packs and licenses without consent. */
   licenseReview: DaemonVoiceModelPackLicenseReviewV1Schema.nullable().optional(),
 }).superRefine((status, ctx) => {
@@ -140,6 +158,7 @@ export const DaemonVoiceInferenceErrorCodeSchema = z.enum([
   'machine_unreachable',
   'request_timeout',
   'invalid_audio_input',
+  'output_too_large',
   'unsupported_codec',
   'unsupported_runtime_family',
   'cancelled',

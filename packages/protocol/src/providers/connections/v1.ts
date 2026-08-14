@@ -78,13 +78,6 @@ export const ProviderConnectionV1Schema = z.object({
     if (value.endpointOverrides !== undefined || value.endpointOverridesByMachineId !== undefined) {
       ctx.addIssue({ code: 'custom', path: ['deployment'], message: 'Managed deployment does not accept endpoint overrides' });
     }
-    if (Object.keys(value.purposeBindingDefaults ?? {}).length === 0) {
-      ctx.addIssue({
-        code: 'custom',
-        path: ['purposeBindingDefaults'],
-        message: 'Managed deployment requires at least one connected-account purpose binding',
-      });
-    }
   } else if (value.purposeBindingDefaults !== undefined) {
     ctx.addIssue({
       code: 'custom',
