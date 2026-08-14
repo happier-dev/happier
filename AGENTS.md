@@ -2,6 +2,18 @@
 
 This file is the canonical cross-tool constitution for this repository.
 
+## What Happier is
+
+Happier is a cross-device client and companion for coding agents. Think of it as what you would get if Claude Desktop, Codex App, Cursor Glass and Conductor were merged into one open-source app.
+
+Agent sessions run on computers, VPSs and dev boxes users control. Happier can connect to one or many of these machines and lets users monitor, steer, approve, review, resume and continue their sessions from a phone, browser or desktop.
+
+People drive agents through Happier all day. It should feel warm, fluid, blazing-fast and delightful to use.
+
+We love ambitious product ideas and simple systems. Do not preserve complexity because it already exists or introduce machinery because it looks architecturally impressive. Understand the real constraint, intent and requirements. Do not overcomplicate the implementation or invent hard requirements for speculative, unreachable or low-impact edge cases. New guarantees and machinery must be justified by an explicit requirement, released contract, reproduced failure or reachable material risk.
+
+Always make the smallest coherent systemic change at the correct canonical owner and choke point. Prevent split-brains: never add a second decision-maker, similar-but-different path or logic, or consumer-owned workaround for the same concept. Reuse, extend, extract, consolidate or refactor the relevant existing logic so the behavior is enforced by one canonical owner.
+
 ## Tier 0 — the ten invariants
 
 1. Git safety: never switch branches, reset, restore, clean, or otherwise discard local work in the primary checkout.
@@ -53,6 +65,8 @@ This file is the canonical cross-tool constitution for this repository.
 - Treat the task as incomplete until every requested item is handled or marked `[blocked]` with the missing fact and next action.
 - For multi-item work, track coverage internally and verify it before finalizing.
 - Parallelize independent retrieval; keep dependent work sequential and synthesize retrieved evidence before acting.
+- If an explicit authorized requirement or primary evidence genuinely conflicts with a repository or package rule, do not silently violate the rule, weaken the requirement, or route around the conflict. Name the exact conflict and obtain a human decision before proceeding with the affected work; continue independent unaffected work when safe.
+- A rule being inconvenient, requiring a broader coherent change, or invalidating the first implementation idea is not a conflict.
 
 ## Plan authority and lifecycle
 
@@ -99,6 +113,7 @@ Before changing production behavior:
 - Identify the canonical owner, existing implementations, adjacent compatibility paths, and existing tests before choosing where to change behavior. Reuse, extend, refine, extract, consolidate, migrate, or remove at that owner before adding logic.
 - Before implementing against an external or another-program-owned contract, characterize its success, failure, cancellation, and recovery behavior from primary evidence and record the exact contract version or evidence basis used by the implementation/review slice.
 - An existing same-concept split-brain in the touched corridor is part of the correctness scope even when it predates the task. Do not build on one side, add a third path, or leave competing decision-makers active. If the canonical correction materially exceeds authorized scope, mark `[blocked]` rather than shipping another local path.
+- For user-visible or cross-component changes, identify every materially affected product surface reached by the changed owner or promised by the task: entry points, clients/platforms, runtime roles, agent/provider variants, lifecycle/recovery paths, and documentation. Mark unaffected surfaces not applicable with a reason. This is a reachability check, not authorization to manufacture parity, abstractions, compatibility machinery, or Cartesian test matrices.
 - Do not infer behavior solely from filenames, comments, or stale documentation; verify against implementation, tests, logs, schemas, or runtime observations.
 - Treat discovery as incomplete until you can name:
   - the canonical owner;
@@ -145,8 +160,6 @@ Before changing production behavior:
   5. use an existing dependency already owned by the affected package when it reduces total lifetime complexity;
   6. otherwise add the smallest clear, coherent, consumed implementation.
 - Choose the earliest option that fully satisfies the complete contract and minimizes total lifetime complexity. Do not force an earlier rung when it worsens ownership, UX, compatibility, security, performance, platform behavior, or maintenance.
-- Optimize for fewer concepts, decision-makers, branches, dependencies, invalid states, failure paths, and facts callers must know—not the fewest characters, lines, files, tests, or diff hunks. Prefer direct idiomatic code over clever one-liners.
-- A broad refactor is not overengineering when evidence shows it is necessary to establish one authoritative behavior, migrate consumers, remove duplicated decisions or active split-brains, eliminate invalid states, or prevent predictable divergence. Do not absorb unrelated debt, but do not classify necessary systemic work as unrelated merely because it crosses files or packages.
 - When a deliberately simpler implementation relies on a bounded scale, topology, platform, or lifecycle assumption, encode that assumption through a type, invariant, assertion, or test when practical. Otherwise add a narrow owner-local explanation of the current ceiling and the observable condition that would invalidate it; do not build the hypothetical upgrade path or create a new debt ledger without a real requirement.
 - This discipline governs solution selection. It does not cap discovery, testing, QA, security analysis, compatibility validation, review findings, documentation, or an explanation the user requested.
 
@@ -156,7 +169,8 @@ Before changing production behavior:
 - Fix the owning cause rather than adding a workaround, duplicate path, or similar-but-different implementation. Design from the canonical owner and caller-visible contract so new behavior becomes a natural extension of the system rather than a bolted-on exception.
 - Before adding a protocol, state machine, registry, table, lease, credential, generation, gate, or parallel path, name the reproduced failure or live consumer it serves and why the existing owner cannot enforce the contract. Apply the deletion test: if removing the mechanism removes only complexity while the required behavior still holds, do not build it.
 - Land behavior as the smallest consumed vertical through its real entry point, owner, and output. Do not build a dormant horizontal replacement spine and weave its consumer branches into live paths while its producer or activation remains absent.
-- Prefer designs that increase locality and leverage: fewer places deciding the same rule, less knowledge required by callers, fewer invalid states, moving parts, and failure modes, and a clearer interface.
+- Optimize for fewer concepts, decision-makers, branches, dependencies, invalid states, failure paths, and facts callers must know—not the fewest characters, lines, files, tests, or diff hunks. Prefer direct idiomatic code over clever one-liners.
+- A broad refactor is not overengineering when evidence shows it is necessary to establish one authoritative behavior, migrate consumers, remove duplicated decisions or active split-brains, eliminate invalid states, or prevent predictable divergence. Do not absorb unrelated debt, but do not classify necessary systemic work as unrelated merely because it crosses files or packages.
 - Typed models, state machines, registries, lookup tables, interfaces, and adapters are tools, not defaults or anti-patterns. Use them when observed domain variation, lifecycle, ownership, or invariants justify them and they remove distributed branching, duplicated rules, lockstep edits, or invalid states.
 - A broader refactor is justified when evidence shows repeated or divergent logic, recurring special cases, cross-layer leakage, callers changing in lockstep, an interface exposing implementation knowledge, or repeated implementation friction caused by the current shape. Name that evidence and the complexity the refactor removes.
 - Reject an abstraction when it adds concepts, modes, configuration, dependencies, failure paths, or indirection without reducing caller knowledge, duplicate decisions, branching, lifecycle risk, or future change cost. A single implementation is a reason to examine the seam, not an automatic veto; a real external boundary or enforced invariant may justify it.
@@ -229,7 +243,8 @@ Before changing production behavior:
 
 - Keep TypeScript strict; do not weaken `tsconfig` or type rules to pass checks.
 - `@ts-ignore` is forbidden. Use `@ts-expect-error` only on the exact expected-failure line with a short rationale.
-- Broad `as any` is forbidden except in a narrow boundary fixture/harness with a one-line justification.
+- Prefer inference for local variables, private implementation details, and obvious return values. Add explicit types when they prevent widening, expose an invariant, stabilize inference, or define an exported/public, wire, persistence, package, or security-sensitive contract.
+- Production `any` types and broad `as any` casts are forbidden except at a narrowly isolated genuinely untyped external boundary or boundary fixture/harness with a one-line rationale. Prefer `unknown`, validate it, and narrow to a real type immediately.
 - Prefer `satisfies`, explicit interfaces, typed fixtures, and canonical schemas over casting.
 - No production TODO/FIXME placeholders, stray debug output, dead code, or commented-out blocks.
 

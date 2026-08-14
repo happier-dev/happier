@@ -95,4 +95,4 @@ If `yarn` is not on PATH, use `corepack yarn ...`.
 
 ## Commit messages
 
-Use Conventional Commits as defined in the root `AGENTS.md` ("Commit messages").
+Use Conventional Commits as defined in the root `AGENTS.md` under **Adversarial review and handoff**.
