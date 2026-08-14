@@ -1702,6 +1702,13 @@ export {
   StoredJsonContentEnvelopeSchema,
   type StoredJsonContentEnvelope,
 } from './storage/storedJsonContentEnvelope.js';
+export {
+  ARTIFACT_PLAIN_DATA_KEY_MARKER,
+  decodePlainArtifactStoredContent,
+  encodePlainArtifactStoredContent,
+  isPlainArtifactDataKeyMarker,
+  isPlainArtifactStoredContent,
+} from './storage/artifactStoredContent.js';
 
 export {
   isSessionEncryptionModeAllowedByStoragePolicy,
