@@ -1,6 +1,6 @@
-import { readdir } from 'node:fs/promises';
+import { access, readdir } from 'node:fs/promises';
 
-import { readArtifactManifest, validateArtifactManifest } from '../runtime/shared/artifact_manifest.mjs';
+import { artifactPayloadDir, readArtifactManifest, validateArtifactManifest } from '../runtime/shared/artifact_manifest.mjs';
 import { resolveStackArtifactsDir } from '../runtime/shared/runtime_paths.mjs';
 import { join } from 'node:path';
 
@@ -9,6 +9,17 @@ function compareArtifactRecency(left, right) {
   const rightTime = Number(Date.parse(String(right?.manifest?.createdAt ?? ''))) || 0;
   if (leftTime !== rightTime) return rightTime - leftTime;
   return String(right?.manifest?.artifactFingerprint ?? '').localeCompare(String(left?.manifest?.artifactFingerprint ?? ''));
+}
+
+async function isCompleteComponentArtifact({ artifactDir, component, manifest }) {
+  const entrypoint = component === 'web' ? 'index.html' : manifest.entrypoint;
+  if (component === 'web' && manifest.entrypoint !== entrypoint) return false;
+  try {
+    await access(join(artifactPayloadDir(artifactDir), entrypoint));
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export async function resolveLatestComponentArtifact({ stackBaseDir, component }) {
@@ -23,6 +34,9 @@ export async function resolveLatestComponentArtifact({ stackBaseDir, component }
     const validation = validateArtifactManifest(manifest);
     if (!validation.ok) continue;
     if (validation.manifest.component !== component) continue;
+    // A manifest alone is not a published artifact: activation and server packaging
+    // consume its payload entrypoint as well.
+    if (!(await isCompleteComponentArtifact({ artifactDir, component, manifest: validation.manifest }))) continue;
     candidates.push({ artifactDir, manifest: validation.manifest });
   }
 

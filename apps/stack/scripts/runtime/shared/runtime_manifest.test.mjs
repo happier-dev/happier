@@ -91,6 +91,24 @@ test('validateRuntimeManifest rejects component entrypoints that escape the snap
   assert.match(result.errors.join('\n'), /server entrypoint must stay within the snapshot root/i);
 });
 
+test('validateRuntimeManifest rejects snapshot ids that can escape a runtime builds directory', () => {
+  for (const snapshotId of ['../escaped', '/absolute-snapshot', 'nested/snapshot', 'nested\\snapshot']) {
+    const result = validateRuntimeManifest({
+      version: 1,
+      snapshotId,
+      sourceFingerprint: 'src-1',
+      components: {
+        web: { artifactFingerprint: 'web-1', entrypoint: 'ui/index.html' },
+        server: { artifactFingerprint: 'srv-1', entrypoint: 'server/happier-server' },
+        daemon: { artifactFingerprint: 'cli-1', entrypoint: 'cli/happier' },
+      },
+    });
+
+    assert.equal(result.ok, false, snapshotId);
+    assert.match(result.errors.join('\n'), /snapshot id.*path segment/i);
+  }
+});
+
 test('resolveRuntimeManifestEntrypoint normalizes contained paths and rejects escaping paths', () => {
   assert.equal(
     resolveRuntimeManifestEntrypoint({

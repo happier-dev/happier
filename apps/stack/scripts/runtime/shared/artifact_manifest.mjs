@@ -1,4 +1,5 @@
 import { join } from 'node:path';
+import { access } from 'node:fs/promises';
 
 import { readJsonIfExists, writeJsonAtomic } from '../../utils/fs/json.mjs';
 
@@ -45,4 +46,16 @@ export function validateArtifactManifest(manifest) {
         }
       : null,
   };
+}
+
+export async function readReusableArtifactManifest({ artifactDir, artifactFingerprint }) {
+  const manifest = await readArtifactManifest({ artifactDir });
+  const validation = validateArtifactManifest(manifest);
+  if (!validation.ok || validation.manifest.artifactFingerprint !== artifactFingerprint) return null;
+  try {
+    await access(join(artifactPayloadDir(artifactDir), validation.manifest.entrypoint));
+    return validation.manifest;
+  } catch {
+    return null;
+  }
 }

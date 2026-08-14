@@ -40,3 +40,12 @@ test('resolveStackRuntimePaths exposes build and activation locations', () => {
     manifestPath: '/tmp/happier/stacks/prod-dev/runtime/builds/snap-1/manifest.json',
   });
 });
+
+test('resolveStackRuntimePaths rejects snapshot ids that are not one path segment', () => {
+  for (const snapshotId of ['../escaped', '/absolute-snapshot', 'nested/snapshot', 'nested\\snapshot']) {
+    assert.throws(
+      () => resolveStackRuntimePaths({ stackBaseDir: '/tmp/happier/stacks/prod-dev', snapshotId }),
+      /snapshot id.*path segment/i,
+    );
+  }
+});

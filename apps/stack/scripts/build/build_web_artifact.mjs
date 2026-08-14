@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { dirname, join } from 'node:path';
 import { cp, mkdir, readdir, rename, rm } from 'node:fs/promises';
 
+import { execYarn } from '../../../../scripts/workspaces/execYarnCommand.mjs';
 import { buildIntoTempThenReplace } from '../utils/fs/atomic_dir_swap.mjs';
 import { ensureDepsInstalled, requireDir } from '../utils/proc/pm.mjs';
 import { getComponentDir } from '../utils/paths/paths.mjs';
@@ -10,7 +11,27 @@ import { ensureExpoIsolationEnv, getExpoStatePaths, resolveExpoTmpDir, wantsExpo
 import { expoExec } from '../utils/expo/command.mjs';
 import { pathExists } from '../utils/fs/fs.mjs';
 import { buildStackWebExportEnv } from '../utils/ui/ui_export_env.mjs';
-import { artifactPayloadDir, readArtifactManifest, writeArtifactManifest } from '../runtime/shared/artifact_manifest.mjs';
+import { artifactPayloadDir, readArtifactManifest, readReusableArtifactManifest, writeArtifactManifest } from '../runtime/shared/artifact_manifest.mjs';
+
+function runCanonicalUiPostinstall({ uiDir, env }) {
+  execYarn(['-s', 'postinstall:real'], {
+    cwd: uiDir,
+    env,
+    stdio: 'inherit',
+  });
+}
+
+export async function ensureWebUiDependencies({
+  uiDir,
+  env = process.env,
+  ensureDepsInstalledImpl = ensureDepsInstalled,
+  runUiPostinstallImpl = runCanonicalUiPostinstall,
+}) {
+  await ensureDepsInstalledImpl(uiDir, 'happier-ui', {
+    env,
+    onDependenciesReady: () => runUiPostinstallImpl({ uiDir, env }),
+  });
+}
 
 export function resolveWebExportStagingRootDir(uiDir) {
   return join(uiDir, '.expo', 'hstack', 'web-artifact-export');
@@ -161,29 +182,31 @@ export async function buildWebArtifact({
   artifactFingerprint,
   sourceMetadata,
   forceRebuild = false,
+  env = process.env,
 }) {
-  const existing = await readArtifactManifest({ artifactDir });
-  if (!forceRebuild && existing?.artifactFingerprint === artifactFingerprint) {
+  void forceRebuild;
+  const existing = await readReusableArtifactManifest({ artifactDir, artifactFingerprint });
+  if (existing) {
     return { artifactDir, manifest: existing };
   }
 
   const uiDir = getComponentDir(rootDir, 'happier-ui');
   await requireDir('happier-ui', uiDir);
-  await ensureDepsInstalled(uiDir, 'happier-ui');
+  await ensureWebUiDependencies({ uiDir, env });
 
   await buildIntoTempThenReplace(artifactDir, async (tmpArtifactDir) => {
     const payloadDir = artifactPayloadDir(tmpArtifactDir);
 
-    const env = buildStackWebExportEnv({ baseEnv: process.env });
+    const exportEnv = buildStackWebExportEnv({ baseEnv: env });
     const paths = getExpoStatePaths({
-      baseDir: getDefaultAutostartPaths().baseDir,
+      baseDir: getDefaultAutostartPaths(env).baseDir,
       kind: 'ui-export-runtime-artifact',
       projectDir: uiDir,
       stateFileName: 'ui.export.runtime.state.json',
     });
-    const tmpDir = resolveExpoTmpDir({ env, defaultTmpDir: paths.tmpDir, kind: 'ui-export-runtime-artifact', projectDir: uiDir });
-    await ensureExpoIsolationEnv({ env, stateDir: paths.stateDir, expoHomeDir: paths.expoHomeDir, tmpDir });
-    const entrypoint = await exportWebPayloadToArtifactPayloadDir({ uiDir, payloadDir, env, artifactFingerprint });
+    const tmpDir = resolveExpoTmpDir({ env: exportEnv, defaultTmpDir: paths.tmpDir, kind: 'ui-export-runtime-artifact', projectDir: uiDir });
+    await ensureExpoIsolationEnv({ env: exportEnv, stateDir: paths.stateDir, expoHomeDir: paths.expoHomeDir, tmpDir });
+    const entrypoint = await exportWebPayloadToArtifactPayloadDir({ uiDir, payloadDir, env: exportEnv, artifactFingerprint });
 
     await writeArtifactManifest({
       artifactDir: tmpArtifactDir,

@@ -21,9 +21,10 @@ import { pathExists } from './utils/fs/fs.mjs';
 import { buildStackTauriExportEnv, buildStackWebExportEnv } from './utils/ui/ui_export_env.mjs';
 import { parseBuildSelection } from './build/build_targets.mjs';
 import { shouldBuildStackArtifacts } from './build/build_mode.mjs';
-import { acquireRuntimeBuildLock } from './build/runtime_build_lock.mjs';
 import { resolveStackRuntimePaths } from './runtime/shared/runtime_paths.mjs';
+import { resolveRuntimeBuildAuthority } from './runtime/shared/runtime_build_authority.mjs';
 import { refreshLocalBundledWorkspacePackages } from '../bin/localBundledWorkspacePreflight.mjs';
+import { withWorkspaceBundleLock } from '@happier-dev/cli-common/workspaceBundleLock';
 
 async function prepareTauriSidecarForBuild({ env }) {
   const moduleUrl = new URL('../../ui/scripts/prepareTauriSidecar.mjs', import.meta.url);
@@ -55,9 +56,9 @@ async function main() {
         '',
         'note:',
         '  If run from inside the Happier UI checkout/worktree, the build uses that checkout.',
-        '  Explicit component flags build stack-local artifacts for named stacks in v1.',
+        '  Explicit component flags publish or reuse repository-authority artifacts for named stacks.',
         '  Building artifacts alone does not switch the active runtime; use `hstack stack runtime <name> activate ...` or `--activate-runtime`.',
-        '  --tauri remains a legacy local UI/Tauri build flag and cannot be mixed with stack-local artifact/runtime flags in v1.',
+        '  --tauri remains a legacy local UI/Tauri build flag and cannot be mixed with named-stack artifact/runtime flags.',
       ].join('\n'),
     });
     return;
@@ -80,28 +81,33 @@ async function main() {
   const wantsArtifactBuild = shouldBuildStackArtifacts({ selection, argv, env: process.env });
   if (wantsArtifactBuild) {
     const stackName = String(process.env.HAPPIER_STACK_STACK ?? '').trim() || 'main';
-    const { baseDir: stackBaseDir } = resolveStackBaseDir(stackName, process.env);
-    const runtimePaths = resolveStackRuntimePaths({ stackBaseDir });
+    const authority = resolveRuntimeBuildAuthority({
+      rootDir,
+      consumerStackName: stackName,
+      env: process.env,
+    });
+    const runtimePaths = resolveStackRuntimePaths({ stackBaseDir: authority.producerStackBaseDir });
     await mkdir(runtimePaths.runtimeDir, { recursive: true });
-    const releaseBuildLock = await acquireRuntimeBuildLock({ lockPath: runtimePaths.lockPath });
-    try {
+    const result = await withWorkspaceBundleLock(async () => {
       await ensureWorkspacePackagesBuiltForComponent(rootDir, { quiet: true, env: process.env });
       await refreshLocalBundledWorkspacePackages(rootDir);
       const { buildStackArtifacts } = await import('./build/build_stack_artifacts.mjs');
-      const result = await buildStackArtifacts({ rootDir, argv, env: process.env });
-      if (json) {
-        printResult({ json, data: result });
-      } else {
-        console.log(`[build] stack artifacts ready for ${result.stackName}`);
-        for (const [component, artifact] of Object.entries(result.artifacts ?? {})) {
-          console.log(`[build] ${component}: ${artifact.artifactDir}`);
-        }
-        if (result.runtime?.snapshotPath) {
-          console.log(`[build] runtime snapshot activated: ${result.runtime.snapshotPath}`);
-        }
+      return await buildStackArtifacts({ rootDir, argv, env: process.env, authority });
+    }, {
+      lockPath: runtimePaths.lockPath,
+      errorLabel: 'runtime snapshot build lock',
+      timeoutMs: Number(process.env.HAPPIER_STACK_RUNTIME_BUILD_LOCK_TIMEOUT_MS) || undefined,
+    });
+    if (json) {
+      printResult({ json, data: result });
+    } else {
+      console.log(`[build] stack artifacts ready for ${result.consumerStackName} (producer: ${result.producerStackName})`);
+      for (const [component, artifact] of Object.entries(result.artifacts ?? {})) {
+        console.log(`[build] ${component}: ${artifact.artifactDir}`);
       }
-    } finally {
-      await releaseBuildLock();
+      if (result.runtime?.snapshotPath) {
+        console.log(`[build] runtime snapshot selected: ${result.runtime.snapshotPath}`);
+      }
     }
     return;
   }

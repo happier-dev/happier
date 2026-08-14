@@ -1,5 +1,5 @@
 import { readdir, rm, stat } from 'node:fs/promises';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 
 import { readArtifactManifest, validateArtifactManifest } from '../runtime/shared/artifact_manifest.mjs';
 import { readRuntimeManifest, readRuntimePointer, validateRuntimeManifest } from '../runtime/shared/runtime_manifest.mjs';
@@ -68,14 +68,57 @@ export function resolveRuntimeRetentionPolicy({ env = process.env } = {}) {
   };
 }
 
+export async function collectExternalRuntimeSnapshotReferences({ producerStackBaseDir, stacksStorageRoot = '' }) {
+  const normalizedProducerBaseDir = String(producerStackBaseDir ?? '').trim();
+  const storageRoot = String(stacksStorageRoot ?? '').trim();
+  if (!normalizedProducerBaseDir || !storageRoot) return [];
+  const producerStackName = basename(normalizedProducerBaseDir);
+  const stackNames = await listChildDirectories(storageRoot);
+  const references = [];
+
+  for (const consumerStackName of stackNames) {
+    if (consumerStackName === producerStackName) continue;
+    const consumerBaseDir = join(storageRoot, consumerStackName);
+    const pointer = await readRuntimePointer({
+      currentPath: resolveStackRuntimePaths({ stackBaseDir: consumerBaseDir }).currentPath,
+    });
+    if (String(pointer?.producerStackName ?? '').trim() !== producerStackName) continue;
+    const snapshotId = String(pointer?.snapshotId ?? '').trim();
+    if (!snapshotId) continue;
+    references.push({ consumerStackName, snapshotId });
+  }
+
+  return references;
+}
+
+export async function assertRuntimeProducerCanBeRemoved({ producerStackBaseDir, stacksStorageRoot }) {
+  const references = await collectExternalRuntimeSnapshotReferences({
+    producerStackBaseDir,
+    stacksStorageRoot,
+  });
+  if (references.length === 0) return { ok: true, references: [] };
+
+  const consumers = [...new Set(references.map((reference) => reference.consumerStackName))].sort();
+  throw new Error(
+    `[runtime] cannot archive runtime producer while these stacks depend on it: ${consumers.join(', ')}. `
+    + 'Select another runtime snapshot for those stacks first.',
+  );
+}
+
 export async function pruneRuntimeSnapshots({
   stackBaseDir,
   keepCount,
   preserveSnapshotIds = [],
+  externalReferenceStorageRoot = '',
 }) {
   const runtimePaths = resolveStackRuntimePaths({ stackBaseDir });
   const snapshotIds = await listChildDirectories(runtimePaths.buildsDir);
   const keep = new Set((preserveSnapshotIds ?? []).map((value) => String(value ?? '').trim()).filter(Boolean));
+  const externalReferences = await collectExternalRuntimeSnapshotReferences({
+    producerStackBaseDir: stackBaseDir,
+    stacksStorageRoot: externalReferenceStorageRoot,
+  });
+  for (const reference of externalReferences) keep.add(reference.snapshotId);
   const activePointer = await readRuntimePointer({ currentPath: runtimePaths.currentPath });
   const activeSnapshotId = String(activePointer?.snapshotId ?? '').trim();
   const validSnapshots = [];

@@ -19,7 +19,7 @@ test('direct Stack artifact builds refresh bundled workspaces before loading art
   const packageManagerStubPath = join(fixtureDir, 'package-manager.stub.mjs');
   const preflightStubPath = join(fixtureDir, 'preflight.stub.mjs');
   const artifactBuilderStubPath = join(fixtureDir, 'build-stack-artifacts.stub.mjs');
-  const runtimeBuildLockStubPath = join(fixtureDir, 'runtime-build-lock.stub.mjs');
+  const runtimeBuildLockStubPath = join(fixtureDir, 'workspace-build-lock.stub.mjs');
   const loaderPath = join(fixtureDir, 'loader.mjs');
 
   writeFileSync(
@@ -75,11 +75,10 @@ test('direct Stack artifact builds refresh bundled workspaces before loading art
     runtimeBuildLockStubPath,
     [
       "import { rmSync, writeFileSync } from 'node:fs';",
-      'export async function acquireRuntimeBuildLock() {',
+      'export async function withWorkspaceBundleLock(fn) {',
       `  writeFileSync(${JSON.stringify(runtimeLockMarkerPath)}, 'held\\n', 'utf8');`,
-      '  return async function releaseRuntimeBuildLock() {',
-      `    rmSync(${JSON.stringify(runtimeLockMarkerPath)}, { force: true });`,
-      '  };',
+      '  try { return await fn({ waited: false, heldLockValue: "fixture" }); }',
+      `  finally { rmSync(${JSON.stringify(runtimeLockMarkerPath)}, { force: true }); }`,
       '}',
       '',
     ].join('\n'),
@@ -104,7 +103,7 @@ test('direct Stack artifact builds refresh bundled workspaces before loading art
       '    }',
       `    return { url: pathToFileURL(${JSON.stringify(artifactBuilderStubPath)}).href, shortCircuit: true };`,
       '  }',
-      "  if (specifier === './build/runtime_build_lock.mjs') {",
+      "  if (specifier === '@happier-dev/cli-common/workspaceBundleLock') {",
       `    return { url: pathToFileURL(${JSON.stringify(runtimeBuildLockStubPath)}).href, shortCircuit: true };`,
       '  }',
       '  return defaultResolve(specifier, context, defaultResolve);',
@@ -123,6 +122,8 @@ test('direct Stack artifact builds refresh bundled workspaces before loading art
         ...process.env,
         HAPPIER_STACK_CLI_ROOT_DISABLE: '1',
         HAPPIER_STACK_STACK: 'entry-preflight',
+        HAPPIER_STACK_STORAGE_DIR: join(fixtureDir, 'stacks'),
+        HAPPIER_STACK_RUNTIME_BUILD_AUTHORITY_STACK: 'entry-preflight',
         HAPPIER_STACK_UPDATE_CHECK: '0',
         NODE_OPTIONS: existingNodeOptions ? `${existingNodeOptions} ${loaderOption}` : loaderOption,
       },

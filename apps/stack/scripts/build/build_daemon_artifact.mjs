@@ -1,4 +1,4 @@
-import { readArtifactManifest, writeArtifactManifest, artifactPayloadDir } from '../runtime/shared/artifact_manifest.mjs';
+import { readArtifactManifest, readReusableArtifactManifest, writeArtifactManifest, artifactPayloadDir } from '../runtime/shared/artifact_manifest.mjs';
 import { buildIntoTempThenReplace } from '../utils/fs/atomic_dir_swap.mjs';
 import { buildCliBinaryArtifactPayload, CLI_BINARY_TARGETS, resolveCurrentBinaryTarget } from '@happier-dev/cli-common/componentArtifacts';
 
@@ -8,15 +8,17 @@ export async function buildDaemonArtifact({
   artifactFingerprint,
   sourceMetadata,
   forceRebuild = false,
+  env = process.env,
 }) {
   void rootDir;
-  const existing = await readArtifactManifest({ artifactDir });
-  if (!forceRebuild && existing?.artifactFingerprint === artifactFingerprint) {
+  void forceRebuild;
+  const existing = await readReusableArtifactManifest({ artifactDir, artifactFingerprint });
+  if (existing) {
     return { artifactDir, manifest: existing };
   }
 
   const target = resolveCurrentBinaryTarget({ availableTargets: CLI_BINARY_TARGETS });
-  const externals = String(process.env.HAPPIER_CLI_BUN_EXTERNALS ?? '')
+  const externals = String(env.HAPPIER_CLI_BUN_EXTERNALS ?? '')
     .split(',')
     .map((value) => value.trim())
     .filter(Boolean);
@@ -28,6 +30,7 @@ export async function buildDaemonArtifact({
       payloadDir,
       target,
       externals,
+      env,
     });
 
     await writeArtifactManifest({

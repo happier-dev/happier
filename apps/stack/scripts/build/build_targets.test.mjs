@@ -31,6 +31,18 @@ test('parseBuildSelection expands --all to web, server, and daemon without tauri
   assert.equal(selection.explicitComponentSelection, true);
 });
 
+test('parseBuildSelection keeps explicit --server builds server-only', () => {
+  const selection = parseBuildSelection({ argv: ['--server'] });
+
+  assert.deepEqual(selection.components, {
+    web: false,
+    server: true,
+    daemon: false,
+    tauri: false,
+  });
+  assert.equal(selection.explicitComponentSelection, true);
+});
+
 test('parseBuildSelection treats --activate-runtime with no component flags as a full runtime build', () => {
   const selection = parseBuildSelection({ argv: ['--activate-runtime'] });
 

@@ -6,7 +6,12 @@ import { tmpdir } from 'node:os';
 
 import { writeArtifactManifest } from '../runtime/shared/artifact_manifest.mjs';
 import { writeRuntimeManifest, writeRuntimePointer } from '../runtime/shared/runtime_manifest.mjs';
-import { pruneComponentArtifacts, pruneRuntimeSnapshots, resolveRuntimeRetentionPolicy } from './runtime_retention.mjs';
+import {
+  assertRuntimeProducerCanBeRemoved,
+  pruneComponentArtifacts,
+  pruneRuntimeSnapshots,
+  resolveRuntimeRetentionPolicy,
+} from './runtime_retention.mjs';
 
 async function writeRuntimeSnapshot(stackBaseDir, snapshotId, createdAt) {
   const snapshotDir = join(stackBaseDir, 'runtime', 'builds', snapshotId);
@@ -156,6 +161,78 @@ test('pruneRuntimeSnapshots preserves transitive snapshot references declared by
     assert.equal(await readFile(join(reused, 'manifest.json'), 'utf8').then(Boolean), true);
   } finally {
     await rm(stackBaseDir, { recursive: true, force: true });
+  }
+});
+
+test('pruneRuntimeSnapshots preserves snapshots selected by another managed stack and their dependencies', async () => {
+  const storageRoot = await mkdtemp(join(tmpdir(), 'runtime-retention-external-pointer-'));
+  const producerStackName = 'repo-happier-producer';
+  const producerStackBaseDir = join(storageRoot, producerStackName);
+  const consumerStackBaseDir = join(storageRoot, 'qa-consumer');
+
+  try {
+    const dependency = await writeRuntimeSnapshot(producerStackBaseDir, 'snapshot-dependency', '2026-03-07T09:00:00.000Z');
+    const selected = await writeRuntimeSnapshot(producerStackBaseDir, 'snapshot-selected', '2026-03-07T10:00:00.000Z');
+    const newest = await writeRuntimeSnapshot(producerStackBaseDir, 'snapshot-newest', '2026-03-07T11:00:00.000Z');
+    const selectedManifestPath = join(selected, 'manifest.json');
+    const selectedManifest = JSON.parse(await readFile(selectedManifestPath, 'utf8'));
+    selectedManifest.reusedSnapshotIds = ['snapshot-dependency'];
+    await writeFile(selectedManifestPath, JSON.stringify(selectedManifest, null, 2) + '\n', 'utf8');
+    await writeRuntimePointer({
+      currentPath: join(consumerStackBaseDir, 'runtime', 'current.json'),
+      pointer: {
+        version: 1,
+        producerStackName,
+        snapshotId: 'snapshot-selected',
+        snapshotPath: selected,
+        sourceFingerprint: 'source-snapshot-selected',
+        updatedAt: '2026-03-07T11:30:00.000Z',
+      },
+    });
+
+    const result = await pruneRuntimeSnapshots({
+      stackBaseDir: producerStackBaseDir,
+      keepCount: 1,
+      externalReferenceStorageRoot: storageRoot,
+    });
+
+    assert.deepEqual(result.keptSnapshotIds.sort(), ['snapshot-dependency', 'snapshot-selected']);
+    assert.deepEqual(result.removedEntries, ['snapshot-newest']);
+    assert.equal(await readFile(join(dependency, 'manifest.json'), 'utf8').then(Boolean), true);
+    assert.equal(await readFile(join(selected, 'manifest.json'), 'utf8').then(Boolean), true);
+    await assert.rejects(() => readFile(join(newest, 'manifest.json'), 'utf8'), /ENOENT/);
+  } finally {
+    await rm(storageRoot, { recursive: true, force: true });
+  }
+});
+
+test('runtime producer removal is rejected while managed consumers select its snapshots', async () => {
+  const storageRoot = await mkdtemp(join(tmpdir(), 'runtime-retention-remove-guard-'));
+  const producerStackName = 'repo-happier-producer';
+  const producerStackBaseDir = join(storageRoot, producerStackName);
+  const selected = await writeRuntimeSnapshot(producerStackBaseDir, 'snapshot-selected', '2026-03-07T10:00:00.000Z');
+
+  try {
+    for (const consumerStackName of ['qa-one', 'qa-two']) {
+      await writeRuntimePointer({
+        currentPath: join(storageRoot, consumerStackName, 'runtime', 'current.json'),
+        pointer: {
+          version: 1,
+          producerStackName,
+          snapshotId: 'snapshot-selected',
+          snapshotPath: selected,
+          sourceFingerprint: 'source-snapshot-selected',
+          updatedAt: '2026-03-07T11:30:00.000Z',
+        },
+      });
+    }
+
+    await assert.rejects(
+      assertRuntimeProducerCanBeRemoved({ producerStackBaseDir, stacksStorageRoot: storageRoot }),
+      /qa-one, qa-two/i,
+    );
+  } finally {
+    await rm(storageRoot, { recursive: true, force: true });
   }
 });
 

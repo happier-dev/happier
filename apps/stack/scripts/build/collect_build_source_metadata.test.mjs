@@ -5,7 +5,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { run } from '../utils/proc/proc.mjs';
-import { collectBuildSourceMetadata } from './collect_build_source_metadata.mjs';
+import {
+  assertBuildSourceMetadataStable,
+  collectBuildSourceMetadata,
+} from './collect_build_source_metadata.mjs';
 
 async function createTempRepo(t) {
   const repoDir = await mkdtemp(join(tmpdir(), 'hstack-build-source-meta-'));
@@ -38,4 +41,14 @@ test('collectBuildSourceMetadata changes dirtyHash when dirty file contents chan
 
   assert.notEqual(first.dirtyHash, second.dirtyHash);
   assert.notEqual(first.sourceFingerprint, second.sourceFingerprint);
+});
+
+test('assertBuildSourceMetadataStable rejects publication after source identity changes', () => {
+  assert.throws(
+    () => assertBuildSourceMetadataStable({
+      before: { sourceFingerprint: 'source-before' },
+      after: { sourceFingerprint: 'source-after' },
+    }),
+    (error) => error?.code === 'HAPPIER_RUNTIME_BUILD_SOURCE_CHANGED',
+  );
 });

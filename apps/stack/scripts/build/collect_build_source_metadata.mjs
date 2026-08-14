@@ -16,6 +16,18 @@ function resolveDbProvider(env, serverComponent) {
   });
 }
 
+export function assertBuildSourceMetadataStable({ before, after }) {
+  const beforeFingerprint = String(before?.sourceFingerprint ?? '').trim();
+  const afterFingerprint = String(after?.sourceFingerprint ?? '').trim();
+  if (beforeFingerprint && beforeFingerprint === afterFingerprint) return;
+
+  const error = new Error(
+    '[build] source changed while runtime artifacts were being built; the candidate was not published. Retry against the current checkout.',
+  );
+  error.code = 'HAPPIER_RUNTIME_BUILD_SOURCE_CHANGED';
+  throw error;
+}
+
 async function readGitHead(repoDir) {
   try {
     return (await runCapture('git', ['rev-parse', 'HEAD'], { cwd: repoDir })).trim();

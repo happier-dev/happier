@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
 import {
+  ensureWebUiDependencies,
   exportWebPayloadToArtifactPayloadDir,
   resolveWebExportStagingRootDir,
 } from './build_web_artifact.mjs';
@@ -12,6 +13,31 @@ import {
 function createTempDir(prefix) {
   return mkdtempSync(join(tmpdir(), prefix));
 }
+
+test('web artifact dependencies run the canonical UI postinstall through the dependency-ready callback', async () => {
+  const events = [];
+  const uiDir = '/tmp/happier-ui';
+  const env = { HAPPIER_STACK_TEST: 'web-artifact-postinstall' };
+
+  await ensureWebUiDependencies({
+    uiDir,
+    env,
+    ensureDepsInstalledImpl: async (dir, label, options) => {
+      events.push(['dependencies', dir, label]);
+      await options.onDependenciesReady();
+      events.push(['dependencies-ready']);
+    },
+    runUiPostinstallImpl: ({ uiDir: receivedUiDir, env: receivedEnv }) => {
+      events.push(['postinstall', receivedUiDir, receivedEnv]);
+    },
+  });
+
+  assert.deepEqual(events, [
+    ['dependencies', uiDir, 'happier-ui'],
+    ['postinstall', uiDir, env],
+    ['dependencies-ready'],
+  ]);
+});
 
 test('exportWebPayloadToArtifactPayloadDir exports via project-local staging dir and moves into payload', async () => {
   const root = createTempDir('stack-web-export-');

@@ -1,11 +1,47 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { mkdtemp, mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
-import { activateRuntimeSnapshot } from './activate_runtime_snapshot.mjs';
+import {
+  activateRuntimeSnapshot,
+  composeRuntimePublicationResult,
+  publishRuntimeSnapshot,
+  selectRuntimeSnapshot,
+} from './activate_runtime_snapshot.mjs';
+
+test('composeRuntimePublicationResult exposes producer, consumer, reuse, and selection state', () => {
+  assert.deepEqual(
+    composeRuntimePublicationResult({
+      consumerStackName: 'qa-one',
+      producerStackName: 'repo-happier-producer',
+      published: {
+        snapshotId: 'snapshot-shared',
+        snapshotPath: '/stacks/repo-happier-producer/runtime/builds/snapshot-shared',
+        reused: true,
+      },
+      selectedRuntime: {
+        snapshotId: 'snapshot-shared',
+        snapshotPath: '/stacks/repo-happier-producer/runtime/builds/snapshot-shared',
+        currentPath: '/stacks/qa-one/runtime/current.json',
+        producerStackName: 'repo-happier-producer',
+      },
+    }),
+    {
+      consumerStackName: 'qa-one',
+      producerStackName: 'repo-happier-producer',
+      snapshotId: 'snapshot-shared',
+      snapshotPath: '/stacks/repo-happier-producer/runtime/builds/snapshot-shared',
+      currentPath: '/stacks/qa-one/runtime/current.json',
+      reused: true,
+      selected: true,
+    },
+  );
+});
 import { writeArtifactManifest } from '../runtime/shared/artifact_manifest.mjs';
+import { inspectActiveRuntimeSnapshot } from '../runtime/launch/inspectActiveRuntimeSnapshot.mjs';
+import { resolveStackRuntimePaths } from '../runtime/shared/runtime_paths.mjs';
 import { writeRuntimeSnapshotLayout } from '../testkit/core/runtime_snapshot_layout.mjs';
 
 function createSourceMetadata() {
@@ -20,11 +56,25 @@ function createSourceMetadata() {
   };
 }
 
-async function createArtifact(rootDir, component, files) {
+async function createArtifact(
+  rootDir,
+  component,
+  files,
+  { includeDaemonNodeRuntime = component === 'daemon' } = {},
+) {
   const artifactDir = join(rootDir, component);
   const payloadDir = join(artifactDir, 'payload');
   await mkdir(payloadDir, { recursive: true });
-  for (const [relativePath, content] of Object.entries(files)) {
+  const payloadFiles = {
+    ...(includeDaemonNodeRuntime
+      ? {
+          'package-dist/index.mjs': "console.log('daemon node runtime');\n",
+          'package-dist/.build-manifest.json': JSON.stringify({ fingerprint: '0123456789abcdef' }) + '\n',
+        }
+      : {}),
+    ...files,
+  };
+  for (const [relativePath, content] of Object.entries(payloadFiles)) {
     const targetPath = join(payloadDir, relativePath);
     await mkdir(join(targetPath, '..'), { recursive: true });
     await writeFile(targetPath, content);
@@ -101,6 +151,7 @@ test('activateRuntimeSnapshot assembles a complete runtime and updates current.j
     assert.equal(current.snapshotId, 'snapshot-1');
     assert.equal(current.snapshotPath, runtime.snapshotPath);
     assert.equal(manifest.snapshotId, 'snapshot-1');
+    assert.deepEqual(manifest.target, { platform: process.platform, arch: process.arch });
     assert.equal(manifest.components.web.entrypoint, 'ui/index.html');
     assert.equal(manifest.components.server.entrypoint, 'server/happier-server');
     assert.equal(manifest.components.daemon.entrypoint, 'cli/happier');
@@ -112,6 +163,193 @@ test('activateRuntimeSnapshot assembles a complete runtime and updates current.j
     assert.equal(await readFile(join(stackBaseDir, 'runtime', 'current', 'cli', 'happier'), 'utf8'), '#!/bin/sh\necho daemon\n');
   } finally {
     await rm(stackBaseDir, { recursive: true, force: true });
+  }
+});
+
+test('a consumer cannot select a runtime snapshot built for another platform', async () => {
+  const storageRoot = await mkdtemp(join(tmpdir(), 'runtime-snapshot-target-'));
+  const producerStackBaseDir = join(storageRoot, 'producer');
+  const consumerStackBaseDir = join(storageRoot, 'consumer');
+
+  try {
+    const artifactsRoot = join(storageRoot, 'artifacts-fixture');
+    const web = await createArtifact(artifactsRoot, 'web', { 'index.html': '<html></html>' });
+    const server = await createArtifact(artifactsRoot, 'server', { 'happier-server': '#!/bin/sh\n' });
+    const daemon = await createArtifact(artifactsRoot, 'daemon', { happier: '#!/bin/sh\n' });
+    await publishRuntimeSnapshot({
+      producerStackBaseDir,
+      snapshotId: 'snapshot-foreign',
+      sourceMetadata: createSourceMetadata(),
+      artifacts: { web, server, daemon },
+      platform: 'foreign-os',
+      arch: 'foreign-arch',
+    });
+
+    await assert.rejects(
+      selectRuntimeSnapshot({
+        consumerStackBaseDir,
+        producerStackBaseDir,
+        producerStackName: 'producer',
+        snapshotId: 'snapshot-foreign',
+      }),
+      /targets foreign-os\/foreign-arch/i,
+    );
+  } finally {
+    await rm(storageRoot, { recursive: true, force: true });
+  }
+});
+
+test('publishing an existing valid snapshot identity reuses its immutable bytes', async () => {
+  const stackBaseDir = await mkdtemp(join(tmpdir(), 'runtime-snapshot-immutable-'));
+  try {
+    const artifactsRoot = join(stackBaseDir, 'artifacts-fixture');
+    const web = await createArtifact(artifactsRoot, 'web', { 'index.html': '<html>first</html>' });
+    const server = await createArtifact(artifactsRoot, 'server', { 'happier-server': '#!/bin/sh\necho first\n' });
+    const daemon = await createArtifact(artifactsRoot, 'daemon', { happier: '#!/bin/sh\necho first\n' });
+    const first = await publishRuntimeSnapshot({
+      producerStackBaseDir: stackBaseDir,
+      snapshotId: 'snapshot-immutable',
+      sourceMetadata: createSourceMetadata(),
+      artifacts: { web, server, daemon },
+    });
+    await writeFile(join(web.artifactDir, 'payload', 'index.html'), '<html>mutated source artifact</html>', 'utf8');
+
+    const second = await publishRuntimeSnapshot({
+      producerStackBaseDir: stackBaseDir,
+      snapshotId: 'snapshot-immutable',
+      sourceMetadata: createSourceMetadata(),
+      artifacts: { web, server, daemon },
+    });
+
+    assert.equal(second.reused, true);
+    assert.equal(first.snapshotPath, second.snapshotPath);
+    assert.equal(await readFile(join(second.snapshotPath, 'ui', 'index.html'), 'utf8'), '<html>first</html>');
+  } finally {
+    await rm(stackBaseDir, { recursive: true, force: true });
+  }
+});
+
+test('published runtime snapshot can be selected by another managed stack without copying payloads', async () => {
+  const storageRoot = await mkdtemp(join(tmpdir(), 'shared-runtime-snapshot-'));
+  const producerStackName = 'repo-happier-producer';
+  const producerStackBaseDir = join(storageRoot, producerStackName);
+  const consumerStackBaseDir = join(storageRoot, 'qa-consumer');
+
+  try {
+    const artifactsRoot = join(storageRoot, 'artifacts-fixture');
+    const web = await createArtifact(artifactsRoot, 'web', { 'index.html': '<html>shared</html>' });
+    const server = await createArtifact(artifactsRoot, 'server', { 'happier-server': '#!/bin/sh\necho shared server\n' });
+    const daemon = await createArtifact(artifactsRoot, 'daemon', { 'happier': '#!/bin/sh\necho shared daemon\n' });
+
+    const published = await publishRuntimeSnapshot({
+      producerStackBaseDir,
+      snapshotId: 'snapshot-shared',
+      sourceMetadata: createSourceMetadata(),
+      artifacts: { web, server, daemon },
+    });
+    const selected = await selectRuntimeSnapshot({
+      consumerStackBaseDir,
+      producerStackBaseDir,
+      producerStackName,
+      snapshotId: published.snapshotId,
+    });
+
+    const current = JSON.parse(await readFile(join(consumerStackBaseDir, 'runtime', 'current.json'), 'utf8'));
+    assert.equal(current.producerStackName, producerStackName);
+    assert.equal(current.snapshotPath, published.snapshotPath);
+    await assert.rejects(readFile(join(consumerStackBaseDir, 'runtime', 'builds', 'snapshot-shared', 'manifest.json'), 'utf8'), { code: 'ENOENT' });
+
+    const inspection = await inspectActiveRuntimeSnapshot({
+      stackBaseDir: consumerStackBaseDir,
+      env: { HAPPIER_STACK_STORAGE_DIR: storageRoot },
+    });
+    assert.equal(inspection.valid, true, inspection.errors.join('\n'));
+    assert.equal(inspection.snapshotPath, published.snapshotPath);
+    assert.equal(inspection.snapshot.producerStackName, producerStackName);
+    assert.equal(selected.snapshotPath, published.snapshotPath);
+  } finally {
+    await rm(storageRoot, { recursive: true, force: true });
+  }
+});
+
+test('selectRuntimeSnapshot rejects a snapshot root symlink outside the producer builds directory', async () => {
+  const storageRoot = await mkdtemp(join(tmpdir(), 'shared-runtime-external-snapshot-'));
+  const producerStackBaseDir = join(storageRoot, 'producer');
+  const consumerStackBaseDir = join(storageRoot, 'consumer');
+  const snapshotId = 'snapshot-external';
+  const externalSnapshotDir = join(storageRoot, 'external-snapshot');
+
+  try {
+    const snapshotDir = await createSnapshotPayload(producerStackBaseDir, snapshotId, {});
+    await rename(snapshotDir, externalSnapshotDir);
+    await symlink(externalSnapshotDir, snapshotDir, process.platform === 'win32' ? 'junction' : 'dir');
+
+    await assert.rejects(
+      selectRuntimeSnapshot({
+        consumerStackBaseDir,
+        producerStackBaseDir,
+        producerStackName: 'producer',
+        snapshotId,
+      }),
+      /snapshot.*outside.*runtime builds/i,
+    );
+    await assert.rejects(
+      readFile(join(consumerStackBaseDir, 'runtime', 'current.json'), 'utf8'),
+      { code: 'ENOENT' },
+    );
+  } finally {
+    await rm(storageRoot, { recursive: true, force: true });
+  }
+});
+
+test('cross-stack selection and inspection reject non-canonical producer stack names', async () => {
+  const storageRoot = await mkdtemp(join(tmpdir(), 'shared-runtime-untrusted-producer-'));
+  const producerStackBaseDir = join(storageRoot, 'repo-producer');
+  const consumerStackBaseDir = join(storageRoot, 'qa-consumer');
+
+  try {
+    const artifactsRoot = join(storageRoot, 'artifacts-fixture');
+    const web = await createArtifact(artifactsRoot, 'web', { 'index.html': '<html>shared</html>' });
+    const server = await createArtifact(artifactsRoot, 'server', { 'happier-server': '#!/bin/sh\necho shared server\n' });
+    const daemon = await createArtifact(artifactsRoot, 'daemon', { 'happier': '#!/bin/sh\necho shared daemon\n' });
+    const published = await publishRuntimeSnapshot({
+      producerStackBaseDir,
+      snapshotId: 'snapshot-untrusted',
+      sourceMetadata: createSourceMetadata(),
+      artifacts: { web, server, daemon },
+    });
+
+    await assert.rejects(
+      selectRuntimeSnapshot({
+        consumerStackBaseDir,
+        producerStackBaseDir,
+        producerStackName: '../outside',
+        snapshotId: published.snapshotId,
+      }),
+      /invalid producer stack name/i,
+    );
+
+    const consumerPaths = resolveStackRuntimePaths({ stackBaseDir: consumerStackBaseDir });
+    await mkdir(consumerPaths.runtimeDir, { recursive: true });
+    await writeFile(
+      consumerPaths.currentPath,
+      JSON.stringify({
+        version: 1,
+        snapshotId: published.snapshotId,
+        snapshotPath: published.snapshotPath,
+        producerStackName: '../outside',
+        sourceFingerprint: 'source-fingerprint',
+      }),
+      'utf8',
+    );
+    const inspection = await inspectActiveRuntimeSnapshot({
+      stackBaseDir: consumerStackBaseDir,
+      env: { HAPPIER_STACK_STORAGE_DIR: storageRoot },
+    });
+    assert.equal(inspection.valid, false);
+    assert.match(inspection.errors.join('\n'), /invalid producer stack name/i);
+  } finally {
+    await rm(storageRoot, { recursive: true, force: true });
   }
 });
 
@@ -133,6 +371,42 @@ test('activateRuntimeSnapshot rejects artifacts whose declared entrypoints are m
           artifacts: { web, server, daemon },
         }),
       /artifact entrypoint is missing/i,
+    );
+  } finally {
+    await rm(stackBaseDir, { recursive: true, force: true });
+  }
+});
+
+test('activateRuntimeSnapshot rejects daemon artifacts that flatten the node runtime beside the binary', async () => {
+  const stackBaseDir = await mkdtemp(join(tmpdir(), 'activate-runtime-snapshot-flat-daemon-'));
+
+  try {
+    const artifactsRoot = join(stackBaseDir, 'artifacts-fixture');
+    const web = await createArtifact(artifactsRoot, 'web', { 'index.html': '<html></html>' });
+    const server = await createArtifact(artifactsRoot, 'server', { 'happier-server': '#!/bin/sh\necho server\n' });
+    const daemon = await createArtifact(
+      artifactsRoot,
+      'daemon',
+      {
+        'happier': '#!/bin/sh\necho daemon\n',
+        'index.mjs': "console.log('flattened daemon node runtime');\n",
+      },
+      { includeDaemonNodeRuntime: false },
+    );
+
+    await assert.rejects(
+      async () =>
+        activateRuntimeSnapshot({
+          stackBaseDir,
+          snapshotId: 'snapshot-flat-daemon',
+          sourceMetadata: createSourceMetadata(),
+          artifacts: { web, server, daemon },
+        }),
+      /daemon artifact node entrypoint is missing.*package-dist[/\\]index\.mjs/i,
+    );
+    await assert.rejects(
+      readFile(join(stackBaseDir, 'runtime', 'current.json'), 'utf8'),
+      { code: 'ENOENT' },
     );
   } finally {
     await rm(stackBaseDir, { recursive: true, force: true });
