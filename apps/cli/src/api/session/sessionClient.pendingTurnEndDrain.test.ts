@@ -101,7 +101,17 @@ vi.mock('./mutations/createSessionMutationOutbox', () => ({
     enqueueTranscriptMessage: (mutation: unknown) => enqueueTranscriptMessageMock(mutation),
     enqueueRuntimeActivitySnapshot: async () => ({ persisted: true, delivered: true }),
     setSessionSyncPendingInputServerContract: (result: unknown) => setServerContractMock(result),
-    readRuntimeActivitySnapshotTail: () => ({ sequence: 0, custody: null, settlement: null }),
+    readRuntimeActivitySnapshotTail: () => ({
+      sequence: 1,
+      custody: null,
+      settlement: {
+        identity: { mutationKey: 'runtime-activity-snapshot:s1', admissionOrder: 1 },
+        desiredValue: { state: 'idle', activeCount: 0 },
+        result: 'applied',
+        committedProjection: { state: 'idle', activeCount: 0, observedAt: 1, revision: 1 },
+        committedRevision: 1,
+      },
+    }),
     waitForRuntimeActivitySnapshotTailChange: async () => false,
     awaitReady: async () => {},
     flush: (reason: unknown) => flushOutboxMock(reason),

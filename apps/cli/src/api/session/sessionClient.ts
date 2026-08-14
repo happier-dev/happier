@@ -691,6 +691,7 @@ export class ApiSessionClient extends EventEmitter {
      */
     private sessionConnectionEpoch = 0;
     private sessionSyncPendingInputServerContract: SessionSyncPendingInputServerContractResult | null = null;
+    private pendingInputReadinessAbortController: AbortController | null = null;
     private changesSyncInFlight: Promise<void> | null = null;
     private readonly sessionChangesCursorByAccountId = new Map<string, number>();
     private accountIdPromise: Promise<string> | null = null;
@@ -1240,15 +1241,41 @@ export class ApiSessionClient extends EventEmitter {
                 ) {
                     return;
                 }
-                this.sessionSyncPendingInputServerContract = serverContract;
+                this.pendingInputReadinessAbortController?.abort();
+                const pendingInputReadinessAbortController = new AbortController();
+                this.pendingInputReadinessAbortController = pendingInputReadinessAbortController;
+                const isResolvedContractCurrent = () => (
+                    serverContract.sessionConnectionEpoch === this.sessionConnectionEpoch
+                    && serverContract.socket === this.socket
+                    && this.socket === currentTransportSocket
+                    && this.socket.connected === true
+                    && !this.closed
+                    && !this.runtimeTerminationStarted
+                );
+                const clearPendingInputReadiness = () => {
+                    if (this.pendingInputReadinessAbortController === pendingInputReadinessAbortController) {
+                        this.pendingInputReadinessAbortController = null;
+                    }
+                };
                 await this.sessionMutationOutbox.setSessionSyncPendingInputServerContract(serverContract);
                 if (serverContract.mode === 'auth_failed') {
+                    this.sessionSyncPendingInputServerContract = serverContract;
+                    clearPendingInputReadiness();
                     this.sessionConnectionSupervisor?.reportProbeResult?.({
                         status: 'auth_failed',
                         statusCode: 401,
                         errorMessage: 'Authentication failed while resolving session compatibility',
                     });
                     return;
+                }
+
+                const requiresRuntimeActivityPublisherReadiness = (
+                    supportsRuntimeActivityV2(serverContract)
+                    && supportsPendingInputV1(serverContract)
+                );
+                if (!requiresRuntimeActivityPublisherReadiness) {
+                    this.sessionSyncPendingInputServerContract = serverContract;
+                    clearPendingInputReadiness();
                 }
 
                 if (this.shouldKeepUserSocketConnected()) {
@@ -1266,6 +1293,31 @@ export class ApiSessionClient extends EventEmitter {
                     });
                 }
 
+                await this.sessionMutationOutbox.flush('connect').catch((error) => {
+                    logger.debug('[API] Failed to flush durable session mutations on reconnect', {
+                        error: serializeAxiosErrorForLog(error),
+                    });
+                });
+                if (requiresRuntimeActivityPublisherReadiness) {
+                    while (
+                        isResolvedContractCurrent()
+                        && this.pendingInputReadinessAbortController === pendingInputReadinessAbortController
+                    ) {
+                        const tail = this.sessionMutationOutbox.readRuntimeActivitySnapshotTail();
+                        if (tail.custody === null && tail.settlement !== null) {
+                            this.sessionSyncPendingInputServerContract = serverContract;
+                            clearPendingInputReadiness();
+                            break;
+                        }
+                        const changed = await this.sessionMutationOutbox.waitForRuntimeActivitySnapshotTailChange(
+                            tail.sequence,
+                            pendingInputReadinessAbortController.signal,
+                        );
+                        if (!changed) return;
+                    }
+                    if (!isResolvedContractCurrent()) return;
+                }
+
                 await this.syncChangesOnConnect({ reason: isReconnect ? 'reconnect' : 'connect' }).catch((error) => {
                     logger.debug('[API] Session changes sync on connect failed (non-fatal)', {
                         error: serializeAxiosErrorForLog(error),
@@ -1280,15 +1332,12 @@ export class ApiSessionClient extends EventEmitter {
                         error: serializeAxiosErrorForLog(error),
                     });
                 });
-                await this.sessionMutationOutbox.flush('connect').catch((error) => {
-                    logger.debug('[API] Failed to flush durable session mutations on reconnect', {
-                        error: serializeAxiosErrorForLog(error),
-                    });
-                });
             },
             onDisconnected: async ({ event }) => {
                 logger.debug('[API] Socket disconnected:', event.reason ?? 'unknown');
                 this.clearReconnectPresenceReassertTimer();
+                this.pendingInputReadinessAbortController?.abort();
+                this.pendingInputReadinessAbortController = null;
                 await invalidateServerContract();
                 if (this.socket === currentTransportSocket) {
                     this.rpcHandlerManager.onSocketDisconnect();
@@ -1301,6 +1350,8 @@ export class ApiSessionClient extends EventEmitter {
             },
             onAuthFailed: async () => {
                 this.clearReconnectPresenceReassertTimer();
+                this.pendingInputReadinessAbortController?.abort();
+                this.pendingInputReadinessAbortController = null;
                 await invalidateServerContract();
                 if (this.socket === currentTransportSocket) {
                     this.rpcHandlerManager.onSocketDisconnect();
@@ -5439,6 +5490,8 @@ export class ApiSessionClient extends EventEmitter {
 
     async close() {
         logger.debug('[API] socket.close() called');
+        this.pendingInputReadinessAbortController?.abort();
+        this.pendingInputReadinessAbortController = null;
         this.acceptedCanonicalPendingDeliveryOperationAbortController.abort();
         this.sessionMessageCommitRetry.dispose();
         if (this.startupMessageCatchUpRetryTimer) {

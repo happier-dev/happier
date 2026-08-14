@@ -179,6 +179,120 @@ describe('ApiSessionClient durable mutation outbox', () => {
     await client.close();
   });
 
+  it('withholds current pending materialization until the initial Runtime Activity publisher snapshot is acknowledged', async () => {
+    const featuresResponse = createDeferred<Response>();
+    const fetchFeatures = vi.fn(async () => await featuresResponse.promise);
+    vi.stubGlobal('fetch', fetchFeatures);
+    const currentFeaturesResponse = new Response(JSON.stringify({
+      features: {
+        sharing: {
+          pendingQueueV2: { enabled: true },
+          pendingDeliveryState: { enabled: true },
+        },
+      },
+      capabilities: {
+        session: {
+          runtimeActivity: { protocolVersion: 2 },
+          pendingInput: { protocolVersion: 1 },
+        },
+      },
+    }), { status: 200 });
+
+    const runtimeActivityAck = createDeferred<void>();
+    const runtimeActivityRequest = createDeferred<Readonly<{
+      sessionId: string;
+      mutationId: string;
+      snapshot: Readonly<{ state: string; activeCount: number }>;
+    }>>();
+    let pendingMaterializeCount = 0;
+    let publisherRegistered = false;
+    sessionSocketStub = createApiSessionSocketStub({
+      id: 'session-socket-current',
+      connected: true,
+      emit: (event, args) => {
+        if (event !== 'ping') return;
+        const callback = args[0];
+        if (typeof callback === 'function') callback();
+      },
+      emitWithAck: async (event, payload) => {
+        if (event === 'ping') return { v: 1 };
+        if (event === 'session-runtime-activity-snapshot') {
+          const request = payload as Awaited<typeof runtimeActivityRequest.promise>;
+          runtimeActivityRequest.resolve(request);
+          await runtimeActivityAck.promise;
+          return {
+            status: 'applied',
+            sessionId: request.sessionId,
+            mutationId: request.mutationId,
+            projection: {
+              ...request.snapshot,
+              observedAt: 1,
+              revision: 1,
+            },
+          };
+        }
+        if (event === 'pending-materialize-next') {
+          pendingMaterializeCount += 1;
+          if (!publisherRegistered) {
+            return { ok: false, error: 'forbidden' };
+          }
+          return {
+            ok: true,
+            didMaterialize: false,
+            pendingCount: 0,
+            pendingBlockedCount: 0,
+            pendingVersion: 2,
+          };
+        }
+        if (event === 'session-runtime-activity-close') {
+          return { status: 'closed', sessionId: 's1' };
+        }
+        throw new Error(`Unexpected session socket ACK event: ${event}`);
+      },
+    });
+    userSocketStub = createApiSessionSocketStub({ id: 'user-socket', connected: false });
+
+    const { ApiSessionClient } = await import('./sessionClient');
+    const fixture = createPlainSessionFixture({
+      id: 's1',
+      pendingCount: 1,
+      pendingBlockedCount: 0,
+      pendingVersion: 1,
+    });
+    const client = new ApiSessionClient('tok', {
+      ...fixture,
+      metadata: { ...fixture.metadata, machineId: 'machine-1' },
+    });
+
+    await expect.poll(() => fetchFeatures).toHaveBeenCalledTimes(1);
+    await client.getRuntimeActivitySnapshotPublisher().publish({
+      state: 'idle',
+      activeCount: 0,
+    });
+    featuresResponse.resolve(currentFeaturesResponse);
+    await expect.poll(() => sessionSocketStub?.emitWithAck.mock.calls.map((call) => call[0]), {
+      timeout: 5_000,
+    }).toContain('session-runtime-activity-snapshot');
+    await runtimeActivityRequest.promise;
+    const beforePublisherAck = await client.materializeNextPendingMessageSafely({ reconcileWhenEmpty: 'force' });
+    const materializationsBeforePublisherAck = pendingMaterializeCount;
+
+    publisherRegistered = true;
+    runtimeActivityAck.resolve();
+    await expect.poll(() => (
+      (client as unknown as {
+        sessionSyncPendingInputServerContract: { mode?: unknown } | null;
+      }).sessionSyncPendingInputServerContract?.mode
+    )).toBe('session_sync_v2_pending_input_v1');
+    await expect(client.materializeNextPendingMessageSafely({ reconcileWhenEmpty: 'force' }))
+      .resolves.toEqual({ type: 'no_pending' });
+
+    await client.close();
+    expect(beforePublisherAck).toMatchObject({ type: 'retryable_transport' });
+    expect(materializationsBeforePublisherAck).toBe(0);
+    expect(pendingMaterializeCount).toBe(1);
+  });
+
   it('does not queue a terminal session turn mutation when no turn is active', async () => {
     vi.mocked(axios.post).mockRejectedValue(new Error('server offline'));
     const deliveredEvents: string[] = [];
