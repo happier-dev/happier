@@ -814,6 +814,20 @@ describe('startup readiness predicate (D15 shared-parser unification)', () => {
       'Resuming session abc123 from on-disk history…\n(rendered 3,128 lines of prior transcript; input not yet ready)',
     ))).toBe(false);
   });
+
+  it('does not infer readiness from a mode footer while the composer is absent', () => {
+    const state = parseClaudeScreenState([
+      'Applied runtime control; transcript is redrawing',
+      '  ⏵⏵ accept edits on (shift+tab to cycle)',
+    ].join('\n'));
+
+    expect(state.composerContent).toBeNull();
+    expect(state.inputBoxInteractive).toBe(true);
+    expect(isClaudeScreenReadyForInput(state)).toBe(false);
+    expect(isSafeWindowForSlashControl(state)).toBe(false);
+    expect(isSafeWindowForModeCycle(state)).toBe(false);
+    expect(resolveClaudeScreenInFlightSteerVeto(state)).toBe('no_interactive_composer');
+  });
 });
 
 describe('parseClaudeScreenState — unrecognized confirmation dialogs (P-B fail-closed)', () => {

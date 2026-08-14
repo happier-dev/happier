@@ -3708,6 +3708,64 @@ describe('createZellijTerminalHostAdapter', () => {
     expect(dumpCount).toBeGreaterThanOrEqual(4);
   });
 
+  it('gives staging and Enter their own bounded phase after a slow successful write', async () => {
+    let nowMs = 1_000;
+    const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => nowMs);
+    const prompt = 'continue';
+    const calls: string[] = [];
+    const actions: ZellijActions = {
+      attachCreateBackground: async () => ({ exitCode: 0, stdout: '', stderr: '' }),
+      runCommand: async () => ({ exitCode: 0, stdout: 'terminal_1', stderr: '' }),
+      writeBytesChunked: async () => {
+        calls.push('write');
+        nowMs += 100;
+      },
+      sendEnter: async (params) => {
+        expect(params.timeoutMs).toBeGreaterThan(0);
+        calls.push('enter');
+      },
+      sendEscape: async () => {
+        throw new Error('should not interrupt');
+      },
+      listPanes: async () => [{ id: 1, is_plugin: false, is_focused: true }],
+      dumpScreen: async (params) => {
+        expect(params.timeoutMs).toBeGreaterThan(0);
+        return calls.includes('enter') ? 'Claude Code\n❯' : `Claude Code\n❯ ${prompt}`;
+      },
+      closePane: async () => undefined,
+      killSession: async () => ({ exitCode: 0, stdout: '', stderr: '' }),
+      deleteSession: async () => ({ exitCode: 0, stdout: '', stderr: '' }),
+    };
+    const adapter = createZellijTerminalHostAdapter({
+      zellijBinary: '/tools/zellij',
+      happyHomeDir: '/home/happier',
+      actions,
+      actionTimeoutMs: 100,
+      promptSubmitVerification: createClaudePromptSubmitVerificationPolicy(),
+    });
+
+    try {
+      await expect(adapter.injectUserPrompt(
+        {
+          kind: 'zellij',
+          sessionName: 'session-a',
+          paneId: 'terminal_1',
+          attachMetadata: { attachStrategy: 'terminal_host', topology: 'shared' },
+        },
+        {
+          text: prompt,
+          multiline: false,
+          origin: { kind: 'ui_pending', nonce: 'nonce-slow-write' },
+          scheduling: { timeoutMs: 100 },
+        },
+      )).resolves.toMatchObject({ status: 'injected' });
+    } finally {
+      nowSpy.mockRestore();
+    }
+
+    expect(calls).toEqual(['write', 'enter']);
+  });
+
   it('bounds prompt write and Enter with the size-aware prompt timeout when input has no timeout', async () => {
     const timeouts: Record<string, number | undefined> = {};
     const actions: ZellijActions = {

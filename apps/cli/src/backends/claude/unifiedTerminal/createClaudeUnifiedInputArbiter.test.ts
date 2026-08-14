@@ -174,8 +174,9 @@ describe('createClaudeUnifiedInputArbiter', () => {
     await arbiter.dispose();
   });
 
-  it('publishes acceptance correlation when a write may have reached Claude before Enter was verified', async () => {
+  it('moves a prompt into non-blocking terminal custody when Enter was never attempted', async () => {
     const onProviderAcceptancePending = vi.fn();
+    const onInjectionFailure = vi.fn(async () => ({ action: 'claimed_pending_delivery' as const }));
     const arbiter = createClaudeUnifiedInputArbiter({
       nowMs: () => 10_000,
       quietPeriodMs: 0,
@@ -187,6 +188,7 @@ describe('createClaudeUnifiedInputArbiter', () => {
         recoverable: true,
       })),
       onProviderAcceptancePending,
+      onInjectionFailure,
     });
 
     arbiter.observeLifecycle({ type: 'turn_state', state: 'idle', observedAtMs: 10_000 });
@@ -203,9 +205,66 @@ describe('createClaudeUnifiedInputArbiter', () => {
       expect.objectContaining({ userMessageLocalIds: ['after-write-local'] }),
       expect.objectContaining({ acceptedAs: 'new_turn' }),
     );
+    expect(onInjectionFailure).toHaveBeenCalledWith(expect.objectContaining({
+      failureState: 'failed_ambiguous',
+      result: expect.objectContaining({
+        phase: 'after_write_before_enter',
+      }),
+    }));
     expect(arbiter.snapshot()).toMatchObject({
+      queuedCount: 0,
+      pendingInjectionCount: 0,
+      providerAcceptancePendingCount: 0,
+      terminalCustodyCount: 1,
+      headInputState: 'terminal_custody',
+    });
+
+    await arbiter.dispose();
+  });
+
+  it('retires exact terminal custody after the canonical Pending row is discarded', async () => {
+    let deliveryState: 'pending' | 'accepted' | 'retired' = 'pending';
+    const arbiter = createClaudeUnifiedInputArbiter({
+      nowMs: () => 10_000,
+      quietPeriodMs: 0,
+      injectPrompt: vi.fn()
+        .mockResolvedValueOnce({
+          status: 'failed' as const,
+          reason: 'timeout' as const,
+          phase: 'after_write_before_enter' as const,
+          duplicateRisk: 'possible' as const,
+          recoverable: true,
+        })
+        .mockResolvedValueOnce({
+          status: 'injected' as const,
+          at: 10_001,
+          bytesWritten: 11,
+        }),
+      onInjectionFailure: vi.fn(async () => ({ action: 'claimed_pending_delivery' as const })),
+      resolvePromptDeliveryState: () => deliveryState,
+    });
+
+    arbiter.observeLifecycle({ type: 'turn_state', state: 'idle', observedAtMs: 10_000 });
+    arbiter.observeLifecycle({ type: 'output', observedAtMs: 10_000 });
+    await arbiter.enqueueUiMessage({
+      message: 'old prompt',
+      origin: { kind: 'ui_pending' },
+      userMessageLocalIds: ['discarded-local'],
+    });
+    await arbiter.drainWhenSafe();
+    expect(arbiter.snapshot().terminalCustodyCount).toBe(1);
+
+    deliveryState = 'retired';
+    await arbiter.enqueueUiMessage({
+      message: 'new prompt',
+      origin: { kind: 'ui_pending' },
+      userMessageLocalIds: ['new-local'],
+    });
+    await arbiter.drainWhenSafe();
+
+    expect(arbiter.snapshot()).toMatchObject({
+      terminalCustodyCount: 0,
       providerAcceptancePendingCount: 1,
-      headInputState: 'awaiting_provider_acceptance',
     });
 
     await arbiter.dispose();

@@ -328,6 +328,46 @@ describe('createPtyTerminalHostAdapter', () => {
     expect(fake.processes[0]?.writes).toEqual([prompt, '\r']);
   });
 
+  it('gives staging and Enter their own bounded phase after a slow successful PTY write', async () => {
+    let nowMs = 1_000;
+    const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => nowMs);
+    const prompt = 'continue';
+    const fake = createFakeProviderWithProcess(() => new FakePtyProcess((process, data) => {
+      if (data === prompt) {
+        nowMs += 100;
+        process.emitData(`\u001b[2J\u001b[H> ${prompt}`);
+      } else if (data === '\r') {
+        process.emitData('\u001b[2J\u001b[HClaude Code\r\n> ');
+      }
+    }));
+    const adapter = createPtyTerminalHostAdapter({
+      ptyProvider: fake.provider,
+      inputStabilityDelayMs: 0,
+      postWriteLivenessDelayMs: 0,
+      promptSubmitVerification: createClaudePromptSubmitVerificationPolicy(),
+    });
+    const handle = await adapter.createOrAttachHost({
+      sessionName: 'happier-claude-windows',
+      workingDirectory: 'C:\\repo',
+      spawnArgv: ['node.exe'],
+      spawnEnv: {},
+      isolatedEnv: true,
+    });
+
+    try {
+      await expect(adapter.injectUserPrompt(handle, {
+        text: prompt,
+        multiline: false,
+        origin: { kind: 'ui_pending', nonce: 'n-slow-write' },
+        scheduling: { timeoutMs: 100 },
+      })).resolves.toMatchObject({ status: 'injected' });
+    } finally {
+      nowSpy.mockRestore();
+    }
+
+    expect(fake.processes[0]?.writes).toEqual([prompt, '\r']);
+  });
+
   it('does not submit or report injection when multiline prompt staging times out', async () => {
     const prompt = 'first line\nsecond line';
     const fake = createFakeProvider();
@@ -353,7 +393,7 @@ describe('createPtyTerminalHostAdapter', () => {
     })).resolves.toEqual({
       status: 'failed',
       reason: 'timeout',
-      phase: 'during_write',
+      phase: 'after_write_before_enter',
       duplicateRisk: 'possible',
       recoverable: true,
     });
@@ -463,8 +503,10 @@ describe('createPtyTerminalHostAdapter', () => {
 
   it('does not mistake Claude\'s submitted prompt row for an unsent Windows composer draft', async () => {
     const prompt = 'Reply exactly with WIN-CLAUDE-UNIFIED-CS-AFTERFIX2-FIRST-20260629T1535Z and nothing else.';
-    const fake = createFakeProviderWithProcess(() => new FakePtyProcess((process) => {
-      process.emitData(`\u001b[2J\u001b[H> ${prompt}`);
+    const fake = createFakeProviderWithProcess(() => new FakePtyProcess((process, data) => {
+      process.emitData(data === '\r'
+        ? `\u001b[2J\u001b[H> ${prompt}\r\nClaude Code\r\n> `
+        : `\u001b[2J\u001b[H> ${prompt}`);
     }));
     const adapter = createPtyTerminalHostAdapter({
       ptyProvider: fake.provider,

@@ -1466,7 +1466,6 @@ export function createZellijTerminalHostAdapter(params: Readonly<{
       }
 
       const injectionTimeoutMs = input.scheduling.timeoutMs ?? resolveTerminalPromptWriteTimeoutMs(input.text);
-      const deadline = createTerminalHostDeadline(injectionTimeoutMs);
       const textToWrite = input.text;
       const textToWriteBytes = Buffer.byteLength(textToWrite, 'utf8');
       let failurePhase: TerminalInjectionFailurePhase = 'during_write';
@@ -1513,6 +1512,11 @@ export function createZellijTerminalHostAdapter(params: Readonly<{
         } else {
           await writeBytes();
         }
+        // Prompt staging/Enter is a separate terminal operation from the completed paste/write.
+        // Give it its own bounded clock so a loaded host cannot consume the submission budget.
+        const submissionDeadline = createTerminalHostDeadline(
+          input.scheduling.timeoutMs ?? actionTimeoutMs,
+        );
         failurePhase = 'after_enter_unknown';
         duplicateRisk = 'likely';
         const submission = await runTerminalPromptSubmission({
@@ -1562,7 +1566,7 @@ export function createZellijTerminalHostAdapter(params: Readonly<{
               },
             }
             : {}),
-          remainingTimeoutMs: () => remainingTerminalHostDeadlineMs(deadline),
+          remainingTimeoutMs: () => remainingTerminalHostDeadlineMs(submissionDeadline),
           wait,
         });
         if (!submission.success) {

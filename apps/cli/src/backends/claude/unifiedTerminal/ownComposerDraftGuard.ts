@@ -79,6 +79,7 @@ export async function clearOwnLeftoverComposerDraft(opts: Readonly<{
     if (screen.selectionListVisible) return 'selection_list';
     if (screen.queuedMessageBannerVisible) return 'queued_message_banner';
     if (screen.generating) return 'generating';
+    if (screen.composerContent === null) return 'no_interactive_composer';
     return 'non_input_state';
   }
 

@@ -659,6 +659,14 @@ export function parseClaudeScreenState(rawText: string, context?: ClaudeScreenPa
   };
 }
 
+function hasCapturedClaudeComposer(state: ClaudeScreenState): boolean {
+  return state.composerContent !== null;
+}
+
+function hasClaudeInteractiveComposer(state: ClaudeScreenState): boolean {
+  return state.inputBoxInteractive && hasCapturedClaudeComposer(state);
+}
+
 function hasBlockingOverlay(state: ClaudeScreenState): boolean {
   return (
     state.generating
@@ -680,25 +688,26 @@ function hasBlockingOverlay(state: ClaudeScreenState): boolean {
 }
 
 /**
- * Startup-readiness predicate (D15): the TUI shows an interactive input box and is NOT generating,
- * blocked by a dialog/editor, showing a slash command picker, or holding a visible user draft.
+ * Startup-readiness predicate (D15): the TUI shows a captured interactive composer and is NOT
+ * generating, blocked by a dialog/editor, showing a slash command picker, or holding a visible
+ * user draft. A mode footer alone is not composer readiness while the TUI redraws its transcript.
  *
  * This is the single shared screen-state owner for both startup readiness and runtime-control safe
  * windows (Section A intent), replacing the readiness bridge's narrow standalone regex which missed
  * boxed composers (`│ > │`) and produced false-negative "not ready" detections that killed live hosts.
  */
 export function isClaudeScreenReadyForInput(state: ClaudeScreenState): boolean {
-  return state.inputBoxInteractive && !hasBlockingOverlay(state);
+  return hasClaudeInteractiveComposer(state) && !hasBlockingOverlay(state);
 }
 
 /** Safe to type `/model` / `/effort` and submit only on a clean, interactive composer. */
 export function isSafeWindowForSlashControl(state: ClaudeScreenState): boolean {
-  return state.inputBoxInteractive && !hasBlockingOverlay(state);
+  return hasClaudeInteractiveComposer(state) && !hasBlockingOverlay(state);
 }
 
 /** Safe to send a raw ShiftTab mode-cycle press only on a clean, interactive composer. */
 export function isSafeWindowForModeCycle(state: ClaudeScreenState): boolean {
-  return state.inputBoxInteractive && !hasBlockingOverlay(state);
+  return hasClaudeInteractiveComposer(state) && !hasBlockingOverlay(state);
 }
 
 /**
@@ -725,8 +734,7 @@ export function resolveClaudeScreenInFlightSteerVeto(state: ClaudeScreenState): 
   if (state.selectionListVisible) return 'selection_list';
   if (state.userDraftPresent) return 'user_draft';
   if (state.generating) return null;
-  if (state.inputBoxInteractive) return null;
-  return 'no_interactive_composer';
+  return hasClaudeInteractiveComposer(state) ? null : 'no_interactive_composer';
 }
 
 /**

@@ -5192,6 +5192,11 @@ export class ApiSessionClient extends EventEmitter {
         return exactLocalId !== null && this.acceptedProviderInputLocalIds.has(exactLocalId);
     }
 
+    hasCanonicalPendingProviderInputDelivery(localId: string): boolean {
+        const exactLocalId = readPendingLocalId(localId);
+        return exactLocalId !== null && this.canonicalPendingDeliveryByLocalId.has(exactLocalId);
+    }
+
     updateMetadata(handler: (metadata: Metadata) => Metadata): Promise<void> {
         return this.metadataLock.inLock(async () => {
             await this.waitForSessionSocketOnlineForAckWrite('update-metadata');

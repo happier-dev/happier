@@ -230,9 +230,13 @@ export async function pasteTextViaTmuxBuffer(params: Readonly<{
     await (params.wait ?? waitFor)(submitDelayMs);
   }
 
+  // Loading/pasting and submitting are independent terminal operations. A successful slow
+  // paste must not leave staging verification and Enter with only the remainder of its clock.
+  const submissionDeadline = createTerminalHostDeadline(params.timeoutMs);
+
   async function sendSubmitEnter(): Promise<'success' | 'timeout' | 'failed'> {
     const submitDeadline = createTerminalHostDeadline(resolvePromptSubmitTimeoutMs({
-      remainingTimeoutMs: remainingTerminalHostDeadlineMs(deadline),
+      remainingTimeoutMs: remainingTerminalHostDeadlineMs(submissionDeadline),
       fallbackTimeoutMs: params.timeoutMs,
     }));
     return timedCommandSucceeded(params.executor, ['send-keys', '-t', params.target, 'C-m'], submitDeadline);
@@ -257,7 +261,7 @@ export async function pasteTextViaTmuxBuffer(params: Readonly<{
         }) ?? false,
       }
       : {}),
-    remainingTimeoutMs: () => remainingTerminalHostDeadlineMs(deadline),
+    remainingTimeoutMs: () => remainingTerminalHostDeadlineMs(submissionDeadline),
     wait: params.wait ?? waitFor,
     submitRetryDelayMs: params.submitRetryDelayMs ?? 0,
   });

@@ -324,8 +324,8 @@ export type ClaudeUnifiedTerminalSessionOptions<Mode extends EnhancedMode = Enha
   allowFirstInputBeforeSessionStart?: boolean | undefined;
   /** Canonical session-turn lifecycle probe for the arbiter's stale-turn recovery (Lane N2). */
   isCanonicalTurnActive?: (() => boolean) | undefined;
-  /** Canonical session delivery-state probe used to suppress ambiguous retries already accepted by the provider. */
-  isPromptDeliveryAccepted?: ((batch: ClaudeUnifiedPromptBatch<Mode>) => boolean) | undefined;
+  /** Canonical Pending delivery-state probe used to reconcile ambiguous terminal custody. */
+  resolvePromptDeliveryState?: ((batch: ClaudeUnifiedPromptBatch<Mode>) => import('./_types').ClaudeUnifiedPromptDeliveryState) | undefined;
   /**
    * Lane P (O-design Seam A): de-duplicated session-level steer availability tee from the steer
    * evaluator. Launchers publish it to agentState via the capability publisher.
@@ -1905,7 +1905,7 @@ export async function runClaudeUnifiedTerminalSession<Mode extends EnhancedMode 
         interruptActiveTurn: () => hostResolution.adapter.interruptTurn(activeHandle),
         onSteerAcceptanceArmed: steerWiring.onSteerAcceptanceArmed,
         isCanonicalTurnActive: opts.isCanonicalTurnActive,
-        isPromptDeliveryAccepted: opts.isPromptDeliveryAccepted,
+        resolvePromptDeliveryState: opts.resolvePromptDeliveryState,
         onPendingInputInterruptAndRunLocalIdChange: (localId) => {
           opts.onPendingInputInterruptAndRunLocalIdChange?.(
             pendingInputInterruptAndRunEnabled ? localId : null,

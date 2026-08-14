@@ -327,9 +327,6 @@ export function createPtyTerminalHostAdapter(params?: Readonly<{
         }
       }
       const shouldStagePrompt = promptSubmitVerification?.shouldVerifyAfterSubmit(input.text) === true;
-      const deadline = createTerminalHostDeadline(
-        input.scheduling.timeoutMs ?? resolveTerminalPromptWriteTimeoutMs(input.text),
-      );
       const textToWrite = input.multiline && shouldStagePrompt ? wrapBracketedPaste(input.text) : input.text;
       if (!writeToSession(session, textToWrite)) {
         return failedInjectionResult({
@@ -339,6 +336,11 @@ export function createPtyTerminalHostAdapter(params?: Readonly<{
           recoverable: true,
         });
       }
+      // Writing and submitting are independent PTY operations. Preserve the bounded timeout for
+      // each phase instead of letting a slow successful write exhaust staging/Enter verification.
+      const submissionDeadline = createTerminalHostDeadline(
+        input.scheduling.timeoutMs ?? resolveTerminalPromptWriteTimeoutMs(input.text),
+      );
       const submission = await runTerminalPromptSubmission({
         promptText: input.text,
         ...(shouldStagePrompt
@@ -358,7 +360,7 @@ export function createPtyTerminalHostAdapter(params?: Readonly<{
           if (!writeToSession(session, '\r')) return 'failed';
           return await waitForPostWriteLiveness(session) ? 'success' : 'failed';
         },
-        remainingTimeoutMs: () => remainingTerminalHostDeadlineMs(deadline),
+        remainingTimeoutMs: () => remainingTerminalHostDeadlineMs(submissionDeadline),
       });
       if (!submission.success) {
         return failedInjectionResult({

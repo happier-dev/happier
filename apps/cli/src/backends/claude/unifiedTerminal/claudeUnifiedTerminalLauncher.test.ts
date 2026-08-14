@@ -149,6 +149,7 @@ function createSession(overrides: Readonly<{
       recordClaudeJsonlMessageConsumed: vi.fn(),
       bindProviderInputOutcomeProducer: vi.fn(() => vi.fn()),
       hasPendingProviderInputAcceptance: vi.fn(() => false),
+      hasCanonicalPendingProviderInputDelivery: vi.fn(() => true),
       hasActiveCanonicalTurn: vi.fn(() => false),
       blockPendingMessageDelivery: vi.fn(async () => false),
       wakePendingMaterialization: vi.fn(),
@@ -846,25 +847,32 @@ describe('claudeUnifiedTerminalLauncher', () => {
     });
   });
 
-  it('passes core provider-acceptance state to the unified terminal runner', async () => {
+  it('passes canonical Pending delivery state to the unified terminal runner', async () => {
     setProcessTty(false);
     const session = createSession();
     const client = session.client as unknown as {
       hasPendingProviderInputAcceptance: ReturnType<typeof vi.fn>;
+      hasCanonicalPendingProviderInputDelivery: ReturnType<typeof vi.fn>;
     };
     client.hasPendingProviderInputAcceptance.mockReturnValueOnce(true);
+    client.hasCanonicalPendingProviderInputDelivery.mockReturnValueOnce(false);
     mocks.runClaudeUnifiedTerminalSession.mockImplementationOnce(async (opts: {
-      isPromptDeliveryAccepted?: (batch: {
+      resolvePromptDeliveryState?: (batch: {
         message: string;
         maxUserMessageSeq?: number | null;
         userMessageLocalIds?: readonly string[];
-      }) => boolean;
+      }) => 'pending' | 'accepted' | 'retired';
     }) => {
-      expect(opts.isPromptDeliveryAccepted?.({
+      expect(opts.resolvePromptDeliveryState?.({
         message: 'already accepted',
         maxUserMessageSeq: 739,
         userMessageLocalIds: ['prompt-739'],
-      })).toBe(true);
+      })).toBe('accepted');
+      expect(opts.resolvePromptDeliveryState?.({
+        message: 'discarded row',
+        maxUserMessageSeq: 740,
+        userMessageLocalIds: ['prompt-740'],
+      })).toBe('retired');
     });
 
     await claudeUnifiedTerminalLauncher(session, {
@@ -875,6 +883,7 @@ describe('claudeUnifiedTerminalLauncher', () => {
     });
 
     expect(client.hasPendingProviderInputAcceptance).toHaveBeenCalledWith('prompt-739');
+    expect(client.hasCanonicalPendingProviderInputDelivery).toHaveBeenCalledWith('prompt-740');
   });
 
   it('registers terminal composer clear through additive session runtime controls', async () => {

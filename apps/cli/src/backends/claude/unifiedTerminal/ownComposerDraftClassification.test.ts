@@ -92,4 +92,16 @@ describe('classifyClaudeOwnComposerDraft', () => {
     expect(screen.composerContent).toBe('/effort medium');
     expect(classifyScreen(rawText)).toBe('own');
   });
+
+  it('classifies a non-dialog screen with no composer as non-input, not empty', () => {
+    const rawText = [
+      'Applied runtime control; transcript is redrawing',
+      '  ⏵⏵ accept edits on (shift+tab to cycle)',
+    ].join('\n');
+    const screen = parseClaudeScreenState(rawText);
+
+    expect(screen.composerContent).toBeNull();
+    expect(screen.inputBoxInteractive).toBe(true);
+    expect(classifyScreen(rawText)).toBe('non_input_state');
+  });
 });

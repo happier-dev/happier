@@ -136,6 +136,26 @@ describe('resolveClaudeUnifiedPendingDeliveryBlock', () => {
     });
   });
 
+  it.each(['timeout', 'verification_failed'] as const)(
+    'classifies pre-Enter %s after prompt bytes reached the composer as uncertain delivery',
+    (reason) => {
+      const error = Object.assign(new Error('Claude unified terminal prompt was staged but not submitted'), {
+        code: 'claude_unified_terminal_injection_failed',
+        failureState: 'failed_ambiguous',
+        reason,
+        phase: 'after_write_before_enter',
+        duplicateRisk: 'possible',
+        recoverable: true,
+        userMessageLocalIds: ['pending-local-staged'],
+      });
+
+      expect(resolveClaudeUnifiedPendingDeliveryBlock(error)).toEqual({
+        localIds: ['pending-local-staged'],
+        reason: 'delivery_outcome_uncertain',
+      });
+    },
+  );
+
   it('maps sustained head blockers to retryable pending delivery block reasons', () => {
     expect(resolveClaudeUnifiedPendingDeliveryBlockForDeliveryBlocker({
       localIds: ['pending-local-draft', ' pending-local-draft\n', 'pending-local-draft', 'pending-local-2'],

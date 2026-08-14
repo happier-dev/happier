@@ -48,6 +48,11 @@ const unknownResumeScreen = [
   'Rendering transcript messages and tools...',
 ].join('\n');
 
+const modeFooterWithoutComposerScreen = [
+  'Applied runtime control; transcript is redrawing',
+  '  ⏵⏵ accept edits on (shift+tab to cycle)',
+].join('\n');
+
 const queuedBannerScreen = [
   '✶ Forging… (44s · esc to interrupt)',
   '  Press up to edit queued messages',
@@ -149,6 +154,23 @@ describe('createClaudeUnifiedInFlightSteerEvaluator', () => {
     const unknownDecision = await unknown.wiring.evaluateInFlightSteer(pendingBatch('steer me'));
     expect(unknownDecision).toMatchObject({ steer: false, reason: 'no_interactive_composer' });
     expect(unknownDecision).not.toMatchObject({ turnLikelyEnded: true });
+  });
+
+  it('vetoes a mode-footer capture whose interactive marker is stale but composer is absent', async () => {
+    const { telemetry, wiring } = createHarness({ screen: modeFooterWithoutComposerScreen });
+
+    const decision = await wiring.evaluateInFlightSteer(pendingBatch('exact pending prompt'));
+
+    expect(decision).toMatchObject({ steer: false, reason: 'no_interactive_composer' });
+    expect(decision).not.toMatchObject({ turnLikelyEnded: true });
+    expect(telemetry.emit).toHaveBeenCalledWith({
+      name: 'unified.steer.decision',
+      properties: expect.objectContaining({
+        decision: 'vetoed',
+        reason: 'no_interactive_composer',
+        originKind: 'ui_pending',
+      }),
+    });
   });
 
   it('refuses to steer a prompt that changes the permission mode while a turn is live', async () => {
