@@ -39,7 +39,6 @@ function spawnVitestRun({ configPath, shardSpec, nodeOptions, vitestArgs }) {
         NODE_OPTIONS: nodeOptions,
       },
       stdio: 'inherit',
-      shell: process.platform === 'win32',
     },
     cleanupPollMs: 25,
     signalCleanupGraceMs: 0,

@@ -19,43 +19,38 @@ describe('CLI test global setup', () => {
         }
         vi.restoreAllMocks();
         vi.doUnmock('node:child_process');
+        vi.doUnmock('node:fs');
         vi.doUnmock('./testSetupBuildCoordinator');
         vi.resetModules();
     });
 
-    it('skips the dist build for shared-only mode', async () => {
+    it('does not publish build outputs in source-only mode', async () => {
         const { setup } = await importSetupModule();
-        const ensureSharedDepsBuiltOnce = vi.fn(async () => undefined);
         const ensureDistBuiltOnce = vi.fn(async () => undefined);
 
         await setup({
-            buildMode: 'shared-only',
+            buildMode: 'none',
             dependencies: {
                 resolveProjectRoot: () => '/tmp/happier-cli-project',
-                ensureSharedDepsBuiltOnce,
                 ensureDistBuiltOnce,
             },
         });
 
-        expect(ensureSharedDepsBuiltOnce).toHaveBeenCalledWith('/tmp/happier-cli-project');
         expect(ensureDistBuiltOnce).not.toHaveBeenCalled();
     });
 
-    it('runs both shared deps and dist builds for full mode', async () => {
+    it('runs the canonical dist build for full mode', async () => {
         const { setup } = await importSetupModule();
-        const ensureSharedDepsBuiltOnce = vi.fn(async () => undefined);
         const ensureDistBuiltOnce = vi.fn(async () => undefined);
 
         await setup({
             buildMode: 'full',
             dependencies: {
                 resolveProjectRoot: () => '/tmp/happier-cli-project',
-                ensureSharedDepsBuiltOnce,
                 ensureDistBuiltOnce,
             },
         });
 
-        expect(ensureSharedDepsBuiltOnce).toHaveBeenCalledWith('/tmp/happier-cli-project');
         expect(ensureDistBuiltOnce).toHaveBeenCalledWith('/tmp/happier-cli-project');
     });
 
@@ -63,56 +58,17 @@ describe('CLI test global setup', () => {
         const { setup } = await importSetupModule();
         process.env.HAPPIER_CLI_TEST_SKIP_BUILD = 'true';
 
-        const ensureSharedDepsBuiltOnce = vi.fn(async () => undefined);
         const ensureDistBuiltOnce = vi.fn(async () => undefined);
 
         await setup({
             buildMode: 'full',
             dependencies: {
                 resolveProjectRoot: () => '/tmp/happier-cli-project',
-                ensureSharedDepsBuiltOnce,
                 ensureDistBuiltOnce,
             },
         });
 
-        expect(ensureSharedDepsBuiltOnce).not.toHaveBeenCalled();
         expect(ensureDistBuiltOnce).not.toHaveBeenCalled();
-    });
-
-    it('requires bundled protocol runtime dependency markers before skipping shared deps build', async () => {
-        delete process.env.HAPPIER_CLI_TEST_SKIP_BUILD;
-        const ensureBuildArtifactsReadyOnce = vi.fn(async () => undefined);
-        vi.doMock('./testSetupBuildCoordinator', () => ({
-            ensureBuildArtifactsReadyOnce,
-        }));
-
-        const { setup } = await importSetupModule();
-
-        await setup({
-            buildMode: 'shared-only',
-            dependencies: {
-                resolveProjectRoot: () => cliProjectRoot,
-            },
-        });
-
-        expect(ensureBuildArtifactsReadyOnce).toHaveBeenCalledTimes(1);
-        expect(ensureBuildArtifactsReadyOnce).toHaveBeenCalledWith(
-            expect.objectContaining({
-                markerPaths: expect.arrayContaining([
-                    join(cliProjectRoot, 'node_modules', '@happier-dev', 'protocol', 'dist', 'sessions', 'fork.js'),
-                    join(cliProjectRoot, 'node_modules', '@happier-dev', 'protocol', 'node_modules', 'zod', 'package.json'),
-                    join(
-                        cliProjectRoot,
-                        'node_modules',
-                        '@happier-dev',
-                        'protocol',
-                        'node_modules',
-                        'base64-js',
-                        'package.json',
-                    ),
-                ]),
-            }),
-        );
     });
 
     it('uses the canonical repo dist build lock for mutable CLI dist outputs', async () => {
@@ -131,9 +87,8 @@ describe('CLI test global setup', () => {
             },
         });
 
-        expect(ensureBuildArtifactsReadyOnce).toHaveBeenCalledTimes(2);
-        expect(ensureBuildArtifactsReadyOnce).toHaveBeenNthCalledWith(
-            2,
+        expect(ensureBuildArtifactsReadyOnce).toHaveBeenCalledTimes(1);
+        expect(ensureBuildArtifactsReadyOnce).toHaveBeenCalledWith(
             expect.objectContaining({
                 lockPath: join(resolve(cliProjectRoot, '..', '..'), '.project', 'tmp', 'cli-dist-build.lock'),
             }),
@@ -142,6 +97,16 @@ describe('CLI test global setup', () => {
 
     it('forwards the canonical lock lease to the nested dist build process', async () => {
         delete process.env.HAPPIER_CLI_TEST_SKIP_BUILD;
+        const distEntrypoint = join(cliProjectRoot, 'dist', 'index.mjs');
+        vi.doMock('node:fs', async (importOriginal) => {
+            const actual = await importOriginal<typeof import('node:fs')>();
+            return {
+                ...actual,
+                existsSync: (path: Parameters<typeof actual.existsSync>[0]) => (
+                    path === distEntrypoint || actual.existsSync(path)
+                ),
+            };
+        });
         const spawnSync = vi.fn((
             _command: string,
             _args: readonly string[],

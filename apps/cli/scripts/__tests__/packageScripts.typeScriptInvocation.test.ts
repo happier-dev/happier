@@ -17,21 +17,23 @@ const packageJson = JSON.parse(
 
 describe('apps/cli package scripts', () => {
   it('routes typecheck through the shared Node-safe TypeScript wrapper', () => {
-    expect(String(packageJson.scripts?.typecheck ?? '')).toMatch(
+    expect(String(packageJson.scripts?.typecheck ?? '')).toContain(
+      '--script=typecheck:local',
+    );
+    expect(String(packageJson.scripts?.['typecheck:local'] ?? '')).toMatch(
       /scripts\/workspaces\/runTypeScriptCli\.mjs --noEmit\b/,
     );
-    expect(String(packageJson.scripts?.typecheck ?? '')).not.toMatch(/\btsc\b/);
-    expect(packageJson.scripts?.pretypecheck).toBe('yarn -s prepare:declarations');
+    expect(String(packageJson.scripts?.['typecheck:local'] ?? '')).not.toMatch(/\btsc\b/);
+    expect(packageJson.scripts?.['pretypecheck:local']).toBe('yarn -s prepare:declarations');
     expect(packageJson.scripts?.['prepare:declarations']).toBe('node scripts/buildSharedDeps.mjs --declarations');
   });
 
-  it('refreshes bundled workspace bytes before source tests without building CLI dist', () => {
+  it('runs source tests without publishing shared workspace output', () => {
     expect(packageJson.scripts?.pretest).toBeUndefined();
-    expect(packageJson.scripts?.vitest).toBe('node scripts/syncSharedDepsForDev.mjs plugin-sdk && vitest');
-    expect(packageJson.scripts?.['test:unit']).toMatch(/^node scripts\/syncSharedDepsForDev\.mjs plugin-sdk && /);
-    expect(packageJson.scripts?.['test:integration']).toMatch(/^node scripts\/syncSharedDepsForDev\.mjs plugin-sdk && /);
-    expect(packageJson.scripts?.['test:slow']).toMatch(/^node scripts\/syncSharedDepsForDev\.mjs plugin-sdk && /);
-    expect(packageJson.scripts?.['test:unit']).not.toMatch(/build:shared|buildSharedDeps/);
+    expect(packageJson.scripts?.['vitest:local']).toBe('vitest');
+    expect(packageJson.scripts?.['test:unit:local']).not.toMatch(/syncSharedDepsForDev|build:shared|buildSharedDeps/);
+    expect(packageJson.scripts?.['test:integration']).not.toMatch(/syncSharedDepsForDev|build:shared|buildSharedDeps/);
+    expect(packageJson.scripts?.['test:slow']).not.toMatch(/syncSharedDepsForDev|build:shared|buildSharedDeps/);
   });
 
   it('delegates build orchestration to the atomic CLI dist build owner', () => {

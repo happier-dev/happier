@@ -78,11 +78,15 @@ const env = {
   HAPPIER_VARIANT: variant, // For internal validation
 };
 
+// Start from argv on every platform. `shell: true` makes Node concatenate the
+// command and arguments into one unescaped command line (Node DEP0190): it splits
+// `binPath` at any space and hands these user-supplied arguments straight to a
+// shell parser. `process.execPath` is the absolute Node already running this
+// wrapper, so there is no bare-name PATH lookup for Windows to need a shell for.
 const binPath = path.join(__dirname, '..', 'bin', 'happier.mjs');
-const proc = spawn('node', [binPath, command, ...args], {
+const proc = spawn(process.execPath, [binPath, command, ...args], {
   env,
-  stdio: 'inherit',
-  shell: process.platform === 'win32'
+  stdio: 'inherit'
 });
 
 proc.on('exit', (code) => process.exit(code || 0));
