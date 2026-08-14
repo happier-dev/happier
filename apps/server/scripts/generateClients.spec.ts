@@ -4,6 +4,7 @@ import {
     isMainModule,
     prismaGenerateDatabaseUrlForProvider,
     resolveBuildDbProvidersFromEnv,
+    resolveSchemaSyncScript,
 } from "./generateClients";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -82,6 +83,13 @@ describe("prismaGenerateDatabaseUrlForProvider", () => {
         expect(prismaGenerateDatabaseUrlForProvider("postgres")).toMatch(/^postgresql:\/\//);
         expect(prismaGenerateDatabaseUrlForProvider("mysql")).toMatch(/^mysql:\/\//);
         expect(prismaGenerateDatabaseUrlForProvider("sqlite")).toMatch(/^file:/);
+    });
+});
+
+describe("resolveSchemaSyncScript", () => {
+    it("checks tracked schema outputs instead of generating them on a one-way remote mirror", () => {
+        expect(resolveSchemaSyncScript({ HAPPIER_DEV_TARGET_EXECUTION: "1" })).toBe("schema:sync:check");
+        expect(resolveSchemaSyncScript({})).toBe("schema:sync");
     });
 });
 
