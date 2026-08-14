@@ -121,6 +121,19 @@ describe('ApiClient connected services quotas v3', () => {
     );
   });
 
+  it('forwards cancellation for an uncached account encryption mode probe', async () => {
+    const controller = new AbortController();
+    mockGet.mockResolvedValue({ status: 200, data: { mode: 'plain', updatedAt: 1 } });
+
+    const api = await ApiClient.create(createTestCredentials());
+
+    await expect(api.getAccountEncryptionModeUncached({ signal: controller.signal })).resolves.toBe('plain');
+    expect(axios.get).toHaveBeenCalledWith(
+      expect.stringContaining('/v1/account/encryption'),
+      expect.objectContaining({ signal: controller.signal }),
+    );
+  });
+
   it('shares concurrent and fresh account encryption mode lookups', async () => {
     let resolveMode: ((value: unknown) => void) | undefined;
     mockGet.mockReturnValueOnce(new Promise((resolve) => {

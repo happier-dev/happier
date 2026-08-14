@@ -13,6 +13,7 @@ import {
 } from '../../runtimeAuth/connectedServiceAuthGenerationApplyFailure';
 import type { AcceptedConnectedServiceAccountVerificationByServiceId } from '../../accountTransitions/acceptedConnectedServiceAccountVerification';
 import { evaluatePredictiveSoftSwitchSessionApplyPolicy } from './predictiveSoftSwitchPolicy';
+import type { ConnectedServiceGroupQuotaProbeResult } from '../../quotas/ConnectedServiceQuotasCoordinator';
 import {
   buildGenerationApplyResult,
   buildLeaseCompletion,
@@ -66,6 +67,15 @@ export type {
   ConnectedServiceAuthGroupSwitchResult,
   ConnectedServiceAuthGroupSwitchState,
 } from './pipeline/switchPipeline';
+
+export class ConnectedServiceAuthGroupQuotaProbeIncompleteError extends Error {
+  readonly code = 'connected_service_auth_group_quota_probe_incomplete';
+
+  constructor(readonly reason: ConnectedServiceGroupQuotaProbeResult['reason']) {
+    super('Connected service auth group quota evidence could not be refreshed within the pre-turn budget');
+    this.name = 'ConnectedServiceAuthGroupQuotaProbeIncompleteError';
+  }
+}
 
 export class ConnectedServiceAuthGroupSwitchCoordinator {
   private readonly switchTimestampsBySessionKey = new Map<string, number[]>();
@@ -127,7 +137,8 @@ export class ConnectedServiceAuthGroupSwitchCoordinator {
       groupId: string;
       profileIds: ReadonlyArray<string>;
       reason: string;
-    }>): Promise<void>;
+      deadlineAtMs?: number;
+    }>): Promise<ConnectedServiceGroupQuotaProbeResult | void>;
     resolveGenerationConflict?: (error: unknown) => number | null;
     emitEvent?: (event: ConnectedServiceAuthGroupSwitchEvent) => void;
   }>) {}
@@ -260,6 +271,7 @@ export class ConnectedServiceAuthGroupSwitchCoordinator {
       serviceId: string;
       groupId: string;
       reason: string;
+      deadlineAtMs?: number;
     }>;
     loaded: ConnectedServiceAuthGroupSwitchState;
     activeProfileId?: string | null;
@@ -276,12 +288,16 @@ export class ConnectedServiceAuthGroupSwitchCoordinator {
       allowCurrentProfileRetry: input.allowCurrentProfileRetry,
     });
     if (profileIds.length === 0) return input.loaded;
-    await this.deps.probeQuotaSnapshotsForGroup({
+    const probeResult = await this.deps.probeQuotaSnapshotsForGroup({
       serviceId: input.request.serviceId,
       groupId: input.request.groupId,
       profileIds,
       reason: input.request.reason,
+      ...(input.request.deadlineAtMs === undefined ? {} : { deadlineAtMs: input.request.deadlineAtMs }),
     });
+    if (probeResult?.status === 'incomplete') {
+      throw new ConnectedServiceAuthGroupQuotaProbeIncompleteError(probeResult.reason);
+    }
     return await this.deps.loadState({
       serviceId: input.request.serviceId,
       groupId: input.request.groupId,
@@ -766,6 +782,7 @@ export class ConnectedServiceAuthGroupSwitchCoordinator {
     observedProfileId?: string | null;
     switchesThisTurn?: number;
     sessionSwitchesThisHour?: number;
+    deadlineAtMs?: number;
   }>): Promise<ConnectedServiceAuthGroupSwitchResult> {
     return await this.runSwitchPipeline(input, 'pre_turn');
   }

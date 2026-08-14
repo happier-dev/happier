@@ -44,7 +44,10 @@ import {
   buildConnectedServiceAuthGroupSwitchStateFromAccountUsage,
   type AccountUsageStoreForAuthGroupSwitchState,
 } from './accountGroups/switching/buildConnectedServiceAuthGroupSwitchStateFromAccountUsage';
-import type { ConnectedServiceAuthGroupSwitchState } from './accountGroups/switching/ConnectedServiceAuthGroupSwitchCoordinator';
+import {
+  ConnectedServiceAuthGroupQuotaProbeIncompleteError,
+  type ConnectedServiceAuthGroupSwitchState,
+} from './accountGroups/switching/ConnectedServiceAuthGroupSwitchCoordinator';
 import { evaluatePredictiveSoftSwitchPolicy } from './accountGroups/switching/predictiveSoftSwitchPolicy';
 import type { ConnectedServiceRefreshFailureCategory } from './credentials/lifecycleTypes';
 import { persistCredentialHealthForMaterializationFailure } from './refresh/refreshDiagnostics';
@@ -84,6 +87,7 @@ type ConnectedServiceAuthGroupPreTurnSwitchCoordinator = Readonly<{
     groupId: string;
     reason: 'usage_limit' | 'soft_threshold' | 'auth_expired' | 'account_changed' | 'refresh_failed';
     observedProfileId?: string | null;
+    deadlineAtMs?: number;
   }>): Promise<Readonly<{
     status: string;
     activeProfileId?: string | null;
@@ -534,6 +538,7 @@ async function maybeSelectGroupActiveProfileForSpawn(params: Readonly<{
   sessionId?: string;
   authGroupSwitchCoordinator?: ConnectedServiceAuthGroupPreTurnSwitchCoordinator | null;
   predictiveSoftSwitchMode: 'supported' | 'unsupported';
+  quotaProbeDeadlineAtMs?: number;
 }>): Promise<ConnectedServiceAuthGroupResponse> {
   if (!isFullAuthGroup(params.group)) return params.group;
   // Pre-spawn switches only happen through the injected switch coordinator FSM. There is no
@@ -571,13 +576,22 @@ async function maybeSelectGroupActiveProfileForSpawn(params: Readonly<{
       allowCurrentProfileRetry: true,
     }).length > 0
   ) {
-    const switched = await params.authGroupSwitchCoordinator.switchBeforeTurn({
-      ...(params.sessionId ? { sessionId: params.sessionId } : {}),
-      serviceId: params.serviceId,
-      groupId: params.groupId,
-      reason: switchReason,
-      observedProfileId: state.activeProfileId,
-    });
+    let switched: Awaited<ReturnType<ConnectedServiceAuthGroupPreTurnSwitchCoordinator['switchBeforeTurn']>>;
+    try {
+      switched = await params.authGroupSwitchCoordinator.switchBeforeTurn({
+        ...(params.sessionId ? { sessionId: params.sessionId } : {}),
+        serviceId: params.serviceId,
+        groupId: params.groupId,
+        reason: switchReason,
+        observedProfileId: state.activeProfileId,
+        ...(params.quotaProbeDeadlineAtMs === undefined ? {} : { deadlineAtMs: params.quotaProbeDeadlineAtMs }),
+      });
+    } catch (error) {
+      if (error instanceof ConnectedServiceAuthGroupQuotaProbeIncompleteError && switchReason === 'soft_threshold') {
+        return params.group;
+      }
+      throw error;
+    }
     const authoritative = await resolveAuthoritativeGroupAfterSpawnSwitchResult({
       group: params.group,
       serviceId: params.serviceId,
@@ -604,13 +618,22 @@ async function maybeSelectGroupActiveProfileForSpawn(params: Readonly<{
   const selectedProfileId = selected.selected?.profileId ?? null;
   if (!selectedProfileId || selectedProfileId === readProfileId(state.activeProfileId)) return params.group;
 
-  const switched = await params.authGroupSwitchCoordinator.switchBeforeTurn({
-    ...(params.sessionId ? { sessionId: params.sessionId } : {}),
-    serviceId: params.serviceId,
-    groupId: params.groupId,
-    reason: switchReason,
-    observedProfileId: state.activeProfileId,
-  });
+  let switched: Awaited<ReturnType<ConnectedServiceAuthGroupPreTurnSwitchCoordinator['switchBeforeTurn']>>;
+  try {
+    switched = await params.authGroupSwitchCoordinator.switchBeforeTurn({
+      ...(params.sessionId ? { sessionId: params.sessionId } : {}),
+      serviceId: params.serviceId,
+      groupId: params.groupId,
+      reason: switchReason,
+      observedProfileId: state.activeProfileId,
+      ...(params.quotaProbeDeadlineAtMs === undefined ? {} : { deadlineAtMs: params.quotaProbeDeadlineAtMs }),
+    });
+  } catch (error) {
+    if (error instanceof ConnectedServiceAuthGroupQuotaProbeIncompleteError && switchReason === 'soft_threshold') {
+      return params.group;
+    }
+    throw error;
+  }
   const authoritative = await resolveAuthoritativeGroupAfterSpawnSwitchResult({
     group: params.group,
     serviceId: params.serviceId,
@@ -675,6 +698,7 @@ async function resolveCredentialBindings(params: Readonly<{
   sessionId?: string;
   authGroupSwitchCoordinator?: ConnectedServiceAuthGroupPreTurnSwitchCoordinator | null;
   predictiveSoftSwitchMode: 'supported' | 'unsupported';
+  quotaProbeDeadlineAtMs?: number;
 }>): Promise<Readonly<{
   credentialBindings: ReadonlyArray<{ serviceId: ConnectedServiceId; profileId: string }>;
   groupSelections: ReadonlyMap<ConnectedServiceId, ConnectedServiceResolvedGroupSelection>;
@@ -712,6 +736,7 @@ async function resolveCredentialBindings(params: Readonly<{
       ...(params.sessionId ? { sessionId: params.sessionId } : {}),
       authGroupSwitchCoordinator: params.authGroupSwitchCoordinator ?? null,
       predictiveSoftSwitchMode: params.predictiveSoftSwitchMode,
+      quotaProbeDeadlineAtMs: params.quotaProbeDeadlineAtMs,
     });
     const activeProfileId = readProfileId(selectedGroup.activeProfileId);
     if (!activeProfileId) {
@@ -781,6 +806,7 @@ async function maybeSwitchGroupAfterSpawnPreflightRefreshFailure(params: Readonl
   api: ApiClient;
   sessionId?: string;
   authGroupSwitchCoordinator?: ConnectedServiceAuthGroupPreTurnSwitchCoordinator | null;
+  quotaProbeDeadlineAtMs?: number;
 }>): Promise<boolean> {
   if (params.error.kind !== 'reconnect_required') return false;
   const group = params.groupSelections.get(params.error.serviceId);
@@ -1139,6 +1165,7 @@ export async function resolveConnectedServiceAuthForSpawn(params: Readonly<{
   nowMs?: () => number;
   sessionId?: string;
   authGroupSwitchCoordinator?: ConnectedServiceAuthGroupPreTurnSwitchCoordinator | null;
+  quotaProbeDeadlineAtMs?: number;
   accountSettings?: AccountSettings | Readonly<Record<string, unknown>> | null;
   processEnv?: NodeJS.ProcessEnv;
   credentialRefreshService?: ConnectedServiceSpawnCredentialRefreshService | null;
@@ -1185,6 +1212,7 @@ export async function resolveConnectedServiceAuthForSpawn(params: Readonly<{
     ...(params.sessionId ? { sessionId: params.sessionId } : {}),
     authGroupSwitchCoordinator: params.authGroupSwitchCoordinator ?? null,
     predictiveSoftSwitchMode: credentialLifecycleDescriptor.predictiveSoftSwitch.mode,
+    quotaProbeDeadlineAtMs: params.quotaProbeDeadlineAtMs,
   });
 
   const resolvedCredentials = await resolveConnectedServiceCredentialsWithRevisions({

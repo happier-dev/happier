@@ -23,6 +23,7 @@ import {
 import { waitForSessionWebhook } from './spawn/waitForSessionWebhook';
 import { readPendingFirstInputFromEnv } from './spawn/pendingFirstInput';
 import type { ConnectedServicesMaterializationDiagnostic } from './connectedServices/materialize/providerMaterializerTypes';
+import { ConnectedServiceAuthGroupQuotaProbeIncompleteError } from './connectedServices/accountGroups/switching/ConnectedServiceAuthGroupSwitchCoordinator';
 import { isConnectedServiceUxDiagnosticSpawnErrorDetail } from '@happier-dev/protocol';
 import { UsageLimitRecoveryScheduler } from './connectedServices/usageLimitRecovery/UsageLimitRecoveryScheduler';
 import type { StopSessionResult } from './sessions/stopSessionContract';
@@ -356,6 +357,7 @@ vi.mock('@/ui/logger', () => ({
     debug: vi.fn(),
     debugLargeJson: vi.fn(),
     info: vi.fn(),
+    infoFile: vi.fn(),
     warn: vi.fn(),
     logFilePath: '/tmp/happier-daemon.log',
   },
@@ -2014,6 +2016,57 @@ describe('startDaemon spawn resume wiring (integration)', () => {
       } else {
         process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED = refreshEnvOriginal;
       }
+      exitSpy.mockRestore();
+    }
+  });
+
+  it('fails closed with a stable validation result when hard-limit quota evidence is incomplete', async () => {
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
+    const refreshEnvOriginal = process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED;
+    process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED = 'false';
+    let run: Promise<unknown> | null = null;
+    let shutdownRequested = false;
+    try {
+      resolveConnectedServiceAuthForSpawnMock.mockRejectedValueOnce(
+        new ConnectedServiceAuthGroupQuotaProbeIncompleteError('deadline_exceeded'),
+      );
+      const { startDaemon } = await import('./startDaemon');
+      run = startDaemon();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      const spawnSession = await waitForSpawnSessionRegistration();
+
+      await expect(spawnSession({
+        directory: '/tmp',
+        backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+        connectedServices: {
+          v: 1,
+          bindingsByServiceId: {
+            'openai-codex': {
+              source: 'connected',
+              selection: 'group',
+              groupId: 'happier',
+              profileId: 'primary',
+            },
+          },
+        },
+        token: 't',
+      })).resolves.toEqual({
+        type: 'error',
+        errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
+        errorMessage: 'Connected service account availability could not be verified before launch. Please retry.',
+      });
+      expect(spawnHappyCLI).not.toHaveBeenCalled();
+
+      shutdownRequested = true;
+      harness.requestShutdown('happier-cli');
+      await run;
+    } finally {
+      if (!shutdownRequested) {
+        harness.requestShutdown('happier-cli');
+        await run?.catch(() => {});
+      }
+      if (refreshEnvOriginal === undefined) delete process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED;
+      else process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED = refreshEnvOriginal;
       exitSpy.mockRestore();
     }
   });

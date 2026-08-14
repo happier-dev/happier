@@ -255,9 +255,13 @@ import { buildConnectedServiceUxDiagnostic } from './connectedServices/diagnosti
 import { shouldResolveConnectedServiceAuthForSpawn } from './connectedServices/shouldResolveConnectedServiceAuthForSpawn';
 import { ConnectedServiceRefreshCoordinator } from './connectedServices/refresh/ConnectedServiceRefreshCoordinator';
 import { prepareConnectedServiceAuthGroupCandidateForSwitch } from './connectedServices/refresh/prepareConnectedServiceAuthGroupCandidateForSwitch';
+import { ConnectedServiceAuthGroupQuotaProbeIncompleteError } from './connectedServices/accountGroups/switching/ConnectedServiceAuthGroupSwitchCoordinator';
 import { createConnectedServiceGroupMutationCurrentnessValidator } from './connectedServices/credentials/createConnectedServiceGroupMutationCurrentnessValidator';
 import { createConnectedServicesAuthUpdatedRestartHandler } from './connectedServices/refresh/createConnectedServicesAuthUpdatedRestartHandler';
-import { ConnectedServiceQuotasCoordinator } from './connectedServices/quotas/ConnectedServiceQuotasCoordinator';
+import {
+  ConnectedServiceQuotasCoordinator,
+  DEFAULT_CONNECTED_SERVICE_QUOTA_FETCH_TIMEOUT_MS,
+} from './connectedServices/quotas/ConnectedServiceQuotasCoordinator';
 import { createConnectedServiceQuotaFetchers } from './connectedServices/quotas/createConnectedServiceQuotaFetchers';
 import {
   ConnectedServiceRuntimeRegistry,
@@ -3417,16 +3421,18 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
                     }
                   }
                   materializationKey = connectedServiceMaterializationIdentityV1.id;
-	                  normalizedOptions = {
-	                    ...normalizedOptions,
-	                    connectedServiceMaterializationIdentityV1,
-	                  };
-	                  try {
-	                    const connectedServiceAuthQuotaFreshnessMs = resolvePositiveIntEnv(
+                  normalizedOptions = {
+                    ...normalizedOptions,
+                    connectedServiceMaterializationIdentityV1,
+                  };
+                  try {
+                    const connectedServiceAuthQuotaFreshnessMs = resolvePositiveIntEnv(
                       process.env.HAPPIER_CONNECTED_SERVICES_AUTH_GROUP_QUOTA_FRESHNESS_MS,
                       5 * 60_000,
                       { min: 1_000, max: 60 * 60_000 },
                     );
+                    const connectedServiceSpawnQuotaProbeDeadlineAtMs = Date.now()
+                      + DEFAULT_CONNECTED_SERVICE_QUOTA_FETCH_TIMEOUT_MS;
                     const preTurnSwitchCoordinator = createDaemonConnectedServiceAuthGroupSwitchCoordinator({
                       api,
                       prepareCandidateForSwitch: prepareAuthGroupCandidateForSwitch,
@@ -3441,7 +3447,14 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
                       nowMs: () => Date.now(),
                       restartSession: async () => {},
                       probeQuotaSnapshotsForGroup: async (input) => {
-                        await connectedServiceQuotasCoordinator?.probeGroupQuotaSnapshots(input);
+                        if (!connectedServiceQuotasCoordinator) return {
+                          status: 'incomplete' as const,
+                          requestedProfileCount: input.profileIds.length,
+                          completedProfileCount: 0,
+                          completedProfileIds: [],
+                          reason: 'probe_unavailable' as const,
+                        };
+                        return await connectedServiceQuotasCoordinator.probeGroupQuotaSnapshots(input);
                       },
                       emitEvent: (event) => {
                         if (!event.success || event.resultStatus !== 'switched') return;
@@ -3485,6 +3498,7 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
                       nowMs: () => Date.now(),
                       sessionId: connectedServiceAuthSessionId,
                       authGroupSwitchCoordinator: preTurnSwitchCoordinator,
+                      quotaProbeDeadlineAtMs: connectedServiceSpawnQuotaProbeDeadlineAtMs,
                       accountSettings: activeAccountSettings?.settings ?? null,
                       processEnv: process.env,
                       credentialRefreshService: connectedServiceRefreshCoordinator,
@@ -3503,31 +3517,42 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
                     // SPAWN_VALIDATION_FAILED code + message (legacy consumers unchanged) AND attach a
                     // structured `errorDetail` so the client can programmatically recognize "resume
                     // unreachable" and offer "start fresh under the new account".
-	                    if (error instanceof ConnectedServiceSpawnResumeUnreachableError) {
-	                      logger.warn('[DAEMON RUN] Connected services resume reachability re-verify failed; failing closed before spawn', {
-	                        agentId: error.agentId,
+                    if (error instanceof ConnectedServiceSpawnResumeUnreachableError) {
+                      logger.warn('[DAEMON RUN] Connected services resume reachability re-verify failed; failing closed before spawn', {
+                        agentId: error.agentId,
                         errorCode: error.errorCode,
                         failurePhase: error.failurePhase,
                         vendorResumeId: error.vendorResumeId,
                         cwd: error.cwd,
                         targetMaterializedRoot: error.targetMaterializedRoot,
                         reason: error.reason,
-	                      });
-	                      return buildSpawnResumeUnreachableErrorResult(error);
-	                    }
-	                    if (error instanceof ConnectedServiceSpawnMaterializationError) {
-	                      logger.warn('[DAEMON RUN] Connected services materialization failed; failing closed before spawn', {
-	                        agentId: error.agentId,
-	                        diagnostics: error.diagnostics.map((diagnostic) => ({
-	                          code: diagnostic.code,
-	                          providerId: diagnostic.providerId,
-	                          serviceId: diagnostic.serviceId,
-	                          reason: diagnostic.reason,
-	                          severity: diagnostic.severity,
-	                        })),
-	                      });
-	                      return buildConnectedServiceMaterializationSpawnErrorResult(error);
-	                    }
+                      });
+                      return buildSpawnResumeUnreachableErrorResult(error);
+                    }
+                    if (error instanceof ConnectedServiceAuthGroupQuotaProbeIncompleteError) {
+                      logger.warn('[DAEMON RUN] Connected-service quota evidence refresh did not complete before spawn; failing closed', {
+                        agentId: catalogAgentId,
+                        reason: error.reason ?? 'unknown',
+                      });
+                      return {
+                        type: 'error',
+                        errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
+                        errorMessage: 'Connected service account availability could not be verified before launch. Please retry.',
+                      };
+                    }
+                    if (error instanceof ConnectedServiceSpawnMaterializationError) {
+                      logger.warn('[DAEMON RUN] Connected services materialization failed; failing closed before spawn', {
+                        agentId: error.agentId,
+                        diagnostics: error.diagnostics.map((diagnostic) => ({
+                          code: diagnostic.code,
+                          providerId: diagnostic.providerId,
+                          serviceId: diagnostic.serviceId,
+                          reason: diagnostic.reason,
+                          severity: diagnostic.severity,
+                        })),
+                      });
+                      return buildConnectedServiceMaterializationSpawnErrorResult(error);
+                    }
                     const credentialRefreshErrorResult = buildConnectedServiceCredentialSpawnErrorResult({
                       agentId: catalogAgentId,
                       error,
@@ -3539,7 +3564,7 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
                       });
                       return credentialRefreshErrorResult;
                     }
-	                    logger.debug('[DAEMON RUN] Connected services resolution failed', error);
+                    logger.debug('[DAEMON RUN] Connected services resolution failed', error);
                     return {
                       type: 'error',
                       errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,

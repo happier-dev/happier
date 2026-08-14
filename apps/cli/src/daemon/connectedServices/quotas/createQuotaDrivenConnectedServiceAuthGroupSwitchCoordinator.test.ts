@@ -78,6 +78,15 @@ function group(activeProfileId: string, generation: number): ConnectedServiceAut
   };
 }
 
+function completeQuotaProbe(profileIds: ReadonlyArray<string> = []) {
+  return {
+    status: 'complete' as const,
+    requestedProfileCount: profileIds.length,
+    completedProfileCount: profileIds.length,
+    completedProfileIds: [...profileIds],
+  };
+}
+
 describe('createQuotaDrivenConnectedServiceAuthGroupSwitchCoordinator', () => {
   it('preserves an explicit runtime-failure switch reason for recipient-only committed-generation apply', async () => {
     const runtimeQuotaSnapshots = new ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore();
@@ -99,7 +108,7 @@ describe('createQuotaDrivenConnectedServiceAuthGroupSwitchCoordinator', () => {
       applyConnectedServiceAuthGeneration,
       switchReasonForApplyGeneration: 'automatic_runtime_failure',
       quotaCoordinator: {
-        probeGroupQuotaSnapshots: vi.fn(async () => {}),
+        probeGroupQuotaSnapshots: vi.fn(async (input) => completeQuotaProbe(input.profileIds)),
       },
     });
 
@@ -141,13 +150,14 @@ describe('createQuotaDrivenConnectedServiceAuthGroupSwitchCoordinator', () => {
       snapshot: quotaSnapshot('primary', 5),
     });
 
-    const probeGroupQuotaSnapshots = vi.fn(async () => {
+    const probeGroupQuotaSnapshots = vi.fn(async (input: Readonly<{ profileIds: ReadonlyArray<string> }>) => {
       runtimeQuotaSnapshots.recordSnapshot({
         serviceId: 'openai-codex',
         groupId: 'main',
         profileId: 'backup',
         snapshot: quotaSnapshot('backup', 80),
       });
+      return completeQuotaProbe(input.profileIds);
     });
     const api = {
       getConnectedServiceAuthGroup: vi.fn(async () => group('primary', 1)),
@@ -225,7 +235,7 @@ describe('createQuotaDrivenConnectedServiceAuthGroupSwitchCoordinator', () => {
       restartSession,
       applyConnectedServiceAuthGeneration,
       quotaCoordinator: {
-        probeGroupQuotaSnapshots: vi.fn(async () => {}),
+        probeGroupQuotaSnapshots: vi.fn(async (input) => completeQuotaProbe(input.profileIds)),
       },
     });
 
@@ -290,7 +300,7 @@ describe('createQuotaDrivenConnectedServiceAuthGroupSwitchCoordinator', () => {
       restartSession,
       applyConnectedServiceAuthGeneration,
       quotaCoordinator: {
-        probeGroupQuotaSnapshots: vi.fn(async () => {}),
+        probeGroupQuotaSnapshots: vi.fn(async (input) => completeQuotaProbe(input.profileIds)),
       },
     });
 
@@ -359,7 +369,7 @@ describe('createQuotaDrivenConnectedServiceAuthGroupSwitchCoordinator', () => {
       restartSession,
       applyConnectedServiceAuthGeneration,
       quotaCoordinator: {
-        probeGroupQuotaSnapshots: vi.fn(async () => {}),
+        probeGroupQuotaSnapshots: vi.fn(async (input) => completeQuotaProbe(input.profileIds)),
       },
     });
 

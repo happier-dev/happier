@@ -30,6 +30,7 @@ import { createConnectedServiceAuthGenerationApplyFailureError } from './connect
 import type { ConnectedServiceSessionAuthSwitchReason } from './connectedServiceSessionAuthSwitchCore';
 import { ConnectedServiceAuthGroupRuntimeStateRevisionConflictError } from '@/api/connectedServices/connectedServiceCredentialApi';
 import type { ConnectedServiceAuthGroupCandidatePreparationResult } from '../refresh/prepareConnectedServiceAuthGroupCandidateForSwitch';
+import type { ConnectedServiceGroupQuotaProbeResult } from '../quotas/ConnectedServiceQuotasCoordinator';
 
 type AuthGroupApi = Readonly<{
   getConnectedServiceAuthGroup(input: Readonly<{
@@ -229,7 +230,8 @@ export function createDaemonConnectedServiceAuthGroupSwitchCoordinator(params: R
     groupId: string;
     profileIds: ReadonlyArray<string>;
     reason: string;
-  }>) => Promise<void>;
+    deadlineAtMs?: number;
+  }>) => Promise<ConnectedServiceGroupQuotaProbeResult | void>;
   resolveCredentialRevision?: (
     serviceId: ConnectedServiceId,
     profileId: string | null,
@@ -369,11 +371,12 @@ export function createDaemonConnectedServiceAuthGroupSwitchCoordinator(params: R
         // The quota coordinator already owns bounded provider fetches, leases, and credential
         // refresh. A shorter outer race detached that still-mutating owner from the selection
         // which depended on it, allowing a stale revision to be committed.
-        await params.probeQuotaSnapshotsForGroup?.({
+        return await params.probeQuotaSnapshotsForGroup?.({
           serviceId,
           groupId: input.groupId,
           profileIds: input.profileIds,
           reason: input.reason,
+          deadlineAtMs: input.deadlineAtMs,
         });
       },
     } : {}),

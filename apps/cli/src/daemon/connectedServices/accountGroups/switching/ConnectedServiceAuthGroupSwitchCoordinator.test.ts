@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1 } from '../selection/selectConnectedServiceAuthGroupCandidate';
 import {
+  ConnectedServiceAuthGroupQuotaProbeIncompleteError,
   ConnectedServiceAuthGroupSwitchCoordinator,
   InMemoryConnectedServiceAuthGroupSwitchLeaseRegistry,
   type ConnectedServiceAuthGroupSwitchState,
@@ -1631,6 +1632,37 @@ describe('ConnectedServiceAuthGroupSwitchCoordinator', () => {
       reason: 'soft_threshold',
     });
   });
+
+  it.each(['soft_threshold', 'usage_limit'] as const)(
+    'does not select or commit from partial quota evidence for %s',
+    async (reason) => {
+      const commitSwitch = vi.fn(async (input: Readonly<{ toProfileId: string }>) => state(input.toProfileId, 2));
+      const coordinator = new ConnectedServiceAuthGroupSwitchCoordinator({
+        leases: new InMemoryConnectedServiceAuthGroupSwitchLeaseRegistry(),
+        nowMs: () => 1_000,
+        quotaFreshnessMs: 60_000,
+        loadState: async () => state('primary', 1),
+        commitSwitch,
+        applyGeneration: async () => {},
+        probeQuotaSnapshotsForGroup: async () => ({
+          status: 'incomplete',
+          requestedProfileCount: 2,
+          completedProfileCount: 1,
+          completedProfileIds: ['primary'],
+          reason: 'deadline_exceeded',
+        }),
+      });
+
+      await expect(coordinator.switchBeforeTurn({
+        sessionId: 'session-1',
+        serviceId: 'openai-codex',
+        groupId: 'main',
+        reason,
+        deadlineAtMs: 1_100,
+      })).rejects.toBeInstanceOf(ConnectedServiceAuthGroupQuotaProbeIncompleteError);
+      expect(commitSwitch).not.toHaveBeenCalled();
+    },
+  );
 
   it('applies an already-advanced hard usage-limit generation with quota-unknown target evidence', async () => {
     const applied: string[] = [];

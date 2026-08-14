@@ -1,4 +1,5 @@
 import type { ConnectedServiceId } from '@happier-dev/protocol';
+import type { ConnectedServiceGroupQuotaProbeResult } from './ConnectedServiceQuotasCoordinator';
 
 import { createDaemonConnectedServiceAuthGroupSwitchCoordinator } from '../runtimeAuth/createDaemonConnectedServiceAuthGroupSwitchCoordinator';
 
@@ -10,7 +11,8 @@ type QuotaDrivenSnapshotCoordinator = Readonly<{
     groupId: string;
     profileIds: ReadonlyArray<string>;
     reason: string;
-  }>): Promise<void>;
+    deadlineAtMs?: number;
+  }>): Promise<ConnectedServiceGroupQuotaProbeResult>;
 }>;
 
 type CreateQuotaDrivenConnectedServiceAuthGroupSwitchCoordinatorParams =
@@ -26,7 +28,8 @@ export function createQuotaDrivenConnectedServiceAuthGroupSwitchCoordinator(
     ...params,
     switchReasonForApplyGeneration: params.switchReasonForApplyGeneration ?? 'pre_turn_group_policy',
     probeQuotaSnapshotsForGroup: async (input) => {
-      await params.quotaCoordinator?.probeGroupQuotaSnapshots(input);
+      if (!params.quotaCoordinator) return;
+      return await params.quotaCoordinator.probeGroupQuotaSnapshots(input);
     },
   });
 }

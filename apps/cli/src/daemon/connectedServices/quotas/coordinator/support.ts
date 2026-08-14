@@ -132,7 +132,8 @@ export type ConnectedServicesBindingsV1Like = Readonly<{
 
 export type QuotaApi = Readonly<{
   getAccountEncryptionMode?: () => Promise<ConnectedServiceAccountMode>;
-  getConnectedServiceQuotaSnapshotSealed: (args: Readonly<{ serviceId: ConnectedServiceId; profileId: string }>) => Promise<
+  getAccountEncryptionModeUncached?: (options?: Readonly<{ signal?: AbortSignal }>) => Promise<ConnectedServiceAccountMode>;
+  getConnectedServiceQuotaSnapshotSealed: (args: Readonly<{ serviceId: ConnectedServiceId; profileId: string; signal?: AbortSignal }>) => Promise<
     | null
     | Readonly<{
         sealed: Readonly<{ format: 'account_scoped_v1'; ciphertext: string }>;
@@ -145,7 +146,7 @@ export type QuotaApi = Readonly<{
         }>;
       }>
   >;
-  getConnectedServiceQuotaSnapshotPlain?: (args: Readonly<{ serviceId: ConnectedServiceId; profileId: string }>) => Promise<
+  getConnectedServiceQuotaSnapshotPlain?: (args: Readonly<{ serviceId: ConnectedServiceId; profileId: string; signal?: AbortSignal }>) => Promise<
     | null
     | Readonly<{
         content: Readonly<{ t: 'plain'; v: ConnectedServiceQuotaSnapshotV1 }>;
@@ -158,14 +159,14 @@ export type QuotaApi = Readonly<{
         }>;
       }>
   >;
-  getConnectedServiceCredentialSealed: (args: Readonly<{ serviceId: ConnectedServiceId; profileId: string }>) => Promise<
+  getConnectedServiceCredentialSealed: (args: Readonly<{ serviceId: ConnectedServiceId; profileId: string; signal?: AbortSignal }>) => Promise<
     | null
     | Readonly<{
         sealed: Readonly<{ format: 'account_scoped_v1'; ciphertext: string }>;
         metadata: Readonly<{ kind: string }>;
       }>
   >;
-  getConnectedServiceCredentialPlain?: (args: Readonly<{ serviceId: ConnectedServiceId; profileId: string }>) => Promise<
+  getConnectedServiceCredentialPlain?: (args: Readonly<{ serviceId: ConnectedServiceId; profileId: string; signal?: AbortSignal }>) => Promise<
     | null
     | Readonly<{
         content: Readonly<{ t: 'plain'; v: ConnectedServiceCredentialRecordV1 }>;
@@ -211,6 +212,7 @@ export type QuotaApi = Readonly<{
   getConnectedServiceAuthGroup?: (args: Readonly<{
     serviceId: ConnectedServiceId;
     groupId: string;
+    signal?: AbortSignal;
   }>) => Promise<ConnectedServiceAuthGroupV1 | null>;
   updateConnectedServiceAuthGroupRuntimeState?: (args: Readonly<{
     serviceId: ConnectedServiceId;
@@ -376,7 +378,10 @@ export type ConnectedServiceQuotaCoordinatorDiagnostic = Readonly<{
   selectedProfileId?: string;
   selectedRemainingPercent?: number | null;
   targetCount?: number;
+  completedTargetCount?: number;
   allowedTargetCount?: number;
+  durationMs?: number;
+  probeOutcome?: 'complete' | 'incomplete';
   expectedProviderAccountId?: string | null;
   actualProviderAccountId?: string | null;
   expectedProfileId?: string;

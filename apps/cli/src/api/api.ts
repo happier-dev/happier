@@ -887,6 +887,7 @@ export class ApiClient {
   async getConnectedServiceCredentialSealed(params: {
     serviceId: ConnectedServiceId;
     profileId: string;
+    signal?: AbortSignal;
   }): Promise<ConnectedServiceCredentialSealedResponse | null> {
     return await this.connectedServiceCredentialApi.getConnectedServiceCredentialSealed(params);
   }
@@ -971,6 +972,7 @@ export class ApiClient {
   async getConnectedServiceAuthGroup(params: {
     serviceId: ConnectedServiceId;
     groupId: string;
+    signal?: AbortSignal;
   }): Promise<ConnectedServiceAuthGroupV1 | null> {
     return await this.connectedServiceCredentialApi.getConnectedServiceAuthGroup(params);
   }
@@ -1272,7 +1274,13 @@ export class ApiClient {
     }
   }
 
-  async getAccountEncryptionMode(options?: Readonly<{ refresh?: boolean }>): Promise<'e2ee' | 'plain' | 'unknown'> {
+  async getAccountEncryptionMode(options?: Readonly<{
+    refresh?: boolean;
+    signal?: AbortSignal;
+  }>): Promise<'e2ee' | 'plain' | 'unknown'> {
+    if (options?.signal) {
+      return await this.fetchAccountEncryptionModeFromServer(options.signal);
+    }
     const cached = this.accountEncryptionModeCache;
     const nowMs = Date.now();
     if (!options?.refresh && cached?.kind === 'value' && cached.expiresAtMs > nowMs) return cached.value;
@@ -1296,13 +1304,18 @@ export class ApiClient {
     }
   }
 
-  private async fetchAccountEncryptionModeFromServer(): Promise<'e2ee' | 'plain' | 'unknown'> {
-    return await this.connectedServiceCredentialApi.getAccountEncryptionMode?.() ?? 'e2ee';
+  async getAccountEncryptionModeUncached(options?: Readonly<{ signal?: AbortSignal }>): Promise<'e2ee' | 'plain' | 'unknown'> {
+    return await this.fetchAccountEncryptionModeFromServer(options?.signal);
+  }
+
+  private async fetchAccountEncryptionModeFromServer(signal?: AbortSignal): Promise<'e2ee' | 'plain' | 'unknown'> {
+    return await this.connectedServiceCredentialApi.getAccountEncryptionMode?.({ signal }) ?? 'e2ee';
   }
 
   async getConnectedServiceCredentialPlain(params: {
     serviceId: ConnectedServiceId;
     profileId: string;
+    signal?: AbortSignal;
   }): Promise<ConnectedServiceCredentialPlainResponse | null> {
     return await this.connectedServiceCredentialApi.getConnectedServiceCredentialPlain?.(params) ?? null;
   }
@@ -1575,6 +1588,7 @@ export class ApiClient {
   async getConnectedServiceQuotaSnapshotSealed(params: {
     serviceId: ConnectedServiceId;
     profileId: string;
+    signal?: AbortSignal;
   }): Promise<{
     sealed: SealedConnectedServiceQuotaSnapshotV1;
     metadata: {
@@ -1596,6 +1610,7 @@ export class ApiClient {
             'Content-Type': 'application/json',
           },
           timeout: resolveConnectedServicesServerApiTimeoutMs(),
+          signal: params.signal,
         },
       );
       if (response.status !== 200) {
@@ -1875,6 +1890,7 @@ export class ApiClient {
   async getConnectedServiceQuotaSnapshotPlain(params: {
     serviceId: ConnectedServiceId;
     profileId: string;
+    signal?: AbortSignal;
   }): Promise<{
     content: { t: 'plain'; v: ConnectedServiceQuotaSnapshotV1 };
     metadata: {
@@ -1897,6 +1913,7 @@ export class ApiClient {
             'Content-Type': 'application/json',
           },
           timeout: resolveConnectedServicesServerApiTimeoutMs(),
+          signal: params.signal,
         },
       );
       if (response.status !== 200) {

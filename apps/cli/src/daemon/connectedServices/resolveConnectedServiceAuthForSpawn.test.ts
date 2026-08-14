@@ -19,6 +19,7 @@ import type { Credentials } from '@/persistence';
 import type { ApiClient } from '@/api/api';
 import { ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore } from './accountGroups/quotas/ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore';
 import { createDaemonConnectedServiceAuthGroupSwitchCoordinator } from './runtimeAuth/createDaemonConnectedServiceAuthGroupSwitchCoordinator';
+import { ConnectedServiceAuthGroupQuotaProbeIncompleteError } from './accountGroups/switching/ConnectedServiceAuthGroupSwitchCoordinator';
 import { CLAUDE_SUBSCRIPTION_OAUTH_SCOPE } from './descriptors/connectedAccountDescriptors';
 import {
   ConnectedServiceSpawnCredentialRefreshError,
@@ -3680,6 +3681,12 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
       expectedAccessToken: 'primary-access',
     },
     {
+      name: 'retains the authoritative current profile when a soft-threshold quota probe is incomplete',
+      mode: 'probe_incomplete',
+      expectedProfileId: 'primary',
+      expectedAccessToken: 'primary-access',
+    },
+    {
       name: 'materializes the committed group after predictive apply fails post-CAS',
       mode: 'post_cas_failure',
       expectedProfileId: 'backup',
@@ -3758,8 +3765,11 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
       randomBytes: (length) => randomBytes(length),
     });
 
-    const switchBeforeTurn = vi.fn(async (_input?: unknown) => mode === 'authoritative_null'
-      ? {
+    const switchBeforeTurn = vi.fn(async (_input?: unknown) => {
+      if (mode === 'probe_incomplete') {
+        throw new ConnectedServiceAuthGroupQuotaProbeIncompleteError('deadline_exceeded');
+      }
+      return mode === 'authoritative_null' ? {
           status: 'superseded_after_apply' as const,
           activeProfileId: null,
           generation: 8,
@@ -3769,7 +3779,8 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
           activeProfileId: 'backup',
           generation: 8,
           errorCode: 'hot_apply_failed',
-        });
+        };
+    });
     const accountUsageStore = {
       resolveBySource: vi.fn((source: { serviceId: string; profileId: string; groupId?: string | null; groupGeneration?: number | null }) => {
         if (
@@ -3952,13 +3963,17 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
     }
 
     expect(accountUsageStore.resolveBySource).toHaveBeenCalled();
-    expect(coordinatorResult).toMatchObject({
-      status: mode === 'authoritative_null'
-        ? 'superseded_after_apply'
-        : mode === 'post_cas_failure'
-          ? 'generation_apply_failed'
-          : 'predictive_apply_unavailable',
-    });
+    if (mode === 'probe_incomplete') {
+      expect(coordinatorResult).toBeNull();
+    } else {
+      expect(coordinatorResult).toMatchObject({
+        status: mode === 'authoritative_null'
+          ? 'superseded_after_apply'
+          : mode === 'post_cas_failure'
+            ? 'generation_apply_failed'
+            : 'predictive_apply_unavailable',
+      });
+    }
     if (mode === 'post_cas_failure') {
       expect(updateConnectedServiceAuthGroupActiveProfile).toHaveBeenCalledWith(expect.objectContaining({
         activeProfileId: 'backup',
@@ -3980,7 +3995,9 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
     }
     // Resolution re-reads ambiguous switch outcomes, then materialization performs one final
     // authoritative currentness check before writing the selected credential.
-    expect(getConnectedServiceAuthGroup).toHaveBeenCalledTimes(mode === 'post_cas_failure' ? 4 : 3);
+    expect(getConnectedServiceAuthGroup).toHaveBeenCalledTimes(
+      mode === 'post_cas_failure' ? 4 : mode === 'probe_incomplete' ? 2 : 3,
+    );
     expect(connectedServiceAuth).not.toBeNull();
     const credential = await readClaudeCodeNativeCredential(connectedServiceAuth!.env.CLAUDE_CONFIG_DIR!);
     expect(credential).toMatchObject({

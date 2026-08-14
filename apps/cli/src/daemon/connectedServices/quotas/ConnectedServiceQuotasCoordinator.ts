@@ -214,6 +214,16 @@ export type {
   ConnectedServiceQuotaSoftSwitchPolicyGuard,
 } from './coordinator/support';
 
+export type ConnectedServiceGroupQuotaProbeResult = Readonly<{
+  status: 'complete' | 'incomplete';
+  requestedProfileCount: number;
+  completedProfileCount: number;
+  completedProfileIds: ReadonlyArray<string>;
+  reason?: 'deadline_exceeded' | 'probe_unavailable';
+}>;
+
+export const DEFAULT_CONNECTED_SERVICE_QUOTA_FETCH_TIMEOUT_MS = 15_000;
+
 export class ConnectedServiceQuotasCoordinator {
   private static readonly MAX_STARTUP_CURRENT_SOURCE_REFRESHES = 256;
   private readonly api: QuotaApi;
@@ -336,7 +346,7 @@ export class ConnectedServiceQuotasCoordinator {
     this.fetchTimeoutMs =
       typeof params.fetchTimeoutMs === 'number' && Number.isFinite(params.fetchTimeoutMs)
         ? Math.max(1, Math.trunc(params.fetchTimeoutMs))
-        : 15_000;
+        : DEFAULT_CONNECTED_SERVICE_QUOTA_FETCH_TIMEOUT_MS;
     this.failureBackoffMinMs =
       typeof params.failureBackoffMinMs === 'number' && Number.isFinite(params.failureBackoffMinMs)
         ? Math.max(1, Math.trunc(params.failureBackoffMinMs))
@@ -2367,6 +2377,7 @@ export class ConnectedServiceQuotasCoordinator {
     groupId: string;
     profileId: string;
     now: number;
+    signal?: AbortSignal;
   }>): Promise<void> {
     if (!this.runtimeQuotaSnapshots) return;
     if (typeof this.api.getConnectedServiceAuthGroup !== 'function') return;
@@ -2374,8 +2385,10 @@ export class ConnectedServiceQuotasCoordinator {
     const group = await this.api.getConnectedServiceAuthGroup({
       serviceId: input.serviceId,
       groupId: input.groupId,
+      signal: input.signal,
     }).catch(() => null);
     if (!group) return;
+    if (input.signal?.aborted) return;
 
     const reconciledGroup = await this.clearStaleMemberLimitersWithFreshEvidence({ group, ...input });
     await this.evaluateGroupQuotaLifecycle({
@@ -2736,11 +2749,13 @@ export class ConnectedServiceQuotasCoordinator {
   private async readCurrentQuotaGroupForContext(input: Readonly<{
     serviceId: ConnectedServiceId;
     groupId: string;
+    signal?: AbortSignal;
   }>): Promise<ConnectedServiceAuthGroupV1 | null> {
     if (typeof this.api.getConnectedServiceAuthGroup !== 'function') return null;
     const group = await this.api.getConnectedServiceAuthGroup({
       serviceId: input.serviceId,
       groupId: input.groupId,
+      signal: input.signal,
     }).catch(() => null);
     if (!group) return null;
     if (group.serviceId !== input.serviceId || group.groupId !== input.groupId) return null;
@@ -2810,124 +2825,251 @@ export class ConnectedServiceQuotasCoordinator {
     serviceId: ConnectedServiceId;
     groupId: string;
     profileIds: ReadonlyArray<string>;
-  }>): Promise<void> {
-    if (this.checkQuotaWorkGate('probe_group').status !== 'open') return;
-    if (!this.runtimeQuotaSnapshots) return;
+    deadlineAtMs?: number;
+  }>): Promise<ConnectedServiceGroupQuotaProbeResult> {
+    const startedAtMs = Date.now();
     const serviceId = ConnectedServiceIdSchema.parse(input.serviceId);
     const groupId = String(input.groupId ?? '').trim();
-    if (!groupId) return;
-    const fetcher = this.quotaFetchersByServiceId.get(serviceId);
-    if (!fetcher) return;
     const profileIds = Array.from(new Set(input.profileIds
       .map((profileId) => String(profileId ?? '').trim())
       .filter((profileId) => profileId.length > 0)));
-    if (profileIds.length === 0) return;
+    const completedProfileIds: string[] = [];
+    const deadlineAtMs = typeof input.deadlineAtMs === 'number' && Number.isFinite(input.deadlineAtMs)
+      ? Math.max(0, Math.trunc(input.deadlineAtMs))
+      : null;
+    const deadlineController = new AbortController();
+    let deadlineTimer: ReturnType<typeof setTimeout> | null = null;
+    if (deadlineAtMs !== null) {
+      const remainingMs = Math.max(0, deadlineAtMs - Date.now());
+      if (remainingMs === 0) deadlineController.abort('quota-probe-deadline');
+      else {
+        deadlineTimer = setTimeout(() => deadlineController.abort('quota-probe-deadline'), remainingMs);
+        (deadlineTimer as unknown as { unref?: () => void }).unref?.();
+      }
+    }
+    const deadlineExceeded = (): boolean => deadlineController.signal.aborted
+      || (deadlineAtMs !== null && Date.now() >= deadlineAtMs);
+    const result = (
+      status: ConnectedServiceGroupQuotaProbeResult['status'],
+      reason?: ConnectedServiceGroupQuotaProbeResult['reason'],
+    ): ConnectedServiceGroupQuotaProbeResult => ({
+      status,
+      requestedProfileCount: profileIds.length,
+      completedProfileCount: completedProfileIds.length,
+      completedProfileIds: [...completedProfileIds],
+      ...(reason ? { reason } : {}),
+    });
+    let outcome: ConnectedServiceGroupQuotaProbeResult = result('complete');
+    try {
+      if (!groupId || profileIds.length === 0) return outcome;
+      if (this.checkQuotaWorkGate('probe_group').status !== 'open' || !this.runtimeQuotaSnapshots) {
+        outcome = result('incomplete', 'probe_unavailable');
+        return outcome;
+      }
+      const fetcher = this.quotaFetchersByServiceId.get(serviceId);
+      if (!fetcher) {
+        outcome = result('incomplete', 'probe_unavailable');
+        return outcome;
+      }
+      if (deadlineExceeded()) {
+        outcome = result('incomplete', 'deadline_exceeded');
+        return outcome;
+      }
 
-    const accountMode = await resolveConnectedServiceAccountMode(this.api);
-    const encryption = this.credentials.encryption;
-    const material =
-      encryption.type === 'legacy'
+      const accountMode = deadlineAtMs !== null
+        ? await this.api.getAccountEncryptionModeUncached?.({ signal: deadlineController.signal }) ?? 'unknown'
+        : await resolveConnectedServiceAccountMode(this.api);
+      if (deadlineExceeded()) {
+        outcome = result('incomplete', 'deadline_exceeded');
+        return outcome;
+      }
+      if (deadlineAtMs !== null && typeof this.api.getAccountEncryptionModeUncached !== 'function') {
+        outcome = result('incomplete', 'probe_unavailable');
+        return outcome;
+      }
+      const encryption = this.credentials.encryption;
+      const material = encryption.type === 'legacy'
         ? ({ type: 'legacy' as const, secret: encryption.secret })
         : ({ type: 'dataKey' as const, machineKey: encryption.machineKey });
-    const now = Math.max(0, Math.trunc(this.now()));
-    const group = await this.readCurrentQuotaGroupForContext({ serviceId, groupId });
+      const now = Math.max(0, Math.trunc(this.now()));
+      const group = await this.readCurrentQuotaGroupForContext({
+        serviceId,
+        groupId,
+        signal: deadlineAtMs === null ? undefined : deadlineController.signal,
+      });
+      if (deadlineExceeded()) {
+        outcome = result('incomplete', 'deadline_exceeded');
+        return outcome;
+      }
 
-    for (const profileId of profileIds) {
-      try {
-        const lease = await this.acquireQuotaFetchLease({ serviceId, profileId });
-        if (lease.type === 'contended') {
-          const observedSnapshot = await this.waitForContendedQuotaFetch({
+      for (const profileId of profileIds) {
+        if (deadlineExceeded()) {
+          outcome = result('incomplete', 'deadline_exceeded');
+          return outcome;
+        }
+        try {
+          // Lease acquisition is a mutation. Do not start it after expiry and always await it once started.
+          const lease = await this.acquireQuotaFetchLease({ serviceId, profileId });
+          if (deadlineExceeded()) {
+            outcome = result('incomplete', 'deadline_exceeded');
+            return outcome;
+          }
+          if (lease.type === 'contended') {
+            const observedSnapshot = await this.waitForContendedQuotaFetch({
+              accountMode,
+              material,
+              serviceId,
+              profileId,
+              fetcher,
+              now,
+              leaseUntil: lease.leaseUntil,
+              signal: deadlineAtMs === null ? undefined : deadlineController.signal,
+            });
+            if (deadlineExceeded()) {
+              outcome = result('incomplete', 'deadline_exceeded');
+              return outcome;
+            }
+            if (observedSnapshot) {
+              this.runtimeQuotaSnapshots.recordSnapshot({
+                serviceId,
+                groupId,
+                profileId,
+                groupGeneration: group?.generation ?? null,
+                snapshot: observedSnapshot,
+              });
+              if (deadlineExceeded()) {
+                outcome = result('incomplete', 'deadline_exceeded');
+                return outcome;
+              }
+              await this.recordFetchedQuotaSnapshotAsAccountUsage({
+                serviceId,
+                profileId,
+                accountMode: accountMode === 'plain' || accountMode === 'e2ee' ? accountMode : null,
+                groupId,
+                groupContexts: this.buildQuotaGroupContextsForProfile({ group, profileId }),
+                snapshot: observedSnapshot,
+                now,
+              });
+              if (deadlineExceeded()) {
+                outcome = result('incomplete', 'deadline_exceeded');
+                return outcome;
+              }
+              await this.maybeClearStaleMemberLimitersForGroupQuotaSnapshot({
+                serviceId,
+                groupId,
+                profileId,
+                now,
+                signal: deadlineAtMs === null ? undefined : deadlineController.signal,
+              });
+              if (deadlineExceeded()) {
+                outcome = result('incomplete', 'deadline_exceeded');
+                return outcome;
+              }
+            }
+            completedProfileIds.push(profileId);
+            continue;
+          }
+
+          const credential = await this.readCredentialForQuota({
             accountMode,
             material,
             serviceId,
             profileId,
-            fetcher,
-            now,
-            leaseUntil: lease.leaseUntil,
+            signal: deadlineAtMs === null ? undefined : deadlineController.signal,
           });
-          if (observedSnapshot) {
-            this.runtimeQuotaSnapshots.recordSnapshot({
-              serviceId,
-              groupId,
-              profileId,
-              groupGeneration: group?.generation ?? null,
-              snapshot: observedSnapshot,
-            });
-            await this.recordFetchedQuotaSnapshotAsAccountUsage({
-              serviceId,
-              profileId,
-              accountMode: accountMode === 'plain' || accountMode === 'e2ee' ? accountMode : null,
-              groupId,
-              groupContexts: this.buildQuotaGroupContextsForProfile({ group, profileId }),
-              snapshot: observedSnapshot,
-              now,
-            });
-            await this.maybeClearStaleMemberLimitersForGroupQuotaSnapshot({
-              serviceId,
-              groupId,
-              profileId,
-              now,
-            });
+          if (deadlineExceeded()) {
+            outcome = result('incomplete', 'deadline_exceeded');
+            return outcome;
           }
-          continue;
+          if (!credential.record) {
+            completedProfileIds.push(profileId);
+            continue;
+          }
+          const raced = await this.fetchQuotaSnapshot({
+            fetcher,
+            serviceId,
+            profileId,
+            record: credential.record,
+            now,
+            signal: deadlineAtMs === null ? undefined : deadlineController.signal,
+          });
+          if (deadlineExceeded()) {
+            outcome = result('incomplete', 'deadline_exceeded');
+            return outcome;
+          }
+          if (raced.type === 'timeout' || !raced.snapshot) {
+            completedProfileIds.push(profileId);
+            continue;
+          }
+          const snapshot = raced.snapshot;
+          this.runtimeQuotaSnapshots.recordSnapshot({
+            serviceId,
+            groupId,
+            profileId,
+            groupGeneration: group?.generation ?? null,
+            snapshot,
+          });
+          if (deadlineExceeded()) {
+            outcome = result('incomplete', 'deadline_exceeded');
+            return outcome;
+          }
+          await this.recordFetchedQuotaSnapshotAsAccountUsage({
+            serviceId,
+            profileId,
+            accountMode: credential.storageMode,
+            sourceProviderAccountId: readCredentialAccountIdentity(credential.record)?.providerAccountId ?? null,
+            groupId,
+            groupContexts: this.buildQuotaGroupContextsForProfile({ group, profileId }),
+            snapshot,
+            now,
+          });
+          if (deadlineExceeded()) {
+            outcome = result('incomplete', 'deadline_exceeded');
+            return outcome;
+          }
+          await this.maybeClearStaleMemberLimitersForGroupQuotaSnapshot({
+            serviceId,
+            groupId,
+            profileId,
+            now,
+            signal: deadlineAtMs === null ? undefined : deadlineController.signal,
+          });
+          if (deadlineExceeded()) {
+            outcome = result('incomplete', 'deadline_exceeded');
+            return outcome;
+          }
+          completedProfileIds.push(profileId);
+        } catch (error) {
+          if (deadlineExceeded()) {
+            outcome = result('incomplete', 'deadline_exceeded');
+            return outcome;
+          }
+          await this.persistCredentialHealthForQuotaFailure({ serviceId, profileId, error, now }).catch(() => false);
+          const key = this.makeBindingKey({ serviceId, profileId });
+          this.applyFailureBackoff({
+            now,
+            key,
+            retryAfterMs: readQuotaRetryAfterMs(error),
+            retryAfterBackoffMinMs: fetcher.pollPolicy?.retryAfterBackoffMinMs,
+          });
+          completedProfileIds.push(profileId);
         }
-
-        const credential = await this.readCredentialForQuota({
-          accountMode,
-          material,
-          serviceId,
-          profileId,
-        });
-        if (!credential.record) continue;
-        const raced = await this.fetchQuotaSnapshot({
-          fetcher,
-          serviceId,
-          profileId,
-          record: credential.record,
-          now,
-        });
-        if (raced.type === 'timeout') continue;
-        const snapshot = raced.snapshot;
-        if (!snapshot) continue;
-        this.runtimeQuotaSnapshots.recordSnapshot({
-          serviceId,
-          groupId,
-          profileId,
-          groupGeneration: group?.generation ?? null,
-          snapshot,
-        });
-        const recordedAccountUsage = await this.recordFetchedQuotaSnapshotAsAccountUsage({
-          serviceId,
-          profileId,
-          accountMode: credential.storageMode,
-          sourceProviderAccountId: readCredentialAccountIdentity(credential.record)?.providerAccountId ?? null,
-          groupId,
-          groupContexts: this.buildQuotaGroupContextsForProfile({ group, profileId }),
-          snapshot,
-          now,
-        });
-        await this.maybeClearStaleMemberLimitersForGroupQuotaSnapshot({
-          serviceId,
-          groupId,
-          profileId,
-          now,
-        });
-        void recordedAccountUsage;
-      } catch (error) {
-        await this.persistCredentialHealthForQuotaFailure({
-          serviceId,
-          profileId,
-          error,
-          now,
-        }).catch(() => false);
-        const key = this.makeBindingKey({ serviceId, profileId });
-        this.applyFailureBackoff({
-          now,
-          key,
-          retryAfterMs: readQuotaRetryAfterMs(error),
-          retryAfterBackoffMinMs: fetcher.pollPolicy?.retryAfterBackoffMinMs,
-        });
       }
+      outcome = result('complete');
+      return outcome;
+    } finally {
+      if (deadlineTimer) clearTimeout(deadlineTimer);
+      this.recordDiagnostic?.({
+        event: 'quota_work_requested',
+        phase: 'probe_group',
+        reason: outcome.status === 'complete' ? 'complete' : outcome.reason ?? 'incomplete',
+        serviceId,
+        groupId,
+        targetCount: profileIds.length,
+        completedTargetCount: outcome.completedProfileCount,
+        durationMs: Math.max(0, Date.now() - startedAtMs),
+        probeOutcome: outcome.status,
+      });
     }
   }
 
@@ -2980,11 +3122,13 @@ export class ConnectedServiceQuotasCoordinator {
     accountMode: ConnectedServiceAccountMode;
     serviceId: ConnectedServiceId;
     profileId: string;
+    signal?: AbortSignal;
   }>): Promise<ResolvedExistingQuotaSnapshot> {
     if (input.accountMode !== 'e2ee' && typeof this.api.getConnectedServiceQuotaSnapshotPlain === 'function') {
       const plain = await this.api.getConnectedServiceQuotaSnapshotPlain({
         serviceId: input.serviceId,
         profileId: input.profileId,
+        signal: input.signal,
       });
       if (plain) {
         return { storageMode: 'plain', existing: plain };
@@ -2999,6 +3143,7 @@ export class ConnectedServiceQuotasCoordinator {
       existing: await this.api.getConnectedServiceQuotaSnapshotSealed({
         serviceId: input.serviceId,
         profileId: input.profileId,
+        signal: input.signal,
       }),
     };
   }
@@ -3008,6 +3153,7 @@ export class ConnectedServiceQuotasCoordinator {
     material: Parameters<typeof openConnectedServiceQuotaSnapshotCiphertext>[0]['material'];
     serviceId: ConnectedServiceId;
     profileId: string;
+    signal?: AbortSignal;
   }>): Promise<Readonly<{
     storageMode: ResolvedQuotaStorageMode;
     record: ConnectedServiceCredentialRecordV1 | null;
@@ -3016,6 +3162,7 @@ export class ConnectedServiceQuotasCoordinator {
       const plain = await this.api.getConnectedServiceCredentialPlain({
         serviceId: input.serviceId,
         profileId: input.profileId,
+        signal: input.signal,
       }).catch(() => null);
       const record = plain?.content?.t === 'plain' ? plain.content.v : null;
       if (record) {
@@ -3035,6 +3182,7 @@ export class ConnectedServiceQuotasCoordinator {
     const sealed = await this.api.getConnectedServiceCredentialSealed({
       serviceId: input.serviceId,
       profileId: input.profileId,
+      signal: input.signal,
     });
     if (!sealed?.sealed?.ciphertext) {
       return { storageMode: 'e2ee', record: null };
@@ -3104,11 +3252,26 @@ export class ConnectedServiceQuotasCoordinator {
     fetcher: ConnectedServiceQuotaFetcher;
     now: number;
     leaseUntil: number;
+    signal?: AbortSignal;
   }>): Promise<ConnectedServiceQuotaSnapshotV1 | null> {
     const maxWaitMs = this.quotaFetchLeaseContentionWaitMaxMs;
     if (maxWaitMs > 0) {
       const waitMs = Math.min(maxWaitMs, Math.max(0, Math.trunc(input.leaseUntil - input.now)));
-    if (waitMs > 0) await this.sleepMs(waitMs);
+    if (waitMs > 0) {
+      if (input.signal) {
+        let resolveAbort!: () => void;
+        const abortPromise = new Promise<void>((resolve) => { resolveAbort = resolve; });
+        if (input.signal.aborted) resolveAbort();
+        else input.signal.addEventListener('abort', resolveAbort, { once: true });
+        try {
+          await Promise.race([this.sleepMs(waitMs), abortPromise]);
+        } finally {
+          input.signal.removeEventListener('abort', resolveAbort);
+        }
+      } else {
+        await this.sleepMs(waitMs);
+      }
+    }
     }
     const observed = await this.readExistingQuotaSnapshot(input).catch(() => null);
     if (!this.isExistingQuotaSnapshotFresh({
@@ -3133,12 +3296,16 @@ export class ConnectedServiceQuotasCoordinator {
     fetcher: ConnectedServiceQuotaFetcher;
     record: ConnectedServiceCredentialRecordV1;
     now: number;
+    signal?: AbortSignal;
   }>): Promise<
     | Readonly<{ type: 'timeout' }>
     | Readonly<{ type: 'result'; snapshot: ConnectedServiceQuotaSnapshotV1 | null }>
   > {
     const controller = new AbortController();
     const timeoutMs = this.fetchTimeoutMs;
+    const abortFromCaller = (): void => controller.abort('quota-probe-deadline');
+    if (input.signal?.aborted) abortFromCaller();
+    else input.signal?.addEventListener('abort', abortFromCaller, { once: true });
     const fetchPromise = input.fetcher.fetch({
       record: buildCredentialRecordForQuotaFetcher(input.record),
       now: input.now,
@@ -3158,18 +3325,37 @@ export class ConnectedServiceQuotasCoordinator {
       (timeoutHandle as unknown as { unref?: () => void })?.unref?.();
     });
 
+    let resolveCallerAbort!: () => void;
+    const callerAbortPromise = new Promise<{ type: 'timeout' }>((resolve) => {
+      resolveCallerAbort = () => resolve({ type: 'timeout' });
+    });
+    const settleCallerAbort = (): void => resolveCallerAbort();
+    if (input.signal?.aborted) settleCallerAbort();
+    else input.signal?.addEventListener('abort', settleCallerAbort, { once: true });
     const raced = await Promise.race([
       fetchPromise.then(
         (snapshot) => ({ type: 'result' as const, snapshot }),
         (error) => ({ type: 'error' as const, error }),
       ),
       timeoutPromise,
+      ...(input.signal ? [callerAbortPromise] : []),
     ]);
 
     if (timeoutHandle) clearTimeout(timeoutHandle);
     timeoutHandle = null;
+    input.signal?.removeEventListener('abort', abortFromCaller);
+    input.signal?.removeEventListener('abort', settleCallerAbort);
 
-    if (raced.type === 'timeout') return raced;
+    if (raced.type === 'timeout') {
+      if (input.signal) {
+        // Deadline-owned pre-spawn probes never detach a provider read. Every registered production
+        // fetcher forwards AbortSignal to fetch (or settles synchronously), so abort and observe its
+        // terminal result before reporting the aggregate probe incomplete.
+        controller.abort('quota-probe-deadline');
+        await fetchPromise.catch(() => null);
+      }
+      return raced;
+    }
     if (raced.type === 'error') throw raced.error;
     return raced;
   }
@@ -3262,6 +3448,7 @@ export class ConnectedServiceQuotasCoordinator {
     profileId: string;
     record: ConnectedServiceCredentialRecordV1;
     now: number;
+    signal?: AbortSignal;
   }>): Promise<
     | Readonly<{ type: 'timeout' }>
     | Readonly<{ type: 'result'; snapshot: ConnectedServiceQuotaSnapshotV1 | null }>
@@ -3270,6 +3457,7 @@ export class ConnectedServiceQuotasCoordinator {
       fetcher: input.fetcher,
       record: input.record,
       now: input.now,
+      signal: input.signal,
     });
   }
 
