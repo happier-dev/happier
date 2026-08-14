@@ -1,0 +1,149 @@
+{
+  "/": {
+    "title": "Happier — Claude Code、Codex ほか",
+    "description": "Claude Code、Codex ほか 11 のエージェントを、自分のアカウントのままスマートフォン、ブラウザー、デスクトップから。オープンソース。",
+    "ogTitle": "Happier — あらゆる AI コーディングエージェントに、1 つのクライアント。",
+    "ogDescription": "Claude Code、Codex、OpenCode、Cursor ほか 9 つ。エンドツーエンド暗号化された 1 つのアプリで、あらゆるデバイスから、自分のサブスクリプションのまま。オープンソースでセルフホストもできます。",
+    "ogImageAlt": "Happier のワードマークと、その下の言葉：あらゆる AI コーディングエージェントに、1 つのクライアント。Claude Code、Codex、OpenCode、Cursor、Gemini、Copilot ほか 7 つ。"
+  },
+  "/agents": {
+    "title": "Happier が動かす 13 のエージェント",
+    "description": "Claude Code、Codex、OpenCode、Pi ほか 9 つのコマンドライン型エージェントを、自分のコンピューターと自分のアカウントで。",
+    "ogTitle": "Happier が動かすすべての AI コーディングエージェント",
+    "ogDescription": "13 のコマンドライン型コーディングエージェントを、スマートフォン、ブラウザー、デスクトップの 1 つのアプリで。どれも自分のコンピューターで、自分のサブスクリプションまたは API キーのもとで動きます。",
+    "ogImageAlt": "Happier のワードマークと、その下の言葉：あらゆる AI コーディングエージェントに、1 つのクライアント。"
+  },
+  "/agents/claude-code": {
+    "title": "Claude Code のためのオープンソースアプリ",
+    "description": "Claude Code を自分のコンピューターで動かし、スマートフォンやブラウザーから操作。MIT ライセンスのオープンソース。",
+    "ogTitle": "Claude Code のためのオープンソースアプリ",
+    "ogDescription": "Claude Code は自分の Anthropic アカウントでサインインしたまま、自分のコンピューターで動き続けます。Happier はそこにスマートフォンとブラウザータブとデスクトップウィンドウを与えます。",
+    "ogImageAlt": "Happier のワードマークと、その下の言葉：あらゆる AI コーディングエージェントに、1 つのクライアント。"
+  },
+  "/agents/codex": {
+    "title": "Codex CLI をスマートフォンで — Happier",
+    "description": "openai/codex CLI を自分の ChatGPT サブスクリプションや API キーで実行し、どのデバイスからでも操作。無料でオープンソース。",
+    "ogTitle": "オープンソースアプリから、スマートフォンで Codex を",
+    "ogDescription": "openai/codex CLI は、自分が所有するハードウェア上で、自分の ChatGPT サブスクリプションまたは API キーで動きます。Happier は、どこにいてもそれをのぞける窓です。",
+    "ogImageAlt": "Happier のワードマークと、その下の言葉：あらゆる AI コーディングエージェントに、1 つのクライアント。"
+  },
+  "/agents/opencode": {
+    "title": "OpenCode のためのオープンソースアプリ",
+    "description": "OpenCode を自分が管理するハードウェアで動かし、セルフホスト可能なリレー越しにスマートフォンとデスクトップから操作。",
+    "ogTitle": "OpenCode のためのオープンソースアプリ",
+    "ogDescription": "OpenCode はオープンソースです。Happier もオープンソースで、MIT ライセンスであり、セルフホストできます。どちらも、自分の管理下にないサーバーを必要としません。",
+    "ogImageAlt": "Happier のワードマークと、その下の言葉：あらゆる AI コーディングエージェントに、1 つのクライアント。"
+  },
+  "/agents/cursor": {
+    "title": "Cursor Agent CLI をスマートフォンから",
+    "description": "ヘッドレスな cursor-agent を自分のコンピューターやサーバーで動かし、会話、差分、承認はスマートフォンで。MIT ライセンス。",
+    "ogTitle": "Cursor Agent CLI をスマートフォンから動かす",
+    "ogDescription": "Cursor は、エディターウィンドウを必要としないヘッドレスなエージェントを提供しています。Happier はそれをあなたのコンピューターで実行し、会話をスマートフォンに届けます。",
+    "ogImageAlt": "Happier のワードマークと、その下の言葉：あらゆる AI コーディングエージェントに、1 つのクライアント。"
+  },
+  "/agents/gemini": {
+    "title": "Gemini CLI をあらゆるデバイスで",
+    "description": "Google のオープンソースのターミナルエージェントは、自社の Cloud プロジェクトを含む自分の環境で動きます。セッションは暗号化。",
+    "ogTitle": "使っているすべてのデバイスで Gemini CLI を",
+    "ogDescription": "Google のオープンソースのターミナルエージェント。組織の運用がそうであれば自社の Google Cloud プロジェクトに対して動き、スマートフォンから読めます。",
+    "ogImageAlt": "Happier のワードマークと、その下の言葉：あらゆる AI コーディングエージェントに、1 つのクライアント。"
+  },
+  "/agents/github-copilot": {
+    "title": "GitHub Copilot CLI をスマートフォンから",
+    "description": "Copilot のコマンドラインエージェントを自分のコンピューターやビルドマシンで実行。GitHub の製品ではない独立したクライアント。",
+    "ogTitle": "GitHub Copilot CLI を、スマートフォンから操作する",
+    "ogDescription": "Copilot のコマンドラインエージェントを、自分のコンピューターや自分のビルドマシンで動かしながら、セッションはポケットの中に。",
+    "ogImageAlt": "Happier のワードマークと、その下の言葉：あらゆる AI コーディングエージェントに、1 つのクライアント。"
+  },
+  "/agents/qwen": {
+    "title": "Qwen Code のためのオープンソースアプリ",
+    "description": "Qwen Code を自分のコンピューターと自分のアカウントで動かし、セッションは暗号化されたリレー越しに手元のデバイスへ。",
+    "ogTitle": "Qwen Code のためのオープンソースアプリ",
+    "ogDescription": "Qwen Code は自分のコンピューターで、セッションはスマートフォンで。どちらの側もオープンソースで、役立てるのに当社のアカウントは必要ありません。",
+    "ogImageAlt": "Happier のワードマークと、その下の言葉：あらゆる AI コーディングエージェントに、1 つのクライアント。"
+  },
+  "/agents/kimi": {
+    "title": "Kimi CLI をスマートフォンやブラウザーで",
+    "description": "Moonshot のターミナルエージェントはコンピューターに留まり、どこからでも読んで方向づけられます。MIT ライセンス。",
+    "ogTitle": "スマートフォン、ブラウザー、デスクトップから Kimi CLI を",
+    "ogDescription": "Moonshot のターミナルエージェントは、あなたのコンピューターに留まります。会話は暗号化されたまま、あなたが行く先へついていきます。",
+    "ogImageAlt": "Happier のワードマークと、その下の言葉：あらゆる AI コーディングエージェントに、1 つのクライアント。"
+  },
+  "/agents/kilo": {
+    "title": "Kilo CLI をスマートフォンとノートパソコンで",
+    "description": "Kilo CLI と他の 12 のコマンドライン型エージェントのための一つのオープンソースアプリ。シート制限も機能制限もありません。",
+    "ogTitle": "スマートフォン、ノートパソコン、ブラウザーで Kilo CLI を",
+    "ogDescription": "Kilo と、インストールしているかもしれない他の 12 のコマンドライン型コーディングエージェントのための、一つのオープンソースアプリ。",
+    "ogImageAlt": "Happier のワードマークと、その下の言葉：あらゆる AI コーディングエージェントに、1 つのクライアント。"
+  },
+  "/agents/kiro": {
+    "title": "Kiro CLI をどこからでも動かす — Happier",
+    "description": "AWS のエージェント型 CLI を自分の AWS アイデンティティで動かし、セッションはスマートフォンから。リレーはセルフホスト可能。",
+    "ogTitle": "どこにいても Kiro CLI を動かす",
+    "ogDescription": "AWS のエージェント型 CLI を、自分の AWS アイデンティティで、自分のコンピューター上で動かし、その前にアプリを置きます。",
+    "ogImageAlt": "Happier のワードマークと、その下の言葉：あらゆる AI コーディングエージェントに、1 つのクライアント。"
+  },
+  "/agents/auggie": {
+    "title": "Auggie をスマートフォンとデスクトップで",
+    "description": "Augment Code の CLI を自分の利用権で動かし、トランスクリプトと承認は他のエージェントと並べて 1 か所に。",
+    "ogTitle": "Auggie を、スマートフォンとデスクトップで",
+    "ogDescription": "Augment Code の CLI を、自分の Augment 利用権で、自分のコンピューター上で動かし、会話は所有するすべてのデバイスに。",
+    "ogImageAlt": "Happier のワードマークと、その下の言葉：あらゆる AI コーディングエージェントに、1 つのクライアント。"
+  },
+  "/agents/pi": {
+    "title": "Pi Coding Agent のオープンソースアプリ",
+    "description": "Pi は自分の API キーを、Happier はスマートフォンとデスクトップのクライアントを。鍵はサーバーに置きません。",
+    "ogTitle": "Pi Coding Agent のためのオープンソースアプリ",
+    "ogDescription": "Pi は自分の鍵を持ち込み、自前のモデルは持ちません。Happier はスマートフォン、ブラウザー、デスクトップアプリをもたらし、その間にサーバーは置きません。",
+    "ogImageAlt": "Happier のワードマークと、その下の言葉：あらゆる AI コーディングエージェントに、1 つのクライアント。"
+  },
+  "/agents/grok": {
+    "title": "Grok Build CLI をスマートフォンから",
+    "description": "xAI のコーディング CLI を自分のコンピューターで動かし、どのデバイスからでも操作。統合は実験的で、未対応の点も明示。",
+    "ogTitle": "スマートフォンから、あるいはデスクから Grok Build CLI を",
+    "ogDescription": "xAI のコーディング CLI を、自分の xAI アカウントで、自分のコンピューター上で動かします。Happier の統合は実験的であり、このページは何かをインストールする前にそう伝えます。",
+    "ogImageAlt": "Happier のワードマークと、その下の言葉：あらゆる AI コーディングエージェントに、1 つのクライアント。"
+  },
+  "/vs/claude-code-remote-control": {
+    "title": "Claude Code Remote Control と比較",
+    "description": "Remote Control は無料で優秀。API キー、ゲートウェイ、Bedrock、Foundry、ZDR 組織では非対応。Happier と比較。",
+    "ogTitle": "Claude Code Remote Control と Happier",
+    "ogDescription": "Anthropic 自身のリモートが得意なこと、それが自らをオフにする 5 つの状況、そして 13 のエージェントに 1 つのクライアントが代わりに何をするか。",
+    "ogImageAlt": "Happier のワードマークと、その下の言葉：あらゆる AI コーディングエージェントに、1 つのクライアント。"
+  },
+  "/vs/codex-remote": {
+    "title": "Codex Remote と Happier を比較",
+    "description": "OpenAI は ChatGPT アプリを Codex の動く Mac や Windows PC とつなぎます。その範囲と条件、Happier の違い。",
+    "ogTitle": "Codex Remote と Happier を比べる",
+    "ogDescription": "OpenAI 自身のリモートが得意なこと、それが動くための 5 つの条件、そしてあらゆるコーディングエージェントに 1 つのクライアントが代わりに何をするか。",
+    "ogImageAlt": "Happier のワードマークと、その下の言葉：あらゆる AI コーディングエージェントに、1 つのクライアント。"
+  },
+  "/features/usage-limits": {
+    "title": "Claude Code と Codex の利用上限をまたぐ",
+    "description": "Claude Code や Codex の利用上限に達しても、セッションはリセットを待って再開。アカウントをまとめて切り替えることも。",
+    "ogTitle": "利用上限でセッションを終わらせない。",
+    "ogDescription": "セッションは利用上限をまたいで居場所を保ち、リセットを待って作業を拾い直します。1 つのアカウントでも、まとめた複数のアカウントでも。",
+    "ogImageAlt": "Happier のワードマークと、その下の言葉：あらゆる AI コーディングエージェントに、1 つのクライアント。"
+  },
+  "/features/terminal": {
+    "title": "Claude Code と Codex、ターミナルとアプリで",
+    "description": "Claude Code、Codex、OpenCode を各自の TUI で動かし、同じセッションをスマートフォンから。tmux で接続も。",
+    "ogTitle": "Claude Code、Codex、OpenCode のターミナルはそのまま、アプリからも",
+    "ogDescription": "1 つのセッションに 2 つのフロントエンド。シェルの中のベンダー自身の TUI と、スマートフォンの Happier。切り替えの両側で、同じセッション ID、同じトランスクリプト、同じキュー。",
+    "ogImageAlt": "Happier のワードマークと、その下の言葉：あらゆる AI コーディングエージェントに、1 つのクライアント。"
+  },
+  "/security": {
+    "title": "Happier のエンドツーエンド暗号化 — リレーの見え方",
+    "description": "Happier のセッションは、書き込んだデバイスで内容が封をされます。鍵、リレーがなお読める列、平文ストレージポリシーでの変化。",
+    "ogTitle": "エンドツーエンド暗号化。鍵は自分のデバイスに",
+    "ogDescription": "セッションはそれを作ったデバイスでセッションごとの鍵により暗号化され、リレーは開ける手立てのない封をされた写しを渡されます。それでも見えるものを、ぼかさずに名指しします。",
+    "ogImageAlt": "Happier のワードマークと、その下の言葉：あらゆる AI コーディングエージェントに、1 つのクライアント。"
+  },
+  "/enterprise": {
+    "title": "Happier のセルフホスト — SSO、mTLS、データ",
+    "description": "Happier のリレーを自分で運用。GitHub 組織や OIDC グループでの制限、mTLS、保持期間、Postgres と Docker。",
+    "ogTitle": "自社の SSO の背後で Happier のリレーをセルフホスト",
+    "ogDescription": "自分でホストするリレーを、自社の GitHub 組織や OIDC グループに限定し、クライアント証明書、オフボーディングの再確認、選べるストレージポリシーを添えて。すべて MIT ライセンスです。",
+    "ogImageAlt": "Happier のワードマークと、その下の言葉：あらゆる AI コーディングエージェントに、1 つのクライアント。"
+  }
+}

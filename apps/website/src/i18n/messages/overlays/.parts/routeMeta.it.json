@@ -1,0 +1,149 @@
+{
+  "/": {
+    "title": "Happier — app open source per Claude Code, Codex e altri 11",
+    "description": "Esegui Claude Code, Codex e altri 11 agenti da telefono, browser o desktop. Open source, crittografato end-to-end, self-hostabile. Con i tuoi abbonamenti.",
+    "ogTitle": "Happier — un solo client per ogni agente di coding AI.",
+    "ogDescription": "Claude Code, Codex, OpenCode, Cursor e altri 9 — in un’unica app crittografata end-to-end, su ogni dispositivo, con i tuoi abbonamenti. Open source e self-hostabile.",
+    "ogImageAlt": "Il wordmark Happier sopra le parole: Un solo client per ogni agente di coding AI. Claude Code, Codex, OpenCode, Cursor, Gemini, Copilot e altri 7."
+  },
+  "/agents": {
+    "title": "Happier esegue 13 agenti di coding AI da riga di comando",
+    "description": "Un’unica app open source per 13 agenti di coding da riga di comando: Claude Code, Codex, OpenCode, Pi e altri nove. Sui tuoi computer, con i tuoi account.",
+    "ogTitle": "Ogni agente di coding AI che Happier esegue",
+    "ogDescription": "Tredici agenti di coding da riga di comando, un’unica app su telefono, browser e desktop. Ognuno gira sul tuo computer, con il tuo abbonamento o la tua chiave API.",
+    "ogImageAlt": "Il wordmark Happier sopra le parole: Un solo client per ogni agente di coding AI."
+  },
+  "/agents/claude-code": {
+    "title": "App open source per Claude Code — Happier",
+    "description": "Esegui Claude Code sul tuo computer e pilotalo da telefono, browser o desktop. Open source, crittografato end-to-end, self-hostabile, con licenza MIT.",
+    "ogTitle": "App open source per Claude Code",
+    "ogDescription": "Claude Code continua a girare sul tuo computer, autenticato con il tuo account Anthropic. Happier gli dà un telefono, una scheda del browser e una finestra desktop.",
+    "ogImageAlt": "Il wordmark Happier sopra le parole: Un solo client per ogni agente di coding AI."
+  },
+  "/agents/codex": {
+    "title": "Codex CLI sul tuo telefono — Happier, app open source",
+    "description": "La CLI openai/codex gira sul tuo computer con il tuo abbonamento ChatGPT o chiave API. Leggila, approvala e guidala da ogni dispositivo. Open source.",
+    "ogTitle": "Codex sul tuo telefono, da un’app open source",
+    "ogDescription": "La CLI openai/codex gira su hardware che possiedi, con il tuo abbonamento ChatGPT o la tua chiave API. Happier è la finestra su di essa da dovunque tu ti trovi.",
+    "ogImageAlt": "Il wordmark Happier sopra le parole: Un solo client per ogni agente di coding AI."
+  },
+  "/agents/opencode": {
+    "title": "App open source per OpenCode — telefono e desktop",
+    "description": "OpenCode gira su hardware che controlli, con le tue credenziali opencode auth. Happier aggiunge telefono, browser e desktop su un relay self-hostabile.",
+    "ogTitle": "App open source per OpenCode",
+    "ogDescription": "OpenCode è open source. Happier è open source, con licenza MIT e self-hostabile. Nessuno dei due ha bisogno di un server che non controlli.",
+    "ogImageAlt": "Il wordmark Happier sopra le parole: Un solo client per ogni agente di coding AI."
+  },
+  "/agents/cursor": {
+    "title": "Esegui Cursor Agent CLI dal telefono — Happier",
+    "description": "Il binario headless cursor-agent sul tuo computer o server, con la conversazione, i diff e le approvazioni sul telefono. Open source, con licenza MIT.",
+    "ogTitle": "Esegui Cursor Agent CLI dal tuo telefono",
+    "ogDescription": "Cursor rilascia un agente headless che non ha bisogno della finestra dell’editor. Happier lo esegue sul tuo computer e mette la conversazione sul tuo telefono.",
+    "ogImageAlt": "Il wordmark Happier sopra le parole: Un solo client per ogni agente di coding AI."
+  },
+  "/agents/gemini": {
+    "title": "Gemini CLI su ogni dispositivo — Happier",
+    "description": "L’agente da terminale open source di Google gira nel tuo ambiente, anche sul tuo progetto Cloud. Happier porta la sessione sul telefono, crittografata.",
+    "ogTitle": "Gemini CLI su ogni dispositivo che usi",
+    "ogDescription": "L’agente da terminale open source di Google, in esecuzione sul tuo progetto Google Cloud se è così che lavora la tua organizzazione, leggibile da un telefono.",
+    "ogImageAlt": "Il wordmark Happier sopra le parole: Un solo client per ogni agente di coding AI."
+  },
+  "/agents/github-copilot": {
+    "title": "GitHub Copilot CLI dal tuo telefono — Happier",
+    "description": "Esegui la CLI di Copilot sul tuo computer o sulla macchina di build e pilotala da ovunque. Client open source indipendente, non un prodotto GitHub.",
+    "ogTitle": "GitHub Copilot CLI, pilotata dal tuo telefono",
+    "ogDescription": "L’agente da riga di comando di Copilot, in esecuzione sul tuo computer o sulla tua macchina di build, con la sessione in tasca.",
+    "ogImageAlt": "Il wordmark Happier sopra le parole: Un solo client per ogni agente di coding AI."
+  },
+  "/agents/qwen": {
+    "title": "App open source per Qwen Code — Happier",
+    "description": "Qwen Code gira sul tuo computer con il tuo account. Happier porta la sessione su telefono, browser e desktop, su un relay crittografato che ospiti tu.",
+    "ogTitle": "App open source per Qwen Code",
+    "ogDescription": "Qwen Code sul tuo computer, con la sessione sul tuo telefono. Entrambe le metà sono open source e nessuna delle due ha bisogno di un account da noi per essere utile.",
+    "ogImageAlt": "Il wordmark Happier sopra le parole: Un solo client per ogni agente di coding AI."
+  },
+  "/agents/kimi": {
+    "title": "Kimi CLI dal telefono, dal browser o dal desktop",
+    "description": "Kimi CLI, l’agente da terminale di Moonshot, resta sul tuo computer mentre lo leggi e lo guidi da ovunque. Con licenza MIT, crittografato end-to-end.",
+    "ogTitle": "Kimi CLI dal telefono, dal browser o dal desktop",
+    "ogDescription": "L’agente da terminale di Moonshot resta sul tuo computer. La conversazione va dove vai tu, crittografata lungo il percorso.",
+    "ogImageAlt": "Il wordmark Happier sopra le parole: Un solo client per ogni agente di coding AI."
+  },
+  "/agents/kilo": {
+    "title": "Kilo CLI su telefono, laptop e browser",
+    "description": "Un’app open source per Kilo CLI e altri dodici agenti di coding da riga di comando, sui tuoi computer e con i tuoi account. Senza postazioni né paywall.",
+    "ogTitle": "Kilo CLI su telefono, laptop e browser",
+    "ogDescription": "Un’unica app open source per Kilo e gli altri dodici agenti di coding da riga di comando che potresti avere installati.",
+    "ogImageAlt": "Il wordmark Happier sopra le parole: Un solo client per ogni agente di coding AI."
+  },
+  "/agents/kiro": {
+    "title": "Esegui Kiro CLI da dovunque tu sia — Happier",
+    "description": "Kiro CLI gira sul tuo computer o su una macchina EC2, sotto la tua identità AWS, con la sessione leggibile dal telefono. Relay self-hostabile.",
+    "ogTitle": "Esegui Kiro CLI da dovunque tu sia",
+    "ogDescription": "La CLI agentica di AWS, in esecuzione sotto la tua identità AWS sul tuo computer, con un’app davanti.",
+    "ogImageAlt": "Il wordmark Happier sopra le parole: Un solo client per ogni agente di coding AI."
+  },
+  "/agents/auggie": {
+    "title": "Auggie sul telefono e sul desktop — Happier",
+    "description": "Auggie, la CLI di Augment Code, gira sul tuo computer con il tuo entitlement. Happier raccoglie trascrizione e approvazioni accanto agli altri agenti.",
+    "ogTitle": "Auggie, sul telefono e sul desktop",
+    "ogDescription": "La CLI di Augment Code, in esecuzione sul tuo computer con il tuo entitlement Augment, con la conversazione su ogni dispositivo che possiedi.",
+    "ogImageAlt": "Il wordmark Happier sopra le parole: Un solo client per ogni agente di coding AI."
+  },
+  "/agents/pi": {
+    "title": "App open source per il Pi Coding Agent",
+    "description": "Pi porta le tue chiavi API; Happier porta i client telefono, browser e desktop. Nessuno dei due tiene le chiavi su un server. Licenza MIT, self-hostabile.",
+    "ogTitle": "App open source per il Pi Coding Agent",
+    "ogDescription": "Pi porta le proprie chiavi e nessun modello proprio. Happier porta il telefono, il browser e l’app desktop, e nessun server in mezzo.",
+    "ogImageAlt": "Il wordmark Happier sopra le parole: Un solo client per ogni agente di coding AI."
+  },
+  "/agents/grok": {
+    "title": "Grok Build CLI dal tuo telefono — Happier",
+    "description": "Grok Build, la CLI di xAI, gira sul tuo computer, pilotata da ogni dispositivo. L’integrazione è sperimentale e questa pagina dice cosa non supporta.",
+    "ogTitle": "Grok Build CLI dal telefono o dalla scrivania",
+    "ogDescription": "La CLI di coding di xAI, in esecuzione sul tuo computer con il tuo account xAI. L’integrazione Happier è sperimentale, e questa pagina lo dice prima che tu installi qualsiasi cosa.",
+    "ogImageAlt": "Il wordmark Happier sopra le parole: Un solo client per ogni agente di coding AI."
+  },
+  "/vs/claude-code-remote-control": {
+    "title": "Claude Code Remote Control vs Happier: cosa copre ognuno",
+    "description": "Remote Control è gratuito e valido. Non è però disponibile con chiavi API, gateway, Bedrock, Foundry e organizzazioni ZDR. Confronto voce per voce.",
+    "ogTitle": "Claude Code Remote Control e Happier",
+    "ogDescription": "Cosa fa bene il remote di Anthropic, le cinque situazioni in cui si disattiva, e cosa fa invece un solo client per tredici agenti.",
+    "ogImageAlt": "Il wordmark Happier sopra le parole: Un solo client per ogni agente di coding AI."
+  },
+  "/vs/codex-remote": {
+    "title": "Codex dal telefono — Codex Remote vs Happier",
+    "description": "OpenAI abbina l’app ChatGPT a un Mac o a un PC Windows che esegue Codex. Cosa copre Remote, le cinque condizioni in cui gira, e cosa fa invece Happier.",
+    "ogTitle": "Codex Remote e Happier, a confronto",
+    "ogDescription": "Cosa fa bene il remote di OpenAI, le cinque condizioni in cui gira, e cosa fa invece un solo client per ogni agente di coding.",
+    "ogImageAlt": "Il wordmark Happier sopra le parole: Un solo client per ogni agente di coding AI."
+  },
+  "/features/usage-limits": {
+    "title": "Claude Code e Codex oltre il limite di utilizzo",
+    "description": "Arrivi al limite di utilizzo di Claude Code o Codex e la sessione aspetta il reset, poi riprende — da sola, se vuoi. Oppure metti in pool più account.",
+    "ogTitle": "Un limite di utilizzo non deve chiudere la sessione.",
+    "ogDescription": "La sessione tiene il posto attraverso un limite di utilizzo, aspetta il reset e riprende il lavoro — su un solo account, o sugli account che metti in pool.",
+    "ogImageAlt": "Il wordmark Happier sopra le parole: Un solo client per ogni agente di coding AI."
+  },
+  "/features/terminal": {
+    "title": "Claude Code e Codex nel terminale, e nell’app",
+    "description": "Esegui Claude Code, Codex o OpenCode nella loro TUI e segui la stessa sessione dal telefono. Fai attach via tmux, o restituisci il controllo all’app.",
+    "ogTitle": "Tieni i tuoi terminali Claude Code, Codex e OpenCode, o lavora dall’app",
+    "ogDescription": "Una sola sessione, due front end: la TUI del fornitore nella tua shell e Happier sul tuo telefono. Stesso id di sessione, stessa trascrizione, stessa coda su entrambi i lati del passaggio.",
+    "ogImageAlt": "Il wordmark Happier sopra le parole: Un solo client per ogni agente di coding AI."
+  },
+  "/security": {
+    "title": "Crittografia end-to-end in Happier: cosa vede il relay",
+    "description": "Il contenuto è sigillato sul dispositivo che lo ha scritto. Le chiavi, le colonne che un relay legge ancora, e cosa cambia con l’archiviazione in chiaro.",
+    "ogTitle": "Crittografia end-to-end, con le chiavi sui tuoi dispositivi",
+    "ogDescription": "La tua sessione è crittografata con una chiave per sessione sul dispositivo che l’ha creata, e al relay arriva una copia sigillata che non ha nulla per aprirla. Ecco cosa può ancora vedere — detto per nome, non glissato.",
+    "ogImageAlt": "Il wordmark Happier sopra le parole: Un solo client per ogni agente di coding AI."
+  },
+  "/enterprise": {
+    "title": "Happier self-hosted per team — SSO, mTLS, i tuoi dati",
+    "description": "Ospita tu il relay Happier: accesso per org GitHub e gruppi OIDC, mTLS inoltrato, offboarding, archiviazione, conservazione, Docker con Postgres.",
+    "ogTitle": "Self-hosting del relay Happier dietro il tuo SSO",
+    "ogDescription": "Un relay che ospiti tu, vincolato alla tua organizzazione GitHub o ai tuoi gruppi OIDC, con certificati client, ricontrolli di offboarding e una policy di archiviazione che scegli tu. Tutto con licenza MIT.",
+    "ogImageAlt": "Il wordmark Happier sopra le parole: Un solo client per ogni agente di coding AI."
+  }
+}

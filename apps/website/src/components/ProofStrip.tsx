@@ -49,6 +49,8 @@ type Fact = {
  *   agents       remote-dev packages/agents/src/types.ts:10 → 13 named + custom ACP
  */
 export function ProofStrip() {
+    const { pageProse: { PAGE_PROSE } } = useSiteData();
+
     const { providers: { PROVIDERS } } = useSiteData();
 
     const { totalDownloads } = usePublicStat(statsUrl('downloads.json'), parseDownloads, {
@@ -95,7 +97,7 @@ export function ProofStrip() {
     ];
 
     return (
-        <ul className="flex flex-wrap items-center gap-x-7 gap-y-3.5" aria-label="Project at a glance">
+        <ul className="flex flex-wrap items-center gap-x-7 gap-y-3.5" aria-label={PAGE_PROSE.proofStrip.p0}>
             {facts.map((fact) => {
                 const body = (
                     <>

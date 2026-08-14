@@ -3,6 +3,8 @@ import { HandoffToComputer } from './HandoffToComputer';
 import { InstallCommand } from './InstallCommand';
 import { VerifyInstaller } from './VerifyInstaller';
 import { isHandheld, usePlatform } from './usePlatform';
+import { rich } from '../i18n/rich';
+import { useSiteData } from '../i18n/siteData';
 
 /**
  * The single above-the-fold action block, resolved per device.
@@ -22,6 +24,8 @@ import { isHandheld, usePlatform } from './usePlatform';
  *                    no Play listing to send anyone to (see data/downloads.ts).
  */
 export function PrimaryCta() {
+    const { pageProse: { PAGE_PROSE } } = useSiteData();
+
     const platform = usePlatform();
 
     if (isHandheld(platform)) {
@@ -71,13 +75,10 @@ export function PrimaryCta() {
                     rel="noreferrer"
                     className="inline-flex items-center gap-2 rounded-2xl border px-4 py-3 text-[14px] font-medium transition-transform hover:-translate-y-[1px]"
                     style={{ borderColor: 'var(--card-border)', color: 'var(--fg)' }}
-                >
-                    Already set up? Open the app
-                    <svg viewBox="0 0 16 16" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                >{rich(PAGE_PROSE.primaryCta.p0, { 1: () => <svg viewBox="0 0 16 16" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
                         <path d="M3 8h10" />
                         <path d="M9 4l4 4-4 4" />
-                    </svg>
-                </a>
+                    </svg> })}</a>
             </div>
             <VerifyInstaller windowsShell={platform === 'windows'} />
         </div>

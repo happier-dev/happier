@@ -1,6 +1,7 @@
 import { RevealText } from '../components/RevealText';
 import { trackFaqOpened } from '../analytics/events';
 import { useSiteData } from '../i18n/siteData';
+import { rich } from '../i18n/rich';
 
 export const FAQ_SECTION_ID = 'faq';
 
@@ -14,6 +15,8 @@ export const FAQ_SECTION_ID = 'faq';
  * there for anyone who wants to collapse a long answer.
  */
 export function Faq() {
+    const { pageProse: { PAGE_PROSE } } = useSiteData();
+
     const { faq: { FAQ_ITEMS } } = useSiteData();
 
     return (
@@ -23,9 +26,7 @@ export function Faq() {
                     <div
                         className="mb-5 text-[11.5px] font-semibold uppercase tracking-[0.18em]"
                         style={{ color: 'var(--muted)' }}
-                    >
-                        Straight answers
-                    </div>
+                    >{rich(PAGE_PROSE.faq.p0)}</div>
                     <RevealText
                         as="h2"
                         text={'The questions\nyou were going to ask.'}

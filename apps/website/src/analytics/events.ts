@@ -132,6 +132,13 @@ export const SECTION_NAMES = [
     'faq',
     'call-to-action',
     'footer',
+    // The language list in the footer, and the dismissible banner offering a
+    // reader the locale their browser asks for. Both are tracked separately from
+    // the footer they sit in: the banner is the only thing on the site that
+    // proposes a navigation the reader did not ask for, so taken-versus-dismissed
+    // is the measure of whether it earns its place.
+    'locale-switcher',
+    'locale-suggestion',
     // /agents
     'agents-intro',
     // 'agents-matrix' — the thirteen-by-nine capability table was removed from

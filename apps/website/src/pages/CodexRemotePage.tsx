@@ -66,9 +66,9 @@ export function CodexRemotePage() {
               * "Codex Remote" is OpenAI's own label, not a name we minted.
               */}
             <PageHeader
-                eyebrow="Codex Remote"
-                title="Codex from your phone: Codex Remote and Happier, compared"
-                standfirst="OpenAI put Codex inside the ChatGPT mobile app and calls the feature Remote: you pair a phone to a Mac or Windows PC and drive the Codex session running on it. Here is what that covers, the conditions OpenAI’s own documentation puts on it, and the workflow it was never built for."
+                eyebrow={PAGE_PROSE.codexRemotePage.p9}
+                title={PAGE_PROSE.codexRemotePage.p10}
+                standfirst={PAGE_PROSE.codexRemotePage.p11}
             />
 
             <Prose data-section="codex-concession">
@@ -79,9 +79,7 @@ export function CodexRemotePage() {
             <section className="relative" data-section="codex-strengths">
                 <div className="mx-auto max-w-[1400px] px-6 py-10 md:px-10 md:py-14">
                     <div className="max-w-[860px]">
-                        <h2 className="font-display text-[26px] font-normal leading-[1.14] tracking-[-0.025em] md:text-[34px]">
-                            What Codex’s own remote does well, specifically
-                        </h2>
+                        <h2 className="font-display text-[26px] font-normal leading-[1.14] tracking-[-0.025em] md:text-[34px]">{rich(PAGE_PROSE.codexRemotePage.p12)}</h2>
                         <p className="mt-4 max-w-[720px] text-[16px] leading-[1.65]" style={{ color: 'var(--muted)' }}>{rich(PAGE_PROSE.codexRemotePage.p0)}</p>
                         <dl className="mt-7 grid gap-6 md:grid-cols-2">
                             {CODEX_SECTION.strengths.map((item) => (
@@ -102,9 +100,7 @@ export function CodexRemotePage() {
             <section className="relative" data-section="codex-conditions">
                 <div className="mx-auto max-w-[1400px] px-6 py-10 md:px-10 md:py-14">
                     <div className="max-w-[860px]">
-                        <h2 className="font-display text-[26px] font-normal leading-[1.14] tracking-[-0.025em] md:text-[34px]">
-                            The five conditions it runs under
-                        </h2>
+                        <h2 className="font-display text-[26px] font-normal leading-[1.14] tracking-[-0.025em] md:text-[34px]">{rich(PAGE_PROSE.codexRemotePage.p13)}</h2>
                         <p className="mt-4 max-w-[720px] text-[16px] leading-[1.65]" style={{ color: 'var(--muted)' }}>{rich(PAGE_PROSE.codexRemotePage.p1)}</p>
                         <ol className="mt-8 space-y-8">
                             {CODEX_SECTION.conditions.map((item, index) => (
@@ -136,31 +132,19 @@ export function CodexRemotePage() {
             <section className="relative" data-section="codex-table">
                 <div className="mx-auto max-w-[1400px] px-6 py-10 md:px-10 md:py-14">
                     <div className="max-w-[900px]">
-                        <h2 className="font-display text-[26px] font-normal leading-[1.14] tracking-[-0.025em] md:text-[34px]">
-                            Will it run in your setup?
-                        </h2>
+                        <h2 className="font-display text-[26px] font-normal leading-[1.14] tracking-[-0.025em] md:text-[34px]">{rich(PAGE_PROSE.codexRemotePage.p14)}</h2>
                         <p className="mt-4 max-w-[720px] text-[16px] leading-[1.65]" style={{ color: 'var(--muted)' }}>{rich(PAGE_PROSE.codexRemotePage.p3)}</p>
                         <div
                             className="mt-6 overflow-x-auto rounded-2xl border"
                             style={{ borderColor: 'var(--card-border)' }}
                         >
                             <table className="w-full min-w-[640px] border-collapse text-left text-[14px]">
-                                <caption className="px-4 pb-3 pt-4 text-left text-[13px]" style={{ color: 'var(--muted)' }}>
-                                    The Codex column restates OpenAI’s published documentation at
-                                    learn.chatgpt.com/docs/remote, /docs/remote-connections,
-                                    /docs/cloud and /docs/pricing. Verified August 2026.
-                                </caption>
+                                <caption className="px-4 pb-3 pt-4 text-left text-[13px]" style={{ color: 'var(--muted)' }}>{rich(PAGE_PROSE.codexRemotePage.p15)}</caption>
                                 <thead>
                                     <tr>
-                                        <th scope="col" className="px-4 py-3 font-semibold" style={{ color: 'var(--fg)' }}>
-                                            Fact
-                                        </th>
-                                        <th scope="col" className="px-4 py-3 font-semibold" style={{ color: 'var(--fg)' }}>
-                                            Codex Remote &amp; Codex cloud
-                                        </th>
-                                        <th scope="col" className="px-4 py-3 font-semibold" style={{ color: 'var(--fg)' }}>
-                                            Happier
-                                        </th>
+                                        <th scope="col" className="px-4 py-3 font-semibold" style={{ color: 'var(--fg)' }}>{rich(PAGE_PROSE.codexRemotePage.p16)}</th>
+                                        <th scope="col" className="px-4 py-3 font-semibold" style={{ color: 'var(--fg)' }}>{rich(PAGE_PROSE.codexRemotePage.p17)}</th>
+                                        <th scope="col" className="px-4 py-3 font-semibold" style={{ color: 'var(--fg)' }}>{rich(PAGE_PROSE.codexRemotePage.p18)}</th>
                                     </tr>
                                 </thead>
                                 <tbody>
@@ -191,9 +175,7 @@ export function CodexRemotePage() {
             <section className="relative" data-section="codex-difference">
                 <div className="mx-auto max-w-[1400px] px-6 py-10 md:px-10 md:py-14">
                     <div className="max-w-[860px]">
-                        <h2 className="font-display text-[26px] font-normal leading-[1.14] tracking-[-0.025em] md:text-[34px]">
-                            What one client for {AGENTS.length} agents buys you
-                        </h2>
+                        <h2 className="font-display text-[26px] font-normal leading-[1.14] tracking-[-0.025em] md:text-[34px]">{rich(PAGE_PROSE.codexRemotePage.p19, undefined, { length: AGENTS.length })}</h2>
                         <p className="mt-4 max-w-[720px] text-[16px] leading-[1.65]" style={{ color: 'var(--muted)' }}>{rich(PAGE_PROSE.codexRemotePage.p4)}</p>
                         <dl className="mt-7 grid gap-6 md:grid-cols-2">
                             {CODEX_SECTION.arguments.map((item) => (
@@ -221,7 +203,7 @@ export function CodexRemotePage() {
                 </div>
             </section>
 
-            <Prose heading="Trying it" data-section="codex-cta">
+            <Prose heading={PAGE_PROSE.codexRemotePage.p20} data-section="codex-cta">
                 <P>{rich(PAGE_PROSE.codexRemotePage.p7)}</P>
                 <div data-cta-location="call-to-action">
                     <InstallCommand />

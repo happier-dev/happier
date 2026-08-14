@@ -4,13 +4,16 @@
  * GENERATED THE FIRST TIME, EDITED BY HAND AFTER THAT. Re-running the codemod
  * over an already-lifted page does nothing, because the prose is no longer in
  * the JSX to find — so this file is normal source from here on. Re-word a
- * sentence here, not in the component.
+ * sentence here, not in the component. A later run MERGES into what is here
+ * rather than replacing it, and continues the numbering, so ids already carrying
+ * translations keep pointing at the same sentence.
  *
  * `<1>…</1>` marks a slot: the element that wrapped that run of text in the
  * original markup, whose props live in the component and never reach a
- * translator. `{name}` is an interpolated value. Both are named, so a
- * translation may put them wherever the target language needs them. See
- * src/i18n/rich.tsx.
+ * translator. An EMPTY slot, `<2></2>`, is an element with nothing in it — an
+ * icon, a `<br />` — and it is in the message so a translation can move it.
+ * `{name}` is an interpolated value. All three are named, so a translation may
+ * put them wherever the target language needs them. See src/i18n/rich.tsx.
  *
  * This is an ordinary data module, so `yarn i18n:extract` picks it up and the
  * overlay in src/i18n/siteData.ts translates it exactly like every other one.
@@ -28,6 +31,9 @@ export const PAGE_PROSE = {
         p8: "The <1>attach guide</1> lists the cases instead of promising all of them.",
         p9: "One command on the computer that holds your code, then <1>happier {id}</1> in the repository you want to work in.",
         p10: "Walkthroughs are in the <1>guides</1>. All of it is MIT-licensed, and the relay is one you can run yourself.",
+        p11: "Breadcrumb",
+        p12: "← Every agent Happier runs",
+        p13: "Questions about running {name} through Happier",
     },
     agentsIndex: {
         p0: "Happier installs on the computer that holds your repository, starts the vendor’s own CLI there as an ordinary subprocess under your own login, and carries the conversation to your other devices end-to-end encrypted. It hosts none of these agents, and puts no model of its own in front of them.",
@@ -37,12 +43,24 @@ export const PAGE_PROSE = {
         p4: "Four more are defined and on the way. None of them is in the build you can install today, and none is counted in the {length} above.",
         p5: "Anything speaking the Agent Client Protocol can be added as a backend of your own without waiting for us. That path has no page here because what it can do is whatever your CLI implements, and writing a page about it would be writing a page about your code.",
         p6: "Install Happier on the computer that holds your code, then start any agent on this page by name — <1>happier claude</1>, <2>happier codex</2>, <3>happier opencode</3>. The agent runs there, under your own subscription or API key. Happier is the transport and the interface, not a middleman for the model call.",
+        p7: "Every agent, one app",
+        p8: "Every AI coding agent Happier runs",
+        p9: "What is not on this list, and why",
+        p10: "Coming in the next version",
+        p11: "When one of them ships in {UPCOMING_RELEASE} it moves up into the grid and gets a page of its own.",
+        p12: "Or bring your own",
+        p13: "Running any of them",
     },
     alternatingFeatures: {
         p0: "Happier is the mobile-native control layer for the AI coding agents you already use. It mirrors your terminal, syncs every session, and gives you back the things a CLI can't: presence, approvals, voice, and one inbox for all of it.",
+        p1: "What Happier does",
+    },
+    analyticsNotice: {
+        p0: "What we measure",
     },
     callToAction: {
         p0: "Run it on the computer that runs your code. Keep your own subscriptions and keys. Self-host the relay or use ours. MIT licensed, end-to-end encrypted.",
+        p1: "Already paired? Open the web app<1></1>",
     },
     codexRemotePage: {
         p0: "Every claim in this block restates OpenAI’s published documentation, including the part where their cloud does something Happier does not do at all. None of it is hedged, because a vague concession is not a concession.",
@@ -54,6 +72,31 @@ export const PAGE_PROSE = {
         p6: "Codex has its own page here, with the install path, the auth model and the quirks — <1>Codex in Happier</1>. The same question, asked about Anthropic’s remote, is answered on <2>the Claude Code Remote Control page</2>.",
         p7: "Install on the computer that holds your code. Nothing on your phone matters until that computer is set up, which is why this is the first step rather than an app store badge.",
         p8: "Then <1>happier codex</1> in a repository. The session is on your phone from the moment it starts, and it is still in your terminal — <2>happier attach</2> puts you back in Codex’s own TUI without starting a second one.",
+        p9: "Codex Remote",
+        p10: "Codex from your phone: Codex Remote and Happier, compared",
+        p11: "OpenAI put Codex inside the ChatGPT mobile app and calls the feature Remote: you pair a phone to a Mac or Windows PC and drive the Codex session running on it. Here is what that covers, the conditions OpenAI’s own documentation puts on it, and the workflow it was never built for.",
+        p12: "What Codex’s own remote does well, specifically",
+        p13: "The five conditions it runs under",
+        p14: "Will it run in your setup?",
+        p15: "The Codex column restates OpenAI’s published documentation at learn.chatgpt.com/docs/remote, /docs/remote-connections, /docs/cloud and /docs/pricing. Verified August 2026.",
+        p16: "Fact",
+        p17: "Codex Remote & Codex cloud",
+        p18: "Happier",
+        p19: "What one client for {length} agents buys you",
+        p20: "Trying it",
+    },
+    discordMembers: {
+        p0: "<1><2></2> happier developers</1> on Discord",
+    },
+    downloadBadges: {
+        p0: "Download",
+        p1: "Show all desktop download options",
+        p2: "Detected",
+        p3: "Open the Happier web app",
+        p4: "Web app",
+    },
+    downloadStats: {
+        p0: "downloads",
     },
     enterprisePage: {
         p0: "The shape is worth getting straight before the list. Sessions run on your developers’ own computers, against the provider CLIs they already have. The relay carries messages between those computers and their phones, browsers and desktops. It is the only piece that has to be reachable from outside, and it is the piece you are being asked to host.",
@@ -63,25 +106,110 @@ export const PAGE_PROSE = {
         p4: "None of the controls above sits behind a purchase: there is no enterprise tier to buy and no seat count to negotiate for any of them. Depending on your procurement process that is either the reassuring part of this page or the concerning one. What you get instead is the source, an MIT licence and a container image.",
         p5: "The honest order is: stand the relay up on a throwaway host, point one developer at it, and read <1>GET /v1/features</1> to see exactly what that server is advertising to its clients. That response is the contract, and it is the fastest way to confirm a policy you set is a policy the clients will actually honour.",
         p6: "The <1>Docker deployment guide</1> covers the image, the volume and the Postgres override. The <2>server auth reference</2> covers every variable named above, including the recipes for a public server that requires GitHub or an OIDC provider.",
+        p7: "Self-hosted relay",
+        p8: "Self-host the Happier relay: SSO, mTLS and your own database",
+        p9: "Happier is MIT-licensed, and the relay every device talks through is a container you can run yourself. This page is the list of controls that come with it — what the server enforces, what it stores, and what it hands your clients at runtime.",
+        p10: "SSO: GitHub orgs, OIDC groups and client certificates",
+        p11: "Identity is delegated to whatever you already run. Happier’s job is to enforce it on every request rather than only at signup, and to keep asking.",
+        p12: "Storage policy, retention and the database you host",
+        p13: "The controls an auditor asks about second, once they have finished with authentication.",
+        p14: "If your organisation has zero data retention",
+        p15: "What procurement gets: an MIT licence and a container image",
+        p16: "Stand up a test relay and check what it enforces",
+    },
+    faq: {
+        p0: "Straight answers",
+    },
+    featureGrid: {
+        p0: "And there's more",
     },
     footer: {
         p0: "One open-source client for every coding agent — thirteen of them, run on your own computer, with your own subscriptions or API keys, end-to-end encrypted.",
+        p1: "© {BUILD_YEAR} Happier. Open source. Made with care.",
+    },
+    getStarted: {
+        p0: "Get started",
+        p1: "Scan from<1></1>your terminal",
+    },
+    handoffToComputer: {
+        p0: "Happier runs where your code runs.",
+        p1: "Start on the computer with your repos on it — then this phone becomes a screen for it. Send yourself the one-line setup command.",
+        p2: "<1></1>Send to my computer",
+        p3: "Email it to myself",
+    },
+    happierMark: {
+        p0: "Happier home",
+        p1: "happier",
     },
     heroShowcase: {
         p0: "Scroll to explore",
+        p1: "Happier desktop app",
+        p2: "Happier desktop app screenshot — scroll to explore",
+        p3: "Happier desktop app — scroll horizontally to explore",
+        p4: "Happier mobile app",
+    },
+    mobileThemePreview: {
+        p0: "Preview the next Happier mobile theme",
+        p1: "Mobile theme previews",
+    },
+    nav: {
+        p0: "Star on GitHub",
+        p1: "GitHub",
+        p2: "Agents",
+        p3: "Enterprise",
+        p4: "Docs",
+        p5: "Install Happier",
+    },
+    primaryCta: {
+        p0: "Already set up? Open the app<1></1>",
+    },
+    proofStrip: {
+        p0: "Project at a glance",
+    },
+    providerMarkRow: {
+        p0: "Supported AI coding agents",
     },
     securityPage: {
         p0: "The variables that set all three, the at-rest options underneath them and the identity controls around them are the operator’s half of this, and they live on <1>the self-hosting page for teams</1>.",
         p1: "The <1>encryption model reference</1> covers the same ground as procedure — what restore asks of you, what each storage mode means for an account, which flow to reach for when a device cannot read a session yet.",
         p2: "Encryption is a claim about content, and a claim about content is only half an answer. Here is the other half, at the same level of detail: the columns a server operating this relay can read without a key.",
+        p3: "Security",
+        p4: "End-to-end encryption, with the keys on your own devices",
+        p5: "Happier keeps one coding session in sync between the computer it runs on and every device you watch it from, and a relay server sits in the middle of that. This page is the architecture under that sentence: which key is made where, what the relay actually holds, what it can still see, and what changes on a server configured to turn encryption off.",
+        p6: "Your encryption keys are created on your own device",
+        p7: "Linking a new device, and how your keys reach it",
+        p8: "Storage policy: end-to-end encryption is the default",
+        p9: "Push notifications are sent by your own computer",
+        p10: "Self-hosted relay: the metadata stays on your hardware too",
+        p11: "Read the encryption code yourself",
+        p12: "How a message is encrypted between your phone and your computer",
+        p13: "What the relay server stores",
+        p14: "It holds",
+        p15: "It does not hold",
     },
     selfHost: {
         p0: "Run the Happier relay server on your own infrastructure. Your data never leaves your network.",
+        p1: "Self-host",
+        p2: "Copy commands",
+    },
+    tabbedExplorer: {
+        p0: "See it in action",
     },
     terminalPage: {
         p0: "Three of the thirteen, and they do not behave the same way. Codex is exclusive — one driver at a time. OpenCode is not, and Claude Code can be either, depending on which runtime you start it under.",
         p1: "The other ten agents Happier runs still start from the terminal with <1>happier <agent></1> and still appear on your phone. What they do not do is let you take the session back into their own TUI half way through.",
         p2: "Nothing on this page needs configuration if you start your sessions from the terminal — that path works the moment the CLI is installed. The settings that do need a decision are tmux integration, the Windows session mode and where the embedded terminal docks, and all three are in the <1>configuration reference</1>.",
+        p3: "Feature",
+        p4: "Keep your Claude Code, Codex and OpenCode terminals, or work from the app",
+        p5: "Happier runs them as the same session you would have started yourself — so you can drive it from their own TUI, from your phone, or from both, without the session noticing.",
+        p6: "Start in the terminal or in the app, and move between them",
+        p7: "Which agents move a session between the terminal and the app",
+        p8: "Agent",
+        p9: "Terminal and app together",
+        p10: "Reattaches through",
+        p11: "What that means in practice",
+        p12: "What attaching needs: tmux, the same computer, a running daemon",
+        p13: "tmux, the Windows session mode, and where the terminal docks",
     },
     usageLimitsPage: {
         p0: "A provider refuses a turn and Happier shows “Usage limit reached”, with the reset time when the provider supplied one. From there: wait — “Resume when limit resets” keeps the session and picks it up on its own — or “Check limit now” to re-probe, or stop waiting. Waiting is the one that keeps your afternoon: Happier holds the reset time, re-checks it for you, starts the session again if it had exited in the meantime, and sends a prompt to carry on from the interrupted context. Tick “Always wait and resume” once and you stop being asked — every limit after that is handled the same way with nobody watching. A Codex session goes one further and arms the wait by itself once “Continue automatically” is set.",
@@ -89,6 +217,30 @@ export const PAGE_PROSE = {
         p2: "The defaults a new pool starts with. All of them are editable per pool.",
         p3: "One row per account you can connect. Being able to use a pool and being able to change account inside a running turn are two different capabilities, and the second one is rarer.",
         p4: "Connecting the accounts comes first, and that part has a <1>configuration reference</1>: how each provider’s sign-in works, which agent can consume which credential, and where the quota snapshots come from.",
+        p5: "Feature",
+        p6: "A usage limit should not end your session.",
+        p7: "Every provider stops you eventually, and Happier cannot change that. What it can do is hold the session at the limit, show you when it resets, and start the work again from where it stopped. Turn on “Always wait and resume” and it does the whole thing unattended — one setting, and you come back to a session that carried on instead of one that stopped. That is on one account. Own several subscriptions and there is a better answer below: pool them, and a session that runs one dry moves to the next.",
+        p8: "With one account, Happier waits out the reset and resumes the session",
+        p9: "Pool the subscriptions you own, and the session carries on across them",
+        p10: "How a pool falls back: the account it picks, and how often",
+        p11: "Setting",
+        p12: "Default",
+        p13: "Why",
+        p14: "Which accounts you can pool, and which agents can use them",
+        p15: "Account you connect",
+        p16: "Agents that can use it",
+        p17: "Switches mid-session",
+        p18: "Quota meter",
+        p19: "Your own accounts, and what your provider’s terms allow",
+        p20: "Build a pool in the app, start a session on it from the CLI",
+    },
+    verifyInstaller: {
+        p0: "Signed releases — verify before you run it",
+        p1: "The installer does not trust its own download. It fetches the release archive and the published <1>checksums.txt</1>, checks the archive’s SHA-256 against it, then verifies that checksums file with <2>minisign</2> against a key that ships inside the script. Either check failing aborts the install before anything is written to disk.",
+        p2: "Signing key {RELEASE_PUBKEY_ID}:",
+        p3: "It is also served at <1>happier.dev/happier-release.pub</1>. The two should be identical — if they are not, do not install.",
+        p4: "Prefer not to pipe anything into a shell? Don’t:",
+        p5: "<1>Read the script</1> · <2>Security model</2>",
     },
     vsRemoteControl: {
         p0: "Already using Claude Code Remote Control? <1>Compare it with Happier.</1>",
@@ -102,5 +254,17 @@ export const PAGE_PROSE = {
         p5: "The other difference is where your conversation lives. Remote Control stores the session transcript on Anthropic servers while it is connected, per its documentation, and organisations under Zero Data Retention rules cannot enable it at all. Happier encrypts the transcript end to end by default, and <1>happier relay host install</1> puts the relay on hardware you own.",
         p6: "Each of the {length} agents has its own page — <1>start here</1>.",
         p7: "Install on the computer that holds your code. Nothing on your phone matters until that computer is set up, which is why this is the first step rather than an app store badge.",
+        p8: "Claude Code Remote Control",
+        p9: "Claude Code from your phone: Remote Control and Happier, compared",
+        p10: "Anthropic ships a remote for its own agent, it is free with a subscription you probably already pay for, and it is good. Here is exactly what it does, the situations its own documentation says it will not run in, and the workflow it was never built for.",
+        p11: "What Remote Control does well, specifically",
+        p12: "The five situations where Remote Control turns itself off",
+        p13: "Will it run in your setup?",
+        p14: "The Remote Control column restates Anthropic’s published documentation at code.claude.com/docs/en/remote-control. Verified August 2026.",
+        p15: "Capability",
+        p16: "Claude Code Remote Control",
+        p17: "Happier",
+        p18: "What one client for {length} agents buys you",
+        p19: "Trying it",
     },
 } as const;

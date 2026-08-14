@@ -1,5 +1,6 @@
 import { findRoute } from './routes';
 import { LocaleProvider } from './i18n';
+import { LocaleSuggestion } from './components/LocaleSuggestion';
 import { localeFromPathname } from './i18n/locales';
 import { useSiteAnalytics } from './analytics/useSiteAnalytics';
 
@@ -35,6 +36,9 @@ export function App({ path }: { path: string }) {
     // not take, so the two sides disagreed by construction on every prefixed
     // URL. One input, one answer, both sides.
     return (
-        <LocaleProvider locale={localeFromPathname(path)}>{route.render()}</LocaleProvider>
+        <LocaleProvider locale={localeFromPathname(path)} path={path}>
+            <LocaleSuggestion />
+            {route.render()}
+        </LocaleProvider>
     );
 }

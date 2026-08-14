@@ -59,13 +59,10 @@ export function CallToAction() {
                                 rel="noreferrer"
                                 className="inline-flex items-center gap-2 rounded-2xl border px-6 py-3.5 text-[15px] font-semibold"
                                 style={{ borderColor: 'var(--card-border)', color: 'var(--fg)' }}
-                            >
-                                Already paired? Open the web app
-                                <svg viewBox="0 0 16 16" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            >{rich(PAGE_PROSE.callToAction.p1, { 1: () => <svg viewBox="0 0 16 16" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                                     <path d="M3 8h10" />
                                     <path d="M9 4l4 4-4 4" />
-                                </svg>
-                            </a>
+                                </svg> })}</a>
                         </div>
                         <div className="mt-8 flex justify-center">
                             <DiscordMembers />

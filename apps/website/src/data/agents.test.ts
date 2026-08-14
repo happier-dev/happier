@@ -734,6 +734,7 @@ describe('every agent page leads with something only that agent can say', () => 
                         LocaleProvider,
                         {
                             locale: 'en',
+                            path: `/agents/${agent.slug}`,
                             children: createElement(AgentDetail, { agent }),
                         },
                     ),

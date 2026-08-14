@@ -1,50 +1,44 @@
-import { StrictMode } from 'react';
-import { createRoot, hydrateRoot } from 'react-dom/client';
 import './styles/globals.css';
-import { App } from './App';
-import { exposeAnalyticsControls, initAnalytics } from './analytics/analytics';
+import { entrySlugFor } from './entries/_names';
 
 /**
- * Analytics starts before React, not inside it.
+ * THE DEV SERVER'S ENTRY, AND NOTHING ELSE SHIPS FROM IT.
  *
- * `$pageview` should carry the moment the page became a page, not the moment
- * hydration finished — on this page those are hundreds of milliseconds apart,
- * and the gap is exactly the interval where a bounced visitor leaves. Mounting
- * here also keeps it out of the render tree, so StrictMode's double-invoke
- * cannot double-fire it and the SSR bundle (src/entry-server.tsx) never touches
- * it at all.
+ * In production every page has its own entry (src/entries/<slug>.tsx) and its
+ * own chunk, and scripts/prerender.mjs writes the right <script> tag into each
+ * prerendered file. A visitor to /security downloads /security's code plus the
+ * shared react/vendor chunk — not the other twenty pages.
  *
- * initAnalytics() is a no-op when the visitor sends Do Not Track or Global
- * Privacy Control, when they have opted out, or when the key is missing.
- */
-initAnalytics();
-exposeAnalyticsControls();
-
-const container = document.getElementById('root')!;
-
-/**
- * One lookup, no router.
+ * `vite dev` has no prerenderer, so index.html has to point at something, and it
+ * points here. This file's whole job is to look at `location.pathname` and load
+ * the same entry the production HTML would have named. It is the ONE place the
+ * mapping is done at runtime rather than at build time.
  *
- * The page the browser is showing was served as a real file from Cloudflare
- * Pages, so `location.pathname` is authoritative — it is the same string the
- * prerenderer used for this file, which is what keeps hydration from
- * mismatching. There is no client-side navigation to intercept: every link on
- * the site is a full page load, on purpose.
+ * WHY THE `import.meta.env.DEV` GUARD IS LOAD-BEARING. `import.meta.glob` is
+ * expanded at build time into an object of dynamic imports — every entry on the
+ * site. Under `vite build` DEV is replaced by the literal `false`, so Rollup
+ * drops the whole block and, with it, one dynamic import per page; the chunk
+ * this file produces is then the stylesheet and nothing else, which is exactly
+ * what the shell HTML wants. Remove the guard and index.html becomes a
+ * lazy-loader for the entire site again.
+ *
+ * The stylesheet import stays OUTSIDE the guard: it is what makes the dev server
+ * serve CSS eagerly (a dev page that waited for a lazily imported entry to bring
+ * its own CSS would flash unstyled), and in production it is the reason the
+ * shell HTML gets its <link rel="stylesheet"> injected by Vite at all.
  */
-const tree = (
-    <StrictMode>
-        <App path={window.location.pathname} />
-    </StrictMode>
-);
+if (import.meta.env.DEV) {
+    const entries = import.meta.glob<{ default?: unknown }>('./entries/*.tsx');
+    const key = `./entries/${entrySlugFor(window.location.pathname)}.tsx`;
+    const load = entries[key];
 
-/**
- * The production build ships a prerendered #root (scripts/prerender.mjs), so the
- * markup is already there and must be hydrated rather than thrown away. `vite
- * dev` serves the empty shell from index.html, so fall back to a fresh root —
- * hydrating an empty container would warn on every dev reload.
- */
-if (container.firstChild) {
-    hydrateRoot(container, tree);
-} else {
-    createRoot(container).render(tree);
+    if (!load) {
+        throw new Error(
+            `No client entry for "${window.location.pathname}". Expected src/entries/` +
+                `${entrySlugFor(window.location.pathname)}.tsx. Every route in ROUTES ` +
+                '(src/routes.tsx) needs one — see src/entries/_names.ts.',
+        );
+    }
+
+    void load();
 }

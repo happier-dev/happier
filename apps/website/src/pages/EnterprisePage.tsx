@@ -75,9 +75,9 @@ export function EnterprisePage() {
               * thing".
               */}
             <PageHeader
-                eyebrow="Self-hosted relay"
-                title="Self-host the Happier relay: SSO, mTLS and your own database"
-                standfirst="Happier is MIT-licensed, and the relay every device talks through is a container you can run yourself. This page is the list of controls that come with it — what the server enforces, what it stores, and what it hands your clients at runtime."
+                eyebrow={PAGE_PROSE.enterprisePage.p7}
+                title={PAGE_PROSE.enterprisePage.p8}
+                standfirst={PAGE_PROSE.enterprisePage.p9}
             />
 
             <Prose data-section="enterprise-shape">
@@ -92,30 +92,30 @@ export function EnterprisePage() {
 
             <CapabilityList
                 dataSection="enterprise-access"
-                heading="SSO: GitHub orgs, OIDC groups and client certificates"
-                standfirst="Identity is delegated to whatever you already run. Happier’s job is to enforce it on every request rather than only at signup, and to keep asking."
+                heading={PAGE_PROSE.enterprisePage.p10}
+                standfirst={PAGE_PROSE.enterprisePage.p11}
                 items={ENTERPRISE_ACCESS}
             />
 
             <CapabilityList
                 dataSection="enterprise-data"
-                heading="Storage policy, retention and the database you host"
-                standfirst="The controls an auditor asks about second, once they have finished with authentication."
+                heading={PAGE_PROSE.enterprisePage.p12}
+                standfirst={PAGE_PROSE.enterprisePage.p13}
                 items={ENTERPRISE_DATA}
             />
 
-            <Prose heading="If your organisation has zero data retention" data-section="enterprise-zdr">
+            <Prose heading={PAGE_PROSE.enterprisePage.p14} data-section="enterprise-zdr">
                 {ENTERPRISE_ZDR.map((paragraph) => (
                     <P key={paragraph.slice(0, 32)}>{paragraph}</P>
                 ))}
             </Prose>
 
-            <Prose heading="What procurement gets: an MIT licence and a container image" data-section="enterprise-licence">
+            <Prose heading={PAGE_PROSE.enterprisePage.p15} data-section="enterprise-licence">
                 <P>{rich(PAGE_PROSE.enterprisePage.p3)}</P>
                 <P>{rich(PAGE_PROSE.enterprisePage.p4)}</P>
             </Prose>
 
-            <Prose heading="Stand up a test relay and check what it enforces" data-section="enterprise-cta">
+            <Prose heading={PAGE_PROSE.enterprisePage.p16} data-section="enterprise-cta">
                 <P>{rich(PAGE_PROSE.enterprisePage.p5, { 1: (c: ReactNode) => <code className="font-mono">{c}</code> })}</P>
                 <div data-cta-location="call-to-action">
                     <InstallCommand />

@@ -1,6 +1,8 @@
 import { useState } from 'react';
 
 import { isAnalyticsActive, optIn, optOut, readOptOut } from '../analytics/analytics';
+import { rich } from '../i18n/rich';
+import { useSiteData } from '../i18n/siteData';
 
 /**
  * The disclosure and the opt-out, in one footer line.
@@ -18,6 +20,8 @@ import { isAnalyticsActive, optIn, optOut, readOptOut } from '../analytics/analy
  * which is the only thing this site ever writes to a device).
  */
 export function AnalyticsNotice() {
+    const { pageProse: { PAGE_PROSE } } = useSiteData();
+
     const [optedOut, setOptedOut] = useState(() => readOptOut());
     const [wasActive] = useState(() => isAnalyticsActive());
 
@@ -46,9 +50,7 @@ export function AnalyticsNotice() {
                 rel="noreferrer"
                 className="underline underline-offset-2 transition-opacity hover:opacity-100"
                 style={{ opacity: 0.75 }}
-            >
-                What we measure
-            </a>
+            >{rich(PAGE_PROSE.analyticsNotice.p0)}</a>
             {wasActive || optedOut ? (
                 <button
                     onClick={toggle}

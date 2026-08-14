@@ -1,6 +1,8 @@
 import type { ReactNode } from 'react';
 import { RevealText } from '../components/RevealText';
 import { InstallCommand } from '../components/InstallCommand';
+import { rich } from '../i18n/rich';
+import { useSiteData } from '../i18n/siteData';
 
 type Step = {
     number: number;
@@ -60,6 +62,8 @@ const STEPS: ReadonlyArray<Step> = [
 export const GET_STARTED_SECTION_ID = 'get-started';
 
 export function GetStarted() {
+    const { pageProse: { PAGE_PROSE } } = useSiteData();
+
     return (
         <section id={GET_STARTED_SECTION_ID} data-section="get-started" className="relative">
             <div className="section-y mx-auto max-w-[1400px] px-6 md:px-10">
@@ -67,9 +71,7 @@ export function GetStarted() {
                     <div
                         className="mb-5 text-[11.5px] font-semibold uppercase tracking-[0.18em]"
                         style={{ color: 'var(--muted)' }}
-                    >
-                        Get started
-                    </div>
+                    >{rich(PAGE_PROSE.getStarted.p0)}</div>
                     <RevealText
                         as="h2"
                         text={'Up and running\nin under a minute.'}
@@ -142,6 +144,8 @@ export function GetStarted() {
 
 /** A small QR placeholder for the "pair your device" step. */
 function QrChip() {
+    const { pageProse: { PAGE_PROSE } } = useSiteData();
+
     return (
         <div className="inline-flex items-center gap-3">
             <div
@@ -172,11 +176,7 @@ function QrChip() {
                     </g>
                 </svg>
             </div>
-            <span className="text-[13px] leading-[1.4]" style={{ color: 'var(--muted)' }}>
-                Scan from
-                <br />
-                your terminal
-            </span>
+            <span className="text-[13px] leading-[1.4]" style={{ color: 'var(--muted)' }}>{rich(PAGE_PROSE.getStarted.p1, { 1: () => <br /> })}</span>
         </div>
     );
 }

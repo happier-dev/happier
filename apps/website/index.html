@@ -303,6 +303,24 @@
     </head>
     <body>
         <div id="root"></div>
+        <!--
+          THE DEV ENTRY, AND THE ONLY MODULE SCRIPT IN THIS FILE.
+
+          It is not the script any shipped page loads. The client build emits one
+          entry per prerendered page (src/entries/, wired up in vite.config.ts),
+          and scripts/prerender.mjs replaces this tag in each emitted file with
+          that page's own chunk plus modulepreloads for the chunks it shares —
+          the shared react vendor chunk, the shared shell. That is what stops a
+          reader of /security downloading the copy for the other twenty pages.
+
+          src/main.tsx therefore does nothing in production but pull in the
+          stylesheet; in `vite dev`, where there is no prerenderer, it looks at
+          location.pathname and loads the entry the built page would have named.
+
+          Adding a SECOND module script here breaks the split: the prerenderer
+          requires exactly one so it knows which tag to swap, and fails the build
+          if it finds more. Inline scripts and application/ld+json are unaffected.
+        -->
         <script type="module" src="/src/main.tsx"></script>
     </body>
 </html>

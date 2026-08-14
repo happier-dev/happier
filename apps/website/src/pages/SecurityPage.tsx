@@ -45,28 +45,28 @@ export function SecurityPage() {
               * in the hop cards, where they are evidence rather than framing.
               */}
             <PageHeader
-                eyebrow="Security"
-                title="End-to-end encryption, with the keys on your own devices"
-                standfirst="Happier keeps one coding session in sync between the computer it runs on and every device you watch it from, and a relay server sits in the middle of that. This page is the architecture under that sentence: which key is made where, what the relay actually holds, what it can still see, and what changes on a server configured to turn encryption off."
+                eyebrow={PAGE_PROSE.securityPage.p3}
+                title={PAGE_PROSE.securityPage.p4}
+                standfirst={PAGE_PROSE.securityPage.p5}
             />
 
             <MessagePath />
 
             <Ledger />
 
-            <Prose heading="Your encryption keys are created on your own device" data-section="security-keys">
+            <Prose heading={PAGE_PROSE.securityPage.p6} data-section="security-keys">
                 {SECURITY_KEYS.map((paragraph) => (
                     <P key={paragraph.slice(0, 32)}>{paragraph}</P>
                 ))}
             </Prose>
 
-            <Prose heading="Linking a new device, and how your keys reach it" data-section="security-pairing">
+            <Prose heading={PAGE_PROSE.securityPage.p7} data-section="security-pairing">
                 {SECURITY_PAIRING.map((paragraph) => (
                     <P key={paragraph.slice(0, 32)}>{paragraph}</P>
                 ))}
             </Prose>
 
-            <Prose heading="Storage policy: end-to-end encryption is the default" data-section="security-storage">
+            <Prose heading={PAGE_PROSE.securityPage.p8} data-section="security-storage">
                 {SECURITY_STORAGE.map((paragraph) => (
                     <P key={paragraph.slice(0, 32)}>{paragraph}</P>
                 ))}
@@ -77,19 +77,19 @@ export function SecurityPage() {
                     >{c}</a> })}</P>
             </Prose>
 
-            <Prose heading="Push notifications are sent by your own computer" data-section="security-notifications">
+            <Prose heading={PAGE_PROSE.securityPage.p9} data-section="security-notifications">
                 {SECURITY_NOTIFICATIONS.map((paragraph) => (
                     <P key={paragraph.slice(0, 32)}>{paragraph}</P>
                 ))}
             </Prose>
 
-            <Prose heading="Self-hosted relay: the metadata stays on your hardware too" data-section="security-selfhost">
+            <Prose heading={PAGE_PROSE.securityPage.p10} data-section="security-selfhost">
                 {SECURITY_SELF_HOST.map((paragraph) => (
                     <P key={paragraph.slice(0, 32)}>{paragraph}</P>
                 ))}
             </Prose>
 
-            <Prose heading="Read the encryption code yourself" data-section="security-source">
+            <Prose heading={PAGE_PROSE.securityPage.p11} data-section="security-source">
                 {SECURITY_SOURCE.map((paragraph) => (
                     <P key={paragraph.slice(0, 32)}>{paragraph}</P>
                 ))}
@@ -115,15 +115,15 @@ export function SecurityPage() {
  * self-host diagram uses, so the two pictures of these three nodes agree.
  */
 function MessagePath() {
+    const { pageProse: { PAGE_PROSE } } = useSiteData();
+
     const { security: { SECURITY_DIAGRAM_CAPTION, SECURITY_HOPS } } = useSiteData();
 
     return (
         <section className="relative" data-section="security-path">
             <div className="mx-auto max-w-[1400px] px-6 py-10 md:px-10 md:py-14">
                 <div className="max-w-[880px]">
-                    <h2 className="font-display text-[26px] font-normal leading-[1.14] tracking-[-0.025em] md:text-[34px]">
-                        How a message is encrypted between your phone and your computer
-                    </h2>
+                    <h2 className="font-display text-[26px] font-normal leading-[1.14] tracking-[-0.025em] md:text-[34px]">{rich(PAGE_PROSE.securityPage.p12)}</h2>
                     <p
                         className="mt-4 max-w-[720px] text-[16px] leading-[1.65]"
                         style={{ color: 'var(--muted)' }}
@@ -216,9 +216,7 @@ function Ledger() {
         <section className="relative" data-section="security-ledger">
             <div className="mx-auto max-w-[1400px] px-6 py-10 md:px-10 md:py-14">
                 <div className="max-w-[880px]">
-                    <h2 className="font-display text-[26px] font-normal leading-[1.14] tracking-[-0.025em] md:text-[34px]">
-                        What the relay server stores
-                    </h2>
+                    <h2 className="font-display text-[26px] font-normal leading-[1.14] tracking-[-0.025em] md:text-[34px]">{rich(PAGE_PROSE.securityPage.p13)}</h2>
                     <p
                         className="mt-4 max-w-[720px] text-[16px] leading-[1.65]"
                         style={{ color: 'var(--muted)' }}
@@ -226,8 +224,8 @@ function Ledger() {
                 </div>
 
                 <div className="mt-10 grid gap-10 md:grid-cols-2 md:gap-14">
-                    <LedgerColumn heading="It holds" items={SECURITY_VISIBLE} />
-                    <LedgerColumn heading="It does not hold" items={SECURITY_INVISIBLE} />
+                    <LedgerColumn heading={PAGE_PROSE.securityPage.p14} items={SECURITY_VISIBLE} />
+                    <LedgerColumn heading={PAGE_PROSE.securityPage.p15} items={SECURITY_INVISIBLE} />
                 </div>
             </div>
         </section>

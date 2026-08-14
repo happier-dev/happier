@@ -5,6 +5,9 @@ import {
     RELEASE_PUBKEY_ID,
     RELEASE_PUBKEY_URL,
 } from '../data/downloads';
+import { rich } from '../i18n/rich';
+import { useSiteData } from '../i18n/siteData';
+import type { ReactNode } from 'react';
 
 /**
  * The "why should I pipe your script into my shell" disclosure.
@@ -29,6 +32,8 @@ import {
  * browser's own in-page search.
  */
 export function VerifyInstaller({ windowsShell = false }: { windowsShell?: boolean }) {
+    const { pageProse: { PAGE_PROSE } } = useSiteData();
+
     const scriptUrl = windowsShell ? INSTALL_SCRIPT_PS1_URL : INSTALL_SCRIPT_URL;
 
     return (
@@ -50,7 +55,7 @@ export function VerifyInstaller({ windowsShell = false }: { windowsShell?: boole
                     <path d="M8 1.5 2.5 3.8v4c0 3.2 2.2 6.1 5.5 6.9 3.3-.8 5.5-3.7 5.5-6.9v-4L8 1.5Z" />
                     <path d="m5.8 7.9 1.6 1.6 3-3.2" />
                 </svg>
-                <span>Signed releases — verify before you run it</span>
+                <span>{rich(PAGE_PROSE.verifyInstaller.p0)}</span>
                 <svg
                     viewBox="0 0 16 16"
                     className="h-3 w-3 shrink-0 transition-transform group-open:rotate-180"
@@ -69,45 +74,30 @@ export function VerifyInstaller({ windowsShell = false }: { windowsShell?: boole
                 className="mt-3 rounded-2xl border p-4 text-[13px] leading-[1.6]"
                 style={{ borderColor: 'var(--card-border)', color: 'var(--muted)' }}
             >
-                <p>
-                    The installer does not trust its own download. It fetches the release archive
-                    and the published <code className="font-mono">checksums.txt</code>, checks the
-                    archive&rsquo;s SHA-256 against it, then verifies that checksums file with{' '}
-                    <a
+                <p>{rich(PAGE_PROSE.verifyInstaller.p1, { 1: (c: ReactNode) => <code className="font-mono">{c}</code>, 2: (c: ReactNode) => <a
                         href="https://jedisct1.github.io/minisign/"
                         target="_blank"
                         rel="noreferrer"
                         className="underline underline-offset-2"
                         style={{ color: 'var(--fg)' }}
-                    >
-                        minisign
-                    </a>{' '}
-                    against a key that ships inside the script. Either check failing aborts the
-                    install before anything is written to disk.
-                </p>
+                    >{c}</a> })}</p>
 
-                <p className="mt-3">Signing key {RELEASE_PUBKEY_ID}:</p>
+                <p className="mt-3">{rich(PAGE_PROSE.verifyInstaller.p2, undefined, { RELEASE_PUBKEY_ID })}</p>
                 <pre
                     className="mt-1.5 overflow-x-auto rounded-xl border px-3 py-2 font-mono text-[11.5px] leading-[1.5]"
                     style={{ borderColor: 'var(--card-border)', color: 'var(--fg)' }}
                 >
                     <code>{RELEASE_PUBKEY}</code>
                 </pre>
-                <p className="mt-1.5">
-                    It is also served at{' '}
-                    <a
+                <p className="mt-1.5">{rich(PAGE_PROSE.verifyInstaller.p3, { 1: (c: ReactNode) => <a
                         href={RELEASE_PUBKEY_URL}
                         target="_blank"
                         rel="noreferrer"
                         className="underline underline-offset-2"
                         style={{ color: 'var(--fg)' }}
-                    >
-                        happier.dev/happier-release.pub
-                    </a>
-                    . The two should be identical — if they are not, do not install.
-                </p>
+                    >{c}</a> })}</p>
 
-                <p className="mt-3">Prefer not to pipe anything into a shell? Don&rsquo;t:</p>
+                <p className="mt-3">{rich(PAGE_PROSE.verifyInstaller.p4)}</p>
                 <pre
                     className="mt-1.5 overflow-x-auto rounded-xl border px-3 py-2 font-mono text-[11.5px] leading-[1.6]"
                     style={{ borderColor: 'var(--card-border)', color: 'var(--fg)' }}
@@ -119,27 +109,19 @@ export function VerifyInstaller({ windowsShell = false }: { windowsShell?: boole
                     </code>
                 </pre>
 
-                <p className="mt-3">
-                    <a
+                <p className="mt-3">{rich(PAGE_PROSE.verifyInstaller.p5, { 1: (c: ReactNode) => <a
                         href={scriptUrl}
                         target="_blank"
                         rel="noreferrer"
                         className="underline underline-offset-2"
                         style={{ color: 'var(--fg)' }}
-                    >
-                        Read the script
-                    </a>{' '}
-                    ·{' '}
-                    <a
+                    >{c}</a>, 2: (c: ReactNode) => <a
                         href="https://docs.happier.dev/security"
                         target="_blank"
                         rel="noreferrer"
                         className="underline underline-offset-2"
                         style={{ color: 'var(--fg)' }}
-                    >
-                        Security model
-                    </a>
-                </p>
+                    >{c}</a> })}</p>
             </div>
         </details>
     );

@@ -22,6 +22,8 @@ import { useSiteData } from '../i18n/siteData';
  *      reveal), driven imperatively so scrolling never re-renders React.
  */
 export function HeroShowcase() {
+    const { pageProse: { PAGE_PROSE } } = useSiteData();
+
     const sectionRef = useRef<HTMLDivElement | null>(null);
     const [visible, setVisible] = useState(false);
 
@@ -72,7 +74,7 @@ export function HeroShowcase() {
                 <div className="relative z-[1] w-full" style={{ overflowX: 'clip' }}>
                     <Picture
                         id="showcaseDesktop"
-                        alt="Happier desktop app"
+                        alt={PAGE_PROSE.heroShowcase.p1}
                         className="block w-full"
                         imgClassName="w-full select-none"
                         draggable={false}
@@ -149,7 +151,7 @@ function DesktopScrollable({ visible }: { visible: boolean }) {
                 ref={scrollRef}
                 tabIndex={0}
                 role="region"
-                aria-label="Happier desktop app screenshot — scroll to explore"
+                aria-label={PAGE_PROSE.heroShowcase.p2}
                 className="no-scrollbar overflow-x-auto rounded-2xl"
                 style={{
                     WebkitOverflowScrolling: 'touch',
@@ -162,7 +164,7 @@ function DesktopScrollable({ visible }: { visible: boolean }) {
             >
                 <Picture
                     id="showcaseDesktop"
-                    alt="Happier desktop app — scroll horizontally to explore"
+                    alt={PAGE_PROSE.heroShowcase.p3}
                     className="block h-full w-max max-w-none"
                     imgClassName="h-full w-auto max-w-none select-none"
                     sizes="auto 180vw"
@@ -181,6 +183,8 @@ function DesktopScrollable({ visible }: { visible: boolean }) {
  * CSS transition chasing the scroll value — so it stays smooth on mobile.
  */
 function PhoneParallax({ visible }: { visible: boolean }) {
+    const { pageProse: { PAGE_PROSE } } = useSiteData();
+
     const windowRef = useRef<HTMLDivElement | null>(null);
     const imgRef = useRef<HTMLImageElement | null>(null);
     const frame = useRef(0);
@@ -243,7 +247,7 @@ function PhoneParallax({ visible }: { visible: boolean }) {
                 <Picture
                     id="showcaseMobile"
                     imgRef={imgRef}
-                    alt="Happier mobile app"
+                    alt={PAGE_PROSE.heroShowcase.p4}
                     onLoad={onScroll}
                     className="block w-full"
                     imgClassName="w-full select-none"

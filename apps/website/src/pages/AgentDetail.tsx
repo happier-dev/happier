@@ -309,10 +309,8 @@ export function AgentDetail({ agent }: { agent: AgentRecord }) {
 
     return (
         <PageShell>
-            <nav aria-label="Breadcrumb" className="mx-auto max-w-[1400px] px-6 pt-8 md:px-10">
-                <a href="/agents" className="text-[13px] underline underline-offset-2" style={{ color: 'var(--muted)' }}>
-                    ← Every agent Happier runs
-                </a>
+            <nav aria-label={PAGE_PROSE.agentDetail.p11} className="mx-auto max-w-[1400px] px-6 pt-8 md:px-10">
+                <a href="/agents" className="text-[13px] underline underline-offset-2" style={{ color: 'var(--muted)' }}>{rich(PAGE_PROSE.agentDetail.p12)}</a>
             </nav>
 
             <PageHeader
@@ -499,9 +497,7 @@ export function AgentDetail({ agent }: { agent: AgentRecord }) {
             <section className="relative" data-section="agent-faq">
                 <div className="mx-auto max-w-[1400px] px-6 py-10 md:px-10 md:py-14">
                     <div className="max-w-[760px]">
-                        <h2 className="font-display text-[26px] font-normal leading-[1.14] tracking-[-0.025em] md:text-[34px]">
-                            Questions about running {agent.name} through Happier
-                        </h2>
+                        <h2 className="font-display text-[26px] font-normal leading-[1.14] tracking-[-0.025em] md:text-[34px]">{rich(PAGE_PROSE.agentDetail.p13, undefined, { name: agent.name })}</h2>
                         <dl className="mt-6 space-y-7">
                             {agent.faq.map((item) => (
                                 <div key={item.q}>

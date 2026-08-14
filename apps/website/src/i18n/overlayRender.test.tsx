@@ -4,7 +4,16 @@ import { describe, expect, it } from 'vitest';
 import { LocaleProvider } from './index';
 import { AgentsIndex } from '../pages/AgentsIndex';
 import { UPCOMING_LABEL } from '../data/availability';
-import { siteDataFor } from './siteData';
+import { registerOverlay, siteDataFor } from './siteData';
+import zhHansOverlay from './messages/overlays/zh-Hans.json';
+
+// Registering the overlay explicitly is the whole point, not test scaffolding.
+// siteData used to discover locales with an eager `import.meta.glob`, which put
+// all nine languages — 1.4 MB — into the chunk every route shares. A client
+// entry now imports exactly its own overlay and hands it over, and this is that
+// same path: if registration stops working, these tests go red rather than the
+// site quietly shipping English.
+registerOverlay('zh-Hans', zhHansOverlay as Record<string, string>);
 
 /**
  * The end-to-end proof, and the reason it is a RENDER test rather than a unit
@@ -22,13 +31,18 @@ import { siteDataFor } from './siteData';
  * would catch a component that was missed by the import codemod.
  */
 describe('a translated string reaches rendered HTML', () => {
-    const chinese = '将在 v0.3 中推出';
-    const chinesePageProse =
-        'Happier 安装在存放代码仓库的电脑上，以当前用户身份将供应商自己的 CLI 作为普通子进程启动，并通过端到端加密把对话同步到你的其他设备。它不托管这些智能体，也不会在它们前面插入自己的模型。';
+    // READ FROM THE OVERLAY, NOT PINNED AS LITERALS. These used to be two
+    // hard-coded Chinese sentences, and they broke the moment the translation
+    // was revised — which is a test failing for a reason that is not a defect.
+    // What is being proved is that the overlay REACHES the page; the wording is
+    // the translator's business and changes without the mechanism changing.
+    const overlay = zhHansOverlay as Record<string, string>;
+    const chinese = overlay['availability.UPCOMING_LABEL'];
+    const chinesePageProse = overlay['pageProse.PAGE_PROSE.agentsIndex.p0'];
 
     it('renders the English label under the default locale', () => {
         const markup = renderToStaticMarkup(
-            <LocaleProvider locale="en">
+            <LocaleProvider locale="en" path="/agents">
                 <AgentsIndex />
             </LocaleProvider>,
         );
@@ -38,7 +52,7 @@ describe('a translated string reaches rendered HTML', () => {
 
     it('renders the overlay translation under zh-Hans', () => {
         const markup = renderToStaticMarkup(
-            <LocaleProvider locale="zh-Hans">
+            <LocaleProvider locale="zh-Hans" path="/zh/agents">
                 <AgentsIndex />
             </LocaleProvider>,
         );
@@ -51,10 +65,11 @@ describe('a translated string reaches rendered HTML', () => {
     });
 
     it('renders lifted page prose through the locale overlay instead of its static source import', () => {
+        expect(chinesePageProse, 'the overlay has no entry for this id any more').toBeTypeOf('string');
         expect(siteDataFor('zh-Hans').pageProse.PAGE_PROSE.agentsIndex.p0).toBe(chinesePageProse);
 
         const markup = renderToStaticMarkup(
-            <LocaleProvider locale="zh-Hans">
+            <LocaleProvider locale="zh-Hans" path="/zh/agents">
                 <AgentsIndex />
             </LocaleProvider>,
         );
@@ -66,7 +81,7 @@ describe('a translated string reaches rendered HTML', () => {
         // render, in English, rather than blanking — that is the whole point of
         // the per-key fallback.
         const markup = renderToStaticMarkup(
-            <LocaleProvider locale="zh-Hans">
+            <LocaleProvider locale="zh-Hans" path="/zh/agents">
                 <AgentsIndex />
             </LocaleProvider>,
         );

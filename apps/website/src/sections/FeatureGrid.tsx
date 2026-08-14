@@ -1,7 +1,10 @@
 import { RevealText } from '../components/RevealText';
 import { useSiteData } from '../i18n/siteData';
+import { rich } from '../i18n/rich';
 
 export function FeatureGrid() {
+    const { pageProse: { PAGE_PROSE } } = useSiteData();
+
     const { features: { GRID_FEATURES } } = useSiteData();
 
     return (
@@ -11,9 +14,7 @@ export function FeatureGrid() {
                     <div
                         className="mb-5 text-[11.5px] font-semibold uppercase tracking-[0.18em]"
                         style={{ color: 'var(--muted)' }}
-                    >
-                        And there&apos;s more
-                    </div>
+                    >{rich(PAGE_PROSE.featureGrid.p0)}</div>
                     <RevealText
                         as="h2"
                         text={'Everything else\nyou didn\u2019t know you needed.'}

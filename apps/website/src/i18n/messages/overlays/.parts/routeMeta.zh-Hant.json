@@ -1,0 +1,149 @@
+{
+  "/": {
+    "title": "Happier：Claude Code、Codex 用戶端",
+    "description": "在手機、瀏覽器或桌面上執行 Claude Code、Codex 等 13 個代理程式。開源、端對端加密、可自行架設，用你自己的訂閱。",
+    "ogTitle": "Happier — 一個用戶端，管每一個 AI 程式設計代理程式。",
+    "ogDescription": "Claude Code、Codex、OpenCode、Cursor，另外還有 9 個 — 收在同一個端對端加密的應用程式裡，在每一台裝置上，用你自己的訂閱。開源，可自行架設。",
+    "ogImageAlt": "Happier 字標，下方寫著：一個用戶端，管每一個 AI 程式設計代理程式。Claude Code、Codex、OpenCode、Cursor、Gemini、Copilot，另外還有 7 個。"
+  },
+  "/agents": {
+    "title": "Happier 執行的 13 個 AI 程式設計代理程式",
+    "description": "一個開源應用程式，管 13 個命令列代理程式：Claude Code、Codex、OpenCode、Pi 等，都在你自己的電腦上、用你自己的帳號。",
+    "ogTitle": "Happier 執行的每一個 AI 程式設計代理程式",
+    "ogDescription": "十三個命令列程式設計代理程式，一個應用程式，在你的手機、瀏覽器和桌面上。每一個都在你自己的電腦上執行，用你自己的訂閱或 API 金鑰。",
+    "ogImageAlt": "Happier 字標，下方寫著：一個用戶端，管每一個 AI 程式設計代理程式。"
+  },
+  "/agents/claude-code": {
+    "title": "Claude Code 的開源應用程式 — Happier",
+    "description": "在你自己的電腦上執行 Claude Code，並從手機、瀏覽器或桌面驅動它。開源、端對端加密、可自行架設、採用 MIT 授權。",
+    "ogTitle": "Claude Code 的開源應用程式",
+    "ogDescription": "Claude Code 持續在你自己的電腦上執行，登入的是你自己的 Anthropic 帳號。Happier 為它加上手機、瀏覽器分頁和桌面視窗。",
+    "ogImageAlt": "Happier 字標，下方寫著：一個用戶端，管每一個 AI 程式設計代理程式。"
+  },
+  "/agents/codex": {
+    "title": "Codex CLI 上手機 — 開源的 Happier",
+    "description": "openai/codex CLI 用你自己的 ChatGPT 訂閱或 API 金鑰在你的電腦上執行。從任何裝置閱讀、核准並引導它。免費、開源。",
+    "ogTitle": "用開源應用程式，把 Codex 帶上手機",
+    "ogDescription": "openai/codex CLI 在你自己的硬體上執行，用的是你自己的 ChatGPT 訂閱或 API 金鑰。Happier 是你人在任何地方都能望進去的那扇窗。",
+    "ogImageAlt": "Happier 字標，下方寫著：一個用戶端，管每一個 AI 程式設計代理程式。"
+  },
+  "/agents/opencode": {
+    "title": "OpenCode 的開源應用程式 — 手機與桌面",
+    "description": "OpenCode 在你掌控的硬體上執行，用你自己的 opencode auth 憑證。Happier 透過可自行架設的中繼站加上各裝置用戶端。",
+    "ogTitle": "OpenCode 的開源應用程式",
+    "ogDescription": "OpenCode 是開源的。Happier 也是開源的，採用 MIT 授權，而且可以自行架設。兩者都不需要你無法掌控的伺服器。",
+    "ogImageAlt": "Happier 字標，下方寫著：一個用戶端，管每一個 AI 程式設計代理程式。"
+  },
+  "/agents/cursor": {
+    "title": "Cursor Agent CLI 上手機 — Happier",
+    "description": "無頭的 cursor-agent 執行檔跑在你自己的電腦或伺服器上，對話、差異和核准則在你的手機上。開源，採用 MIT 授權。",
+    "ogTitle": "從手機執行 Cursor Agent CLI",
+    "ogDescription": "Cursor 提供不需要編輯器視窗的無頭代理程式。Happier 在你的電腦上執行它，並把對話放到你的手機上。",
+    "ogImageAlt": "Happier 字標，下方寫著：一個用戶端，管每一個 AI 程式設計代理程式。"
+  },
+  "/agents/gemini": {
+    "title": "Gemini CLI 在每台裝置上 — Happier",
+    "description": "Google 的開源終端機代理程式在你自己的環境裡執行，包含你自己的 Cloud 專案。Happier 把工作階段加密後帶到你的手機。",
+    "ogTitle": "在你使用的每台裝置上使用 Gemini CLI",
+    "ogDescription": "Google 的開源終端機代理程式；如果你的組織是那樣運作的，它就跑在你自己的 Google Cloud 專案上，並且可以從手機閱讀。",
+    "ogImageAlt": "Happier 字標，下方寫著：一個用戶端，管每一個 AI 程式設計代理程式。"
+  },
+  "/agents/github-copilot": {
+    "title": "GitHub Copilot CLI，從手機驅動",
+    "description": "GitHub Copilot 命令列代理程式跑在你的電腦或建置機上，可從任何地方驅動。獨立的開源用戶端，不是 GitHub 的產品。",
+    "ogTitle": "從手機驅動 GitHub Copilot CLI",
+    "ogDescription": "Copilot 命令列代理程式，跑在你自己的電腦或你自己的建置機上，工作階段則在你口袋裡。",
+    "ogImageAlt": "Happier 字標，下方寫著：一個用戶端，管每一個 AI 程式設計代理程式。"
+  },
+  "/agents/qwen": {
+    "title": "Qwen Code 的開源應用程式 — Happier",
+    "description": "Qwen Code 用你自己的帳號在你自己的電腦上執行。Happier 透過你可以自行架設的加密中繼站，把工作階段放上手機與桌面。",
+    "ogTitle": "Qwen Code 的開源應用程式",
+    "ogDescription": "Qwen Code 在你自己的電腦上，工作階段在你的手機上。兩半都是開源的，而且都不需要在我們這裡開帳號才有用。",
+    "ogImageAlt": "Happier 字標，下方寫著：一個用戶端，管每一個 AI 程式設計代理程式。"
+  },
+  "/agents/kimi": {
+    "title": "Kimi CLI 上手機、瀏覽器與桌面",
+    "description": "Kimi CLI 是 Moonshot 的終端機程式設計代理程式，留在你的電腦上，你從任何地方讀取並引導它。免費、MIT 授權、端對端加密。",
+    "ogTitle": "從手機、瀏覽器或桌面使用 Kimi CLI",
+    "ogDescription": "Moonshot 的終端機代理程式留在你的電腦上。對話則跟著你走，途中加密。",
+    "ogImageAlt": "Happier 字標，下方寫著：一個用戶端，管每一個 AI 程式設計代理程式。"
+  },
+  "/agents/kilo": {
+    "title": "Kilo CLI 上手機、筆電與瀏覽器",
+    "description": "Kilo CLI 和另外 12 個命令列代理程式共用一個開源應用程式，跑在你自己的電腦上、用你自己的帳號。沒有席次，沒有功能鎖。",
+    "ogTitle": "在手機、筆電和瀏覽器上使用 Kilo CLI",
+    "ogDescription": "一個開源應用程式，管 Kilo 和你可能裝了的另外 12 個命令列程式設計代理程式。",
+    "ogImageAlt": "Happier 字標，下方寫著：一個用戶端，管每一個 AI 程式設計代理程式。"
+  },
+  "/agents/kiro": {
+    "title": "Kiro CLI，從任何地方執行 — Happier",
+    "description": "Kiro CLI 跑在你自己的電腦或 EC2 機器上，以你自己的 AWS 身分執行，工作階段可從手機閱讀。開源，中繼站可自行架設。",
+    "ogTitle": "不管你在哪裡，都能執行 Kiro CLI",
+    "ogDescription": "AWS 的代理式 CLI，在你自己的電腦上以你自己的 AWS 身分執行，前面擺著應用程式。",
+    "ogImageAlt": "Happier 字標，下方寫著：一個用戶端，管每一個 AI 程式設計代理程式。"
+  },
+  "/agents/auggie": {
+    "title": "Auggie 上手機與桌面 — Happier",
+    "description": "Auggie 是 Augment Code 的 CLI，以你自己的使用權在你自己的電腦上執行。Happier 把它的對話紀錄和核准收在同處。",
+    "ogTitle": "Auggie，在你的手機和桌面上",
+    "ogDescription": "Augment Code 的 CLI，在你自己的電腦上以你自己的 Augment 使用權執行，對話則出現在你擁有的每台裝置上。",
+    "ogImageAlt": "Happier 字標，下方寫著：一個用戶端，管每一個 AI 程式設計代理程式。"
+  },
+  "/agents/pi": {
+    "title": "Pi Coding Agent 的開源應用程式",
+    "description": "Pi 帶來你自己的 API 金鑰；Happier 帶來手機、瀏覽器和桌面用戶端。兩者都不會把金鑰放在伺服器上。MIT 授權，可自行架設。",
+    "ogTitle": "Pi Coding Agent 的開源應用程式",
+    "ogDescription": "Pi 自備金鑰，卻不自備模型。Happier 帶來手機、瀏覽器和桌面應用程式，中間沒有伺服器。",
+    "ogImageAlt": "Happier 字標，下方寫著：一個用戶端，管每一個 AI 程式設計代理程式。"
+  },
+  "/agents/grok": {
+    "title": "Grok Build CLI 上手機 — Happier",
+    "description": "Grok Build CLI 跑在你自己的電腦上，用你自己的 xAI 帳號，可從任何裝置驅動。這個整合是實驗性的，本頁會點名它還缺什麼。",
+    "ogTitle": "從手機或座位上使用 Grok Build CLI",
+    "ogDescription": "xAI 的程式設計 CLI，用你自己的 xAI 帳號在你自己的電腦上執行。Happier 的整合是實驗性的，本頁在你安裝任何東西之前就先說明這點。",
+    "ogImageAlt": "Happier 字標，下方寫著：一個用戶端，管每一個 AI 程式設計代理程式。"
+  },
+  "/vs/claude-code-remote-control": {
+    "title": "Claude Code Remote 與 Happier",
+    "description": "Remote Control 免費且好用，但對 API 金鑰、閘道、Bedrock、Foundry 和 ZDR 組織無法使用。兩者各涵蓋什麼，並排比較。",
+    "ogTitle": "Claude Code Remote Control 與 Happier",
+    "ogDescription": "Anthropic 自家的遠端工具做得好的地方、它會自行關掉的五種情況，以及一個涵蓋十三個代理程式的用戶端改為做什麼。",
+    "ogImageAlt": "Happier 字標，下方寫著：一個用戶端，管每一個 AI 程式設計代理程式。"
+  },
+  "/vs/codex-remote": {
+    "title": "Codex Remote 與 Happier 比較",
+    "description": "OpenAI 把 ChatGPT 應用程式配對到跑 Codex 的 Mac 或 Windows 電腦。Remote 的五個條件，Happier 做什麼。",
+    "ogTitle": "Codex Remote 與 Happier，並排比較",
+    "ogDescription": "OpenAI 自家的遠端工具做得好的地方、它執行時所依據的五個條件，以及一個涵蓋每一個程式設計代理程式的用戶端改為做什麼。",
+    "ogImageAlt": "Happier 字標，下方寫著：一個用戶端，管每一個 AI 程式設計代理程式。"
+  },
+  "/features/usage-limits": {
+    "title": "Claude Code、Codex 用量上限不中斷工作",
+    "description": "撞到 Claude Code 或 Codex 的用量上限，工作階段會等過重設再繼續 — 你要的話可以自動。或把帳號組成池備援。",
+    "ogTitle": "用量上限不該終結你的工作階段。",
+    "ogDescription": "工作階段會停在用量上限處守住位置，等過重設，再把工作接回去 — 在一個帳號上，或跨你組成池的那些帳號。",
+    "ogImageAlt": "Happier 字標，下方寫著：一個用戶端，管每一個 AI 程式設計代理程式。"
+  },
+  "/features/terminal": {
+    "title": "Claude Code、Codex 在終端機，也在應用程式",
+    "description": "在自己的 TUI 裡跑 Claude Code、Codex 或 OpenCode，同一個工作階段也在手機上。用 tmux attach，或交回應用程式。",
+    "ogTitle": "保留你的 Claude Code、Codex 和 OpenCode 終端機，或從應用程式工作",
+    "ogDescription": "一個工作階段，兩個前端：你 shell 裡供應商自己的 TUI，和你手機上的 Happier。切換的兩側是同一個 session id、同一份對話紀錄、同一個佇列。",
+    "ogImageAlt": "Happier 字標，下方寫著：一個用戶端，管每一個 AI 程式設計代理程式。"
+  },
+  "/security": {
+    "title": "Happier 的端對端加密：中繼站看得到什麼",
+    "description": "Happier 的工作階段內容在寫下它的裝置上就封起來。金鑰在哪裡產生、中繼站沒有金鑰仍讀得到哪些欄位，以及明文儲存政策下有何不同。",
+    "ogTitle": "端對端加密，金鑰在你自己的裝置上",
+    "ogDescription": "你的工作階段在做出它的裝置上以每個工作階段各自的金鑰加密，中繼站拿到的是一份它沒有東西可以打開的密封副本。它仍然看得到什麼，這裡直接點名，不含糊帶過。",
+    "ogImageAlt": "Happier 字標，下方寫著：一個用戶端，管每一個 AI 程式設計代理程式。"
+  },
+  "/enterprise": {
+    "title": "Happier 中繼站自行架設：SSO、mTLS、資料",
+    "description": "自己執行 Happier 中繼站：GitHub 組織與 OIDC 群組把關、轉發 mTLS、離職重檢、儲存政策、保留、Docker 加 Postgres。",
+    "ogTitle": "把 Happier 中繼站架在你自己的 SSO 後面",
+    "ogDescription": "一個你自己託管的中繼站，鎖在你的 GitHub 組織或 OIDC 群組上，有用戶端憑證、離職重新檢查，以及一份由你選擇的儲存政策。全部採 MIT 授權。",
+    "ogImageAlt": "Happier 字標，下方寫著：一個用戶端，管每一個 AI 程式設計代理程式。"
+  }
+}

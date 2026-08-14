@@ -2,6 +2,8 @@ import { useState } from 'react';
 import { trackDemoPlayed } from '../analytics/events';
 import { RevealText } from '../components/RevealText';
 import { Picture } from '../components/Picture';
+import { rich } from '../i18n/rich';
+import { useSiteData } from '../i18n/siteData';
 
 const TABS = [
     {
@@ -29,6 +31,8 @@ const TABS = [
 type TabId = (typeof TABS)[number]['id'];
 
 export function TabbedExplorer() {
+    const { pageProse: { PAGE_PROSE } } = useSiteData();
+
     const [activeTab, setActiveTab] = useState<TabId>(TABS[0].id);
     const active = TABS.find((t) => t.id === activeTab) ?? TABS[0];
 
@@ -39,9 +43,7 @@ export function TabbedExplorer() {
                     <div
                         className="mb-5 text-[11.5px] font-semibold uppercase tracking-[0.18em]"
                         style={{ color: 'var(--muted)' }}
-                    >
-                        See it in action
-                    </div>
+                    >{rich(PAGE_PROSE.tabbedExplorer.p0)}</div>
                     <RevealText
                         as="h2"
                         text={'Every tool.\nOne interface.'}

@@ -3,6 +3,7 @@ import { DISCORD_INVITE_URL } from '../data/community';
 import { CHANGELOG_URL, DOCS_URL, GUIDES_URL, GITHUB_REPO_URL, LICENSE_URL, WEB_APP_URL } from '../data/downloads';
 import { rich } from '../i18n/rich';
 import { useSiteData } from '../i18n/siteData';
+import { LocaleSwitcher } from '../components/LocaleSwitcher';
 
 /**
  * Read once at module scope, not per render.
@@ -155,8 +156,18 @@ export function Footer({ isHome = true }: { isHome?: boolean } = {}) {
                     className="mt-14 flex flex-col items-start justify-between gap-4 border-t pt-8 text-[13px] sm:flex-row sm:items-center"
                     style={{ borderColor: 'var(--card-border)', color: 'var(--muted)' }}
                 >
-                    <span>© {BUILD_YEAR} Happier. Open source. Made with care.</span>
-                    <span className="font-mono text-[12px]">happier.dev</span>
+                    <span>{rich(PAGE_PROSE.footer.p1, undefined, { BUILD_YEAR })}</span>
+                    {/*
+                        The switcher lives in the bottom bar rather than as a
+                        fifth column: it is one control with ten settings, not
+                        ten more destinations competing with Product / Open
+                        source / Resources. Its panel opens UPWARD for the same
+                        reason — there is nothing below it but the page edge.
+                    */}
+                    <div className="flex items-center gap-5">
+                        <LocaleSwitcher />
+                        <span className="font-mono text-[12px]">happier.dev</span>
+                    </div>
                 </div>
             </div>
         </footer>

@@ -34,8 +34,8 @@ export function AgentsIndex() {
     return (
         <PageShell>
             <PageHeader
-                eyebrow="Every agent, one app"
-                title="Every AI coding agent Happier runs"
+                eyebrow={PAGE_PROSE.agentsIndex.p7}
+                title={PAGE_PROSE.agentsIndex.p8}
                 standfirst={
                     <>
                         {AGENTS.length} command-line coding agents, on your own computers, with your
@@ -82,7 +82,7 @@ export function AgentsIndex() {
                 </div>
             </section>
 
-            <Prose heading="What is not on this list, and why" data-section="agents-unlisted">
+            <Prose heading={PAGE_PROSE.agentsIndex.p9} data-section="agents-unlisted">
                 {/*
                  * The dropped clause explained the mechanism to the reader: "A build-time test
                  * fails if a shipped id appears in neither place — which is how this page finds out
@@ -109,7 +109,7 @@ export function AgentsIndex() {
                 </dl>
             </Prose>
 
-            <Prose heading="Coming in the next version" data-section="agents-upcoming">
+            <Prose heading={PAGE_PROSE.agentsIndex.p10} data-section="agents-upcoming">
                 <P>{rich(PAGE_PROSE.agentsIndex.p4, undefined, { length: AGENTS.length })}</P>
                 <dl className="space-y-5">
                     {UPCOMING_AGENTS.map((agent) => (
@@ -138,17 +138,14 @@ export function AgentsIndex() {
                         </div>
                     ))}
                 </dl>
-                <P>
-                    When one of them ships in {UPCOMING_RELEASE} it moves up into the grid and gets a
-                    page of its own.
-                </P>
+                <P>{rich(PAGE_PROSE.agentsIndex.p11, undefined, { UPCOMING_RELEASE })}</P>
             </Prose>
 
-            <Prose heading="Or bring your own" data-section="agents-custom">
+            <Prose heading={PAGE_PROSE.agentsIndex.p12} data-section="agents-custom">
                 <P>{rich(PAGE_PROSE.agentsIndex.p5)}</P>
             </Prose>
 
-            <Prose heading="Running any of them" data-section="agents-cta">
+            <Prose heading={PAGE_PROSE.agentsIndex.p13} data-section="agents-cta">
                 <P>{rich(PAGE_PROSE.agentsIndex.p6, { 1: (c: ReactNode) => <code className="font-mono">{c}</code>, 2: (c: ReactNode) => <code className="font-mono">{c}</code>, 3: (c: ReactNode) => <code className="font-mono">{c}</code> })}</P>
                 <div data-cta-location="call-to-action">
                     <InstallCommand />

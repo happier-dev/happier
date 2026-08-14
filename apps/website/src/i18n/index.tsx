@@ -13,11 +13,23 @@ export { buildHeadTags, htmlLangFor } from './head';
 type LocaleContextValue = {
     locale: Locale;
     t: Messages;
+    /**
+     * The pathname being rendered, INCLUDING the locale prefix (`/es/security`).
+     *
+     * The locale switcher needs it to build the other languages' URLs, and it
+     * cannot get it any other way: the obvious source is `findRoute()`, but
+     * src/routes.tsx statically imports every page component, so a footer that
+     * called it would pull the whole site into the chunk every page shares and
+     * undo the bundle split. Both callers already know the path for free — the
+     * prerenderer is rendering it, the browser is standing on it.
+     */
+    path: string;
 };
 
 const LocaleContext = createContext<LocaleContextValue>({
     locale: DEFAULT_LOCALE,
     t: en,
+    path: '/',
 });
 
 /**
@@ -33,10 +45,24 @@ const LocaleContext = createContext<LocaleContextValue>({
  * emitting, the client entry is generated per locale — removes the branch
  * rather than trying to keep two of them in agreement.
  */
-export function LocaleProvider({ locale, children }: { locale: Locale; children: ReactNode }) {
+export function LocaleProvider({
+    locale,
+    path,
+    children,
+}: {
+    locale: Locale;
+    /**
+     * Origin-relative pathname with its locale prefix. The prerenderer passes
+     * the path it is emitting; the client entry passes
+     * `window.location.pathname`, which is the same string because the page was
+     * served as its own file. Same input on both sides, so hydration matches.
+     */
+    path: string;
+    children: ReactNode;
+}) {
     const value = useMemo<LocaleContextValue>(
-        () => ({ locale, t: messagesFor(locale) }),
-        [locale],
+        () => ({ locale, t: messagesFor(locale), path }),
+        [locale, path],
     );
 
     return <LocaleContext.Provider value={value}>{children}</LocaleContext.Provider>;
@@ -63,6 +89,11 @@ export function pathForLocale(target: Locale, currentPathname: string, currentHa
         ? currentPathname.slice(currentPrefix.length) || '/'
         : currentPathname;
     const targetPrefix = LOCALE_META[target].pathPrefix;
-    const path = targetPrefix ? `${targetPrefix}${bare === '/' ? '/' : bare}` : bare;
+    // `/zh`, NOT `/zh/` — the same rule localeUrl() follows, and it has to be
+    // the same or the switcher links every reader at a URL that is not the
+    // page's own canonical. Cloudflare Pages serves both from zh/index.html so
+    // nothing 404s, which is exactly why this kind of mismatch survives: it is
+    // invisible until something counts internal links.
+    const path = targetPrefix ? (bare === '/' ? targetPrefix : `${targetPrefix}${bare}`) : bare;
     return `${path}${currentHash}`;
 }

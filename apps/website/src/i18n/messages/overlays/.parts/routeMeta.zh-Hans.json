@@ -1,0 +1,149 @@
+{
+  "/": {
+    "title": "Happier：Claude Code、Codex 开源应用",
+    "description": "从手机、浏览器或桌面运行 Claude Code、Codex 等 13 个智能体。开源、端到端加密、可自托管，用你自己的订阅。",
+    "ogTitle": "Happier —— 一个客户端，面向每一个 AI 编码智能体。",
+    "ogDescription": "Claude Code、Codex、OpenCode、Cursor 以及另外 9 个 —— 收在一个端到端加密的应用里，在每台设备上，用你自己的订阅。开源，可自托管。",
+    "ogImageAlt": "Happier 字标，下方写着：一个客户端，面向每一个 AI 编码智能体。Claude Code、Codex、OpenCode、Cursor、Gemini、Copilot 以及另外 7 个。"
+  },
+  "/agents": {
+    "title": "Happier 运行的 13 个 AI 编码智能体",
+    "description": "一个开源应用，运行 13 个命令行编码智能体：Claude Code、Codex、OpenCode、Pi 等，在你自己的电脑上，用你自己的账户。",
+    "ogTitle": "Happier 运行的每一个 AI 编码智能体",
+    "ogDescription": "13 个命令行编码智能体，一个应用，覆盖手机、浏览器和桌面。每一个都跑在你自己的电脑上，用你自己的订阅或 API 密钥。",
+    "ogImageAlt": "Happier 字标，下方写着：一个客户端，面向每一个 AI 编码智能体。"
+  },
+  "/agents/claude-code": {
+    "title": "面向 Claude Code 的开源应用 — Happier",
+    "description": "在你自己的电脑上运行 Claude Code，并从手机、浏览器或桌面驱动它。开源、端到端加密、可自托管，采用 MIT 许可。",
+    "ogTitle": "面向 Claude Code 的开源应用",
+    "ogDescription": "Claude Code 仍然运行在你自己的电脑上，用你自己的 Anthropic 账户登录。Happier 为它加上手机、浏览器标签页和桌面窗口。",
+    "ogImageAlt": "Happier 字标，下方写着：一个客户端，面向每一个 AI 编码智能体。"
+  },
+  "/agents/codex": {
+    "title": "手机上的 Codex CLI — 开源的 Happier",
+    "description": "openai/codex CLI 在你的电脑上运行，使用你自己的 ChatGPT 订阅或 API 密钥。从任何设备读取、批准和引导它。免费，开源。",
+    "ogTitle": "手机上的 Codex，来自开源应用",
+    "ogDescription": "openai/codex CLI 运行在你自己的硬件上，使用你自己的 ChatGPT 订阅或 API 密钥。Happier 是你在任何地方看向它的那扇窗。",
+    "ogImageAlt": "Happier 字标，下方写着：一个客户端，面向每一个 AI 编码智能体。"
+  },
+  "/agents/opencode": {
+    "title": "面向 OpenCode 的开源应用 — 手机与桌面",
+    "description": "OpenCode 运行在你掌控的硬件上，使用你自己的 opencode auth 凭据。Happier 在可自托管的中继上加手机、浏览器和桌面客户端。",
+    "ogTitle": "面向 OpenCode 的开源应用",
+    "ogDescription": "OpenCode 是开源的。Happier 也是开源的，采用 MIT 许可，可以自托管。两者都不需要不由你掌控的服务器。",
+    "ogImageAlt": "Happier 字标，下方写着：一个客户端，面向每一个 AI 编码智能体。"
+  },
+  "/agents/cursor": {
+    "title": "Cursor Agent CLI 开源客户端，从手机驱动",
+    "description": "无头的 cursor-agent 可执行文件运行在你自己的电脑或服务器上，对话、diff 和审批都在你的手机上。开源，MIT 许可。",
+    "ogTitle": "从你的手机运行 Cursor Agent CLI",
+    "ogDescription": "Cursor 提供了不需要编辑器窗口的无头智能体。Happier 在你的电脑上运行它，并把对话放到你的手机上。",
+    "ogImageAlt": "Happier 字标，下方写着：一个客户端，面向每一个 AI 编码智能体。"
+  },
+  "/agents/gemini": {
+    "title": "Gemini CLI 在每台设备上 — Happier",
+    "description": "Google 的开源终端智能体在你自己的环境里运行，也包括你自己的 Cloud 项目。Happier 把会话加密地送到你的手机上。",
+    "ogTitle": "在你使用的每台设备上运行 Gemini CLI",
+    "ogDescription": "Google 的开源终端智能体，如果你的组织就是这样运作的，它会对着你自己的 Google Cloud 项目运行，并且可以从手机上读取。",
+    "ogImageAlt": "Happier 字标，下方写着：一个客户端，面向每一个 AI 编码智能体。"
+  },
+  "/agents/github-copilot": {
+    "title": "GitHub Copilot CLI，从手机驱动",
+    "description": "在你的电脑或构建机上运行 Copilot 命令行智能体，并从任何地方驱动它。独立的开源客户端，不是 GitHub 的产品。",
+    "ogTitle": "GitHub Copilot CLI，从你的手机驱动",
+    "ogDescription": "Copilot 命令行智能体，运行在你自己的电脑或你自己的构建机上，会话装在你的口袋里。",
+    "ogImageAlt": "Happier 字标，下方写着：一个客户端，面向每一个 AI 编码智能体。"
+  },
+  "/agents/qwen": {
+    "title": "面向 Qwen Code 的开源应用 — Happier",
+    "description": "Qwen Code 用你自己的账户在你自己的电脑上运行。Happier 通过你可以自己运行的加密中继，把会话放到手机、浏览器和桌面上。",
+    "ogTitle": "面向 Qwen Code 的开源应用",
+    "ogDescription": "Qwen Code 在你自己的电脑上，会话在你的手机上。两半都是开源的，而且都不需要在我们这里开账户才有用。",
+    "ogImageAlt": "Happier 字标，下方写着：一个客户端，面向每一个 AI 编码智能体。"
+  },
+  "/agents/kimi": {
+    "title": "Kimi CLI，从手机、浏览器或桌面驱动",
+    "description": "Moonshot 的终端编码智能体留在你自己的电脑上，你可以从任何地方读取和引导它。免费、MIT 许可、端到端加密、可自托管。",
+    "ogTitle": "从手机、浏览器或桌面使用 Kimi CLI",
+    "ogDescription": "Moonshot 的终端智能体留在你的电脑上。对话跟着你走，路上是加密的。",
+    "ogImageAlt": "Happier 字标，下方写着：一个客户端，面向每一个 AI 编码智能体。"
+  },
+  "/agents/kilo": {
+    "title": "Kilo CLI，在手机、笔记本和浏览器上",
+    "description": "一个开源应用，用于 Kilo CLI 和另外 12 个命令行编码智能体，在你自己的电脑上用你自己的账户。没有席位，没有功能门槛。",
+    "ogTitle": "在手机、笔记本和浏览器上使用 Kilo CLI",
+    "ogDescription": "一个开源应用，用于 Kilo 以及你可能装了的另外 12 个命令行编码智能体。",
+    "ogImageAlt": "Happier 字标，下方写着：一个客户端，面向每一个 AI 编码智能体。"
+  },
+  "/agents/kiro": {
+    "title": "Kiro CLI，在任何地方运行 — Happier",
+    "description": "AWS 的智能体式 CLI 运行在你自己的电脑或 EC2 机器上，用你自己的 AWS 身份，会话可从手机读取。开源，中继可自托管。",
+    "ogTitle": "在你所在的任何地方运行 Kiro CLI",
+    "ogDescription": "AWS 的智能体式 CLI，以你自己的 AWS 身份在你自己的电脑上运行，前面加了应用。",
+    "ogImageAlt": "Happier 字标，下方写着：一个客户端，面向每一个 AI 编码智能体。"
+  },
+  "/agents/auggie": {
+    "title": "Auggie，在手机和桌面上 — Happier",
+    "description": "Augment Code 的 CLI 以你自己的权益在你自己的电脑上运行。Happier 把它的对话记录和审批与你的其他智能体收在同处。",
+    "ogTitle": "Auggie，在你的手机和桌面上",
+    "ogDescription": "Augment Code 的 CLI，以你自己的 Augment 权益在你自己的电脑上运行，对话出现在你拥有的每台设备上。",
+    "ogImageAlt": "Happier 字标，下方写着：一个客户端，面向每一个 AI 编码智能体。"
+  },
+  "/agents/pi": {
+    "title": "面向 Pi Coding Agent 的开源应用",
+    "description": "Pi 用的是你自己的 API 密钥；Happier 带来手机、浏览器和桌面客户端。两者都不会把你的密钥放在服务器上。MIT 许可，可自托管。",
+    "ogTitle": "面向 Pi Coding Agent 的开源应用",
+    "ogDescription": "Pi 走的是自带密钥的路子，本身不提供模型。Happier 带来手机、浏览器和桌面应用，中间不放服务器。",
+    "ogImageAlt": "Happier 字标，下方写着：一个客户端，面向每一个 AI 编码智能体。"
+  },
+  "/agents/grok": {
+    "title": "Grok Build CLI，从手机驱动 — Happier",
+    "description": "xAI 的编码 CLI 运行在你自己的电脑上，可以从任何设备驱动它。Happier 的这项集成是实验性的，本页写明了它还不支持的内容。",
+    "ogTitle": "从手机或工位使用 Grok Build CLI",
+    "ogDescription": "xAI 的编码 CLI，用你自己的 xAI 账户在你自己的电脑上运行。Happier 的这项集成是实验性的，本页在你安装任何东西之前就把这点说清楚。",
+    "ogImageAlt": "Happier 字标，下方写着：一个客户端，面向每一个 AI 编码智能体。"
+  },
+  "/vs/claude-code-remote-control": {
+    "title": "Claude Code 远程控制与 Happier 对比",
+    "description": "Remote Control 免费且好用，但对 API 密钥、网关、Bedrock、Foundry 和 ZDR 组织不可用。两者各覆盖什么，并排对照。",
+    "ogTitle": "Claude Code Remote Control 与 Happier",
+    "ogDescription": "Anthropic 自家远程控制做得好的地方、它会自行关闭的五种情形，以及一个管住 13 个智能体的客户端换来什么。",
+    "ogImageAlt": "Happier 字标，下方写着：一个客户端，面向每一个 AI 编码智能体。"
+  },
+  "/vs/codex-remote": {
+    "title": "Codex Remote 与 Happier 对比",
+    "description": "OpenAI 把 ChatGPT 配对到运行 Codex 的 Mac 或 Windows 电脑。Remote 的五个条件，以及 Happier 的做法。",
+    "ogTitle": "Codex Remote 与 Happier，并排对照",
+    "ogDescription": "OpenAI 自家远程控制做得好的地方、它运行所依赖的五个条件，以及一个面向每一个编码智能体的客户端换来什么。",
+    "ogImageAlt": "Happier 字标，下方写着：一个客户端，面向每一个 AI 编码智能体。"
+  },
+  "/features/usage-limits": {
+    "title": "Claude Code 与 Codex 用量上限，不丢工作",
+    "description": "撞上 Claude Code 或 Codex 的用量上限，会话会等过重置再接着跑，你愿意的话可自动进行。也可以把账号组池并回退。",
+    "ogTitle": "用量上限不该结束你的会话。",
+    "ogDescription": "会话在用量上限处保住自己的位置，等过重置，再把活儿接下去 —— 在一个账号上，或者在你组池的那些账号之间。",
+    "ogImageAlt": "Happier 字标，下方写着：一个客户端，面向每一个 AI 编码智能体。"
+  },
+  "/features/terminal": {
+    "title": "Claude Code、Codex 在终端，也在应用里",
+    "description": "在 Claude Code、Codex 或 OpenCode 自己的 TUI 里运行，同一个会话从手机跟进。用 tmux 接入，或把控制权交回应用。",
+    "ogTitle": "保留你的 Claude Code、Codex 和 OpenCode 终端，或者从应用里工作",
+    "ogDescription": "一个会话，两个前端：你 shell 里服务方自己的 TUI，和你手机上的 Happier。切换前后是同一个会话 id、同一份会话记录、同一个队列。",
+    "ogImageAlt": "Happier 字标，下方写着：一个客户端，面向每一个 AI 编码智能体。"
+  },
+  "/security": {
+    "title": "Happier 端到端加密：relay 能看到什么",
+    "description": "会话内容在写下它的那台设备上就已封装。密钥在哪里、relay 在没有密钥时仍能读到哪些列，以及切换到明文存储策略后会变成什么样。",
+    "ogTitle": "端到端加密，密钥在你自己的设备上",
+    "ogDescription": "你的会话在制造它的设备上用一把每会话密钥加密，relay 拿到的是一份它无从打开的封装副本。它还能看到什么，这里逐项点名，不含糊。",
+    "ogImageAlt": "Happier 字标，下方写着：一个客户端，面向每一个 AI 编码智能体。"
+  },
+  "/enterprise": {
+    "title": "面向团队的自托管 Happier：SSO、mTLS",
+    "description": "自托管 Happier relay：GitHub 组织与 OIDC 群组门禁、mTLS、离职重新校验、存储策略、留存期、Docker/Postgres。",
+    "ogTitle": "自托管 Happier 的 relay，放在你自己的 SSO 之后",
+    "ogDescription": "一个由你托管的 relay，锁定到你的 GitHub 组织或 OIDC 群组，带客户端证书、离职重新校验，以及由你选择的存储策略。全部 MIT 许可。",
+    "ogImageAlt": "Happier 字标，下方写着：一个客户端，面向每一个 AI 编码智能体。"
+  }
+}

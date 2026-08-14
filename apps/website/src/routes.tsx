@@ -1,7 +1,8 @@
 import type { ReactElement } from 'react';
 
-import { DEFAULT_LOCALE, LOCALE_META, localeFromPathname, localeUrl, type Locale } from './i18n/locales';
+import { DEFAULT_LOCALE, LOCALES, LOCALE_META, localeFromPathname, localeUrl, type Locale } from './i18n/locales';
 import { AGENTS, AGENT_META } from './data/agents';
+import { ROUTE_META_I18N } from './data/routeMetaI18n';
 import { CODEX_COMPARISON_ROWS } from './data/codexRemote';
 import { COMPARISON_ROWS } from './data/comparison';
 import { ENTERPRISE_ACCESS, ENTERPRISE_DATA } from './data/enterprise';
@@ -47,19 +48,20 @@ export type Route = {
     /** Origin-relative path. Always starts with `/`; only `/` ends with one. */
     path: string;
     /**
-     * The languages THIS PAGE exists in. Omitted means `['en']`.
+     * The languages THIS PAGE exists in. Omitted means all of them — see the
+     * default applied where ROUTES is assembled, and the note there for why it
+     * changed from `['en']`.
      *
-     * This is the gate for the whole locale lane, and it is deliberately
-     * per-route rather than per-site. A page enters a language when someone adds
-     * the code here, and until then it emits one file, one self-referencing
-     * hreflang and one sitemap row — exactly as it does today. Nothing can
-     * advertise a translation that does not exist, and a half-finished language
-     * is a normal state rather than a broken build.
+     * Set it to NARROW a page: a route that should exist in fewer languages
+     * than the rest names them here and the default stops applying. The hreflang
+     * cluster, the sitemap rows and the files the prerenderer writes are all
+     * derived from this one array, so a page can never advertise a translation
+     * that was not built.
      *
      * The per-key English fallback in i18n/messages/registry.ts is the safety
-     * net for the last few untranslated strings INSIDE a page listed here. It is
-     * not a licence to list a page before it is ready: a mostly-English page
-     * under /zh/ is a worse signal than no /zh/ page at all.
+     * net for individual untranslated strings INSIDE a page listed here. It is
+     * not a licence to list a page whose copy does not exist yet: a mostly
+     * English page under /zh/ is a worse signal than no /zh/ page at all.
      */
     locales?: readonly Locale[];
     /**
@@ -506,6 +508,22 @@ const SECURITY: Route = {
     render: () => <SecurityPage />,
 };
 
+/**
+ * Every page below ships in every language the site has.
+ *
+ * Applied here rather than repeated on 21 route objects, and applied as a
+ * DEFAULT rather than an override — `{ locales: LOCALES, ...route }` means a
+ * route that names its own `locales` still wins. That is the escape hatch for a
+ * page which should exist in fewer languages than the rest, and it is why
+ * `Route.locales` stays optional.
+ *
+ * The gate this replaces was `['en']`, chosen so a new page shipped English-only
+ * until someone declared it ready. That was right while nothing was translated.
+ * Now all 862 strings exist in all ten languages, so the useful default is the
+ * other one — and a page added later without per-locale metadata fails
+ * scripts/i18n-apply-route-meta.mjs by name rather than shipping English titles
+ * over translated copy.
+ */
 export const ROUTES: ReadonlyArray<Route> = [
     HOME,
     AGENTS_INDEX,
@@ -516,7 +534,7 @@ export const ROUTES: ReadonlyArray<Route> = [
     TERMINAL,
     SECURITY,
     ENTERPRISE,
-];
+].map((route) => ({ locales: LOCALES, ...route }));
 
 export function findRoute(pathname: string): Route | undefined {
     // Strip the locale prefix first: `/zh/agents` and `/agents` are the same
@@ -602,7 +620,13 @@ function localizeJsonLd(
 
 /** Route metadata as it should read in `locale`, falling back to the English. */
 export function metaFor(route: Route, locale: Locale) {
-    const override = route.i18n?.[locale] ?? {};
+    // Two sources, in priority order. `route.i18n` is the hand-written escape
+    // hatch for one page in one language; ROUTE_META_I18N is the generated bulk,
+    // authored per locale and validated for caps and cross-locale uniqueness by
+    // scripts/i18n-apply-route-meta.mjs. Neither is a translation: the English
+    // titles sit at 36-58 characters against a 60 cap and the descriptions at
+    // 143-155 against 155, so every language writes its own to fit.
+    const override = route.i18n?.[locale] ?? ROUTE_META_I18N[route.path]?.[locale] ?? {};
     return {
         title: override.title ?? route.title,
         description: override.description ?? route.description,

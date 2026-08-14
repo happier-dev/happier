@@ -49,8 +49,15 @@ function scratchRoot() {
 /** Modules whose exported strings are site copy. */
 function sourceModules() {
     const dataDir = join(ROOT, 'src/data');
+    // routeMetaI18n.ts holds the OUTPUT of translation, not its input: nine
+    // locales' worth of authored titles and descriptions. Walking it extracts
+    // 937 already-translated strings as though they were English awaiting a
+    // translator, which is both circular and enormous.
+    const generated = new Set(['routeMetaI18n']);
+
     const data = readdirSync(dataDir)
         .filter((f) => (f.endsWith('.ts') || f.endsWith('.tsx')) && !f.includes('.test.'))
+        .filter((f) => !generated.has(basename(f, f.endsWith('.tsx') ? '.tsx' : '.ts')))
         .map((f) => ({ ns: basename(f, f.endsWith('.tsx') ? '.tsx' : '.ts'), file: join(dataDir, f) }));
     return data;
 }
@@ -85,16 +92,41 @@ async function loadModules(modules) {
 }
 
 /** Tokens that must survive translation byte-identical. */
+/**
+ * The words that can actually follow `happier` on a command line.
+ *
+ * Matching `happier` followed by any lowercase word was too greedy: it caught
+ * the prose "N happier
+ * developers on Discord" and then demanded that a Chinese translation keep the
+ * English phrase "happier developers" byte-identical inside an otherwise
+ * Chinese sentence. Two translators independently reported it as reading wrong,
+ * which is the right outcome for a rule that was wrong. Anything genuinely
+ * risky is written in backticks and caught by the pattern above this one.
+ */
+const CLI_SUBCOMMANDS = new Set([
+    'attach', 'connect', 'daemon', 'doctor', 'tools', 'auth', 'login', 'logout',
+    'status', 'update', 'machine', 'session', 'sessions', 'help', 'version',
+    'claude', 'codex', 'opencode', 'cursor', 'gemini', 'copilot', 'qwen',
+    'kimi', 'kilo', 'kiro', 'auggie', 'pi', 'grok',
+]);
+
 const DNT_PATTERNS = [
-    /`[^`]+`/g,                       // inline code spans
-    /\bhappier\s+[a-z][\w:-]*/g,      // CLI invocations
+    /`[^`]+`/g,                       // inline code spans — unambiguous
     /~\/[\w./-]+/g,                   // home-relative paths
-    /\b(?:npm|npx|yarn|brew|curl|iwr|pnpm)\s+[\w@./-]+/g,
+    // A command line, anchored to the start of the string or a line. NOT a bare
+    // `npm|yarn|brew` followed by a word: "distributed as an npm package" is
+    // prose, and demanding it survive byte-identical failed every translation
+    // that correctly wrote "paquet npm" or "npm パッケージ". Package names that
+    // genuinely must not move are already in backticks.
+    /^(?:curl|iwr|wget|npx|pnpm dlx)\s+\S+.*$/gm,
 ];
 
 function dntTokens(value) {
     const found = new Set();
     for (const re of DNT_PATTERNS) for (const m of value.matchAll(re)) found.add(m[0]);
+    for (const m of value.matchAll(/\bhappier\s+([a-z][\w-]*)/g)) {
+        if (CLI_SUBCOMMANDS.has(m[1])) found.add(m[0]);
+    }
     return [...found];
 }
 

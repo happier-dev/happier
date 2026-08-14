@@ -7,6 +7,8 @@ type ProviderMarkRowProps = Readonly<{
 }>;
 
 export function ProviderMarkRow(props: ProviderMarkRowProps) {
+    const { pageProse: { PAGE_PROSE } } = useSiteData();
+
     const { providers: { PROVIDERS } } = useSiteData();
 
     const { theme } = useTheme();
@@ -17,7 +19,7 @@ export function ProviderMarkRow(props: ProviderMarkRowProps) {
     return (
         <div
             className={`flex flex-nowrap items-center gap-3 overflow-hidden ${justify === 'center' ? 'justify-center' : 'justify-start'}`}
-            aria-label="Supported AI coding agents"
+            aria-label={PAGE_PROSE.providerMarkRow.p0}
         >
             {PROVIDERS.map((provider) => (
                 <div

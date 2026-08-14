@@ -36,7 +36,13 @@ type DeepPartial<T> = T extends string
       ? ReadonlyArray<DeepPartial<U>>
       : { [K in keyof T]?: DeepPartial<T[K]> };
 
-export const MESSAGES: { en: Messages } & { [L in Exclude<Locale, 'en'>]: DeepPartial<Messages> } = {
+/**
+ * English is complete by construction; every other locale is optional and
+ * partial. A locale with no entry here is not an error — it renders English for
+ * the whole `Messages` tree and can still be fully translated at the data-module
+ * level, because those are two independent catalogues.
+ */
+export const MESSAGES: { en: Messages } & Partial<Record<Exclude<Locale, 'en'>, DeepPartial<Messages>>> = {
     en,
     'zh-Hans': zhHans,
 };

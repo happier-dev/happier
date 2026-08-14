@@ -30,6 +30,8 @@ import {
     DESKTOP_RELEASES_PAGE,
     type DesktopPlatformId,
 } from '../data/downloads';
+import { rich } from '../i18n/rich';
+import { useSiteData } from '../i18n/siteData';
 
 type Os = 'mac' | 'win' | 'linux' | 'unknown';
 type Arch = 'arm64' | 'x86_64' | 'unknown';
@@ -149,6 +151,8 @@ const BADGE_STYLE = {
 } as const;
 
 export function DownloadBadges({ webApp = false }: { webApp?: boolean } = {}) {
+    const { pageProse: { PAGE_PROSE } } = useSiteData();
+
     const { theme } = useTheme();
     const isDark = theme === 'dark';
 
@@ -309,9 +313,7 @@ export function DownloadBadges({ webApp = false }: { webApp?: boolean } = {}) {
                             <span
                                 className="text-[9.5px] font-medium uppercase tracking-[0.12em]"
                                 style={{ color: 'var(--muted)' }}
-                            >
-                                Download
-                            </span>
+                            >{rich(PAGE_PROSE.downloadBadges.p0)}</span>
                             <span className="text-[14px] font-semibold tracking-tight">
                                 {DESKTOP_LABEL[os]}
                             </span>
@@ -328,7 +330,7 @@ export function DownloadBadges({ webApp = false }: { webApp?: boolean } = {}) {
                         onClick={() => setPopoverOpen((prev) => !prev)}
                         className="grid place-items-center px-2.5 transition-opacity hover:opacity-80"
                         style={{ color: 'var(--fg)' }}
-                        aria-label="Show all desktop download options"
+                        aria-label={PAGE_PROSE.downloadBadges.p1}
                         aria-expanded={popoverOpen}
                         aria-haspopup="menu"
                     >
@@ -391,9 +393,7 @@ export function DownloadBadges({ webApp = false }: { webApp?: boolean } = {}) {
                                                     color: 'var(--bg)',
                                                     background: 'var(--fg)',
                                                 }}
-                                            >
-                                                Detected
-                                            </span>
+                                            >{rich(PAGE_PROSE.downloadBadges.p2)}</span>
                                         )}
                                     </span>
                                     <span
@@ -427,9 +427,9 @@ export function DownloadBadges({ webApp = false }: { webApp?: boolean } = {}) {
                             : '0 20px 60px -20px rgba(10, 10, 11, 0.35)',
                         transition: 'box-shadow 700ms ease',
                     }}
-                    aria-label="Open the Happier web app"
+                    aria-label={PAGE_PROSE.downloadBadges.p3}
                 >
-                    <span>Web app</span>
+                    <span>{rich(PAGE_PROSE.downloadBadges.p4)}</span>
                     <svg viewBox="0 0 16 16" className="h-4 w-4 transition-transform group-hover:translate-x-0.5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                         <path d="M3 8h10" />
                         <path d="M9 4l4 4-4 4" />

@@ -55,9 +55,9 @@ export function TerminalPage() {
     return (
         <PageShell>
             <PageHeader
-                eyebrow="Feature"
-                title="Keep your Claude Code, Codex and OpenCode terminals, or work from the app"
-                standfirst="Happier runs them as the same session you would have started yourself — so you can drive it from their own TUI, from your phone, or from both, without the session noticing."
+                eyebrow={PAGE_PROSE.terminalPage.p3}
+                title={PAGE_PROSE.terminalPage.p4}
+                standfirst={PAGE_PROSE.terminalPage.p5}
             />
 
             <Prose data-section="terminal-intro">
@@ -69,9 +69,7 @@ export function TerminalPage() {
             <section className="relative" data-section="terminal-moves">
                 <div className="mx-auto max-w-[1400px] px-6 py-10 md:px-10 md:py-14">
                     <div className="max-w-[860px]">
-                        <h2 className="font-display text-[26px] font-normal leading-[1.14] tracking-[-0.025em] md:text-[34px]">
-                            Start in the terminal or in the app, and move between them
-                        </h2>
+                        <h2 className="font-display text-[26px] font-normal leading-[1.14] tracking-[-0.025em] md:text-[34px]">{rich(PAGE_PROSE.terminalPage.p6)}</h2>
                         <dl className="mt-7 grid gap-7 md:grid-cols-2">
                             {TERMINAL_MOVES.map((item) => (
                                 <div key={item.id}>
@@ -91,9 +89,7 @@ export function TerminalPage() {
             <section className="relative" data-section="terminal-support">
                 <div className="mx-auto max-w-[1400px] px-6 py-10 md:px-10 md:py-14">
                     <div className="max-w-[900px]">
-                        <h2 className="font-display text-[26px] font-normal leading-[1.14] tracking-[-0.025em] md:text-[34px]">
-                            Which agents move a session between the terminal and the app
-                        </h2>
+                        <h2 className="font-display text-[26px] font-normal leading-[1.14] tracking-[-0.025em] md:text-[34px]">{rich(PAGE_PROSE.terminalPage.p7)}</h2>
                         <p
                             className="mt-4 max-w-[720px] text-[16px] leading-[1.65]"
                             style={{ color: 'var(--muted)' }}
@@ -105,18 +101,10 @@ export function TerminalPage() {
                             <table className="w-full min-w-[720px] border-collapse text-left text-[14px]">
                                 <thead>
                                     <tr>
-                                        <th scope="col" className="px-4 py-3 font-semibold" style={{ color: 'var(--fg)' }}>
-                                            Agent
-                                        </th>
-                                        <th scope="col" className="px-4 py-3 font-semibold" style={{ color: 'var(--fg)' }}>
-                                            Terminal and app together
-                                        </th>
-                                        <th scope="col" className="px-4 py-3 font-semibold" style={{ color: 'var(--fg)' }}>
-                                            Reattaches through
-                                        </th>
-                                        <th scope="col" className="px-4 py-3 font-semibold" style={{ color: 'var(--fg)' }}>
-                                            What that means in practice
-                                        </th>
+                                        <th scope="col" className="px-4 py-3 font-semibold" style={{ color: 'var(--fg)' }}>{rich(PAGE_PROSE.terminalPage.p8)}</th>
+                                        <th scope="col" className="px-4 py-3 font-semibold" style={{ color: 'var(--fg)' }}>{rich(PAGE_PROSE.terminalPage.p9)}</th>
+                                        <th scope="col" className="px-4 py-3 font-semibold" style={{ color: 'var(--fg)' }}>{rich(PAGE_PROSE.terminalPage.p10)}</th>
+                                        <th scope="col" className="px-4 py-3 font-semibold" style={{ color: 'var(--fg)' }}>{rich(PAGE_PROSE.terminalPage.p11)}</th>
                                     </tr>
                                 </thead>
                                 <tbody>
@@ -167,13 +155,13 @@ export function TerminalPage() {
                 ))}
             </Prose>
 
-            <Prose heading="What attaching needs: tmux, the same computer, a running daemon" data-section="terminal-catch">
+            <Prose heading={PAGE_PROSE.terminalPage.p12} data-section="terminal-catch">
                 {TERMINAL_CATCH.map((paragraph) => (
                     <P key={paragraph.slice(0, 32)}>{withCode(paragraph)}</P>
                 ))}
             </Prose>
 
-            <Prose heading="tmux, the Windows session mode, and where the terminal docks" data-section="terminal-docs">
+            <Prose heading={PAGE_PROSE.terminalPage.p13} data-section="terminal-docs">
                 <P>{rich(PAGE_PROSE.terminalPage.p2, { 1: (c: ReactNode) => <a
                         href={TERMINAL_DOCS_URL}
                         className="underline underline-offset-2"

@@ -62,24 +62,36 @@ const MODULES = {
 
 export type SiteData = typeof MODULES;
 
-/**
- * Per-locale string overrides, keyed by the ids in
- * src/i18n/generated/en.json. Locales with no file yet resolve to English for
- * every id, which is the correct behaviour and not an error.
- *
- * `import.meta.glob` with `eager` so the prerenderer — which runs the SSR
- * bundle in plain Node — gets them synchronously, and so Rollup can tree-shake
- * a locale nobody builds.
- */
-const OVERLAYS = import.meta.glob<{ default: Record<string, string> }>('./messages/overlays/*.json', {
-    eager: true,
-});
+const cache = new Map<Locale, SiteData>();
 
-function overridesFor(locale: Locale): Record<string, string> {
-    return OVERLAYS[`./messages/overlays/${locale}.json`]?.default ?? {};
+const OVERRIDES = new Map<Locale, Readonly<Record<string, string>>>();
+
+/**
+ * Hand this module a locale's translations, keyed by the ids in
+ * src/i18n/generated/en.json. A locale nobody registers resolves to English for
+ * every id — correct behaviour, not an error.
+ *
+ * A REGISTRY, NOT AN `import.meta.glob`, AND THE DIFFERENCE WAS MEASURED.
+ * `glob('./messages/overlays/*.json', { eager: true })` put all nine locales —
+ * 1.4 MB of JSON — into the chunk every route shares. The first build after the
+ * translations landed went from 153 KB gzip to 570 KB, 553 KB of it shared by
+ * every page: every visitor downloading nine languages to read one, which is
+ * precisely what the route split had just been done to stop.
+ *
+ * With a registry the caller that knows the locale supplies it. A client entry
+ * statically imports its OWN overlay and nothing else; an English entry imports
+ * none and carries none; the bundler splits them for free. The prerenderer
+ * registers all of them through ./overlays.server.ts, which exists only in the
+ * SSR bundle and is never shipped.
+ */
+export function registerOverlay(locale: Locale, overrides: Readonly<Record<string, string>>): void {
+    OVERRIDES.set(locale, overrides);
+    cache.delete(locale);
 }
 
-const cache = new Map<Locale, SiteData>();
+function overridesFor(locale: Locale): Readonly<Record<string, string>> {
+    return OVERRIDES.get(locale) ?? {};
+}
 
 export function siteDataFor(locale: Locale): SiteData {
     if (locale === DEFAULT_LOCALE) return MODULES;

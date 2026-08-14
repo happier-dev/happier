@@ -2,10 +2,13 @@ import { useEffect, useMemo, useState } from 'react';
 import { PhoneFrame } from './PhoneFrame';
 import { MOBILE_THEME_PREVIEWS, resolveNextThemePreviewIndex } from './themePreviews';
 import { Picture } from '../../components/Picture';
+import { useSiteData } from '../../i18n/siteData';
 
 const REVEAL_DURATION_MS = 600;
 
 export function MobileThemePreview() {
+    const { pageProse: { PAGE_PROSE } } = useSiteData();
+
     const [committedIndex, setCommittedIndex] = useState(0);
     const [revealingIndex, setRevealingIndex] = useState<number | null>(null);
     const activeIndex = revealingIndex ?? committedIndex;
@@ -39,7 +42,7 @@ export function MobileThemePreview() {
             <button
                 type="button"
                 className="group relative block w-full cursor-pointer appearance-none border-0 bg-transparent p-0 text-left outline-none focus-visible:ring-2 focus-visible:ring-white/70 focus-visible:ring-offset-4 focus-visible:ring-offset-black"
-                aria-label="Preview the next Happier mobile theme"
+                aria-label={PAGE_PROSE.mobileThemePreview.p0}
                 onClick={advancePreview}
             >
                 <PhoneFrame>
@@ -64,7 +67,7 @@ export function MobileThemePreview() {
                 </PhoneFrame>
             </button>
 
-            <div className="flex items-center justify-center gap-1.5" aria-label="Mobile theme previews">
+            <div className="flex items-center justify-center gap-1.5" aria-label={PAGE_PROSE.mobileThemePreview.p1}>
                 {swatches.map((preview, index) => {
                     const selected = index === activeIndex;
                     return (

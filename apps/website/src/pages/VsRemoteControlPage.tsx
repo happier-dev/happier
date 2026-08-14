@@ -60,9 +60,9 @@ export function VsRemoteControlPage() {
               * then says plainly what the page does with it.
               */}
             <PageHeader
-                eyebrow="Claude Code Remote Control"
-                title="Claude Code from your phone: Remote Control and Happier, compared"
-                standfirst="Anthropic ships a remote for its own agent, it is free with a subscription you probably already pay for, and it is good. Here is exactly what it does, the situations its own documentation says it will not run in, and the workflow it was never built for."
+                eyebrow={PAGE_PROSE.vsRemoteControlPage.p8}
+                title={PAGE_PROSE.vsRemoteControlPage.p9}
+                standfirst={PAGE_PROSE.vsRemoteControlPage.p10}
             />
 
             <Prose data-section="rc-concession">
@@ -73,9 +73,7 @@ export function VsRemoteControlPage() {
             <section className="relative" data-section="rc-strengths">
                 <div className="mx-auto max-w-[1400px] px-6 py-10 md:px-10 md:py-14">
                     <div className="max-w-[860px]">
-                        <h2 className="font-display text-[26px] font-normal leading-[1.14] tracking-[-0.025em] md:text-[34px]">
-                            What Remote Control does well, specifically
-                        </h2>
+                        <h2 className="font-display text-[26px] font-normal leading-[1.14] tracking-[-0.025em] md:text-[34px]">{rich(PAGE_PROSE.vsRemoteControlPage.p11)}</h2>
                         <p className="mt-4 max-w-[720px] text-[16px] leading-[1.65]" style={{ color: 'var(--muted)' }}>{rich(PAGE_PROSE.vsRemoteControlPage.p0)}</p>
                         <dl className="mt-7 grid gap-6 md:grid-cols-2">
                             {RC_STRENGTHS.map((item) => (
@@ -96,9 +94,7 @@ export function VsRemoteControlPage() {
             <section className="relative" data-section="vs-remote-control">
                 <div className="mx-auto max-w-[1400px] px-6 py-10 md:px-10 md:py-14">
                     <div className="max-w-[860px]">
-                        <h2 className="font-display text-[26px] font-normal leading-[1.14] tracking-[-0.025em] md:text-[34px]">
-                            The five situations where Remote Control turns itself off
-                        </h2>
+                        <h2 className="font-display text-[26px] font-normal leading-[1.14] tracking-[-0.025em] md:text-[34px]">{rich(PAGE_PROSE.vsRemoteControlPage.p12)}</h2>
                         <p className="mt-4 max-w-[720px] text-[16px] leading-[1.65]" style={{ color: 'var(--muted)' }}>{rich(PAGE_PROSE.vsRemoteControlPage.p1)}</p>
                         <ol className="mt-8 space-y-8">
                             {RC_SECTION.cases
@@ -135,31 +131,19 @@ export function VsRemoteControlPage() {
             <section className="relative" data-section="rc-table">
                 <div className="mx-auto max-w-[1400px] px-6 py-10 md:px-10 md:py-14">
                     <div className="max-w-[900px]">
-                        <h2 className="font-display text-[26px] font-normal leading-[1.14] tracking-[-0.025em] md:text-[34px]">
-                            Will it run in your setup?
-                        </h2>
+                        <h2 className="font-display text-[26px] font-normal leading-[1.14] tracking-[-0.025em] md:text-[34px]">{rich(PAGE_PROSE.vsRemoteControlPage.p13)}</h2>
                         <p className="mt-4 max-w-[720px] text-[16px] leading-[1.65]" style={{ color: 'var(--muted)' }}>{rich(PAGE_PROSE.vsRemoteControlPage.p3)}</p>
                         <div
                             className="mt-6 overflow-x-auto rounded-2xl border"
                             style={{ borderColor: 'var(--card-border)' }}
                         >
                             <table className="w-full min-w-[640px] border-collapse text-left text-[14px]">
-                                <caption className="px-4 pb-3 pt-4 text-left text-[13px]" style={{ color: 'var(--muted)' }}>
-                                    The Remote Control column restates Anthropic’s published
-                                    documentation at code.claude.com/docs/en/remote-control.
-                                    Verified August 2026.
-                                </caption>
+                                <caption className="px-4 pb-3 pt-4 text-left text-[13px]" style={{ color: 'var(--muted)' }}>{rich(PAGE_PROSE.vsRemoteControlPage.p14)}</caption>
                                 <thead>
                                     <tr>
-                                        <th scope="col" className="px-4 py-3 font-semibold" style={{ color: 'var(--fg)' }}>
-                                            Capability
-                                        </th>
-                                        <th scope="col" className="px-4 py-3 font-semibold" style={{ color: 'var(--fg)' }}>
-                                            Claude Code Remote Control
-                                        </th>
-                                        <th scope="col" className="px-4 py-3 font-semibold" style={{ color: 'var(--fg)' }}>
-                                            Happier
-                                        </th>
+                                        <th scope="col" className="px-4 py-3 font-semibold" style={{ color: 'var(--fg)' }}>{rich(PAGE_PROSE.vsRemoteControlPage.p15)}</th>
+                                        <th scope="col" className="px-4 py-3 font-semibold" style={{ color: 'var(--fg)' }}>{rich(PAGE_PROSE.vsRemoteControlPage.p16)}</th>
+                                        <th scope="col" className="px-4 py-3 font-semibold" style={{ color: 'var(--fg)' }}>{rich(PAGE_PROSE.vsRemoteControlPage.p17)}</th>
                                     </tr>
                                 </thead>
                                 <tbody>
@@ -190,9 +174,7 @@ export function VsRemoteControlPage() {
             <section className="relative" data-section="rc-difference">
                 <div className="mx-auto max-w-[1400px] px-6 py-10 md:px-10 md:py-14">
                     <div className="max-w-[860px]">
-                        <h2 className="font-display text-[26px] font-normal leading-[1.14] tracking-[-0.025em] md:text-[34px]">
-                            What one client for {AGENTS.length} agents buys you
-                        </h2>
+                        <h2 className="font-display text-[26px] font-normal leading-[1.14] tracking-[-0.025em] md:text-[34px]">{rich(PAGE_PROSE.vsRemoteControlPage.p18, undefined, { length: AGENTS.length })}</h2>
                         <p className="mt-4 max-w-[720px] text-[16px] leading-[1.65]" style={{ color: 'var(--muted)' }}>{rich(PAGE_PROSE.vsRemoteControlPage.p4)}</p>
                         <dl className="mt-7 grid gap-6 md:grid-cols-2">
                             {RC_SECTION.arguments.map((item) => (
@@ -212,7 +194,7 @@ export function VsRemoteControlPage() {
                 </div>
             </section>
 
-            <Prose heading="Trying it" data-section="rc-cta">
+            <Prose heading={PAGE_PROSE.vsRemoteControlPage.p19} data-section="rc-cta">
                 <P>{rich(PAGE_PROSE.vsRemoteControlPage.p7)}</P>
                 <div data-cta-location="call-to-action">
                     <InstallCommand />

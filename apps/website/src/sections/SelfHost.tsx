@@ -85,9 +85,7 @@ export function SelfHost() {
                         <div
                             className="mb-5 inline-flex rounded-full border px-3 py-1 text-[11.5px] font-semibold uppercase tracking-[0.18em]"
                             style={{ color: 'var(--muted)', borderColor: 'var(--card-border)' }}
-                        >
-                            Self-host
-                        </div>
+                        >{rich(PAGE_PROSE.selfHost.p1)}</div>
                         <RevealText
                             as="h2"
                             text={'Own the stack.\nStay independent.'}
@@ -227,6 +225,8 @@ function TerminalBlock({
 }: {
     lines: ReadonlyArray<{ prompt: boolean; text: string }>;
 }) {
+    const { pageProse: { PAGE_PROSE } } = useSiteData();
+
     const [copied, setCopied] = useState(false);
     const commands = lines.filter((l) => l.prompt).map((l) => l.text).join('\n');
 
@@ -258,7 +258,7 @@ function TerminalBlock({
                     onClick={onCopy}
                     className="text-[12px] opacity-60 transition-opacity hover:opacity-100"
                     style={{ color: 'var(--fg)' }}
-                    aria-label="Copy commands"
+                    aria-label={PAGE_PROSE.selfHost.p2}
                 >
                     {copied ? 'Copied!' : 'Copy'}
                 </button>

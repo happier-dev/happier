@@ -1,0 +1,149 @@
+{
+  "/": {
+    "title": "Happier — open-source app for Claude Code, Codex & 11 more",
+    "description": "Run Claude Code, Codex and 11 more agents from your phone, browser or desktop. Open-source, end-to-end encrypted, self-hostable. Your own subscriptions.",
+    "ogTitle": "Happier — One client for every AI coding agent.",
+    "ogDescription": "Claude Code, Codex, OpenCode, Cursor and 9 more — in one end-to-end encrypted app, on every device, on your own subscriptions. Open-source and self-hostable.",
+    "ogImageAlt": "The Happier wordmark over the words: One client for every AI coding agent. Claude Code, Codex, OpenCode, Cursor, Gemini, Copilot and 7 more."
+  },
+  "/agents": {
+    "title": "Every AI coding agent Happier runs — 13 and counting",
+    "description": "One open-source app for 13 command-line coding agents — Claude Code, Codex, OpenCode, Pi and nine more — on your own computers, with your own accounts.",
+    "ogTitle": "Every AI coding agent Happier runs",
+    "ogDescription": "Thirteen command-line coding agents, one app on your phone, browser and desktop. Each runs on your own computer, under your own subscription or API key.",
+    "ogImageAlt": "The Happier wordmark over the words: One client for every AI coding agent."
+  },
+  "/agents/claude-code": {
+    "title": "Open-source app for Claude Code — Happier",
+    "description": "Run Claude Code on your own computer and drive it from your phone, browser or desktop. Open-source, end-to-end encrypted, self-hostable, MIT-licensed.",
+    "ogTitle": "Open-source app for Claude Code",
+    "ogDescription": "Claude Code keeps running on your own computer, signed in with your own Anthropic account. Happier gives it a phone, a browser tab and a desktop window.",
+    "ogImageAlt": "The Happier wordmark over the words: One client for every AI coding agent."
+  },
+  "/agents/codex": {
+    "title": "Codex CLI on your phone — open-source Happier",
+    "description": "The openai/codex CLI runs on your computer under your own ChatGPT subscription or API key. Read, approve and steer it from any device. Free, open-source.",
+    "ogTitle": "Codex on your phone, from an open-source app",
+    "ogDescription": "The openai/codex CLI runs on hardware you own, under your own ChatGPT subscription or API key. Happier is the window onto it from wherever you happen to be.",
+    "ogImageAlt": "The Happier wordmark over the words: One client for every AI coding agent."
+  },
+  "/agents/opencode": {
+    "title": "Open-source app for OpenCode — phone and desktop",
+    "description": "OpenCode runs on hardware you control, with your own opencode auth credentials. Happier adds phone, browser and desktop clients over a self-hostable relay.",
+    "ogTitle": "Open-source app for OpenCode",
+    "ogDescription": "OpenCode is open source. Happier is open source, MIT-licensed and self-hostable. Neither of them needs a server you do not control.",
+    "ogImageAlt": "The Happier wordmark over the words: One client for every AI coding agent."
+  },
+  "/agents/cursor": {
+    "title": "Run Cursor Agent CLI from your phone — Happier",
+    "description": "The headless cursor-agent binary on your own computer or server, with the conversation, diffs and approvals on your phone. Open-source and MIT-licensed.",
+    "ogTitle": "Run Cursor Agent CLI from your phone",
+    "ogDescription": "Cursor ships a headless agent that does not need the editor window. Happier runs it on your computer and puts the conversation on your phone.",
+    "ogImageAlt": "The Happier wordmark over the words: One client for every AI coding agent."
+  },
+  "/agents/gemini": {
+    "title": "Gemini CLI on every device — Happier",
+    "description": "Google’s open-source terminal agent runs in your own environment, including your own Cloud project. Happier carries the session to your phone, encrypted.",
+    "ogTitle": "Gemini CLI on every device you use",
+    "ogDescription": "Google’s open-source terminal agent, running against your own Google Cloud project if that is how your organisation works, readable from a phone.",
+    "ogImageAlt": "The Happier wordmark over the words: One client for every AI coding agent."
+  },
+  "/agents/github-copilot": {
+    "title": "GitHub Copilot CLI from your phone — Happier",
+    "description": "Run the Copilot command-line agent on your computer or build box and drive it from anywhere. Independent open-source client, not a GitHub product.",
+    "ogTitle": "GitHub Copilot CLI, driven from your phone",
+    "ogDescription": "The Copilot command-line agent, running on your own computer or your own build box, with the session in your pocket.",
+    "ogImageAlt": "The Happier wordmark over the words: One client for every AI coding agent."
+  },
+  "/agents/qwen": {
+    "title": "Open-source app for Qwen Code — Happier",
+    "description": "Qwen Code runs on your own computer with your own account. Happier puts the session on your phone, browser and desktop over an encrypted relay you can run.",
+    "ogTitle": "Open-source app for Qwen Code",
+    "ogDescription": "Qwen Code on your own computer, with the session on your phone. Both halves are open source and neither needs an account with us to be useful.",
+    "ogImageAlt": "The Happier wordmark over the words: One client for every AI coding agent."
+  },
+  "/agents/kimi": {
+    "title": "Kimi CLI from your phone, browser or desktop",
+    "description": "Moonshot’s terminal coding agent stays on your computer while you read and steer it from anywhere. Free, MIT-licensed and end-to-end encrypted.",
+    "ogTitle": "Kimi CLI from your phone, browser or desktop",
+    "ogDescription": "Moonshot’s terminal agent stays on your computer. The conversation goes wherever you go, encrypted on the way.",
+    "ogImageAlt": "The Happier wordmark over the words: One client for every AI coding agent."
+  },
+  "/agents/kilo": {
+    "title": "Kilo CLI on your phone, laptop and browser",
+    "description": "One open-source app for Kilo CLI and twelve other command-line coding agents, on your own computers with your own accounts. No seats, no feature gate.",
+    "ogTitle": "Kilo CLI on your phone, laptop and browser",
+    "ogDescription": "One open-source app for Kilo and the twelve other command-line coding agents you might have installed.",
+    "ogImageAlt": "The Happier wordmark over the words: One client for every AI coding agent."
+  },
+  "/agents/kiro": {
+    "title": "Run Kiro CLI from anywhere — Happier",
+    "description": "AWS’s agentic CLI on your own computer or EC2 box, under your own AWS identity, with the session readable from a phone. Open-source, self-hostable relay.",
+    "ogTitle": "Run Kiro CLI from anywhere you are",
+    "ogDescription": "AWS’s agentic CLI, running under your own AWS identity on your own computer, with an app in front of it.",
+    "ogImageAlt": "The Happier wordmark over the words: One client for every AI coding agent."
+  },
+  "/agents/auggie": {
+    "title": "Auggie on your phone and desktop — Happier",
+    "description": "Augment Code’s CLI runs on your own computer under your own entitlement. Happier collects its transcript and approvals alongside your other agents.",
+    "ogTitle": "Auggie, on your phone and your desktop",
+    "ogDescription": "Augment Code’s CLI, running on your own computer under your own Augment entitlement, with the conversation on every device you own.",
+    "ogImageAlt": "The Happier wordmark over the words: One client for every AI coding agent."
+  },
+  "/agents/pi": {
+    "title": "Open-source app for the Pi Coding Agent",
+    "description": "Pi brings your own API keys; Happier brings the phone, browser and desktop clients. Neither holds your keys on a server. MIT-licensed and self-hostable.",
+    "ogTitle": "Open-source app for the Pi Coding Agent",
+    "ogDescription": "Pi brings its own keys and no model of its own. Happier brings the phone, the browser and the desktop app, and no server in the middle.",
+    "ogImageAlt": "The Happier wordmark over the words: One client for every AI coding agent."
+  },
+  "/agents/grok": {
+    "title": "Grok Build CLI from your phone — Happier",
+    "description": "xAI’s coding CLI on your own computer, driven from any device. The integration is experimental and this page names what it does not support yet.",
+    "ogTitle": "Grok Build CLI from your phone or your desk",
+    "ogDescription": "xAI’s coding CLI, running on your own computer with your own xAI account. The Happier integration is experimental, and this page says so before you install anything.",
+    "ogImageAlt": "The Happier wordmark over the words: One client for every AI coding agent."
+  },
+  "/vs/claude-code-remote-control": {
+    "title": "Claude Code Remote Control vs Happier: what each covers",
+    "description": "Remote Control is free and good. It is also unavailable for API keys, gateways, Bedrock, Foundry and ZDR orgs. What each one covers, side by side.",
+    "ogTitle": "Claude Code Remote Control vs Happier",
+    "ogDescription": "What Anthropic’s own remote does well, the five situations it turns itself off in, and what one client for thirteen agents does instead.",
+    "ogImageAlt": "The Happier wordmark over the words: One client for every AI coding agent."
+  },
+  "/vs/codex-remote": {
+    "title": "Codex from your phone — Codex Remote vs Happier",
+    "description": "OpenAI pairs the ChatGPT app to a Mac or Windows PC running Codex. What Remote covers, the five conditions it runs under, and what Happier does instead.",
+    "ogTitle": "Codex Remote and Happier, compared",
+    "ogDescription": "What OpenAI’s own remote does well, the five conditions it runs under, and what one client for every coding agent does instead.",
+    "ogImageAlt": "The Happier wordmark over the words: One client for every AI coding agent."
+  },
+  "/features/usage-limits": {
+    "title": "Claude Code and Codex usage limits without losing work",
+    "description": "Hit a Claude Code or Codex usage limit and the session waits out the reset, then carries on — automatically, if you like. Or pool accounts and fall back.",
+    "ogTitle": "A usage limit should not end your session.",
+    "ogDescription": "The session holds its place through a usage limit, waits out the reset and picks the work back up — on one account, or across the accounts you pool.",
+    "ogImageAlt": "The Happier wordmark over the words: One client for every AI coding agent."
+  },
+  "/features/terminal": {
+    "title": "Claude Code and Codex in your terminal, and in the app",
+    "description": "Run Claude Code, Codex or OpenCode in their own TUI and follow the same session from your phone. Attach over tmux, or hand control back to the app.",
+    "ogTitle": "Keep your Claude Code, Codex and OpenCode terminals, or work from the app",
+    "ogDescription": "One session, two front ends: the provider’s own TUI in your shell and Happier on your phone. Same session id, same transcript, same queue on both sides of the switch.",
+    "ogImageAlt": "The Happier wordmark over the words: One client for every AI coding agent."
+  },
+  "/security": {
+    "title": "End-to-end encryption in Happier — what the relay sees",
+    "description": "Session content is sealed on the device that wrote it. The keys, the columns a relay can still read, and what changes under a plaintext storage policy.",
+    "ogTitle": "End-to-end encryption, with the keys on your own devices",
+    "ogDescription": "Your session is encrypted under a per-session key on the device that made it, and the relay is handed a sealed copy it has nothing to open. Here is what it can still see — named, not glossed.",
+    "ogImageAlt": "The Happier wordmark over the words: One client for every AI coding agent."
+  },
+  "/enterprise": {
+    "title": "Self-hosted Happier for teams — SSO, mTLS, your data",
+    "description": "Run the Happier relay yourself: GitHub org and OIDC group gating, forwarded mTLS, offboarding re-checks, storage policy, retention, Docker with Postgres.",
+    "ogTitle": "Self-host the Happier relay behind your own SSO",
+    "ogDescription": "A relay you host, locked to your GitHub org or OIDC groups, with client certificates, offboarding re-checks and a storage policy you choose. MIT-licensed, all of it.",
+    "ogImageAlt": "The Happier wordmark over the words: One client for every AI coding agent."
+  }
+}

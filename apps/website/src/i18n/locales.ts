@@ -12,7 +12,25 @@
  * product experience — we never advertise in a language the app cannot speak.
  */
 
-export const LOCALES = ['en', 'zh-Hans'] as const;
+/**
+ * The same ten codes the app ships, in the same spelling.
+ *
+ * `zh-Hant` is listed BEFORE `zh-Hans` because `suggestLocale` and
+ * `localeFromPathname` both resolve longest-match-first, and a Traditional
+ * reader must never be handed Simplified text they did not ask for.
+ */
+export const LOCALES = [
+    'en',
+    'zh-Hant',
+    'zh-Hans',
+    'ja',
+    'ru',
+    'pl',
+    'es',
+    'it',
+    'pt',
+    'ca',
+] as const;
 
 export type Locale = (typeof LOCALES)[number];
 
@@ -44,8 +62,31 @@ export type LocaleMeta = {
      * hyphenated form and fall back to en_US, so the two cannot be shared.
      */
     ogLocale: string;
-    /** Corresponding `SupportedLanguage` in the app's i18n registry. */
-    productLanguage: 'en' | 'zh-Hans';
+    /**
+     * The three strings the suggestion banner needs, IN THIS LANGUAGE.
+     *
+     * They live here rather than in the message catalogue because of who reads
+     * them: a Spanish speaker looking at the English page. The banner has to
+     * speak the language it is offering, and that locale's overlay is not
+     * loaded — a page ships exactly one overlay, which is what keeps the other
+     * nine out of every reader's download. Ten short phrases in the shared
+     * registry cost almost nothing and are always to hand.
+     */
+    suggestion: {
+        /** "This page is also available in X." */
+        offer: string;
+        /** The link. "Read it in X." */
+        action: string;
+        /** aria-label for the dismiss button. */
+        dismiss: string;
+    };
+    /**
+     * Corresponding `SupportedLanguage` in the app's i18n registry
+     * (remote-dev/apps/ui/sources/text/_all.ts). Keeping it explicit means a
+     * website locale can always be traced to a translated product experience —
+     * we never advertise in a language the app cannot speak.
+     */
+    productLanguage: Locale;
 };
 
 export const LOCALE_META: Record<Locale, LocaleMeta> = {
@@ -56,20 +97,141 @@ export const LOCALE_META: Record<Locale, LocaleMeta> = {
         englishName: 'English',
         acceptLanguagePrefixes: ['en'],
         ogLocale: 'en_US',
+        suggestion: {
+            offer: 'This page is also available in English.',
+            action: 'Read it in English',
+            dismiss: 'Dismiss',
+        },
         productLanguage: 'en',
+    },
+    // Traditional is matched before Simplified — see the note on LOCALES. Bare
+    // `zh` belongs to Simplified because it is overwhelmingly mainland traffic,
+    // but zh-TW / zh-HK / zh-MO must never fall into it.
+    'zh-Hant': {
+        htmlLang: 'zh-Hant',
+        pathPrefix: '/zh-Hant',
+        nativeName: '中文(繁體)',
+        englishName: 'Chinese (Traditional)',
+        acceptLanguagePrefixes: ['zh-hant', 'zh-tw', 'zh-hk', 'zh-mo'],
+        ogLocale: 'zh_TW',
+        suggestion: {
+            offer: '本頁面也有繁體中文版本。',
+            action: '以繁體中文閱讀',
+            dismiss: '關閉',
+        },
+        productLanguage: 'zh-Hant',
     },
     'zh-Hans': {
         htmlLang: 'zh-Hans',
         pathPrefix: '/zh',
-        nativeName: '简体中文',
+        nativeName: '中文(简体)',
         englishName: 'Chinese (Simplified)',
-        // zh-Hans-CN, zh-CN, zh-Hans, zh-Hans-US, zh-Hans-HK and bare `zh` all
-        // land here. zh-Hant/zh-TW/zh-HK deliberately do NOT — Traditional
-        // readers get English until a zh-Hant locale ships, rather than being
-        // shown Simplified text they did not ask for.
         acceptLanguagePrefixes: ['zh-hans', 'zh-cn', 'zh-sg', 'zh'],
         ogLocale: 'zh_CN',
+        suggestion: {
+            offer: '本页面也有简体中文版本。',
+            action: '用简体中文阅读',
+            dismiss: '关闭',
+        },
         productLanguage: 'zh-Hans',
+    },
+    ja: {
+        htmlLang: 'ja',
+        pathPrefix: '/ja',
+        nativeName: '日本語',
+        englishName: 'Japanese',
+        acceptLanguagePrefixes: ['ja'],
+        ogLocale: 'ja_JP',
+        suggestion: {
+            offer: 'このページは日本語でもご覧いただけます。',
+            action: '日本語で読む',
+            dismiss: '閉じる',
+        },
+        productLanguage: 'ja',
+    },
+    ru: {
+        htmlLang: 'ru',
+        pathPrefix: '/ru',
+        nativeName: 'Русский',
+        englishName: 'Russian',
+        acceptLanguagePrefixes: ['ru'],
+        ogLocale: 'ru_RU',
+        suggestion: {
+            offer: 'Эта страница также доступна на русском.',
+            action: 'Читать по-русски',
+            dismiss: 'Закрыть',
+        },
+        productLanguage: 'ru',
+    },
+    pl: {
+        htmlLang: 'pl',
+        pathPrefix: '/pl',
+        nativeName: 'Polski',
+        englishName: 'Polish',
+        acceptLanguagePrefixes: ['pl'],
+        ogLocale: 'pl_PL',
+        suggestion: {
+            offer: 'Ta strona jest dostępna także po polsku.',
+            action: 'Czytaj po polsku',
+            dismiss: 'Zamknij',
+        },
+        productLanguage: 'pl',
+    },
+    es: {
+        htmlLang: 'es',
+        pathPrefix: '/es',
+        nativeName: 'Español',
+        englishName: 'Spanish',
+        acceptLanguagePrefixes: ['es'],
+        ogLocale: 'es_ES',
+        suggestion: {
+            offer: 'Esta página también está disponible en español.',
+            action: 'Leerla en español',
+            dismiss: 'Cerrar',
+        },
+        productLanguage: 'es',
+    },
+    it: {
+        htmlLang: 'it',
+        pathPrefix: '/it',
+        nativeName: 'Italiano',
+        englishName: 'Italian',
+        acceptLanguagePrefixes: ['it'],
+        ogLocale: 'it_IT',
+        suggestion: {
+            offer: 'Questa pagina è disponibile anche in italiano.',
+            action: 'Leggila in italiano',
+            dismiss: 'Chiudi',
+        },
+        productLanguage: 'it',
+    },
+    pt: {
+        htmlLang: 'pt',
+        pathPrefix: '/pt',
+        nativeName: 'Português',
+        englishName: 'Portuguese',
+        acceptLanguagePrefixes: ['pt'],
+        ogLocale: 'pt_PT',
+        suggestion: {
+            offer: 'Esta página também está disponível em português.',
+            action: 'Ler em português',
+            dismiss: 'Fechar',
+        },
+        productLanguage: 'pt',
+    },
+    ca: {
+        htmlLang: 'ca',
+        pathPrefix: '/ca',
+        nativeName: 'Català',
+        englishName: 'Catalan',
+        acceptLanguagePrefixes: ['ca'],
+        ogLocale: 'ca_ES',
+        suggestion: {
+            offer: 'Aquesta pàgina també està disponible en català.',
+            action: 'Llegeix-la en català',
+            dismiss: 'Tanca',
+        },
+        productLanguage: 'ca',
     },
 };
 
@@ -131,14 +293,20 @@ export function localeFromPathname(pathname: string): Locale {
  * banner, never a redirect.
  */
 export function suggestLocale(current: Locale, navigatorLanguages: readonly string[]): Locale | null {
+    // Longest prefix wins, independent of LOCALES order: `zh-hant` must beat the
+    // bare `zh` that belongs to Simplified, or a Taiwanese reader is offered
+    // mainland text. localeFromPathname already resolves URLs this way.
+    const byLength = LOCALES.flatMap((locale) =>
+        LOCALE_META[locale].acceptLanguagePrefixes.map((prefix) => ({ locale, prefix })),
+    ).sort((a, b) => b.prefix.length - a.prefix.length);
+
     for (const raw of navigatorLanguages) {
         const tag = raw.trim().toLowerCase();
         if (!tag) continue;
-        for (const locale of LOCALES) {
-            const hit = LOCALE_META[locale].acceptLanguagePrefixes.some(
-                (prefix) => tag === prefix || tag.startsWith(`${prefix}-`),
-            );
-            if (hit) return locale === current ? null : locale;
+        for (const { locale, prefix } of byLength) {
+            if (tag === prefix || tag.startsWith(`${prefix}-`)) {
+                return locale === current ? null : locale;
+            }
         }
     }
     return null;

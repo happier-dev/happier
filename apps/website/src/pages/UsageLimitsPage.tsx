@@ -75,17 +75,17 @@ export function UsageLimitsPage() {
     return (
         <PageShell>
             <PageHeader
-                eyebrow="Feature"
-                title="A usage limit should not end your session."
-                standfirst="Every provider stops you eventually, and Happier cannot change that. What it can do is hold the session at the limit, show you when it resets, and start the work again from where it stopped. Turn on “Always wait and resume” and it does the whole thing unattended — one setting, and you come back to a session that carried on instead of one that stopped. That is on one account. Own several subscriptions and there is a better answer below: pool them, and a session that runs one dry moves to the next."
+                eyebrow={PAGE_PROSE.usageLimitsPage.p5}
+                title={PAGE_PROSE.usageLimitsPage.p6}
+                standfirst={PAGE_PROSE.usageLimitsPage.p7}
             />
 
-            <Prose heading="With one account, Happier waits out the reset and resumes the session" data-section="usage-limits-baseline">
+            <Prose heading={PAGE_PROSE.usageLimitsPage.p8} data-section="usage-limits-baseline">
                 <P>{rich(PAGE_PROSE.usageLimitsPage.p0)}</P>
                 <P>{rich(PAGE_PROSE.usageLimitsPage.p1)}</P>
             </Prose>
 
-            <Prose heading="Pool the subscriptions you own, and the session carries on across them" data-section="usage-limits-pools">
+            <Prose heading={PAGE_PROSE.usageLimitsPage.p9} data-section="usage-limits-pools">
                 {USAGE_LIMITS_POOL_SCOPE.map((paragraph) => (
                     <P key={paragraph.slice(0, 32)}>{paragraph}</P>
                 ))}
@@ -97,9 +97,7 @@ export function UsageLimitsPage() {
             <section className="relative" data-section="usage-limits-defaults">
                 <div className="mx-auto max-w-[1400px] px-6 py-10 md:px-10 md:py-14">
                     <div className="max-w-[900px]">
-                        <h2 className="font-display text-[26px] font-normal leading-[1.14] tracking-[-0.025em] md:text-[34px]">
-                            How a pool falls back: the account it picks, and how often
-                        </h2>
+                        <h2 className="font-display text-[26px] font-normal leading-[1.14] tracking-[-0.025em] md:text-[34px]">{rich(PAGE_PROSE.usageLimitsPage.p10)}</h2>
                         <p
                             className="mt-4 max-w-[720px] text-[16px] leading-[1.65]"
                             style={{ color: 'var(--muted)' }}
@@ -111,15 +109,9 @@ export function UsageLimitsPage() {
                             <table className="w-full min-w-[640px] border-collapse text-left text-[14px]">
                                 <thead>
                                     <tr>
-                                        <th scope="col" className="px-4 py-3 font-semibold" style={{ color: 'var(--fg)' }}>
-                                            Setting
-                                        </th>
-                                        <th scope="col" className="px-4 py-3 font-semibold" style={{ color: 'var(--fg)' }}>
-                                            Default
-                                        </th>
-                                        <th scope="col" className="px-4 py-3 font-semibold" style={{ color: 'var(--fg)' }}>
-                                            Why
-                                        </th>
+                                        <th scope="col" className="px-4 py-3 font-semibold" style={{ color: 'var(--fg)' }}>{rich(PAGE_PROSE.usageLimitsPage.p11)}</th>
+                                        <th scope="col" className="px-4 py-3 font-semibold" style={{ color: 'var(--fg)' }}>{rich(PAGE_PROSE.usageLimitsPage.p12)}</th>
+                                        <th scope="col" className="px-4 py-3 font-semibold" style={{ color: 'var(--fg)' }}>{rich(PAGE_PROSE.usageLimitsPage.p13)}</th>
                                     </tr>
                                 </thead>
                                 <tbody>
@@ -150,9 +142,7 @@ export function UsageLimitsPage() {
             <section className="relative" data-section="usage-limits-support">
                 <div className="mx-auto max-w-[1400px] px-6 py-10 md:px-10 md:py-14">
                     <div className="max-w-[900px]">
-                        <h2 className="font-display text-[26px] font-normal leading-[1.14] tracking-[-0.025em] md:text-[34px]">
-                            Which accounts you can pool, and which agents can use them
-                        </h2>
+                        <h2 className="font-display text-[26px] font-normal leading-[1.14] tracking-[-0.025em] md:text-[34px]">{rich(PAGE_PROSE.usageLimitsPage.p14)}</h2>
                         <p
                             className="mt-4 max-w-[720px] text-[16px] leading-[1.65]"
                             style={{ color: 'var(--muted)' }}
@@ -164,18 +154,10 @@ export function UsageLimitsPage() {
                             <table className="w-full min-w-[720px] border-collapse text-left text-[14px]">
                                 <thead>
                                     <tr>
-                                        <th scope="col" className="px-4 py-3 font-semibold" style={{ color: 'var(--fg)' }}>
-                                            Account you connect
-                                        </th>
-                                        <th scope="col" className="px-4 py-3 font-semibold" style={{ color: 'var(--fg)' }}>
-                                            Agents that can use it
-                                        </th>
-                                        <th scope="col" className="px-4 py-3 font-semibold" style={{ color: 'var(--fg)' }}>
-                                            Switches mid-session
-                                        </th>
-                                        <th scope="col" className="px-4 py-3 font-semibold" style={{ color: 'var(--fg)' }}>
-                                            Quota meter
-                                        </th>
+                                        <th scope="col" className="px-4 py-3 font-semibold" style={{ color: 'var(--fg)' }}>{rich(PAGE_PROSE.usageLimitsPage.p15)}</th>
+                                        <th scope="col" className="px-4 py-3 font-semibold" style={{ color: 'var(--fg)' }}>{rich(PAGE_PROSE.usageLimitsPage.p16)}</th>
+                                        <th scope="col" className="px-4 py-3 font-semibold" style={{ color: 'var(--fg)' }}>{rich(PAGE_PROSE.usageLimitsPage.p17)}</th>
+                                        <th scope="col" className="px-4 py-3 font-semibold" style={{ color: 'var(--fg)' }}>{rich(PAGE_PROSE.usageLimitsPage.p18)}</th>
                                     </tr>
                                 </thead>
                                 <tbody>
@@ -215,13 +197,13 @@ export function UsageLimitsPage() {
                 </div>
             </section>
 
-            <Prose heading="Your own accounts, and what your provider’s terms allow" data-section="usage-limits-scope">
+            <Prose heading={PAGE_PROSE.usageLimitsPage.p19} data-section="usage-limits-scope">
                 {USAGE_LIMITS_SCOPE.map((paragraph) => (
                     <P key={paragraph.slice(0, 32)}>{paragraph}</P>
                 ))}
             </Prose>
 
-            <Prose heading="Build a pool in the app, start a session on it from the CLI" data-section="usage-limits-docs">
+            <Prose heading={PAGE_PROSE.usageLimitsPage.p20} data-section="usage-limits-docs">
                 <P>{USAGE_LIMITS_SETUP[0]}</P>
                 <P>{rich(PAGE_PROSE.usageLimitsPage.p4, { 1: (c: ReactNode) => <a
                         href={USAGE_LIMITS_DOCS_URL}

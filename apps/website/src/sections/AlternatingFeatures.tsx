@@ -102,9 +102,7 @@ export function AlternatingFeatures() {
                     <div
                         className="mb-5 text-[11.5px] font-semibold uppercase tracking-[0.18em]"
                         style={{ color: 'var(--muted)' }}
-                    >
-                        What Happier does
-                    </div>
+                    >{rich(PAGE_PROSE.alternatingFeatures.p1)}</div>
                     <RevealText
                         as="h2"
                         text={'One control room\nfor every coding agent.'}

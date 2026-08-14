@@ -1,0 +1,149 @@
+{
+  "/": {
+    "title": "Happier — Claude Code, Codex i 11 agents més, codi obert",
+    "description": "Claude Code, Codex i 11 agents més al telèfon, al navegador i a l’escriptori, amb els teus comptes. Codi obert, xifrat d’extrem a extrem, autoallotjable.",
+    "ogTitle": "Happier — Un sol client per a tots els agents de programació amb IA.",
+    "ogDescription": "Claude Code, Codex, OpenCode, Cursor i 9 més, en una sola aplicació xifrada d’extrem a extrem, a tots els teus dispositius i amb les teves pròpies subscripcions. Codi obert i autoallotjable.",
+    "ogImageAlt": "El logotip de Happier sobre les paraules: Un sol client per a tots els agents de programació amb IA. Claude Code, Codex, OpenCode, Cursor, Gemini, Copilot i 7 més."
+  },
+  "/agents": {
+    "title": "Els 13 agents de programació amb IA que Happier executa",
+    "description": "Una aplicació de codi obert per a 13 agents de programació de línia d’ordres: Claude Code, Codex, OpenCode, Pi i nou més, als teus ordinadors i comptes.",
+    "ogTitle": "Tots els agents de programació amb IA que Happier executa",
+    "ogDescription": "Tretze agents de programació de línia d’ordres, una sola aplicació al telèfon, al navegador i a l’escriptori. Cadascun s’executa al teu propi ordinador, amb la teva pròpia subscripció o clau d’API.",
+    "ogImageAlt": "El logotip de Happier sobre les paraules: Un sol client per a tots els agents de programació amb IA."
+  },
+  "/agents/claude-code": {
+    "title": "Aplicació de codi obert per a Claude Code — Happier",
+    "description": "Executa Claude Code al teu ordinador i dirigeix-lo des del telèfon, el navegador o l’escriptori. Codi obert, xifrat d’extrem a extrem, llicència MIT.",
+    "ogTitle": "Aplicació de codi obert per a Claude Code",
+    "ogDescription": "Claude Code continua executant-se al teu propi ordinador, amb la sessió iniciada amb el teu propi compte d’Anthropic. Happier li dona un telèfon, una pestanya del navegador i una finestra d’escriptori.",
+    "ogImageAlt": "El logotip de Happier sobre les paraules: Un sol client per a tots els agents de programació amb IA."
+  },
+  "/agents/codex": {
+    "title": "Codex CLI al teu telèfon — Happier, de codi obert",
+    "description": "La CLI openai/codex s’executa al teu ordinador amb la teva subscripció de ChatGPT o clau d’API. Llegeix-la i dirigeix-la des de qualsevol dispositiu.",
+    "ogTitle": "Codex al teu telèfon, des d’una aplicació de codi obert",
+    "ogDescription": "La CLI openai/codex s’executa en maquinari que és teu, amb la teva pròpia subscripció de ChatGPT o clau d’API. Happier és la finestra que hi dona des d’on siguis.",
+    "ogImageAlt": "El logotip de Happier sobre les paraules: Un sol client per a tots els agents de programació amb IA."
+  },
+  "/agents/opencode": {
+    "title": "OpenCode al telèfon i a l’escriptori — Happier",
+    "description": "OpenCode s’executa en maquinari teu, amb les teves credencials d’opencode auth. Happier hi afegeix clients mòbils, web i d’escriptori sobre un relay teu.",
+    "ogTitle": "Aplicació de codi obert per a OpenCode",
+    "ogDescription": "OpenCode és de codi obert. Happier és de codi obert, amb llicència MIT i autoallotjable. Cap dels dos necessita un servidor que no controlis.",
+    "ogImageAlt": "El logotip de Happier sobre les paraules: Un sol client per a tots els agents de programació amb IA."
+  },
+  "/agents/cursor": {
+    "title": "Executa Cursor Agent CLI des del telèfon — Happier",
+    "description": "El binari cursor-agent sense interfície al teu ordinador o servidor, amb la conversa, els diffs i les aprovacions al telèfon. Codi obert i llicència MIT.",
+    "ogTitle": "Executa Cursor Agent CLI des del teu telèfon",
+    "ogDescription": "Cursor distribueix un agent sense interfície que no necessita la finestra de l’editor. Happier l’executa al teu ordinador i posa la conversa al teu telèfon.",
+    "ogImageAlt": "El logotip de Happier sobre les paraules: Un sol client per a tots els agents de programació amb IA."
+  },
+  "/agents/gemini": {
+    "title": "Gemini CLI a tots els dispositius — Happier",
+    "description": "L’agent de terminal de codi obert de Google s’executa al teu entorn, inclòs el teu projecte de Cloud. Happier porta la sessió xifrada al teu telèfon.",
+    "ogTitle": "Gemini CLI a tots els dispositius que fas servir",
+    "ogDescription": "L’agent de terminal de codi obert de Google, executant-se contra el teu propi projecte de Google Cloud si així és com funciona la teva organització, llegible des d’un telèfon.",
+    "ogImageAlt": "El logotip de Happier sobre les paraules: Un sol client per a tots els agents de programació amb IA."
+  },
+  "/agents/github-copilot": {
+    "title": "GitHub Copilot CLI des del telèfon — Happier",
+    "description": "Executa l’agent de Copilot de línia d’ordres al teu ordinador o màquina de compilació i dirigeix-lo des d’on siguis. Client de codi obert, no de GitHub.",
+    "ogTitle": "GitHub Copilot CLI, dirigida des del teu telèfon",
+    "ogDescription": "L’agent de línia d’ordres de Copilot, executant-se al teu propi ordinador o a la teva pròpia màquina de compilació, amb la sessió a la butxaca.",
+    "ogImageAlt": "El logotip de Happier sobre les paraules: Un sol client per a tots els agents de programació amb IA."
+  },
+  "/agents/qwen": {
+    "title": "Aplicació de codi obert per a Qwen Code — Happier",
+    "description": "Qwen Code s’executa al teu ordinador amb el teu compte. Happier posa la sessió al telèfon, al navegador i a l’escriptori per un relay xifrat i teu.",
+    "ogTitle": "Aplicació de codi obert per a Qwen Code",
+    "ogDescription": "Qwen Code al teu propi ordinador, amb la sessió al telèfon. Les dues meitats són de codi obert i cap no necessita un compte amb nosaltres per ser útil.",
+    "ogImageAlt": "El logotip de Happier sobre les paraules: Un sol client per a tots els agents de programació amb IA."
+  },
+  "/agents/kimi": {
+    "title": "Kimi CLI des del telèfon, el navegador o l’escriptori",
+    "description": "L’agent de terminal de Moonshot es queda al teu ordinador i el llegeixes i dirigeixes des d’on siguis. Gratuït, llicència MIT i xifrat d’extrem a extrem.",
+    "ogTitle": "Kimi CLI des del telèfon, el navegador o l’escriptori",
+    "ogDescription": "L’agent de terminal de Moonshot es queda al teu ordinador. La conversa va allà on vas tu, xifrada pel camí.",
+    "ogImageAlt": "El logotip de Happier sobre les paraules: Un sol client per a tots els agents de programació amb IA."
+  },
+  "/agents/kilo": {
+    "title": "Kilo CLI al telèfon, al portàtil i al navegador",
+    "description": "Una aplicació de codi obert per a Kilo CLI i dotze agents de línia d’ordres més, als teus ordinadors i amb els teus comptes. Sense places ni restriccions.",
+    "ogTitle": "Kilo CLI al telèfon, al portàtil i al navegador",
+    "ogDescription": "Una sola aplicació de codi obert per a Kilo i els altres dotze agents de programació de línia d’ordres que puguis tenir instal·lats.",
+    "ogImageAlt": "El logotip de Happier sobre les paraules: Un sol client per a tots els agents de programació amb IA."
+  },
+  "/agents/kiro": {
+    "title": "Executa Kiro CLI des d’on siguis — Happier",
+    "description": "La CLI agèntica d’AWS al teu ordinador o màquina EC2, amb la teva identitat d’AWS i la sessió llegible des d’un telèfon. Codi obert, relay autoallotjable.",
+    "ogTitle": "Executa Kiro CLI des d’on siguis",
+    "ogDescription": "La CLI agèntica d’AWS, executant-se amb la teva pròpia identitat d’AWS al teu propi ordinador, amb una aplicació al davant.",
+    "ogImageAlt": "El logotip de Happier sobre les paraules: Un sol client per a tots els agents de programació amb IA."
+  },
+  "/agents/auggie": {
+    "title": "Auggie al telèfon i a l’escriptori — Happier",
+    "description": "La CLI d’Augment Code s’executa al teu ordinador amb el teu dret d’ús. Happier en recull la transcripció i les aprovacions al costat dels altres agents.",
+    "ogTitle": "Auggie, al teu telèfon i al teu escriptori",
+    "ogDescription": "La CLI d’Augment Code, executant-se al teu propi ordinador amb el teu propi dret d’ús d’Augment, amb la conversa a tots els dispositius que tens.",
+    "ogImageAlt": "El logotip de Happier sobre les paraules: Un sol client per a tots els agents de programació amb IA."
+  },
+  "/agents/pi": {
+    "title": "Aplicació de codi obert per al Pi Coding Agent",
+    "description": "Pi porta les teves claus d’API; Happier porta els clients de telèfon, navegador i escriptori. Cap dels dos les guarda en un servidor. Llicència MIT.",
+    "ogTitle": "Aplicació de codi obert per al Pi Coding Agent",
+    "ogDescription": "Pi porta les seves pròpies claus i cap model propi. Happier porta el telèfon, el navegador i l’aplicació d’escriptori, i cap servidor pel mig.",
+    "ogImageAlt": "El logotip de Happier sobre les paraules: Un sol client per a tots els agents de programació amb IA."
+  },
+  "/agents/grok": {
+    "title": "Grok Build CLI des del telèfon — Happier",
+    "description": "La CLI de programació de xAI al teu ordinador, dirigida des de qualsevol dispositiu. La integració és experimental i la pàgina diu què encara no admet.",
+    "ogTitle": "Grok Build CLI des del telèfon o des de l’escriptori",
+    "ogDescription": "La CLI de programació de xAI, executant-se al teu propi ordinador amb el teu propi compte de xAI. La integració amb Happier és experimental, i aquesta pàgina ho diu abans que instal·lis res.",
+    "ogImageAlt": "El logotip de Happier sobre les paraules: Un sol client per a tots els agents de programació amb IA."
+  },
+  "/vs/claude-code-remote-control": {
+    "title": "Claude Code Remote Control i Happier, comparats",
+    "description": "Remote Control és gratuït i és bo. També és inaccessible amb claus d’API, passarel·les, Bedrock, Foundry i organitzacions ZDR. Què cobreix cadascun.",
+    "ogTitle": "Claude Code des del telèfon: Remote Control i Happier",
+    "ogDescription": "Què fa bé el remot propi d’Anthropic, les cinc situacions en què es desactiva tot sol, i què fa en canvi un sol client per a tretze agents.",
+    "ogImageAlt": "El logotip de Happier sobre les paraules: Un sol client per a tots els agents de programació amb IA."
+  },
+  "/vs/codex-remote": {
+    "title": "Codex des del telèfon: Codex Remote i Happier",
+    "description": "OpenAI aparella l’aplicació de ChatGPT amb un Mac o un PC Windows que executa Codex. Què cobreix Remote, sota quines cinc condicions i què fa Happier.",
+    "ogTitle": "Codex Remote i Happier, comparats",
+    "ogDescription": "Què fa bé el remot propi d’OpenAI, les cinc condicions sota les quals funciona, i què fa en canvi un sol client per a tots els agents de programació.",
+    "ogImageAlt": "El logotip de Happier sobre les paraules: Un sol client per a tots els agents de programació amb IA."
+  },
+  "/features/usage-limits": {
+    "title": "Claude Code i Codex: límits d’ús sense perdre feina",
+    "description": "Si arribes a un límit d’ús de Claude Code o Codex, la sessió espera el reinici i continua, automàticament si vols. O agrupa comptes i deixa que canviï.",
+    "ogTitle": "Un límit d’ús no hauria d’acabar amb la teva sessió.",
+    "ogDescription": "La sessió manté el seu lloc durant un límit d’ús, espera que passi el reinici i reprèn la feina — amb un sol compte, o entre els comptes que agrupis.",
+    "ogImageAlt": "El logotip de Happier sobre les paraules: Un sol client per a tots els agents de programació amb IA."
+  },
+  "/features/terminal": {
+    "title": "Claude Code i Codex al terminal, i també a l’aplicació",
+    "description": "Executa Claude Code, Codex o OpenCode a la seva TUI i segueix la mateixa sessió des del telèfon. Fes attach per tmux, o torna el control a l’aplicació.",
+    "ogTitle": "Conserva els teus terminals de Claude Code, Codex i OpenCode, o treballa des de l’aplicació",
+    "ogDescription": "Una sessió, dues interfícies: la TUI del proveïdor al teu intèrpret d’ordres i Happier al telèfon. Mateix id de sessió, mateixa transcripció i mateixa cua a banda i banda del canvi.",
+    "ogImageAlt": "El logotip de Happier sobre les paraules: Un sol client per a tots els agents de programació amb IA."
+  },
+  "/security": {
+    "title": "Xifratge d’extrem a extrem a Happier: què veu el relay",
+    "description": "El contingut de la sessió se segella al dispositiu que l’ha escrit. Les claus, les columnes que un relay encara pot llegir i què canvia sense xifratge.",
+    "ogTitle": "Xifratge d’extrem a extrem, amb les claus als teus propis dispositius",
+    "ogDescription": "La teva sessió es xifra amb una clau per sessió al dispositiu que l’ha creat, i el relay rep una còpia segellada que no pot obrir. Això és el que encara pot veure, anomenat i no dissimulat.",
+    "ogImageAlt": "El logotip de Happier sobre les paraules: Un sol client per a tots els agents de programació amb IA."
+  },
+  "/enterprise": {
+    "title": "Happier per a equips: relay autoallotjat amb SSO i mTLS",
+    "description": "Executa tu mateix el relay de Happier: organitzacions de GitHub i grups d’OIDC, mTLS reenviat, recomprovacions de baixa, retenció i Docker amb Postgres.",
+    "ogTitle": "Autoallotja el relay de Happier darrere el teu propi SSO",
+    "ogDescription": "Un relay que allotges tu, restringit a la teva organització de GitHub o als teus grups d’OIDC, amb certificats de client, recomprovacions de baixa i una política d’emmagatzematge que tries tu. Tot amb llicència MIT.",
+    "ogImageAlt": "El logotip de Happier sobre les paraules: Un sol client per a tots els agents de programació amb IA."
+  }
+}
