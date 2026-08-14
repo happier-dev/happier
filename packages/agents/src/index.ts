@@ -492,6 +492,7 @@ export type {
   AttachFailureCodeV1,
   AttachRequestV1,
   AttachResultV1,
+  AttachSessionMetadataV1,
   AttachSurfaceV1,
   BackendSessionLaunchHintsV1,
   BackendSurfaceBaseFailureCodeV1,
@@ -531,10 +532,12 @@ export type {
   ForkPointV1,
   ForkRequestV1,
   ForkResultV1,
+  ForkSessionMetadataV1,
   ForkSurfaceV1,
   HandoffAvailabilityRequestV1,
   HandoffExportRequestV1,
   HandoffExportResultV1,
+  HandoffExportSessionMetadataV1,
   HandoffFailureCodeV1,
   HandoffImportRequestV1,
   HandoffImportResultV1,
@@ -623,6 +626,7 @@ export {
   parseCreateCheckpointRequestV1,
   parseResolveCheckpointRestoreTargetRequestV1,
   parseRestoreCheckpointRequestV1,
+  projectSessionMetadataForAgentHandoff,
 } from './runtime/surfaces/index.js';
 export type { RuntimeDescriptor } from './runtime/identity/runtimeDescriptor.js';
 export {

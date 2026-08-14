@@ -24,7 +24,7 @@ export type ExternalSessionResolveSourceRequestV1 = Readonly<{
    * Host-supplied environment for deterministic source validation/canonicalization.
    * This is intentionally scoped to source resolution rather than ambient process state.
    */
-  env?: NodeJS.ProcessEnv;
+  env?: Readonly<Record<string, string | undefined>>;
 }>;
 
 export type ExternalSessionResolveSourceResultV1 = Readonly<{

@@ -1,6 +1,5 @@
 import type { BackendSurfaceAvailabilityV1 } from '@happier-dev/protocol';
 
-import type { MaybePromise } from '../engine/contracts.js';
 import type {
   BackendSessionLaunchHintsV1,
   BackendSurfaceResultV1,
@@ -15,10 +14,25 @@ export type ForkAvailabilityOperationV1 =
   | 'fork'
   | 'resolveReplayChildLaunch';
 
+export type ForkSessionMetadataV1 = Readonly<Partial<{
+  providerSessionId: string;
+  codexSessionId: string;
+  codexBackendMode: string;
+  codexHome: 'user' | 'connectedService';
+  codexConnectedServiceId: string;
+  codexConnectedServiceProfileId: string;
+  codexConnectedServiceGroupId: string;
+  codexHomePath: string;
+  opencodeSessionId: string;
+  opencodeBackendMode: string;
+  opencodeServerBaseUrl: string;
+  opencodeServerBaseUrlExplicit: boolean;
+}>>;
+
 export type ForkAvailabilityRequestV1 = Readonly<{
   operation: ForkAvailabilityOperationV1;
   parentSessionId: string;
-  parentMetadata: Readonly<Record<string, unknown>>;
+  parentMetadata: ForkSessionMetadataV1;
   directory: string;
   forkPoint: ForkPointV1;
 }>;
@@ -45,29 +59,28 @@ export type AcpForkSessionRequestV1 = Readonly<{
   signal?: AbortSignal;
 }>;
 
-export type AcpSessionOperationResultValueV1 = Readonly<{
-  providerSessionId: string;
-  sessionStateUpdates?: readonly SessionStateUpdateV1[];
-}>;
-
 export type AcpLoadSessionResultV1 = BackendSurfaceResultV1<
-  AcpSessionOperationResultValueV1,
-  AcpSessionOperationFailureCodeV1
+  Readonly<{
+    providerSessionId: string;
+    sessionStateUpdates?: readonly SessionStateUpdateV1[];
+  }>
 >;
 
-export type AcpForkSessionResultV1 = BackendSurfaceResultV1<
-  AcpSessionOperationResultValueV1,
-  AcpSessionOperationFailureCodeV1
->;
+export type AcpForkSessionResultV1 = AcpLoadSessionResultV1;
+
+export type AcpSessionOperationResultValueV1 = Extract<
+  AcpLoadSessionResultV1,
+  Readonly<{ ok: true }>
+>['value'];
 
 export type AcpSessionOperationsV1 = Readonly<{
-  loadSession(request: AcpLoadSessionRequestV1): MaybePromise<AcpLoadSessionResultV1>;
-  forkSession(request: AcpForkSessionRequestV1): MaybePromise<AcpForkSessionResultV1>;
+  loadSession(request: AcpLoadSessionRequestV1): AcpLoadSessionResultV1 | Promise<AcpLoadSessionResultV1>;
+  forkSession(request: AcpForkSessionRequestV1): AcpForkSessionResultV1 | Promise<AcpForkSessionResultV1>;
 }>;
 
 export type ForkRequestV1 = Readonly<{
   parentSessionId: string;
-  parentMetadata: Readonly<Record<string, unknown>>;
+  parentMetadata: ForkSessionMetadataV1;
   directory: string;
   forkPoint: ForkPointV1;
   acp?: AcpSessionOperationsV1;
@@ -80,15 +93,15 @@ export type ForkResultV1 = Readonly<{
 
 export type ReplayForkChildLaunchRequestV1 = Readonly<{
   parentSessionId: string;
-  parentMetadata: Readonly<Record<string, unknown>>;
+  parentMetadata: ForkSessionMetadataV1;
   directory: string;
   forkPoint: ForkPointV1;
 }>;
 
 export type ForkSurfaceV1 = Readonly<{
-  evaluateAvailability?: (request: ForkAvailabilityRequestV1) => MaybePromise<BackendSurfaceAvailabilityV1>;
-  fork?: (request: ForkRequestV1) => MaybePromise<ForkResultV1 | null>;
+  evaluateAvailability?: (request: ForkAvailabilityRequestV1) => BackendSurfaceAvailabilityV1 | Promise<BackendSurfaceAvailabilityV1>;
+  fork?: (request: ForkRequestV1) => ForkResultV1 | null | Promise<ForkResultV1 | null>;
   resolveReplayChildLaunch?: (
     request: ReplayForkChildLaunchRequestV1
-  ) => MaybePromise<BackendSessionLaunchHintsV1 | null>;
+  ) => BackendSessionLaunchHintsV1 | null | Promise<BackendSessionLaunchHintsV1 | null>;
 }>;

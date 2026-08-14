@@ -2,12 +2,21 @@ import type { MaybePromise } from '../engine/contracts.js';
 import type { BackendSurfaceAvailabilityV1 } from '@happier-dev/protocol';
 import type { BackendSurfaceResultV1 } from './primitives.js';
 
+export type AttachSessionMetadataV1 = Readonly<Partial<{
+  path: string;
+  providerSessionId: string;
+  opencodeSessionId: string;
+  opencodeBackendMode: string;
+  opencodeServerBaseUrl: string;
+  opencodeServerBaseUrlExplicit: boolean;
+}>>;
+
 export type AttachAvailabilityDepthV1 = 'metadata' | 'live';
 
 export type AttachAvailabilityRequestV1 = Readonly<{
   operation: 'attach';
   sessionId: string;
-  metadata: Readonly<Record<string, unknown>>;
+  metadata: AttachSessionMetadataV1;
   currentMachineId?: string | null;
   sessionMachineId?: string | null;
   hasLocalAttachmentInfo?: boolean;
@@ -16,7 +25,7 @@ export type AttachAvailabilityRequestV1 = Readonly<{
 
 export type AttachRequestV1 = Readonly<{
   sessionId: string;
-  metadata: Readonly<Record<string, unknown>>;
+  metadata: AttachSessionMetadataV1;
 }>;
 
 export type AttachResultV1 = Readonly<{

@@ -10,4 +10,5 @@ export type * from './externalSession.js';
 export { deriveExternalSessionActivity } from './externalSession.js';
 export type * from './fork.js';
 export type * from './handoff.js';
+export { projectSessionMetadataForAgentHandoff } from './handoff.js';
 export type * from './primitives.js';

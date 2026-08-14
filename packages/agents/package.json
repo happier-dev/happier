@@ -38,6 +38,10 @@
       "types": "./dist/session/state/metadataReaders.d.ts",
       "default": "./dist/session/state/metadataReaders.js"
     },
+    "./runtime/surfaces": {
+      "types": "./dist/runtime/surfaces/index.d.ts",
+      "default": "./dist/runtime/surfaces/index.js"
+    },
     "./permissions/privilege": {
       "types": "./dist/permissions/privilege.d.ts",
       "default": "./dist/permissions/privilege.js"
