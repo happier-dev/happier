@@ -50,8 +50,13 @@ export const UPCOMING_RELEASE = 'v0.3';
  *
  * Exported as a constant so the guard can assert the rendered page contains it,
  * rather than trusting whoever adds the next entry to remember the sentence.
+ *
+ * It was "Not available yet — in the upcoming v0.3". The badge renders directly
+ * under headings that already say the same thing, so the negation was the most
+ * repeated one on the site while adding nothing the heading had not said. The
+ * version is the part that carries information, so the version is what is left.
  */
-export const UPCOMING_LABEL = `Not available yet — in the upcoming ${UPCOMING_RELEASE}`;
+export const UPCOMING_LABEL = `Coming in ${UPCOMING_RELEASE}`;
 
 /**
  * Where the released tree sits relative to this repository, and the env var

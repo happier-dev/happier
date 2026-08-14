@@ -61,7 +61,11 @@ export const en = {
         headlineLineOne: 'Claude Code, Codex',
         headlineLineTwo: 'OpenCode, Pi',
         headlineLineTwoAside: '& 9 more',
-        headlineLineThree: 'Everywhere you work.',
+        // "work" narrowed the promise to the working day and carried the wrong
+        // connotation with it — a lot of this audience codes for pleasure. "go"
+        // frames Happier as the thing you take with you, which is the claim the
+        // rest of the page actually supports.
+        headlineLineThree: 'Everywhere you go.',
         // "computer", never "machine": the reader's own laptop or desktop. In
         // Happier "machine" is a UI noun (the thing you pick in the machine
         // selector), and using it for both makes the sentence ambiguous.

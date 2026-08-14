@@ -313,7 +313,7 @@ export type AgentRecord = {
      * similarity gate in agents.test.ts for the before and after.
      */
     lead: ReadonlyArray<string>;
-    /** The "What it does" section. */
+    /** The "What <agent> does, and what Happier adds" section. */
     whatItDoes: string[];
     /** Four to six questions someone actually asks about this agent. */
     faq: ReadonlyArray<AgentFaqItem>;
@@ -384,7 +384,10 @@ export const UPCOMING_AGENTS: ReadonlyArray<UpcomingAgent> = [
         // binary on a Gemini credential. It is absent from the released
         // AGENT_IDS (see SHIPPED_AGENT_IDS in ./availability.ts), which is what
         // makes it upcoming rather than shipped.
-        note: 'Google’s Antigravity CLI is coming in the next version — a terminal-hosted backend that will run on a Gemini credential. It is not in the build you can install today, and we would rather say that than let a search result imply otherwise.',
+        // The trailing clause here used to read "and we would rather say that
+        // than let a search result imply otherwise" — our editorial reasoning,
+        // addressed to the reader. The fact stands on its own.
+        note: 'Google’s Antigravity CLI is coming in the next version — a terminal-hosted backend that will run on a Gemini credential. It is not in the build you can install today.',
     },
     {
         availability: 'upcoming',
@@ -405,7 +408,9 @@ export const UPCOMING_AGENTS: ReadonlyArray<UpcomingAgent> = [
         name: 'CodeRabbit',
         vendor: 'CodeRabbit',
         binary: 'coderabbit',
-        note: 'CodeRabbit is a review tool rather than a conversational coding agent, so even when it lands there is no session to open on your phone — it would be a tool run inside one. That is why it would not get a page like the thirteen above.',
+        // Dropped: "That is why it would not get a page like the thirteen
+        // above." — our URL-minting policy, which is not the reader's question.
+        note: 'CodeRabbit is a review tool rather than a conversational coding agent, so even when it lands there is no session to open on your phone — it would be a tool run inside one.',
     },
     {
         availability: 'upcoming',
@@ -467,7 +472,7 @@ export const AGENTS: ReadonlyArray<AgentRecord> = [
             },
             {
                 q: 'How do I turn the unified terminal runtime on?',
-                a: 'It is a Claude Code provider setting in the app — Settings, Providers, Claude Code, “Use unified terminal runtime” — and it is off until you turn it on, because the Agent SDK runtime is the default. It needs a terminal host to put the TUI in: tmux if you have it, otherwise the zellij Happier bundles. That means macOS and Linux today; on Windows the CLI points you at WSL2 rather than pretending. Either way `happier attach <session-id>` puts you back at that session in a terminal, and going to your phone afterwards does not start a second one.',
+                a: 'It is a Claude Code provider setting in the app — Settings, Providers, Claude Code, “Use unified terminal runtime” — and it is off until you turn it on, because the Agent SDK runtime is the default. It needs a terminal host to put the TUI in: tmux if you have it, otherwise the zellij Happier bundles. That means macOS and Linux today; on Windows the CLI points you at WSL2. Either way `happier attach <session-id>` puts you back at that session in a terminal, and going to your phone afterwards does not start a second one.',
             },
             {
                 q: 'What happens if I send a message while Claude is working?',
@@ -785,7 +790,7 @@ export const AGENTS: ReadonlyArray<AgentRecord> = [
             },
             {
                 q: 'Where is the official documentation?',
-                a: 'Alibaba publishes the Qwen Code docs itself and the link is above; Happier does not mirror them, because a copy of someone else’s install instructions is a copy that goes stale. The Happier-side settings have their own page in our docs.',
+                a: 'Alibaba publishes the Qwen Code docs itself and the link is above; Happier does not mirror them, because a copy of someone else’s install instructions is a copy that goes stale. The Happier-side settings are documented separately.',
             },
             {
                 q: 'Does Happier see my prompts?',

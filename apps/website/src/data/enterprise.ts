@@ -51,27 +51,32 @@ export type EnterpriseCapability = {
 export const ENTERPRISE_ACCESS: ReadonlyArray<EnterpriseCapability> = [
     {
         id: 'closed',
-        title: 'A relay that only your people can reach',
+        // Was "A relay that only your people can reach" — a promise about a
+        // relay rather than a control an operator can look up. The control is:
+        // turn signup off, require an IdP, and have eligibility enforced on
+        // every authenticated route and on the realtime handshake
+        // (apps/server/sources/app/auth/enforceLoginEligibility.ts).
+        title: 'Require an identity provider, re-checked on every request',
         body: 'Anonymous signup is on by default because most self-hosters put the relay behind Tailscale and are done. Turn it off and require an identity provider instead, and eligibility is enforced on every authenticated HTTP route and on the realtime handshake — not only at the front door. A request from someone who no longer qualifies is refused, not downgraded.',
     },
     {
         id: 'github',
-        title: 'GitHub, restricted to your orgs',
+        title: 'GitHub sign-in, restricted to your organisations',
         body: 'Allow specific logins, or require membership of one or more GitHub organisations, matching any or all of them. The recommended path verifies membership through a GitHub App rather than the user’s own OAuth token, so access does not survive a developer revoking consent — and does not break when they do.',
     },
     {
         id: 'oidc',
-        title: 'OIDC, with rules per provider',
+        title: 'OIDC single sign-on, with allow rules per provider',
         body: 'Okta, Entra ID, Auth0, Keycloak, anything with a discovery document. Each provider gets its own allow rules: a login allowlist, permitted email domains, groups the user must be in any of, groups they must be in all of. If your IdP omits groups from the token and hands back an overage pointer instead, Happier treats the user as ineligible rather than as ungrouped.',
     },
     {
         id: 'mtls',
-        title: 'Client certificates from your MDM',
+        title: 'mTLS client certificates from your MDM',
         body: 'Terminate mTLS at your reverse proxy and forward a verified identity to Happier. Map it from the certificate’s SAN email or SAN UPN so a device rotating its certificate is still the same person, and constrain it with issuer and email-domain allowlists. Unknown certificates are rejected unless you have deliberately enabled auto-provisioning.',
     },
     {
         id: 'offboarding',
-        title: 'Offboarding that actually happens',
+        title: 'Offboarding: membership re-checked on the interval you set',
         body: 'Membership is re-checked on an interval you set — daily by default, down to a minute — and the result is cached on the identity record. The interesting setting is what happens when your IdP is unreachable: permissive by default, or strict, where the server fails closed rather than letting a stale eligibility check stand in for a live one.',
     },
 ];
@@ -85,7 +90,7 @@ export const ENTERPRISE_DATA: ReadonlyArray<EnterpriseCapability> = [
     },
     {
         id: 'retention',
-        title: 'Retention you configure, or none at all',
+        title: 'Retention windows you set, enforced without reading a transcript',
         body: 'Off by default: set nothing and the server keeps sessions forever. Turn it on and the session rule is conservative on purpose — a session tree is deleted only when it is inactive on the persisted flag, older than the cutoff on two separate timestamps, and not observed as live in memory, with the cutoff re-checked inside the delete transaction. It never needs to decrypt a transcript to decide.',
     },
     {
@@ -100,7 +105,7 @@ export const ENTERPRISE_DATA: ReadonlyArray<EnterpriseCapability> = [
     },
     {
         id: 'deploy',
-        title: 'Docker, and a database you already run',
+        title: 'A Docker image, with SQLite or Postgres behind it',
         body: 'The published relay-server image runs as a non-root user with the web UI embedded, defaults to SQLite under a single mounted volume, and takes a documented Postgres override. MySQL works too, from a source-built image — the prebuilt one deliberately leaves that client out. Pin an immutable tag; the image does not update itself.',
     },
 ];

@@ -111,7 +111,7 @@ export const TERMINAL_INTRO: ReadonlyArray<string> = [
  * between steering and interrupting, and a paragraph that blurs them is worth
  * less than no paragraph at all.
  */
-export const CLAUDE_UNIFIED_HEADING = 'Drive Claude Code inside its own terminal';
+export const CLAUDE_UNIFIED_HEADING = 'Drive one Claude Code session from both the terminal and the app';
 
 export const CLAUDE_UNIFIED: ReadonlyArray<string> = [
     'Steering and interrupting are different moves. Interrupting stops the turn that is running and starts another one from your message. Steering adds to the turn that is running — the work carries on, now knowing the thing you just told it. Both are useful, and the second one is the one you want when you look up from your phone and realise it is about to rename the wrong file.',
@@ -133,20 +133,27 @@ export const TERMINAL_MOVES: ReadonlyArray<{ id: string; title: string; body: st
     },
     {
         id: 'back',
-        title: 'Go back the other way',
+        title: 'Hand the session back to the app',
         body: 'Taking local control starts from the terminal; handing it back can be asked for from the app. Happier will wait for the current terminal turn to reach a safe stopping point first, because forcing a prompt into a busy TUI is how you lose the work it was in the middle of.',
     },
     {
         id: 'in-app',
-        title: 'Or never open a terminal at all',
-        body: 'The app has a real one built in — a live shell on the connected computer, docked to the bottom panel, the sidebar or the details panel, surviving a page refresh and keeping the same shell as you move it around. It is the same terminal transport the app uses to run provider logins.',
+        title: 'Use the terminal built into the app',
+        body: 'A live shell on the connected computer, docked to the bottom panel, the sidebar or the details panel, surviving a page refresh and keeping the same shell as you move it around. It is the same terminal transport the app uses to run provider logins.',
     },
 ];
 
 /**
- * The catch. Every feature page needs one and this is the honest version: tmux
- * has to be on BEFORE the session starts, which is the single most common way
- * this workflow disappoints someone on their first try.
+ * What attaching needs. Every feature page needs this section and this is the
+ * honest version: tmux has to be on BEFORE the session starts, which is the
+ * single most common way this workflow disappoints someone on their first try.
+ *
+ * The heading used to be "The catch", which told a reader arriving cold that
+ * something was wrong without telling them what — a framing where a description
+ * belongs. The three requirements are the description: tmux enabled first, the
+ * same computer and account, and a daemon that is running for the embedded
+ * terminal. Naming them is also the only version of this heading that anyone
+ * searches for.
  */
 export const TERMINAL_CATCH: ReadonlyArray<string> = [
     'The one that catches people: on macOS and Linux, attaching to a Claude Code or Codex session started from the app needs tmux integration enabled before that session starts. Turn it on after the fact and the session already running is not attachable — it was never launched inside tmux to begin with. You also have to attach from the same computer that owns the session and the same account that started it.',

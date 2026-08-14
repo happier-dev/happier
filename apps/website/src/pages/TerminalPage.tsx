@@ -44,14 +44,22 @@ function withCode(text: string): ReactNode[] {
  *
  * Evaluation intent only. The step list (enabling tmux, choosing a Windows
  * mode, docking the embedded terminal) is linked once and not repeated.
+ *
+ * THE H1 WAS "Keep your terminal. Or never open one.", WHICH MEANS NOTHING COLD.
+ * It reads as a promise to someone who already knows what the page is about, and
+ * it carries no noun anybody types: not Claude Code, not Codex, not tmux. The
+ * headings now name the agents whose terminals this is about, because "Claude
+ * Code terminal" and "Codex TUI" are the queries this page exists to answer, and
+ * "The catch" — a heading that told the reader only that something was wrong —
+ * is now the list of what attaching actually needs.
  */
 export function TerminalPage() {
     return (
         <PageShell>
             <PageHeader
                 eyebrow="Feature"
-                title="Keep your terminal. Or never open one."
-                standfirst="Happier runs Claude Code, Codex and OpenCode as the same session you would have started yourself — so you can drive it from their own TUI, from your phone, or from both, without the session noticing."
+                title="Keep your Claude Code, Codex and OpenCode terminals, or work from the app"
+                standfirst="Happier runs them as the same session you would have started yourself — so you can drive it from their own TUI, from your phone, or from both, without the session noticing."
             />
 
             <Prose data-section="terminal-intro">
@@ -64,7 +72,7 @@ export function TerminalPage() {
                 <div className="mx-auto max-w-[1400px] px-6 py-10 md:px-10 md:py-14">
                     <div className="max-w-[860px]">
                         <h2 className="font-display text-[26px] font-normal leading-[1.14] tracking-[-0.025em] md:text-[34px]">
-                            Four ways in, one session
+                            Start in the terminal or in the app, and move between them
                         </h2>
                         <dl className="mt-7 grid gap-7 md:grid-cols-2">
                             {TERMINAL_MOVES.map((item) => (
@@ -86,7 +94,7 @@ export function TerminalPage() {
                 <div className="mx-auto max-w-[1400px] px-6 py-10 md:px-10 md:py-14">
                     <div className="max-w-[900px]">
                         <h2 className="font-display text-[26px] font-normal leading-[1.14] tracking-[-0.025em] md:text-[34px]">
-                            Which agents hand control back and forth
+                            Which agents move a session between the terminal and the app
                         </h2>
                         <p
                             className="mt-4 max-w-[720px] text-[16px] leading-[1.65]"
@@ -170,13 +178,13 @@ export function TerminalPage() {
                 ))}
             </Prose>
 
-            <Prose heading="The catch" data-section="terminal-catch">
+            <Prose heading="What attaching needs: tmux, the same computer, a running daemon" data-section="terminal-catch">
                 {TERMINAL_CATCH.map((paragraph) => (
                     <P key={paragraph.slice(0, 32)}>{withCode(paragraph)}</P>
                 ))}
             </Prose>
 
-            <Prose heading="Setting it up" data-section="terminal-docs">
+            <Prose heading="tmux, the Windows session mode, and where the terminal docks" data-section="terminal-docs">
                 <P>
                     Nothing on this page needs configuration if you start your sessions from the
                     terminal — that path works the moment the CLI is installed. The settings that do

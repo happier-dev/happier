@@ -38,14 +38,31 @@ export function CodexRemotePage() {
     return (
         <PageShell>
             {/*
-              * The eyebrow used to read "Honest comparison". Self-praise the
-              * reader cannot check, and the same two words every unsourced
-              * comparison page uses. The evidence rule in src/data/codexRemote.ts
-              * is what makes the page honest; the label names the source instead.
+              * TWO WRONG EYEBROWS, IN ORDER, SO NEITHER COMES BACK — the same
+              * pair as the Claude page, and for the same reasons.
+              *
+              * "Honest comparison": self-praise the reader cannot check, and the
+              * two words every unsourced comparison page also uses.
+              *
+              * "Sourced from OpenAI's docs": the same defect wearing evidence. A
+              * label that names where the facts came from tells a stranger
+              * nothing about what is on the page. The sourcing rule is stated in
+              * the docblock at the top of src/data/codexRemote.ts, and the
+              * attribution is made to the reader in body copy — the standfirst,
+              * CODEX_SECTION.turn and the dek above the conditions list all name
+              * OpenAI outright. The eyebrow names OpenAI's feature instead,
+              * which is what someone arriving from search typed.
+              */}
+            {/*
+              * The same H1 edit as the Claude page, in the same shape on
+              * purpose: "…and where Happier fits" named no outcome and meant
+              * nothing cold. "Codex from your phone" is the query this page
+              * exists for; the rest of the line says what it does with it.
+              * "Codex Remote" is OpenAI's own label, not a name we minted.
               */}
             <PageHeader
-                eyebrow="Sourced from OpenAI’s docs"
-                title="Codex from your phone, and where Happier fits"
+                eyebrow="Codex Remote"
+                title="Codex from your phone: Codex Remote and Happier, compared"
                 standfirst="OpenAI put Codex inside the ChatGPT mobile app and calls the feature Remote: you pair a phone to a Mac or Windows PC and drive the Codex session running on it. Here is what that covers, the conditions OpenAI’s own documentation puts on it, and the workflow it was never built for."
             />
 
@@ -132,9 +149,9 @@ export function CodexRemotePage() {
                             Will it run in your setup?
                         </h2>
                         <p className="mt-4 max-w-[720px] text-[16px] leading-[1.65]" style={{ color: 'var(--muted)' }}>
-                            Not a feature scorecard — the eight facts that decide whether either
-                            thing works where you work. Three of them go to OpenAI. Those three are
-                            why the other five are worth reading.
+                            The eight facts that decide whether either thing works where you work.
+                            Three of them go to OpenAI. Those three are why the other five are worth
+                            reading.
                         </p>
                         <div
                             className="mt-6 overflow-x-auto rounded-2xl border"

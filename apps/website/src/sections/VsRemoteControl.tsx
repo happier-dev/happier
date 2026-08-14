@@ -11,10 +11,16 @@ export const VS_REMOTE_CONTROL_SECTION_ID = 'vs-remote-control';
  * us on them. The table now lives only on /vs/claude-code-remote-control, where
  * a reader has self-selected into wanting it.
  *
- * What is left is the five things that only exist because one client runs every
+ * What is left is the six things that only exist because one client runs every
  * agent. Layout intent: the headline states the landscape in three short
- * sentences, the sub-line names the product, and the five arguments are a plain
+ * sentences, the sub-line names the product, and the six arguments are a plain
  * grid — no table, no ticks, no column labelled with someone else's brand.
+ *
+ * THE COUNT IS A LAYOUT CONSTRAINT AS WELL AS AN EDITORIAL ONE. The grid below
+ * is two columns at sm and three at lg. Five cards left a hole in the second
+ * row on every wide screen, which reads as a rendering bug rather than as a
+ * deliberate list. Six fills both rows at three columns and both rows at two.
+ * If a seventh card is ever added, add an eighth with it.
  */
 export function VsRemoteControl() {
     return (

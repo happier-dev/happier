@@ -149,7 +149,11 @@ export type SecurityLedgerEntry = { id: string; title: string; body: string };
 export const SECURITY_VISIBLE: ReadonlyArray<SecurityLedgerEntry> = [
     {
         id: 'ciphertext',
-        title: 'Ciphertext, and a key it cannot open',
+        // "Ciphertext, and a key it cannot open" was the old title: the second
+        // half named the relay's inability rather than the thing on the row.
+        // What the relay holds is a sealed envelope; the body says, once, that
+        // no server route can produce one.
+        title: 'Ciphertext, and a sealed key envelope',
         body: 'One row per message, holding base64 and nothing else, plus the session’s wrapped data key. The wrapping is done on a device; no server route produces one.',
     },
     {
@@ -269,7 +273,7 @@ export const SECURITY_STORAGE: ReadonlyArray<string> = [
  * rather than a clause.
  */
 export const SECURITY_NOTIFICATIONS: ReadonlyArray<string> = [
-    'A push notification is the one thing that leaves the model behind, because it has to arrive at a phone that has nothing open. Happier’s answer is that the server does not send them. It stores your push tokens; the CLI on your own computer reads them back and sends the notification itself, which keeps the relay out of a path it would otherwise have to be told the contents of.',
+    'A push notification is the one thing that leaves the model behind, because it has to arrive at a phone that has nothing open. Happier’s answer is that your own computer sends them. The server stores your push tokens; the CLI on your own computer reads them back and sends the notification itself, which keeps the relay out of a path it would otherwise have to be told the contents of.',
     'What the payload carries is deliberately thin: the tool or request type, and a short hint where one helps — a file such as src/file.ts, a command name, a count like "3 questions". Raw tool input is not put into it. Enough to decide whether to reach for the phone, on a screen anyone standing behind you can read.',
 ];
 

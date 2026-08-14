@@ -152,10 +152,26 @@ export const FAQ_ITEMS: ReadonlyArray<FaqItem> = [
          * NAME ONLY THOSE TWO. Anything else in the base prompt is not
          * switchable, and a setting the reader cannot find is worse than no
          * setting at all.
+         *
+         * THE ONE CAVEAT THAT HAS TO STAY. Memory is the single shipped feature
+         * that issues model turns Happier asked for rather than ones you typed.
+         * Verified in the v0.2.10 release artifact, not in this repository —
+         * node_modules/@happier-dev/protocol/dist/memory/memorySettings.js:
+         *   :219  enabled: z.boolean().default(false)  — memory is off until
+         *         the reader turns it on, so the caveat costs the "No." nothing.
+         *   :46-47 summarizerBackendId defaults to CLAUDE_MEMORY_SUMMARIZER_
+         *         BACKEND_ID, summarizerModelId to 'default' — the summariser
+         *         runs on a backend the reader has already connected. There is
+         *         no Happier-hosted model anywhere in the path.
+         *   :56   updateMode: 'onIdle' | 'continuous', default 'onIdle'
+         *   :58   maxRunsPerHour, default 12
+         * Dropping this sentence made the answer read as though nothing in
+         * Happier ever calls a model, which is one feature short of true.
          */
         a: [
             'No. Your agent talks straight to its own provider: Claude Code, Codex, Gemini and the rest run on your computer, with their own auth and their own harness, exactly as they do in your terminal. Happier is the client around that, so a prompt costs what it cost before.',
             'Happier does add a small amount of instruction of its own, and two pieces of it are yours to switch off under Settings → Sessions → Prompt personalization. “Session title updates” asks the agent to name the session, and you can set it to never, to session start only, or to update again when the task changes. “Ask the agent to suggest reply options” asks it to offer tappable answers when it puts a question to you, and it is a single switch. Turn both off and what is left is two short paragraphs telling the agent how file attachments and `@path` references arrive.',
+            'One feature does spend tokens of its own: memory summarises your sessions on a credential you have already connected, on idle, up to twelve times an hour. It is off until you turn it on.',
         ],
     },
     {
@@ -251,7 +267,7 @@ export const FAQ_ITEMS: ReadonlyArray<FaqItem> = [
         q: 'Can I change the model without starting over?',
         a: [
             'Usually. A running session has a model picker in its input settings, listing the agent’s own models plus the models from every Provider connection you have enabled and that the agent can actually use. There is also a “Use CLI settings” option, which tells Happier to set no override at all and let the CLI decide from its own config.',
-            'Whether the change lands mid-session is up to the agent runtime: some apply it to the next prompt, others need a restart or a fork. Happier tells you which and never silently swaps you to a different connection or falls back to a native model behind your back.',
+            'Whether the change lands mid-session is up to the agent runtime: some apply it to the next prompt, others need a restart or a fork. Happier tells you which, and keeps you on the connection you picked.',
         ],
     },
     {
@@ -259,7 +275,7 @@ export const FAQ_ITEMS: ReadonlyArray<FaqItem> = [
         q: 'Do I have to approve every permission prompt?',
         a: [
             'Only as much as you want to. There are four permission modes: Default, which leaves the provider’s normal ask-when-needed behaviour alone; Read-only, where the agent can inspect but write-like actions are denied; Safe YOLO, which auto-allows reads and still asks before writes; and YOLO, which skips approvals as far as the provider allows. Set it per session, change it while one is running, or set a default per agent under Settings → Providers so new Claude sessions start read-only and new Codex sessions do not.',
-            'Two things worth knowing. Not every provider supports every mode — where one does not, Happier falls back to the closest supported behaviour and shows you the Effective policy rather than pretending. And Plan is a session mode, not a permission mode: being in Plan does not mean auto-approve, and you can still get prompts.',
+            'Two things worth knowing. Not every provider supports every mode — where one does not, Happier falls back to the closest supported behaviour and shows you the Effective policy it landed on. And Plan is a session mode, not a permission mode: being in Plan does not mean auto-approve, and you can still get prompts.',
             'When a session does need you, it moves into the “Needs attention” group and pushes a notification you can answer from the alert, so approving is a tap rather than a trip back to the laptop.',
         ],
     },
@@ -268,7 +284,7 @@ export const FAQ_ITEMS: ReadonlyArray<FaqItem> = [
         q: 'Can I see how much of my quota I have used?',
         a: [
             'Yes, for the providers that publish it — today that is Codex, Claude subscription and Gemini accounts connected through Connected services. Each profile shows a quota meter and reset time, the meters appear again in the new-session auth picker, and the composer carries a usage badge while you work, so you can see a limit coming instead of discovering it mid-turn.',
-            'Where a provider publishes no usage endpoint, Happier shows nothing rather than guessing.',
+            'The meter is there for every provider that publishes one, and only for those.',
         ],
     },
     {
@@ -315,7 +331,7 @@ export const FAQ_ITEMS: ReadonlyArray<FaqItem> = [
         q: 'Do I need the mobile app?',
         a: [
             'No. app.happier.dev is the full app in a browser tab, and there is a desktop build for macOS, Windows and Linux if you would rather it was a window than a tab. Plenty of people run Happier entirely on the same computer their sessions run on, for the diff review and the session list rather than for the mobility.',
-            'If you do want it on a phone: iOS is on the App Store. Android is a direct APK download from the GitHub releases — there is no public Play listing yet, only a closed testing track you have to be opted into, and we would rather say that than link you at a 404.',
+            'If you do want it on a phone: iOS is on the App Store. Android is a direct APK download from the GitHub releases — there is no public Play listing yet, only a closed testing track you have to be opted into.',
         ],
     },
     {

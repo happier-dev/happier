@@ -66,27 +66,40 @@ export const CODEX_SECTION = {
     strengths: [
         {
             id: 'phone',
-            title: 'Four verbs, all of them on the phone',
+            // "Four verbs, all of them on the phone" was a heading about the
+            // sentence underneath it rather than about Remote. The four verbs
+            // are OpenAI's own, and naming them is both clearer and the thing a
+            // reader is looking for.
+            title: 'Start, guide, approve and review from your phone',
             body: 'OpenAI’s Remote page lists what the phone is for: start tasks, guide work as it happens, approve requested actions, review the result. The work does not move — “Codex runs each task on your connected computer” — so the phone is a control surface rather than a second place your code ends up.',
         },
         {
             id: 'setup',
-            title: 'Pairing is a QR scan and a permission prompt',
+            title: 'Pairing is a QR scan from the ChatGPT desktop app',
             body: 'Settings → Connections → “Control this Mac or PC” in the ChatGPT desktop app, approve remote access, scan the code. The phone has to be signed in to the same account and workspace, and OpenAI’s own step list ends with the honest one: keep your computer awake and online.',
         },
         {
             id: 'ssh',
-            title: 'It reaches an SSH host, not only the computer in front of you',
+            // Was "…not only the computer in front of you", which defined the
+            // capability by what it is not. The positive is the ~/.ssh/config
+            // discovery the body goes on to describe.
+            title: 'It reaches the SSH hosts already in your ~/.ssh/config',
             body: 'Per OpenAI’s remote-connections page, Codex reads concrete host aliases from `~/.ssh/config`, resolves them with OpenSSH, and ignores pattern-only hosts. A devbox you already have in your SSH config is discoverable rather than something you have to set up twice.',
         },
         {
             id: 'cloud',
-            title: 'Codex cloud does a thing Happier does not do at all',
+            // The old title was about Happier's shortfall, on a card whose job
+            // is to say what Codex cloud does. The concession still stands in
+            // the body, where it is argued rather than asserted in a heading.
+            // Its replacement, "with no computer of your own", fixed the subject
+            // but kept defining the capability by what the reader lacks. This
+            // one states the thing itself, in OpenAI's own terms.
+            title: 'Codex cloud runs tasks in parallel, in isolated environments',
             body: 'Separately from Remote, Codex runs tasks in isolated cloud environments, in parallel, with per-repository setup steps, dependencies and variables — started from the web, from GitHub, from Linear or from Slack. Happier has no equivalent and is not going to pretend otherwise: every Happier session runs on a computer you own. Work on a repository you have not cloned anywhere is what a cloud environment is for.',
         },
         {
             id: 'plan',
-            title: 'It comes with a subscription you may already have',
+            title: 'Codex is included with ChatGPT subscriptions',
             body: 'OpenAI’s pricing page states that ChatGPT Work and Codex are included in the Free, Go, Plus, Pro, Business, Edu and Enterprise plans. Two things the same documentation adds: Remote availability depends on rollout and your workspace settings, and inside a managed workspace an admin may need to enable Remote Control access before a phone can connect at all.',
         },
     ],
@@ -161,7 +174,7 @@ export const CODEX_SECTION = {
     ],
 
     /**
-     * THE ARGUMENT. Five things that exist because one client runs every agent.
+     * THE ARGUMENT. Six things that exist because one client runs every agent.
      *
      * Each is verified in shipped source, and the anchor is named in the comment
      * above it so the next person to edit this can re-check it with one grep
@@ -186,7 +199,9 @@ export const CODEX_SECTION = {
             // `backendTargetKeys`: "Select the agent provider/backend targets to
             // use." Multiselect, required.
             // remote-dev/packages/protocol/src/actions/actionSpecs.ts:1205,1276
-            title: 'Mix and match inside one workspace.',
+            // Same edit as the matching card in comparison.ts, and for the same
+            // reason: name what is being mixed.
+            title: 'Mix and match agents inside one workspace.',
             body: 'A Codex session can hand the review to a delegate run on Claude Code while a third agent reads a stack trace, and you can steer any of them mid-run. Happier’s plan, review and delegate runs take an explicit list of provider targets rather than whichever provider you happen to be sitting in. A remote built by one vendor drives that vendor’s agent; that is what it is for.',
         },
         {
@@ -204,7 +219,14 @@ export const CODEX_SECTION = {
             // `connectedServices.quotas` gate (docs/features/connected-services.mdx).
             // Was "Your accounts, pooled, with the meters showing." — a caption,
             // not a heading. See the note on the matching card in comparison.ts.
-            title: 'Choose the account. See what is left.',
+            // "Load-balance" is how people search for account pooling, and it
+            // is what the pool does: policy `strategy` defaults to
+            // `least_limited` (packages/protocol/src/connect/
+            // connectedServiceSchemas.ts:502), rendered in the app's pool screen
+            // as "Least limited first — Prefer the member with the most usable
+            // quota" (apps/ui/sources/text/translations/en.ts:2754-2755). The
+            // schema rejects `round_robin`, so that word must not appear here.
+            title: 'Choose an account, or load-balance a pool, and see what usage is left.',
             body: 'Connect more than one profile per service — a personal Codex subscription and a work one, an OpenAI key — and pick which one a session runs on when you start it. Pools are pools of accounts rather than of agents: the same Codex subscription is usable by any agent that runs on it, OpenCode included. Where the quota surface is enabled, Codex, Claude and Gemini profiles carry a usage snapshot in the auth picker, so you can see what is left before committing a long run to it. When a pool does move a running session to another account, it is bounded — at most once a turn and three times a session hour by default — and mid-session switching is Claude Code and Codex only.',
         },
         {
@@ -229,6 +251,27 @@ export const CODEX_SECTION = {
             title: 'Start a session on any computer you own.',
             body: 'Sessions are created against a machine, so a Codex session can start on the VPS while you are on the laptop, and a session on the laptop can message it and wait for it to finish. A live session can also move between computers under the same session id, carrying its provider state and project directory — supported for Claude Code and OpenCode, experimental for Codex.',
         },
+        {
+            id: 'reviewComments',
+            // THE SIXTH CARD. Identical wording to the matching card in
+            // comparison.ts, on purpose and for the same reason the `oneApp`
+            // card is: it is one claim about Happier, it is not vendor-specific,
+            // and two wordings of one claim is how one of them drifts.
+            //
+            // The full evidence trail — the line affordance, what a draft
+            // stores, the line-content hash re-anchoring, `includeInPrompt`, the
+            // { serverId, machineId, rootPath } workspace scope that lets a NEW
+            // session on a DIFFERENT agent pick the comments up, and the
+            // registry entry proving the feature is on by default and not
+            // experimental — is written out in full above the same card in
+            // comparison.ts. Re-check it there before editing either copy.
+            //
+            // The cross-vendor half is the argument this page is making: Codex
+            // wrote the diff, and the notes you leave on it can go to a Claude
+            // Code session in the same project without being retyped.
+            title: 'Mark the lines. Send them to any agent.',
+            body: 'Open a file or a diff — the changed-files review, or the diff the agent just wrote into the transcript — and leave a comment on the exact line. Happier saves the path, the line, a snippet and a hash of that line’s contents, so the note still finds its code after the file moves underneath it. Pick which comments to send and they go in as structured review context: back into the same session, or into a new one on a different agent, because the comments are held against the workspace and any session you open there finds them waiting.',
+        },
     ],
 } as const;
 
@@ -240,7 +283,10 @@ export const CODEX_SECTION = {
  * item that is not the same kind of thing, and anyone who checks would catch it.
  */
 export const CODEX_SCOPE_LIMIT = {
-    heading: 'And the job it was never meant to do',
+    // "And the job it was never meant to do" defined the section by a negative
+    // and named no product. The section is about scope — which agent each
+    // client drives — and the count comes from the registry, like the body's.
+    heading: `Remote drives Codex. Happier drives ${AGENTS.length} agents.`,
     body: `Remote drives Codex, and Codex cloud runs Codex. That is what a vendor remote is: every vendor that ships one ships it for its own agent, and there is nothing strange about that. The cross-vendor case gets built on an open protocol instead — Zed runs Claude, Codex, OpenCode, Copilot, Cursor and Pi Coding Agent in the editor over ACP, and Happier speaks ACP too, across your devices rather than inside one editor. Reaching one vendor’s agent from your phone and running ${AGENTS.length} vendors’ agents out of one inbox are different jobs. Happier is built for the second one.`,
 } as const;
 
@@ -289,7 +335,7 @@ export const CODEX_COMPARISON_ROWS: ReadonlyArray<CodexComparisonRow> = [
     },
     {
         id: 'cloud',
-        capability: 'Running work with no computer of your own',
+        capability: 'Running work in a hosted environment',
         codex: 'Codex cloud: isolated cloud environments (per OpenAI docs)',
         happier: 'Not offered — every session runs on a computer you own',
     },

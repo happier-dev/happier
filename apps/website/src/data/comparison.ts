@@ -33,7 +33,12 @@
  */
 
 export const RC_SECTION = {
-    eyebrow: 'Where Happier fits',
+    // "Where Happier fits" was the old eyebrow, and it is the same phrase both
+    // /vs H1s were carrying: it names no outcome, and it is legible only to a
+    // reader who already knows what Happier is. An eyebrow is read cold, so it
+    // now says what the section is about — one client, every agent — which is
+    // what the six cards under it go on to argue.
+    eyebrow: 'One client for every agent',
     /**
      * Three sentences, three lines. "Codex has mobile" is DESCRIPTIVE — OpenAI
      * put Codex inside the ChatGPT mobile app, and there is no product called
@@ -61,8 +66,8 @@ export const RC_SECTION = {
     /** The turn. Names the reader's situation rather than attacking the product. */
     turn: 'This page is about the rest of it: the setups Anthropic’s own documentation says Remote Control will not run in, and the twelve other agents it was never meant to cover.',
     /**
-     * THE ARGUMENT. Five things that only exist because one client runs every
-     * agent — not five ways Happier scores higher on somebody else's axes.
+     * THE ARGUMENT. Six things that only exist because one client runs every
+     * agent — not six ways Happier scores higher on somebody else's axes.
      *
      * Each one is verified in the shipped product (remote-dev), and the anchor is
      * named in the comment above it so the next person to edit the copy can
@@ -92,7 +97,10 @@ export const RC_SECTION = {
             // `backendTargetKeys`: "Select the agent provider/backend targets to
             // use." Multiselect over execution.backends.enabled.
             // packages/protocol/src/actions/actionSpecs.ts
-            title: 'Mix and match inside one workspace.',
+            // "Mix and match inside one workspace." left the reader to work out
+            // what is being mixed. The noun is the point of the card, and it is
+            // the noun the page is about: agents.
+            title: 'Mix and match agents inside one workspace.',
             body: 'A Codex session can hand the UI work to a delegate run on Claude while a Pi session digs through a stack trace, and you can steer any of them mid-run. Happier’s review, plan and delegate runs take a list of provider targets — not whichever provider you happen to be sitting in. A remote built by one vendor drives that vendor’s agent; Remote Control is a Claude Code feature, by its own documentation.',
         },
         {
@@ -129,7 +137,16 @@ export const RC_SECTION = {
             // accounts. Keep the session going.", "Review the diff. Send
             // notes." — and this one now does too. It does not reuse the
             // features.ts opener, because both render on the homepage.
-            title: 'Choose the account. See what is left.',
+            // LOAD BALANCING IS THE WORD PEOPLE SEARCH FOR, and it is also what
+            // the pool does: `ConnectedServiceAuthGroupPolicyV1Schema.strategy`
+            // is `'priority' | 'least_limited' | 'manual'` and DEFAULTS to
+            // `least_limited` (packages/protocol/src/connect/
+            // connectedServiceSchemas.ts:502), which the app's own pool screen
+            // renders as "Least limited first — Prefer the member with the most
+            // usable quota" (apps/ui/sources/text/translations/en.ts:2754-2755).
+            // `round_robin` is NOT a strategy the schema accepts, so do not
+            // write that word here.
+            title: 'Choose an account, or load-balance a pool, and see what usage is left.',
             body: 'Connect more than one profile per service — a personal Codex subscription and a work one, a Claude setup-token, an Anthropic API key — and choose which one a session runs on at the moment you start it. Quota snapshots for Codex, Claude and Gemini profiles show as badges in the auth picker, so you can see what is left before you commit a long run to it. Nothing switches until you build a pool on purpose; once you have, it starts with automatic fallback on for the accounts a running session can actually move between, and there is a toggle on the pool if you would rather switch by hand.',
         },
         {
@@ -167,6 +184,58 @@ export const RC_SECTION = {
             // optional; only the citation moved.
             title: 'Start a session on any computer you own.',
             body: 'Sessions are created against a machine, so a Codex session can start on the VPS while you are on the laptop, and a Claude session on the laptop can message it and wait for it to finish. A live session can also move between machines — same session id, different computer — carrying its provider state and project directory with it, which works for Claude Code and OpenCode, and is experimental on Codex.',
+        },
+        {
+            id: 'reviewComments',
+            // THE SIXTH CARD, added because five cells in a three-column grid
+            // reads as a layout bug. It is not filler: this is the one argument
+            // on the page where the reader's REVIEW crosses vendors, and neither
+            // vendor remote has an equivalent.
+            //
+            // WHY THIS ONE AND NOT SELF-HOSTING, E2EE OR THE MIT LICENCE. Those
+            // three are already argued twice each on this page — E2EE in
+            // cases.zdr and again in the COMPARISON_ROWS `zdr`/`transcript`
+            // rows, the licence in the `price` row — and none of them is a
+            // consequence of one client running every agent, which is the frame
+            // this list is under. Review comments are: the notes are held
+            // against the WORKSPACE, so the agent you send them to does not
+            // have to be the agent that wrote the diff.
+            //
+            // EVERY CLAIM, ANCHORED IN SHIPPED SOURCE (remote-dev):
+            //  • Line affordance on files and diffs —
+            //    apps/ui/sources/components/ui/code/diff/reviewComments/
+            //    ReviewCommentLineAffordance.tsx, and CodeLineRow.tsx.
+            //  • On the diff the agent just wrote, inside the transcript —
+            //    components/tools/shell/presentation/ToolDiffView.tsx:60-80 and
+            //    components/tools/renderers/fileOps/ToolFileDiffListView.tsx:52.
+            //  • On the changed-files review —
+            //    components/sessions/files/content/ChangedFilesReview.tsx:159.
+            //  • What is stored: filePath, anchor (line + `lineHash`), snapshot
+            //    (selectedLines/beforeContext/afterContext), body —
+            //    sync/domains/input/reviewComments/reviewCommentTypes.ts.
+            //  • Re-anchoring by line-content hash after the file moves —
+            //    the `lineHash` field above, resolved through
+            //    `anchorResolution: WorkspaceAnchorResolutionV1`, and rendered
+            //    into the prompt by reviewCommentPrompt.ts (`formatResolution`).
+            //  • Choosing which to send — `includeInPrompt`, and
+            //    `filterReviewCommentDraftsIncludedInPrompt` in the same file.
+            //  • WORKSPACE-SCOPED, NOT SESSION-SCOPED, which is the whole point
+            //    of the card: resolveNewSessionReviewCommentsScope.ts builds the
+            //    scope from { serverId, machineId, rootPath } and the NEW-session
+            //    composer discovers saved drafts through it —
+            //    components/sessions/new/attachments/
+            //    useNewSessionAttachmentsController.ts:92-107. The new session
+            //    picks its own agent, so a Claude diff can be sent to Codex.
+            //  • ON BY DEFAULT, and not experimental — the copy would be an
+            //    overclaim otherwise. uiFeatureRegistry.ts:301-309:
+            //    'files.reviewComments' → { showInSettings: true,
+            //    isExperimental: false, defaultEnabled: true }.
+            //
+            // The title deliberately does not reuse "Review the diff. Send
+            // notes." from features.ts — both render on the homepage, and two
+            // headings with one wording is how one of them drifts.
+            title: 'Mark the lines. Send them to any agent.',
+            body: 'Open a file or a diff — the changed-files review, or the diff the agent just wrote into the transcript — and leave a comment on the exact line. Happier saves the path, the line, a snippet and a hash of that line’s contents, so the note still finds its code after the file moves underneath it. Pick which comments to send and they go in as structured review context: back into the same session, or into a new one on a different agent, because the comments are held against the workspace and any session you open there finds them waiting.',
         },
     ],
     /**
@@ -318,17 +387,21 @@ export const COMPARISON_ROWS: ReadonlyArray<ComparisonRow> = [
 export const RC_STRENGTHS: ReadonlyArray<{ id: string; title: string; body: string }> = [
     {
         id: 'connect',
-        title: 'Three ways into a running session',
+        title: 'Three ways into a running Claude Code session',
         body: 'Open the session URL in any browser, scan the QR code, or open claude.ai/code and find the session by name — Remote Control sessions show a computer icon with a green dot when they are online. With `claude remote-control` the QR is behind a spacebar press, and the VS Code command shows no QR at all; it posts the session URL into the conversation instead.',
     },
     {
         id: 'adopt',
-        title: '`/rc` adopts the session you are already in',
+        // The backticks used to render as literal grave accents: the strengths
+        // grid prints `item.title` as plain text (VsRemoteControlPage.tsx), so
+        // markup that is decoration in a body string is punctuation in a
+        // heading. The command is legible without them.
+        title: '/rc adopts the Claude Code session you are already in',
         body: 'You do not have to decide in advance. Type /rc inside a running Claude Code session and it becomes remotely controllable, carrying over the conversation history — no restart, no losing the context you have built up over the last hour.',
     },
     {
         id: 'reconnect',
-        title: 'It survives a sleeping laptop, and it pushes',
+        title: 'It reconnects after your laptop sleeps, and pushes when it needs a decision',
         body: 'If your computer sleeps or the network drops, Claude Code reconnects when it comes back online, and queues subagent and workflow status updates while the connection rebuilds so you get them once it recovers. Push notifications arrive when Claude decides one is warranted, or when it needs a decision from you to continue.',
     },
     {
@@ -338,7 +411,7 @@ export const RC_STRENGTHS: ReadonlyArray<{ id: string; title: string; body: stri
     },
     {
         id: 'price',
-        title: 'It comes with a subscription you may already have',
+        title: 'Included with Claude Pro, Max, Team and Enterprise',
         body: 'Remote Control is available on Pro, Max, Team and Enterprise. Two things the same page adds: it is a research preview, and on Team and Enterprise it is off until an Owner turns on the Remote Control toggle in Claude Code admin settings. API keys are not supported at all.',
     },
 ];
@@ -357,6 +430,9 @@ export const RC_STRENGTHS: ReadonlyArray<{ id: string; title: string; body: stri
  * (zed.dev/docs/ai/external-agents). Do not put it back.
  */
 export const RC_SCOPE_LIMIT = {
-    heading: 'And one thing it was never built for',
+    // "And one thing it was never built for" defined the section by a negative
+    // and named no product, so it told a cold reader nothing. The section is
+    // about scope: which agent each client drives. State that.
+    heading: 'Remote Control drives Claude Code. Happier drives thirteen agents.',
     body: 'Remote Control is a Claude Code feature. It does not extend to Codex, Cursor, Gemini, Copilot, OpenCode, Qwen, Kimi, Kilo, Kiro, Auggie, Pi or Grok — some of those have a remote of their own, most have none, and none of them share an inbox with the others. Reaching one vendor’s agent from your phone and running thirteen vendors’ agents from one place are different jobs. Happier is built for the second one.',
 } as const;

@@ -62,9 +62,9 @@ export const zhHans: Messages = {
         // TOTAL after 等, not the remainder — "X、Y 等 13 种" is the natural form
         // and asserts the same fact (4 named + 9 = 13 shipped providers).
         headlineLineTwoAside: '等 13 种',
-        // EN: "Everywhere you work." — the emphasis moved from travel ("走到哪")
-        // to work, so the Chinese parallel moves with it.
-        headlineLineThree: '在哪工作，就在哪用。',
+        // EN: "Everywhere you go." — the English moved back off "work" to the
+        // travel framing, so the Chinese parallel moves back with it.
+        headlineLineThree: '走到哪，就在哪用。',
         // Line 1 mirrors the new English: your own computer (电脑, not 机器 —
         // 机器 is reserved for the in-app machine selector), your own
         // subscriptions or API keys. Line 2 is the app's own privacyTitle,

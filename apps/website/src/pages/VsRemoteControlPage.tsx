@@ -28,16 +28,35 @@ export function VsRemoteControlPage() {
     return (
         <PageShell>
             {/*
-              * The eyebrow used to read "Honest comparison". Calling your own
-              * comparison honest is a claim the reader cannot check and that
-              * every dishonest comparison also makes; the evidence rule in
-              * src/data/comparison.ts is what makes it true, and this label now
-              * says what the page is sourced from instead of how to feel
-              * about it.
+              * TWO WRONG EYEBROWS, IN ORDER, SO NEITHER COMES BACK.
+              *
+              * It read "Honest comparison" first. Calling your own comparison
+              * honest is a claim the reader cannot check and that every
+              * dishonest comparison also makes.
+              *
+              * It then read "Sourced from Anthropic's docs", which is the same
+              * defect wearing evidence: a label that says where the page got
+              * its facts rather than what the page is about. Sourcing is real
+              * and it belongs in comments — the rule is stated in full in the
+              * docblock at the top of src/data/comparison.ts — and it is made
+              * to the reader in body copy, where the standfirst, RC_SECTION.turn
+              * and the dek above the five-conditions list all attribute to
+              * Anthropic explicitly. An eyebrow has three or four words and its
+              * job is to tell a stranger arriving cold from search which
+              * product this page is about. So it names the product.
+              */}
+            {/*
+              * THE H1 USED TO END "…and where Happier fits", as did the Codex
+              * page's. "Fits" names no outcome, and the phrase only means
+              * anything to a reader who already knows what Happier is — which
+              * is nobody arriving on a page whose whole job is to be found by
+              * someone searching for the other product. The pair now leads on
+              * the thing the visitor typed (their agent, from their phone) and
+              * then says plainly what the page does with it.
               */}
             <PageHeader
-                eyebrow="Sourced from Anthropic’s docs"
-                title="Claude Code Remote Control, and where Happier fits"
+                eyebrow="Claude Code Remote Control"
+                title="Claude Code from your phone: Remote Control and Happier, compared"
                 standfirst="Anthropic ships a remote for its own agent, it is free with a subscription you probably already pay for, and it is good. Here is exactly what it does, the situations its own documentation says it will not run in, and the workflow it was never built for."
             />
 
@@ -127,9 +146,9 @@ export function VsRemoteControlPage() {
                             Will it run in your setup?
                         </h2>
                         <p className="mt-4 max-w-[720px] text-[16px] leading-[1.65]" style={{ color: 'var(--muted)' }}>
-                            Not a feature scorecard — the eight facts that decide whether either
-                            thing works where you work. Two of them Anthropic wins outright. Those
-                            two are why the other six are worth reading.
+                            The eight facts that decide whether either thing works where you work.
+                            Two of them Anthropic wins outright. Those two are why the other six are
+                            worth reading.
                         </p>
                         <div
                             className="mt-6 overflow-x-auto rounded-2xl border"

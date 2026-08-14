@@ -60,9 +60,22 @@ function CapabilityList({ items, dataSection, heading, standfirst }: {
 export function EnterprisePage() {
     return (
         <PageShell>
+            {/*
+              * "Run the whole thing on your own infrastructure" was the old H1,
+              * and "the whole thing" is the problem: it asks the reader to
+              * already know what Happier is before the heading means anything,
+              * and it reads like a hobbyist self-hosting a media server. The
+              * buyer this page is written for arrives with a compliance team
+              * and types the nouns they have to satisfy — self-hosted, SSO,
+              * mTLS, where the data lives. All four are controls this server
+              * actually ships (apps/server/sources/app/auth/providers/{github,
+              * oidc,mtls}, and prisma/schema.prisma's postgresql provider), so
+              * the heading names them rather than gesturing at "the whole
+              * thing".
+              */}
             <PageHeader
-                eyebrow="Self-hosted"
-                title="Run the whole thing on your own infrastructure"
+                eyebrow="Self-hosted relay"
+                title="Self-host the Happier relay: SSO, mTLS and your own database"
                 standfirst="Happier is MIT-licensed, and the relay every device talks through is a container you can run yourself. This page is the list of controls that come with it — what the server enforces, what it stores, and what it hands your clients at runtime."
             />
 
@@ -99,14 +112,14 @@ export function EnterprisePage() {
 
             <CapabilityList
                 dataSection="enterprise-access"
-                heading="Who gets in"
+                heading="SSO: GitHub orgs, OIDC groups and client certificates"
                 standfirst="Identity is delegated to whatever you already run. Happier’s job is to enforce it on every request rather than only at signup, and to keep asking."
                 items={ENTERPRISE_ACCESS}
             />
 
             <CapabilityList
                 dataSection="enterprise-data"
-                heading="What the server holds, and for how long"
+                heading="Storage policy, retention and the database you host"
                 standfirst="The controls an auditor asks about second, once they have finished with authentication."
                 items={ENTERPRISE_DATA}
             />
@@ -117,7 +130,7 @@ export function EnterprisePage() {
                 ))}
             </Prose>
 
-            <Prose heading="The licence, which is the part procurement asks about" data-section="enterprise-licence">
+            <Prose heading="What procurement gets: an MIT licence and a container image" data-section="enterprise-licence">
                 <P>
                     MIT. Not source-available, not open-core with the auth stack behind a commercial
                     tier, not AGPL. Everything on this page is in the same repository as the client,
@@ -134,7 +147,7 @@ export function EnterprisePage() {
                 </P>
             </Prose>
 
-            <Prose heading="Evaluating it" data-section="enterprise-cta">
+            <Prose heading="Stand up a test relay and check what it enforces" data-section="enterprise-cta">
                 <P>
                     The honest order is: stand the relay up on a throwaway host, point one developer
                     at it, and read <code className="font-mono">GET /v1/features</code> to see

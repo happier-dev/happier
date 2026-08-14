@@ -39,6 +39,21 @@ import { DOCS_URL, GUIDES_URL, WEB_APP_URL } from '../data/downloads';
  *
  * What remains shared is shared on purpose. One app, one session list, one
  * install command — repeating that is not duplication, it is the product.
+ *
+ * THE SECTION HEADINGS DESCRIBE, THEY DO NOT FRAME
+ * ------------------------------------------------
+ * They used to be written for a reader who already knew what the page was:
+ * "Claude Code in particular", "What it does", "Terminal or UI". Each named a
+ * position in the argument rather than a thing the reader gets, and none of
+ * them carried a noun anyone types into a search box. Someone arriving cold on
+ * "gemini cli mobile app" got no purchase on any of them.
+ *
+ * Every heading now says what its section covers, and carries the agent's name
+ * where the sentence wants one — which is most of them, because that name is
+ * the search term these pages exist for. It also cuts rendered similarity
+ * rather than adding to it: the headings differ per page where the template
+ * used to repeat verbatim. The doorway gate in agents.test.ts is the number to
+ * watch if that ever stops being true.
  */
 
 const OTHER_AGENT_COUNT = AGENTS.length - 1;
@@ -261,7 +276,7 @@ function RunsOnAccount({ agent }: { agent: AgentRecord }) {
     const list = joinWithOr(services.map((id) => CONNECTED_SERVICE_LABELS[id]));
 
     return (
-        <Prose heading="Which account it runs on" data-section="agent-accounts">
+        <Prose heading={`Which account ${agent.name} runs on`} data-section="agent-accounts">
             <P>
                 {agent.name} is one of the agents Happier can point at a credential you connected
                 once instead of at whatever that computer is logged into. It accepts {list}.
@@ -317,7 +332,7 @@ export function AgentDetail({ agent }: { agent: AgentRecord }) {
               * extra words could not come from anywhere else without turning
               * thirteen pages into a doorway set.
               */}
-            <Prose heading={`${agent.name} in particular`} data-section="agent-lead">
+            <Prose heading={`How Happier runs ${agent.name}`} data-section="agent-lead">
                 {agent.lead.map((paragraph) => (
                     <P key={paragraph.slice(0, 32)}>
                         <Ticks text={paragraph} />
@@ -325,7 +340,10 @@ export function AgentDetail({ agent }: { agent: AgentRecord }) {
                 ))}
             </Prose>
 
-            <Prose heading="What it does" data-section="agent-what-it-does">
+            <Prose
+                heading={`What ${agent.name} does, and what Happier adds`}
+                data-section="agent-what-it-does"
+            >
                 {agent.whatItDoes.map((paragraph) => (
                     <P key={paragraph.slice(0, 32)}>
                         <Ticks text={paragraph} />
@@ -353,7 +371,19 @@ export function AgentDetail({ agent }: { agent: AgentRecord }) {
               * on every page. Thirteen copies of a long paragraph is how a page
               * set ends up 33% identical to itself.
               */}
-            <Prose heading="On your phone, laptop and browser" data-section="agent-devices">
+            <Prose
+                /*
+                 * NOT "<agent> on your phone, browser and desktop", which was
+                 * the first draft: three of the thirteen H1s are already that
+                 * sentence — Kimi's, Kilo's and Gemini's — and a page whose H2
+                 * restates its own H1 has spent a heading saying nothing new.
+                 * The verbs are what this section is actually about: these are
+                 * full clients, not read-only mirrors, which is the sentence
+                 * the body opens on.
+                 */
+                heading={`Read, approve and answer ${agent.name} from any device`}
+                data-section="agent-devices"
+            >
                 <P>
                     The iOS and Android apps, the desktop app for macOS, Windows and Linux, and{' '}
                     <a
@@ -372,7 +402,25 @@ export function AgentDetail({ agent }: { agent: AgentRecord }) {
                 </P>
             </Prose>
 
-            <Prose heading="Runs on your own computer" data-section="agent-your-computer">
+            {/*
+                One heading for thirteen pages read as an instruction to go and
+                install it yourself, which is wrong on the majority: eight of the
+                thirteen are `happier-managed-*`, where Happier fetches the agent
+                into ~/.happier/tools/providers/ when PATH has no copy. It is
+                right on the other five — Claude Code among them, which ships as a
+                vendor install script Happier refuses to execute unasked. So the
+                heading follows installKind, and the pages stop being identical
+                here as a side effect.
+            */}
+            <Prose
+                heading={
+                    agent.installKind === 'happier-managed-package' ||
+                    agent.installKind === 'happier-managed-release'
+                        ? `Happier can install ${agent.name} for you`
+                        : `Installing ${agent.name} the way ${agent.vendor} documents it`
+                }
+                data-section="agent-your-computer"
+            >
                 <P>
                     Happier installs on the computer that already holds your repository, and{' '}
                     <code className="font-mono">happier {agent.id}</code> starts {agent.name} there
@@ -429,7 +477,10 @@ export function AgentDetail({ agent }: { agent: AgentRecord }) {
 
             <RunsOnAccount agent={agent} />
 
-            <Prose heading={`Works with the other ${OTHER_AGENT_COUNT} too`} data-section="agent-other-agents">
+            <Prose
+                heading={`One app for ${agent.name} and ${OTHER_AGENT_COUNT} other agents`}
+                data-section="agent-other-agents"
+            >
                 <P>
                     {agent.name} is one of {AGENTS.length} command-line coding agents Happier runs,
                     and they share one session list, one permission inbox, one set of keyboard
@@ -463,7 +514,10 @@ export function AgentDetail({ agent }: { agent: AgentRecord }) {
                 </P>
             </Prose>
 
-            <Prose heading="Terminal or UI" data-section="agent-terminal">
+            <Prose
+                heading={`The same ${agent.name} session in your terminal and in the app`}
+                data-section="agent-terminal"
+            >
                 <P>
                     Typing <code className="font-mono">happier {agent.id}</code> in a terminal starts
                     the session right where you are standing, and the same session is in the app at
@@ -492,7 +546,7 @@ export function AgentDetail({ agent }: { agent: AgentRecord }) {
                 <div className="mx-auto max-w-[1400px] px-6 py-10 md:px-10 md:py-14">
                     <div className="max-w-[760px]">
                         <h2 className="font-display text-[26px] font-normal leading-[1.14] tracking-[-0.025em] md:text-[34px]">
-                            {agent.name} in Happier — questions
+                            Questions about running {agent.name} through Happier
                         </h2>
                         <dl className="mt-6 space-y-7">
                             {agent.faq.map((item) => (
@@ -513,7 +567,17 @@ export function AgentDetail({ agent }: { agent: AgentRecord }) {
                 </div>
             </section>
 
-            <Prose heading={`Getting ${agent.name} onto your phone`} data-section="agent-cta">
+            {/*
+              * "in two commands" is countable on the page rather than a
+              * flourish: the block below is the install one-liner
+              * (<InstallCommand /> renders exactly one, per platform) and then
+              * `happier <id>` in the repository. If a third step ever appears
+              * here, the number in this heading is wrong.
+              */}
+            <Prose
+                heading={`Get ${agent.name} onto your phone in two commands`}
+                data-section="agent-cta"
+            >
                 <P>
                     One command on the computer that holds your code, then{' '}
                     <code className="font-mono">happier {agent.id}</code> in the repository you want

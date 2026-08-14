@@ -38,9 +38,20 @@ const PLAIN_SAMPLE = 'push the hotfix branch';
 export function SecurityPage() {
     return (
         <PageShell>
+            {/*
+              * THE H1 USED TO READ "The relay carries your session. It cannot
+              * read it." Two defects in one line. It framed instead of
+              * describing — a stranger arriving cold from search learns
+              * nothing about what this page gives them — and it defined the
+              * product by what the relay is unable to do rather than by what
+              * the reader gets. The searchable nouns are "end-to-end
+              * encryption" and "keys", and both are now in the heading. The
+              * relay's limits are still stated, at length, in the ledger and
+              * in the hop cards, where they are evidence rather than framing.
+              */}
             <PageHeader
                 eyebrow="Security"
-                title="The relay carries your session. It cannot read it."
+                title="End-to-end encryption, with the keys on your own devices"
                 standfirst="Happier keeps one coding session in sync between the computer it runs on and every device you watch it from, and a relay server sits in the middle of that. This page is the architecture under that sentence: which key is made where, what the relay actually holds, what it can still see, and what changes on a server configured to turn encryption off."
             />
 
@@ -48,19 +59,19 @@ export function SecurityPage() {
 
             <Ledger />
 
-            <Prose heading="One secret, and a tree under it" data-section="security-keys">
+            <Prose heading="Your encryption keys are created on your own device" data-section="security-keys">
                 {SECURITY_KEYS.map((paragraph) => (
                     <P key={paragraph.slice(0, 32)}>{paragraph}</P>
                 ))}
             </Prose>
 
-            <Prose heading="The moment a key moves" data-section="security-pairing">
+            <Prose heading="Linking a new device, and how your keys reach it" data-section="security-pairing">
                 {SECURITY_PAIRING.map((paragraph) => (
                     <P key={paragraph.slice(0, 32)}>{paragraph}</P>
                 ))}
             </Prose>
 
-            <Prose heading="What a server can change" data-section="security-storage">
+            <Prose heading="Storage policy: end-to-end encryption is the default" data-section="security-storage">
                 {SECURITY_STORAGE.map((paragraph) => (
                     <P key={paragraph.slice(0, 32)}>{paragraph}</P>
                 ))}
@@ -78,19 +89,19 @@ export function SecurityPage() {
                 </P>
             </Prose>
 
-            <Prose heading="Notifications, which leave the model behind" data-section="security-notifications">
+            <Prose heading="Push notifications are sent by your own computer" data-section="security-notifications">
                 {SECURITY_NOTIFICATIONS.map((paragraph) => (
                     <P key={paragraph.slice(0, 32)}>{paragraph}</P>
                 ))}
             </Prose>
 
-            <Prose heading="What running it yourself adds" data-section="security-selfhost">
+            <Prose heading="Self-hosted relay: the metadata stays on your hardware too" data-section="security-selfhost">
                 {SECURITY_SELF_HOST.map((paragraph) => (
                     <P key={paragraph.slice(0, 32)}>{paragraph}</P>
                 ))}
             </Prose>
 
-            <Prose heading="Where to check all of this" data-section="security-source">
+            <Prose heading="Read the encryption code yourself" data-section="security-source">
                 {SECURITY_SOURCE.map((paragraph) => (
                     <P key={paragraph.slice(0, 32)}>{paragraph}</P>
                 ))}
@@ -129,7 +140,7 @@ function MessagePath() {
             <div className="mx-auto max-w-[1400px] px-6 py-10 md:px-10 md:py-14">
                 <div className="max-w-[880px]">
                     <h2 className="font-display text-[26px] font-normal leading-[1.14] tracking-[-0.025em] md:text-[34px]">
-                        What happens to a message
+                        How a message is encrypted between your phone and your computer
                     </h2>
                     <p
                         className="mt-4 max-w-[720px] text-[16px] leading-[1.65]"
@@ -220,7 +231,7 @@ function Ledger() {
             <div className="mx-auto max-w-[1400px] px-6 py-10 md:px-10 md:py-14">
                 <div className="max-w-[880px]">
                     <h2 className="font-display text-[26px] font-normal leading-[1.14] tracking-[-0.025em] md:text-[34px]">
-                        What the relay ends up holding
+                        What the relay server stores
                     </h2>
                     <p
                         className="mt-4 max-w-[720px] text-[16px] leading-[1.65]"

@@ -173,14 +173,29 @@ const VS_REMOTE_CONTROL: Route = {
     // Vertex session is turned away by the separate api.anthropic.com rule, and
     // Happier ships a first-party Gemini Vertex profile, so naming it here was
     // wrong twice.
+    //
+    // The tail used to read "What each does, per Anthropic's own docs." A meta
+    // description has ~155 characters, and spending twenty-four of them naming
+    // where the facts came from is evidence-as-prose in its SERP form: the
+    // snippet has to state the thing. The sourcing is real and it lives where
+    // sourcing belongs — the docblock at the top of src/data/comparison.ts, and
+    // the attributed sentences on the page (RC_SECTION.turn, and the standfirst
+    // and dek above the five-conditions list). Every unavailability named here
+    // is Anthropic's own published behaviour, verified August 2026.
     description:
-        'Remote Control is free and good. It is also unavailable for API keys, gateways, Bedrock, Foundry and ZDR orgs. What each does, per Anthropic’s own docs.',
+        'Remote Control is free and good. It is also unavailable for API keys, gateways, Bedrock, Foundry and ZDR orgs. What each one covers, side by side.',
     ogTitle: 'Claude Code Remote Control vs Happier',
     // The share card is not the place to send the reader to a competitor. "When
     // you should use it instead of Happier" was the old tail of this string and
     // it is what a link preview would have led with.
+    //
+    // "the five situations its documentation says it turns itself off in" was
+    // the middle clause. The attribution belongs on the page, in body copy,
+    // where it is made in full; in a share card it is nine words of provenance
+    // in place of the thing itself. The on-page <h2> states it unattributed for
+    // the same reason, so the two now agree.
     ogDescription:
-        'What Anthropic’s own remote does well, the five situations its documentation says it turns itself off in, and what one client for thirteen agents does instead.',
+        'What Anthropic’s own remote does well, the five situations it turns itself off in, and what one client for thirteen agents does instead.',
     ogImage: '/images/og.png',
     ogImageAlt: 'The Happier wordmark over the words: One client for every AI coding agent.',
     jsonLd: [
@@ -222,13 +237,23 @@ const VS_REMOTE_CONTROL: Route = {
 const VS_CODEX_REMOTE: Route = {
     path: '/vs/codex-remote',
     title: 'Codex from your phone — Codex Remote vs Happier',
+    // "the conditions in OpenAI's own docs" was the middle clause, and it is the
+    // same evidence-as-prose defect as the eyebrow this page used to carry: the
+    // snippet named its source instead of naming the thing. Attribution is made
+    // in full on the page — CODEX_SECTION.turn, the standfirst, and the dek
+    // above the conditions list — and the sourcing rule is in the docblock at top
+    // of src/data/codexRemote.ts. Every condition is OpenAI's own published
+    // requirement, verified August 2026.
     description:
-        'OpenAI pairs the ChatGPT app to a Mac or Windows PC running Codex. What Remote covers, the conditions in OpenAI’s own docs, and where Happier fits.',
-    ogTitle: 'Codex on your phone, and where Happier fits',
+        'OpenAI pairs the ChatGPT app to a Mac or Windows PC running Codex. What Remote covers, the five conditions it runs under, and what Happier does instead.',
+    // "…and where Happier fits" is gone from both the snippet and the share
+    // card, for the reason it is gone from the H1: "fits" names no outcome, and
+    // the phrase is legible only to a reader who already knows the product.
+    ogTitle: 'Codex Remote and Happier, compared',
     // Not "why Codex Remote is not enough". The share card is read by people who
     // like Codex, and the page's whole method is conceding accurately first.
     ogDescription:
-        'What OpenAI’s own remote does well, the five conditions its documentation puts on it, and what one client for every coding agent does instead.',
+        'What OpenAI’s own remote does well, the five conditions it runs under, and what one client for every coding agent does instead.',
     ogImage: '/images/og.png',
     ogImageAlt: 'The Happier wordmark over the words: One client for every AI coding agent.',
     jsonLd: [
@@ -267,12 +292,35 @@ const VS_CODEX_REMOTE: Route = {
  */
 const USAGE_LIMITS: Route = {
     path: '/features/usage-limits',
-    title: 'Usage limits in Happier — pool the accounts you own',
+    // The title and the share card both used to sell the pool — "pool the
+    // accounts you own", "a running session that moves to another account you
+    // own" — which is the smaller half of what this page is about and the half
+    // that needs a second subscription before it means anything. The larger
+    // claim holds with one account: the session waits out the reset and carries
+    // on.
+    //
+    // "load-balance" was briefly here as an SEO term and has been removed. A
+    // pool is FAILOVER, not load balancing: above the soft threshold
+    // (default 15% remaining) `resolveSoftSwitchPreferredCandidate` returns the
+    // ACTIVE member unchanged and the caller bails, so nothing is ever
+    // distributed off a healthy account — see
+    // apps/server/.../selectConnectedServiceAuthGroupCandidate.ts:593,811 in the
+    // shipped tree, and the product's own UI string "Automatic fallback"
+    // (apps/ui/sources/text/translations/en.ts:2748). If the query is worth
+    // targeting, target it as a disambiguation in body copy, never as an
+    // assertion of mechanism in metadata.
+    //
+    // Neither the title nor the share card may promise an UNATTENDED resume:
+    // accountSettings.ts:276 defaults the recovery mode to 'ask'. Waiting and
+    // resuming is what Happier does; doing it without being asked is one
+    // setting ("Always wait and resume"), and the page body is where that is
+    // sold. See the evidence block at the top of UsageLimitsPage.tsx.
+    title: 'Claude Code and Codex usage limits without losing work',
     description:
-        'Hit a Claude Code or Codex usage limit and Happier can move the running session to another account you own. Which agents, which defaults, and the catch.',
-    ogTitle: 'What Happier does when you hit a usage limit',
+        'Hit a Claude Code or Codex usage limit and the session waits out the reset, then carries on — automatically, if you like. Or pool accounts and fall back.',
+    ogTitle: 'A usage limit should not end your session.',
     ogDescription:
-        'Quota meters before you hit the wall, and — for Claude Code and Codex — a running session that moves to another account you own. Three switches an hour, by default.',
+        'The session holds its place through a usage limit, waits out the reset and picks the work back up — on one account, or across the accounts you pool.',
     ogImage: '/images/og.png',
     ogImageAlt: 'The Happier wordmark over the words: One client for every AI coding agent.',
     jsonLd: [
@@ -296,10 +344,14 @@ const USAGE_LIMITS: Route = {
 
 const TERMINAL: Route = {
     path: '/features/terminal',
-    title: 'Happier keeps your terminal — Claude Code & Codex TUIs',
+    // "Happier keeps your terminal" and the share card's "Keep your terminal. Or
+    // never open one." are both legible only to a reader who already knows what
+    // Happier is. The agents are the nouns people search for, so the agents are
+    // in the title; tmux is in the description for the same reason.
+    title: 'Claude Code and Codex in your terminal, and in the app',
     description:
-        'Run Claude Code, Codex or OpenCode in their own TUI and follow the same session from your phone. Attach from a shell, or hand control back to the app.',
-    ogTitle: 'Keep your terminal. Or never open one.',
+        'Run Claude Code, Codex or OpenCode in their own TUI and follow the same session from your phone. Attach over tmux, or hand control back to the app.',
+    ogTitle: 'Keep your Claude Code, Codex and OpenCode terminals, or work from the app',
     ogDescription:
         'One session, two front ends: the provider’s own TUI in your shell and Happier on your phone. Same session id, same transcript, same queue on both sides of the switch.',
     ogImage: '/images/og.png',
@@ -336,7 +388,7 @@ const ENTERPRISE: Route = {
     title: 'Self-hosted Happier for teams — SSO, mTLS, your data',
     description:
         'Run the Happier relay yourself: GitHub org and OIDC group gating, forwarded mTLS, offboarding re-checks, storage policy, retention, Docker with Postgres.',
-    ogTitle: 'Happier, on your own infrastructure',
+    ogTitle: 'Self-host the Happier relay behind your own SSO',
     ogDescription:
         'A relay you host, locked to your GitHub org or OIDC groups, with client certificates, offboarding re-checks and a storage policy you choose. MIT-licensed, all of it.',
     ogImage: '/images/og.png',
@@ -388,7 +440,7 @@ const SECURITY: Route = {
     title: 'End-to-end encryption in Happier — what the relay sees',
     description:
         'Session content is sealed on the device that wrote it. The keys, the columns a relay can still read, and what changes under a plaintext storage policy.',
-    ogTitle: 'What the relay can and cannot read',
+    ogTitle: 'End-to-end encryption, with the keys on your own devices',
     ogDescription:
         'Your session is encrypted under a per-session key on the device that made it, and the relay is handed a sealed copy it has nothing to open. Here is what it can still see — named, not glossed.',
     ogImage: '/images/og.png',

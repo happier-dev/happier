@@ -38,23 +38,62 @@ import {
  * carries in the <title> and the URL; the H1 now leads with the outcome, and it
  * is one that holds in both branches of the page — waiting keeps the session,
  * and so does switching.
+ *
+ * THE HEADINGS THEN SOLD THE POOL, AND THE POOL IS THE SMALLER HALF. "Hit a
+ * usage limit. Keep the session." names a mechanism, and every H2 under it was
+ * scaffolding around pooling — "Before you build a pool, you get a banner and a
+ * choice", "What a pool is, and what it changes" — so the page read as though it
+ * had nothing for the reader with one account. It has the larger thing: a limit
+ * pauses the session, Happier waits out the reset, re-checks, restarts the
+ * session process if it had exited, and sends a continuation prompt so the work
+ * carries on from where it stopped. None of that needs a second account.
+ *
+ * WHAT THE SINGLE-ACCOUNT PATH ACTUALLY DOES, read in the shipped tree
+ * (happier-dev/happier @ v0.2) rather than inferred from the feature's name:
+ *   the wait is not pool-only
+ *     apps/cli/src/session/usageLimitRecoveryControls/usageLimitRecoverySelectedAuth.ts
+ *       — with no group and no profile the selected auth resolves to
+ *       `{ kind: 'native' }`, so a plain provider login arms the same recovery
+ *   who does the waiting
+ *     apps/cli/src/session/actions/createCliActionDeps.ts:389-394, 1035-1049 —
+ *       an armed / waiting / checking intent carrying a `nextCheckAtMs` is
+ *       scheduled, and the check re-runs without the reader present
+ *   what happens at the reset
+ *     apps/cli/src/daemon/startDaemon.ts:818-833 —
+ *       `resumeInactiveSessionWhenUsageLimitReady` re-spawns the session under
+ *       its existing session id, so the session need not have stayed alive
+ *   the work resumes, not just the session
+ *     apps/ui/sources/text/translations/en.ts:7393-7402 — "Continuation prompt
+ *       … ask the provider to continue from the interrupted context"
+ *   how automatic it is, exactly
+ *     packages/protocol/src/account/settings/accountSettings.ts:273-297 —
+ *       `mode: 'ask' | 'auto_wait'`, DEFAULTING TO 'ask'. The first limit shows
+ *       the banner and you choose; "Always wait and resume" (en.ts:4705) and the
+ *       "Continue automatically" setting (en.ts:7390-7392) make it hands-off
+ *       from then on. So the headings say the session waits and resumes. They do
+ *       not say it arms itself, because on a default install it does not.
  */
 export function UsageLimitsPage() {
     return (
         <PageShell>
             <PageHeader
                 eyebrow="Feature"
-                title="Hit a usage limit. Keep the session."
-                standfirst="Every provider stops you eventually. Happier cannot change that and does not claim to. What it can do is show you the meter before you hit it, pool the accounts you already own on that provider, and — for Claude Code and Codex — move a running session onto another one of them instead of ending your afternoon."
+                title="A usage limit should not end your session."
+                standfirst="Every provider stops you eventually, and Happier cannot change that. What it can do is hold the session at the limit, show you when it resets, and start the work again from where it stopped. Turn on “Always wait and resume” and it does the whole thing unattended — one setting, and you come back to a session that carried on instead of one that stopped. That is on one account. Own several subscriptions and there is a better answer below: pool them, and let Happier load-balance across them."
             />
 
-            <Prose heading="With one account, you get a banner and a choice" data-section="usage-limits-baseline">
+            <Prose heading="With one account, Happier waits out the reset and resumes the session" data-section="usage-limits-baseline">
                 <P>
                     A provider refuses a turn and Happier shows “Usage limit reached”, with the reset
                     time when the provider supplied one. From there: wait — “Resume when limit
                     resets” keeps the session and picks it up on its own — or “Check limit now” to
-                    re-probe, or stop waiting. That is the whole of it, and for one account it is
-                    enough.
+                    re-probe, or stop waiting. Waiting is the one that keeps your afternoon: Happier
+                    holds the reset time, re-checks it for you, starts the session again if it had
+                    exited in the meantime, and sends a prompt to carry on from the interrupted
+                    context. Tick “Always wait and resume” once and you stop being asked — every
+                    limit after that is handled the same way with nobody watching. A Codex session
+                    goes one further and arms the wait by itself once “Continue automatically” is
+                    set.
                 </P>
                 <P>
                     That banner appears for Claude Code, Codex, OpenCode, Gemini and Pi. No other
@@ -63,7 +102,7 @@ export function UsageLimitsPage() {
                 </P>
             </Prose>
 
-            <Prose heading="What a pool is, and what it changes" data-section="usage-limits-pools">
+            <Prose heading="Pool & load-balance the accounts you own, and the session carries on across them" data-section="usage-limits-pools">
                 {USAGE_LIMITS_POOL_SCOPE.map((paragraph) => (
                     <P key={paragraph.slice(0, 32)}>{paragraph}</P>
                 ))}
@@ -76,15 +115,13 @@ export function UsageLimitsPage() {
                 <div className="mx-auto max-w-[1400px] px-6 py-10 md:px-10 md:py-14">
                     <div className="max-w-[900px]">
                         <h2 className="font-display text-[26px] font-normal leading-[1.14] tracking-[-0.025em] md:text-[34px]">
-                            The defaults a new pool starts with
+                            How a pool falls back: the account it picks, and how often
                         </h2>
                         <p
                             className="mt-4 max-w-[720px] text-[16px] leading-[1.65]"
                             style={{ color: 'var(--muted)' }}
                         >
-                            All of them are editable per pool. They are listed because “three
-                            switches per session hour” tells you more about how this feature behaves
-                            than any sentence describing it would.
+                            The defaults a new pool starts with. All of them are editable per pool.
                         </p>
                         <div
                             className="mt-6 overflow-x-auto rounded-2xl border"
@@ -133,16 +170,15 @@ export function UsageLimitsPage() {
                 <div className="mx-auto max-w-[1400px] px-6 py-10 md:px-10 md:py-14">
                     <div className="max-w-[900px]">
                         <h2 className="font-display text-[26px] font-normal leading-[1.14] tracking-[-0.025em] md:text-[34px]">
-                            Which accounts you can pool, and who can use them
+                            Which accounts you can pool, and which agents can use them
                         </h2>
                         <p
                             className="mt-4 max-w-[720px] text-[16px] leading-[1.65]"
                             style={{ color: 'var(--muted)' }}
                         >
-                            One row per account you can connect, because that is what a pool is made
-                            of. Being able to use a pool and being able to change account inside a
-                            running turn are two different capabilities, and the second one is
-                            rarer. The third column is the honest one.
+                            One row per account you can connect. Being able to use a pool and being
+                            able to change account inside a running turn are two different
+                            capabilities, and the second one is rarer.
                         </p>
                         <div
                             className="mt-6 overflow-x-auto rounded-2xl border"
@@ -202,13 +238,13 @@ export function UsageLimitsPage() {
                 </div>
             </section>
 
-            <Prose heading="What a pool is for" data-section="usage-limits-scope">
+            <Prose heading="Your own accounts, and what your provider’s terms allow" data-section="usage-limits-scope">
                 {USAGE_LIMITS_SCOPE.map((paragraph) => (
                     <P key={paragraph.slice(0, 32)}>{paragraph}</P>
                 ))}
             </Prose>
 
-            <Prose heading="Setting it up" data-section="usage-limits-docs">
+            <Prose heading="Build a pool in the app, start a session on it from the CLI" data-section="usage-limits-docs">
                 <P>{USAGE_LIMITS_SETUP[0]}</P>
                 <P>
                     Connecting the accounts comes first, and that part has a{' '}

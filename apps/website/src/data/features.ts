@@ -20,8 +20,10 @@ export type FeatureImage = {
  * 'upcoming' renders without the not-yet-available label.
  *
  * THE CURRENT SET. All thirty entries below were checked against the RELEASED
- * tree on 2026-08-11 and every one of them is in it — the riskiest four were
- * the ones with no shipped docs page, and all four have shipped implementations:
+ * tree on 2026-08-11, and the two added on 2026-08-14 ('machines', 'surfaces')
+ * were checked the same way — every one of them is in it. The riskiest four
+ * were the ones with no shipped docs page, and all four have shipped
+ * implementations:
  *
  *   themes        apps/ui/sources/theme/profiles/themeProfileImportExport.ts
  *   automations   apps/ui/sources/sync/domains/automations/automationTypes
@@ -47,6 +49,16 @@ export type Feature = {
     /** Optional feature-specific image that replaces the generic device visual.
      *  Falls back to the device mockup if the file is absent (see FeatureImage). */
     image?: FeatureImage;
+    /**
+     * Optional shell transcript rendered under the body, one array entry per line.
+     *
+     * EVERY LINE MUST BE A COMMAND THAT RUNS. The renderer prints these verbatim
+     * in a monospace block, which reads to a developer as a promise that they can
+     * paste it — so an invented flag here is a worse defect than an invented
+     * adjective anywhere else on the page. Each line below is checked against the
+     * released CLI's own usage strings; the citations sit beside the strings.
+     */
+    code?: ReadonlyArray<string>;
 };
 
 export type GridFeature = {
@@ -63,7 +75,14 @@ export type GridFeature = {
  * Order follows a deliberate narrative arc:
  *   promise -> adopt-nothing -> keep your terminal -> mobile power ->
  *   multi-agent -> control -> manage many -> review -> voice ->
- *   power-user wins -> cost -> reliability -> customization -> trust (closer).
+ *   where it runs -> what drives it -> power-user wins -> cost ->
+ *   reliability -> customization -> trust (closer).
+ *
+ * 'machines' and 'surfaces' are one row (5 + 7) and belong together: the first
+ * answers "which computer executes this", the second "what can tell it to". They
+ * sit immediately before 'mcp' on purpose, so the two MCP sentences on the page
+ * are neighbours and read as the pair they are — Happier CONSUMING your MCP
+ * servers, then Happier BEING one.
  *
  * Copy is grounded in the shipped implementation; terminology is checked
  * against real product strings (e.g. the "Needs attention" / "Working"
@@ -110,8 +129,23 @@ export const PRIMARY_FEATURES: ReadonlyArray<Feature> = [
         id: 'cockpit',
         availability: 'shipped',
         eyebrow: 'Mobile cockpit',
-        title: 'Everything you need. One tap away.',
-        body: 'Chat, files, Git, and a live terminal — one tap each. Browse and edit code, review diffs, manage branches, and open pull requests, straight from your pocket.',
+        // "Everything you need" was the old title, and it named nothing: it is
+        // the same sentence a project-management tool or a note-taking app would
+        // write, so it carried no information and no search term. The three
+        // nouns below are the things a developer actually types into a search
+        // box, and each one is a real tab: SessionMobileSurface is
+        // 'chat' | 'browse' | 'git' | 'navigation' | 'tabs' | 'terminal'
+        // (apps/ui/sources/components/workspaceCockpit/session/sessionCockpitState.ts:3).
+        //
+        // ONE HONEST GAP, and it is why the body says what it says. There is no
+        // tab called "editor" — the editor opens from the `browse` tab when you
+        // pick a file, and it is a real editor (Monaco on web, CodeMirror in a
+        // WebView on native) that saves: SessionFileDetailsView passes
+        // `saveFileEdits` to `onSaveEditingFile`
+        // (apps/ui/sources/components/sessions/files/views/SessionFileDetailsView.tsx:368,604).
+        // So the title names the capability and the body names the route to it.
+        title: 'Editor. Git. Terminal. One tap away.',
+        body: 'Chat, files, Git, and a live terminal, each its own tab. Open a file to read or edit it, review the diff, manage branches, and open a pull request — from your pocket.',
         visual: 'mobile',
         accent: 'blue',
         image: {
@@ -119,11 +153,32 @@ export const PRIMARY_FEATURES: ReadonlyArray<Feature> = [
         },
     },
     {
-        id: 'subagents',
+        id: 'sessionTeam',
         availability: 'shipped',
         eyebrow: 'Multi-agent',
-        title: 'One session. A whole team of agents.',
-        body: 'Launch subagents to review, plan, or delegate — and choose which backend runs each one: Claude, Codex, or any ACP-compatible CLI. Mix providers in a single workspace and watch every subagent work in the timeline.',
+        // WHY THIS STOPPED BEING A SUBAGENT CARD. "One session. A whole team of
+        // agents." described the smaller half of what ships. Subagents are a
+        // feature every agent CLI has some version of; sessions that create,
+        // message and read EACH OTHER are the differentiated claim, and all
+        // three are shipped actions carrying `session_agent: true`, which is the
+        // flag that says a running session may call them
+        // (packages/protocol/src/actions/actionSpecs.ts):
+        //
+        //   session.spawn_new       ui_button/voice/session_agent/mcp/cli all true
+        //   session.message.send    "Send a user message to the AI coding
+        //                            assistant inside the specified session."
+        //   session.transcript.get  "Read the semantic transcript for a session
+        //                            as clean user/assistant messages…"
+        //
+        // The agent choice on a spawn is real too: session.spawn_new takes
+        // `agentId` and `backendTargetKey` in its inputHints, which is what makes
+        // "a Claude session and a Codex session" a thing you can set up rather
+        // than a thing that happens to you. Subagents stay in the second half of
+        // the body because they are still true — subagents.delegate.start and
+        // subagents.plan.start take `backendTargetKeys` against
+        // `execution.backends.enabled`.
+        title: 'Your sessions work as a team.',
+        body: 'A session can start another session, send it messages, and read its transcript — so a Claude session and a Codex session can split the work between them. Each one still runs its own subagents, on whichever backend you choose: Claude, Codex, or any ACP-compatible CLI.',
         visual: 'mobileAndDesktop',
         accent: 'magenta',
     },
@@ -168,6 +223,124 @@ export const PRIMARY_FEATURES: ReadonlyArray<Feature> = [
         image: {
             id: 'feature_voice',
         },
+    },
+    {
+        id: 'machines',
+        availability: 'shipped',
+        eyebrow: 'Every computer',
+        // WHY THIS IS A PRIMARY CARD AND NOT A GRID LINE. Choosing where a
+        // session runs is a decision the reader makes before they make any other
+        // one, and the page had no sentence for it: 'anywhere' is about the
+        // devices you WATCH from, and the grid's 'handoff' line is about moving a
+        // session after it started. Neither says you get to pick in the first
+        // place.
+        //
+        // WHAT IS CHECKED, AND WHERE.
+        //   the picker    apps/ui/sources/components/sessions/new/components/
+        //                 resolveMachinePickerPresence.ts returns
+        //                 { status: 'online', selectable: true } and
+        //                 'offline' | 'revoked' | 'replaced' with
+        //                 selectable: false — which is exactly "marks which are
+        //                 online, and starts sessions on those". MachineSelector
+        //                 renders the unselectable ones rather than hiding them.
+        //   over SSH      `happier machine setup --ssh <user@host>`
+        //                 (apps/cli/src/cli/commands/machine/help.ts:8) and, in
+        //                 the app, RemoteSshMachineSetupSection /
+        //                 MachineSetupFlowScreen under settings/machines. Both
+        //                 surfaces are why the sentence says "from the app or the
+        //                 CLI" rather than naming one.
+        //   the host list "VPS, home server, dev box" is the released docs' own
+        //                 phrase for what the SSH bootstrap targets
+        //                 (apps/docs/content/docs/clients/cli.mdx:89), so the
+        //                 examples here are not invented. "VM" is deliberately
+        //                 absent: nothing in the tree says it.
+        title: 'Run sessions on every computer you own.',
+        body: 'Connect your laptop, your desktop, a VPS, or a dev box, then pick which one runs each session. The picker marks which are online, and starts sessions on those. Add another over SSH, from the app or the CLI.',
+        visual: 'mobileAndDesktop',
+        accent: 'coral',
+    },
+    {
+        id: 'surfaces',
+        availability: 'shipped',
+        eyebrow: 'App, voice, CLI, MCP',
+        // THE CARD THE PAGE WAS MISSING. Everything else on this page describes a
+        // screen. This describes the thing under all the screens: one registry of
+        // 75 actions (packages/protocol/src/actions/actionIds.ts, ACTION_IDS) and
+        // one executor (actionExecutor.ts), which every surface calls.
+        //
+        // "REGISTRY" IS A DESCRIPTION, NOT A NAME, and it is lowercase for that
+        // reason. The shipped code files it under actionCatalog.ts and the
+        // released docs say "the same action catalog as the app, CLI, voice, and
+        // session-agent surfaces". Neither string is a capitalised product name,
+        // so nothing here is being christened; if the product ever settles on one
+        // of the two words in the UI, this copy should take that word.
+        //
+        // THE SURFACE LIST IS NOT A FIGURE OF SPEECH. It is a type. Every action
+        // spec declares a boolean per surface, and the seven keys are exactly:
+        //   ui_button, ui_slash_command, voice_tool, voice_action_block,
+        //   session_agent, mcp, cli
+        // (ActionSurfaceSchema, packages/protocol/src/actions/actionSpecs.ts).
+        // The body names six things because it collapses the two voice keys into
+        // "voice"; it names no surface that is not on that list.
+        //
+        // THE CONTROLS ARE PER ACTION AND PER SURFACE. ActionSettingsOverride
+        // carries `disabledSurfaces` and `approvalRequiredSurfaces`, both arrays
+        // of surface keys, keyed by action id (actionSettings.ts), and the app
+        // has a screen per action for them (settings/actions/[actionId].tsx,
+        // actionSettingsTargetApproval.ts).
+        //
+        // ONE NARROWING, STATED SO NOBODY WIDENS IT BACK. Approval is settable on
+        // SURFACE targets — mcp, cli, session_agent, the two voice ones, and the
+        // slash command — but not on the UI button placements: for those,
+        // resolveActionSettingsApprovalSurface returns null and only the
+        // enable/disable control exists. That is why the sentence says approval
+        // is chosen per surface rather than "on every button".
+        //
+        // THE MCP SERVER IS `happier mcp serve`, NOT `happier mcp`.
+        // `happier mcp` alone prints usage; `serve` is the stdio server, with
+        // `start` kept as a compatibility alias
+        // (apps/cli/src/cli/commands/mcp.ts:17-23, and the released
+        // apps/docs/content/docs/clients/mcp.mdx says the same).
+        // THE TITLE NAMES THE VERBS, NOT THE ARCHITECTURE. It read "The app,
+        // voice, the CLI, and MCP run the same actions." — true, and abstract:
+        // "the same actions" is a sameness claim about a mechanism, and a
+        // reader who does not already know what a Happier action is gets
+        // nothing from it. What they can do with it is spawn a session and run
+        // it from whichever surface is in reach, so that is what it says.
+        //
+        // Both verbs are real actions on all four named surfaces:
+        // `session.spawn_new` and `session.message.send` declare
+        // ui_button/voice/session_agent/mcp/cli true (actionSpecs.ts), and the
+        // CLI form of both is in the `code` block below.
+        title: 'Spawn and manage sessions from the app, voice, the CLI and MCP.',
+        body: 'Every action Happier can take — create a session, send it a message, set the model, start a review — is defined once, in one registry. The app, slash commands, voice, in-session agents, the CLI, and an external MCP host all call the same definition, and for each action you choose which of those surfaces can run it and which have to ask you first.',
+        // VERIFIED, LINE BY LINE, AGAINST THE RELEASED CLI'S OWN USAGE STRINGS.
+        //   happier mcp serve
+        //     apps/cli/src/cli/commands/mcp.ts:17
+        //     "happier mcp serve [--session <session-id>]"
+        //   happier session list --json
+        //     apps/cli/src/cli/commands/session/handleSessionCommand.ts:82
+        //     "happier session list [--active] … [--json]"
+        //   happier session send <id> "…"
+        //     handleSessionCommand.ts:85
+        //     "happier session send <session-id-or-prefix> <message> …"
+        //   happier session actions list
+        //     handleSessionCommand.ts:98  "happier session actions list [--json]"
+        //   happier session actions execute <id> session.spawn_new
+        //     handleSessionCommand.ts:100
+        //     "happier session actions execute <session-id> <action-id>
+        //      [--input-json <json>] …" — --input-json is optional, so the short
+        //     form is a command that runs. `session.spawn_new` is a real
+        //     ACTION_IDS entry, and the same string the other surfaces use.
+        code: [
+            'happier mcp serve',
+            'happier session list --json',
+            'happier session send <id> "rerun the failing test"',
+            'happier session actions list',
+            'happier session actions execute <id> session.spawn_new',
+        ],
+        visual: 'desktop',
+        accent: 'sun',
     },
     {
         id: 'mcp',

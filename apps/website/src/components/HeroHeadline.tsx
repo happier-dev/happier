@@ -42,12 +42,50 @@ const BASE_DELAY = 120;
 const STAGGER = 45;
 
 const GRADIENT_STYLE = {
+    // The two stops are PINNED to the content box (see the padding note below).
+    // Without explicit stop positions the gradient sizes itself to the padding
+    // box, so adding padding stretched it and flattened the visible band.
     backgroundImage:
-        'linear-gradient(to bottom, var(--fg-primary), var(--fg-primary-soft))',
+        'linear-gradient(to bottom, var(--fg-primary) 0.2em, var(--fg-primary-soft) calc(0.2em + 1lh))',
     backgroundClip: 'text',
     WebkitBackgroundClip: 'text',
     color: 'transparent',
     WebkitTextFillColor: 'transparent',
+    // Descenders were being cut off — the y in "Everywhere", the y in "you".
+    //
+    // `background-clip: text` paints the gradient across the element's PADDING
+    // BOX and then clips it to the glyph shapes. These spans are
+    // `display: inline-block` because the reveal animation transforms them, so
+    // their box is only one line tall, and a line box is SHORTER THAN THE FONT.
+    // Glyph area outside the box has no background painted under it, and with
+    // `color: transparent` there is nothing else to draw, so the overflowing
+    // part of the glyph vanished along a clean horizontal line.
+    //
+    // THE GOVERNING LINE-HEIGHT IS 1.02, FROM `.font-display` (globals.css:514)
+    // — not the `leading-[1.06]` on the h1 below. Both selectors are
+    // specificity (0,1,0) and `.font-display` is emitted later, so it wins.
+    // (`tracking-[-0.025em]` on the h1 loses to the same rule, which is why
+    // neither utility is on the element any more: they rendered nothing.)
+    //
+    // Measured, not guessed. Inter Tight (public/fonts/
+    // inter-tight-latin-var.woff2, unitsPerEm 2048) has hhea/sTypo ascent
+    // 0.9688em and descent 0.2412em — a 1.2100em content area inside a 1.02em
+    // box. Half-leading is therefore NEGATIVE, -0.0950em, and the baseline
+    // lands 0.8738em down: 0.1463em of room below it for a glyph descending up
+    // to 0.2412em, and 0.8738em of room above for ink reaching yMax 1.0908em.
+    // The tail of the y overflowed by ~0.06em.
+    //
+    // Padded on BOTH sides on purpose. The bottom is what was visibly broken,
+    // but the top has the same defect and more headroom to lose: an accented
+    // capital — É, Ä, Ō — overflows by up to 0.217em, and this string comes
+    // from the locale catalogue, so a translator introduces one with no code
+    // change. Fixing only the side that happened to break in English would
+    // hand the bug to the first language that capitalises an accent.
+    //
+    // Extend the painted box and take the same amount back out of the layout:
+    // the margin box is unchanged, so line boxes and baselines do not move.
+    paddingBlock: '0.2em',
+    marginBlock: '-0.2em',
 } as const;
 
 function words(text: string, extra?: Omit<WordSpec, 'text'>): WordSpec[] {
@@ -151,7 +189,7 @@ export function HeroHeadline() {
     const lineThreeStart = lineTwoStart + countWords(lineTwo);
 
     return (
-        <h1 className="font-display text-balance text-[42px] font-normal leading-[1.06] tracking-[-0.025em] sm:text-[44px] md:text-[48px] lg:text-[58px] xl:text-[64px]">
+        <h1 className="font-display text-balance text-[42px] font-normal sm:text-[44px] md:text-[48px] lg:text-[58px] xl:text-[64px]">
             <span className="block">
                 <WordsLine groups={lineOne} startIndex={0} />
             </span>

@@ -68,11 +68,13 @@ const LAYOUT: Record<string, PanelSpec> = {
     existingSessions: { span: 7,  tall: true, sz: '250%', sp: '84% 16%', so: 0.52 },
     terminalTuis:     { span: 5,  tall: true, sz: '300%', sp: '56% 34%', so: 0.5 },
     cockpit:          { span: 5,  tall: true, sz: '344%', sp: '74% 40%', so: 0.44 },
-    subagents:        { span: 7,  tall: true, sz: '360%', sp: '66% 56%', so: 0.56 },
+    sessionTeam:      { span: 7,  tall: true, sz: '360%', sp: '66% 56%', so: 0.56 },
     queue:            { span: 12, tall: true, sz: '262%', sp: '70% 26%', so: 0.4 },
     attention:        { span: 5,              sz: '322%', sp: '70% 50%', so: 0.46 },
     review:           { span: 7,  tall: true, sz: '380%', sp: '66% 24%', so: 0.5 },
     voice:            { span: 12, tall: true, sz: '224%', sp: '78% 30%', so: 0.54 },
+    machines:         { span: 5,              sz: '330%', sp: '72% 34%', so: 0.5  },
+    surfaces:         { span: 7,              sz: '286%', sp: '64% 38%', so: 0.46 },
     mcp:              { span: 7,  tall: true, sz: '300%', sp: '60% 42%', so: 0.48 },
     subscriptions:    { span: 5,  tall: true, sz: '336%', sp: '72% 22%', so: 0.5 },
     accounts:         { span: 7,  tall: true, sz: '288%', sp: '80% 36%', so: 0.52 },
@@ -209,6 +211,7 @@ function FeaturePanel({ feature }: { feature: Feature }) {
                     >
                         {feature.body}
                     </p>
+                    {feature.code && <PanelCode lines={feature.code} />}
                 </div>
 
                 {/* Always AFTER the copy in the DOM. On phones the art is in flow and
@@ -225,6 +228,41 @@ function FeaturePanel({ feature }: { feature: Feature }) {
                 )}
             </div>
         </article>
+    );
+}
+
+/**
+ * A shell transcript inside a panel.
+ *
+ * A panel carrying one of these is the only place on the page where a claim can
+ * be CHECKED rather than believed: every other panel asks the reader to take a
+ * sentence on trust, and this hands them commands they can paste. That is the
+ * whole reason it exists, so the treatment stays quiet — the panel's own card
+ * colours, the same hairline as everything else, and no syntax highlighting,
+ * which would only invent categories a shell line does not have.
+ *
+ * `overflow-x: auto` belongs on this element, not on an ancestor. `.fpanel` is
+ * `overflow: hidden`, so a long line that escaped here would be silently CLIPPED
+ * rather than scrolled — the reader would see a truncated command with no way to
+ * reach the rest of it. Owning the scroll here is also what keeps the page body
+ * from scrolling sideways on a phone, where the longest line is wider than the
+ * panel and is meant to scroll inside it.
+ *
+ * No copy button on purpose: these are several separate commands, and one button
+ * can only offer to copy all of them, which is never what the reader wanted.
+ */
+function PanelCode({ lines }: { lines: ReadonlyArray<string> }) {
+    return (
+        <pre
+            className="mt-5 overflow-x-auto rounded-xl border px-3.5 py-3 font-mono text-[11.5px] leading-[1.75] md:text-[12.5px]"
+            style={{
+                borderColor: 'var(--card-border)',
+                background: 'var(--card)',
+                color: 'var(--fg)',
+            }}
+        >
+            <code>{lines.join('\n')}</code>
+        </pre>
     );
 }
 

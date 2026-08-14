@@ -41,10 +41,10 @@ export function AgentsIndex() {
 
             <Prose data-section="agents-intro">
                 <P>
-                    Happier does not host any of these agents and does not put a model of its own in
-                    front of them. It installs on the computer that holds your repository, starts
-                    the vendor’s own CLI there as an ordinary subprocess under your own login, and
-                    carries the conversation to your other devices end-to-end encrypted.
+                    Happier installs on the computer that holds your repository, starts the
+                    vendor’s own CLI there as an ordinary subprocess under your own login, and
+                    carries the conversation to your other devices end-to-end encrypted. It hosts
+                    none of these agents, and puts no model of its own in front of them.
                 </P>
                 <P>
                     What that means in practice is that you keep every agent you already pay for and
@@ -94,11 +94,17 @@ export function AgentsIndex() {
             </section>
 
             <Prose heading="What is not on this list, and why" data-section="agents-unlisted">
+                {/*
+                 * The dropped clause explained the mechanism to the reader: "A build-time test
+                 * fails if a shipped id appears in neither place — which is how this page finds out
+                 * about a new agent before you do." True — availability.test.ts asserts every
+                 * shipped id is either an AGENTS card or an UNLISTED_AGENTS entry — but it is our
+                 * build process, not the reader's answer. Recorded here so the guarantee is not
+                 * lost with the sentence.
+                 */}
                 <P>
-                    The release ships one more id than this page has cards for, and leaving that
-                    unsaid would make the page wrong within a release. A build-time test fails if a
-                    shipped id appears in neither place — which is how this page finds out about a
-                    new agent before you do.
+                    The release ships one more id than this page has cards for. Here it is, with the
+                    reason it has no page of its own.
                 </P>
                 <dl className="space-y-5">
                     {Object.entries(UNLISTED_AGENTS).map(([id, reason]) => (
@@ -119,11 +125,8 @@ export function AgentsIndex() {
 
             <Prose heading="Coming in the next version" data-section="agents-upcoming">
                 <P>
-                    Four more agents are coming in the next version and are not in the build you can
-                    install today. None of them runs if you download Happier this afternoon, and
-                    none of them is counted in the {AGENTS.length} above. They are here because a
-                    page that quietly omitted them would be answering a different question than the
-                    one you asked.
+                    Four more are defined and on the way. None of them is in the build you can
+                    install today, and none is counted in the {AGENTS.length} above.
                 </P>
                 <dl className="space-y-5">
                     {UPCOMING_AGENTS.map((agent) => (
@@ -154,7 +157,7 @@ export function AgentsIndex() {
                 </dl>
                 <P>
                     When one of them ships in {UPCOMING_RELEASE} it moves up into the grid and gets a
-                    page of its own. Until then it stays down here, in the future tense.
+                    page of its own.
                 </P>
             </Prose>
 
