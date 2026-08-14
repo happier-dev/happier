@@ -110,7 +110,9 @@ exit 0
       '--rolling-tag',
       'true',
       '--generate-notes',
-      'false',
+      'true',
+      '--release-message',
+      'Approved exact candidate notes',
       '--notes',
       'Rolling dev build.',
       '--prune-assets',
@@ -128,6 +130,10 @@ exit 0
   );
 
   const log = fs.readFileSync(ghLog, 'utf8');
+  assert.match(log, /gh release create dev-test .*--notes Approved exact candidate notes/);
+  assert.doesNotMatch(log, /gh release create dev-test .*--generate-notes/);
+  assert.match(log, /gh release edit dev-test .*--notes Approved exact candidate notes/);
+  assert.doesNotMatch(log, /### Commits|Full diff|Rolling dev build/);
   assert.match(log, /gh api -X PATCH repos\/test\/test\/git\/refs\/tags\/dev-test/);
   // `force` must be a JSON boolean, not the string "true" (GitHub API rejects `-f force=true` with HTTP 422).
   assert.match(log, /\s-F\s+force=true\b/);

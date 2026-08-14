@@ -450,20 +450,26 @@ async function main() {
     releaseExists = false;
   }
 
+  const approvedReleaseBody = releaseMessage.trim();
+
   if (!releaseExists) {
     if (!tagEnsured && !dryRun) {
       fail(`Cannot create release ${tag}: tag ref could not be ensured.`);
     }
-    if (generateNotes) {
+    if (approvedReleaseBody) {
+      run(
+        'gh',
+        ['release', 'create', tag, ...prereleaseFlag, '--title', title, '--notes', approvedReleaseBody],
+        { env: ghEnv, dryRun },
+      );
+    } else if (generateNotes) {
       run(
         'gh',
         ['release', 'create', tag, ...prereleaseFlag, '--title', title, '--generate-notes'],
         { env: ghEnv, dryRun },
       );
     } else {
-      const prefix = releaseMessage.trim();
-      const suffix = notes.trim();
-      const body = prefix && suffix ? `${prefix}\n\n${suffix}` : prefix || suffix;
+      const body = notes.trim();
       if (!body) fail('notes or release_message is required when generate_notes=false');
       run(
         'gh',
@@ -475,31 +481,31 @@ async function main() {
 
   // Update rolling release notes with commit summary.
   if (rollingTag) {
-    const { compareUrl, commitCount, commits } = collectRollingCompareSummary({
-      oldSha,
-      sha,
-      repo,
-      dryRun,
-      maxCommits,
-      tag,
-    });
+    if (approvedReleaseBody) {
+      run('gh', buildRollingReleaseEditArgs({ tag, title, notes: approvedReleaseBody }), { env: ghEnv, dryRun });
+    } else {
+      const { compareUrl, commitCount, commits } = collectRollingCompareSummary({
+        oldSha,
+        sha,
+        repo,
+        dryRun,
+        maxCommits,
+        tag,
+      });
 
-    const notesPrefix = notes.trim() || 'Rolling release.';
-    let body = '';
-    if (releaseMessage.trim()) {
-      body += `${releaseMessage.trim()}\n\n`;
-    }
-    body += `${notesPrefix}\n`;
+      const notesPrefix = notes.trim() || 'Rolling release.';
+      let body = `${notesPrefix}\n`;
 
-    if (commitCount) {
-      body += `\n### Commits (${commitCount})\n\n${commits}\n\nFull diff: ${compareUrl}\n`;
-      const parsedCount = Number(commitCount);
-      if (Number.isFinite(parsedCount) && parsedCount > maxCommits) {
-        body += `\n(Showing first ${maxCommits} commits; see Full diff for the complete list.)\n`;
+      if (commitCount) {
+        body += `\n### Commits (${commitCount})\n\n${commits}\n\nFull diff: ${compareUrl}\n`;
+        const parsedCount = Number(commitCount);
+        if (Number.isFinite(parsedCount) && parsedCount > maxCommits) {
+          body += `\n(Showing first ${maxCommits} commits; see Full diff for the complete list.)\n`;
+        }
       }
-    }
 
-    run('gh', buildRollingReleaseEditArgs({ tag, title, notes: body }), { env: ghEnv, dryRun });
+      run('gh', buildRollingReleaseEditArgs({ tag, title, notes: body }), { env: ghEnv, dryRun });
+    }
   }
 
   // Prune assets (rolling tags typically).
