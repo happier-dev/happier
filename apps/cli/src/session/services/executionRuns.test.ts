@@ -273,7 +273,7 @@ describe('listExecutionRuns', () => {
         });
     });
 
-    it('returns an empty list when rpc is unavailable and no markers or transcript runs exist', async () => {
+    it('reports protocol unsupported when the rpc method is unavailable and bounded recovery finds no runs', async () => {
         callSessionRpc.mockRejectedValueOnce(new Error('RPC method not available'));
         listExecutionRunMarkers.mockResolvedValueOnce([]);
         readRawSessionHistoryRows.mockResolvedValueOnce([]);
@@ -286,10 +286,9 @@ describe('listExecutionRuns', () => {
         });
 
         expect(result).toEqual({
-            ok: true,
-            data: {
-                runs: [],
-            },
+            ok: false,
+            code: 'execution_run_protocol_unsupported',
+            message: 'RPC method not available',
         });
     });
 
@@ -480,14 +479,14 @@ describe('listExecutionRuns', () => {
         });
     });
 
-    it('preserves the original rpc app-level list error when transcript fallback lookup fails', async () => {
+    it('preserves authoritative not found when bounded recovery finds no list records', async () => {
         callSessionRpc.mockResolvedValueOnce({
             ok: false,
             errorCode: 'execution_run_not_found',
             error: 'Not found',
         });
         listExecutionRunMarkers.mockResolvedValueOnce([]);
-        readRawSessionHistoryRows.mockRejectedValueOnce(new Error('transcript fetch failed'));
+        readRawSessionHistoryRows.mockResolvedValueOnce([]);
 
         const result = await listExecutionRuns({
             token: 'token',
@@ -503,10 +502,10 @@ describe('listExecutionRuns', () => {
         });
     });
 
-    it('preserves the original rpc transport error when transcript list fallback lookup fails', async () => {
+    it('reports target unavailable when the rpc target and transcript recovery are unavailable', async () => {
         callSessionRpc.mockRejectedValueOnce(new Error('Socket connect timeout'));
         listExecutionRunMarkers.mockResolvedValueOnce([]);
-        readRawSessionHistoryRows.mockRejectedValueOnce(new Error('transcript fetch failed'));
+        readRawSessionHistoryRows.mockResolvedValueOnce([]);
 
         const result = await listExecutionRuns({
             token: 'token',
@@ -517,7 +516,7 @@ describe('listExecutionRuns', () => {
 
         expect(result).toEqual({
             ok: false,
-            code: 'unknown_error',
+            code: 'execution_run_target_unavailable',
             message: 'Socket connect timeout',
         });
     });
@@ -592,7 +591,7 @@ describe('getExecutionRun', () => {
             error: 'Not found',
         });
         listExecutionRunMarkers.mockResolvedValueOnce([]);
-        readRawSessionHistoryRows.mockRejectedValueOnce(new Error('transcript fetch failed'));
+        readRawSessionHistoryRows.mockResolvedValueOnce([]);
 
         const result = await getExecutionRun({
             token: 'token',
@@ -747,7 +746,7 @@ describe('getExecutionRun', () => {
         });
     });
 
-    it('preserves the original rpc transport error when transcript get fallback lookup fails', async () => {
+    it('reports target unavailable when the rpc target and get recovery are unavailable', async () => {
         callSessionRpc.mockRejectedValueOnce(new Error('Socket connect timeout'));
         listExecutionRunMarkers.mockResolvedValueOnce([]);
         readRawSessionHistoryRows.mockRejectedValueOnce(new Error('transcript fetch failed'));
@@ -761,8 +760,27 @@ describe('getExecutionRun', () => {
 
         expect(result).toEqual({
             ok: false,
-            code: 'unknown_error',
+            code: 'execution_run_target_unavailable',
             message: 'Socket connect timeout',
+        });
+    });
+
+    it('reports protocol unsupported when the get rpc method is unavailable and bounded recovery finds no run', async () => {
+        callSessionRpc.mockRejectedValueOnce(new Error('Method not found'));
+        listExecutionRunMarkers.mockResolvedValueOnce([]);
+        readRawSessionHistoryRows.mockResolvedValueOnce([]);
+
+        const result = await getExecutionRun({
+            token: 'token',
+            sessionId: 'sess-1',
+            ctx: { encryptionKey: new Uint8Array([1, 2, 3, 4]), encryptionVariant: 'legacy' },
+            request: { runId: 'run-missing' },
+        });
+
+        expect(result).toEqual({
+            ok: false,
+            code: 'execution_run_protocol_unsupported',
+            message: 'Method not found',
         });
     });
 });
