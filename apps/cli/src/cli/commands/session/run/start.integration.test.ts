@@ -6,8 +6,14 @@ import {
   deriveBoxPublicKeyFromSeed,
   sealEncryptedDataKeyEnvelopeV1,
 } from '@happier-dev/protocol';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
-import { bindApiSessionSocketMock, createApiSessionSocketStub } from '@/testkit/backends/apiSessionSocketHarness';
+import {
+  bindApiSessionSocketMock,
+  bindApiSessionSocketPairMock,
+  createApiSessionSocketStub,
+  type ApiSessionSocketStub,
+} from '@/testkit/backends/apiSessionSocketHarness';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
 import { captureConsoleJsonOutput } from '@/testkit/logger/captureOutput';
@@ -25,9 +31,12 @@ describe('happier session run start (integration)', () => {
   let envScope = createEnvKeyScope(envKeys);
   let server: Server | null = null;
   let happyHomeDir = '';
+  let sessionActive = true;
+  let startRpcSocket: ApiSessionSocketStub;
 
   beforeEach(async () => {
     happyHomeDir = await createTempDir('happier-cli-session-run-start-');
+    sessionActive = true;
 
     const sessionId = 'sess_integration_run_start_123';
     const dek = new Uint8Array(32).fill(3);
@@ -41,7 +50,7 @@ describe('happier session run start (integration)', () => {
 
     const { encodeBase64: encodeBase64Session, encryptWithDataKey } = await import('@/api/encryption');
     const metadataCiphertext = encodeBase64Session(
-      encryptWithDataKey({ path: '/tmp', flavor: 'claude' }, dek),
+      encryptWithDataKey({ path: '/tmp', flavor: 'claude', machineId: 'machine-integration-1' }, dek),
       'base64',
     );
     const dataEncryptionKeyBase64 = encodeBase64Session(envelope, 'base64');
@@ -59,7 +68,7 @@ describe('happier session run start (integration)', () => {
                 seq: 1,
                 createdAt: 1,
                 updatedAt: 2,
-                active: false,
+                active: sessionActive,
                 activeAt: 0,
                 metadata: metadataCiphertext,
                 metadataVersion: 0,
@@ -68,6 +77,7 @@ describe('happier session run start (integration)', () => {
                 pendingCount: 0,
                 pendingVersion: 0,
                 dataEncryptionKey: dataEncryptionKeyBase64,
+                machineId: 'machine-integration-1',
                 share: null,
               },
             ],
@@ -93,7 +103,7 @@ describe('happier session run start (integration)', () => {
               seq: 1,
               createdAt: 1,
               updatedAt: 2,
-              active: false,
+              active: sessionActive,
               activeAt: 0,
               metadata: metadataCiphertext,
               metadataVersion: 0,
@@ -102,6 +112,7 @@ describe('happier session run start (integration)', () => {
               pendingCount: 0,
               pendingVersion: 0,
               dataEncryptionKey: dataEncryptionKeyBase64,
+              machineId: 'machine-integration-1',
               share: null,
             },
           }),
@@ -127,7 +138,7 @@ describe('happier session run start (integration)', () => {
 
     const { decodeBase64, decrypt, encodeBase64: encodeBase64Rpc, encrypt } = await import('@/api/encryption');
 
-    const socket = createApiSessionSocketStub({
+    startRpcSocket = createApiSessionSocketStub({
       emit: (event: string, args: unknown[]) => {
         const [data, cb] = args as [any, ((value: unknown) => void) | undefined];
         if (event !== SOCKET_RPC_EVENTS.CALL) return;
@@ -145,7 +156,7 @@ describe('happier session run start (integration)', () => {
         });
       },
     });
-    bindApiSessionSocketMock(mockIo, socket);
+    bindApiSessionSocketMock(mockIo, startRpcSocket);
   });
 
   afterEach(async () => {
@@ -194,6 +205,81 @@ describe('happier session run start (integration)', () => {
       expect(parsed.data?.callId).toBe('call_1');
       expect(parsed.data?.backendId).toBe('claude');
       expect(parsed.data?.backendTarget).toEqual({ kind: 'builtInAgent', agentId: 'claude' });
+    } finally {
+      output.restore();
+    }
+  });
+
+  it('resumes an inactive resumable parent before starting its execution run', async () => {
+    const { handleSessionCommand } = await import('../index');
+    const { decodeBase64, decrypt, encodeBase64, encrypt } = await import('@/api/encryption');
+    const output = captureConsoleJsonOutput();
+    const machineKeySeed = new Uint8Array(32).fill(8);
+    const rpcOrder: string[] = [];
+    sessionActive = false;
+
+    const userSocket = createApiSessionSocketStub({
+      emit: (event: string, args: unknown[]) => {
+        const [data, cb] = args as [any, ((value: unknown) => void) | undefined];
+        if (event !== SOCKET_RPC_EVENTS.CALL) return;
+        rpcOrder.push(String(data.method ?? ''));
+        expect(data.method).toBe(`machine-integration-1:${RPC_METHODS.SPAWN_HAPPY_SESSION}`);
+        const request = decrypt(
+          machineKeySeed,
+          'dataKey',
+          decodeBase64(String(data.params ?? ''), 'base64'),
+        ) as any;
+        expect(request).toMatchObject({
+          type: 'resume-session',
+          sessionId: 'sess_integration_run_start_123',
+          directory: '/tmp',
+        });
+        cb?.({
+          ok: true,
+          result: encodeBase64(
+            encrypt(machineKeySeed, 'dataKey', {
+              type: 'success',
+              sessionId: 'sess_integration_run_start_123',
+            }),
+            'base64',
+          ),
+        });
+      },
+    });
+    const orderedStartSocket = createApiSessionSocketStub({
+      emit: (event: string, args: unknown[]) => {
+        const [data, cb] = args as [any, ((value: unknown) => void) | undefined];
+        if (event !== SOCKET_RPC_EVENTS.CALL) return;
+        rpcOrder.push(String(data.method ?? ''));
+        return startRpcSocket.emit(event, data, cb);
+      },
+    });
+    bindApiSessionSocketPairMock(mockIo, {
+      userSocket,
+      sessionSocket: orderedStartSocket,
+      fallbackSocket: orderedStartSocket,
+    });
+
+    try {
+      await handleSessionCommand(
+        ['run', 'start', 'sess_integration_run_start_123', '--intent', 'review', '--backend', 'claude', '--json'],
+        {
+          readCredentialsFn: async () => ({
+            token: 'token_test',
+            encryption: {
+              type: 'dataKey',
+              publicKey: deriveBoxPublicKeyFromSeed(machineKeySeed),
+              machineKey: machineKeySeed,
+            },
+          }),
+        },
+      );
+
+      expect(output.json().ok).toBe(true);
+      expect(rpcOrder).toEqual([
+        `machine-integration-1:${RPC_METHODS.SPAWN_HAPPY_SESSION}`,
+        'sess_integration_run_start_123:execution.run.start',
+      ]);
     } finally {
       output.restore();
     }
