@@ -62,7 +62,64 @@ describe('sessionControlAdapterRegistry', () => {
         },
       },
     })).toBe('/tmp/pi-session-1.jsonl');
+    expect(getProviderSessionControlAdapter('pi')?.resolveSessionArtifactPath?.({
+      runtimeDescriptorV1: {
+        v: 1,
+        agentId: 'pi',
+        provider: {
+          resumeStrategy: 'sessionFileAbsolutePreferred',
+          providerSessionId: 'pi-session-1',
+          sessionFile: '/tmp/pi-session-1.jsonl',
+        },
+      },
+    })).toBe('/tmp/pi-session-1.jsonl');
     expect(getProviderSessionControlAdapter('claude')).toBeNull();
     expect(getProviderSessionControlAdapter('customAcp')).toBeNull();
+  });
+  it('resolves Pi debug artifacts only from its canonical host descriptor or legacy path field', () => {
+    const adapter = getProviderSessionControlAdapter('pi');
+
+    expect(adapter?.resolveSessionArtifactPath?.({
+      agentRuntimeDescriptorV1: {
+        v: 1,
+        providerId: 'pi',
+        provider: {
+          resumeStrategy: 'sessionFileAbsolutePreferred',
+          vendorSessionId: 'legacy-pi-session',
+          sessionFile: ' C:\\Users\\alice\\.pi\\sessions\\session.jsonl ',
+        },
+      },
+    })).toBe('C:\\Users\\alice\\.pi\\sessions\\session.jsonl');
+    expect(adapter?.resolveSessionArtifactPath?.({
+      piSessionFile: ' /tmp/pi/legacy-session.jsonl ',
+    })).toBe('/tmp/pi/legacy-session.jsonl');
+
+    for (const metadata of [
+      {
+        runtimeDescriptorV1: {
+          v: 1,
+          agentId: 'codex',
+          provider: { sessionFile: '/tmp/not-pi.jsonl' },
+        },
+        piSessionFile: '/tmp/pi/legacy-session.jsonl',
+      },
+      {
+        runtimeDescriptorV1: {
+          v: 2,
+          agentId: 'pi',
+          provider: { sessionFile: '/tmp/pi/malformed.jsonl' },
+        },
+        piSessionFile: '/tmp/pi/legacy-session.jsonl',
+      },
+      {
+        runtimeDescriptorV1: {
+          v: 1,
+          agentId: 'pi',
+          provider: { sessionFile: 'relative/session.jsonl' },
+        },
+      },
+    ]) {
+      expect(adapter?.resolveSessionArtifactPath?.(metadata)).toBeNull();
+    }
   });
 });

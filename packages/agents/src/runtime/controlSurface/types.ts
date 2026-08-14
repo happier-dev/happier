@@ -9,6 +9,7 @@ export type ProviderSessionControlAdapter = Readonly<{
   resolveConfiguredRuntimeKind?: (accountSettings?: Record<string, unknown> | null) => AgentRuntimeKind | null;
   resolvePersistedSessionRuntimeKind?: (metadata: unknown) => AgentRuntimeKind | null;
   resolveVendorResumeId?: (metadata: unknown) => string | null;
+  resolveSessionArtifactPath?: (metadata: unknown) => string | null;
   isExperimentalVendorResumeEnabled?: (input: Readonly<{
     metadata: unknown;
     accountSettings: Record<string, unknown> | null;

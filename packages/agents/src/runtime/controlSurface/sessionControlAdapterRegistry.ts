@@ -29,3 +29,11 @@ export function getProviderSessionControlAdapter(agentId: AgentId | string): Pro
   }
   return PROVIDER_SESSION_CONTROL_ADAPTERS[agentId as GeneratedProviderSessionControlAdapterProviderId];
 }
+
+export function resolveSessionArtifactPathFromMetadata(metadata: unknown): string | null {
+  const matches = PROVIDER_SESSION_CONTROL_ADAPTER_PROVIDER_IDS.flatMap((agentId) => {
+    const path = PROVIDER_SESSION_CONTROL_ADAPTERS[agentId].resolveSessionArtifactPath?.(metadata);
+    return path ? [path] : [];
+  });
+  return matches.length === 1 ? matches[0] : null;
+}

@@ -72,6 +72,7 @@ export const AGENT_DEFINITION = Object.freeze({
       kind: 'runtimeDescriptorResumeId',
       providerId: PI_AGENT_ID,
       absolutePathField: 'sessionFile',
+      legacyAbsolutePathField: 'piSessionFile',
       fallbackField: 'providerSessionId',
     },
     runtimeDescriptorReader: {

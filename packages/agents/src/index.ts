@@ -410,6 +410,9 @@ export {
   resolveProviderSessionBackendMode,
 } from './session/controls/providerBackendModes.js';
 export {
+  resolveSessionArtifactPathFromMetadata,
+} from './runtime/controlSurface/sessionControlAdapterRegistry.js';
+export {
   LEGACY_ACP_CONFIG_OPTIONS_STATE_KEY,
   LEGACY_ACP_SESSION_MODELS_STATE_KEY,
   LEGACY_ACP_SESSION_MODES_STATE_KEY,

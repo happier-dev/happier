@@ -439,6 +439,7 @@ export const GENERATED_PROVIDER_SESSION_CONTROL_ADAPTERS: Readonly<Record<Genera
   pi: createRuntimeDescriptorResumeIdSessionControlAdapter({
     providerId: 'pi',
     absolutePathField: 'sessionFile',
+    legacyAbsolutePathField: 'piSessionFile',
     fallbackField: 'providerSessionId',
   }),
 });

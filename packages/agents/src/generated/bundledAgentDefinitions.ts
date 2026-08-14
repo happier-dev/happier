@@ -2962,6 +2962,7 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
       "absolutePathField": "sessionFile",
       "fallbackField": "providerSessionId",
       "kind": "runtimeDescriptorResumeId",
+      "legacyAbsolutePathField": "piSessionFile",
       "providerId": "pi"
     }
   },
