@@ -2,6 +2,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
 import { parseArgs } from 'node:util';
 
@@ -99,7 +100,7 @@ function main() {
   /** @type {string[]} */
   const bumped = [];
 
-  const bumpVersionScript = path.join('scripts', 'pipeline', 'release', 'bump-version.mjs');
+  const bumpVersionScript = fileURLToPath(new URL('./bump-version.mjs', import.meta.url));
   /**
    * @param {'app'|'server'|'website'|'cli'|'stack'} component
    * @param {string} bump
