@@ -1,11 +1,118 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
-import { dirname, resolve } from 'node:path';
+import { execFileSync, spawnSync } from 'node:child_process';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, '..', '..');
+
+test('production bump planning directs an unversioned exact candidate to materialize before final promotion', () => {
+  const root = mkdtempSync(join(tmpdir(), 'happier-release-bump-plan-'));
+  const bin = join(root, 'bin');
+  const cliVersion = JSON.parse(readFileSync(join(repoRoot, 'apps', 'cli', 'package.json'), 'utf8')).version;
+  mkdirSync(bin);
+  const git = join(bin, 'git');
+  writeFileSync(
+    git,
+    `#!/bin/sh\nset -eu\nif [ "$1" = show ] && [ "$2" = origin/main:apps/cli/package.json ]; then printf '%s\\n' ${JSON.stringify(JSON.stringify({ version: cliVersion }))}; exit 0; fi\necho "unexpected git call: $*" >&2\nexit 2\n`,
+    { mode: 0o755 },
+  );
+  chmodSync(git, 0o755);
+
+  try {
+    const result = spawnSync(
+      process.execPath,
+      [
+        resolve(repoRoot, 'scripts', 'pipeline', 'release', 'resolve-bump-plan.mjs'),
+        '--environment',
+        'production',
+        '--bump-preset',
+        'none',
+        '--deploy-targets',
+        'cli',
+        '--changed-ui',
+        'false',
+        '--changed-cli',
+        'false',
+        '--changed-stack',
+        'false',
+        '--changed-server',
+        'false',
+        '--changed-website',
+        'false',
+        '--changed-shared',
+        'false',
+      ],
+      {
+        cwd: repoRoot,
+        env: { ...process.env, PATH: `${bin}:${process.env.PATH ?? ''}` },
+        encoding: 'utf8',
+      },
+    );
+
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /materialize and commit CHANGELOG and version changes.*bump=none/i);
+    assert.doesNotMatch(result.stderr, /set bump/i);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('a materialized final candidate resolves no new post-approval bump', () => {
+  const out = execFileSync(
+    process.execPath,
+    [
+      resolve(repoRoot, 'scripts', 'pipeline', 'release', 'resolve-bump-plan.mjs'),
+      '--environment',
+      'preview',
+      '--bump-preset',
+      'none',
+      '--bump-app-override',
+      'preset',
+      '--bump-cli-override',
+      'preset',
+      '--bump-stack-override',
+      'preset',
+      '--deploy-targets',
+      'ui,cli,stack,server_runner',
+      '--changed-ui',
+      'true',
+      '--changed-cli',
+      'true',
+      '--changed-stack',
+      'true',
+      '--changed-server',
+      'true',
+      '--changed-website',
+      'true',
+      '--changed-shared',
+      'false',
+    ],
+    { cwd: repoRoot, env: process.env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 30_000 },
+  );
+
+  const parsed = JSON.parse(out);
+  assert.deepEqual(
+    {
+      bump_app: parsed.bump_app,
+      bump_cli: parsed.bump_cli,
+      bump_stack: parsed.bump_stack,
+      bump_server: parsed.bump_server,
+      bump_website: parsed.bump_website,
+    },
+    {
+      bump_app: 'none',
+      bump_cli: 'none',
+      bump_stack: 'none',
+      bump_server: 'none',
+      bump_website: 'none',
+    },
+  );
+  assert.equal(parsed.should_bump, false);
+});
 
 test('resolve-bump-plan computes bump + publish flags from changed components and deploy_targets', async () => {
   const out = execFileSync(

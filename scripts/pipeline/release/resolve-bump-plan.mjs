@@ -191,7 +191,7 @@ function main() {
       }
       if (devVersion === mainVersion) {
         fail(
-          `Refusing production deploy_targets includes cli without a version change (dev and main both at ${devVersion}). Set bump!=none or bump_cli_override!=none.`,
+          `Refusing production deploy_targets includes cli without a version change (dev and main both at ${devVersion}). Materialize and commit CHANGELOG and version changes in the approved candidate, then rerun final exact-SHA promotion with bump=none.`,
         );
       }
     }
@@ -204,7 +204,7 @@ function main() {
       }
       if (devVersion === mainVersion) {
         fail(
-          `Refusing production deploy_targets includes stack without a version change (dev and main both at ${devVersion}). Set bump!=none or bump_stack_override!=none.`,
+          `Refusing production deploy_targets includes stack without a version change (dev and main both at ${devVersion}). Materialize and commit CHANGELOG and version changes in the approved candidate, then rerun final exact-SHA promotion with bump=none.`,
         );
       }
     }
@@ -225,7 +225,7 @@ function main() {
 
       if (mainVersion && devVersion && devVersion === mainVersion) {
         fail(
-          `Refusing production deploy_targets includes server without a version change (dev and main both at ${devVersion}). Set bump!=none.`,
+          `Refusing production deploy_targets includes server without a version change (dev and main both at ${devVersion}). Materialize and commit CHANGELOG and version changes in the approved candidate, then rerun final exact-SHA promotion with bump=none.`,
         );
       }
     }
