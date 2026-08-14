@@ -1,6 +1,6 @@
 import { spawnSync } from 'node:child_process';
 import { appendFileSync, chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { chmod, copyFile, mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises';
+import { chmod, copyFile, mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { delimiter, dirname, join } from 'node:path';
 
@@ -74,8 +74,50 @@ type InstallProviderCliDeps = Readonly<{
   extractGitHubReleaseAsset?: typeof extractGitHubReleaseAsset;
   ensureManagedPnpmCommand?: typeof ensureManagedPnpmCommand;
   ensureManagedJavaScriptRuntimeCommand?: typeof ensureManagedJavaScriptRuntimeCommand;
+  renameManagedInstallPath?: typeof rename;
   spawnSync?: typeof spawnSync;
 }>;
+
+async function promoteManagedInstallCandidate(params: Readonly<{
+  installRoot: string;
+  deps: InstallProviderCliDeps;
+}>): Promise<void> {
+  const currentDir = join(params.installRoot, 'current');
+  const nextDir = join(params.installRoot, 'next');
+  const previousDir = join(params.installRoot, 'previous');
+  const renamePath = params.deps.renameManagedInstallPath ?? rename;
+
+  await mkdir(params.installRoot, { recursive: true });
+  await rm(previousDir, { recursive: true, force: true });
+
+  let previousReleaseMoved = false;
+  try {
+    await renamePath(currentDir, previousDir);
+    previousReleaseMoved = true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+  }
+
+  try {
+    await renamePath(nextDir, currentDir);
+  } catch (promotionError) {
+    await rm(currentDir, { recursive: true, force: true });
+    if (previousReleaseMoved) {
+      try {
+        await renamePath(previousDir, currentDir);
+      } catch (restoreError) {
+        throw new Error(
+          `Managed provider promotion failed and the previous release could not be restored: ${String(restoreError)}`,
+          { cause: promotionError },
+        );
+      }
+    }
+    await rm(nextDir, { recursive: true, force: true });
+    throw promotionError;
+  }
+
+  await rm(previousDir, { recursive: true, force: true });
+}
 
 export function resolvePlatformFromNodePlatform(nodePlatform: string): ProviderCliInstallPlatform | null {
   if (nodePlatform === 'darwin') return 'darwin';
@@ -648,9 +690,7 @@ async function installManagedPackageProviderCli(params: Readonly<{
     runtimePathEntries,
   });
 
-  await rm(join(installRoot, 'current'), { recursive: true, force: true });
-  await mkdir(installRoot, { recursive: true });
-  await rename(nextDir, join(installRoot, 'current'));
+  await promoteManagedInstallCandidate({ installRoot, deps: params.deps });
 }
 
 async function resolveManagedBinaryAsset(params: Readonly<{
@@ -677,6 +717,7 @@ async function resolveManagedBinaryAsset(params: Readonly<{
 async function installManagedBinaryProviderCli(params: Readonly<{
   providerId: AgentId;
   managedInstall: Extract<ProviderCliManagedInstallSpec, { kind: 'github_release_binary' }>;
+  platform: ProviderCliInstallPlatform;
   env: NodeJS.ProcessEnv;
   logPath: string;
   deps: InstallProviderCliDeps;
@@ -692,6 +733,10 @@ async function installManagedBinaryProviderCli(params: Readonly<{
     const extractDir = join(scratchDir, 'extract');
     const nextDir = join(installRoot, 'next');
     const nextBinPath = resolveStagedManagedProviderCommandPath(params.providerId, 'next', params.env);
+    const archiveEntries = params.managedInstall.archiveEntriesByPlatform[params.platform];
+    if (archiveEntries.length === 0) {
+      throw new Error(`Provider ${params.providerId} has no declared runtime archive entries for ${params.platform}`);
+    }
 
     await (params.deps.downloadGitHubReleaseAsset ?? downloadGitHubReleaseAsset)({
       url: asset.url,
@@ -707,13 +752,24 @@ async function installManagedBinaryProviderCli(params: Readonly<{
       archiveName: asset.name,
       extractDir,
       outputPath: nextBinPath,
+      outputDir: nextDir,
+      archiveEntries,
       archiveExtractionLimits: params.managedInstall.archiveExtractionLimits,
     });
 
+    for (const entry of archiveEntries) {
+      const installedPath = join(nextDir, ...entry.destinationPath.split('/'));
+      const installedStat = await stat(installedPath).catch((error: NodeJS.ErrnoException) => {
+        if (error.code === 'ENOENT') return null;
+        throw error;
+      });
+      if (!installedStat?.isFile()) {
+        throw new Error(`[github-release] required archive member was not staged: ${entry.archivePath}`);
+      }
+    }
+
     appendLogLine(params.logPath, `# asset: ${asset.name}`);
-    await rm(join(installRoot, 'current'), { recursive: true, force: true });
-    await mkdir(installRoot, { recursive: true });
-    await rename(nextDir, join(installRoot, 'current'));
+    await promoteManagedInstallCandidate({ installRoot, deps: params.deps });
   } finally {
     await rm(scratchDir, { recursive: true, force: true });
   }
@@ -866,6 +922,7 @@ export async function installProviderCli(params: Readonly<{
       await installManagedBinaryProviderCli({
         providerId: params.providerId,
         managedInstall: plan.managedInstall,
+        platform: params.platform,
         env,
         logPath,
         deps,

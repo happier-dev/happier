@@ -21,11 +21,19 @@ export type ProviderCliArchiveExtractionLimits = Readonly<{
   maxExpandedBytes: number;
 }>;
 
+export type ProviderCliManagedArchiveEntry = Readonly<{
+  archivePath: string;
+  destinationPath: string;
+}>;
+
 export type ProviderCliManagedInstallSpec =
   | Readonly<{
       kind: 'github_release_binary';
       githubRepo: string;
       binaryName: string;
+      archiveEntriesByPlatform: Readonly<
+        Record<ProviderCliInstallPlatform, ReadonlyArray<ProviderCliManagedArchiveEntry>>
+      >;
       archiveExtractionLimits?: ProviderCliArchiveExtractionLimits;
     }>
   | Readonly<{
@@ -128,10 +136,35 @@ export const PROVIDER_CLI_RUNTIME_SPECS: Readonly<Record<AgentId, ProviderCliRun
       kind: 'github_release_binary',
       githubRepo: 'openai/codex',
       binaryName: 'codex',
-      // OpenAI Codex rust-v0.146.0's checksum-pinned Windows ZIP expands to
-      // 368,757,648 bytes, including one 358,650,672-byte executable. A 384
-      // MiB ceiling leaves bounded headroom while retaining generic archive,
-      // entry-count, path, and compression-ratio protections.
+      // OpenAI Codex rust-v0.147.0's canonical package layout. Keep this an
+      // explicit runtime allowlist: package metadata, rg, and other bundled
+      // files are not part of Happier's managed provider installation.
+      archiveEntriesByPlatform: {
+        darwin: [
+          { archivePath: 'bin/codex', destinationPath: 'bin/codex' },
+          { archivePath: 'bin/codex-code-mode-host', destinationPath: 'bin/codex-code-mode-host' },
+        ],
+        linux: [
+          { archivePath: 'bin/codex', destinationPath: 'bin/codex' },
+          { archivePath: 'bin/codex-code-mode-host', destinationPath: 'bin/codex-code-mode-host' },
+        ],
+        win32: [
+          { archivePath: 'bin/codex.exe', destinationPath: 'bin/codex.exe' },
+          { archivePath: 'bin/codex-code-mode-host.exe', destinationPath: 'bin/codex-code-mode-host.exe' },
+          {
+            archivePath: 'codex-resources/codex-command-runner.exe',
+            destinationPath: 'codex-resources/codex-command-runner.exe',
+          },
+          {
+            archivePath: 'codex-resources/codex-windows-sandbox-setup.exe',
+            destinationPath: 'codex-resources/codex-windows-sandbox-setup.exe',
+          },
+        ],
+      },
+      // OpenAI Codex rust-v0.147.0's checksum-pinned x64 Windows package
+      // expands to 370,442,135 bytes, including one 298,668,336-byte
+      // executable. A 384 MiB ceiling leaves bounded headroom while retaining
+      // generic archive, entry-count, path, and compression-ratio protections.
       archiveExtractionLimits: {
         maxFileBytes: 384 * 1024 * 1024,
         maxExpandedBytes: 384 * 1024 * 1024,

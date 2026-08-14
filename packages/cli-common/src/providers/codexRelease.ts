@@ -47,22 +47,22 @@ function normalizeAssets(raw: unknown): GitHubReleaseAsset[] {
 
 function preferredCodexAssetNames(): string[] {
   if (process.platform === 'darwin' && process.arch === 'arm64') {
-    return ['codex-aarch64-apple-darwin.tar.gz'];
+    return ['codex-package-aarch64-apple-darwin.tar.gz'];
   }
   if (process.platform === 'darwin' && process.arch === 'x64') {
-    return ['codex-x86_64-apple-darwin.tar.gz'];
+    return ['codex-package-x86_64-apple-darwin.tar.gz'];
   }
   if (process.platform === 'linux' && process.arch === 'arm64') {
-    return ['codex-aarch64-unknown-linux-musl.tar.gz', 'codex-aarch64-unknown-linux-gnu.tar.gz'];
+    return ['codex-package-aarch64-unknown-linux-musl.tar.gz'];
   }
   if (process.platform === 'linux' && process.arch === 'x64') {
-    return ['codex-x86_64-unknown-linux-musl.tar.gz', 'codex-x86_64-unknown-linux-gnu.tar.gz'];
+    return ['codex-package-x86_64-unknown-linux-musl.tar.gz'];
   }
   if (process.platform === 'win32' && process.arch === 'arm64') {
-    return ['codex-aarch64-pc-windows-msvc.exe.zip'];
+    return ['codex-package-aarch64-pc-windows-msvc.tar.gz'];
   }
   if (process.platform === 'win32' && process.arch === 'x64') {
-    return ['codex-x86_64-pc-windows-msvc.exe.zip'];
+    return ['codex-package-x86_64-pc-windows-msvc.tar.gz'];
   }
   throw new Error(`Unsupported codex platform: ${process.platform}/${process.arch}`);
 }
