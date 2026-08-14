@@ -175,7 +175,15 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
     "agentCatalogEntry": {
       "importName": "ANTIGRAVITY_AGENT_RUNTIME_CONTRIBUTION",
       "source": "./agent/contributions/runtime"
-    }
+    },
+    "protocolRuntimeDescriptor": {
+      "buildFunction": "buildAntigravityRuntimeDescriptorV1",
+      "canonicalReader": "readCanonicalAntigravityRuntimeDescriptorV1",
+      "kind": "providerRuntimeDescriptorV1",
+      "providerId": "antigravity",
+      "source": "./agent/runtime/runtimeDescriptor"
+    },
+    "runtimeDescriptorReader": {
   },
   "sessionModeDescriptor": {
     "runtimeSwitch": "none",

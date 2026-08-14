@@ -44,5 +44,12 @@ export const AGENT_DEFINITION = Object.freeze({
       importName: 'ANTIGRAVITY_AGENT_RUNTIME_CONTRIBUTION',
       source: './agent/contributions/runtime',
     },
+    protocolRuntimeDescriptor: {
+      kind: 'providerRuntimeDescriptorV1',
+      providerId: 'antigravity',
+      source: './agent/runtime/runtimeDescriptor',
+      buildFunction: 'buildAntigravityRuntimeDescriptorV1',
+      canonicalReader: 'readCanonicalAntigravityRuntimeDescriptorV1',
+    },
   },
 });

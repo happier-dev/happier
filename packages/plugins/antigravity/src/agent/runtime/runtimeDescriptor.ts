@@ -1,17 +1,11 @@
-import type { ConcreteAntigravityRuntimeMode } from '../lifecycle/runtimeMode.js';
-
-type RuntimeDescriptorEnvelopeV1<TAgentId extends string = string> = Readonly<{
-  v: 1;
-  agentId: TAgentId;
-  agent: Readonly<Record<string, unknown>>;
-} & Record<string, unknown>>;
+export type AntigravityRuntimeDescriptorModeV1 = 'cliPrint' | 'sdk';
 
 type AntigravityRuntimeDescriptorAgentExtra = Readonly<{
   owner: 'antigravity';
   schemaId: 'antigravity.agentRuntimeDescriptorExtra';
   v: 1;
   runtimeHandle?: Readonly<{
-    runtimeMode?: ConcreteAntigravityRuntimeMode;
+    runtimeMode?: AntigravityRuntimeDescriptorModeV1;
     providerSessionId?: string;
     agyConversationId?: string;
     localharnessSessionId?: string;
@@ -23,7 +17,7 @@ type AntigravityRuntimeDescriptorAgentExtra = Readonly<{
 }>;
 
 type AntigravityRuntimeDescriptorAgentPayload = Readonly<{
-  runtimeMode?: ConcreteAntigravityRuntimeMode;
+  runtimeMode?: AntigravityRuntimeDescriptorModeV1;
   providerSessionId?: string;
   agyConversationId?: string;
   localharnessSessionId?: string;
@@ -42,7 +36,7 @@ export type AntigravityRuntimeDescriptorV1 = Readonly<{
 
 export type CanonicalAntigravityRuntimeDescriptorV1 = Readonly<{
   agentId: 'antigravity';
-  runtimeMode: ConcreteAntigravityRuntimeMode | null;
+  runtimeMode: AntigravityRuntimeDescriptorModeV1 | null;
   providerSessionId: string | null;
   agyConversationId: string | null;
   localharnessSessionId: string | null;
@@ -53,7 +47,7 @@ export type CanonicalAntigravityRuntimeDescriptorV1 = Readonly<{
 }>;
 
 export type BuildAntigravityRuntimeDescriptorV1Params = Readonly<{
-  runtimeMode: ConcreteAntigravityRuntimeMode;
+  runtimeMode: AntigravityRuntimeDescriptorModeV1;
   providerSessionId?: string | null;
   agyConversationId?: string | null;
   localharnessSessionId?: string | null;
@@ -69,68 +63,26 @@ function asRecord(value: unknown): Record<string, unknown> | null {
     : null;
 }
 
+function hasOnlyKeys(
+  value: Readonly<Record<string, unknown>>,
+  allowedKeys: ReadonlySet<string>,
+): boolean {
+  return Object.keys(value).every((key) => allowedKeys.has(key));
+}
+
 function normalizeTrimmedString(value: unknown): string | null {
   if (typeof value !== 'string') return null;
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : null;
 }
 
-function readAgentIdCompat(record: Readonly<Record<string, unknown>>): string | null {
-  const hasAgentId = Object.hasOwn(record, 'agentId');
-  const hasProviderId = Object.hasOwn(record, 'providerId');
-  const agentId = normalizeTrimmedString(record.agentId);
-  const providerId = normalizeTrimmedString(record.providerId);
-  if ((hasAgentId && !agentId) || (hasProviderId && !providerId)) return null;
-  if (agentId && providerId && agentId !== providerId) return null;
-  return agentId ?? providerId;
-}
-
-function normalizeConcreteRuntimeMode(value: unknown): ConcreteAntigravityRuntimeMode | null {
+function normalizeConcreteRuntimeMode(value: unknown): AntigravityRuntimeDescriptorModeV1 | null {
   const trimmed = normalizeTrimmedString(value);
   return trimmed === 'cliPrint' || trimmed === 'sdk' ? trimmed : null;
 }
 
 function normalizeHome(value: unknown): 'user' | 'connectedService' | null {
   return value === 'user' || value === 'connectedService' ? value : null;
-}
-
-function readRuntimeDescriptorV1(value: unknown): RuntimeDescriptorEnvelopeV1 | null {
-  const descriptor = asRecord(value);
-  if (!descriptor || descriptor.v !== 1) return null;
-  const agentId = readAgentIdCompat(descriptor);
-  if (!agentId) return null;
-  const rawAgentPayload = asRecord(descriptor.agent) ?? asRecord(descriptor.provider); // legacy `provider` payload-key read-compat
-  if (!rawAgentPayload) return null;
-  const agentPayload = Object.hasOwn(rawAgentPayload, 'agentExtra')
-    ? rawAgentPayload
-    : (() => {
-      const { providerExtra: legacyExtra, ...rest } = rawAgentPayload; // legacy `providerExtra` read-compat
-      return legacyExtra === undefined ? rawAgentPayload : { ...rest, agentExtra: legacyExtra };
-    })();
-  const {
-    providerId: _legacyProviderId,
-    provider: _legacyProviderPayload,
-    ...canonicalDescriptor
-  } = descriptor;
-  return {
-    ...canonicalDescriptor,
-    v: 1,
-    agentId,
-    agent: agentPayload,
-  } as RuntimeDescriptorEnvelopeV1;
-}
-
-function readRuntimeDescriptorV1ForAgent<TAgentId extends string>(
-  value: unknown,
-  agentId: TAgentId,
-): RuntimeDescriptorEnvelopeV1<TAgentId> | null {
-  const descriptor = readRuntimeDescriptorV1(value);
-  return descriptor?.agentId === agentId ? descriptor as RuntimeDescriptorEnvelopeV1<TAgentId> : null;
-}
-
-function readMetadataDescriptorInput(metadata: unknown): unknown {
-  const record = asRecord(metadata);
-  return record?.runtimeDescriptorV1 ?? record?.agentRuntimeDescriptorV1 ?? null;
 }
 
 function readAgentExtraRuntimeHandle(value: unknown): Record<string, unknown> | null {
@@ -207,10 +159,19 @@ export function buildAntigravityRuntimeDescriptorV1(
 export function readCanonicalAntigravityRuntimeDescriptorV1(
   value: unknown,
 ): CanonicalAntigravityRuntimeDescriptorV1 | null {
-  const descriptor = readRuntimeDescriptorV1ForAgent(value, 'antigravity');
-  if (!descriptor) return null;
+  const descriptor = asRecord(value);
+  if (
+    !descriptor
+    || descriptor.v !== 1
+    || descriptor.agentId !== 'antigravity'
+    || Object.hasOwn(descriptor, 'providerId')
+    || Object.hasOwn(descriptor, 'provider')
+  ) return null;
 
-  const agentPayload = descriptor.agent as AntigravityRuntimeDescriptorAgentPayload & Record<string, unknown>;
+  const agentPayload = asRecord(descriptor.agent) as
+    | (AntigravityRuntimeDescriptorAgentPayload & Record<string, unknown>)
+    | null;
+  if (!agentPayload) return null;
   const handle = readAgentExtraRuntimeHandle(agentPayload.agentExtra);
   const runtimeMode = normalizeConcreteRuntimeMode(handle?.runtimeMode)
     ?? normalizeConcreteRuntimeMode(agentPayload.runtimeMode);
@@ -243,35 +204,52 @@ export function readCanonicalAntigravityRuntimeDescriptorV1(
   };
 }
 
-function readLegacyAntigravitySessionMetadataRuntimeDescriptor(
-  metadataRecord: Record<string, unknown>,
+export function readStrictCanonicalAntigravityRuntimeDescriptorV1(
+  value: unknown,
 ): CanonicalAntigravityRuntimeDescriptorV1 | null {
-  const runtimeMode = normalizeConcreteRuntimeMode(metadataRecord.antigravityRuntimeMode);
-  if (!runtimeMode) return null;
-  const agyConversationId = normalizeTrimmedString(metadataRecord.agyConversationId)
-    ?? normalizeTrimmedString(metadataRecord.antigravityConversationId);
-  const localharnessSessionId = normalizeTrimmedString(metadataRecord.localharnessSessionId)
-    ?? normalizeTrimmedString(metadataRecord.antigravityLocalharnessSessionId);
-  return {
-    agentId: 'antigravity',
-    runtimeMode,
-    providerSessionId: normalizeTrimmedString(metadataRecord.providerSessionId)
-      ?? agyConversationId
-      ?? localharnessSessionId,
-    agyConversationId,
-    localharnessSessionId,
-    home: normalizeHome(metadataRecord.antigravityRuntimeHome),
-    connectedServiceId: normalizeTrimmedString(metadataRecord.connectedServiceId),
-    connectedServiceProfileId: normalizeTrimmedString(metadataRecord.connectedServiceProfileId),
-    connectedServiceGroupId: normalizeTrimmedString(metadataRecord.connectedServiceGroupId),
-  };
-}
+  const descriptor = asRecord(value);
+  if (!descriptor || !hasOnlyKeys(descriptor, new Set(['v', 'agentId', 'agent']))) return null;
+  const agent = asRecord(descriptor.agent);
+  if (
+    !agent
+    || !hasOnlyKeys(agent, new Set([
+      'runtimeMode',
+      'providerSessionId',
+      'agyConversationId',
+      'localharnessSessionId',
+      'home',
+      'connectedServiceId',
+      'connectedServiceProfileId',
+      'connectedServiceGroupId',
+      'agentExtra',
+    ]))
+  ) return null;
 
-export function readAntigravitySessionMetadataRuntimeDescriptor(
-  metadata: unknown,
-): CanonicalAntigravityRuntimeDescriptorV1 | null {
-  const metadataRecord = asRecord(metadata);
-  if (!metadataRecord) return null;
-  return readCanonicalAntigravityRuntimeDescriptorV1(readMetadataDescriptorInput(metadataRecord))
-    ?? readLegacyAntigravitySessionMetadataRuntimeDescriptor(metadataRecord);
+  if (agent.agentExtra !== undefined) {
+    const extra = asRecord(agent.agentExtra);
+    if (
+      !extra
+      || !hasOnlyKeys(extra, new Set(['owner', 'schemaId', 'v', 'runtimeHandle']))
+      || extra.owner !== 'antigravity'
+      || extra.schemaId !== 'antigravity.agentRuntimeDescriptorExtra'
+      || extra.v !== 1
+    ) return null;
+    if (extra.runtimeHandle !== undefined) {
+      const runtimeHandle = asRecord(extra.runtimeHandle);
+      if (
+        !runtimeHandle
+        || !hasOnlyKeys(runtimeHandle, new Set([
+          'runtimeMode',
+          'providerSessionId',
+          'agyConversationId',
+          'localharnessSessionId',
+          'home',
+          'connectedServiceId',
+          'connectedServiceProfileId',
+          'connectedServiceGroupId',
+        ]))
+      ) return null;
+    }
+  }
+  return readCanonicalAntigravityRuntimeDescriptorV1(descriptor);
 }

@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
-import {
+import * as runtimeDescriptor from './runtimeDescriptor.js';
+
+const {
   buildAntigravityRuntimeDescriptorV1,
-  readAntigravitySessionMetadataRuntimeDescriptor,
   readCanonicalAntigravityRuntimeDescriptorV1,
-} from './runtimeDescriptor.js';
+} = runtimeDescriptor;
 
 describe('Antigravity runtime descriptor', () => {
   it('builds and reads concrete runtime mode and cliPrint conversation affinity', () => {
@@ -96,32 +97,16 @@ describe('Antigravity runtime descriptor', () => {
     });
   });
 
-  it('prefers the canonical runtimeDescriptorV1 metadata over legacy Antigravity fields', () => {
-    expect(readAntigravitySessionMetadataRuntimeDescriptor({
-      antigravityRuntimeMode: 'cliPrint',
-      agyConversationId: 'legacy-conv',
-      runtimeDescriptorV1: buildAntigravityRuntimeDescriptorV1({
-        runtimeMode: 'sdk',
-        localharnessSessionId: 'lh-session-2',
-      }),
-    })).toMatchObject({
-      runtimeMode: 'sdk',
-      providerSessionId: 'lh-session-2',
-      localharnessSessionId: 'lh-session-2',
-      agyConversationId: null,
-    });
+  it('does not expose a plugin-local raw metadata compatibility reader', () => {
+    expect(runtimeDescriptor).not.toHaveProperty('readAntigravitySessionMetadataRuntimeDescriptor');
   });
 
-  it('falls back to legacy provider-local metadata when no descriptor is present', () => {
-    expect(readAntigravitySessionMetadataRuntimeDescriptor({
-      antigravityRuntimeMode: 'cliPrint',
-      agyConversationId: 'legacy-conv',
-    })).toMatchObject({
-      agentId: 'antigravity',
-      runtimeMode: 'cliPrint',
-      providerSessionId: 'legacy-conv',
-      agyConversationId: 'legacy-conv',
-    });
+  it('leaves legacy generic carrier normalization to the host compatibility owner', () => {
+    expect(readCanonicalAntigravityRuntimeDescriptorV1({
+      v: 1,
+      providerId: 'antigravity',
+      provider: { runtimeMode: 'sdk' },
+    })).toBeNull();
   });
 
   it('fails closed when canonical and deployed identity fields conflict', () => {
