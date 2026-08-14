@@ -148,6 +148,10 @@ _.env.pipeline.production.local
 
 # Reproducible fixture compiler output and one-off migration tooling
 /packages/plugin-ui/fixtures/external-authoring/dist-node/
+/packages/plugin-sdk/.facade-current-declarations/
+/packages/plugin-sdk/.facade-inference-current/
+/packages/plugin-sdk/src/**/*.d.ts.map
+/packages/protocol/src/**/*.d.ts.map
 /apps/ui/scripts/icons/codemod*.mjs
 /apps/ui/scripts/icons/fix*.mjs
 /apps/ui/scripts/icons/inventory.mjs
