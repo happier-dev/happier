@@ -112,6 +112,11 @@
       "import": "./dist/process/index.js",
       "default": "./dist/process/index.js"
     },
+    "./fs/windowsProtectedAcl": {
+      "types": "./dist/fs/windowsProtectedAcl.d.ts",
+      "import": "./dist/fs/windowsProtectedAcl.js",
+      "default": "./dist/fs/windowsProtectedAcl.js"
+    },
     "./componentArtifacts": {
       "types": "./dist/componentArtifacts/index.d.ts",
       "import": "./dist/componentArtifacts/index.js",
