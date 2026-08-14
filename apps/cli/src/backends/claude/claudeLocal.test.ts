@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { basename, dirname, join } from 'node:path';
 import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { PassThrough } from 'node:stream';
 import { logger } from '@/ui/logger';
@@ -26,9 +27,13 @@ const { mockSpawn, mockClaudeFindLastSession, mockResolveClaudeCliPath, mockIsCl
     mockIsClaudeCliJavaScriptFile: vi.fn(),
 }));
 
-vi.mock('node:child_process', () => ({
-    spawn: mockSpawn
-}));
+vi.mock('node:child_process', async () => {
+    const actual = await vi.importActual<typeof import('node:child_process')>('node:child_process');
+    return {
+        ...actual,
+        spawn: mockSpawn,
+    };
+});
 
 vi.mock('@/ui/logger', () => ({
     logger: {
@@ -294,7 +299,7 @@ describe('claudeLocal --continue handling', () => {
         expect(spawnArgs[promptIndex - 1]).toBe('--');
     });
 
-    it('injects --mcp-config when happierMcpConfigJson is provided', async () => {
+    it('injects --mcp-config through a temporary file and removes it after Claude exits', async () => {
         const mcpJson = JSON.stringify({
             mcpServers: { happier: { command: 'node', args: ['happier-mcp.mjs', '--url', 'http://127.0.0.1:1234'] } },
         });
@@ -312,7 +317,10 @@ describe('claudeLocal --continue handling', () => {
         const spawnArgs = mockSpawn.mock.calls[0][1];
         const idx = spawnArgs.indexOf('--mcp-config');
         expect(idx).toBeGreaterThan(-1);
-        expect(spawnArgs[idx + 1]).toBe(mcpJson);
+        const configPath = spawnArgs[idx + 1];
+        expect(configPath).not.toBe(mcpJson);
+        expect(JSON.stringify(spawnArgs)).not.toContain('http://127.0.0.1:1234');
+        await expect(stat(configPath)).rejects.toMatchObject({ code: 'ENOENT' });
     });
 
     it('redacts MCP config payloads from Claude argument debug logs', async () => {
@@ -369,8 +377,13 @@ describe('claudeLocal --continue handling', () => {
             .filter((entry) => entry.value === '--mcp-config')
             .map((entry) => entry.index);
         expect(mcpFlags.length).toBe(2);
-        expect(spawnArgs[mcpFlags[0]! + 1]).toBe(userMcp);
-        expect(spawnArgs[mcpFlags[1]! + 1]).toBe(happierMcp);
+        const userMcpPath = spawnArgs[mcpFlags[0]! + 1]!;
+        const happierMcpPath = spawnArgs[mcpFlags[1]! + 1]!;
+        expect(userMcpPath).not.toBe(userMcp);
+        expect(happierMcpPath).not.toBe(happierMcp);
+        expect(JSON.stringify(spawnArgs)).not.toContain('happier-mcp.mjs');
+        await expect(stat(userMcpPath)).rejects.toMatchObject({ code: 'ENOENT' });
+        await expect(stat(happierMcpPath)).rejects.toMatchObject({ code: 'ENOENT' });
     });
 
     it('keeps values attached to flag arguments before injected settings and mcp config', async () => {

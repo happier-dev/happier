@@ -22,6 +22,7 @@ type TerminalLaunchSpecFixture = Readonly<{
   cwd?: string;
   env?: Record<string, string>;
   envPassthroughKeys?: string[];
+  cleanupPaths?: string[];
   diagnostics?: {
     sessionId?: string;
     logsDir?: string;
@@ -210,6 +211,14 @@ describe('buildClaudeUnifiedTerminalSpawn', () => {
   });
 
   it('uses the managed JavaScript runtime wrapper when the resolved Claude CLI is a JavaScript file', async () => {
+    const mcpConfigJson = JSON.stringify({
+      mcpServers: {
+        connected: {
+          command: 'mcp-server',
+          env: { API_TOKEN: 'synthetic-sensitive-value' },
+        },
+      },
+    });
     const spawn = await buildClaudeUnifiedTerminalSpawn({
       path: '/workspace/project',
       first: {
@@ -221,7 +230,7 @@ describe('buildClaudeUnifiedTerminalSpawn', () => {
       claudeArgs: ['--model', 'sonnet', '--permission-mode', 'bypassPermissions'],
       hookPluginDir: '/tmp/plugin',
       hookSettingsPath: '/tmp/settings.json',
-      happierMcpConfigJson: '{"mcpServers":{}}',
+      happierMcpConfigJson: mcpConfigJson,
       deps: {
         resolveClaudeCliPath: () => '/opt/claude/cli.js',
         isClaudeCliJavaScriptFile: () => true,
@@ -240,7 +249,19 @@ describe('buildClaudeUnifiedTerminalSpawn', () => {
     expect(launchSpec.args?.[0]).toBe('/happier/scripts/claude_local_launcher.cjs');
     expect(launchSpec.args).toContain('/tmp/plugin');
     expect(launchSpec.args).toContain('/tmp/settings.json');
-    expect(launchSpec.args).toContain('{"mcpServers":{}}');
+    expect(JSON.stringify(launchSpec.args)).not.toContain('synthetic-sensitive-value');
+    const mcpConfigIndex = launchSpec.args?.indexOf('--mcp-config') ?? -1;
+    expect(mcpConfigIndex).toBeGreaterThanOrEqual(0);
+    const mcpConfigPath = launchSpec.args?.[mcpConfigIndex + 1];
+    expect(typeof mcpConfigPath).toBe('string');
+    expect(mcpConfigPath).not.toBe(mcpConfigJson);
+    await expect(readFile(mcpConfigPath!, 'utf8')).resolves.toBe(mcpConfigJson);
+    if (process.platform !== 'win32') {
+      await expect(stat(mcpConfigPath!)).resolves.toMatchObject({ mode: expect.any(Number) });
+      expect((await stat(mcpConfigPath!)).mode & 0o777).toBe(0o600);
+    }
+    expect(launchSpec.cleanupPaths).toContain(mcpConfigPath);
+    await rm(mcpConfigPath!, { force: true });
     expect(launchSpec.args).toContain('--permission-mode');
     expect(launchSpec.args).toContain('dontAsk');
     expect(launchSpec.args).not.toContain('bypassPermissions');
@@ -966,11 +987,17 @@ async function readOverlayFromArgs(args: readonly string[], hookSettingsPath: st
       }
       expect(launchSpec.command).toBe('/usr/local/bin/claude');
       expect(launchSpec.args).toContain('--append-system-prompt');
-      expect(launchSpec.args).toContain(longMcpConfigJson);
+      expect(launchSpec.args).not.toContain(longMcpConfigJson);
+      const mcpConfigIndex = launchSpec.args?.indexOf('--mcp-config') ?? -1;
+      expect(mcpConfigIndex).toBeGreaterThanOrEqual(0);
+      const mcpConfigPath = launchSpec.args?.[mcpConfigIndex + 1];
+      await expect(readFile(mcpConfigPath!, 'utf8')).resolves.toBe(longMcpConfigJson);
+      expect(launchSpec.cleanupPaths).toContain(mcpConfigPath);
       expect(launchSpec.cwd).toBe('/workspace/project');
       expect(launchSpec.env?.DISABLE_AUTOUPDATER).toBe('1');
 
       await rm(dirname(specPath!), { recursive: true, force: true });
+      await rm(mcpConfigPath!, { force: true });
     });
   });
 

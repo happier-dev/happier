@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { EventEmitter } from 'node:events';
+import { readFile, stat, unlink } from 'node:fs/promises';
 
 import type {
   TerminalAttachmentId,
@@ -9,6 +10,7 @@ import type {
 import type { TerminalAttachmentInfo } from '@/terminal/attachment/terminalAttachmentInfo';
 
 import { runClaudeUnifiedTerminalSession } from './runClaudeUnifiedTerminalSession';
+import { buildClaudeUnifiedTerminalSpawn } from './buildClaudeUnifiedTerminalSpawn';
 
 const attachmentId = 'attachment-adopted-resume' as TerminalAttachmentId;
 const existingHandle: TerminalHostHandle = {
@@ -205,6 +207,7 @@ describe('runClaudeUnifiedTerminalSession launch disposition', () => {
   it('reports one provider launch immediately before a fresh create with spawn argv', async () => {
     const abortController = new AbortController();
     const calls: string[] = [];
+    const cleanupUnreadArtifacts = vi.fn(async () => undefined);
     const onProviderLaunchStarting = vi.fn(async () => {
       calls.push('launch_starting');
     });
@@ -217,11 +220,18 @@ describe('runClaudeUnifiedTerminalSession launch disposition', () => {
 
     await runClaudeUnifiedTerminalSession({
       ...baseOptions(adapter, abortController),
+      buildSpawn: async () => ({
+        spawnArgv: ['/bin/claude', '--resume', 'claude-resume-id'],
+        spawnEnv: {},
+        launchSpecPath: '/synthetic/launch.json',
+        cleanupUnreadArtifacts,
+      }),
       onProviderLaunchStarting,
     });
 
     expect(onProviderLaunchStarting).toHaveBeenCalledTimes(1);
     expect(createOrAttachHost).toHaveBeenCalledTimes(1);
+    expect(cleanupUnreadArtifacts).not.toHaveBeenCalled();
     expect(calls).toEqual([
       'launch_starting',
       'create:/bin/claude --resume claude-resume-id',
@@ -263,5 +273,57 @@ describe('runClaudeUnifiedTerminalSession launch disposition', () => {
       'launch_starting',
       'create:/bin/claude --resume claude-resume-id',
     ]);
+  });
+
+  it('removes private MCP spawn artifacts when host creation fails before launch-spec handoff', async () => {
+    const abortController = new AbortController();
+    const adapter = createAdapter({
+      createOrAttachHost: vi.fn(async () => {
+        throw new Error('synthetic host creation failure');
+      }),
+    });
+    let launchSpecPath: string | undefined;
+    let mcpConfigPath: string | undefined;
+
+    try {
+      await expect(runClaudeUnifiedTerminalSession({
+        ...baseOptions(adapter, abortController),
+        happierMcpConfigJson: JSON.stringify({
+          mcpServers: {
+            fixture: {
+              command: 'synthetic-mcp-server',
+              env: { TOKEN: 'synthetic-pre-handoff-marker' },
+            },
+          },
+        }),
+        buildSpawn: async (params) => {
+          const spawn = await buildClaudeUnifiedTerminalSpawn({
+            ...params,
+            deps: {
+              resolveClaudeCliPath: () => '/synthetic/claude',
+              isClaudeCliJavaScriptFile: () => false,
+              ensureClaudeJsRuntimeExecutable: async () => '/synthetic/runtime',
+              terminalLaunchSpecRunnerPath: '/synthetic/terminal-launch-spec-runner.cjs',
+              resolveCommandInvocation: ({ command, args }) => ({ command, args }),
+            },
+          });
+          launchSpecPath = spawn.launchSpecPath;
+          const launchSpec = JSON.parse(await readFile(launchSpecPath!, 'utf8')) as { args?: string[] };
+          const mcpConfigIndex = launchSpec.args?.indexOf('--mcp-config') ?? -1;
+          mcpConfigPath = launchSpec.args?.[mcpConfigIndex + 1];
+          expect(JSON.stringify(launchSpec.args)).not.toContain('synthetic-pre-handoff-marker');
+          await expect(readFile(mcpConfigPath!, 'utf8')).resolves.toContain('synthetic-pre-handoff-marker');
+          return spawn;
+        },
+      })).rejects.toThrow('synthetic host creation failure');
+
+      expect(launchSpecPath).toBeTruthy();
+      expect(mcpConfigPath).toBeTruthy();
+      await expect(stat(launchSpecPath!)).rejects.toMatchObject({ code: 'ENOENT' });
+      await expect(stat(mcpConfigPath!)).rejects.toMatchObject({ code: 'ENOENT' });
+    } finally {
+      if (mcpConfigPath) await unlink(mcpConfigPath).catch(() => undefined);
+      if (launchSpecPath) await unlink(launchSpecPath).catch(() => undefined);
+    }
   });
 });

@@ -2,7 +2,7 @@ import { createRequire } from 'node:module';
 import { mkdtemp, readFile, readdir, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 
 import { describe, expect, it, vi } from 'vitest';
 
@@ -16,9 +16,12 @@ describe('terminal_launch_spec_runner.cjs', () => {
     const specDir = await mkdtemp(join(tmpdir(), 'happier-terminal-launch-spec-test-'));
     const workDir = await mkdtemp(join(tmpdir(), 'happier-terminal-launch-spec-work-'));
     const outputPath = join(workDir, 'child-output.json');
+    const cleanupDir = await mkdtemp(join(tmpdir(), 'happier-claude-mcp-config-'));
+    const cleanupPath = join(cleanupDir, 'happier-claude-mcp-config.success.json');
     const specPath = join(specDir, 'launch.json');
     const previousSecret = process.env.SPEC_SECRET;
     process.env.SPEC_SECRET = 'from-runner-env';
+    await writeFile(cleanupPath, '{"mcpServers":{}}', { mode: 0o600 });
     await writeFile(specPath, JSON.stringify({
       command: process.execPath,
       args: [
@@ -33,6 +36,7 @@ describe('terminal_launch_spec_runner.cjs', () => {
         SPEC_ENV: 'from-spec',
       },
       envPassthroughKeys: ['SPEC_SECRET'],
+      cleanupPaths: [cleanupPath],
     }), { mode: 0o600 });
 
     if (process.platform !== 'win32') {
@@ -42,6 +46,8 @@ describe('terminal_launch_spec_runner.cjs', () => {
     try {
       await expect(mod.runLaunchSpecFile(specPath)).resolves.toBe(0);
       expect(existsSync(specPath)).toBe(false);
+      expect(existsSync(cleanupPath)).toBe(false);
+      expect(existsSync(dirname(cleanupPath))).toBe(false);
       await expect(readFile(outputPath, 'utf8')).resolves.toBe(JSON.stringify({
         cwd: realDir,
         env: 'from-spec',
@@ -67,7 +73,9 @@ describe('terminal_launch_spec_runner.cjs', () => {
     const workDir = await mkdtemp(join(tmpdir(), 'happier-terminal-launch-spec-work-'));
     const logsDir = join(workDir, 'logs', 'terminal-runner');
     const sessionExitDir = join(workDir, 'logs', 'session-exit');
+    const cleanupPath = join(workDir, 'happier-claude-mcp-config.failure.json');
     const specPath = join(specDir, 'launch.json');
+    await writeFile(cleanupPath, '{"mcpServers":{}}', { mode: 0o600 });
     await writeFile(specPath, JSON.stringify({
       command: process.execPath,
       args: ['-e', 'process.stderr.write("raw claude stderr\\n"); process.exit(1);'],
@@ -75,6 +83,7 @@ describe('terminal_launch_spec_runner.cjs', () => {
       env: {
         PATH: process.env.PATH ?? '',
       },
+      cleanupPaths: [cleanupPath],
       diagnostics: {
         sessionId: 'sess_stderr',
         logsDir,
@@ -96,6 +105,7 @@ describe('terminal_launch_spec_runner.cjs', () => {
     await expect(readFile(join(logsDir, logNames[0]!), 'utf8')).resolves.toBe('raw claude stderr\n');
 
     const reportNames = await readdir(sessionExitDir);
+    expect(existsSync(cleanupPath)).toBe(false);
     expect(reportNames).toHaveLength(1);
     expect(reportNames[0]).toMatch(/^session-sess_stderr-pid-\d+\.json$/);
     const report = JSON.parse(await readFile(join(sessionExitDir, reportNames[0]!), 'utf8'));
@@ -107,5 +117,30 @@ describe('terminal_launch_spec_runner.cjs', () => {
       stderrLogPath: join(logsDir, logNames[0]!),
       stderrTail: 'raw claude stderr\n',
     });
+  });
+
+  it('does not delete cleanup paths outside the owned Claude MCP filename contract', async () => {
+    const mod = require('./terminal_launch_spec_runner.cjs') as {
+      runLaunchSpecFile: (specPath: string) => Promise<number>;
+    };
+    const specDir = await mkdtemp(join(tmpdir(), 'happier-terminal-launch-spec-test-'));
+    const workDir = await mkdtemp(join(tmpdir(), 'happier-terminal-launch-spec-work-'));
+    const retainedPath = join(workDir, 'unowned-config.json');
+    const specPath = join(specDir, 'launch.json');
+    await writeFile(retainedPath, '{"keep":true}', { mode: 0o600 });
+    await writeFile(specPath, JSON.stringify({
+      command: process.execPath,
+      args: ['-e', 'process.exit(0);'],
+      cwd: workDir,
+      env: { PATH: process.env.PATH ?? '' },
+      cleanupPaths: [retainedPath],
+    }), { mode: 0o600 });
+
+    try {
+      await expect(mod.runLaunchSpecFile(specPath)).resolves.toBe(0);
+      expect(existsSync(retainedPath)).toBe(true);
+    } finally {
+      await rm(workDir, { recursive: true, force: true });
+    }
   });
 });

@@ -689,6 +689,10 @@ async function readExistingTerminalHostAttachment(params: Readonly<{
 }
 
 async function removeUnreadLaunchSpec(spawn: ClaudeUnifiedTerminalSpawn): Promise<void> {
+  if (spawn.cleanupUnreadArtifacts) {
+    await spawn.cleanupUnreadArtifacts().catch(() => undefined);
+    return;
+  }
   if (!spawn.launchSpecPath) return;
   await unlink(spawn.launchSpecPath).catch(() => undefined);
   const specDir = dirname(spawn.launchSpecPath);
@@ -1113,6 +1117,7 @@ export async function runClaudeUnifiedTerminalSession<Mode extends EnhancedMode 
     }
   }
   let spawn: ClaudeUnifiedTerminalSpawn | null = null;
+  let spawnArtifactsHandedOff = false;
   let spawnEnvForRuntimeControl: Readonly<Record<string, string>> | null = null;
   const ensureSpawn = async (): Promise<ClaudeUnifiedTerminalSpawn> => {
     if (spawn) return spawn;
@@ -1259,6 +1264,7 @@ export async function runClaudeUnifiedTerminalSession<Mode extends EnhancedMode 
           spawnEnv: fallbackSpawn.spawnEnv,
           isolatedEnv: true,
         });
+        spawnArtifactsHandedOff = true;
       }
     } else {
       if (existingTerminalHost) {
@@ -1281,19 +1287,20 @@ export async function runClaudeUnifiedTerminalSession<Mode extends EnhancedMode 
         explicitResumeIdentityRequired = expectedProviderResumeSessionId !== null;
         await opts.onProviderLaunchStarting?.();
         handle = await hostResolution.adapter.createOrAttachHost(createOptions);
+        spawnArtifactsHandedOff = true;
       }
     }
   } catch (error) {
     removeProcessSignalCleanup?.();
     removeProcessSignalCleanup = null;
     disposeReplayableHookSubscription(hookSubscription);
-    if (spawn) await removeUnreadLaunchSpec(spawn);
+    if (spawn && !spawnArtifactsHandedOff) await removeUnreadLaunchSpec(spawn);
     throw error;
   }
   if (processSignalAbortController.signal.aborted) {
     removeProcessSignalCleanup?.();
     disposeReplayableHookSubscription(hookSubscription);
-    if (spawn) await removeUnreadLaunchSpec(spawn);
+    if (spawn && !spawnArtifactsHandedOff) await removeUnreadLaunchSpec(spawn);
     return;
   }
   const activeHandle = handle;

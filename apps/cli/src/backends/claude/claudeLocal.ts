@@ -28,6 +28,10 @@ import {
     buildClaudePermissionModeLaunchSettings,
     resolveClaudeLaunchSettingsOverlayArg,
 } from './utils/resolveClaudeLaunchSettingsOverlay';
+import {
+    materializeClaudeMcpConfigArgsForSpawn,
+    type MaterializedClaudeMcpConfigArgs,
+} from './utils/materializeClaudeMcpConfigArgsForSpawn';
 
 /**
  * Error thrown when the Claude process exits with a non-zero exit code.
@@ -274,6 +278,8 @@ export async function claudeLocal(opts: {
         stopThinkingTimeout.unref?.();
     };
 
+    let materializedMcpConfig: MaterializedClaudeMcpConfigArgs | null = null;
+
     // Spawn the process
     try {
         // Start the interactive process
@@ -283,6 +289,13 @@ export async function claudeLocal(opts: {
         const nodeExecutable = shouldUseNodeLauncher
             ? await ensureClaudeJsRuntimeExecutable()
             : null;
+        materializedMcpConfig = await materializeClaudeMcpConfigArgsForSpawn([
+            ...(opts.claudeArgs ?? []),
+            ...(typeof opts.happierMcpConfigJson === 'string' && opts.happierMcpConfigJson.trim().length > 0
+                ? ['--mcp-config', opts.happierMcpConfigJson.trim()]
+                : []),
+        ]);
+        const effectiveClaudeArgs = materializedMcpConfig.args;
         await new Promise<void>((r, reject) => {
             const args: string[] = []
 
@@ -320,15 +333,15 @@ export async function claudeLocal(opts: {
             const positionalArgs: string[] = [];
             let trailingPermissionFlagArgs: string[] = [];
 
-            if (opts.claudeArgs) {
-                for (let i = 0; i < opts.claudeArgs.length; i++) {
-                    const arg = opts.claudeArgs[i];
+            if (effectiveClaudeArgs.length > 0) {
+                for (let i = 0; i < effectiveClaudeArgs.length; i++) {
+                    const arg = effectiveClaudeArgs[i];
                     if (arg === '--dangerously-skip-permissions') {
                         trailingPermissionFlagArgs = ['--permission-mode', 'bypassPermissions'];
                         continue;
                     }
                     if (arg === '--permission-mode') {
-                        const nextArg = i + 1 < opts.claudeArgs.length ? opts.claudeArgs[i + 1] : undefined;
+                        const nextArg = i + 1 < effectiveClaudeArgs.length ? effectiveClaudeArgs[i + 1] : undefined;
                         if (typeof nextArg === 'string' && !nextArg.startsWith('-')) {
                             trailingPermissionFlagArgs = ['--permission-mode', nextArg];
                             i++;
@@ -344,7 +357,7 @@ export async function claudeLocal(opts: {
                     }
                     if (arg.startsWith('-')) {
                         flagArgs.push(arg);
-                        const nextArg = i + 1 < opts.claudeArgs.length ? opts.claudeArgs[i + 1] : undefined;
+                        const nextArg = i + 1 < effectiveClaudeArgs.length ? effectiveClaudeArgs[i + 1] : undefined;
                         if (claudeCliFlagCanConsumeNextArg(arg, nextArg)) {
                             flagArgs.push(nextArg!);
                             i++;
@@ -355,7 +368,7 @@ export async function claudeLocal(opts: {
                 }
             }
 
-            // Append Happier-injected flags after any user-provided flags.
+            // Happier-injected flags were appended before parsing so user ordering stays intact.
             //
             // Claude Code merges multiple `--mcp-config` sources additively and uses last-write-wins on collisions.
             // Appending here means we do not need to parse/merge user JSON and Happier wins on collisions.
@@ -381,10 +394,6 @@ export async function claudeLocal(opts: {
                 flagArgs.push('--settings', settingsOverlay);
                 logger.debug(`[ClaudeLocal] Using launch settings: ${settingsOverlay}`);
             }
-            if (typeof opts.happierMcpConfigJson === 'string' && opts.happierMcpConfigJson.trim().length > 0) {
-                flagArgs.push('--mcp-config', opts.happierMcpConfigJson.trim());
-            }
-
             // Add flag arguments before positional prompts.
             if (flagArgs.length > 0) {
                 args.push(...flagArgs);
@@ -620,6 +629,7 @@ export async function claudeLocal(opts: {
             });
         });
     } finally {
+        await materializedMcpConfig?.cleanup();
         process.stdin.resume();
         clearStopThinkingTimeout();
         activeFetchIds.clear();

@@ -1,7 +1,7 @@
 import { chmodSync, existsSync, writeFileSync } from 'node:fs';
-import { chmod, mkdtemp, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, rmdir, unlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 
 import type { CommandInvocation } from '@happier-dev/cli-common/process';
 import { resolveWindowsCommandInvocation } from '@happier-dev/cli-common/process';
@@ -38,11 +38,13 @@ import {
   buildClaudePermissionModeLaunchSettings,
   resolveClaudeLaunchSettingsOverlayArg,
 } from '../utils/resolveClaudeLaunchSettingsOverlay';
+import { materializeClaudeMcpConfigArgsForSpawn } from '../utils/materializeClaudeMcpConfigArgsForSpawn';
 
 export type ClaudeUnifiedTerminalSpawn = Readonly<{
   spawnArgv: readonly string[];
   spawnEnv: Readonly<Record<string, string>>;
   launchSpecPath?: string | undefined;
+  cleanupUnreadArtifacts?: (() => Promise<void>) | undefined;
 }>;
 
 export class ClaudeUnifiedTerminalUnsupportedOptionError extends Error {
@@ -355,6 +357,7 @@ type TerminalLaunchSpec = Readonly<{
   cwd: string;
   env: Readonly<Record<string, string>>;
   envPassthroughKeys?: readonly string[] | undefined;
+  cleanupPaths?: readonly string[] | undefined;
   diagnostics?: Readonly<{
     sessionId: string;
     logsDir: string;
@@ -391,11 +394,35 @@ function splitTerminalLaunchSpecEnv(env: Readonly<Record<string, string>>): Spli
 async function writeTerminalLaunchSpec(spec: TerminalLaunchSpec): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), 'happier-terminal-launch-'));
   const path = join(dir, 'launch.json');
-  await writeFile(path, JSON.stringify(spec), { mode: 0o600 });
-  if (process.platform !== 'win32') {
-    await chmod(path, 0o600);
+  try {
+    await writeFile(path, JSON.stringify(spec), { mode: 0o600 });
+    if (process.platform !== 'win32') {
+      await chmod(path, 0o600);
+    }
+    return path;
+  } catch (error) {
+    await unlink(path).catch(() => undefined);
+    await rmdir(dir).catch(() => undefined);
+    throw error;
   }
-  return path;
+}
+
+function createUnreadSpawnArtifactsCleanup(params: Readonly<{
+  launchSpecPath: string;
+  cleanupMcpConfig: () => Promise<void>;
+}>): () => Promise<void> {
+  let cleanupPromise: Promise<void> | null = null;
+  return () => {
+    cleanupPromise ??= (async () => {
+      await unlink(params.launchSpecPath).catch(() => undefined);
+      const specDir = dirname(params.launchSpecPath);
+      if (basename(specDir).startsWith('happier-terminal-launch-')) {
+        await rmdir(specDir).catch(() => undefined);
+      }
+      await params.cleanupMcpConfig();
+    })();
+    return cleanupPromise;
+  };
 }
 
 function defaultDeps(inputDeps: Partial<ClaudeUnifiedTerminalSpawnDeps> | undefined): ClaudeUnifiedTerminalSpawnDeps {
@@ -434,70 +461,85 @@ export async function buildClaudeUnifiedTerminalSpawn<Mode extends EnhancedMode 
   // EFFECTIVE config root of the spawned process (CLAUDE_CONFIG_DIR / HOME in the child env).
   const env = buildClaudeEnv(input.envOverlay);
   const statuslineSettings = resolveStatuslineOverlaySettings({ input, deps, env });
-  const args = buildClaudeArgs(input, statuslineSettings);
+  const materializedMcpConfig = await materializeClaudeMcpConfigArgsForSpawn(
+    buildClaudeArgs(input, statuslineSettings),
+  );
+  const args = materializedMcpConfig.args;
 
-  const nodeExecutable = await deps.ensureClaudeJsRuntimeExecutable();
-  if (!nodeExecutable) {
-    throw new ReferenceError(buildMissingJavaScriptRuntimeMessage('Claude unified terminal launcher'));
-  }
-  if (
-    !existsSync(deps.terminalLaunchSpecRunnerPath)
-    && !isEmbeddedBunBundlePath(deps.terminalLaunchSpecRunnerPath)
-    && !input.deps?.terminalLaunchSpecRunnerPath
-  ) {
-    throw new Error('Claude unified terminal launch-spec runner not found. Please ensure CLI runtime assets are present next to the running bundle.');
-  }
-
-  let childCommand: string;
-  let childArgs: readonly string[];
-  if (deps.isClaudeCliJavaScriptFile(resolvedClaudeCliPath)) {
+  try {
+    const nodeExecutable = await deps.ensureClaudeJsRuntimeExecutable();
+    if (!nodeExecutable) {
+      throw new ReferenceError(buildMissingJavaScriptRuntimeMessage('Claude unified terminal launcher'));
+    }
     if (
-      !existsSync(deps.claudeLocalLauncherPath)
-      && !isEmbeddedBunBundlePath(deps.claudeLocalLauncherPath)
-      && !input.deps?.claudeLocalLauncherPath
+      !existsSync(deps.terminalLaunchSpecRunnerPath)
+      && !isEmbeddedBunBundlePath(deps.terminalLaunchSpecRunnerPath)
+      && !input.deps?.terminalLaunchSpecRunnerPath
     ) {
-      throw new Error('Claude local launcher not found. Please ensure CLI runtime assets are present next to the running bundle.');
+      throw new Error('Claude unified terminal launch-spec runner not found. Please ensure CLI runtime assets are present next to the running bundle.');
     }
-    if (!env.HAPPIER_CLAUDE_PATH && !env.HAPPY_CLAUDE_PATH) {
-      env.HAPPIER_CLAUDE_PATH = resolvedClaudeCliPath;
+
+    let childCommand: string;
+    let childArgs: readonly string[];
+    if (deps.isClaudeCliJavaScriptFile(resolvedClaudeCliPath)) {
+      if (
+        !existsSync(deps.claudeLocalLauncherPath)
+        && !isEmbeddedBunBundlePath(deps.claudeLocalLauncherPath)
+        && !input.deps?.claudeLocalLauncherPath
+      ) {
+        throw new Error('Claude local launcher not found. Please ensure CLI runtime assets are present next to the running bundle.');
+      }
+      if (!env.HAPPIER_CLAUDE_PATH && !env.HAPPY_CLAUDE_PATH) {
+        env.HAPPIER_CLAUDE_PATH = resolvedClaudeCliPath;
+      }
+      childCommand = nodeExecutable;
+      childArgs = [deps.claudeLocalLauncherPath, ...args];
+    } else {
+      const invocation = deps.resolveCommandInvocation({
+        command: resolvedClaudeCliPath,
+        args,
+        env,
+      });
+      childCommand = invocation.command;
+      childArgs = invocation.args;
     }
-    childCommand = nodeExecutable;
-    childArgs = [deps.claudeLocalLauncherPath, ...args];
-  } else {
-    const invocation = deps.resolveCommandInvocation({
-      command: resolvedClaudeCliPath,
-      args,
-      env,
+
+    const splitEnv = splitTerminalLaunchSpecEnv(env);
+    const happySessionId = typeof input.happySessionId === 'string' ? input.happySessionId.trim() : '';
+    const specPath = await writeTerminalLaunchSpec({
+      command: childCommand,
+      args: childArgs,
+      cwd: input.path,
+      env: splitEnv.persistedEnv,
+      ...(splitEnv.passthroughKeys.length > 0 ? { envPassthroughKeys: splitEnv.passthroughKeys } : {}),
+      ...(materializedMcpConfig.cleanupPaths.length > 0
+        ? { cleanupPaths: materializedMcpConfig.cleanupPaths }
+        : {}),
+      ...(happySessionId.length > 0
+        ? {
+            diagnostics: {
+              sessionId: happySessionId,
+              logsDir: join(configuration.logsDir, 'terminal-runner'),
+              sessionExitDir: join(configuration.logsDir, 'session-exit'),
+            },
+          }
+        : {}),
     });
-    childCommand = invocation.command;
-    childArgs = invocation.args;
+
+    return {
+      spawnArgv: [nodeExecutable, deps.terminalLaunchSpecRunnerPath, specPath],
+      spawnEnv: {
+        ...buildTerminalLauncherProcessEnv(),
+        ...splitEnv.passthroughEnv,
+      },
+      launchSpecPath: specPath,
+      cleanupUnreadArtifacts: createUnreadSpawnArtifactsCleanup({
+        launchSpecPath: specPath,
+        cleanupMcpConfig: materializedMcpConfig.cleanup,
+      }),
+    };
+  } catch (error) {
+    await materializedMcpConfig.cleanup();
+    throw error;
   }
-
-  const splitEnv = splitTerminalLaunchSpecEnv(env);
-  const happySessionId = typeof input.happySessionId === 'string' ? input.happySessionId.trim() : '';
-  const specPath = await writeTerminalLaunchSpec({
-    command: childCommand,
-    args: childArgs,
-    cwd: input.path,
-    env: splitEnv.persistedEnv,
-    ...(splitEnv.passthroughKeys.length > 0 ? { envPassthroughKeys: splitEnv.passthroughKeys } : {}),
-    ...(happySessionId.length > 0
-      ? {
-          diagnostics: {
-            sessionId: happySessionId,
-            logsDir: join(configuration.logsDir, 'terminal-runner'),
-            sessionExitDir: join(configuration.logsDir, 'session-exit'),
-          },
-        }
-      : {}),
-  });
-
-  return {
-    spawnArgv: [nodeExecutable, deps.terminalLaunchSpecRunnerPath, specPath],
-    spawnEnv: {
-      ...buildTerminalLauncherProcessEnv(),
-      ...splitEnv.passthroughEnv,
-    },
-    launchSpecPath: specPath,
-  };
 }
