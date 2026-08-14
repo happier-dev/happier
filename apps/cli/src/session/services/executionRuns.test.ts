@@ -18,7 +18,13 @@ vi.mock('./getSessionHistory', () => ({
     readRawSessionHistoryRows,
 }));
 
-import { getExecutionRun, listExecutionRuns, normalizeExecutionRunRpcPayload, waitForExecutionRun } from './executionRuns';
+import {
+    getExecutionRun,
+    listExecutionRuns,
+    normalizeExecutionRunRpcPayload,
+    startExecutionRun,
+    waitForExecutionRun,
+} from './executionRuns';
 
 function createRun(params: Readonly<{
     runId: string;
@@ -552,6 +558,27 @@ describe('normalizeExecutionRunRpcPayload', () => {
         ).toEqual({
             ok: false,
             code: 'RPC_METHOD_NOT_AVAILABLE',
+            message: 'RPC method not available',
+        });
+    });
+});
+
+describe('startExecutionRun', () => {
+    beforeEach(() => {
+        callSessionRpc.mockReset();
+    });
+
+    it('reports protocol unsupported when a live runtime lacks the start method', async () => {
+        callSessionRpc.mockRejectedValueOnce(new Error('RPC method not available'));
+
+        await expect(startExecutionRun({
+            token: 'token',
+            sessionId: 'sess-1',
+            ctx: { encryptionKey: new Uint8Array([1, 2, 3, 4]), encryptionVariant: 'legacy' },
+            request: { intent: 'review' },
+        })).resolves.toEqual({
+            ok: false,
+            code: 'execution_run_protocol_unsupported',
             message: 'RPC method not available',
         });
     });

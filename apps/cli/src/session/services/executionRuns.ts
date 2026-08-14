@@ -356,10 +356,23 @@ export function isExecutionRunTerminalStatus(status: unknown): status is Executi
 export async function startExecutionRun(
     params: ExecutionRunRpcContext & Readonly<{ request: unknown }>,
 ): Promise<ExecutionRunServiceResult<unknown>> {
-    return await callExecutionRunRpc({
-        ...params,
-        methodSuffix: SESSION_RPC_METHODS.EXECUTION_RUN_START,
-    });
+    try {
+        const result = await callExecutionRunRpc({
+            ...params,
+            methodSuffix: SESSION_RPC_METHODS.EXECUTION_RUN_START,
+        });
+        if (!result.ok) {
+            const fallbackCode = classifyExecutionRunServiceFallback(result);
+            return fallbackCode
+                ? toExecutionRunFallbackExhaustedError(result.message, fallbackCode)
+                : result;
+        }
+        return result;
+    } catch (error) {
+        const fallbackCode = classifyExecutionRunRpcFallback(error);
+        if (!fallbackCode) throw error;
+        return toExecutionRunFallbackExhaustedError(error, fallbackCode);
+    }
 }
 
 export async function listExecutionRuns(

@@ -1,4 +1,5 @@
 import { homedir } from 'node:os';
+import { randomUUID } from 'node:crypto';
 
 import {
   buildBackendTargetKey,
@@ -52,6 +53,7 @@ import { getSessionStatus } from '@/session/services/getSessionStatus';
 import { getSessionTranscript } from '@/session/services/getSessionTranscript';
 import { listSessions } from '@/session/services/listSessions';
 import { requestSessionStop } from '@/session/services/requestSessionStop';
+import { requestInactiveSessionResume } from '@/session/services/requestInactiveSessionResume';
 import { sendSessionMessage } from '@/session/services/sendSessionMessage';
 import { setSessionArchivedState } from '@/session/services/setSessionArchivedState';
 import { setSessionModel } from '@/session/services/setSessionModel';
@@ -1115,6 +1117,26 @@ export function createCliActionDeps(params: Readonly<{
       const transport = await resolveTransportForSession(sessionId);
       if (!transport.ok) {
         return { ok: false, code: transport.code, ...(transport.candidates ? { candidates: transport.candidates } : {}) };
+      }
+      if (transport.rawSession.active !== true) {
+        if (!params.credentials) {
+          return { ok: false, code: 'not_authenticated' };
+        }
+        const metadata = readSessionMetadata({ ...transport, rawSession: transport.rawSession }) ?? {};
+        const resumed = await requestInactiveSessionResume({
+          credentials: params.credentials,
+          sessionId: transport.sessionId,
+          localId: `execution.run.start:${randomUUID()}`,
+          rawSession: transport.rawSession,
+          metadata,
+        });
+        if (!resumed.ok) {
+          return {
+            ok: false,
+            code: 'execution_run_target_unavailable',
+            message: resumed.message,
+          };
+        }
       }
       return await startExecutionRun({
         token: params.token,
