@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { MobileThemePreview } from './heroShowcase/MobileThemePreview';
 import { Picture } from '../components/Picture';
+import { rich } from '../i18n/rich';
+import { PAGE_PROSE } from '../data/pageProse';
 
 /**
  * Product showcase below the hero.
@@ -165,9 +167,7 @@ function DesktopScrollable({ visible }: { visible: boolean }) {
                     draggable={false}
                 />
             </div>
-            <p className="mt-3 text-center text-[12px]" style={{ color: 'var(--muted)' }}>
-                Scroll to explore
-            </p>
+            <p className="mt-3 text-center text-[12px]" style={{ color: 'var(--muted)' }}>{rich(PAGE_PROSE.heroShowcase.p0)}</p>
         </div>
     );
 }

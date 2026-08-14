@@ -1,7 +1,9 @@
-import { CODEX_COMPARISON_ROWS, CODEX_SCOPE_LIMIT, CODEX_SECTION } from '../data/codexRemote';
 import { P, PageHeader, PageShell, Prose } from '../components/PageShell';
 import { InstallCommand } from '../components/InstallCommand';
-import { AGENTS } from '../data/agents';
+import { useSiteData } from '../i18n/siteData';
+import { rich } from '../i18n/rich';
+import { PAGE_PROSE } from '../data/pageProse';
+import type { ReactNode } from 'react';
 
 /**
  * /vs/codex-remote
@@ -35,6 +37,8 @@ import { AGENTS } from '../data/agents';
  *     act, and it was a blocker the last time it shipped.
  */
 export function CodexRemotePage() {
+    const { codexRemote: { CODEX_COMPARISON_ROWS, CODEX_SCOPE_LIMIT, CODEX_SECTION }, agents: { AGENTS } } = useSiteData();
+
     return (
         <PageShell>
             {/*
@@ -77,12 +81,7 @@ export function CodexRemotePage() {
                         <h2 className="font-display text-[26px] font-normal leading-[1.14] tracking-[-0.025em] md:text-[34px]">
                             What Codex’s own remote does well, specifically
                         </h2>
-                        <p className="mt-4 max-w-[720px] text-[16px] leading-[1.65]" style={{ color: 'var(--muted)' }}>
-                            Every claim in this block restates OpenAI’s published documentation,
-                            including the part where their cloud does something Happier does not do
-                            at all. None of it is hedged, because a vague concession is not a
-                            concession.
-                        </p>
+                        <p className="mt-4 max-w-[720px] text-[16px] leading-[1.65]" style={{ color: 'var(--muted)' }}>{rich(PAGE_PROSE.codexRemotePage.p0)}</p>
                         <dl className="mt-7 grid gap-6 md:grid-cols-2">
                             {CODEX_SECTION.strengths.map((item) => (
                                 <div key={item.id}>
@@ -105,11 +104,7 @@ export function CodexRemotePage() {
                         <h2 className="font-display text-[26px] font-normal leading-[1.14] tracking-[-0.025em] md:text-[34px]">
                             The five conditions it runs under
                         </h2>
-                        <p className="mt-4 max-w-[720px] text-[16px] leading-[1.65]" style={{ color: 'var(--muted)' }}>
-                            These are not limitations we found by testing. Each one is a requirement
-                            OpenAI publishes, and one of them applies to Happier in exactly the same
-                            way — which is said below rather than quietly left out.
-                        </p>
+                        <p className="mt-4 max-w-[720px] text-[16px] leading-[1.65]" style={{ color: 'var(--muted)' }}>{rich(PAGE_PROSE.codexRemotePage.p1)}</p>
                         <ol className="mt-8 space-y-8">
                             {CODEX_SECTION.conditions.map((item, index) => (
                                 <li key={item.id}>
@@ -134,12 +129,7 @@ export function CodexRemotePage() {
 
             <Prose heading={CODEX_SCOPE_LIMIT.heading} data-section="codex-scope">
                 <P>{CODEX_SCOPE_LIMIT.body}</P>
-                <P>
-                    This is filed on its own rather than as a sixth entry in the list above, because
-                    it is a different kind of statement. The five conditions are requirements: meet
-                    them and the thing works. This one is the shape of the product, and no amount of
-                    meeting requirements changes it.
-                </P>
+                <P>{rich(PAGE_PROSE.codexRemotePage.p2)}</P>
             </Prose>
 
             <section className="relative" data-section="codex-table">
@@ -148,11 +138,7 @@ export function CodexRemotePage() {
                         <h2 className="font-display text-[26px] font-normal leading-[1.14] tracking-[-0.025em] md:text-[34px]">
                             Will it run in your setup?
                         </h2>
-                        <p className="mt-4 max-w-[720px] text-[16px] leading-[1.65]" style={{ color: 'var(--muted)' }}>
-                            The eight facts that decide whether either thing works where you work.
-                            Three of them go to OpenAI. Those three are why the other five are worth
-                            reading.
-                        </p>
+                        <p className="mt-4 max-w-[720px] text-[16px] leading-[1.65]" style={{ color: 'var(--muted)' }}>{rich(PAGE_PROSE.codexRemotePage.p3)}</p>
                         <div
                             className="mt-6 overflow-x-auto rounded-2xl border"
                             style={{ borderColor: 'var(--card-border)' }}
@@ -207,11 +193,7 @@ export function CodexRemotePage() {
                         <h2 className="font-display text-[26px] font-normal leading-[1.14] tracking-[-0.025em] md:text-[34px]">
                             What one client for {AGENTS.length} agents buys you
                         </h2>
-                        <p className="mt-4 max-w-[720px] text-[16px] leading-[1.65]" style={{ color: 'var(--muted)' }}>
-                            None of these are a vendor remote doing its job badly. They are the
-                            things that only become possible once the client is not tied to one
-                            vendor’s agent.
-                        </p>
+                        <p className="mt-4 max-w-[720px] text-[16px] leading-[1.65]" style={{ color: 'var(--muted)' }}>{rich(PAGE_PROSE.codexRemotePage.p4)}</p>
                         <dl className="mt-7 grid gap-6 md:grid-cols-2">
                             {CODEX_SECTION.arguments.map((item) => (
                                 <div key={item.id}>
@@ -224,52 +206,26 @@ export function CodexRemotePage() {
                                 </div>
                             ))}
                         </dl>
-                        <p className="mt-7 max-w-[720px] text-[16px] leading-[1.68]" style={{ color: 'var(--muted)' }}>
-                            The other difference is where the conversation lives. A Happier account
-                            is end-to-end encrypted by default — the sync server holds ciphertext it
-                            cannot read — and{' '}
-                            <code className="font-mono">happier relay host install</code> puts the
-                            relay itself on hardware you own.
-                        </p>
-                        <p className="mt-4 max-w-[720px] text-[16px] leading-[1.68]" style={{ color: 'var(--muted)' }}>
-                            Codex has its own page here, with the install path, the auth model and
-                            the quirks —{' '}
-                            <a
+                        <p className="mt-7 max-w-[720px] text-[16px] leading-[1.68]" style={{ color: 'var(--muted)' }}>{rich(PAGE_PROSE.codexRemotePage.p5, { 1: (c: ReactNode) => <code className="font-mono">{c}</code> })}</p>
+                        <p className="mt-4 max-w-[720px] text-[16px] leading-[1.68]" style={{ color: 'var(--muted)' }}>{rich(PAGE_PROSE.codexRemotePage.p6, { 1: (c: ReactNode) => <a
                                 href="/agents/codex"
                                 className="underline underline-offset-2"
                                 style={{ color: 'var(--fg)' }}
-                            >
-                                Codex in Happier
-                            </a>
-                            . The same question, asked about Anthropic’s remote, is answered on{' '}
-                            <a
+                            >{c}</a>, 2: (c: ReactNode) => <a
                                 href="/vs/claude-code-remote-control"
                                 className="underline underline-offset-2"
                                 style={{ color: 'var(--fg)' }}
-                            >
-                                the Claude Code Remote Control page
-                            </a>
-                            .
-                        </p>
+                            >{c}</a> })}</p>
                     </div>
                 </div>
             </section>
 
             <Prose heading="Trying it" data-section="codex-cta">
-                <P>
-                    Install on the computer that holds your code. Nothing on your phone matters
-                    until that computer is set up, which is why this is the first step rather than
-                    an app store badge.
-                </P>
+                <P>{rich(PAGE_PROSE.codexRemotePage.p7)}</P>
                 <div data-cta-location="call-to-action">
                     <InstallCommand />
                 </div>
-                <P>
-                    Then <code className="font-mono">happier codex</code> in a repository. The
-                    session is on your phone from the moment it starts, and it is still in your
-                    terminal — <code className="font-mono">happier attach</code> puts you back in
-                    Codex’s own TUI without starting a second one.
-                </P>
+                <P>{rich(PAGE_PROSE.codexRemotePage.p8, { 1: (c: ReactNode) => <code className="font-mono">{c}</code>, 2: (c: ReactNode) => <code className="font-mono">{c}</code> })}</P>
             </Prose>
         </PageShell>
     );

@@ -3,6 +3,8 @@ import { RevealText } from '../components/RevealText';
 import { InstallCommand } from '../components/InstallCommand';
 import { DiscordMembers } from '../components/DiscordMembers';
 import { Picture } from '../components/Picture';
+import { rich } from '../i18n/rich';
+import { PAGE_PROSE } from '../data/pageProse';
 
 export function CallToAction() {
     const { theme } = useTheme();
@@ -43,11 +45,7 @@ export function CallToAction() {
                         <p
                             className="mx-auto mt-6 max-w-[520px] text-[17px] leading-[1.55] md:text-[18px]"
                             style={{ color: 'var(--muted)' }}
-                        >
-                            Run it on the computer that runs your code. Keep your own
-                            subscriptions and keys. Self-host the relay or use ours.
-                            MIT licensed, end-to-end encrypted.
-                        </p>
+                        >{rich(PAGE_PROSE.callToAction.p0)}</p>
                         {/* Install command first, web app second. The closing CTA's job
                             is to get a command onto the machine the agent will run on;
                             the web app is only useful once a machine is paired. */}

@@ -501,21 +501,6 @@
       "`worktree`"
     ]
   },
-  "downloads.INSTALL_COMMAND_UNIX": {
-    "dnt": [
-      "curl -fsSL"
-    ]
-  },
-  "downloads.INSTALL_COMMAND_UNIX_INSPECTABLE": {
-    "dnt": [
-      "curl -fsSL"
-    ]
-  },
-  "downloads.INSTALL_COMMAND_WINDOWS": {
-    "dnt": [
-      "iwr https"
-    ]
-  },
   "faq.FAQ_ITEMS.tokens.a.1": {
     "dnt": [
       "`@path`"
@@ -591,6 +576,29 @@
   "features.PRIMARY_FEATURES.surfaces.code.4": {
     "dnt": [
       "happier session"
+    ]
+  },
+  "pageProse.PAGE_PROSE.agentsIndex.p6": {
+    "dnt": [
+      "happier claude",
+      "happier codex",
+      "happier opencode"
+    ]
+  },
+  "pageProse.PAGE_PROSE.codexRemotePage.p5": {
+    "dnt": [
+      "happier relay"
+    ]
+  },
+  "pageProse.PAGE_PROSE.codexRemotePage.p8": {
+    "dnt": [
+      "happier codex",
+      "happier attach"
+    ]
+  },
+  "pageProse.PAGE_PROSE.vsRemoteControlPage.p5": {
+    "dnt": [
+      "happier relay"
     ]
   },
   "terminalFeature.CLAUDE_UNIFIED.2": {

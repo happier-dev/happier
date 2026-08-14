@@ -1,17 +1,9 @@
 import { P, PageHeader, PageShell, Prose } from '../components/PageShell';
-import {
-    SECURITY_DIAGRAM_CAPTION,
-    SECURITY_DOCS_URL,
-    SECURITY_HOPS,
-    SECURITY_INVISIBLE,
-    SECURITY_KEYS,
-    SECURITY_NOTIFICATIONS,
-    SECURITY_PAIRING,
-    SECURITY_SELF_HOST,
-    SECURITY_SOURCE,
-    SECURITY_STORAGE,
-    SECURITY_VISIBLE,
-} from '../data/security';
+import { SECURITY_DOCS_URL, type SecurityHop } from '../data/security';
+import { useSiteData } from '../i18n/siteData';
+import { rich } from '../i18n/rich';
+import { PAGE_PROSE } from '../data/pageProse';
+import type { ReactNode } from 'react';
 
 /**
  * /security
@@ -36,6 +28,8 @@ const CIPHER_SAMPLE = 'hQx2Vb9k4Tn1Rm7c…';
 const PLAIN_SAMPLE = 'push the hotfix branch';
 
 export function SecurityPage() {
+    const { security: { SECURITY_KEYS, SECURITY_NOTIFICATIONS, SECURITY_PAIRING, SECURITY_SELF_HOST, SECURITY_SOURCE, SECURITY_STORAGE } } = useSiteData();
+
     return (
         <PageShell>
             {/*
@@ -75,18 +69,11 @@ export function SecurityPage() {
                 {SECURITY_STORAGE.map((paragraph) => (
                     <P key={paragraph.slice(0, 32)}>{paragraph}</P>
                 ))}
-                <P>
-                    The variables that set all three, the at-rest options underneath them and the
-                    identity controls around them are the operator’s half of this, and they live on{' '}
-                    <a
+                <P>{rich(PAGE_PROSE.securityPage.p0, { 1: (c: ReactNode) => <a
                         href="/enterprise"
                         className="underline underline-offset-2"
                         style={{ color: 'var(--fg)' }}
-                    >
-                        the self-hosting page for teams
-                    </a>
-                    .
-                </P>
+                    >{c}</a> })}</P>
             </Prose>
 
             <Prose heading="Push notifications are sent by your own computer" data-section="security-notifications">
@@ -105,19 +92,11 @@ export function SecurityPage() {
                 {SECURITY_SOURCE.map((paragraph) => (
                     <P key={paragraph.slice(0, 32)}>{paragraph}</P>
                 ))}
-                <P>
-                    The{' '}
-                    <a
+                <P>{rich(PAGE_PROSE.securityPage.p1, { 1: (c: ReactNode) => <a
                         href={SECURITY_DOCS_URL}
                         className="underline underline-offset-2"
                         style={{ color: 'var(--fg)' }}
-                    >
-                        encryption model reference
-                    </a>{' '}
-                    covers the same ground as procedure — what restore asks of you, what each
-                    storage mode means for an account, which flow to reach for when a device cannot
-                    read a session yet.
-                </P>
+                    >{c}</a> })}</P>
             </Prose>
         </PageShell>
     );
@@ -135,6 +114,8 @@ export function SecurityPage() {
  * self-host diagram uses, so the two pictures of these three nodes agree.
  */
 function MessagePath() {
+    const { security: { SECURITY_DIAGRAM_CAPTION, SECURITY_HOPS } } = useSiteData();
+
     return (
         <section className="relative" data-section="security-path">
             <div className="mx-auto max-w-[1400px] px-6 py-10 md:px-10 md:py-14">
@@ -226,6 +207,8 @@ function MessagePath() {
  * differ — the reader is being handed a fact to weigh, not a scorecard.
  */
 function Ledger() {
+    const { security: { SECURITY_INVISIBLE, SECURITY_VISIBLE } } = useSiteData();
+
     return (
         <section className="relative" data-section="security-ledger">
             <div className="mx-auto max-w-[1400px] px-6 py-10 md:px-10 md:py-14">
@@ -236,11 +219,7 @@ function Ledger() {
                     <p
                         className="mt-4 max-w-[720px] text-[16px] leading-[1.65]"
                         style={{ color: 'var(--muted)' }}
-                    >
-                        Encryption is a claim about content, and a claim about content is only half
-                        an answer. Here is the other half, at the same level of detail: the columns
-                        a server operating this relay can read without a key.
-                    </p>
+                    >{rich(PAGE_PROSE.securityPage.p2)}</p>
                 </div>
 
                 <div className="mt-10 grid gap-10 md:grid-cols-2 md:gap-14">
@@ -291,7 +270,12 @@ function LedgerColumn({
  * 36px — so the two diagrams read as one icon set. The relay carries a padlock
  * because that is the one node whose state the page is about.
  */
-function HopIcon({ id }: { id: (typeof SECURITY_HOPS)[number]['id'] }) {
+// `SecurityHop['id']`, not `(typeof SECURITY_HOPS)[number]['id']`. The array now
+// reaches the page through useSiteData(), and a type query would sit in the
+// PARAMETER LIST — outside any body a hook can run in — so it has to name the
+// exported type instead of the module-level const.
+function HopIcon({ id }: { id: SecurityHop['id'] }) {
+
     const props = {
         width: 36,
         height: 36,

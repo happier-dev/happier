@@ -1,12 +1,10 @@
 import { InstallCommand } from '../components/InstallCommand';
 import { P, PageHeader, PageShell, Prose } from '../components/PageShell';
-import {
-    ENTERPRISE_ACCESS,
-    ENTERPRISE_DATA,
-    ENTERPRISE_DEPLOY_URL,
-    ENTERPRISE_DOCS_URL,
-    ENTERPRISE_ZDR,
-} from '../data/enterprise';
+import { ENTERPRISE_DEPLOY_URL, ENTERPRISE_DOCS_URL } from '../data/enterprise';
+import { useSiteData } from '../i18n/siteData';
+import { rich } from '../i18n/rich';
+import { PAGE_PROSE } from '../data/pageProse';
+import type { ReactNode } from 'react';
 
 /**
  * /enterprise
@@ -58,6 +56,8 @@ function CapabilityList({ items, dataSection, heading, standfirst }: {
 }
 
 export function EnterprisePage() {
+    const { enterprise: { ENTERPRISE_ACCESS, ENTERPRISE_DATA, ENTERPRISE_ZDR } } = useSiteData();
+
     return (
         <PageShell>
             {/*
@@ -80,34 +80,13 @@ export function EnterprisePage() {
             />
 
             <Prose data-section="enterprise-shape">
-                <P>
-                    The shape is worth getting straight before the list. Sessions run on your
-                    developers’ own computers, against the provider CLIs they already have. The
-                    relay carries messages between those computers and their phones, browsers and
-                    desktops. It is the only piece that has to be reachable from outside, and it is
-                    the piece you are being asked to host.
-                </P>
-                <P>
-                    Everything below is server configuration: environment variables on that
-                    container, enforced by that container, with no Happier-operated service in the
-                    path. The default posture of a fresh server is end-to-end encrypted storage and
-                    open signup, on the assumption that most people put it behind Tailscale. If you
-                    are reading this page you almost certainly want the opposite of the second half
-                    of that sentence.
-                </P>
-                <P>
-                    What that encrypted default means underneath — which key is generated where,
-                    what your relay is left holding, and the columns it can read without one — is{' '}
-                    <a
+                <P>{rich(PAGE_PROSE.enterprisePage.p0)}</P>
+                <P>{rich(PAGE_PROSE.enterprisePage.p1)}</P>
+                <P>{rich(PAGE_PROSE.enterprisePage.p2, { 1: (c: ReactNode) => <a
                         href="/security"
                         className="underline underline-offset-2"
                         style={{ color: 'var(--fg)' }}
-                    >
-                        the encryption architecture
-                    </a>
-                    , written for the developer rather than for you. It is the page to send anyone
-                    who asks what the server can see; this one stays on what you can enforce.
-                </P>
+                    >{c}</a> })}</P>
             </Prose>
 
             <CapabilityList
@@ -131,45 +110,16 @@ export function EnterprisePage() {
             </Prose>
 
             <Prose heading="What procurement gets: an MIT licence and a container image" data-section="enterprise-licence">
-                <P>
-                    MIT. Not source-available, not open-core with the auth stack behind a commercial
-                    tier, not AGPL. Everything on this page is in the same repository as the client,
-                    under the same licence, and none of it is gated on a contract with us. If your
-                    organisation’s policy is that copyleft does not come inside the building, that
-                    policy does not stop here.
-                </P>
-                <P>
-                    None of the controls above sits behind a purchase: there is no enterprise tier
-                    to buy and no seat count to negotiate for any of them. Depending on your
-                    procurement process that is either the reassuring part of this page or the
-                    concerning one. What you get instead is the source, an MIT licence and a
-                    container image.
-                </P>
+                <P>{rich(PAGE_PROSE.enterprisePage.p3)}</P>
+                <P>{rich(PAGE_PROSE.enterprisePage.p4)}</P>
             </Prose>
 
             <Prose heading="Stand up a test relay and check what it enforces" data-section="enterprise-cta">
-                <P>
-                    The honest order is: stand the relay up on a throwaway host, point one developer
-                    at it, and read <code className="font-mono">GET /v1/features</code> to see
-                    exactly what that server is advertising to its clients. That response is the
-                    contract, and it is the fastest way to confirm a policy you set is a policy the
-                    clients will actually honour.
-                </P>
+                <P>{rich(PAGE_PROSE.enterprisePage.p5, { 1: (c: ReactNode) => <code className="font-mono">{c}</code> })}</P>
                 <div data-cta-location="call-to-action">
                     <InstallCommand />
                 </div>
-                <P>
-                    The{' '}
-                    <a href={ENTERPRISE_DEPLOY_URL} className="underline underline-offset-2" style={{ color: 'var(--fg)' }}>
-                        Docker deployment guide
-                    </a>{' '}
-                    covers the image, the volume and the Postgres override. The{' '}
-                    <a href={ENTERPRISE_DOCS_URL} className="underline underline-offset-2" style={{ color: 'var(--fg)' }}>
-                        server auth reference
-                    </a>{' '}
-                    covers every variable named above, including the recipes for a public server
-                    that requires GitHub or an OIDC provider.
-                </P>
+                <P>{rich(PAGE_PROSE.enterprisePage.p6, { 1: (c: ReactNode) => <a href={ENTERPRISE_DEPLOY_URL} className="underline underline-offset-2" style={{ color: 'var(--fg)' }}>{c}</a>, 2: (c: ReactNode) => <a href={ENTERPRISE_DOCS_URL} className="underline underline-offset-2" style={{ color: 'var(--fg)' }}>{c}</a> })}</P>
             </Prose>
         </PageShell>
     );

@@ -96,6 +96,12 @@ export const USAGE_LIMITS_SWITCHING: ReadonlyArray<string> = [
     'Nothing switches until you build a pool, and a pool is something you make on purpose: Settings → Connected services, open the service those accounts belong to, then Pools → Create pool, name it, and add the accounts you want in it. Until that exists, every session uses the one account you picked and stops when that account stops.',
     'Once the pool exists it starts with automatic fallback on, for the services that can change account inside a running session. There is a toggle on the pool — "Automatic fallback" — and turning it off leaves you a pool you switch by hand, which is a reasonable way to run it if you would rather decide each time.',
     'The defaults are deliberately unambitious. Happier falls back to another member, preferring whichever has the most quota left, at most once per turn and three times per session hour, with a thirty-second cooldown in between. When a provider says a limit resets at a particular time, Happier takes it at its word and does not treat that account as a candidate until then. A pool is a way to not lose twenty minutes to a re-login; it is not a rotation service, and the per-hour ceiling is there so it cannot quietly become one.',
+    // The disambiguation, not the claim. "Load balancing" is what people search
+    // for and it is NOT what this does — nothing moves while the active account
+    // is healthy (selectConnectedServiceAuthGroupCandidate.ts:593). Saying so
+    // plainly answers the query, corrects the expectation before someone buys a
+    // second subscription for the wrong reason, and asserts nothing false.
+    'People often call this load balancing. What Happier does is narrower, and worth knowing before you pay for a second subscription: it does not spread work across your accounts to keep them level. Nothing moves at all while the account you are on still has room. The pool is there for the moment one runs out — the product calls it automatic fallback, and that is exactly what it is.',
 ];
 
 /**

@@ -1,5 +1,7 @@
 import { useState } from 'react';
 import { RevealText } from '../components/RevealText';
+import { rich } from '../i18n/rich';
+import { PAGE_PROSE } from '../data/pageProse';
 
 /**
  * The three self-host claims, and the one that was false.
@@ -93,10 +95,7 @@ export function SelfHost() {
                         <p
                             className="mt-6 max-w-[480px] text-[17px] leading-[1.55] md:text-[18px]"
                             style={{ color: 'var(--muted)' }}
-                        >
-                            Run the Happier relay server on your own infrastructure.
-                            Your data never leaves your network.
-                        </p>
+                        >{rich(PAGE_PROSE.selfHost.p0)}</p>
 
                         <div className="mt-10 space-y-6">
                             {HIGHLIGHTS.map((item) => (

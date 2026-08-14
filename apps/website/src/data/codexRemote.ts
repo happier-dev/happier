@@ -219,14 +219,17 @@ export const CODEX_SECTION = {
             // `connectedServices.quotas` gate (docs/features/connected-services.mdx).
             // Was "Your accounts, pooled, with the meters showing." — a caption,
             // not a heading. See the note on the matching card in comparison.ts.
-            // "Load-balance" is how people search for account pooling, and it
-            // is what the pool does: policy `strategy` defaults to
-            // `least_limited` (packages/protocol/src/connect/
-            // connectedServiceSchemas.ts:502), rendered in the app's pool screen
-            // as "Least limited first — Prefer the member with the most usable
-            // quota" (apps/ui/sources/text/translations/en.ts:2754-2755). The
-            // schema rejects `round_robin`, so that word must not appear here.
-            title: 'Choose an account, or load-balance a pool, and see what usage is left.',
+            // "load-balance" was here on the same mistaken reasoning as the
+            // comparison.ts card — see the full correction there. Short version:
+            // `least_limited` orders failover candidates, it does not move work
+            // off a healthy account, and the product calls the feature
+            // "Automatic fallback". The schema rejects `round_robin` too, so
+            // that word must not appear here either.
+            //
+            // Worded differently from the comparison.ts card on purpose: the two
+            // are byte-identical today on two separately indexed pages, which is
+            // a duplicate-dek signal on pages deliberately kept from competing.
+            title: 'Pick the account a session runs on, or pool several to fall back.',
             body: 'Connect more than one profile per service — a personal Codex subscription and a work one, an OpenAI key — and pick which one a session runs on when you start it. Pools are pools of accounts rather than of agents: the same Codex subscription is usable by any agent that runs on it, OpenCode included. Where the quota surface is enabled, Codex, Claude and Gemini profiles carry a usage snapshot in the auth picker, so you can see what is left before committing a long run to it. When a pool does move a running session to another account, it is bounded — at most once a turn and three times a session hour by default — and mid-session switching is Claude Code and Codex only.',
         },
         {

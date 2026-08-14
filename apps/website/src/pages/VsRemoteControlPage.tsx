@@ -1,7 +1,9 @@
-import { COMPARISON_ROWS, RC_SCOPE_LIMIT, RC_SECTION, RC_STRENGTHS } from '../data/comparison';
 import { P, PageHeader, PageShell, Prose } from '../components/PageShell';
 import { InstallCommand } from '../components/InstallCommand';
-import { AGENTS } from '../data/agents';
+import { useSiteData } from '../i18n/siteData';
+import { rich } from '../i18n/rich';
+import { PAGE_PROSE } from '../data/pageProse';
+import type { ReactNode } from 'react';
 
 /**
  * /vs/claude-code-remote-control
@@ -25,6 +27,8 @@ import { AGENTS } from '../data/agents';
  *     and it was false.
  */
 export function VsRemoteControlPage() {
+    const { comparison: { COMPARISON_ROWS, RC_SCOPE_LIMIT, RC_SECTION, RC_STRENGTHS }, agents: { AGENTS } } = useSiteData();
+
     return (
         <PageShell>
             {/*
@@ -71,11 +75,7 @@ export function VsRemoteControlPage() {
                         <h2 className="font-display text-[26px] font-normal leading-[1.14] tracking-[-0.025em] md:text-[34px]">
                             What Remote Control does well, specifically
                         </h2>
-                        <p className="mt-4 max-w-[720px] text-[16px] leading-[1.65]" style={{ color: 'var(--muted)' }}>
-                            Every claim in this block is from Anthropic’s own Remote Control
-                            documentation, including the flag defaults. None of it is hedged, because
-                            a vague concession is not a concession.
-                        </p>
+                        <p className="mt-4 max-w-[720px] text-[16px] leading-[1.65]" style={{ color: 'var(--muted)' }}>{rich(PAGE_PROSE.vsRemoteControlPage.p0)}</p>
                         <dl className="mt-7 grid gap-6 md:grid-cols-2">
                             {RC_STRENGTHS.map((item) => (
                                 <div key={item.id}>
@@ -98,11 +98,7 @@ export function VsRemoteControlPage() {
                         <h2 className="font-display text-[26px] font-normal leading-[1.14] tracking-[-0.025em] md:text-[34px]">
                             The five situations where Remote Control turns itself off
                         </h2>
-                        <p className="mt-4 max-w-[720px] text-[16px] leading-[1.65]" style={{ color: 'var(--muted)' }}>
-                            These are not limitations we found by testing. They are documented
-                            behaviour: in each case Remote Control is disabled or unavailable by
-                            design, and Anthropic says so.
-                        </p>
+                        <p className="mt-4 max-w-[720px] text-[16px] leading-[1.65]" style={{ color: 'var(--muted)' }}>{rich(PAGE_PROSE.vsRemoteControlPage.p1)}</p>
                         <ol className="mt-8 space-y-8">
                             {RC_SECTION.cases
                                 .filter((item) => item.id !== 'otherAgents')
@@ -132,11 +128,7 @@ export function VsRemoteControlPage() {
 
             <Prose heading={RC_SCOPE_LIMIT.heading} data-section="rc-scope">
                 <P>{RC_SCOPE_LIMIT.body}</P>
-                <P>
-                    This is filed on its own rather than as a sixth entry in the list above, because
-                    it is a different kind of statement. The five conditions are switches: satisfy
-                    one and a feature you had stops working. This is the shape of the product.
-                </P>
+                <P>{rich(PAGE_PROSE.vsRemoteControlPage.p2)}</P>
             </Prose>
 
             <section className="relative" data-section="rc-table">
@@ -145,11 +137,7 @@ export function VsRemoteControlPage() {
                         <h2 className="font-display text-[26px] font-normal leading-[1.14] tracking-[-0.025em] md:text-[34px]">
                             Will it run in your setup?
                         </h2>
-                        <p className="mt-4 max-w-[720px] text-[16px] leading-[1.65]" style={{ color: 'var(--muted)' }}>
-                            The eight facts that decide whether either thing works where you work.
-                            Two of them Anthropic wins outright. Those two are why the other six are
-                            worth reading.
-                        </p>
+                        <p className="mt-4 max-w-[720px] text-[16px] leading-[1.65]" style={{ color: 'var(--muted)' }}>{rich(PAGE_PROSE.vsRemoteControlPage.p3)}</p>
                         <div
                             className="mt-6 overflow-x-auto rounded-2xl border"
                             style={{ borderColor: 'var(--card-border)' }}
@@ -204,11 +192,7 @@ export function VsRemoteControlPage() {
                         <h2 className="font-display text-[26px] font-normal leading-[1.14] tracking-[-0.025em] md:text-[34px]">
                             What one client for {AGENTS.length} agents buys you
                         </h2>
-                        <p className="mt-4 max-w-[720px] text-[16px] leading-[1.65]" style={{ color: 'var(--muted)' }}>
-                            None of these are Remote Control doing its job badly. They are the
-                            things that only become possible once the client is not tied to one
-                            vendor’s agent.
-                        </p>
+                        <p className="mt-4 max-w-[720px] text-[16px] leading-[1.65]" style={{ color: 'var(--muted)' }}>{rich(PAGE_PROSE.vsRemoteControlPage.p4)}</p>
                         <dl className="mt-7 grid gap-6 md:grid-cols-2">
                             {RC_SECTION.arguments.map((item) => (
                                 <div key={item.id}>
@@ -221,32 +205,14 @@ export function VsRemoteControlPage() {
                                 </div>
                             ))}
                         </dl>
-                        <p className="mt-7 max-w-[720px] text-[16px] leading-[1.68]" style={{ color: 'var(--muted)' }}>
-                            The other difference is where your conversation lives. Remote Control
-                            stores the session transcript on Anthropic servers while it is
-                            connected, per its documentation, and organisations under Zero Data
-                            Retention rules cannot enable it at all. Happier encrypts the transcript
-                            end to end by default, and{' '}
-                            <code className="font-mono">happier relay host install</code> puts the
-                            relay on hardware you own.
-                        </p>
-                        <p className="mt-4 max-w-[720px] text-[16px] leading-[1.68]" style={{ color: 'var(--muted)' }}>
-                            Each of the {AGENTS.length} agents has its own page —{' '}
-                            <a href="/agents" className="underline underline-offset-2" style={{ color: 'var(--fg)' }}>
-                                start here
-                            </a>
-                            .
-                        </p>
+                        <p className="mt-7 max-w-[720px] text-[16px] leading-[1.68]" style={{ color: 'var(--muted)' }}>{rich(PAGE_PROSE.vsRemoteControlPage.p5, { 1: (c: ReactNode) => <code className="font-mono">{c}</code> })}</p>
+                        <p className="mt-4 max-w-[720px] text-[16px] leading-[1.68]" style={{ color: 'var(--muted)' }}>{rich(PAGE_PROSE.vsRemoteControlPage.p6, { 1: (c: ReactNode) => <a href="/agents" className="underline underline-offset-2" style={{ color: 'var(--fg)' }}>{c}</a> }, { length: AGENTS.length })}</p>
                     </div>
                 </div>
             </section>
 
             <Prose heading="Trying it" data-section="rc-cta">
-                <P>
-                    Install on the computer that holds your code. Nothing on your phone matters until
-                    that computer is set up, which is why this is the first step rather than an app
-                    store badge.
-                </P>
+                <P>{rich(PAGE_PROSE.vsRemoteControlPage.p7)}</P>
                 <div data-cta-location="call-to-action">
                     <InstallCommand />
                 </div>

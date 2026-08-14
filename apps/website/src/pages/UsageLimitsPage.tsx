@@ -1,14 +1,9 @@
 import { P, PageHeader, PageShell, Prose } from '../components/PageShell';
-import {
-    POOL_DEFAULTS,
-    SERVICE_SUPPORT,
-    USAGE_LIMITS_DOCS_URL,
-    USAGE_LIMITS_POOL_SCOPE,
-    USAGE_LIMITS_SCOPE,
-    USAGE_LIMITS_SETUP,
-    USAGE_LIMITS_SUPPORT_NOTES,
-    USAGE_LIMITS_SWITCHING,
-} from '../data/usageLimits';
+import { USAGE_LIMITS_DOCS_URL } from '../data/usageLimits';
+import { useSiteData } from '../i18n/siteData';
+import { rich } from '../i18n/rich';
+import { PAGE_PROSE } from '../data/pageProse';
+import type { ReactNode } from 'react';
 
 /**
  * /features/usage-limits
@@ -74,35 +69,22 @@ import {
  *       not say it arms itself, because on a default install it does not.
  */
 export function UsageLimitsPage() {
+    const { usageLimits: { POOL_DEFAULTS, SERVICE_SUPPORT, USAGE_LIMITS_POOL_SCOPE, USAGE_LIMITS_SCOPE, USAGE_LIMITS_SETUP, USAGE_LIMITS_SUPPORT_NOTES, USAGE_LIMITS_SWITCHING } } = useSiteData();
+
     return (
         <PageShell>
             <PageHeader
                 eyebrow="Feature"
                 title="A usage limit should not end your session."
-                standfirst="Every provider stops you eventually, and Happier cannot change that. What it can do is hold the session at the limit, show you when it resets, and start the work again from where it stopped. Turn on “Always wait and resume” and it does the whole thing unattended — one setting, and you come back to a session that carried on instead of one that stopped. That is on one account. Own several subscriptions and there is a better answer below: pool them, and let Happier load-balance across them."
+                standfirst="Every provider stops you eventually, and Happier cannot change that. What it can do is hold the session at the limit, show you when it resets, and start the work again from where it stopped. Turn on “Always wait and resume” and it does the whole thing unattended — one setting, and you come back to a session that carried on instead of one that stopped. That is on one account. Own several subscriptions and there is a better answer below: pool them, and a session that runs one dry moves to the next."
             />
 
             <Prose heading="With one account, Happier waits out the reset and resumes the session" data-section="usage-limits-baseline">
-                <P>
-                    A provider refuses a turn and Happier shows “Usage limit reached”, with the reset
-                    time when the provider supplied one. From there: wait — “Resume when limit
-                    resets” keeps the session and picks it up on its own — or “Check limit now” to
-                    re-probe, or stop waiting. Waiting is the one that keeps your afternoon: Happier
-                    holds the reset time, re-checks it for you, starts the session again if it had
-                    exited in the meantime, and sends a prompt to carry on from the interrupted
-                    context. Tick “Always wait and resume” once and you stop being asked — every
-                    limit after that is handled the same way with nobody watching. A Codex session
-                    goes one further and arms the wait by itself once “Continue automatically” is
-                    set.
-                </P>
-                <P>
-                    That banner appears for Claude Code, Codex, OpenCode, Gemini and Pi. No other
-                    agent in the registry reports usage limits to Happier in a form it can act on,
-                    so what you get there is whatever the provider’s own CLI prints.
-                </P>
+                <P>{rich(PAGE_PROSE.usageLimitsPage.p0)}</P>
+                <P>{rich(PAGE_PROSE.usageLimitsPage.p1)}</P>
             </Prose>
 
-            <Prose heading="Pool & load-balance the accounts you own, and the session carries on across them" data-section="usage-limits-pools">
+            <Prose heading="Pool the subscriptions you own, and the session carries on across them" data-section="usage-limits-pools">
                 {USAGE_LIMITS_POOL_SCOPE.map((paragraph) => (
                     <P key={paragraph.slice(0, 32)}>{paragraph}</P>
                 ))}
@@ -120,9 +102,7 @@ export function UsageLimitsPage() {
                         <p
                             className="mt-4 max-w-[720px] text-[16px] leading-[1.65]"
                             style={{ color: 'var(--muted)' }}
-                        >
-                            The defaults a new pool starts with. All of them are editable per pool.
-                        </p>
+                        >{rich(PAGE_PROSE.usageLimitsPage.p2)}</p>
                         <div
                             className="mt-6 overflow-x-auto rounded-2xl border"
                             style={{ borderColor: 'var(--card-border)' }}
@@ -175,11 +155,7 @@ export function UsageLimitsPage() {
                         <p
                             className="mt-4 max-w-[720px] text-[16px] leading-[1.65]"
                             style={{ color: 'var(--muted)' }}
-                        >
-                            One row per account you can connect. Being able to use a pool and being
-                            able to change account inside a running turn are two different
-                            capabilities, and the second one is rarer.
-                        </p>
+                        >{rich(PAGE_PROSE.usageLimitsPage.p3)}</p>
                         <div
                             className="mt-6 overflow-x-auto rounded-2xl border"
                             style={{ borderColor: 'var(--card-border)' }}
@@ -246,18 +222,11 @@ export function UsageLimitsPage() {
 
             <Prose heading="Build a pool in the app, start a session on it from the CLI" data-section="usage-limits-docs">
                 <P>{USAGE_LIMITS_SETUP[0]}</P>
-                <P>
-                    Connecting the accounts comes first, and that part has a{' '}
-                    <a
+                <P>{rich(PAGE_PROSE.usageLimitsPage.p4, { 1: (c: ReactNode) => <a
                         href={USAGE_LIMITS_DOCS_URL}
                         className="underline underline-offset-2"
                         style={{ color: 'var(--fg)' }}
-                    >
-                        configuration reference
-                    </a>
-                    : how each provider’s sign-in works, which agent can consume which credential,
-                    and where the quota snapshots come from.
-                </P>
+                    >{c}</a> })}</P>
                 <P>{USAGE_LIMITS_SETUP[1]}</P>
             </Prose>
         </PageShell>

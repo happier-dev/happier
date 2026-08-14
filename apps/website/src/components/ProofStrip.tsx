@@ -1,9 +1,9 @@
-import { PROVIDERS } from '../data/providers';
 import { GITHUB_REPO_URL, LICENSE_URL } from '../data/downloads';
 import { DISCORD_INVITE_URL } from '../data/community';
 import { formatStatCount, readCount, statsUrl, usePublicStat } from './publicStats';
 import { useGitHubStats } from './GitHubStats';
 import { RollingNumber } from './RollingNumber';
+import { useSiteData } from '../i18n/siteData';
 
 /** Measured 2026-08-08 from stats.happier.dev/downloads.json. */
 const FALLBACK_DOWNLOAD_TOTAL = 36783;
@@ -49,6 +49,8 @@ type Fact = {
  *   agents       remote-dev packages/agents/src/types.ts:10 → 13 named + custom ACP
  */
 export function ProofStrip() {
+    const { providers: { PROVIDERS } } = useSiteData();
+
     const { totalDownloads } = usePublicStat(statsUrl('downloads.json'), parseDownloads, {
         totalDownloads: FALLBACK_DOWNLOAD_TOTAL,
     });

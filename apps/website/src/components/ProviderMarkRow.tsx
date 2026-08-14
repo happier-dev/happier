@@ -1,5 +1,5 @@
-import { PROVIDERS } from '../data/providers';
 import { useTheme } from './ThemeContext';
+import { useSiteData } from '../i18n/siteData';
 
 type ProviderMarkRowProps = Readonly<{
     justify?: 'start' | 'center';
@@ -7,6 +7,8 @@ type ProviderMarkRowProps = Readonly<{
 }>;
 
 export function ProviderMarkRow(props: ProviderMarkRowProps) {
+    const { providers: { PROVIDERS } } = useSiteData();
+
     const { theme } = useTheme();
     const justify = props.justify ?? 'start';
     const size = props.size ?? 18;

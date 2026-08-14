@@ -1,7 +1,10 @@
-import { AGENTS, UNLISTED_AGENTS, UPCOMING_AGENTS } from '../data/agents';
-import { UPCOMING_LABEL, UPCOMING_RELEASE } from '../data/availability';
+import { UPCOMING_RELEASE } from '../data/availability';
 import { P, PageHeader, PageShell, Prose } from '../components/PageShell';
 import { InstallCommand } from '../components/InstallCommand';
+import { useSiteData } from '../i18n/siteData';
+import { rich } from '../i18n/rich';
+import { PAGE_PROSE } from '../data/pageProse';
+import type { ReactNode } from 'react';
 
 /**
  * /agents
@@ -25,6 +28,8 @@ import { InstallCommand } from '../components/InstallCommand';
  * appears outside that band.
  */
 export function AgentsIndex() {
+    const { agents: { AGENTS, UNLISTED_AGENTS, UPCOMING_AGENTS }, availability: { UPCOMING_LABEL } } = useSiteData();
+
     return (
         <PageShell>
             <PageHeader
@@ -40,26 +45,9 @@ export function AgentsIndex() {
             />
 
             <Prose data-section="agents-intro">
-                <P>
-                    Happier installs on the computer that holds your repository, starts the
-                    vendor’s own CLI there as an ordinary subprocess under your own login, and
-                    carries the conversation to your other devices end-to-end encrypted. It hosts
-                    none of these agents, and puts no model of its own in front of them.
-                </P>
-                <P>
-                    What that means in practice is that you keep every agent you already pay for and
-                    stop needing a different remote for each one. Each page below covers one agent
-                    in the detail you want before installing something: the command Happier runs and
-                    what it hands that binary, how a permission choice made on a phone is expressed
-                    to that particular CLI, which sign-in flow the app can start for you, how the
-                    binary gets onto your computer, whether the session can move to the agent’s own
-                    terminal interface, and the questions people ask about running it this way.
-                </P>
-                <P>
-                    Per-agent limits — which sessions can be forked, resumed, reattached or moved to
-                    another computer — live in the Happier documentation rather than here, because
-                    the documentation ships with the product and a marketing page does not.
-                </P>
+                <P>{rich(PAGE_PROSE.agentsIndex.p0)}</P>
+                <P>{rich(PAGE_PROSE.agentsIndex.p1)}</P>
+                <P>{rich(PAGE_PROSE.agentsIndex.p2)}</P>
             </Prose>
 
             <section className="relative" data-section="agents-list">
@@ -102,10 +90,7 @@ export function AgentsIndex() {
                  * build process, not the reader's answer. Recorded here so the guarantee is not
                  * lost with the sentence.
                  */}
-                <P>
-                    The release ships one more id than this page has cards for. Here it is, with the
-                    reason it has no page of its own.
-                </P>
+                <P>{rich(PAGE_PROSE.agentsIndex.p3)}</P>
                 <dl className="space-y-5">
                     {Object.entries(UNLISTED_AGENTS).map(([id, reason]) => (
                         <div key={id}>
@@ -124,10 +109,7 @@ export function AgentsIndex() {
             </Prose>
 
             <Prose heading="Coming in the next version" data-section="agents-upcoming">
-                <P>
-                    Four more are defined and on the way. None of them is in the build you can
-                    install today, and none is counted in the {AGENTS.length} above.
-                </P>
+                <P>{rich(PAGE_PROSE.agentsIndex.p4, undefined, { length: AGENTS.length })}</P>
                 <dl className="space-y-5">
                     {UPCOMING_AGENTS.map((agent) => (
                         <div key={agent.id}>
@@ -162,23 +144,11 @@ export function AgentsIndex() {
             </Prose>
 
             <Prose heading="Or bring your own" data-section="agents-custom">
-                <P>
-                    Anything speaking the Agent Client Protocol can be added as a backend of your own
-                    without waiting for us. That path has no page here because what it can do is
-                    whatever your CLI implements, and writing a page about it would be writing a page
-                    about your code.
-                </P>
+                <P>{rich(PAGE_PROSE.agentsIndex.p5)}</P>
             </Prose>
 
             <Prose heading="Running any of them" data-section="agents-cta">
-                <P>
-                    Install Happier on the computer that holds your code, then start any agent on
-                    this page by name — <code className="font-mono">happier claude</code>,{' '}
-                    <code className="font-mono">happier codex</code>,{' '}
-                    <code className="font-mono">happier opencode</code>. The agent runs there, under
-                    your own subscription or API key. Happier is the transport and the interface,
-                    not a middleman for the model call.
-                </P>
+                <P>{rich(PAGE_PROSE.agentsIndex.p6, { 1: (c: ReactNode) => <code className="font-mono">{c}</code>, 2: (c: ReactNode) => <code className="font-mono">{c}</code>, 3: (c: ReactNode) => <code className="font-mono">{c}</code> })}</P>
                 <div data-cta-location="call-to-action">
                     <InstallCommand />
                 </div>

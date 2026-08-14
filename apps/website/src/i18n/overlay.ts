@@ -42,6 +42,11 @@ const NOT_COPY_FIELDS: ReadonlySet<string> = new Set([
     // links and asset references
     'docsUrl', 'guideUrl', 'vendorDocs', 'happierDocsPath', 'image', 'ogImage',
     'file', 'asset', 'logo', 'mark',
+    // Responsive-image plumbing. These read as prose to a length heuristic —
+    // they are long, comma-separated and full of words — and all 57 of them in
+    // generatedImages.ts were being handed to a translator. A localised srcset
+    // points at images that do not exist.
+    'avif', 'webp', 'png', 'jpg', 'srcset', 'srcSet', 'sizes',
     // machine-readable metadata
     'type', '@type', '@context', '@id', 'schema', 'locale', 'lang',
 ]);
@@ -99,6 +104,13 @@ export function looksTranslatable(value: string): boolean {
     // Keys, hashes and base64 blobs: long, no spaces, base64 alphabet only.
     // RELEASE_PUBKEY in downloads.ts reached a translator without this.
     if (!/\s/.test(t) && /^[A-Za-z0-9+/=_-]{20,}$/.test(t)) return false;
+    // Shell commands, which are shown to be copy-pasted verbatim. These read as
+    // prose — INSTALL_COMMAND_UNIX_INSPECTABLE even carries an English comment,
+    // `# read it first` — but a localised command does not run. If that comment
+    // is ever worth translating it needs its own id, not the whole invocation.
+    if (/^(?:curl|iwr|wget|npm|npx|yarn|pnpm|brew|bash|sh|zsh|powershell|pwsh|docker|git|less|cat|sudo)\b/.test(t)) {
+        return false;
+    }
     if (/^(?:[a-z0-9:[\]/.%-]+\s+){2,}[a-z0-9:[\]/.%-]+$/.test(t) && !/[A-Z]/.test(t) && !/[.!?]/.test(t)) {
         return false;                                                    // tailwind class lists
     }

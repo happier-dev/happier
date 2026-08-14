@@ -1,9 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
 import type { CSSProperties } from 'react';
-import { PRIMARY_FEATURES, type Feature } from '../data/features';
+import { type Feature } from '../data/features';
 import { RevealText } from '../components/RevealText';
 import { Picture } from '../components/Picture';
 import clsx from 'clsx';
+import { useSiteData } from '../i18n/siteData';
+import { rich } from '../i18n/rich';
+import { PAGE_PROSE } from '../data/pageProse';
 
 /**
  * Feature panels.
@@ -89,6 +92,8 @@ const SPAN_CLASS: Record<Span, string> = {
 };
 
 export function AlternatingFeatures() {
+    const { features: { PRIMARY_FEATURES } } = useSiteData();
+
     return (
         <section id="features" data-section="features" className="relative">
             <div className="section-y mx-auto max-w-[1400px] px-6 md:px-10">
@@ -108,11 +113,7 @@ export function AlternatingFeatures() {
                     <p
                         className="mx-auto mt-6 max-w-[560px] text-[17px] leading-[1.55] md:text-[18px]"
                         style={{ color: 'var(--muted)' }}
-                    >
-                        Happier is the mobile-native control layer for the AI coding agents you already use.
-                        It mirrors your terminal, syncs every session, and gives you back the things a CLI
-                        can&apos;t: presence, approvals, voice, and one inbox for all of it.
-                    </p>
+                    >{rich(PAGE_PROSE.alternatingFeatures.p0)}</p>
                 </div>
 
                 <div className="grid grid-cols-1 gap-5 md:grid-cols-12 md:gap-6">

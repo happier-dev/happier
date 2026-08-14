@@ -1,6 +1,8 @@
 import { HappierMark } from '../components/HappierMark';
 import { DISCORD_INVITE_URL } from '../data/community';
 import { CHANGELOG_URL, DOCS_URL, GUIDES_URL, GITHUB_REPO_URL, LICENSE_URL, WEB_APP_URL } from '../data/downloads';
+import { rich } from '../i18n/rich';
+import { PAGE_PROSE } from '../data/pageProse';
 
 /**
  * Read once at module scope, not per render.
@@ -116,11 +118,7 @@ export function Footer({ isHome = true }: { isHome?: boolean } = {}) {
                         <p
                             className="mt-5 max-w-[320px] text-[14px] leading-[1.6]"
                             style={{ color: 'var(--muted)' }}
-                        >
-                            One open-source client for every coding agent — thirteen of them, run on
-                            your own computer, with your own subscriptions or API keys, end-to-end
-                            encrypted.
-                        </p>
+                        >{rich(PAGE_PROSE.footer.p0)}</p>
                     </div>
 
                     {FOOTER_COLUMNS.map((col) => (

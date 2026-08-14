@@ -137,16 +137,25 @@ export const RC_SECTION = {
             // accounts. Keep the session going.", "Review the diff. Send
             // notes." — and this one now does too. It does not reuse the
             // features.ts opener, because both render on the homepage.
-            // LOAD BALANCING IS THE WORD PEOPLE SEARCH FOR, and it is also what
-            // the pool does: `ConnectedServiceAuthGroupPolicyV1Schema.strategy`
-            // is `'priority' | 'least_limited' | 'manual'` and DEFAULTS to
-            // `least_limited` (packages/protocol/src/connect/
-            // connectedServiceSchemas.ts:502), which the app's own pool screen
-            // renders as "Least limited first — Prefer the member with the most
-            // usable quota" (apps/ui/sources/text/translations/en.ts:2754-2755).
-            // `round_robin` is NOT a strategy the schema accepts, so do not
-            // write that word here.
-            title: 'Choose an account, or load-balance a pool, and see what usage is left.',
+            // THIS SAID "load-balance" AND THAT WAS WRONG. The argument for it
+            // was that `ConnectedServiceAuthGroupPolicyV1Schema.strategy`
+            // defaults to `least_limited` (packages/protocol/src/connect/
+            // connectedServiceSchemas.ts:502) and the pool screen renders that
+            // as "Prefer the member with the most usable quota". But that is the
+            // ORDER failover candidates are tried in, not a reason to move: at
+            // selectConnectedServiceAuthGroupCandidate.ts:593 the selection
+            // returns the CURRENT account unchanged whenever it is above the
+            // soft threshold (default 15% remaining), and the caller then bails
+            // because the selection equals the active profile. Nothing is ever
+            // distributed off a healthy account. It is failover with a
+            // preventive early trip, and the product's own UI calls it
+            // "Automatic fallback" (apps/ui/sources/text/translations/en.ts:2748).
+            //
+            // The search term is real; the mechanism claim was not. It is
+            // answered as a disambiguation in the usage-limits body instead.
+            // `round_robin` is NOT a strategy the schema accepts either, so do
+            // not write that word here.
+            title: 'Choose an account, or pool several and let Happier fall back.',
             body: 'Connect more than one profile per service — a personal Codex subscription and a work one, a Claude setup-token, an Anthropic API key — and choose which one a session runs on at the moment you start it. Quota snapshots for Codex, Claude and Gemini profiles show as badges in the auth picker, so you can see what is left before you commit a long run to it. Nothing switches until you build a pool on purpose; once you have, it starts with automatic fallback on for the accounts a running session can actually move between, and there is a toggle on the pool if you would rather switch by hand.',
         },
         {

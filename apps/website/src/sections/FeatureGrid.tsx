@@ -1,7 +1,9 @@
-import { GRID_FEATURES } from '../data/features';
 import { RevealText } from '../components/RevealText';
+import { useSiteData } from '../i18n/siteData';
 
 export function FeatureGrid() {
+    const { features: { GRID_FEATURES } } = useSiteData();
+
     return (
         <section className="relative" data-section="feature-grid">
             <div className="section-y mx-auto max-w-[1400px] px-6 md:px-10">

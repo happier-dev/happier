@@ -7,6 +7,9 @@ import {
 import { P, PageHeader, PageShell, Prose } from '../components/PageShell';
 import { InstallCommand } from '../components/InstallCommand';
 import { DOCS_URL, GUIDES_URL, WEB_APP_URL } from '../data/downloads';
+import { rich } from '../i18n/rich';
+import { PAGE_PROSE } from '../data/pageProse';
+import type { ReactNode } from 'react';
 
 /**
  * /agents/<slug>
@@ -158,22 +161,11 @@ function InstallReality({ agent }: { agent: AgentRecord }) {
             );
         case 'vendor-script':
             return (
-                <P>
-                    Happier looks for <code className="font-mono">{agent.binary}</code> on your PATH
-                    and runs the copy you installed. {agent.vendor} distributes it with an install
-                    script rather than a package; Happier can show you that command, and it will not
-                    execute a vendor install script on its own — vendor recipes are refused unless
-                    you explicitly allow them.
-                </P>
+                <P>{rich(PAGE_PROSE.agentDetail.p0, { 1: (c: ReactNode) => <code className="font-mono">{c}</code> }, { binary: agent.binary, vendor: agent.vendor })}</P>
             );
         case 'you-install-it':
             return (
-                <P>
-                    Happier looks for <code className="font-mono">{agent.binary}</code> on your PATH
-                    and runs the copy you installed. There is no install path for it inside Happier
-                    at all: install it the way {agent.vendor} documents, and Happier picks it up
-                    from there.
-                </P>
+                <P>{rich(PAGE_PROSE.agentDetail.p1, { 1: (c: ReactNode) => <code className="font-mono">{c}</code> }, { binary: agent.binary, vendor: agent.vendor })}</P>
             );
     }
 }
@@ -306,6 +298,10 @@ function RunsOnAccount({ agent }: { agent: AgentRecord }) {
 export function AgentDetail({ agent }: { agent: AgentRecord }) {
     const setupLink = setupLinkFor(agent);
     const hasSetupGuide = agent.vendorSetupGuide !== null;
+    // Bound to a const because the link below is built inside a rich() slot
+    // callback, and TypeScript drops the narrowing from `agent.happierDocsPath ?`
+    // once the check and the use sit either side of a closure.
+    const happierDocsPath = agent.happierDocsPath;
 
     return (
         <PageShell>
@@ -384,22 +380,13 @@ export function AgentDetail({ agent }: { agent: AgentRecord }) {
                 heading={`Read, approve and answer ${agent.name} from any device`}
                 data-section="agent-devices"
             >
-                <P>
-                    The iOS and Android apps, the desktop app for macOS, Windows and Linux, and{' '}
-                    <a
+                <P>{rich(PAGE_PROSE.agentDetail.p2, { 1: (c: ReactNode) => <a
                         href={WEB_APP_URL}
                         target="_blank"
                         rel="noreferrer"
                         className="underline underline-offset-2"
                         style={{ color: 'var(--fg)' }}
-                    >
-                        app.happier.dev
-                    </a>{' '}
-                    are all clients onto the {agent.name} process running on your computer — not
-                    read-only mirrors. Answer a permission request, send the next instruction, browse
-                    the repository, read the diff. The transcript is end-to-end encrypted before it
-                    leaves your computer, so the server carrying it holds ciphertext.
-                </P>
+                    >{c}</a> }, { name: agent.name })}</P>
             </Prose>
 
             {/*
@@ -421,13 +408,7 @@ export function AgentDetail({ agent }: { agent: AgentRecord }) {
                 }
                 data-section="agent-your-computer"
             >
-                <P>
-                    Happier installs on the computer that already holds your repository, and{' '}
-                    <code className="font-mono">happier {agent.id}</code> starts {agent.name} there
-                    as an ordinary subprocess, in the directory you point it at, signed in the way
-                    you signed it in. There is no gateway between the agent and {agent.vendor}, and
-                    no copy of your source anywhere else.
-                </P>
+                <P>{rich(PAGE_PROSE.agentDetail.p3, { 1: (c: ReactNode) => <code className="font-mono">{c}</code> }, { id: agent.id, name: agent.name, vendor: agent.vendor })}</P>
                 <InstallReality agent={agent} />
                 {/*
                     Only call it a guide when the definition carries a real
@@ -458,20 +439,14 @@ export function AgentDetail({ agent }: { agent: AgentRecord }) {
                         instructions is a copy that goes stale.
                     </P>
                 ) : null}
-                {agent.happierDocsPath ? (
-                    <P>
-                        Configuration reference for the Happier side —{' '}
-                        <a
-                            href={docsHref(agent.happierDocsPath)}
+                {happierDocsPath ? (
+                    <P>{rich(PAGE_PROSE.agentDetail.p4, { 1: (c: ReactNode) => <a
+                            href={docsHref(happierDocsPath)}
                             target="_blank"
                             rel="noreferrer"
                             className="underline underline-offset-2"
                             style={{ color: 'var(--fg)' }}
-                        >
-                            {agent.name} in the Happier docs
-                        </a>
-                        .
-                    </P>
+                        >{c}</a> }, { name: agent.name })}</P>
                 ) : null}
             </Prose>
 
@@ -481,11 +456,7 @@ export function AgentDetail({ agent }: { agent: AgentRecord }) {
                 heading={`One app for ${agent.name} and ${OTHER_AGENT_COUNT} other agents`}
                 data-section="agent-other-agents"
             >
-                <P>
-                    {agent.name} is one of {AGENTS.length} command-line coding agents Happier runs,
-                    and they share one session list, one permission inbox, one set of keyboard
-                    shortcuts and one MCP configuration.
-                </P>
+                <P>{rich(PAGE_PROSE.agentDetail.p5, undefined, { name: agent.name, length: AGENTS.length })}</P>
                 <P>
                     {agent.runtime.toolsDelivery === 'native-mcp' ? (
                         <>
@@ -503,43 +474,22 @@ export function AgentDetail({ agent }: { agent: AgentRecord }) {
                         </>
                     )}
                 </P>
-                <P>
-                    That matters most on the days you are running more than one: sessions from
-                    different vendors side by side, and a notification tap opening the session that
-                    raised the request rather than the app’s front door.{' '}
-                    <a href="/agents" className="underline underline-offset-2" style={{ color: 'var(--fg)' }}>
-                        The full list is here
-                    </a>
-                    .
-                </P>
+                <P>{rich(PAGE_PROSE.agentDetail.p6, { 1: (c: ReactNode) => <a href="/agents" className="underline underline-offset-2" style={{ color: 'var(--fg)' }}>{c}</a> })}</P>
             </Prose>
 
             <Prose
                 heading={`The same ${agent.name} session in your terminal and in the app`}
                 data-section="agent-terminal"
             >
-                <P>
-                    Typing <code className="font-mono">happier {agent.id}</code> in a terminal starts
-                    the session right where you are standing, and the same session is in the app at
-                    the same time. What you read in that shell is Happier’s own display of the
-                    session — the transcript, the permission prompts, the tool output — rather than{' '}
-                    {agent.name}’s interface. Nobody has to give up the terminal to get a phone
-                    client.
-                </P>
+                <P>{rich(PAGE_PROSE.agentDetail.p7, { 1: (c: ReactNode) => <code className="font-mono">{c}</code> }, { id: agent.id, name: agent.name })}</P>
                 <TerminalHandoff agent={agent} />
-                <P>
-                    The{' '}
-                    <a
+                <P>{rich(PAGE_PROSE.agentDetail.p8, { 1: (c: ReactNode) => <a
                         href={docsHref('/features/attach-to-session')}
                         target="_blank"
                         rel="noreferrer"
                         className="underline underline-offset-2"
                         style={{ color: 'var(--fg)' }}
-                    >
-                        attach guide
-                    </a>{' '}
-                    lists the cases instead of promising all of them.
-                </P>
+                    >{c}</a> })}</P>
             </Prose>
 
             <section className="relative" data-section="agent-faq">
@@ -578,27 +528,17 @@ export function AgentDetail({ agent }: { agent: AgentRecord }) {
                 heading={`Get ${agent.name} onto your phone in two commands`}
                 data-section="agent-cta"
             >
-                <P>
-                    One command on the computer that holds your code, then{' '}
-                    <code className="font-mono">happier {agent.id}</code> in the repository you want
-                    to work in.
-                </P>
+                <P>{rich(PAGE_PROSE.agentDetail.p9, { 1: (c: ReactNode) => <code className="font-mono">{c}</code> }, { id: agent.id })}</P>
                 <div data-cta-location="call-to-action">
                     <InstallCommand />
                 </div>
-                <P>
-                    Walkthroughs are in the{' '}
-                    <a
+                <P>{rich(PAGE_PROSE.agentDetail.p10, { 1: (c: ReactNode) => <a
                         href={GUIDES_URL}
                         target="_blank"
                         rel="noreferrer"
                         className="underline underline-offset-2"
                         style={{ color: 'var(--fg)' }}
-                    >
-                        guides
-                    </a>
-                    . All of it is MIT-licensed, and the relay is one you can run yourself.
-                </P>
+                    >{c}</a> })}</P>
             </Prose>
         </PageShell>
     );

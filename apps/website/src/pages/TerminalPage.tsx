@@ -1,15 +1,10 @@
 import type { ReactNode } from 'react';
 
 import { P, PageHeader, PageShell, Prose } from '../components/PageShell';
-import {
-    CLAUDE_UNIFIED,
-    CLAUDE_UNIFIED_HEADING,
-    CONTROL_ROWS,
-    TERMINAL_CATCH,
-    TERMINAL_DOCS_URL,
-    TERMINAL_INTRO,
-    TERMINAL_MOVES,
-} from '../data/terminalFeature';
+import { TERMINAL_DOCS_URL } from '../data/terminalFeature';
+import { useSiteData } from '../i18n/siteData';
+import { rich } from '../i18n/rich';
+import { PAGE_PROSE } from '../data/pageProse';
 
 /**
  * `happier attach` in backticks → a real <code> element.
@@ -54,6 +49,8 @@ function withCode(text: string): ReactNode[] {
  * is now the list of what attaching actually needs.
  */
 export function TerminalPage() {
+    const { terminalFeature: { CLAUDE_UNIFIED, CLAUDE_UNIFIED_HEADING, CONTROL_ROWS, TERMINAL_CATCH, TERMINAL_INTRO, TERMINAL_MOVES } } = useSiteData();
+
     return (
         <PageShell>
             <PageHeader
@@ -99,11 +96,7 @@ export function TerminalPage() {
                         <p
                             className="mt-4 max-w-[720px] text-[16px] leading-[1.65]"
                             style={{ color: 'var(--muted)' }}
-                        >
-                            Three of the thirteen, and they do not behave the same way. Codex is
-                            exclusive — one driver at a time. OpenCode is not, and Claude Code can be
-                            either, depending on which runtime you start it under.
-                        </p>
+                        >{rich(PAGE_PROSE.terminalPage.p0)}</p>
                         <div
                             className="mt-6 overflow-x-auto rounded-2xl border"
                             style={{ borderColor: 'var(--card-border)' }}
@@ -152,12 +145,7 @@ export function TerminalPage() {
                         <p
                             className="mt-5 max-w-[720px] text-[16px] leading-[1.65]"
                             style={{ color: 'var(--muted)' }}
-                        >
-                            The other ten agents Happier runs still start from the terminal with{' '}
-                            <code className="font-mono">happier &lt;agent&gt;</code> and still appear
-                            on your phone. What they do not do is let you take the session back into
-                            their own TUI half way through.
-                        </p>
+                        >{rich(PAGE_PROSE.terminalPage.p1, { 1: (c: ReactNode) => <code className="font-mono">{c}</code> })}</p>
                     </div>
                 </div>
             </section>
@@ -185,20 +173,11 @@ export function TerminalPage() {
             </Prose>
 
             <Prose heading="tmux, the Windows session mode, and where the terminal docks" data-section="terminal-docs">
-                <P>
-                    Nothing on this page needs configuration if you start your sessions from the
-                    terminal — that path works the moment the CLI is installed. The settings that do
-                    need a decision are tmux integration, the Windows session mode and where the
-                    embedded terminal docks, and all three are in the{' '}
-                    <a
+                <P>{rich(PAGE_PROSE.terminalPage.p2, { 1: (c: ReactNode) => <a
                         href={TERMINAL_DOCS_URL}
                         className="underline underline-offset-2"
                         style={{ color: 'var(--fg)' }}
-                    >
-                        configuration reference
-                    </a>
-                    .
-                </P>
+                    >{c}</a> })}</P>
             </Prose>
         </PageShell>
     );

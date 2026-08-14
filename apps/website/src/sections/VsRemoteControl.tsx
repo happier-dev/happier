@@ -1,5 +1,8 @@
 import { RevealText } from '../components/RevealText';
-import { RC_SECTION } from '../data/comparison';
+import { useSiteData } from '../i18n/siteData';
+import { rich } from '../i18n/rich';
+import { PAGE_PROSE } from '../data/pageProse';
+import type { ReactNode } from 'react';
 
 export const VS_REMOTE_CONTROL_SECTION_ID = 'vs-remote-control';
 
@@ -23,6 +26,8 @@ export const VS_REMOTE_CONTROL_SECTION_ID = 'vs-remote-control';
  * If a seventh card is ever added, add an eighth with it.
  */
 export function VsRemoteControl() {
+    const { comparison: { RC_SECTION } } = useSiteData();
+
     return (
         <section id={VS_REMOTE_CONTROL_SECTION_ID} data-section="vs-remote-control" className="relative">
             <div className="section-y mx-auto max-w-[1400px] px-6 md:px-10">
@@ -74,24 +79,11 @@ export function VsRemoteControl() {
                 <p
                     className="mx-auto mt-10 max-w-[760px] text-center text-[15px] leading-[1.6]"
                     style={{ color: 'var(--muted)' }}
-                >
-                    {/*
-                      * The anchor used to read "What it does well, and the
-                      * setups its documentation says it will not run in." — a
-                      * summary of the page pasted into a link, and one that led
-                      * with what the other product cannot do. The keyword stays
-                      * in the question, so the internal link keeps its value;
-                      * the anchor is now the invitation.
-                      */}
-                    Already using Claude Code Remote Control?{' '}
-                    <a
+                >{rich(PAGE_PROSE.vsRemoteControl.p0, { 1: (c: ReactNode) => <a
                         href="/vs/claude-code-remote-control"
                         className="underline underline-offset-2"
                         style={{ color: 'var(--fg)' }}
-                    >
-                        Compare it with Happier.
-                    </a>
-                </p>
+                    >{c}</a> })}</p>
             </div>
         </section>
     );

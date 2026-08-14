@@ -1,3 +1,4 @@
+import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 
@@ -78,7 +79,11 @@ describe('the upcoming set is computed, not asserted', () => {
 });
 
 describe('an upcoming agent is never described as though it ran', () => {
-    const markup = renderToStaticMarkup(AgentsIndex());
+    // `createElement(AgentsIndex)`, not `AgentsIndex()`. Calling a component as
+    // a plain function runs its body with no React dispatcher, so the moment it
+    // used a hook — useSiteData, for the translation overlay — useContext read
+    // from null. This renders it as an element, which is what it always was.
+    const markup = renderToStaticMarkup(createElement(AgentsIndex));
 
     it('renders every upcoming agent behind the label', () => {
         for (const agent of UPCOMING_AGENTS) {

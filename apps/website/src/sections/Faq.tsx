@@ -1,6 +1,6 @@
 import { RevealText } from '../components/RevealText';
-import { FAQ_ITEMS } from '../data/faq';
 import { trackFaqOpened } from '../analytics/events';
+import { useSiteData } from '../i18n/siteData';
 
 export const FAQ_SECTION_ID = 'faq';
 
@@ -14,6 +14,8 @@ export const FAQ_SECTION_ID = 'faq';
  * there for anyone who wants to collapse a long answer.
  */
 export function Faq() {
+    const { faq: { FAQ_ITEMS } } = useSiteData();
+
     return (
         <section id={FAQ_SECTION_ID} data-section="faq" className="relative">
             <div className="section-y mx-auto max-w-[1400px] px-6 md:px-10">
