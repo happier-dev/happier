@@ -1,0 +1,89 @@
+---
+name: happier-docs
+description: Create, update, reorganize, or review Happier internal technical documentation and published user/operator/contributor docs with evidence-backed product truth, exact release status, canonical-page ownership, human voice, minimal editing, and appropriate validation. Use whenever a change affects `docs/**`, `apps/docs/**`, or behavior that may make existing Happier documentation incomplete or false.
+---
+
+# Happier Documentation
+
+Keep documentation truthful, useful, current, and owned without turning every code change into prose churn. Follow the root constitution and, for published docs, `apps/docs/AGENTS.md`. For an explicit deep review or QA request, use `skills/happier-review` as the orchestrator and apply this skill as the documentation-domain standard; this skill does not create a competing general review workflow.
+
+## 1. Classify the documentation impact
+
+For the changed behavior or contract, decide whether it affects:
+
+- internal technical/product architecture under `docs/**`;
+- published user/operator/self-hoster/contributor behavior under `apps/docs/content/docs/**`;
+- both surfaces;
+- neither surface, with a concrete reason.
+
+A refactor that leaves every documented contract unchanged may need no docs edit. A behavior, command, setting, support status, workflow, failure/recovery path, protocol, persistence shape, compatibility rule, deployment requirement, or canonical owner change normally does.
+
+## 2. Identify audience, page type, and canonical owner
+
+Classify published pages as task guide, concept, reference, troubleshooting, or development documentation. Internal docs explain architecture, contracts, ownership, and contributor-facing implementation constraints.
+
+Search by the feature, command, setting, route, schema, provider/agent id, UI label, error, and reader phrasing before creating a page. Update, move, consolidate, or retire the canonical page instead of adding a parallel explanation. Map links, navigation, related pages, examples, and translations or screenshots that depend on the changed documentation contract.
+
+## 3. Establish product truth and release basis
+
+Documentation is a claim, not proof. For Happier behavior:
+
+- inspect the reachable implementing producer and consumer, not only a matching string;
+- identify gates, defaults, platform/provider variation, failure/recovery behavior, and compatibility seams material to the claim;
+- establish the page's target stable, preview, development, or explicitly future basis from immutable release/artifact evidence when availability is release-sensitive;
+- distinguish shipped, preview, development-only, experimental, deprecated, planned, and merely possible behavior.
+
+README files, existing docs, changelogs, plans, issues, PR descriptions, commit messages, comments, and generated summaries are orientation. They do not independently prove that behavior is reachable or released.
+
+For vendor-owned behavior, use current official vendor documentation and keep attribution with the claim. Do not state a competitor's limitation as Happier's own conclusion. Never invent product names, capabilities, support levels, guarantees, dates, quotes, or personal experience. Cut unsupported superlatives and comparisons.
+
+Use `skills/happier-compatibility` when documentation claims depend on released/predecessor formats, mixed versions, upgrades, rollback, migrations, or persisted historical data.
+
+## 4. Choose the edit contract
+
+Use the narrowest mode that serves the reader:
+
+- **Patch:** add or correct bounded material and preserve every unaffected claim, example, link, caveat, and structural choice.
+- **Polish:** improve clarity and flow while preserving structure, information density, factual scope, and recognizable voice.
+- **Rewrite:** redesign structure or framing only when explicitly requested or when the current document cannot serve its audience.
+
+An approved or preferred version becomes the baseline for later edits. A high change count in a correction pass is a warning sign, not evidence of quality. Every correction is a new claim: verify it as carefully as the text it replaces and do not swap one unsupported absolute for its opposite.
+
+Before a substantial rewrite, inventory every material claim involving behavior, commands, settings, support, platforms, providers, compatibility, security, failure/recovery, readiness, and exact names. Account for each in the result. Humanizing is not summarizing.
+
+## 5. Draft for meaning and human voice
+
+Write like a thoughtful builder helping another developer: warm, direct, concrete, and technically honest.
+
+- Start with the reader's intent or outcome, not the implementation or a promotional hook.
+- For a substantial unfamiliar system, establish the mental model, normal path, important limits, and why the mechanism matters before cataloguing controls.
+- Lead with the user consequence, then include enough implementation detail to make the behavior trustworthy.
+- Keep commands, exact product terms, security boundaries, platform/provider differences, fallbacks, recovery, and readiness close to the claims they qualify.
+- Use topic headings that remain meaningful without the body and contain words readers recognize.
+- Avoid promotional fog, artificial urgency, generic importance, invented slogans, repetitive field-label bullets, and definition primarily by negation.
+- Preserve warmth, useful detail, and natural rhythm. Treat anti-slop patterns as diagnostic signals, not forbidden grammar.
+- Keep repository paths and implementation trivia out of user/operator prose unless the page is explicitly development-facing.
+- Never expose secrets, tokens, private URLs, internal-only evidence, or sensitive screenshots.
+
+## 6. Validate the documentation contract
+
+Run the narrowest checks that can falsify the edit:
+
+- inspect materially changed commands, links, examples, settings, defaults, and support statements;
+- run `yarn --cwd apps/docs types:check` for published MDX/schema/TypeScript/generated-content changes;
+- run `yarn --cwd apps/docs build` when routing, navigation, generation, rendering, or production build behavior can be affected;
+- use current non-sensitive screenshots only when they materially improve a UI-heavy workflow;
+- for substantial published UI instructions, use the risk-appropriate live product check when runnable and authorized.
+
+Do not add wording-policing tests. Validate parsing, generation, routing, links, commands, and factual behavior rather than exact prose.
+
+## 7. Handoff
+
+Report:
+
+- canonical pages created, updated, moved, consolidated, or intentionally left unchanged;
+- audience/page type and target release/channel basis;
+- implementing evidence for decision-material claims;
+- materially affected surfaces and related pages checked;
+- validation actually run and anything unavailable;
+- remaining stale, uncertain, or intentionally deferred documentation and the next action.
