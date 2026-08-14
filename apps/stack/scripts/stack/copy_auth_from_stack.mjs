@@ -56,7 +56,9 @@ export async function copyAuthFromStackIntoNewStack({
   const targetCli = stackEnv.HAPPIER_STACK_CLI_HOME_DIR;
   const sourceInternalServerUrl = `http://127.0.0.1:${resolveServerPortFromEnv({ env: sourceEnv, defaultPort: 3005 })}`;
   const targetInternalServerUrl = `http://127.0.0.1:${resolveServerPortFromEnv({ env: stackEnv, defaultPort: 3005 })}`;
-  const sourceEnvScoped = applyStackActiveServerScopeEnv({ env: sourceEnv, stackName: fromStackName, cliIdentity: 'default' });
+  const sourceScopeEnv = { ...process.env, ...sourceEnv };
+  delete sourceScopeEnv.HAPPIER_STACK_DISABLE_STABLE_SCOPE;
+  const sourceEnvScoped = applyStackActiveServerScopeEnv({ env: sourceScopeEnv, stackName: fromStackName, cliIdentity: 'default' });
   const targetEnvScoped = applyStackActiveServerScopeEnv({ env: stackEnv, stackName, cliIdentity: 'default' });
   const sourceCredentialPaths = resolveStackCredentialPaths({
     cliHomeDir: sourceCli,

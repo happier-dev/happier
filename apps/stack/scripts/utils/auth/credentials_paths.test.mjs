@@ -16,7 +16,7 @@ import {
 test('resolveStackCredentialPaths returns legacy + server-scoped paths', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'happy-stacks-cred-paths-'));
   const serverUrl = 'http://127.0.0.1:3009';
-  const out = resolveStackCredentialPaths({ cliHomeDir: dir, serverUrl });
+  const out = resolveStackCredentialPaths({ cliHomeDir: dir, serverUrl, env: {} });
   assert.equal(out.legacyPath, join(dir, 'access.key'));
   assert.ok(out.serverScopedPath.startsWith(join(dir, 'servers', 'env_')));
   assert.ok(out.serverScopedPath.endsWith('/access.key'));
@@ -38,7 +38,7 @@ test('resolveStackCredentialPaths hashes equivalent loopback server URLs to the 
 
 test('resolveStackCredentialPaths uses a neutral default server id when serverUrl is empty', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'happy-stacks-cred-paths-'));
-  const out = resolveStackCredentialPaths({ cliHomeDir: dir, serverUrl: '' });
+  const out = resolveStackCredentialPaths({ cliHomeDir: dir, serverUrl: '', env: {} });
   assert.equal(out.urlHashServerId, 'default');
   assert.equal(out.activeServerId, 'default');
   assert.ok(out.serverScopedPath.endsWith('/servers/default/access.key'));
@@ -116,7 +116,7 @@ test('resolveStackCredentialPaths uses HAPPIER_ACTIVE_SERVER_ID when provided', 
   assert.notEqual(out.serverScopedPath, out.urlHashServerScopedPath);
 });
 
-test('resolveStackCredentialPaths prefers the matching cli settings server id over a leaked stable scope alias', async () => {
+test('resolveStackCredentialPaths keeps the stable runtime scope and treats a matching settings profile as a credential source', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'happy-stacks-cred-paths-settings-'));
   const serverUrl = 'http://127.0.0.1:3009';
   const canonicalServerId = 'stack-dev-profile';
@@ -150,9 +150,10 @@ test('resolveStackCredentialPaths prefers the matching cli settings server id ov
     env: { HAPPIER_ACTIVE_SERVER_ID: 'stack_dev__id_default' },
   });
 
-  assert.equal(out.activeServerId, canonicalServerId);
-  assert.equal(out.serverScopedPath, join(dir, 'servers', canonicalServerId, 'access.key'));
-  assert.ok(out.paths.includes(join(dir, 'servers', 'stack_dev__id_default', 'access.key')));
+  assert.equal(out.activeServerId, 'stack_dev__id_default');
+  assert.equal(out.settingsServerId, canonicalServerId);
+  assert.equal(out.serverScopedPath, join(dir, 'servers', 'stack_dev__id_default', 'access.key'));
+  assert.ok(out.paths.includes(join(dir, 'servers', canonicalServerId, 'access.key')));
 });
 
 test('findExistingStackCredentialPath accepts the stable scope alias when settings select another matching profile', async () => {
@@ -186,8 +187,8 @@ test('findExistingStackCredentialPath accepts the stable scope alias when settin
   await mkdir(join(dir, 'servers', stableServerId), { recursive: true });
   await writeFile(stableCredentialPath, 'stable-stack-credential\n', 'utf-8');
 
-  assert.equal(out.serverScopedPath, join(dir, 'servers', settingsServerId, 'access.key'));
-  assert.ok(out.aliasServerScopedPaths.includes(stableCredentialPath));
+  assert.equal(out.serverScopedPath, stableCredentialPath);
+  assert.ok(out.aliasServerScopedPaths.includes(join(dir, 'servers', settingsServerId, 'access.key')));
   assert.equal(
     findExistingStackCredentialPath({ cliHomeDir: dir, serverUrl, env }),
     stableCredentialPath,
@@ -342,7 +343,7 @@ test('findExistingStackCredentialPath falls back to url-hash path when stable sc
 test('resolveStackDaemonStatePaths returns legacy + server-scoped state and lock paths', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'happy-stacks-daemon-paths-'));
   const serverUrl = 'http://127.0.0.1:3009';
-  const out = resolveStackDaemonStatePaths({ cliHomeDir: dir, serverUrl });
+  const out = resolveStackDaemonStatePaths({ cliHomeDir: dir, serverUrl, env: {} });
 
   assert.equal(out.legacyStatePath, join(dir, 'daemon.state.json'));
   assert.equal(out.legacyLockPath, join(dir, 'daemon.state.json.lock'));
@@ -408,7 +409,7 @@ test('resolvePreferredStackDaemonStatePaths falls back to any existing server-sc
   await new Promise((resolve) => setTimeout(resolve, 15));
   await writeFile(join(serverDir, 'daemon.state.json'), '{"pid":3}\n', 'utf-8');
 
-  const preferred = resolvePreferredStackDaemonStatePaths({ cliHomeDir: dir, serverUrl: '' });
+  const preferred = resolvePreferredStackDaemonStatePaths({ cliHomeDir: dir, serverUrl: '', env: {} });
   assert.equal(preferred.statePath, join(serverDir, 'daemon.state.json'));
   assert.equal(preferred.lockPath, join(serverDir, 'daemon.state.json.lock'));
 });

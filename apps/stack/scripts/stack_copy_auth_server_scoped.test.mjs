@@ -112,6 +112,7 @@ test('hstack stack new copy-auth prefers source server-scoped credentials over u
   const sandboxDir = join(tmp, 'sandbox');
   const sourceStack = 'seed-auth';
   const targetStack = 'exp-copy-auth';
+  const sourceLifecycleScopeId = 'stack_source-copy__id_default';
   const serverPort = await pickNextFreeTcpPort(4101, { host: '127.0.0.1' });
   const serverUrl = `http://127.0.0.1:${serverPort}`;
 
@@ -129,11 +130,18 @@ test('hstack stack new copy-auth prefers source server-scoped credentials over u
   const sourceCred = resolveStackCredentialPaths({
     cliHomeDir: sourceCliHome,
     serverUrl,
-    env: { ...process.env, HAPPIER_ACTIVE_SERVER_ID: '' },
+    env: {
+      ...process.env,
+      HAPPIER_ACTIVE_SERVER_ID: '',
+      HAPPIER_DAEMON_LIFECYCLE_SCOPE_ID: sourceLifecycleScopeId,
+    },
   });
   await mkdir(dirname(sourceCred.serverScopedPath), { recursive: true });
   await writeFile(join(sourceCliHome, 'access.key'), 'legacy-wrong\n', 'utf-8');
   await writeFile(sourceCred.serverScopedPath, 'server-scoped-correct\n', 'utf-8');
+  const unrelatedScopedPath = join(sourceCliHome, 'servers', 'stack_unrelated__id_default', 'access.key');
+  await mkdir(dirname(unrelatedScopedPath), { recursive: true });
+  await writeFile(unrelatedScopedPath, 'unrelated-server-credential\n', 'utf-8');
   await writeFile(join(sourceCliHome, 'settings.json'), JSON.stringify({ machineId: 'seed-machine' }) + '\n', 'utf-8');
   await writeFile(
     join(storageDir, sourceStack, 'env'),
@@ -152,6 +160,7 @@ test('hstack stack new copy-auth prefers source server-scoped credentials over u
     HAPPIER_STACK_WORKSPACE_DIR: workspaceDir,
     HAPPIER_STACK_STORAGE_DIR: storageDir,
     HAPPIER_STACK_SANDBOX_DIR: sandboxDir,
+    HAPPIER_DAEMON_LIFECYCLE_SCOPE_ID: sourceLifecycleScopeId,
   };
 
   const res = await runNode(
