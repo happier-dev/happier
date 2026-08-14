@@ -2,7 +2,7 @@ import { z } from 'zod';
 import tweetnacl from 'tweetnacl';
 
 import { decodeBase64 } from '../../../../crypto/base64.js';
-import { createCanonicalJsonSigningInput } from '../directRouteGrantV1.js';
+import { createCanonicalJsonSigningInput } from '../../../../crypto/canonicalJson.js';
 import { VoiceMediaApplicationKindV1Schema } from '../voiceMediaV1.js';
 
 export const PEER_TCP_TUNNEL_RELAY_AUTHORIZATION_AUDIENCE_V1 =

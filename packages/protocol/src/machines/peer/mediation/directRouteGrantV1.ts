@@ -3,6 +3,9 @@ import { z } from 'zod';
 import { DirectRouteGrantScopeV1Schema } from './directRouteGrantScopesV1.js';
 import { PeerFlowKindV1Schema } from './flowKind.js';
 import { DirectPeerRouteKindV1Schema } from './routeKind.js';
+import { createCanonicalJsonSigningInput } from '../../../crypto/canonicalJson.js';
+
+export { createCanonicalJsonSigningInput } from '../../../crypto/canonicalJson.js';
 
 const Base64UrlSchema = z.string().regex(/^[A-Za-z0-9_-]+$/);
 
@@ -54,23 +57,6 @@ export const SignedDirectRouteGrantV1Schema = z.object({
 export type DirectRouteGrantPayloadV1 = z.infer<typeof DirectRouteGrantPayloadV1Schema>;
 export type DirectRouteGrantSignatureV1 = z.infer<typeof DirectRouteGrantSignatureV1Schema>;
 export type SignedDirectRouteGrantV1 = z.infer<typeof SignedDirectRouteGrantV1Schema>;
-
-function canonicalize(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(canonicalize);
-  if (value && typeof value === 'object') {
-    const record = value as Record<string, unknown>;
-    const entries = Object.keys(record)
-      .filter((key) => record[key] !== undefined)
-      .sort()
-      .map((key) => [key, canonicalize(record[key])] as const);
-    return Object.fromEntries(entries);
-  }
-  return value;
-}
-
-export function createCanonicalJsonSigningInput(value: unknown): string {
-  return JSON.stringify(canonicalize(value));
-}
 
 export function createDirectRouteGrantSigningInputV1(payload: DirectRouteGrantPayloadV1): string {
   return createCanonicalJsonSigningInput(DirectRouteGrantPayloadV1Schema.parse(payload));

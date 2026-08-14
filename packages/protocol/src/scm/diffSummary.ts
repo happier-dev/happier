@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { ScmBackendPreferenceSchema } from './index.js';
+import { ScmBackendPreferenceSchema } from './backendIdentity.js';
 
 export const ScmDiffSummarySourceKindSchema = z.enum([
   'turnCheckpoint',

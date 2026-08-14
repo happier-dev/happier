@@ -2,7 +2,7 @@ import { sha256 } from '@noble/hashes/sha2';
 import { z } from 'zod';
 
 import { decodeBase64, encodeBase64 } from '../../../crypto/base64.js';
-import { createCanonicalJsonSigningInput } from './directRouteGrantV1.js';
+import { createCanonicalJsonSigningInput } from '../../../crypto/canonicalJson.js';
 import { VoiceMediaApplicationKindV1Schema } from './voiceMediaV1.js';
 
 export const PEER_APPLICATION_ENCRYPTION_VERSION_V1 = 1 as const;

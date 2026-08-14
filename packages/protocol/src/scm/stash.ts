@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
-import { ScmOperationErrorCodeSchema, ScmRequestBaseSchema } from './index.js';
+import { ScmOperationErrorCodeSchema } from './operationError.js';
+import { ScmRequestBaseSchema } from './requestBase.js';
 
 export const ScmStashKindSchema = z.enum(['branch', 'transient', 'unmanaged']);
 export type ScmStashKind = z.infer<typeof ScmStashKindSchema>;

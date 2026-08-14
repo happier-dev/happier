@@ -3,7 +3,7 @@ import { z } from 'zod';
 import {
   ScmChangeSetModelSchema,
   ScmDiffAreaSchema,
-} from './index.js';
+} from './workingSnapshot.js';
 import {
   ProviderRefreshPolicySchema,
   VcsLocalStateFreshnessSchema,

@@ -1,9 +1,5 @@
 import { z } from 'zod';
 import {
-  ScmHostingProviderRefSchema,
-  ScmPullRequestStatusProjectionSchema,
-} from './pullRequests.js';
-import {
   ProviderRefreshPolicySchema,
   VcsLocalStateFreshnessSchema,
 } from './freshness.js';
@@ -12,6 +8,32 @@ import {
   ScmBackendIdSchema,
   ScmBackendPreferenceSchema,
 } from './backendIdentity.js';
+import {
+  SCM_OPERATION_ERROR_CODES,
+  ScmOperationErrorCodeSchema,
+  type ScmOperationErrorCode,
+} from './operationError.js';
+import { ScmRequestBaseSchema } from './requestBase.js';
+import {
+  ScmBranchSourceRefSchema,
+  ScmRemoteManagementNameSchema,
+  ScmRemoteUrlSchema,
+} from './remoteNormalization.js';
+import { ScmRemoteResponseSchema } from './remoteResponse.js';
+import {
+  ScmBranchIntegrationOperationSchema,
+  ScmCapabilitiesSchema,
+  ScmChangeSetModelSchema,
+  ScmDefaultBranchPushPolicySchema,
+  ScmDiffAreaSchema,
+  ScmEntryKindSchema,
+  ScmOperationStateSchema,
+  ScmRepoModeSchema,
+  ScmRemoteInfoSchema,
+  ScmWorkingEntrySchema,
+  ScmWorkingSnapshotSchema,
+  type ScmWorkingSnapshot,
+} from './workingSnapshot.js';
 
 export {
   ScmSelectedMutationPathSchema,
@@ -25,248 +47,77 @@ export {
   type ScmBackendPreference,
   type ScmBuiltInBackendId,
 } from './backendIdentity.js';
+export {
+  ProviderRefreshPolicySchema,
+  type ProviderRefreshPolicy,
+} from './freshness.js';
+export {
+  SourceControlCloneProtocolSchema,
+  type SourceControlCloneProtocol,
+} from './cloneProtocol.js';
+export {
+  SCM_OPERATION_ERROR_CODES,
+  ScmOperationErrorCodeSchema,
+  type ScmOperationErrorCode,
+} from './operationError.js';
+export {
+  ScmRequestBaseSchema,
+  type ScmRequestBase,
+} from './requestBase.js';
+export {
+  ScmBranchSourceRefSchema,
+  ScmOptionalBranchSourceRefSchema,
+  ScmOptionalRemoteManagementNameSchema,
+  ScmOptionalRemoteNameSchema,
+  ScmRemoteNameSchema,
+  ScmRemoteUrlSchema,
+  normalizeScmBranchSourceRef,
+  normalizeScmRemoteName,
+  normalizeScmRemoteRequest,
+  normalizeScmRemoteUrl,
+  type ScmBranchSourceRef,
+  type ScmBranchSourceRefNormalizationResult,
+  type ScmOptionalBranchSourceRef,
+  type ScmOptionalRemoteName,
+  type ScmRemoteName,
+  type ScmRemoteNameNormalizationResult,
+  type ScmRemoteRequestNormalizationResult,
+  type ScmRemoteUrl,
+  type ScmRemoteUrlNormalizationResult,
+} from './remoteNormalization.js';
+export {
+  ScmRemoteResponseSchema,
+  type ScmRemoteResponse,
+} from './remoteResponse.js';
+export * from './workingSnapshot.js';
+export {
+  createScmCapabilities,
+  createScmCapabilitiesFromBackendCapabilities,
+} from './capabilities.js';
+export {
+  ScmBackendCapabilitiesSchema,
+  supportedCapability,
+  unsupportedCapability,
+  type ScmBackendCapabilities,
+  type ScmBackendCapabilityLeaf,
+  type ScmBackendCapabilityUnavailableReason,
+} from './backendCapabilities.js';
+export { resolveScmScopedChangedPaths } from './pathScope.js';
+export {
+  ScmHostingProviderKindSchema,
+  resolveScmHostingProviderFollowupAllowedBaseUrl,
+  type ScmHostingProviderKind,
+  type ScmHostingProviderRef,
+} from './pullRequests.js';
+export { SCM_WORKTREE_REMOVE_AUTHORIZATION_TOKEN } from './worktrees.js';
+export {
+  ScmBackendContributionSchema,
+  type ScmBackendContribution,
+} from '../plugins/contributions/scmBackends.js';
 
 export const SCM_COMMIT_MESSAGE_MAX_LENGTH = 4096;
 export const SCM_COMMIT_PATCH_MAX_COUNT = 256;
 export const SCM_COMMIT_PATCH_MAX_LENGTH = 200_000;
-
-export const SCM_OPERATION_ERROR_CODES = {
-  NOT_REPOSITORY: 'NOT_REPOSITORY',
-  INVALID_PATH: 'INVALID_PATH',
-  INVALID_REQUEST: 'INVALID_REQUEST',
-  COMMAND_FAILED: 'COMMAND_FAILED',
-  CHANGE_APPLY_FAILED: 'CHANGE_APPLY_FAILED',
-  COMMIT_REQUIRED: 'COMMIT_REQUIRED',
-  CONFLICTING_WORKTREE: 'CONFLICTING_WORKTREE',
-  REMOTE_AUTH_REQUIRED: 'REMOTE_AUTH_REQUIRED',
-  REMOTE_UPSTREAM_REQUIRED: 'REMOTE_UPSTREAM_REQUIRED',
-  REMOTE_NON_FAST_FORWARD: 'REMOTE_NON_FAST_FORWARD',
-  REMOTE_FF_ONLY_REQUIRED: 'REMOTE_FF_ONLY_REQUIRED',
-  REMOTE_REJECTED: 'REMOTE_REJECTED',
-  REMOTE_NOT_FOUND: 'REMOTE_NOT_FOUND',
-  REMOTE_ALREADY_EXISTS: 'REMOTE_ALREADY_EXISTS',
-  BRANCH_OPERATION_IN_PROGRESS: 'BRANCH_OPERATION_IN_PROGRESS',
-  BRANCH_OPERATION_NOT_IN_PROGRESS: 'BRANCH_OPERATION_NOT_IN_PROGRESS',
-  FEATURE_UNSUPPORTED: 'FEATURE_UNSUPPORTED',
-  BACKEND_UNAVAILABLE: 'BACKEND_UNAVAILABLE',
-} as const;
-
-export type ScmOperationErrorCode =
-  (typeof SCM_OPERATION_ERROR_CODES)[keyof typeof SCM_OPERATION_ERROR_CODES];
-
-export const ScmOperationErrorCodeSchema = z.enum([
-  SCM_OPERATION_ERROR_CODES.NOT_REPOSITORY,
-  SCM_OPERATION_ERROR_CODES.INVALID_PATH,
-  SCM_OPERATION_ERROR_CODES.INVALID_REQUEST,
-  SCM_OPERATION_ERROR_CODES.COMMAND_FAILED,
-  SCM_OPERATION_ERROR_CODES.CHANGE_APPLY_FAILED,
-  SCM_OPERATION_ERROR_CODES.COMMIT_REQUIRED,
-  SCM_OPERATION_ERROR_CODES.CONFLICTING_WORKTREE,
-  SCM_OPERATION_ERROR_CODES.REMOTE_AUTH_REQUIRED,
-  SCM_OPERATION_ERROR_CODES.REMOTE_UPSTREAM_REQUIRED,
-  SCM_OPERATION_ERROR_CODES.REMOTE_NON_FAST_FORWARD,
-  SCM_OPERATION_ERROR_CODES.REMOTE_FF_ONLY_REQUIRED,
-  SCM_OPERATION_ERROR_CODES.REMOTE_REJECTED,
-  SCM_OPERATION_ERROR_CODES.REMOTE_NOT_FOUND,
-  SCM_OPERATION_ERROR_CODES.REMOTE_ALREADY_EXISTS,
-  SCM_OPERATION_ERROR_CODES.BRANCH_OPERATION_IN_PROGRESS,
-  SCM_OPERATION_ERROR_CODES.BRANCH_OPERATION_NOT_IN_PROGRESS,
-  SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED,
-  SCM_OPERATION_ERROR_CODES.BACKEND_UNAVAILABLE,
-]);
-
-export const ScmRepoModeSchema = z.enum(['.git', '.sl']);
-export type ScmRepoMode = z.infer<typeof ScmRepoModeSchema>;
-
-export const ScmDiffAreaSchema = z.enum(['included', 'pending', 'both']);
-export type ScmDiffArea = z.infer<typeof ScmDiffAreaSchema>;
-
-export const ScmChangeSetModelSchema = z.enum(['index', 'working-copy']);
-export type ScmChangeSetModel = z.infer<typeof ScmChangeSetModelSchema>;
-
-export const ScmBranchIntegrationOperationSchema = z.enum(['merge', 'rebase']);
-export type ScmBranchIntegrationOperation = z.infer<typeof ScmBranchIntegrationOperationSchema>;
-
-export const ScmDefaultBranchPushPolicySchema = z.enum([
-  'allow',
-  'requires-feature-branch',
-  'deny',
-]);
-export type ScmDefaultBranchPushPolicy = z.infer<typeof ScmDefaultBranchPushPolicySchema>;
-
-const ScmCapabilitiesSchemaCore = z.object({
-  capabilityScope: z.literal('local-backend').default('local-backend'),
-  readStatus: z.boolean(),
-  readDiffFile: z.boolean(),
-  readDiffCommit: z.boolean(),
-  readLog: z.boolean(),
-  readBranches: z.boolean().optional(),
-  readStash: z.boolean().optional(),
-  writeInclude: z.boolean(),
-  writeExclude: z.boolean(),
-  writeDiscard: z.boolean().optional(),
-  writeCommit: z.boolean(),
-  writeCommitPathSelection: z.boolean(),
-  writeCommitLineSelection: z.boolean(),
-  writeBackout: z.boolean(),
-  writeBranchCreate: z.boolean().optional(),
-  writeBranchCheckout: z.boolean().optional(),
-  writeBranchMerge: z.boolean().optional(),
-  writeBranchRebase: z.boolean().optional(),
-  writeBranchOperationControl: z.boolean().optional(),
-  writeRemoteAdd: z.boolean().optional(),
-  writeRemoteSetUrl: z.boolean().optional(),
-  writeRemoteRemove: z.boolean().optional(),
-  writeRemoteFetch: z.boolean(),
-  writeRemotePull: z.boolean(),
-  writeRemotePush: z.boolean(),
-  writeRemotePublish: z.boolean().optional(),
-  readHostingProvider: z.boolean().optional(),
-  readPullRequestStatus: z.boolean().optional(),
-  writePullRequestCreate: z.boolean().optional(),
-  writePullRequestCheckout: z.boolean().optional(),
-  writePullRequestPrepareWorktree: z.boolean().optional(),
-  writePullRequestRunStacked: z.boolean().optional(),
-  defaultBranchPushPolicy: ScmDefaultBranchPushPolicySchema.optional(),
-  writeRepositoryInit: z.boolean().optional(),
-  readHostingRepositoryPublishTargets: z.boolean().optional(),
-  writeHostingRepositoryPublish: z.boolean().optional(),
-  writeRepositoryRemoveIndexLock: z.boolean().optional(),
-  writeStash: z.boolean().optional(),
-  worktreeCreate: z.boolean(),
-  changeSetModel: ScmChangeSetModelSchema,
-  supportedDiffAreas: z.array(ScmDiffAreaSchema).min(1),
-  operationLabels: z
-    .object({
-      commit: z.string().optional(),
-      include: z.string().optional(),
-      exclude: z.string().optional(),
-      backout: z.string().optional(),
-      fetch: z.string().optional(),
-      pull: z.string().optional(),
-      push: z.string().optional(),
-    })
-    .optional(),
-});
-export const ScmCapabilitiesSchema = z.preprocess((value) => {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    return value;
-  }
-  const record = value as Record<string, unknown>;
-  if (record.worktreeCreate !== undefined || record.workspaceWorktreeCreate === undefined) {
-    return value;
-  }
-  return {
-    ...record,
-    worktreeCreate: record.workspaceWorktreeCreate,
-  };
-}, ScmCapabilitiesSchemaCore);
-export type ScmCapabilities = z.infer<typeof ScmCapabilitiesSchema>;
-
-export const ScmEntryKindSchema = z.enum([
-  'modified',
-  'added',
-  'deleted',
-  'renamed',
-  'copied',
-  'untracked',
-  'conflicted',
-]);
-export type ScmEntryKind = z.infer<typeof ScmEntryKindSchema>;
-
-export const ScmPathStatsSchema = z.object({
-  includedAdded: z.number().int().nonnegative(),
-  includedRemoved: z.number().int().nonnegative(),
-  pendingAdded: z.number().int().nonnegative(),
-  pendingRemoved: z.number().int().nonnegative(),
-  isBinary: z.boolean(),
-});
-export type ScmPathStats = z.infer<typeof ScmPathStatsSchema>;
-
-export const ScmWorkingEntrySchema = z.object({
-  path: z.string(),
-  previousPath: z.string().nullable(),
-  kind: ScmEntryKindSchema,
-  includeStatus: z.string(),
-  pendingStatus: z.string(),
-  hasIncludedDelta: z.boolean(),
-  hasPendingDelta: z.boolean(),
-  stats: ScmPathStatsSchema,
-});
-export type ScmWorkingEntry = z.infer<typeof ScmWorkingEntrySchema>;
-
-export const ScmWorktreeSchema = z.object({
-  id: z.string().min(1).optional(),
-  path: z.string(),
-  branch: z.string().nullable(),
-  isCurrent: z.boolean(),
-  isMain: z.boolean().optional(),
-  isPrunable: z.boolean().optional(),
-  changeCount: z.number().int().nonnegative().optional(),
-  lastActivityAt: z.number().int().nonnegative().optional(),
-});
-export type ScmWorktree = z.infer<typeof ScmWorktreeSchema>;
-
-export const ScmRemoteInfoSchema = z.object({
-  name: z.string().min(1),
-  fetchUrl: z.string().optional(),
-  pushUrl: z.string().optional(),
-});
-export type ScmRemoteInfo = z.infer<typeof ScmRemoteInfoSchema>;
-
-export const ScmOperationStateSchema = z.object({
-  kind: ScmBranchIntegrationOperationSchema,
-  sourceRef: z.string().nullable().optional(),
-  canContinue: z.boolean(),
-  canAbort: z.boolean(),
-});
-export type ScmOperationState = z.infer<typeof ScmOperationStateSchema>;
-
-export const ScmWorkingSnapshotSchema = z.object({
-  projectKey: z.string(),
-  fetchedAt: z.number().int(),
-  freshness: VcsLocalStateFreshnessSchema.optional(),
-  refreshPolicy: ProviderRefreshPolicySchema.optional(),
-  repo: z.object({
-    isRepo: z.boolean(),
-    rootPath: z.string().nullable(),
-    backendId: ScmBackendIdSchema.nullable(),
-    mode: ScmRepoModeSchema.nullable(),
-    defaultBranch: z.string().min(1).nullable().optional(),
-    worktrees: z.array(ScmWorktreeSchema).default([]),
-    remotes: z.array(ScmRemoteInfoSchema).default([]),
-  }),
-  capabilities: ScmCapabilitiesSchema,
-  branch: z.object({
-    head: z.string().nullable(),
-    upstream: z.string().nullable(),
-    ahead: z.number().int().nonnegative(),
-    behind: z.number().int().nonnegative(),
-    detached: z.boolean(),
-  }),
-  stashCount: z.number().int().nonnegative().optional(),
-  operationState: ScmOperationStateSchema.nullable().optional(),
-  hostingProvider: ScmHostingProviderRefSchema.nullable().optional(),
-  pullRequestStatus: ScmPullRequestStatusProjectionSchema.nullable().optional(),
-  hasConflicts: z.boolean(),
-  entries: z.array(ScmWorkingEntrySchema),
-  totals: z.object({
-    includedFiles: z.number().int().nonnegative(),
-    pendingFiles: z.number().int().nonnegative(),
-    untrackedFiles: z.number().int().nonnegative(),
-    includedAdded: z.number().int().nonnegative(),
-    includedRemoved: z.number().int().nonnegative(),
-    pendingAdded: z.number().int().nonnegative(),
-    pendingRemoved: z.number().int().nonnegative(),
-  }),
-});
-export type ScmWorkingSnapshot = z.infer<typeof ScmWorkingSnapshotSchema>;
-
-export const ScmRequestBaseSchema = z.object({
-  cwd: z.string().optional(),
-  backendPreference: ScmBackendPreferenceSchema.optional(),
-});
-export type ScmRequestBase = z.infer<typeof ScmRequestBaseSchema>;
 
 export const ScmBackendDescribeRequestSchema = ScmRequestBaseSchema;
 export type ScmBackendDescribeRequest = z.infer<typeof ScmBackendDescribeRequestSchema>;
@@ -541,15 +392,6 @@ export const ScmRemoteRequestSchema = ScmRequestBaseSchema.extend({
 });
 export type ScmRemoteRequest = z.infer<typeof ScmRemoteRequestSchema>;
 
-export const ScmRemoteResponseSchema = z.object({
-  success: z.boolean(),
-  stdout: z.string().optional(),
-  stderr: z.string().optional(),
-  error: z.string().optional(),
-  errorCode: ScmOperationErrorCodeSchema.optional(),
-});
-export type ScmRemoteResponse = z.infer<typeof ScmRemoteResponseSchema>;
-
 export type ScmRemoteTarget = {
   remote: string;
   branch: string | null;
@@ -607,226 +449,6 @@ export type ScmRemoteMutationPolicy = {
 export type ScmRemoteMutationResult =
   | { ok: true }
   | { ok: false; reason: ScmRemoteMutationReason };
-
-export type ScmRemoteRequestNormalizationResult =
-  | { ok: true; request: { remote: string | undefined; branch: string | undefined } }
-  | { ok: false; error: string };
-
-export type ScmRemoteNameNormalizationResult =
-  | { ok: true; name: string }
-  | { ok: false; error: string };
-
-export type ScmRemoteUrlNormalizationResult =
-  | { ok: true; url: string }
-  | { ok: false; error: string };
-
-export type ScmBranchSourceRefNormalizationResult =
-  | { ok: true; sourceRef: string }
-  | { ok: false; error: string };
-
-const CONTROL_CHAR_REGEX = /[\u0000-\u001F\u007F]/;
-
-function hasUnsupportedRemoteRefSyntax(
-  value: string,
-  label: 'Remote name' | 'Branch name',
-  options?: { allowRemoteNameSlash?: boolean }
-): boolean {
-  if (CONTROL_CHAR_REGEX.test(value)) return true;
-  if (value.includes('\\')) return true;
-  if (value.includes('//')) return true;
-  if (value.startsWith('/') || value.endsWith('/')) return true;
-  if (value.includes('@{') || value.includes('..')) return true;
-
-  if (label === 'Remote name') {
-    return value.includes(':') || (!options?.allowRemoteNameSlash && value.includes('/'));
-  }
-
-  return (
-    value.startsWith('+') ||
-    value.startsWith('.') ||
-    value.endsWith('.') ||
-    value.endsWith('.lock') ||
-    value.includes(':') ||
-    value.includes('^') ||
-    value.includes('~') ||
-    value.includes('?') ||
-    value.includes('*') ||
-    value.includes('[')
-  );
-}
-
-function normalizeRemoteRefValue(
-  value: string | undefined,
-  label: 'Remote name' | 'Branch name',
-  options?: { allowRemoteNameSlash?: boolean }
-): { ok: true; value: string | undefined } | { ok: false; error: string } {
-  if (value === undefined) {
-    return { ok: true, value: undefined };
-  }
-  const normalized = value.trim();
-  if (!normalized) {
-    return { ok: true, value: undefined };
-  }
-  if (normalized.startsWith('-')) {
-    return { ok: false, error: `${label} cannot start with "-"` };
-  }
-  if (/\s/.test(normalized)) {
-    return { ok: false, error: `${label} must not contain whitespace` };
-  }
-  if (normalized.includes('\0')) {
-    return { ok: false, error: `${label} contains unsupported characters` };
-  }
-  if (hasUnsupportedRemoteRefSyntax(normalized, label, options)) {
-    return { ok: false, error: `${label} contains unsupported syntax` };
-  }
-  return { ok: true, value: normalized };
-}
-
-function normalizeRequiredRemoteRefValue(
-  value: string | undefined,
-  label: 'Remote name' | 'Branch name'
-): { ok: true; value: string } | { ok: false; error: string } {
-  const normalized = normalizeRemoteRefValue(value, label);
-  if (!normalized.ok) {
-    return normalized;
-  }
-  if (!normalized.value) {
-    return { ok: false, error: `${label} is required` };
-  }
-  return { ok: true, value: normalized.value };
-}
-
-export function normalizeScmRemoteName(
-  value: string | undefined,
-  options: { allowSlash?: boolean } = {}
-): ScmRemoteNameNormalizationResult {
-  const normalized = normalizeRemoteRefValue(value, 'Remote name', {
-    allowRemoteNameSlash: options.allowSlash ?? true,
-  });
-  if (!normalized.ok) {
-    return normalized;
-  }
-  if (!normalized.value) {
-    return { ok: false, error: 'Remote name is required' };
-  }
-  return { ok: true, name: normalized.value };
-}
-
-export function normalizeScmRemoteUrl(
-  value: string | undefined,
-  label = 'Remote URL'
-): ScmRemoteUrlNormalizationResult {
-  const normalized = typeof value === 'string' ? value.trim() : '';
-  if (!normalized) {
-    return { ok: false, error: `${label} is required` };
-  }
-  if (normalized.startsWith('-')) {
-    return { ok: false, error: `${label} cannot start with "-"` };
-  }
-  if (CONTROL_CHAR_REGEX.test(normalized)) {
-    return { ok: false, error: `${label} contains unsupported characters` };
-  }
-  return { ok: true, url: normalized };
-}
-
-export function normalizeScmBranchSourceRef(value: string | undefined): ScmBranchSourceRefNormalizationResult {
-  const normalized = normalizeRequiredRemoteRefValue(value, 'Branch name');
-  if (!normalized.ok) {
-    return { ok: false, error: normalized.error.replace(/^Branch name/, 'Source ref') };
-  }
-  return { ok: true, sourceRef: normalized.value };
-}
-
-function createNormalizedStringSchema<TValue extends string>(
-  normalize: (value: string | undefined) => { ok: true; value: TValue } | { ok: false; error: string }
-) {
-  return z.string().transform((value, ctx) => {
-    const result = normalize(value);
-    if (!result.ok) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: result.error,
-      });
-      return z.NEVER;
-    }
-    return result.value;
-  });
-}
-
-export const ScmRemoteNameSchema = createNormalizedStringSchema((value) => {
-  const normalized = normalizeScmRemoteName(value);
-  return normalized.ok
-    ? { ok: true, value: normalized.name }
-    : normalized;
-});
-export type ScmRemoteName = z.infer<typeof ScmRemoteNameSchema>;
-
-export const ScmOptionalRemoteNameSchema = z.preprocess((value) => {
-  if (typeof value !== 'string') {
-    return value;
-  }
-  return value.trim() ? value : undefined;
-}, ScmRemoteNameSchema.optional());
-export type ScmOptionalRemoteName = z.infer<typeof ScmOptionalRemoteNameSchema>;
-
-const ScmRemoteManagementNameSchema = createNormalizedStringSchema((value) => {
-  const normalized = normalizeScmRemoteName(value, { allowSlash: false });
-  return normalized.ok
-    ? { ok: true, value: normalized.name }
-    : normalized;
-});
-export const ScmOptionalRemoteManagementNameSchema = z.preprocess((value) => {
-  if (typeof value !== 'string') {
-    return value;
-  }
-  return value.trim() ? value : undefined;
-}, ScmRemoteManagementNameSchema.optional());
-
-export const ScmRemoteUrlSchema = createNormalizedStringSchema((value) => {
-  const normalized = normalizeScmRemoteUrl(value);
-  return normalized.ok
-    ? { ok: true, value: normalized.url }
-    : normalized;
-});
-export type ScmRemoteUrl = z.infer<typeof ScmRemoteUrlSchema>;
-
-export const ScmBranchSourceRefSchema = createNormalizedStringSchema((value) => {
-  const normalized = normalizeScmBranchSourceRef(value);
-  return normalized.ok
-    ? { ok: true, value: normalized.sourceRef }
-    : normalized;
-});
-export type ScmBranchSourceRef = z.infer<typeof ScmBranchSourceRefSchema>;
-
-export const ScmOptionalBranchSourceRefSchema = z.preprocess((value) => {
-  if (typeof value !== 'string') {
-    return value;
-  }
-  return value.trim() ? value : undefined;
-}, ScmBranchSourceRefSchema.optional());
-export type ScmOptionalBranchSourceRef = z.infer<typeof ScmOptionalBranchSourceRefSchema>;
-
-export function normalizeScmRemoteRequest(
-  request: Readonly<Pick<ScmRemoteRequest, 'remote' | 'branch'>>
-): ScmRemoteRequestNormalizationResult {
-  const remote = normalizeRemoteRefValue(request.remote, 'Remote name', {
-    allowRemoteNameSlash: true,
-  });
-  if (!remote.ok) {
-    return remote;
-  }
-  const branch = normalizeRemoteRefValue(request.branch, 'Branch name');
-  if (!branch.ok) {
-    return branch;
-  }
-  return {
-    ok: true,
-    request: {
-      remote: remote.value,
-      branch: branch.value,
-    },
-  };
-}
 
 export const ScmRemoteAddRequestSchema = ScmRequestBaseSchema.extend({
   name: ScmRemoteManagementNameSchema,

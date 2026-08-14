@@ -2,7 +2,7 @@ import { sha256 } from '@noble/hashes/sha2';
 import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils';
 import { z } from 'zod';
 
-import { createCanonicalJsonSigningInput } from '../directRouteGrantV1.js';
+import { createCanonicalJsonSigningInput } from '../../../../crypto/canonicalJson.js';
 
 export const PeerMachineRpcCommandReceiptIssuerV1Schema = z.enum(['ui', 'daemon']);
 

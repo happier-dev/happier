@@ -1,12 +1,14 @@
 import { z } from 'zod';
 
 import {
-  ScmOperationErrorCodeSchema,
   ScmOptionalRemoteManagementNameSchema,
+} from './remoteNormalization.js';
+import {
   ScmRemoteInfoSchema,
-  ScmRequestBaseSchema,
   ScmWorkingSnapshotSchema,
-} from './index.js';
+} from './workingSnapshot.js';
+import { ScmOperationErrorCodeSchema } from './operationError.js';
+import { ScmRequestBaseSchema } from './requestBase.js';
 import {
   ScmHostingProviderKindSchema,
   ScmHostingProviderRefSchema,

@@ -1,10 +1,10 @@
 import { z } from 'zod';
 
 import {
-  ScmOperationErrorCodeSchema,
   ScmRemoteResponseSchema,
-  ScmRequestBaseSchema,
-} from './index.js';
+} from './remoteResponse.js';
+import { ScmOperationErrorCodeSchema } from './operationError.js';
+import { ScmRequestBaseSchema } from './requestBase.js';
 
 export const ScmBranchTypeSchema = z.enum(['local', 'remote']);
 export type ScmBranchType = z.infer<typeof ScmBranchTypeSchema>;
@@ -75,4 +75,3 @@ export type ScmRemotePublishRequest = z.infer<typeof ScmRemotePublishRequestSche
 
 export const ScmRemotePublishResponseSchema = ScmRemoteResponseSchema;
 export type ScmRemotePublishResponse = z.infer<typeof ScmRemotePublishResponseSchema>;
-

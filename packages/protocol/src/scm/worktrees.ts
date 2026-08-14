@@ -2,8 +2,8 @@ import { z } from 'zod';
 
 import {
   ScmOperationErrorCodeSchema,
-  ScmRequestBaseSchema,
-} from './index.js';
+} from './operationError.js';
+import { ScmRequestBaseSchema } from './requestBase.js';
 
 export const SCM_WORKTREE_REMOVE_AUTHORIZATION_TOKEN = 'remove-worktree' as const;
 

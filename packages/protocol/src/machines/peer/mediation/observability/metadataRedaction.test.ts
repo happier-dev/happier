@@ -1,3 +1,4 @@
+import { readFile } from 'node:fs/promises';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -49,7 +50,16 @@ describe('peer mediation observability shared redactor (DUP-3 single owner)', ()
     const a = redactedPeerMediationObservabilityReference('grant', 'abc');
     const b = redactedPeerMediationObservabilityReference('grant', 'abc');
     expect(a).toBe(b);
+    expect(a).toBe('grant_ba7816bf8f01');
     expect(a).toMatch(/^grant_[0-9a-f]{12}$/);
     expect(a).not.toContain('abc');
+  });
+
+  it('keeps the shared redactor browser-portable for Protocol root consumers', async () => {
+    const source = await readFile(new URL('./metadataRedaction.ts', import.meta.url), 'utf8');
+
+    expect(source).not.toContain('node:crypto');
+    expect(source).toContain("from '@noble/hashes/sha2'");
+    expect(source).toContain("from '@noble/hashes/utils'");
   });
 });

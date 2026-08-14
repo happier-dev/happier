@@ -2,7 +2,7 @@ import { sha256 } from '@noble/hashes/sha2';
 import { z } from 'zod';
 
 import { PluginContributionIdentityV1Schema } from '../../../plugins/contributionIdentity.js';
-import { createCanonicalJsonSigningInput } from './directRouteGrantV1.js';
+import { createCanonicalJsonSigningInput } from '../../../crypto/canonicalJson.js';
 
 export const VOICE_MEDIA_VERSION_V1 = 1 as const;
 export const VOICE_MEDIA_AGENT_REALTIME_PCM_FORMAT_V1 = {

@@ -1,7 +1,8 @@
 import { z } from 'zod';
 
 import { DirectRouteGrantScopeV1Schema } from './directRouteGrantScopesV1.js';
-import { DIRECT_ROUTE_GRANT_AUDIENCE_V1, createCanonicalJsonSigningInput } from './directRouteGrantV1.js';
+import { createCanonicalJsonSigningInput } from '../../../crypto/canonicalJson.js';
+import { DIRECT_ROUTE_GRANT_AUDIENCE_V1 } from './directRouteGrantV1.js';
 import { PeerFlowKindV1Schema } from './flowKind.js';
 import { DirectPeerRouteKindV1Schema } from './routeKind.js';
 import { decodeCanonicalBase64UrlFixedLength } from './strictBase64Url.js';

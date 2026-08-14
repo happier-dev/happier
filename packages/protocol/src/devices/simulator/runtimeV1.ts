@@ -3,8 +3,10 @@ import { z } from 'zod';
 import {
   MachineLiveStreamControlLeaseV1Schema,
   MachineLiveStreamControlSidebandV1Schema,
+} from '../../machines/peer/mediation/stream/controlV1.js';
+import {
   MachineLiveStreamRouteKindV1Schema,
-} from '../../machines/peer/mediation/stream/index.js';
+} from '../../machines/peer/mediation/stream/v1.js';
 import { SimulatorDeviceResourceV1Schema } from './v1.js';
 import { SimulatorSidebandKindV1Schema, SimulatorSidebandMessageV1Schema } from './sidebandV1.js';
 

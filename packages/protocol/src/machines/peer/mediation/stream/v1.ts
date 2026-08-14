@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 import { readCanonicalPaddedBase64DecodedLength } from '../../../../crypto/base64.js';
-import { createCanonicalJsonSigningInput } from '../directRouteGrantV1.js';
+import { createCanonicalJsonSigningInput } from '../../../../crypto/canonicalJson.js';
 import { MachineLiveStreamControlSidebandV1Schema } from './controlV1.js';
 
 export const MACHINE_LIVE_STREAM_SOCKET_EVENT = 'machines.liveStream.v1' as const;

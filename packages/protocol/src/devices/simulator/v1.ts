@@ -1,11 +1,13 @@
 import { z } from 'zod';
 
 import {
-  MachineLiveStreamCodecIdV1Schema,
   MachineLiveStreamInputControlKindV1Schema,
   MachineLiveStreamInputModeV1Schema,
   type MachineLiveStreamInputControlKindV1,
-} from '../../machines/peer/mediation/stream/index.js';
+} from '../../machines/peer/mediation/stream/controlV1.js';
+import {
+  MachineLiveStreamCodecIdV1Schema,
+} from '../../machines/peer/mediation/stream/codecsV1.js';
 import { BACKABLE_SIMULATOR_STREAM_CONTROLS_V1 } from './runtimeActionBacking.js';
 
 export const SimulatorPlatformV1Schema = z.enum(['ios', 'android']);

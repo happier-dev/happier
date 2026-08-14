@@ -1,4 +1,5 @@
-import { createHash } from 'node:crypto';
+import { sha256 } from '@noble/hashes/sha2';
+import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils';
 
 import { redactDiagnosticsHeaders } from '../../../../browser/diagnostics/egress/headers.js';
 import { isUnsafeTelemetryDataKey } from '../../../../common/sensitiveKeys.js';
@@ -105,5 +106,5 @@ export function redactedPeerMediationObservabilityReference(
   raw: string | undefined,
 ): string | undefined {
   if (!raw) return undefined;
-  return `${prefix}_${createHash('sha256').update(raw).digest('hex').slice(0, 12)}`;
+  return `${prefix}_${bytesToHex(sha256(utf8ToBytes(raw))).slice(0, 12)}`;
 }

@@ -107,7 +107,7 @@ export const CHROMIUM_FOR_TESTING_PRODUCT_SOURCE = ChromiumForTestingProductSour
 } satisfies ChromiumForTestingProductSourceV1);
 
 export function resolveChromiumForTestingPlatform(
-  platform: NodeJS.Platform | string,
+  platform: string,
   arch: string,
 ): ChromiumForTestingPlatform | null {
   if (platform === 'darwin') {

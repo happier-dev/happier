@@ -13,6 +13,10 @@ import {
   resolveAgentIdFromPersistedContributionIdentityV1,
   resolvePersistedContributionIdentityV1FromAgentId,
 } from '../../plugins/contributionIdentity.js';
+import {
+  AgentExecutionTargetV1Schema,
+  type AgentExecutionTargetV1,
+} from '../../agents/executionTargetV1.js';
 
 export const BackendTargetSourceKindV2Schema = z.enum(['built_in', 'configured']);
 export type BackendTargetSourceKindV2 = z.infer<typeof BackendTargetSourceKindV2Schema>;
@@ -44,11 +48,12 @@ export const BackendTargetRefV2Schema = z.object({
 });
 export type BackendTargetRefV2 = z.infer<typeof BackendTargetRefV2Schema>;
 
-export const PersistedAgentTargetRefV1Schema = z.object({
-  kind: z.literal('agent'),
-  identity: PluginContributionIdentityV1Schema,
-}).strict();
-export type PersistedAgentTargetRefV1 = z.infer<typeof PersistedAgentTargetRefV1Schema>;
+/**
+ * Compatibility name for persisted backend-target readers and writers.
+ * The canonical model is AgentExecutionTargetV1.
+ */
+export const PersistedAgentTargetRefV1Schema = AgentExecutionTargetV1Schema;
+export type PersistedAgentTargetRefV1 = AgentExecutionTargetV1;
 
 export const PersistedBackendTargetRefV2Schema = z.union([
   BackendTargetRefV2Schema,

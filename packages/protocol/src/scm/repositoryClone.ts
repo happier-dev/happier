@@ -1,9 +1,12 @@
 import { z } from 'zod';
 
 import {
-  ScmOperationErrorCodeSchema,
   ScmWorkingSnapshotSchema,
-} from './index.js';
+} from './workingSnapshot.js';
+import { ScmOperationErrorCodeSchema } from './operationError.js';
+import {
+  SourceControlCloneProtocolSchema,
+} from './cloneProtocol.js';
 import {
   ScmHostingProviderRefSchema,
 } from './pullRequests.js';
@@ -13,15 +16,16 @@ import {
   ScmRepositoryProvisioningFailureResponseSchema,
 } from './repositoryProvisioning.js';
 
+export {
+  SourceControlCloneProtocolSchema,
+  type SourceControlCloneProtocol,
+} from './cloneProtocol.js';
+
 const UNSAFE_PATH_SEGMENT_REGEX = /(^|[/\\])\.\.($|[/\\])/;
 
 function hasUnsafePathInput(value: string): boolean {
   return value.includes('\0') || value.startsWith('~') || UNSAFE_PATH_SEGMENT_REGEX.test(value);
 }
-
-export const SourceControlCloneProtocolSchema = z.enum(['auto', 'ssh', 'https']);
-export type SourceControlCloneProtocol =
-  z.infer<typeof SourceControlCloneProtocolSchema>;
 
 export const ScmRepositoryCloneAuthorizationTokenSchema = z.literal('clone-repository');
 export type ScmRepositoryCloneAuthorizationToken =
