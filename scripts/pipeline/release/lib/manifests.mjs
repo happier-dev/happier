@@ -58,7 +58,10 @@ export function buildManifestRecord(params) {
     notesUrl: params.notesUrl ?? null,
     build: {
       commitSha: params.commitSha ?? null,
-      workflowRunId: params.workflowRunId ?? null,
+      workflowRunId: params.buildWorkflowRunId ?? params.workflowRunId ?? null,
+    },
+    publication: {
+      workflowRunId: params.publicationWorkflowRunId ?? params.workflowRunId ?? null,
     },
   };
 }
