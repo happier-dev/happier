@@ -44,7 +44,7 @@ User guides:
 
 ## Multi-server workflows
 
-For detailed Relay profile, switching, and multi-Relay machine guidance, see [Features → Multi-server](/docs/features/multi-server).
+For detailed Relay profile, switching, and multi-Relay machine guidance, see [Features → Multi-server](/features/multi-server).
 
 ## Notifications
 
@@ -56,7 +56,7 @@ Happier supports push notifications for:
 
 On iOS and Android, permission/action-request notifications can also expose action buttons and route you back into the correct session, including multi-server flows.
 
-See [Notifications](./notifications) for setup/self-hosting notes and [Notification routing](/docs/features/notifications-routing) for the exact in-app behavior.
+See [Notifications](./notifications) for setup/self-hosting notes and [Notification routing](/features/notifications-routing) for the exact in-app behavior.
 
 ## Session read and unread state
 
@@ -73,7 +73,7 @@ Use **Mark as unread** to keep a session in your attention list after you have o
 
 If you mark the session unread while you are already inside it, Happier keeps it unread for that current focused view instead of immediately marking it read again. Closing and reopening the session is treated as a new viewing intent, so the session can become read again when it is visible and focused.
 
-Full guide: [Session read and unread state](/docs/features/session-read-state).
+Full guide: [Session read and unread state](/features/session-read-state).
 
 ## Embedded terminal
 
@@ -85,7 +85,7 @@ The app can show a live session terminal directly inside the session UI.
 
 If the background service is connected to the wrong Relay, the app surfaces that mismatch and offers a repair action instead of silently failing later in the flow.
 
-Full guide: [Embedded terminal](/docs/features/embedded-terminal).
+Full guide: [Embedded terminal](/features/embedded-terminal).
 
 ## Local memory search
 
@@ -99,7 +99,7 @@ That lets you:
 
 Memory search is opt-in and machine-scoped, so you enable and configure it per machine.
 
-Full guide: [Local memory search](/docs/features/local-memory-search).
+Full guide: [Local memory search](/features/local-memory-search).
 
 ## Provider authentication in settings
 
@@ -109,7 +109,7 @@ Provider settings can also open machine-local CLI login flows directly inside th
 - on smaller layouts, Happier uses a more focused terminal presentation
 - the provider settings page also shows auth status, auth method, and refresh actions when supported
 
-Full guide: [Provider authentication](/docs/features/provider-authentication).
+Full guide: [Provider authentication](/features/provider-authentication).
 
 ## Engine and model picker
 
@@ -123,7 +123,7 @@ The picker supports:
 - custom model ids where the provider supports freeform model selection
 - favorite model shortcuts in the new-session engine picker
 
-Full guide: [Model and engine selection](/docs/features/model-and-engine-selection).
+Full guide: [Model and engine selection](/features/model-and-engine-selection).
 
 ## Machine installables
 
@@ -141,7 +141,7 @@ This screen lets you:
 
 Installables are managed per machine, so your laptop, desktop, and remote boxes can each have different installed tools and policies.
 
-Full guide: [Installables](/docs/features/installables).
+Full guide: [Installables](/features/installables).
 
 ## Session workspace surfaces
 
@@ -164,8 +164,8 @@ On phone-sized layouts, the same workflows are shown through the **session cockp
 - inspect commit history
 - switch between review and editing while keeping your place
 
-Full guide: [Git & Files](/docs/features/git).
-Review comments guide: [Review comments](/docs/features/review-comments).
+Full guide: [Git & Files](/features/git).
+Review comments guide: [Review comments](/features/review-comments).
 
 ### Mobile session cockpit
 
@@ -201,7 +201,7 @@ Important behavior:
 - selecting a worktree changes the active checkout used by Files, Git, terminals, and new sessions
 - reopening a project restores the remembered project state when possible
 
-Full guide: [Projects & worktrees](/docs/features/projects-and-worktrees).
+Full guide: [Projects & worktrees](/features/projects-and-worktrees).
 
 ### Persistent tab/workspace state
 
@@ -242,7 +242,7 @@ The composer adapts to the available width. On roomy layouts, common controls ca
 
 By default, Enter inserts a new line and the send button sends the message.
 
-If you enable **Enter to Send** in [Session settings](/docs/features/session-settings), Enter sends the current message when the composer has sendable content. On web, Shift+Enter inserts a new line. On iOS and iPadOS with a physical keyboard, Shift+Enter also continues to insert a new line while Enter sends.
+If you enable **Enter to Send** in [Session settings](/features/session-settings), Enter sends the current message when the composer has sendable content. On web, Shift+Enter inserts a new line. On iOS and iPadOS with a physical keyboard, Shift+Enter also continues to insert a new line while Enter sends.
 
 This lets you choose between a chat-style flow and a writing flow:
 
@@ -263,7 +263,7 @@ Attachments and linked files solve different problems. Attachments bring externa
 
 Review comments are path-scoped. If you start from Projects or choose a new-session path with saved review comments, Happier offers those comments for that exact checkout.
 
-For the new-session-specific flow, see [Start a new session](/docs/features/start-a-session).
+For the new-session-specific flow, see [Start a new session](/features/start-a-session).
 
 ## Linking project files into a prompt
 
@@ -308,7 +308,7 @@ Current user-facing behavior:
 - if the selected new-session path already has saved review comments, the composer also offers a **Review comments** switch for that same path
 - if **Enter to Send** is enabled, Enter can send an attachment-only message once the attachments are ready
 
-Full guide: [Attachments & image previews](/docs/features/attachments).
+Full guide: [Attachments & image previews](/features/attachments).
 
 ## Updates
 
@@ -316,9 +316,9 @@ Full guide: [Attachments & image previews](/docs/features/attachments).
 - **Mobile app**: native updates come from the App Store / Play Store; OTA updates (when enabled) are fetched in-app and applied via an “Update available” banner (reload).
 - **Self-hosted UI**: if you’re serving the web UI from your own server (Docker/self-host runtime/runner), UI updates track your server/runtime update path.
 
-Public release names stay `stable`, `preview`, and `dev`, but actual availability is artifact-dependent. Check [Updates](/docs/advanced/updates) for the current desktop/mobile/web matrix instead of assuming every app shape ships every lane.
+Public release names stay `stable`, `preview`, and `dev`, but actual availability is artifact-dependent. Check [Updates](/advanced/updates) for the current desktop/mobile/web matrix instead of assuming every app shape ships every lane.
 
-Full matrix (all apps/assets): [Updates](/docs/advanced/updates).
+Full matrix (all apps/assets): [Updates](/advanced/updates).
 
 ## Authentication (keyed vs keyless)
 
@@ -342,8 +342,8 @@ On phones and mobile-sized web browsers with camera support, Happier opens the a
 
 If you self-host and your current server is `localhost`, Happier may intentionally omit the server URL from mobile QR/deep links. In that case, first configure the phone to a reachable server URL (LAN IP, Tailscale, or a public domain), then retry.
 
-User guide: [Features → Device linking & restore](/docs/features/device-linking-and-restore)
+User guide: [Features → Device linking & restore](/features/device-linking-and-restore)
 
 For operator configuration, see:
-- [Server Auth](/docs/server/auth)
-- [Encryption & plaintext storage](/docs/server/encryption)
+- [Server Auth](/server/auth)
+- [Encryption & plaintext storage](/server/encryption)
