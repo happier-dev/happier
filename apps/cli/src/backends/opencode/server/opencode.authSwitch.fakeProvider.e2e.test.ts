@@ -109,7 +109,7 @@ async function buildTrustedManagedState(params: Readonly<{
   ownerToken: string;
   server: StartedManagedServer;
 }>): Promise<SharedManagedOpenCodeServerState> {
-  const processInfo = getOpenCodeServerProcessInfoBestEffort(params.server.pid);
+  const processInfo = await getOpenCodeServerProcessInfoBestEffort(params.server.pid);
   if (!processInfo?.cmd) {
     throw new Error(`Missing process command line for PID ${params.server.pid}`);
   }

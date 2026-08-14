@@ -2,6 +2,14 @@ import { execFileSync } from 'node:child_process';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+const { readProcessInfoByPidMock } = vi.hoisted(() => ({
+  readProcessInfoByPidMock: vi.fn(),
+}));
+
+vi.mock('@/daemon/doctor', () => ({
+  readProcessInfoByPid: readProcessInfoByPidMock,
+}));
+
 import {
   getOpenCodeServerProcessInfoBestEffort,
   isOpenCodeServerPidAlive,
@@ -21,14 +29,14 @@ describe('isOpenCodeServerPidAlive', () => {
     vi.spyOn(process, 'kill').mockImplementation(() => true);
     vi.mocked(execFileSync).mockReturnValue('Zs opencode opencode serve --port 1234\n');
 
-    expect(isOpenCodeServerPidAlive(1234)).toBe(false);
+    expect(isOpenCodeServerPidAlive(1234, { platform: 'darwin' })).toBe(false);
   });
 
   it('returns true when the pid is alive and ps shows a non-zombie state', () => {
     vi.spyOn(process, 'kill').mockImplementation(() => true);
     vi.mocked(execFileSync).mockReturnValue('Ss opencode opencode serve --port 1234\n');
 
-    expect(isOpenCodeServerPidAlive(1234)).toBe(true);
+    expect(isOpenCodeServerPidAlive(1234, { platform: 'darwin' })).toBe(true);
   });
 
   it('returns true when ps inspection is unavailable but the pid still exists', () => {
@@ -37,7 +45,7 @@ describe('isOpenCodeServerPidAlive', () => {
       throw new Error('ps unavailable');
     });
 
-    expect(isOpenCodeServerPidAlive(1234)).toBe(true);
+    expect(isOpenCodeServerPidAlive(1234, { platform: 'darwin' })).toBe(true);
   });
 
   it('returns false when the pid does not exist', () => {
@@ -45,7 +53,7 @@ describe('isOpenCodeServerPidAlive', () => {
       throw new Error('ESRCH');
     });
 
-    expect(isOpenCodeServerPidAlive(1234)).toBe(false);
+    expect(isOpenCodeServerPidAlive(1234, { platform: 'darwin' })).toBe(false);
     expect(execFileSync).not.toHaveBeenCalled();
   });
 });
@@ -53,22 +61,27 @@ describe('isOpenCodeServerPidAlive', () => {
 describe('getOpenCodeServerProcessInfoBestEffort', () => {
   afterEach(() => {
     vi.restoreAllMocks();
-    vi.mocked(execFileSync).mockReset();
+    readProcessInfoByPidMock.mockReset();
   });
 
-  it('returns parsed process info including stat when ps succeeds', () => {
-    vi.mocked(execFileSync).mockReturnValue('Ss opencode opencode serve --port 1234\n');
+  it('returns parsed process info including stat when macOS ps succeeds', async () => {
+    readProcessInfoByPidMock.mockResolvedValue({
+      pid: 1234,
+      stat: 'Ss',
+      name: 'opencode',
+      cmd: 'opencode serve --port 1234',
+    });
 
-    expect(getOpenCodeServerProcessInfoBestEffort(1234)).toEqual({
+    await expect(getOpenCodeServerProcessInfoBestEffort(1234)).resolves.toEqual({
       stat: 'Ss',
       name: 'opencode',
       cmd: 'opencode serve --port 1234',
     });
   });
 
-  it('returns null when ps does not provide a row', () => {
-    vi.mocked(execFileSync).mockReturnValue('\n');
+  it('returns null when macOS ps does not provide a row', async () => {
+    readProcessInfoByPidMock.mockResolvedValue(null);
 
-    expect(getOpenCodeServerProcessInfoBestEffort(1234)).toBeNull();
+    await expect(getOpenCodeServerProcessInfoBestEffort(1234)).resolves.toBeNull();
   });
 });
