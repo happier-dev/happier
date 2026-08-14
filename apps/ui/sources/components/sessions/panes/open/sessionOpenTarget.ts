@@ -71,11 +71,6 @@ export type SessionOpenLayout = Readonly<{
     multiPaneEnabled: boolean;
 }>;
 
-/**
- * Whether this layout has room for that pane at all, which is the question every caller was asking
- * in its own words. `single` is the one answer that means "there is nowhere to put a pane here" —
- * a phone, multi-pane switched off, or a window too narrow for main + pane minimums.
- */
 function probeLayout(
     layout: SessionOpenLayout,
     open: Readonly<{ right: boolean; details: boolean }>,
@@ -95,6 +90,11 @@ function probeLayout(
     });
 }
 
+/**
+ * Whether this layout has room for that pane at all, which is the question every caller was asking
+ * in its own words. `single` is the one answer that means "there is nowhere to put a pane here" —
+ * a phone, multi-pane switched off, or a window too narrow for main + pane minimums.
+ */
 export function canLayoutHostSessionPane(
     layout: SessionOpenLayout,
     slot: SessionPaneSlot,

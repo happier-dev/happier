@@ -89,6 +89,23 @@ export type PetCompanionActivityTrayProps = Readonly<{
     style?: StyleProp<ViewStyle>;
 }>;
 
+/**
+ * The three resolvers below map a SESSION's attention state, not an agent-activity status, and are
+ * deliberately not folded into `agentActivityToneStyle` / `AgentActivityStatusSlot`.
+ *
+ * The tray is keyed by `sessionId` and its statuses come from
+ * `buildPetCompanionActivityModel` — pending permission/user-action requests, a projected turn
+ * failure, `deriveSessionRuntimePresentationState().working`, unread messages. `review` has no
+ * counterpart in the ten-value agent vocabulary at all, and a session is never `queued`,
+ * `timedOut` or `cancelled`. Sharing the agent tables here would be the coincidental-similarity
+ * kind of centralising: two different questions ("is an agent running" vs "does this session want
+ * me") answered by one switch, which then cannot move for either of them.
+ *
+ * Its real neighbour is the session-list attention owner
+ * (`components/sessions/shell/row/sessionRowAttentionColors.ts`), whose `SessionRowAttentionState`
+ * covers the same ground with an extra `unread`/`quiet` distinction. Converging those two is a
+ * session-attention change, not an agent-activity one.
+ */
 function resolveStatusLabel(status: PetCompanionTrayItem['status']): string {
     switch (status) {
         case 'waiting':

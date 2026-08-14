@@ -104,8 +104,9 @@ export function ItemRowActions(props: ItemRowActionsProps) {
             fn();
         };
 
-        // InteractionManager can be delayed by long/continuous interactions (scroll, gestures).
-        // Use a fast timeout fallback so the action still runs promptly.
+        // On RN 0.81 New Arch, InteractionManager is the no-op stub and resolves on a microtask, so
+        // it is never delayed by scroll/gestures and always wins this race. The timeout only covers
+        // an environment where InteractionManager is missing or throws.
         const fallback = setTimeout(runOnce, 0);
         try {
             InteractionManager.runAfterInteractions(() => {
