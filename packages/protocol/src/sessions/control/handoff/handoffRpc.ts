@@ -44,6 +44,7 @@ export {
 } from './handoffSchemas.js';
 export {
   evaluateSessionHandoffWorkspaceTransferSourcePathSafety,
+  normalizeSessionHandoffWorkspaceRootPath,
   type SessionHandoffWorkspaceTransferPathSafety,
   type SessionHandoffWorkspaceTransferPathSafetyReasonCode,
 } from './workspaceTransferSourcePathSafety.js';

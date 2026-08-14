@@ -82,3 +82,38 @@ describe('evaluateSessionHandoffWorkspaceTransferSourcePathSafety', () => {
     });
   });
 });
+
+describe('normalizeSessionHandoffWorkspaceRootPath', () => {
+  it('normalizes POSIX roots while preserving their platform syntax', async () => {
+    const mod = await loadSafetyModule();
+    expect(mod).not.toHaveProperty('error');
+    if ('error' in mod) return;
+
+    expect(mod.normalizeSessionHandoffWorkspaceRootPath('/Users/alice/./projects//demo/'))
+      .toBe('/Users/alice/projects/demo');
+  });
+
+  it('normalizes Windows drive and UNC roots without rewriting them as POSIX paths', async () => {
+    const mod = await loadSafetyModule();
+    expect(mod).not.toHaveProperty('error');
+    if ('error' in mod) return;
+
+    expect(mod.normalizeSessionHandoffWorkspaceRootPath('C:\\Users\\alice\\.\\projects\\\\demo\\'))
+      .toBe('C:\\Users\\alice\\projects\\demo');
+    expect(mod.normalizeSessionHandoffWorkspaceRootPath('\\\\server\\share\\projects\\.\\demo\\'))
+      .toBe('\\\\server\\share\\projects\\demo');
+  });
+
+  it('rejects roots, relative paths, parent traversal, and NUL bytes', async () => {
+    const mod = await loadSafetyModule();
+    expect(mod).not.toHaveProperty('error');
+    if ('error' in mod) return;
+
+    expect(mod.normalizeSessionHandoffWorkspaceRootPath('/')).toBeNull();
+    expect(mod.normalizeSessionHandoffWorkspaceRootPath('C:\\')).toBeNull();
+    expect(mod.normalizeSessionHandoffWorkspaceRootPath('\\\\server\\share')).toBeNull();
+    expect(mod.normalizeSessionHandoffWorkspaceRootPath('projects/demo')).toBeNull();
+    expect(mod.normalizeSessionHandoffWorkspaceRootPath('C:\\Users\\alice\\..\\bob\\demo')).toBeNull();
+    expect(mod.normalizeSessionHandoffWorkspaceRootPath('/repo/\0/demo')).toBeNull();
+  });
+});

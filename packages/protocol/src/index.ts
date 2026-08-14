@@ -4074,6 +4074,7 @@ export {
   type SessionHandoffWorkspaceTransfer,
   type SessionHandoffWorkspaceReplicationManifestTransferPublication,
   evaluateSessionHandoffWorkspaceTransferSourcePathSafety,
+  normalizeSessionHandoffWorkspaceRootPath,
   SESSION_HANDOFF_PROGRESS_FULL_TIMELINE,
   SESSION_HANDOFF_PROGRESS_FULL_TIMELINE_WITH_SOURCE_SCAN,
   SESSION_HANDOFF_PROGRESS_MINIMAL_TIMELINE,

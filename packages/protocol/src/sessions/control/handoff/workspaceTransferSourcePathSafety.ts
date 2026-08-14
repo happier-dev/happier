@@ -77,7 +77,12 @@ function joinCanonicalPath(root: string, remainder: string, absolute: boolean): 
     return segments.join('/');
   }
 
-  return root === '/' ? `/${segments.join('/')}` : `${root}${segments.join('/')}`;
+  if (root === '/') {
+    return `/${segments.join('/')}`;
+  }
+  return root.endsWith('/')
+    ? `${root}${segments.join('/')}`
+    : `${root}/${segments.join('/')}`;
 }
 
 function isFilesystemRoot(path: string): boolean {
@@ -104,6 +109,43 @@ function isAbsolutePathInput(value: string): boolean {
     return true;
   }
   return /^(\\\\|\/\/)[^\\/]+[\\/][^\\/]+(?:[\\/].*)?$/.test(value);
+}
+
+/**
+ * Canonical validator/normalizer for machine-owned workspace roots carried by
+ * session handoff state. The result preserves the originating platform's path
+ * syntax because another machine must treat it as opaque until the owning
+ * machine maps it through its local path normalizer.
+ */
+export function normalizeSessionHandoffWorkspaceRootPath(value: unknown): string | null {
+  const rawPath = trimPathInput(value);
+  if (!rawPath || rawPath.includes('\0') || !isAbsolutePathInput(rawPath)) {
+    return null;
+  }
+
+  const slashNormalizedInput = rawPath.replace(/\\/g, '/');
+  if (slashNormalizedInput.split('/').some((segment) => segment === '..')) {
+    return null;
+  }
+
+  const normalizedPath = normalizePath(rawPath);
+  if (!normalizedPath || isFilesystemRoot(normalizedPath)) {
+    return null;
+  }
+
+  const driveMatch = rawPath.match(/^([A-Za-z]:)([\\/])/);
+  if (driveMatch) {
+    const separator = driveMatch[2];
+    const remainder = normalizedPath.slice(3).replace(/\//g, separator);
+    return `${driveMatch[1]}${separator}${remainder}`;
+  }
+
+  if (rawPath.startsWith('\\\\') || rawPath.startsWith('//')) {
+    const separator = rawPath.startsWith('\\\\') ? '\\' : '/';
+    return normalizedPath.replace(/\//g, separator);
+  }
+
+  return normalizedPath;
 }
 
 export function evaluateSessionHandoffWorkspaceTransferSourcePathSafety(params: Readonly<{
