@@ -22,6 +22,7 @@ import { probeAgentModelsBestEffort } from '@/capabilities/probes/agentModelsPro
 import { probeAgentModesBestEffort } from '@/capabilities/probes/agentModesProbe';
 import { probeAgentConfigOptionsBestEffort } from '@/capabilities/probes/agentConfigOptionsProbe';
 import { readCredentials } from '@/persistence';
+import { ApiClient } from '@/api/api';
 import { bootstrapAccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
 import type { AgentId } from '@happier-dev/agents';
 import { applyAgentRuntimeKindOverrideToAccountSettings } from '@happier-dev/agents';
@@ -35,6 +36,12 @@ import { invokeProviderCliInstall as invokeSharedProviderCliInstall } from '@/ru
 import { existsSync, statSync } from 'node:fs';
 import { dirname, resolve as resolvePath } from 'node:path';
 import os from 'node:os';
+import { join } from 'node:path';
+import { rm } from 'node:fs/promises';
+import { configuration } from '@/configuration';
+import { createConnectedServiceMaterializationIdentity } from '@/daemon/connectedServices/materialize/createConnectedServiceMaterializationIdentity';
+import { resolveConnectedServiceAuthForSpawn } from '@/daemon/connectedServices/resolveConnectedServiceAuthForSpawn';
+import { HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY } from '@/daemon/connectedServices/connectedServiceChildEnvironment';
 
 const DEFAULT_PROBE_MODELS_TIMEOUT_MS = 30_000;
 type CliProbeMethod = 'probeModels' | 'probeModes' | 'probeConfigOptions';
@@ -91,7 +98,10 @@ function parseProbeProfileId(params?: Record<string, unknown>): string | null {
     return profileId || null;
 }
 
-async function resolveProbeBackendContext(params?: Record<string, unknown>): Promise<{
+async function resolveProbeBackendContext(
+    params?: Record<string, unknown>,
+    options: Readonly<{ requireCredentials?: boolean }> = {},
+): Promise<{
     backendTarget: BackendTargetRefV1 | undefined;
     credentials: Awaited<ReturnType<typeof readCredentials>> | null;
     accountSettings: Record<string, unknown> | null;
@@ -104,12 +114,16 @@ async function resolveProbeBackendContext(params?: Record<string, unknown>): Pro
     const needsAccountSettingsForProbes =
         agentId && (AGENTS[agentId as keyof typeof AGENTS] as AgentCatalogEntry | undefined)?.needsAccountSettingsForProbes === true;
     const shouldLoadAccountSettings = backendTarget?.kind === 'configuredAcpBackend' || needsAccountSettingsForProbes;
-    if (!shouldLoadAccountSettings) {
+    if (!shouldLoadAccountSettings && options.requireCredentials !== true) {
       return { backendTarget, credentials: null, accountSettings: null };
     }
 
     const credentials = await readCredentials().catch(() => null);
     if (!credentials) return { backendTarget, credentials: null, accountSettings: null };
+
+    if (!shouldLoadAccountSettings) {
+      return { backendTarget, credentials, accountSettings: null };
+    }
 
     const accountSettingsContext = await bootstrapAccountSettingsContext({
         credentials,
@@ -132,6 +146,69 @@ async function resolveProbeBackendContext(params?: Record<string, unknown>): Pro
       backendTarget,
       credentials,
       accountSettings: effectiveAccountSettings,
+    };
+}
+
+type ConnectedServiceProbeEnvironment = Readonly<{
+    processEnv: NodeJS.ProcessEnv;
+    connectedServiceSelectionCacheKey: string | null;
+    cleanup: (() => Promise<void>) | null;
+}>;
+
+async function resolveConnectedServiceProbeEnvironment(params: Readonly<{
+    agentId: AgentCatalogEntry['id'];
+    cwd: string;
+    connectedServices: ConnectedServiceBindingsV1 | null;
+    credentials: Awaited<ReturnType<typeof readCredentials>> | null;
+    accountSettings: Record<string, unknown> | null;
+    requiresMaterializedAuth: boolean;
+}>): Promise<ConnectedServiceProbeEnvironment> {
+    if (!params.requiresMaterializedAuth || !params.connectedServices) {
+        return {
+            processEnv: process.env,
+            connectedServiceSelectionCacheKey: null,
+            cleanup: null,
+        };
+    }
+    if (!params.credentials) {
+        throw new Error('Connected-service credentials are unavailable for this preflight probe');
+    }
+
+    const materializationIdentity = createConnectedServiceMaterializationIdentity();
+    const materializationBaseDir = join(configuration.happyHomeDir, 'daemon', 'connected-services', 'materialized');
+    const resolved = await resolveConnectedServiceAuthForSpawn({
+        agentId: params.agentId,
+        sessionDirectory: params.cwd,
+        connectedServicesBindingsRaw: params.connectedServices,
+        materializationKey: materializationIdentity.id,
+        connectedServiceMaterializationIdentityV1: materializationIdentity,
+        activeServerDir: configuration.activeServerDir,
+        baseDir: materializationBaseDir,
+        credentials: params.credentials,
+        api: await ApiClient.create(params.credentials),
+        accountSettings: params.accountSettings,
+        processEnv: process.env,
+        // A model/control probe observes current group authority but must never mutate the selected
+        // group or trigger credential refresh. Actual spawn owns those lifecycle transitions.
+        authGroupSwitchCoordinator: null,
+        credentialRefreshService: null,
+    });
+    if (!resolved) {
+        throw new Error('The selected connected-service account could not be materialized for this preflight probe');
+    }
+
+    return {
+        processEnv: { ...process.env, ...resolved.env },
+        connectedServiceSelectionCacheKey:
+            resolved.env[HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY] ?? null,
+        cleanup: async () => {
+            resolved.cleanupOnExit?.();
+            resolved.cleanupOnFailure?.();
+            await rm(join(materializationBaseDir, materializationIdentity.id), {
+                recursive: true,
+                force: true,
+            });
+        },
     };
 }
 
@@ -200,34 +277,71 @@ async function invokeCliProbeMethod(
     method: CliProbeMethod,
     params?: Record<string, unknown>,
 ): Promise<CapabilitiesInvokeResponse> {
-    const probeContext = await resolveProbeBackendContext({ ...params, agentId });
+    const connectedServices = parseProbeConnectedServices(params);
+    const entry = AGENTS[agentId];
+    const preflightAdapter = entry?.getPreflightSessionControlsProbeAdapter
+        ? await entry.getPreflightSessionControlsProbeAdapter().catch(() => null)
+        : null;
+    const requiresMaterializedAuth = Boolean(
+        connectedServices && preflightAdapter?.connectedServiceAuth === 'materialized-env',
+    );
+    const probeContext = await resolveProbeBackendContext(
+        { ...params, agentId },
+        { requireCredentials: requiresMaterializedAuth },
+    );
     const timeoutMsRaw = (params ?? {}).timeoutMs;
     const timeoutMs = typeof timeoutMsRaw === 'number' ? timeoutMsRaw : DEFAULT_PROBE_MODELS_TIMEOUT_MS;
     const cwd = resolveProbeCwd((params ?? {}).cwd);
-    const connectedServices = parseProbeConnectedServices(params);
     const profileId = parseProbeProfileId(params);
-    const commonParams = {
-        agentId,
-        backendTarget: probeContext.backendTarget,
-        cwd,
-        timeoutMs,
-        profileId,
-        accountSettings: probeContext.accountSettings,
-        credentials: probeContext.credentials,
-        connectedServices,
-    };
-
-    if (method === 'probeModels') {
-        const result = await probeAgentModelsBestEffort(commonParams);
-        return { ok: true, result };
+    let connectedServiceProbeEnvironment: ConnectedServiceProbeEnvironment;
+    try {
+        connectedServiceProbeEnvironment = await resolveConnectedServiceProbeEnvironment({
+            agentId,
+            cwd,
+            connectedServices,
+            credentials: probeContext.credentials,
+            accountSettings: probeContext.accountSettings,
+            requiresMaterializedAuth,
+        });
+    } catch {
+        return {
+            ok: false,
+            error: {
+                code: 'connected-service-preflight-failed',
+                message: 'Could not prepare the selected connected-service account for this probe.',
+            },
+        };
     }
-    if (method === 'probeModes') {
-        const result = await probeAgentModesBestEffort(commonParams);
-        return { ok: true, result };
-    }
 
-    const result = await probeAgentConfigOptionsBestEffort(commonParams);
-    return { ok: true, result };
+    try {
+        const commonParams = {
+            agentId,
+            backendTarget: probeContext.backendTarget,
+            cwd,
+            timeoutMs,
+            profileId,
+            accountSettings: probeContext.accountSettings,
+            credentials: probeContext.credentials,
+            connectedServices,
+            processEnv: connectedServiceProbeEnvironment.processEnv,
+            connectedServiceSelectionCacheKey:
+                connectedServiceProbeEnvironment.connectedServiceSelectionCacheKey,
+        };
+
+        if (method === 'probeModels') {
+            const result = await probeAgentModelsBestEffort(commonParams);
+            return { ok: true, result };
+        }
+        if (method === 'probeModes') {
+            const result = await probeAgentModesBestEffort(commonParams);
+            return { ok: true, result };
+        }
+
+        const result = await probeAgentConfigOptionsBestEffort(commonParams);
+        return { ok: true, result };
+    } finally {
+        await connectedServiceProbeEnvironment.cleanup?.();
+    }
 }
 
 function createGenericCliCapability(agentId: AgentCatalogEntry['id']): Capability {

@@ -1,4 +1,4 @@
-import type { PreflightModelsProbeAdapter } from '@/capabilities/probes/preflightModelsProbeAdapterTypes';
+import type { PreflightSessionControlsProbeAdapter } from '@/capabilities/probes/preflightSessionControlsProbeAdapterTypes';
 import { killProcessTree } from '@/agent/acp/killProcessTree';
 import { resolveProviderCliLaunchSpec } from '@/runtime/managedTools/requireProviderCliLaunchSpec';
 import { resolveWindowsCommandInvocation } from '@happier-dev/cli-common/process';
@@ -105,9 +105,13 @@ function parseOpenCodeModelsVerboseOutput(outputRaw: string): OpenCodeVerboseMod
   return parsed.length > 0 ? parsed : null;
 }
 
-async function probeOpenCodeModelsVerbose(params: Readonly<{ cwd: string; timeoutMs: number }>): Promise<unknown[] | null> {
+async function probeOpenCodeModelsVerbose(params: Readonly<{
+  cwd: string;
+  timeoutMs: number;
+  processEnv?: NodeJS.ProcessEnv;
+}>): Promise<unknown[] | null> {
   const timeoutMs = Math.max(250, params.timeoutMs);
-  const launch = resolveProviderCliLaunchSpec('opencode');
+  const launch = resolveProviderCliLaunchSpec('opencode', { processEnv: params.processEnv ?? process.env });
   const command = launch?.command ?? 'opencode';
   const args = [...(launch?.args ?? []), 'models', '--verbose'];
 
@@ -129,7 +133,7 @@ async function probeOpenCodeModelsVerbose(params: Readonly<{ cwd: string; timeou
 
     const child = spawn(invocation.command, invocation.args, {
       cwd: params.cwd,
-      env: { ...process.env, CI: '1' },
+      env: { ...(params.processEnv ?? process.env), CI: '1' },
       stdio: ['ignore', 'pipe', 'pipe'],
       windowsHide: true,
       windowsVerbatimArguments: invocation.windowsVerbatimArguments,
@@ -190,12 +194,13 @@ async function probeOpenCodeModelsVerbose(params: Readonly<{ cwd: string; timeou
   });
 }
 
-export const openCodePreflightModelsProbeAdapter: PreflightModelsProbeAdapter = {
+export const openCodePreflightModelsProbeAdapter: PreflightSessionControlsProbeAdapter = {
+  connectedServiceAuth: 'materialized-env',
   failureCacheStrategy: 'cooldown',
   // Fallback: if `models --verbose` parsing fails for any reason, the core probe can still
   // populate the model list via the plain `models` command (without model-scoped options).
   cliModelsCommandArgs: ['models'],
-  probeModelsRaw: async ({ cwd, timeoutMs }) => {
-    return await probeOpenCodeModelsVerbose({ cwd, timeoutMs });
+  probeModelsRaw: async ({ cwd, timeoutMs, processEnv }) => {
+    return await probeOpenCodeModelsVerbose({ cwd, timeoutMs, processEnv });
   },
 };

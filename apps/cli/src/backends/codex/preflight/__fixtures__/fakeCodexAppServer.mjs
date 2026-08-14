@@ -1,5 +1,6 @@
 import readline from 'node:readline';
-import { writeFileSync } from 'node:fs';
+import { existsSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 
 const delayMs = Number.parseInt(process.env.HAPPIER_FAKE_CODEX_APP_SERVER_DELAY_MS ?? '', 10) || 600;
 
@@ -23,6 +24,9 @@ function handleModelList(msg) {
     writeFileSync(process.env.HAPPIER_FAKE_CODEX_APP_SERVER_ENV_CAPTURE_FILE, JSON.stringify({
       CODEX_HOME: process.env.CODEX_HOME ?? null,
       CODEX_SQLITE_HOME: process.env.CODEX_SQLITE_HOME ?? null,
+      CODEX_AUTH_FILE_PRESENT: typeof process.env.CODEX_HOME === 'string'
+        ? existsSync(join(process.env.CODEX_HOME, 'auth.json'))
+        : false,
     }));
   }
   setTimeout(() => {
