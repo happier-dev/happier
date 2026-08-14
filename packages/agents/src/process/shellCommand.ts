@@ -1,4 +1,4 @@
-export type ShellCommandDialect = 'posix' | 'windows_cmd';
+export type ShellCommandDialect = 'posix' | 'windows_cmd' | 'powershell';
 
 function assertRepresentableArgument(arg: string): void {
   if (arg.includes('\0')) {
@@ -42,6 +42,18 @@ export function buildWindowsCmdCommand(args: readonly string[]): string {
   ].join(' ');
 }
 
+function quoteForPowerShell(arg: string): string {
+  assertRepresentableArgument(arg);
+  return `'${arg.replaceAll("'", "''")}'`;
+}
+
+export function buildPowerShellCommand(args: readonly string[]): string {
+  if (args.length === 0) {
+    throw new TypeError('PowerShell command requires an executable');
+  }
+  return `& ${args.map((arg) => quoteForPowerShell(String(arg))).join(' ')}`;
+}
+
 export function buildShellCommand(
   args: readonly string[],
   dialect: ShellCommandDialect,
@@ -51,6 +63,8 @@ export function buildShellCommand(
       return buildPosixShellCommand(args);
     case 'windows_cmd':
       return buildWindowsCmdCommand(args);
+    case 'powershell':
+      return buildPowerShellCommand(args);
   }
 }
 

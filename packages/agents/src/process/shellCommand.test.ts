@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 import {
   buildPosixShellCommand,
   buildPosixShellEnvironmentAssignments,
+  buildPowerShellCommand,
   buildShellCommand,
   buildWindowsCmdCommand,
 } from './shellCommand.js';
@@ -52,6 +53,26 @@ describe('POSIX shell command serialization', () => {
     expect(() =>
       buildShellCommand(['node.exe', 'bad\0arg'], 'windows_cmd')
     ).toThrow('must not contain NUL');
+    expect(() =>
+      buildShellCommand(['node.exe', 'bad\0arg'], 'powershell')
+    ).toThrow('must not contain NUL');
+  });
+});
+
+describe('PowerShell command serialization', () => {
+  it('uses the call operator and preserves every argv token as a single-quoted literal', () => {
+    expect(buildPowerShellCommand([
+      String.raw`C:\Program Files\Happier\node.exe`,
+      String.raw`C:\hook path\forwarder's script.cjs`,
+      '43127',
+      'Stop',
+      '--secret-file',
+      '$env:PATH `literal` & | < > "quoted"',
+    ])).toBe(
+      "& 'C:\\Program Files\\Happier\\node.exe' "
+      + "'C:\\hook path\\forwarder''s script.cjs' "
+      + "'43127' 'Stop' '--secret-file' '$env:PATH `literal` & | < > \"quoted\"'",
+    );
   });
 });
 
