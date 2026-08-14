@@ -30,19 +30,25 @@ export function readJsonOwnerLockSnapshot(lockPath) {
   return { exists: true, raw, owner: parseJsonOwnerLockRaw(raw) };
 }
 
-function serializeJsonOwnerLock(nowMs) {
+function serializeJsonOwnerLock({ createdAtMs, updatedAtMs }) {
   return JSON.stringify({
     pid: process.pid,
-    createdAtMs: nowMs,
-    updatedAtMs: nowMs,
+    createdAtMs,
+    updatedAtMs,
   });
 }
 
-export function describeJsonOwnerLock(lockPath, nowMs) {
-  const owner = readJsonOwnerLockSnapshot(lockPath).owner;
+export function describeJsonOwnerLockOwner(owner, nowMs = Date.now()) {
   if (!owner) return 'owner=unknown';
-  const ageMs = Math.max(0, nowMs - Number(owner.updatedAtMs ?? owner.createdAtMs ?? nowMs));
-  return `pid=${String(owner.pid ?? 'unknown')} ageMs=${ageMs}`;
+  const createdAtMs = Number(owner.createdAtMs ?? owner.updatedAtMs ?? nowMs);
+  const updatedAtMs = Number(owner.updatedAtMs ?? owner.createdAtMs ?? nowMs);
+  const heldMs = Math.max(0, nowMs - createdAtMs);
+  const heartbeatAgeMs = Math.max(0, nowMs - updatedAtMs);
+  return `pid=${String(owner.pid ?? 'unknown')} heldMs=${heldMs} heartbeatAgeMs=${heartbeatAgeMs}`;
+}
+
+export function describeJsonOwnerLock(lockPath, nowMs) {
+  return describeJsonOwnerLockOwner(readJsonOwnerLockSnapshot(lockPath).owner, nowMs);
 }
 
 export function shouldReclaimJsonOwnerLockSnapshot(snapshot, staleAfterMs, nowMs, fallbackMtimeMs = 0, options = {}) {
@@ -131,11 +137,13 @@ export async function withJsonOwnerFileLock(fn, options = {}) {
   let fd = null;
   let heartbeat = null;
   let ownLockRaw = null;
+  let acquiredAtMs = null;
   let waited = false;
 
   while (true) {
     try {
-      ownLockRaw = serializeJsonOwnerLock(Date.now());
+      acquiredAtMs = Date.now();
+      ownLockRaw = serializeJsonOwnerLock({ createdAtMs: acquiredAtMs, updatedAtMs: acquiredAtMs });
       fd = openSync(lockPath, 'wx');
       writeFileSync(fd, ownLockRaw, 'utf8');
       break;
@@ -174,7 +182,7 @@ export async function withJsonOwnerFileLock(fn, options = {}) {
     heartbeat = setInterval(() => {
       try {
         if (readJsonOwnerLockRaw(lockPath) !== ownLockRaw) return;
-        ownLockRaw = serializeJsonOwnerLock(Date.now());
+        ownLockRaw = serializeJsonOwnerLock({ createdAtMs: acquiredAtMs, updatedAtMs: Date.now() });
         writeFileSync(lockPath, ownLockRaw, 'utf8');
       } catch {}
     }, Math.max(500, Math.min(5_000, Math.floor(staleAfterMs / 4))));

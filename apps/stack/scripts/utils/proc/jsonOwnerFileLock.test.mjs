@@ -5,7 +5,14 @@ import { join } from 'node:path';
 import test from 'node:test';
 import { setTimeout as delay } from 'node:timers/promises';
 
-import { withJsonOwnerFileLock } from './jsonOwnerFileLock.mjs';
+import { describeJsonOwnerLockOwner, withJsonOwnerFileLock } from './jsonOwnerFileLock.mjs';
+
+test('describeJsonOwnerLockOwner distinguishes total hold time from heartbeat freshness', () => {
+  assert.equal(
+    describeJsonOwnerLockOwner({ pid: 42, createdAtMs: 1_000, updatedAtMs: 9_000 }, 10_000),
+    'pid=42 heldMs=9000 heartbeatAgeMs=1000',
+  );
+});
 
 test('withJsonOwnerFileLock reclaims a stale malformed owner using the file mtime fallback', async () => {
   const root = await mkdtemp(join(tmpdir(), 'hstack-json-owner-lock-malformed-'));
@@ -77,12 +84,14 @@ test('live-owner stale reclaim preserves an actively heartbeating owner', async 
     }, { lockPath, timeoutMs: 3_000, pollIntervalMs: 20, staleAfterMs: 800, allowLiveOwnerStaleReclaim: true });
     await holderEntered;
 
-    const firstHeartbeat = JSON.parse(await readFile(lockPath, 'utf8')).updatedAtMs;
+    const initialOwner = JSON.parse(await readFile(lockPath, 'utf8'));
+    const firstHeartbeat = initialOwner.updatedAtMs;
     const heartbeatDeadline = Date.now() + 2_000;
     let observedHeartbeat = false;
     while (Date.now() < heartbeatDeadline) {
       const owner = JSON.parse(await readFile(lockPath, 'utf8'));
       if (owner.updatedAtMs > firstHeartbeat) {
+        assert.equal(owner.createdAtMs, initialOwner.createdAtMs, 'heartbeat must preserve the acquisition time');
         observedHeartbeat = true;
         break;
       }

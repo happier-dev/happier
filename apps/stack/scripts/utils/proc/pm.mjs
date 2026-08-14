@@ -12,6 +12,7 @@ import { resolveInstalledPath, resolveInstalledCliRoot } from '../paths/runtime.
 import { expandHome } from '../paths/canonical_home.mjs';
 import { resolveCliDistBuildLockPath, withCliDistBuildLock } from './cliDistBuildLock.mjs';
 import { withDependencyRefresh } from './dependency_refresh.mjs';
+import { describeJsonOwnerLockOwner } from './jsonOwnerFileLock.mjs';
 import { resolveWorkspaceToolBinDirs } from './workspace_tool_bins.mjs';
 import { probeCliDistRuntimeImport, readCliDistIntegrity } from '../cli/cliDistIntegrity.mjs';
 import { assertNoMissingLocalImports } from '../../../../../scripts/workspaces/distLocalImports.mjs';
@@ -58,14 +59,6 @@ function resolveWorkspaceBuildWaitNoticeEveryMs(env = process.env) {
   return parsePositiveEnvInt(env.HAPPIER_WORKSPACE_BUILD_NOTICE_EVERY_MS, 30_000);
 }
 
-function describeLockOwnerSnapshot(owner, nowMs = Date.now()) {
-  if (!owner || typeof owner !== 'object') {
-    return 'owner=unknown';
-  }
-  const ageMs = Math.max(0, nowMs - Number(owner.updatedAtMs ?? owner.createdAtMs ?? nowMs));
-  return `pid=${String(owner.pid ?? 'unknown')} ageMs=${ageMs}`;
-}
-
 function createWorkspaceBuildWaitNotifier({ env = process.env, label, kind }) {
   const noticeAfterMs = resolveWorkspaceBuildWaitNoticeAfterMs(env);
   const noticeEveryMs = resolveWorkspaceBuildWaitNoticeEveryMs(env);
@@ -84,7 +77,7 @@ function createWorkspaceBuildWaitNotifier({ env = process.env, label, kind }) {
 
     let message = '';
     if (kind === 'lock') {
-      const ownerText = describeLockOwnerSnapshot(event.owner, Date.now());
+      const ownerText = describeJsonOwnerLockOwner(event.owner, Date.now());
       message = `[local] waiting for ${label} lock (${Math.ceil(waitedMs / 1000)}s): ${event.lockPath} (${ownerText})`;
     } else if (kind === 'imports') {
       const attempt = Number(event.attempt ?? 0);
