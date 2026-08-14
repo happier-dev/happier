@@ -1501,7 +1501,7 @@ function Test-InstallerTransientWebException {
     [Parameter(Mandatory = $true)] [System.Management.Automation.ErrorRecord] $ErrorRecord
   )
 
-  $retryableStatusCodes = @(502, 503, 504)
+  $retryableStatusCodes = @(404, 502, 503, 504)
   $exception = $ErrorRecord.Exception
   $statusCode = $null
   if ($exception -and $exception.Response -and $exception.Response.StatusCode) {

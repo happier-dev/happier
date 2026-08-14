@@ -432,6 +432,23 @@ validate_requested_install_version() {
   return 0
 }
 
+fetch_release_metadata_with_retry() {
+  local source="$1"
+  local attempts="${HAPPIER_INSTALLER_DOWNLOAD_RETRY_ATTEMPTS:-3}"
+  local retry_delay="${HAPPIER_INSTALLER_DOWNLOAD_RETRY_DELAY_SECONDS:-2}"
+  local attempt=1
+  while true; do
+    if curl_auth "${source}"; then
+      return 0
+    fi
+    if [[ "${attempt}" -ge "${attempts}" ]]; then
+      return 1
+    fi
+    attempt=$((attempt + 1))
+    sleep "${retry_delay}"
+  done
+}
+
 download_release_asset_with_retry() {
   local output_path="$1"
   local source="$2"
@@ -1639,7 +1656,7 @@ action_version() {
   local release_json=""
   if [[ -z "${RELEASE_ASSETS_DIR}" ]]; then
     info "Fetching ${tag} release metadata..."
-    if ! release_json="$(curl_auth "${api_url}")"; then
+    if ! release_json="$(fetch_release_metadata_with_retry "${api_url}")"; then
       echo "Failed to fetch release metadata for ${name}." >&2
       return 1
     fi
@@ -2410,7 +2427,7 @@ curl_auth() {
 
 RELEASE_JSON=""
 if [[ -z "${RELEASE_ASSETS_DIR}" ]]; then
-  if ! capture_installer_step_output "Fetching ${TAG} release metadata" RELEASE_JSON curl_auth "${API_URL}"; then
+  if ! capture_installer_step_output "Fetching ${TAG} release metadata" RELEASE_JSON fetch_release_metadata_with_retry "${API_URL}"; then
     if [[ "${CHANNEL}" == "stable" ]]; then
       echo "No stable releases found for ${INSTALL_NAME}." >&2
     elif [[ "${CHANNEL}" == "publicdev" ]]; then

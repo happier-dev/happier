@@ -476,6 +476,27 @@ test('install.sh retries transient minisign signature downloads before failing t
   }
 });
 
+test('install.sh retries a transient rolling release metadata gap', async () => {
+  const scenario = await runInstallerScenario({
+    HAPPIER_TEST_CURL_FAIL_ONCE_MATCH: '/releases/tags/cli-stable',
+    HAPPIER_TEST_CURL_FAIL_ONCE_STDERR: 'curl: (22) The requested URL returned error: 404',
+    HAPPIER_TEST_CURL_FAIL_ONCE_EXIT_CODE: '22',
+    HAPPIER_INSTALLER_DOWNLOAD_RETRY_DELAY_SECONDS: '0',
+  });
+  try {
+    assert.match(scenario.stdout, /- \[✓\] Fetching cli-stable release metadata/);
+    assert.match(scenario.stdout, /Signature verified\./);
+  } finally {
+    await scenario.cleanup();
+  }
+});
+
+test('install.ps1 retries the transient rolling release 404 gap', async () => {
+  const source = await readFile(join(repoRoot, 'scripts', 'release', 'installers', 'install.ps1'), 'utf8');
+  assert.match(source, /\$retryableStatusCodes = @\(404, 502, 503, 504\)/);
+  assert.match(source, /Invoke-InstallerRestMethodWithRetry -Uri "https:\/\/api\.github\.com\/repos\/\$Repo\/releases\/tags\/\$tag"/);
+});
+
 test('install.sh does not render a shell-owned post-install summary when doctor repair --report-only yields no output', async () => {
   const scenario = await runInstallerScenario({
     HAPPIER_NONINTERACTIVE: '',
