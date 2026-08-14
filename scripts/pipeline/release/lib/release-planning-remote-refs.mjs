@@ -1,8 +1,24 @@
 // @ts-check
 
-import { execFileSync, spawnSync } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
+import { accessSync, constants } from 'node:fs';
+import { delimiter, join } from 'node:path';
 
 const OBJECT_ID_PATTERN = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/;
+
+function resolveGitExecutable() {
+  const names = process.platform === 'win32' ? ['git.exe', 'git'] : ['git'];
+  for (const directory of String(process.env.PATH ?? '').split(delimiter)) {
+    for (const name of names) {
+      const candidate = join(directory || process.cwd(), name);
+      try {
+        accessSync(candidate, constants.X_OK);
+        return candidate;
+      } catch {}
+    }
+  }
+  return 'git';
+}
 
 function runGit(cwd, args) {
   return execFileSync('git', args, {
@@ -13,15 +29,20 @@ function runGit(cwd, args) {
   }).trim();
 }
 
-function hasCommitObject(cwd, objectId) {
-  const result = spawnSync('git', ['cat-file', '-e', `${objectId}^{commit}`], {
+function findMissingCommitObjects(cwd, objectIds) {
+  if (objectIds.length === 0) return [];
+  const output = execFileSync(resolveGitExecutable(), ['cat-file', '--batch-check=%(objectname) %(objecttype)'], {
     cwd,
     encoding: 'utf8',
-    stdio: 'ignore',
-    timeout: 10_000,
+    input: `${objectIds.map((objectId) => `${objectId}^{commit}`).join('\n')}\n`,
+    stdio: ['pipe', 'pipe', 'pipe'],
+    timeout: 30_000,
   });
-  if (result.error) throw result.error;
-  return result.status === 0;
+  const rows = output.trim().split(/\r?\n/);
+  if (rows.length !== objectIds.length) {
+    throw new Error(`git cat-file --batch-check returned ${rows.length} rows for ${objectIds.length} objects`);
+  }
+  return objectIds.filter((_objectId, index) => !/^[0-9a-f]{40}(?:[0-9a-f]{24})? commit$/.test(rows[index]));
 }
 
 /**
@@ -31,6 +52,10 @@ function hasCommitObject(cwd, objectId) {
 export function resolveRemoteReleasePlanningRefs(opts) {
   const remote = String(opts.remote ?? 'origin').trim();
   if (!remote) throw new Error('remote is required');
+  const objectIds = [...new Set((opts.objectIds ?? []).map((objectId) => String(objectId).trim()).filter(Boolean))];
+  for (const objectId of objectIds) {
+    if (!OBJECT_ID_PATTERN.test(objectId)) throw new Error(`Invalid immutable object ID: ${objectId}`);
+  }
   const branchNames = [...new Set(opts.branchNames.map((name) => String(name).trim()).filter(Boolean))];
   const optionalBranchNames = [
     ...new Set((opts.optionalBranchNames ?? []).map((name) => String(name).trim()).filter(Boolean)),
@@ -63,15 +88,14 @@ export function resolveRemoteReleasePlanningRefs(opts) {
   }
   const tags = {};
   for (const [tag, objectId] of Object.entries(directTags)) tags[tag] = peeledTags[tag] ?? objectId;
-  const requiredObjects = [...new Set([...Object.values(branches), ...Object.values(tags)])];
-  const missing = requiredObjects.filter((objectId) => !hasCommitObject(opts.repoRoot, objectId));
+  const requiredObjects = [...new Set([...Object.values(branches), ...Object.values(tags), ...objectIds])];
+  const missing = findMissingCommitObjects(opts.repoRoot, requiredObjects);
   for (let index = 0; index < missing.length; index += 64) {
     runGit(opts.repoRoot, ['fetch', '--no-tags', remote, ...missing.slice(index, index + 64)]);
   }
-  for (const objectId of requiredObjects) {
-    if (!hasCommitObject(opts.repoRoot, objectId)) {
-      throw new Error(`Remote advertised object ${objectId} is not an available commit after object-only fetch`);
-    }
+  const unavailable = findMissingCommitObjects(opts.repoRoot, requiredObjects);
+  if (unavailable.length > 0) {
+    throw new Error(`Remote advertised object ${unavailable[0]} is not an available commit after object-only fetch`);
   }
   return { branches, tags };
 }

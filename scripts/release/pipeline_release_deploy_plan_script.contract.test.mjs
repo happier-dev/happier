@@ -83,7 +83,7 @@ test('compute-deploy-plan detects commits behind + relevant changes per deploy b
       '--deploy-environment',
       'production',
       '--source-ref',
-      'dev',
+      sourceSha,
       '--force-deploy',
       'false',
       '--deploy-ui',
@@ -108,7 +108,7 @@ test('compute-deploy-plan detects commits behind + relevant changes per deploy b
 
   assert.equal(parsed.source_sha, sourceSha);
   assert.equal(parsed.deploy_environment, 'production');
-  assert.equal(parsed.source_ref, 'dev');
+  assert.equal(parsed.source_ref, sourceSha);
 
   // Server + UI have relevant changes and are enabled => needed true.
   assert.equal(parsed.deploy_server.needed, true);

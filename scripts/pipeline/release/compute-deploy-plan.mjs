@@ -6,6 +6,8 @@ import { execFileSync } from 'node:child_process';
 import { parseArgs } from 'node:util';
 import { resolveRemoteReleasePlanningRefs } from './lib/release-planning-remote-refs.mjs';
 
+const OBJECT_ID_PATTERN = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/;
+
 function fail(message) {
   console.error(message);
   process.exit(1);
@@ -149,6 +151,7 @@ function main() {
   const sourceRef = String(values['source-ref'] ?? '').trim();
   if (!deployEnvironment) fail('--deploy-environment is required');
   if (!sourceRef) fail('--source-ref is required');
+  const sourceIsImmutableObjectId = OBJECT_ID_PATTERN.test(sourceRef);
 
   const forceDeploy = parseBoolString(values['force-deploy'], '--force-deploy');
   const deployUi = parseBoolString(values['deploy-ui'], '--deploy-ui');
@@ -166,11 +169,12 @@ function main() {
   const remoteRefs = resolveRemoteReleasePlanningRefs({
     repoRoot,
     remote,
-    branchNames: [sourceRef],
+    branchNames: sourceIsImmutableObjectId ? [] : [sourceRef],
     optionalBranchNames: deployRefs,
     tagPrefixes: [],
+    objectIds: sourceIsImmutableObjectId ? [sourceRef] : [],
   });
-  const sourceSha = remoteRefs.branches[sourceRef];
+  const sourceSha = sourceIsImmutableObjectId ? sourceRef : remoteRefs.branches[sourceRef];
 
   /**
    * @param {string} key
