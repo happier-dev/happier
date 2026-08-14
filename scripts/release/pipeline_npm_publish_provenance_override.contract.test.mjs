@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 
 function makeTempDir() {
@@ -18,8 +19,18 @@ function runPublishTarball({ githubActions }) {
   const binDir = path.join(dir, 'bin');
   fs.mkdirSync(binDir, { recursive: true });
 
-  const tarballPath = path.join(dir, 'dummy.tgz');
-  fs.writeFileSync(tarballPath, 'not-a-real-tarball', { encoding: 'utf8' });
+  const packageDir = path.join(dir, 'package');
+  fs.mkdirSync(packageDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(packageDir, 'package.json'),
+    JSON.stringify({ name: 'happier-provenance-fixture', version: '1.2.3' }),
+    'utf8',
+  );
+  fs.writeFileSync(path.join(packageDir, 'index.js'), 'export {};\n', 'utf8');
+  const tarballPath = path.join(dir, 'fixture.tgz');
+  execFileSync('tar', ['-czf', tarballPath, '-C', dir, 'package']);
+  const integrity = `sha512-${crypto.createHash('sha512').update(fs.readFileSync(tarballPath)).digest('base64')}`;
+  const stubLogPath = path.join(dir, 'npm-stub.log');
 
   const npxPath = path.join(binDir, 'npx');
   writeExecutable(
@@ -27,9 +38,17 @@ function runPublishTarball({ githubActions }) {
     [
       '#!/usr/bin/env bash',
       'set -euo pipefail',
-      'echo "NPM_CONFIG_PROVENANCE=${NPM_CONFIG_PROVENANCE-}"',
-      'echo "GITHUB_ACTIONS=${GITHUB_ACTIONS-}"',
-      'exit 0',
+      'printf "NPM_CONFIG_PROVENANCE=%s\\n" "${NPM_CONFIG_PROVENANCE-}" >> "${NPM_STUB_LOG}"',
+      'if [[ "$*" == *"dist.integrity"* ]]; then',
+      '  printf "\\\"%s\\\"\\n" "${NPM_STUB_INTEGRITY}"',
+      'elif [[ "$*" == *"dist-tags"* ]]; then',
+      '  printf "{\\\"next\\\":\\\"1.2.3\\\"}\\n"',
+      'elif [[ "$*" == *"dist-tag add"* || "$*" == *" publish "* ]]; then',
+      '  printf "ok\\n"',
+      'else',
+      '  echo "unexpected npm invocation: $*" >&2',
+      '  exit 1',
+      'fi',
       '',
     ].join('\n'),
   );
@@ -40,9 +59,11 @@ function runPublishTarball({ githubActions }) {
     // Ensure the script is the one deciding, not the outer environment.
     NPM_CONFIG_PROVENANCE: '',
     GITHUB_ACTIONS: githubActions ? 'true' : '',
+    NPM_STUB_INTEGRITY: integrity,
+    NPM_STUB_LOG: stubLogPath,
   };
 
-  return execFileSync(
+  const stdout = execFileSync(
     process.execPath,
     [
       'scripts/pipeline/npm/publish-tarball.mjs',
@@ -55,6 +76,7 @@ function runPublishTarball({ githubActions }) {
     ],
     { env, encoding: 'utf8' },
   );
+  return `${stdout}\n${fs.readFileSync(stubLogPath, 'utf8')}`;
 }
 
 test('publish-tarball sets NPM_CONFIG_PROVENANCE=false by default locally', () => {
@@ -66,4 +88,3 @@ test('publish-tarball sets NPM_CONFIG_PROVENANCE=true by default in GitHub Actio
   const stdout = runPublishTarball({ githubActions: true });
   assert.match(stdout, /NPM_CONFIG_PROVENANCE=true/);
 });
-
