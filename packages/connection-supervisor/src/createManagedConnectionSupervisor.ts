@@ -361,18 +361,22 @@ export function createManagedConnectionSupervisor(
       }
 
       const run = async (): Promise<void> => {
-      if (isStarted && !isStopped) {
-        if (state.phase === 'online' || state.phase === 'connecting') {
+        if (isStarted && !isStopped) {
+          if (
+            state.phase === 'online'
+            || state.phase === 'connecting'
+            || (state.phase === 'offline' && state.nextRetryAt !== null)
+          ) {
+            return;
+          }
+          reconnectAttempt = 0;
+          await establishConnection({ initial: config.probeBeforeInitialConnect === true, attempt: 0 });
           return;
         }
+        isStarted = true;
+        isStopped = false;
         reconnectAttempt = 0;
-        await establishConnection({ initial: config.probeBeforeInitialConnect === true, attempt: 0 });
-        return;
-      }
-      isStarted = true;
-      isStopped = false;
-      reconnectAttempt = 0;
-      await establishConnection({ initial: true, attempt: 0 });
+        await establishConnection({ initial: true, attempt: 0 });
       };
 
       const promise = run();
