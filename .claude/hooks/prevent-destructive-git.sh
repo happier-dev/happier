@@ -39,6 +39,13 @@ if [[ -n "${ALLOW_DESTRUCTIVE_GIT:-}" && "${ALLOW_DESTRUCTIVE_GIT:-}" != "0" ]];
 fi
 
 MATCHED=""
+# `git stash` is repo-wide regardless of cwd: one slip sweeps every tracked
+# modification in this shared checkout (5,362 files on 2026-08-06). Strip the
+# read-only inspection subcommands first, per clause, so `git stash list` stays
+# usable while `git stash list >/dev/null; ...; git stash` is still blocked —
+# that exact compound shape caused the incident.
+STASH_STRIPPED=$(printf '%s' "$COMMAND" | sed -E 's/git[[:space:]]+stash[[:space:]]+(list|show)[^;&|]*//g')
+
 case "$COMMAND" in
   *"git reset"*) MATCHED="git reset" ;;
   *"git restore"*) MATCHED="git restore" ;;
@@ -47,6 +54,12 @@ case "$COMMAND" in
   *"git switch"*) MATCHED="git switch" ;;
   *) MATCHED="" ;;
 esac
+
+if [[ -z "$MATCHED" ]]; then
+  case "$STASH_STRIPPED" in
+    *"git stash"*) MATCHED="git stash" ;;
+  esac
+fi
 
 if [[ -z "$MATCHED" ]]; then
   exit 0

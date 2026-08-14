@@ -33,20 +33,17 @@ Proven on the 2026-07-02/03 transcript corridor program; these are defaults, not
   session orchestrates authorized work, writes lane briefs, validates deliverables, and steers;
   it authors a repository plan only when the user explicitly requests planning. Independent reviews of
   completed corridors/critical changes run on Fable or Opus.
-- **Never use Sonnet** for reviews, implementation, or QA/diagnosis/fix — its claims/diagnostics are unreliable (read-only exploration/search lanes are the ONLY acceptable Sonnet use). **Never use Haiku for anything.** Use **gpt-5.6 sol high (Codex)** or **Fable** for everything, including browser/live/device QA lanes (Codex drives the agent-browser/agent-device CLI and owns the fixes). Subagents inherit the parent (Fable) model by default, and an unset model on a QA lane silently burns 150k–350k Fable tokens per lane — always set `model` explicitly on Agent calls: QA/evidence/mechanical → Codex; DEEP/independent reviews (adversarial passes, ship gates) → FABLE specifically.
-- **Deep/independent reviews, ship gates, corridor-gate reviewing, and taste-critical decisions run on Fable or Opus.** Reviewer ≠ author is absolute; never Codex-reviews-Codex on a gate. Large plans reference the root constitution and repository skills rather than copying private operating manuals. Plan-local documents contain only product decisions, seam ownership, acceptance criteria, and evidence specific to that program.
-- **Large UI implementation goes to OPUS, not Codex** (proven better UI taste). Any lane touching user-facing surfaces/components/animations MUST load the `make-interfaces-feel-better` + `interface-details` skills before writing surface code, reuse existing components/themed tokens/text primitives exclusively, and treat a duplicate animation/UI primitive as a review finding. Taste-critical UI decisions: Fable or Opus.
-- **Codex model id caveat (updated 2026-07-09, GPT-5.6 era):** use `-m gpt-5.6-sol -c 'model_reasoning_effort="high"'` (the form below). If the account rejects that id, fall back to the account default — do NOT fall back to 5.5.
-- **Happier-MCP delegated runs CAN now set the model + reasoning effort per-run (added 2026-07-09).** `execution.run.start` / `subagents.delegate.start` / `subagents.plan.start` accept `modelId` (same vocabulary as `session.spawn_new`), plus `sessionConfigOptionOverrides` OR the `configOptions` shorthand (e.g. `{ "reasoning_effort": "high" }`) — merged canonically at the action boundary (a conflict fails with `invalid_parameters`). Omitting them keeps the backend's configured default. **Application caveat:** the option is THREADED to every plugin's run-backend factory, but per-plugin *application* varies — codex/opencode/antigravity apply `modelId`; reasoning effort application is a per-plugin follow-up at each plugin's `updateConfig` seam and generic ACP plugins (gemini/copilot/qwen/kimi/…) don't apply model to runs yet. Until a given plugin applies effort, prefer raw `codex exec -m gpt-5.6-sol -c 'model_reasoning_effort="high"' …` when a specific model+effort MUST be guaranteed per-run. Verify a delegated run's actual model by reading its sidechain (codex banner logs the model).
-- **Repeatedly-killed Fable lanes get handed to Codex, not resumed again.** Each resume replays the lane's full transcript uncached; after the second kill, the cheaper path is a Codex handoff whose brief is the lane's on-disk report + `git status` of its files. Design lane briefs so the report file alone is a sufficient restart brief.
-- **Implementation lanes go to Codex (gpt-5.6 sol, high reasoning), driven RAW** — no Claude wrapper
-  babysitting a codex process:
-  `codex exec -s workspace-write -C <repo-dir> -m gpt-5.6-sol -c 'model_reasoning_effort="high"' [resume <session-id>] "$(cat prompt.txt)"`
-  as a background Bash task. Session ids live in `~/.codex/sessions/YYYY/MM/DD/rollout-*-<uuid>.jsonl`
-  (identify by cwd + keywords; record the id in the tracking doc at launch). The codex-companion
-  wrapper's job registry lives in a happier-managed dir and gets wiped — do not rely on it for
-  long lanes. Prompts always go through a file + `"$(cat …)"`: zsh executes backticks inside
-  double-quoted inline prompts and shreds the brief.
+- **This section is the Claude-tool model roster referenced by the root `AGENTS.md` "Efficient execution" rule.** The constitution defers the model choice here; this file's ruling governs for Claude Code.
+- **Do not use GPT/Codex models for implementation** (user ruling, 2026-08-05 — this supersedes the earlier Codex-first guidance throughout this section). **Implementation runs on Opus at high reasoning effort.** **Never use Sonnet** for reviews, implementation, or QA/diagnosis/fix — its claims/diagnostics are unreliable (read-only exploration/search lanes are the ONLY acceptable Sonnet use). **Never use Haiku for anything.** Use **Opus (high)** or **Fable** for everything, including browser/live/device QA lanes (the QA lane drives the agent-browser/agent-device CLI and owns its fixes). Subagents inherit the parent model by default; when the parent is already Opus or Fable, inheriting is correct and needs no override. Set `model` explicitly only to move a lane to a *different* allowed tier — never to route work to a GPT/Codex, Sonnet, or Haiku backend.
+- **Deep/independent reviews, ship gates, corridor-gate reviewing, and taste-critical decisions run on Fable or Opus.** Reviewer ≠ author is absolute: the reviewing agent must be a different agent from the author, and on a gate it must not be the same agent instance that wrote the change. Large plans reference the root constitution and repository skills rather than copying private operating manuals. Plan-local documents contain only product decisions, seam ownership, acceptance criteria, and evidence specific to that program.
+- **All implementation goes to OPUS (high)** — UI and non-UI alike. Any lane touching user-facing surfaces/components/animations MUST load the `make-interfaces-feel-better` + `interface-details` skills before writing surface code, reuse existing components/themed tokens/text primitives exclusively, and treat a duplicate animation/UI primitive as a review finding. Taste-critical UI decisions: Fable or Opus.
+- **Codex model id caveat — RETIRED (2026-08-05).** Superseded by the no-GPT-for-implementation ruling above. The `gpt-5.6-sol` invocation form is retained in history only; do not select it for implementation, review, or QA work.
+- **Happier-MCP delegated runs CAN now set the model + reasoning effort per-run (added 2026-07-09).** `execution.run.start` / `subagents.delegate.start` / `subagents.plan.start` accept `modelId` (same vocabulary as `session.spawn_new`), plus `sessionConfigOptionOverrides` OR the `configOptions` shorthand (e.g. `{ "reasoning_effort": "high" }`) — merged canonically at the action boundary (a conflict fails with `invalid_parameters`). Omitting them keeps the backend's configured default. **Application caveat:** the option is THREADED to every plugin's run-backend factory, but per-plugin *application* varies — codex/opencode/antigravity apply `modelId`; reasoning effort application is a per-plugin follow-up at each plugin's `updateConfig` seam and generic ACP plugins (gemini/copilot/qwen/kimi/…) don't apply model to runs yet. Until a given plugin applies effort, guarantee the model+effort by launching the lane as an Opus subagent instead of relying on a backend plugin to apply the override — **not** by falling back to a GPT/Codex CLI (superseded 2026-08-05). Verify a delegated run's actual model by reading its sidechain.
+- **Repeatedly-killed lanes get handed to a fresh Opus lane, not resumed again.** Each resume replays the lane's full transcript uncached; after the second kill, the cheaper path is a fresh handoff whose brief is the lane's on-disk report + `git status` of its files. Design lane briefs so the report file alone is a sufficient restart brief.
+- **Implementation lanes go to Opus at high reasoning effort.** Launch them as subagents/execution runs that
+  inherit or explicitly select Opus; do not shell out to a GPT/Codex CLI for implementation. If a lane
+  brief is long, still pass it through a file + `"$(cat …)"` when it reaches a shell: zsh executes
+  backticks inside double-quoted inline prompts and shreds the brief.
 - **Keep the orchestrator context lean:** detail lives in the workspace tracking docs, not in lane
   prompts or orchestrator prose. Every tracking-doc edit by a lane is auto-injected into the main
   context — that is the (worthwhile) tax of the living-ledger pattern; don't add to it with
@@ -58,15 +55,15 @@ Proven on the 2026-07-02/03 transcript corridor program; these are defaults, not
   everything else belongs in the lane report file. Long final messages are pure orchestrator-context
   burn.
 
-## Delegating via the Happier MCP subagent runs (VERIFIED 2026-07-08 — prefer this over raw `codex exec` AND over spawning new sessions)
+## Delegating via the Happier MCP subagent runs (VERIFIED 2026-07-08 — prefer this over a raw agent CLI AND over spawning new sessions)
 
 The Happier MCP (`mcp__happier__action_execute`, plus `action_spec_search` / `action_options_resolve` to discover actions + resolve field options) is the delegation surface. Enabled backends (verified): `agent:codex`, `agent:claude`, `agent:gemini`, `agent:opencode`, `agent:cursor`, `agent:copilot`, `agent:qwen`, `agent:kimi`, `agent:pi`, and more. Prefer it over raw `codex exec`: runs are UI-visible, fleet-managed, resumable across orchestrator compaction, model-economy-honored, and — critically — you can read the delegate's **own tool calls/results** to VERIFY what it actually did (anti-fake-DONE).
 
 **The subagent primitive is an EXECUTION RUN within a session — NOT a new session.** Use `subagents.delegate.start` / `execution.run.start`, which parent a bounded, ephemeral subagent run (a sidechain) under the ORCHESTRATOR's session. Do NOT use `session.spawn_new` for lane delegation — that creates a heavy independent top-level session and loses fleet management. (Round-trip verified live 2026-07-08: a `subagents.delegate.start` codex run succeeded in ~16s and `execution.run.wait` returned the structured result inline — `summary` + `deliverablesDigest` — no cold start, no separate transcript fetch.)
 
 Round-trip (every action below confirmed working):
-- **Delegate a lane (ergonomic default)** → `action_execute` `subagents.delegate.start` `{ sessionId, backendTargetKeys: ["agent:codex", …], instructions: "<lane brief>" }` → returns per-target `{ runId, callId, sidechainId }`. Fans out to multiple backends in one call. `subagents.plan.start` (`/h.plan`) is the planning variant and is used only for an explicit user-requested planning task; `review.start` runs parallel review engines (each engine = its own run).
-- **Delegate with full control** → `execution.run.start` `{ sessionId, intent, backendTarget: { kind:"builtInAgent", agentId:"codex" }, instructions, permissionMode, retentionPolicy, runClass, ioMode, initialContextMode }` when you need to set permission mode / retention / run class / io mode explicitly.
+- **Delegate a lane (ergonomic default)** → `action_execute` `subagents.delegate.start` `{ sessionId, backendTargetKeys: ["agent:claude", …], instructions: "<lane brief>" }` → returns per-target `{ runId, callId, sidechainId }`. (Pick a Claude/Opus backend; per the model-economy ruling above, do **not** target `agent:codex` or any GPT backend for implementation, review, or QA.) Fans out to multiple backends in one call. `subagents.plan.start` (`/h.plan`) is the planning variant and is used only for an explicit user-requested planning task; `review.start` runs parallel review engines (each engine = its own run).
+- **Delegate with full control** → `execution.run.start` `{ sessionId, intent, backendTarget: { kind:"builtInAgent", agentId:"claude" }, instructions, permissionMode, retentionPolicy, runClass, ioMode, initialContextMode }` when you need to set permission mode / retention / run class / io mode explicitly.
 - **Await + get result (best — returns result inline)** → `execution.run.wait` `{ sessionId, runId, timeoutSeconds, pollIntervalMs }` → `{ status, result: { run, latestToolResult: { summary, deliverablesDigest } } }`. Polls to terminal status; no separate transcript read needed for the headline result.
 - **Fleet monitor / continue / stop** → `execution.run.list` `{ sessionId, status:"running"|"succeeded"|… }`, `execution.run.send` `{ runId, message, resume:true }` (iterate/continue a run), `execution.run.stop` `{ runId }`. For deep verification of what a run DID, read its sidechain: `session.transcript.get`/`session.events.get` `{ sessionId, scope:"sidechain", sidechainId, kinds:["tool_call","tool_result"] }`.
 - **Record the `runId` + `sidechainId` in the lane Ledger at launch** — survives your compaction; reattach with `execution.run.send`/`wait`.
@@ -80,7 +77,7 @@ Resolve inputs with `action_options_resolve`: `execution.backends.enabled` (back
 
 Parent session: runs need a `sessionId` to parent them. Use the current orchestrator session, or create ONE long-lived orchestrator session via `session.spawn_new` and hang all lane runs off it as sidechains.
 
-Caveats (observed): a cold backend's FIRST run can take minutes to boot (CLI + ACP handshake) — give `execution.run.wait` a generous `timeoutSeconds` (600+) and don't read a timeout as failure; poll `execution.run.list` or the sidechain. If a run stays output-silent, check the target machine (there can be >1 — pick the one hosting the worktree) and that the backend is authed there. `session.spawn_new` remains valid only for a genuinely independent, persistent top-level session (e.g. a long-lived QA workspace driving the UI), never for routine lane delegation. Raw `codex exec` stays a fallback only if the MCP is unavailable in a headless/cron run.
+Caveats (observed): a cold backend's FIRST run can take minutes to boot (CLI + ACP handshake) — give `execution.run.wait` a generous `timeoutSeconds` (600+) and don't read a timeout as failure; poll `execution.run.list` or the sidechain. If a run stays output-silent, check the target machine (there can be >1 — pick the one hosting the worktree) and that the backend is authed there. `session.spawn_new` remains valid only for a genuinely independent, persistent top-level session (e.g. a long-lived QA workspace driving the UI), never for routine lane delegation. If the MCP is unavailable in a headless/cron run, fall back to a local Claude/Opus subagent — **not** to a GPT/Codex CLI.
 
 ## Connected services in execution runs (pick the account/pool a delegated run authenticates as)
 
@@ -120,20 +117,36 @@ profile.
   normal shared state and do not reserve a file. Inspect current bytes and layer compatible changes;
   coordinate only overlapping hunks, incompatible decisions for one live seam, generated outputs
   with one producer, destructive moves/rewrites, or exclusive mutable runtime resources.
+- **Never ask a lane to prove an attribution negative.** A brief demanding "include pre-existing
+  failures you did NOT cause" makes the lane establish a clean basis, and the standard procedure for
+  that is stashing or checking out — which sweeps the shared checkout. Ask instead for failures
+  observed but unattributed, and adjudicate them at the orchestrator. Pair every prohibition with the
+  safe procedure and state the blast radius; a bare NEVER does not correct a wrong mental model (a
+  lane wrote `cd <package> && git stash` believing it was directory-scoped).
+- **Lanes share the one primary checkout; do NOT isolate them into worktrees.** `git worktree add`
+  checks out a commit-ish, so this checkout's uncommitted and untracked work — normally thousands of
+  files — does not travel to it. An isolated lane would start at bare HEAD, seeing none of the
+  program's in-flight work, which is the same failure a stray `git stash` causes and would break the
+  moving-bytes model outright (a downstream lane must be able to read the upstream lane's just-landed
+  bytes without a commit/merge cycle). Isolation is only coherent for committed work. Enforcement
+  belongs in `.claude/hooks/prevent-destructive-git.sh`, which matches the whole command string and
+  therefore catches every clause of a compound command.
 - **Record material transitions, not every thought.** Update the lane report and orchestrator
   ledger when scope, ownership, candidate identity, finding disposition, validation state, or a
   blocker materially changes. A closed gate, landed fix, or completed validation is always a
   material transition: record it before starting the next unit, so a crashed lane loses at most
   one gate. Do not create per-microchange packets or ledger churn.
 - **Stalled/killed agent ≠ lost work.** Before re-running, check its artifacts (report, evidence
-  files, ledger rows, codex session). Resume with context (SendMessage / `codex exec resume`)
-  instead of restarting; only fresh-start when the transcript/session is genuinely gone.
+  files, ledger rows, run sidechain). Resume with context (SendMessage / `execution.run.send` with
+  `resume: true`) instead of restarting; only fresh-start when the transcript/session is genuinely gone.
 - **Verify lane claims.** Reports referencing files that don't exist, "green" suites that are red
   at the lane's own commit, and inflated LOC deltas all happened. Reviewers rerun the tests
-  themselves against a frozen snapshot/commit basis and attribute concurrent churn explicitly.
+  themselves against the current bytes of a dirty shared tree — that is the normal basis. Never
+  freeze, stash, or otherwise manufacture a clean basis to separate your failures from concurrent
+  churn; a failure you cannot attribute is reported as unattributed, not resolved by mutating the tree.
 - **Adversarial review at composed boundaries.** Authors run `skills/attack-conclusion` while
   building. Independent review and `skills/verify-claims` target load-bearing delegated claims and
-  the frozen consumed vertical, corridor gate, or ship candidate—not every microchange. After
+  the consumed vertical, corridor gate, or ship candidate—not every microchange. After
   accepted fixes, review the finding delta unless the candidate, contract, scope, or risk changed
   materially. Author ≠ reviewer remains mandatory for corridor and ship gates.
 
