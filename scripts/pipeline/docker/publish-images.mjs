@@ -551,8 +551,6 @@ async function main() {
     return uniq(tags);
   };
 
-  const allowGhcrFailure = registries.has('dockerhub') && registries.has('ghcr');
-
   /** @type {ReadonlyArray<Readonly<{ registry: 'dockerhub' | 'ghcr'; tags: string[]; base: string }>>} */
   const relayTagSets = uniq(
     /** @type {Array<Readonly<{ registry: 'dockerhub' | 'ghcr'; tags: string[]; base: string }>>} */ ([
@@ -579,7 +577,7 @@ async function main() {
 
   /**
    * @param {readonly string[]} tags
-   * @param {{ target: string; file: string; cacheScope: string; extraArgs?: string[]; allowFailure?: boolean }} params
+   * @param {{ target: string; file: string; cacheScope: string; extraArgs?: string[] }} params
    */
   const runBuildxForTags = async (tags, params) => {
     if (tags.length === 0) return;
@@ -603,27 +601,18 @@ async function main() {
       '.',
     ];
 
-    try {
-      await runDockerBuildxBuildWithRetry({
-        dockerArgs: args,
-        dryRun,
-        onRetry: (attempt, errorText) => {
-          console.warn(`[pipeline] docker buildx build failed (attempt ${attempt}/${DEFAULT_BUILD_RETRIES}), retrying...`);
-          if (errorText) {
-            const firstLine = String(errorText).split('\n').find(Boolean);
-            if (firstLine) console.warn(`[pipeline] transient error: ${firstLine}`);
-          }
-          dockerPreflight({ dryRun: false });
-        },
-      });
-    } catch (err) {
-      if (params.allowFailure) {
-        const msg = err instanceof Error ? err.message : String(err);
-        console.warn(`[pipeline] docker buildx push failed (ignored): ${msg}`);
-        return;
-      }
-      throw err;
-    }
+    await runDockerBuildxBuildWithRetry({
+      dockerArgs: args,
+      dryRun,
+      onRetry: (attempt, errorText) => {
+        console.warn(`[pipeline] docker buildx build failed (attempt ${attempt}/${DEFAULT_BUILD_RETRIES}), retrying...`);
+        if (errorText) {
+          const firstLine = String(errorText).split('\n').find(Boolean);
+          if (firstLine) console.warn(`[pipeline] transient error: ${firstLine}`);
+        }
+        dockerPreflight({ dryRun: false });
+      },
+    });
   }
 
   const useGhaCache = String(process.env.GITHUB_ACTIONS ?? '').toLowerCase() === 'true';
@@ -649,14 +638,12 @@ async function main() {
       ...optionalBuildArgs,
     ];
 
-    // Build/push dockerhub first so if GHCR permissions block publishing we still ship to Docker Hub.
     for (const tagSet of relayTagSets) {
       await runBuildxForTags(tagSet.tags, {
         target: 'relay-server',
         file: 'Dockerfile',
         cacheScope: 'relay-server',
         extraArgs,
-        allowFailure: allowGhcrFailure && tagSet.registry === 'ghcr',
       });
     }
 
@@ -688,7 +675,6 @@ async function main() {
         file: 'docker/dev-box/Dockerfile',
         cacheScope: 'dev-box',
         extraArgs,
-        allowFailure: allowGhcrFailure && tagSet.registry === 'ghcr',
       });
     }
   }
