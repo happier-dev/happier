@@ -11,7 +11,7 @@
     "test": "vitest run",
     "test:runtime:bun": "bun run scripts/tokenRuntimeCompatibility.ts",
     "test:watch": "vitest",
-    "build": "pkgroll",
+    "build": "node scripts/build.mjs",
     "typecheck": "node ../../scripts/workspaces/runTypeScriptCli.mjs --noEmit"
   },
   "main": "./dist/index.cjs",
