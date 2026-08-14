@@ -182,6 +182,36 @@ export type OpenCodeGlobalEventDelivery = Readonly<{
   connectionGeneration: number;
 }>;
 
+export type OpenCodeMcpStatus = Readonly<
+  | { status: 'connected' }
+  | { status: 'disabled' }
+  | { status: 'failed'; error: string }
+  | { status: 'needs_auth' }
+  | { status: 'needs_client_registration'; error: string }
+>;
+
+function readOpenCodeMcpStatus(response: unknown, serverName: string): OpenCodeMcpStatus {
+  if (!response || typeof response !== 'object' || Array.isArray(response)) {
+    throw new Error(`OpenCode MCP registration returned an invalid status map for "${serverName}"`);
+  }
+  const rawStatus = (response as Record<string, unknown>)[serverName];
+  if (!rawStatus || typeof rawStatus !== 'object' || Array.isArray(rawStatus)) {
+    throw new Error(`OpenCode MCP registration response omitted status for "${serverName}"`);
+  }
+  const status = (rawStatus as Record<string, unknown>).status;
+  if (status === 'connected' || status === 'disabled' || status === 'needs_auth') {
+    return { status };
+  }
+  if (status === 'failed' || status === 'needs_client_registration') {
+    const error = (rawStatus as Record<string, unknown>).error;
+    if (typeof error !== 'string' || error.trim().length === 0) {
+      throw new Error(`OpenCode MCP registration returned status "${status}" without an error for "${serverName}"`);
+    }
+    return { status, error: error.trim() };
+  }
+  throw new Error(`OpenCode MCP registration returned an unknown status for "${serverName}"`);
+}
+
 export type OpenCodeServerRuntimeClient = Readonly<{
   setDirectoryOverride: (directory: string) => void;
   sessionList: () => Promise<unknown[]>;
@@ -198,7 +228,7 @@ export type OpenCodeServerRuntimeClient = Readonly<{
   agentsList: () => Promise<ReadonlyArray<{ name: string; description?: string }>>;
   appSkills: () => Promise<unknown[]>;
   providersList: () => Promise<ReadonlyArray<{ id: string; env?: readonly string[]; models?: Record<string, unknown> }>>;
-  mcpAdd: (opts: { name: string; config: unknown }) => Promise<void>;
+  mcpAdd: (opts: { name: string; config: unknown }) => Promise<OpenCodeMcpStatus>;
   mcpDisconnect: (opts: { name: string }) => Promise<void>;
   sessionPromptAsync: (opts: {
     sessionId: string;
@@ -617,8 +647,10 @@ export async function createOpenCodeServerRuntimeClient(params: Readonly<{
     },
     mcpAdd: async ({ name, config }) => {
       const serverName = typeof name === 'string' ? name.trim() : '';
-      if (!serverName) return;
-      await fetchJson<void>({
+      if (!serverName) {
+        throw new Error('OpenCode MCP registration requires a server name');
+      }
+      const response = await fetchJson<unknown>({
         url: buildUrl(baseUrl, '/mcp', { directory: resolveDirectory() }),
         method: 'POST',
         headers,
@@ -628,6 +660,7 @@ export async function createOpenCodeServerRuntimeClient(params: Readonly<{
         },
         timeoutMs: httpTimeoutMs,
       });
+      return readOpenCodeMcpStatus(response, serverName);
     },
     mcpDisconnect: async ({ name }) => {
       const serverName = typeof name === 'string' ? name.trim() : '';

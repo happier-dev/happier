@@ -467,6 +467,7 @@ describe('OpenCode server runtime (real integration)', () => {
         session,
         messageBuffer: new MessageBuffer(),
         mcpServers: {},
+        happierMcpAdmission: { kind: 'not_available_for_execution_run' },
         permissionHandler: { handleToolCall: async () => ({ decision: 'approved' }) } as any,
         onThinkingChange: () => {},
         getPermissionMode: () => 'default',

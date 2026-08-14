@@ -188,6 +188,7 @@ export function createOpenCodeServerExecutionRunBackend(args: Readonly<{
         session: sessionAdapter as unknown as ApiSessionClient,
         messageBuffer: new MessageBuffer(),
         mcpServers: {},
+        happierMcpAdmission: { kind: 'not_available_for_execution_run' },
         permissionHandler: (args.permissionHandler ?? null) as any,
         onThinkingChange: (thinking) => {
             emit({ type: 'status', status: thinking ? 'running' : 'idle' });

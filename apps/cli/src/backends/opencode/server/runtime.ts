@@ -219,12 +219,18 @@ export type OpenCodeServerRuntimeDeps = Readonly<{
   createClient?: typeof createOpenCodeServerRuntimeClient;
 }>;
 
+export type OpenCodeHappierMcpAdmission = Readonly<
+  | { kind: 'required' }
+  | { kind: 'not_available_for_execution_run' }
+>;
+
 export function createOpenCodeServerRuntime(params: {
   directory: string;
   env?: NodeJS.ProcessEnv;
   session: ApiSessionClient;
   messageBuffer: MessageBuffer;
   mcpServers: Record<string, McpServerConfig>;
+  happierMcpAdmission: OpenCodeHappierMcpAdmission;
   permissionHandler: ProviderEnforcedPermissionHandler;
   onThinkingChange: (thinking: boolean) => void;
   getPermissionMode?: () => PermissionMode | null | undefined;
@@ -333,12 +339,21 @@ export function createOpenCodeServerRuntime(params: {
   let mcpServerRegistrationInFlight: Promise<void> | null = null;
   let mcpServerRegistrationRerunRequested = false;
   const ensuredMcpServerNames = new Set<string>();
-  const requiredMcpServerName = Object.prototype.hasOwnProperty.call(params.mcpServers, 'happier')
+  const requiredMcpServerName = params.happierMcpAdmission.kind === 'required'
     ? 'happier'
     : null;
   let requiredMcpServerReadiness = {
     deferred: createDeferred<RequiredMcpServerReadinessOutcome>(),
   };
+  if (
+    requiredMcpServerName
+    && !Object.prototype.hasOwnProperty.call(params.mcpServers, requiredMcpServerName)
+  ) {
+    requiredMcpServerReadiness.deferred.resolve({
+      status: 'failed',
+      error: new Error('required Happier MCP server configuration is missing'),
+    });
+  }
 
   let turnDeferred: Deferred<void> | null = null;
   let turnInFlight = false;
@@ -3774,6 +3789,12 @@ export function createOpenCodeServerRuntime(params: {
     requiredMcpServerReadiness = {
       deferred: createDeferred<RequiredMcpServerReadinessOutcome>(),
     };
+    if (!Object.prototype.hasOwnProperty.call(params.mcpServers, requiredMcpServerName)) {
+      requiredMcpServerReadiness.deferred.resolve({
+        status: 'failed',
+        error: new Error('required Happier MCP server configuration is missing'),
+      });
+    }
   };
 
   const registerMcpServersForCurrentDirectoryBestEffort = async (): Promise<void> => {
@@ -3818,7 +3839,7 @@ export function createOpenCodeServerRuntime(params: {
         : undefined;
 
       try {
-        await c.mcpAdd({
+        const registrationStatus = await c.mcpAdd({
           name: serverName,
           config: {
             type: 'local',
@@ -3827,6 +3848,12 @@ export function createOpenCodeServerRuntime(params: {
             ...(env && Object.keys(env).length > 0 ? { environment: env } : {}),
           },
         });
+        if (registrationStatus.status !== 'connected') {
+          const detail = 'error' in registrationStatus ? `: ${registrationStatus.error}` : '';
+          throw new Error(
+            `OpenCode MCP server "${serverName}" returned status "${registrationStatus.status}"${detail}`,
+          );
+        }
         ensuredMcpServerNames.add(serverName);
         if (
           serverName === requiredMcpServerName
@@ -3878,7 +3905,6 @@ export function createOpenCodeServerRuntime(params: {
     targetSessionId: string,
   ): Promise<RequiredMcpServerReadinessOutcome | null> => {
     if (!requiredMcpServerName) return { status: 'ready' };
-
     for (;;) {
       if (!isActivePromptTurn(turn, targetSessionId)) return null;
       const readiness = requiredMcpServerReadiness;

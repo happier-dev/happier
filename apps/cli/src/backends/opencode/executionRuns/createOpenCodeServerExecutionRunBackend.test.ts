@@ -116,6 +116,8 @@ describe('createOpenCodeServerExecutionRunBackend', () => {
     expect(createOpenCodeServerRuntimeMock).toHaveBeenCalledWith(expect.objectContaining({
       directory: '/tmp/opencode-run',
       env: { HAPPIER_OPENCODE_SERVER_URL: 'http://127.0.0.1:4096' },
+      mcpServers: {},
+      happierMcpAdmission: { kind: 'not_available_for_execution_run' },
     }));
     expect(beginTurn).toHaveBeenCalledTimes(1);
     expect(flushTurn).toHaveBeenCalledTimes(1);

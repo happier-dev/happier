@@ -108,6 +108,7 @@ export async function runOpenCode(opts: StandardAcpProviderRunOptions & {
         session,
         messageBuffer,
         mcpServers,
+        happierMcpAdmission: { kind: 'required' },
         permissionHandler,
         onThinkingChange: setThinking,
         getPermissionMode,
