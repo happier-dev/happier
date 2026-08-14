@@ -31,7 +31,6 @@ describe('E11 canonical service lifecycle', () => {
   it.each([
     ['systemd-user', 'systemctl', ['--user', 'disable', '--now', 'dev.happier.stack.exp.service']],
     ['launchd-user', 'launchctl', ['bootout', 'gui/501/dev.happier.stack.exp']],
-    ['schtasks-user', 'schtasks', ['/End', '/TN', 'Happier\\dev.happier.stack.exp']],
   ] as const)('plans %s teardown fail-closed by canonical target', (backend, cmd, args) => {
     const plan = planServiceAction({
       backend,
@@ -46,6 +45,22 @@ describe('E11 canonical service lifecycle', () => {
       args,
       expectedFailure: 'service-absent',
     }));
+  });
+
+  it('plans Windows teardown through typed scheduler commands', () => {
+    const plan = planServiceAction({
+      backend: 'schtasks-user',
+      action: 'uninstall',
+      label: 'dev.happier.stack.exp',
+      definitionPath: 'C:\\Users\\test\\.happier\\services\\dev.happier.stack.exp.ps1',
+      taskName: 'Happier\\dev.happier.stack.exp',
+    });
+
+    expect(plan.commands).toHaveLength(2);
+    expect(plan.commands.every((command) => command.cmd === 'powershell.exe')).toBe(true);
+    expect(plan.commands[0]?.args.at(-1)).toContain('Stop-ScheduledTask');
+    expect(plan.commands[1]?.args.at(-1)).toContain('Unregister-ScheduledTask');
+    expect(plan.commands.every((command) => command.allowFail !== true)).toBe(true);
   });
 
   it('only classifies explicit backend absence as benign', () => {

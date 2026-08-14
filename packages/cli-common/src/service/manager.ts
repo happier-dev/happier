@@ -7,7 +7,15 @@ import { commandExistsOnPath } from '../process/index.js';
 import { buildLaunchdPlistXml } from './launchd.js';
 import { mergeServiceEnvWithPath } from './path.js';
 import { renderSystemdServiceUnit } from './systemd.js';
-import { buildWindowsScheduledTaskPowerShellAction, renderWindowsScheduledTaskWrapperPs1 } from './windows.js';
+import {
+  buildReadWindowsScheduledTaskStatusPowerShellCommand,
+  buildRemoveWindowsScheduledTaskIfPresentPowerShellCommand,
+  buildStopWindowsScheduledTaskIfRunningPowerShellCommand,
+  buildWindowsScheduledTaskPowerShellAction,
+  parseWindowsScheduledTaskStatusPowerShellJson,
+  renderWindowsScheduledTaskWrapperPs1,
+  splitQualifiedWindowsScheduledTaskName,
+} from './windows.js';
 
 export type ServiceMode = 'user' | 'system';
 
@@ -48,6 +56,10 @@ export type PlannedCommand = Readonly<{
 }>;
 export type ServicePlan = Readonly<{ writes: PlannedWrite[]; commands: PlannedCommand[] }>;
 export type ServiceRegistrationState = 'registered' | 'absent';
+
+function windowsPowerShellCommandArgs(command: string): readonly string[] {
+  return ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', command];
+}
 
 export function resolveServiceBackend(params: Readonly<{ platform?: NodeJS.Platform; mode?: ServiceMode }> = {}): ServiceBackend {
   const p = String(params.platform ?? '').trim() || process.platform;
@@ -343,6 +355,12 @@ export function planServiceAction(params: Readonly<{
 
   if (backend === 'schtasks-user' || backend === 'schtasks-system') {
     const name = taskName || `Happier\\${label}`;
+    const stopIfRunning = {
+      cmd: 'powershell.exe',
+      args: windowsPowerShellCommandArgs(buildStopWindowsScheduledTaskIfRunningPowerShellCommand({
+        qualifiedTaskName: name,
+      })),
+    } satisfies PlannedCommand;
     const mode: ServiceMode = backend === 'schtasks-system' ? 'system' : 'user';
     if (action === 'install') {
       if (!definitionPath) throw new Error('definitionPath is required for schtasks install');
@@ -362,13 +380,19 @@ export function planServiceAction(params: Readonly<{
         ps,
         ...(mode === 'system' ? ['/RU', 'SYSTEM', '/RL', 'HIGHEST'] : []),
       ];
+      commands.push(stopIfRunning);
       commands.push({ cmd: 'schtasks', args });
       commands.push({ cmd: 'schtasks', args: ['/Run', '/TN', name] });
       return { writes, commands };
     }
     if (action === 'uninstall') {
-      commands.push({ cmd: 'schtasks', args: ['/End', '/TN', name], expectedFailure: 'service-absent' });
-      commands.push({ cmd: 'schtasks', args: ['/Delete', '/F', '/TN', name], expectedFailure: 'service-absent' });
+      commands.push(stopIfRunning);
+      commands.push({
+        cmd: 'powershell.exe',
+        args: windowsPowerShellCommandArgs(buildRemoveWindowsScheduledTaskIfPresentPowerShellCommand({
+          qualifiedTaskName: name,
+        })),
+      });
       return { writes, commands };
     }
     if (action === 'start') {
@@ -376,11 +400,11 @@ export function planServiceAction(params: Readonly<{
       return { writes, commands };
     }
     if (action === 'stop') {
-      commands.push({ cmd: 'schtasks', args: ['/End', '/TN', name], allowFail: true });
+      commands.push(stopIfRunning);
       return { writes, commands };
     }
     if (action === 'restart') {
-      commands.push({ cmd: 'schtasks', args: ['/End', '/TN', name], allowFail: true });
+      commands.push(stopIfRunning);
       commands.push({ cmd: 'schtasks', args: ['/Run', '/TN', name] });
       return { writes, commands };
     }
@@ -489,12 +513,6 @@ export function isBenignServiceAbsenceFailure(params: Readonly<{
     if (!['bootout', 'disable', 'print'].includes(action)) return false;
     return /could not find (?:specified )?service|service.*not found|no such process/i.test(output);
   }
-  if (params.cmd === 'schtasks') {
-    const action = params.args.map((arg) => String(arg).toLowerCase()).find((arg) => arg === '/end' || arg === '/delete' || arg === '/query') ?? '';
-    const missing = /cannot find the file specified|specified task name.*does not exist/i.test(output);
-    if (missing) return true;
-    return action === '/end' && /task.*(?:is not currently running|not running)/i.test(output);
-  }
   return false;
 }
 
@@ -519,8 +537,10 @@ export function inspectServiceRegistration(params: Readonly<{
     cmd = 'launchctl';
     args = ['print', `${domain}/${label}`];
   } else {
-    cmd = 'schtasks';
-    args = ['/Query', '/TN', String(params.taskName ?? '').trim() || `Happier\\${label}`];
+    const qualifiedTaskName = String(params.taskName ?? '').trim() || `Happier\\${label}`;
+    const { taskName, taskPath } = splitQualifiedWindowsScheduledTaskName(qualifiedTaskName);
+    cmd = 'powershell.exe';
+    args = [...windowsPowerShellCommandArgs(buildReadWindowsScheduledTaskStatusPowerShellCommand({ taskName, taskPath }))];
   }
   if (!commandExistsOnPath(cmd, { path: process.env.PATH })) throw new Error(`[service] command not found: ${cmd}`);
   const res = spawnSync(cmd, args, { encoding: 'utf8', env: buildServiceCommandEnv({ cmd, args, env: process.env, uid }) });
@@ -529,6 +549,11 @@ export function inspectServiceRegistration(params: Readonly<{
   const stdout = String(res.stdout ?? '').trim();
   if (status === 0) {
     if (cmd === 'systemctl' && /^not-found$/i.test(stdout)) return 'absent';
+    if (cmd === 'powershell.exe') {
+      const snapshot = parseWindowsScheduledTaskStatusPowerShellJson(stdout);
+      if (!snapshot) throw new Error(`[service] failed to parse Windows scheduled task status for ${label}`);
+      return snapshot.exists ? 'registered' : 'absent';
+    }
     return 'registered';
   }
   if (isBenignServiceAbsenceFailure({ cmd, args, status, stdout: res.stdout, stderr: res.stderr })) return 'absent';

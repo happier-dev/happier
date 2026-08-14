@@ -7,6 +7,53 @@ function psQuoted(s: string): string {
   return `"${psDoubleQuote(s)}"`;
 }
 
+export function splitQualifiedWindowsScheduledTaskName(qualifiedTaskName: string): Readonly<{
+  taskName: string;
+  taskPath: string;
+}> {
+  const parts = String(qualifiedTaskName ?? '')
+    .trim()
+    .replaceAll('/', '\\')
+    .split('\\')
+    .filter(Boolean);
+  const taskName = parts.pop() ?? '';
+  if (!taskName) throw new Error('qualifiedTaskName is required for Windows scheduled task control');
+  return {
+    taskName,
+    taskPath: parts.length > 0 ? `\\${parts.join('\\')}\\` : '\\',
+  };
+}
+
+export function buildStopWindowsScheduledTaskIfRunningPowerShellCommand(params: Readonly<{
+  qualifiedTaskName: string;
+}>): string {
+  const { taskName, taskPath } = splitQualifiedWindowsScheduledTaskName(params.qualifiedTaskName);
+  return [
+    '$ErrorActionPreference = "Stop"',
+    `$taskPath = ${psQuoted(taskPath)}`,
+    `$taskName = ${psQuoted(taskName)}`,
+    '$task = Get-ScheduledTask -TaskPath $taskPath -TaskName $taskName -ErrorAction SilentlyContinue',
+    'if ($null -ne $task -and [int]$task.State -eq 4) {',
+    '  Stop-ScheduledTask -TaskPath $taskPath -TaskName $taskName -ErrorAction Stop',
+    '}',
+  ].join('; ');
+}
+
+export function buildRemoveWindowsScheduledTaskIfPresentPowerShellCommand(params: Readonly<{
+  qualifiedTaskName: string;
+}>): string {
+  const { taskName, taskPath } = splitQualifiedWindowsScheduledTaskName(params.qualifiedTaskName);
+  return [
+    '$ErrorActionPreference = "Stop"',
+    `$taskPath = ${psQuoted(taskPath)}`,
+    `$taskName = ${psQuoted(taskName)}`,
+    '$task = Get-ScheduledTask -TaskPath $taskPath -TaskName $taskName -ErrorAction SilentlyContinue',
+    'if ($null -ne $task) {',
+    '  Unregister-ScheduledTask -TaskPath $taskPath -TaskName $taskName -Confirm:$false -ErrorAction Stop',
+    '}',
+  ].join('; ');
+}
+
 export type WindowsScheduledTaskStatusSnapshot = Readonly<{
   exists: boolean;
   enabled: boolean;

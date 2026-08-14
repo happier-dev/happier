@@ -16,6 +16,13 @@ describe('planServiceAction (schtasks install)', () => {
 
     const create = plan.commands.find((command) =>
       command.cmd === 'schtasks' && command.args.includes('/Create'));
+    expect(plan.commands.map((command) => command.cmd)).toEqual(['powershell.exe', 'schtasks', 'schtasks']);
+    expect(plan.commands[0]?.args).toEqual(expect.arrayContaining([
+      '-NoProfile',
+      '-NonInteractive',
+      '-Command',
+    ]));
+    expect(plan.commands[0]?.args.at(-1)).toContain('Stop-ScheduledTask');
     expect(create).toBeDefined();
     expect(create?.args).toContain('/SC');
     expect(create?.args).toContain('ONLOGON');

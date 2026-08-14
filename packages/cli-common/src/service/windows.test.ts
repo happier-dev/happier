@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  buildRemoveWindowsScheduledTaskIfPresentPowerShellCommand,
   buildReadWindowsScheduledTaskStatusPowerShellCommand,
+  buildStopWindowsScheduledTaskIfRunningPowerShellCommand,
   parseWindowsScheduledTaskStatusPowerShellJson,
 } from './windows';
 
@@ -41,5 +43,31 @@ describe('Windows scheduled task PowerShell status helper', () => {
     expect(command).toContain('LastRunTime');
     expect(command).toContain('Actions');
     expect(command).toContain('ConvertTo-Json -Compress');
+  });
+});
+
+describe('Windows scheduled task lifecycle PowerShell helpers', () => {
+  it('stops only an existing running task through typed scheduler state', () => {
+    const command = buildStopWindowsScheduledTaskIfRunningPowerShellCommand({
+      qualifiedTaskName: 'Happier\\happier-daemon.default',
+    });
+
+    expect(command).toContain('Get-ScheduledTask');
+    expect(command).toContain('[int]$task.State -eq 4');
+    expect(command).toContain('Stop-ScheduledTask');
+    expect(command).toContain('-ErrorAction Stop');
+    expect(command).not.toContain('schtasks');
+  });
+
+  it('removes only an existing task without parsing localized command output', () => {
+    const command = buildRemoveWindowsScheduledTaskIfPresentPowerShellCommand({
+      qualifiedTaskName: 'Happier\\happier-daemon.default',
+    });
+
+    expect(command).toContain('Get-ScheduledTask');
+    expect(command).toContain('Unregister-ScheduledTask');
+    expect(command).toContain('-Confirm:$false');
+    expect(command).toContain('-ErrorAction Stop');
+    expect(command).not.toContain('schtasks');
   });
 });
