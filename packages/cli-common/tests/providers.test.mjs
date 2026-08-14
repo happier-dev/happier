@@ -19,7 +19,6 @@ import {
   resolveProviderCliManagedCommandPath,
   resolveExistingPnpmCommand,
 } from '../dist/providers/index.js';
-import { resolveCodexReleaseAsset } from '../dist/providers/codexRelease.js';
 import { resolvePnpmReleaseAsset } from '../dist/providers/pnpmRelease.js';
 
 function currentProviderInstallPlatform() {
@@ -193,26 +192,6 @@ test('resolvePlatformFromNodePlatform maps supported node platforms and rejects 
   assert.equal(resolvePlatformFromNodePlatform('linux'), 'linux');
   assert.equal(resolvePlatformFromNodePlatform('win32'), 'win32');
   assert.equal(resolvePlatformFromNodePlatform('freebsd'), null);
-});
-
-test('resolveCodexReleaseAsset parses versions from normal release tags', () => {
-  const resolved = resolveCodexReleaseAsset({
-    tag_name: 'rust-v0.111.0',
-    assets: [{
-      name: currentCodexReleaseAssetName(),
-      browser_download_url: 'https://example.invalid/codex.tar.gz',
-      digest: 'sha256:deadbeef',
-    }],
-  });
-
-  assert.equal(resolved.version, '0.111.0');
-});
-
-test('resolveCodexReleaseAsset rejects selected assets without a digest', () => {
-  assert.throws(() => resolveCodexReleaseAsset({
-    tag_name: 'rust-v0.111.0',
-    assets: [{ name: currentCodexReleaseAssetName(), browser_download_url: 'https://example.invalid/codex.tar.gz' }],
-  }), /digest/i);
 });
 
 test('resolvePnpmReleaseAsset parses versions from normal release tags', () => {

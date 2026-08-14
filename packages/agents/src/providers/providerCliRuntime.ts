@@ -26,12 +26,17 @@ export type ProviderCliManagedArchiveEntry = Readonly<{
   destinationPath: string;
 }>;
 
+export type ProviderCliManagedAssetNameByPlatform = Readonly<
+  Record<ProviderCliInstallPlatform, Readonly<Record<'arm64' | 'x64', string>>>
+>;
+
 export type ProviderCliManagedInstallSpec =
   | Readonly<{
       kind: 'github_release_binary';
       githubRepo: string;
       binaryName: string;
-      archiveEntriesByPlatform: Readonly<
+      assetNameByPlatform?: ProviderCliManagedAssetNameByPlatform;
+      archiveEntriesByPlatform?: Readonly<
         Record<ProviderCliInstallPlatform, ReadonlyArray<ProviderCliManagedArchiveEntry>>
       >;
       archiveExtractionLimits?: ProviderCliArchiveExtractionLimits;
@@ -136,6 +141,20 @@ export const PROVIDER_CLI_RUNTIME_SPECS: Readonly<Record<AgentId, ProviderCliRun
       kind: 'github_release_binary',
       githubRepo: 'openai/codex',
       binaryName: 'codex',
+      assetNameByPlatform: {
+        darwin: {
+          arm64: 'codex-package-aarch64-apple-darwin.tar.gz',
+          x64: 'codex-package-x86_64-apple-darwin.tar.gz',
+        },
+        linux: {
+          arm64: 'codex-package-aarch64-unknown-linux-musl.tar.gz',
+          x64: 'codex-package-x86_64-unknown-linux-musl.tar.gz',
+        },
+        win32: {
+          arm64: 'codex-package-aarch64-pc-windows-msvc.tar.gz',
+          x64: 'codex-package-x86_64-pc-windows-msvc.tar.gz',
+        },
+      },
       // OpenAI Codex rust-v0.147.0's canonical package layout. Keep this an
       // explicit runtime allowlist: package metadata, rg, and other bundled
       // files are not part of Happier's managed provider installation.

@@ -694,8 +694,8 @@ async function installManagedPackageProviderCli(params: Readonly<{
 }
 
 async function resolveManagedBinaryAsset(params: Readonly<{
-  providerId: AgentId;
   managedInstall: Extract<ProviderCliManagedInstallSpec, { kind: 'github_release_binary' }>;
+  platform: ProviderCliInstallPlatform;
   deps: InstallProviderCliDeps;
   env: NodeJS.ProcessEnv;
 }>): Promise<Readonly<{ name: string; url: string; digest: string | null }>> {
@@ -705,13 +705,105 @@ async function resolveManagedBinaryAsset(params: Readonly<{
     githubToken: params.env.GITHUB_TOKEN,
   });
 
-  if (params.providerId === 'codex') {
-    const { resolveCodexReleaseAsset } = await import('./codexRelease.js');
-    const asset = resolveCodexReleaseAsset(release);
-    return { name: asset.name, url: asset.url, digest: asset.digest };
+  const assets = normalizeGitHubReleaseAssets(release);
+  const declaredAssetName = params.managedInstall.assetNameByPlatform
+    ? params.managedInstall.assetNameByPlatform[params.platform][resolveManagedAssetArch(process.arch)]
+    : null;
+  const selected = (declaredAssetName
+    ? [declaredAssetName]
+    : preferredGitHubReleaseAssetNames({
+        binaryName: params.managedInstall.binaryName,
+        platform: params.platform,
+        arch: process.arch,
+      }))
+    .map((name) => assets.find((asset) => asset.name === name))
+    .find(Boolean);
+  if (!selected) {
+    throw new Error(
+      `No ${params.managedInstall.binaryName} release asset found for ${params.platform}/${process.arch}`,
+    );
   }
+  if (!selected.digest) throw new Error(`${selected.name} release asset is missing a required digest`);
 
-  throw new Error(`Unsupported managed github release provider: ${params.providerId}`);
+  return { name: selected.name, url: selected.browser_download_url, digest: selected.digest };
+}
+
+type GitHubReleaseAsset = Readonly<{
+  name: string;
+  browser_download_url: string;
+  digest: string | null;
+}>;
+
+function normalizeGitHubReleaseAssets(release: unknown): GitHubReleaseAsset[] {
+  const rawAssets = release && typeof release === 'object'
+    ? (release as { assets?: unknown }).assets
+    : null;
+  if (!Array.isArray(rawAssets)) return [];
+  const assets: GitHubReleaseAsset[] = [];
+  for (const entry of rawAssets) {
+    if (!entry || typeof entry !== 'object') continue;
+    const name = typeof (entry as { name?: unknown }).name === 'string'
+      ? (entry as { name: string }).name.trim()
+      : '';
+    const url = typeof (entry as { browser_download_url?: unknown }).browser_download_url === 'string'
+      ? (entry as { browser_download_url: string }).browser_download_url.trim()
+      : '';
+    const digest = typeof (entry as { digest?: unknown }).digest === 'string'
+      ? (entry as { digest: string }).digest.trim()
+      : null;
+    if (name && url) assets.push({ name, browser_download_url: url, digest });
+  }
+  return assets;
+}
+
+function resolveManagedAssetArch(arch: string): 'arm64' | 'x64' {
+  if (arch === 'arm64' || arch === 'x64') return arch;
+  throw new Error(`Unsupported managed GitHub release architecture: ${arch}`);
+}
+
+function preferredGitHubReleaseAssetNames(params: Readonly<{
+  binaryName: string;
+  platform: ProviderCliInstallPlatform;
+  arch: string;
+}>): string[] {
+  const { binaryName, platform, arch } = params;
+  if (platform === 'darwin' && arch === 'arm64') {
+    return [
+      `${binaryName}-darwin-arm64`, `${binaryName}-darwin-arm64.tar.gz`, `${binaryName}-darwin-arm64.tar.xz`,
+      `${binaryName}-darwin-arm64.zip`, `${binaryName}-aarch64-apple-darwin.tar.gz`,
+      `${binaryName}-aarch64-apple-darwin.tar.xz`, `${binaryName}-aarch64-apple-darwin.zip`,
+    ];
+  }
+  if (platform === 'darwin' && arch === 'x64') {
+    return [
+      `${binaryName}-darwin-x64`, `${binaryName}-darwin-x64.tar.gz`, `${binaryName}-darwin-x64.tar.xz`,
+      `${binaryName}-darwin-x64.zip`, `${binaryName}-x86_64-apple-darwin.tar.gz`,
+      `${binaryName}-x86_64-apple-darwin.tar.xz`, `${binaryName}-x86_64-apple-darwin.zip`,
+    ];
+  }
+  if (platform === 'linux' && arch === 'arm64') {
+    return [
+      `${binaryName}-linux-arm64`, `${binaryName}-linux-arm64.tar.gz`, `${binaryName}-linux-arm64.tar.xz`,
+      `${binaryName}-linux-arm64.zip`, `${binaryName}-aarch64-unknown-linux-musl.tar.gz`,
+      `${binaryName}-aarch64-unknown-linux-musl.tar.xz`, `${binaryName}-aarch64-unknown-linux-gnu.tar.gz`,
+      `${binaryName}-aarch64-unknown-linux-gnu.tar.xz`,
+    ];
+  }
+  if (platform === 'linux' && arch === 'x64') {
+    return [
+      `${binaryName}-linux-x64`, `${binaryName}-linux-x64.tar.gz`, `${binaryName}-linux-x64.tar.xz`,
+      `${binaryName}-linux-x64.zip`, `${binaryName}-x86_64-unknown-linux-musl.tar.gz`,
+      `${binaryName}-x86_64-unknown-linux-musl.tar.xz`, `${binaryName}-x86_64-unknown-linux-gnu.tar.gz`,
+      `${binaryName}-x86_64-unknown-linux-gnu.tar.xz`,
+    ];
+  }
+  if (platform === 'win32' && arch === 'arm64') {
+    return [`${binaryName}-windows-arm64.exe`, `${binaryName}-windows-arm64.zip`, `${binaryName}-aarch64-pc-windows-msvc.exe.zip`];
+  }
+  if (platform === 'win32' && arch === 'x64') {
+    return [`${binaryName}-windows-x64.exe`, `${binaryName}-windows-x64.zip`, `${binaryName}-x86_64-pc-windows-msvc.exe.zip`];
+  }
+  throw new Error(`Unsupported managed GitHub release platform: ${platform}/${arch}`);
 }
 
 async function installManagedBinaryProviderCli(params: Readonly<{
@@ -733,8 +825,8 @@ async function installManagedBinaryProviderCli(params: Readonly<{
     const extractDir = join(scratchDir, 'extract');
     const nextDir = join(installRoot, 'next');
     const nextBinPath = resolveStagedManagedProviderCommandPath(params.providerId, 'next', params.env);
-    const archiveEntries = params.managedInstall.archiveEntriesByPlatform[params.platform];
-    if (archiveEntries.length === 0) {
+    const archiveEntries = params.managedInstall.archiveEntriesByPlatform?.[params.platform];
+    if (params.managedInstall.archiveEntriesByPlatform && archiveEntries?.length === 0) {
       throw new Error(`Provider ${params.providerId} has no declared runtime archive entries for ${params.platform}`);
     }
 
@@ -757,7 +849,7 @@ async function installManagedBinaryProviderCli(params: Readonly<{
       archiveExtractionLimits: params.managedInstall.archiveExtractionLimits,
     });
 
-    for (const entry of archiveEntries) {
+    for (const entry of archiveEntries ?? []) {
       const installedPath = join(nextDir, ...entry.destinationPath.split('/'));
       const installedStat = await stat(installedPath).catch((error: NodeJS.ErrnoException) => {
         if (error.code === 'ENOENT') return null;

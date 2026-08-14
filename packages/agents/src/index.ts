@@ -399,6 +399,7 @@ export {
   type ProviderCliInstallCommand,
   type ProviderCliInstallPlatform,
   type ProviderCliManagedArchiveEntry,
+  type ProviderCliManagedAssetNameByPlatform,
   type ProviderCliAlternativeBinaryIdentityProbe,
   type ProviderCliKnownCommandCandidate,
   type ProviderCliManagedInstallSpec,
