@@ -2,6 +2,7 @@ import { getPageImage, source } from '@/lib/source';
 import { notFound } from 'next/navigation';
 import { ImageResponse } from 'next/og';
 import { generate as DefaultImage } from 'fumadocs-ui/og';
+import { SITE_NAME } from '@/lib/site';
 
 export const revalidate = false;
 
@@ -11,7 +12,9 @@ export async function GET(_req: Request, { params }: RouteContext<'/og/docs/[...
   if (!page) notFound();
 
   return new ImageResponse(
-    <DefaultImage title={page.data.title} description={page.data.description} site="My App" />,
+    // `site` was the starter's "My App". It is printed into the card itself, so
+    // every social preview of every page carried it.
+    <DefaultImage title={page.data.title} description={page.data.description} site={SITE_NAME} />,
     {
       width: 1200,
       height: 630,
