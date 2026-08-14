@@ -37,6 +37,7 @@ import {
   formatPublicReleaseChannelChoices,
   normalizePublicReleaseChannel,
 } from './release/lib/public-release-rings.mjs';
+import { buildPublicReleaseContractV1 } from './release/public-release-contract.mjs';
 import { resolveReleaseEnvironmentChannel } from './release/resolve-release-environment-channel.mjs';
 
 function fail(message) {
@@ -1013,6 +1014,7 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
         subcommand !== 'release-build-server-binaries' &&
         subcommand !== 'release-prepare-binary-assets' &&
         subcommand !== 'release-publish-manifests' &&
+        subcommand !== 'release-contract' &&
         subcommand !== 'release-validate' &&
         subcommand !== 'release-verify-artifacts' &&
         subcommand !== 'release-compute-changed-components' &&
@@ -1052,6 +1054,12 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
               ].join('\n'),
             );
           }
+
+        if (subcommand === 'release-contract') {
+          parseArgs({ args: rest, options: {}, allowPositionals: false });
+          process.stdout.write(`${JSON.stringify(buildPublicReleaseContractV1())}\n`);
+          return;
+        }
 
         if (subcommand === 'smoke-cli') {
           const { values } = parseArgs({

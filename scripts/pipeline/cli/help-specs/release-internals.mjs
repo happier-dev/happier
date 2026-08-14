@@ -27,6 +27,17 @@ import { formatPublicReleaseChannelChoices } from '../../release/lib/public-rele
 const publicReleaseChannelChoices = formatPublicReleaseChannelChoices();
 
 export const COMMAND_HELP_RELEASE_INTERNALS = {
+  'release-contract': {
+    summary: 'Print the versioned public release contract as JSON.',
+    usage: 'node scripts/pipeline/run.mjs release-contract',
+    options: [],
+    bullets: [
+      'JSON-only read surface for canonical release targets, validation suites, and the integrated, stable, and deep profiles.',
+      'It is preparation-only: it does not select a candidate, dispatch validation, publish, deploy, migrate, or cut over a self-hosted relay.',
+    ],
+    examples: ['node scripts/pipeline/run.mjs release-contract'],
+  },
+
   'release-bump-plan': {
     summary: 'Compute a bump plan from “changed components” inputs (workflow helper).',
     usage:

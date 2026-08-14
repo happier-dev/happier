@@ -12,6 +12,16 @@
  * }} ReleaseValidationSuiteDefinition
  */
 
+/**
+ * @typedef {{
+ *   id: string;
+ *   normalRelease: boolean;
+ *   checksProfile: 'fast' | 'full' | null;
+ *   automaticSuiteIds: readonly string[];
+ *   manualEntrypoint?: string;
+ * }} ReleaseValidationProfileDefinition
+ */
+
 /** @type {readonly ReleaseValidationSuiteDefinition[]} */
 export const RELEASE_VALIDATION_SUITES = [
   {
@@ -19,7 +29,7 @@ export const RELEASE_VALIDATION_SUITES = [
     supportsDirectSource: true,
     supportsUpdateSources: true,
     supportedDirectSourceKinds: ['published-channel', 'published-tag', 'local-build'],
-    supportedUpdateSourceKinds: ['published-channel', 'local-build'],
+    supportedUpdateSourceKinds: ['published-channel', 'published-tag', 'local-build'],
     supportedUpdateSourcePairs: [
       { from: 'published-channel', to: 'local-build' },
     ],
@@ -29,7 +39,7 @@ export const RELEASE_VALIDATION_SUITES = [
     id: 'binary-smoke',
     supportsDirectSource: true,
     supportsUpdateSources: false,
-    supportedDirectSourceKinds: ['local-build'],
+    supportedDirectSourceKinds: ['local-build', 'git-ref-build'],
     executorId: 'binary-smoke',
   },
   {
@@ -68,7 +78,6 @@ export const RELEASE_VALIDATION_SUITES = [
     ],
     executorId: 'cli-update',
   },
-  { id: 'server-upgrade', supportsDirectSource: false, supportsUpdateSources: true },
   {
     id: 'daemon-continuity',
     supportsDirectSource: true,
@@ -87,6 +96,45 @@ export const RELEASE_VALIDATION_SUITES = [
 
 export const RELEASE_VALIDATION_SUITE_IDS = RELEASE_VALIDATION_SUITES.map((suite) => suite.id);
 
+const INTEGRATED_AUTOMATIC_RELEASE_VALIDATION_SUITE_IDS = Object.freeze([
+  'artifact-verify',
+  'binary-smoke',
+  'session-continuity',
+  'cli-update',
+  'docker-release-assets',
+]);
+
+const STABLE_AUTOMATIC_RELEASE_VALIDATION_SUITE_IDS = Object.freeze([
+  ...INTEGRATED_AUTOMATIC_RELEASE_VALIDATION_SUITE_IDS,
+]);
+
+/** @type {readonly ReleaseValidationProfileDefinition[]} */
+export const RELEASE_VALIDATION_PROFILES = Object.freeze([
+  Object.freeze({
+    id: 'integrated',
+    normalRelease: true,
+    checksProfile: 'fast',
+    automaticSuiteIds: INTEGRATED_AUTOMATIC_RELEASE_VALIDATION_SUITE_IDS,
+  }),
+  Object.freeze({
+    id: 'stable',
+    normalRelease: true,
+    checksProfile: 'full',
+    automaticSuiteIds: STABLE_AUTOMATIC_RELEASE_VALIDATION_SUITE_IDS,
+  }),
+  Object.freeze({
+    id: 'deep',
+    normalRelease: false,
+    checksProfile: null,
+    automaticSuiteIds: Object.freeze([]),
+    // Presentation metadata only. Deep remains a human-run certification
+    // profile and never becomes a normal release dispatch selector.
+    manualEntrypoint: 'skills/happier-release-validation/SKILL.md',
+  }),
+]);
+
+export const RELEASE_VALIDATION_PROFILE_IDS = RELEASE_VALIDATION_PROFILES.map((profile) => profile.id);
+
 /**
  * @param {string} raw
  * @returns {ReleaseValidationSuiteDefinition | null}
@@ -94,6 +142,54 @@ export const RELEASE_VALIDATION_SUITE_IDS = RELEASE_VALIDATION_SUITES.map((suite
 export function resolveReleaseValidationSuite(raw) {
   const id = String(raw ?? '').trim();
   return RELEASE_VALIDATION_SUITES.find((suite) => suite.id === id) ?? null;
+}
+
+/**
+ * @param {string} raw
+ * @returns {ReleaseValidationProfileDefinition | null}
+ */
+export function resolveReleaseValidationProfile(raw) {
+  const id = String(raw ?? '').trim();
+  return RELEASE_VALIDATION_PROFILES.find((profile) => profile.id === id) ?? null;
+}
+
+/**
+ * Resolve the automatic suites that are reachable for one exact release
+ * candidate. Profiles own the eligible suite catalog; this function owns the
+ * candidate-aware applicability decision so workflows do not grow a second
+ * release-validation policy.
+ *
+ * @param {string} profileId
+ * @param {{
+ *   hasCliCandidate: boolean;
+ *   hasServerCandidate: boolean;
+ *   hasPublishedRelayPredecessor: boolean;
+ *   risks: { cliUpgrade: boolean; sessionContinuity: boolean; relayUpgrade: boolean };
+ * }} context
+ */
+export function resolveAutomaticReleaseValidationExecution(profileId, context) {
+  const profile = resolveReleaseValidationProfile(profileId);
+  if (!profile?.normalRelease) {
+    throw new Error(`Automatic execution requires a normal release profile: ${profileId}`);
+  }
+  const applicable = {
+    'artifact-verify': context.hasCliCandidate,
+    'binary-smoke': context.hasCliCandidate || context.hasServerCandidate,
+    'session-continuity': context.hasServerCandidate && context.risks.sessionContinuity,
+    'cli-update': context.hasCliCandidate && context.risks.cliUpgrade,
+    'docker-release-assets': context.hasServerCandidate
+      && context.hasPublishedRelayPredecessor
+      && context.risks.relayUpgrade,
+  };
+  const selectedSuiteIds = [];
+  const skippedSuiteIds = [];
+  for (const suiteId of profile.automaticSuiteIds) {
+    if (!Object.hasOwn(applicable, suiteId)) {
+      throw new Error(`Automatic suite ${suiteId} has no applicability owner`);
+    }
+    (applicable[suiteId] ? selectedSuiteIds : skippedSuiteIds).push(suiteId);
+  }
+  return { selectedSuiteIds, skippedSuiteIds };
 }
 
 export const RELEASE_VALIDATION_SOURCE_KINDS = [

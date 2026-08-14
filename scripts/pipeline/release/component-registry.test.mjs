@@ -1,7 +1,23 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { classifyChangedPaths, deriveVersionedComponentChanges } from './component-registry.mjs';
+import {
+  classifyChangedPaths,
+  deriveVersionedComponentChanges,
+  releaseTargets,
+} from './component-registry.mjs';
+
+test('release target registry covers the local release CLI surface exactly', () => {
+  assert.deepEqual(releaseTargets, [
+    'ui',
+    'server',
+    'website',
+    'docs',
+    'cli',
+    'stack',
+    'server_runner',
+  ]);
+});
 
 test('packages/cli-common changes trigger cli/stack/server versioned component bumps', () => {
   const classified = classifyChangedPaths([

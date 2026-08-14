@@ -93,6 +93,19 @@ export const versionedComponents = Object.freeze({
   },
 });
 
+// Release dispatch targets are broader than versioned components: website,
+// docs, and the server runner can be selected without adding a versioned
+// component entry. Keep the local CLI and public release contract aligned here.
+export const releaseTargets = Object.freeze([
+  'ui',
+  'server',
+  'website',
+  'docs',
+  'cli',
+  'stack',
+  'server_runner',
+]);
+
 export function classifyChangedPaths(paths) {
   const flags = Object.create(null);
   for (const key of Object.keys(components)) flags[key] = false;
