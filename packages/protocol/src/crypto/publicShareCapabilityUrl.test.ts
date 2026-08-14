@@ -22,4 +22,15 @@ describe('redactPublicShareCapabilityUrl', () => {
       '/v1/sessions/session-1/public-share',
     );
   });
+
+  it('templates a browser Artifact bearer capability and removes its correlation query', () => {
+    const capability = 'SENTINEL_BROWSER_ARTIFACT_CAPABILITY';
+    const correlation = 'SENTINEL_BROWSER_ARTIFACT_CORRELATION';
+    expect(redactPublicShareCapabilityUrl(
+      `/v1/plugins/availability/ui-artifacts/browser/${capability}/assets/app.js?correlation=${correlation}`,
+    )).toBe('/v1/plugins/availability/ui-artifacts/browser/:token/assets/app.js');
+    expect(redactPublicShareCapabilityUrl(
+      `https://artifacts.example.test/v1/plugins/availability/ui-artifacts/browser/${capability}/?correlation=${correlation}`,
+    )).toBe('https://artifacts.example.test/v1/plugins/availability/ui-artifacts/browser/:token/');
+  });
 });
