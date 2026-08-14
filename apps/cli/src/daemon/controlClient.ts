@@ -802,11 +802,7 @@ export async function spawnDaemonSession(
   return result;
 }
 
-export type DaemonSpawnSessionResolveStatus =
-  | { status: 'success'; sessionId: string }
-  | { status: 'pending' }
-  | { status: 'not_found' }
-  | { status: 'unsupported' };
+export type DaemonSpawnSessionResolveStatus = SpawnSessionNonceResolution;
 
 export async function resolveDaemonSpawnSessionByNonce(spawnNonce: string): Promise<DaemonSpawnSessionResolveStatus> {
   const normalizedSpawnNonce = spawnNonce.trim();
@@ -818,6 +814,24 @@ export async function resolveDaemonSpawnSessionByNonce(spawnNonce: string): Prom
     const status = (result as { status: string }).status;
     if (status === 'pending') return { status: 'pending' };
     if (status === 'not_found') return { status: 'not_found' };
+    if (status === 'error') {
+      const errorCode = typeof (result as { errorCode?: unknown }).errorCode === 'string'
+        ? (result as { errorCode: string }).errorCode
+        : '';
+      const errorMessage = typeof (result as { errorMessage?: unknown }).errorMessage === 'string'
+        ? (result as { errorMessage: string }).errorMessage.trim()
+        : '';
+      if ((Object.values(SPAWN_SESSION_ERROR_CODES) as string[]).includes(errorCode) && errorMessage) {
+        const errorDetailRaw = (result as { errorDetail?: unknown }).errorDetail;
+        return {
+          status: 'error',
+          errorCode: errorCode as (typeof SPAWN_SESSION_ERROR_CODES)[keyof typeof SPAWN_SESSION_ERROR_CODES],
+          errorMessage,
+          ...(isSpawnSessionErrorDetail(errorDetailRaw) ? { errorDetail: errorDetailRaw } : {}),
+        };
+      }
+      return { status: 'not_found' };
+    }
     if (status === 'success') {
       const sessionId = typeof (result as { sessionId?: unknown }).sessionId === 'string'
         ? (result as { sessionId: string }).sessionId.trim()

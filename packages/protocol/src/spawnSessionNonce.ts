@@ -10,14 +10,28 @@
  * poll behavior cannot drift between consumers.
  */
 
+import type { SpawnSessionErrorCode, SpawnSessionErrorDetail } from './spawnSession.js';
+
 export type SpawnSessionNonceResolution =
   | { status: 'success'; sessionId: string }
+  | {
+      status: 'error';
+      errorCode: SpawnSessionErrorCode;
+      errorMessage: string;
+      errorDetail?: SpawnSessionErrorDetail;
+    }
   | { status: 'pending' }
   | { status: 'not_found' }
   | { status: 'unsupported' };
 
 export type SettleSpawnSessionNonceResult =
   | { status: 'success'; sessionId: string }
+  | {
+      status: 'error';
+      errorCode: SpawnSessionErrorCode;
+      errorMessage: string;
+      errorDetail?: SpawnSessionErrorDetail;
+    }
   /** Deadline elapsed while the spawn was still tracked (slow webhook). */
   | { status: 'timeout' }
   /**
@@ -75,6 +89,9 @@ export async function settleSpawnSessionNonce(params: Readonly<{
         };
       }
       // A success without an id is a malformed resolver response; keep polling.
+    }
+    if (resolution.status === 'error') {
+      return resolution;
     }
     if (resolution.status === 'unsupported') {
       return { status: 'unsupported' };

@@ -350,6 +350,44 @@ describe('daemon control server: /spawn-session', () => {
     }
   });
 
+  it('returns the canonical terminal child-exit result even when no tracked child remains', async () => {
+    const errorMessage = 'Child process exited before session webhook (pid=8892, code=1, signal=null)';
+    const app = createDaemonControlApp({
+      getChildren: () => [],
+      machineId: 'machine_local',
+      stopSession: async () => ({ status: 'not_found' as const }),
+      spawnSession: async () => ({ type: 'success', sessionId: 'unused' }),
+      resolveSpawnSessionByNonce: async () => ({
+        status: 'error',
+        errorCode: SPAWN_SESSION_ERROR_CODES.CHILD_EXITED_BEFORE_WEBHOOK,
+        errorMessage,
+      }),
+      requestShutdown: () => {},
+      onHappySessionWebhook: () => {},
+      controlToken: 'test-token',
+    });
+
+    try {
+      await app.ready();
+      const res = await app.inject({
+        method: 'POST',
+        url: '/spawn-session/resolve',
+        headers: { 'Content-Type': 'application/json', 'x-happier-daemon-token': 'test-token' },
+        payload: JSON.stringify({ spawnNonce: 'nonce-child-exit' }),
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toEqual({
+        success: true,
+        status: 'error',
+        errorCode: SPAWN_SESSION_ERROR_CODES.CHILD_EXITED_BEFORE_WEBHOOK,
+        errorMessage,
+      });
+    } finally {
+      await app.close();
+    }
+  });
+
   it('resolves and positively abandons a spawn from reattached persisted nonce custody after daemon restart', async () => {
     const descriptor = buildSessionRunnerRespawnDescriptorV1FromSpawnOptions({
       directory: '/tmp',
@@ -391,27 +429,6 @@ describe('daemon control server: /spawn-session', () => {
       });
       expect(pendingResolve.json()).toEqual({ success: true, status: 'pending' });
 
-      const duplicateWhilePending = await app.inject({
-        method: 'POST',
-        url: '/spawn-session',
-        headers: { 'Content-Type': 'application/json', 'x-happier-daemon-token': 'test-token' },
-        payload: JSON.stringify({
-          directory: '/tmp',
-          spawnNonce: 'nonce-after-restart',
-          pendingFirstInput: {
-            text: 'Promote this first prompt only in the original runner.',
-            localId: 'spawn-first:nonce-after-restart',
-          },
-        }),
-      });
-      expect(duplicateWhilePending.statusCode).toBe(202);
-      expect(duplicateWhilePending.json()).toEqual({
-        success: false,
-        status: 'pending',
-        errorCode: SPAWN_SESSION_ERROR_CODES.SESSION_WEBHOOK_TIMEOUT,
-      });
-      expect(spawnSession).not.toHaveBeenCalled();
-
       reattachedChild.happySessionId = 'sess-after-restart';
       await expect(abandonSpawnedSessionUntilCompleted({
         spawnNonce: 'nonce-after-restart',
@@ -446,6 +463,7 @@ describe('daemon control server: /spawn-session', () => {
       machineId: 'machine_local',
       stopSession: async () => ({ status: 'not_found' as const }),
       spawnSession: async () => ({ type: 'success', sessionId: 'sess-from-response' }),
+      resolveSpawnSessionByNonce: async () => ({ status: 'success', sessionId: 'sess-from-response' }),
       requestShutdown: () => {},
       onHappySessionWebhook: () => {},
       controlToken: 'test-token',
@@ -486,7 +504,7 @@ describe('daemon control server: /spawn-session', () => {
     }
   });
 
-  it('returns cached spawn nonce success without starting another session', async () => {
+  it('leaves repeated spawn nonce admission to the canonical spawn owner', async () => {
     const spawnSession = vi
       .fn()
       .mockResolvedValueOnce({ type: 'success' as const, sessionId: 'sess-original' })
@@ -531,27 +549,34 @@ describe('daemon control server: /spawn-session', () => {
       expect(secondRes.statusCode).toBe(200);
       expect(secondRes.json()).toEqual({
         success: true,
-        sessionId: 'sess-original',
+        sessionId: 'sess-duplicate',
         approvedNewDirectoryCreation: true,
       });
-      expect(spawnSession).toHaveBeenCalledTimes(1);
+      expect(spawnSession).toHaveBeenCalledTimes(2);
     } finally {
       await app.close();
     }
   });
 
-  it('returns pending for duplicate in-flight spawn nonce without starting another session', async () => {
+  it('serializes a pending replay returned by the canonical spawn owner', async () => {
     let resolveStarted: (() => void) | null = null;
     const started = new Promise<void>((resolve) => {
       resolveStarted = resolve;
     });
     const resolvers: Array<() => void> = [];
-    const spawnSession = vi.fn(async () => {
-      resolveStarted?.();
-      return await new Promise<{ type: 'success'; sessionId: string }>((resolve) => {
-        resolvers.push(() => resolve({ type: 'success', sessionId: 'sess-in-flight' }));
+    const spawnSession = vi.fn()
+      .mockImplementationOnce(async () => {
+        resolveStarted?.();
+        return await new Promise<{ type: 'success'; sessionId: string }>((resolve) => {
+          resolvers.push(() => resolve({ type: 'success', sessionId: 'sess-in-flight' }));
+        });
+      })
+      .mockResolvedValueOnce({
+        type: 'success' as const,
+        spawnNonce: 'nonce-in-flight',
+        sessionIdStatus: 'pending' as const,
+        runnerAcceptance: 'same_request_runner' as const,
       });
-    });
     const app = createDaemonControlApp({
       getChildren: () => [],
       machineId: 'machine_local',
@@ -590,13 +615,15 @@ describe('daemon control server: /spawn-session', () => {
       ]);
       expect(duplicateResult).not.toBe('timed-out');
       if (duplicateResult === 'timed-out') throw new Error('duplicate spawn timed out');
-      expect(duplicateResult.statusCode).toBe(202);
+      expect(duplicateResult.statusCode).toBe(200);
       expect(duplicateResult.json()).toEqual({
-        success: false,
+        success: true,
         status: 'pending',
-        errorCode: SPAWN_SESSION_ERROR_CODES.SESSION_WEBHOOK_TIMEOUT,
+        spawnNonce: 'nonce-in-flight',
+        sessionIdStatus: 'pending',
+        approvedNewDirectoryCreation: true,
       });
-      expect(spawnSession).toHaveBeenCalledTimes(1);
+      expect(spawnSession).toHaveBeenCalledTimes(2);
 
       for (const resolve of resolvers) resolve();
       const firstResult = await firstSpawn;
@@ -617,6 +644,7 @@ describe('daemon control server: /spawn-session', () => {
         spawnNonce: 'nonce-missing-session-id',
         sessionIdStatus: 'pending',
       }),
+      resolveSpawnSessionByNonce: async () => ({ status: 'pending' }),
       requestShutdown: () => {},
       onHappySessionWebhook: () => {},
       controlToken: 'test-token',

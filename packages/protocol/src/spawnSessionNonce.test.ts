@@ -33,6 +33,27 @@ describe('settleSpawnSessionNonce', () => {
     expect(resolve).toHaveBeenCalledTimes(1);
   });
 
+  it('returns a terminal operation error immediately without polling further', async () => {
+    const resolve = vi.fn(async () => ({
+      status: 'error' as const,
+      errorCode: 'CHILD_EXITED_BEFORE_WEBHOOK' as const,
+      errorMessage: 'Child process exited before session webhook (pid=8892, code=1, signal=null)',
+    }));
+    const result = await settleSpawnSessionNonce({
+      spawnNonce: 'nonce-child-exit',
+      resolve,
+      timeoutMs: 5_000,
+      pollIntervalMs: 10,
+      sleep: immediateSleep,
+    });
+    expect(result).toEqual({
+      status: 'error',
+      errorCode: 'CHILD_EXITED_BEFORE_WEBHOOK',
+      errorMessage: 'Child process exited before session webhook (pid=8892, code=1, signal=null)',
+    });
+    expect(resolve).toHaveBeenCalledTimes(1);
+  });
+
   it('times out while the resolver stays pending', async () => {
     let nowMs = 0;
     const resolve = vi.fn(async () => ({ status: 'pending' as const }));

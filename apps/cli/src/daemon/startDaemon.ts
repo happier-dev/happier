@@ -230,6 +230,7 @@ import { buildSpawnChildProcessEnv } from './spawn/buildSpawnChildProcessEnv';
 import { resolveStackProcessKindOverrideForSessionSpawn } from './spawn/resolveStackProcessKindOverrideForSessionSpawn';
 import { createSpawnConcurrencyGate } from './spawn/createSpawnConcurrencyGate';
 import { computeDaemonSpawnRequestKey, createSpawnRequestCoalescer } from './spawn/spawnRequestCoalescer';
+import { createDaemonSpawnAttemptRegistry } from './spawn/daemonSpawnAttemptRegistry';
 import { normalizeSpawnSessionDirectory } from '@/rpc/handlers/spawnSessionOptionsContract';
 import { startAutomationWorker, type AutomationWorkerHandle } from './automation/automationWorker';
 import { startMemoryWorker, type MemoryWorkerHandle } from './memory/memoryWorker';
@@ -2149,11 +2150,9 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
           15 * 60_000,
           { min: 1000, max: 60 * 60_000 },
         );
-        const acceptedSpawnByNonce = new Map<string, {
-          pid: number;
-          result: Extract<SpawnSessionResult, { type: 'success' }>;
-          expiresAtMs: number;
-        }>();
+        const daemonSpawnAttemptRegistry = createDaemonSpawnAttemptRegistry({
+          ttlMs: acceptedSpawnNonceTtlMs,
+        });
         const shutdownSpawnDrainGraceMs = resolvePositiveIntEnv(
           process.env.HAPPIER_DAEMON_SHUTDOWN_SPAWN_DRAIN_GRACE_MS,
           10_000,
@@ -2845,49 +2844,26 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
             ...(spawnNonce ? { spawnNonce } : {}),
           };
         };
-        const pruneAcceptedSpawnNonces = (nowMs: number = Date.now()): void => {
-          for (const [spawnNonce, record] of acceptedSpawnByNonce.entries()) {
-            if (record.expiresAtMs <= nowMs) {
-              acceptedSpawnByNonce.delete(spawnNonce);
+        const resolveTrackedSpawnByNonce = async (spawnNonce: string): Promise<SpawnSessionResult | null> => {
+          for (const [pid, tracked] of pidToTrackedSession) {
+            if (
+              tracked.startedBy !== 'daemon'
+              || tracked.pid !== pid
+              || normalizeSpawnNonceForAck(tracked.spawnOptions?.spawnNonce) !== spawnNonce
+            ) {
+              continue;
             }
+            const runState = await readProcessRunState(pid).catch(() => null);
+            if (runState !== 'servable') continue;
+            const result = buildSpawnAcceptedResult({
+              pid,
+              spawnNonce,
+            });
+            result.runnerAcceptance = 'same_request_runner';
+            daemonSpawnAttemptRegistry.rememberAccepted({ spawnNonce, result });
+            return result;
           }
-        };
-        const rememberAcceptedSpawnByNonce = (params: Readonly<{
-          spawnNonce?: string;
-          pid: number;
-          result: Extract<SpawnSessionResult, { type: 'success' }>;
-        }>): void => {
-          const spawnNonce = normalizeSpawnNonceForAck(params.spawnNonce);
-          if (!spawnNonce) return;
-          const nowMs = Date.now();
-          pruneAcceptedSpawnNonces(nowMs);
-          acceptedSpawnByNonce.set(spawnNonce, {
-            pid: params.pid,
-            result: params.result,
-            expiresAtMs: nowMs + acceptedSpawnNonceTtlMs,
-          });
-        };
-        const resolveAcceptedSpawnByNonce = async (
-          spawnNonce: string,
-        ): Promise<SpawnSessionResult | null> => {
-          const normalizedSpawnNonce = normalizeSpawnNonceForAck(spawnNonce);
-          if (!normalizedSpawnNonce) return null;
-          const nowMs = Date.now();
-          pruneAcceptedSpawnNonces(nowMs);
-          const accepted = acceptedSpawnByNonce.get(normalizedSpawnNonce);
-          if (!accepted) return null;
-          const result = buildSpawnAcceptedResult({
-            pid: accepted.pid,
-            spawnNonce: normalizedSpawnNonce,
-            fallbackSessionId: accepted.result.sessionId,
-          });
-          result.runnerAcceptance = 'same_request_runner';
-          acceptedSpawnByNonce.set(normalizedSpawnNonce, {
-            ...accepted,
-            result,
-            expiresAtMs: nowMs + acceptedSpawnNonceTtlMs,
-          });
-          return result;
+          return null;
         };
         const persistAcceptedSpawnMarker = async (params: Readonly<{
           pid: number;
@@ -2934,9 +2910,13 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
               ...normalizedOptions,
               spawnNonce: requestedSpawnNonce,
             };
-            const acceptedResult = await resolveAcceptedSpawnByNonce(requestedSpawnNonce);
+            const acceptedResult = daemonSpawnAttemptRegistry.replay(requestedSpawnNonce);
             if (acceptedResult) {
               return acceptedResult;
+            }
+            const trackedResult = await resolveTrackedSpawnByNonce(requestedSpawnNonce);
+            if (trackedResult) {
+              return trackedResult;
             }
           }
           const key = computeDaemonSpawnRequestKey(normalizedOptions);
@@ -3869,16 +3849,18 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
                 logger.debug(`[DAEMON RUN] Session ${completedSession.happySessionId} fully spawned with webhook (tmux)`);
               },
             }).then(async (result) => {
-              const nudgeResult = await nudgeAttachedExistingSessionPendingQueue({
-                requestedExistingSessionId: normalizedExistingSessionId,
-                credentials,
-                isShutdownRequested: () => shutdownInitiated,
-                resolved: resolveSpawnWebhookResult({
+              const resolved = resolveSpawnWebhookResult({
                 pid: tmuxPid,
                 result,
                 pidToTrackedSession,
                 warn: (message) => logger.warn(message),
-              }),
+              });
+              daemonSpawnAttemptRegistry.settle(trackedSpawnOptions.spawnNonce ?? '', resolved);
+              const nudgeResult = await nudgeAttachedExistingSessionPendingQueue({
+                requestedExistingSessionId: normalizedExistingSessionId,
+                credentials,
+                isShutdownRequested: () => shutdownInitiated,
+                resolved,
               });
               if (nudgeResult.type === 'error') {
                 logger.warn(`[DAEMON RUN] Pending queue wake failed after webhook for PID ${tmuxPid} (tmux): ${nudgeResult.errorMessage}`);
@@ -3886,14 +3868,15 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
               return nudgeResult;
             }).catch((error) => {
               logger.warn(`[DAEMON RUN] Session webhook monitor failed for PID ${tmuxPid} (tmux): ${error instanceof Error ? error.message : String(error)}`);
-              return {
+              const result = {
                 type: 'error' as const,
                 errorCode: SPAWN_SESSION_ERROR_CODES.UNEXPECTED,
                 errorMessage: error instanceof Error ? error.message : String(error),
               };
+              daemonSpawnAttemptRegistry.settle(trackedSpawnOptions.spawnNonce ?? '', result);
+              return result;
             });
-            rememberAcceptedSpawnByNonce({
-              pid: tmuxPid,
+            daemonSpawnAttemptRegistry.rememberAccepted({
               spawnNonce: trackedSpawnOptions.spawnNonce,
               result: acceptedResult,
             });
@@ -4009,13 +3992,12 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
                   spawnNonce: trackedSpawnOptions.spawnNonce,
                   fallbackSessionId: normalizedExistingSessionId,
                 });
-                rememberAcceptedSpawnByNonce({
-                  pid: params.pid,
+                daemonSpawnAttemptRegistry.rememberAccepted({
                   spawnNonce: trackedSpawnOptions.spawnNonce,
                   result: acceptedResult,
                 });
 
-                void waitForVisibleConsoleSessionWebhook({
+                const webhookCompletion = waitForVisibleConsoleSessionWebhook({
                   pid: params.pid,
                   pollMs,
                   pidToAwaiter,
@@ -4029,6 +4011,7 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
                     pidToTrackedSession,
                     warn: (message) => logger.warn(message),
                   });
+                  daemonSpawnAttemptRegistry.settle(trackedSpawnOptions.spawnNonce ?? '', resolved);
                   if (resolved.type === 'success') {
                     logger.debug(
                       `[DAEMON RUN] Session ${resolved.sessionId} fully spawned with webhook (${params.logLabel})`,
@@ -4067,7 +4050,13 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
                   }
                 }).catch((error) => {
                   logger.warn(`[DAEMON RUN] Session webhook monitor failed for PID ${params.pid} (${params.logLabel}): ${error instanceof Error ? error.message : String(error)}`);
+                  daemonSpawnAttemptRegistry.settle(trackedSpawnOptions.spawnNonce ?? '', {
+                    type: 'error',
+                    errorCode: SPAWN_SESSION_ERROR_CODES.UNEXPECTED,
+                    errorMessage: error instanceof Error ? error.message : String(error),
+                  });
                 });
+                void webhookCompletion;
                 return acceptedResult;
               };
 
@@ -4371,16 +4360,18 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
                   logger.debug(`[DAEMON RUN] Session ${completedSession.happySessionId} fully spawned with webhook`);
             },
           }).then(async (result) => {
-            const nudgeResult = await nudgeAttachedExistingSessionPendingQueue({
-              requestedExistingSessionId: normalizedExistingSessionId,
-              credentials,
-              isShutdownRequested: () => shutdownInitiated,
-              resolved: resolveSpawnWebhookResult({
+            const resolved = resolveSpawnWebhookResult({
               pid: happyProcess.pid!,
               result,
               pidToTrackedSession,
               warn: (message) => logger.warn(message),
-            }),
+            });
+            daemonSpawnAttemptRegistry.settle(trackedSpawnOptions.spawnNonce ?? '', resolved);
+            const nudgeResult = await nudgeAttachedExistingSessionPendingQueue({
+              requestedExistingSessionId: normalizedExistingSessionId,
+              credentials,
+              isShutdownRequested: () => shutdownInitiated,
+              resolved,
             });
             if (nudgeResult.type === 'error') {
               logger.warn(`[DAEMON RUN] Pending queue wake failed after webhook for PID ${happyProcess.pid}: ${nudgeResult.errorMessage}`);
@@ -4388,14 +4379,15 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
             return nudgeResult;
           }).catch((error) => {
             logger.warn(`[DAEMON RUN] Session webhook monitor failed for PID ${happyProcess.pid}: ${error instanceof Error ? error.message : String(error)}`);
-            return {
+            const result = {
               type: 'error' as const,
               errorCode: SPAWN_SESSION_ERROR_CODES.UNEXPECTED,
               errorMessage: error instanceof Error ? error.message : String(error),
             };
+            daemonSpawnAttemptRegistry.settle(trackedSpawnOptions.spawnNonce ?? '', result);
+            return result;
           });
-          rememberAcceptedSpawnByNonce({
-            pid: happyProcess.pid,
+          daemonSpawnAttemptRegistry.rememberAccepted({
             spawnNonce: trackedSpawnOptions.spawnNonce,
             result: acceptedResult,
           });
@@ -6300,6 +6292,7 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
       stopSession,
       prepareStopSession: prepareStopSessionForDaemonStop,
       spawnSession,
+      resolveSpawnSessionByNonce: async (spawnNonce) => daemonSpawnAttemptRegistry.resolve(spawnNonce),
       requestShutdown: () => requestShutdown('happier-cli'),
       beforeShutdown,
       onHappySessionWebhook,

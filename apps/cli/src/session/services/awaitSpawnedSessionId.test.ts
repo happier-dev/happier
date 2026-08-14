@@ -61,6 +61,24 @@ describe('awaitSpawnedSessionId', () => {
     expect(result).toMatchObject({ type: 'error', errorCode: 'UNEXPECTED' });
   });
 
+  it('passes a terminal nonce resolution error through unchanged', async () => {
+    const result = await awaitSpawnedSessionId({
+      result: { type: 'success', sessionIdStatus: 'pending', spawnNonce: 'nonce-child-exit' },
+      resolveSpawnSessionByNonce: async () => ({
+        status: 'error',
+        errorCode: 'CHILD_EXITED_BEFORE_WEBHOOK',
+        errorMessage: 'Child process exited before session webhook',
+      }),
+      timeoutMs: 2_000,
+      pollIntervalMs: 25,
+    });
+    expect(result).toEqual({
+      type: 'error',
+      errorCode: 'CHILD_EXITED_BEFORE_WEBHOOK',
+      errorMessage: 'Child process exited before session webhook',
+    });
+  });
+
   it('fails when a pending spawn has no nonce or no resolver to resolve it', async () => {
     const withoutNonce = await awaitSpawnedSessionId({
       result: { type: 'success', sessionIdStatus: 'pending' },
@@ -105,5 +123,19 @@ describe('abandonSpawnedSessionUntilCompleted', () => {
       resolveSpawnSessionByNonce: async () => ({ status: 'success', sessionId: 'session-a' }),
       archiveSession: async () => false,
     })).resolves.toEqual({ status: 'failed' });
+  });
+
+  it('maps a terminal resolution error to failed cleanup', async () => {
+    const archiveSession = vi.fn(async () => true);
+    await expect(abandonSpawnedSessionUntilCompleted({
+      spawnNonce: 'nonce-a',
+      resolveSpawnSessionByNonce: async () => ({
+        status: 'error',
+        errorCode: 'CHILD_EXITED_BEFORE_WEBHOOK',
+        errorMessage: 'Child exited',
+      }),
+      archiveSession,
+    })).resolves.toEqual({ status: 'failed' });
+    expect(archiveSession).not.toHaveBeenCalled();
   });
 });

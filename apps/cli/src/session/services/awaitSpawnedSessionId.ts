@@ -173,6 +173,13 @@ export async function awaitSpawnedSessionId(params: Readonly<{
   switch (settled.status) {
     case 'success':
       return { type: 'success', sessionId: settled.sessionId };
+    case 'error':
+      return {
+        type: 'error',
+        errorCode: settled.errorCode,
+        errorMessage: settled.errorMessage,
+        ...(settled.errorDetail ? { errorDetail: settled.errorDetail } : {}),
+      };
     case 'unsupported':
       return {
         type: 'error',
@@ -215,7 +222,7 @@ export async function abandonSpawnedSessionUntilCompleted(params: Readonly<{
     return { status: 'failed' };
   }
   if (resolution.status !== 'success') {
-    return { status: resolution.status };
+    return { status: resolution.status === 'error' ? 'failed' : resolution.status };
   }
 
   try {

@@ -93,6 +93,7 @@ import {
   type SessionConnectedServiceAuthSwitchRpcParams,
   type SessionRunnerRuntimeStateV1,
   type SessionRunnerStatusGetRequestV1,
+  type SpawnSessionNonceResolution,
 } from '@happier-dev/protocol';
 import {
   ConnectedServiceRuntimeAuthFailureKindSchema,
@@ -133,10 +134,6 @@ const DaemonDistClosureFingerprintSchema = z.string().regex(DAEMON_DIST_CLOSURE_
 type DaemonSelfRestartRequest = Readonly<{
   successorDistClosureFingerprint?: string;
 }>;
-const DEFAULT_SPAWN_NONCE_PENDING_TTL_MS = 5 * 60_000;
-const DEFAULT_SPAWN_NONCE_SUCCESS_TTL_MS = 60 * 60_000;
-const SPAWN_NONCE_PENDING_TTL_ENV_KEY = 'HAPPIER_DAEMON_SPAWN_NONCE_PENDING_TTL_MS';
-const SPAWN_NONCE_SUCCESS_TTL_ENV_KEY = 'HAPPIER_DAEMON_SPAWN_NONCE_SUCCESS_TTL_MS';
 const DAEMON_CONTROL_ERROR_MESSAGE_MAX_LENGTH = 500;
 
 const brokerBridgeAuthzDeniedSchema = z.object({
@@ -360,27 +357,6 @@ function resolveDaemonControlBodyLimitBytes(): number {
   return Math.max(1024 * 1024, Math.min(parsed, 64 * 1024 * 1024));
 }
 
-function resolvePositiveIntFromEnv(key: string, fallback: number): number {
-  const raw = String(process.env[key] ?? '').trim();
-  if (!raw) return fallback;
-  const parsed = Number.parseInt(raw, 10);
-  if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
-  return parsed;
-}
-
-type SpawnNonceCorrelationRecord = Readonly<{
-  status: 'pending' | 'success';
-  sessionId?: string;
-  updatedAtMs: number;
-  expiresAtMs: number;
-}>;
-
-type SpawnNonceAdmissionResult =
-  | { type: 'none' }
-  | { type: 'claimed' }
-  | { type: 'pending' }
-  | { type: 'success'; sessionId: string };
-
 export function createDaemonControlApp({
   getChildren,
   machineId,
@@ -388,6 +364,7 @@ export function createDaemonControlApp({
   stopSession,
   prepareStopSession,
   spawnSession,
+  resolveSpawnSessionByNonce,
   requestShutdown,
   beforeShutdown,
   onHappySessionWebhook,
@@ -419,6 +396,7 @@ export function createDaemonControlApp({
   stopSession: (sessionId: string) => Promise<StopSessionResult>;
   prepareStopSession?: (child: TrackedSession) => Promise<void> | void;
   spawnSession: (options: SpawnSessionOptions) => Promise<SpawnSessionResult>;
+  resolveSpawnSessionByNonce?: (spawnNonce: string) => Promise<SpawnSessionNonceResolution> | SpawnSessionNonceResolution;
   requestShutdown: () => void;
   beforeShutdown?: () => Promise<void>;
   onHappySessionWebhook: (sessionId: string, metadata: Metadata) => Promise<void> | void;
@@ -530,90 +508,6 @@ export function createDaemonControlApp({
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);
   const typed = app.withTypeProvider<ZodTypeProvider>();
-  const spawnNoncePendingTtlMs = resolvePositiveIntFromEnv(
-    SPAWN_NONCE_PENDING_TTL_ENV_KEY,
-    DEFAULT_SPAWN_NONCE_PENDING_TTL_MS,
-  );
-  const spawnNonceSuccessTtlMs = resolvePositiveIntFromEnv(
-    SPAWN_NONCE_SUCCESS_TTL_ENV_KEY,
-    DEFAULT_SPAWN_NONCE_SUCCESS_TTL_MS,
-  );
-  const spawnNonceCorrelationByNonce = new Map<string, SpawnNonceCorrelationRecord>();
-
-  const pruneSpawnNonceCorrelation = (nowMs: number = Date.now()): void => {
-    for (const [spawnNonce, record] of spawnNonceCorrelationByNonce.entries()) {
-      if (record.expiresAtMs <= nowMs) {
-        spawnNonceCorrelationByNonce.delete(spawnNonce);
-      }
-    }
-  };
-
-  const markSpawnNoncePending = (spawnNonce: string): void => {
-    const normalizedNonce = spawnNonce.trim();
-    if (!normalizedNonce) return;
-    const nowMs = Date.now();
-    pruneSpawnNonceCorrelation(nowMs);
-    const current = spawnNonceCorrelationByNonce.get(normalizedNonce);
-    if (current?.status === 'success' && current.expiresAtMs > nowMs) return;
-    spawnNonceCorrelationByNonce.set(normalizedNonce, {
-      status: 'pending',
-      updatedAtMs: nowMs,
-      expiresAtMs: nowMs + spawnNoncePendingTtlMs,
-    });
-  };
-
-  const markSpawnNonceSuccess = (spawnNonce: string, sessionId: string): void => {
-    const normalizedNonce = spawnNonce.trim();
-    const normalizedSessionId = sessionId.trim();
-    if (!normalizedNonce || !isCanonicalSessionId(normalizedSessionId)) return;
-    const nowMs = Date.now();
-    pruneSpawnNonceCorrelation(nowMs);
-    spawnNonceCorrelationByNonce.set(normalizedNonce, {
-      status: 'success',
-      sessionId: normalizedSessionId,
-      updatedAtMs: nowMs,
-      expiresAtMs: nowMs + spawnNonceSuccessTtlMs,
-    });
-  };
-
-  const claimSpawnNonceAdmission = (spawnNonce: string): SpawnNonceAdmissionResult => {
-    const normalizedNonce = spawnNonce.trim();
-    if (!normalizedNonce) return { type: 'none' };
-    const nowMs = Date.now();
-    pruneSpawnNonceCorrelation(nowMs);
-    // This map is daemon-process local. Happier's daemon currently serves one user,
-    // so the nonce itself is the admission key; a future multi-tenant daemon must
-    // include the authenticated account/user scope in this key.
-    const current = spawnNonceCorrelationByNonce.get(normalizedNonce);
-    if (current?.status === 'success' && isCanonicalSessionId(current.sessionId)) {
-      return { type: 'success', sessionId: current.sessionId.trim() };
-    }
-    if (current?.status === 'pending') {
-      return { type: 'pending' };
-    }
-    spawnNonceCorrelationByNonce.set(normalizedNonce, {
-      status: 'pending',
-      updatedAtMs: nowMs,
-      expiresAtMs: nowMs + spawnNoncePendingTtlMs,
-    });
-    return { type: 'claimed' };
-  };
-
-  const markSpawnNonceFromTrackedSession = (sessionId: string): void => {
-    const normalizedSessionId = sessionId.trim();
-    if (!isCanonicalSessionId(normalizedSessionId)) return;
-    for (const child of getChildren()) {
-      const trackedNonce = typeof child.spawnOptions?.spawnNonce === 'string'
-        ? child.spawnOptions.spawnNonce.trim()
-        : '';
-      const trackedSessionId = typeof child.happySessionId === 'string'
-        ? child.happySessionId.trim()
-        : '';
-      if (!trackedNonce || trackedSessionId !== normalizedSessionId) continue;
-      markSpawnNonceSuccess(trackedNonce, trackedSessionId);
-    }
-  };
-
   const authSchema401 = z.object({
     success: z.literal(false),
     error: z.string(),
@@ -896,15 +790,12 @@ export function createDaemonControlApp({
         sessionId,
         error,
       });
-      markSpawnNonceFromTrackedSession(sessionId);
       reply.code(503);
       return {
         status: 'error' as const,
         errorCode: 'session_startup_reconciliation_failed' as const,
       };
     }
-    markSpawnNonceFromTrackedSession(sessionId);
-
     try {
       await readiness;
     } catch (error) {
@@ -1913,22 +1804,6 @@ export function createDaemonControlApp({
   }, async (request, reply) => {
     const { directory, sessionId, existingSessionId } = request.body;
     const spawnNonce = typeof request.body.spawnNonce === 'string' ? request.body.spawnNonce.trim() : '';
-    const nonceAdmission = claimSpawnNonceAdmission(spawnNonce);
-    if (nonceAdmission.type === 'success') {
-      return {
-        success: true,
-        sessionId: nonceAdmission.sessionId,
-        approvedNewDirectoryCreation: true,
-      };
-    }
-    if (nonceAdmission.type === 'pending') {
-      reply.code(202);
-      return {
-        success: false as const,
-        status: 'pending' as const,
-        errorCode: SPAWN_SESSION_ERROR_CODES.SESSION_WEBHOOK_TIMEOUT,
-      };
-    }
     const normalizedDirectory = normalizeSpawnSessionDirectory(directory, process.env);
 
     logger.debug(`[CONTROL SERVER] Spawn session request: dir=${normalizedDirectory}, sessionId=${sessionId || 'new'}`);
@@ -1948,9 +1823,6 @@ export function createDaemonControlApp({
         ) as SpawnSessionOptions,
       );
     } catch (error) {
-      if (spawnNonce) {
-        spawnNonceCorrelationByNonce.delete(spawnNonce);
-      }
       const message = error instanceof Error ? error.message : String(error);
       reply.code(500);
       return {
@@ -1975,17 +1847,11 @@ export function createDaemonControlApp({
               approvedNewDirectoryCreation: true,
             };
           }
-          if (spawnNonce) {
-            spawnNonceCorrelationByNonce.delete(spawnNonce);
-          }
           reply.code(500);
           return {
             success: false,
             error: 'Failed to spawn session: no session ID returned',
           };
-        }
-        if (spawnNonce) {
-          markSpawnNonceSuccess(spawnNonce, result.sessionId);
         }
         return {
           success: true,
@@ -1996,9 +1862,6 @@ export function createDaemonControlApp({
         };
 
       case 'requestToApproveDirectoryCreation':
-        if (spawnNonce) {
-          spawnNonceCorrelationByNonce.delete(spawnNonce);
-        }
         reply.code(409);
         return {
           success: false,
@@ -2008,9 +1871,6 @@ export function createDaemonControlApp({
         };
 
       case 'error':
-        if (spawnNonce && result.errorCode !== SPAWN_SESSION_ERROR_CODES.SESSION_WEBHOOK_TIMEOUT) {
-          spawnNonceCorrelationByNonce.delete(spawnNonce);
-        }
         reply.code(500);
         return {
           success: false,
@@ -2029,8 +1889,11 @@ export function createDaemonControlApp({
       response: {
         200: z.object({
           success: z.literal(true),
-          status: z.enum(['success', 'pending', 'not_found']),
+          status: z.enum(['success', 'error', 'pending', 'not_found']),
           sessionId: z.string().optional(),
+          errorCode: z.string().optional(),
+          errorMessage: z.string().optional(),
+          errorDetail: z.unknown().optional(),
         }),
         401: authSchema401,
       },
@@ -2038,20 +1901,42 @@ export function createDaemonControlApp({
     preHandler: requireAuth,
   }, async (request) => {
     const spawnNonce = request.body.spawnNonce.trim();
-    pruneSpawnNonceCorrelation();
-    const cached = spawnNonceCorrelationByNonce.get(spawnNonce);
-    if (cached?.status === 'success' && isCanonicalSessionId(cached.sessionId)) {
-      return {
-        success: true as const,
-        status: 'success' as const,
-        sessionId: cached.sessionId.trim(),
-      };
+    if (resolveSpawnSessionByNonce) {
+      try {
+        const resolved = await resolveSpawnSessionByNonce(spawnNonce);
+        if (resolved.status === 'success') {
+          return {
+            success: true as const,
+            status: 'success' as const,
+            sessionId: resolved.sessionId,
+          };
+        }
+        if (resolved.status === 'error') {
+          return {
+            success: true as const,
+            status: 'error' as const,
+            errorCode: resolved.errorCode,
+            errorMessage: resolved.errorMessage,
+            ...(resolved.errorDetail ? { errorDetail: resolved.errorDetail } : {}),
+          };
+        }
+        if (resolved.status === 'pending') {
+          return {
+            success: true as const,
+            status: 'pending' as const,
+          };
+        }
+      } catch (error) {
+        logger.warn('[CONTROL SERVER] Canonical spawn nonce resolution failed; falling back to tracked children', {
+          spawnNonce,
+          error: readSafeDaemonControlErrorDiagnostic(error),
+        });
+      }
     }
 
     const matches = getChildren().filter((child) => child.spawnOptions?.spawnNonce === spawnNonce);
     const successMatch = matches.find((child) => isCanonicalSessionId(child.happySessionId));
     if (successMatch && isCanonicalSessionId(successMatch.happySessionId)) {
-      markSpawnNonceSuccess(spawnNonce, successMatch.happySessionId);
       return {
         success: true as const,
         status: 'success' as const,
@@ -2060,14 +1945,6 @@ export function createDaemonControlApp({
     }
 
     if (matches.length > 0) {
-      markSpawnNoncePending(spawnNonce);
-      return {
-        success: true as const,
-        status: 'pending' as const,
-      };
-    }
-
-    if (cached?.status === 'pending') {
       return {
         success: true as const,
         status: 'pending' as const,
@@ -2352,6 +2229,7 @@ export function startDaemonControlServer({
   stopSession,
   prepareStopSession,
   spawnSession,
+  resolveSpawnSessionByNonce,
   requestShutdown,
   beforeShutdown,
   onHappySessionWebhook,
@@ -2381,6 +2259,7 @@ export function startDaemonControlServer({
   stopSession: (sessionId: string) => Promise<StopSessionResult>;
   prepareStopSession?: (child: TrackedSession) => Promise<void> | void;
   spawnSession: (options: SpawnSessionOptions) => Promise<SpawnSessionResult>;
+  resolveSpawnSessionByNonce?: (spawnNonce: string) => Promise<SpawnSessionNonceResolution> | SpawnSessionNonceResolution;
   requestShutdown: () => void;
   beforeShutdown?: () => Promise<void>;
   onHappySessionWebhook: (sessionId: string, metadata: Metadata) => Promise<void> | void;
@@ -2473,6 +2352,7 @@ export function startDaemonControlServer({
       stopSession,
       prepareStopSession,
       spawnSession,
+      resolveSpawnSessionByNonce,
       requestShutdown,
       beforeShutdown,
       onHappySessionWebhook,

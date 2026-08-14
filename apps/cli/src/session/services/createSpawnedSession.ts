@@ -57,7 +57,6 @@ const DEFAULT_SPAWNED_SESSION_FETCH_TIMEOUT_MS = 10_000;
 const DEFAULT_SPAWNED_SESSION_FETCH_POLL_INTERVAL_MS = 200;
 const SPAWN_TRANSIENT_ERROR_MARKERS = [
   'Request failed: /spawn-session, The socket connection was closed unexpectedly',
-  'Child process exited before session webhook',
 ] as const;
 
 function resolvePositiveIntFromEnv(key: string, fallback: number): number {
