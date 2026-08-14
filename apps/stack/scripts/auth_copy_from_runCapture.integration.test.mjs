@@ -9,7 +9,35 @@ import { resolveYarnCommandInvocation } from '../../../scripts/workspaces/execYa
 import { resolveStackCredentialPaths } from './utils/auth/credentials_paths.mjs';
 import { buildStackStableScopeId } from './utils/auth/stable_scope_id.mjs';
 import { authScriptPath, runNodeCapture } from './testkit/auth_testkit.mjs';
-import { buildLightMigrationBaseEnv, resolveDbProviderForLightFromEnv } from './auth.mjs';
+
+async function createReadableSourceSqliteAccountDb({ rootDir, dataDir }) {
+  const serverDir = join(dirname(rootDir), 'server');
+  const databaseUrl = `file:${join(dataDir, 'happier-server-light.sqlite')}`;
+  const result = await runNodeCapture(
+    [
+      '--input-type=module',
+      '-e',
+      `
+const { PrismaClient } = await import(${JSON.stringify(join(serverDir, 'generated', 'sqlite-client', 'index.js'))});
+const db = new PrismaClient();
+try {
+  await db.$executeRawUnsafe('CREATE TABLE IF NOT EXISTS "Account" ("id" TEXT NOT NULL PRIMARY KEY, "publicKey" TEXT)');
+} finally {
+  await db.$disconnect();
+}
+      `.trim(),
+    ],
+    {
+      cwd: serverDir,
+      env: { ...process.env, DATABASE_URL: databaseUrl },
+    }
+  );
+  assert.equal(
+    result.code,
+    0,
+    `expected readable source SQLite Account DB\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`
+  );
+}
 
 test('hstack stack auth copy-from does not hit ReferenceError: runCapture is not defined', async (t) => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));
@@ -58,6 +86,7 @@ test('hstack stack auth copy-from does not hit ReferenceError: runCapture is not
 
   await mkStackEnv('dev-auth');
   await mkStackEnv('dev');
+  await createReadableSourceSqliteAccountDb({ rootDir, dataDir: join(storageDir, 'dev-auth', 'server-light') });
   await mkdir(join(storageDir, 'dev-auth', 'cli'), { recursive: true });
   await writeFile(join(storageDir, 'dev-auth', 'cli', 'access.key'), 'seed-token\n', 'utf-8');
   await writeFile(join(storageDir, 'dev-auth', 'cli', 'settings.json'), JSON.stringify({ machineId: 'seed-machine' }) + '\n', 'utf-8');
@@ -212,6 +241,7 @@ test('hstack stack auth copy-from prefers source server-scoped credential over u
 
   await mkStackEnv(sourceStack, sourceCliHome);
   await mkStackEnv(targetStack, targetCliHome);
+  await createReadableSourceSqliteAccountDb({ rootDir, dataDir: join(storageDir, sourceStack, 'server-light') });
 
   const sourceCred = resolveStackCredentialPaths({
     cliHomeDir: sourceCliHome,
@@ -293,6 +323,7 @@ test('hstack stack auth copy-from prefers source stable-scope credential when so
 
   await mkStackEnv(sourceStack, sourceCliHome);
   await mkStackEnv(targetStack, targetCliHome);
+  await createReadableSourceSqliteAccountDb({ rootDir, dataDir: join(storageDir, sourceStack, 'server-light') });
 
   const stableId = buildStackStableScopeId({ stackName: sourceStack, cliIdentity: 'default' });
   const stableCredPath = join(sourceCliHome, 'servers', stableId, 'access.key');
@@ -398,6 +429,7 @@ test('hstack stack auth copy-from fails closed when source token subject is miss
 
   await mkStackEnv(sourceStack, sourceCliHome);
   await mkStackEnv(targetStack, targetCliHome);
+  await createReadableSourceSqliteAccountDb({ rootDir, dataDir: join(storageDir, sourceStack, 'server-light') });
 
   // Source token subject has no matching Account row in source DB (source DB starts empty).
   await writeFile(
@@ -428,7 +460,7 @@ test('hstack stack auth copy-from fails closed when source token subject is miss
   );
 });
 
-test('hstack stack auth copy-from accepts source auth when source server validates token', async (t) => {
+test('hstack stack auth copy-from fails before copying credentials when a live source token validates but its SQLite Account DB is unavailable', async (t) => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));
   const rootDir = dirname(scriptsDir);
 
@@ -492,8 +524,10 @@ test('hstack stack auth copy-from accepts source auth when source server validat
     'utf-8'
   );
 
+  let profileRequests = 0;
   const sourceServer = createServer((req, res) => {
     if (req.method === 'GET' && req.url === '/v1/account/profile') {
+      profileRequests += 1;
       res.writeHead(200, { 'content-type': 'application/json' });
       res.end(JSON.stringify({ id: 'any-account' }));
       return;
@@ -526,16 +560,33 @@ test('hstack stack auth copy-from accepts source auth when source server validat
     HAPPIER_STACK_ENV_FILE: join(storageDir, targetStack, 'env'),
   };
 
-  const res = await runNodeCapture([authScriptPath(rootDir), 'copy-from', sourceStack], { cwd: rootDir, env });
-  assert.equal(res.code, 0, `expected exit 0, got ${res.code}\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
-  assert.ok(
-    !`${res.stdout}\n${res.stderr}`.includes('source auth appears stale'),
-    `expected live source server validation to bypass stale subject guard\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`
+  const res = await runNodeCapture(
+    [join(rootDir, 'scripts', 'stack.mjs'), 'auth', targetStack, '--', 'copy-from', sourceStack],
+    { cwd: rootDir, env }
+  );
+  assert.ok(profileRequests > 0, 'expected live source server validation before the SQLite Account read fails');
+  assert.notEqual(
+    res.code,
+    0,
+    `expected unavailable source SQLite Account DB to fail copy-from\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`
+  );
+  assert.match(
+    `${res.stdout}\n${res.stderr}`,
+    /source.*SQLite database|source Account rows/i,
+    `expected source Account read failure\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`
   );
 
   const targetStableId = buildStackStableScopeId({ stackName: targetStack, cliIdentity: 'default' });
-  const copied = await readFile(join(targetCliHome, 'servers', targetStableId, 'access.key'), 'utf-8');
-  assert.ok(copied.includes(sourceToken), `expected copied credential to include source token\ncopied:\n${copied}`);
+  await assert.rejects(
+    readFile(join(targetCliHome, 'servers', targetStableId, 'access.key'), 'utf-8'),
+    { code: 'ENOENT' },
+    'expected no server-scoped target credential when source SQLite Account DB is unavailable'
+  );
+  await assert.rejects(
+    readFile(join(targetCliHome, 'access.key'), 'utf-8'),
+    { code: 'ENOENT' },
+    'expected no legacy target credential when source SQLite Account DB is unavailable'
+  );
 });
 
 test('hstack stack auth copy-from fails closed when source stack is not running (unless explicitly opted into offline)', async (t) => {
@@ -607,7 +658,10 @@ test('hstack stack auth copy-from fails closed when source stack is not running 
     HAPPIER_STACK_ENV_FILE: join(storageDir, targetStack, 'env'),
   };
 
-  const res = await runNodeCapture([authScriptPath(rootDir), 'copy-from', sourceStack], { cwd: rootDir, env });
+  const res = await runNodeCapture(
+    [join(rootDir, 'scripts', 'stack.mjs'), 'auth', targetStack, '--', 'copy-from', sourceStack],
+    { cwd: rootDir, env }
+  );
   assert.notEqual(
     res.code,
     0,
@@ -669,6 +723,7 @@ test('hstack stack auth copy-from --no-secret does not overwrite target master s
 
   const sourceDirs = await mkStackEnv(sourceStack, sourceCliHome);
   const targetDirs = await mkStackEnv(targetStack, targetCliHome);
+  await createReadableSourceSqliteAccountDb({ rootDir, dataDir: sourceDirs.dataDir });
 
   await writeFile(join(sourceDirs.dataDir, 'handy-master-secret.txt'), 'source-secret\n', 'utf-8');
   await writeFile(join(targetDirs.dataDir, 'handy-master-secret.txt'), 'target-secret\n', 'utf-8');
@@ -868,7 +923,7 @@ console.log(JSON.stringify(rows.map((row) => row.id)));
   );
 });
 
-test('hstack stack auth copy-from does not require source sqlite migrations when the source light db is already readable and process env leaks pglite provider flags', async (t) => {
+test('hstack stack auth copy-from reads a checksum-mismatched source sqlite database without migrating it and seeds a fresh sqlite target', async (t) => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));
   const rootDir = dirname(scriptsDir);
   const repoRoot = dirname(dirname(rootDir));
@@ -922,7 +977,13 @@ test('hstack stack auth copy-from does not require source sqlite migrations when
     );
   };
 
-  await writeStackEnv({ name: sourceStack, baseDir: sourceBaseDir, cliHomeDir: sourceCliHome, dataDir: sourceDataDir });
+  await writeStackEnv({
+    name: sourceStack,
+    baseDir: sourceBaseDir,
+    cliHomeDir: sourceCliHome,
+    dataDir: sourceDataDir,
+    dbProvider: 'sqlite',
+  });
   await writeStackEnv({
     name: targetStack,
     baseDir: targetBaseDir,
@@ -978,7 +1039,6 @@ ${code}
   };
 
   await migrateSqlite(sourceDataDir);
-  await migrateSqlite(targetDataDir);
 
   const sourceDbPath = join(sourceDataDir, 'happier-server-light.sqlite');
   const sourceDatabaseUrl = `file:${sourceDbPath}`;
@@ -993,45 +1053,27 @@ console.log('ok');
     `,
   });
 
+  const sourceMigrationChecksum = 'intentionally-mismatched-source-checksum';
+  const sourceChecksumsBefore = JSON.parse(
+    await runSqliteClient({
+      databaseUrl: sourceDatabaseUrl,
+      code: `
+await db.$executeRawUnsafe(${JSON.stringify(`UPDATE "_prisma_migrations" SET checksum = '${sourceMigrationChecksum}'`)});
+const rows = await db.$queryRawUnsafe(${JSON.stringify('SELECT DISTINCT checksum FROM "_prisma_migrations" ORDER BY checksum')});
+console.log(JSON.stringify(rows.map((row) => row.checksum)));
+      `,
+    })
+  );
+  assert.deepEqual(sourceChecksumsBefore, [sourceMigrationChecksum], 'expected an intentionally mismatched source migration ledger');
+
   const b64 = (value) =>
     Buffer.from(value, 'utf-8').toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
   const sourceToken = `${b64(JSON.stringify({ alg: 'none', typ: 'JWT' }))}.${b64(JSON.stringify({ sub: sourceAccountId }))}.sig`;
   await writeFile(join(sourceCliHome, 'access.key'), JSON.stringify({ token: sourceToken }) + '\n', 'utf-8');
 
-  const sourceEnv = {
-    HAPPIER_STACK_STACK: sourceStack,
-    HAPPIER_STACK_SERVER_COMPONENT: 'happier-server-light',
-    HAPPIER_STACK_REPO_DIR: repoRoot,
-    HAPPIER_SERVER_LIGHT_DATA_DIR: sourceDataDir,
-    HAPPIER_SERVER_LIGHT_FILES_DIR: join(sourceDataDir, 'files'),
-    HAPPIER_SERVER_LIGHT_DB_DIR: join(sourceDataDir, 'pglite'),
-  };
-  const leakedLightEnv = buildLightMigrationBaseEnv(
-    {
-      ...process.env,
-      HAPPIER_DB_PROVIDER: 'pglite',
-      HAPPY_DB_PROVIDER: 'pglite',
-    },
-    sourceEnv
-  );
-  assert.equal(
-    leakedLightEnv.HAPPIER_DB_PROVIDER,
-    undefined,
-    'expected leaked HAPPIER_DB_PROVIDER to be stripped before light migration resolution'
-  );
-  assert.equal(
-    leakedLightEnv.HAPPY_DB_PROVIDER,
-    undefined,
-    'expected leaked HAPPY_DB_PROVIDER to be stripped before light migration resolution'
-  );
-  assert.equal(
-    resolveDbProviderForLightFromEnv(leakedLightEnv),
-    'sqlite',
-    'expected leaked provider flags to stop influencing the source light migration path'
-  );
-
   const env = {
     ...process.env,
+    HAPPIER_STACK_REPO_DIR: repoRoot,
     HAPPIER_STACK_HOME_DIR: homeDir,
     HAPPIER_STACK_STORAGE_DIR: storageDir,
     HAPPIER_STACK_WORKSPACE_DIR: workspaceDir,
@@ -1041,7 +1083,7 @@ console.log('ok');
     HAPPY_DB_PROVIDER: 'pglite',
   };
 
-  const res = await runNodeCapture([authScriptPath(rootDir), 'copy-from', sourceStack, '--offline-ok', '--force'], {
+  const res = await runNodeCapture([join(rootDir, 'scripts', 'stack.mjs'), 'auth', targetStack, '--', 'copy-from', sourceStack, '--offline-ok', '--force'], {
     cwd: rootDir,
     env,
   });
@@ -1059,8 +1101,24 @@ console.log(JSON.stringify(rows.map((row) => row.id)));
     `,
   });
   const targetIds = JSON.parse(targetIdsRaw);
-  assert.ok(
-    targetIds.includes(sourceAccountId),
-    `expected source account to be seeded into target db\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`
+  assert.deepEqual(
+    targetIds,
+    [sourceAccountId],
+    `expected fresh target sqlite db to contain the copied source account\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`
+  );
+
+  const sourceChecksumsAfter = JSON.parse(
+    await runSqliteClient({
+      databaseUrl: sourceDatabaseUrl,
+      code: `
+const rows = await db.$queryRawUnsafe(${JSON.stringify('SELECT DISTINCT checksum FROM "_prisma_migrations" ORDER BY checksum')});
+console.log(JSON.stringify(rows.map((row) => row.checksum)));
+      `,
+    })
+  );
+  assert.deepEqual(
+    sourceChecksumsAfter,
+    [sourceMigrationChecksum],
+    'expected copy-from to leave the source migration ledger unchanged'
   );
 });

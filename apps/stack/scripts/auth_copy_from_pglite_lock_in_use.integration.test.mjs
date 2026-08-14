@@ -1,13 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { chmod, mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { authScriptPath, runNodeCapture, terminateChildProcess } from './testkit/auth_testkit.mjs';
+import { runNodeCapture, terminateChildProcess } from './testkit/auth_testkit.mjs';
 import { spawnTestProcess } from './testkit/core/spawn_test_process.mjs';
 
-test('hstack stack auth copy-from skips pglite DB seed when lock is held by a live pid', async () => {
+test('hstack stack auth copy-from fails before copying target auth when the source pglite database is locked', async () => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));
   const rootDir = dirname(scriptsDir);
 
@@ -50,7 +50,7 @@ test('hstack stack auth copy-from skips pglite DB seed when lock is held by a li
   };
 
   const source = await mkStackEnv('dev-auth');
-  await mkStackEnv('dev');
+  const target = await mkStackEnv('dev');
   const sourceCliHome = join(source.baseDir, 'cli');
   await mkdir(sourceCliHome, { recursive: true });
   await writeFile(join(sourceCliHome, 'access.key'), 'seed-token\n', 'utf-8');
@@ -74,16 +74,31 @@ test('hstack stack auth copy-from skips pglite DB seed when lock is held by a li
       HAPPIER_STACK_WORKSPACE_DIR: workspaceDir,
       HAPPIER_STACK_STACK: 'dev',
       HAPPIER_STACK_ENV_FILE: join(storageDir, 'dev', 'env'),
+      // The fixture supplies the source lock directly; avoid an unrelated shared
+      // dependency-refresh admission before reaching that lock assertion.
+      HAPPIER_STACK_SKIP_REFRESH_DEPS: '1',
     };
 
-    const res = await runNodeCapture([authScriptPath(rootDir), 'copy-from', 'dev-auth', '--offline-ok'], { cwd: rootDir, env });
-    assert.equal(res.code, 0, `expected exit 0, got ${res.code}\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
+    const res = await runNodeCapture(
+      [join(rootDir, 'scripts', 'stack.mjs'), 'auth', 'dev', '--', 'copy-from', 'dev-auth', '--offline-ok'],
+      { cwd: rootDir, env }
+    );
+    assert.notEqual(res.code, 0, `expected locked source DB to fail copy-from\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
     const combinedOutput = `${res.stdout}\n${res.stderr}`;
-    assert.match(combinedOutput, /\bdb seed skipped\b/i, `expected db seed to be skipped\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
     assert.match(
       combinedOutput,
       /\bpglite.*(?:already in use|in use)\b/i,
       `expected message about live pglite lock\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`
+    );
+    await assert.rejects(
+      readFile(join(target.baseDir, 'cli', 'access.key'), 'utf-8'),
+      { code: 'ENOENT' },
+      'source DB failure must not copy the target legacy credential'
+    );
+    await assert.rejects(
+      readFile(join(target.baseDir, 'cli', 'settings.json'), 'utf-8'),
+      { code: 'ENOENT' },
+      'source DB failure must not copy target settings'
     );
   } finally {
     try {

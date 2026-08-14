@@ -2182,6 +2182,12 @@ async function main() {
     await cmdStackDaemon({ rootDir, stackName, argv: passthrough, json });
     return;
   }
+  if (wantsHelpFlag && cmd === 'auth' && stackNameForHelp && stackExistsSync(stackNameForHelp)) {
+    // Auth has command-specific recovery flags. Preserve the complete forwarded command so
+    // `stack auth <name> copy-from <source> --help` reaches the stack-scoped auth owner.
+    await cmdAuth({ rootDir, stackName: stackNameForHelp, args: argv.slice(2) });
+    return;
+  }
   if (wantsHelpFlag && cmd !== 'help') {
     const handled = await printDelegatedStackHelpIfAvailable({
       rootDir,
