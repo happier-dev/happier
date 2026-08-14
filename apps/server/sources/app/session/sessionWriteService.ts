@@ -7,12 +7,14 @@ import { readEncryptionFeatureEnv } from "@/app/features/catalog/readFeatureEnv"
 import type { Prisma } from "@prisma/client";
 import {
     isStoredContentKindAllowedForSessionByStoragePolicy,
+    isRecoveredHistoryTranscriptObservationProvenance,
     PrimaryTurnStatusV1Schema,
     TranscriptRawRecordV1Schema,
     agentEventLocalIdAttentionImpact,
     ExactSessionTurnEndMutationV1Schema,
     SessionTurnMutationV1Schema,
     SessionRuntimeIssueV1Schema,
+    SessionStoredMessageContentSchema,
     type PrimaryTurnStatusV1,
     type SessionRuntimeIssueV1,
     type SessionTurnMutationReceiptV1,
@@ -268,61 +270,63 @@ function isTerminalTurnStatus(value: unknown): value is Exclude<PrimaryTurnStatu
     return value === "completed" || value === "cancelled" || value === "failed";
 }
 
-function resolveStoredSessionMessageAttentionImpact(row: Readonly<{
-    localId?: string | null;
-    messageRole?: unknown;
-    content: PrismaJson.SessionMessageContent;
-}>): SessionMessageAttentionImpact {
-    const trustedLocalIdAttentionImpact = parseSessionMessageRole(row.messageRole) === "event"
-        ? agentEventLocalIdAttentionImpact(row.localId)
-        : null;
-    return resolveMessageAttentionImpact({
-        content: row.content,
-        explicitAttentionImpact: trustedLocalIdAttentionImpact ?? undefined,
-    });
-}
-
-async function findLatestUnreadAffectingMainTranscriptMessageSeq(tx: Tx, sessionId: string): Promise<number | null> {
-    const pageSize = 100;
+async function findLatestUnreadAffectingMainTranscriptMessageSeq(sessionId: string): Promise<number | null> {
+    const metadataPageSize = 100;
+    const contentBatchSize = 100;
     let beforeSeq: number | null = null;
     for (;;) {
-        const messages = await tx.sessionMessage.findMany({
+        const metadataRows = await db.sessionMessage.findMany({
             where: {
                 sessionId,
                 sidechainId: null,
                 ...(beforeSeq === null ? {} : { seq: { lt: beforeSeq } }),
             },
             orderBy: { seq: "desc" },
-            take: pageSize,
+            take: metadataPageSize,
             select: {
+                id: true,
                 seq: true,
-                localId: true,
-                messageRole: true,
-                content: true,
+                transcriptObservationProvenance: true,
             },
         });
-        if (!Array.isArray(messages) || messages.length === 0) return null;
-        for (const message of messages) {
-            if (resolveStoredSessionMessageAttentionImpact(message).affectsUnread) {
-                return normalizeReadSeq(message.seq);
+        if (!Array.isArray(metadataRows) || metadataRows.length === 0) return null;
+
+        const contentRequiredRows = metadataRows.filter(
+            (row) => !isRecoveredHistoryTranscriptObservationProvenance(row.transcriptObservationProvenance),
+        );
+        for (let offset = 0; offset < contentRequiredRows.length; offset += contentBatchSize) {
+            const batch = contentRequiredRows.slice(offset, offset + contentBatchSize);
+            const contentRows = await db.sessionMessage.findMany({
+                where: {
+                    sessionId,
+                    sidechainId: null,
+                    id: { in: batch.map((row) => row.id) },
+                },
+                select: { id: true, content: true },
+            });
+            const contentById = new Map(contentRows.map((row) => [row.id, row.content]));
+            for (const row of batch) {
+                const content = SessionStoredMessageContentSchema.safeParse(contentById.get(row.id));
+                if (!content.success) return normalizeReadSeq(row.seq);
+                if (resolveMessageAttentionImpact({ content: content.data }).affectsUnread) {
+                    return normalizeReadSeq(row.seq);
+                }
             }
         }
-        if (messages.length < pageSize) return null;
-        beforeSeq = normalizeReadSeq(messages[messages.length - 1]?.seq);
+        if (metadataRows.length < metadataPageSize) return null;
+        beforeSeq = normalizeReadSeq(metadataRows[metadataRows.length - 1]?.seq);
         if (beforeSeq === null) return null;
     }
 }
 
-async function resolveManualUnreadReadableSessionSeq(
-    tx: Tx,
-    sessionId: string,
+function resolveManualUnreadReadableSessionSeq(
+    latestMainMessageSeq: number | null,
     session: Readonly<{
         seq?: number | null;
         latestReadyEventSeq?: number | null;
         latestTurnStatus?: PrimaryTurnStatusV1 | string | null;
     }>,
-): Promise<number> {
-    const latestMainMessageSeq = await findLatestUnreadAffectingMainTranscriptMessageSeq(tx, sessionId);
+): number {
     let readableSeq = maxReadSeq(latestMainMessageSeq, normalizeReadSeq(session.latestReadyEventSeq));
     if (readableSeq === null && isTerminalTurnStatus(parseStoredLatestTurnStatus(session.latestTurnStatus))) {
         readableSeq = normalizeReadSeq(session.seq);
@@ -1812,6 +1816,26 @@ export async function applySessionReadCursorOperation(params: {
     }
 
     try {
+        let latestMainMessageSeq: number | null | undefined;
+        let initialSessionSeq: number | undefined;
+        if (operation.kind === "mark-unread") {
+            const initial = await inTx(async (tx) => {
+                const access = await ensureSessionEditAccess(tx, { actorUserId, sessionId });
+                if (!access.ok) return access;
+                const session = await tx.session.findUnique({
+                    where: { id: sessionId },
+                    select: { seq: true },
+                });
+                if (!session) return { ok: false, error: "session-not-found" } as const;
+                return { ok: true, sessionSeq: normalizeReadSeq(session.seq) ?? 0 } as const;
+            });
+            if (!initial.ok) {
+                return { ok: false, error: initial.error };
+            }
+            initialSessionSeq = initial.sessionSeq;
+            latestMainMessageSeq = await findLatestUnreadAffectingMainTranscriptMessageSeq(sessionId);
+        }
+
         return await inTx(async (tx) => {
             const access = await ensureSessionEditAccess(tx, { actorUserId, sessionId });
             if (!access.ok) {
@@ -1826,8 +1850,14 @@ export async function applySessionReadCursorOperation(params: {
                 return { ok: false, error: "session-not-found" };
             }
 
+            const finalSessionSeq = normalizeReadSeq(session.seq) ?? 0;
+            const conservativeMainMessageSeq = operation.kind === "mark-unread"
+                && typeof initialSessionSeq === "number"
+                && finalSessionSeq > initialSessionSeq
+                ? finalSessionSeq
+                : latestMainMessageSeq ?? null;
             const readableSessionSeq = operation.kind === "mark-unread" && session.lastViewedSessionSeq !== null
-                ? await resolveManualUnreadReadableSessionSeq(tx, sessionId, session)
+                ? resolveManualUnreadReadableSessionSeq(conservativeMainMessageSeq, session)
                 : undefined;
             const resolved = resolveSessionReadCursorOperation({
                 sessionSeq: session.seq,
