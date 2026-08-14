@@ -19,6 +19,7 @@ import {
 } from './utils/auth/stable_scope_id.mjs';
 import { probeCliDistRuntimeImport, readCliDistIntegrity } from './utils/cli/cliDistIntegrity.mjs';
 import { resolveStackRuntimeLaunchContext } from './runtime/launch/resolveStackRuntimeLaunchContext.mjs';
+import { isPidAlive, readStackRuntimeStateFile } from './utils/stack/runtime_state.mjs';
 import {
   applyCliRuntimeLaunchProvenanceEnv,
   resolveCliRuntimeLaunchSpec,
@@ -385,7 +386,20 @@ async function main() {
     defaultPort: 3005,
   });
   const prefixServerSelection = readPrefixServerSelection(argv);
-  const runtimeLaunchContext = await resolveStackRuntimeLaunchContext({ argv, env: baseProcessEnv });
+  const recordedRuntimeState = await readStackRuntimeStateFile(runtimeStatePath);
+  const recordedRuntimeOwnerPid = Number(recordedRuntimeState?.ownerPid);
+  const activeRuntimeState =
+    String(recordedRuntimeState?.stackName ?? '').trim() === stackName &&
+    Number.isFinite(recordedRuntimeOwnerPid) &&
+    recordedRuntimeOwnerPid > 1 &&
+    isPidAlive(recordedRuntimeOwnerPid)
+    ? recordedRuntimeState
+    : null;
+  const runtimeLaunchContext = await resolveStackRuntimeLaunchContext({
+    argv,
+    env: baseProcessEnv,
+    activeRuntimeState,
+  });
 
   const internalServerUrl = `http://127.0.0.1:${serverPort}`;
   const { publicServerUrl } = getPublicServerUrlEnvOverride({ env: baseProcessEnv, serverPort, stackName });
