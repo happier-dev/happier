@@ -241,7 +241,7 @@ function getProcessInfoByPidPosix(pid: number): RawProcessInfo | null {
   if (process.platform === 'linux' || process.platform === 'win32') return null;
 
   try {
-    const output = execFileSync('ps', ['-o', 'stat=,comm=,command=', '-p', String(pid)], {
+    const output = execFileSync('ps', ['-o', 'stat=,ucomm=,command=', '-p', String(pid)], {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'ignore'],
     }).trim();
