@@ -568,6 +568,185 @@ describe('createOpenCodeServerRuntime', () => {
     });
   });
 
+  it('keeps startup non-blocking but waits for required Happier MCP readiness before the first prompt', async () => {
+    const client = createFakeClient();
+    let resolveSlowCustomMcp!: () => void;
+    client.mcpAdd.mockImplementation(async (input?: unknown) => {
+      const name = (input as { name?: unknown } | undefined)?.name;
+      if (name !== 'slow_custom') return;
+      await new Promise<void>((resolve) => {
+        resolveSlowCustomMcp = resolve;
+      });
+    });
+    const session = createFakeSession();
+    const runtime = createOpenCodeServerRuntime({
+      directory: '/tmp',
+      session,
+      messageBuffer: new MessageBuffer(),
+      mcpServers: {
+        slow_custom: {
+          command: process.execPath,
+          args: ['--version'],
+        },
+        happier: {
+          command: process.execPath,
+          args: ['--help'],
+        },
+      },
+      permissionHandler: createFakePermissionHandler() as unknown as ProviderEnforcedPermissionHandler,
+      onThinkingChange: vi.fn(),
+    }, {
+      createClient: async () => client as unknown as OpenCodeServerRuntimeClient,
+    });
+
+    try {
+      const startPromise = runtime.startOrLoad({});
+      const startOutcome = observePromiseSettlement(startPromise);
+      await flushTranscriptCommitMicrotasks();
+
+      expect(startOutcome.status).toBe('resolved');
+      expect(client.mcpAdd).toHaveBeenCalledTimes(1);
+
+      runtime.beginTurn();
+      const promptPromise = (runtime as unknown as OpenCodeRuntimePromptHarness).sendPromptWithMeta({
+        text: 'first prompt requiring Happier tools',
+        localId: 'local-required-happier-ready',
+      });
+      void promptPromise.catch(() => undefined);
+      const promptOutcome = observePromiseSettlement(promptPromise);
+
+      await flushTranscriptCommitMicrotasks();
+
+      expect(promptOutcome.status).toBe('pending');
+      expect(client.sessionPromptAsync).not.toHaveBeenCalled();
+
+      resolveSlowCustomMcp();
+
+      await expect.poll(() => client.mcpAdd.mock.calls.length).toBe(2);
+      expect(client.mcpAdd).toHaveBeenNthCalledWith(2, {
+        name: 'happier',
+        config: {
+          type: 'local',
+          enabled: true,
+          command: [process.execPath, '--help'],
+        },
+      });
+      await expect.poll(() => client.sessionPromptAsync.mock.calls.length).toBe(1);
+
+      await emitTerminalAssistantAndIdle(client, { messageId: 'msg_required_happier_ready_done' });
+      await expect(promptPromise).resolves.toBeUndefined();
+      await expect(startPromise).resolves.toBe('ses_1');
+    } finally {
+      resolveSlowCustomMcp?.();
+      await runtime.reset().catch(() => {});
+    }
+  });
+
+  it('fails the turn before provider acceptance when required Happier MCP registration fails', async () => {
+    const client = createFakeClient();
+    client.mcpAdd.mockRejectedValueOnce(new Error('required bridge add failed'));
+    const session = createFakeSession();
+    const runtime = createOpenCodeServerRuntime({
+      directory: '/tmp',
+      session,
+      messageBuffer: new MessageBuffer(),
+      mcpServers: {
+        happier: {
+          command: process.execPath,
+          args: ['--version'],
+        },
+      },
+      permissionHandler: createFakePermissionHandler() as unknown as ProviderEnforcedPermissionHandler,
+      onThinkingChange: vi.fn(),
+    }, {
+      createClient: async () => client as unknown as OpenCodeServerRuntimeClient,
+    });
+
+    try {
+      await runtime.startOrLoad({});
+      runtime.beginTurn();
+      const promptPromise = (runtime as unknown as OpenCodeRuntimePromptHarness).sendPromptWithMeta({
+        text: 'first prompt with unavailable Happier tools',
+        localId: 'local-required-happier-failed',
+      });
+      void promptPromise.catch(() => undefined);
+
+      await expect(promptPromise).rejects.toThrow(/required Happier MCP registration failed.*required bridge add failed/i);
+      expect(client.sessionPromptAsync).not.toHaveBeenCalled();
+      expect(session.sendAgentMessage).toHaveBeenCalledWith(
+        'opencode',
+        expect.objectContaining({
+          type: 'turn_failed',
+          code: 'opencode_prompt_not_dispatched',
+        }),
+      );
+    } finally {
+      await runtime.reset().catch(() => {});
+    }
+  });
+
+  it('waits for required Happier MCP registration to rerun in the resumed session directory', async () => {
+    const client = createFakeClient();
+    let resolveInitialDirectoryMcp!: () => void;
+    client.mcpAdd
+      .mockImplementationOnce(async () => {
+        await new Promise<void>((resolve) => {
+          resolveInitialDirectoryMcp = resolve;
+        });
+      })
+      .mockResolvedValueOnce(undefined);
+    client.sessionGet = vi.fn(async ({ sessionId }: { sessionId: string }) => ({
+      id: sessionId,
+      directory: '/tmp/resumed-opencode',
+    }));
+    const session = createFakeSession();
+    const runtime = createOpenCodeServerRuntime({
+      directory: '/tmp',
+      session,
+      messageBuffer: new MessageBuffer(),
+      mcpServers: {
+        happier: {
+          command: process.execPath,
+          args: ['--version'],
+        },
+      },
+      permissionHandler: createFakePermissionHandler() as unknown as ProviderEnforcedPermissionHandler,
+      onThinkingChange: vi.fn(),
+    }, {
+      createClient: async () => client as unknown as OpenCodeServerRuntimeClient,
+    });
+
+    try {
+      await runtime.startOrLoad({ resumeId: 'ses_remote' });
+      runtime.beginTurn();
+      const promptPromise = (runtime as unknown as OpenCodeRuntimePromptHarness).sendPromptWithMeta({
+        text: 'first prompt after resume',
+        localId: 'local-required-happier-resume',
+      });
+      void promptPromise.catch(() => undefined);
+
+      await flushTranscriptCommitMicrotasks();
+
+      expect(client.setDirectoryOverride).toHaveBeenCalledWith('/tmp/resumed-opencode');
+      expect(client.mcpAdd).toHaveBeenCalledTimes(1);
+      expect(client.sessionPromptAsync).not.toHaveBeenCalled();
+
+      resolveInitialDirectoryMcp();
+
+      await expect.poll(() => client.mcpAdd.mock.calls.length).toBe(2);
+      await expect.poll(() => client.sessionPromptAsync.mock.calls.length).toBe(1);
+
+      await emitTerminalAssistantAndIdle(client, {
+        sessionId: 'ses_remote',
+        messageId: 'msg_required_happier_resume_done',
+      });
+      await expect(promptPromise).resolves.toBeUndefined();
+    } finally {
+      resolveInitialDirectoryMcp?.();
+      await runtime.reset().catch(() => {});
+    }
+  });
+
   it('waits for the OpenCode server.connected startup event before dispatching the first prompt', async () => {
     const client = createFakeClient({ emitServerConnectedOnSubscribe: false });
     const session = createFakeSession();

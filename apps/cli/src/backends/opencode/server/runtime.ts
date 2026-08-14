@@ -115,6 +115,12 @@ type Deferred<T> = {
   reject: (error: unknown) => void;
 };
 
+type RequiredMcpServerReadinessOutcome = Readonly<
+  | { status: 'ready' }
+  | { status: 'failed'; error: unknown }
+  | { status: 'superseded' }
+>;
+
 type OpenCodeToolObservationProvenance = Readonly<
   | { source: 'provider-live-subscription' }
   | { source: 'control-plane-history' }
@@ -327,6 +333,12 @@ export function createOpenCodeServerRuntime(params: {
   let mcpServerRegistrationInFlight: Promise<void> | null = null;
   let mcpServerRegistrationRerunRequested = false;
   const ensuredMcpServerNames = new Set<string>();
+  const requiredMcpServerName = Object.prototype.hasOwnProperty.call(params.mcpServers, 'happier')
+    ? 'happier'
+    : null;
+  let requiredMcpServerReadiness = {
+    deferred: createDeferred<RequiredMcpServerReadinessOutcome>(),
+  };
 
   let turnDeferred: Deferred<void> | null = null;
   let turnInFlight = false;
@@ -3755,16 +3767,49 @@ export function createOpenCodeServerRuntime(params: {
     resetTurnEventState();
   };
 
+  const invalidateMcpServersForCurrentDirectory = (): void => {
+    ensuredMcpServersForDirectory = false;
+    if (!requiredMcpServerName) return;
+    requiredMcpServerReadiness.deferred.resolve({ status: 'superseded' });
+    requiredMcpServerReadiness = {
+      deferred: createDeferred<RequiredMcpServerReadinessOutcome>(),
+    };
+  };
+
   const registerMcpServersForCurrentDirectoryBestEffort = async (): Promise<void> => {
     if (ensuredMcpServersForDirectory) return;
     if (!params.mcpServers || Object.keys(params.mcpServers).length === 0) return;
-    const c = await ensureClient();
+    const requiredReadinessForRegistration = requiredMcpServerReadiness;
+    let c: OpenCodeServerRuntimeClient;
+    try {
+      c = await ensureClient();
+    } catch (error) {
+      if (
+        requiredMcpServerName
+        && requiredMcpServerReadiness === requiredReadinessForRegistration
+      ) {
+        requiredReadinessForRegistration.deferred.resolve({ status: 'failed', error });
+      }
+      throw error;
+    }
     let hadFailures = false;
     for (const [name, cfg] of Object.entries(params.mcpServers)) {
       const serverName = typeof name === 'string' ? name.trim() : '';
       if (!serverName) continue;
       const cmd = typeof cfg?.command === 'string' ? cfg.command.trim() : '';
-      if (!cmd) continue;
+      if (!cmd) {
+        if (
+          serverName === requiredMcpServerName
+          && requiredMcpServerReadiness === requiredReadinessForRegistration
+        ) {
+          requiredReadinessForRegistration.deferred.resolve({
+            status: 'failed',
+            error: new Error('required Happier MCP server command is missing'),
+          });
+        }
+        hadFailures = true;
+        continue;
+      }
       const args = Array.isArray(cfg.args) ? cfg.args.filter((v) => typeof v === 'string' && v.trim().length > 0).map((v) => v.trim()) : [];
       const env = cfg.env && typeof cfg.env === 'object' && !Array.isArray(cfg.env)
         ? Object.fromEntries(
@@ -3783,9 +3828,26 @@ export function createOpenCodeServerRuntime(params: {
           },
         });
         ensuredMcpServerNames.add(serverName);
+        if (
+          serverName === requiredMcpServerName
+          && requiredMcpServerReadiness === requiredReadinessForRegistration
+        ) {
+          requiredReadinessForRegistration.deferred.resolve({ status: 'ready' });
+        }
       } catch (error) {
         hadFailures = true;
-        logger.debug('[OpenCodeServer] Failed to register MCP server (non-fatal)', { serverName, error });
+        if (
+          serverName === requiredMcpServerName
+          && requiredMcpServerReadiness === requiredReadinessForRegistration
+        ) {
+          requiredReadinessForRegistration.deferred.resolve({ status: 'failed', error });
+        }
+        logger.debug(
+          serverName === requiredMcpServerName
+            ? '[OpenCodeServer] Required Happier MCP server registration failed; prompt admission will fail closed'
+            : '[OpenCodeServer] Failed to register MCP server (non-fatal)',
+          { serverName, error },
+        );
       }
     }
     ensuredMcpServersForDirectory = hadFailures !== true;
@@ -3809,6 +3871,33 @@ export function createOpenCodeServerRuntime(params: {
         ensuredMcpServersForDirectory = false;
         scheduleMcpServersForCurrentDirectoryBestEffort();
       });
+  };
+
+  const waitForRequiredMcpServerBeforePrompt = async (
+    turn: Deferred<void>,
+    targetSessionId: string,
+  ): Promise<RequiredMcpServerReadinessOutcome | null> => {
+    if (!requiredMcpServerName) return { status: 'ready' };
+
+    for (;;) {
+      if (!isActivePromptTurn(turn, targetSessionId)) return null;
+      const readiness = requiredMcpServerReadiness;
+      const outcome = await Promise.race([
+        readiness.deferred.promise.then((result) => ({ type: 'readiness' as const, result })),
+        turn.promise.then(
+          () => ({ type: 'turn_resolved' as const }),
+          (error: unknown) => ({ type: 'turn_rejected' as const, error }),
+        ),
+      ]);
+
+      if (outcome.type === 'turn_rejected') throw outcome.error;
+      if (outcome.type === 'turn_resolved') return null;
+      if (!isActivePromptTurn(turn, targetSessionId)) return null;
+      if (readiness !== requiredMcpServerReadiness || outcome.result.status === 'superseded') {
+        continue;
+      }
+      return outcome.result;
+    }
   };
 
   const drainPendingAfterStartOrLoad = async (): Promise<void> => {
@@ -3861,7 +3950,7 @@ export function createOpenCodeServerRuntime(params: {
     },
 
     async startOrLoad(opts: { resumeId?: string | null } = {}): Promise<string> {
-      ensuredMcpServersForDirectory = false;
+      invalidateMcpServersForCurrentDirectory();
       await attachSubscriptionIfNeeded();
       const c = await ensureClient();
 
@@ -3880,7 +3969,7 @@ export function createOpenCodeServerRuntime(params: {
           } catch {
             // non-fatal
           }
-          ensuredMcpServersForDirectory = false;
+          invalidateMcpServersForCurrentDirectory();
           scheduleMcpServersForCurrentDirectoryBestEffort();
         }
         await c.sessionUpdate({ sessionId: sessionId!, permission: [...resolveSessionPermissionRuleset()] as unknown[] });
@@ -3945,7 +4034,7 @@ export function createOpenCodeServerRuntime(params: {
         } catch {
           // non-fatal
         }
-        ensuredMcpServersForDirectory = false;
+        invalidateMcpServersForCurrentDirectory();
         scheduleMcpServersForCurrentDirectoryBestEffort();
       }
       publishDynamicSessionOptionsBestEffort();
@@ -3965,7 +4054,6 @@ export function createOpenCodeServerRuntime(params: {
       const promptSessionId = sessionId;
       if (!promptSessionId) throw new Error('OpenCode server session was not started');
       const c = await ensureClient();
-      scheduleMcpServersForCurrentDirectoryBestEffort();
       const effectiveText = typeof paramsWithMeta.text === 'string' ? paramsWithMeta.text : '';
 
       const shouldOmitCustomMessageId = omitCustomMessageIdForResumedSession === true;
@@ -4014,6 +4102,18 @@ export function createOpenCodeServerRuntime(params: {
         failTurnDueToConnectedBrokerNotReady(brokerReadiness.reason);
         await thisTurnDeferred.promise;
         return;
+      }
+
+      const requiredMcpReadiness = await waitForRequiredMcpServerBeforePrompt(thisTurnDeferred, promptSessionId);
+      if (requiredMcpReadiness === null) {
+        throwPromptNotDispatched('required Happier MCP readiness ended before prompt_async');
+      } else if (requiredMcpReadiness.status === 'failed') {
+        const detail = requiredMcpReadiness.error instanceof Error
+          ? requiredMcpReadiness.error.message
+          : formatErrorForUi(requiredMcpReadiness.error, { maxChars: 1_000 }).trim();
+        throwPromptNotDispatched(
+          `required Happier MCP registration failed${detail ? `: ${detail}` : ''}`,
+        );
       }
 
       const controlAbort = new AbortController();
@@ -4323,7 +4423,7 @@ export function createOpenCodeServerRuntime(params: {
       omitCustomMessageIdForResumedSession = false;
       suppressSessionErrorAbortNotificationForSessionId = null;
       for (const key of Object.keys(configOverrides)) delete configOverrides[key];
-      ensuredMcpServersForDirectory = false;
+      invalidateMcpServersForCurrentDirectory();
       mcpServerRegistrationRerunRequested = false;
       if (ensuredMcpServerNames.size > 0) {
         try {
