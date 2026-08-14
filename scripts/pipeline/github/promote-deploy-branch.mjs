@@ -36,6 +36,20 @@ function run(cmd, args, opts) {
 }
 
 /**
+ * @param {unknown} err
+ * @returns {boolean}
+ */
+function isExplicitNotFoundError(err) {
+  if (!err || typeof err !== 'object') return false;
+  const status = Number(/** @type {{ status?: unknown }} */ (err).status);
+  if (status === 404) return true;
+  const candidate = /** @type {{ stderr?: unknown; message?: unknown }} */ (err);
+  const stderr = Buffer.isBuffer(candidate.stderr) ? candidate.stderr.toString('utf8') : String(candidate.stderr ?? '');
+  const message = String(candidate.message ?? '');
+  return /(?:\bHTTP\s*)?404\b/i.test(`${stderr}\n${message}`);
+}
+
+/**
  * @param {string} remoteUrl
  * @returns {string}
  */
@@ -167,20 +181,20 @@ function main() {
   );
 
   const updateApi = repo ? `repos/${repo}/git/refs/heads/${targetRef}` : `repos/OWNER/REPO/git/refs/heads/${targetRef}`;
-  run('gh', ['api', '-X', 'PATCH', updateApi, '-f', `sha=${sourceSha}`, '-F', 'force=true'], { env: ghEnv, dryRun });
-
-  if (dryRun) return;
-  if (!repo) fail('Missing repo for update operation.');
+  if (!repo && !dryRun) fail('Missing repo for update operation.');
+  const patchArgs = ['api', '-X', 'PATCH', updateApi, '-f', `sha=${sourceSha}`, '-F', 'force=true'];
 
   try {
-    run('gh', ['api', '-X', 'PATCH', updateApi, '-f', `sha=${sourceSha}`, '-F', 'force=true'], { env: ghEnv });
-  } catch {
+    run('gh', patchArgs, { env: ghEnv, dryRun });
+  } catch (err) {
+    if (!isExplicitNotFoundError(err)) throw err;
     run(
       'gh',
       ['api', '-X', 'POST', `repos/${repo}/git/refs`, '-f', `ref=refs/heads/${targetBranch}`, '-f', `sha=${sourceSha}`],
       { env: ghEnv },
     );
   }
+  if (dryRun) return;
 }
 
 main();
