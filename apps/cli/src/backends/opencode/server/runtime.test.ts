@@ -2494,6 +2494,171 @@ describe('createOpenCodeServerRuntime', () => {
     });
 
     await runtime.startOrLoad({});
+  it('rejects a qualified model absent from an authoritative provider inventory before prompt_async', async () => {
+    const client = createFakeClient();
+    client.providersList = vi.fn(async () => ([
+      {
+        id: 'openai',
+        env: ['OPENAI_API_KEY'],
+        models: ({
+          'gpt-5.6-luna': {
+            id: 'gpt-5.6-luna',
+            name: 'GPT-5.6 Luna',
+            status: 'active',
+            capabilities: { input: { text: true } },
+          },
+        }) as Record<string, unknown>,
+      },
+    ]));
+    client.sessionPromptAsync = vi.fn(async () => {
+      throw new Error('prompt_async must not be called for an unavailable qualified model');
+    });
+    const session = createFakeSession();
+    const runtime = createOpenCodeServerRuntime({
+      directory: '/tmp',
+      session,
+      messageBuffer: new MessageBuffer(),
+      mcpServers: {},
+      permissionHandler: createFakePermissionHandler() as unknown as ProviderEnforcedPermissionHandler,
+      onThinkingChange: vi.fn(),
+    }, {
+      createClient: async () => client as unknown as OpenCodeServerRuntimeClient,
+    });
+
+    await runtime.startOrLoad({});
+    await runtime.setSessionModel('openai-codex/gpt-5.6-luna');
+    runtime.beginTurn();
+
+    const promptPromise = (runtime as unknown as OpenCodeRuntimePromptHarness).sendPromptWithMeta({
+      text: 'hello',
+      localId: 'local-invalid-qualified-model',
+    });
+
+    await expect(promptPromise).rejects.toMatchObject({
+      name: 'ProviderPromptSubmissionRejectedBeforeEffectError',
+      reason: 'provider_rejected_before_acceptance',
+    });
+    expect(client.sessionPromptAsync).not.toHaveBeenCalled();
+    await expect.poll(() => session.sessionTurnLifecycle.failTurn.mock.calls.length).toBe(1);
+    expect(session.sessionTurnLifecycle.failTurn).toHaveBeenCalledWith(expect.objectContaining({
+      provider: 'opencode',
+      issue: expect.objectContaining({
+        source: 'provider_session_error',
+        providerTurnId: expect.any(String),
+      }),
+      providerTurnId: expect.any(String),
+    }));
+    expect(sentAgentMessagesOfType(session, 'turn_failed')).toHaveLength(0);
+
+    await runtime.reset();
+  });
+
+  it('dispatches an inventory-backed qualified model with its low variant', async () => {
+    const client = createFakeClient();
+    client.providersList = vi.fn(async () => ([
+      {
+        id: 'openai',
+        env: ['OPENAI_API_KEY'],
+        models: ({
+          'gpt-5.6-luna': {
+            id: 'gpt-5.6-luna',
+            name: 'GPT-5.6 Luna',
+            status: 'active',
+            capabilities: { input: { text: true } },
+            variants: { low: { reasoningEffort: 'low' } },
+          },
+        }) as Record<string, unknown>,
+      },
+    ]));
+    const session = createFakeSession();
+    const runtime = createOpenCodeServerRuntime({
+      directory: '/tmp',
+      session,
+      messageBuffer: new MessageBuffer(),
+      mcpServers: {},
+      permissionHandler: createFakePermissionHandler() as unknown as ProviderEnforcedPermissionHandler,
+      onThinkingChange: vi.fn(),
+    }, {
+      createClient: async () => client as unknown as OpenCodeServerRuntimeClient,
+    });
+
+    await runtime.startOrLoad({});
+    await runtime.setSessionModel('openai/gpt-5.6-luna');
+    await runtime.setSessionConfigOption('reasoning_effort', 'low');
+    runtime.beginTurn();
+
+    const promptPromise = (runtime as unknown as OpenCodeRuntimePromptHarness).sendPromptWithMeta({
+      text: 'hello',
+      localId: 'local-valid-qualified-model',
+    });
+
+    await expect.poll(() => client.sessionPromptAsync.mock.calls.length).toBe(1);
+    expect(readOpenCodePromptAsyncCall(client, 0)).toMatchObject({
+      sessionId: 'ses_1',
+      model: { providerID: 'openai', modelID: 'gpt-5.6-luna' },
+      variant: 'low',
+      parts: [{ type: 'text', text: 'hello' }],
+    });
+
+    client.__emit({
+      directory: '/tmp',
+      payload: { type: 'message.part.updated', properties: { part: { id: 'part_luna', type: 'text', sessionID: 'ses_1' } } },
+    });
+    client.__emit({
+      directory: '/tmp',
+      payload: { type: 'message.part.delta', properties: { sessionID: 'ses_1', messageID: 'msg_asst_luna', partID: 'part_luna', delta: 'ok' } },
+    });
+    await emitTerminalAssistantAndIdle(client, { messageId: 'msg_asst_luna' });
+
+    await expect(promptPromise).resolves.toBeUndefined();
+  });
+
+  it('preserves qualified custom-model dispatch when provider inventory is unavailable', async () => {
+    const client = createFakeClient();
+    client.providersList = vi.fn(async () => {
+      throw new Error('provider inventory unavailable');
+    });
+    const session = createFakeSession();
+    const runtime = createOpenCodeServerRuntime({
+      directory: '/tmp',
+      session,
+      messageBuffer: new MessageBuffer(),
+      mcpServers: {},
+      permissionHandler: createFakePermissionHandler() as unknown as ProviderEnforcedPermissionHandler,
+      onThinkingChange: vi.fn(),
+    }, {
+      createClient: async () => client as unknown as OpenCodeServerRuntimeClient,
+    });
+
+    await runtime.startOrLoad({});
+    await runtime.setSessionModel('custom-provider/custom-model');
+    runtime.beginTurn();
+
+    const promptPromise = (runtime as unknown as OpenCodeRuntimePromptHarness).sendPromptWithMeta({
+      text: 'hello',
+      localId: 'local-custom-model-inventory-unavailable',
+    });
+
+    await expect.poll(() => client.sessionPromptAsync.mock.calls.length).toBe(1);
+    expect(readOpenCodePromptAsyncCall(client, 0)).toMatchObject({
+      sessionId: 'ses_1',
+      model: { providerID: 'custom-provider', modelID: 'custom-model' },
+      parts: [{ type: 'text', text: 'hello' }],
+    });
+
+    client.__emit({
+      directory: '/tmp',
+      payload: { type: 'message.part.updated', properties: { part: { id: 'part_custom', type: 'text', sessionID: 'ses_1' } } },
+    });
+    client.__emit({
+      directory: '/tmp',
+      payload: { type: 'message.part.delta', properties: { sessionID: 'ses_1', messageID: 'msg_asst_custom', partID: 'part_custom', delta: 'ok' } },
+    });
+    await emitTerminalAssistantAndIdle(client, { messageId: 'msg_asst_custom' });
+
+    await expect(promptPromise).resolves.toBeUndefined();
+  });
+
     await runtime.setSessionModel('gpt-5.4-mini');
     runtime.beginTurn();
 

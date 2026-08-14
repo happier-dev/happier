@@ -333,6 +333,7 @@ export function createOpenCodeServerRuntime(params: {
 
   let selectedAgent: string | null = null;
   let selectedModel: OpenCodeModelRef | null = null;
+  let selectedModelWasQualifiedOverride = false;
   const configOverrides: Record<string, unknown> = {};
   let omitCustomMessageIdForResumedSession = false;
   let ensuredMcpServersForDirectory = false;
@@ -981,13 +982,51 @@ export function createOpenCodeServerRuntime(params: {
       : null;
   };
 
-  const resolveModelOverride = async (rawModelId: string): Promise<OpenCodeModelRef | null> => {
+  const validateQualifiedModelAgainstProviderInventory = async (
+    model: OpenCodeModelRef,
+  ): Promise<OpenCodeModelRef> => {
+    const c = await ensureClient();
+    let providers: Awaited<ReturnType<OpenCodeServerRuntimeClient['providersList']>>;
+    try {
+      providers = await c.providersList();
+    } catch {
+      // Preserve OpenCode custom-model behavior when the provider inventory is unavailable. A
+      // successful inventory response is authoritative; a transport/runtime failure is not.
+      return model;
+    }
+
+    const providerInfo = providers.find(
+      (providerRecord) => normalizeString(providerRecord.id) === model.providerID,
+    );
+    if (asRecord(providerInfo?.models)) {
+      const inventoryMatch = findModelForProvider(
+        providers,
+        model.providerID,
+        model.modelID,
+      );
+      if (inventoryMatch) return inventoryMatch;
+    }
+
+    const modelId = `${model.providerID}/${model.modelID}`;
+    throw new ProviderPromptSubmissionRejectedBeforeEffectError(
+      'provider_rejected_before_acceptance',
+      new Error(`OpenCode model is not available from the current provider inventory: ${modelId}`),
+    );
+  };
+
+  const resolveModelOverride = async (
+    rawModelId: string,
+    options: Readonly<{ validateQualifiedModel?: boolean }> = {},
+  ): Promise<OpenCodeModelRef | null> => {
     const trimmed = rawModelId.trim();
     if (!trimmed) return null;
 
     const parsed = parseOpenCodeModelId(trimmed);
     if (parsed) {
-      return modelIsSelectable(parsed) ? parsed : null;
+      if (!modelIsSelectable(parsed)) return null;
+      return options.validateQualifiedModel === true
+        ? await validateQualifiedModelAgainstProviderInventory(parsed)
+        : parsed;
     }
 
     const c = await ensureClient();
@@ -1019,8 +1058,13 @@ export function createOpenCodeServerRuntime(params: {
 
   const resolvePromptModelOverride = async (meta: unknown): Promise<OpenCodeModelRef | undefined> => {
     const rawModelId = normalizeString(asRecord(meta)?.model).trim();
-    if (!rawModelId) return selectedModel ?? undefined;
-    return (await resolveModelOverride(rawModelId)) ?? undefined;
+    if (rawModelId) {
+      return (await resolveModelOverride(rawModelId, { validateQualifiedModel: true })) ?? undefined;
+    }
+    if (!selectedModel) return undefined;
+    return selectedModelWasQualifiedOverride
+      ? await validateQualifiedModelAgainstProviderInventory(selectedModel)
+      : selectedModel;
   };
 
   const isPrePromptMessageId = (messageId: string): boolean => {
@@ -4157,6 +4201,20 @@ export function createOpenCodeServerRuntime(params: {
         // Abort handling (runtime.cancel) will reject the turn; do not attempt to send another prompt.
         await awaitPreDispatchTurnSettlement(thisTurnDeferred, 'control abort fired before prompt_async');
       }
+      let model: OpenCodeModelRef | undefined;
+      try {
+        model = await resolvePromptModelOverride(paramsWithMeta.meta);
+      } catch (error) {
+        setThinking(false);
+        await flushAndClearStreamWriters({
+          reason: 'abort',
+          interruptedReason: 'provider_session_error',
+        });
+        surfaceOpenCodeRuntimeFailure('session_error', error);
+        rejectTurn(error);
+        throw error;
+      }
+
       if (!isActivePromptTurn(thisTurnDeferred, promptSessionId)) {
         await awaitPreDispatchTurnSettlement(thisTurnDeferred, 'active prompt turn ended before prompt_async');
       }
@@ -4187,7 +4245,6 @@ export function createOpenCodeServerRuntime(params: {
       }
 
       try {
-        const model = await resolvePromptModelOverride(paramsWithMeta.meta);
         const promptAsyncPromise = c.sessionPromptAsync({
           sessionId: promptSessionId,
           messageId: messageID,
@@ -4460,6 +4517,7 @@ export function createOpenCodeServerRuntime(params: {
           const c = await ensureClient();
           const names = [...ensuredMcpServerNames];
           ensuredMcpServerNames.clear();
+      selectedModelWasQualifiedOverride = false;
           await Promise.all(names.map(async (name) => await c.mcpDisconnect({ name }).catch(() => {})));
         } catch {
           ensuredMcpServerNames.clear();
@@ -4524,3 +4582,5 @@ export function createOpenCodeServerRuntime(params: {
     },
   };
 }
+        selectedModelWasQualifiedOverride = false;
+      selectedModelWasQualifiedOverride = parseOpenCodeModelId(trimmed) !== null;
