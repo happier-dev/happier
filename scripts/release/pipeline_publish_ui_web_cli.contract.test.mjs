@@ -38,7 +38,8 @@ for (const { channel, rollingTag } of [
     },
   );
 
-  assert.match(out, new RegExp(`\\[pipeline\\] ui-web: channel=${channel} tag=${rollingTag}`));
+  assert.match(out, new RegExp(`^\\[pipeline\\] ui-web: channel=${channel} version=\\S+$`, 'm'));
+  assert.match(out, new RegExp(`^\\[pipeline\\] ui-web: tag=${rollingTag} target=\\S+$`, 'm'));
   assert.match(out, /scripts\/pipeline\/release\/publish-ui-web\.mjs/);
   });
 }

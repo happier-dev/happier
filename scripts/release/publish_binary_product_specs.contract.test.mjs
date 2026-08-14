@@ -26,6 +26,7 @@ test('binary publish product specs expose the canonical per-product release meta
     releaseTitleBase: 'Happier CLI',
     rollingNotesSubject: 'CLI binaries',
     versionNotesSubject: 'CLI',
+    notarizationEvidenceSuffix: 'cli',
   });
 
   assert.deepEqual(getBinaryPublishProductSpec('hstack'), {
@@ -45,6 +46,7 @@ test('binary publish product specs expose the canonical per-product release meta
     releaseTitleBase: 'Happier Stack',
     rollingNotesSubject: 'hstack binaries',
     versionNotesSubject: 'hstack',
+    notarizationEvidenceSuffix: 'hstack',
   });
 
   assert.deepEqual(getBinaryPublishProductSpec('server'), {
@@ -64,6 +66,7 @@ test('binary publish product specs expose the canonical per-product release meta
     releaseTitleBase: 'Happier Server',
     rollingNotesSubject: 'server runtime release',
     versionNotesSubject: 'Server runtime',
+    notarizationEvidenceSuffix: 'server',
   });
 });
 

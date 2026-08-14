@@ -130,25 +130,32 @@ export async function finalizePreparedBinaryArtifacts(params) {
     os: artifact.os,
     arch: artifact.arch,
   }));
+  const evidenceSuffix = params.productSpec.notarizationEvidenceSuffix;
   const evidenceNames = (await readdir(artifactsDir))
-    .filter((name) => name.endsWith('.cli.json'))
+    .filter((name) => name.endsWith(`.${evidenceSuffix}.json`))
     .sort();
-  if (evidenceNames.length > 0) {
-    const expectedEvidenceNames = ['darwin-arm64.cli.json', 'darwin-x64.cli.json'];
-    if (
-      params.productSpec.id !== 'cli'
-      || evidenceNames.length !== expectedEvidenceNames.length
-      || evidenceNames.some((name, index) => name !== expectedEvidenceNames[index])
-    ) {
-      throw new Error(`unexpected prepared evidence set for ${params.productSpec.id} ${version}`);
-    }
-    artifacts.push(...evidenceNames.map((name) => ({
-      name,
-      path: path.join(artifactsDir, name),
-      os: 'darwin',
-      arch: name.includes('arm64') ? 'arm64' : 'x64',
-    })));
+  const expectedEvidenceNames = [
+    `darwin-arm64.${evidenceSuffix}.json`,
+    `darwin-x64.${evidenceSuffix}.json`,
+  ];
+  const missingEvidenceNames = expectedEvidenceNames.filter((name) => !evidenceNames.includes(name));
+  if (missingEvidenceNames.length > 0) {
+    throw new Error(
+      `missing prepared Darwin notarization evidence for ${params.productSpec.id} ${version}: ${missingEvidenceNames.join(', ')}`,
+    );
   }
+  if (
+    evidenceNames.length !== expectedEvidenceNames.length
+    || evidenceNames.some((name, index) => name !== expectedEvidenceNames[index])
+  ) {
+    throw new Error(`unexpected prepared evidence set for ${params.productSpec.id} ${version}`);
+  }
+  artifacts.push(...evidenceNames.map((name) => ({
+    name,
+    path: path.join(artifactsDir, name),
+    os: 'darwin',
+    arch: name.includes('arm64') ? 'arm64' : 'x64',
+  })));
   const checksumsPath = await writeChecksums({
     product: params.productSpec.manifestProduct,
     version,

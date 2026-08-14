@@ -18,6 +18,7 @@
  *   releaseTitleBase: string;
  *   rollingNotesSubject: string;
  *   versionNotesSubject: string;
+ *   notarizationEvidenceSuffix: 'cli' | 'hstack' | 'server';
  * }} BinaryPublishProductSpec
  */
 
@@ -43,6 +44,7 @@ const PRODUCT_SPECS = Object.freeze({
     releaseTitleBase: 'Happier CLI',
     rollingNotesSubject: 'CLI binaries',
     versionNotesSubject: 'CLI',
+    notarizationEvidenceSuffix: 'cli',
   }),
   hstack: Object.freeze({
     id: 'hstack',
@@ -61,6 +63,7 @@ const PRODUCT_SPECS = Object.freeze({
     releaseTitleBase: 'Happier Stack',
     rollingNotesSubject: 'hstack binaries',
     versionNotesSubject: 'hstack',
+    notarizationEvidenceSuffix: 'hstack',
   }),
   server: Object.freeze({
     id: 'server',
@@ -79,6 +82,7 @@ const PRODUCT_SPECS = Object.freeze({
     releaseTitleBase: 'Happier Server',
     rollingNotesSubject: 'server runtime release',
     versionNotesSubject: 'Server runtime',
+    notarizationEvidenceSuffix: 'server',
   }),
 });
 

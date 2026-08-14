@@ -1,12 +1,58 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
+import os from 'node:os';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, '..', '..');
+
+test('server-runtime version allocation does not require installed workspace packages', () => {
+  const tempDir = fs.mkdtempSync(resolve(os.tmpdir(), 'happier-release-version-allocation-'));
+  const loaderPath = resolve(tempDir, 'reject-workspace-packages.mjs');
+  const githubOutputPath = resolve(tempDir, 'github-output.txt');
+  fs.writeFileSync(loaderPath, [
+    'export async function resolve(specifier, context, nextResolve) {',
+    "  if (specifier.startsWith('@happier-dev/')) {",
+    "    throw new Error(`workspace package imported before dependency installation: ${specifier}`);",
+    '  }',
+    '  return nextResolve(specifier, context);',
+    '}',
+    '',
+  ].join('\n'));
+
+  try {
+    const result = spawnSync(
+      process.execPath,
+      [
+        '--loader',
+        loaderPath,
+        resolve(repoRoot, 'scripts', 'pipeline', 'release', 'publish-server-runtime.mjs'),
+        '--channel',
+        'dev',
+        '--base-version',
+        '0.1.0',
+        '--resolve-version-only',
+        '--github-output',
+        githubOutputPath,
+        '--dry-run',
+      ],
+      {
+        cwd: repoRoot,
+        env: { ...process.env },
+        encoding: 'utf8',
+        timeout: 30_000,
+      },
+    );
+
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    assert.match(fs.readFileSync(githubOutputPath, 'utf8'), /^version=0\.1\.0-dev\.\d+$/m);
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
 
 for (const { channel, rollingTag } of [
   { channel: 'preview', rollingTag: 'server-preview' },

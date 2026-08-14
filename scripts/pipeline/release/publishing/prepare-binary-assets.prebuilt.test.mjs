@@ -32,11 +32,17 @@ async function writeCliEvidence(artifactsDir) {
   await writeFile(join(artifactsDir, 'darwin-arm64.cli.json'), '{"target":"darwin-arm64"}\n', 'utf8');
 }
 
+async function writeProductEvidence(artifactsDir, suffix) {
+  await writeFile(join(artifactsDir, `darwin-x64.${suffix}.json`), '{"target":"darwin-x64"}\n', 'utf8');
+  await writeFile(join(artifactsDir, `darwin-arm64.${suffix}.json`), '{"target":"darwin-arm64"}\n', 'utf8');
+}
+
 test('finalizePreparedBinaryArtifacts signs one complete native CLI artifact matrix', async () => {
   const artifactsDir = await mkdtemp(join(tmpdir(), 'happier-prebuilt-cli-'));
   const version = '1.2.3-preview.4';
   try {
     await writeCliArchives(artifactsDir, version);
+    await writeCliEvidence(artifactsDir);
     const writes = [];
     const signs = [];
 
@@ -58,14 +64,44 @@ test('finalizePreparedBinaryArtifacts signs one complete native CLI artifact mat
 
     assert.deepEqual(
       writes[0].artifacts.map((artifact) => [artifact.os, artifact.arch, artifact.name]),
-      CLI_TARGETS.map(([os, arch]) => [os, arch, `happier-v${version}-${os}-${arch}.tar.gz`]),
+      [
+        ...CLI_TARGETS.map(([os, arch]) => [os, arch, `happier-v${version}-${os}-${arch}.tar.gz`]),
+        ['darwin', 'arm64', 'darwin-arm64.cli.json'],
+        ['darwin', 'x64', 'darwin-x64.cli.json'],
+      ],
     );
     assert.deepEqual(signs, [{
       path: join(artifactsDir, `checksums-happier-v${version}.txt`),
       trustedComment: `happier ${version} preview`,
     }]);
-    assert.equal(result.artifacts.length, CLI_TARGETS.length);
+    assert.equal(result.artifacts.length, CLI_TARGETS.length + 2);
     assert.equal(result.signaturePath, join(artifactsDir, `checksums-happier-v${version}.txt.minisig`));
+  } finally {
+    await rm(artifactsDir, { recursive: true, force: true });
+  }
+});
+
+test('finalizePreparedBinaryArtifacts refuses publication without both Darwin notarization evidence records', async () => {
+  const artifactsDir = await mkdtemp(join(tmpdir(), 'happier-prebuilt-cli-missing-evidence-'));
+  const version = '1.2.3-preview.4';
+  try {
+    await writeCliArchives(artifactsDir, version);
+    await assert.rejects(
+      finalizePreparedBinaryArtifacts({
+        artifactsDir,
+        productSpec: getBinaryPublishProductSpec('cli'),
+        channel: 'preview',
+        version,
+        targets: CLI_TARGETS.map(([os, arch]) => ({ os, arch })),
+        writeChecksums: async () => {
+          throw new Error('must not checksum an unsigned Darwin matrix');
+        },
+        signFile: async () => {
+          throw new Error('must not sign an unsigned Darwin matrix');
+        },
+      }),
+      /missing prepared Darwin notarization evidence/iu,
+    );
   } finally {
     await rm(artifactsDir, { recursive: true, force: true });
   }
@@ -104,6 +140,52 @@ test('finalizePreparedBinaryArtifacts signs the complete CLI candidate envelope 
     await rm(artifactsDir, { recursive: true, force: true });
   }
 });
+
+for (const { productId, manifestProduct, suffix } of [
+  { productId: 'hstack', manifestProduct: 'hstack', suffix: 'hstack' },
+  { productId: 'server', manifestProduct: 'happier-server', suffix: 'server' },
+]) {
+  test(`finalizePreparedBinaryArtifacts signs the complete ${productId} envelope including Darwin notarization evidence`, async () => {
+    const artifactsDir = await mkdtemp(join(tmpdir(), `happier-prebuilt-${productId}-evidence-`));
+    const version = '1.2.3-dev.4';
+    const targets = CLI_TARGETS.map(([os, arch]) => ({ os, arch }));
+    try {
+      for (const [os, arch] of CLI_TARGETS) {
+        await writeFile(
+          join(artifactsDir, `${manifestProduct}-v${version}-${os}-${arch}.tar.gz`),
+          `${os}-${arch}\n`,
+          'utf8',
+        );
+      }
+      await writeProductEvidence(artifactsDir, suffix);
+      const writes = [];
+
+      await finalizePreparedBinaryArtifacts({
+        artifactsDir,
+        productSpec: getBinaryPublishProductSpec(productId),
+        channel: 'dev',
+        version,
+        targets,
+        writeChecksums: async (input) => {
+          writes.push(input);
+          return join(artifactsDir, `checksums-${manifestProduct}-v${version}.txt`);
+        },
+        signFile: async ({ path }) => `${path}.minisig`,
+      });
+
+      assert.deepEqual(
+        writes[0].artifacts.map((artifact) => artifact.name).sort(),
+        [
+          ...CLI_TARGETS.map(([os, arch]) => `${manifestProduct}-v${version}-${os}-${arch}.tar.gz`),
+          `darwin-arm64.${suffix}.json`,
+          `darwin-x64.${suffix}.json`,
+        ].sort(),
+      );
+    } finally {
+      await rm(artifactsDir, { recursive: true, force: true });
+    }
+  });
+}
 
 test('finalizePreparedBinaryArtifacts fails closed when one native CLI target is missing', async () => {
   const artifactsDir = await mkdtemp(join(tmpdir(), 'happier-prebuilt-cli-missing-'));
@@ -294,6 +376,21 @@ test('binary publisher accepts an exact finalized-artifacts handoff explicitly',
   ]);
 
   assert.equal(values['finalized-artifacts'], true);
+});
+
+test('privileged binary publisher can validate an artifact envelope without executing candidate binaries', () => {
+  const values = parsePublishBinaryReleaseArgs([
+    '--product',
+    'cli',
+    '--channel',
+    'dev',
+    '--version',
+    '1.2.3-dev.4',
+    '--prepared-artifacts',
+    '--skip-smoke',
+  ]);
+
+  assert.equal(values['skip-smoke'], true);
 });
 
 test('binary publisher can resolve one version for all native build jobs', () => {

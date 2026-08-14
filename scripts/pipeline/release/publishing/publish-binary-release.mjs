@@ -190,6 +190,7 @@ export function parsePublishBinaryReleaseArgs(argv) {
       'base-version': { type: 'string', default: '' },
       'prepared-artifacts': { type: 'boolean', default: false },
       'finalized-artifacts': { type: 'boolean', default: false },
+      'skip-smoke': { type: 'boolean', default: false },
       'resolve-version-only': { type: 'boolean', default: false },
       'github-output': { type: 'string', default: '' },
       'dry-run': { type: 'boolean', default: false },
@@ -233,12 +234,13 @@ export async function publishBinaryReleaseMain(options = {}) {
   const releaseMessage = String(values['release-message'] ?? '').trim();
   const explicitVersion = String(values.version ?? '').trim();
   const finalizedArtifacts = values['finalized-artifacts'] === true;
+  const skipSmoke = values['skip-smoke'] === true;
   if (finalizedArtifacts && !explicitVersion) {
     throw new Error('--version is required with --finalized-artifacts');
   }
   const phase = String(values.phase ?? 'publish').trim();
-  if (!['publish', 'promote-rolling'].includes(phase)) {
-    throw new Error('--phase must be publish|promote-rolling');
+  if (!['publish', 'publish-immutable', 'promote-rolling'].includes(phase)) {
+    throw new Error('--phase must be publish|publish-immutable|promote-rolling');
   }
   if (phase === 'promote-rolling' && !explicitVersion) {
     throw new Error('--version is required for same-version rolling promotion');
@@ -393,6 +395,7 @@ export async function publishBinaryReleaseMain(options = {}) {
       publicationWorkflowRunId: String(process.env.GITHUB_RUN_ID ?? ''),
       preparedArtifacts: values['prepared-artifacts'] === true || finalizedArtifacts,
       finalizedArtifacts,
+      skipSmoke,
       dryRun: opts.dryRun,
       env: {
         HAPPIER_EMBEDDED_POLICY_ENV: process.env.HAPPIER_EMBEDDED_POLICY_ENV ?? embeddedPolicy,
@@ -408,7 +411,7 @@ export async function publishBinaryReleaseMain(options = {}) {
       '--target-sha', targetSha,
       '--prerelease', prerelease,
       '--rolling-tag', 'false',
-      '--generate-notes', 'true',
+      '--generate-notes', 'false',
       '--notes', versionNotes,
       '--assets-dir', path.relative(repoRoot, artifactsDir),
       '--clobber', 'false',
@@ -417,25 +420,29 @@ export async function publishBinaryReleaseMain(options = {}) {
       ...(opts.dryRun ? ['--dry-run'] : []),
     ], { cwd: repoRoot });
 
-    run(opts, process.execPath, [
-      ROLLING_PROMOTION_SCRIPT_RELATIVE_PATH,
-      '--source-tag', versionTag,
-      '--rolling-tag', rollingTag,
-      '--title', rollingTitle,
-      '--target-sha', targetSha,
-      '--prerelease', prerelease,
-      '--notes', notes,
-      '--release-message', releaseMessage,
-      '--repo', repoSlug,
-      '--public-key', RELEASE_PUBLIC_KEY_RELATIVE_PATH,
-      ...(opts.dryRun ? ['--dry-run'] : []),
-    ], { cwd: repoRoot });
+    if (phase === 'publish') {
+      run(opts, process.execPath, [
+        ROLLING_PROMOTION_SCRIPT_RELATIVE_PATH,
+        '--source-tag', versionTag,
+        '--rolling-tag', rollingTag,
+        '--title', rollingTitle,
+        '--target-sha', targetSha,
+        '--prerelease', prerelease,
+        '--notes', notes,
+        '--release-message', releaseMessage,
+        '--repo', repoSlug,
+        '--public-key', RELEASE_PUBLIC_KEY_RELATIVE_PATH,
+        ...(opts.dryRun ? ['--dry-run'] : []),
+      ], { cwd: repoRoot });
+    }
 
     if (!opts.dryRun && productSpec.id === 'cli') {
       console.log(`[pipeline] published GitHub rolling release: ${rollingTag}`);
       console.log(`[pipeline] published GitHub versioned release: ${versionTag}`);
       console.log(`[pipeline] note: GitHub may not update 'Published' timestamps for rolling releases; verify assets on tag '${rollingTag}'.`);
     }
+    const githubOutputPath = String(values['github-output'] ?? '').trim();
+    if (githubOutputPath) fs.appendFileSync(githubOutputPath, `version=${version}\n`, 'utf8');
   } finally {
     if (restoreVersion) {
       restoreVersion();
