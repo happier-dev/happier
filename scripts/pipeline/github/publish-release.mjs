@@ -12,6 +12,7 @@ import { buildRollingReleaseEditArgs } from './lib/gh-release-commands.mjs';
 
 const DEFAULT_RELEASE_UPLOAD_RETRIES = 3;
 const DEFAULT_RELEASE_UPLOAD_RETRY_DELAY_MS = 2_000;
+const DEFAULT_RELEASE_TRANSFER_TIMEOUT_MS = 10 * 60_000;
 
 function fail(message) {
   console.error(message);
@@ -111,13 +112,21 @@ function formatExecError(err) {
  */
 function isTransientReleaseUploadError(err) {
   const raw = formatExecError(err);
-  return /release not found/i.test(raw) || /404/i.test(raw);
+  return (
+    /release not found/i.test(raw)
+    || /404/i.test(raw)
+    || /ETIMEDOUT/i.test(raw)
+    || /ECONNRESET/i.test(raw)
+    || /socket hang up/i.test(raw)
+    || /Service Unavailable/i.test(raw)
+    || /\b50[234]\b/.test(raw)
+  );
 }
 
 /**
  * @param {string} cmd
  * @param {string[]} args
- * @param {{ env?: Record<string, string>; dryRun?: boolean; allowFailure?: boolean }} [opts]
+ * @param {{ env?: Record<string, string>; dryRun?: boolean; allowFailure?: boolean; timeoutMs?: number }} [opts]
  */
 function run(cmd, args, opts) {
   const dryRun = opts?.dryRun === true;
@@ -132,7 +141,7 @@ function run(cmd, args, opts) {
       env: { ...process.env, ...(opts?.env ?? {}) },
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe'],
-      timeout: 120_000,
+      timeout: opts?.timeoutMs ?? 120_000,
     });
   } catch (err) {
     if (opts?.allowFailure) return '';
@@ -171,7 +180,7 @@ async function fileSha256(filePath) {
   return hash.digest('hex');
 }
 
-async function assertRemoteAssetMatches({ tag, repo, name, expectedPath, env }) {
+async function assertRemoteAssetMatches({ tag, repo, name, expectedPath, env, timeoutMs }) {
   const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'happier-immutable-release-audit-'));
   try {
     run('gh', [
@@ -180,7 +189,7 @@ async function assertRemoteAssetMatches({ tag, repo, name, expectedPath, env }) 
       '--pattern', name,
       '--dir', scratch,
       '--clobber',
-    ], { env });
+    ], { env, timeoutMs });
     const downloadedPath = path.join(scratch, name);
     if (!fs.existsSync(downloadedPath)) fail(`Immutable release audit did not download expected asset: ${name}`);
     const [expectedSha, downloadedSha] = await Promise.all([
@@ -368,6 +377,10 @@ async function main() {
   const uploadRetryDelayMs = readPositiveIntegerEnv(
     'HAPPIER_PIPELINE_GH_RELEASE_UPLOAD_RETRY_DELAY_MS',
     DEFAULT_RELEASE_UPLOAD_RETRY_DELAY_MS,
+  );
+  const transferTimeoutMs = readPositiveIntegerEnv(
+    'HAPPIER_PIPELINE_GH_RELEASE_TRANSFER_TIMEOUT_MS',
+    DEFAULT_RELEASE_TRANSFER_TIMEOUT_MS,
   );
   /** @type {Record<string, string>} */
   const ghEnv = {};
@@ -564,6 +577,7 @@ async function main() {
           name,
           expectedPath: /** @type {string} */ (localByName.get(name)),
           env: ghEnv,
+          timeoutMs: transferTimeoutMs,
         });
       }
     }
@@ -573,7 +587,11 @@ async function main() {
       let uploaded = false;
       for (let attempt = 1; attempt <= uploadRetries; attempt += 1) {
         try {
-          run('gh', ['release', 'upload', tag, spec], { env: ghEnv, dryRun });
+          run('gh', ['release', 'upload', tag, spec], {
+            env: ghEnv,
+            dryRun,
+            timeoutMs: transferTimeoutMs,
+          });
           uploaded = true;
           break;
         } catch (err) {
@@ -588,7 +606,14 @@ async function main() {
     }
     if (!dryRun) {
       for (const [name, expectedPath] of localByName) {
-        await assertRemoteAssetMatches({ tag, repo, name, expectedPath, env: ghEnv });
+        await assertRemoteAssetMatches({
+          tag,
+          repo,
+          name,
+          expectedPath,
+          env: ghEnv,
+          timeoutMs: transferTimeoutMs,
+        });
       }
     }
     return;
@@ -598,7 +623,11 @@ async function main() {
     let uploaded = false;
     for (let attempt = 1; attempt <= uploadRetries; attempt += 1) {
       try {
-        run('gh', ['release', 'upload', tag, spec, ...clobberFlag], { env: ghEnv, dryRun });
+        run('gh', ['release', 'upload', tag, spec, ...clobberFlag], {
+          env: ghEnv,
+          dryRun,
+          timeoutMs: transferTimeoutMs,
+        });
         uploaded = true;
         break;
       } catch (err) {
