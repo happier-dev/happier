@@ -46,6 +46,7 @@ import {
   mergeSpawnConfigOptionAliases,
   type SpawnConfigOptionValue,
 } from './sessionSpawnConfigOptions.js';
+import { EXECUTION_RUN_ACTION_PERMISSION_MODES } from './executionRunActionPermissionMode.js';
 
 /**
  * Resolve the canonical run-start model + config-option selection from an agent-facing action
@@ -1413,12 +1414,11 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         const reviewInput = parsed.data as ReviewStartInput;
         const engineIds = reviewInput.engineIds;
         const instructions = reviewInput.instructions.trim();
-        const permissionDecision = resolveSessionAgentPermission(ctx, reviewInput.permissionMode, [
-          'read_only',
-          'default',
-          'workspace_write',
-          'yolo',
-        ]);
+        const permissionDecision = resolveSessionAgentPermission(
+          ctx,
+          reviewInput.permissionMode,
+          EXECUTION_RUN_ACTION_PERMISSION_MODES,
+        );
         if (permissionDecision?.ok === false) {
           return createPermissionPolicyResult(ctx, permissionDecision);
         }
@@ -1495,12 +1495,11 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           actionId === 'subagents.plan.start' ? 'plan' : actionId === 'subagents.delegate.start' ? 'delegate' : 'voice_agent';
         const permissionModeDefault = intent === 'delegate' ? 'workspace_write' : 'read_only';
         const requestedPermissionMode = (parsed.data as any).permissionMode ?? permissionModeDefault;
-        const permissionDecision = resolveSessionAgentPermission(ctx, requestedPermissionMode, [
-          'read_only',
-          'default',
-          'workspace_write',
-          'yolo',
-        ]);
+        const permissionDecision = resolveSessionAgentPermission(
+          ctx,
+          requestedPermissionMode,
+          EXECUTION_RUN_ACTION_PERMISSION_MODES,
+        );
         if (permissionDecision?.ok === false) {
           return createPermissionPolicyResult(ctx, permissionDecision);
         }
@@ -1711,12 +1710,11 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
               delete request.connectedServicesDefaultServiceIds;
             }
           }
-          const permissionDecision = resolveSessionAgentPermission(ctx, request.permissionMode, [
-            'read_only',
-            'default',
-            'workspace_write',
-            'yolo',
-          ]);
+          const permissionDecision = resolveSessionAgentPermission(
+            ctx,
+            request.permissionMode,
+            EXECUTION_RUN_ACTION_PERMISSION_MODES,
+          );
           if (permissionDecision?.ok === false) {
             return createPermissionPolicyResult(ctx, permissionDecision);
           }

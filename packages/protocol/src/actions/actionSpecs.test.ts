@@ -681,6 +681,15 @@ describe('Action Spec Registry', () => {
     });
   });
 
+  it('normalizes supported session permission aliases and rejects unknown modes at the action boundary', () => {
+    const spec = getActionSpec('session.spawn_new');
+
+    expect(spec.inputSchema.parse({ permissionMode: 'read_only' })).toEqual({
+      permissionMode: 'read-only',
+    });
+    expect(spec.inputSchema.safeParse({ permissionMode: 'surprise-me' }).success).toBe(false);
+  });
+
   it('rejects daemon-internal session.spawn_new plumbing fields', () => {
     const spec = getActionSpec('session.spawn_new');
     const internalFields = [
@@ -1075,6 +1084,33 @@ describe('Action Spec Registry', () => {
       instructions: 'Do it.',
     });
     expect(parsed.permissionMode).toBe('workspace_write');
+  });
+
+  it('advertises and validates the canonical delegate permission modes at the tool boundary', () => {
+    const spec = getActionSpec('subagents.delegate.start');
+    const baseInput = {
+      backendTargetKeys: ['agent:pi'],
+      instructions: 'Do it.',
+    };
+
+    for (const permissionMode of ['read_only', 'default', 'workspace_write', 'yolo']) {
+      const parsed = (spec.inputSchema as z.ZodTypeAny).safeParse({ ...baseInput, permissionMode });
+      expect(parsed.success, permissionMode).toBe(true);
+    }
+
+    const invalid = (spec.inputSchema as z.ZodTypeAny).safeParse({
+      ...baseInput,
+      permissionMode: 'workspace_read',
+    });
+    expect(invalid.success).toBe(false);
+    if (!invalid.success) {
+      expect(invalid.error.issues[0]?.path).toEqual(['permissionMode']);
+      expect(invalid.error.issues[0]?.message).toContain('read_only');
+      expect(invalid.error.issues[0]?.message).toContain('workspace_write');
+    }
+
+    const permissionModeHint = spec.inputHints?.fields.find((field) => field.path === 'permissionMode');
+    expect(permissionModeHint?.description).toContain('read_only | default | workspace_write | yolo');
   });
 
   it('defaults voice agent start to long-lived streaming', () => {

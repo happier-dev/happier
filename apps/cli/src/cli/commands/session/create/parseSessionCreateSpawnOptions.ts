@@ -2,7 +2,9 @@ import {
   AcpConfigOptionOverridesV1Schema,
   AgentRuntimeDescriptorV1Schema,
   ConnectedServiceBindingsV1Schema,
+  SESSION_PERMISSION_MODES,
   SessionMcpSelectionV1Schema,
+  parseSessionPermissionModeAlias,
   type SpawnConfigOptionValue,
 } from '@happier-dev/protocol';
 import { readNonBlankSessionControlIdentifier } from '@/agent/runtime/sessionControlIdentifiers';
@@ -27,7 +29,27 @@ export type ParsedSessionCreateSpawnOptions = Readonly<{
   actionInput: SessionCreateSpawnActionInput;
 }>;
 
-export const SESSION_CREATE_USAGE = 'happier session create [--path <path>] [--backend <backend-target>] [--title <title>] [--tag <tag>] [--prompt <text>|--message <text>] [--model <model-id>] [--permission-mode <mode>] [--mode <agent-mode-id>] [--config-option <id=value>] [--reasoning-effort <value>] [--ultracode] [--config-overrides-json <json>] [--launch-profile <profile-id>] [--env <KEY=VALUE>] [--auth <default|native|cs:<id>>|--connected-services <selector>|--auth-json <json>] [--mcp-selection-json <json>] [--transcript-storage <persisted|direct>] [--terminal-json <json>] [--codex-backend-mode <mcp|acp|appServer>] [--runtime-descriptor-json <json>|--agent-runtime-descriptor-json <json>] [--host <host>] [--machine-id <machineId>] [--spawn-attempt-id <id>] [--resume-spawn-attempt] [--json]';
+export const SESSION_CREATE_USAGE = [
+  'happier session create [options]',
+  '',
+  'Options:',
+  '  [--path <path>] [--backend <backend-target>]',
+  '  [--title <title>] [--tag <tag>]',
+  '  [--prompt <text>|--message <text>]',
+  `  [--model <model-id>] [--permission-mode <${SESSION_PERMISSION_MODES.join('|')}>]`,
+  '    Aliases include read_only, ro, safe, full-access, accept-edits, and bypass-permissions.',
+  '  [--mode <agent-mode-id>] [--config-option <id=value>]',
+  '  [--reasoning-effort <value>] [--ultracode]',
+  '  [--config-overrides-json <json>] [--launch-profile <profile-id>]',
+  '  [--env <KEY=VALUE>]',
+  '  [--auth <default|native|cs:<id>>|--connected-services <selector>|--auth-json <json>]',
+  '  [--mcp-selection-json <json>] [--transcript-storage <persisted|direct>]',
+  '  [--terminal-json <json>] [--codex-backend-mode <mcp|acp|appServer>]',
+  '  [--runtime-descriptor-json <json>|--agent-runtime-descriptor-json <json>]',
+  '  [--host <host>] [--machine-id <machineId>]',
+  '  [--spawn-attempt-id <id>] [--resume-spawn-attempt]',
+  '  [--json]',
+].join('\n');
 
 function readRepeatedFlagValues(argv: readonly string[], flag: string): string[] {
   const values: string[] = [];
@@ -173,7 +195,13 @@ export function parseSessionCreateSpawnOptions(argv: readonly string[]): ParsedS
   const backendTargetKeys = normalizeBackendTargetKeysFromCsv(backendRaw);
   const backendTargetKey = backendTargetKeys.length === 1 ? backendTargetKeys[0] : null;
   const modelId = readOpaqueFlagValue(argv, '--model') ?? '';
-  const permissionMode = (readFlagValue(argv, '--permission-mode') ?? '').trim();
+  const permissionModeRaw = (readFlagValue(argv, '--permission-mode') ?? '').trim();
+  const permissionMode = permissionModeRaw ? parseSessionPermissionModeAlias(permissionModeRaw) : null;
+  if (permissionModeRaw && !permissionMode) {
+    throw new Error(
+      `Invalid --permission-mode "${permissionModeRaw}". Expected one of: ${SESSION_PERMISSION_MODES.join(', ')}.`,
+    );
+  }
   const agentModeId = readOpaqueFlagValue(argv, '--mode') ?? '';
   const launchProfileId = readFlagValue(argv, '--launch-profile');
   const legacyProfileId = readFlagValue(argv, '--profile');

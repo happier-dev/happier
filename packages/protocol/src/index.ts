@@ -1748,9 +1748,12 @@ export {
 
 export {
   SESSION_PERMISSION_MODES,
+  SessionPermissionModeInputSchema,
   SessionPermissionModeSchema,
   type SessionPermissionMode,
+  createSessionPermissionModeInputSchema,
   createSessionPermissionModeSchema,
+  parseSessionPermissionModeAlias,
 } from './sessionMetadata/sessionPermissionModes.js';
 
 export {

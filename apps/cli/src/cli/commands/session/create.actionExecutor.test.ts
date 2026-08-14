@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { SESSION_PERMISSION_MODES } from '@happier-dev/protocol';
 
 import { captureConsoleJsonOutput, captureConsoleText } from '@/testkit/logger/captureOutput';
 import { SESSION_CREATE_USAGE } from './create/parseSessionCreateSpawnOptions';
@@ -30,6 +31,10 @@ describe('happier session create (action executor)', () => {
 
       expect(execute).not.toHaveBeenCalled();
       expect(output.text()).toContain(SESSION_CREATE_USAGE);
+      for (const permissionMode of SESSION_PERMISSION_MODES) {
+        expect(output.text()).toContain(permissionMode);
+      }
+      expect(output.text()).toContain('read_only');
     } finally {
       output.restore();
     }
@@ -81,6 +86,69 @@ describe('happier session create (action executor)', () => {
           session: { id: 'sess-1' },
         }),
       }));
+    } finally {
+      output.restore();
+    }
+  });
+
+  it('normalizes permission aliases before executing session.spawn_new', async () => {
+    execute.mockResolvedValueOnce({
+      ok: true,
+      result: {
+        type: 'success',
+        sessionId: 'sess-read-only',
+        created: true,
+        session: { id: 'sess-read-only' },
+      },
+    });
+
+    const { handleSessionCommand } = await import('./handleSessionCommand');
+    const output = captureConsoleJsonOutput();
+    try {
+      await handleSessionCommand(
+        ['create', '--path', '/tmp', '--permission-mode', 'read_only', '--json'],
+        {
+          readCredentialsFn: async () => ({
+            token: 'token_test',
+            encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
+          }),
+        },
+      );
+
+      expect(execute).toHaveBeenCalledWith(
+        'session.spawn_new',
+        expect.objectContaining({ permissionMode: 'read-only' }),
+        { surface: 'cli', defaultSessionId: null, actionRequestId: expect.any(String) },
+      );
+      expect(output.json()).toMatchObject({ ok: true, kind: 'session_create' });
+    } finally {
+      output.restore();
+    }
+  });
+
+  it('rejects an unknown permission mode as invalid_arguments before executing an action', async () => {
+    const { handleSessionCommand } = await import('./handleSessionCommand');
+    const output = captureConsoleJsonOutput();
+    try {
+      await handleSessionCommand(
+        ['create', '--path', '/tmp', '--permission-mode', 'surprise-me', '--json'],
+        {
+          readCredentialsFn: async () => ({
+            token: 'token_test',
+            encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
+          }),
+        },
+      );
+
+      expect(execute).not.toHaveBeenCalled();
+      expect(output.json()).toMatchObject({
+        ok: false,
+        kind: 'session_create',
+        error: {
+          code: 'invalid_arguments',
+          message: expect.stringContaining('Invalid --permission-mode'),
+        },
+      });
     } finally {
       output.restore();
     }
