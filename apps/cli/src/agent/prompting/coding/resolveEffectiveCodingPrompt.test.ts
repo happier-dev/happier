@@ -209,6 +209,9 @@ describe('resolveEffectiveCodingPromptText', () => {
 
     expect(out).toContain('Happier tools are available through the CLI bridge');
     expect(out).toContain('when you need to discover the available built-in Happier tools');
+    expect(out).toContain('Use the listed tool `name` verbatim for `--tool`');
+    expect(out).toContain('ActionSpec IDs (for example, `subagents.delegate.start`) are not tool names');
+    expect(out).toContain('invoke the listed `action_execute` tool and pass the ID as `actionId`');
     expect(out).not.toContain('change_title');
     expect(out).not.toContain('rename the session');
     expect(out).not.toContain('# Session title');
