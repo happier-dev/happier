@@ -72,6 +72,7 @@ import { readProcessRunState } from './processRunState';
 
 export type DaemonControlRequestOptions = {
   timeoutMs?: number;
+  signal?: AbortSignal;
 };
 
 type DaemonPostAuthScope = 'daemon-control' | 'connected-service-broker-refresh' | 'connected-service-run-materialize';
@@ -368,7 +369,9 @@ async function daemonPost(path: string, body?: any, options: DaemonPostOptions =
       headers,
       body: JSON.stringify(body || {}),
       // Mostly increased for stress test
-      signal: AbortSignal.timeout(timeout)
+      signal: options.signal
+        ? AbortSignal.any([options.signal, AbortSignal.timeout(timeout)])
+        : AbortSignal.timeout(timeout)
     });
     
     const rawBody = await response.text();

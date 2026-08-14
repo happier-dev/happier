@@ -78,6 +78,50 @@ describe('daemon control client (HTTP error responses)', () => {
     }
   });
 
+  it('settles an in-flight control request when the caller aborts', async () => {
+    let requestObserved: (() => void) | null = null;
+    const observed = new Promise<void>((resolve) => {
+      requestObserved = resolve;
+    });
+    const server = http.createServer((_req, _res) => {
+      requestObserved?.();
+      // Keep the response open so only the caller signal can settle this request.
+    });
+
+    try {
+      const { port } = await listen(server);
+      tmpHomeDir = await createTempDir('happier-daemon-client-abort-');
+      envScope.patch({ HAPPIER_HOME_DIR: tmpHomeDir });
+      reloadConfiguration();
+      writeDaemonState({
+        pid: process.pid,
+        httpPort: port,
+        startedAt: Date.now(),
+        startedWithCliVersion: 'test',
+        controlToken: 'test-token',
+      });
+
+      const controller = new AbortController();
+      const request = notifyDaemonConnectedServiceTurnLifecycle({
+        sessionId: 'sess_1',
+        event: 'assistant_message_end',
+        terminalStatus: 'completed',
+      }, {
+        signal: controller.signal,
+        timeoutMs: 60_000,
+      });
+
+      await observed;
+      controller.abort();
+
+      await expect(request).resolves.toEqual({
+        error: expect.stringMatching(/aborted|aborterror/i),
+      });
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
   it('posts manual connected-service auth switch requests to the daemon control route', async () => {
     let observedUrl: string | undefined;
     let observedBody: Record<string, unknown> | null = null;
