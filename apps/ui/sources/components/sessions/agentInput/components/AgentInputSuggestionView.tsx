@@ -1,6 +1,9 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
+import type { AgentId } from '@/agents/catalog/catalog';
+import { getAgentPickerIconScale } from '@/agents/catalog/catalog';
+import { AgentIcon } from '@/agents/registry/AgentIcon';
 import { Typography } from '@/constants/Typography';
 import { FileIcon } from '@/components/ui/media/FileIcon';
 import { InlineRepoPathLabel } from '@/components/ui/path/InlineRepoPathLabel';
@@ -36,6 +39,31 @@ export const FileMentionSuggestion = React.memo(({ fileName, filePath, fileType 
         </View>
     );
 });
+
+interface SessionMentionAgentLogoProps {
+    agentId: AgentId;
+    testID?: string;
+}
+
+/**
+ * The leading glyph of a session mention row: the logo of the provider running in
+ * that session.
+ *
+ * This is an icon for `CommandMenuRow`, not a competing row — the exception below
+ * still stands. It is a component rather than a bare `<AgentIcon>` element because
+ * the optical size correction must be read at RENDER time: candidate resolution
+ * runs on every keystroke, and in Node-side tests the registry's image assets
+ * cannot be loaded at all, which turned the whole session kind into a failed kind
+ * and emptied the section.
+ */
+export const SessionMentionAgentLogo = React.memo(({ agentId, testID }: SessionMentionAgentLogoProps) => (
+    <AgentIcon
+        agentId={agentId}
+        size={16}
+        style={{ transform: [{ scale: getAgentPickerIconScale(agentId) }] }}
+        testID={testID}
+    />
+));
 
 /*
  * Vendor-plugin and skill rows used to live here as two more bespoke components

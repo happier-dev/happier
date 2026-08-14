@@ -10,6 +10,13 @@ export type AutocompleteSuggestion = Readonly<{
     text: string;
     label?: string;
     description?: string;
+    /**
+     * A per-candidate icon for the primitive `CommandMenu` row, overriding the
+     * kind's glyph. Used where the glyph is genuinely a property of the candidate
+     * rather than of its kind — a session row draws the logo of the provider
+     * running in it. A kind whose rows are all alike leaves this unset.
+     */
+    icon?: React.ReactNode;
     component?: React.ElementType;
     rowHeight?: number;
     /**

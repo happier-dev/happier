@@ -18,7 +18,9 @@ import { t } from '@/text';
  *
  * Only the file kind keeps `renderRow`: it needs `InlineRepoPathLabel`'s path-aware
  * truncation. Plugin and skill rows are the primitive's default icon + label +
- * subtitle, supplied by the registry.
+ * subtitle, supplied by the registry. A candidate may override that icon when the
+ * glyph belongs to the candidate rather than to its kind — a session row draws its
+ * own provider logo — and the kind's glyph remains the fallback.
  *
  * The original suggestion is preserved as `meta` so the host can retrieve it in
  * `onSelect` without maintaining a parallel lookup.
@@ -35,7 +37,7 @@ export function buildAgentInputCommandMenuItems(
             label: suggestion.label ?? suggestion.text,
             description: suggestion.description,
             group: t(kind.sectionTitleKey),
-            icon: component ? undefined : kind.icon?.(),
+            icon: component ? undefined : suggestion.icon ?? kind.icon?.(),
             rowHeight: suggestion.rowHeight,
             renderRow: component ? () => React.createElement(component) : undefined,
             meta: suggestion,
