@@ -2,7 +2,7 @@
 
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
-import { classifyChangedPaths } from './component-registry.mjs';
+import { classifyChangedPaths, deriveVersionedComponentChanges } from './component-registry.mjs';
 
 function fail(msg) {
   process.stderr.write(`[compute-changed-components] ${msg}\n`);
@@ -55,10 +55,11 @@ function main() {
     .filter(Boolean);
 
   const classified = classifyChangedPaths(paths);
+  const versioned = deriveVersionedComponentChanges(classified);
 
   // Preserve the workflow's existing outputs naming.
   const outputs = {
-    changed_ui: String(Boolean(classified.ui)),
+    changed_ui: String(Boolean(versioned.app)),
     changed_cli: String(Boolean(classified.cli)),
     changed_server: String(Boolean(classified.server)),
     changed_website: String(Boolean(classified.website)),
