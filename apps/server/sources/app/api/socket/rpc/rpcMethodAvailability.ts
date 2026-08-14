@@ -1,3 +1,5 @@
+import { RPC_METHODS } from "@happier-dev/protocol/rpc";
+
 function parsePositiveIntOrDefault(value: string | undefined, fallback: number): number {
     if (typeof value !== "string") return fallback;
     const parsed = Number.parseInt(value, 10);
@@ -19,6 +21,11 @@ const SESSION_SCOPED_RPC_CLUSTER_FETCH_TIMEOUT_MS = parsePositiveIntOrDefault(
     1000,
 );
 
+const STOP_SESSION_RPC_METHOD_AVAILABILITY_GRACE_MS = parsePositiveIntOrDefault(
+    process.env.HAPPIER_STOP_SESSION_RPC_METHOD_AVAILABILITY_GRACE_MS,
+    10_000,
+);
+
 const EXTERNAL_SESSIONS_RPC_METHOD_AVAILABILITY_GRACE_MS = parsePositiveIntOrDefault(
     process.env.HAPPIER_DIRECT_SESSIONS_RPC_METHOD_AVAILABILITY_GRACE_MS,
     15_000,
@@ -32,6 +39,9 @@ const LONG_STARTUP_GRACE_SCOPED_DAEMON_RPC_METHOD_PREFIXES = [
 export function resolveRpcMethodAvailabilityGraceMs(method: string): number {
     const scopeSeparatorIndex = method.indexOf(":");
     const normalizedMethod = scopeSeparatorIndex >= 0 ? method.slice(scopeSeparatorIndex + 1) : method;
+    if (scopeSeparatorIndex >= 0 && normalizedMethod === RPC_METHODS.STOP_SESSION) {
+        return STOP_SESSION_RPC_METHOD_AVAILABILITY_GRACE_MS;
+    }
     if (LONG_STARTUP_GRACE_SCOPED_DAEMON_RPC_METHOD_PREFIXES.some((prefix) => normalizedMethod.startsWith(prefix))) {
         return EXTERNAL_SESSIONS_RPC_METHOD_AVAILABILITY_GRACE_MS;
     }
