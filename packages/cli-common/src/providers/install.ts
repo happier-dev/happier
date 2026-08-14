@@ -1,8 +1,9 @@
 import { spawnSync } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { appendFileSync, chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { chmod, copyFile, mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
-import { delimiter, dirname, join } from 'node:path';
+import { delimiter, dirname, isAbsolute, join, relative } from 'node:path';
 
 import type {
   AgentId,
@@ -12,6 +13,8 @@ import type {
 } from '@happier-dev/agents';
 import { getProviderCliRuntimeSpec } from '@happier-dev/agents';
 import { fetchGitHubLatestRelease } from '@happier-dev/release-runtime';
+
+import { withWorkspaceBundleLock } from '../../workspaceBundleLock.mjs';
 
 import { commandExistsOnPath, resolveWindowsCommandInvocation } from '../process/index.js';
 import { createManagedToolScratchDir } from './createManagedToolScratchDir.js';
@@ -74,49 +77,90 @@ type InstallProviderCliDeps = Readonly<{
   extractGitHubReleaseAsset?: typeof extractGitHubReleaseAsset;
   ensureManagedPnpmCommand?: typeof ensureManagedPnpmCommand;
   ensureManagedJavaScriptRuntimeCommand?: typeof ensureManagedJavaScriptRuntimeCommand;
+  removeManagedInstallPath?: typeof rm;
   renameManagedInstallPath?: typeof rename;
   spawnSync?: typeof spawnSync;
 }>;
 
+const MANAGED_RETIRED_INSTALL_DIRECTORY_PATTERN =
+  /^previous-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+async function cleanupRetiredManagedInstallDirectories(params: Readonly<{
+  installRoot: string;
+  logPath: string;
+  removePath: typeof rm;
+}>): Promise<void> {
+  const entries = await readdir(params.installRoot, { withFileTypes: true }).catch((error) => {
+    appendInstallLogBestEffort(params.logPath, `# retired release cleanup scan deferred: ${String(error)}`);
+    return [];
+  });
+  for (const entry of entries) {
+    if (!entry.isDirectory() || !MANAGED_RETIRED_INSTALL_DIRECTORY_PATTERN.test(entry.name)) continue;
+    const retiredPath = join(params.installRoot, entry.name);
+    try {
+      await params.removePath(retiredPath, { recursive: true, force: true });
+    } catch (error) {
+      appendInstallLogBestEffort(params.logPath, `# retired release cleanup deferred: ${String(error)}`);
+    }
+  }
+}
+
 async function promoteManagedInstallCandidate(params: Readonly<{
   installRoot: string;
+  candidateDir: string;
+  logPath: string;
   deps: InstallProviderCliDeps;
 }>): Promise<void> {
   const currentDir = join(params.installRoot, 'current');
-  const nextDir = join(params.installRoot, 'next');
-  const previousDir = join(params.installRoot, 'previous');
+  const previousDir = join(params.installRoot, `previous-${randomUUID()}`);
+  const removePath = params.deps.removeManagedInstallPath ?? rm;
   const renamePath = params.deps.renameManagedInstallPath ?? rename;
 
   await mkdir(params.installRoot, { recursive: true });
-  await rm(previousDir, { recursive: true, force: true });
-
-  let previousReleaseMoved = false;
-  try {
-    await renamePath(currentDir, previousDir);
-    previousReleaseMoved = true;
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
-  }
-
-  try {
-    await renamePath(nextDir, currentDir);
-  } catch (promotionError) {
-    await rm(currentDir, { recursive: true, force: true });
-    if (previousReleaseMoved) {
-      try {
-        await renamePath(previousDir, currentDir);
-      } catch (restoreError) {
-        throw new Error(
-          `Managed provider promotion failed and the previous release could not be restored: ${String(restoreError)}`,
-          { cause: promotionError },
-        );
-      }
+  let waitReported = false;
+  await withWorkspaceBundleLock(async () => {
+    let previousReleaseMoved = false;
+    try {
+      await renamePath(currentDir, previousDir);
+      previousReleaseMoved = true;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
     }
-    await rm(nextDir, { recursive: true, force: true });
-    throw promotionError;
-  }
 
-  await rm(previousDir, { recursive: true, force: true });
+    try {
+      await renamePath(params.candidateDir, currentDir);
+    } catch (promotionError) {
+      await removePath(currentDir, { recursive: true, force: true });
+      if (previousReleaseMoved) {
+        try {
+          await renamePath(previousDir, currentDir);
+        } catch (restoreError) {
+          throw new Error(
+            `Managed provider promotion failed and the previous release could not be restored: ${String(restoreError)}`,
+            { cause: promotionError },
+          );
+        }
+      }
+      await removePath(params.candidateDir, { recursive: true, force: true });
+      throw promotionError;
+    }
+
+    await cleanupRetiredManagedInstallDirectories({
+      installRoot: params.installRoot,
+      logPath: params.logPath,
+      removePath,
+    });
+  }, {
+    lockPath: join(params.installRoot, '.lock', 'install.lock'),
+    timeoutMs: 60_000,
+    staleAfterMs: 60_000,
+    errorLabel: 'managed provider install lock',
+    onWait: ({ waitedMs }) => {
+      if (waitReported) return;
+      waitReported = true;
+      appendInstallLogBestEffort(params.logPath, `# waiting for managed provider install lock after ${waitedMs}ms`);
+    },
+  });
 }
 
 export function resolvePlatformFromNodePlatform(nodePlatform: string): ProviderCliInstallPlatform | null {
@@ -268,6 +312,18 @@ function appendLogLine(logPath: string, line: string): void {
   appendFileSync(logPath, `${line}\n`, 'utf8');
 }
 
+function appendInstallLogBestEffort(logPath: string, line: string): void {
+  try {
+    appendLogLine(logPath, line);
+  } catch (logError) {
+    try {
+      console.warn(`[provider-install] ${line} (install log unavailable: ${String(logError)})`);
+    } catch {
+      // Reporting must never replace the install outcome.
+    }
+  }
+}
+
 function resolveProviderToolInstallDir(providerId: AgentId, env: NodeJS.ProcessEnv): string {
   return join(resolveHappyHomeDirFromEnvironment(env), 'tools', 'providers', providerId);
 }
@@ -315,29 +371,22 @@ function resolveVendorInstallTimeoutMs(env: NodeJS.ProcessEnv): number {
   return Math.min(parsed, 900_000);
 }
 
-function resolveStagedManagedProviderCommandPath(
+function resolveManagedProviderCommandPathInInstallDir(
   providerId: AgentId,
-  stage: 'current' | 'next',
+  installDir: string,
   env: NodeJS.ProcessEnv,
 ): string {
+  const installRoot = resolveManagedProviderInstallDir(providerId, env);
+  const currentDir = join(installRoot, 'current');
   const currentPath = resolveProviderCliManagedCommandPath(providerId, {
     happyHomeDir: resolveHappyHomeDirFromEnvironment(env),
     processEnv: env,
   });
-  const currentSegment = join('current', 'bin');
-  const targetSegment = join(stage, 'bin');
-  if (!currentPath.includes(currentSegment)) {
-    throw new Error(`Managed provider path missing ${currentSegment}: ${currentPath}`);
+  const relativeCommandPath = relative(currentDir, currentPath);
+  if (!relativeCommandPath || isAbsolute(relativeCommandPath) || relativeCommandPath.split(/[\\/]/).includes('..')) {
+    throw new Error(`Managed provider path is outside ${currentDir}: ${currentPath}`);
   }
-  return currentPath.replace(currentSegment, targetSegment);
-}
-
-function resolveStagedManagedProviderWorkspaceDir(
-  providerId: AgentId,
-  stage: 'current' | 'next',
-  env: NodeJS.ProcessEnv,
-): string {
-  return join(dirname(resolveStagedManagedProviderCommandPath(providerId, stage, env)), '..', 'workspace');
+  return join(installDir, relativeCommandPath);
 }
 
 function buildManagedPackageInstallEnvironment(
@@ -626,71 +675,83 @@ async function installManagedPackageProviderCli(params: Readonly<{
   }
 
   const installRoot = resolveManagedProviderInstallDir(params.providerId, params.env);
-  const nextDir = join(installRoot, 'next');
-  const workspaceDir = join(nextDir, 'workspace');
-  const launcherPath = resolveStagedManagedProviderCommandPath(params.providerId, 'next', params.env);
-  const launcherWorkspaceDir = resolveStagedManagedProviderWorkspaceDir(params.providerId, 'current', params.env);
-  const runtimePathEntries = resolveJavaScriptRuntimePathEntries({
-    processEnv: params.env,
-    runtimeCommand: jsRuntimeCommand,
+  const scratchDir = await createManagedToolScratchDir({
+    installDir: installRoot,
+    prefix: params.providerId,
   });
-
-  await rm(nextDir, { recursive: true, force: true });
-  await mkdir(workspaceDir, { recursive: true });
-  await writeFile(
-    join(workspaceDir, 'package.json'),
-    JSON.stringify({ name: `happier-provider-${params.providerId}`, private: true, version: '0.0.0' }, null, 2),
-    'utf8',
-  );
-
-  const childEnv = buildManagedPackageInstallEnvironment(params.env, workspaceDir);
-  if (runtimePathEntries.length > 0) {
-    childEnv.PATH = [...runtimePathEntries, String(childEnv.PATH ?? params.env.PATH ?? '')]
-      .filter((value) => value.length > 0)
-      .join(delimiter);
-  }
-  const addArgs = ['--dir', workspaceDir, 'add', params.managedInstall.packageName, '--ignore-scripts'];
-  const spawn = params.deps.spawnSync ?? spawnSync;
-  const result = spawn(pnpmCommand, addArgs, {
-    cwd: workspaceDir,
-    encoding: 'utf8',
-    env: childEnv,
-    windowsHide: true,
-  });
-  appendCommandLog(
-    params.logPath,
-    pnpmCommand,
-    addArgs,
-    String(result.stdout ?? ''),
-    String(result.stderr ?? ''),
-    result.status ?? null,
-    result.signal ?? null,
-  );
-  if (result.error) {
-    throw result.error;
-  }
-  if ((result.status ?? 1) !== 0) {
-    throw new Error(String(result.stderr ?? '').trim() || `pnpm add failed (${result.status ?? 'unknown'})`);
-  }
-
-  if (params.managedInstall.packageBinarySetup?.kind === 'opencode_platform_binary') {
-    const materialized = await materializeOpenCodeManagedPackageBinary({
-      workspaceDir,
-      platform: params.platform,
-      env: childEnv,
-      spawnSync: spawn,
+  try {
+    const candidateDir = join(scratchDir, 'candidate');
+    const workspaceDir = join(candidateDir, 'workspace');
+    const launcherPath = resolveManagedProviderCommandPathInInstallDir(params.providerId, candidateDir, params.env);
+    const launcherWorkspaceDir = join(installRoot, 'current', 'workspace');
+    const runtimePathEntries = resolveJavaScriptRuntimePathEntries({
+      processEnv: params.env,
+      runtimeCommand: jsRuntimeCommand,
     });
-    appendLogLine(params.logPath, `# opencode platform package: ${materialized.packageName}`);
+
+    await mkdir(workspaceDir, { recursive: true });
+    await writeFile(
+      join(workspaceDir, 'package.json'),
+      JSON.stringify({ name: `happier-provider-${params.providerId}`, private: true, version: '0.0.0' }, null, 2),
+      'utf8',
+    );
+
+    const childEnv = buildManagedPackageInstallEnvironment(params.env, workspaceDir);
+    if (runtimePathEntries.length > 0) {
+      childEnv.PATH = [...runtimePathEntries, String(childEnv.PATH ?? params.env.PATH ?? '')]
+        .filter((value) => value.length > 0)
+        .join(delimiter);
+    }
+    const addArgs = ['--dir', workspaceDir, 'add', params.managedInstall.packageName, '--ignore-scripts'];
+    const spawn = params.deps.spawnSync ?? spawnSync;
+    const result = spawn(pnpmCommand, addArgs, {
+      cwd: workspaceDir,
+      encoding: 'utf8',
+      env: childEnv,
+      windowsHide: true,
+    });
+    appendCommandLog(
+      params.logPath,
+      pnpmCommand,
+      addArgs,
+      String(result.stdout ?? ''),
+      String(result.stderr ?? ''),
+      result.status ?? null,
+      result.signal ?? null,
+    );
+    if (result.error) {
+      throw result.error;
+    }
+    if ((result.status ?? 1) !== 0) {
+      throw new Error(String(result.stderr ?? '').trim() || `pnpm add failed (${result.status ?? 'unknown'})`);
+    }
+
+    if (params.managedInstall.packageBinarySetup?.kind === 'opencode_platform_binary') {
+      const materialized = await materializeOpenCodeManagedPackageBinary({
+        workspaceDir,
+        platform: params.platform,
+        env: childEnv,
+        spawnSync: spawn,
+      });
+      appendLogLine(params.logPath, `# opencode platform package: ${materialized.packageName}`);
+    }
+
+    await writeManagedPackageLauncher({
+      outputPath: launcherPath,
+      workspaceDir: launcherWorkspaceDir,
+      binaryName: params.managedInstall.binaryName,
+      runtimePathEntries,
+    });
+
+    await promoteManagedInstallCandidate({
+      installRoot,
+      candidateDir,
+      logPath: params.logPath,
+      deps: params.deps,
+    });
+  } finally {
+    await rm(scratchDir, { recursive: true, force: true });
   }
-
-  await writeManagedPackageLauncher({
-    outputPath: launcherPath,
-    workspaceDir: launcherWorkspaceDir,
-    binaryName: params.managedInstall.binaryName,
-    runtimePathEntries,
-  });
-
-  await promoteManagedInstallCandidate({ installRoot, deps: params.deps });
 }
 
 async function resolveManagedBinaryAsset(params: Readonly<{
@@ -823,8 +884,8 @@ async function installManagedBinaryProviderCli(params: Readonly<{
   try {
     const archivePath = join(scratchDir, asset.name);
     const extractDir = join(scratchDir, 'extract');
-    const nextDir = join(installRoot, 'next');
-    const nextBinPath = resolveStagedManagedProviderCommandPath(params.providerId, 'next', params.env);
+    const candidateDir = join(scratchDir, 'candidate');
+    const candidateBinPath = resolveManagedProviderCommandPathInInstallDir(params.providerId, candidateDir, params.env);
     const archiveEntries = params.managedInstall.archiveEntriesByPlatform?.[params.platform];
     if (params.managedInstall.archiveEntriesByPlatform && archiveEntries?.length === 0) {
       throw new Error(`Provider ${params.providerId} has no declared runtime archive entries for ${params.platform}`);
@@ -837,20 +898,19 @@ async function installManagedBinaryProviderCli(params: Readonly<{
       userAgent: 'happier-cli',
     });
 
-    await rm(nextDir, { recursive: true, force: true });
-    await mkdir(dirname(nextBinPath), { recursive: true });
+    await mkdir(dirname(candidateBinPath), { recursive: true });
     await (params.deps.extractGitHubReleaseAsset ?? extractGitHubReleaseAsset)({
       archivePath,
       archiveName: asset.name,
       extractDir,
-      outputPath: nextBinPath,
-      outputDir: nextDir,
+      outputPath: candidateBinPath,
+      outputDir: candidateDir,
       archiveEntries,
       archiveExtractionLimits: params.managedInstall.archiveExtractionLimits,
     });
 
     for (const entry of archiveEntries ?? []) {
-      const installedPath = join(nextDir, ...entry.destinationPath.split('/'));
+      const installedPath = join(candidateDir, ...entry.destinationPath.split('/'));
       const installedStat = await stat(installedPath).catch((error: NodeJS.ErrnoException) => {
         if (error.code === 'ENOENT') return null;
         throw error;
@@ -861,7 +921,12 @@ async function installManagedBinaryProviderCli(params: Readonly<{
     }
 
     appendLogLine(params.logPath, `# asset: ${asset.name}`);
-    await promoteManagedInstallCandidate({ installRoot, deps: params.deps });
+    await promoteManagedInstallCandidate({
+      installRoot,
+      candidateDir,
+      logPath: params.logPath,
+      deps: params.deps,
+    });
   } finally {
     await rm(scratchDir, { recursive: true, force: true });
   }
@@ -1035,7 +1100,7 @@ export async function installProviderCli(params: Readonly<{
       message.startsWith('Managed pnpm is unavailable') || message.startsWith('Managed JavaScript runtime is unavailable')
         ? 'managed-runtime-unavailable'
         : 'command-failed';
-    appendLogLine(logPath, message);
+    appendInstallLogBestEffort(logPath, message);
     return { ok: false, errorCode: code, errorMessage: message, plan, logPath };
   } finally {
     if (vendorScratchDir) {
