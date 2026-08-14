@@ -1,0 +1,15 @@
+export const CLI_RUNTIME_SIDECAR_ENTRIES = Object.freeze([
+  Object.freeze(['childProcessOptions.cjs']),
+  Object.freeze(['claude_version_utils.cjs']),
+  Object.freeze(['claude_local_launcher.cjs']),
+  Object.freeze(['claude_remote_launcher.cjs']),
+  Object.freeze(['session_hook_forwarder.cjs']),
+  Object.freeze(['permission_hook_forwarder.cjs']),
+  Object.freeze(['ripgrep_launcher.cjs']),
+  Object.freeze(['ripgrep_runtime_paths.cjs']),
+  Object.freeze(['statusline_forwarder.cjs']),
+  Object.freeze(['terminal_launch_spec_runner.cjs']),
+  Object.freeze(['node_pty_relay.cjs']),
+  Object.freeze(['runtime']),
+  Object.freeze(['shims']),
+]);

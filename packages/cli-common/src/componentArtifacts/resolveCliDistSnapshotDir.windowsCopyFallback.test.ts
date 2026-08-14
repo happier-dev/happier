@@ -83,4 +83,39 @@ describe('resolveCliDistSnapshotDir Windows copy fallback', () => {
         expect(existsSync(snapshotDir)).toBe(true);
         expect(existsSync(distEntrypointPath)).toBe(true);
     });
+
+    it('reclaims only abandoned process-owned snapshots before creating the next snapshot', async () => {
+        const repoRoot = await createTempDir();
+        const cliDir = join(repoRoot, 'apps', 'cli');
+        const distDir = join(cliDir, 'dist');
+        const distBackupDir = join(cliDir, '.dist.hstack-backup');
+        const distEntrypointPath = join(distDir, 'index.mjs');
+        const abandonedSnapshotDir = join(cliDir, '.dist.hstack-snapshot-111-orphan');
+        const liveSnapshotDir = join(cliDir, '.dist.hstack-snapshot-222-live');
+
+        if (!renameDelegate.current) {
+            throw new Error('expected node:fs/promises.rename delegate to be initialized');
+        }
+        renameMock.mockImplementation((from, to) => renameDelegate.current!(from, to));
+
+        await writeRepoFile(distEntrypointPath, 'export const cli = "fresh";\n');
+        await writeRepoFile(join(abandonedSnapshotDir, 'index.mjs'), 'abandoned\n');
+        await writeRepoFile(join(liveSnapshotDir, 'index.mjs'), 'live\n');
+
+        const snapshotDir = await resolveCliDistSnapshotDir({
+            cliDir,
+            distDir,
+            distBackupDir,
+            distEntrypointPath,
+            reuseExistingDistSnapshot: true,
+            isProcessAliveImpl: (pid) => pid === 222 || pid === process.pid,
+            buildDist: async () => {
+                throw new Error('resolveCliDistSnapshotDir should not rebuild when reusing an existing dist snapshot');
+            },
+        });
+
+        expect(existsSync(abandonedSnapshotDir)).toBe(false);
+        expect(existsSync(liveSnapshotDir)).toBe(true);
+        expect(snapshotDir).toContain(`.dist.hstack-snapshot-${process.pid}-`);
+    });
 });

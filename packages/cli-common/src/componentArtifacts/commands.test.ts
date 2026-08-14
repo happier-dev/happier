@@ -177,6 +177,43 @@ describe('compileBunBinary', () => {
         }
     });
 
+    it('delegates compilation to a package-owned Bun build runner when provided', async () => {
+        const tempRoot = mkdtempSync(join(tmpdir(), 'cli-common-bun-runner-'));
+        try {
+            const entrypoint = join(tempRoot, 'index.mjs');
+            const outfile = join(tempRoot, 'happier-server');
+            const buildRunnerEntrypoint = join(tempRoot, 'build-server.mjs');
+            writeFileSync(entrypoint, 'console.log("ok");\n', 'utf8');
+
+            const calls: Array<{ cmd: string; args: string[] }> = [];
+            await compileBunBinary({
+                entrypoint,
+                bunTarget: 'bun-linux-x64-baseline',
+                outfile,
+                externals: ['redis'],
+                bunCommand: 'bun',
+                buildRunnerEntrypoint,
+                runCommand: async (cmd, args) => {
+                    calls.push({ cmd, args });
+                    writeFileSync(outfile, 'compiled', 'utf8');
+                },
+            });
+
+            expect(calls).toEqual([{
+                cmd: 'bun',
+                args: [
+                    buildRunnerEntrypoint,
+                    '--target=bun-linux-x64-baseline',
+                    `--entrypoint=${entrypoint}`,
+                    `--outfile=${outfile}`,
+                    '--external=redis',
+                ],
+            }]);
+        } finally {
+            rmSync(tempRoot, { recursive: true, force: true });
+        }
+    });
+
     it('retries and clears transient Bun executable extraction failures', async () => {
         const tempRoot = mkdtempSync(join(tmpdir(), 'cli-common-bun-compile-retry-'));
         const originalBunInstall = process.env.BUN_INSTALL;

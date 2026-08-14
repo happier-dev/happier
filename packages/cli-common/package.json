@@ -22,10 +22,25 @@
       "require": "./cliDistBuildManifest.cjs",
       "default": "./cliDistBuildManifest.cjs"
     },
+    "./pinnedRunnerSnapshot": {
+      "types": "./pinnedRunnerSnapshot.d.mts",
+      "import": "./pinnedRunnerSnapshot.mjs",
+      "default": "./pinnedRunnerSnapshot.mjs"
+    },
+    "./cliRuntimeSidecars": {
+      "types": "./cliRuntimeSidecars.d.mts",
+      "import": "./cliRuntimeSidecars.mjs",
+      "default": "./cliRuntimeSidecars.mjs"
+    },
     "./componentArtifacts/cliRuntimeSidecars": {
       "types": "./dist/componentArtifacts/cliRuntimeSidecars.d.ts",
       "import": "./dist/componentArtifacts/cliRuntimeSidecars.js",
       "default": "./dist/componentArtifacts/cliRuntimeSidecars.js"
+    },
+    "./componentArtifacts/copyCliNodeRuntimePayload": {
+      "types": "./dist/componentArtifacts/copyCliNodeRuntimePayload.d.ts",
+      "import": "./dist/componentArtifacts/copyCliNodeRuntimePayload.js",
+      "default": "./dist/componentArtifacts/copyCliNodeRuntimePayload.js"
     },
     "./componentArtifacts/deferredVoiceRuntimePackages": {
       "types": "./dist/componentArtifacts/deferredVoiceRuntimePackages.d.ts",
@@ -185,8 +200,10 @@
     "clean": "node scripts/build.mjs --clean",
     "postinstall:real": "yarn -s build",
     "postinstall": "node -e \"const fs=require('fs');const cp=require('child_process');if(/(^|[\\\\\\\\/])node_modules([\\\\\\\\/]|$)/i.test(process.cwd()))process.exit(0);try{const gate=require('../../scripts/postinstall/shouldRunPostinstall.cjs');if(!gate.shouldRunPostinstall({workspace:'cli-common',scope:process.env.HAPPIER_INSTALL_SCOPE||''}))process.exit(0);}catch{}if(!fs.existsSync('tsconfig.json'))process.exit(0);const run=(cmd,args)=>cp.spawnSync(cmd,args,{stdio:'inherit'});const npmExec=process.env.npm_execpath;let r;if(npmExec){r=run(process.execPath,[npmExec,'run','-s','postinstall:real']);}else{r=run(process.platform==='win32'?'yarn.cmd':'yarn',['-s','postinstall:real']);if(r.error&&process.platform==='win32'){r=run('yarn',['-s','postinstall:real']);}}if(r.error){console.error(r.error.message);process.exit(1);}process.exit(r.status??1);\"",
-    "typecheck": "node ../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.json",
-    "test": "yarn -s build && node ../../node_modules/vitest/vitest.mjs run --config vitest.config.ts"
+    "typecheck": "../../apps/stack/bin/hstack-exec --script=typecheck:local",
+    "typecheck:local": "node ../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.json",
+    "test": "../../apps/stack/bin/hstack-exec --script=test:local",
+    "test:local": "yarn -s build && node ../../node_modules/vitest/vitest.mjs run --config vitest.config.ts"
   },
   "dependencies": {
     "@noble/curves": "^1.9.0",

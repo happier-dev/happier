@@ -1,4 +1,7 @@
-import { withWorkspaceBundleLock } from '../../workspaceBundleLock.mjs';
+import {
+  DEFAULT_WORKSPACE_BUNDLE_LOCK_TIMEOUT_MS,
+  withWorkspaceBundleLock,
+} from '../../workspaceBundleLock.mjs';
 
 export async function withCliDistBuildLock<T>(
   fn: (params: { waited: boolean; heldLockValue: string; inherited: boolean }) => Promise<T>,
@@ -12,7 +15,7 @@ export async function withCliDistBuildLock<T>(
   },
 ): Promise<T> {
   const { env = process.env, ...lockOptions } = options;
-  const timeoutMs = options.timeoutMs ?? 240_000;
+  const timeoutMs = options.timeoutMs ?? DEFAULT_WORKSPACE_BUNDLE_LOCK_TIMEOUT_MS;
   return await withWorkspaceBundleLock(fn, {
     ...lockOptions,
     heldLockValue:

@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+import { existsSync } from 'node:fs';
 import { mkdtemp, mkdir, readFile, readdir, realpath, rm, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -5,7 +7,12 @@ import { fileURLToPath } from 'node:url';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
+import cliDistBuildManifest from '../../cliDistBuildManifest.cjs';
 import { buildCliBinaryArtifactPayload } from './buildCliBinaryArtifactPayload.js';
+import {
+    copyCliNodeWorkspaceRuntimePackagesFromRuntimeRoot,
+    readCliNodeWorkspaceRuntimeIdentity,
+} from './copyCliNodeRuntimePayload.js';
 import { parseWorkspaceLockLeaseValue } from '../../workspaceLockLease.mjs';
 
 const tempDirs: string[] = [];
@@ -22,6 +29,39 @@ async function writeRepoFile(path: string, content: string, timestamp?: Date): P
     if (timestamp) {
         await utimes(path, timestamp, timestamp);
     }
+}
+
+async function writeCliDistFixture(
+    repoRoot: string,
+    content: string,
+    timestamp?: Date,
+): Promise<void> {
+    const entrypoint = join(repoRoot, 'apps', 'cli', 'dist', 'index.mjs');
+    await writeRepoFile(entrypoint, content, timestamp);
+    const { manifestPath } = cliDistBuildManifest.writeCliDistBuildManifest(entrypoint);
+    if (timestamp) {
+        await utimes(manifestPath, timestamp, timestamp);
+    }
+}
+
+async function recordCurrentWorkspaceRuntimeIdentity(repoRoot: string): Promise<void> {
+    const entrypoint = join(repoRoot, 'apps', 'cli', 'dist', 'index.mjs');
+    const current = cliDistBuildManifest.readCliDistBuildManifest(entrypoint);
+    if (!current.ok || !current.manifest) {
+        throw new Error(`invalid CLI dist fixture: ${current.reason}`);
+    }
+    const workspaceRuntime = readCliNodeWorkspaceRuntimeIdentity({
+        repoRoot,
+    });
+    const { manifestPath } = cliDistBuildManifest.writeCliDistBuildManifest(entrypoint, {
+        builtAt: current.manifest.builtAt,
+        ...(current.manifest.inputFingerprint
+            ? { inputFingerprint: current.manifest.inputFingerprint }
+            : {}),
+        workspaceRuntimeIdentity: workspaceRuntime.fingerprint,
+        workspaceRuntimePackages: workspaceRuntime.packageNames,
+    });
+    await utimes(manifestPath, new Date(current.manifest.builtAt), new Date(current.manifest.builtAt));
 }
 
 async function collectFiles(dir: string): Promise<string[]> {
@@ -135,7 +175,7 @@ describe('buildCliBinaryArtifactPayload bundled workspace sync', () => {
         })).rejects.toThrow(/host-native runtime packages require a matching host target/i);
     });
 
-    it('refreshes bundled workspace packages in apps/cli/node_modules before compiling a reused cli dist snapshot', async () => {
+    it('rebuilds the cli dist when workspace package synchronization changes its recorded runtime identity', async () => {
         const repoRoot = await createTempDir();
         const payloadDir = join(repoRoot, 'artifacts', 'payload');
         const older = new Date('2026-04-13T18:00:00.000Z');
@@ -178,7 +218,7 @@ describe('buildCliBinaryArtifactPayload bundled workspace sync', () => {
                 '@homebridge/node-pty-prebuilt-multiarch': '0.0.0',
             },
         }, null, 2)}\n`, older);
-        await writeRepoFile(join(repoRoot, 'apps', 'cli', 'dist', 'index.mjs'), 'export default "cli-entrypoint";\n', newer);
+        await writeCliDistFixture(repoRoot, 'export default "cli-entrypoint";\n', newer);
         await writeRepoFile(join(repoRoot, 'apps', 'cli', 'src', 'index.ts'), 'export default "cli-source";\n', older);
         const staticRuntimeScriptAssets = await collectStaticRuntimeScriptAssetSegments();
         const sidecarPaths = [
@@ -206,12 +246,14 @@ describe('buildCliBinaryArtifactPayload bundled workspace sync', () => {
             version: '0.0.0',
             type: 'module',
             main: './dist/index.js',
+            files: ['dist', 'runtime-guide.md'],
             exports: {
                 '.': './dist/index.js',
                 './firstPartyRuntime': './dist/firstPartyRuntime/index.js',
             },
         }, null, 2)}\n`);
         await writeRepoFile(join(repoRoot, 'packages', 'cli-common', 'README.md'), 'cli-common');
+        await writeRepoFile(join(repoRoot, 'packages', 'cli-common', 'runtime-guide.md'), 'source-only runtime guide\n');
         await writeRepoFile(join(repoRoot, 'packages', 'cli-common', 'dist', 'index.js'), 'export {};\n', older);
         await writeRepoFile(join(repoRoot, 'packages', 'cli-common', 'dist', 'firstPartyRuntime', 'index.js'), 'export {};\n', older);
         await writeRepoFile(sourceWorkspaceInstallPath, currentSourceContent, older);
@@ -284,6 +326,10 @@ describe('buildCliBinaryArtifactPayload bundled workspace sync', () => {
             older,
         );
 
+        await recordCurrentWorkspaceRuntimeIdentity(repoRoot);
+
+        const runCommandCalls: Array<{ cmd: string; args: string[] }> = [];
+
         await buildCliBinaryArtifactPayload({
             repoRoot,
             payloadDir,
@@ -295,8 +341,10 @@ describe('buildCliBinaryArtifactPayload bundled workspace sync', () => {
                 skipped: packageNames,
             }),
             commandProbe: (command) => command === 'bun' || command === 'yarn',
-            runCommand: () => {
-                throw new Error('buildCliBinaryArtifactPayload should not rebuild the cli dist in this scenario');
+            runCommand: async (cmd, args) => {
+                runCommandCalls.push({ cmd, args });
+                await writeCliDistFixture(repoRoot, 'export default "rebuilt-cli-entrypoint";\n', newer);
+                await recordCurrentWorkspaceRuntimeIdentity(repoRoot);
             },
             compileBinary: async ({ outfile, externals }) => {
                 compileObservedContents.push(await readFile(bundledWorkspaceInstallPath, 'utf8'));
@@ -306,6 +354,7 @@ describe('buildCliBinaryArtifactPayload bundled workspace sync', () => {
             },
         });
 
+        expect(runCommandCalls).toHaveLength(1);
         expect(compileObservedContents).toEqual([currentSourceContent]);
         expect(compileObservedExternals).toEqual([[
             '@huggingface/transformers',
@@ -333,13 +382,39 @@ describe('buildCliBinaryArtifactPayload bundled workspace sync', () => {
             .resolves.toBe('managed runtime\n');
         await expect(readFile(join(payloadDir, 'tools', 'unpacked', 'happier-cliproxyapi-managed'), 'utf8'))
             .resolves.toBe('signed managed runtime\n');
+        const payloadManifest = JSON.parse(await readFile(
+            join(payloadDir, 'package-dist', '.build-manifest.json'),
+            'utf8',
+        )) as {
+            runtimeAsset?: unknown;
+            workspaceRuntimeIdentity?: unknown;
+            workspaceRuntimePackages?: unknown;
+        };
+        expect(payloadManifest.runtimeAsset).toEqual({
+            relativePath: 'tools/unpacked/happier-cliproxyapi-managed',
+            byteLength: Buffer.byteLength('signed managed runtime\n'),
+            sha256: createHash('sha256')
+                .update('signed managed runtime\n')
+                .digest('hex'),
+        });
+        const runtimeWorkspaceIdentity = String(payloadManifest.workspaceRuntimeIdentity ?? '');
+        const runtimeWorkspacePackages = Array.isArray(payloadManifest.workspaceRuntimePackages)
+            ? payloadManifest.workspaceRuntimePackages.filter((value): value is string => typeof value === 'string')
+            : [];
+        expect(() => copyCliNodeWorkspaceRuntimePackagesFromRuntimeRoot({
+            runtimeRoot: payloadDir,
+            payloadDir: join(repoRoot, 'runner-closure'),
+            packageNames: runtimeWorkspacePackages,
+            expectedWorkspaceRuntimeIdentity: runtimeWorkspaceIdentity,
+        })).not.toThrow();
+        expect(existsSync(join(payloadDir, 'node_modules', '@happier-dev', 'cli-common', 'runtime-guide.md'))).toBe(false);
         await expect(readFile(join(payloadDir, 'tools', 'unpacked', 'CLIProxyAPI-LICENSE'), 'utf8'))
             .resolves.toBe('CLIProxyAPI license\n');
         await expect(readFile(join(payloadDir, 'tools', 'unpacked', 'CLIProxyAPI-THIRD-PARTY-NOTICES'), 'utf8'))
             .resolves.toBe('CLIProxyAPI third-party notices\n');
     });
 
-    it('rebuilds the cli dist snapshot when tracked inputs are newer than the cli dist entrypoint', async () => {
+    it('rebuilds the cli dist snapshot from the coherent workspace publication produced by its prebuild', async () => {
         const repoRoot = await createTempDir();
         const payloadDir = join(repoRoot, 'artifacts', 'payload');
         const older = new Date('2026-04-13T18:00:00.000Z');
@@ -362,7 +437,7 @@ describe('buildCliBinaryArtifactPayload bundled workspace sync', () => {
                 '@homebridge/node-pty-prebuilt-multiarch': '0.0.0',
             },
         }, null, 2)}\n`, older);
-        await writeRepoFile(join(repoRoot, 'apps', 'cli', 'dist', 'index.mjs'), 'export default "stale-cli-entrypoint";\n', older);
+        await writeCliDistFixture(repoRoot, 'export default "stale-cli-entrypoint";\n', older);
         await writeRepoFile(join(repoRoot, 'apps', 'cli', 'src', 'index.ts'), 'export default "newer-cli-source";\n', newer);
         for (const sidecarPath of [
             ['apps', 'cli', 'scripts', 'childProcessOptions.cjs'],
@@ -491,7 +566,23 @@ describe('buildCliBinaryArtifactPayload bundled workspace sync', () => {
                 commandProbe: (command) => command === 'bun' || command === 'yarn',
                 runCommand: async (cmd, args, options) => {
                     runCommandCalls.push({ cmd, args, options });
-                    await writeRepoFile(join(repoRoot, 'apps', 'cli', 'dist', 'index.mjs'), rebuiltEntrypointContent, newer);
+                    await writeRepoFile(
+                        join(
+                            repoRoot,
+                            'apps',
+                            'cli',
+                            'node_modules',
+                            '@happier-dev',
+                            'cli-common',
+                            'dist',
+                            'firstPartyRuntime',
+                            'installVersionedPayload.js',
+                        ),
+                        'export const publication = "prebuild";\n',
+                        newer,
+                    );
+                    await writeCliDistFixture(repoRoot, rebuiltEntrypointContent, newer);
+                    await recordCurrentWorkspaceRuntimeIdentity(repoRoot);
                 },
                 compileBinary: async ({ entrypoint, outfile }) => {
                     compiledEntrypoints.push(await readFile(entrypoint, 'utf8'));

@@ -128,6 +128,7 @@ export async function buildServerBinaryArtifactPayload({
     externals,
     bunCommand,
     runCommand,
+    buildRunnerEntrypoint: join(repoRoot, 'packages', 'cli-common', 'scripts', 'buildServerBunBinary.mjs'),
   });
 
   let migrationEntrypoint: string | undefined;

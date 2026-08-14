@@ -2,6 +2,12 @@ import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
+import {
+    collectPackageBuildOutputTargets,
+    isLocalPackageBuildOutputTarget,
+    resolvePackageBuildOutputTargetMatches,
+} from '../../packageBuildOutputTargets.mjs';
+
 export type BundledWorkspacePackage = Readonly<{
     packageName: string;
     srcDir: string;
@@ -46,45 +52,6 @@ function directoryHasAtLeastOneFile(dirPath: string): boolean {
     return false;
 }
 
-function collectExpectedExportFileTargets(exportsField: unknown): string[] {
-    const targets: string[] = [];
-    const visit = (value: unknown): void => {
-        if (!value) return;
-        if (typeof value === 'string') {
-            targets.push(value);
-            return;
-        }
-        if (Array.isArray(value)) {
-            for (const item of value) {
-                visit(item);
-            }
-            return;
-        }
-        if (typeof value === 'object') {
-            for (const item of Object.values(value as Record<string, unknown>)) {
-                visit(item);
-            }
-        }
-    };
-    visit(exportsField);
-    return targets;
-}
-
-function collectExpectedPackageFilesFromPackageJson(pkgJson: unknown): string[] {
-    const candidates: string[] = [];
-    if (pkgJson && typeof pkgJson === 'object') {
-        for (const key of ['main', 'module', 'types'] as const) {
-            const value = Reflect.get(pkgJson, key);
-            if (typeof value === 'string' && value.trim()) {
-                candidates.push(value.trim());
-            }
-        }
-        candidates.push(...collectExpectedExportFileTargets(Reflect.get(pkgJson, 'exports')));
-    }
-
-    return [...new Set(candidates)].filter((value) => value.startsWith('./') || value.startsWith('dist/'));
-}
-
 function isWorkspacePackageBuilt(srcDir: string): boolean {
     const pkgJsonPath = join(srcDir, 'package.json');
     if (!existsSync(pkgJsonPath)) {
@@ -92,12 +59,17 @@ function isWorkspacePackageBuilt(srcDir: string): boolean {
     }
 
     const pkgJson = JSON.parse(readFileSync(pkgJsonPath, 'utf8'));
-    const expectedFiles = collectExpectedPackageFilesFromPackageJson(pkgJson).map((path) => join(srcDir, path));
-    if (expectedFiles.length === 0) {
+    const expectedTargets = collectPackageBuildOutputTargets(pkgJson)
+        .filter(isLocalPackageBuildOutputTarget);
+    if (expectedTargets.length === 0) {
         return directoryHasAtLeastOneFile(join(srcDir, 'dist'));
     }
 
-    return expectedFiles.every((path) => existsSync(path));
+    return expectedTargets.every((target) => resolvePackageBuildOutputTargetMatches({
+        packageDir: srcDir,
+        outputDir: join(srcDir, 'dist'),
+        target,
+    }).length > 0);
 }
 
 export async function ensureBundledWorkspacePackagesBuilt(_params: Readonly<{

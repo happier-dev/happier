@@ -1,7 +1,7 @@
 'use strict';
 
 const { createHash } = require('node:crypto');
-const { existsSync, readFileSync, readdirSync, statSync, writeFileSync } = require('node:fs');
+const { existsSync, lstatSync, readFileSync, readdirSync, statSync, writeFileSync } = require('node:fs');
 const { dirname, isAbsolute, join, relative, resolve } = require('node:path');
 
 const CLI_DIST_BUILD_MANIFEST = '.build-manifest.json';
@@ -323,6 +323,29 @@ function buildCliDistManifest(entrypoint, options = {}) {
   if (inputFingerprint && !/^[a-f0-9]{64}$/.test(inputFingerprint)) {
     throw new Error(`[cli-dist-manifest] invalid_input_fingerprint: ${entrypoint}`);
   }
+  const workspaceRuntimeIdentity = String(
+    options.workspaceRuntimeIdentity ?? '',
+  ).trim().toLowerCase();
+  if (workspaceRuntimeIdentity && !/^[a-f0-9]{64}$/.test(workspaceRuntimeIdentity)) {
+    throw new Error(`[cli-dist-manifest] invalid_workspace_runtime_identity: ${entrypoint}`);
+  }
+  const workspaceRuntimePackages = options.workspaceRuntimePackages;
+  if (
+    workspaceRuntimePackages !== undefined
+    && (
+      !Array.isArray(workspaceRuntimePackages)
+      || workspaceRuntimePackages.length === 0
+      || new Set(workspaceRuntimePackages).size !== workspaceRuntimePackages.length
+      || workspaceRuntimePackages.some(
+        (packageName) => !/^@happier-dev\/[a-z0-9][a-z0-9._-]*$/.test(packageName),
+      )
+    )
+  ) {
+    throw new Error(`[cli-dist-manifest] invalid_workspace_runtime_packages: ${entrypoint}`);
+  }
+  if (workspaceRuntimePackages !== undefined && !workspaceRuntimeIdentity) {
+    throw new Error(`[cli-dist-manifest] workspace_runtime_packages_without_identity: ${entrypoint}`);
+  }
 
   return {
     fingerprint: closure.fingerprint,
@@ -330,6 +353,8 @@ function buildCliDistManifest(entrypoint, options = {}) {
     fileCount: closure.fileCount,
     toolVersion: CLI_DIST_BUILD_MANIFEST_TOOL_VERSION,
     ...(inputFingerprint ? { inputFingerprint } : {}),
+    ...(workspaceRuntimeIdentity ? { workspaceRuntimeIdentity } : {}),
+    ...(workspaceRuntimePackages ? { workspaceRuntimePackages } : {}),
   };
 }
 
@@ -339,6 +364,36 @@ function writeCliDistBuildManifest(entrypoint, options = {}) {
   const manifestPath = join(outputDir, CLI_DIST_BUILD_MANIFEST);
   writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, 'utf8');
   return { manifest, manifestPath };
+}
+
+function writeCliDistWorkspaceRuntimeIdentity(params = {}) {
+  const entrypoint = resolve(String(params.entrypoint ?? ''));
+  const manifestResult = readCliDistBuildManifest(entrypoint);
+  if (!manifestResult.ok || !manifestResult.manifestPath || !manifestResult.manifest) {
+    throw new Error(
+      `[cli-dist-manifest] cannot record workspace runtime identity from invalid build manifest: ${manifestResult.reason}`,
+    );
+  }
+  const workspaceRuntimeIdentity = String(
+    params.workspaceRuntimeIdentity ?? '',
+  ).trim().toLowerCase();
+  if (!/^[a-f0-9]{64}$/.test(workspaceRuntimeIdentity)) {
+    throw new Error('[cli-dist-manifest] invalid workspace runtime identity');
+  }
+  const manifest = {
+    ...manifestResult.manifest,
+    workspaceRuntimeIdentity,
+  };
+  writeFileSync(
+    manifestResult.manifestPath,
+    `${JSON.stringify(manifest, null, 2)}\n`,
+    'utf8',
+  );
+  return {
+    manifest,
+    manifestPath: manifestResult.manifestPath,
+    workspaceRuntimeIdentity,
+  };
 }
 
 function invalidManifestResult(reason, manifestPath, extra = {}) {
@@ -387,6 +442,30 @@ function readCliDistBuildManifest(entrypoint, options = {}) {
   if (recordedInputFingerprint && !/^[a-f0-9]{64}$/.test(recordedInputFingerprint)) {
     return invalidManifestResult('invalid_build_manifest_input_fingerprint', manifestPath);
   }
+  const recordedWorkspaceRuntimeIdentity = String(
+    manifest?.workspaceRuntimeIdentity ?? '',
+  ).trim().toLowerCase();
+  if (
+    recordedWorkspaceRuntimeIdentity
+    && !/^[a-f0-9]{64}$/.test(recordedWorkspaceRuntimeIdentity)
+  ) {
+    return invalidManifestResult('invalid_workspace_runtime_identity', manifestPath);
+  }
+  const recordedWorkspaceRuntimePackages = manifest?.workspaceRuntimePackages;
+  if (
+    recordedWorkspaceRuntimePackages !== undefined
+    && (
+      !recordedWorkspaceRuntimeIdentity
+      || !Array.isArray(recordedWorkspaceRuntimePackages)
+      || recordedWorkspaceRuntimePackages.length === 0
+      || new Set(recordedWorkspaceRuntimePackages).size !== recordedWorkspaceRuntimePackages.length
+      || recordedWorkspaceRuntimePackages.some(
+        (packageName) => !/^@happier-dev\/[a-z0-9][a-z0-9._-]*$/.test(packageName),
+      )
+    )
+  ) {
+    return invalidManifestResult('invalid_workspace_runtime_packages', manifestPath);
+  }
 
   const recordedFileCount = Number(manifest?.fileCount);
   if (!Number.isInteger(recordedFileCount) || recordedFileCount <= 0) {
@@ -429,6 +508,242 @@ function readCliDistBuildManifest(entrypoint, options = {}) {
   };
 }
 
+function normalizeCliRuntimeAssetRelativePath(value) {
+  const rawRelativePath = String(value ?? '');
+  const relativePath = rawRelativePath.trim();
+  if (
+    !relativePath
+    || relativePath !== rawRelativePath
+    || relativePath.includes('\\')
+    || relativePath.startsWith('/')
+    || relativePath.includes('\0')
+  ) {
+    return null;
+  }
+  const segments = relativePath.split('/');
+  if (segments.some((segment) => !segment || segment === '.' || segment === '..')) {
+    return null;
+  }
+  return relativePath;
+}
+
+function parseCliRuntimeAssetManifestEntry(manifest) {
+  if (Object.prototype.hasOwnProperty.call(manifest ?? {}, 'runtimeAssets')) {
+    return { ok: false, reason: 'invalid_runtime_asset_manifest_entry', entry: null };
+  }
+  const rawEntry = manifest?.runtimeAsset;
+  if (!rawEntry) {
+    return { ok: false, reason: 'missing_runtime_asset_manifest', entry: null };
+  }
+  if (typeof rawEntry !== 'object' || Array.isArray(rawEntry)) {
+    return { ok: false, reason: 'invalid_runtime_asset_manifest_entry', entry: null };
+  }
+  const keys = Object.keys(rawEntry).sort();
+  if (keys.join('\0') !== ['byteLength', 'relativePath', 'sha256'].join('\0')) {
+    return { ok: false, reason: 'invalid_runtime_asset_manifest_entry', entry: null };
+  }
+  const relativePath = normalizeCliRuntimeAssetRelativePath(rawEntry.relativePath);
+  const byteLength = Number(rawEntry.byteLength);
+  const sha256 = String(rawEntry.sha256 ?? '').trim().toLowerCase();
+  if (
+    !relativePath
+    || !Number.isSafeInteger(byteLength)
+    || byteLength < 0
+    || !/^[a-f0-9]{64}$/.test(sha256)
+  ) {
+    return { ok: false, reason: 'invalid_runtime_asset_manifest_entry', entry: null };
+  }
+  return {
+    ok: true,
+    reason: 'runtime_asset_manifest',
+    entry: { relativePath, byteLength, sha256 },
+  };
+}
+
+function resolveCliRuntimeAssetPath(runtimeRoot, relativePath) {
+  const normalizedRoot = resolve(String(runtimeRoot ?? ''));
+  const normalizedRelativePath = normalizeCliRuntimeAssetRelativePath(relativePath);
+  if (!normalizedRelativePath) return null;
+  const assetPath = resolve(normalizedRoot, ...normalizedRelativePath.split('/'));
+  return isPathInsideDirectory(assetPath, normalizedRoot) && assetPath !== normalizedRoot
+    ? assetPath
+    : null;
+}
+
+function writeCliRuntimeAssetBuildManifest(params = {}) {
+  const runtimeRoot = resolve(String(params.runtimeRoot ?? ''));
+  const entrypoint = resolve(String(params.entrypoint ?? ''));
+  const manifestResult = readCliDistBuildManifest(entrypoint);
+  if (!manifestResult.ok || !manifestResult.manifestPath || !manifestResult.manifest) {
+    throw new Error(
+      `[cli-dist-manifest] cannot record runtime assets from invalid build manifest: ${manifestResult.reason}`,
+    );
+  }
+  const relativePath = normalizeCliRuntimeAssetRelativePath(params.relativePath);
+  if (!relativePath) {
+    throw new Error('[cli-dist-manifest] expected exactly one canonical runtime asset path');
+  }
+  const assetPath = resolveCliRuntimeAssetPath(runtimeRoot, relativePath);
+  if (!assetPath) {
+    throw new Error(`[cli-dist-manifest] invalid runtime asset path: ${relativePath}`);
+  }
+  const assetEntry = lstatSync(assetPath);
+  if (assetEntry.isSymbolicLink() || !assetEntry.isFile()) {
+    throw new Error(`[cli-dist-manifest] runtime asset must be a physical file: ${relativePath}`);
+  }
+  const bytes = readFileSync(assetPath);
+  const runtimeAsset = {
+    relativePath,
+    byteLength: bytes.byteLength,
+    sha256: createHash('sha256').update(bytes).digest('hex'),
+  };
+  const manifest = {
+    ...manifestResult.manifest,
+    runtimeAsset,
+  };
+  writeFileSync(
+    manifestResult.manifestPath,
+    `${JSON.stringify(manifest, null, 2)}\n`,
+    'utf8',
+  );
+  return {
+    manifest,
+    manifestPath: manifestResult.manifestPath,
+    runtimeAsset,
+  };
+}
+
+function refreshCliRuntimeAssetBuildManifest(params = {}) {
+  const runtimeRoot = resolve(String(params.runtimeRoot ?? ''));
+  const entrypoint = resolve(String(params.entrypoint ?? ''));
+  const manifestResult = readCliDistBuildManifest(entrypoint);
+  if (!manifestResult.ok || !manifestResult.manifest) {
+    throw new Error(
+      `[cli-dist-manifest] cannot refresh runtime asset from invalid build manifest: ${manifestResult.reason}`,
+    );
+  }
+  const parsed = parseCliRuntimeAssetManifestEntry(manifestResult.manifest);
+  if (!parsed.ok || !parsed.entry) {
+    throw new Error(
+      `[cli-dist-manifest] cannot refresh runtime asset from invalid manifest entry: ${parsed.reason}`,
+    );
+  }
+  return writeCliRuntimeAssetBuildManifest({
+    runtimeRoot,
+    entrypoint,
+    relativePath: parsed.entry.relativePath,
+  });
+}
+
+function readCliRuntimeAssetIntegrity(params = {}) {
+  const runtimeRoot = resolve(String(params.runtimeRoot ?? ''));
+  const relativePath = normalizeCliRuntimeAssetRelativePath(params.relativePath);
+  if (!relativePath) {
+    return { ok: false, reason: 'invalid_runtime_asset_path', relativePath: null };
+  }
+  const assetPath = resolveCliRuntimeAssetPath(runtimeRoot, relativePath);
+  if (!assetPath) {
+    return { ok: false, reason: 'invalid_runtime_asset_path', relativePath };
+  }
+  const entrypoint = params.entrypoint
+    ? resolve(String(params.entrypoint))
+    : join(runtimeRoot, 'package-dist', 'index.mjs');
+  if (!isPathInsideDirectory(entrypoint, runtimeRoot) || entrypoint === runtimeRoot) {
+    return {
+      ok: false,
+      reason: 'invalid_runtime_asset_entrypoint',
+      relativePath,
+      assetPath,
+      manifestPath: null,
+    };
+  }
+  const manifestResult = readCliDistBuildManifest(entrypoint);
+  if (!manifestResult.ok || !manifestResult.manifest) {
+    return {
+      ok: false,
+      reason: manifestResult.reason,
+      relativePath,
+      assetPath,
+      manifestPath: manifestResult.manifestPath,
+    };
+  }
+  const parsed = parseCliRuntimeAssetManifestEntry(manifestResult.manifest);
+  if (!parsed.ok || !parsed.entry) {
+    return {
+      ok: false,
+      reason: parsed.reason,
+      relativePath,
+      assetPath,
+      manifestPath: manifestResult.manifestPath,
+    };
+  }
+  const expected = parsed.entry;
+  if (expected.relativePath !== relativePath) {
+    return {
+      ok: false,
+      reason: 'runtime_asset_not_recorded',
+      relativePath,
+      assetPath,
+      manifestPath: manifestResult.manifestPath,
+    };
+  }
+
+  try {
+    const entry = lstatSync(assetPath);
+    if (entry.isSymbolicLink() || !entry.isFile()) {
+      return {
+        ok: false,
+        reason: 'runtime_asset_not_physical_file',
+        relativePath,
+        assetPath,
+        manifestPath: manifestResult.manifestPath,
+      };
+    }
+    if (entry.size !== expected.byteLength) {
+      return {
+        ok: false,
+        reason: 'runtime_asset_byte_length_mismatch',
+        relativePath,
+        assetPath,
+        manifestPath: manifestResult.manifestPath,
+        expected,
+      };
+    }
+    const observedSha256 = createHash('sha256')
+      .update(readFileSync(assetPath))
+      .digest('hex');
+    if (observedSha256 !== expected.sha256) {
+      return {
+        ok: false,
+        reason: 'runtime_asset_sha256_mismatch',
+        relativePath,
+        assetPath,
+        manifestPath: manifestResult.manifestPath,
+        expected,
+        observedSha256,
+      };
+    }
+    return {
+      ok: true,
+      reason: 'runtime_asset_manifest',
+      relativePath,
+      assetPath,
+      manifestPath: manifestResult.manifestPath,
+      expected,
+      observedSha256,
+    };
+  } catch {
+    return {
+      ok: false,
+      reason: 'runtime_asset_unreadable',
+      relativePath,
+      assetPath,
+      manifestPath: manifestResult.manifestPath,
+      expected,
+    };
+  }
+}
+
 function readRecordedCliDistBuildManifestFingerprint(distDir) {
   try {
     const manifest = JSON.parse(readFileSync(join(resolve(String(distDir ?? '')), CLI_DIST_BUILD_MANIFEST), 'utf8'));
@@ -447,6 +762,10 @@ module.exports = {
   readCliDistBuildManifest,
   readCliDistClosure,
   readCliDistClosureFingerprint,
+  readCliRuntimeAssetIntegrity,
   readRecordedCliDistBuildManifestFingerprint,
+  refreshCliRuntimeAssetBuildManifest,
+  writeCliDistWorkspaceRuntimeIdentity,
+  writeCliRuntimeAssetBuildManifest,
   writeCliDistBuildManifest,
 };

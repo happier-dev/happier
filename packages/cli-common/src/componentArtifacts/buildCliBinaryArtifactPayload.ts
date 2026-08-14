@@ -1,9 +1,10 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { cp, mkdir, rm } from 'node:fs/promises';
 import { createRequire } from 'node:module';
-import { join } from 'node:path';
+import { join, relative } from 'node:path';
 import * as tar from 'tar';
 
+import cliDistBuildManifest from '../../cliDistBuildManifest.cjs';
 import { createWorkspaceChildBuildEnv } from '../../workspaceChildBuildEnv.mjs';
 import { CLI_BINARY_TARGETS, resolveCurrentBinaryTarget, resolveExecutableName, type BinaryTarget } from './targets.js';
 import { commandExists, compileBunBinary, ensureFileExists, execOrThrow, resolveBunCommand, resolveYarnCommand, type RunCommand } from './commands.js';
@@ -14,7 +15,10 @@ import {
 } from '../workspaces/index.js';
 import { withCliDistBuildLock } from './withCliDistBuildLock.js';
 import { resolveCliDistSnapshotDir } from './resolveCliDistSnapshotDir.js';
-import { copyCliNodeRuntimePayload } from './copyCliNodeRuntimePayload.js';
+import {
+  copyCliNodeRuntimePayload,
+  readCliNodeWorkspaceRuntimeIdentity,
+} from './copyCliNodeRuntimePayload.js';
 import { finalizeRuntimeArtifactPayload } from './finalizeRuntimeArtifactPayload.js';
 import { CLI_DEFERRED_VOICE_RUNTIME_PACKAGES } from './deferredVoiceRuntimePackages.js';
 import type {
@@ -46,6 +50,12 @@ const CLI_BUN_COMPILE_EXTERNAL_PACKAGES = [
 type CliToolUnpackModule = {
   unpackTools?: (options: Readonly<{ platformDir: string; toolsDir: string }>) => Promise<unknown> | unknown;
 };
+
+function isExactStringList(value: unknown, expected: readonly string[]): boolean {
+  return Array.isArray(value)
+    && value.length === expected.length
+    && value.every((entry, index) => entry === expected[index]);
+}
 
 function normalizeNodePlatform(platform: string): string {
   return platform === 'win32' ? 'windows' : platform;
@@ -216,7 +226,15 @@ export async function buildCliBinaryArtifactPayload({
     repoRoot,
     hostPackageDir: cliDir,
   });
-  const snapshotDistDir = await withCliDistBuildLock<string>(
+  const {
+    snapshotDistDir,
+    workspaceRuntimeIdentity,
+    workspaceRuntimePackages,
+  } = await withCliDistBuildLock<{
+    snapshotDistDir: string;
+    workspaceRuntimeIdentity: string;
+    workspaceRuntimePackages: readonly string[];
+  }>(
     async ({ heldLockValue }) => {
       const runCommandWithHeldDistLock: RunCommand = (cmd, args, options = {}) => runCommand(cmd, args, {
         ...options,
@@ -234,6 +252,11 @@ export async function buildCliBinaryArtifactPayload({
         ensureWorkspacePackagesBuiltByName,
       });
       syncCliBundledWorkspacePackagesForCompile(repoRoot, cliDir, workspaceBundles);
+      const workspaceRuntimeBeforeBuild = readCliNodeWorkspaceRuntimeIdentity({
+        repoRoot,
+        hostPackageDir: cliDir,
+      });
+      const currentDistManifest = cliDistBuildManifest.readCliDistBuildManifest(entrypoint);
 
       // If the CLI dist entrypoint is already present and is at least as new as the tracked inputs,
       // prefer snapshotting it instead of rebuilding. Rebuilding `apps/cli` is expensive and can
@@ -246,8 +269,14 @@ export async function buildCliBinaryArtifactPayload({
           ...workspaceBundles.map(({ srcDir }) => join(srcDir, 'dist')),
         ],
         requiredInputFingerprint: requiredCliDistInputFingerprint,
-      });
-      return await resolveCliDistSnapshotDir({
+      })
+        && currentDistManifest.manifest?.workspaceRuntimeIdentity
+          === workspaceRuntimeBeforeBuild.fingerprint
+        && isExactStringList(
+          currentDistManifest.manifest?.workspaceRuntimePackages,
+          workspaceRuntimeBeforeBuild.packageNames,
+        );
+      const snapshotDistDir = await resolveCliDistSnapshotDir({
         cliDir,
         distDir,
         distBackupDir,
@@ -258,11 +287,38 @@ export async function buildCliBinaryArtifactPayload({
           await ensureFileExists(entrypoint);
         },
       });
+      const workspaceRuntime = readCliNodeWorkspaceRuntimeIdentity({
+        repoRoot,
+        hostPackageDir: cliDir,
+      });
+      return {
+        snapshotDistDir,
+        workspaceRuntimeIdentity: workspaceRuntime.fingerprint,
+        workspaceRuntimePackages: workspaceRuntime.packageNames,
+      };
     },
     { lockPath },
   );
 
   const snapshotEntrypoint = join(snapshotDistDir, 'index.mjs');
+  const snapshotManifest = cliDistBuildManifest.readCliDistBuildManifest(
+    snapshotEntrypoint,
+  );
+  const recordedWorkspaceRuntimeIdentity = String(
+    snapshotManifest.manifest?.workspaceRuntimeIdentity ?? '',
+  ).trim().toLowerCase();
+  if (
+    !snapshotManifest.ok
+    || recordedWorkspaceRuntimeIdentity !== workspaceRuntimeIdentity
+    || !isExactStringList(
+      snapshotManifest.manifest?.workspaceRuntimePackages,
+      workspaceRuntimePackages,
+    )
+  ) {
+    throw new Error(
+      '[component-artifacts] CLI dist snapshot does not match its workspace runtime publication',
+    );
+  }
 
   try {
     await rm(payloadDir, { recursive: true, force: true });
@@ -284,14 +340,22 @@ export async function buildCliBinaryArtifactPayload({
       runCommand,
     });
     await rm(join(payloadDir, 'node_modules'), { recursive: true, force: true });
-    await copyCliNodeRuntimePayload({
+    const stagedWorkspaceRuntime = await copyCliNodeRuntimePayload({
       repoRoot,
       payloadDir,
       distDir: snapshotDistDir,
+      expectedWorkspaceRuntimeIdentity: recordedWorkspaceRuntimeIdentity,
+    });
+    // The source dist manifest detects build-host publication churn. The artifact
+    // carries a normalized workspace payload, so its immutable manifest must bind
+    // the physical package closure that was actually staged for shipment.
+    cliDistBuildManifest.writeCliDistWorkspaceRuntimeIdentity({
+      entrypoint: join(payloadDir, 'package-dist', 'index.mjs'),
+      workspaceRuntimeIdentity: stagedWorkspaceRuntime.fingerprint,
     });
     await copyCliRuntimeSidecars(repoRoot, payloadDir);
     await copyCliRuntimeTools(repoRoot, payloadDir, target);
-    await stageCliProxyApiManagedRuntime({
+    const cliProxyApiManagedRuntime = await stageCliProxyApiManagedRuntime({
       repoRoot,
       payloadDir,
       target,
@@ -301,6 +365,14 @@ export async function buildCliBinaryArtifactPayload({
     });
     await stageDeferredVoiceInferenceRuntimeArchive(payloadDir, target);
     await finalizeRuntimeArtifactPayload(payloadDir);
+    cliDistBuildManifest.writeCliRuntimeAssetBuildManifest({
+      runtimeRoot: payloadDir,
+      entrypoint: join(payloadDir, 'package-dist', 'index.mjs'),
+      relativePath: relative(
+        payloadDir,
+        cliProxyApiManagedRuntime.executablePath,
+      ).replaceAll('\\', '/'),
+    });
 
     return {
       executableName,

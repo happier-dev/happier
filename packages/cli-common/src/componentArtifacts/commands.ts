@@ -185,6 +185,7 @@ export async function compileBunBinary({
   bunCommand,
   runCommand = execOrThrow,
   maxAttempts,
+  buildRunnerEntrypoint,
 }: {
   entrypoint: string;
   bunTarget: string;
@@ -194,6 +195,7 @@ export async function compileBunBinary({
   bunCommand?: string;
   runCommand?: RunCommand;
   maxAttempts?: number;
+  buildRunnerEntrypoint?: string;
 }): Promise<void> {
   const resolvedBunCommand = (() => {
     const candidate = String(bunCommand ?? '').trim();
@@ -202,11 +204,22 @@ export async function compileBunBinary({
     if (fallback) return fallback;
     throw new Error('[component-artifacts] bun is required to compile binary artifacts');
   })();
-  const args = ['build', '--compile', '--no-cache', `--target=${bunTarget}`, entrypoint, '--outfile', outfile];
+  const args = buildRunnerEntrypoint
+    ? [
+        buildRunnerEntrypoint,
+        `--target=${bunTarget}`,
+        `--entrypoint=${entrypoint}`,
+        `--outfile=${outfile}`,
+      ]
+    : ['build', '--compile', '--no-cache', `--target=${bunTarget}`, entrypoint, '--outfile', outfile];
   for (const external of externals) {
     const value = String(external ?? '').trim();
     if (!value) continue;
-    args.push('--external', value);
+    if (buildRunnerEntrypoint) {
+      args.push(`--external=${value}`);
+    } else {
+      args.push('--external', value);
+    }
   }
   const attempts = resolveBunCompileMaxAttempts(process.env.HAPPIER_BUN_COMPILE_ATTEMPTS, maxAttempts);
   for (let attempt = 1; attempt <= attempts; attempt += 1) {

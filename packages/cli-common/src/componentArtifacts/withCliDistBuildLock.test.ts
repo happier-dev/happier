@@ -2,7 +2,7 @@ import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, unlinkSync, w
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import {
     createWorkspaceLockLeaseValue,
@@ -13,6 +13,23 @@ import { withCliDistBuildLock } from './withCliDistBuildLock.js';
 function writeLockOwner(lockPath: string, owner: { pid: number; createdAtMs: number; updatedAtMs: number }): void {
     mkdirSync(dirname(lockPath), { recursive: true });
     writeFileSync(lockPath, JSON.stringify(owner), 'utf8');
+}
+
+async function waitForCondition(predicate: () => boolean, label: string, timeoutMs = 1_000): Promise<void> {
+    await new Promise<void>((resolvePromise, rejectPromise) => {
+        const timeout = setTimeout(() => {
+            rejectPromise(new Error(`timed out waiting for ${label}`));
+        }, timeoutMs);
+        const check = () => {
+            if (predicate()) {
+                clearTimeout(timeout);
+                resolvePromise();
+                return;
+            }
+            setTimeout(check, 5);
+        };
+        check();
+    });
 }
 
 describe('withCliDistBuildLock', () => {
@@ -286,6 +303,70 @@ describe('withCliDistBuildLock', () => {
 
             expect(existsSync(lockPath)).toBe(true);
         } finally {
+            rmSync(repoRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('keeps the canonical long contention budget by default while honoring an explicit override', async () => {
+        const repoRoot = mkdtempSync(join(tmpdir(), 'cli-common-dist-lock-default-budget-'));
+        const lockPath = join(repoRoot, '.project', 'tmp', 'cli-dist-build.lock');
+        let defaultAttempt: Promise<string> | null = null;
+        let explicitAttempt: Promise<string> | null = null;
+        let nowSpy: ReturnType<typeof vi.spyOn> | null = null;
+        try {
+            const contentionWindowMs = 4 * 60_000;
+            const claimPath = `${lockPath}.priority-claim`;
+            let nowMs = Date.now();
+            writeLockOwner(lockPath, {
+                pid: process.pid,
+                createdAtMs: nowMs,
+                updatedAtMs: nowMs,
+            });
+            nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => nowMs);
+            const defaultWaitingAttempt = withCliDistBuildLock(async () => 'default', {
+                lockPath,
+            });
+            defaultAttempt = defaultWaitingAttempt;
+            await waitForCondition(() => existsSync(claimPath), 'CLI dist lock contender');
+
+            nowMs += contentionWindowMs + 1;
+            const defaultOutcome = await Promise.race([
+                defaultWaitingAttempt.then(
+                    () => 'fulfilled',
+                    () => 'rejected',
+                ),
+                new Promise<'pending'>((resolve) => setTimeout(() => resolve('pending'), 1_100)),
+            ]);
+            expect(defaultOutcome).toBe('pending');
+
+            nowSpy.mockRestore();
+            nowSpy = null;
+            unlinkSync(lockPath);
+            await expect(defaultWaitingAttempt).resolves.toBe('default');
+            defaultAttempt = null;
+
+            nowMs = Date.now();
+            writeLockOwner(lockPath, {
+                pid: process.pid,
+                createdAtMs: nowMs,
+                updatedAtMs: nowMs,
+            });
+            nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => nowMs);
+            const explicitWaitingAttempt = withCliDistBuildLock(async () => 'explicit', {
+                lockPath,
+                timeoutMs: contentionWindowMs,
+            });
+            explicitAttempt = explicitWaitingAttempt;
+            await waitForCondition(() => existsSync(claimPath), 'explicit CLI dist lock contender');
+
+            nowMs += contentionWindowMs + 1;
+            await expect(explicitWaitingAttempt).rejects.toThrow(/Timed out waiting for CLI dist build lock/);
+            explicitAttempt = null;
+        } finally {
+            nowSpy?.mockRestore();
+            if (existsSync(lockPath)) unlinkSync(lockPath);
+            await defaultAttempt?.catch(() => {});
+            await explicitAttempt?.catch(() => {});
             rmSync(repoRoot, { recursive: true, force: true });
         }
     });

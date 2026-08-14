@@ -157,6 +157,14 @@ function packageSupportsTarget(packageJson: PackageJson, target: BinaryTarget): 
     && matchesPackageConstraint(packageJson.cpu, target.arch);
 }
 
+function requiredSharpRuntimePackages(target: BinaryTarget): string[] {
+  const platform = target.os === 'windows' ? 'win32' : target.os;
+  const suffix = `${platform}-${target.arch}`;
+  return target.os === 'windows'
+    ? [`@img/sharp-${suffix}`]
+    : [`@img/sharp-${suffix}`, `@img/sharp-libvips-${suffix}`];
+}
+
 async function collectInstalledPackageSidecars({
   repoRoot,
   packageName,
@@ -375,13 +383,23 @@ export async function resolveServerBinarySidecarEntries({
   });
 
   if (target) {
+    const sharpVisited = new Set<string>();
     entries.push(...await collectInstalledPackageSidecars({
       repoRoot,
       packageName: 'sharp',
       target,
-      optional: true,
-      visited: new Set(),
+      optional: false,
+      visited: sharpVisited,
     }));
+    for (const packageName of requiredSharpRuntimePackages(target)) {
+      entries.push(...await collectInstalledPackageSidecars({
+        repoRoot,
+        packageName,
+        target,
+        optional: false,
+        visited: sharpVisited,
+      }));
+    }
   }
 
   return entries;

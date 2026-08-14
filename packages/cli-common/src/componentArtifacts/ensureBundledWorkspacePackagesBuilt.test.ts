@@ -110,4 +110,48 @@ describe('ensureBundledWorkspacePackagesBuilt', () => {
             rmSync(repoRoot, { recursive: true, force: true });
         }
     });
+
+    it('accepts a wildcard export when at least one emitted file matches it', async () => {
+        const repoRoot = mkdtempSync(join(tmpdir(), 'cli-common-ws-bundles-'));
+        try {
+            const workspaceSrc = join(repoRoot, 'packages', 'plugins', 'channels');
+            mkdirSync(workspaceSrc, { recursive: true });
+            writeFileSync(
+                join(workspaceSrc, 'package.json'),
+                JSON.stringify({
+                    name: '@happier-dev/plugins-channels',
+                    version: '0.0.0',
+                    main: './dist/index.js',
+                    exports: {
+                        '.': './dist/index.js',
+                        './happier-plugin-ui/*': './dist/happier-plugin-ui/*',
+                    },
+                }),
+                'utf8',
+            );
+            const distDir = join(workspaceSrc, 'dist');
+            mkdirSync(join(distDir, 'happier-plugin-ui'), { recursive: true });
+            writeFileSync(join(distDir, 'index.js'), 'export {};\n', 'utf8');
+            writeFileSync(
+                join(distDir, 'happier-plugin-ui', 'ui-artifacts.json'),
+                '{"version":1,"entries":[]}\n',
+                'utf8',
+            );
+
+            await expect(ensureBundledWorkspacePackagesBuilt({
+                repoRoot,
+                bundles: [{
+                    packageName: '@happier-dev/plugins-channels',
+                    srcDir: workspaceSrc,
+                }],
+                ensureWorkspacePackagesBuiltByName: async (_root, packageNames) => ({
+                    ok: true,
+                    built: [],
+                    skipped: packageNames,
+                }),
+            })).resolves.toBeUndefined();
+        } finally {
+            rmSync(repoRoot, { recursive: true, force: true });
+        }
+    });
 });
