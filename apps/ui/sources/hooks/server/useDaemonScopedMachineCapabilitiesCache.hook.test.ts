@@ -12,8 +12,10 @@ installServerHookCommonModuleMocks({
     storage: async (importOriginal) => {
         const { createPartialStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
         return createPartialStorageModuleMock(importOriginal, {
-            useMachine: vi.fn((machineId: string) => (
-                machineId === 'm1' ? { id: 'm1', metadata: {}, daemonStateVersion: 7 } : null
+            useMachineCliDetectionTarget: vi.fn((machineId: string | null) => (
+                machineId === 'm1'
+                    ? { daemonStateVersion: 7, isOnline: true }
+                    : { daemonStateVersion: 0, isOnline: false }
             )),
         });
     },

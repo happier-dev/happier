@@ -1,4 +1,4 @@
-import { useMachine } from '@/sync/domains/state/storage';
+import { useMachineCliDetectionTarget } from '@/sync/domains/state/storage';
 import { useMachineCapabilitiesCache, type MachineCapabilitiesCacheState } from '@/hooks/server/useMachineCapabilitiesCache';
 import type { CapabilitiesDetectRequest } from '@/sync/api/capabilities/capabilitiesProtocol';
 
@@ -19,11 +19,15 @@ export function useDaemonScopedMachineCapabilitiesCache(params: Readonly<{
      */
     daemonStateVersion?: number | null;
 }>): { state: MachineCapabilitiesCacheState; refresh: (next?: { request?: CapabilitiesDetectRequest; timeoutMs?: number; bypassCache?: boolean }) => void } {
-    const machine = useMachine(params.machineId ?? '');
+    // Subscribe to the narrow, reference-stable CLI-detection projection rather than the whole
+    // machine record: presence heartbeats rewrite `activeAt`/`updatedAt`/`seq` constantly, and a
+    // wide subscription re-renders every consumer (including every machine picker row) for fields
+    // this cache key never reads.
+    const machineTarget = useMachineCliDetectionTarget(params.machineId ?? null);
     const cacheKeySalt =
         typeof params.daemonStateVersion === 'number'
             ? params.daemonStateVersion
-            : resolveDaemonCapabilitiesCacheKeySalt(machine);
+            : resolveDaemonCapabilitiesCacheKeySalt(machineTarget);
 
     return useMachineCapabilitiesCache({
         machineId: params.machineId,
