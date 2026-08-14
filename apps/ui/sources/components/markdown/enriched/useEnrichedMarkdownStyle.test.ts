@@ -1,3 +1,4 @@
+import type { TextStyle } from 'react-native';
 import { describe, expect, it } from 'vitest';
 
 import { buildEnrichedMarkdownStyle } from './useEnrichedMarkdownStyle';
@@ -8,10 +9,12 @@ const colors = {
     border: { default: '#cccccc' },
 } as const;
 
+type WebUnistylesTextStyle = TextStyle & Record<`unistyles_${string}`, unknown>;
+
 // Mirrors the transcript's real web textStyle: a Unistyles-registered style whose numeric
 // metrics are non-enumerable, non-writable (but configurable) data properties.
-function createWebUnistylesTextStyle(values: Record<string, number>): unknown {
-    const style: Record<string, unknown> = {};
+function createWebUnistylesTextStyle(values: Readonly<Record<'fontSize' | 'lineHeight', number>>): WebUnistylesTextStyle {
+    const style: WebUnistylesTextStyle = { unistyles_test: {} };
     Object.defineProperties(
         style,
         Object.fromEntries(Object.entries(values).map(([key, value]) => [key, {
@@ -20,7 +23,6 @@ function createWebUnistylesTextStyle(values: Record<string, number>): unknown {
             configurable: true,
         }])),
     );
-    style.unistyles_test = {};
     return style;
 }
 
@@ -43,7 +45,7 @@ describe('buildEnrichedMarkdownStyle uiFontScale', () => {
             colors,
             profile: 'transcript',
             uiFontScale: 1.3,
-            textStyle: createWebUnistylesTextStyle({ fontSize: 16, lineHeight: 24 }) as never,
+            textStyle: createWebUnistylesTextStyle({ fontSize: 16, lineHeight: 24 }),
         });
 
         expect(bundle.markdownStyle.paragraph?.fontSize).toBe(20.8);
@@ -57,7 +59,7 @@ describe('buildEnrichedMarkdownStyle uiFontScale', () => {
             colors,
             profile: 'transcript',
             uiFontScale: 1,
-            textStyle: createWebUnistylesTextStyle({ fontSize: 16, lineHeight: 24 }) as never,
+            textStyle: createWebUnistylesTextStyle({ fontSize: 16, lineHeight: 24 }),
         });
 
         expect(bundle.markdownStyle.paragraph?.fontSize).toBe(16);

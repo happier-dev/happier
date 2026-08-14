@@ -1,12 +1,12 @@
-import React from 'react';
-import { act } from 'react-test-renderer';
+import React, { act } from 'react';
+import type { ReactTestInstance } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
 import { installToolCallsGroupViewCommonModuleMocks } from '@/components/sessions/transcript/turns/toolCalls/toolCallsGroupViewTestHelpers';
 import { flattenStyleProp } from './toolCallsGroupUnitsTestFixtures';
 
-(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const shared = vi.hoisted(() => ({
     contentWidthMode: 'compact' as 'compact' | 'medium' | 'full',
@@ -16,7 +16,10 @@ installToolCallsGroupViewCommonModuleMocks({
     reactNative: async () => {
         const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
         return createReactNativeWebMock({
-            Platform: { OS: 'web', select: (values: any) => values?.web ?? values?.default ?? null },
+            Platform: {
+                OS: 'web',
+                select: <T,>(values: Readonly<{ web?: T; default?: T }>) => values.web ?? values.default ?? null,
+            },
         });
     },
     storage: async (importOriginal) => {
@@ -45,11 +48,11 @@ vi.mock('@/sync/domains/state/storageStore', () => ({
 }));
 
 function findRowFrameMaxWidth(screen: Awaited<ReturnType<typeof renderScreen>>): unknown {
-    const matchingNode = screen.findAllByType('View' as never).find((node: any) => {
+    const matchingNode = screen.findAllByType('View' as never).find((node: ReactTestInstance) => {
         const style = flattenStyleProp(node.props.style);
         return style.flexGrow === 1 && style.flexBasis === 0 && style.maxWidth !== undefined;
     });
-    return matchingNode ? flattenStyleProp((matchingNode as any).props.style).maxWidth : undefined;
+    return matchingNode ? flattenStyleProp(matchingNode.props.style).maxWidth : undefined;
 }
 
 describe('ToolCallsGroupUnitRowFrame content width', () => {
