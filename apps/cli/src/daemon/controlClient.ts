@@ -51,6 +51,8 @@ import {
   RestartSessionRunnerResultV1Schema,
   SessionRunnerRuntimeStateV1Schema,
   SessionRunnerStatusGetRequestV1Schema,
+  SPAWN_SESSION_ERROR_CODES,
+  isSpawnSessionErrorDetail,
   type ConnectedServiceBindingsV1,
   type ConnectedServiceId,
   type RestartAllSessionRunnersRequestV1,
@@ -60,6 +62,7 @@ import {
   type SessionRunnerRestartModeV1,
   type SessionRunnerRuntimeStateV1,
   type SessionRunnerStatusGetRequestV1,
+  type SpawnSessionNonceResolution,
 } from '@happier-dev/protocol';
 import {
   StopSessionResultSchema,
