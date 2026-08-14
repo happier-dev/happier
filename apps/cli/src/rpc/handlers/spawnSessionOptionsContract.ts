@@ -2,6 +2,7 @@ import { z } from 'zod';
 import {
   AcpConfigOptionOverridesV1Schema,
   AgentRuntimeDescriptorV1Schema,
+  PendingFirstInputV1Schema,
   SessionInitialGoalRequestV1Schema,
   SessionAttachMetadataIdentityPolicySchema,
   SessionMcpSelectionV1Schema,
@@ -49,10 +50,7 @@ const SpawnDaemonSessionRequestCompatSchema = z.object({
   machineId: z.string().trim().min(1).optional(),
   spawnNonce: z.string().trim().min(1).optional(),
   accountSettingsVersionHint: z.number().int().min(0).optional(),
-  pendingFirstInput: z.object({
-    text: z.string().refine((value) => value.trim().length > 0),
-    localId: z.string().refine((value) => value.trim().length > 0),
-  }).strict().optional(),
+  pendingFirstInput: PendingFirstInputV1Schema.optional(),
   sessionId: z.string().trim().min(1).optional(),
   existingSessionId: z.string().trim().min(1).optional(),
   initialTranscriptAfterSeq: z.number().int().min(0).optional(),

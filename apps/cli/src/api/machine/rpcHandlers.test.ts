@@ -813,6 +813,7 @@ describe('registerMachineRpcHandlers', () => {
       pendingFirstInput: {
         text: 'Summarize the repo',
         localId: ' spawn-first:opaque-1 ',
+        meta: { profileId: 'work' },
       },
       agentModeId: 'plan',
       agentModeUpdatedAt: 321,
@@ -831,6 +832,7 @@ describe('registerMachineRpcHandlers', () => {
       pendingFirstInput: {
         text: 'Summarize the repo',
         localId: ' spawn-first:opaque-1 ',
+        meta: { profileId: 'work' },
       },
       agentModeId: 'plan',
       agentModeUpdatedAt: 321,

@@ -18,6 +18,7 @@ import {
   AcpConfigOptionOverridesV1Schema,
   AgentRuntimeDescriptorV1Schema,
   BackendTargetRefSchema,
+  PendingFirstInputV1Schema,
   RestartAllSessionRunnersRequestV1Schema,
   RestartSessionRunnerRequestV1Schema,
   SessionConnectedServiceAuthSwitchRpcParamsSchema,
@@ -401,11 +402,8 @@ export function registerMachineRpcHandlers(params: Readonly<{
       : undefined;
     const normalizedResume = typeof resume === 'string' ? resume : undefined;
     const normalizedPendingFirstInput = (() => {
-      if (!pendingFirstInput || typeof pendingFirstInput !== 'object') return undefined;
-      const value = pendingFirstInput as { text?: unknown; localId?: unknown };
-      if (typeof value.text !== 'string' || value.text.trim().length === 0) return undefined;
-      if (typeof value.localId !== 'string' || value.localId.trim().length === 0) return undefined;
-      return { text: value.text, localId: value.localId };
+      const parsed = PendingFirstInputV1Schema.safeParse(pendingFirstInput);
+      return parsed.success ? parsed.data : undefined;
     })();
     const normalizedSpawnNonce = typeof spawnNonce === 'string' && spawnNonce.trim().length > 0 ? spawnNonce : undefined;
     const normalizedTranscriptStorage =
