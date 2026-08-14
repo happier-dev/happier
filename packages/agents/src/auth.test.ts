@@ -112,7 +112,7 @@ describe('AGENT_AUTH_PROBE_CONFIG', () => {
   it('drops the legacy Cursor fallback binary when the env disables it', () => {
     expect(getAgentAuthProbeConfig('cursor', {
       HAPPIER_CURSOR_AGENT_FALLBACK_ENABLED: '0',
-    } as NodeJS.ProcessEnv).binaryNames).toEqual(['cursor-agent']);
+    }).binaryNames).toEqual(['cursor-agent']);
   });
 
   it('supports both current and legacy Claude credential file layouts', () => {

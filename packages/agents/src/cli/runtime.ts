@@ -113,7 +113,7 @@ export function getAgentCliRuntimeSpec(id: AgentId): AgentCliRuntimeSpec {
 
 export function getAgentCliBinaryNames(
   id: AgentId,
-  processEnv: NodeJS.ProcessEnv = process.env,
+  processEnv: Readonly<Record<string, string | undefined>> = process.env,
 ): ReadonlyArray<string> {
   const runtimeSpec = getAgentCliRuntimeSpec(id);
   const fallbackEnabled = runtimeSpec.alternativeBinaryFallbackEnabledEnvVar

@@ -56,7 +56,7 @@ export const AGENT_AUTH_PROBE_CONFIG: Readonly<Record<CanonicalAgentId, AgentAut
 
 export function getAgentAuthProbeConfig(
   agentId: AgentId,
-  processEnv: NodeJS.ProcessEnv = process.env,
+  processEnv: Readonly<Record<string, string | undefined>> = process.env,
 ): AgentAuthProbeConfig {
   const config = AGENT_AUTH_PROBE_CONFIG[agentId];
   return {
