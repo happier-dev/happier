@@ -37,6 +37,14 @@
     "./permissions/privilege": {
       "types": "./dist/permissions/privilege.d.ts",
       "default": "./dist/permissions/privilege.js"
+    },
+    "./request-auth": {
+      "types": "./dist/requestAuth/index.d.ts",
+      "default": "./dist/requestAuth/index.js"
+    },
+    "./runtime/connected-services-adapter": {
+      "types": "./dist/runtime/adjunctAdapters/connectedServices.d.ts",
+      "default": "./dist/runtime/adjunctAdapters/connectedServices.js"
     }
   },
   "files": [
