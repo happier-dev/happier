@@ -19,7 +19,7 @@ describe('runTerminalPromptSubmission', () => {
         calls.push('enter');
         return 'success';
       },
-      remainingTimeoutMs: () => 100,
+      remainingTimeoutMs: () => 1_000,
       wait: async (delayMs) => {
         calls.push(`wait:${delayMs}`);
       },
@@ -27,18 +27,19 @@ describe('runTerminalPromptSubmission', () => {
 
     expect(calls).toEqual([
       'verify-staged',
-      'wait:25',
+      'wait:250',
       'verify-staged',
       'enter',
     ]);
   });
 
   it('does not send Enter when exact prompt staging exhausts the write deadline', async () => {
+    const verifyStagedBeforeSubmit = vi.fn(async () => false);
     const submitEnter = vi.fn();
 
     await expect(runTerminalPromptSubmission({
       promptText: 'first\nsecond',
-      verifyStagedBeforeSubmit: async () => false,
+      verifyStagedBeforeSubmit,
       submitEnter,
       remainingTimeoutMs: () => 0,
       wait: async () => {},
@@ -50,7 +51,28 @@ describe('runTerminalPromptSubmission', () => {
       submitMayHaveReachedPane: false,
     });
 
+    expect(verifyStagedBeforeSubmit).toHaveBeenCalledOnce();
     expect(submitEnter).not.toHaveBeenCalled();
+  });
+
+  it('submits when the final deadline observation proves the exact prompt is staged', async () => {
+    const submitEnter = vi.fn(async ({ remainingTimeoutMs }: Readonly<{ remainingTimeoutMs?: number | undefined }>) => {
+      expect(remainingTimeoutMs).toBeUndefined();
+      return 'success' as const;
+    });
+
+    await expect(runTerminalPromptSubmission({
+      promptText: 'first\nsecond',
+      verifyStagedBeforeSubmit: async ({ remainingTimeoutMs }) => {
+        expect(remainingTimeoutMs).toBeUndefined();
+        return true;
+      },
+      submitEnter,
+      remainingTimeoutMs: () => 0,
+      wait: async () => {},
+    })).resolves.toEqual({ success: true });
+
+    expect(submitEnter).toHaveBeenCalledOnce();
   });
 
   it('submits immediately and then verifies the composer', async () => {

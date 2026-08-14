@@ -1,5 +1,5 @@
 const DEFAULT_POST_SUBMIT_SETTLE_MS = 50;
-const DEFAULT_PRE_SUBMIT_POLL_MS = 25;
+const DEFAULT_PRE_SUBMIT_POLL_MS = 250;
 
 export type TerminalPromptSubmitVerificationPolicy = Readonly<{
   shouldVerifyAfterSubmit(promptText: string): boolean;
@@ -51,8 +51,12 @@ export async function runTerminalPromptSubmission(params: Readonly<{
   stagingPollIntervalMs?: number | undefined;
   submitRetryDelayMs?: number | undefined;
 }>): Promise<TerminalPromptSubmissionResult> {
+  let stagingWasProvenAtDeadline = false;
+  const remainingOperationTimeoutMs = (): number | undefined => (
+    stagingWasProvenAtDeadline ? undefined : params.remainingTimeoutMs?.()
+  );
   const submitOnce = async (): Promise<TerminalPromptSubmitCommandResult> => normalizeSubmitResult(await params.submitEnter({
-    remainingTimeoutMs: params.remainingTimeoutMs?.(),
+    remainingTimeoutMs: remainingOperationTimeoutMs(),
   }));
   const postSubmitSettleMs = Math.max(
     0,
@@ -70,26 +74,30 @@ export async function runTerminalPromptSubmission(params: Readonly<{
     );
     while (true) {
       const remainingTimeoutMs = params.remainingTimeoutMs?.();
-      if (remainingTimeoutMs === 0) {
-        return {
-          success: false,
-          reason: 'timeout',
-          phase: 'after_write_before_enter',
-          duplicateRisk: 'possible',
-          submitMayHaveReachedPane: false,
-        };
-      }
       try {
         if (await params.verifyStagedBeforeSubmit({
           promptText: params.promptText,
-          remainingTimeoutMs,
+          remainingTimeoutMs: remainingTimeoutMs === 0 ? undefined : remainingTimeoutMs,
         })) {
+          // Staging and Enter are separate terminal operations. If the exact prompt became
+          // observable at the boundary, let the adapter apply its normal bounded Enter/capture
+          // timeout instead of passing an already exhausted staging budget.
+          stagingWasProvenAtDeadline = remainingTimeoutMs === 0;
           break;
         }
       } catch {
         return {
           success: false,
           reason: 'verification_failed',
+          phase: 'after_write_before_enter',
+          duplicateRisk: 'possible',
+          submitMayHaveReachedPane: false,
+        };
+      }
+      if (remainingTimeoutMs === 0) {
+        return {
+          success: false,
+          reason: 'timeout',
           phase: 'after_write_before_enter',
           duplicateRisk: 'possible',
           submitMayHaveReachedPane: false,
@@ -112,7 +120,7 @@ export async function runTerminalPromptSubmission(params: Readonly<{
     try {
       return await params.verifyAfterSubmit?.({
         promptText: params.promptText,
-        remainingTimeoutMs: params.remainingTimeoutMs?.(),
+        remainingTimeoutMs: remainingOperationTimeoutMs(),
       }) ?? false;
     } catch {
       return null;
