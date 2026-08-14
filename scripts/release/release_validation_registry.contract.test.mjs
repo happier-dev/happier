@@ -48,3 +48,17 @@ test('release-validation registry encodes supported cli-update source direction'
     { from: 'published-tag', to: 'local-pack' },
   ]);
 });
+
+test('release-validation registry exposes the immutable relay upgrade direction', () => {
+  const relay = resolveReleaseValidationSuite('docker-release-assets');
+
+  assert.deepEqual(relay?.supportedUpdateSourceKinds, [
+    'published-channel',
+    'published-tag',
+    'local-build',
+  ]);
+  assert.deepEqual(relay?.supportedUpdateSourcePairs, [
+    { from: 'published-channel', to: 'local-build' },
+    { from: 'published-channel', to: 'published-tag' },
+  ]);
+});

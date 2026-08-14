@@ -192,6 +192,14 @@ test('release-assets-e2e run.sh documents relay-server upgrade smoke flags', () 
   assert.match(res.stdout ?? '', /--no-relay-upgrade/);
   assert.match(res.stdout ?? '', /--relay-upgrade-from-channel=/);
   assert.match(res.stdout ?? '', /--relay-upgrade-db=/);
+  assert.match(res.stdout ?? '', /--relay-upgrade-to-server-tag=/);
+  assert.match(res.stdout ?? '', /--relay-upgrade-to-server-version=/);
+});
+
+test('release-assets-e2e run.sh requires immutable relay upgrade tag and version together', () => {
+  const res = spawnSync('bash', [runScript, '--relay-upgrade-to-server-tag=server-v0.2.11', '--help'], { encoding: 'utf8' });
+  assert.equal(res.status, 2);
+  assert.match(res.stderr ?? '', /tag and version must be provided together/i);
 });
 
 test('release-assets-e2e compose.dockerhub mounts terminal-auth-approve for relay upgrade bootstrap', () => {

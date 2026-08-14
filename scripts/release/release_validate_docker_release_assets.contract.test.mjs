@@ -116,6 +116,41 @@ test('docker release-assets plans published preview to local-build relay upgrade
   });
 });
 
+test('docker release-assets plans published stable to immutable server candidate upgrades', () => {
+  const plan = resolveDockerReleaseAssetsPlan({
+    platform: 'linux',
+    source: null,
+    update: {
+      from: { kind: 'published-channel', ref: 'stable' },
+      to: { kind: 'published-tag', ref: 'server-v0.2.11' },
+    },
+  });
+
+  assert.equal(plan.relayUpgradeFromChannel, 'stable');
+  assert.equal(plan.relayUpgradeToServerTag, 'server-v0.2.11');
+  assert.equal(plan.relayUpgradeToServerVersion, '0.2.11');
+  assert.deepEqual(plan.args.slice(-4), [
+    '--relay-upgrade-from-channel=stable',
+    '--relay-upgrade-db=both',
+    '--relay-upgrade-to-server-tag=server-v0.2.11',
+    '--relay-upgrade-to-server-version=0.2.11',
+  ]);
+});
+
+test('docker release-assets rejects non-server immutable tags for relay upgrades', () => {
+  assert.throws(
+    () => resolveDockerReleaseAssetsPlan({
+      platform: 'linux',
+      source: null,
+      update: {
+        from: { kind: 'published-channel', ref: 'stable' },
+        to: { kind: 'published-tag', ref: 'cli-v0.2.11' },
+      },
+    }),
+    /server-v<version>/i,
+  );
+});
+
 test('docker release-assets rejects non-linux platforms', () => {
   assert.throws(
     () =>

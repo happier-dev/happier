@@ -44,7 +44,11 @@ export const RELEASE_VALIDATION_SUITES = [
     supportsDirectSource: true,
     supportsUpdateSources: true,
     supportedDirectSourceKinds: ['local-build', 'published-channel'],
-    supportedUpdateSourceKinds: ['published-channel', 'local-build'],
+    supportedUpdateSourceKinds: ['published-channel', 'published-tag', 'local-build'],
+    supportedUpdateSourcePairs: [
+      { from: 'published-channel', to: 'local-build' },
+      { from: 'published-channel', to: 'published-tag' },
+    ],
     executorId: 'docker-release-assets',
   },
   {
