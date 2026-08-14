@@ -8,6 +8,7 @@ import {
 import { publishSessionReadyProjectionUpdate } from "@/app/session/ready/publishSessionReadyProjectionUpdate";
 import { randomKeyNaked } from "@/utils/keys/randomKeyNaked";
 import { log } from "@/utils/logging/log";
+import { SESSION_MESSAGE_USER_ATTENTION_IMPACT } from "@happier-dev/protocol";
 
 export async function emitPendingChanged(params: {
     sessionId: string;
@@ -94,7 +95,13 @@ export async function emitPendingResolvedMessage(params: {
         : buildNewMessageUpdate;
     const messageResults = await Promise.allSettled(
         params.participantCursors.map(async ({ accountId, cursor }) => {
-            const payload = buildMessageUpdate(params.message!, params.sessionId, cursor, randomKeyNaked(12));
+            const payload = buildMessageUpdate(
+                params.message!,
+                params.sessionId,
+                cursor,
+                randomKeyNaked(12),
+                { attentionImpact: SESSION_MESSAGE_USER_ATTENTION_IMPACT },
+            );
             eventRouter.emitUpdate({
                 userId: accountId,
                 payload,

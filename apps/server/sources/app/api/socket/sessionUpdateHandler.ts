@@ -39,6 +39,7 @@ import {
     SESSION_TRANSCRIPT_OBSERVATION_CAPABILITY_EVENT_V1,
     SESSION_TRANSCRIPT_OBSERVATION_CAPABILITY_V1,
     SESSION_TRANSCRIPT_OBSERVATION_EVENT_V1,
+    isRecoveredHistoryTranscriptObservationProvenance,
     SessionTranscriptObservationV1Schema,
     SessionTurnMutationV1Schema,
 } from "@happier-dev/protocol";
@@ -155,6 +156,7 @@ export function sessionUpdateHandler(
             return;
         }
         const observation = parsed.data;
+        const isRecoveredHistory = isRecoveredHistoryTranscriptObservationProvenance(observation.provenance);
         if (!canMutateSocketSession(connection, observation.sessionId)) {
             callback?.({ ok: false, error: "forbidden" });
             return;
@@ -199,10 +201,10 @@ export function sessionUpdateHandler(
                 },
                 trustedSourceTimestamps: { createdAt: observation.createdAt, updatedAt: observation.updatedAt },
                 trustedTranscriptObservationProvenance: observation.provenance,
-                ...(observation.provenance.kind === "non_dependent" && observation.provenance.source === "history"
+                ...(isRecoveredHistory
                     ? { trustedAttentionImpact: SESSION_MESSAGE_NO_USER_ATTENTION_IMPACT }
                     : {}),
-                ...(observation.sessionEventType && !(observation.provenance.kind === "non_dependent" && observation.provenance.source === "history")
+                ...(observation.sessionEventType && !isRecoveredHistory
                     ? { trustedSessionEventType: observation.sessionEventType }
                     : {}),
             })
@@ -219,10 +221,10 @@ export function sessionUpdateHandler(
                 },
                 trustedSourceTimestamps: { createdAt: observation.createdAt, updatedAt: observation.updatedAt },
                 trustedTranscriptObservationProvenance: observation.provenance,
-                ...(observation.provenance.kind === "non_dependent" && observation.provenance.source === "history"
+                ...(isRecoveredHistory
                     ? { trustedAttentionImpact: SESSION_MESSAGE_NO_USER_ATTENTION_IMPACT }
                     : {}),
-                ...(observation.sessionEventType && !(observation.provenance.kind === "non_dependent" && observation.provenance.source === "history")
+                ...(observation.sessionEventType && !isRecoveredHistory
                     ? { trustedSessionEventType: observation.sessionEventType }
                     : {}),
             });
