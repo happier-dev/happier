@@ -78,6 +78,10 @@
       "types": "./dist/process/index.d.ts",
       "default": "./dist/process/index.js"
     },
+    "./fs/windowsProtectedAcl": {
+      "types": "./dist/fs/windowsProtectedAcl.d.ts",
+      "default": "./dist/fs/windowsProtectedAcl.js"
+    },
     "./componentArtifacts": {
       "types": "./dist/componentArtifacts/index.d.ts",
       "default": "./dist/componentArtifacts/index.js"

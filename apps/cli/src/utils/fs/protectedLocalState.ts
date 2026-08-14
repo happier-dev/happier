@@ -1,4 +1,3 @@
-import { execFile } from 'node:child_process';
 import { constants } from 'node:fs';
 import {
   chmod,
@@ -12,71 +11,25 @@ import {
 import { randomUUID } from 'node:crypto';
 import { dirname } from 'node:path';
 
-export type ProtectedLocalStateKind = 'directory' | 'file';
+import {
+  createWindowsProtectedAclBoundary,
+  type WindowsProtectedAclBoundary,
+  type WindowsProtectedAclCommandResult,
+  type WindowsProtectedAclCommandRunner,
+  type WindowsProtectedPathKind,
+} from '@happier-dev/cli-common/fs/windowsProtectedAcl';
 
-export type WindowsProtectedLocalStateCommandResult = Readonly<{
-  exitCode: number;
-  stdout: string;
-  stderr: string;
-}>;
-
-export type WindowsProtectedLocalStateCommandRunner = (
-  command: string,
-  args: readonly string[],
-) => Promise<WindowsProtectedLocalStateCommandResult>;
-
-export type WindowsProtectedLocalStateAclBoundary = Readonly<{
-  applyAndVerify(input: Readonly<{
-    path: string;
-    kind: ProtectedLocalStateKind;
-  }>): Promise<void>;
-  verify(input: Readonly<{
-    path: string;
-    kind: ProtectedLocalStateKind;
-  }>): Promise<void>;
-}>;
+export type ProtectedLocalStateKind = WindowsProtectedPathKind;
+export type WindowsProtectedLocalStateCommandResult = WindowsProtectedAclCommandResult;
+export type WindowsProtectedLocalStateCommandRunner = WindowsProtectedAclCommandRunner;
+export type WindowsProtectedLocalStateAclBoundary = WindowsProtectedAclBoundary;
+export const createWindowsProtectedLocalStateAclBoundary = createWindowsProtectedAclBoundary;
 
 export type ProtectedLocalStateOptions = Readonly<{
   platform?: NodeJS.Platform;
   expectedUid?: number;
   windowsAclBoundary?: WindowsProtectedLocalStateAclBoundary;
 }>;
-
-type WindowsAclSnapshot = Readonly<{
-  ownerSid: string;
-  protected: boolean;
-  reparsePoint: boolean;
-  rules: readonly Readonly<{
-    sid: string;
-    type: string;
-    inherited: boolean;
-    rights: string;
-  }>[];
-}>;
-
-const LOCAL_SYSTEM_SID = 'S-1-5-18';
-const WINDOWS_SID_PATTERN = /^S-\d(?:-\d+)+$/u;
-const WINDOWS_ACL_INSPECTION_SCRIPT = [
-  '& {',
-  'param([string]$Path)',
-  '$acl = Get-Acl -LiteralPath $Path -ErrorAction Stop',
-  '$attributes = [System.IO.File]::GetAttributes($Path)',
-  '$rules = @($acl.Access | ForEach-Object {',
-  '  [pscustomobject]@{',
-  '    sid = $_.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value',
-  '    type = $_.AccessControlType.ToString()',
-  '    inherited = $_.IsInherited',
-  '    rights = $_.FileSystemRights.ToString()',
-  '  }',
-  '})',
-  '[pscustomobject]@{',
-  '  ownerSid = ([System.Security.Principal.NTAccount]::new($acl.Owner)).Translate([System.Security.Principal.SecurityIdentifier]).Value',
-  '  protected = $acl.AreAccessRulesProtected',
-  '  reparsePoint = (($attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0)',
-  '  rules = $rules',
-  '} | ConvertTo-Json -Depth 5 -Compress',
-  '} ',
-].join('\n');
 
 let defaultWindowsAclBoundary: WindowsProtectedLocalStateAclBoundary | null = null;
 
@@ -85,153 +38,6 @@ function isErrno(error: unknown, code: string): boolean {
     && error !== null
     && 'code' in error
     && (error as NodeJS.ErrnoException).code === code;
-}
-
-function defaultWindowsCommandRunner(
-  command: string,
-  args: readonly string[],
-): Promise<WindowsProtectedLocalStateCommandResult> {
-  return new Promise((resolve, reject) => {
-    execFile(command, [...args], {
-      encoding: 'utf8',
-      windowsHide: true,
-      maxBuffer: 1024 * 1024,
-    }, (error, stdout, stderr) => {
-      if (error && typeof error.code !== 'number') {
-        reject(new Error(`Protected local state command could not start: ${command}`));
-        return;
-      }
-      resolve({
-        exitCode: typeof error?.code === 'number' ? error.code : 0,
-        stdout: String(stdout),
-        stderr: String(stderr),
-      });
-    });
-  });
-}
-
-function parseCurrentUserSid(stdout: string): string {
-  const match = stdout.match(/S-\d(?:-\d+)+/u);
-  if (!match || !WINDOWS_SID_PATTERN.test(match[0])) {
-    throw new Error('Unable to resolve the current Windows user SID');
-  }
-  return match[0];
-}
-
-function parseWindowsAclSnapshot(stdout: string): WindowsAclSnapshot {
-  let value: unknown;
-  try {
-    value = JSON.parse(stdout);
-  } catch {
-    throw new Error('Windows protected local state ACL verification returned invalid JSON');
-  }
-  if (typeof value !== 'object' || value === null) {
-    throw new Error('Windows protected local state ACL verification returned an invalid snapshot');
-  }
-  const candidate = value as Partial<WindowsAclSnapshot>;
-  if (
-    typeof candidate.ownerSid !== 'string'
-    || typeof candidate.protected !== 'boolean'
-    || typeof candidate.reparsePoint !== 'boolean'
-    || !Array.isArray(candidate.rules)
-  ) {
-    throw new Error('Windows protected local state ACL verification returned an invalid snapshot');
-  }
-  for (const rule of candidate.rules) {
-    if (
-      typeof rule !== 'object'
-      || rule === null
-      || typeof rule.sid !== 'string'
-      || typeof rule.type !== 'string'
-      || typeof rule.inherited !== 'boolean'
-      || typeof rule.rights !== 'string'
-    ) {
-      throw new Error('Windows protected local state ACL verification returned an invalid rule');
-    }
-  }
-  return candidate as WindowsAclSnapshot;
-}
-
-function verifyWindowsAclSnapshot(snapshot: WindowsAclSnapshot, currentUserSid: string): void {
-  if (snapshot.ownerSid !== currentUserSid) {
-    throw new Error('Windows protected local state has an unexpected owner SID');
-  }
-  if (!snapshot.protected) {
-    throw new Error('Windows protected local state still inherits ACL entries');
-  }
-  if (snapshot.reparsePoint) {
-    throw new Error('Windows protected local state must not be a reparse point');
-  }
-  if (snapshot.rules.length !== 2) {
-    throw new Error('Windows protected local state has unexpected ACL entries');
-  }
-
-  const expectedSids = new Set([currentUserSid, LOCAL_SYSTEM_SID]);
-  for (const rule of snapshot.rules) {
-    if (
-      !expectedSids.delete(rule.sid)
-      || rule.type !== 'Allow'
-      || rule.inherited
-      || rule.rights !== 'FullControl'
-    ) {
-      throw new Error('Windows protected local state has an unsafe ACL entry');
-    }
-  }
-  if (expectedSids.size !== 0) {
-    throw new Error('Windows protected local state is missing a required ACL entry');
-  }
-}
-
-export function createWindowsProtectedLocalStateAclBoundary(params: Readonly<{
-  runCommand?: WindowsProtectedLocalStateCommandRunner;
-}> = {}): WindowsProtectedLocalStateAclBoundary {
-  const runCommand = params.runCommand ?? defaultWindowsCommandRunner;
-  let currentUserSidPromise: Promise<string> | null = null;
-
-  const runChecked = async (command: string, args: readonly string[]) => {
-    const result = await runCommand(command, args);
-    if (result.exitCode !== 0) {
-      throw new Error(`Windows protected local state command failed: ${command}`);
-    }
-    return result;
-  };
-
-  const resolveCurrentUserSid = async (): Promise<string> => {
-    currentUserSidPromise ??= runChecked('whoami.exe', ['/user', '/fo', 'csv', '/nh'])
-      .then((result) => parseCurrentUserSid(result.stdout));
-    return currentUserSidPromise;
-  };
-
-  const verify = async (input: Readonly<{
-    path: string;
-    kind: ProtectedLocalStateKind;
-  }>): Promise<void> => {
-    const currentUserSid = await resolveCurrentUserSid();
-    const inspection = await runChecked('powershell.exe', [
-      '-NoProfile',
-      '-NonInteractive',
-      '-Command',
-      WINDOWS_ACL_INSPECTION_SCRIPT,
-      input.path,
-    ]);
-    verifyWindowsAclSnapshot(parseWindowsAclSnapshot(inspection.stdout), currentUserSid);
-  };
-
-  return Object.freeze({
-    async applyAndVerify(input) {
-      const currentUserSid = await resolveCurrentUserSid();
-      const inheritance = input.kind === 'directory' ? '(OI)(CI)' : '';
-      await runChecked('icacls.exe', [
-        input.path,
-        '/inheritancelevel:r',
-        '/grant:r',
-        `*${currentUserSid}:${inheritance}F`,
-        `*${LOCAL_SYSTEM_SID}:${inheritance}F`,
-      ]);
-      await verify(input);
-    },
-    verify,
-  });
 }
 
 function resolvePlatform(options: ProtectedLocalStateOptions): NodeJS.Platform {
@@ -278,7 +84,8 @@ function validateStats(params: Readonly<{
   }
 }
 
-async function fsyncDirectory(path: string): Promise<void> {
+async function fsyncDirectory(path: string, platform: NodeJS.Platform): Promise<void> {
+  if (platform === 'win32') return;
   const handle = await open(path, 'r');
   try {
     await handle.sync();
@@ -331,7 +138,7 @@ export async function ensureProtectedLocalStateDirectory(
   }
   await assertProtectedPath(path, 'directory', options);
   if (!existed) {
-    await fsyncDirectory(dirname(path));
+    await fsyncDirectory(dirname(path), resolvePlatform(options));
   }
 }
 
@@ -370,7 +177,7 @@ export async function createProtectedLocalStateFileExclusive(
 
   try {
     await assertProtectedPath(path, 'file', options);
-    await fsyncDirectory(dirname(path));
+    await fsyncDirectory(dirname(path), platform);
   } catch (error) {
     await rm(path, { force: true }).catch(() => {});
     throw error;
@@ -432,7 +239,7 @@ export async function writeProtectedLocalStateFileAtomic(
     await rename(temporaryPath, path);
     published = true;
     await assertProtectedPath(path, 'file', options);
-    await fsyncDirectory(dirname(path));
+    await fsyncDirectory(dirname(path), resolvePlatform(options));
   } catch (error) {
     await rm(temporaryPath, { force: true }).catch(() => {});
     if (published) {
@@ -448,7 +255,7 @@ export async function removeProtectedLocalStateFile(
 ): Promise<void> {
   await assertProtectedPath(path, 'file', options);
   await rm(path);
-  await fsyncDirectory(dirname(path));
+  await fsyncDirectory(dirname(path), resolvePlatform(options));
 }
 
 export async function listProtectedLocalStateDirectory(

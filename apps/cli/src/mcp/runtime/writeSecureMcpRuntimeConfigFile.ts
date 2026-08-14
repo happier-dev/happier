@@ -1,28 +1,29 @@
 import { randomUUID } from 'node:crypto';
-import { chmod, mkdir, rename, unlink, writeFile } from 'node:fs/promises';
+import { rename, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-const PRIVATE_DIR_MODE = 0o700;
-const PRIVATE_FILE_MODE = 0o600;
+import {
+  createProtectedLocalStateFileExclusive,
+  ensureProtectedLocalStateDirectory,
+  readProtectedLocalStateFile,
+  type ProtectedLocalStateOptions,
+} from '@/utils/fs/protectedLocalState';
 
 function isErrnoException(err: unknown): err is NodeJS.ErrnoException {
   return typeof err === 'object' && err !== null && 'code' in err;
-}
-
-async function bestEffortChmod(path: string, mode: number): Promise<void> {
-  await chmod(path, mode).catch(() => {});
 }
 
 export async function writeSecureMcpRuntimeConfigFile(params: Readonly<{
   prefix: string;
   tmpDir: string | null;
   payload: unknown;
-}>): Promise<string> {
+}>, deps: Readonly<{
+  protectedLocalStateOptions?: ProtectedLocalStateOptions;
+}> = {}): Promise<string> {
   const baseDir = params.tmpDir ?? join(tmpdir(), params.prefix);
-
-  await mkdir(baseDir, { recursive: true, mode: PRIVATE_DIR_MODE });
-  await bestEffortChmod(baseDir, PRIVATE_DIR_MODE);
+  const protectedLocalStateOptions = deps.protectedLocalStateOptions ?? {};
+  await ensureProtectedLocalStateDirectory(baseDir, protectedLocalStateOptions);
 
   const json = JSON.stringify(params.payload);
 
@@ -37,14 +38,13 @@ export async function writeSecureMcpRuntimeConfigFile(params: Readonly<{
     const tempPath = join(baseDir, `${params.prefix}.${id}.${randomUUID()}.tmp`);
 
     try {
-      await writeFile(tempPath, json, { mode: PRIVATE_FILE_MODE, flag: 'wx' });
-      await bestEffortChmod(tempPath, PRIVATE_FILE_MODE);
-
+      await createProtectedLocalStateFileExclusive(tempPath, json, protectedLocalStateOptions);
       await rename(tempPath, finalPath);
-      await bestEffortChmod(finalPath, PRIVATE_FILE_MODE);
+      await readProtectedLocalStateFile(finalPath, protectedLocalStateOptions);
       return finalPath;
     } catch (err) {
-      await unlink(tempPath).catch(() => {});
+      await rm(tempPath, { force: true }).catch(() => {});
+      await rm(finalPath, { force: true }).catch(() => {});
       if (isErrnoException(err) && err.code === 'EEXIST') continue;
       throw err;
     }
