@@ -662,8 +662,10 @@ export async function ensureCliBuilt(cliDir, { buildCli, quiet = false, env: env
     // A full CLI build owns shared dependency compilation through Yarn's automatic
     // prebuild -> build:shared lifecycle. Only repair shared outputs separately when
     // this admission will trust an existing CLI dist without running that lifecycle.
-    const skipAfterWorkspacePreparation = async (reason, current = false) => {
+    const prepareWorkspaceOutputs = async () =>
       await ensureWorkspacePackagesBuiltForComponent(cliDir, { quiet, env: envIn });
+    const skipAfterWorkspacePreparation = async (reason, current = false) => {
+      await prepareWorkspaceOutputs();
       return skip(reason, current);
     };
     if (!buildCli) {
@@ -713,7 +715,13 @@ export async function ensureCliBuilt(cliDir, { buildCli, quiet = false, env: env
       } else if (!(await pathExists(distEntrypoint))) {
         // fallthrough to build
       } else if (await isCliDistFreshForInputs(distEntrypoint, inputFreshness)) {
-        return await skipAfterWorkspacePreparation('up_to_date', true);
+        const workspacePreparation = await prepareWorkspaceOutputs();
+        if (workspacePreparation.built.length === 0) {
+          return skip('up_to_date', true);
+        }
+        // A repaired dependency changes the inputs consumed by the CLI bundle even
+        // when its source mtimes predate the current CLI publication. Run the full
+        // Yarn lifecycle so prebuild syncs those outputs before publishing the CLI.
       }
     }
 
