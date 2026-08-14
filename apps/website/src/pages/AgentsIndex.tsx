@@ -3,7 +3,6 @@ import { P, PageHeader, PageShell, Prose } from '../components/PageShell';
 import { InstallCommand } from '../components/InstallCommand';
 import { useSiteData } from '../i18n/siteData';
 import { rich } from '../i18n/rich';
-import { PAGE_PROSE } from '../data/pageProse';
 import type { ReactNode } from 'react';
 
 /**
@@ -28,6 +27,8 @@ import type { ReactNode } from 'react';
  * appears outside that band.
  */
 export function AgentsIndex() {
+    const { pageProse: { PAGE_PROSE } } = useSiteData();
+
     const { agents: { AGENTS, UNLISTED_AGENTS, UPCOMING_AGENTS }, availability: { UPCOMING_LABEL } } = useSiteData();
 
     return (

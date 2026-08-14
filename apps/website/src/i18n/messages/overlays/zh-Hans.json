@@ -1,3 +1,4 @@
 {
-  "availability.UPCOMING_LABEL": "将在 v0.3 中推出"
+  "availability.UPCOMING_LABEL": "将在 v0.3 中推出",
+  "pageProse.PAGE_PROSE.agentsIndex.p0": "Happier 安装在存放代码仓库的电脑上，以当前用户身份将供应商自己的 CLI 作为普通子进程启动，并通过端到端加密把对话同步到你的其他设备。它不托管这些智能体，也不会在它们前面插入自己的模型。"
 }

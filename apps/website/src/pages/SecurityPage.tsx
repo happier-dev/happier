@@ -2,7 +2,6 @@ import { P, PageHeader, PageShell, Prose } from '../components/PageShell';
 import { SECURITY_DOCS_URL, type SecurityHop } from '../data/security';
 import { useSiteData } from '../i18n/siteData';
 import { rich } from '../i18n/rich';
-import { PAGE_PROSE } from '../data/pageProse';
 import type { ReactNode } from 'react';
 
 /**
@@ -28,6 +27,8 @@ const CIPHER_SAMPLE = 'hQx2Vb9k4Tn1Rm7c…';
 const PLAIN_SAMPLE = 'push the hotfix branch';
 
 export function SecurityPage() {
+    const { pageProse: { PAGE_PROSE } } = useSiteData();
+
     const { security: { SECURITY_KEYS, SECURITY_NOTIFICATIONS, SECURITY_PAIRING, SECURITY_SELF_HOST, SECURITY_SOURCE, SECURITY_STORAGE } } = useSiteData();
 
     return (
@@ -207,6 +208,8 @@ function MessagePath() {
  * differ — the reader is being handed a fact to weigh, not a scorecard.
  */
 function Ledger() {
+    const { pageProse: { PAGE_PROSE } } = useSiteData();
+
     const { security: { SECURITY_INVISIBLE, SECURITY_VISIBLE } } = useSiteData();
 
     return (

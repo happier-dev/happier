@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { LocaleProvider } from './index';
 import { AgentsIndex } from '../pages/AgentsIndex';
 import { UPCOMING_LABEL } from '../data/availability';
+import { siteDataFor } from './siteData';
 
 /**
  * The end-to-end proof, and the reason it is a RENDER test rather than a unit
@@ -22,6 +23,8 @@ import { UPCOMING_LABEL } from '../data/availability';
  */
 describe('a translated string reaches rendered HTML', () => {
     const chinese = '将在 v0.3 中推出';
+    const chinesePageProse =
+        'Happier 安装在存放代码仓库的电脑上，以当前用户身份将供应商自己的 CLI 作为普通子进程启动，并通过端到端加密把对话同步到你的其他设备。它不托管这些智能体，也不会在它们前面插入自己的模型。';
 
     it('renders the English label under the default locale', () => {
         const markup = renderToStaticMarkup(
@@ -45,6 +48,17 @@ describe('a translated string reaches rendered HTML', () => {
                 'importing the data module directly instead of calling useSiteData()',
         ).toContain(chinese);
         expect(markup).not.toContain(UPCOMING_LABEL);
+    });
+
+    it('renders lifted page prose through the locale overlay instead of its static source import', () => {
+        expect(siteDataFor('zh-Hans').pageProse.PAGE_PROSE.agentsIndex.p0).toBe(chinesePageProse);
+
+        const markup = renderToStaticMarkup(
+            <LocaleProvider locale="zh-Hans">
+                <AgentsIndex />
+            </LocaleProvider>,
+        );
+        expect(markup).toContain(chinesePageProse);
     });
 
     it('falls back to English for every string the overlay does not cover', () => {

@@ -3,7 +3,6 @@ import { P, PageHeader, PageShell, Prose } from '../components/PageShell';
 import { ENTERPRISE_DEPLOY_URL, ENTERPRISE_DOCS_URL } from '../data/enterprise';
 import { useSiteData } from '../i18n/siteData';
 import { rich } from '../i18n/rich';
-import { PAGE_PROSE } from '../data/pageProse';
 import type { ReactNode } from 'react';
 
 /**
@@ -56,6 +55,8 @@ function CapabilityList({ items, dataSection, heading, standfirst }: {
 }
 
 export function EnterprisePage() {
+    const { pageProse: { PAGE_PROSE } } = useSiteData();
+
     const { enterprise: { ENTERPRISE_ACCESS, ENTERPRISE_DATA, ENTERPRISE_ZDR } } = useSiteData();
 
     return (

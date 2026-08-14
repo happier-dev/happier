@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { RevealText } from '../components/RevealText';
 import { rich } from '../i18n/rich';
-import { PAGE_PROSE } from '../data/pageProse';
+import { useSiteData } from '../i18n/siteData';
 
 /**
  * The three self-host claims, and the one that was false.
@@ -75,6 +75,8 @@ export const SELF_HOST_STACK_NODES = [
 type StackNode = (typeof SELF_HOST_STACK_NODES)[number];
 
 export function SelfHost() {
+    const { pageProse: { PAGE_PROSE } } = useSiteData();
+
     return (
         <section className="relative" data-section="self-host">
             <div className="section-y mx-auto max-w-[1400px] px-6 md:px-10">

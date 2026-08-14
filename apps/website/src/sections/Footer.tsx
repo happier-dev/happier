@@ -2,7 +2,7 @@ import { HappierMark } from '../components/HappierMark';
 import { DISCORD_INVITE_URL } from '../data/community';
 import { CHANGELOG_URL, DOCS_URL, GUIDES_URL, GITHUB_REPO_URL, LICENSE_URL, WEB_APP_URL } from '../data/downloads';
 import { rich } from '../i18n/rich';
-import { PAGE_PROSE } from '../data/pageProse';
+import { useSiteData } from '../i18n/siteData';
 
 /**
  * Read once at module scope, not per render.
@@ -105,6 +105,8 @@ function hrefFor(href: string, isHome: boolean): string {
 }
 
 export function Footer({ isHome = true }: { isHome?: boolean } = {}) {
+    const { pageProse: { PAGE_PROSE } } = useSiteData();
+
     return (
         <footer
             className="relative border-t"

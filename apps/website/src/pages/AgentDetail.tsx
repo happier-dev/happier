@@ -8,8 +8,8 @@ import { P, PageHeader, PageShell, Prose } from '../components/PageShell';
 import { InstallCommand } from '../components/InstallCommand';
 import { DOCS_URL, GUIDES_URL, WEB_APP_URL } from '../data/downloads';
 import { rich } from '../i18n/rich';
-import { PAGE_PROSE } from '../data/pageProse';
 import type { ReactNode } from 'react';
+import { useSiteData } from '../i18n/siteData';
 
 /**
  * /agents/<slug>
@@ -133,6 +133,8 @@ function Ticks({ text }: { text: string }) {
  * definitions actually say.
  */
 function InstallReality({ agent }: { agent: AgentRecord }) {
+    const { pageProse: { PAGE_PROSE } } = useSiteData();
+
     const managedPath = (
         <>
             <code className="font-mono">~/.happier/tools/providers/{agent.id}/</code>
@@ -296,6 +298,8 @@ function RunsOnAccount({ agent }: { agent: AgentRecord }) {
 }
 
 export function AgentDetail({ agent }: { agent: AgentRecord }) {
+    const { pageProse: { PAGE_PROSE } } = useSiteData();
+
     const setupLink = setupLinkFor(agent);
     const hasSetupGuide = agent.vendorSetupGuide !== null;
     // Bound to a const because the link below is built inside a rich() slot

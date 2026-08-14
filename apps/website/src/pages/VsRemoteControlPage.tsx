@@ -2,7 +2,6 @@ import { P, PageHeader, PageShell, Prose } from '../components/PageShell';
 import { InstallCommand } from '../components/InstallCommand';
 import { useSiteData } from '../i18n/siteData';
 import { rich } from '../i18n/rich';
-import { PAGE_PROSE } from '../data/pageProse';
 import type { ReactNode } from 'react';
 
 /**
@@ -27,6 +26,8 @@ import type { ReactNode } from 'react';
  *     and it was false.
  */
 export function VsRemoteControlPage() {
+    const { pageProse: { PAGE_PROSE } } = useSiteData();
+
     const { comparison: { COMPARISON_ROWS, RC_SCOPE_LIMIT, RC_SECTION, RC_STRENGTHS }, agents: { AGENTS } } = useSiteData();
 
     return (

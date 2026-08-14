@@ -1,9 +1,11 @@
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 
+import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 
+import { LocaleProvider } from '../i18n';
 import { AgentDetail } from '../pages/AgentDetail';
 
 import {
@@ -727,7 +729,15 @@ describe('every agent page leads with something only that agent can say', () => 
         const { mean, worst } = pairwiseJaccard(
             AGENTS.map((agent) => ({
                 slug: agent.slug,
-                text: renderToStaticMarkup(AgentDetail({ agent }))
+                text: renderToStaticMarkup(
+                    createElement(
+                        LocaleProvider,
+                        {
+                            locale: 'en',
+                            children: createElement(AgentDetail, { agent }),
+                        },
+                    ),
+                )
                     .replace(/<[^>]+>/g, ' ')
                     .replace(/&[a-z]+;/g, ' '),
             })),

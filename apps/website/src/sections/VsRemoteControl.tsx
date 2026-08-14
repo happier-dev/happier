@@ -1,7 +1,6 @@
 import { RevealText } from '../components/RevealText';
 import { useSiteData } from '../i18n/siteData';
 import { rich } from '../i18n/rich';
-import { PAGE_PROSE } from '../data/pageProse';
 import type { ReactNode } from 'react';
 
 export const VS_REMOTE_CONTROL_SECTION_ID = 'vs-remote-control';
@@ -26,6 +25,8 @@ export const VS_REMOTE_CONTROL_SECTION_ID = 'vs-remote-control';
  * If a seventh card is ever added, add an eighth with it.
  */
 export function VsRemoteControl() {
+    const { pageProse: { PAGE_PROSE } } = useSiteData();
+
     const { comparison: { RC_SECTION } } = useSiteData();
 
     return (

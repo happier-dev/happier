@@ -4,7 +4,6 @@ import { P, PageHeader, PageShell, Prose } from '../components/PageShell';
 import { TERMINAL_DOCS_URL } from '../data/terminalFeature';
 import { useSiteData } from '../i18n/siteData';
 import { rich } from '../i18n/rich';
-import { PAGE_PROSE } from '../data/pageProse';
 
 /**
  * `happier attach` in backticks → a real <code> element.
@@ -49,6 +48,8 @@ function withCode(text: string): ReactNode[] {
  * is now the list of what attaching actually needs.
  */
 export function TerminalPage() {
+    const { pageProse: { PAGE_PROSE } } = useSiteData();
+
     const { terminalFeature: { CLAUDE_UNIFIED, CLAUDE_UNIFIED_HEADING, CONTROL_ROWS, TERMINAL_CATCH, TERMINAL_INTRO, TERMINAL_MOVES } } = useSiteData();
 
     return (

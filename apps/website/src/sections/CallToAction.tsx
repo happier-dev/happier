@@ -4,9 +4,11 @@ import { InstallCommand } from '../components/InstallCommand';
 import { DiscordMembers } from '../components/DiscordMembers';
 import { Picture } from '../components/Picture';
 import { rich } from '../i18n/rich';
-import { PAGE_PROSE } from '../data/pageProse';
+import { useSiteData } from '../i18n/siteData';
 
 export function CallToAction() {
+    const { pageProse: { PAGE_PROSE } } = useSiteData();
+
     const { theme } = useTheme();
     const bg = theme === 'dark' ? 'heroBackdropDark' : 'heroBackdropLight';
 

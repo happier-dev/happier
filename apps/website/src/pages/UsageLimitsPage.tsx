@@ -2,7 +2,6 @@ import { P, PageHeader, PageShell, Prose } from '../components/PageShell';
 import { USAGE_LIMITS_DOCS_URL } from '../data/usageLimits';
 import { useSiteData } from '../i18n/siteData';
 import { rich } from '../i18n/rich';
-import { PAGE_PROSE } from '../data/pageProse';
 import type { ReactNode } from 'react';
 
 /**
@@ -69,6 +68,8 @@ import type { ReactNode } from 'react';
  *       not say it arms itself, because on a default install it does not.
  */
 export function UsageLimitsPage() {
+    const { pageProse: { PAGE_PROSE } } = useSiteData();
+
     const { usageLimits: { POOL_DEFAULTS, SERVICE_SUPPORT, USAGE_LIMITS_POOL_SCOPE, USAGE_LIMITS_SCOPE, USAGE_LIMITS_SETUP, USAGE_LIMITS_SUPPORT_NOTES, USAGE_LIMITS_SWITCHING } } = useSiteData();
 
     return (

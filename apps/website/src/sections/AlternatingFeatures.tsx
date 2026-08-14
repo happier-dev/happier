@@ -6,7 +6,6 @@ import { Picture } from '../components/Picture';
 import clsx from 'clsx';
 import { useSiteData } from '../i18n/siteData';
 import { rich } from '../i18n/rich';
-import { PAGE_PROSE } from '../data/pageProse';
 
 /**
  * Feature panels.
@@ -92,6 +91,8 @@ const SPAN_CLASS: Record<Span, string> = {
 };
 
 export function AlternatingFeatures() {
+    const { pageProse: { PAGE_PROSE } } = useSiteData();
+
     const { features: { PRIMARY_FEATURES } } = useSiteData();
 
     return (

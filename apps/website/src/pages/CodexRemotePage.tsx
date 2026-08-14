@@ -2,7 +2,6 @@ import { P, PageHeader, PageShell, Prose } from '../components/PageShell';
 import { InstallCommand } from '../components/InstallCommand';
 import { useSiteData } from '../i18n/siteData';
 import { rich } from '../i18n/rich';
-import { PAGE_PROSE } from '../data/pageProse';
 import type { ReactNode } from 'react';
 
 /**
@@ -37,6 +36,8 @@ import type { ReactNode } from 'react';
  *     act, and it was a blocker the last time it shipped.
  */
 export function CodexRemotePage() {
+    const { pageProse: { PAGE_PROSE } } = useSiteData();
+
     const { codexRemote: { CODEX_COMPARISON_ROWS, CODEX_SCOPE_LIMIT, CODEX_SECTION }, agents: { AGENTS } } = useSiteData();
 
     return (

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import { MobileThemePreview } from './heroShowcase/MobileThemePreview';
 import { Picture } from '../components/Picture';
 import { rich } from '../i18n/rich';
-import { PAGE_PROSE } from '../data/pageProse';
+import { useSiteData } from '../i18n/siteData';
 
 /**
  * Product showcase below the hero.
@@ -122,6 +122,8 @@ export function HeroShowcase() {
  * the page; the image fills the height and overflows horizontally to pan.
  */
 function DesktopScrollable({ visible }: { visible: boolean }) {
+    const { pageProse: { PAGE_PROSE } } = useSiteData();
+
     const scrollRef = useRef<HTMLDivElement | null>(null);
 
     useEffect(() => {
