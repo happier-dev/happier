@@ -58,6 +58,8 @@ export async function fetchGitHubReleaseByTag(params: Readonly<{
   userAgent?: string;
   githubToken?: string;
   fetchImpl?: FetchImpl;
+  transientNotFoundAttempts?: number;
+  retryDelayMs?: number;
 }>): Promise<unknown> {
   const userAgent = String(params.userAgent ?? '').trim() || 'happier-release-runtime';
   const token = String(params.githubToken ?? '').trim();
@@ -68,28 +70,28 @@ export async function fetchGitHubReleaseByTag(params: Readonly<{
   };
   if (token) headers.authorization = `Bearer ${token}`;
 
-  if (params.fetchImpl) {
+  const attempts = Math.max(1, Math.floor(params.transientNotFoundAttempts ?? 3));
+  const retryDelayMs = Math.max(0, Math.floor(params.retryDelayMs ?? 250));
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
     try {
-      const response = await params.fetchImpl(url, { headers });
-      if (!response.ok) {
-        throw createHttpError(`[github] failed to resolve release tag ${params.tag} (${response.status})`, response.status);
+      if (params.fetchImpl) {
+        const response = await params.fetchImpl(url, { headers });
+        if (!response.ok) {
+          throw createHttpError(`[github] failed to resolve release tag ${params.tag} (${response.status})`, response.status);
+        }
+        return response.json();
       }
-      return response.json();
+      return await requestJson({ url, headers });
     } catch (error) {
-      throw normalizeGitHubRequestError({
+      const normalized = normalizeGitHubRequestError({
         context: `[github] failed to resolve release tag ${params.tag}`,
         error,
       });
+      if (readHttpStatus(normalized) !== 404 || attempt >= attempts) throw normalized;
+      if (retryDelayMs > 0) await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
     }
   }
-  try {
-    return await requestJson({ url, headers });
-  } catch (error) {
-    throw normalizeGitHubRequestError({
-      context: `[github] failed to resolve release tag ${params.tag}`,
-      error,
-    });
-  }
+  throw createHttpError(`[github] failed to resolve release tag ${params.tag}`, 404);
 }
 
 export async function fetchGitHubLatestRelease(params: Readonly<{
@@ -148,6 +150,7 @@ export async function fetchFirstGitHubReleaseByTags(params: Readonly<{
         userAgent: params.userAgent,
         githubToken: params.githubToken,
         fetchImpl: params.fetchImpl,
+        transientNotFoundAttempts: 1,
       });
       return { tag, release };
     } catch (e) {

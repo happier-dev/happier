@@ -66,6 +66,23 @@ test('fetchGitHubReleaseByTag throws with status for non-ok responses', async ()
   }
 });
 
+test('fetchGitHubReleaseByTag tolerates the bounded rolling-release replacement gap', async () => {
+  let calls = 0;
+  const release = await fetchGitHubReleaseByTag({
+    githubRepo: 'happier-dev/happier',
+    tag: 'server-preview',
+    retryDelayMs: 0,
+    fetchImpl: async () => {
+      calls += 1;
+      return calls < 3
+        ? { ok: false, status: 404, json: async () => ({}) }
+        : { ok: true, status: 200, json: async () => ({ tag_name: 'server-preview' }) };
+    },
+  });
+  assert.equal(calls, 3);
+  assert.equal(release.tag_name, 'server-preview');
+});
+
 test('fetchFirstGitHubReleaseByTags returns first non-404 release', async () => {
   const u1 = 'https://api.github.com/repos/happier-dev/happier/releases/tags/ui-web-preview';
   const u2 = 'https://api.github.com/repos/happier-dev/happier/releases/tags/ui-web-stable';
