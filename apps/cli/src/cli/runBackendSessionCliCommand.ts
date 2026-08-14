@@ -334,6 +334,7 @@ ${chalk.bold.cyan(`${agentId} CLI Options (from \`${providerHelpCommand}\`):`)}
       else directConnectedServiceEnvironment?.cleanupOnFailure?.();
     }
   } catch (error) {
+    logger.fatal(error);
     console.error(chalk.red('Error:'), error instanceof Error ? error.message : 'Unknown error');
     if (process.env.DEBUG) {
       console.error(error);

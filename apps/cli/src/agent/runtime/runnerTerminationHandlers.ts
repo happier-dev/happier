@@ -6,6 +6,7 @@ import {
   type RunnerTerminationOutcome,
 } from './runnerTerminationOutcome';
 import { writeSessionExitReportSync } from '../../session/diagnostics/sessionExitReport';
+import { logger } from '../../ui/logger';
 
 type ProcessLike = Pick<EventEmitter, 'on' | 'removeListener'>;
 type RunnerTerminationSessionExitReportOptions = Readonly<{
@@ -90,6 +91,14 @@ export function registerRunnerTerminationHandlers(params: Readonly<{
   const terminate = (event: RunnerTerminationEvent) => {
     if (terminated) return;
     terminated = true;
+
+    if (event.kind === 'unhandledRejection' || event.kind === 'uncaughtException') {
+      try {
+        logger.fatal(event.kind === 'unhandledRejection' ? event.reason : event.error);
+      } catch {
+        // Fatal diagnostics must never replace runner cleanup and exit semantics.
+      }
+    }
 
     try {
       params.onTerminationRequested?.(event);

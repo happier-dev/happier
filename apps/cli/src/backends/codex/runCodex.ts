@@ -567,6 +567,7 @@ export async function runCodex(opts: {
             mode = 'remote';
         }
     }
+    const startedInLocalMode = mode === 'local';
 
     const shouldFastStartLocal =
         mode === 'local' &&
@@ -719,16 +720,18 @@ export async function runCodex(opts: {
         resolve: (() => void) | null;
     } = { promise: null, resolve: null };
     codexAppServerDaemonReportReadiness.promise = useCodexAppServer
-        ? new Promise<void>((resolve) => {
-            codexAppServerDaemonReportReadiness.resolve = resolve;
-        })
+        ? startedInLocalMode
+            ? Promise.resolve()
+            : new Promise<void>((resolve) => {
+                codexAppServerDaemonReportReadiness.resolve = resolve;
+            })
         : null;
     const startupMetadata: Metadata = useCodexAppServer
         ? {
             ...metadata,
             connectedServiceAccessTokenRefreshV1: {
                 v: 1,
-                mode: 'daemon_callback',
+                mode: startedInLocalMode ? 'unavailable' : 'daemon_callback',
                 serviceIds: ['openai-codex'],
             },
         }
@@ -1211,6 +1214,31 @@ export async function runCodex(opts: {
         keepAlive: (nextThinking, nextMode) => session.keepAlive(nextThinking, nextMode),
     });
     const turnAssistantPreviewTracker = createTurnAssistantPreviewTracker();
+    let happierMcpServer: { url: string; stop: () => void } | null = null;
+    let client: CodexMcpClient | null = null;
+    let remoteTerminalUi: ReturnType<typeof createCodexRemoteTerminalUi> | null = null;
+    let cleanupRunResourcesPromise: Promise<void> | null = null;
+    const cleanupRunResourcesOnce = (): Promise<void> => {
+        cleanupRunResourcesPromise ??= (async () => {
+            quotaSnapshotDeliveryOutbox.clearSession(session.sessionId);
+            await closeProviderInputAdmission();
+            await cleanupCodexRunResources({
+                session,
+                reconnectionHandle,
+                client,
+                codexRuntime: getCodexRemoteRuntime(),
+                stopHappierMcpServer: () => happierMcpServer?.stop(),
+                unmountRemoteUi: async () => {
+                    await remoteTerminalUi?.unmount();
+                },
+                keepAliveInterval,
+                messageBuffer,
+                logDebug: (message, error) => logger.debug(message, error),
+                logActiveHandles,
+            });
+        })();
+        return cleanupRunResourcesPromise;
+    };
 
     let resumeIdFromLocalControl: string | null = null;
     if (mode === 'local') {
@@ -1225,7 +1253,7 @@ export async function runCodex(opts: {
                 codexArgs: opts.codexArgs ?? [],
             }));
         if (localResult.type === 'exit') {
-            clearInterval(keepAliveInterval);
+            await cleanupRunResourcesOnce();
             return;
         }
 
@@ -1300,9 +1328,6 @@ export async function runCodex(opts: {
     if (shouldLogAcpDebug) {
         logger.debug(`[Codex] Remote engine selected: ${useCodexAcp ? 'acp' : useCodexAppServer ? 'appServer' : 'mcp'}`);
     }
-    let happierMcpServer: { url: string; stop: () => void } | null = null;
-    let client: CodexMcpClient | null = null;
-    let remoteTerminalUi: ReturnType<typeof createCodexRemoteTerminalUi> | null = null;
     // codexAcpRuntime is declared above to allow the onUserMessage binding to steer mid-turn.
     // Codex ACP `startOrLoad` (especially `loadSession`) can be slow and is not cancellable at the protocol
     // level today. Local-control switching and abort must still unblock immediately, so we race `startOrLoad`
@@ -1403,22 +1428,7 @@ export async function runCodex(opts: {
             }
 
             try {
-                await closeProviderInputAdmission();
-                await cleanupCodexRunResources({
-                    session,
-                    reconnectionHandle,
-                    client,
-                    codexRuntime: getCodexRemoteRuntime(),
-                    stopHappierMcpServer: () => happierMcpServer?.stop(),
-                    unmountRemoteUi: async () => {
-                        if (!remoteTerminalUi) return;
-                        await remoteTerminalUi.unmount();
-                    },
-                    keepAliveInterval,
-                    messageBuffer,
-                    logDebug: (message, error) => logger.debug(message, error),
-                    logActiveHandles,
-                });
+                await cleanupRunResourcesOnce();
             } catch (e) {
                 logger.debug('[Codex] Cleanup failure during termination (non-fatal)', e);
             } finally {
@@ -1904,7 +1914,7 @@ export async function runCodex(opts: {
     }
 
     const callbackMetadata = session.getMetadataSnapshot?.();
-    if (!useCodexAppServer && callbackMetadata && session.sessionId?.trim()) {
+    if ((!useCodexAppServer || startedInLocalMode) && callbackMetadata && session.sessionId?.trim()) {
         void reportSessionToDaemonIfRunning({
             sessionId: session.sessionId,
             metadata: {
@@ -2851,21 +2861,6 @@ export async function runCodex(opts: {
 
     } finally {
         terminationHandlers.dispose();
-        quotaSnapshotDeliveryOutbox.clearSession(session.sessionId);
-        await closeProviderInputAdmission();
-        await cleanupCodexRunResources({
-            session,
-            reconnectionHandle,
-            client,
-            codexRuntime: getCodexRemoteRuntime(),
-            stopHappierMcpServer: () => happierMcpServer?.stop(),
-            unmountRemoteUi: async () => {
-                await remoteTerminalUi?.unmount();
-            },
-            keepAliveInterval,
-            messageBuffer,
-            logDebug: (message, error) => logger.debug(message, error),
-            logActiveHandles,
-        });
+        await cleanupRunResourcesOnce();
     }
 }
