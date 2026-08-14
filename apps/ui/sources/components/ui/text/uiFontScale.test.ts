@@ -88,6 +88,35 @@ describe('uiFontScale', () => {
         expect(scaled[marker]).toEqual({ className: 'unistyles_x' });
     });
 
+    it('scales web Unistyles styles whose metrics are non-enumerable, non-writable properties', () => {
+        // Mirrors react-native-unistyles/src/web removeInlineStyles + assignSecrets: style values
+        // become non-enumerable, non-writable (but configurable) data properties, and the secret
+        // lives under an enumerable `unistyles_*` key without the native `uni__getStyles` shape.
+        const style: any = {};
+        Object.defineProperties(style, {
+            fontSize: { value: 16, enumerable: false, configurable: true },
+            lineHeight: { value: 24, enumerable: false, configurable: true },
+        });
+        style.unistyles_web1 = {};
+        Object.defineProperty(style.unistyles_web1, '__uni__key', {
+            value: 'transcriptMarkdownText',
+            enumerable: false,
+            configurable: true,
+        });
+
+        const scaled = scaleTextStyle(style, 1.3) as any;
+
+        expect(scaled).not.toBe(style);
+        expect(scaled.fontSize).toBe(20.8);
+        expect(scaled.lineHeight).toBe(31.2);
+        // Enumerability is preserved so the web renderer keeps sizing text via CSS classes.
+        expect(Object.getOwnPropertyDescriptor(scaled, 'fontSize')?.enumerable).toBe(false);
+        expect(scaled.unistyles_web1).toBe(style.unistyles_web1);
+        // The original registered style must never be mutated.
+        expect(style.fontSize).toBe(16);
+        expect(style.lineHeight).toBe(24);
+    });
+
     it('does not crash on nullish styles', () => {
         expect(scaleTextStyle(null, 1.1)).toBe(null);
         expect(scaleTextStyle(undefined, 1.1)).toBe(undefined);

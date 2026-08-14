@@ -249,6 +249,7 @@ vi.mock('@/components/ui/scroll/useScrollEdgeFades', () => ({
 
 vi.mock('@/components/ui/layout/layout', () => ({
     layout: { maxWidth: 800, headerMaxWidth: 800 },
+    useLayoutMaxWidth: () => 800,
 }));
 
 describe('PendingMessagesTranscriptBlock', () => {

@@ -16,6 +16,23 @@ function clonePreservingOwnProps<T extends object>(entry: T): T {
     }
 }
 
+function setScaledMetric(target: any, key: string, value: number): void {
+    const descriptor = Object.getOwnPropertyDescriptor(target, key);
+    if (!descriptor || (descriptor.writable === true && !descriptor.get && !descriptor.set)) {
+        target[key] = value;
+        return;
+    }
+    // Web Unistyles registers style values as non-enumerable, non-writable data properties
+    // (see react-native-unistyles/src/web removeInlineStyles). Redefine the metric on the
+    // clone while preserving its enumerability so CSS-class-driven rendering is unaffected.
+    Object.defineProperty(target, key, {
+        value,
+        enumerable: descriptor.enumerable,
+        configurable: true,
+        writable: true,
+    });
+}
+
 function scaleNumericTextMetrics(entry: any, uiFontScale: number): any {
     const hasFontSize = typeof entry?.fontSize === 'number';
     const hasLineHeight = typeof entry?.lineHeight === 'number';
@@ -24,12 +41,13 @@ function scaleNumericTextMetrics(entry: any, uiFontScale: number): any {
 
     const next: any = clonePreservingOwnProps(entry as any);
     try {
-        if (hasFontSize) next.fontSize = roundTo2(next.fontSize * uiFontScale);
-        if (hasLineHeight) next.lineHeight = roundTo2(next.lineHeight * uiFontScale);
-        if (hasLetterSpacing) next.letterSpacing = roundTo2(next.letterSpacing * uiFontScale);
+        if (hasFontSize) setScaledMetric(next, 'fontSize', roundTo2(entry.fontSize * uiFontScale));
+        if (hasLineHeight) setScaledMetric(next, 'lineHeight', roundTo2(entry.lineHeight * uiFontScale));
+        if (hasLetterSpacing) setScaledMetric(next, 'letterSpacing', roundTo2(entry.letterSpacing * uiFontScale));
         return next;
     } catch {
-        // If the style object is non-writable (or uses accessors), avoid corrupting opaque metadata.
+        // A non-configurable, non-writable metric cannot be scaled without corrupting opaque
+        // metadata; fail closed to the unscaled style.
         return entry;
     }
 }
