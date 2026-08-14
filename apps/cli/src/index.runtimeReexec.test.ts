@@ -13,6 +13,7 @@ const {
   resolveNpmPackageNameOverrideMock,
   installConsoleWriteErrorGuardsMock,
   shouldInstallConsoleWriteErrorGuardsMock,
+  loggerFatalMock,
 } = vi.hoisted(() => ({
   dispatchCliMock: vi.fn(async () => undefined),
   ensureWindowsUtf8CodePageMock: vi.fn(),
@@ -25,6 +26,7 @@ const {
   resolveNpmPackageNameOverrideMock: vi.fn(({ fallback }: { fallback: string }) => fallback),
   installConsoleWriteErrorGuardsMock: vi.fn(),
   shouldInstallConsoleWriteErrorGuardsMock: vi.fn(() => true),
+  loggerFatalMock: vi.fn(),
 }));
 
 vi.mock('@/cli/dispatch', () => ({
@@ -73,6 +75,12 @@ vi.mock('@/utils/writeConsoleBestEffort', () => ({
   shouldInstallConsoleWriteErrorGuards: shouldInstallConsoleWriteErrorGuardsMock,
 }));
 
+vi.mock('@/ui/logger', () => ({
+  logger: {
+    fatal: loggerFatalMock,
+  },
+}));
+
 function createDeferred() {
   let resolve!: () => void;
   const promise = new Promise<undefined>((resolvePromise) => {
@@ -107,6 +115,7 @@ describe('CLI startup runtime reexec', () => {
     installConsoleWriteErrorGuardsMock.mockReset();
     shouldInstallConsoleWriteErrorGuardsMock.mockReset();
     shouldInstallConsoleWriteErrorGuardsMock.mockReturnValue(true);
+    loggerFatalMock.mockReset();
     vi.resetModules();
   });
 
@@ -141,6 +150,7 @@ describe('CLI startup runtime reexec', () => {
 
       await vi.waitFor(() => {
         expect(output.lines).toContain('Error: startup blew up');
+        expect(loggerFatalMock).toHaveBeenCalledWith(startupError);
         expect(process.exitCode).toBe(1);
       });
     } finally {
