@@ -107,6 +107,60 @@ describe('parseComposerTokenEnd', () => {
     });
 });
 
+/**
+ * A quoted span lets one token hold a name with spaces (`@"my session"`). Its
+ * opening quote therefore suspends the whitespace rule that normally ends a
+ * token — so an opening quote that is NOT the start of a value turns the rest of
+ * the line into one token and holds the picker open across every following word.
+ *
+ * `"@"` in prose is exactly that shape, and it is the reported defect: quoting
+ * the mention character while writing about it opened the picker and kept it
+ * open. The span now opens only when a value actually follows the quote.
+ */
+describe('an opening quote with no value after it', () => {
+    it('does not open a span when a space follows the quote', () => {
+        expect(parseComposerTokenEnd('@" rest', 0, 7)).toBe(1);
+    });
+
+    it('does not open a span when the quote ends the content', () => {
+        expect(parseComposerTokenEnd('@"', 0, 2)).toBe(1);
+    });
+
+    it('still opens a span for a real quoted value', () => {
+        expect(parseComposerTokenEnd('@"my session"', 0, 13)).toBe(13);
+    });
+
+    it('leaves a quoted mention character in prose inert', () => {
+        const content = '"@" is the mention character';
+
+        expect(findActiveWord(content, { start: 3, end: 3 }, ALL_KINDS)).toBeUndefined();
+        expect(findActiveWord(content, { start: content.length, end: content.length }, ALL_KINDS))
+            .toBeUndefined();
+    });
+
+    it('keeps searching a quoted name across its spaces', () => {
+        const content = '@"fix detached dev';
+        const active = findActiveWord(content, { start: content.length, end: content.length }, ALL_KINDS);
+
+        expect(active?.word).toBe(content);
+        expect(parseComposerSuggestionQuery(active!.word)?.query).toBe('fix detached dev');
+    });
+
+    /**
+     * The one value shape the grammar cannot express, stated rather than left to
+     * be discovered: quoting is what carries a space, so a value that STARTS with
+     * one has no representation. No candidate source produces such a value — file
+     * paths come from ripgrep, session slugs from `[a-z0-9-]+`, plugin and skill
+     * names from their catalogs — and accepting it would reopen the `"@"` defect.
+     */
+    it('does not round-trip a value beginning with whitespace, by construction', () => {
+        const token = formatComposerSuggestionToken('@', ' leading.ts');
+
+        expect(token).toBe('@" leading.ts"');
+        expect(parseComposerTokenEnd(token, 0, token.length)).toBe(1);
+    });
+});
+
 describe('isComposerTokenBoundaryChar', () => {
     it.each([' ', '\t', '\n', '\u00A0', ',', ';', '(', ')', '[', ']', '{', '}', '<', '>', '!', '?', '"', ''])(
         'treats %j as a boundary',
