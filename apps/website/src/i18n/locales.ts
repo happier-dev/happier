@@ -38,6 +38,12 @@ export type LocaleMeta = {
      * crawlers and traps users who deliberately chose the other language.
      */
     acceptLanguagePrefixes: readonly string[];
+    /**
+     * Open Graph's locale format — language_TERRITORY with an underscore, which
+     * is NOT the BCP-47 tag in `htmlLang`. Facebook and LinkedIn reject the
+     * hyphenated form and fall back to en_US, so the two cannot be shared.
+     */
+    ogLocale: string;
     /** Corresponding `SupportedLanguage` in the app's i18n registry. */
     productLanguage: 'en' | 'zh-Hans';
 };
@@ -49,6 +55,7 @@ export const LOCALE_META: Record<Locale, LocaleMeta> = {
         nativeName: 'English',
         englishName: 'English',
         acceptLanguagePrefixes: ['en'],
+        ogLocale: 'en_US',
         productLanguage: 'en',
     },
     'zh-Hans': {
@@ -61,6 +68,7 @@ export const LOCALE_META: Record<Locale, LocaleMeta> = {
         // readers get English until a zh-Hant locale ships, rather than being
         // shown Simplified text they did not ask for.
         acceptLanguagePrefixes: ['zh-hans', 'zh-cn', 'zh-sg', 'zh'],
+        ogLocale: 'zh_CN',
         productLanguage: 'zh-Hans',
     },
 };
@@ -73,12 +81,28 @@ export function localeUrl(locale: Locale, route = '/'): string {
     const prefix = LOCALE_META[locale].pathPrefix;
     const normalized = route === '/' ? '/' : route.replace(/\/+$/, '');
     if (!prefix) return `${SITE_ORIGIN}${normalized}`;
-    return normalized === '/' ? `${SITE_ORIGIN}${prefix}/` : `${SITE_ORIGIN}${prefix}${normalized}`;
+    // `/zh`, NOT `/zh/`. Only the origin root carries a trailing slash; `/zh` is
+    // an ordinary path segment like `/agents`, and it is written to
+    // `zh/index.html`. scripts/assert-crawlable.mjs derives the canonical it
+    // expects FROM that file path, so a trailing slash here makes every
+    // localised home page fail its own canonical check.
+    return normalized === '/' ? `${SITE_ORIGIN}${prefix}` : `${SITE_ORIGIN}${prefix}${normalized}`;
 }
 
-/** Every path the build must emit for a route, keyed by locale. */
-export function localeRoutes(route = '/'): ReadonlyArray<{ locale: Locale; path: string }> {
-    return LOCALES.map((locale) => ({
+/**
+ * Every path the build must emit for a route.
+ *
+ * `locales` is the route's OWN list, not the site's. A route that exists only in
+ * English emits one file and advertises one alternate; a route that has been
+ * translated emits more. That per-route gating is what makes a partially
+ * translated site correct rather than merely tolerated — nothing can advertise a
+ * URL the build did not write.
+ */
+export function localeRoutes(
+    route = '/',
+    locales: readonly Locale[] = LOCALES,
+): ReadonlyArray<{ locale: Locale; path: string }> {
+    return locales.map((locale) => ({
         locale,
         path: localeUrl(locale, route).slice(SITE_ORIGIN.length),
     }));

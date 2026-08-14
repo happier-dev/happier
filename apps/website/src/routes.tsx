@@ -1,5 +1,6 @@
 import type { ReactElement } from 'react';
 
+import { DEFAULT_LOCALE, LOCALE_META, localeFromPathname, localeUrl, type Locale } from './i18n/locales';
 import { AGENTS, AGENT_META } from './data/agents';
 import { CODEX_COMPARISON_ROWS } from './data/codexRemote';
 import { COMPARISON_ROWS } from './data/comparison';
@@ -45,6 +46,30 @@ export const SITE = 'https://happier.dev';
 export type Route = {
     /** Origin-relative path. Always starts with `/`; only `/` ends with one. */
     path: string;
+    /**
+     * The languages THIS PAGE exists in. Omitted means `['en']`.
+     *
+     * This is the gate for the whole locale lane, and it is deliberately
+     * per-route rather than per-site. A page enters a language when someone adds
+     * the code here, and until then it emits one file, one self-referencing
+     * hreflang and one sitemap row — exactly as it does today. Nothing can
+     * advertise a translation that does not exist, and a half-finished language
+     * is a normal state rather than a broken build.
+     *
+     * The per-key English fallback in i18n/messages/registry.ts is the safety
+     * net for the last few untranslated strings INSIDE a page listed here. It is
+     * not a licence to list a page before it is ready: a mostly-English page
+     * under /zh/ is a worse signal than no /zh/ page at all.
+     */
+    locales?: readonly Locale[];
+    /**
+     * Per-locale metadata. Titles and descriptions cannot be translated — the
+     * English is authored at 143-155 characters against a 155 cap, so a Spanish
+     * or Russian rendering overflows before it starts. They have to be
+     * re-authored to fit, which is why they live here as whole strings rather
+     * than going through the catalogue.
+     */
+    i18n?: Partial<Record<Locale, Partial<Pick<Route, 'title' | 'description' | 'ogTitle' | 'ogDescription' | 'ogImageAlt'>>>>;
     /** ≤60 characters, unique across routes. Asserted at build time. */
     title: string;
     /** ≤155 characters. Google truncates past that and the tail is wasted. */
@@ -494,10 +519,16 @@ export const ROUTES: ReadonlyArray<Route> = [
 ];
 
 export function findRoute(pathname: string): Route | undefined {
+    // Strip the locale prefix first: `/zh/agents` and `/agents` are the same
+    // ROUTE in two languages, not two routes. Doing this before the trailing
+    // slash normalisation matters for `/zh/`, which becomes `` and then `/`.
+    const locale = localeFromPathname(pathname);
+    const prefix = LOCALE_META[locale].pathPrefix;
+    const bare = prefix && pathname.startsWith(prefix) ? pathname.slice(prefix.length) || '/' : pathname;
+
     // Cloudflare Pages serves /agents and /agents/ from the same file, so the
     // client has to accept both or a trailing slash breaks hydration.
-    const normalised =
-        pathname !== '/' && pathname.endsWith('/') ? pathname.slice(0, -1) : pathname;
+    const normalised = bare !== '/' && bare.endsWith('/') ? bare.slice(0, -1) : bare;
     return ROUTES.find((route) => route.path === normalised);
 }
 
@@ -526,28 +557,102 @@ function escapeJsonLd(json: string): string {
  * index.html by scripts/prerender.mjs, which is a plain Node script working on
  * text. Keeping it here means the head and the page are edited in one file.
  */
-export function headTagsFor(route: Route): string {
-    const url = `${SITE}${route.path}`;
+/** The languages a route exists in. Absent means English only. */
+export function localesFor(route: Route): readonly Locale[] {
+    return route.locales ?? [DEFAULT_LOCALE];
+}
+
+/**
+ * Re-point a page-scoped JSON-LD node at the locale's own URL.
+ *
+ * `webPage()` mints `@id` and `url` from the English path, which is right for
+ * the English file and a collision for every other one: two documents declaring
+ * the same `@id` tell a crawler they are the same document, which is precisely
+ * what hreflang exists to deny. `inLanguage` moves for the same reason — a
+ * Chinese page describing itself as `en` contradicts its own `<html lang>`.
+ *
+ * Only the prefix is rewritten, so `#webpage` and any `#agent-list` fragment
+ * survive and stay unique per URL.
+ */
+function localizeJsonLd(
+    node: Record<string, unknown>,
+    routePath: string,
+    locale: Locale,
+): Record<string, unknown> {
+    if (locale === DEFAULT_LOCALE) return node;
+    const englishUrl = `${SITE}${routePath}`;
+    const localised = localeUrl(locale, routePath);
+    const rewrite = (value: unknown): unknown => {
+        if (typeof value === 'string') {
+            return value.startsWith(englishUrl) ? localised + value.slice(englishUrl.length) : value;
+        }
+        if (Array.isArray(value)) return value.map(rewrite);
+        if (typeof value === 'object' && value !== null) {
+            return Object.fromEntries(
+                Object.entries(value as Record<string, unknown>).map(([k, v]) => [k, rewrite(v)]),
+            );
+        }
+        return value;
+    };
+    return {
+        ...(rewrite(node) as Record<string, unknown>),
+        inLanguage: LOCALE_META[locale].htmlLang,
+    };
+}
+
+/** Route metadata as it should read in `locale`, falling back to the English. */
+export function metaFor(route: Route, locale: Locale) {
+    const override = route.i18n?.[locale] ?? {};
+    return {
+        title: override.title ?? route.title,
+        description: override.description ?? route.description,
+        ogTitle: override.ogTitle ?? route.ogTitle,
+        ogDescription: override.ogDescription ?? route.ogDescription,
+        ogImageAlt: override.ogImageAlt ?? route.ogImageAlt,
+    };
+}
+
+export function headTagsFor(route: Route, locale: Locale = DEFAULT_LOCALE): string {
+    // SELF-CANONICAL, ALWAYS. Pointing /zh/agents at the English URL is the
+    // one-line mistake that de-indexes an entire language: Google treats the
+    // Chinese page as a duplicate and drops it. Every localised page is the
+    // canonical version of itself, and hreflang — not canonical — is what tells
+    // the crawler they are translations of each other.
+    const url = localeUrl(locale, route.path);
+    const meta = metaFor(route, locale);
     const ogImage = route.ogImage.startsWith('http') ? route.ogImage : `${SITE}${route.ogImage}`;
+    const locales = localesFor(route);
 
     const tags = [
-        `<title>${escapeAttr(route.title)}</title>`,
-        `<meta name="description" content="${escapeAttr(route.description)}" />`,
+        `<title>${escapeAttr(meta.title)}</title>`,
+        `<meta name="description" content="${escapeAttr(meta.description)}" />`,
         `<link rel="canonical" href="${escapeAttr(url)}" />`,
+        // Reciprocity is automatic: every file for this route reads the same
+        // `locales` array, so each one lists all the others AND itself, which is
+        // what Google requires before it will honour any of them.
+        ...locales.map(
+            (l) =>
+                `<link rel="alternate" hreflang="${escapeAttr(LOCALE_META[l].htmlLang)}" href="${escapeAttr(localeUrl(l, route.path))}" />`,
+        ),
+        `<link rel="alternate" hreflang="x-default" href="${escapeAttr(localeUrl(DEFAULT_LOCALE, route.path))}" />`,
+        `<meta property="og:locale" content="${escapeAttr(LOCALE_META[locale].ogLocale)}" />`,
+        ...locales
+            .filter((l) => l !== locale)
+            .map((l) => `<meta property="og:locale:alternate" content="${escapeAttr(LOCALE_META[l].ogLocale)}" />`),
         `<meta name="robots" content="index, follow, max-snippet:-1, max-image-preview:large, max-video-preview:-1" />`,
         `<meta property="og:url" content="${escapeAttr(url)}" />`,
-        `<meta property="og:title" content="${escapeAttr(route.ogTitle)}" />`,
-        `<meta property="og:description" content="${escapeAttr(route.ogDescription)}" />`,
+        `<meta property="og:title" content="${escapeAttr(meta.ogTitle)}" />`,
+        `<meta property="og:description" content="${escapeAttr(meta.ogDescription)}" />`,
         `<meta property="og:image" content="${escapeAttr(ogImage)}" />`,
         `<meta property="og:image:type" content="image/png" />`,
         `<meta property="og:image:width" content="1200" />`,
         `<meta property="og:image:height" content="630" />`,
-        `<meta property="og:image:alt" content="${escapeAttr(route.ogImageAlt)}" />`,
+        `<meta property="og:image:alt" content="${escapeAttr(meta.ogImageAlt)}" />`,
         `<meta name="twitter:card" content="summary_large_image" />`,
-        `<meta name="twitter:title" content="${escapeAttr(route.ogTitle)}" />`,
-        `<meta name="twitter:description" content="${escapeAttr(route.ogDescription)}" />`,
+        `<meta name="twitter:title" content="${escapeAttr(meta.ogTitle)}" />`,
+        `<meta name="twitter:description" content="${escapeAttr(meta.ogDescription)}" />`,
         `<meta name="twitter:image" content="${escapeAttr(ogImage)}" />`,
-        `<meta name="twitter:image:alt" content="${escapeAttr(route.ogImageAlt)}" />`,
+        `<meta name="twitter:image:alt" content="${escapeAttr(meta.ogImageAlt)}" />`,
     ];
 
     if (route.path === '/') {
@@ -556,7 +661,7 @@ export function headTagsFor(route: Route): string {
 
     for (const node of route.jsonLd) {
         tags.push(
-            `<script type="application/ld+json">${escapeJsonLd(JSON.stringify(node))}</script>`,
+            `<script type="application/ld+json">${escapeJsonLd(JSON.stringify(localizeJsonLd(node, route.path, locale)))}</script>`,
         );
     }
 
@@ -571,7 +676,13 @@ export function headTagsFor(route: Route): string {
  * assertion all consume the same object.
  */
 export type RouteManifestEntry = {
+    /** The URL as served, INCLUDING any locale prefix: `/zh/agents`. */
     path: string;
+    /** The locale-independent route, for grouping translations of one page. */
+    routePath: string;
+    locale: Locale;
+    /** BCP-47 tag for this file's `<html lang>`. */
+    htmlLang: string;
     title: string;
     description: string;
     head: string;
@@ -584,12 +695,34 @@ export function fileForRoute(path: string): string {
     return `${path.replace(/^\/|\/$/g, '')}/index.html`;
 }
 
+/**
+ * One entry per (route, locale) pair the build must emit.
+ *
+ * `fileForRoute` needs no locale awareness: it is handed the already-prefixed
+ * path, so `/zh/agents` maps to `zh/agents/index.html` under the rule it already
+ * had. The same holds for scripts/assert-crawlable.mjs, which derives the
+ * expected canonical FROM the file path and therefore validates a `/zh/` URL
+ * with no change at all.
+ *
+ * While every route is English-only this returns exactly what it always did —
+ * one entry per route — which is what makes this change verifiable by diffing
+ * dist/ rather than by reading it.
+ */
 export function routeManifest(): RouteManifestEntry[] {
-    return ROUTES.map((route) => ({
-        path: route.path,
-        title: route.title,
-        description: route.description,
-        head: headTagsFor(route),
-        file: fileForRoute(route.path),
-    }));
+    return ROUTES.flatMap((route) =>
+        localesFor(route).map((locale) => {
+            const path = localeUrl(locale, route.path).slice(SITE.length);
+            const meta = metaFor(route, locale);
+            return {
+                path,
+                routePath: route.path,
+                locale,
+                htmlLang: LOCALE_META[locale].htmlLang,
+                title: meta.title,
+                description: meta.description,
+                head: headTagsFor(route, locale),
+                file: fileForRoute(path),
+            };
+        }),
+    );
 }

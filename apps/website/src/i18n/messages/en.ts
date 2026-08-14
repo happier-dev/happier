@@ -61,6 +61,16 @@ export const en = {
         headlineLineOne: 'Claude Code, Codex',
         headlineLineTwo: 'OpenCode, Pi',
         headlineLineTwoAside: '& 9 more',
+        /**
+         * Does the aside count the REMAINDER or the TOTAL?
+         *
+         * English says "& 9 more" — 4 named + 9 = 13. Chinese enumerations
+         * idiomatically state the total after 等 ("等 13 种"), which asserts the
+         * same fact by different arithmetic. Without this field the count guard
+         * checks 4 + 13 = 13 against the Chinese and either fails on correct
+         * copy or, as it did until now, never looks at anything but English.
+         */
+        headlineLineTwoAsideCounts: 'remainder' as 'remainder' | 'total',
         // "work" narrowed the promise to the working day and carried the wrong
         // connotation with it — a lot of this audience codes for pleasure. "go"
         // frames Happier as the thing you take with you, which is the claim the

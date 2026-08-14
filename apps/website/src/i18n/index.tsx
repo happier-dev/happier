@@ -21,19 +21,22 @@ const LocaleContext = createContext<LocaleContextValue>({
 });
 
 /**
- * Wraps the app. `locale` is passed explicitly by the prerender entry (which
- * knows which file it is emitting) and inferred from `location.pathname` in
- * the browser — the two must agree, or React would hydrate mismatched text.
+ * Wraps the app. `locale` is REQUIRED, and deliberately so.
+ *
+ * It used to be optional, falling back to DEFAULT_LOCALE on the server and to
+ * `localeFromPathname(window.location.pathname)` in the browser. Those two
+ * branches disagree by construction on every non-English page: the prerender
+ * would emit English into `dist/zh/agents/index.html` and the browser would
+ * hydrate Chinese over it. React does not merge that, it warns and re-renders,
+ * and the crawler keeps the English it was served. Passing the locale in from
+ * the caller that already knows it — the prerender entry knows which file it is
+ * emitting, the client entry is generated per locale — removes the branch
+ * rather than trying to keep two of them in agreement.
  */
-export function LocaleProvider({ locale, children }: { locale?: Locale; children: ReactNode }) {
-    const resolved = locale
-        ?? (typeof window === 'undefined'
-            ? DEFAULT_LOCALE
-            : localeFromPathname(window.location.pathname));
-
+export function LocaleProvider({ locale, children }: { locale: Locale; children: ReactNode }) {
     const value = useMemo<LocaleContextValue>(
-        () => ({ locale: resolved, t: messagesFor(resolved) }),
-        [resolved],
+        () => ({ locale, t: messagesFor(locale) }),
+        [locale],
     );
 
     return <LocaleContext.Provider value={value}>{children}</LocaleContext.Provider>;

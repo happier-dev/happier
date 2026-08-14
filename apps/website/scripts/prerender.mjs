@@ -150,6 +150,21 @@ async function main() {
             '\n        ' +
             shell.slice(headEnd);
         out = out.replace(ROOT_DIV, () => `<div id="root">${appHtml}</div>`);
+
+        // `<html lang>` per file. index.html ships `lang="en"` as the shell's
+        // default; a localised page has to declare its own or a screen reader
+        // announces Chinese in an English voice and Google reads the page as
+        // English regardless of the hreflang cluster.
+        if (route.htmlLang && route.htmlLang !== 'en') {
+            const before = out;
+            out = out.replace(/<html([^>]*)\slang="[^"]*"/i, (_m, rest) => `<html${rest} lang="${route.htmlLang}"`);
+            if (out === before) {
+                throw new Error(
+                    `could not set lang="${route.htmlLang}" on ${route.file} — index.html no longer has a <html lang="…"> to replace.`,
+                );
+            }
+        }
+
         out = stripAuthoringComments(out);
 
         const file = path.join(DIST, route.file);

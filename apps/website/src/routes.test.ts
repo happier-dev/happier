@@ -41,6 +41,41 @@ describe('route table', () => {
         }
     });
 
+    /**
+     * The route-level checks above see ONE title per route. This one sees every
+     * FILE the build emits, which is where a locale goes wrong: a route that
+     * declares `locales: ['en', 'zh-Hans']` without a matching `i18n['zh-Hans']`
+     * entry writes the English title into /zh/ too, and then two URLs compete
+     * for the same query — the exact failure the route-level guard was written
+     * to prevent, reintroduced one dimension over.
+     *
+     * Titles and descriptions cannot be translated into the caps anyway (the
+     * English is authored at 143-155 against a 155 ceiling), so being forced to
+     * author them per locale is the correct outcome, not an inconvenience.
+     */
+    it('gives every emitted page — each locale of each route — its own title and description', () => {
+        const titles = new Map<string, string>();
+        const descriptions = new Map<string, string>();
+
+        for (const entry of routeManifest()) {
+            expect(entry.title.length, `${entry.path}: "${entry.title}"`).toBeLessThanOrEqual(60);
+            expect(entry.description.length, `${entry.path}`).toBeLessThanOrEqual(155);
+            expect(
+                titles.get(entry.title),
+                `${entry.path} ships the same <title> as ${titles.get(entry.title)}. ` +
+                    `Give it \`i18n['${entry.locale}'].title\` in src/routes.tsx, or drop ` +
+                    `'${entry.locale}' from that route's \`locales\`.`,
+            ).toBeUndefined();
+            expect(
+                descriptions.get(entry.description),
+                `${entry.path} ships the same description as ${descriptions.get(entry.description)}. ` +
+                    `Give it \`i18n['${entry.locale}'].description\`, or drop '${entry.locale}'.`,
+            ).toBeUndefined();
+            titles.set(entry.title, entry.path);
+            descriptions.set(entry.description, entry.path);
+        }
+    });
+
     it('mints a unique page-scoped JSON-LD @id for every route', () => {
         const seen = new Map<string, string>();
         for (const route of ROUTES) {
@@ -99,10 +134,15 @@ describe('route table', () => {
 
     it('produces a manifest the build scripts can consume without React', () => {
         const manifest = routeManifest();
-        expect(manifest).toHaveLength(ROUTES.length);
+        // One entry per (route, locale) pair, not per route. While every route
+        // is English-only these are the same number, which is the property that
+        // let the locale dimension land without changing a single output file.
+        const expected = ROUTES.reduce((n, route) => n + (route.locales?.length ?? 1), 0);
+        expect(manifest).toHaveLength(expected);
         for (const entry of manifest) {
             expect(typeof entry.head).toBe('string');
             expect(entry.file.endsWith('index.html')).toBe(true);
+            expect(entry.htmlLang.length, `${entry.path} has no html lang`).toBeGreaterThan(0);
         }
     });
 

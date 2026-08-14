@@ -1,6 +1,7 @@
 import { Fragment } from 'react';
 
 import { useT } from '../i18n';
+import { segmentWords } from '../i18n/segmentWords';
 
 /**
  * Hero headline: three reveal lines, a small aside next to line two, and a
@@ -31,6 +32,12 @@ import { useT } from '../i18n';
 
 type WordSpec = {
     text: string;
+    /**
+     * What to emit after this span. A space for Latin, nothing between CJK
+     * characters — segmentWords decides, because inserting spaces between
+     * Chinese characters is visibly wrong.
+     */
+    joiner: string;
     small?: boolean;
     gradient?: boolean;
 };
@@ -88,11 +95,15 @@ const GRADIENT_STYLE = {
     marginBlock: '-0.2em',
 } as const;
 
-function words(text: string, extra?: Omit<WordSpec, 'text'>): WordSpec[] {
-    return text
-        .split(/\s+/)
-        .filter(Boolean)
-        .map((word) => ({ text: word, ...extra }));
+/**
+ * NOT `text.split(/\s+/)`. Chinese and Japanese contain no spaces, so a split on
+ * whitespace returned the whole line as ONE unit — and because WordsLine wraps
+ * every group in `white-space: nowrap`, that unit could not wrap at all and ran
+ * off the viewport. segmentWords gives CJK real break opportunities and returns
+ * exactly what the old split returned for Latin text.
+ */
+function words(text: string, extra?: Omit<WordSpec, 'text' | 'joiner'>): WordSpec[] {
+    return segmentWords(text).map((unit) => ({ text: unit.text, joiner: unit.joiner, ...extra }));
 }
 
 /**
@@ -158,7 +169,7 @@ function WordsLine({ groups, startIndex }: { groups: ReadonlyArray<Group>; start
                             {group.words.map((word, i) => (
                                 <Fragment key={i}>
                                     {renderWord(word, at + i)}
-                                    {i === group.words.length - 1 ? '' : ' '}
+                                    {word.joiner}
                                 </Fragment>
                             ))}
                         </span>

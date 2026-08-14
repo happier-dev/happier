@@ -48,7 +48,10 @@
              purpose, and therefore outside the per-route markers below. -->
         <meta property="og:site_name" content="Happier" />
         <meta property="og:type" content="website" />
-        <meta property="og:locale" content="en_US" />
+        <!-- og:locale is NOT here: it is per-page, emitted by headTagsFor() in
+             src/routes.tsx inside the per-route markers below, because a
+             localised page declares its own locale and its alternates. A shared
+             copy here shipped the tag twice on every page. -->
         <meta name="author" content="Happier" />
 
         <!-- Self-hosted fonts. src/styles/fonts.css is imported by

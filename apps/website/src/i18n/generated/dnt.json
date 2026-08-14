@@ -1,0 +1,629 @@
+{
+  "agents.AGENTS.claude.lead.0": {
+    "dnt": [
+      "`claude`"
+    ]
+  },
+  "agents.AGENTS.claude.lead.2": {
+    "dnt": [
+      "`claude`",
+      "`/login`",
+      "`~/.local/bin`",
+      "`~/.local/share/claude`",
+      "`~/.claude/local/cli.js`",
+      "~/.local/bin",
+      "~/.local/share/claude",
+      "~/.claude/local/cli.js"
+    ]
+  },
+  "agents.AGENTS.claude.whatItDoes.0": {
+    "dnt": [
+      "`claude`",
+      "`happier claude`",
+      "happier claude"
+    ]
+  },
+  "agents.AGENTS.claude.faq.0.a": {
+    "dnt": [
+      "`claude`"
+    ]
+  },
+  "agents.AGENTS.claude.faq.1.a": {
+    "dnt": [
+      "`claude`"
+    ]
+  },
+  "agents.AGENTS.claude.faq.2.a": {
+    "dnt": [
+      "`happier attach <session-id>`",
+      "happier attach"
+    ]
+  },
+  "agents.AGENTS.claude.faq.4.a": {
+    "dnt": [
+      "`CLAUDE.md`"
+    ]
+  },
+  "agents.AGENTS.codex.lead.1": {
+    "dnt": [
+      "`happier attach`",
+      "happier attach"
+    ]
+  },
+  "agents.AGENTS.codex.lead.2": {
+    "dnt": [
+      "`codex login`"
+    ]
+  },
+  "agents.AGENTS.codex.whatItDoes.0": {
+    "dnt": [
+      "`happier codex`",
+      "happier codex"
+    ]
+  },
+  "agents.AGENTS.codex.faq.0.a": {
+    "dnt": [
+      "`codex`",
+      "`~/.happier/tools/providers/codex/`",
+      "~/.happier/tools/providers/codex/"
+    ]
+  },
+  "agents.AGENTS.codex.faq.1.a": {
+    "dnt": [
+      "`codex`"
+    ]
+  },
+  "agents.AGENTS.codex.faq.2.a": {
+    "dnt": [
+      "`codex`"
+    ]
+  },
+  "agents.AGENTS.opencode.lead.0": {
+    "dnt": [
+      "`opencode`"
+    ]
+  },
+  "agents.AGENTS.opencode.lead.2": {
+    "dnt": [
+      "`.opencode/skills`",
+      "`.opencode/commands`",
+      "`~/.config/opencode`",
+      "~/.config/opencode"
+    ]
+  },
+  "agents.AGENTS.opencode.whatItDoes.0": {
+    "dnt": [
+      "`happier opencode`",
+      "`opencode auth`",
+      "happier opencode"
+    ]
+  },
+  "agents.AGENTS.opencode.faq.0.a": {
+    "dnt": [
+      "`opencode`",
+      "`opencode-ai`"
+    ]
+  },
+  "agents.AGENTS.opencode.faq.1.a": {
+    "dnt": [
+      "`opencode auth`"
+    ]
+  },
+  "agents.AGENTS.cursor.lead.0": {
+    "dnt": [
+      "`cursor-agent`",
+      "`cursor`",
+      "`agent`",
+      "`about --format json`"
+    ]
+  },
+  "agents.AGENTS.cursor.lead.1": {
+    "dnt": [
+      "`about`",
+      "`CURSOR_API_KEY`"
+    ]
+  },
+  "agents.AGENTS.cursor.whatItDoes.0": {
+    "dnt": [
+      "`cursor-agent`",
+      "`happier cursor`",
+      "happier cursor"
+    ]
+  },
+  "agents.AGENTS.cursor.faq.0.a": {
+    "dnt": [
+      "`cursor-agent`",
+      "`cursor`",
+      "`happier cursor`",
+      "happier cursor"
+    ]
+  },
+  "agents.AGENTS.cursor.faq.2.a": {
+    "dnt": [
+      "`cursor-agent`"
+    ]
+  },
+  "agents.AGENTS.gemini.lead.1": {
+    "dnt": [
+      "`gemini auth`"
+    ]
+  },
+  "agents.AGENTS.gemini.lead.2": {
+    "dnt": [
+      "`.gemini/skills`"
+    ]
+  },
+  "agents.AGENTS.gemini.whatItDoes.0": {
+    "dnt": [
+      "`happier gemini`",
+      "happier gemini"
+    ]
+  },
+  "agents.AGENTS.gemini.faq.0.a": {
+    "dnt": [
+      "`gemini`",
+      "`@google/gemini-cli`",
+      "`~/.happier/tools/providers/gemini/`",
+      "~/.happier/tools/providers/gemini/"
+    ]
+  },
+  "agents.AGENTS.copilot.lead.0": {
+    "dnt": [
+      "`gh auth login`"
+    ]
+  },
+  "agents.AGENTS.copilot.lead.1": {
+    "dnt": [
+      "`COPILOT_GITHUB_TOKEN`",
+      "`GH_TOKEN`",
+      "`GITHUB_TOKEN`"
+    ]
+  },
+  "agents.AGENTS.copilot.lead.2": {
+    "dnt": [
+      "`.github/skills`",
+      "`~/.copilot/skills`",
+      "`happier tools`",
+      "happier tools",
+      "~/.copilot/skills"
+    ]
+  },
+  "agents.AGENTS.copilot.whatItDoes.0": {
+    "dnt": [
+      "`happier copilot`",
+      "happier copilot"
+    ]
+  },
+  "agents.AGENTS.copilot.faq.0.a": {
+    "dnt": [
+      "`copilot`",
+      "`@github/copilot`",
+      "`~/.happier/`",
+      "~/.happier/"
+    ]
+  },
+  "agents.AGENTS.copilot.faq.1.a": {
+    "dnt": [
+      "`gh auth login`"
+    ]
+  },
+  "agents.AGENTS.qwen.lead.1": {
+    "dnt": [
+      "`qwen --acp --approval-mode`",
+      "`plan`",
+      "`auto-edit`",
+      "`yolo`",
+      "`default`"
+    ]
+  },
+  "agents.AGENTS.qwen.lead.2": {
+    "dnt": [
+      "`qwen`",
+      "`/auth`",
+      "`happier tools`",
+      "happier tools"
+    ]
+  },
+  "agents.AGENTS.qwen.whatItDoes.0": {
+    "dnt": [
+      "`happier qwen`",
+      "happier qwen",
+      "npm package."
+    ]
+  },
+  "agents.AGENTS.qwen.faq.0.a": {
+    "dnt": [
+      "`@qwen-code/qwen-code`",
+      "`~/.happier/tools/providers/qwen/`",
+      "`qwen`",
+      "~/.happier/tools/providers/qwen/"
+    ]
+  },
+  "agents.AGENTS.kimi.lead.0": {
+    "dnt": [
+      "`~/.happier/`",
+      "~/.happier/"
+    ]
+  },
+  "agents.AGENTS.kimi.lead.1": {
+    "dnt": [
+      "`kimi --work-dir`",
+      "`acp`",
+      "`--yolo`"
+    ]
+  },
+  "agents.AGENTS.kimi.lead.2": {
+    "dnt": [
+      "`kimi`",
+      "`/setup`",
+      "`kimi login`"
+    ]
+  },
+  "agents.AGENTS.kimi.whatItDoes.0": {
+    "dnt": [
+      "`happier kimi`",
+      "happier kimi"
+    ]
+  },
+  "agents.AGENTS.kilo.lead.0": {
+    "dnt": [
+      "npm package"
+    ]
+  },
+  "agents.AGENTS.kilo.lead.1": {
+    "dnt": [
+      "`OPENCODE_PERMISSION`"
+    ]
+  },
+  "agents.AGENTS.kilo.lead.2": {
+    "dnt": [
+      "`kilo`",
+      "`/connect`"
+    ]
+  },
+  "agents.AGENTS.kilo.whatItDoes.0": {
+    "dnt": [
+      "`happier kilo`",
+      "happier kilo",
+      "npm package."
+    ]
+  },
+  "agents.AGENTS.kilo.faq.0.a": {
+    "dnt": [
+      "`@kilocode/cli`",
+      "`kilo`",
+      "`~/.happier/tools/providers/kilo/`",
+      "~/.happier/tools/providers/kilo/",
+      "npm prefix."
+    ]
+  },
+  "agents.AGENTS.kiro.lead.0": {
+    "dnt": [
+      "`kiro-cli`"
+    ]
+  },
+  "agents.AGENTS.kiro.lead.1": {
+    "dnt": [
+      "`kiro-cli acp`"
+    ]
+  },
+  "agents.AGENTS.kiro.lead.2": {
+    "dnt": [
+      "`kiro-cli login`"
+    ]
+  },
+  "agents.AGENTS.kiro.whatItDoes.0": {
+    "dnt": [
+      "`happier kiro`",
+      "`kiro-cli`",
+      "happier kiro"
+    ]
+  },
+  "agents.AGENTS.kiro.faq.0.a": {
+    "dnt": [
+      "`kiro-cli`"
+    ]
+  },
+  "agents.AGENTS.kiro.faq.1.a": {
+    "dnt": [
+      "`kiro-cli`",
+      "`happier kiro`",
+      "happier kiro"
+    ]
+  },
+  "agents.AGENTS.kiro.faq.3.a": {
+    "dnt": [
+      "`kiro-cli`"
+    ]
+  },
+  "agents.AGENTS.auggie.lead.0": {
+    "dnt": [
+      "`/providers/augment`",
+      "`@augmentcode/auggie`",
+      "npm install"
+    ]
+  },
+  "agents.AGENTS.auggie.lead.1": {
+    "dnt": [
+      "`HAPPIER_AUGGIE_ALLOW_INDEXING`"
+    ]
+  },
+  "agents.AGENTS.auggie.lead.2": {
+    "dnt": [
+      "`--permission`",
+      "`happier tools`",
+      "happier tools"
+    ]
+  },
+  "agents.AGENTS.auggie.whatItDoes.0": {
+    "dnt": [
+      "`happier auggie`",
+      "happier auggie"
+    ]
+  },
+  "agents.AGENTS.auggie.faq.0.a": {
+    "dnt": [
+      "`@augmentcode/auggie`",
+      "`auggie`",
+      "`~/.happier/`",
+      "~/.happier/"
+    ]
+  },
+  "agents.AGENTS.auggie.faq.1.a": {
+    "dnt": [
+      "`/providers/augment`"
+    ]
+  },
+  "agents.AGENTS.pi.whatItDoes.0": {
+    "dnt": [
+      "`happier pi`",
+      "happier pi"
+    ]
+  },
+  "agents.AGENTS.pi.faq.0.a": {
+    "dnt": [
+      "`@earendil-works/pi-coding-agent`",
+      "`pi`",
+      "`~/.happier/tools/providers/pi/`",
+      "~/.happier/tools/providers/pi/"
+    ]
+  },
+  "agents.AGENTS.pi.faq.2.a": {
+    "dnt": [
+      "`omp`",
+      "`pi`"
+    ]
+  },
+  "agents.AGENTS.grok.lead.0": {
+    "dnt": [
+      "`grok`"
+    ]
+  },
+  "agents.AGENTS.grok.lead.1": {
+    "dnt": [
+      "`XAI_API_KEY`"
+    ]
+  },
+  "agents.AGENTS.grok.lead.2": {
+    "dnt": [
+      "`~/.grok/bin`",
+      "~/.grok/bin"
+    ]
+  },
+  "agents.AGENTS.grok.whatItDoes.0": {
+    "dnt": [
+      "`happier grok`",
+      "`grok`",
+      "happier grok"
+    ]
+  },
+  "agents.AGENTS.grok.faq.2.a": {
+    "dnt": [
+      "`grok`",
+      "`~/.grok/bin`",
+      "~/.grok/bin"
+    ]
+  },
+  "agents.AGENTS.grok.faq.3.a": {
+    "dnt": [
+      "`grok`"
+    ]
+  },
+  "codexRemote.CODEX_COMPARISON_ROWS.setup.happier": {
+    "dnt": [
+      "`happier codex`",
+      "happier codex"
+    ]
+  },
+  "codexRemote.CODEX_COMPARISON_ROWS.ssh.codex": {
+    "dnt": [
+      "`~/.ssh/config`",
+      "~/.ssh/config"
+    ]
+  },
+  "codexRemote.CODEX_SECTION.strengths.ssh.title": {
+    "dnt": [
+      "~/.ssh/config"
+    ]
+  },
+  "codexRemote.CODEX_SECTION.strengths.ssh.body": {
+    "dnt": [
+      "`~/.ssh/config`",
+      "~/.ssh/config"
+    ]
+  },
+  "codexRemote.CODEX_SECTION.conditions.hostOs.codex": {
+    "dnt": [
+      "`codex`"
+    ]
+  },
+  "codexRemote.CODEX_SECTION.conditions.setupPath.happier": {
+    "dnt": [
+      "`happier codex`",
+      "happier codex"
+    ]
+  },
+  "codexRemote.CODEX_SECTION.conditions.workspace.happier": {
+    "dnt": [
+      "`happier relay host install`",
+      "happier relay"
+    ]
+  },
+  "codexRemote.CODEX_SECTION.arguments.terminal.body": {
+    "dnt": [
+      "`happier attach <session-id>`",
+      "happier attach"
+    ]
+  },
+  "comparison.RC_SECTION.arguments.terminal.body": {
+    "dnt": [
+      "`happier attach`",
+      "happier attach"
+    ]
+  },
+  "comparison.RC_SECTION.cases.zdr.happier": {
+    "dnt": [
+      "`happier relay host install`",
+      "happier relay"
+    ]
+  },
+  "comparison.RC_STRENGTHS.connect.body": {
+    "dnt": [
+      "`claude remote-control`"
+    ]
+  },
+  "comparison.RC_STRENGTHS.server.body": {
+    "dnt": [
+      "`claude remote-control`",
+      "`--capacity <N>`",
+      "`--spawn`",
+      "`same-dir`",
+      "`worktree`"
+    ]
+  },
+  "downloads.INSTALL_COMMAND_UNIX": {
+    "dnt": [
+      "curl -fsSL"
+    ]
+  },
+  "downloads.INSTALL_COMMAND_UNIX_INSPECTABLE": {
+    "dnt": [
+      "curl -fsSL"
+    ]
+  },
+  "downloads.INSTALL_COMMAND_WINDOWS": {
+    "dnt": [
+      "iwr https"
+    ]
+  },
+  "faq.FAQ_ITEMS.tokens.a.1": {
+    "dnt": [
+      "`@path`"
+    ]
+  },
+  "faq.FAQ_ITEMS.tos.a.0": {
+    "dnt": [
+      "`claude`",
+      "`codex`",
+      "`opencode`"
+    ]
+  },
+  "faq.FAQ_ITEMS.code.a.2": {
+    "dnt": [
+      "`happier relay host install`",
+      "happier relay"
+    ]
+  },
+  "faq.FAQ_ITEMS.server.a.1": {
+    "dnt": [
+      "`happier relay host install`",
+      "happier relay"
+    ]
+  },
+  "faq.FAQ_ITEMS.plan.a.1": {
+    "dnt": [
+      "`ANTHROPIC_BASE_URL`",
+      "`api.anthropic.com`"
+    ]
+  },
+  "faq.FAQ_ITEMS.claudeCodeFromPhone.a.0": {
+    "dnt": [
+      "`claude`"
+    ]
+  },
+  "faq.FAQ_ITEMS.multiDevice.a.1": {
+    "dnt": [
+      "`happier attach <session-id>`",
+      "happier attach"
+    ]
+  },
+  "faq.FAQ_ITEMS.sshTmux.a.0": {
+    "dnt": [
+      "`happier attach`",
+      "happier attach"
+    ]
+  },
+  "faq.FAQ_ITEMS.platforms.a.0": {
+    "dnt": [
+      "`curl -fsSL https://happier.dev/install | bash`",
+      "`iwr https://happier.dev/install.ps1 -useb | iex`",
+      "curl -fsSL",
+      "iwr https"
+    ]
+  },
+  "faq.FAQ_ITEMS.platforms.a.1": {
+    "dnt": [
+      "`happier attach`",
+      "happier attach"
+    ]
+  },
+  "faq.FAQ_ITEMS.workComputer.a.0": {
+    "dnt": [
+      "`happier relay host install`",
+      "happier relay"
+    ]
+  },
+  "features.PRIMARY_FEATURES.surfaces.code.2": {
+    "dnt": [
+      "happier session"
+    ]
+  },
+  "features.PRIMARY_FEATURES.surfaces.code.4": {
+    "dnt": [
+      "happier session"
+    ]
+  },
+  "terminalFeature.CLAUDE_UNIFIED.2": {
+    "dnt": [
+      "`claude`"
+    ]
+  },
+  "terminalFeature.TERMINAL_CATCH.1": {
+    "dnt": [
+      "`happier attach`",
+      "happier attach"
+    ]
+  },
+  "terminalFeature.TERMINAL_MOVES.terminal-first.body": {
+    "dnt": [
+      "`happier`",
+      "`happier codex`",
+      "`happier opencode`",
+      "`happier gemini`",
+      "happier codex",
+      "happier opencode",
+      "happier gemini"
+    ]
+  },
+  "terminalFeature.TERMINAL_MOVES.app-first.body": {
+    "dnt": [
+      "`happier attach <session-id>`",
+      "happier attach"
+    ]
+  },
+  "usageLimits.USAGE_LIMITS_SETUP.0": {
+    "dnt": [
+      "happier connect"
+    ]
+  }
+}

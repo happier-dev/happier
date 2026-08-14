@@ -11,10 +11,20 @@
  *      `HeroHeadline` does per group (src/components/HeroHeadline.tsx:118) —
  *      the line can no longer wrap at all, so it overflows the viewport.
  *
- * `Intl.Segmenter` with `granularity: 'word'` gives real CJK word boundaries
- * (Chrome 87+, Safari 14.1+, Firefox 125+, Node 16+). Where it is missing we
- * fall back to per-character segmentation for CJK runs, which still animates
- * and still wraps — only the boundaries are less linguistic.
+ * WHY THIS DOES NOT USE `Intl.Segmenter`, HAVING BEEN WRITTEN TO
+ * The site is PRERENDERED: the HTML is segmented in Node and then hydrated by
+ * whatever browser the reader has. `Intl.Segmenter` for Chinese is dictionary
+ * based, so its boundaries are an ICU-version detail, not a spec guarantee —
+ * Node's ICU and the reader's ICU can legitimately disagree, and React would
+ * hydrate a different number of spans than the server emitted. Firefox only
+ * shipped it in 125, so a share of readers would take the fallback path while
+ * the prerender took the ICU one, which is the same divergence by another
+ * route.
+ *
+ * Per-character segmentation for CJK runs is deterministic everywhere, animates
+ * the same way, and — the part that actually matters — restores the wrap
+ * opportunities. The boundaries are less linguistic than ICU's. That is the
+ * whole cost, and it buys server/client agreement.
  *
  * Latin text is unchanged: for a space-separated line this returns exactly what
  * `split(' ')` returned, so English rendering is byte-identical to before.
@@ -33,45 +43,21 @@ export function hasCjk(text: string): boolean {
     return CJK.test(text);
 }
 
-type Segmenter = {
-    segment: (input: string) => Iterable<{ segment: string }>;
-};
-
-const segmenterCache = new Map<string, Segmenter | null>();
-
-function getSegmenter(locale: string): Segmenter | null {
-    if (segmenterCache.has(locale)) return segmenterCache.get(locale) ?? null;
-    let created: Segmenter | null = null;
-    const ctor = (Intl as unknown as { Segmenter?: new (l: string, o: { granularity: string }) => Segmenter }).Segmenter;
-    if (typeof ctor === 'function') {
-        try {
-            created = new ctor(locale, { granularity: 'word' });
-        } catch {
-            created = null;
-        }
-    }
-    segmenterCache.set(locale, created);
-    return created;
-}
-
 /**
  * Returns the reveal units for `line`. Each unit is rendered in its own span;
  * `joiner` tells the caller what text node (if any) to emit after it — a space
  * for Latin, nothing for CJK, because inserting spaces between Chinese
  * characters is visibly wrong.
  */
-export function segmentWords(line: string, locale: string): ReadonlyArray<{ text: string; joiner: string }> {
+export function segmentWords(line: string): ReadonlyArray<{ text: string; joiner: string }> {
     if (!hasCjk(line)) {
-        const words = line.split(' ');
+        const words = line.split(/\s+/).filter(Boolean);
         return words.map((text, index) => ({ text, joiner: index === words.length - 1 ? '' : ' ' }));
     }
 
     // Mixed CJK/Latin: segment the whole line, then re-attach a space only
     // where the original line actually had one.
-    const segmenter = getSegmenter(locale);
-    const raw: string[] = segmenter
-        ? Array.from(segmenter.segment(line), (s) => s.segment)
-        : fallbackSegments(line);
+    const raw = cjkAwareSegments(line);
 
     const units: { text: string; joiner: string }[] = [];
     for (const piece of raw) {
@@ -97,8 +83,8 @@ export function segmentWords(line: string, locale: string): ReadonlyArray<{ text
     return units.length > 0 ? units : [{ text: line, joiner: '' }];
 }
 
-/** Per-character for CJK runs, whole tokens for Latin runs. */
-function fallbackSegments(line: string): string[] {
+/** Per-character for CJK runs, whole tokens for Latin runs. Deterministic. */
+function cjkAwareSegments(line: string): string[] {
     const out: string[] = [];
     let latin = '';
     for (const char of line) {

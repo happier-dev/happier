@@ -62,6 +62,7 @@ export const zhHans: Messages = {
         // TOTAL after 等, not the remainder — "X、Y 等 13 种" is the natural form
         // and asserts the same fact (4 named + 9 = 13 shipped providers).
         headlineLineTwoAside: '等 13 种',
+        headlineLineTwoAsideCounts: 'total' as const,
         // EN: "Everywhere you go." — the English moved back off "work" to the
         // travel framing, so the Chinese parallel moves back with it.
         headlineLineThree: '走到哪，就在哪用。',

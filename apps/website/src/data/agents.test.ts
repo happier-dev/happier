@@ -506,8 +506,18 @@ describe('the pages make no claim they cannot keep', () => {
  * 5-word shingles, which is roughly what a near-duplicate detector looks at.
  */
 describe('every agent page leads with something only that agent can say', () => {
+    // `\p{L}\p{N}`, not `a-z0-9`. The ASCII-only class returned THREE tokens for
+    // a Russian, Japanese or Chinese paragraph — only the Latin product names
+    // survived — which would make every similarity gate below pass vacuously the
+    // day an agent page is translated. A guard that cannot fail is worse than no
+    // guard, because it reports green.
+    const CJK_RUN = /[぀-ヿ㐀-䶿一-鿿豈-﫿]/;
+
     function words(text: string): string[] {
-        return text.toLowerCase().match(/[a-z0-9][a-z0-9'’./@-]*/g) ?? [];
+        const raw = text.toLowerCase().match(/[\p{L}\p{N}][\p{L}\p{N}'’./@-]*/gu) ?? [];
+        // CJK has no spaces, so a whole run matches as a single token. Split it
+        // per character so a shingle spans real content rather than one blob.
+        return raw.flatMap((token) => (CJK_RUN.test(token) ? Array.from(token) : [token]));
     }
 
     function shingles(text: string, n = 5): Set<string> {

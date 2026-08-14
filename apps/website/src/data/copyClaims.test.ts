@@ -10,6 +10,8 @@ import { PRIMARY_FEATURES } from './features';
 import { PROVIDERS } from './providers';
 import { USAGE_LIMITS_SCOPE, USAGE_LIMITS_SWITCHING } from './usageLimits';
 import { en } from '../i18n/messages/en';
+import { LOCALES } from '../i18n/locales';
+import { messagesFor } from '../i18n/messages/registry';
 import { ROUTES } from '../routes';
 
 /**
@@ -301,16 +303,24 @@ describe('agent count claims match the shipped provider set', () => {
         }
     });
 
-    it('adds up: named agents plus the aside equals the shipped provider count', () => {
-        const named = `${en.hero.headlineLineOne}, ${en.hero.headlineLineTwo}`
-            .split(',')
+    // Runs over EVERY locale, not just English. It used to read `en` only,
+    // which is how zh-Hans came to assert a different number from the English
+    // in the one translated string on the site that carries one — and pass.
+    // Splitting on the CJK enumeration comma 、 matters for the same reason.
+    it.each(LOCALES)('adds up in %s: named agents and the aside reach the provider count', (locale) => {
+        const t = messagesFor(locale);
+        const named = `${t.hero.headlineLineOne}, ${t.hero.headlineLineTwo}`
+            .split(/[,、，]/)
             .map((part) => part.trim())
             .filter(Boolean).length;
 
-        const aside = en.hero.headlineLineTwoAside.match(/\d+/);
-        expect(aside, 'hero aside carries no number to check').not.toBeNull();
+        const aside = t.hero.headlineLineTwoAside.match(/\d+/);
+        expect(aside, `hero aside carries no number to check in ${locale}`).not.toBeNull();
 
-        expect(named + Number(aside![0])).toBe(PROVIDERS.length);
+        const claimed = Number(aside![0]);
+        const total = t.hero.headlineLineTwoAsideCounts === 'total' ? claimed : named + claimed;
+
+        expect(total, `hero in ${locale} claims ${total} providers`).toBe(PROVIDERS.length);
     });
 });
 
