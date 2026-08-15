@@ -199,9 +199,7 @@ export class ClaudeUnifiedDialogChoiceBroker {
     }
     const identity = getClaudeUnifiedDialogIdentity(params.dialog);
     if (this.pendingChoice?.identity === identity) return this.pendingChoice.promise;
-    if (this.pendingChoice) {
-      await this.completeSourceOwnedCancellation(this.pendingChoice.requestId, 'claude_unified_dialog_changed');
-    }
+    await this.cancelAllSourceOwnedRequests('claude_unified_dialog_changed');
 
     const requestId = this.createRequestId();
     const toolInput = buildClaudeUnifiedDialogQuestionInput(params.dialog);
