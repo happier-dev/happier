@@ -17,7 +17,6 @@ import {
 } from '@/backends/catalog';
 import type { CatalogAgentId } from '@/backends/types';
 import { configuration } from '@/configuration';
-import { createConnectedServiceMaterializedTargetRootCleanup } from '@/daemon/connectedServices/materialize/createConnectedServiceMaterializedTargetRootCleanup';
 import { resolveConnectedServiceAuthForSpawn } from '@/daemon/connectedServices/resolveConnectedServiceAuthForSpawn';
 import { shouldResolveConnectedServiceAuthForSpawn } from '@/daemon/connectedServices/shouldResolveConnectedServiceAuthForSpawn';
 import { resolveEffectiveProviderStateMode } from '@/daemon/connectedServices/stateSharing/resolveEffectiveProviderStateMode';
@@ -133,12 +132,8 @@ export async function resolveDirectConnectedServiceEnvironment(params: Readonly<
       connectedServiceAuth,
     });
     const cleanupOnFailure = childEnvironment.cleanupOnFailure
-      ?? (connectedServiceAuth
-        ? createConnectedServiceMaterializedTargetRootCleanup({
-            agentId: params.agentId,
-            env: connectedServiceAuth.env,
-          })
-        : null);
+      ?? connectedServiceAuth?.cleanupMaterializationRoot
+      ?? null;
     if (!childEnvironment.ok) {
       cleanupOnFailure?.();
       failureCleaned = true;
@@ -152,10 +147,8 @@ export async function resolveDirectConnectedServiceEnvironment(params: Readonly<
   } catch (error) {
     if (!failureCleaned && connectedServiceAuth) {
       const cleanup = connectedServiceAuth.cleanupOnFailure
-        ?? createConnectedServiceMaterializedTargetRootCleanup({
-          agentId: params.agentId,
-          env: connectedServiceAuth.env,
-        });
+        ?? connectedServiceAuth.cleanupMaterializationRoot
+        ?? null;
       cleanup?.();
     }
     throw error;

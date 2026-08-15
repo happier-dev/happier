@@ -25,7 +25,6 @@ import {
   type ConnectedServiceResolvedSelection,
 } from './materialize/materializeConnectedServicesForSpawn';
 import { createConnectedServiceGroupMutationCurrentnessValidator } from './credentials/createConnectedServiceGroupMutationCurrentnessValidator';
-import { createConnectedServiceMaterializedTargetRootCleanup } from './materialize/createConnectedServiceMaterializedTargetRootCleanup';
 import {
   collectBlockingConnectedServicesMaterializationDiagnostics,
   type ConnectedServicesMaterializationDiagnostic,
@@ -1088,7 +1087,10 @@ async function materializeAndVerifyConnectedServiceAuthForSpawn(params: Readonly
   resumeReachabilityRequired: boolean;
   candidatePersistedSessionFile: string | null;
   validateGroupMutationCurrentness: ReturnType<typeof createConnectedServiceGroupMutationCurrentnessValidator>;
-}>): Promise<ConnectedServicesMaterializeResult | null> {
+}>): Promise<(ConnectedServicesMaterializeResult & Readonly<{
+  materializationRoot: string;
+  cleanupMaterializationRoot: () => void;
+}>) | null> {
   const materialized = await materializeConnectedServicesForSpawn({
     agentId: params.agentId,
     materializationKey: params.materializationKey,
@@ -1140,10 +1142,7 @@ async function materializeAndVerifyConnectedServiceAuthForSpawn(params: Readonly
     return materialized;
   } catch (error) {
     const cleanupOnFailure = materialized.cleanupOnFailure
-      ?? createConnectedServiceMaterializedTargetRootCleanup({
-        agentId: params.agentId,
-        env: materialized.env,
-      });
+      ?? materialized.cleanupMaterializationRoot;
     cleanupOnFailure?.();
     throw error;
   }
@@ -1189,6 +1188,8 @@ export async function resolveConnectedServiceAuthForSpawn(params: Readonly<{
   candidatePersistedSessionFile?: string | null;
 }>): Promise<Readonly<{
   env: Record<string, string>;
+  materializationRoot?: string | null;
+  cleanupMaterializationRoot?: (() => void) | null;
   cleanupOnFailure: (() => void) | null;
   cleanupOnExit: (() => void) | null;
   connectedServicesBindings: ConnectedServicesBindingsV1;

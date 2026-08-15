@@ -281,7 +281,10 @@ export async function materializeConnectedServicesForSpawn(params: Readonly<{
   vendorResumeId?: string | null;
   candidatePersistedSessionFile?: string | null;
   validateGroupMutationCurrentness?: ConnectedServicesProviderMaterializerInput['validateGroupMutationCurrentness'];
-}>): Promise<ConnectedServicesMaterializeResult | null> {
+}>): Promise<(ConnectedServicesMaterializeResult & Readonly<{
+  materializationRoot: string;
+  cleanupMaterializationRoot: () => void;
+}>) | null> {
   const rootDir = resolveConnectedServiceMaterializedRootDir({
     baseDir: params.baseDir,
     agentId: params.agentId,
@@ -369,6 +372,8 @@ export async function materializeConnectedServicesForSpawn(params: Readonly<{
     const cleanupOnExit = materialized.cleanupOnExit ? cleanupFinalRoot : materialized.cleanupOnExit;
     return {
       ...materialized,
+      materializationRoot: rootDir,
+      cleanupMaterializationRoot: cleanupFinalRoot,
       cleanupOnFailure,
       cleanupOnExit,
       env: {
