@@ -1,7 +1,5 @@
 import type { TranslationKeyNoParams } from '@/text';
-import type { ServerRetentionPolicy } from './serverRetentionPolicy';
-
-export type ServerRetentionDomainKey = Exclude<keyof ServerRetentionPolicy, 'policyVersion' | 'enabled'>;
+export type ServerRetentionDomainKey = string;
 
 export type ServerRetentionDomainMetadata = Readonly<{
     key: ServerRetentionDomainKey;
@@ -10,6 +8,8 @@ export type ServerRetentionDomainMetadata = Readonly<{
 
 export const SERVER_RETENTION_DOMAIN_METADATA: readonly ServerRetentionDomainMetadata[] = Object.freeze([
     { key: 'sessions', titleKey: 'server.retention.sessions' },
+    { key: 'sessionMessages', titleKey: 'server.retention.sessionMessages' },
+    { key: 'sessionSidechainMessages', titleKey: 'server.retention.sidechainMessages' },
     { key: 'accountChanges', titleKey: 'server.retention.accountChanges' },
     { key: 'voiceSessionLeases', titleKey: 'server.retention.voiceSessionLeases' },
     { key: 'userFeedItems', titleKey: 'server.retention.feedItems' },

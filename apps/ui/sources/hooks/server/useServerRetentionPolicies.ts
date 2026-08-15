@@ -1,7 +1,8 @@
 import * as React from 'react';
 
-import { useServerFeaturesMainSelectionSnapshot } from '@/sync/domains/features/featureDecisionRuntime';
-import { readServerRetentionPolicy, type ServerRetentionPolicy } from '@/sync/domains/server/retention/serverRetentionPolicy';
+import { getCachedServerRetentionPolicy, getServerRetentionPolicy } from '@/sync/api/capabilities/serverRetentionPolicyClient';
+import type { ServerRetentionPolicyView } from '@/sync/domains/server/retention/serverRetentionPolicy';
+import { fireAndForget } from '@/utils/system/fireAndForget';
 
 function normalizeServerIds(serverIds: ReadonlyArray<string>): string[] {
     const seen = new Set<string>();
@@ -17,19 +18,28 @@ function normalizeServerIds(serverIds: ReadonlyArray<string>): string[] {
     return normalized;
 }
 
-export function useServerRetentionPolicies(serverIds: ReadonlyArray<string>): Readonly<Record<string, ServerRetentionPolicy | null>> {
+export function useServerRetentionPolicies(serverIds: ReadonlyArray<string>): Readonly<Record<string, ServerRetentionPolicyView | null>> {
     const normalizedServerIds = React.useMemo(
         () => normalizeServerIds(serverIds),
         [serverIds.join('\u0000')],
     );
-    const snapshot = useServerFeaturesMainSelectionSnapshot(normalizedServerIds, { enabled: normalizedServerIds.length > 0 });
+    const [policies, setPolicies] = React.useState<Readonly<Record<string, ServerRetentionPolicyView | null>>>({});
 
-    return React.useMemo(() => {
-        const policies: Record<string, ServerRetentionPolicy | null> = {};
+    React.useEffect(() => {
+        let cancelled = false;
+        const initial: Record<string, ServerRetentionPolicyView | null> = {};
         for (const serverId of normalizedServerIds) {
-            const features = snapshot.snapshotsByServerId[serverId];
-            policies[serverId] = features?.status === 'ready' ? readServerRetentionPolicy(features.features) : null;
+            initial[serverId] = getCachedServerRetentionPolicy(serverId);
         }
-        return policies;
-    }, [normalizedServerIds, snapshot]);
+        setPolicies(initial);
+        fireAndForget((async () => {
+            const entries = await Promise.all(normalizedServerIds.map(async (serverId) => (
+                [serverId, await getServerRetentionPolicy({ serverId })] as const
+            )));
+            if (!cancelled) setPolicies(Object.fromEntries(entries));
+        })(), { tag: 'useServerRetentionPolicies.load' });
+        return () => { cancelled = true; };
+    }, [normalizedServerIds]);
+
+    return policies;
 }

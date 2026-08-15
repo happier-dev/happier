@@ -1,7 +1,7 @@
 import { t } from '@/text';
 
-import type { ServerRetentionPolicy } from './serverRetentionPolicy';
-import { SERVER_RETENTION_DOMAIN_METADATA, type ServerRetentionDomainKey } from './serverRetentionDomainMetadata';
+import { normalizeServerRetentionPolicy, type ServerRetentionPolicy } from './serverRetentionPolicy';
+import { SERVER_RETENTION_DOMAIN_METADATA } from './serverRetentionDomainMetadata';
 
 type RetentionRow = Readonly<{
     key: string;
@@ -18,33 +18,74 @@ function formatAgePolicy(policy: { mode: 'keep_forever' } | { mode: 'delete_olde
 
 export function formatSessionRetentionSummary(policy: ServerRetentionPolicy | null | undefined): string | null {
     if (!policy) return null;
-    if (policy.sessions.mode === 'keep_forever' || !policy.enabled) {
+    const view = normalizeServerRetentionPolicy(policy);
+    if (!view.enabled) {
         return t('server.retention.keepForever');
     }
-    return t('server.retention.sessionNotice', { count: policy.sessions.inactivityDays });
+    const sessions = view.domains.find((domain) => domain.id === 'sessions')?.policy;
+    if (sessions?.mode === 'delete_inactive') {
+        return t('server.retention.sessionNotice', { count: sessions.inactivityDays });
+    }
+    const hasReportedFinitePolicy = view.domains.some((domain) => domain.policy.mode !== 'keep_forever');
+    if (hasReportedFinitePolicy) return t('server.retention.automaticDeletionEnabled');
+    return view.completeness === 'complete'
+        ? t('server.retention.keepForever')
+        : t('server.retention.detailsUnavailable');
 }
 
 export function formatSavedServerRetentionSummary(policy: ServerRetentionPolicy | null | undefined): string | null {
-    if (!policy || !policy.enabled || policy.sessions.mode === 'keep_forever') {
-        return null;
+    if (!policy) return null;
+    const view = normalizeServerRetentionPolicy(policy);
+    if (!view.enabled) return null;
+    const sessions = view.domains.find((domain) => domain.id === 'sessions')?.policy;
+    if (sessions?.mode === 'delete_inactive') {
+        return t('server.retention.deleteInactiveSessionsDays', { count: sessions.inactivityDays });
     }
+    return view.domains.some((domain) => domain.policy.mode !== 'keep_forever')
+        ? t('server.retention.automaticDeletionEnabled')
+        : t('server.retention.detailsUnavailable');
+}
 
-    return t('server.retention.deleteInactiveSessionsDays', { count: policy.sessions.inactivityDays });
+export function formatServerRetentionDisclosure(policy: ServerRetentionPolicy | null | undefined): string | null {
+    if (!policy) return null;
+    const view = normalizeServerRetentionPolicy(policy);
+    if (!view.enabled) return null;
+    const rowsById = new Map(formatServerRetentionRows(view).map((row) => [row.key, row]));
+    const policies = view.domains.flatMap((domain) => {
+        if (domain.policy.mode === 'keep_forever') return [];
+        if (domain.id === 'sessions' && domain.policy.mode === 'delete_inactive') {
+            return [t('server.retention.relayCleanupInactiveSessionsAfterDays', {
+                count: domain.policy.inactivityDays,
+            })];
+        }
+        if (domain.policy.mode !== 'delete_older_than') return [];
+        const title = rowsById.get(domain.id)?.title ?? domain.id;
+        const firstCharacter = Array.from(title)[0] ?? '';
+        const sentenceCaseTitle = firstCharacter
+            ? `${firstCharacter.toLocaleLowerCase()}${title.slice(firstCharacter.length)}`
+            : title;
+        return [t('server.retention.relayCleanupAfterDays', {
+            domain: sentenceCaseTitle,
+            count: domain.policy.days,
+        })];
+    });
+    if (policies.length === 0) return null;
+    return t('server.retention.relayCleanupSummary', { policies: policies.join(', ') });
 }
 
 function formatDomainPolicyDetail(params: {
-    policy: ServerRetentionPolicy;
-    domainKey: ServerRetentionDomainKey;
+    enabled: boolean;
+    domainId: string;
+    domainPolicy: ReturnType<typeof normalizeServerRetentionPolicy>['domains'][number]['policy'];
 }): string {
-    if (!params.policy.enabled) {
+    if (!params.enabled) {
         return t('server.retention.keepForever');
     }
-
-    const domainPolicy = params.policy[params.domainKey];
+    const domainPolicy = params.domainPolicy;
     if (!domainPolicy || domainPolicy.mode === 'keep_forever') {
         return t('server.retention.keepForever');
     }
-    if (params.domainKey === 'sessions' && domainPolicy.mode === 'delete_inactive') {
+    if (params.domainId === 'sessions' && domainPolicy.mode === 'delete_inactive') {
         return t('server.retention.deleteInactiveSessionsDays', { count: domainPolicy.inactivityDays });
     }
 
@@ -53,10 +94,17 @@ function formatDomainPolicyDetail(params: {
 
 export function formatServerRetentionRows(policy: ServerRetentionPolicy | null | undefined): RetentionRow[] {
     if (!policy) return [];
-
-    return SERVER_RETENTION_DOMAIN_METADATA.map(({ key, titleKey }) => ({
-        key,
-        title: t(titleKey),
-        detail: formatDomainPolicyDetail({ policy, domainKey: key }),
-    }));
+    const view = normalizeServerRetentionPolicy(policy);
+    return view.domains.map((domain) => {
+        const metadata = SERVER_RETENTION_DOMAIN_METADATA.find(({ key }) => key === domain.id);
+        return {
+            key: domain.id,
+            title: metadata ? t(metadata.titleKey) : domain.id,
+            detail: formatDomainPolicyDetail({
+                enabled: view.enabled,
+                domainId: domain.id,
+                domainPolicy: domain.policy,
+            }),
+        };
+    });
 }

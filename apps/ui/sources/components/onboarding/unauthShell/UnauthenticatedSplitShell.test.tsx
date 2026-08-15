@@ -214,6 +214,7 @@ describe('UnauthenticatedSplitShell', () => {
             <UnauthenticatedSplitShell
                 stepId="welcome"
                 isWelcomeStep
+                retentionSummary="This relay cleans up subagent transcripts after 7 days."
                 onOpenRelayCustomFlow={() => {}}
                 onBrandHeroGetStarted={() => {}}
             >
@@ -221,6 +222,8 @@ describe('UnauthenticatedSplitShell', () => {
             </UnauthenticatedSplitShell>,
         );
         expect(screenWelcome.findByTestId('welcome-footer-links')).toBeTruthy();
+        expect(screenWelcome.findByTestId('welcome-footer-retention')).toBeTruthy();
+        expect(screenWelcome.getTextContent()).toContain('This relay cleans up subagent transcripts after 7 days.');
 
         const screenOther = await renderScreen(
             <UnauthenticatedSplitShell

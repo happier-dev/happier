@@ -45,29 +45,18 @@ describe('SessionRetentionNotice', () => {
         resolveServerIdForSessionIdFromLocalCache.mockReturnValue('server-a');
         useServerRetentionPolicy.mockReturnValue({
             enabled: true,
-            sessions: {
-                mode: 'delete_inactive',
-                inactivityDays: 30,
-                requires: ['updatedAt', 'lastActiveAt'],
-            },
-            accountChanges: { mode: 'keep_forever' },
-            voiceSessionLeases: { mode: 'keep_forever' },
-            userFeedItems: { mode: 'keep_forever' },
-            sessionShareAccessLogs: { mode: 'keep_forever' },
-            publicShareAccessLogs: { mode: 'keep_forever' },
-            terminalAuthRequests: { mode: 'keep_forever' },
-            accountAuthRequests: { mode: 'keep_forever' },
-            authPairingSessions: { mode: 'keep_forever' },
-            repeatKeys: { mode: 'keep_forever' },
-            globalLocks: { mode: 'keep_forever' },
-            automationRuns: { mode: 'keep_forever' },
-            automationRunEvents: { mode: 'keep_forever' },
+            completeness: 'complete',
+            domains: [{
+                id: 'sessions',
+                policy: { mode: 'delete_inactive', inactivityDays: 30 },
+            }],
         });
 
         const screen = await renderSessionRetentionNotice('session-a');
 
         const retentionNotice = screen.findByTestId('session-retention-notice');
         expect(retentionNotice).not.toBeNull();
+        expect(screen.findByTestId('session-retention-notice-icon')).not.toBeNull();
         expect(screen.getTextContent()).toContain('server.retention.sessions');
         expect(screen.getTextContent()).toContain('This server deletes inactive sessions after 30 days of inactivity.');
     });

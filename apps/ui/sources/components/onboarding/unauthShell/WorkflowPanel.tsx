@@ -60,6 +60,7 @@ export type WorkflowPanelProps = Readonly<{
     variant: 'desktop' | 'mobile';
     children: React.ReactNode;
     isWelcomeStep: boolean;
+    retentionSummary?: string | null;
     onOpenRelayCustomFlow: () => void;
     onBack?: () => void;
     transitionKey: string;
@@ -224,6 +225,7 @@ export const WorkflowPanel = React.memo(function WorkflowPanel(props: WorkflowPa
                             </StepTransitionFrame>
                             <WelcomeFooterLinks
                                 variant="mobile"
+                                retentionSummary={props.retentionSummary}
                                 onOpenRelayCustomFlow={props.onOpenRelayCustomFlow}
                             />
                         </>
@@ -243,6 +245,7 @@ export const WorkflowPanel = React.memo(function WorkflowPanel(props: WorkflowPa
                             <View style={styles.footerSpacer} />
                             <WelcomeFooterLinks
                                 variant="desktop"
+                                retentionSummary={props.retentionSummary}
                                 onOpenRelayCustomFlow={props.onOpenRelayCustomFlow}
                             />
                         </>
