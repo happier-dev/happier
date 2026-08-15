@@ -1238,7 +1238,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
             recoveryCreditExpires: ({ time }: { time: string }) => `Expires: ${time}`,
             recoveryCreditApplying: '正在套用重置…',
             recoveryCreditMachineUnavailable: '沒有可用來套用此重置的作用中機器。',
-            recoveryCreditNothingToReset: 'No exhausted usage window currently needs a reset.',
+            recoveryCreditNothingToReset: '目前沒有需要重置的已用盡用量視窗。',
             recoveryCreditBadge: ({ count }: { count: number }) => count === 1 ? '1 reset' : `${count} resets`,
             remaining: ({ percent }: { percent: string }) => `剩餘 ${percent}`,
             remainingWithReset: ({ percent, reset }: { percent: string; reset: string }) =>
@@ -3577,6 +3577,24 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
                             zellij: {
                                 title: "zellij",
                                 subtitle: "使用 Happier 內建的 zellij 主機。"
+                            }
+                        }
+                    },
+                    claudeUnifiedTerminalWorkspaceTrust: {
+                        title: "工作區信任",
+                        subtitle: "選擇當 Claude 詢問是否信任工作區時 Happier 的回應方式。",
+                        options: {
+                            ask_every_time: {
+                                title: "每次詢問",
+                                subtitle: "在工作階段中顯示確切的工作區信任問題。"
+                            },
+                            always_trust_happier_workspaces: {
+                                title: "一律信任 Happier 工作區",
+                                subtitle: "信任 Happier 開啟的工作區中目前重新擷取的 Claude 提示。"
+                            },
+                            always_reject_happier_workspaces: {
+                                title: "一律拒絕 Happier 工作區",
+                                subtitle: "拒絕 Happier 開啟的工作區中目前重新擷取的 Claude 提示。"
                             }
                         }
                     },

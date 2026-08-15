@@ -3013,7 +3013,7 @@ export const it: TranslationStructure = {
       recoveryCreditExpires: ({ time }: { time: string }) => `Expires: ${time}`,
       recoveryCreditApplying: "Applicazione del reset…",
       recoveryCreditMachineUnavailable: "Nessuna macchina attiva è disponibile per applicare questo reset.",
-      recoveryCreditNothingToReset: "No exhausted usage window currently needs a reset.",
+      recoveryCreditNothingToReset: "Al momento nessuna finestra di utilizzo esaurita richiede un ripristino.",
       recoveryCreditBadge: ({ count }: { count: number }) => count === 1 ? "1 reset" : `${count} resets`,
       remaining: ({ percent }: { percent: string }) => `${percent} rimanente`,
       remainingWithReset: ({ percent, reset }: { percent: string; reset: string }) =>
@@ -4293,20 +4293,20 @@ export const it: TranslationStructure = {
                         }
                     },
                     claudeUnifiedTerminalWorkspaceTrust: {
-                        title: "Workspace trust",
-                        subtitle: "Choose how Happier responds when Claude asks whether to trust a workspace.",
+                        title: "Attendibilità del workspace",
+                        subtitle: "Scegli come risponde Happier quando Claude chiede se considerare attendibile un workspace.",
                         options: {
                             ask_every_time: {
-                                title: "Ask every time",
-                                subtitle: "Show the exact workspace trust question in the session."
+                                title: "Chiedi ogni volta",
+                                subtitle: "Mostra nella sessione la domanda esatta sull’attendibilità del workspace."
                             },
                             always_trust_happier_workspaces: {
-                                title: "Always trust Happier workspaces",
-                                subtitle: "Trust the current recaptured Claude prompt for workspaces opened by Happier."
+                                title: "Considera sempre attendibili i workspace di Happier",
+                                subtitle: "Considera attendibile il prompt Claude corrente riacquisito per i workspace aperti da Happier."
                             },
                             always_reject_happier_workspaces: {
-                                title: "Always reject Happier workspaces",
-                                subtitle: "Reject the current recaptured Claude prompt for workspaces opened by Happier."
+                                title: "Rifiuta sempre i workspace di Happier",
+                                subtitle: "Rifiuta il prompt Claude corrente riacquisito per i workspace aperti da Happier."
                             }
                         }
                     },

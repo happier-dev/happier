@@ -4,6 +4,7 @@ import { getDeviceLocales } from './deviceLocales';
 import { ca } from './translations/ca';
 import { en } from './translations/en';
 import { es } from './translations/es';
+import { fr } from './translations/fr';
 import { it } from './translations/it';
 import { ja } from './translations/ja';
 import { pl } from './translations/pl';
@@ -30,6 +31,7 @@ const TRANSLATION_TREE_BY_LANGUAGE = {
     ru: () => ru,
     pl: () => pl,
     es: () => es,
+    fr: () => fr,
     it: () => it,
     pt: () => pt,
     ca: () => ca,

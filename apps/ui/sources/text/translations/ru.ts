@@ -2538,7 +2538,7 @@ export const ru: TranslationStructure = {
       recoveryCreditExpires: ({ time }: { time: string }) => `Expires: ${time}`,
       recoveryCreditApplying: "Применение сброса…",
       recoveryCreditMachineUnavailable: "Нет активной машины, на которой можно применить этот сброс.",
-      recoveryCreditNothingToReset: "No exhausted usage window currently needs a reset.",
+      recoveryCreditNothingToReset: "Сейчас нет исчерпанного окна использования, которое нужно сбросить.",
       recoveryCreditBadge: ({ count }: { count: number }) => count === 1 ? "1 reset" : `${count} resets`,
       remaining: ({ percent }: { percent: string }) => `${percent} осталось`,
       remainingWithReset: ({ percent, reset }: { percent: string; reset: string }) =>
@@ -3914,20 +3914,20 @@ export const ru: TranslationStructure = {
                         }
                     },
                     claudeUnifiedTerminalWorkspaceTrust: {
-                        title: "Workspace trust",
-                        subtitle: "Choose how Happier responds when Claude asks whether to trust a workspace.",
+                        title: "Доверие к рабочей области",
+                        subtitle: "Выберите, как Happier отвечает, когда Claude спрашивает, доверять ли рабочей области.",
                         options: {
                             ask_every_time: {
-                                title: "Ask every time",
-                                subtitle: "Show the exact workspace trust question in the session."
+                                title: "Спрашивать каждый раз",
+                                subtitle: "Показывать в сессии точный вопрос о доверии к рабочей области."
                             },
                             always_trust_happier_workspaces: {
-                                title: "Always trust Happier workspaces",
-                                subtitle: "Trust the current recaptured Claude prompt for workspaces opened by Happier."
+                                title: "Всегда доверять рабочим областям Happier",
+                                subtitle: "Доверять текущему повторно захваченному запросу Claude для рабочих областей, открытых Happier."
                             },
                             always_reject_happier_workspaces: {
-                                title: "Always reject Happier workspaces",
-                                subtitle: "Reject the current recaptured Claude prompt for workspaces opened by Happier."
+                                title: "Всегда отклонять рабочие области Happier",
+                                subtitle: "Отклонять текущий повторно захваченный запрос Claude для рабочих областей, открытых Happier."
                             }
                         }
                     },

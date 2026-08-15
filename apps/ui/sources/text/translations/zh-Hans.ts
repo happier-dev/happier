@@ -2500,7 +2500,7 @@ export const zhHans: TranslationStructure = {
       recoveryCreditExpires: ({ time }: { time: string }) => `Expires: ${time}`,
       recoveryCreditApplying: "正在应用重置…",
       recoveryCreditMachineUnavailable: "没有可用于应用此重置的活动机器。",
-      recoveryCreditNothingToReset: "No exhausted usage window currently needs a reset.",
+      recoveryCreditNothingToReset: "当前没有需要重置的已耗尽用量窗口。",
       recoveryCreditBadge: ({ count }: { count: number }) => count === 1 ? "1 reset" : `${count} resets`,
       remaining: ({ percent }: { percent: string }) => `剩余 ${percent}`,
       remainingWithReset: ({ percent, reset }: { percent: string; reset: string }) =>
@@ -3842,20 +3842,20 @@ export const zhHans: TranslationStructure = {
                         }
                     },
                     claudeUnifiedTerminalWorkspaceTrust: {
-                        title: "Workspace trust",
-                        subtitle: "Choose how Happier responds when Claude asks whether to trust a workspace.",
+                        title: "工作区信任",
+                        subtitle: "选择当 Claude 询问是否信任工作区时 Happier 的响应方式。",
                         options: {
                             ask_every_time: {
-                                title: "Ask every time",
-                                subtitle: "Show the exact workspace trust question in the session."
+                                title: "每次询问",
+                                subtitle: "在会话中显示确切的工作区信任问题。"
                             },
                             always_trust_happier_workspaces: {
-                                title: "Always trust Happier workspaces",
-                                subtitle: "Trust the current recaptured Claude prompt for workspaces opened by Happier."
+                                title: "始终信任 Happier 工作区",
+                                subtitle: "信任 Happier 打开的工作区中当前重新捕获的 Claude 提示。"
                             },
                             always_reject_happier_workspaces: {
-                                title: "Always reject Happier workspaces",
-                                subtitle: "Reject the current recaptured Claude prompt for workspaces opened by Happier."
+                                title: "始终拒绝 Happier 工作区",
+                                subtitle: "拒绝 Happier 打开的工作区中当前重新捕获的 Claude 提示。"
                             }
                         }
                     },

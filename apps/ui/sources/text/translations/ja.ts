@@ -2971,7 +2971,7 @@ localTailscale: {
       recoveryCreditExpires: ({ time }: { time: string }) => `Expires: ${time}`,
       recoveryCreditApplying: "リセットを適用中…",
       recoveryCreditMachineUnavailable: "このリセットを適用できるアクティブなマシンがありません。",
-      recoveryCreditNothingToReset: "No exhausted usage window currently needs a reset.",
+      recoveryCreditNothingToReset: "現在、リセットが必要な使用量上限の枠はありません。",
       recoveryCreditBadge: ({ count }: { count: number }) => count === 1 ? "1 reset" : `${count} resets`,
       remaining: ({ percent }: { percent: string }) => `残り${percent}`,
       remainingWithReset: ({ percent, reset }: { percent: string; reset: string }) =>
@@ -4241,20 +4241,20 @@ localTailscale: {
                         }
                     },
                     claudeUnifiedTerminalWorkspaceTrust: {
-                        title: "Workspace trust",
-                        subtitle: "Choose how Happier responds when Claude asks whether to trust a workspace.",
+                        title: "ワークスペースの信頼",
+                        subtitle: "Claude がワークスペースを信頼するか尋ねたときの Happier の応答方法を選択します。",
                         options: {
                             ask_every_time: {
-                                title: "Ask every time",
-                                subtitle: "Show the exact workspace trust question in the session."
+                                title: "毎回確認する",
+                                subtitle: "ワークスペースの信頼に関する質問をそのままセッションに表示します。"
                             },
                             always_trust_happier_workspaces: {
-                                title: "Always trust Happier workspaces",
-                                subtitle: "Trust the current recaptured Claude prompt for workspaces opened by Happier."
+                                title: "Happier のワークスペースを常に信頼する",
+                                subtitle: "Happier が開いたワークスペースでは、再取得された現在の Claude プロンプトを信頼します。"
                             },
                             always_reject_happier_workspaces: {
-                                title: "Always reject Happier workspaces",
-                                subtitle: "Reject the current recaptured Claude prompt for workspaces opened by Happier."
+                                title: "Happier のワークスペースを常に拒否する",
+                                subtitle: "Happier が開いたワークスペースでは、再取得された現在の Claude プロンプトを拒否します。"
                             }
                         }
                     },

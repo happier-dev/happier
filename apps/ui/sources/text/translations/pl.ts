@@ -2607,7 +2607,7 @@ export const pl: TranslationStructure = {
       recoveryCreditExpires: ({ time }: { time: string }) => `Expires: ${time}`,
       recoveryCreditApplying: "Stosowanie resetu…",
       recoveryCreditMachineUnavailable: "Brak aktywnej maszyny, na której można zastosować ten reset.",
-      recoveryCreditNothingToReset: "No exhausted usage window currently needs a reset.",
+      recoveryCreditNothingToReset: "Żadne wyczerpane okno użycia nie wymaga obecnie resetu.",
       recoveryCreditBadge: ({ count }: { count: number }) => count === 1 ? "1 reset" : `${count} resets`,
       remaining: ({ percent }: { percent: string }) => `Pozostało ${percent}`,
       remainingWithReset: ({ percent, reset }: { percent: string; reset: string }) =>
@@ -3986,20 +3986,20 @@ export const pl: TranslationStructure = {
                         }
                     },
                     claudeUnifiedTerminalWorkspaceTrust: {
-                        title: "Workspace trust",
-                        subtitle: "Choose how Happier responds when Claude asks whether to trust a workspace.",
+                        title: "Zaufanie do obszaru roboczego",
+                        subtitle: "Wybierz, jak Happier ma odpowiadać, gdy Claude pyta, czy zaufać obszarowi roboczemu.",
                         options: {
                             ask_every_time: {
-                                title: "Ask every time",
-                                subtitle: "Show the exact workspace trust question in the session."
+                                title: "Pytaj za każdym razem",
+                                subtitle: "Pokaż w sesji dokładne pytanie o zaufanie do obszaru roboczego."
                             },
                             always_trust_happier_workspaces: {
-                                title: "Always trust Happier workspaces",
-                                subtitle: "Trust the current recaptured Claude prompt for workspaces opened by Happier."
+                                title: "Zawsze ufaj obszarom roboczym Happier",
+                                subtitle: "Ufaj bieżącemu ponownie przechwyconemu monitowi Claude dla obszarów roboczych otwartych przez Happier."
                             },
                             always_reject_happier_workspaces: {
-                                title: "Always reject Happier workspaces",
-                                subtitle: "Reject the current recaptured Claude prompt for workspaces opened by Happier."
+                                title: "Zawsze odrzucaj obszary robocze Happier",
+                                subtitle: "Odrzucaj bieżący ponownie przechwycony monit Claude dla obszarów roboczych otwartych przez Happier."
                             }
                         }
                     },
