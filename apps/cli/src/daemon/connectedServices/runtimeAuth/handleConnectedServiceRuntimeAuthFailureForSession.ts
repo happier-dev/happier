@@ -231,7 +231,51 @@ export async function authorizeConnectedServiceRuntimeAuthFailureSource(input: R
     classification: input.classification,
     resolveDurableSessionForRuntimeAuthRecovery: input.resolveDurableSessionForRuntimeAuthRecovery ?? null,
   });
-  const classification = input.classification;
+  const directLiveHotAuth = input.runtimeAuthApply?.directLiveHotAuth;
+  const brokerOwnedSourceResolverApplicable = typeof directLiveHotAuth === 'object'
+    && directLiveHotAuth.authMode.kind === 'provider_owned'
+    && directLiveHotAuth.authMode.name === 'broker_selection_indirection';
+  let brokerOwnedSourceBinding: RuntimeAuthFailureSourceBinding | null = null;
+  let classification = input.classification;
+  const inputHasExactSourceIdentity = classification !== null
+    && typeof classification.profileId === 'string'
+    && classification.profileId.trim().length > 0
+    && typeof classification.credentialRevision === 'string'
+    && classification.credentialRevision.trim().length > 0
+    && (
+      (
+        typeof classification.groupId === 'string'
+        && classification.groupId.trim().length > 0
+        && typeof classification.groupGeneration === 'number'
+        && Number.isInteger(classification.groupGeneration)
+        && classification.groupGeneration >= 0
+      )
+      || (
+        (classification.groupId === null || classification.groupId === undefined)
+        && (classification.groupGeneration === null || classification.groupGeneration === undefined)
+      )
+    );
+  if (
+    brokerOwnedSourceResolverApplicable
+    && tracked
+    && classification
+    && !inputHasExactSourceIdentity
+    && input.resolveCurrentRuntimeAuthFailureSource
+  ) {
+    const resolvedBinding = await input.resolveCurrentRuntimeAuthFailureSource({
+      sessionId: input.sessionId,
+      tracked,
+      classification,
+    });
+    if (resolvedBinding?.serviceId === classification.serviceId) {
+      brokerOwnedSourceBinding = resolvedBinding;
+      classification = applyAuthorizedRuntimeAuthFailureSourceBinding(classification, {
+        status: 'authorized',
+        tracked,
+        sourceBinding: resolvedBinding,
+      });
+    }
+  }
   const reportedProfileId = typeof classification?.profileId === 'string'
     ? classification.profileId.trim()
     : '';
@@ -253,10 +297,9 @@ export async function authorizeConnectedServiceRuntimeAuthFailureSource(input: R
       (reportedGroupId !== null && reportedGroupId.length > 0 && reportedGeneration !== null)
       || ((reportedGroupId === null || reportedGroupId.length === 0) && reportedGeneration === null)
     );
-  const directLiveHotAuth = input.runtimeAuthApply?.directLiveHotAuth;
   const exactLiveSourceResolverApplicable = typeof directLiveHotAuth === 'object'
     && directLiveHotAuth.requiresExactRuntimeIdentity === true;
-  if (modernExactReport) {
+  if (modernExactReport && classification !== null) {
     if (!tracked) {
       throw new Error('connected-service exact runtime source session temporarily unavailable');
     }
@@ -372,17 +415,26 @@ export async function authorizeConnectedServiceRuntimeAuthFailureSource(input: R
     };
   }
 
+  if (classification === null) {
+    return brokerOwnedSourceBinding
+      ? { status: 'authorized', tracked, sourceBinding: brokerOwnedSourceBinding }
+      : { status: 'authorized', tracked };
+  }
+
   // Only providers whose catalog lifecycle capability requires exact live runtime identity use
   // the narrow predecessor verifier. Other providers retain registry-only compatibility semantics.
   const requiresPredecessorVerification = exactLiveSourceResolverApplicable
-    && classification !== null
     && classification.groupId !== null
     && (
       classification.recoveryAction?.kind === 'quota_recovery_required'
       || tracked?.reattachedFromDiskMarker === true
       || !tracked
     );
-  if (!requiresPredecessorVerification) return { status: 'authorized', tracked };
+  if (!requiresPredecessorVerification) {
+    return brokerOwnedSourceBinding
+      ? { status: 'authorized', tracked, sourceBinding: brokerOwnedSourceBinding }
+      : { status: 'authorized', tracked };
+  }
   if (!tracked) {
     return {
       status: 'recovery_superseded',

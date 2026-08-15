@@ -20,9 +20,23 @@ export async function recordConnectedServiceAccountProfileChange(
     });
 
     afterTx(tx, () => {
+        const payload = buildUpdateAccountUpdate(
+            params.accountId,
+            projection,
+            cursor,
+            randomKeyNaked(12),
+        );
+        // Machine-scoped daemons are the canonical consumers that apply committed
+        // group generations to live runtimes. UI-only projection left settings
+        // changes invisible until each session independently encountered a failure.
         eventRouter.emitUpdate({
             userId: params.accountId,
-            payload: buildUpdateAccountUpdate(params.accountId, projection, cursor, randomKeyNaked(12)),
+            payload,
+            recipientFilter: { type: "user-machine-scoped-only" },
+        });
+        eventRouter.emitUpdate({
+            userId: params.accountId,
+            payload,
             recipientFilter: { type: "user-scoped-only" },
         });
     });

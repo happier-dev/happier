@@ -9,8 +9,15 @@ import {
 
 import { createTestAuth } from '../../src/testkit/auth';
 import { fetchJson } from '../../src/testkit/http';
+import { registerMachineIdentity } from '../../src/testkit/machineIdentity';
 import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
 import { createRunDirs } from '../../src/testkit/runDir';
+import {
+  createMachineScopedSocketCollector,
+  createUserScopedSocketCollector,
+  type SocketCollector,
+} from '../../src/testkit/socketClient';
+import { waitFor } from '../../src/testkit/timing';
 
 type UnknownRecord = Record<string, unknown>;
 type AuthGroupResponse = Readonly<{
@@ -21,6 +28,19 @@ type AuthGroupResponse = Readonly<{
 
 const run = createRunDirs({ runLabel: 'core' });
 const serviceId: ConnectedServiceId = 'openai-codex';
+
+async function waitForSocket(socket: SocketCollector, context: string): Promise<void> {
+  socket.connect();
+  await waitFor(() => socket.isConnected(), { timeoutMs: 20_000, context });
+}
+
+function hasConnectedServicesAccountUpdate(socket: SocketCollector, afterIndex: number): boolean {
+  return socket.getEvents().slice(afterIndex).some((event) => (
+    event.kind === 'update'
+    && event.payload.body?.t === 'update-account'
+    && event.payload.body.connectedServicesV2 !== undefined
+  ));
+}
 
 function asRecord(value: unknown): UnknownRecord | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
@@ -334,5 +354,74 @@ describe('core e2e: connected-service auth group CAS', () => {
     expect(readString(afterStaleRuntimeState, 'activeProfileId')).toBe('standby');
     expect(readNumber(afterStaleRuntimeState, 'generation')).toBe(2);
     expect(afterStaleRuntimeState.state).toEqual({});
+  });
+
+  it('publishes committed active-profile truth to both UI and daemon account projections', async () => {
+    const testDir = run.testDir(`connected-service-auth-group-projection-${randomUUID()}`);
+    server = await startServerLight({
+      testDir,
+      dbProvider: 'sqlite',
+      extraEnv: {
+        HAPPIER_FEATURE_CONNECTED_SERVICES__ENABLED: '1',
+        HAPPIER_FEATURE_CONNECTED_SERVICES_ACCOUNT_GROUPS__ENABLED: '1',
+      },
+    });
+    const auth = await createTestAuth(server.baseUrl);
+    const machineId = randomUUID();
+    await registerMachineIdentity({ baseUrl: server.baseUrl, token: auth.token, machineId });
+    const userSocket = createUserScopedSocketCollector(server.baseUrl, auth.token);
+    const machineSocket = createMachineScopedSocketCollector(server.baseUrl, auth.token, machineId);
+
+    try {
+      await Promise.all([
+        waitForSocket(userSocket, 'connected-service UI projection socket'),
+        waitForSocket(machineSocket, 'connected-service daemon projection socket'),
+      ]);
+      const groupId = `codex-projection-${randomUUID()}`;
+      await createConnectedServiceProfile({
+        baseUrl: server.baseUrl,
+        token: auth.token,
+        profileId: 'primary',
+        providerEmail: 'primary@example.test',
+      });
+      await createConnectedServiceProfile({
+        baseUrl: server.baseUrl,
+        token: auth.token,
+        profileId: 'backup',
+        providerEmail: 'backup@example.test',
+      });
+      await createConnectedServiceAuthGroup({
+        baseUrl: server.baseUrl,
+        token: auth.token,
+        groupId,
+        activeProfileId: 'primary',
+        memberProfileIds: ['primary', 'backup'],
+      });
+
+      // Ignore create-time projection events. This assertion specifically covers the same CAS
+      // mutation used by the settings active-member picker and automated group switching.
+      const userEventsBeforeSwitch = userSocket.getEvents().length;
+      const machineEventsBeforeSwitch = machineSocket.getEvents().length;
+      const switched = await switchActiveProfile({
+        baseUrl: server.baseUrl,
+        token: auth.token,
+        groupId,
+        profileId: 'backup',
+        expectedGeneration: 0,
+      });
+      expect(switched.status).toBe(200);
+
+      await waitFor(
+        () => hasConnectedServicesAccountUpdate(userSocket, userEventsBeforeSwitch),
+        { timeoutMs: 20_000, context: 'UI received switched connected-service projection' },
+      );
+      await waitFor(
+        () => hasConnectedServicesAccountUpdate(machineSocket, machineEventsBeforeSwitch),
+        { timeoutMs: 20_000, context: 'daemon received switched connected-service projection' },
+      );
+    } finally {
+      userSocket.close();
+      machineSocket.close();
+    }
   });
 });

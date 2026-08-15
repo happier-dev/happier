@@ -275,6 +275,7 @@ import { createQuotaDrivenConnectedServiceAuthGroupSwitchCoordinator } from './c
 import { ConnectedServiceAuthGroupGenerationConsumer } from './connectedServices/accountGroups/generation/ConnectedServiceAuthGroupGenerationConsumer';
 import { createConnectedServiceCurrentGroupTruthNotifier } from './connectedServices/accountGroups/generation/createConnectedServiceCurrentGroupTruthNotifier';
 import {
+  getBrokerBridgeEffectiveSelection,
   isBrokerBridgeCurrentGroupTruthCompatible,
   markBrokerBridgeEffectiveSelectionUnavailable,
 } from './connectedServices/broker/brokerBridgeEffectiveSelectionRegistry';
@@ -5530,9 +5531,36 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
             ? descriptor.runtimeAuthApply
             : null;
         };
-        const resolveCurrentCodexRuntimeAuthFailureSourceForSession: NonNullable<
+        const resolveCurrentRuntimeAuthFailureSourceForSession: NonNullable<
           Parameters<typeof authorizeConnectedServiceRuntimeAuthFailureSource>[0]['resolveCurrentRuntimeAuthFailureSource']
         > = async ({ sessionId: liveSessionId, classification: liveClassification }) => {
+          const runtimeTarget = connectedServiceRuntimeRegistry.getBySessionId(liveSessionId);
+          const brokerSelectionIdentity = runtimeTarget?.brokerSelectionIdentity ?? null;
+          if (brokerSelectionIdentity) {
+            const serviceId = ConnectedServiceIdSchema.safeParse(liveClassification.serviceId);
+            if (!serviceId.success) return null;
+            const brokerSelection = getBrokerBridgeEffectiveSelection({
+              selectionIdentity: brokerSelectionIdentity,
+              serviceId: serviceId.data,
+            });
+            if (brokerSelection?.availability !== 'available') return null;
+            const selection = brokerSelection.selection;
+            return selection.kind === 'group'
+              ? {
+                  serviceId: selection.serviceId,
+                  groupId: selection.groupId,
+                  profileId: selection.activeProfileId,
+                  generation: selection.generation,
+                  credentialRevision: selection.credentialRevision ?? null,
+                }
+              : {
+                  serviceId: selection.serviceId,
+                  groupId: null,
+                  profileId: selection.profileId,
+                  generation: null,
+                  credentialRevision: null,
+                };
+          }
           return await resolveCurrentCodexRuntimeAuthFailureSource({
             classification: liveClassification,
             readRuntimeIdentity: async (request) => await readConnectedServiceRuntimeIdentityForQuotaFanout({
@@ -5814,7 +5842,7 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
                 serviceId: classification.serviceId,
               }),
             resolveRegisteredRuntimeAuthFailureSource: resolveRegisteredRuntimeAuthFailureSourceForSession,
-            resolveCurrentRuntimeAuthFailureSource: resolveCurrentCodexRuntimeAuthFailureSourceForSession,
+            resolveCurrentRuntimeAuthFailureSource: resolveCurrentRuntimeAuthFailureSourceForSession,
             runtimeAuthApply,
             temporaryThrottleRecovery,
             credentialRefreshService: connectedServiceRefreshCoordinator,
@@ -6642,7 +6670,7 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
               serviceId: durableClassification.serviceId,
           }),
           resolveRegisteredRuntimeAuthFailureSource: resolveRegisteredRuntimeAuthFailureSourceForSession,
-          resolveCurrentRuntimeAuthFailureSource: resolveCurrentCodexRuntimeAuthFailureSourceForSession,
+          resolveCurrentRuntimeAuthFailureSource: resolveCurrentRuntimeAuthFailureSourceForSession,
           runtimeAuthApply,
         });
       },
