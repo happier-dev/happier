@@ -491,6 +491,8 @@ const SessionStopPhysicalUnconfirmedReasonSchema = z.union([
     'transport_ambiguous',
     'marker_fallback_failed',
     'local_session_not_found',
+    'target_daemon_unavailable',
+    'target_session_not_found',
     'daemon_stop_requested',
     'unexpected_error',
   ]),

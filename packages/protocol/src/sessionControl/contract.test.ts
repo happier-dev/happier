@@ -71,6 +71,13 @@ describe('sessionControl contract exports', () => {
         reason: 'relay_inactive_not_observed',
       },
     })).success).toBe(true);
+    for (const reason of ['target_daemon_unavailable', 'target_session_not_found']) {
+      expect(schema.safeParse(envelope({
+        sessionId: 'sess_123',
+        stopped: false,
+        stopOutcome: { status: 'physical_stop_unconfirmed', reason },
+      })).success).toBe(true);
+    }
 
     for (const reason of [
       'terminal_control_serviceability_retirement_failed',

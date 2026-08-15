@@ -6,6 +6,7 @@ import { waitForSocketConnect } from '@/session/transport/socket/waitForSocketCo
 import { resolveSessionControlSocketConnectTimeoutMs } from '@/session/transport/shared/sessionTimeouts';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import { createRpcCallError } from '@happier-dev/protocol/rpcErrors';
+import type { SocketRpcAuthorizationContext } from '@happier-dev/protocol/rpc';
 
 /**
  * Calls exactly one account-scoped machine RPC. The caller owns retry policy;
@@ -16,6 +17,7 @@ export async function callMachineRpc(params: Readonly<{
   machineId: string;
   method: string;
   request: unknown;
+  authorization?: SocketRpcAuthorizationContext;
   timeoutMs?: number;
 }>): Promise<unknown> {
   const machineId = params.machineId.trim();
@@ -60,7 +62,11 @@ export async function callMachineRpc(params: Readonly<{
       try {
         socket.emit(
           SOCKET_RPC_EVENTS.CALL,
-          { method: `${machineId}:${params.method}`, params: encryptedRequest },
+          {
+            method: `${machineId}:${params.method}`,
+            params: encryptedRequest,
+            ...(params.authorization ? { authorization: params.authorization } : {}),
+          },
           (payload: { ok: boolean; result?: unknown; error?: string; errorCode?: string }) => finish(() => resolve(payload)),
         );
       } catch (error) {
