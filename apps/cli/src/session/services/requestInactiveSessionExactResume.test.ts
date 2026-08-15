@@ -26,6 +26,8 @@ function rawSession(overrides: Record<string, unknown> = {}): RawSessionRecord {
 describe('requestInactiveSessionResume', () => {
   afterEach(() => {
     callMachineRpc.mockReset();
+    vi.unstubAllEnvs();
+    vi.useRealTimers();
   });
 
   it('targets only the recorded session machine with one fresh user authorization', async () => {
@@ -61,6 +63,84 @@ describe('requestInactiveSessionResume', () => {
         },
       }),
     }));
+    expect(callMachineRpc.mock.calls[0]?.[0]?.request).not.toHaveProperty('spawnNonce');
+  });
+
+  it('rejects an archived session before contacting its recorded machine', async () => {
+    await expect(requestInactiveSessionResume({
+      credentials,
+      sessionId: 'session-1',
+      localId: 'local-1',
+      rawSession: rawSession({ archivedAt: 123 }),
+      metadata: {
+        agentId: 'claude',
+        machineId: 'machine-session',
+        path: '/repo',
+        claudeSessionId: 'provider-session-1',
+      },
+    })).resolves.toEqual({
+      ok: false,
+      code: 'session_archived',
+      message: 'Archived sessions must be unarchived before resume',
+    });
+
+    expect(callMachineRpc).not.toHaveBeenCalled();
+  });
+
+  it('waits for a 1231ms accepted resume to become ready without submitting the resume twice', async () => {
+    vi.useFakeTimers();
+    vi.stubEnv('HAPPIER_SPAWN_SESSION_ID_RESOLVE_TIMEOUT_MS', '5000');
+    vi.stubEnv('HAPPIER_SPAWN_SESSION_ID_RESOLVE_POLL_INTERVAL_MS', '25');
+    vi.stubEnv('HAPPIER_SPAWN_SESSION_ID_RESOLVE_NOT_FOUND_GRACE_MS', '5000');
+    const startedAt = Date.now();
+    callMachineRpc.mockImplementation(async (params: Readonly<{ method: string }>) => {
+      if (params.method === 'spawn-happy-session') {
+        return {
+          type: 'success',
+          sessionId: 'session-1',
+          sessionIdStatus: 'available',
+        };
+      }
+      if (params.method === 'daemon.spawnSession.resolve') {
+        return Date.now() - startedAt >= 1231
+          ? { status: 'success', sessionId: 'session-1' }
+          : { status: 'pending' };
+      }
+      throw new Error(`Unexpected machine RPC method: ${params.method}`);
+    });
+    let settled = false;
+    const input = {
+      credentials,
+      sessionId: 'session-1',
+      localId: 'local-1',
+      rawSession: rawSession(),
+      metadata: {
+        agentId: 'claude',
+        machineId: 'machine-session',
+        path: '/repo',
+        claudeSessionId: 'provider-session-1',
+      },
+      waitForReady: true,
+    } as const;
+
+    const result = requestInactiveSessionResume(input).then((value) => {
+      settled = true;
+      return value;
+    });
+    await vi.advanceTimersByTimeAsync(1230);
+    expect(settled).toBe(false);
+    await vi.advanceTimersByTimeAsync(20);
+
+    await expect(result).resolves.toEqual({ ok: true });
+    expect(callMachineRpc.mock.calls.filter(([params]) => params.method === 'spawn-happy-session')).toHaveLength(1);
+    expect(callMachineRpc.mock.calls.filter(([params]) => params.method === 'daemon.spawnSession.resolve').length).toBeGreaterThan(1);
+    const submittedNonce = callMachineRpc.mock.calls[0]?.[0]?.request?.spawnNonce;
+    expect(submittedNonce).toMatch(/^inactive-session\.resume:/u);
+    expect(
+      callMachineRpc.mock.calls
+        .filter(([params]) => params.method === 'daemon.spawnSession.resolve')
+        .every(([params]) => params.request?.spawnNonce === submittedNonce),
+    ).toBe(true);
   });
 
   it('fails closed on conflicting machine identity without falling back to another machine', async () => {

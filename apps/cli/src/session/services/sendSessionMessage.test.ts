@@ -1047,6 +1047,57 @@ describe('sendSessionMessage', () => {
         expect(callSessionRpc).not.toHaveBeenCalled();
     });
 
+    it('rejects an archived session before creating Pending custody or requesting resume', async () => {
+        const enqueuePendingQueueV2MessageViaHttp = vi.fn(async () => undefined);
+        const requestInactiveSessionResume = vi.fn(async () => ({ ok: true as const }));
+
+        vi.doMock('@/api/session/pendingQueueV2Transport', () => ({
+            enqueuePendingQueueV2MessageViaHttp,
+        }));
+        vi.doMock('./requestInactiveSessionResume', () => ({
+            requestInactiveSessionResume,
+        }));
+        vi.doMock('./resolveSessionTransportContext', () => ({
+            resolveSessionTransportContext: vi.fn(async () => ({
+                ok: true,
+                sessionId: 'sess-archived',
+                mode: 'plain',
+                ctx: { encryptionKey: new Uint8Array(32).fill(1), encryptionVariant: 'dataKey' },
+                rawSession: {
+                    id: 'sess-archived',
+                    active: false,
+                    archivedAt: 123,
+                    encryptionMode: 'plain',
+                    path: '/repo',
+                    machineId: 'machine-session',
+                    metadata: JSON.stringify({
+                        agentId: 'claude',
+                        path: '/repo',
+                        machineId: 'machine-session',
+                    }),
+                },
+            })),
+        }));
+
+        const { sendSessionMessage } = await import('./sendSessionMessage');
+        const machineKey = new Uint8Array(32).fill(1);
+
+        await expect(sendSessionMessage({
+            credentials: { token: 'token', encryption: { type: 'dataKey', publicKey: machineKey, machineKey } },
+            idOrPrefix: 'sess-archived',
+            message: 'do not queue this',
+            localId: 'archived-local-id',
+            wait: false,
+            timeoutMs: 1,
+        })).resolves.toEqual({
+            ok: false,
+            code: 'session_archived',
+        });
+
+        expect(enqueuePendingQueueV2MessageViaHttp).not.toHaveBeenCalled();
+        expect(requestInactiveSessionResume).not.toHaveBeenCalled();
+    });
+
     it('durably enqueues an inactive prompt before one user-authorized resume on its recorded machine', async () => {
         const sendSessionMessageViaSocketCommitted = vi.fn(async () => undefined);
         const enqueuePendingQueueV2MessageViaHttp = vi.fn(async () => undefined);

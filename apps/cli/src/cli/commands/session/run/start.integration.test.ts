@@ -10,7 +10,7 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import {
   bindApiSessionSocketMock,
-  bindApiSessionSocketPairMock,
+  bindApiSessionSocketSequenceMock,
   createApiSessionSocketStub,
   type ApiSessionSocketStub,
 } from '@/testkit/backends/apiSessionSocketHarness';
@@ -216,6 +216,7 @@ describe('happier session run start (integration)', () => {
     const output = captureConsoleJsonOutput();
     const machineKeySeed = new Uint8Array(32).fill(8);
     const rpcOrder: string[] = [];
+    let submittedNonce = '';
     sessionActive = false;
 
     const userSocket = createApiSessionSocketStub({
@@ -223,24 +224,33 @@ describe('happier session run start (integration)', () => {
         const [data, cb] = args as [any, ((value: unknown) => void) | undefined];
         if (event !== SOCKET_RPC_EVENTS.CALL) return;
         rpcOrder.push(String(data.method ?? ''));
-        expect(data.method).toBe(`machine-integration-1:${RPC_METHODS.SPAWN_HAPPY_SESSION}`);
+        const method = String(data.method ?? '');
         const request = decrypt(
           machineKeySeed,
           'dataKey',
           decodeBase64(String(data.params ?? ''), 'base64'),
         ) as any;
-        expect(request).toMatchObject({
-          type: 'resume-session',
-          sessionId: 'sess_integration_run_start_123',
-          directory: '/tmp',
-        });
+        if (method === `machine-integration-1:${RPC_METHODS.SPAWN_HAPPY_SESSION}`) {
+          expect(request).toMatchObject({
+            type: 'resume-session',
+            sessionId: 'sess_integration_run_start_123',
+            directory: '/tmp',
+            spawnNonce: expect.stringMatching(/^inactive-session\.resume:/u),
+          });
+          submittedNonce = String(request.spawnNonce);
+        } else {
+          expect(method).toBe(`machine-integration-1:${RPC_METHODS.DAEMON_SPAWN_SESSION_RESOLVE}`);
+          expect(request).toEqual({ spawnNonce: submittedNonce });
+        }
         cb?.({
           ok: true,
           result: encodeBase64(
-            encrypt(machineKeySeed, 'dataKey', {
-              type: 'success',
-              sessionId: 'sess_integration_run_start_123',
-            }),
+            encrypt(machineKeySeed, 'dataKey', method.endsWith(RPC_METHODS.SPAWN_HAPPY_SESSION)
+              ? {
+                  type: 'success',
+                  sessionId: 'sess_integration_run_start_123',
+                }
+              : { status: 'success', sessionId: 'sess_integration_run_start_123' }),
             'base64',
           ),
         });
@@ -254,11 +264,7 @@ describe('happier session run start (integration)', () => {
         return startRpcSocket.emit(event, data, cb);
       },
     });
-    bindApiSessionSocketPairMock(mockIo, {
-      userSocket,
-      sessionSocket: orderedStartSocket,
-      fallbackSocket: orderedStartSocket,
-    });
+    bindApiSessionSocketSequenceMock(mockIo, [userSocket, userSocket, orderedStartSocket]);
 
     try {
       await handleSessionCommand(
@@ -278,8 +284,53 @@ describe('happier session run start (integration)', () => {
       expect(output.json().ok).toBe(true);
       expect(rpcOrder).toEqual([
         `machine-integration-1:${RPC_METHODS.SPAWN_HAPPY_SESSION}`,
+        `machine-integration-1:${RPC_METHODS.DAEMON_SPAWN_SESSION_RESOLVE}`,
         'sess_integration_run_start_123:execution.run.start',
       ]);
+    } finally {
+      output.restore();
+    }
+  });
+
+  it('preserves protocol-unsupported for an already-active runtime without resuming it', async () => {
+    const { handleSessionCommand } = await import('../index');
+    const output = captureConsoleJsonOutput();
+    const calls: string[] = [];
+    const unsupportedSocket = createApiSessionSocketStub({
+      emit: (event: string, args: unknown[]) => {
+        const [data, cb] = args as [any, ((value: unknown) => void) | undefined];
+        if (event !== SOCKET_RPC_EVENTS.CALL) return;
+        calls.push(String(data.method ?? ''));
+        cb?.({
+          ok: false,
+          error: 'RPC method not available',
+          errorCode: 'RPC_METHOD_NOT_AVAILABLE',
+        });
+      },
+    });
+    bindApiSessionSocketMock(mockIo, unsupportedSocket);
+
+    try {
+      await handleSessionCommand(
+        ['run', 'start', 'sess_integration_run_start_123', '--intent', 'review', '--backend', 'claude', '--json'],
+        {
+          readCredentialsFn: async () => ({
+            token: 'token_test',
+            encryption: {
+              type: 'dataKey',
+              publicKey: deriveBoxPublicKeyFromSeed(new Uint8Array(32).fill(8)),
+              machineKey: new Uint8Array(32).fill(8),
+            },
+          }),
+        },
+      );
+
+      expect(output.json()).toMatchObject({
+        ok: false,
+        kind: 'session_run_start',
+        error: { code: 'execution_run_protocol_unsupported' },
+      });
+      expect(calls).toEqual(['sess_integration_run_start_123:execution.run.start']);
     } finally {
       output.restore();
     }

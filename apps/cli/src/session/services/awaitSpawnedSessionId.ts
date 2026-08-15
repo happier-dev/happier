@@ -21,7 +21,10 @@ import { delay } from '@/utils/time';
  * `settleSpawnSessionNonce`; this module adapts them to the CLI's
  * `SpawnSessionResult` envelope.
  */
-export type SpawnSessionNonceResolver = (spawnNonce: string) => Promise<SpawnSessionNonceResolution>;
+export type SpawnSessionNonceResolver = (
+  spawnNonce: string,
+  remainingTimeoutMs?: number,
+) => Promise<SpawnSessionNonceResolution>;
 
 export type AwaitSpawnedSessionIdResult =
   | { type: 'success'; sessionId: string }

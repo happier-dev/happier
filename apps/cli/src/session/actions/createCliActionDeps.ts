@@ -1129,6 +1129,7 @@ export function createCliActionDeps(params: Readonly<{
           localId: `execution.run.start:${randomUUID()}`,
           rawSession: transport.rawSession,
           metadata,
+          waitForReady: true,
         });
         if (!resumed.ok) {
           return {

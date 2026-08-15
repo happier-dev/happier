@@ -46,7 +46,7 @@ export type SendSessionMessageResult =
   | Readonly<{ ok: true; sessionId: string; localId: string; waited: boolean; suppressed?: true }>
   | Readonly<{
       ok: false;
-      code: 'session_not_found' | 'session_id_ambiguous' | 'session_lookup_timeout' | 'unsupported' | 'timeout' | 'wait_failed';
+      code: 'session_not_found' | 'session_id_ambiguous' | 'session_lookup_timeout' | 'session_archived' | 'unsupported' | 'timeout' | 'wait_failed';
       candidates?: string[];
       message?: string;
     }>;
@@ -448,6 +448,10 @@ export async function sendSessionMessage(params: Readonly<{
   const sessionId = sessionTarget.sessionId;
   if (typeof sessionId !== 'string' || sessionId.length === 0) {
     throw new Error('Resolved session transport context is missing session id');
+  }
+  const archivedAt = (sessionTarget.rawSession as { archivedAt?: unknown }).archivedAt;
+  if (archivedAt !== null && archivedAt !== undefined) {
+    return { ok: false, code: 'session_archived' };
   }
 
   if (params.localId !== undefined && readPendingLocalId(params.localId) === null) {
