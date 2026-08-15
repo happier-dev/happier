@@ -95,21 +95,41 @@ yarn ghops auth clear
 
 On non-macOS platforms, continue providing `HAPPIER_GITHUB_BOT_TOKEN`; Keychain lifecycle commands fail closed until a native credential-store adapter exists.
 
-## What to write (LLM guidelines)
+## Public GitHub writing
 
-When creating/updating public issues, keep it **useful but minimal**:
+This skill owns the quality and safety of outgoing GitHub payloads. Triage, diagnosis, implementation, review, and release evidence establish the conclusions; polished prose does not become another source of product truth.
 
-- Prefer **user impact, repro steps, expected vs actual**, and **acceptance criteria**.
-- Link to PRs/commits by URL when available.
-- Avoid internal-only detail: no private logs, no secrets, no tokens, and no stack dumps from private environments.
-- If you need to share sensitive debugging context, summarize it and keep the raw detail local.
+Write public issues, pull-request text, and comments in Happier's voice: warm, direct, concrete, technically honest, and useful without sounding like customer-support automation. Be concise because the response is focused, not because evidence, consequences, or caveats were removed.
 
-Suggested comment format for progress updates:
+### Voice and identity
 
-- What changed (1–3 bullets)
-- Why (brief)
-- Next step / what’s blocked (one line)
-- Links (PR/commit/issues)
+- Sound like a thoughtful project collaborator, not a corporate account, growth bot, legal notice, or generic AI assistant.
+- Acknowledge the reporter's actual symptom or contribution when useful; do not substitute canned thanks such as `Thank you for bringing this to our attention` or promise that `our team is actively investigating` without current evidence.
+- Never invent personal experience, quotes, maintainer decisions, or feelings. Do not write `I built`, `I decided`, or `I've been working on` unless the exact user-approved payload deliberately speaks in that maintainer's voice.
+- Use `we` only for a project-level action or status established by evidence or supplied in the exact approved text. Otherwise prefer neutral factual constructions such as `This reproduces on...`, `The current implementation...`, and `The remaining gap is...`.
+- Preserve personality and earned enthusiasm, but avoid promotional fog, slogans, hype, artificial urgency, unsupported superlatives, and competitor comparisons.
+- Prefer plain ASCII punctuation in newly authored public copy.
+
+### Product truth and status
+
+- Lead with the useful outcome or current state: reported, reproduced, unable to reproduce, diagnosed, implemented, merged, released, blocked, awaiting information, or a duplicate candidate.
+- Distinguish those states exactly. A merged change is not released; a development-only behavior is not generally available; a proposed disposition is not a maintainer decision.
+- Separate observed facts from hypotheses and reporter assertions. Say what evidence supports the conclusion without exposing private evidence provenance.
+- Verify public claims against the implementing behavior and relevant release or channel. Never invent capabilities, product names, guarantees, dates, support levels, or availability.
+- Keep vendor attribution with vendor-owned behavior. Do not state a competitor's limitation as Happier's own conclusion.
+- Treat every correction as a new claim requiring the same evidence as the text it replaces.
+
+### Editing and structure
+
+- Patch existing titles, bodies, and comments narrowly unless the user explicitly approves a rewrite. Preserve accurate reporter language, repro steps, examples, caveats, links, and recognizable voice.
+- Prefer user impact, repro steps, expected versus actual behavior, and acceptance criteria where they help the issue become actionable.
+- Start with the consequence or status, include the minimum evidence needed to make it trustworthy, and end with the concrete next action or missing fact.
+- Ask only for specific missing evidence and briefly explain why it matters. Do not turn a needs-information response into an interrogation.
+- Use topic-specific headings and bullets only when they improve scanning. Do not force labeled sections onto a short natural comment or repeat `**Label:** description` formatting for every sentence.
+- Link PRs, commits, and related issues when they materially help; do not add a ceremonial links section.
+- Never include private logs, diagnostic excerpts, secrets, tokens, machine identities, personal paths, full session ids, or private stack dumps. Summarize the relevant technical fact and keep raw sensitive evidence local.
+
+For a progress update, usually cover the outcome or current status, the evidence or user impact, and the next step or blocker. This is a content checklist, not a mandatory heading template.
 
 ## Common commands
 
