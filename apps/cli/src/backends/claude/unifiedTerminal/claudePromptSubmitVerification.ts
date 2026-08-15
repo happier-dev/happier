@@ -1,9 +1,6 @@
 import type { TerminalPromptSubmitVerificationPolicy } from '@/integrations/terminalHost/promptSubmitVerification';
-import { parseExactClaudePastedTextMarkerLineCount } from './claudePastedTextMarker';
-import {
-  isClaudeUnifiedComposerTextExactMatch,
-  isClaudeUnifiedComposerTextMatch,
-} from './promptIdentity';
+import { isExactClaudePastedTextMarker } from './claudePastedTextMarker';
+import { isClaudeUnifiedComposerTextMatch } from './promptIdentity';
 import { parseClaudeScreenState } from './tuiControls/screenState';
 
 function normalizeNewlines(value: string): string {
@@ -12,7 +9,7 @@ function normalizeNewlines(value: string): string {
 
 function isCollapsedPastedTextComposer(composerContent: string | null): boolean {
   return composerContent !== null
-    && parseExactClaudePastedTextMarkerLineCount(composerContent) !== null;
+    && isExactClaudePastedTextMarker(composerContent);
 }
 
 function shouldVerifyAfterSubmit(promptText: string): boolean {
@@ -38,7 +35,7 @@ function isPromptStagedBeforeSubmit(params: Readonly<{
   const promptText = normalizeNewlines(params.promptText);
   const state = parseClaudeScreenState(params.screenText);
   return isCollapsedPastedTextComposer(state.composerContent)
-    || (state.composerContent !== null && isClaudeUnifiedComposerTextExactMatch({
+    || (state.composerContent !== null && isClaudeUnifiedComposerTextMatch({
       promptText,
       composerText: state.composerContent,
     }));

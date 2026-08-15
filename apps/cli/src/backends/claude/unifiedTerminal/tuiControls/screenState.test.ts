@@ -1000,6 +1000,37 @@ describe('parseClaudeScreenState — soft-wrapped composer draft (C11)', () => {
     expect(state.composerContent).toBe('first wrapped segment\nsecond wrapped segment');
   });
 
+  it('captures direct-rendered multi-paragraph drafts across blank composer rows', () => {
+    const state = parseClaudeScreenState([
+      '────────────────────────────────────────────────',
+      '❯ great, awesome! great work',
+      '',
+      '  but seems like a lot of texts are still not translated?',
+      '  http://localhost:5173/zh-Hant',
+      '────────────────────────────────────────────────',
+      '  ⏵⏵ auto mode on (shift+tab to cycle)',
+    ].join('\n'));
+
+    expect(state.composerContent).toBe([
+      'great, awesome! great work',
+      '',
+      'but seems like a lot of texts are still not translated?',
+      'http://localhost:5173/zh-Hant',
+    ].join('\n'));
+  });
+
+  it('keeps blank paragraph rows inside a box-bordered composer', () => {
+    const state = parseClaudeScreenState([
+      '╭──────────────────────────────╮',
+      '│ ❯ first paragraph            │',
+      '│                              │',
+      '│   second paragraph           │',
+      '╰──────────────────────────────╯',
+    ].join('\n'));
+
+    expect(state.composerContent).toBe('first paragraph\n\nsecond paragraph');
+  });
+
   it('keeps single-line drafts and empty composers unchanged', () => {
     const single = parseClaudeScreenState([
       '──────────────',

@@ -23,12 +23,12 @@ export type ClaudeOwnComposerTextLog = Readonly<{
   /**
    * Mark a text whose terminal write failed after bytes may already have reached the composer.
    * This enables a short-prefix match for the same bounded residue window; ordinary records keep
-   * rejecting short prefixes so genuine user drafts remain protected.
+   * rejecting short windows so genuine user drafts remain protected.
    */
   recordPossiblePartialResidue: (text: string, opts?: { minPrefixChars?: number | undefined }) => void;
   /**
-   * True when the composer draft matches recorded own text, or a recent long prefix residue from
-   * an interrupted own injection. Short/old prefixes are intentionally rejected so a genuine user
+   * True when the composer draft matches recorded own text, or a recent long visible window from
+   * an interrupted own injection. Short/old windows are intentionally rejected so a genuine user
    * draft does not classify as ours.
    */
   matches: (draft: string) => boolean;
@@ -53,7 +53,7 @@ type OwnComposerTextLogEntry = Readonly<{
   minShortPrefixResidueChars: number;
 }>;
 
-function isRecentPrefixResidue(params: Readonly<{
+function isRecentRecordedResidue(params: Readonly<{
   entry: OwnComposerTextLogEntry;
   normalizedDraft: string;
   nowMs: number;
@@ -100,7 +100,7 @@ function isCollapsedPasteMarkerMatch(params: Readonly<{
 /**
  * Bounded log of texts the Claude Unified runtime itself wrote into the TUI (lane X, incident
  * cmq8y3nlx): a leftover composer draft that matches one of them, including a bounded recent long
- * prefix from a truncated injection, is OUR OWN residue and may be cleared, while anything else is
+ * viewport window from a truncated injection, is OUR OWN residue and may be cleared, while anything else is
  * treated as a genuine user draft.
  */
 export function createClaudeOwnComposerTextLog(opts?: Readonly<{
@@ -190,13 +190,13 @@ export function createClaudeOwnComposerTextLog(opts?: Readonly<{
           prefixResidueWindowMs,
           largeCollapsedPasteMarkerWindowMs,
         })
-        || isRecentPrefixResidue({
+        || isRecentRecordedResidue({
           entry,
           normalizedDraft: normalized,
           nowMs: referenceMs,
           prefixResidueWindowMs,
         })
-        || (collapsed !== normalized && isRecentPrefixResidue({
+        || (collapsed !== normalized && isRecentRecordedResidue({
           entry,
           normalizedDraft: collapsed,
           nowMs: referenceMs,

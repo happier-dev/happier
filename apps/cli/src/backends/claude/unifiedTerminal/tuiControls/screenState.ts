@@ -108,7 +108,6 @@ const ESC_TO_INTERRUPT = /esc to interrupt/i;
 const GENERATING_SPINNER_LINE = /(?:^|\n)[^\S\n]*[✶✻✽✳·∗*][^\S\n]+\S+…[^\S\n]*\(/u;
 const QUEUED_MESSAGE_BANNER = /press up to edit queued messages/i;
 const SWITCH_MODEL_DIALOG = /switch model\?/i;
-export const CLAUDE_RESUME_PREFILL_COMPOSER_TEXT = 'Continue where you left off';
 // Claude renders the focused-row cursor according to terminal capabilities. Real captures include
 // Unicode `❯`, narrow Unicode `›`, and ASCII `>`; treat them as one terminal presentation detail
 // everywhere that parses a selection row. This is deliberately narrower than normalizing arbitrary
@@ -205,8 +204,9 @@ function lineIndexAt(text: string, index: number): number {
   return line;
 }
 
-// Composer-box bottom border / horizontal rule (also matches box corners ╰╭ and heavy rules).
-const COMPOSER_BORDER_LINE = /^[\s─━—╰╯╭╮│|]*$/;
+// Composer-box bottom border / horizontal rule. Require a horizontal/corner glyph: whitespace-only
+// rows and vertical-only box rows can be intentional blank paragraphs inside the composer.
+const COMPOSER_BORDER_LINE = /^[\s─━—╰╯╭╮│|]*[─━—╰╯╭╮][\s─━—╰╯╭╮│|]*$/;
 // Status glyphs that can follow the composer when no border is rendered (fail-closed stop set).
 const COMPOSER_CONTINUATION_STOP = /^[\s]*(?:[⏵←⏺✻✶·]|⚠)/;
 
@@ -226,11 +226,15 @@ function readComposerContinuationLines(text: string, afterIndex: number): string
     const line = rawLine.replace(/^[^\S\n]*[│|]/, '').replace(/[│|][^\S\n]*$/, '');
     if (COMPOSER_BORDER_LINE.test(line)) break;
     if (COMPOSER_CONTINUATION_STOP.test(line)) break;
-    if (!/^[^\S\n]/.test(line)) break;
     const trimmed = line.trim();
-    if (trimmed.length === 0) break;
+    if (trimmed.length === 0) {
+      continuation.push('');
+      continue;
+    }
+    if (!/^[^\S\n]/.test(line)) break;
     continuation.push(trimmed);
   }
+  while (continuation.at(-1) === '') continuation.pop();
   return continuation;
 }
 
@@ -389,10 +393,6 @@ function cursorProvesPlainPlaceholder(params: Readonly<{
   );
 }
 
-export function isClaudeResumePrefillComposerContent(content: string): boolean {
-  return content.trim() === CLAUDE_RESUME_PREFILL_COMPOSER_TEXT;
-}
-
 function readComposerState(
   text: string,
   rawText: string,
@@ -406,9 +406,6 @@ function readComposerState(
   if (content.length === 0) return { content, cursorRelation: null };
   const continuation = readComposerContinuationLines(text, match.index + match[0].length);
   const cursorRelation = readCursorComposerRelation({ text, match, content, context });
-  if (continuation.length === 0 && isClaudeResumePrefillComposerContent(content)) {
-    return { content: '', cursorRelation };
-  }
   if (continuation.length === 0 && composerContentIsDimPlaceholder(rawText, content, cursorRelation)) {
     return { content: '', cursorRelation };
   }
