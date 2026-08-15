@@ -13,6 +13,7 @@ import {
   ensurePiBrokerExtensionAsset,
   serializePiBrokerSelections,
 } from '@/backends/pi/brokerExtension';
+import { isPidAlive, spawnInlineNodeParentWithChild, waitForProcessExit } from '@/testkit/process/spawn';
 
 import { PiRpcBackend } from './PiRpcBackend';
 
@@ -391,4 +392,34 @@ describe('PiRpcBackend connected-service broker preflight (fail-closed)', () => 
 
     await priv.stopRpcProcessForRestart();
   });
+
+  it('stops the complete Pi RPC process tree before a failed replacement can continue', async () => {
+    const { priv } = createGatedBackend({});
+    const { parent, childPid } = await spawnInlineNodeParentWithChild();
+
+    try {
+      priv.process = parent;
+      expect(parent.pid).toBeTruthy();
+      expect(isPidAlive(childPid)).toBe(true);
+
+      await priv.stopRpcProcessForRestart();
+
+      await expect(waitForProcessExit(childPid, { timeoutMs: 750 })).resolves.toBe(true);
+    } finally {
+      if (isPidAlive(childPid)) {
+        try {
+          process.kill(childPid, 'SIGKILL');
+        } catch {
+          // Best-effort cleanup for the deliberately failing pre-fix assertion.
+        }
+      }
+      if (parent.pid && isPidAlive(parent.pid)) {
+        try {
+          parent.kill('SIGKILL');
+        } catch {
+          // Best-effort cleanup for the deliberately failing pre-fix assertion.
+        }
+      }
+    }
+  }, 15_000);
 });

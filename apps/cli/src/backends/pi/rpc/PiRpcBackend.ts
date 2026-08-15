@@ -17,6 +17,7 @@ import {
   AcpPromptSubmissionPhaseError,
   type AcpPromptSubmissionEvidence,
 } from '@/agent/acp/AcpBackend';
+import { killProcessTree } from '@/agent/acp/killProcessTree';
 import { logger } from '@/ui/logger';
 import {
   HAPPIER_CONNECTED_SERVICE_TARGET_MATERIALIZED_ROOT_ENV_KEY,
@@ -552,6 +553,16 @@ async function delay(ms: number): Promise<void> {
     const timeout = setTimeout(resolve, ms);
     timeout.unref?.();
   });
+}
+
+async function stopPiRpcProcess(child: ChildProcessWithoutNullStreams): Promise<void> {
+  // Register before signaling so a fast Windows exit cannot race the close listener. `close` is
+  // later than `exit` and proves the child's stdio/OS handles have been released as well as its PID.
+  const closed = new Promise<void>((resolve) => {
+    child.once('close', () => resolve());
+  });
+  await killProcessTree(child, { graceMs: 2_000 });
+  await closed;
 }
 
 function normalizePiThinkingEffort(raw: unknown): PiThinkingEffort | null {
@@ -1141,29 +1152,7 @@ export class PiRpcBackend implements AgentBackend {
     this.process = null;
     if (!child) return;
 
-    await new Promise<void>((resolve) => {
-      const timeout = setTimeout(() => {
-        try {
-          child.kill('SIGKILL');
-        } catch {
-          // ignore
-        }
-        resolve();
-      }, 2_000);
-      timeout.unref?.();
-
-      child.once('exit', () => {
-        clearTimeout(timeout);
-        resolve();
-      });
-
-      try {
-        child.kill('SIGTERM');
-      } catch {
-        clearTimeout(timeout);
-        resolve();
-      }
-    });
+    await stopPiRpcProcess(child);
   }
 
   private async ensureProcess(): Promise<void> {
@@ -1483,29 +1472,7 @@ export class PiRpcBackend implements AgentBackend {
     this.process = null;
     if (!child) return;
 
-    await new Promise<void>((resolve) => {
-      const timeout = setTimeout(() => {
-        try {
-          child.kill('SIGKILL');
-        } catch {
-          // ignore
-        }
-        resolve();
-      }, 2_000);
-      timeout.unref?.();
-
-      child.once('exit', () => {
-        clearTimeout(timeout);
-        resolve();
-      });
-
-      try {
-        child.kill('SIGTERM');
-      } catch {
-        clearTimeout(timeout);
-        resolve();
-      }
-    });
+    await stopPiRpcProcess(child);
   }
 
   private isPiRpcFailureTraceEnabled(): boolean {
