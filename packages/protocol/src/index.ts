@@ -1,6 +1,15 @@
 export const HAPPY_PROTOCOL_PACKAGE = '@happier-dev/protocol';
 
 export {
+  ServerRetentionDomainPolicyV2Schema,
+  ServerRetentionDomainV2Schema,
+  ServerRetentionPolicyV2Schema,
+  type ServerRetentionDomainPolicyV2,
+  type ServerRetentionDomainV2,
+  type ServerRetentionPolicyV2,
+} from './retention/serverRetentionPolicyV2.js';
+
+export {
   isPendingLocalId,
   readPendingLocalId,
   PendingLocalIdSchema,
