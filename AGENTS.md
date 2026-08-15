@@ -14,6 +14,8 @@ We love ambitious product ideas and simple systems. Do not preserve complexity b
 
 Do not promote an architectural possibility, speculative future consumer, generalized reuse opportunity, another proposed mechanism, or unsupported robustness/scalability target into a product requirement. Offline behavior, unattended execution, exact ordering or freshness, failover, trust models, and fixed capacity limits are path-specific contracts; establish each from current product evidence, a released security or compatibility obligation, or explicit approval.
 
+Cross-device reachability, execution placement, state ownership, persistence, availability, and consistency are separate contracts. A feature being available on several clients or scoped to an Account establishes neither a server-side source of truth nor a multi-writer problem. Add shared materialization or cross-machine coordination only for a named current flow that cannot be served by reaching the canonical authority through existing transport.
+
 Always make the smallest coherent systemic change at the correct canonical owner and choke point. Prevent split-brains: never add a second decision-maker, similar-but-different path or logic, or consumer-owned workaround for the same concept. Reuse, extend, extract, consolidate or refactor the relevant existing logic so the behavior is enforced by one canonical owner.
 
 ## Tier 0 — the ten invariants

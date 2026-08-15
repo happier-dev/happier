@@ -16,6 +16,7 @@ Only in pre-approval plan review, re-derive the user-visible problem and desired
 
 - the complete justification chain through dependent mechanisms to an approved outcome, required invariant, released or external contract, reproduced failure, or reachable material risk—not another proposed mechanism, future consumer, generalized reuse, or architectural completeness;
 - the reachable consequence without the mechanism, authority and state affected, observability, existing recovery, and reversibility;
+- when the plan introduces shared persistence, replicated projections, placement, failover, or cross-machine coordination, the named current consumer, state authority and lifetime, and evidence that a request-through-authority or replaceable-cache design cannot satisfy the approved contract;
 - why the current canonical owner cannot enforce the contract more directly;
 - the producer, entry point, activation step, and composed live recipe;
 - the recursive deletion result and the old, parallel, or dependent paths that must contract;

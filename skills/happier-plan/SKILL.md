@@ -33,6 +33,8 @@ State the outcome beneath the literal request:
 
 Separate observed facts, derived conclusions, assumptions, and unresolved user decisions. Resolve decision-material ambiguity before finalizing a design; do not bury it as an implementation detail.
 
+For cross-device or cross-runtime work, identify separately the client surfaces, canonical authority and executor, transport, durable state and lifetime, behavior while the authority is unavailable, and required consistency. Do not infer any one of these contracts from another.
+
 Before decomposing work, derive the plan backward from the intended outcome:
 
 1. state the user-visible, operational, compatibility, and architectural truths that must hold when the work is complete;
