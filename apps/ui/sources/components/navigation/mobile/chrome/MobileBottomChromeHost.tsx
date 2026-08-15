@@ -389,7 +389,7 @@ export const MobileBottomChromeHost = React.memo(function MobileBottomChromeHost
             pointerEvents="box-none"
             style={{ position: 'absolute', left: 0, right: 0, bottom: 0 }}
         >
-            <View>
+            <View pointerEvents="box-none">
                 {renderedChrome.current.node}
             </View>
             {renderedChrome.previous ? (
