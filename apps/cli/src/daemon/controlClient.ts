@@ -457,7 +457,10 @@ export async function notifyDaemonSessionStarted(
 
 const DAEMON_SESSION_CONNECTED_SERVICE_AUTH_SWITCH_TIMEOUT_ENV_KEY =
   'HAPPIER_DAEMON_SESSION_CONNECTED_SERVICE_AUTH_SWITCH_HTTP_TIMEOUT_MS';
-const DEFAULT_DAEMON_SESSION_CONNECTED_SERVICE_AUTH_SWITCH_TIMEOUT_MS = 120_000;
+// The daemon may consume a 60s safe-boundary wait and a separate 60s bounded
+// application window. The HTTP caller must leave enough transport/materialization
+// margin for that canonical operation to settle before timing out.
+const DEFAULT_DAEMON_SESSION_CONNECTED_SERVICE_AUTH_SWITCH_TIMEOUT_MS = 180_000;
 
 export function resolveDaemonSessionConnectedServiceAuthSwitchTimeoutMs(
   env: NodeJS.ProcessEnv = process.env,
