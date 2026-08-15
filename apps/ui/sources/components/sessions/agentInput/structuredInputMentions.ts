@@ -18,8 +18,8 @@ import type { AutocompleteSuggestion } from '@/components/autocomplete/autocompl
  *
  * `kind` is an OPEN string (D-12), so a draft written by a newer build survives being loaded,
  * reconciled and re-saved by an older one instead of being discarded or reinterpreted (INV-4).
- * The range reconciler below is generic over `tokenText`/`start`/`end`, so an unknown mention
- * shifts and disappears with its token exactly like a known one.
+ * The reconciler below is generic over `tokenText`, so an unknown mention disappears with its
+ * token exactly like a known one.
  */
 import type {
     ComposerSessionMention,
@@ -52,10 +52,10 @@ export type StructuredInputImageInput = Readonly<{
     provenance?: Readonly<{ kind: 'sessionAttachmentUpload' }>;
 }>;
 
-type LegacyVendorPluginMentionRecord = Omit<ComposerVendorPluginMention, 'kind' | 'tokenText' | 'start' | 'end'>;
+type LegacyVendorPluginMentionRecord = Omit<ComposerVendorPluginMention, 'kind' | 'tokenText'>;
 type LegacySkillMentionRecord = Omit<
     ComposerSkillMention,
-    'kind' | 'tokenText' | 'start' | 'end' | 'id' | 'projectionRef' | 'backendId' | 'agentId'
+    'kind' | 'tokenText' | 'id' | 'projectionRef' | 'backendId' | 'agentId'
 >;
 
 type StructuredInputEnvelope = Readonly<{
@@ -102,7 +102,7 @@ type MentionRefWrite =
     | Readonly<{ status: 'unreferenceable' }>;
 
 function resolveMentionRefWrite(mention: ComposerStructuredInputMention): MentionRefWrite {
-    const range = { token: mention.tokenText, start: mention.start, end: mention.end };
+    const token = { token: mention.tokenText };
 
     if (isComposerVendorPluginMention(mention)) {
         return {
@@ -110,7 +110,7 @@ function resolveMentionRefWrite(mention: ComposerStructuredInputMention): Mentio
             reference: {
                 kind: MENTION_KIND_V1.vendorPlugin,
                 ref: buildMentionRefForKindV1(MENTION_KIND_V1.vendorPlugin, mention.vendorPluginRef),
-                ...range,
+                ...token,
                 ...(mention.label ? { label: mention.label } : {}),
             },
         };
@@ -127,7 +127,7 @@ function resolveMentionRefWrite(mention: ComposerStructuredInputMention): Mentio
             reference: {
                 kind: MENTION_KIND_V1.skill,
                 ref: buildMentionRefForKindV1(MENTION_KIND_V1.skill, identity.id),
-                ...range,
+                ...token,
                 label: mention.displayName ?? mention.name,
             },
         };
@@ -141,7 +141,7 @@ function resolveMentionRefWrite(mention: ComposerStructuredInputMention): Mentio
                 // Relative, no authority component (D-8): the containing session's server is
                 // already the only server this reference can mean.
                 ref: buildMentionRefForKindV1(MENTION_KIND_V1.session, mention.sessionId),
-                ...range,
+                ...token,
                 ...(mention.label ? { label: mention.label } : {}),
             },
         };
@@ -154,14 +154,15 @@ function resolveMentionRefWrite(mention: ComposerStructuredInputMention): Mentio
         reference: {
             kind: unknown.kind,
             ref: unknown.ref,
-            ...range,
+            ...token,
             ...(unknown.label ? { label: unknown.label } : {}),
         },
     };
 }
 
-function mentionRefRangeKey(reference: MentionRefV1): string {
-    return `${reference.kind}\u0000${reference.ref}\u0000${reference.start}\u0000${reference.end}`;
+/** The reference identity (D-26): what `sanitizeMentionRefsV1` already deduplicates on. */
+function mentionRefIdentityKey(reference: MentionRefV1): string {
+    return `${reference.kind}\u0000${reference.ref}`;
 }
 
 function buildLegacyVendorPluginRecord(mention: ComposerVendorPluginMention): LegacyVendorPluginMentionRecord {
@@ -190,190 +191,44 @@ function buildLegacySkillRecord(mention: ComposerSkillMention): LegacySkillMenti
     };
 }
 
-function findChangedSpan(previousText: string, nextText: string): Readonly<{
-    previousStart: number;
-    previousEnd: number;
-    nextEnd: number;
-    delta: number;
-}> {
-    let prefix = 0;
-    const maxPrefix = Math.min(previousText.length, nextText.length);
-    while (prefix < maxPrefix && previousText.charCodeAt(prefix) === nextText.charCodeAt(prefix)) {
-        prefix += 1;
-    }
-
-    let suffix = 0;
-    const previousRemaining = previousText.length - prefix;
-    const nextRemaining = nextText.length - prefix;
-    while (
-        suffix < previousRemaining
-        && suffix < nextRemaining
-        && previousText.charCodeAt(previousText.length - 1 - suffix) === nextText.charCodeAt(nextText.length - 1 - suffix)
-    ) {
-        suffix += 1;
-    }
-
-    const previousEnd = previousText.length - suffix;
-    const nextEnd = nextText.length - suffix;
-    return {
-        previousStart: prefix,
-        previousEnd,
-        nextEnd,
-        delta: nextText.length - previousText.length,
-    };
+/**
+ * Whether the composer still carries this mention: its token is somewhere in the text.
+ *
+ * This is the whole reconciliation rule, and it is deliberately positionless. A mention used
+ * to hold `[start, end)` into the composer text, maintained across every edit by a changed-span
+ * diff; the offsets were then re-checked at the request boundary against the text actually
+ * submitted — which is a TRANSFORM of the composer text (`messageToSend.trim()`, an attachments
+ * block, a review-comments wrapper). The offsets were correct for the text they were measured
+ * against and wrong for the one that shipped, so the reference was silently dropped and the
+ * agent received a bare `@…`. Nothing read a position: `sessionReferenceBlock` and
+ * `messageStructuredReferences` both key on `{kind, ref}`.
+ */
+export function structuredInputMentionSurvivesText(
+    text: string,
+    mention: ComposerStructuredInputMention,
+): boolean {
+    return text.includes(mention.tokenText);
 }
 
-function clampSelection(
-    selection: Readonly<{ start: number; end: number }>,
-    textLength: number,
-): Readonly<{ start: number; end: number }> {
-    const start = Number.isFinite(selection.start)
-        ? Math.min(Math.max(0, Math.trunc(selection.start)), textLength)
-        : textLength;
-    const end = Number.isFinite(selection.end)
-        ? Math.min(Math.max(start, Math.trunc(selection.end)), textLength)
-        : start;
-    return { start, end };
-}
-
-function resolveSelectionChangedSpan(args: Readonly<{
-    previousText: string;
-    nextText: string;
-    previousSelection: Readonly<{ start: number; end: number }>;
-}>): Readonly<{
-    previousStart: number;
-    previousEnd: number;
-    nextEnd: number;
-    delta: number;
-}> | null {
-    const previousSelection = clampSelection(args.previousSelection, args.previousText.length);
-    const selectedLength = previousSelection.end - previousSelection.start;
-    const insertedLength = args.nextText.length - (args.previousText.length - selectedLength);
-    if (insertedLength < 0) return null;
-
-    const nextEnd = previousSelection.start + insertedLength;
-    if (nextEnd > args.nextText.length) return null;
-
-    if (
-        previousSelection.start > 0
-        && args.previousText.charCodeAt(previousSelection.start - 1)
-            !== args.nextText.charCodeAt(previousSelection.start - 1)
-    ) {
-        return null;
-    }
-
-    if (
-        previousSelection.end < args.previousText.length
-        && nextEnd < args.nextText.length
-        && args.previousText.charCodeAt(previousSelection.end) !== args.nextText.charCodeAt(nextEnd)
-    ) {
-        return null;
-    }
-
-    return {
-        previousStart: previousSelection.start,
-        previousEnd: previousSelection.end,
-        nextEnd,
-        delta: args.nextText.length - args.previousText.length,
-    };
-}
-
-function tokenSurvives(text: string, mention: ComposerStructuredInputMention): boolean {
-    return text.slice(mention.start, mention.end) === mention.tokenText;
-}
-
-function reconcileStructuredInputMentionsWithChangedSpan(args: Readonly<{
-    nextText: string;
-    mentions: readonly ComposerStructuredInputMention[];
-    change: Readonly<{
-        previousStart: number;
-        previousEnd: number;
-        nextEnd: number;
-        delta: number;
-    }>;
-}>): ComposerStructuredInputMention[] {
-    const nextMentions: ComposerStructuredInputMention[] = [];
-
-    for (const mention of args.mentions) {
-        const changeBeforeMention = args.change.previousEnd <= mention.start;
-        const changeAfterMention = args.change.previousStart >= mention.end;
-        if (changeBeforeMention) {
-            const shifted = {
-                ...mention,
-                start: mention.start + args.change.delta,
-                end: mention.end + args.change.delta,
-            };
-            if (tokenSurvives(args.nextText, shifted)) {
-                nextMentions.push(shifted);
-            }
-            continue;
-        }
-
-        if (changeAfterMention && tokenSurvives(args.nextText, mention)) {
-            nextMentions.push(mention);
-        }
-    }
-
-    return nextMentions;
-}
-
+/**
+ * The one reconciler. It runs on live edits and on programmatic text swaps alike, because
+ * "does the text still contain this token" needs neither the previous text nor the selection
+ * the edit replaced.
+ */
 export function reconcileStructuredInputMentionsWithText(args: Readonly<{
-    previousText: string;
-    nextText: string;
+    text: string;
     mentions: readonly ComposerStructuredInputMention[];
 }>): ComposerStructuredInputMention[] {
     if (args.mentions.length === 0) return [];
-    if (args.previousText === args.nextText) {
-        return args.mentions.filter((mention) => tokenSurvives(args.nextText, mention));
-    }
-
-    const change = findChangedSpan(args.previousText, args.nextText);
-    return reconcileStructuredInputMentionsWithChangedSpan({
-        nextText: args.nextText,
-        mentions: args.mentions,
-        change,
-    });
-}
-
-export function reconcileStructuredInputMentionsWithTextChange(args: Readonly<{
-    previousText: string;
-    nextText: string;
-    previousSelection: Readonly<{ start: number; end: number }>;
-    mentions: readonly ComposerStructuredInputMention[];
-}>): ComposerStructuredInputMention[] {
-    if (args.mentions.length === 0) return [];
-    if (args.previousText === args.nextText) {
-        return args.mentions.filter((mention) => tokenSurvives(args.nextText, mention));
-    }
-
-    const change = resolveSelectionChangedSpan({
-        previousText: args.previousText,
-        nextText: args.nextText,
-        previousSelection: args.previousSelection,
-    }) ?? findChangedSpan(args.previousText, args.nextText);
-
-    return reconcileStructuredInputMentionsWithChangedSpan({
-        nextText: args.nextText,
-        mentions: args.mentions,
-        change,
-    });
+    return args.mentions.filter((mention) => structuredInputMentionSurvivesText(args.text, mention));
 }
 
 export function createStructuredInputMentionFromSuggestion(args: Readonly<{
     suggestion: AutocompleteSuggestion;
-    start: number;
 }>): ComposerStructuredInputMention | null {
     const structuredInput = args.suggestion.structuredInput;
     if (!structuredInput) return null;
-
-    const tokenText = args.suggestion.text;
-    const base = {
-        tokenText,
-        start: args.start,
-        end: args.start + tokenText.length,
-    };
-
-    return { ...structuredInput, ...base };
+    return { ...structuredInput, tokenText: args.suggestion.text };
 }
 
 /**
@@ -392,19 +247,21 @@ function buildEnvelope(args: Readonly<{
     const writes = composerMentions.map(resolveMentionRefWrite);
     const canWriteReferences = !writes.some((write) => write.status === 'unreferenceable');
 
-    const mentionByRangeKey = new Map<string, ComposerStructuredInputMention>();
+    const mentionByIdentity = new Map<string, ComposerStructuredInputMention>();
     const candidateReferences: MentionRefV1[] = [];
     if (canWriteReferences) {
         for (let index = 0; index < writes.length; index += 1) {
             const write = writes[index]!;
             if (write.status !== 'reference') continue;
             candidateReferences.push(write.reference);
-            mentionByRangeKey.set(mentionRefRangeKey(write.reference), composerMentions[index]!);
+            const identity = mentionRefIdentityKey(write.reference);
+            // First occurrence wins, matching what `sanitizeMentionRefsV1` keeps.
+            if (!mentionByIdentity.has(identity)) mentionByIdentity.set(identity, composerMentions[index]!);
         }
     }
-    // `sanitizeMentionRefsV1` canonicalizes order and drops overlaps; the text-composed half of
-    // the range contract is applied here too, so what ships already satisfies the admission
-    // step the request boundary re-applies.
+    // `sanitizeMentionRefsV1` deduplicates by `{kind, ref}` and enforces the bounds; the
+    // text-composed half of the token contract is applied here too, so what ships already
+    // satisfies the admission step the request boundary re-applies.
     const sanitizedReferences = sanitizeMentionRefsV1(candidateReferences);
     const references = typeof args.text === 'string'
         ? admitMentionRefsV1ForText(args.text, sanitizedReferences)
@@ -413,12 +270,9 @@ function buildEnvelope(args: Readonly<{
     const vendorPluginMentions: LegacyVendorPluginMentionRecord[] = [];
     const skillMentions: LegacySkillMentionRecord[] = [];
     if (canWriteReferences) {
-        const projected = new Set<string>();
+        // No second dedupe pass: `references` is already one entry per `{kind, ref}`.
         for (const reference of references) {
-            const dedupeKey = `${reference.kind} ${reference.ref}`;
-            if (projected.has(dedupeKey)) continue;
-            projected.add(dedupeKey);
-            const mention = mentionByRangeKey.get(mentionRefRangeKey(reference));
+            const mention = mentionByIdentity.get(mentionRefIdentityKey(reference));
             if (!mention) continue;
             if (isComposerVendorPluginMention(mention)) vendorPluginMentions.push(buildLegacyVendorPluginRecord(mention));
             else if (isComposerSkillMention(mention)) skillMentions.push(buildLegacySkillRecord(mention));
@@ -459,7 +313,7 @@ export function buildStructuredInputMetaOverrides(args: Readonly<{
 }>): Record<string, unknown> {
     const text = args.text;
     const survivingMentions = typeof text === 'string'
-        ? (args.mentions ?? []).filter((mention) => tokenSurvives(text, mention))
+        ? (args.mentions ?? []).filter((mention) => structuredInputMentionSurvivesText(text, mention))
         : (args.mentions ?? []);
     const envelope = buildEnvelope({
         mentions: survivingMentions,

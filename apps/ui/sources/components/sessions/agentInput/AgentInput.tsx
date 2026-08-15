@@ -156,7 +156,6 @@ import {
     buildStructuredInputMetaOverrides,
     createStructuredInputMentionFromSuggestion,
     reconcileStructuredInputMentionsWithText,
-    reconcileStructuredInputMentionsWithTextChange,
     type ComposerStructuredInputMention,
 } from './structuredInputMentions';
 import { buildGlassCastShadowStyle } from '@/shadowElevation';
@@ -1491,20 +1490,12 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
             historyAppliedInputStateRef.current = null;
             messageHistory.pause(newState.text);
         }
-        // SB-7 — the two mention reconcilers are DELIBERATELY separate; do not unify them.
-        //
-        // Here we own a LIVE EDIT and therefore know the selection the edit replaced, so
-        // `reconcileStructuredInputMentionsWithTextChange` can resolve the changed span exactly
-        // (an edit that inserts the same characters it deleted is otherwise ambiguous).
-        //
-        // The other two call sites reconcile a PROGRAMMATIC text swap (a controlled-value change
-        // and a session-scope change) where no such selection exists — one of them must even read
-        // the live text via `inputRef.current.getText()` because `inputStateRef` may not describe
-        // it — so they use the diff-based `reconcileStructuredInputMentionsWithText`.
-        updateStructuredInputMentions((current) => reconcileStructuredInputMentionsWithTextChange({
-            previousText,
-            nextText: newState.text,
-            previousSelection: previousState.selection,
+        // SB-7 — one reconciler for every text change, live edit or programmatic swap alike.
+        // It used to be two, because maintaining a mention's `[start, end)` needed the selection
+        // an edit replaced to resolve the changed span. A mention is now kept by whether the text
+        // still contains its token, which needs neither the previous text nor the selection.
+        updateStructuredInputMentions((current) => reconcileStructuredInputMentionsWithText({
+            text: newState.text,
             mentions: current,
         }));
         if (newState.text !== previousText && !isProgrammaticHistoryApply) {
@@ -1550,8 +1541,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
             selection: nextSelection,
         };
         updateStructuredInputMentions((currentMentions) => reconcileStructuredInputMentionsWithText({
-            previousText: current.text,
-            nextText: props.value,
+            text: props.value,
             mentions: currentMentions,
         }));
         setHasAutocompleteTextInteraction(false);
@@ -1581,8 +1571,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         const nextState = { text: props.value, selection: nextSelection };
         historyAppliedInputStateRef.current = { state: nextState };
         updateStructuredInputMentions((currentMentions) => reconcileStructuredInputMentionsWithText({
-            previousText: liveInputText,
-            nextText: props.value,
+            text: props.value,
             mentions: currentMentions,
         }));
         inputStateRef.current = nextState;
@@ -1805,7 +1794,6 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         const suggestion = suggestions[index];
         const currentInputState = inputStateRef.current;
         const activeWordForSelection = findActiveWord(currentInputState.text, currentInputState.selection, props.autocompleteKinds);
-        const insertionStart = activeWordForSelection?.offset ?? currentInputState.selection.start;
 
         const applyResolvedSelection = (result: Readonly<{ text: string; cursorPosition: number }>) => {
             inputRef.current?.setTextAndSelection(result.text, {
@@ -1824,10 +1812,13 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
             );
             applyResolvedSelection(result);
 
-            const mention = createStructuredInputMentionFromSuggestion({ suggestion, start: insertionStart });
+            const mention = createStructuredInputMentionFromSuggestion({ suggestion });
             if (mention) {
+                // Re-picking the same candidate inserts the same token, so it replaces rather
+                // than accumulating. A mention whose token the new text no longer carries is
+                // dropped by the reconciler on the state change this insertion produces.
                 updateStructuredInputMentions((current) => [
-                    ...current.filter((existing) => existing.start !== mention.start || existing.end !== mention.end),
+                    ...current.filter((existing) => existing.tokenText !== mention.tokenText),
                     mention,
                 ]);
             }

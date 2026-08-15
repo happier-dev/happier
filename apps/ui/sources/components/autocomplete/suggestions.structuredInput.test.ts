@@ -244,7 +244,7 @@ describe('structured input autocomplete suggestions', () => {
 
         const suggestions = await getSuggestionsForSession('@plugin:gmail');
         const mention = suggestions[0]
-            ? createStructuredInputMentionFromSuggestion({ suggestion: suggestions[0], start: 0 })
+            ? createStructuredInputMentionFromSuggestion({ suggestion: suggestions[0] })
             : null;
         const meta = buildStructuredInputMetaOverrides({
             mentions: mention ? [mention] : [],
@@ -423,7 +423,7 @@ describe('structured input autocomplete suggestions', () => {
 
         const suggestions = await getSuggestionsForSession('$rev');
         const mention = suggestions[0]
-            ? createStructuredInputMentionFromSuggestion({ suggestion: suggestions[0], start: 0 })
+            ? createStructuredInputMentionFromSuggestion({ suggestion: suggestions[0] })
             : null;
         const fileMention = createStructuredInputMentionFromSuggestion({
             suggestion: {
@@ -431,7 +431,6 @@ describe('structured input autocomplete suggestions', () => {
                 key: 'file-src/index.ts',
                 text: '@src/index.ts',
             },
-            start: 0,
         });
         const meta = buildStructuredInputMetaOverrides({
             mentions: mention ? [mention] : [],

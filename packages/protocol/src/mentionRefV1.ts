@@ -109,25 +109,29 @@ export function parseMentionRefV1(ref: string): Readonly<{ scheme: string; opaqu
 }
 
 /**
- * Range contract (binding): UTF-16 code-unit offsets matching JS `slice`; half-open
- * `[start, end)`; integers with `0 <= start < end <= text.length`;
- * `text.slice(start, end) === token`; sorted and non-overlapping across the array.
+ * Token contract (binding): `token` is the exact text the composer inserted, and the
+ * reference is carried by the message whose text still contains it verbatim.
  *
- * The bound that needs the message text (`slice === token`) cannot live here, because the
- * protocol sanitizer parses metadata independently of the text it accompanies — it is the
- * composed admission step, `admitMentionRefsV1ForText`.
+ * A reference is IDENTITY plus the token that names it — never a position. Offsets were the
+ * original contract and were removed once it was clear that no consumer read one: the
+ * provider projection (`sessionReferenceBlock`) and the transcript row
+ * (`messageStructuredReferences`) both work from `{kind, ref}` and both deduplicate position
+ * away. What positions did instead was delete correct references, because the submitted text
+ * is a TRANSFORM of the composed text — `messageToSend.trim()`, an attachments block, a
+ * review-comments wrapper — and every such transform moved the token out from under its range.
  *
- * `token` is deliberately NOT trimmed: it must equal the exact slice.
+ * The bound that needs the message text cannot live here, because the protocol sanitizer
+ * parses metadata independently of the text it accompanies — it is the composed admission
+ * step, `admitMentionRefsV1ForText`.
+ *
+ * `token` is deliberately NOT trimmed: it must occur in the text exactly as inserted.
  */
 export const MentionRefV1Schema = z.object({
   kind: z.string().trim().min(1).max(MENTION_BOUNDS.maxKindChars),
   ref: z.string().trim().min(1).max(MENTION_BOUNDS.maxRefChars),
   token: z.string().min(1).max(MENTION_BOUNDS.maxTokenChars),
-  start: z.number().int().min(0),
-  end: z.number().int().min(1),
   label: z.string().trim().min(1).max(MENTION_BOUNDS.maxLabelChars).optional(),
 }).passthrough()
-  .refine((mention) => mention.start < mention.end, { path: ['end'] })
   .refine((mention) => parseMentionRefV1(mention.ref) !== null, { path: ['ref'] });
 
 export type MentionRefV1 = z.infer<typeof MentionRefV1Schema>;
@@ -150,45 +154,48 @@ export function readMentionRefOpaqueForKindV1(kind: BuiltInMentionKindV1, ref: s
 
 /**
  * Element-wise sanitization (INV-4). A failing element is dropped **individually**; its
- * siblings survive. Order is canonicalized to sorted-by-range, and an element overlapping
- * an already-accepted one is dropped as malformed.
+ * siblings survive.
+ *
+ * Order is first occurrence, and a repeat of an already-accepted `{kind, ref}` is dropped
+ * (D-26). Without a range, a second entry for the same reference is byte-identical to the
+ * first: it carries nothing, and keeping it would spend the per-message budget on nothing.
+ * This makes `mentions[]` the SET of references a message carries, which is what every
+ * consumer already reduced it to on its own.
  */
 export function sanitizeMentionRefsV1(value: unknown): MentionRefV1[] {
   if (!Array.isArray(value)) return [];
 
-  const parsed: MentionRefV1[] = [];
-  for (const entry of value) {
-    const result = MentionRefV1Schema.safeParse(entry);
-    if (result.success) parsed.push(result.data);
-  }
-  parsed.sort((left, right) => (left.start - right.start) || (left.end - right.end));
-
   const sanitized: MentionRefV1[] = [];
-  let boundary = 0;
-  for (const mention of parsed) {
+  const seen = new Set<string>();
+  for (const entry of value) {
     if (sanitized.length >= MENTION_BOUNDS.maxPerMessage) break;
-    if (mention.start < boundary) continue;
-    sanitized.push(mention);
-    boundary = mention.end;
+    const result = MentionRefV1Schema.safeParse(entry);
+    if (!result.success) continue;
+    const identity = `${result.data.kind}\u0000${result.data.ref}`;
+    if (seen.has(identity)) continue;
+    seen.add(identity);
+    sanitized.push(result.data);
   }
   return sanitized;
 }
 
 /**
  * The composed admission step: compares references against the submitted message text.
- * A reference whose range does not describe its own token in that text is rejected; its
- * siblings are admitted (INV-4). `String.prototype.slice` indexes UTF-16 code units, so
- * the offset contract holds for surrogate pairs by construction.
+ * A reference whose token no longer occurs in that text is rejected; its siblings are
+ * admitted (INV-4).
+ *
+ * This is what keeps a reference honest without making it fragile. It still enforces the one
+ * rule a user can see — delete the `@…` text and the reference goes with it — while surviving
+ * every transform the send path applies between composing the text and submitting it.
+ *
+ * Containment, not a delimited match: a user who deletes the picked token and then writes
+ * text that happens to contain it keeps the reference. Recognising a token boundary here
+ * would put a second copy of the composer's token grammar in the protocol, and the cost of
+ * being wrong is one extra reference the agent is told to use only if the request calls for it.
  */
 export function admitMentionRefsV1ForText(
   text: string,
   mentions: readonly MentionRefV1[],
 ): MentionRefV1[] {
-  const admitted: MentionRefV1[] = [];
-  for (const mention of mentions) {
-    if (mention.end > text.length) continue;
-    if (text.slice(mention.start, mention.end) !== mention.token) continue;
-    admitted.push(mention);
-  }
-  return admitted;
+  return mentions.filter((mention) => text.includes(mention.token));
 }
