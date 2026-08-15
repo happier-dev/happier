@@ -95,6 +95,7 @@ export const WelcomeFooterLinks = React.memo(function WelcomeFooterLinks(props: 
                         name="clock-counter-clockwise"
                         size={14}
                         color={labelColor.color}
+                        style={styles.retentionIcon}
                     />
                     <Text style={[styles.label, labelColor, styles.retentionText]}>
                         {props.retentionSummary}
@@ -220,6 +221,9 @@ const stylesheet = StyleSheet.create(() => ({
     retentionText: {
         flex: 1,
         minWidth: 0,
+    },
+    retentionIcon: {
+        marginTop: 2,
     },
     groupDesktop: {
         flexDirection: 'column',
