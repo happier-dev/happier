@@ -209,9 +209,23 @@ export function createPiConnectedServiceRuntimeAuthAdapter(): ConnectedServicePr
     async hotApply(input) {
       return applyBrokerBridgeRuntimeAuthSelection(input.selection);
     },
-    async recoverAfterRuntimeAuthSwitch() {
-      // Nothing to hot-recover: restart/rematerialize IS the recovery for Pi (no-op success).
-      return { recovered: true, recovery: 'restart_rematerialize' };
+    async recoverAfterRuntimeAuthSwitch(input) {
+      const selection = readRecord(input.selection);
+      if (!readString(selection?.brokerSelectionIdentity)) {
+        return {
+          recovered: false,
+          recovery: 'restart_rematerialize',
+          detached: false,
+          detachedReason: 'broker_selection_identity_missing',
+        };
+      }
+
+      return {
+        recovered: true,
+        recovery: 'provider_owned_broker_selection',
+        detached: false,
+        detachedReason: 'broker_request_time_selection_preserved',
+      };
     },
     async verifyActiveAccount() {
       // No live provider probe exists: adoption is structurally implied by spawning into the

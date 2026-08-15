@@ -201,20 +201,21 @@ function buildOauthOverride(bridgeTag) {
   };
 }
 
-// Best-effort, bounded load handshake: tell the daemon this broker extension actually loaded, keyed by
-// the stable selection identity so the preflight (same env) can match it. Never throws / never blocks.
+// Publish mandatory activation proof without blocking the Pi extension loader. Each request is
+// bounded, and a rejected/unreachable daemon remains eligible until this exact activation receives
+// an acknowledgement or the owning Pi process is stopped.
+const LOAD_HANDSHAKE_RETRY_MS = 250;
 let handshakeSent = false;
 async function sendLoadHandshake(providers) {
   if (handshakeSent) return;
-  handshakeSent = true;
+  const selectionIdentity = process.env[SELECTION_IDENTITY_ENV];
+  if (typeof selectionIdentity !== "string" || selectionIdentity.trim().length === 0) return;
+  const loadNonce = process.env[LOAD_NONCE_ENV];
+  if (typeof loadNonce !== "string" || loadNonce.trim().length === 0) return;
+  if (providers.length === 0) return;
   try {
-    const selectionIdentity = process.env[SELECTION_IDENTITY_ENV];
-    if (typeof selectionIdentity !== "string" || selectionIdentity.trim().length === 0) return;
-    const loadNonce = process.env[LOAD_NONCE_ENV];
-    if (typeof loadNonce !== "string" || loadNonce.trim().length === 0) return;
-    if (providers.length === 0) return;
     const daemonEndpoint = anthropicBridge.readCurrentBrokerEndpoint();
-    await fetch("http://127.0.0.1:" + daemonEndpoint.httpPort + LOADED_HANDSHAKE_PATH, {
+    const response = await fetch("http://127.0.0.1:" + daemonEndpoint.httpPort + LOADED_HANDSHAKE_PATH, {
       method: "POST",
       headers: { "Content-Type": "application/json", "x-happier-daemon-token": daemonEndpoint.scopedToken },
       body: JSON.stringify({
@@ -226,9 +227,16 @@ async function sendLoadHandshake(providers) {
         processPid: process.pid,
       }),
       signal: typeof AbortSignal !== "undefined" && AbortSignal.timeout ? AbortSignal.timeout(2000) : undefined,
-    }).catch(() => {});
+    });
+    if (response.ok) handshakeSent = true;
   } catch (error) {
-    // Swallow: the handshake is advisory; auth still flows via registerProvider + the bridge.
+    // The readiness owner reports a terminal failure if proof never arrives. Keep this producer
+    // eligible for transient state-file, daemon-replacement, and transport failures in the meantime.
+  } finally {
+    if (!handshakeSent) {
+      const retry = setTimeout(() => void sendLoadHandshake(providers), LOAD_HANDSHAKE_RETRY_MS);
+      retry.unref?.();
+    }
   }
 }
 

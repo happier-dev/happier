@@ -196,4 +196,32 @@ describe('piBrokerExtensionSource (generated artifact, exercised live)', () => {
     expect(body.providers).toContain('anthropic');
     expect(handshake!.body).not.toContain(MASTER_CONTROL_TOKEN_SENTINEL);
   });
+
+  it('retries activation proof until the daemon acknowledges the loaded extension', async () => {
+    process.env[PI_BROKER_STATE_PATH_ENV] = await writeBrokerStateFile('tok');
+    process.env[PI_BROKER_SELECTIONS_ENV] = serializePiBrokerSelections({
+      openai: { serviceId: 'openai-codex', profileId: 'p', accountId: null, planType: null },
+    });
+    process.env[PI_BROKER_SELECTION_IDENTITY_ENV] =
+      `pi|connected|broker:${PI_BROKER_EXTENSION_VERSION}|openai-codex:p:`;
+    process.env.HAPPIER_PI_BROKER_LOAD_NONCE = 'pi-spawn-retry';
+    let handshakeCalls = 0;
+    globalThis.fetch = vi.fn(async (input: unknown) => {
+      if (String(input).includes('/connected-service-auth/broker/loaded')) {
+        handshakeCalls += 1;
+        if (handshakeCalls === 1) throw new Error('simulated transport failure');
+        return new Response('{}', { status: handshakeCalls === 2 ? 503 : 200 });
+      }
+      return new Response('ok', { status: 200 });
+    }) as unknown as typeof fetch;
+
+    // Pi invokes an extension factory once per process. A transient rejection must remain eligible
+    // inside that same activation instead of leaving readiness to time out with no second producer.
+    await loadPiBrokerExtension();
+    await vi.waitFor(() => expect(handshakeCalls).toBe(3), { timeout: 1_500 });
+
+    // Acknowledgement consumes the activation proof, so the retry loop must settle.
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(handshakeCalls).toBe(3);
+  });
 });

@@ -200,15 +200,34 @@ describe('createPiConnectedServiceRuntimeAuthAdapter', () => {
     });
   });
 
-  it('treats post-switch recovery as a successful no-op — restart/rematerialize owns recovery (RD-OPI-8)', async () => {
+  it('preserves the Pi process after a broker-owned auth switch', async () => {
     const adapter = createPiConnectedServiceRuntimeAuthAdapter();
 
     await expect(adapter.recoverAfterRuntimeAuthSwitch({
       target: { agentId: 'pi' },
-      selection: {},
+      selection: {
+        serviceId: 'openai-codex',
+        brokerSelectionIdentity: 'pi|connected|broker:1|openai-codex:acct-old:',
+      },
     })).resolves.toEqual({
       recovered: true,
+      recovery: 'provider_owned_broker_selection',
+      detached: false,
+      detachedReason: 'broker_request_time_selection_preserved',
+    });
+  });
+
+  it('declines in-place recovery without request-time broker ownership', async () => {
+    const adapter = createPiConnectedServiceRuntimeAuthAdapter();
+
+    await expect(adapter.recoverAfterRuntimeAuthSwitch({
+      target: { agentId: 'pi' },
+      selection: { serviceId: 'openai-codex' },
+    })).resolves.toEqual({
+      recovered: false,
       recovery: 'restart_rematerialize',
+      detached: false,
+      detachedReason: 'broker_selection_identity_missing',
     });
   });
 
