@@ -5,6 +5,7 @@
 import { join } from 'node:path';
 import { mkdir, rm, stat } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
 
 import {
   SERVER_TARGETS,
@@ -20,13 +21,47 @@ import {
   writeChecksumsFile,
 } from './lib/binary-release.mjs';
 
+/**
+ * Local builds invoked without an explicit --version must never masquerade as clean
+ * stable releases: stamp a `-local.N` prerelease suffix (N = commits since the last
+ * server release tag) so locally built artifacts are always identifiable. CI builds
+ * always pass an explicit --version and are unaffected.
+ */
+function resolveLocalStampedVersion({ repoRoot }) {
+  const baseVersion = readVersionFromPackageJson(join(repoRoot, 'apps', 'server', 'package.json'));
+  const runningInCi = process.env.CI === 'true' || process.env.GITHUB_ACTIONS === 'true';
+  if (runningInCi || !/^\d+\.\d+\.\d+$/.test(baseVersion)) {
+    return baseVersion;
+  }
+  return `${baseVersion}-local.${countCommitsSinceLastServerTag(repoRoot)}`;
+}
+
+function countCommitsSinceLastServerTag(repoRoot) {
+  try {
+    const lastServerTag = execFileSync(
+      'git',
+      ['describe', '--tags', '--match', 'server-v*', '--abbrev=0'],
+      { cwd: repoRoot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] },
+    ).trim();
+    const count = Number.parseInt(execFileSync(
+      'git',
+      ['rev-list', '--count', `${lastServerTag}..HEAD`],
+      { cwd: repoRoot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] },
+    ).trim(), 10);
+    if (Number.isInteger(count) && count >= 0) return count;
+  } catch {
+    // Not a git checkout or git unavailable — fall through to 0.
+  }
+  return 0;
+}
+
 async function main() {
   const repoRoot = resolveRepoRoot();
   const { kv } = parseArgs(process.argv.slice(2));
 
   const channel = normalizeChannel(kv.get('--channel'));
-  const version = String(kv.get('--version') ?? '').trim()
-    || readVersionFromPackageJson(join(repoRoot, 'apps', 'server', 'package.json'));
+  const explicitVersion = String(kv.get('--version') ?? '').trim();
+  const version = explicitVersion || resolveLocalStampedVersion({ repoRoot });
   const outDir = join(repoRoot, 'dist', 'release-assets', 'server');
   // IMPORTANT: build scripts are invoked by multiple integration tests in parallel.
   // Never share a single temp directory across invocations, or concurrent builds will race on rm/mkdir.
