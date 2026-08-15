@@ -13,7 +13,28 @@ import {
   cleanupHookSettingsFile,
   generateHookPluginDir,
   generateHookSettingsFile,
+  refreshRetainedClaudeHookPlugin,
 } from './generateHookSettings';
+
+const WINDOWS_LIFECYCLE_HOOK_NAMES = [
+  'SessionStart',
+  'UserPromptSubmit',
+  'Stop',
+  'StopFailure',
+  'SessionEnd',
+  'PostToolUse',
+  'SubagentStart',
+  'SubagentStop',
+] as const;
+
+const WINDOWS_PERMISSION_HOOK_NAMES = ['PermissionRequest', 'PreToolUse'] as const;
+
+function decodeEncodedPowerShellHookCommand(command: string): string {
+  const match = /^powershell\.exe -NoProfile -NonInteractive -EncodedCommand ([A-Za-z0-9+/]+={0,2})$/.exec(command);
+  expect(match).toBeTruthy();
+  expect(command).not.toMatch(/[&|<>'"`$();]/);
+  return Buffer.from(match![1]!, 'base64').toString('utf16le');
+}
 
 describe('generateHookSettingsFile', () => {
   const createdFiles: string[] = [];
@@ -156,22 +177,53 @@ describe('generateHookPluginDir', () => {
     expect(parsed.hooks?.PermissionDenied).toBeUndefined();
   });
 
-  it('builds Windows lifecycle and permission hook commands as PowerShell invocations', () => {
+  it('encodes every Windows hook command so the outer hook shell cannot interpret its argv, including retained refreshes', () => {
+    const overrideDir = mkdtempSync(join(tmpdir(), 'happier Program Files-'));
+    createdDirs.push(overrideDir);
+    const nodeExecutable = writeExecutableShimSync({
+      dir: overrideDir,
+      fileName: 'node.exe',
+      contents: '#!/bin/sh\n',
+    });
+    envScope.patch({ HAPPIER_MANAGED_NODE_BIN: nodeExecutable });
+
     const pluginDir = generateHookPluginDir(43123, {
       enableLocalPermissionBridge: true,
       permissionHookSecret: 'windows-hook-secret',
       platform: 'win32',
+      sessionHookPluginId: 'windows-shell-neutral-hooks',
     });
 
     expect(pluginDir).toBeTruthy();
     createdPluginDirs.push(pluginDir!);
-    const parsed = JSON.parse(readFileSync(join(pluginDir!, 'hooks', 'hooks.json'), 'utf8')) as any;
-    for (const hookName of ['SessionStart', 'UserPromptSubmit', 'Stop', 'PermissionRequest', 'PreToolUse']) {
-      const command = parsed.hooks?.[hookName]?.[0]?.hooks?.[0]?.command as string;
-      expect(command).toMatch(/^&\s+'[^']+'\s+'[^']+'\s+'43123'/);
-      expect(command).toContain(`'${hookName}'`);
-      expect(command).toContain("'--secret-file'");
-    }
+    const runtimeAssetsDir = readdirSync(join(pluginDir!, 'runtime-assets'))[0]!;
+    const secretFile = join(pluginDir!, 'permission-hook-secret');
+    const assertHookCommands = (port: number): void => {
+      const parsed = JSON.parse(readFileSync(join(pluginDir!, 'hooks', 'hooks.json'), 'utf8')) as any;
+      for (const hookName of [...WINDOWS_LIFECYCLE_HOOK_NAMES, ...WINDOWS_PERMISSION_HOOK_NAMES]) {
+        const command = parsed.hooks?.[hookName]?.[0]?.hooks?.[0]?.command as string;
+        const forwarderBasename = WINDOWS_PERMISSION_HOOK_NAMES.includes(
+          hookName as (typeof WINDOWS_PERMISSION_HOOK_NAMES)[number],
+        )
+          ? 'permission_hook_forwarder.cjs'
+          : 'session_hook_forwarder.cjs';
+        const forwarderPath = join(pluginDir!, 'runtime-assets', runtimeAssetsDir, forwarderBasename);
+        expect(decodeEncodedPowerShellHookCommand(command)).toBe(
+          `& '${nodeExecutable}' '${forwarderPath}' '${port}' '${hookName}' '--secret-file' '${secretFile}'`,
+        );
+        expect(command).not.toContain('windows-hook-secret');
+      }
+    };
+
+    assertHookCommands(43123);
+
+    refreshRetainedClaudeHookPlugin({
+      pluginDir: pluginDir!,
+      port: 53123,
+      platform: 'win32',
+    });
+
+    assertHookCommands(53123);
   });
 
   it('writes the Claude plugin manifest required for --plugin-dir loading', () => {

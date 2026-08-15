@@ -36,7 +36,7 @@ import { isBun } from '@/utils/runtime';
 import { resolveCliRuntimeAssetPath } from '@/runtime/assets/resolveCliRuntimeAssetPath';
 import { resolveReleaseRingScopedBasename } from '@/cli/runtime/publicReleaseChannel';
 import { writeJsonAtomicSync } from '@/utils/fs/writeJsonAtomicSync';
-import { buildPowerShellCommand } from '@/utils/powerShellCommand';
+import { buildEncodedPowerShellCommand } from '@/utils/powerShellCommand';
 import { resolveClaudePermissionHookTimeoutSeconds } from './permissionHookTimeout';
 
 export { DEFAULT_PERMISSION_HOOK_TIMEOUT_SECONDS } from './permissionHookTimeout';
@@ -64,7 +64,7 @@ export interface GenerateHookSettingsOptions {
      * false success.
      */
     permissionHookTimeoutSeconds?: number;
-    /** Testable shell-dialect boundary; production defaults to the current platform. */
+    /** Testable hook-launcher platform boundary; production defaults to the current platform. */
     platform?: NodeJS.Platform;
 }
 
@@ -200,7 +200,7 @@ function writeHookPluginConfiguration(params: Readonly<{
         if (params.platform === 'win32') {
             const args = [params.nodeExecutable, scriptPath, String(params.port), hookEventName];
             if (secretFileExists) args.push('--secret-file', secretFile);
-            return buildPowerShellCommand(args);
+            return buildEncodedPowerShellCommand(args);
         }
         const secretPart = secretFileExists ? ` --secret-file ${JSON.stringify(secretFile)}` : '';
         return `${JSON.stringify(params.nodeExecutable)} ${JSON.stringify(scriptPath)} ${params.port} ${JSON.stringify(hookEventName)}${secretPart}`;
@@ -267,13 +267,14 @@ export function refreshRetainedClaudeHookPlugin(params: Readonly<{
     pluginDir: string;
     port: number;
     permissionHookTimeoutSeconds?: number;
+    platform?: NodeJS.Platform;
 }>): void {
     writeHookPluginConfiguration({
         pluginDir: params.pluginDir,
         port: params.port,
         nodeExecutable: resolveNodeExecutable(),
         enableLocalPermissionBridge: true,
-        platform: process.platform,
+        platform: params.platform ?? process.platform,
         ...(params.permissionHookTimeoutSeconds === undefined
             ? {}
             : { permissionHookTimeoutSeconds: params.permissionHookTimeoutSeconds }),
