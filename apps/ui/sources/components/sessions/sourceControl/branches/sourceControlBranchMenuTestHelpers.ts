@@ -210,10 +210,16 @@ export function installSourceControlBranchMenuCommonModuleMocks(
         },
     }));
 
-    vi.mock('@/sync/ops/sessionMachineTarget', () => ({
-        readMachineTargetForSession: (sessionId: string) =>
-            sourceControlBranchMenuModuleState.readMachineTargetForSessionMock(sessionId),
-    }));
+    vi.mock('@/sync/ops/sessionMachineTarget', async (importOriginal) => {
+        const actual = await importOriginal<typeof import('@/sync/ops/sessionMachineTarget')>();
+        return {
+            ...actual,
+            readMachineTargetForSession: (sessionId: string) =>
+                sourceControlBranchMenuModuleState.readMachineTargetForSessionMock(sessionId),
+            resolveMachineTargetForSessionFromState: (_state: unknown, sessionId: string) =>
+                sourceControlBranchMenuModuleState.readMachineTargetForSessionMock(sessionId),
+        };
+    });
 
     vi.mock('@/scm/scmStatusSync', () => ({
         scmStatusSync: {

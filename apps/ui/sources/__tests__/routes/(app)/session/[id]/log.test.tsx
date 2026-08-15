@@ -1,7 +1,15 @@
 import * as React from 'react';
+import { act } from 'react-test-renderer';
 
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { renderScreen } from '@/dev/testkit';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+    createMachineFixture,
+    createSessionFixture,
+    flushHookEffects,
+    renderScreen,
+    standardCleanup,
+} from '@/dev/testkit';
+import { storage as machineTargetStorage } from '@/sync/domains/state/storageStore';
 import { installSessionRouteCommonModuleMocks } from './sessionRouteTestHelpers';
 
 
@@ -27,9 +35,11 @@ const machineGetBugReportLogTailMock = vi.fn(async (_machineId?: string, _params
 
 let sessionLogPath: string | null = null;
 let sessionMachineId: string | null = null;
-let canonicalMachineTarget: { machineId: string; basePath: string | null } | null = null;
+let routeSession = createSessionFixture({ metadata: null });
 let sessionHydrated = true;
 let mockServerId: string | undefined;
+let previousSessions = machineTargetStorage.getState().sessions;
+let previousMachines = machineTargetStorage.getState().machines;
 const hydrateSpy = vi.fn((sessionId: string, _tag: string, options?: { serverId?: string }) =>
     sessionHydrated
         ? { kind: 'available', sessionId, serverId: options?.serverId }
@@ -68,16 +78,7 @@ installSessionRouteCommonModuleMocks({
             importOriginal,
             overrides: {
                 // Boundary fixture: this route only reads `metadata.sessionLogPath` from the session object.
-                useSession: (() =>
-                    (sessionLogPath
-                        ? {
-                              id: 'session-1',
-                              metadata: { sessionLogPath, machineId: sessionMachineId },
-                          }
-                        : {
-                              id: 'session-1',
-                              metadata: null,
-                          }) as unknown) as typeof import('@/sync/domains/state/storage')['useSession'],
+                useSession: (() => routeSession) as typeof import('@/sync/domains/state/storage')['useSession'],
                 useIsDataReady: () => true,
             },
         });
@@ -117,15 +118,50 @@ vi.mock('@/sync/ops', () => ({
         machineGetBugReportLogTailMock(machineId, params, options),
 }));
 
-vi.mock('@/sync/ops/sessionMachineTarget', () => ({
-    readMachineTargetForSession: () => canonicalMachineTarget,
-}));
+function setRouteSession(logPath: string | null, machineId: string | null) {
+    sessionLogPath = logPath;
+    sessionMachineId = machineId;
+    routeSession = createSessionFixture({
+        active: true,
+        metadata: logPath
+            ? {
+                  sessionLogPath: logPath,
+                  machineId,
+                  path: '/repo',
+                  host: 'tester.local',
+                  homeDir: '/Users/tester',
+              } as ReturnType<typeof createSessionFixture>['metadata']
+            : null,
+    });
+}
+
+function setCanonicalMachineTarget(target: { machineId: string; basePath: string } | null) {
+    machineTargetStorage.setState({
+        sessions: {
+            'session-1': createSessionFixture({
+                active: true,
+                metadata: {
+                    machineId: target?.machineId ?? sessionMachineId,
+                    path: target?.basePath ?? '/repo',
+                    host: 'tester.local',
+                    homeDir: '/Users/tester',
+                } as ReturnType<typeof createSessionFixture>['metadata'],
+            }),
+        },
+        machines: target
+            ? {
+                  [target.machineId]: createMachineFixture({ id: target.machineId, active: true }),
+              }
+            : {},
+    });
+}
 
 describe('Session log screen', () => {
     beforeEach(() => {
-        sessionLogPath = null;
-        sessionMachineId = null;
-        canonicalMachineTarget = null;
+        previousSessions = machineTargetStorage.getState().sessions;
+        previousMachines = machineTargetStorage.getState().machines;
+        setRouteSession(null, null);
+        setCanonicalMachineTarget(null);
         sessionHydrated = true;
         mockServerId = undefined;
         hydrateSpy.mockClear();
@@ -133,11 +169,19 @@ describe('Session log screen', () => {
         machineGetBugReportLogTailMock.mockClear();
     });
 
+    afterEach(() => {
+        standardCleanup();
+        machineTargetStorage.setState({
+            sessions: previousSessions,
+            machines: previousMachines,
+        });
+    });
+
     it('does not fetch log tail until session hydration is ready', async () => {
         sessionHydrated = false;
         mockServerId = 'server-b';
-        sessionLogPath = '/tmp/.happier/logs/session.log';
-        sessionMachineId = 'machine-1';
+        setRouteSession('/tmp/.happier/logs/session.log', 'machine-1');
+        setCanonicalMachineTarget({ machineId: 'machine-1', basePath: '/repo' });
         const { default: SessionLogScreen } = await import('@/app/(app)/session/[id]/log');
 
         await renderScreen(React.createElement(SessionLogScreen));
@@ -156,9 +200,8 @@ describe('Session log screen', () => {
     });
 
     it('fetches session log tail when log path exists', async () => {
-        sessionLogPath = '/tmp/.happier/logs/session.log';
-        sessionMachineId = 'machine-stale';
-        canonicalMachineTarget = { machineId: 'machine-1', basePath: '/repo' };
+        setRouteSession('/tmp/.happier/logs/session.log', 'machine-1');
+        setCanonicalMachineTarget({ machineId: 'machine-1', basePath: '/repo' });
         const { default: SessionLogScreen } = await import('@/app/(app)/session/[id]/log');
 
         await renderScreen(React.createElement(SessionLogScreen));
@@ -167,9 +210,8 @@ describe('Session log screen', () => {
     });
 
     it('does not target stale metadata when canonical reachability is unavailable', async () => {
-        sessionLogPath = '/tmp/.happier/logs/session.log';
-        sessionMachineId = 'machine-stale';
-        canonicalMachineTarget = null;
+        setRouteSession('/tmp/.happier/logs/session.log', 'machine-stale');
+        setCanonicalMachineTarget(null);
         const { default: SessionLogScreen } = await import('@/app/(app)/session/[id]/log');
 
         await renderScreen(React.createElement(SessionLogScreen));
@@ -178,9 +220,8 @@ describe('Session log screen', () => {
     });
 
     it('does not call bug report log tail RPC for session logs', async () => {
-        sessionLogPath = '/tmp/.happier/logs/session.log';
-        sessionMachineId = 'machine-1';
-        canonicalMachineTarget = { machineId: 'machine-1', basePath: '/repo' };
+        setRouteSession('/tmp/.happier/logs/session.log', 'machine-1');
+        setCanonicalMachineTarget({ machineId: 'machine-1', basePath: '/repo' });
         const { default: SessionLogScreen } = await import('@/app/(app)/session/[id]/log');
 
         await renderScreen(React.createElement(SessionLogScreen));
@@ -189,9 +230,8 @@ describe('Session log screen', () => {
     });
 
     it('wires copy rows through item-local copy feedback', async () => {
-        sessionLogPath = '/tmp/.happier/logs/session.log';
-        sessionMachineId = 'machine-1';
-        canonicalMachineTarget = { machineId: 'machine-1', basePath: '/repo' };
+        setRouteSession('/tmp/.happier/logs/session.log', 'machine-1');
+        setCanonicalMachineTarget({ machineId: 'machine-1', basePath: '/repo' });
         const { default: SessionLogScreen } = await import('@/app/(app)/session/[id]/log');
 
         const screen = await renderScreen(React.createElement(SessionLogScreen));
@@ -201,5 +241,31 @@ describe('Session log screen', () => {
         expect(itemByTitle('sessionLog.logPathTitle')?.props.copy).toBe('/tmp/.happier/logs/session.log');
         expect(itemByTitle('sessionLog.logPathTitle')?.props.onPress).toBeUndefined();
         expect(itemByTitle('sessionLog.copyVisibleTitle')?.props.onPress).toBeUndefined();
+    });
+
+    it('fetches when only the machine record hydrates and the session identity stays stable', async () => {
+        setRouteSession('/tmp/.happier/logs/session.log', 'machine-1');
+        setCanonicalMachineTarget(null);
+        const stableSession = machineTargetStorage.getState().sessions['session-1'];
+        const { default: SessionLogScreen } = await import('@/app/(app)/session/[id]/log');
+
+        await renderScreen(React.createElement(SessionLogScreen));
+        expect(machineReadSessionLogTailMock).not.toHaveBeenCalled();
+
+        await act(async () => {
+            machineTargetStorage.setState({
+                machines: {
+                    'machine-1': createMachineFixture({ id: 'machine-1', active: true }),
+                },
+            });
+        });
+        await flushHookEffects();
+
+        expect(machineTargetStorage.getState().sessions['session-1']).toBe(stableSession);
+        expect(machineReadSessionLogTailMock).toHaveBeenCalledWith(
+            'machine-1',
+            { path: sessionLogPath, maxBytes: 200000 },
+            undefined,
+        );
     });
 });

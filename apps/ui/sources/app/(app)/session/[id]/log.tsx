@@ -10,13 +10,13 @@ import { SessionInvalidLinkFallback } from '@/components/sessions/shell/SessionI
 import { Typography } from '@/constants/Typography';
 import { useSessionRouteServerScope } from '@/hooks/session/sessionRouteServerScope';
 import { useHydrateSessionForRoute } from '@/hooks/session/useHydrateSessionForRoute';
+import { useSessionMachineTarget } from '@/components/sessions/model/useSessionMachineTarget';
 import {
     isSessionRouteHydrationAvailable,
     isSessionRouteHydrationMissing,
 } from '@/sync/domains/session/sessionRouteHydrationState';
 import { useIsDataReady, useSession } from '@/sync/domains/state/storage';
 import { machineReadSessionLogTail } from '@/sync/ops';
-import { readMachineTargetForSession } from '@/sync/ops/sessionMachineTarget';
 import { t } from '@/text';
 import { useUnistyles } from 'react-native-unistyles';
 import { Text } from '@/components/ui/text/Text';
@@ -48,9 +48,8 @@ export default function SessionLogScreen() {
         return raw.length > 0 ? raw : null;
     }, [session?.metadata]);
 
-    const resolvedMachineId = React.useMemo(() => {
-        return session?.id ? readMachineTargetForSession(session.id)?.machineId ?? null : null;
-    }, [session?.id, session?.updatedAt, session?.metadata]);
+    const machineTarget = useSessionMachineTarget(sessionId);
+    const resolvedMachineId = machineTarget?.machineId ?? null;
 
     const [tailText, setTailText] = React.useState('');
     const [resolvedLogPath, setResolvedLogPath] = React.useState<string | null>(null);
