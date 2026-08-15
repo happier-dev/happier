@@ -566,6 +566,36 @@ describe('createCodexAppServerExecutionRunBackend', () => {
     expect(sendPrompt).toHaveBeenCalledWith('prompt fallback text');
   });
 
+  it('falls back to the prompt path when a generic review omits structured review input', async () => {
+    const sendPrompt = vi.fn(async () => undefined);
+    const startReview = vi.fn(async () => ({ ok: true as const }));
+    createCodexAppServerRuntimeMock.mockReturnValueOnce({
+      startOrLoad: async () => undefined,
+      getSessionId: () => 'thread_1',
+      sendPrompt,
+      startReview,
+      compactContext: async () => undefined,
+      cancel: async () => undefined,
+      reset: async () => undefined,
+    });
+
+    const { createCodexAppServerExecutionRunBackend } = await import('./createCodexAppServerExecutionRunBackend');
+    const backend = createCodexAppServerExecutionRunBackend({
+      cwd: '/tmp/happier-worktree',
+      env: {},
+      permissionMode: 'read-only' as any,
+      permissionHandler: null,
+      start: { intent: 'review' },
+    });
+
+    await backend.startSession();
+    await backend.sendPrompt('thread_1', 'prompt fallback text');
+    await backend.waitForResponseComplete?.();
+
+    expect(startReview).not.toHaveBeenCalled();
+    expect(sendPrompt).toHaveBeenCalledWith('prompt fallback text');
+  });
+
   it('fails clearly when review input is invalid', async () => {
     const sendPrompt = vi.fn(async () => undefined);
     const startReview = vi.fn(async () => undefined);

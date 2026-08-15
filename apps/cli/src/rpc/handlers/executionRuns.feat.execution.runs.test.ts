@@ -447,6 +447,83 @@ describe('executionRuns session RPC handlers', () => {
     expect(sidechainMsg?.body?.sidechainId).toBe(started.callId);
   });
 
+  it('rejects malformed explicit review intent input before creating a run', async () => {
+    const createBackend = vi.fn(() => createStaticBackend('{"summary":"unused"}'));
+    const client = createEncryptedRpcTestClient({
+      scopePrefix: 'sess_1',
+      registerHandlers: (rpc) => {
+        registerExecutionRunHandlers(rpc, {
+          sessionId: 'sess_1',
+          cwd: process.cwd(),
+          parentProvider: 'claude',
+          createBackend,
+          sendAcp: () => {},
+        });
+      },
+    });
+
+    const result = await client.call<any, any>(SESSION_RPC_METHODS.EXECUTION_RUN_START, {
+      intent: 'review',
+      backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+      permissionMode: 'read_only',
+      retentionPolicy: 'ephemeral',
+      runClass: 'bounded',
+      ioMode: 'request_response',
+      intentInput: { engineIds: [] },
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      errorCode: 'execution_run_invalid_action_input',
+      error: expect.stringContaining('review intentInput'),
+    });
+    expect(createBackend).not.toHaveBeenCalled();
+
+    const listed = await client.call<any, any>(SESSION_RPC_METHODS.EXECUTION_RUN_LIST, {});
+    expect(listed.runs).toEqual([]);
+  });
+
+  it('normalizes partial explicit review intent input before creating a run', async () => {
+    const createBackend = vi.fn((opts: any) => {
+      expect(opts.start?.intentInput).toMatchObject({
+        engineIds: ['codex'],
+        instructions: 'Review the selected scope.',
+        changeType: 'committed',
+        base: { kind: 'none' },
+      });
+      return createStaticBackend('{"summary":"done","findings":[]}');
+    });
+    const client = createEncryptedRpcTestClient({
+      scopePrefix: 'sess_1',
+      registerHandlers: (rpc) => {
+        registerExecutionRunHandlers(rpc, {
+          sessionId: 'sess_1',
+          cwd: process.cwd(),
+          parentProvider: 'claude',
+          createBackend,
+          sendAcp: () => {},
+        });
+      },
+    });
+
+    const result = await client.call<any, any>(SESSION_RPC_METHODS.EXECUTION_RUN_START, {
+      intent: 'review',
+      backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+      instructions: 'Review the selected scope.',
+      permissionMode: 'read_only',
+      retentionPolicy: 'ephemeral',
+      runClass: 'bounded',
+      ioMode: 'request_response',
+      intentInput: {
+        changeType: 'committed',
+        base: { kind: 'none' },
+      },
+    });
+
+    expect(result.runId).toMatch(/^run_/);
+    expect(createBackend).toHaveBeenCalledTimes(1);
+  });
+
   it('publishes public state updates via onExecutionRunPublicStateUpdated', async () => {
     const updates: ExecutionRunPublicState[] = [];
 

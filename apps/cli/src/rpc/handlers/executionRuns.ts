@@ -37,6 +37,7 @@ import { VoiceAgentError } from '@/agent/voice/agent/VoiceAgentManager';
 import { resolveCliFeatureDecision } from '@/features/featureDecisionService';
 import { fetchServerFeaturesSnapshot, type CliServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
 import { resolveExecutionRunRuntimeBackendId } from '@/agent/executionRuns/runtime/backendTargets';
+import { resolveReviewExecutionRunIntentInput } from '@/agent/reviews/resolveReviewExecutionRunIntentInput';
 import { applyExecutionRunListRequest } from '@/session/services/applyExecutionRunListRequest';
 import { preflightCodeRabbitReviewScope } from '@/agent/reviews/engines/coderabbit/preflightCodeRabbitReviewScope';
 import { readCodeRabbitReviewConfigFromEnv } from '@/agent/reviews/engines/coderabbit/readCodeRabbitReviewConfig';
@@ -163,6 +164,26 @@ export function registerExecutionRunHandlers(
     if (!isExecutionRunsEnabled()) return executionRunsDisabled();
     const parsed = ExecutionRunStartRequestSchema.safeParse(raw);
     if (!parsed.success) return invalidParams();
+    const backendId = resolveExecutionRunRuntimeBackendId(parsed.data.backendTarget);
+    let normalizedReviewIntentInput: unknown;
+    let hasNormalizedReviewIntentInput = false;
+    if (parsed.data.intent === 'review') {
+      const reviewInput = resolveReviewExecutionRunIntentInput(parsed.data.intentInput, {
+        engineId: backendId,
+        instructions: parsed.data.instructions ?? '',
+      });
+      if (reviewInput.kind === 'invalid') {
+        return {
+          ok: false,
+          error: 'Invalid review intentInput; omit it for a default prompt review or provide a valid review start or follow-up payload',
+          errorCode: 'execution_run_invalid_action_input',
+        };
+      }
+      if (reviewInput.kind === 'review_start') {
+        normalizedReviewIntentInput = reviewInput.input;
+        hasNormalizedReviewIntentInput = true;
+      }
+    }
     if (parsed.data.intent === 'voice_agent') {
       const serverSnapshot = ctx.getServerFeaturesSnapshot?.() ?? cachedServerSnapshot;
       let voiceDecision = resolveCliFeatureDecision({ featureId: 'voice', env: process.env, serverSnapshot });
@@ -189,7 +210,6 @@ export function registerExecutionRunHandlers(
     if (!isSafePermissionModeForIntent(parsed.data.intent, parsed.data.permissionMode)) {
       return { ok: false, error: 'Permission denied', errorCode: 'permission_denied' };
     }
-    const backendId = resolveExecutionRunRuntimeBackendId(parsed.data.backendTarget);
     if (parsed.data.intent === 'review' && backendId === 'coderabbit') {
       const codeRabbitConfig = readCodeRabbitReviewConfigFromEnv(process.env);
       let preflight;
@@ -237,7 +257,10 @@ export function registerExecutionRunHandlers(
       Awaited<ReturnType<typeof prepareExecutionRunConnectedServices>> = null;
     try {
       const accountSettings = await ctx.resolveAccountSettings?.() ?? null;
-      const startParams: any = { ...(parsed.data as any) };
+      const startParams: any = {
+        ...(parsed.data as any),
+        ...(hasNormalizedReviewIntentInput ? { intentInput: normalizedReviewIntentInput } : {}),
+      };
 
       // ER-CS: resolve the run's connected-services selection (explicit per-target selection, else the
       // session spawn defaulting owner — the SAME blocking settings bootstrap sessions use, QA2-F02)
