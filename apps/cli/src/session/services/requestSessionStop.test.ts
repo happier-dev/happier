@@ -7,6 +7,7 @@ import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
 
 const mocks = vi.hoisted(() => ({
   resolveSessionIdOrPrefix: vi.fn(),
+  callMachineRpc: vi.fn(),
   stopDaemonSession: vi.fn(),
   listSessionMarkers: vi.fn(),
   removeSessionMarker: vi.fn(),
@@ -20,6 +21,10 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('@/session/query/resolveSessionId', () => ({
   resolveSessionIdOrPrefix: mocks.resolveSessionIdOrPrefix,
+}));
+
+vi.mock('@/session/transport/rpc/machineRpc', () => ({
+  callMachineRpc: mocks.callMachineRpc,
 }));
 
 vi.mock('@/daemon/controlClient', () => ({
@@ -73,7 +78,12 @@ describe('requestSessionStop marker fallback', () => {
     happyHomeDir = await createTempDir('happier-marker-stop-');
     process.env.HAPPIER_HOME_DIR = happyHomeDir;
     reloadConfiguration();
-    mocks.resolveSessionIdOrPrefix.mockResolvedValue({ ok: true, sessionId: 'sess-marker-stop' });
+    mocks.resolveSessionIdOrPrefix.mockResolvedValue({
+      ok: true,
+      sessionId: 'sess-marker-stop',
+      rawSession: { id: 'sess-marker-stop', active: false },
+    });
+    mocks.callMachineRpc.mockReset();
     mocks.stopDaemonSession.mockResolvedValue({ status: 'not_found' });
     mocks.listSessionMarkers.mockResolvedValue([{
       pid: 4242,
@@ -98,6 +108,74 @@ describe('requestSessionStop marker fallback', () => {
       return { version: 2, metadata: mocks.persistedMetadata };
     });
     vi.spyOn(process, 'kill').mockImplementation(() => true as never);
+  });
+
+  it('routes a stop only to the exact machine recorded by the session', async () => {
+    mocks.resolveSessionIdOrPrefix.mockResolvedValue({
+      ok: true,
+      sessionId: 'sess-marker-stop',
+      rawSession: {
+        id: 'sess-marker-stop',
+        active: true,
+        machineId: 'machine-owning-session',
+      },
+    });
+    mocks.fetchSessionByIdCompat.mockResolvedValue({
+      id: 'sess-marker-stop',
+      active: false,
+      machineId: 'machine-owning-session',
+    });
+    mocks.callMachineRpc.mockResolvedValue({ status: 'stopped' });
+
+    const { requestSessionStop } = await import('./requestSessionStop');
+
+    await expect(requestSessionStop({ credentials, idOrPrefix: 'sess-marker-stop' })).resolves.toEqual({
+      ok: true,
+      sessionId: 'sess-marker-stop',
+      stopped: true,
+    });
+    expect(mocks.callMachineRpc).toHaveBeenCalledOnce();
+    expect(mocks.callMachineRpc).toHaveBeenCalledWith({
+      credentials,
+      machineId: 'machine-owning-session',
+      method: 'stop-session',
+      request: { sessionId: 'sess-marker-stop' },
+      authorization: { kind: 'session.write', sessionId: 'sess-marker-stop' },
+    });
+    expect(mocks.stopDaemonSession).not.toHaveBeenCalled();
+    expect(mocks.listSessionMarkers).not.toHaveBeenCalled();
+  });
+
+  it('reports the exact target daemon as unavailable without trying caller-local control', async () => {
+    mocks.resolveSessionIdOrPrefix.mockResolvedValue({
+      ok: true,
+      sessionId: 'sess-marker-stop',
+      rawSession: {
+        id: 'sess-marker-stop',
+        active: true,
+        machineId: 'machine-owning-session',
+      },
+    });
+    mocks.fetchSessionByIdCompat.mockResolvedValue({
+      id: 'sess-marker-stop',
+      active: true,
+      machineId: 'machine-owning-session',
+    });
+    mocks.callMachineRpc.mockRejectedValue(new Error('Machine RPC target unavailable'));
+
+    const { requestSessionStop } = await import('./requestSessionStop');
+
+    await expect(requestSessionStop({ credentials, idOrPrefix: 'sess-marker-stop' })).resolves.toEqual({
+      ok: true,
+      sessionId: 'sess-marker-stop',
+      stopped: false,
+      stopOutcome: {
+        status: 'physical_stop_unconfirmed',
+        reason: 'target_daemon_unavailable',
+      },
+    });
+    expect(mocks.stopDaemonSession).not.toHaveBeenCalled();
+    expect(mocks.listSessionMarkers).not.toHaveBeenCalled();
   });
 
   afterEach(async () => {
