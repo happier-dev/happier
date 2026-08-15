@@ -142,7 +142,8 @@ import type { ModelMode, PermissionMode } from '@/sync/domains/permissions/permi
 import { getPermissionModeOverrideForSpawn } from '@/sync/domains/permissions/permissionModeOverride';
 import { getPermissionModeLabelForAgentType, getPermissionModeTitleForAgentType } from '@/sync/domains/permissions/permissionModeOptions';
 import { getModelOverrideForSpawn } from '@/sync/domains/models/modelOverride';
-import { readDisplayMachineTargetForSession, readMachineControlTargetForSession, readMachineTargetForSession } from '@/sync/ops/sessionMachineTarget';
+import { readDisplayMachineTargetForSession } from '@/sync/ops/sessionMachineTarget';
+import { useSessionMachineControlTarget, useSessionMachineTarget } from '@/components/sessions/model/useSessionMachineTarget';
 import { useSessionRecipientState } from '@/components/sessions/agentInput/routing/useSessionRecipientState';
 import {
     resolveParticipantRoutedSend,
@@ -1401,8 +1402,8 @@ function useSessionRunnerRuntimeStatusRetention(input: Readonly<{
     invalidateAndRefresh: () => void;
 }> {
     const sessionId = input.session?.id ?? '';
-    const controlMachineTarget = sessionId ? readMachineControlTargetForSession(sessionId) : null;
-    const reachableMachineTarget = sessionId ? readMachineTargetForSession(sessionId) : null;
+    const controlMachineTarget = useSessionMachineControlTarget(sessionId);
+    const reachableMachineTarget = useSessionMachineTarget(sessionId);
     const rawMachineId = controlMachineTarget?.machineId
         ?? reachableMachineTarget?.machineId
         ?? input.session?.metadata?.machineId;
@@ -2456,12 +2457,8 @@ function SessionViewLoaded({
         const parentSessionId = (fork as any).parentSessionId;
         return typeof parentSessionId === 'string' && parentSessionId.trim().length > 0;
     }, [session.metadata]);
-    const reachableMachineTarget = React.useMemo(() => {
-        return readMachineTargetForSession(sessionId);
-    }, [sessionId, session.updatedAt, session.metadata]);
-    const controlMachineTarget = React.useMemo(() => {
-        return readMachineControlTargetForSession(sessionId);
-    }, [sessionId, session.updatedAt, session.metadata]);
+    const reachableMachineTarget = useSessionMachineTarget(sessionId);
+    const controlMachineTarget = useSessionMachineControlTarget(sessionId);
 
     // Check if CLI version is outdated and not already acknowledged
     const cliVersion = session.metadata?.version;
@@ -4094,10 +4091,10 @@ function SessionViewLoaded({
     }, [agentId, capabilityServerId, controlMachineTarget, executionRunsEnabled, resumeCapabilityOptions, router, session, sessionId, settings]);
     handleUsageLimitRecoveryResumeNowRef.current = handleResumeSession;
 
-    useSessionResumeRequestListener(React.useCallback((requestedSessionId) => {
-        if (requestedSessionId !== sessionId) return;
-        void handleResumeSession();
-    }, [handleResumeSession, sessionId]));
+    useSessionResumeRequestListener(
+        sessionId,
+        React.useCallback(() => handleResumeSession(), [handleResumeSession]),
+    );
 
     // Memoize header-dependent styles to prevent re-renders
     const headerDependentStyles = React.useMemo(() => ({

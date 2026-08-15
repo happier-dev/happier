@@ -199,6 +199,10 @@ vi.mock('@/components/sessions/model/inactiveSessionUi', () => ({
 vi.mock('@/components/sessions/model/useSessionMachineReachability', () => ({
   useSessionMachineReachability: () => ({ machineReachable: true, machineOnline: true }),
 }));
+vi.mock('@/components/sessions/model/useSessionMachineTarget', () => ({
+  useSessionMachineTarget: (sessionId: string) => readMachineTargetForSessionSpy(sessionId),
+  useSessionMachineControlTarget: (sessionId: string) => readMachineControlTargetForSessionSpy(sessionId),
+}));
 vi.mock('@/sync/domains/server/serverRuntime', () => ({
   getActiveServerSnapshot: () => ({ serverId: 'server-1' }),
   subscribeActiveServer: () => () => {},

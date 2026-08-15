@@ -32,8 +32,8 @@ import { teleportVoiceAgentToSessionRoot } from '@/voice/agent/teleportVoiceAgen
 import { useHasGlobalVoiceAgentConversation } from '@/voice/agent/useHasGlobalVoiceAgentConversation';
 import { navigateWithBlurOnWeb } from '@/utils/platform/navigateWithBlurOnWeb';
 import { deferOnWeb } from '@/utils/platform/deferOnWeb';
-import { readMachineTargetForSession } from '@/sync/ops/sessionMachineTarget';
 import { useSessionHandoffSourceReachability } from '@/sync/domains/sessionHandoff/useSessionHandoffSourceReachability';
+import { useSessionMachineTarget } from '@/components/sessions/model/useSessionMachineTarget';
 import { completeSessionForkNavigation } from '@/components/sessions/transcript/forkContext/completeSessionForkNavigation';
 import { createSessionActionTarget } from '@/components/sessions/actions/sessionActionContext';
 import { executeSessionAction } from '@/components/sessions/actions/sessionActionExecution';
@@ -187,10 +187,7 @@ function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
     }),
     [readStateSignature, session, sessionServerId, settings],
   );
-  const reachableMachineId = React.useMemo(
-    () => readMachineTargetForSession(props.sessionId)?.machineId ?? null,
-    [props.sessionId, session.updatedAt, session.metadata],
-  );
+  const reachableMachineId = useSessionMachineTarget(props.sessionId)?.machineId ?? null;
   const sourceMachineId = React.useMemo(
     () => resolveSessionHandoffSourceMachineId({
       reachableMachineId,
@@ -365,10 +362,17 @@ function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
             target: sessionActionTarget,
             context: {
               operations: {
-                resumeSession: (sessionId) => emitSessionResumeRequest(sessionId),
+                resumeSession: async (sessionId) => {
+                  await emitSessionResumeRequest(sessionId);
+                },
               },
             },
-          }), { tag: 'SessionHeaderActionMenu.execute.sessionResume' });
+          }), {
+            tag: 'SessionHeaderActionMenu.execute.sessionResume',
+            onError: () => {
+              Modal.alert(t('common.error'), t('session.resumeFailed'));
+            },
+          });
           return;
         }
         if (actionId === SESSION_ACTION_STOP_ID || actionId === SESSION_ACTION_ARCHIVE_ID) {

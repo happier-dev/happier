@@ -9,6 +9,7 @@ import { NotSourceControlRepositoryState, SourceControlSessionInactiveState, Sou
 import { useSessionMachineReachability } from '@/components/sessions/model/useSessionMachineReachability';
 import { useSessionResumeAction } from '@/components/sessions/model/SessionResumeContext';
 import { emitSessionResumeRequest } from '@/components/sessions/model/sessionResumeRequests';
+import { fireAndForget } from '@/utils/system/fireAndForget';
 import { useScmCommitHistory } from '@/hooks/session/files/useScmCommitHistory';
 import { useFilesScmOperations } from '@/hooks/session/files/useFilesScmOperations';
 import { usePublishBranchAction } from '@/hooks/session/sourceControl/usePublishBranchAction';
@@ -99,6 +100,11 @@ export const SessionRightPanelGitView = React.memo((props: SessionRightPanelGitV
     const gitTheme = useStableGitTheme(theme);
     const pane = useAppPaneScope(props.scopeId);
     const resumeSession = useSessionResumeAction();
+    const requestSessionResume = React.useCallback(() => {
+        fireAndForget(emitSessionResumeRequest(props.sessionId), {
+            tag: 'SessionRightPanelGitView.resumeSession',
+        });
+    }, [props.sessionId]);
     const { activeGitSubTab, commitDraftMessage, setCommitDraftMessage, setActiveGitSubTab } = useSessionRightPanelGitTabState(pane);
     const setActiveGitSubTabRef = React.useRef(setActiveGitSubTab);
     setActiveGitSubTabRef.current = setActiveGitSubTab;
@@ -525,7 +531,7 @@ export const SessionRightPanelGitView = React.memo((props: SessionRightPanelGitV
             return (
                 <SourceControlSessionInactiveState
                     machineReachable={machineReachable}
-                    onOpenSession={resumeSession ?? (() => emitSessionResumeRequest(props.sessionId))}
+                    onOpenSession={resumeSession ?? requestSessionResume}
                 />
             );
         }

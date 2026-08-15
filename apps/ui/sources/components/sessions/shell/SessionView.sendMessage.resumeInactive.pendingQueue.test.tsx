@@ -537,6 +537,17 @@ vi.mock('@/components/sessions/model/resolveSessionMachineReachability', () => (
 vi.mock('@/components/sessions/model/useSessionMachineReachability', () => ({
     useSessionMachineReachability: () => ({ machineReachable: true, machineOnline: true, machineRpcTargetAvailable: true }),
 }));
+vi.mock('@/components/sessions/model/useSessionMachineTarget', () => ({
+    useSessionMachineTarget: () => ({
+        machineId: 'm-target',
+        basePath: '/tmp/target',
+    }),
+    useSessionMachineControlTarget: () => ({
+        machineId: 'm-target',
+        basePath: '/tmp/target',
+        confidence: 'reachable',
+    }),
+}));
 vi.mock('@/sync/domains/server/serverRuntime', () => ({
     getActiveServerSnapshot: () => ({ serverId: 'server-1' }),
     subscribeActiveServer: (listener: any) => {
@@ -1247,7 +1258,7 @@ describe('SessionView (sendMessage resumeInactive pendingQueue)', () => {
         const screen = await renderSessionView();
 
         await act(async () => {
-            emitSessionResumeRequest('s1');
+            await emitSessionResumeRequest('s1');
         });
 
         expect(resumeCapabilityMachineIds).toContain('m-target');
@@ -1268,7 +1279,7 @@ describe('SessionView (sendMessage resumeInactive pendingQueue)', () => {
         const screen = await renderSessionView();
 
         await act(async () => {
-            emitSessionResumeRequest('s1');
+            await emitSessionResumeRequest('s1');
         });
 
         expect(cliDetectionServerIds).toContain('server-cache');
