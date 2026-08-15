@@ -21,6 +21,13 @@ const CLAUDE_2_1_228_USAGE_LIMIT_DIALOG = [
   'Enter to confirm · Esc to cancel',
 ].join('\n');
 
+const CROPPED_SINGLE_OPTION_USAGE_LIMIT_DIALOG = [
+  'What do you want to do?',
+  '❯ 1. Stop and wait for limit to reset',
+  '',
+  'Enter to confirm · Esc to cancel',
+].join('\n');
+
 /**
  * Fixtures are derived from the live probe captures documented in
  * `.reviews/20260610-claude-unified-independent-audit/probes/probe-log.md` (Claude Code 2.1.170, tmux).
@@ -158,6 +165,17 @@ describe('parseClaudeScreenState — usage-limit chooser', () => {
 
     expect(state.usageLimitDialogVisible).toBe(false);
     expect(state.unrecognizedConfirmationDialogVisible).toBe(true);
+  });
+
+  it('recognizes the cropped one-choice usage-limit chooser from the live terminal viewport', () => {
+    const state = parseClaudeScreenState(CROPPED_SINGLE_OPTION_USAGE_LIMIT_DIALOG);
+
+    expect(state.usageLimitDialogVisible).toBe(true);
+    expect(state.unrecognizedConfirmationDialogVisible).toBe(false);
+    expect(state.visibleNumberedDialog?.options).toEqual([
+      { choice: '1', label: 'Stop and wait for limit to reset' },
+    ]);
+    expect(resolveClaudeScreenInFlightSteerVeto(state)).toBe('usage_limit_dialog');
   });
 });
 

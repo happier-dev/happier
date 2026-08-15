@@ -242,7 +242,7 @@ export class ClaudeUnifiedDialogChoiceBroker {
   }
 
   async noteDialogResolvedInTerminal(reason: string): Promise<void> {
-    await this.cancelPendingChoice(reason);
+    await this.cancelAllSourceOwnedRequests(reason);
   }
 
   async dispose(): Promise<void> {

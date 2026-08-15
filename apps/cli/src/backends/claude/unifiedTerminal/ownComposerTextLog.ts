@@ -27,9 +27,9 @@ export type ClaudeOwnComposerTextLog = Readonly<{
    */
   recordPossiblePartialResidue: (text: string, opts?: { minPrefixChars?: number | undefined }) => void;
   /**
-   * True when the composer draft matches recorded own text, or a recent long visible window from
-   * an interrupted own injection. Short/old windows are intentionally rejected so a genuine user
-   * draft does not classify as ours.
+   * True when the composer draft matches recorded own text or a long visible window from an
+   * interrupted own injection. Short windows are accepted only during an explicitly recorded
+   * possible-write interval so a genuine user draft does not classify as ours.
    */
   matches: (draft: string) => boolean;
 }>;
@@ -53,18 +53,19 @@ type OwnComposerTextLogEntry = Readonly<{
   minShortPrefixResidueChars: number;
 }>;
 
-function isRecentRecordedResidue(params: Readonly<{
+function isRecordedComposerWindow(params: Readonly<{
   entry: OwnComposerTextLogEntry;
   normalizedDraft: string;
   nowMs: number;
-  prefixResidueWindowMs: number;
 }>): boolean {
-  const longPrefixResidue = params.normalizedDraft.length >= CLAUDE_UNIFIED_LONG_COMPOSER_RESIDUE_MIN_CHARS
-    && params.nowMs - params.entry.recordedAtMs <= params.prefixResidueWindowMs;
+  // A long exact window carries the same content identity as the full recorded text. Keep it valid
+  // for as long as that bounded entry remains recorded: a failed Enter can leave Claude's viewport
+  // parked on the tail for hours. Only weak, short possible-write evidence expires by time.
+  const longRecordedWindow = params.normalizedDraft.length >= CLAUDE_UNIFIED_LONG_COMPOSER_RESIDUE_MIN_CHARS;
   const contextualShortPrefixResidue = params.normalizedDraft.length >= params.entry.minShortPrefixResidueChars
     && params.entry.shortPrefixResidueUntilMs !== undefined
     && params.nowMs <= params.entry.shortPrefixResidueUntilMs;
-  if (!longPrefixResidue && !contextualShortPrefixResidue) return false;
+  if (!longRecordedWindow && !contextualShortPrefixResidue) return false;
   return isClaudeUnifiedComposerTextMatch({
     promptText: params.entry.text,
     composerText: params.normalizedDraft,
@@ -99,9 +100,9 @@ function isCollapsedPasteMarkerMatch(params: Readonly<{
 
 /**
  * Bounded log of texts the Claude Unified runtime itself wrote into the TUI (lane X, incident
- * cmq8y3nlx): a leftover composer draft that matches one of them, including a bounded recent long
- * viewport window from a truncated injection, is OUR OWN residue and may be cleared, while anything else is
- * treated as a genuine user draft.
+ * cmq8y3nlx): a leftover composer draft that matches one of them, including a long viewport window
+ * from a truncated injection, is OUR OWN residue and may be cleared, while anything else is treated
+ * as a genuine user draft.
  */
 export function createClaudeOwnComposerTextLog(opts?: Readonly<{
   limit?: number;
@@ -190,17 +191,15 @@ export function createClaudeOwnComposerTextLog(opts?: Readonly<{
           prefixResidueWindowMs,
           largeCollapsedPasteMarkerWindowMs,
         })
-        || isRecentRecordedResidue({
+        || isRecordedComposerWindow({
           entry,
           normalizedDraft: normalized,
           nowMs: referenceMs,
-          prefixResidueWindowMs,
         })
-        || (collapsed !== normalized && isRecentRecordedResidue({
+        || (collapsed !== normalized && isRecordedComposerWindow({
           entry,
           normalizedDraft: collapsed,
           nowMs: referenceMs,
-          prefixResidueWindowMs,
         }))
       ));
     },

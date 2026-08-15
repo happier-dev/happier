@@ -131,6 +131,7 @@ const SAFEGUARD_PAUSE_RETRY_OPTION = /\bedit prompt and retry(?:\s+with\s+(.+?))
 // failure + chooser + wait semantics, then require the shared strict numbered-dialog parser below.
 // This stays tolerant of labels and option count without matching arbitrary numbered dialogs.
 const USAGE_LIMIT_DIALOG = /(?:\byou(?:['’]ve| have)\s+(?:hit|reached)\s+your\s+(?:session|usage)\s+limit\b|\/rate-limit-options)[\s\S]{0,1200}\bwhat do you want to do\?[\s\S]{0,700}\bwait\b[^\n]{0,120}\blimit\b[^\n]{0,120}\breset(?:s)?\b/i;
+const CROPPED_USAGE_LIMIT_DIALOG = /\bwhat do you want to do\?[\s\S]{0,400}(?:❯|>)\s*1\.\s*[^\n]{0,120}\bwait\b[^\n]{0,120}\blimit\b[^\n]{0,120}\breset(?:s)?\b/i;
 // Live probe 2026-06-11 (Claude Code 2.1.173, tmux): `/effort <level>` on a conversation cached at a
 // different effort opens "Change effort level? … ❯ 1. Yes, switch to <level>  2. No, go back".
 // Escape / "No, go back" prints `Kept effort level as <current>` (incident cmq8y3nlx, L6).
@@ -511,7 +512,10 @@ function resolveVisibleEffort(text: string): string | null {
   return status?.[1] ? status[1].trim().toLowerCase() : null;
 }
 
-function resolveGenericNumberedDialog(text: string): ClaudeUnifiedGenericNumberedDialog | null {
+function resolveGenericNumberedDialog(
+  text: string,
+  minimumOptionCount = 2,
+): ClaudeUnifiedGenericNumberedDialog | null {
   const lines = text.split('\n');
   const blocks: Array<Array<{ index: number; number: number; label: string; focused: boolean }>> = [];
   let current: Array<{ index: number; number: number; label: string; focused: boolean }> = [];
@@ -533,7 +537,7 @@ function resolveGenericNumberedDialog(text: string): ClaudeUnifiedGenericNumbere
   if (current.length > 0) blocks.push(current);
   if (blocks.length !== 1) return null;
   const block = blocks[0];
-  if (!block || block.length < 2 || block.length > 9) return null;
+  if (!block || block.length < minimumOptionCount || block.length > 9) return null;
   if (block.filter((candidate) => candidate.focused).length !== 1) return null;
   if (block.some((candidate, index) => candidate.number !== index + 1)) return null;
   if (block.some((candidate) => candidate.label.length < 1 || candidate.label.length > 120)) return null;
@@ -561,10 +565,16 @@ function resolveGenericNumberedDialog(text: string): ClaudeUnifiedGenericNumbere
 export function parseClaudeScreenState(rawText: string, context?: ClaudeScreenParseContext): ClaudeScreenState {
   const text = normalizeCapturedScreen(rawText);
   const visibleTail = tailLines(text, 30);
-  const visibleNumberedDialog = resolveGenericNumberedDialog(visibleTail);
+  const usageLimitDialogCandidate = (
+    USAGE_LIMIT_DIALOG.test(visibleTail)
+    || CROPPED_USAGE_LIMIT_DIALOG.test(visibleTail)
+  )
+    ? resolveGenericNumberedDialog(visibleTail, 1)
+    : null;
+  const visibleNumberedDialog = usageLimitDialogCandidate ?? resolveGenericNumberedDialog(visibleTail);
 
   const switchModelDialogVisible = SWITCH_MODEL_DIALOG.test(text);
-  const usageLimitDialogVisible = USAGE_LIMIT_DIALOG.test(visibleTail) && visibleNumberedDialog !== null;
+  const usageLimitDialogVisible = usageLimitDialogCandidate !== null;
   const resumeChoiceDialogOptions = resolveResumeChoiceDialogOptions(text);
   const resumeChoiceDialogVisible = resumeChoiceDialogOptions.length > 0;
   const safeguardPauseDialogOptions = resolveSafeguardPauseDialogOptions(text);

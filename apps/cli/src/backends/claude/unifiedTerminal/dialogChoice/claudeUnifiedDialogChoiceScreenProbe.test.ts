@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { CLAUDE_UNIFIED_TERMINAL_DIALOG_CHOICE_REQUEST_SOURCE } from '@happier-dev/agents';
 
 import { createPermissionHandlerSessionStub } from '../../utils/permissionHandler.testkit';
 import type { AgentStateRequestStore } from '@/agent/permissions/agentStateRequestStore';
@@ -142,6 +143,32 @@ describe('createClaudeUnifiedDialogChoiceScreenProbe', () => {
     expect(port.sentKeys).toEqual([]);
   });
 
+  it('clears an inherited dialog request when the restarted runner observes no dialog', async () => {
+    const { client, probe } = createHarness({ captures: [IDLE] });
+    client.agentState.requests.claude_dialog_choice_inherited = {
+      tool: 'AskUserQuestion',
+      kind: 'user_action',
+      source: CLAUDE_UNIFIED_TERMINAL_DIALOG_CHOICE_REQUEST_SOURCE,
+      arguments: {
+        happierDialog: {
+          kind: 'unrecognized',
+          mode: 'notice',
+          dialogId: 'unrecognized_confirmation',
+          action: 'open_terminal',
+        },
+        questions: [],
+      },
+      createdAt: 1,
+    };
+
+    await expect(probe.evaluateScreenState(parseClaudeScreenState(IDLE))).resolves.toEqual({ kind: 'not_visible' });
+    await vi.waitFor(() => expect(client.agentState.requests.claude_dialog_choice_inherited).toBeUndefined());
+    expect(client.agentState.completedRequests.claude_dialog_choice_inherited).toMatchObject({
+      status: 'canceled',
+      reason: 'claude_dialog_resolved_in_terminal',
+    });
+  });
+
   it('leaves a Happier-initiated effort dialog to its slash-controls owner', async () => {
     const { client, port, probe } = createHarness({
       captures: [EFFORT_DIALOG],
@@ -151,6 +178,35 @@ describe('createClaudeUnifiedDialogChoiceScreenProbe', () => {
     await expect(probe.probe()).resolves.toEqual({ kind: 'owned', dialogId: 'effort_change' });
     expect(client.getAgentStateSnapshot().requests).toEqual({});
     expect(port.sentLiteral).toEqual([]);
+  });
+
+  it('clears an inherited broker request when the visible dialog is owned by another control path', async () => {
+    const { client, probe } = createHarness({
+      captures: [RESUME_DIALOG],
+      resumeStartupActive: true,
+    });
+    client.agentState.requests.claude_dialog_choice_inherited = {
+      tool: 'AskUserQuestion',
+      kind: 'user_action',
+      source: CLAUDE_UNIFIED_TERMINAL_DIALOG_CHOICE_REQUEST_SOURCE,
+      arguments: {
+        happierDialog: {
+          kind: 'unrecognized',
+          mode: 'notice',
+          dialogId: 'unrecognized_confirmation',
+          action: 'open_terminal',
+        },
+        questions: [],
+      },
+      createdAt: 1,
+    };
+
+    await expect(probe.probe()).resolves.toEqual({ kind: 'owned', dialogId: 'resume_choice' });
+    await vi.waitFor(() => expect(client.agentState.requests.claude_dialog_choice_inherited).toBeUndefined());
+    expect(client.agentState.completedRequests.claude_dialog_choice_inherited).toMatchObject({
+      status: 'canceled',
+      reason: 'claude_dialog_owned_by_control_path',
+    });
   });
 
   it('surfaces a TUI-initiated effort dialog after grace and injects the selected answer', async () => {
@@ -180,6 +236,35 @@ describe('createClaudeUnifiedDialogChoiceScreenProbe', () => {
       dialogId: 'effort_change',
       dialogChoice: 'confirm',
     });
+  });
+
+  it('replaces an inherited stale dialog request when the restarted runner observes a new dialog', async () => {
+    const { client, probe } = createHarness({
+      captures: [EFFORT_DIALOG, EFFORT_DIALOG],
+    });
+    client.agentState.requests.claude_dialog_choice_inherited = {
+      tool: 'AskUserQuestion',
+      kind: 'user_action',
+      source: CLAUDE_UNIFIED_TERMINAL_DIALOG_CHOICE_REQUEST_SOURCE,
+      arguments: {
+        happierDialog: {
+          kind: 'unrecognized',
+          mode: 'notice',
+          dialogId: 'unrecognized_confirmation',
+          action: 'open_terminal',
+        },
+        questions: [],
+      },
+      createdAt: 1,
+    };
+
+    await expect(probe.probe()).resolves.toEqual({ kind: 'request_published', dialogId: 'effort_change' });
+    await vi.waitFor(() => expect(client.agentState.requests.claude_dialog_choice_inherited).toBeUndefined());
+    expect(client.agentState.completedRequests.claude_dialog_choice_inherited).toMatchObject({
+      status: 'canceled',
+      reason: 'claude_unified_dialog_changed',
+    });
+    expect(Object.keys(client.agentState.requests)).toEqual(['claude_dialog_choice_1']);
   });
 
   it('surfaces pre-hook workspace trust and injects only the user-selected decision', async () => {
