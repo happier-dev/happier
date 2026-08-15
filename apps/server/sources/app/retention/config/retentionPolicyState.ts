@@ -1,8 +1,6 @@
 import type {
-    KeepForeverRetentionPolicy,
     RetentionDomainPolicies,
     RetentionPolicy,
-    SessionRetentionPolicy,
 } from './retentionPolicyTypes';
 
 const KEEP_FOREVER_POLICY = Object.freeze({ mode: 'keep_forever' as const });
@@ -20,21 +18,7 @@ export function resolveEffectiveRetentionDomains(policy: RetentionPolicy): Reten
         return policy.domains;
     }
 
-    return Object.freeze({
-        sessions: KEEP_FOREVER_POLICY as SessionRetentionPolicy,
-        sessionMessages: KEEP_FOREVER_POLICY as KeepForeverRetentionPolicy,
-        sessionSidechainMessages: KEEP_FOREVER_POLICY as KeepForeverRetentionPolicy,
-        accountChanges: KEEP_FOREVER_POLICY as KeepForeverRetentionPolicy,
-        voiceSessionLeases: KEEP_FOREVER_POLICY as KeepForeverRetentionPolicy,
-        userFeedItems: KEEP_FOREVER_POLICY as KeepForeverRetentionPolicy,
-        sessionShareAccessLogs: KEEP_FOREVER_POLICY as KeepForeverRetentionPolicy,
-        publicShareAccessLogs: KEEP_FOREVER_POLICY as KeepForeverRetentionPolicy,
-        terminalAuthRequests: KEEP_FOREVER_POLICY as KeepForeverRetentionPolicy,
-        accountAuthRequests: KEEP_FOREVER_POLICY as KeepForeverRetentionPolicy,
-        authPairingSessions: KEEP_FOREVER_POLICY as KeepForeverRetentionPolicy,
-        repeatKeys: KEEP_FOREVER_POLICY as KeepForeverRetentionPolicy,
-        globalLocks: KEEP_FOREVER_POLICY as KeepForeverRetentionPolicy,
-        automationRuns: KEEP_FOREVER_POLICY as KeepForeverRetentionPolicy,
-        automationRunEvents: KEEP_FOREVER_POLICY as KeepForeverRetentionPolicy,
-    });
+    return Object.freeze(Object.fromEntries(
+        Object.keys(policy.domains).map((id) => [id, KEEP_FOREVER_POLICY]),
+    )) as RetentionDomainPolicies;
 }

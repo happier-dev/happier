@@ -3,7 +3,7 @@ import { db } from '@/storage/db';
 
 const SIDECHAIN_RETENTION_CURSOR_KEY = 'server.retention.session-sidechain-messages.cursor.v1';
 
-type SidechainCursor = Readonly<{
+export type SidechainRetentionCursor = Readonly<{
     sessionId: string;
     sidechainId: string;
 }>;
@@ -13,7 +13,7 @@ function positiveIntOrDefault(value: number | undefined, fallback: number): numb
     return Math.max(1, Math.floor(value));
 }
 
-function parseCursor(value: string | null): SidechainCursor | null {
+function parseCursor(value: string | null): SidechainRetentionCursor | null {
     if (value === null) return null;
 
     let parsed: unknown;
@@ -44,7 +44,7 @@ function parseCursor(value: string | null): SidechainCursor | null {
     };
 }
 
-async function writeCursor(cursor: SidechainCursor | null): Promise<void> {
+async function writeCursor(cursor: SidechainRetentionCursor | null): Promise<void> {
     await writeToSimpleCache(
         SIDECHAIN_RETENTION_CURSOR_KEY,
         cursor === null
@@ -53,11 +53,11 @@ async function writeCursor(cursor: SidechainCursor | null): Promise<void> {
     );
 }
 
-async function readCursor(): Promise<SidechainCursor | null> {
+async function readCursor(): Promise<SidechainRetentionCursor | null> {
     return parseCursor(await readFromSimpleCache(SIDECHAIN_RETENTION_CURSOR_KEY));
 }
 
-async function findFirstSidechainAfter(cursor: SidechainCursor | null): Promise<SidechainCursor | null> {
+async function findFirstSidechainAfter(cursor: SidechainRetentionCursor | null): Promise<SidechainRetentionCursor | null> {
     if (cursor) {
         const sameSession = await db.sessionMessage.findFirst({
             where: {
@@ -84,7 +84,7 @@ async function findFirstSidechainAfter(cursor: SidechainCursor | null): Promise<
     return { sessionId: nextSession.sessionId, sidechainId: nextSession.sidechainId };
 }
 
-async function readLatestSidechainCreatedAt(cursor: SidechainCursor): Promise<Date | null> {
+async function readLatestSidechainCreatedAt(cursor: SidechainRetentionCursor): Promise<Date | null> {
     const latest = await db.sessionMessage.findFirst({
         where: cursor,
         orderBy: { seq: 'desc' },
@@ -94,7 +94,7 @@ async function readLatestSidechainCreatedAt(cursor: SidechainCursor): Promise<Da
 }
 
 async function countDryRunRows(params: {
-    cursor: SidechainCursor;
+    cursor: SidechainRetentionCursor;
     limit: number;
 }): Promise<number> {
     let counted = 0;
@@ -121,7 +121,7 @@ async function countDryRunRows(params: {
 }
 
 async function deleteExpiredSidechainBatch(params: {
-    cursor: SidechainCursor;
+    cursor: SidechainRetentionCursor;
     cutoff: Date;
     limit: number;
 }): Promise<number> {
@@ -153,7 +153,7 @@ async function deleteExpiredSidechainBatch(params: {
 }
 
 async function sidechainStillExpired(params: {
-    cursor: SidechainCursor;
+    cursor: SidechainRetentionCursor;
     cutoff: Date;
 }): Promise<boolean> {
     const latestCreatedAt = await readLatestSidechainCreatedAt(params.cursor);
@@ -165,19 +165,38 @@ export async function runSessionSidechainMessageRetentionRule(params: {
     batchSize: number;
     dryRun: boolean;
     maxDeletesPerRulePerRun: number;
-}): Promise<{ deleted: number }> {
+    maxCandidatesPerRulePerRun?: number;
+    shouldContinue?: () => boolean;
+    startCursor?: SidechainRetentionCursor | null;
+    persistCursor?: boolean;
+}): Promise<{
+    deleted: number;
+    candidatesExamined: number;
+    hasMore: boolean;
+    nextCursor: SidechainRetentionCursor | null;
+}> {
     const batchSize = positiveIntOrDefault(params.batchSize, 1);
     const maxDeletes = positiveIntOrDefault(params.maxDeletesPerRulePerRun, batchSize);
-    const persistedCursor = await readCursor();
+    const maxCandidates = positiveIntOrDefault(params.maxCandidatesPerRulePerRun, batchSize);
+    const persistedCursor = Object.prototype.hasOwnProperty.call(params, 'startCursor')
+        ? params.startCursor ?? null
+        : await readCursor();
     let scanCursor = persistedCursor;
     let lastCompletedCursor = persistedCursor;
     let deleted = 0;
     let scanned = 0;
+    let yielded = false;
 
-    while (scanned < batchSize && deleted < maxDeletes) {
+    let reachedEnd = false;
+    while (scanned < maxCandidates && deleted < maxDeletes) {
+        if (params.shouldContinue && !params.shouldContinue()) {
+            yielded = true;
+            break;
+        }
         const candidate = await findFirstSidechainAfter(scanCursor);
         if (!candidate) {
             lastCompletedCursor = null;
+            reachedEnd = true;
             break;
         }
         scanCursor = candidate;
@@ -222,9 +241,14 @@ export async function runSessionSidechainMessageRetentionRule(params: {
         lastCompletedCursor = candidate;
     }
 
-    if (!params.dryRun) {
+    if (params.persistCursor ?? !params.dryRun) {
         await writeCursor(lastCompletedCursor);
     }
 
-    return { deleted };
+    return {
+        deleted,
+        candidatesExamined: scanned,
+        hasMore: yielded || (!reachedEnd && (scanned >= maxCandidates || deleted >= maxDeletes)),
+        nextCursor: lastCompletedCursor,
+    };
 }

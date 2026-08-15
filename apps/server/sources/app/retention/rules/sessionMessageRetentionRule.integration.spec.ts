@@ -184,7 +184,41 @@ describe('sessionMessageRetentionRule', () => {
             batchSize: 1,
             dryRun: false,
             maxDeletesPerRulePerRun: 3,
-        })).resolves.toEqual({ deleted: 3 });
+        })).resolves.toMatchObject({ deleted: 3 });
         await expect(db.sessionMessage.count()).resolves.toBe(0);
+    });
+
+    it('continues a dry run after the last counted message instead of recounting it', async () => {
+        const old = new Date('2025-01-01T00:00:00.000Z');
+        const cutoff = new Date('2026-01-01T00:00:00.000Z');
+        await createSession({ id: 'target', active: false, lastActiveAt: old, updatedAt: old, seq: 503 });
+        for (const seq of [1, 2, 3]) {
+            await createMessage({
+                sessionId: 'target',
+                seq,
+                createdAt: old,
+                content: { t: 'plain', v: { text: `${seq}` } },
+            });
+        }
+
+        const { runSessionMessageRetentionRule } = await import('./sessionMessageRetentionRule');
+        const first = await runSessionMessageRetentionRule({
+            cutoff,
+            batchSize: 2,
+            dryRun: true,
+            maxDeletesPerRulePerRun: 2,
+            startCursor: null,
+        });
+        const second = await runSessionMessageRetentionRule({
+            cutoff,
+            batchSize: 2,
+            dryRun: true,
+            maxDeletesPerRulePerRun: 2,
+            startCursor: first.nextCursor,
+        });
+
+        expect(first).toMatchObject({ deleted: 2, candidatesExamined: 2, hasMore: true });
+        expect(second).toMatchObject({ deleted: 1, candidatesExamined: 1, hasMore: false });
+        await expect(db.sessionMessage.count()).resolves.toBe(3);
     });
 });

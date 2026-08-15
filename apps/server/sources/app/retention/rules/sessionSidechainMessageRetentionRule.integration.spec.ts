@@ -83,7 +83,7 @@ describe('sessionSidechainMessageRetentionRule', () => {
             maxDeletesPerRulePerRun: 10,
         });
 
-        expect(result).toEqual({ deleted: 2 });
+        expect(result).toMatchObject({ deleted: 2 });
         await expect(db.sessionMessage.findMany({
             orderBy: [{ sessionId: 'asc' }, { seq: 'asc' }],
             select: { sessionId: true, seq: true, sidechainId: true },
@@ -108,7 +108,7 @@ describe('sessionSidechainMessageRetentionRule', () => {
             batchSize: 1,
             dryRun: true,
             maxDeletesPerRulePerRun: 2,
-        })).resolves.toEqual({ deleted: 2 });
+        })).resolves.toMatchObject({ deleted: 2 });
         await expect(db.sessionMessage.count()).resolves.toBe(3);
 
         await expect(runSessionSidechainMessageRetentionRule({
@@ -116,7 +116,7 @@ describe('sessionSidechainMessageRetentionRule', () => {
             batchSize: 1,
             dryRun: false,
             maxDeletesPerRulePerRun: 2,
-        })).resolves.toEqual({ deleted: 2 });
+        })).resolves.toMatchObject({ deleted: 2 });
         await expect(db.sessionMessage.count()).resolves.toBe(1);
     });
 
@@ -131,17 +131,68 @@ describe('sessionSidechainMessageRetentionRule', () => {
             batchSize: 1,
             dryRun: false,
             maxDeletesPerRulePerRun: 10,
-        })).resolves.toEqual({ deleted: 0 });
+        })).resolves.toMatchObject({ deleted: 0 });
 
         await expect(runSessionSidechainMessageRetentionRule({
             cutoff,
             batchSize: 1,
             dryRun: false,
             maxDeletesPerRulePerRun: 10,
-        })).resolves.toEqual({ deleted: 1 });
+        })).resolves.toMatchObject({ deleted: 1 });
         await expect(db.sessionMessage.findMany({
             orderBy: { seq: 'asc' },
             select: { sidechainId: true },
         })).resolves.toEqual([{ sidechainId: 'a-recent' }]);
+    });
+
+    it('can page a dry-run with an in-memory cursor without mutating the persisted cursor', async () => {
+        await createSession('target', 2);
+        await createMessage({ sessionId: 'target', seq: 1, sidechainId: 'a-expired', createdAt: old });
+        await createMessage({ sessionId: 'target', seq: 2, sidechainId: 'b-expired', createdAt: old });
+
+        const { runSessionSidechainMessageRetentionRule } = await import('./sessionSidechainMessageRetentionRule');
+        const first = await runSessionSidechainMessageRetentionRule({
+            cutoff,
+            batchSize: 10,
+            dryRun: true,
+            maxDeletesPerRulePerRun: 10,
+            maxCandidatesPerRulePerRun: 1,
+            startCursor: null,
+            persistCursor: false,
+        });
+        const second = await runSessionSidechainMessageRetentionRule({
+            cutoff,
+            batchSize: 10,
+            dryRun: true,
+            maxDeletesPerRulePerRun: 10,
+            maxCandidatesPerRulePerRun: 1,
+            startCursor: first.nextCursor,
+            persistCursor: false,
+        });
+
+        expect(first).toMatchObject({ deleted: 1, candidatesExamined: 1, hasMore: true });
+        expect(second).toMatchObject({ deleted: 1, candidatesExamined: 1, hasMore: true });
+        await expect(db.sessionMessage.count()).resolves.toBe(2);
+        await expect(db.simpleCache.count()).resolves.toBe(0);
+    });
+
+    it('yields between sidechain candidates when the sweep time budget expires', async () => {
+        await createSession('target', 2);
+        await createMessage({ sessionId: 'target', seq: 1, sidechainId: 'a-recent', createdAt: recent });
+        await createMessage({ sessionId: 'target', seq: 2, sidechainId: 'b-expired', createdAt: old });
+        let checks = 0;
+
+        const { runSessionSidechainMessageRetentionRule } = await import('./sessionSidechainMessageRetentionRule');
+        const result = await runSessionSidechainMessageRetentionRule({
+            cutoff,
+            batchSize: 500,
+            dryRun: false,
+            maxDeletesPerRulePerRun: 100_000,
+            maxCandidatesPerRulePerRun: 10_000,
+            shouldContinue: () => checks++ === 0,
+        });
+
+        expect(result).toMatchObject({ deleted: 0, candidatesExamined: 1, hasMore: true });
+        await expect(db.sessionMessage.count()).resolves.toBe(2);
     });
 });

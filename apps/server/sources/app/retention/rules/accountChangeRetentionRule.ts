@@ -11,10 +11,12 @@ type AccountChangeRetentionCandidate = Readonly<{
 async function loadAccountChangeRetentionCandidates(params: {
     cutoff: Date;
     limit: number;
+    dryRunOffset?: number;
 }): Promise<AccountChangeRetentionCandidate[]> {
     return await db.accountChange.findMany({
         where: {
             changedAt: { lt: params.cutoff },
+            cursor: { gt: 0 },
         },
         orderBy: [
             { changedAt: 'asc' },
@@ -22,6 +24,7 @@ async function loadAccountChangeRetentionCandidates(params: {
             { cursor: 'asc' },
         ],
         take: Math.max(1, params.limit),
+        ...(params.dryRunOffset && params.dryRunOffset > 0 ? { skip: params.dryRunOffset } : null),
         select: {
             accountId: true,
             kind: true,
@@ -35,14 +38,21 @@ export async function pruneAgedAccountChangesOnce(params: {
     cutoff: Date;
     batchSize: number;
     dryRun: boolean;
-}): Promise<{ deleted: number }> {
+    dryRunOffset?: number;
+}): Promise<{ deleted: number; candidatesExamined: number; hasMore: boolean }> {
+    const limit = Math.max(1, params.batchSize);
     const candidates = await loadAccountChangeRetentionCandidates({
         cutoff: params.cutoff,
-        limit: params.batchSize,
+        limit,
+        dryRunOffset: params.dryRun ? params.dryRunOffset : undefined,
     });
 
     if (params.dryRun) {
-        return { deleted: candidates.length };
+        return {
+            deleted: candidates.length,
+            candidatesExamined: candidates.length,
+            hasMore: candidates.length === limit,
+        };
     }
 
     let deleted = 0;
@@ -83,19 +93,25 @@ export async function pruneAgedAccountChangesOnce(params: {
         }));
     }
 
-    return { deleted };
+    return {
+        deleted,
+        candidatesExamined: candidates.length,
+        hasMore: candidates.length === limit,
+    };
 }
 
 export async function runAccountChangeRetentionRule(params: {
     cutoff: Date;
     batchSize: number;
     dryRun: boolean;
+    dryRunOffset?: number;
     maxDeletesPerRulePerRun: number;
-}): Promise<{ deleted: number }> {
+}): Promise<{ deleted: number; candidatesExamined: number; hasMore: boolean }> {
     const limit = Math.max(1, Math.min(params.batchSize, params.maxDeletesPerRulePerRun));
     return await pruneAgedAccountChangesOnce({
         cutoff: params.cutoff,
         batchSize: limit,
         dryRun: params.dryRun,
+        dryRunOffset: params.dryRunOffset,
     });
 }

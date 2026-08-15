@@ -1,9 +1,10 @@
-import { log } from '@/utils/logging/log';
+import { error as logError, log } from '@/utils/logging/log';
 
 export function logRetentionSweepCompleted(params: {
     reason: 'startup' | 'interval';
     deleted: number;
     byRule: Readonly<Record<string, number>>;
+    details?: Readonly<Record<string, unknown>>;
     dryRun: boolean;
 }) {
     log(
@@ -12,6 +13,7 @@ export function logRetentionSweepCompleted(params: {
             reason: params.reason,
             deleted: params.deleted,
             byRule: params.byRule,
+            details: params.details,
             dryRun: params.dryRun,
         },
         `Retention sweep ran (${params.reason})`,
@@ -22,7 +24,7 @@ export function logRetentionSweepFailed(params: {
     reason: 'startup' | 'interval';
     error: unknown;
 }) {
-    log(
+    logError(
         {
             module: 'retention-worker',
             reason: params.reason,

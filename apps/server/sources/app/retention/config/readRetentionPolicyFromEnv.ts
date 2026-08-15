@@ -7,10 +7,13 @@ import type {
     RetentionPolicy,
     SessionRetentionPolicy,
 } from './retentionPolicyTypes';
+import { readRetentionDomainDefinitions } from '@/app/retention/runtime/retentionRuleRegistry';
 
-const DEFAULT_INTERVAL_MS = 6 * 60 * 60 * 1000;
-const DEFAULT_BATCH_SIZE = 100;
-const DEFAULT_MAX_DELETES_PER_RULE_PER_RUN = 1000;
+const DEFAULT_INTERVAL_MS = 60 * 60 * 1000;
+const DEFAULT_BATCH_SIZE = 500;
+const DEFAULT_MAX_DELETES_PER_RULE_PER_RUN = 100_000;
+const DEFAULT_SWEEP_TIME_BUDGET_MS = 10_000;
+const DEFAULT_MAX_CANDIDATES_PER_RULE_PER_RUN = 10_000;
 
 const KEEP_FOREVER_POLICY = Object.freeze({ mode: 'keep_forever' as const });
 const EMPTY_ENV = Object.freeze({}) as NodeJS.ProcessEnv;
@@ -51,95 +54,30 @@ function readAgePolicy(params: {
     }) satisfies DeleteOlderThanRetentionPolicy;
 }
 
-function readSessionPolicy(env: NodeJS.ProcessEnv): SessionRetentionPolicy {
-    const mode = String(env.HAPPIER_SERVER_RETENTION__SESSIONS__MODE ?? '').trim().toLowerCase();
+function readSessionPolicy(params: { env: NodeJS.ProcessEnv; modeKey: string; durationKey: string }): SessionRetentionPolicy {
+    const mode = String(params.env[params.modeKey] ?? '').trim().toLowerCase();
     if (!mode || mode === 'keep_forever') return KEEP_FOREVER_POLICY;
     if (mode !== 'delete_inactive') {
-        throw new Error('HAPPIER_SERVER_RETENTION__SESSIONS__MODE must be keep_forever or delete_inactive');
+        throw new Error(`${params.modeKey} must be keep_forever or delete_inactive`);
     }
     return Object.freeze({
         mode: 'delete_inactive',
         inactivityDays: parsePositiveInt({
-            env,
-            key: 'HAPPIER_SERVER_RETENTION__SESSIONS__INACTIVITY_DAYS',
+            env: params.env,
+            key: params.durationKey,
         }),
     });
 }
 
 function readDomainPolicies(env: NodeJS.ProcessEnv): RetentionDomainPolicies {
-    return Object.freeze({
-        sessions: readSessionPolicy(env),
-        sessionMessages: readAgePolicy({
-            env,
-            modeKey: 'HAPPIER_SERVER_RETENTION__SESSION_MESSAGES__MODE',
-            daysKey: 'HAPPIER_SERVER_RETENTION__SESSION_MESSAGES__DAYS',
-        }),
-        sessionSidechainMessages: readAgePolicy({
-            env,
-            modeKey: 'HAPPIER_SERVER_RETENTION__SESSION_SIDECHAIN_MESSAGES__MODE',
-            daysKey: 'HAPPIER_SERVER_RETENTION__SESSION_SIDECHAIN_MESSAGES__DAYS',
-        }),
-        accountChanges: readAgePolicy({
-            env,
-            modeKey: 'HAPPIER_SERVER_RETENTION__ACCOUNT_CHANGES__MODE',
-            daysKey: 'HAPPIER_SERVER_RETENTION__ACCOUNT_CHANGES__DAYS',
-        }),
-        voiceSessionLeases: readAgePolicy({
-            env,
-            modeKey: 'HAPPIER_SERVER_RETENTION__VOICE_SESSION_LEASES__MODE',
-            daysKey: 'HAPPIER_SERVER_RETENTION__VOICE_SESSION_LEASES__DAYS',
-        }),
-        userFeedItems: readAgePolicy({
-            env,
-            modeKey: 'HAPPIER_SERVER_RETENTION__USER_FEED_ITEMS__MODE',
-            daysKey: 'HAPPIER_SERVER_RETENTION__USER_FEED_ITEMS__DAYS',
-        }),
-        sessionShareAccessLogs: readAgePolicy({
-            env,
-            modeKey: 'HAPPIER_SERVER_RETENTION__SESSION_SHARE_ACCESS_LOGS__MODE',
-            daysKey: 'HAPPIER_SERVER_RETENTION__SESSION_SHARE_ACCESS_LOGS__DAYS',
-        }),
-        publicShareAccessLogs: readAgePolicy({
-            env,
-            modeKey: 'HAPPIER_SERVER_RETENTION__PUBLIC_SHARE_ACCESS_LOGS__MODE',
-            daysKey: 'HAPPIER_SERVER_RETENTION__PUBLIC_SHARE_ACCESS_LOGS__DAYS',
-        }),
-        terminalAuthRequests: readAgePolicy({
-            env,
-            modeKey: 'HAPPIER_SERVER_RETENTION__TERMINAL_AUTH_REQUESTS__MODE',
-            daysKey: 'HAPPIER_SERVER_RETENTION__TERMINAL_AUTH_REQUESTS__DAYS',
-        }),
-        accountAuthRequests: readAgePolicy({
-            env,
-            modeKey: 'HAPPIER_SERVER_RETENTION__ACCOUNT_AUTH_REQUESTS__MODE',
-            daysKey: 'HAPPIER_SERVER_RETENTION__ACCOUNT_AUTH_REQUESTS__DAYS',
-        }),
-        authPairingSessions: readAgePolicy({
-            env,
-            modeKey: 'HAPPIER_SERVER_RETENTION__AUTH_PAIRING_SESSIONS__MODE',
-            daysKey: 'HAPPIER_SERVER_RETENTION__AUTH_PAIRING_SESSIONS__DAYS',
-        }),
-        repeatKeys: readAgePolicy({
-            env,
-            modeKey: 'HAPPIER_SERVER_RETENTION__REPEAT_KEYS__MODE',
-            daysKey: 'HAPPIER_SERVER_RETENTION__REPEAT_KEYS__DAYS',
-        }),
-        globalLocks: readAgePolicy({
-            env,
-            modeKey: 'HAPPIER_SERVER_RETENTION__GLOBAL_LOCKS__MODE',
-            daysKey: 'HAPPIER_SERVER_RETENTION__GLOBAL_LOCKS__DAYS',
-        }),
-        automationRuns: readAgePolicy({
-            env,
-            modeKey: 'HAPPIER_SERVER_RETENTION__AUTOMATION_RUNS__MODE',
-            daysKey: 'HAPPIER_SERVER_RETENTION__AUTOMATION_RUNS__DAYS',
-        }),
-        automationRunEvents: readAgePolicy({
-            env,
-            modeKey: 'HAPPIER_SERVER_RETENTION__AUTOMATION_RUN_EVENTS__MODE',
-            daysKey: 'HAPPIER_SERVER_RETENTION__AUTOMATION_RUN_EVENTS__DAYS',
-        }),
+    const entries = readRetentionDomainDefinitions().map((definition) => {
+        const config = definition.policyConfig;
+        const policy = config.kind === 'inactive'
+            ? readSessionPolicy({ env, modeKey: config.modeKey, durationKey: config.durationKey })
+            : readAgePolicy({ env, modeKey: config.modeKey, daysKey: config.durationKey });
+        return [definition.id, policy] as const;
     });
+    return Object.freeze(Object.fromEntries(entries)) as RetentionDomainPolicies;
 }
 
 export function readRetentionPolicyFromEnv(env: NodeJS.ProcessEnv): RetentionPolicy {
@@ -162,6 +100,16 @@ export function readRetentionPolicyFromEnv(env: NodeJS.ProcessEnv): RetentionPol
             env: safeEnv,
             key: 'HAPPIER_SERVER_RETENTION__MAX_DELETES_PER_RULE_PER_RUN',
             fallback: DEFAULT_MAX_DELETES_PER_RULE_PER_RUN,
+        }),
+        sweepTimeBudgetMs: parsePositiveInt({
+            env: safeEnv,
+            key: 'HAPPIER_SERVER_RETENTION__SWEEP_TIME_BUDGET_MS',
+            fallback: DEFAULT_SWEEP_TIME_BUDGET_MS,
+        }),
+        maxCandidatesPerRulePerRun: parsePositiveInt({
+            env: safeEnv,
+            key: 'HAPPIER_SERVER_RETENTION__MAX_CANDIDATES_PER_RULE_PER_RUN',
+            fallback: DEFAULT_MAX_CANDIDATES_PER_RULE_PER_RUN,
         }),
         domains: readDomainPolicies(safeEnv),
     });

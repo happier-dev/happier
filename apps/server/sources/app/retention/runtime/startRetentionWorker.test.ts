@@ -89,4 +89,23 @@ describe('startRetentionWorker', () => {
         });
         worker?.stop();
     });
+
+    it('recovers on the next interval when lock acquisition throws', async () => {
+        readRetentionPolicyFromEnv.mockReturnValue(createPolicy(15_000));
+        acquireRetentionSweepLock
+            .mockRejectedValueOnce(new Error('database unavailable'))
+            .mockResolvedValueOnce({ release: vi.fn(async () => {}) });
+
+        const { startRetentionWorker } = await import('./startRetentionWorker');
+        const worker = startRetentionWorker();
+        await vi.advanceTimersByTimeAsync(0);
+        await vi.advanceTimersByTimeAsync(15_000);
+
+        expect(acquireRetentionSweepLock).toHaveBeenCalledTimes(2);
+        expect(logRetentionSweepFailed).toHaveBeenCalledWith({
+            reason: 'startup',
+            error: expect.objectContaining({ message: 'database unavailable' }),
+        });
+        worker?.stop();
+    });
 });

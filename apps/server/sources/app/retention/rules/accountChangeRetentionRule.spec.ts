@@ -72,4 +72,31 @@ describe('accountChangeRetentionRule', () => {
         });
         expect(dbTransactionMock.transaction).toHaveBeenCalledTimes(1);
     });
+
+    it('advances dry-run pages instead of recounting the first candidates', async () => {
+        findMany.mockResolvedValueOnce([
+            { accountId: 'owner-a', kind: 'session', entityId: 'a-11', cursor: 11 },
+            { accountId: 'owner-a', kind: 'session', entityId: 'a-12', cursor: 12 },
+        ]);
+
+        const { runAccountChangeRetentionRule } = await import('./accountChangeRetentionRule');
+        const result = await runAccountChangeRetentionRule({
+            cutoff: new Date('2025-01-01T00:00:00.000Z'),
+            batchSize: 2,
+            dryRun: true,
+            dryRunOffset: 10,
+            maxDeletesPerRulePerRun: 2,
+        });
+
+        expect(findMany).toHaveBeenCalledWith(expect.objectContaining({
+            skip: 10,
+            take: 2,
+        }));
+        expect(result).toEqual({
+            deleted: 2,
+            candidatesExamined: 2,
+            hasMore: true,
+        });
+        expect(deleteMany).not.toHaveBeenCalled();
+    });
 });

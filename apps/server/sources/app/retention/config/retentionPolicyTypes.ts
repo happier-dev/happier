@@ -39,5 +39,7 @@ export type RetentionPolicy = Readonly<{
     batchSize: number;
     dryRun: boolean;
     maxDeletesPerRulePerRun: number;
+    sweepTimeBudgetMs?: number;
+    maxCandidatesPerRulePerRun?: number;
     domains: RetentionDomainPolicies;
 }>;
