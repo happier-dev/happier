@@ -51,6 +51,43 @@ function createContributionHarness() {
 }
 
 describe('ExecutionRunManager — resume rehydrates the immutable launch record', () => {
+  it('releases connected-service materialization when a terminal run has no resume handle', async () => {
+    const cleanup = vi.fn(async () => {});
+    const manager = new ExecutionRunManager({
+      parentProvider: 'claude',
+      cwd: '/tmp/wt',
+      createBackend: ({ connectedServicesCleanup }) => {
+        const backend = createResumableBackend().backend;
+        return {
+          ...backend,
+          loadSessionWithReplayCapture: undefined,
+          async dispose() {
+            await connectedServicesCleanup?.();
+          },
+        } as AgentBackend;
+      },
+      sendAcp: () => {},
+    });
+
+    const started = await manager.start({
+      sessionId: 'parent_1',
+      intent: 'delegate',
+      backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+      instructions: 'one turn',
+      permissionMode: 'read_only',
+      retentionPolicy: 'resumable',
+      runClass: 'bounded',
+      ioMode: 'request_response',
+      connectedServicesSelection: SELECTION,
+      connectedServicesEnv: { CODEX_HOME: '/run/root/codex-home' },
+      connectedServicesCleanup: cleanup,
+    });
+    await manager.waitForTerminal(started.runId);
+
+    expect(manager.get(started.runId)?.resumeHandle).toBeNull();
+    expect(cleanup).toHaveBeenCalledTimes(1);
+  });
+
   it('reports a resumed canonical run before backend recreation and restores terminal state on report failure', async () => {
     const contribution = createContributionHarness();
     const createBackend = vi.fn(() => createResumableBackend().backend);
