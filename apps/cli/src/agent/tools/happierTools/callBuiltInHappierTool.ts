@@ -27,6 +27,13 @@ export async function callBuiltInHappierTool(params: Readonly<{
         ...(sessionTarget.candidates ? { candidates: sessionTarget.candidates } : {}),
       };
     }
+    if (sessionTarget.code === 'session_lookup_timeout') {
+      return {
+        ok: false,
+        errorCode: sessionTarget.code,
+        error: 'Session lookup timed out; try again',
+      };
+    }
     return {
       ok: false,
       errorCode: sessionTarget.code,

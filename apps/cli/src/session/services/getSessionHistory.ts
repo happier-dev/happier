@@ -18,7 +18,7 @@ export type { RawHistoryRow } from './transcript/transcriptHistoryRows';
 export type GetSessionHistoryResult =
   | Readonly<{ ok: true; sessionId: string; format: 'compact'; messages: readonly CompactHistoryRow[] }>
   | Readonly<{ ok: true; sessionId: string; format: 'raw'; messages: readonly RawHistoryRow[] }>
-  | Readonly<{ ok: false; code: 'session_not_found' | 'session_id_ambiguous' | 'unsupported'; candidates?: string[] }>;
+  | Readonly<{ ok: false; code: 'session_not_found' | 'session_id_ambiguous' | 'session_lookup_timeout' | 'unsupported'; candidates?: string[] }>;
 
 function normalizeRawRowSeq(value: unknown): number {
   return typeof value === 'number' && Number.isFinite(value) ? Math.floor(value) : Number.MAX_SAFE_INTEGER;
@@ -147,7 +147,7 @@ export async function getSessionHistory(params: Readonly<{
   if (!sessionTarget.ok) {
     return {
       ok: false,
-      code: sessionTarget.code === 'session_id_ambiguous' ? 'session_id_ambiguous' : sessionTarget.code === 'session_not_found' ? 'session_not_found' : 'unsupported',
+      code: sessionTarget.code,
       ...(sessionTarget.candidates ? { candidates: sessionTarget.candidates } : {}),
     };
   }

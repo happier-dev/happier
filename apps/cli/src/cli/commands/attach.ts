@@ -146,7 +146,12 @@ async function resolveAttachContext(
   let rawSession = await fetchSessionByIdFn({ token: credentials.token, sessionId: sessionIdOrPrefix });
   if (!rawSession) {
     const resolved = await resolveSessionIdOrPrefixFn({ credentials, idOrPrefix: sessionIdOrPrefix });
-    if (!resolved.ok) return null;
+    if (!resolved.ok) {
+      if (resolved.code === 'session_lookup_timeout') {
+        throw new Error('Session lookup timed out; try again');
+      }
+      return null;
+    }
     rawSession = await fetchSessionByIdFn({ token: credentials.token, sessionId: resolved.sessionId });
   }
   if (!rawSession) return null;

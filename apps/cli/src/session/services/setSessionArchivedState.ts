@@ -25,7 +25,7 @@ export async function setSessionArchivedState(params: Readonly<{
   archived: boolean;
 }>): Promise<
   | Readonly<{ ok: true; sessionId: string; archivedAt: number | null }>
-  | Readonly<{ ok: false; code: 'session_not_found' | 'session_id_ambiguous' | 'unsupported'; candidates?: string[] }>
+  | Readonly<{ ok: false; code: 'session_not_found' | 'session_id_ambiguous' | 'session_lookup_timeout' | 'unsupported'; candidates?: string[] }>
 > {
   const resolved = await resolveSessionIdOrPrefix({
     credentials: params.credentials,

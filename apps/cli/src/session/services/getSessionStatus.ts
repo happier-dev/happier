@@ -11,7 +11,7 @@ import { resolveSessionTransportContext } from './resolveSessionTransportContext
 
 export type GetSessionStatusResult =
   | Readonly<{ ok: true; session: SessionSummary; agentState: AgentStateSummary | null }>
-  | Readonly<{ ok: false; code: 'session_not_found' | 'session_id_ambiguous' | 'unsupported'; candidates?: string[] }>;
+  | Readonly<{ ok: false; code: 'session_not_found' | 'session_id_ambiguous' | 'session_lookup_timeout' | 'unsupported'; candidates?: string[] }>;
 
 function summarizeSessionAgentState(params: Readonly<{
   sessionTarget: Extract<Awaited<ReturnType<typeof resolveSessionTransportContext>>, { ok: true }>;

@@ -46,7 +46,7 @@ export type SendSessionMessageResult =
   | Readonly<{ ok: true; sessionId: string; localId: string; waited: boolean; suppressed?: true }>
   | Readonly<{
       ok: false;
-      code: 'session_not_found' | 'session_id_ambiguous' | 'unsupported' | 'timeout' | 'wait_failed';
+      code: 'session_not_found' | 'session_id_ambiguous' | 'session_lookup_timeout' | 'unsupported' | 'timeout' | 'wait_failed';
       candidates?: string[];
       message?: string;
     }>;

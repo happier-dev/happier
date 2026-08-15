@@ -167,6 +167,9 @@ export async function handleResumeCommand(
       if (resolved.code === 'session_id_ambiguous') {
         throw new Error(`Session id is ambiguous (${resolved.candidates?.join(', ') ?? 'multiple matches'})`);
       }
+      if (resolved.code === 'session_lookup_timeout') {
+        throw new Error('Session lookup timed out; try again');
+      }
       throw new Error('Session not found');
     }
     rawSession = await fetchSessionByIdFn({ token: credentials.token, sessionId: resolved.sessionId });
