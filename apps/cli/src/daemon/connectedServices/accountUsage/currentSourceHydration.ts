@@ -60,6 +60,15 @@ type ConnectedServiceCurrentSourceResolution = Awaited<
 
 const CURRENT_SOURCE_RESOLUTION_CONCURRENCY = 4;
 
+/**
+ * The inventory changed while an atomic startup snapshot was being assembled.
+ * This is safe to retry from the canonical startup owner because the staging
+ * store has not yet been committed.
+ */
+export class ConnectedServiceCurrentSourceHydrationConflictError extends Error {
+  override readonly name = 'ConnectedServiceCurrentSourceHydrationConflictError';
+}
+
 export type ConnectedServiceCurrentSourceHydrationResult = Readonly<{
   sources: ConnectedServiceUsageSourceV1[];
   hydration: Readonly<{
@@ -236,7 +245,9 @@ export async function hydrateProviderAccountUsageStoreFromConnectedServiceInvent
   });
   const currentSources = await listCurrentSourcesForServices({ serviceIds, api: input.api });
   if (!currentSourceInventoriesMatch(sources, currentSources)) {
-    throw new Error('Connected service provider-account usage inventory changed during hydration');
+    throw new ConnectedServiceCurrentSourceHydrationConflictError(
+      'Connected service provider-account usage inventory changed during hydration',
+    );
   }
   const currentResolutionsBySourceKey = await resolveCurrentSourcesBounded({
     sources,
@@ -248,7 +259,9 @@ export async function hydrateProviderAccountUsageStoreFromConnectedServiceInvent
     if (!first) continue;
     const current = currentResolutionsBySourceKey.get(key) ?? null;
     if (!currentSourceResolutionMatches(first, current)) {
-      throw new Error('Connected service provider-account usage source changed during hydration');
+      throw new ConnectedServiceCurrentSourceHydrationConflictError(
+        'Connected service provider-account usage source changed during hydration',
+      );
     }
   }
   for (const recordId of hydration.hydratedRecordIds) {
