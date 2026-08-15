@@ -1,10 +1,16 @@
 import chalk from 'chalk';
 
 import type { Credentials } from '@/persistence';
-import { type ExecutionRunIntent, ExecutionRunIntentSchema, ExecutionRunStartRequestSchema } from '@happier-dev/protocol';
+import {
+  ExecutionRunClassSchema,
+  ExecutionRunIntentSchema,
+  ExecutionRunIoModeSchema,
+  ExecutionRunRetentionPolicySchema,
+  ExecutionRunStartRequestSchema,
+} from '@happier-dev/protocol';
 
 import { wantsJson, printJsonEnvelope, writeJsonStdout } from '@/cli/output/jsonEnvelope';
-import { readCommandPositionals, readFlagValue } from '@/cli/commands/shared/argvFlags';
+import { hasFlag, readCommandPositionals, readFlagValue } from '@/cli/commands/shared/argvFlags';
 import {
   defaultIoModeForExecutionRunIntent,
   defaultPermissionModeForExecutionRunIntent,
@@ -19,22 +25,17 @@ import {
   resolveSessionStoredContentEncryptionMode,
 } from '@/session/transport/encryption/sessionEncryptionContext';
 import { resolveSessionIdOrPrefix } from '@/session/query/resolveSessionId';
+import {
+  formatProtocolEnumUsage,
+  parseProtocolEnumFlag,
+} from '@/cli/commands/shared/parseProtocolEnumFlag';
 
-const EXECUTION_RUN_INTENT_VALUES = ExecutionRunIntentSchema.options;
-const EXECUTION_RUN_INTENT_USAGE = EXECUTION_RUN_INTENT_VALUES.join('|');
+const EXECUTION_RUN_INTENT_USAGE = formatProtocolEnumUsage(ExecutionRunIntentSchema);
+const EXECUTION_RUN_RETENTION_USAGE = formatProtocolEnumUsage(ExecutionRunRetentionPolicySchema);
+const EXECUTION_RUN_CLASS_USAGE = formatProtocolEnumUsage(ExecutionRunClassSchema);
+const EXECUTION_RUN_IO_MODE_USAGE = formatProtocolEnumUsage(ExecutionRunIoModeSchema);
 
-export const SESSION_RUN_START_USAGE = `happier session run start <session-id-or-prefix-or-tag> --intent <${EXECUTION_RUN_INTENT_USAGE}> --backend <backend-target> [--json]`;
-
-function parseExecutionRunIntent(rawIntent: string): ExecutionRunIntent {
-  const parsed = ExecutionRunIntentSchema.safeParse(rawIntent);
-  if (parsed.success) return parsed.data;
-
-  const error = new Error(
-    `Invalid --intent "${rawIntent}". Expected one of: ${EXECUTION_RUN_INTENT_VALUES.join(', ')}.`,
-  ) as Error & { code?: string };
-  error.code = 'invalid_arguments';
-  throw error;
-}
+export const SESSION_RUN_START_USAGE = `happier session run start <session-id-or-prefix-or-tag> --intent <${EXECUTION_RUN_INTENT_USAGE}> --backend <backend-target> [--instructions <text>] [--permission-mode <mode>] [--retention <${EXECUTION_RUN_RETENTION_USAGE}>] [--run-class <${EXECUTION_RUN_CLASS_USAGE}>] [--io-mode <${EXECUTION_RUN_IO_MODE_USAGE}>] [--json]`;
 
 export async function cmdSessionRunStart(
   argv: string[],
@@ -59,12 +60,37 @@ export async function cmdSessionRunStart(
     throw new Error(`Usage: ${SESSION_RUN_START_USAGE}`);
   }
 
-  const intent = parseExecutionRunIntent(intentRaw);
+  const intent = parseProtocolEnumFlag({
+    flag: '--intent',
+    rawValue: intentRaw,
+    schema: ExecutionRunIntentSchema,
+  });
 
   const backendTarget = parseSingleBackendTargetFromFlag(backendTargetRaw);
   if (!backendTarget) {
     throw new Error(`Usage: ${SESSION_RUN_START_USAGE}`);
   }
+
+  const permissionMode = (readFlagValue(argv, '--permission-mode') ?? '').trim()
+    || defaultPermissionModeForExecutionRunIntent(intent);
+  const retentionRaw = readFlagValue(argv, '--retention');
+  const retentionPolicy = parseProtocolEnumFlag({
+    flag: '--retention',
+    rawValue: retentionRaw ?? (hasFlag(argv, '--retention') ? '' : 'ephemeral'),
+    schema: ExecutionRunRetentionPolicySchema,
+  });
+  const runClassRaw = readFlagValue(argv, '--run-class');
+  const runClass = parseProtocolEnumFlag({
+    flag: '--run-class',
+    rawValue: runClassRaw ?? (hasFlag(argv, '--run-class') ? '' : defaultRunClassForExecutionRunIntent(intent)),
+    schema: ExecutionRunClassSchema,
+  });
+  const ioModeRaw = readFlagValue(argv, '--io-mode');
+  const ioMode = parseProtocolEnumFlag({
+    flag: '--io-mode',
+    rawValue: ioModeRaw ?? (hasFlag(argv, '--io-mode') ? '' : defaultIoModeForExecutionRunIntent(intent)),
+    schema: ExecutionRunIoModeSchema,
+  });
 
   const credentials = await deps.readCredentialsFn();
   if (!credentials) {
@@ -99,11 +125,6 @@ export async function cmdSessionRunStart(
     console.error(chalk.red('Error:'), `Session not found: ${sessionId}`);
     process.exit(1);
   }
-
-  const permissionMode = (readFlagValue(argv, '--permission-mode') ?? '').trim() || defaultPermissionModeForExecutionRunIntent(intent);
-  const retentionPolicy = (readFlagValue(argv, '--retention') ?? '').trim() || 'ephemeral';
-  const runClass = ((readFlagValue(argv, '--run-class') ?? '').trim() as any) || defaultRunClassForExecutionRunIntent(intent);
-  const ioMode = ((readFlagValue(argv, '--io-mode') ?? '').trim() as any) || defaultIoModeForExecutionRunIntent(intent);
 
   const request = ExecutionRunStartRequestSchema.parse({
     intent,

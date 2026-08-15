@@ -6,11 +6,19 @@ import {
 } from '@happier-dev/protocol';
 
 import { wantsJson, printJsonEnvelope, writeJsonStdout } from '@/cli/output/jsonEnvelope';
-import { readCommandPositionals, readFlagValue, readIntFlagValue } from '@/cli/commands/shared/argvFlags';
+import { hasFlag, readCommandPositionals, readFlagValue, readIntFlagValue } from '@/cli/commands/shared/argvFlags';
 import { parseSingleBackendTargetFromFlag } from '@/cli/commands/session/shared/parseSingleBackendTargetFromFlag';
 import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
 import { normalizeActionExecuteResult } from '@/cli/commands/session/shared/normalizeActionExecuteResult';
 import { resolveSessionTransportContext } from '@/session/services/resolveSessionTransportContext';
+import {
+  formatProtocolEnumUsage,
+  parseProtocolEnumFlag,
+} from '@/cli/commands/shared/parseProtocolEnumFlag';
+
+const EXECUTION_RUN_STATUS_USAGE = formatProtocolEnumUsage(ExecutionRunStatusSchema);
+
+export const SESSION_RUN_LIST_USAGE = `happier session run list <session-id-or-prefix-or-tag> [--backend <backend-target>] [--status <${EXECUTION_RUN_STATUS_USAGE}>] [--limit <count>] [--json]`;
 
 export async function cmdSessionRunList(
   argv: string[],
@@ -22,9 +30,18 @@ export async function cmdSessionRunList(
     valueFlags: ['--backend', '--status', '--limit'],
   });
   if (!idOrPrefix) {
-    throw new Error('Usage: happier session run list <session-id-or-prefix> [--backend <backend-target>] [--status <status>] [--limit <count>] [--json]');
+    throw new Error(`Usage: ${SESSION_RUN_LIST_USAGE}`);
   }
   const limit = readIntFlagValue(argv, '--limit', { min: 1, max: 200 });
+  const backendRaw = (readFlagValue(argv, '--backend') ?? '').trim();
+  const backendTarget = backendRaw ? parseSingleBackendTargetFromFlag(backendRaw) : undefined;
+  if (hasFlag(argv, '--backend') && !backendTarget) {
+    throw new Error(`Usage: ${SESSION_RUN_LIST_USAGE}`);
+  }
+  const statusRaw = (readFlagValue(argv, '--status') ?? '').trim();
+  const status = hasFlag(argv, '--status')
+    ? parseProtocolEnumFlag({ flag: '--status', rawValue: statusRaw, schema: ExecutionRunStatusSchema })
+    : undefined;
 
   const credentials = await deps.readCredentialsFn();
   if (!credentials) {
@@ -50,13 +67,6 @@ export async function cmdSessionRunList(
   }
   const sessionId = sessionTarget.sessionId;
 
-  const backendRaw = (readFlagValue(argv, '--backend') ?? '').trim();
-  const backendTarget = backendRaw ? parseSingleBackendTargetFromFlag(backendRaw) : undefined;
-  if (backendRaw && !backendTarget) {
-    throw new Error('Usage: happier session run list <session-id-or-prefix> [--backend <backend-target>] [--status <status>] [--limit <count>] [--json]');
-  }
-  const statusRaw = (readFlagValue(argv, '--status') ?? '').trim();
-  const status = statusRaw ? ExecutionRunStatusSchema.parse(statusRaw) : undefined;
   const executor = createCliActionExecutorFromCredentials({ credentials });
   const actionRes = await executor.execute(
     'execution.run.list',

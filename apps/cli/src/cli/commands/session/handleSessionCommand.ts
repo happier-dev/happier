@@ -17,7 +17,7 @@ import { cmdSessionSetPermissionMode } from './setPermissionMode';
 import { cmdSessionSetModel } from './setModel';
 import { wantsJson, printJsonEnvelope } from '@/cli/output/jsonEnvelope';
 import { cmdSessionRunGet } from './run/get';
-import { cmdSessionRunList } from './run/list';
+import { cmdSessionRunList, SESSION_RUN_LIST_USAGE } from './run/list';
 import { cmdSessionRunStart, SESSION_RUN_START_USAGE } from './run/start';
 import { cmdSessionRunSend } from './run/send';
 import { cmdSessionRunStop } from './run/stop';
@@ -100,7 +100,7 @@ const SESSION_HELP_BY_COMMAND = {
   'actions describe': 'happier session actions describe <action-id> [--json]',
   'actions execute': 'happier session actions execute <session-id-or-prefix-or-tag> <action-id> [--input-json <json>] [--action-request-id <id>] [--resume-action-request] [--json]',
   'run start': SESSION_RUN_START_USAGE,
-  'run list': 'happier session run list <session-id-or-prefix-or-tag> [--backend <backend-target>] [--status <status>] [--limit <count>] [--json]',
+  'run list': SESSION_RUN_LIST_USAGE,
   'run get': 'happier session run get <session-id-or-prefix-or-tag> <run-id> [--include-structured] [--json]',
   'run send': 'happier session run send <session-id-or-prefix-or-tag> <run-id> <message> [--resume] [--json]',
   'run stop': 'happier session run stop <session-id-or-prefix-or-tag> <run-id> [--json]',

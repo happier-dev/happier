@@ -308,7 +308,7 @@ describe('happier session run start (integration)', () => {
       expect(parsed.ok).toBe(false);
       expect(parsed.kind).toBe('session_run_start');
       expect(parsed.error?.code).toBe('invalid_arguments');
-      expect(parsed.error?.message).toBe('Usage: happier session run start <session-id-or-prefix-or-tag> --intent <review|plan|delegate|voice_agent|memory_hints> --backend <backend-target> [--json]');
+      expect(parsed.error?.message).toBe('Usage: happier session run start <session-id-or-prefix-or-tag> --intent <review|plan|delegate|voice_agent|memory_hints> --backend <backend-target> [--instructions <text>] [--permission-mode <mode>] [--retention <ephemeral|resumable>] [--run-class <bounded|long_lived>] [--io-mode <request_response|streaming>] [--json]');
     } finally {
       output.restore();
     }
@@ -331,6 +331,85 @@ describe('happier session run start (integration)', () => {
       expect(parsed.error).toEqual({
         code: 'invalid_arguments',
         message: 'Invalid --intent "qa_cli_run". Expected one of: review, plan, delegate, voice_agent, memory_hints.',
+      });
+      expect(readCredentialsFn).not.toHaveBeenCalled();
+    } finally {
+      output.restore();
+    }
+  });
+
+  it.each([
+    ['--retention', 'durable', 'ephemeral, resumable'],
+    ['--run-class', 'interactive', 'bounded, long_lived'],
+    ['--io-mode', 'batch', 'request_response, streaming'],
+  ] as const)('rejects an unsupported %s value before reading credentials', async (flag, value, expectedValues) => {
+    const { handleSessionCommand } = await import('../index');
+    const output = captureConsoleJsonOutput();
+    const readCredentialsFn = vi.fn(async () => null);
+
+    try {
+      await handleSessionCommand(
+        [
+          'run',
+          'start',
+          'sess_integration_run_start_123',
+          '--intent',
+          'review',
+          '--backend',
+          'codex',
+          flag,
+          value,
+          '--json',
+        ],
+        { readCredentialsFn },
+      );
+
+      expect(output.json()).toMatchObject({
+        ok: false,
+        kind: 'session_run_start',
+        error: {
+          code: 'invalid_arguments',
+          message: `Invalid ${flag} "${value}". Expected one of: ${expectedValues}.`,
+        },
+      });
+      expect(readCredentialsFn).not.toHaveBeenCalled();
+    } finally {
+      output.restore();
+    }
+  });
+
+  it.each([
+    ['--retention', 'ephemeral, resumable'],
+    ['--run-class', 'bounded, long_lived'],
+    ['--io-mode', 'request_response, streaming'],
+  ] as const)('rejects %s without a value before reading credentials', async (flag, expectedValues) => {
+    const { handleSessionCommand } = await import('../index');
+    const output = captureConsoleJsonOutput();
+    const readCredentialsFn = vi.fn(async () => null);
+
+    try {
+      await handleSessionCommand(
+        [
+          'run',
+          'start',
+          'sess_integration_run_start_123',
+          '--intent',
+          'review',
+          '--backend',
+          'codex',
+          '--json',
+          flag,
+        ],
+        { readCredentialsFn },
+      );
+
+      expect(output.json()).toMatchObject({
+        ok: false,
+        kind: 'session_run_start',
+        error: {
+          code: 'invalid_arguments',
+          message: `Invalid ${flag} "". Expected one of: ${expectedValues}.`,
+        },
       });
       expect(readCredentialsFn).not.toHaveBeenCalled();
     } finally {

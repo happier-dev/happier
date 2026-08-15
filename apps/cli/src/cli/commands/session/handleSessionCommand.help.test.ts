@@ -27,8 +27,12 @@ describe('handleSessionCommand help output', () => {
       expect(output.text()).toContain('happier session actions list [--json]');
       expect(output.text()).toContain('happier session actions describe <action-id> [--json]');
       expect(output.text()).toContain('happier session actions execute <session-id-or-prefix-or-tag> <action-id> [--input-json <json>] [--action-request-id <id>] [--resume-action-request] [--json]');
-      expect(output.text()).toContain('happier session run start <session-id-or-prefix-or-tag> --intent <review|plan|delegate|voice_agent|memory_hints> --backend <backend-target> [--json]');
-      expect(output.text()).toContain('happier session run list <session-id-or-prefix-or-tag> [--backend <backend-target>] [--status <status>] [--limit <count>] [--json]');
+      expect(output.text()).toContain('happier session run start <session-id-or-prefix-or-tag> --intent <review|plan|delegate|voice_agent|memory_hints> --backend <backend-target> [--instructions <text>] [--permission-mode <mode>] [--retention <ephemeral|resumable>] [--run-class <bounded|long_lived>] [--io-mode <request_response|streaming>] [--json]');
+      expect(output.text()).toContain('happier session run list <session-id-or-prefix-or-tag> [--backend <backend-target>] [--status <running|succeeded|failed|cancelled|timeout>] [--limit <count>] [--json]');
+      expect(output.text()).toContain('[--retention <ephemeral|resumable>]');
+      expect(output.text()).toContain('[--run-class <bounded|long_lived>]');
+      expect(output.text()).toContain('[--io-mode <request_response|streaming>]');
+      expect(output.text()).toContain('[--status <running|succeeded|failed|cancelled|timeout>]');
       expect(output.text()).toContain('happier session run send <session-id-or-prefix-or-tag> <run-id> <message> [--resume] [--json]');
       expect(output.text()).toContain('happier session run stop <session-id-or-prefix-or-tag> <run-id> [--json]');
       expect(output.text()).toContain('happier session run action <session-id-or-prefix-or-tag> <run-id> <action-id> [--input-json <json>] [--json]');

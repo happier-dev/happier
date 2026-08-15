@@ -68,4 +68,56 @@ describe('happier session run list (action executor)', () => {
     expect(readCredentialsFn).not.toHaveBeenCalled();
     expect(resolveSessionTransportContext).not.toHaveBeenCalled();
   });
+
+  it('rejects an unsupported status before reading credentials', async () => {
+    const readCredentialsFn = vi.fn(async () => null);
+    const { cmdSessionRunList } = await import('./list');
+
+    await expect(cmdSessionRunList(
+      ['session', 'run', 'sess-prefix', '--status', 'queued'],
+      { readCredentialsFn },
+    )).rejects.toMatchObject({
+      code: 'invalid_arguments',
+      message: 'Invalid --status "queued". Expected one of: running, succeeded, failed, cancelled, timeout.',
+    });
+
+    expect(readCredentialsFn).not.toHaveBeenCalled();
+    expect(resolveSessionTransportContext).not.toHaveBeenCalled();
+  });
+
+  it('rejects an invalid backend target before reading credentials', async () => {
+    const readCredentialsFn = vi.fn(async () => null);
+    const { cmdSessionRunList } = await import('./list');
+
+    await expect(cmdSessionRunList(
+      ['session', 'run', 'sess-prefix', '--backend', 'claude,codex'],
+      { readCredentialsFn },
+    )).rejects.toThrow('Usage: happier session run list');
+
+    expect(readCredentialsFn).not.toHaveBeenCalled();
+    expect(resolveSessionTransportContext).not.toHaveBeenCalled();
+  });
+
+  it('rejects status and backend flags without values before reading credentials', async () => {
+    const { cmdSessionRunList } = await import('./list');
+
+    for (const [flag, expectedError] of [
+      ['--status', {
+        code: 'invalid_arguments',
+        message: 'Invalid --status "". Expected one of: running, succeeded, failed, cancelled, timeout.',
+      }],
+      ['--backend', {
+        message: expect.stringContaining('Usage: happier session run list'),
+      }],
+    ] as const) {
+      const readCredentialsFn = vi.fn(async () => null);
+      await expect(cmdSessionRunList(
+        ['session', 'run', 'sess-prefix', flag],
+        { readCredentialsFn },
+      )).rejects.toMatchObject(expectedError);
+
+      expect(readCredentialsFn).not.toHaveBeenCalled();
+      expect(resolveSessionTransportContext).not.toHaveBeenCalled();
+    }
+  });
 });

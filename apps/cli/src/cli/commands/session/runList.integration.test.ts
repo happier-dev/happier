@@ -252,7 +252,7 @@ describe('happier session run list (integration)', () => {
       expect(parsed.ok).toBe(false);
       expect(parsed.kind).toBe('session_run_list');
       expect(parsed.error?.code).toBe('invalid_arguments');
-      expect(parsed.error?.message).toBe('Usage: happier session run list <session-id-or-prefix> [--backend <backend-target>] [--status <status>] [--limit <count>] [--json]');
+      expect(parsed.error?.message).toBe('Usage: happier session run list <session-id-or-prefix-or-tag> [--backend <backend-target>] [--status <running|succeeded|failed|cancelled|timeout>] [--limit <count>] [--json]');
     } finally {
       output.restore();
     }
