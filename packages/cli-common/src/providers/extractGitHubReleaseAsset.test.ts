@@ -134,4 +134,27 @@ describe('extractGitHubReleaseAsset', () => {
             limits: archiveExtractionLimits,
         }));
     });
+
+    it('forwards the managed-runtime tar link policy to the shared extraction owner', async () => {
+        const rootDir = await mkdtemp(join(tmpdir(), 'happier-extract-github-release-links-'));
+        tempDirs.push(rootDir);
+        const extractDir = join(rootDir, 'extract');
+
+        extractArchivePayloadToDirectoryMock.mockImplementationOnce(async () => {
+            await mkdir(extractDir, { recursive: true });
+            await writeFile(join(extractDir, 'node-v25.8.0-linux-x64'), 'node runtime', 'utf8');
+        });
+
+        await extractGitHubReleaseAsset({
+            archivePath: join(rootDir, 'node.tar.gz'),
+            archiveName: 'node-v25.8.0-linux-x64.tar.gz',
+            extractDir,
+            outputPath: join(rootDir, 'current', 'runtime'),
+            skipTarLinks: true,
+        });
+
+        expect(extractArchivePayloadToDirectoryMock).toHaveBeenCalledWith(expect.objectContaining({
+            tarLinkPolicy: 'skip',
+        }));
+    });
 });

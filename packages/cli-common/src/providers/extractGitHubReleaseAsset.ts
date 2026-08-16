@@ -107,6 +107,7 @@ export async function extractGitHubReleaseAsset(params: Readonly<{
     maxFileBytes: number;
     maxExpandedBytes: number;
   }>;
+  skipTarLinks?: boolean;
 }>): Promise<void> {
   const archiveName = params.archiveName.toLowerCase();
   await mkdir(params.extractDir, { recursive: true });
@@ -117,6 +118,7 @@ export async function extractGitHubReleaseAsset(params: Readonly<{
       archivePath: params.archivePath,
       extractDir: params.extractDir,
       limits: params.archiveExtractionLimits,
+      tarLinkPolicy: params.skipTarLinks ? 'skip' : 'reject',
     });
     if (params.archiveEntries) {
       await publishDeclaredArchiveEntries({
