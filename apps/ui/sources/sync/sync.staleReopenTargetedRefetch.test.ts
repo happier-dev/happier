@@ -80,6 +80,7 @@ import { storage } from './domains/state/storage';
 import type { Session } from './domains/state/storageTypes';
 import type { NormalizedMessage } from './typesRaw';
 import type { DeferredTranscriptMarker } from './domains/session/realtime/deferredTranscriptState';
+import { registerSessionVisibleSurface } from './domains/session/activeViewingSession';
 
 type SyncStaleReopenTestAccess = {
     encryption: { getSessionEncryption: (sessionId: string) => null };
@@ -129,6 +130,28 @@ function buildMessage(id: string, seq: number): NormalizedMessage {
 function emptyMessagesResponse(): Response {
     return new Response(
         JSON.stringify({ messages: [], hasMore: false, nextAfterSeq: null }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+    );
+}
+
+function newerMessageResponse(): Response {
+    return new Response(
+        JSON.stringify({
+            messages: [{
+                id: 'mm21',
+                seq: 21,
+                localId: null,
+                sidechainId: null,
+                content: {
+                    t: 'plain',
+                    v: { role: 'user', content: { type: 'text', text: 'missed reply' } },
+                },
+                createdAt: 21,
+                updatedAt: 21,
+            }],
+            hasMore: false,
+            nextAfterSeq: null,
+        }),
         { status: 200, headers: { 'Content-Type': 'application/json' } },
     );
 }
@@ -223,5 +246,24 @@ describe('sync stale-reopen targeted refetch (C6/D2a)', () => {
         expect(after?.isLoaded).toBe(true);
         expect(after?.messageIdsOldestFirst.length).toBe(20);
         consoleErrorSpy.mockRestore();
+    });
+
+    it('probes the loaded transcript tail once when reopening with a stale equal sequence hint', async () => {
+        const { sync } = await seedLoadedHistorySession();
+        const releaseVisibleSurface = registerSessionVisibleSurface(SESSION_ID);
+        requestMock.mockImplementation((path: string) => Promise.resolve(
+            String(path).includes('afterSeq=20') ? newerMessageResponse() : emptyMessagesResponse(),
+        ));
+
+        try {
+            sync.onSessionVisible(SESSION_ID);
+            await sync.refreshSessionMessages(SESSION_ID);
+
+            expect(messagesRequestPaths().filter((path) => path.includes('afterSeq=20'))).toHaveLength(1);
+            expect(Object.values(storage.getState().sessionMessages[SESSION_ID]?.messagesById ?? {}))
+                .toContainEqual(expect.objectContaining({ realID: 'mm21', seq: 21 }));
+        } finally {
+            releaseVisibleSurface();
+        }
     });
 });

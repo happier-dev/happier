@@ -63,6 +63,7 @@ import {
     markTranscriptDeferred,
     markTranscriptStale,
     readDeferredTranscriptDurableSeq,
+    readStaleTranscriptMessageIds,
     readStaleTranscriptMinSeq,
     type DeferredTranscriptMarker,
     type DeferredTranscriptState,
@@ -1056,6 +1057,7 @@ class Sync {
       private sessionViewport = new Map<string, SessionViewportSnapshot>();
       private sessionViewportHydratedStorageKey: string | null = null;
       private deferredForwardLoadingSessions = new Set<string>();
+      private explicitSessionTailProbeIds = new Set<string>();
       private sessionTranscriptRetention!: SessionTranscriptRetentionController;
       private sessionDataKeys = new Map<string, Uint8Array>(); // Store session data encryption keys internally
       private sessionDataKeyEnvelopes = new Map<string, string>(); // Track wrapped DEK envelopes so unchanged keys can be reused safely
@@ -2052,6 +2054,7 @@ class Sync {
         clearSessionViewingActivationsForServerScopeReset();
         clearMountedSessionRealtimeScmConsumerScopes();
         this.deferredForwardLoadingSessions.clear();
+        this.explicitSessionTailProbeIds.clear();
         this.activeServerSessionIds.clear();
         this.hasFetchedSessionsSnapshotForActiveServer = false;
         this.fetchMoreSessionsInFlight = null;
@@ -2218,15 +2221,18 @@ class Sync {
             } else {
                 this.markSessionLiveTailIntent(sessionId);
             }
+            if (storage.getState().sessionMessages[sessionId]?.isLoaded === true) {
+                this.explicitSessionTailProbeIds.add(sessionId);
+            }
             if (hasStaleTranscriptMarkers(this.deferredTranscriptState, sessionId)) {
                 // C6/D2a: a row was edited while hidden. Refetch only the stale region and merge
                 // it in place (applyMessages upserts) instead of wiping the whole transcript —
                 // the previous full reset discarded all paginated older history to repair an edit.
                 const staleMinSeq = readStaleTranscriptMinSeq(this.deferredTranscriptState, sessionId);
-                fireAndForget(this.refetchStaleTranscriptRegion(sessionId, staleMinSeq).then((repaired) => {
-                    if (repaired) {
-                        this.deferredTranscriptState = clearDeferredTranscriptStateForSession(this.deferredTranscriptState, sessionId);
-                    }
+                const staleMessageIds = readStaleTranscriptMessageIds(this.deferredTranscriptState, sessionId);
+                fireAndForget(this.repairDeferredStaleTranscriptRegion(sessionId, {
+                    minSeq: staleMinSeq,
+                    messageIds: staleMessageIds,
                 }), {
                     tag: 'Sync.onSessionVisible.staleRefetch',
                 });
@@ -5616,6 +5622,7 @@ class Sync {
         }
 
           const hasLoadedMessages = storage.getState().sessionMessages[sessionId]?.isLoaded === true;
+          const hasExplicitTailProbe = this.explicitSessionTailProbeIds.has(sessionId);
           // IMPORTANT: `session.seq` is a "latest known session message seq" hint (often coming from `/sessions`),
           // not necessarily the last message seq that *this device has materialized*. Using it here can cause gaps.
           const afterSeq = hasLoadedMessages ? (this.sessionMaterializedMaxSeqById[sessionId] ?? 0) : 0;
@@ -5664,6 +5671,7 @@ class Sync {
               }
               if (didApplyCurrentAuthority) {
                   this.transcriptAuthorityKeyBySessionId.set(sessionId, authorityKey);
+                  this.explicitSessionTailProbeIds.delete(sessionId);
               }
               return;
           }
@@ -5682,6 +5690,7 @@ class Sync {
               if (!hasLoadedMessages || previousAuthorityKey !== authorityKey) {
                   await this.replaceWithServerTranscript(session, transcriptAuthority);
               }
+              this.explicitSessionTailProbeIds.delete(sessionId);
               return;
           }
 
@@ -5714,6 +5723,7 @@ class Sync {
                 sessionSeqHint,
                 offlineForMs,
                 hasAcceptedLocalPending,
+                hasExplicitTailProbe,
                 thresholds: {
                     largeGapSeq: this.syncTuning.messageLargeGapSeq,
                     maxIncrementalPagesOnResume: this.syncTuning.messageMaxIncrementalPagesOnResume,
@@ -5790,6 +5800,9 @@ class Sync {
           await (isCatchUpWork
               ? this.withSessionCatchUpNewer(sessionId, applyCatchUpDecision)
               : applyCatchUpDecision());
+          if (hasExplicitTailProbe) {
+              this.explicitSessionTailProbeIds.delete(sessionId);
+          }
           if (isCatchUpWork) {
               this.markSocketOfflineCatchUpConsumedForSession(sessionId, offlineForMs);
           }
@@ -7136,43 +7149,80 @@ class Sync {
           });
       }
 
-      private async refetchStaleTranscriptRegion(sessionId: string, staleMinSeq: number | null): Promise<boolean> {
+      private async fetchStaleTranscriptRegion(
+          sessionId: string,
+          staleSnapshot: Readonly<{ minSeq: number | null; messageIds: readonly string[] }>,
+      ): Promise<ReadonlySet<string>> {
+          const staleMinSeq = staleSnapshot.minSeq;
           if (typeof staleMinSeq !== 'number' || !Number.isFinite(staleMinSeq) || staleMinSeq <= 0) {
               this.getOrCreateMessagesSync(sessionId).invalidateCoalesced();
-              return true;
+              return new Set();
           }
           if (this.hasFetchedSessionsSnapshotForActiveServer && !this.isSessionKnownOnResolvedOwnerServer(sessionId)) {
-              return false;
+              return new Set();
           }
-          const afterSeq = Math.max(0, Math.trunc(staleMinSeq) - 1);
+          let afterSeq = Math.max(0, Math.trunc(staleMinSeq) - 1);
           const requestMessages = this.createSessionMessagesRequest(sessionId);
           const session = storage.getState().sessions[sessionId] ?? null;
           const sessionEncryptionMode = session?.encryptionMode === 'plain' ? 'plain' : 'e2ee';
+          const unresolvedMessageIds = new Set(staleSnapshot.messageIds);
+          const resolvedMessageIds = new Set<string>();
           try {
-              await fetchAndApplyNewerMessages({
-                  sessionId,
-                  sessionEncryptionMode,
-                  afterSeq,
-                  limit: SESSION_MESSAGES_PAGE_SIZE,
-                  getSessionEncryption: (id) => this.encryption.getSessionEncryption(id),
-                  isSessionKnown: (id) => this.isSessionKnownOnResolvedOwnerServer(id),
-                  request: requestMessages,
-                  sessionReceivedMessages: this.sessionReceivedMessages,
-                  applyMessages: (sid, messages) => this.applyMessages(sid, messages, { notifyVoice: false }),
-                  onNormalizedMessages: (messages) => ingestWorkspaceMutationMessages(sessionId, messages),
-                  onTaskLifecycleEvent: (event) => this.applySessionThinkingFromTaskLifecycle(sessionId, event),
-                  onMessagesPage: (page) => {
-                      this.updateSessionMessagesPaginationFromPage(sessionId, { scope: 'main' }, page, { allowHasMoreInference: true, direction: 'newer' });
-                  },
-                  ...this.getMessageDecryptBatchOptions(),
-                  log,
-              });
-              return true;
+              while (unresolvedMessageIds.size > 0) {
+                  const result = await fetchAndApplyNewerMessages({
+                      sessionId,
+                      sessionEncryptionMode,
+                      afterSeq,
+                      limit: SESSION_MESSAGES_PAGE_SIZE,
+                      getSessionEncryption: (id) => this.encryption.getSessionEncryption(id),
+                      isSessionKnown: (id) => this.isSessionKnownOnResolvedOwnerServer(id),
+                      request: requestMessages,
+                      sessionReceivedMessages: this.sessionReceivedMessages,
+                      applyMessages: (sid, messages) => this.applyMessages(sid, messages, { notifyVoice: false }),
+                      onNormalizedMessages: (messages) => {
+                          ingestWorkspaceMutationMessages(sessionId, messages);
+                          for (const message of messages) {
+                              if (!unresolvedMessageIds.delete(message.id)) continue;
+                              resolvedMessageIds.add(message.id);
+                          }
+                      },
+                      onTaskLifecycleEvent: (event) => this.applySessionThinkingFromTaskLifecycle(sessionId, event),
+                      onMessagesPage: (page) => {
+                          this.updateSessionMessagesPaginationFromPage(sessionId, { scope: 'main' }, page, { allowHasMoreInference: true, direction: 'newer' });
+                      },
+                      ...this.getMessageDecryptBatchOptions(),
+                      log,
+                  });
+                  const nextAfterSeq = result.page.nextAfterSeq;
+                  if (!nextAfterSeq || result.page.messages.length === 0) break;
+                  afterSeq = nextAfterSeq;
+              }
           } catch (error) {
               log.log(`Failed to refetch stale transcript region: ${error instanceof Error ? error.message : String(error)}`);
-              return false;
           }
+          return resolvedMessageIds;
 	      }
+
+      private async repairDeferredStaleTranscriptRegion(
+          sessionId: string,
+          staleSnapshot: Readonly<{ minSeq: number | null; messageIds: readonly string[] }>,
+      ): Promise<void> {
+          const resolvedMessageIds = await this.fetchStaleTranscriptRegion(sessionId, staleSnapshot);
+          if (!staleSnapshot.messageIds.every((messageId) => resolvedMessageIds.has(messageId))) return;
+          this.deferredTranscriptState = clearDeferredTranscriptStateForSession(this.deferredTranscriptState, sessionId);
+      }
+
+      private async repairSessionTranscriptRevision(
+          repair: Readonly<{ sessionId: string; minSeq: number; messageIds: readonly string[] }>,
+      ): Promise<void> {
+          const resolvedMessageIds = await this.fetchStaleTranscriptRegion(repair.sessionId, {
+              minSeq: repair.minSeq,
+              messageIds: repair.messageIds,
+          });
+          if (!repair.messageIds.every((messageId) => resolvedMessageIds.has(messageId))) {
+              throw new Error('Durable transcript revision could not be materialized');
+          }
+      }
 
       private readTranscriptRetentionProtectedSessionIds(): ReadonlySet<string> {
           const protectedIds = new Set(readMountedSessionTranscriptConsumerSessionIdsForRetention());
@@ -7207,6 +7257,7 @@ class Sync {
           this.sessionReceivedMessages.delete(sessionId);
           this.deleteSessionMessagesPaginationStateForSession(sessionId);
           this.deferredForwardLoadingSessions.delete(sessionId);
+          this.explicitSessionTailProbeIds.delete(sessionId);
           this.sessionMessagesWindowStateBySessionId.set(
               sessionId,
               resetSessionMessagesWindowForSessionSwitch(this.getSessionTargetWindowState(sessionId)),
@@ -7482,6 +7533,7 @@ class Sync {
                             await this.withSessionCatchUpNewer(sessionId, () =>
                                 this.getOrCreateMessagesSync(sessionId).invalidateAndAwait());
                         },
+                        repairSessionTranscriptRevision: (repair) => this.repairSessionTranscriptRevision(repair),
                         invalidateScmStatusForSession: (sessionId) => scmStatusSync.invalidate(sessionId),
                         applyTodoSocketUpdates: (changes) => this.applyTodoSocketUpdates(changes),
                         kvBulkGet,
