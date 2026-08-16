@@ -163,6 +163,13 @@ async function enableWorkspaceTransferForHandoff(page: Page): Promise<void> {
   throw new Error('workspace transfer toggle control not found in session handoff modal');
 }
 
+async function selectMachineForHandoff(page: Page, machineId: string): Promise<void> {
+  await page.getByTestId('session-handoff-machine-dropdown-trigger').click();
+  const option = page.getByTestId(`session-handoff-machine-option:${machineId}`);
+  await expect(option).toHaveCount(1, { timeout: 120_000 });
+  await option.click();
+}
+
 async function connectTerminalForHome(params: {
   page: Page;
   testDir: string;
@@ -415,8 +422,7 @@ test.describe('ui e2e: session handoff from header action menu via direct peer',
     await page.getByTestId('dropdown-option-session_handoff').click();
 
     await expect(page.getByTestId('session-handoff-modal')).toHaveCount(1, { timeout: 60_000 });
-    await expect(page.getByTestId(`session-handoff-machine:${targetMachineId}`)).toHaveCount(1, { timeout: 120_000 });
-    await page.getByTestId(`session-handoff-machine:${targetMachineId}`).click();
+    await selectMachineForHandoff(page, targetMachineId);
     await enableWorkspaceTransferForHandoff(page);
     await page.getByTestId('session-handoff-workspace-transfer-strategy-trigger').click();
     await expect(page.getByTestId('dropdown-option-sync_changes')).toHaveCount(1, { timeout: 60_000 });
@@ -611,8 +617,7 @@ test.describe('ui e2e: session handoff from header action menu via forced server
     await page.getByTestId('dropdown-option-session_handoff').click();
 
     await expect(page.getByTestId('session-handoff-modal')).toHaveCount(1, { timeout: 60_000 });
-    await expect(page.getByTestId(`session-handoff-machine:${targetMachineId}`)).toHaveCount(1, { timeout: 120_000 });
-    await page.getByTestId(`session-handoff-machine:${targetMachineId}`).click();
+    await selectMachineForHandoff(page, targetMachineId);
     await enableWorkspaceTransferForHandoff(page);
     await page.getByTestId('session-handoff-workspace-transfer-strategy-trigger').click();
     await expect(page.getByTestId('dropdown-option-sync_changes')).toHaveCount(1, { timeout: 60_000 });
@@ -804,8 +809,7 @@ test.describe('ui e2e: session handoff failure recovery from header action menu'
     await page.getByTestId('dropdown-option-session_handoff').click();
 
     await expect(page.getByTestId('session-handoff-modal')).toHaveCount(1, { timeout: 60_000 });
-    await expect(page.getByTestId(`session-handoff-machine:${targetMachineId}`)).toHaveCount(1, { timeout: 120_000 });
-    await page.getByTestId(`session-handoff-machine:${targetMachineId}`).click();
+    await selectMachineForHandoff(page, targetMachineId);
     await page.getByTestId('session-handoff-start').click();
     await expect(page.getByTestId('web-modal-confirm')).toHaveCount(1, { timeout: 60_000 });
     await page.getByTestId('web-modal-confirm').click();

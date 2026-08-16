@@ -220,6 +220,9 @@ describe('SessionHandoffPickerModal', () => {
 
         const machineSelector = tree.findByType('MachineSelector' as any);
         expect(machineSelector.props.testIdPrefix).toBe('session-handoff-machine');
+        expect(machineSelector.props.presentation).toBe('dropdown');
+        expect(machineSelector.props.showSearch).toBe(true);
+        expect(machineSelector.props.dropdownTestID).toBe('session-handoff-machine-dropdown-trigger');
         await act(async () => {
             invokeTestInstanceHandler(machineSelector, 'onSelect', { id: 'machine_target', metadata: { displayName: 'Target machine' } });
         });
