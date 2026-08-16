@@ -81,7 +81,7 @@ describe('pagePiTranscript', () => {
     const ordered = await importAll(source, env, { maxBytes: 1024 * 1024, maxItems: 10 });
     // only m1 + m3 (active leaf = m3, the last in file)
     expect(ordered.map((i) => i.id)).toHaveLength(2);
-    expect((ordered[1]!.raw as { content: Array<{ text: string }> }).content[0]!.text).toBe('active branch');
+    expect((ordered[1]!.raw as { content: { data: { message: { content: Array<{ text: string }> } } } }).content.data.message.content[0]!.text).toBe('active branch');
   });
 
   it('returns empty and no cursor for a missing session', async () => {

@@ -35,6 +35,19 @@ export async function readAfterPiTranscript(params: Readonly<{
   const items = mapPiSessionToDirectMessages({ entries, fileRelPath: resolved.fileRelPath });
   const total = items.length;
 
+  // The polling follow-lease treats a missing cursor as "start from the newest" and sends the
+  // 'tail' sentinel. Answer it the way the claude provider does: no items, and a cursor
+  // positioned at the end of the active branch. Decoding 'tail' as 0 would replay the whole
+  // session every poll (each replay re-applies every item and truncates, forcing the client
+  // into a full-refetch loop).
+  if (params.cursor === 'tail') {
+    return {
+      items: [],
+      nextCursor: encodePiForwardCursor({ v: 1, kind: 'piForward', delivered: total }),
+      truncated: false,
+    };
+  }
+
   const delivered = Math.min(Math.max(0, decodePiForwardCursor(params.cursor)), total);
   const maxItems = Math.max(1, Math.trunc(params.maxItems));
   const maxBytes = Math.max(1, Math.trunc(params.maxBytes));
@@ -52,7 +65,10 @@ export async function readAfterPiTranscript(params: Readonly<{
 
   const newDelivered = delivered + pageItems.length;
   const truncated = newDelivered < total;
-  const nextCursor = truncated ? encodePiForwardCursor({ v: 1, kind: 'piForward', delivered: newDelivered }) : null;
+  // Always hand back a resumable cursor, including when fully caught up: clients store this
+  // cursor verbatim for the next poll, and a null here makes them fall back to the 'tail'
+  // sentinel (claude parity: end-of-file cursors are returned, not null).
+  const nextCursor = encodePiForwardCursor({ v: 1, kind: 'piForward', delivered: newDelivered });
 
   return { items: pageItems, nextCursor, truncated };
 }
