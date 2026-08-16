@@ -68,6 +68,7 @@ test('apps/ui/eas.json keeps canonical preview and production profiles on matchi
   assert.equal(typeof production, 'object');
   assert.equal(production.environment, 'production');
   assert.equal(production.channel, 'production');
+  assert.equal(production?.android?.resourceClass, 'large');
   assert.equal(production?.env?.APP_ENV, 'production');
   assert.equal(production?.env?.HAPPIER_APP_VARIANT_OVERRIDE ?? undefined, undefined);
 
