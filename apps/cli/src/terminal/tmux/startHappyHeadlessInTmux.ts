@@ -4,6 +4,7 @@ import { buildHappyCliSubprocessLaunchSpec } from '@/utils/spawnHappyCLI';
 import { isTmuxAvailable, selectPreferredTmuxSessionName, TmuxUtilities } from '@/integrations/tmux';
 import { AGENTS, requireCatalogEntry } from '@/backends/catalog';
 import { DEFAULT_CATALOG_AGENT_ID } from '@/backends/types';
+import { createTerminalAttachmentId } from '@/terminal/attachment/terminalAttachmentInfo';
 
 function removeFlag(argv: string[], flag: string): string[] {
   return argv.filter((arg) => arg !== flag);
@@ -57,6 +58,7 @@ export async function startHappyHeadlessInTmux(argv: string[]): Promise<void> {
 
   const windowName = `happy-${Date.now()}-${agent}`;
   const tmuxTarget = `${resolvedSessionName}:${windowName}`;
+  const attachmentId = createTerminalAttachmentId();
 
   const terminalRuntimeArgs = [
     '--happy-terminal-mode',
@@ -65,6 +67,8 @@ export async function startHappyHeadlessInTmux(argv: string[]): Promise<void> {
     'tmux',
     '--happy-tmux-target',
     tmuxTarget,
+    '--happy-terminal-attachment-id',
+    attachmentId,
   ];
 
   const launchSpec = buildHappyCliSubprocessLaunchSpec([...childArgs, ...terminalRuntimeArgs]);

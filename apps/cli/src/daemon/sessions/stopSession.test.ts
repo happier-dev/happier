@@ -34,34 +34,15 @@ const readTerminalAttachmentState = vi.fn(async (params: {
   return info ? { status: 'present' as const, info } : { status: 'absent' as const };
 });
 const removeTerminalAttachmentInfo = vi.fn(async () => true);
-vi.mock('@/terminal/attachment/terminalAttachmentInfo', () => ({
-  readTerminalAttachmentInfo,
-  readTerminalAttachmentState,
-  removeTerminalAttachmentInfo,
-}));
-
-const resolveZellijRuntimeBinary = vi.fn<(params?: { expectedVersion?: string }) => Promise<string | null>>(
-  async () => null,
-);
-vi.mock('@/integrations/zellij/runtimeBinary', () => ({
-  resolveZellijRuntimeBinary,
-}));
-
-const prepareZellijSocketDir = vi.fn(async () => {});
-const resolveZellijSocketDir = vi.fn(() => '/happy-home/terminal/zellij');
-vi.mock('@/integrations/zellij/socketDir', () => ({
-  prepareZellijSocketDir,
-  resolveZellijSocketDir,
-}));
-
-const zellijKillSession = vi.fn(async () => ({ exitCode: 0, stdout: '', stderr: '' }));
-const zellijDeleteSession = vi.fn(async () => ({ exitCode: 0, stdout: '', stderr: '' }));
-vi.mock('@/integrations/zellij/actions', () => ({
-  defaultZellijActions: {
-    killSession: zellijKillSession,
-    deleteSession: zellijDeleteSession,
-  },
-}));
+vi.mock('@/terminal/attachment/terminalAttachmentInfo', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/terminal/attachment/terminalAttachmentInfo')>();
+  return {
+    ...actual,
+    readTerminalAttachmentInfo,
+    readTerminalAttachmentState,
+    removeTerminalAttachmentInfo,
+  };
+});
 
 const recordTerminalHostKillAudit = vi.fn();
 vi.mock('@/daemon/sessionKillAudit', () => ({
@@ -397,36 +378,6 @@ describe('createStopSession', () => {
     expect(killSpy).toHaveBeenCalledWith(333, 'SIGTERM');
     expect(pidToTrackedSession.size).toBe(1);
     expect(pidToTrackedSession.has(333)).toBe(true);
-  });
-
-  it('parks a legacy zellij attachment without signaling either host or runner', async () => {
-    const { createStopSession } = await import('./stopSession');
-
-    readTerminalAttachmentInfo.mockResolvedValueOnce({
-      version: 1,
-      sessionId: 'sess-zellij',
-      terminal: {
-        mode: 'zellij',
-        zellij: {
-          sessionName: 'happier-claude-unified-123',
-          paneId: 'terminal_1',
-        },
-      },
-      updatedAt: 1,
-    });
-    const killSpy = vi.spyOn(process, 'kill').mockImplementation(() => true as any);
-
-    const pidToTrackedSession = new Map<number, any>([
-      [333, { startedBy: 'terminal', pid: 333, happySessionId: 'sess-zellij', processCommandHash: 'h3' }],
-    ]);
-
-    const stop = createStopSession({ pidToTrackedSession });
-    const ok = await stop('sess-zellij');
-
-    expect(ok).toEqual({ status: 'incomplete', reason: 'legacy_attachment' });
-    expect(zellijKillSession).not.toHaveBeenCalled();
-    expect(zellijDeleteSession).not.toHaveBeenCalled();
-    expect(killSpy).not.toHaveBeenCalled();
   });
 
   it('does not destroy an exact host when no tracked runner exit can be proven', async () => {
@@ -1138,10 +1089,10 @@ describe('createStopSession', () => {
     }));
   });
 
-  it('parks a legacy attachment even when its old host is already missing', async () => {
+  it('stops the tracked runner and retires an unchanged legacy attachment after its host is proven dead', async () => {
     const { createStopSession } = await import('./stopSession');
 
-    readTerminalAttachmentInfo.mockResolvedValueOnce({
+    const attachmentInfo: TerminalAttachmentInfo = {
       version: 1,
       sessionId: 'sess-zellij',
       terminal: {
@@ -1152,25 +1103,46 @@ describe('createStopSession', () => {
         },
       },
       updatedAt: 1,
-    });
+    };
     const killSpy = vi.spyOn(process, 'kill').mockImplementation(() => true as any);
+    const removeAttachmentInfo = vi.fn(async () => true);
+    const dispose = vi.fn(async () => undefined);
 
     const pidToTrackedSession = new Map<number, any>([
       [333, { startedBy: 'terminal', pid: 333, happySessionId: 'sess-zellij', processCommandHash: 'h3' }],
     ]);
 
-    const stop = createStopSession({ pidToTrackedSession });
+    const stop = createStopSession({
+      pidToTrackedSession,
+      readAttachmentInfo: vi.fn(async () => attachmentInfo),
+      removeAttachmentInfo,
+      terminalHostAdapters: {
+        zellij: {
+          kind: 'zellij',
+          createOrAttachHost: vi.fn(),
+          injectUserPrompt: vi.fn(),
+          interruptTurn: vi.fn(),
+          evaluateLiveness: vi.fn(async () => ({ paneAlive: false, paneDead: true, observedAt: 1 })),
+          dispose,
+        } as any,
+      },
+      waitForTrackedRunnersExit: vi.fn(async () => true),
+    });
     const ok = await stop('sess-zellij');
 
-    expect(ok).toEqual({ status: 'incomplete', reason: 'legacy_attachment' });
-    expect(zellijKillSession).not.toHaveBeenCalled();
-    expect(killSpy).not.toHaveBeenCalled();
+    expect(ok).toEqual({ status: 'stopped' });
+    expect(killSpy).toHaveBeenCalledWith(333, 'SIGTERM');
+    expect(dispose).not.toHaveBeenCalled();
+    expect(removeAttachmentInfo).toHaveBeenCalledWith(expect.objectContaining({
+      sessionId: 'sess-zellij',
+      expectedLegacyAttachment: attachmentInfo,
+    }));
   });
 
-  it('does not fall through to runner signaling for a legacy zellij attachment', async () => {
+  it('stops the tracked runner but preserves a legacy attachment whose host is still alive', async () => {
     const { createStopSession } = await import('./stopSession');
 
-    readTerminalAttachmentInfo.mockResolvedValueOnce({
+    const attachmentInfo: TerminalAttachmentInfo = {
       version: 1,
       sessionId: 'sess-zellij',
       terminal: {
@@ -1181,19 +1153,112 @@ describe('createStopSession', () => {
         },
       },
       updatedAt: 1,
-    });
+    };
     const killSpy = vi.spyOn(process, 'kill').mockImplementation(() => true as any);
+    const removeAttachmentInfo = vi.fn(async () => true);
+    const dispose = vi.fn(async () => undefined);
 
     const pidToTrackedSession = new Map<number, any>([
       [333, { startedBy: 'terminal', pid: 333, happySessionId: 'sess-zellij', processCommandHash: 'h3' }],
     ]);
 
-    const stop = createStopSession({ pidToTrackedSession });
+    const stop = createStopSession({
+      pidToTrackedSession,
+      readAttachmentInfo: vi.fn(async () => attachmentInfo),
+      removeAttachmentInfo,
+      terminalHostAdapters: {
+        zellij: {
+          kind: 'zellij',
+          createOrAttachHost: vi.fn(),
+          injectUserPrompt: vi.fn(),
+          interruptTurn: vi.fn(),
+          evaluateLiveness: vi.fn(async () => ({ paneAlive: true, observedAt: 1 })),
+          dispose,
+        } as any,
+      },
+      waitForTrackedRunnersExit: vi.fn(async () => true),
+    });
     const ok = await stop('sess-zellij');
 
     expect(ok).toEqual({ status: 'incomplete', reason: 'legacy_attachment' });
-    expect(zellijKillSession).not.toHaveBeenCalled();
-    expect(killSpy).not.toHaveBeenCalled();
+    expect(killSpy).toHaveBeenCalledWith(333, 'SIGTERM');
+    expect(dispose).not.toHaveBeenCalled();
+    expect(removeAttachmentInfo).not.toHaveBeenCalled();
+  });
+
+  it('retires a legacy Windows attachment after the exact persisted runner is proven exited', async () => {
+    const { createStopSession } = await import('./stopSession');
+    const attachmentInfo: TerminalAttachmentInfo = {
+      version: 1,
+      sessionId: 'sess-windows-legacy',
+      terminal: {
+        mode: 'windows_terminal',
+        requested: 'windows_terminal',
+        windows: {
+          host: 'windows_terminal',
+          pid: 444,
+          windowId: 'happier-window-1',
+        },
+      },
+      updatedAt: 1,
+    };
+    const removeAttachmentInfo = vi.fn(async () => true);
+    const stop = createStopSession({
+      pidToTrackedSession: new Map([
+        [444, {
+          startedBy: 'daemon',
+          pid: 444,
+          happySessionId: attachmentInfo.sessionId,
+          processCommandHash: 'windows-command',
+        } as any],
+      ]),
+      readAttachmentInfo: vi.fn(async () => attachmentInfo),
+      removeAttachmentInfo,
+      areTrackedRunnersExited: vi.fn(async () => true),
+      waitForTrackedRunnersExit: vi.fn(async () => true),
+    });
+
+    await expect(stop(attachmentInfo.sessionId)).resolves.toEqual({ status: 'stopped' });
+    expect(removeAttachmentInfo).toHaveBeenCalledWith(expect.objectContaining({
+      expectedLegacyAttachment: attachmentInfo,
+    }));
+  });
+
+  it('retires a stranded legacy attachment when its exact terminal host is already dead', async () => {
+    const { createStopSession } = await import('./stopSession');
+    const attachmentInfo: TerminalAttachmentInfo = {
+      version: 1,
+      sessionId: 'sess-dead-legacy-host',
+      terminal: {
+        mode: 'tmux',
+        tmux: { target: 'happy:dead-window', tmpDir: '/tmp/happier-tmux' },
+      },
+      updatedAt: 1,
+    };
+    const removeAttachmentInfo = vi.fn(async () => true);
+    const dispose = vi.fn(async () => undefined);
+    const stop = createStopSession({
+      pidToTrackedSession: new Map(),
+      readAttachmentInfo: vi.fn(async () => attachmentInfo),
+      removeAttachmentInfo,
+      terminalHostAdapters: {
+        tmux: {
+          kind: 'tmux',
+          createOrAttachHost: vi.fn(),
+          injectUserPrompt: vi.fn(),
+          interruptTurn: vi.fn(),
+          evaluateLiveness: vi.fn(async () => ({ paneAlive: false, paneDead: true, observedAt: 1 })),
+          dispose,
+        } as any,
+      },
+    });
+
+    await expect(stop(attachmentInfo.sessionId)).resolves.toEqual({ status: 'stopped' });
+    expect(dispose).not.toHaveBeenCalled();
+    expect(removeAttachmentInfo).toHaveBeenCalledWith(expect.objectContaining({
+      sessionId: attachmentInfo.sessionId,
+      expectedLegacyAttachment: attachmentInfo,
+    }));
   });
 
   it('parks a tracked tmux host when no committed attachment identity exists', async () => {

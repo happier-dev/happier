@@ -269,6 +269,81 @@ describe('terminalAttachmentInfo', () => {
     }
   });
 
+  it('removes an unchanged legacy v1 attachment only with its exact persisted snapshot', async () => {
+    const dir = tmp.dirSync({ unsafeCleanup: true });
+    try {
+      const sessionId = 'sess_legacy_confirmed_dead';
+      await writeTerminalAttachmentInfo({
+        happyHomeDir: dir.name,
+        sessionId,
+        terminal: { mode: 'tmux', tmux: { target: 'happy:dead-window', tmpDir: '/tmp/happy-tmux' } },
+      });
+      const legacy = await readTerminalAttachmentInfo({ happyHomeDir: dir.name, sessionId });
+      expect(legacy).toMatchObject({ version: 1, sessionId });
+      if (!legacy || legacy.version !== 1) throw new Error('Expected a legacy attachment fixture');
+
+      await writeTerminalAttachmentInfo({
+        happyHomeDir: dir.name,
+        sessionId,
+        terminal: { mode: 'tmux', tmux: { target: 'happy:replacement-window', tmpDir: '/tmp/happy-tmux' } },
+      });
+
+      await expect(removeTerminalAttachmentInfo({
+        happyHomeDir: dir.name,
+        sessionId,
+        expectedLegacyAttachment: legacy,
+      })).resolves.toBe(false);
+      await expect(readTerminalAttachmentInfo({ happyHomeDir: dir.name, sessionId })).resolves.toMatchObject({
+        version: 1,
+        terminal: { tmux: { target: 'happy:replacement-window' } },
+      });
+    } finally {
+      dir.removeCallback();
+    }
+  });
+
+  it('does not let a late metadata-only writer downgrade a bound v2 attachment', async () => {
+    const dir = tmp.dirSync({ unsafeCleanup: true });
+    try {
+      const sessionId = 'sess_bound_not_downgraded';
+      const handle = {
+        kind: 'tmux',
+        sessionName: 'happy',
+        paneId: 'owned-window',
+        socketDir: '/tmp/happy-tmux',
+        attachMetadata: {
+          attachStrategy: 'terminal_host',
+          topology: 'shared',
+          locality: 'same_machine',
+          maxClients: null,
+          requiresLocalAttachmentInfo: true,
+          liveProbe: 'required',
+        },
+      } as const;
+      const terminal = {
+        mode: 'tmux',
+        tmux: { target: 'happy:owned-window', tmpDir: '/tmp/happy-tmux' },
+      } as const;
+      await writeTerminalAttachmentInfo({
+        happyHomeDir: dir.name,
+        sessionId,
+        attachmentId: 'attachment-current',
+        handle,
+        terminal,
+      });
+
+      await writeTerminalAttachmentInfo({ happyHomeDir: dir.name, sessionId, terminal });
+
+      await expect(readTerminalAttachmentInfo({ happyHomeDir: dir.name, sessionId })).resolves.toMatchObject({
+        version: 2,
+        attachmentId: 'attachment-current',
+        handle,
+      });
+    } finally {
+      dir.removeCallback();
+    }
+  });
+
   it('reads windows terminal attachment info', async () => {
     const dir = tmp.dirSync({ unsafeCleanup: true });
     try {

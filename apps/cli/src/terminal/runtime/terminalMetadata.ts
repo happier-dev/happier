@@ -14,6 +14,16 @@ export function buildTerminalMetadataFromRuntimeFlags(
     mode,
   };
 
+  const attachmentId = typeof flags.attachmentId === 'string' ? flags.attachmentId.trim() : '';
+  if (attachmentId) {
+    terminal.controlServiceabilityV1 = {
+      v: 1,
+      attachmentId,
+      state: 'servable',
+      observedAt: Date.now(),
+    };
+  }
+
   if (
     flags.requested === 'plain'
     || flags.requested === 'tmux'

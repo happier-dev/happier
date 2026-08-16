@@ -238,6 +238,46 @@ describe('runClaudeUnifiedTerminalSession launch disposition', () => {
     ]);
   });
 
+  it('retires a positively dead legacy attachment before creating a fresh host', async () => {
+    const abortController = new AbortController();
+    const legacyAttachment: TerminalAttachmentInfo = {
+      version: 1,
+      sessionId: 'happy-adopted-resume',
+      terminal: {
+        mode: 'tmux',
+        tmux: { target: 'happier-legacy:legacy-window', tmpDir: '/tmp/happier-tmux' },
+      },
+      updatedAt: 1,
+    };
+    let storedAttachment: TerminalAttachmentInfo | null = legacyAttachment;
+    const createOrAttachHost = vi.fn(async () => {
+      abortController.abort();
+      return existingHandle;
+    });
+    const dispose = vi.fn(async () => undefined);
+    const adapter = createAdapter({
+      createOrAttachHost,
+      dispose,
+      evaluateLiveness: vi.fn(async () => ({ paneAlive: false, paneDead: true, observedAt: 1 })),
+    });
+    const removeTerminalHostAttachmentInfo = vi.fn(async (input: Readonly<{
+      expectedLegacyAttachment?: Extract<TerminalAttachmentInfo, Readonly<{ version: 1 }>>;
+    }>) => {
+      expect(input.expectedLegacyAttachment).toEqual(legacyAttachment);
+      storedAttachment = null;
+    });
+
+    await runClaudeUnifiedTerminalSession({
+      ...baseOptions(adapter, abortController),
+      readTerminalHostAttachmentInfo: async () => storedAttachment,
+      removeTerminalHostAttachmentInfo,
+    });
+
+    expect(removeTerminalHostAttachmentInfo).toHaveBeenCalledTimes(1);
+    expect(dispose).not.toHaveBeenCalled();
+    expect(createOrAttachHost).toHaveBeenCalledTimes(1);
+  });
+
   it('reports one provider launch immediately before confirmed-dead adoption fallback creates', async () => {
     const abortController = new AbortController();
     const calls: string[] = [];
@@ -304,7 +344,7 @@ describe('runClaudeUnifiedTerminalSession launch disposition', () => {
               isClaudeCliJavaScriptFile: () => false,
               ensureClaudeJsRuntimeExecutable: async () => '/synthetic/runtime',
               terminalLaunchSpecRunnerPath: '/synthetic/terminal-launch-spec-runner.cjs',
-              resolveCommandInvocation: ({ command, args }) => ({ command, args }),
+              resolveCommandInvocation: ({ command, args }) => ({ command, args: [...args] }),
             },
           });
           launchSpecPath = spawn.launchSpecPath;

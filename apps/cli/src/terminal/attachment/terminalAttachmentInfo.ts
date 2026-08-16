@@ -1,9 +1,14 @@
-import { chmod, mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readFile, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 
 import type { Metadata } from '@/api/types';
 import type { TerminalAttachmentId, TerminalHostHandle } from '@/integrations/terminalHost/_types';
+import { withJsonOwnerFileLock } from '@/utils/fs/jsonOwnerFileLock';
+import { writeJsonAtomic } from '@/utils/fs/writeJsonAtomic';
+
+const TERMINAL_ATTACHMENT_LOCK_TIMEOUT_MS = 5_000;
+const TERMINAL_ATTACHMENT_LOCK_STALE_AFTER_MS = 30_000;
 
 export type LegacyTerminalAttachmentInfo = {
   version: 1;
@@ -23,6 +28,13 @@ export type BoundTerminalAttachmentInfo = {
 
 export type TerminalAttachmentInfo = LegacyTerminalAttachmentInfo | BoundTerminalAttachmentInfo;
 
+export function matchesLegacyTerminalAttachmentSnapshot(
+  current: LegacyTerminalAttachmentInfo,
+  expected: LegacyTerminalAttachmentInfo,
+): boolean {
+  return JSON.stringify(current) === JSON.stringify(expected);
+}
+
 export function createTerminalAttachmentId(): TerminalAttachmentId {
   return randomUUID() as TerminalAttachmentId;
 }
@@ -41,6 +53,15 @@ function sessionFilePath(happyHomeDir: string, sessionId: string): string {
 
 function legacySessionFilePath(happyHomeDir: string, sessionId: string): string {
   return join(sessionsDir(happyHomeDir), `${sessionId}.json`);
+}
+
+async function withTerminalAttachmentLock<TResult>(path: string, effect: () => Promise<TResult>): Promise<TResult> {
+  return await withJsonOwnerFileLock({
+    lockPath: `${path}.lock`,
+    timeoutMs: TERMINAL_ATTACHMENT_LOCK_TIMEOUT_MS,
+    staleAfterMs: TERMINAL_ATTACHMENT_LOCK_STALE_AFTER_MS,
+    errorCode: 'terminal_attachment_lock_unavailable',
+  }, effect);
 }
 
 function normalizeOptionalString(value: unknown): string {
@@ -117,16 +138,29 @@ async function removeTerminalAttachmentInfoPath(params: {
   path: string;
   sessionId: string;
   expectedAttachmentId?: TerminalAttachmentId | string | undefined;
+  expectedLegacyAttachment?: LegacyTerminalAttachmentInfo | undefined;
   expectedTerminal?: NonNullable<Metadata['terminal']> | undefined;
 }): Promise<boolean> {
   try {
-    const raw = await readFile(params.path, 'utf8');
-    const parsed = parseTerminalAttachmentInfo(raw, params.sessionId);
-    if (!params.expectedAttachmentId) return false;
-    if (parsed?.version !== 2 || parsed.attachmentId !== params.expectedAttachmentId) return false;
-    if (!parsed || !terminalMatchesExpected(parsed.terminal, params.expectedTerminal)) return false;
-    await unlink(params.path);
-    return true;
+    return await withTerminalAttachmentLock(params.path, async () => {
+      const raw = await readFile(params.path, 'utf8');
+      const parsed = parseTerminalAttachmentInfo(raw, params.sessionId);
+      if (!parsed || !terminalMatchesExpected(parsed.terminal, params.expectedTerminal)) return false;
+      if (params.expectedAttachmentId) {
+        if (parsed.version !== 2 || parsed.attachmentId !== params.expectedAttachmentId) return false;
+      } else if (params.expectedLegacyAttachment) {
+        if (
+          parsed.version !== 1
+          || !matchesLegacyTerminalAttachmentSnapshot(parsed, params.expectedLegacyAttachment)
+        ) {
+          return false;
+        }
+      } else {
+        return false;
+      }
+      await unlink(params.path);
+      return true;
+    });
   } catch {
     return false;
   }
@@ -167,10 +201,16 @@ export async function writeTerminalAttachmentInfo(params: {
       };
 
   const path = sessionFilePath(params.happyHomeDir, params.sessionId);
-  const tmpPath = `${path}.tmp`;
-
-  await writeFile(tmpPath, JSON.stringify(info, null, 2), { encoding: 'utf8', mode: 0o600 });
-  await rename(tmpPath, path);
+  await withTerminalAttachmentLock(path, async () => {
+    const current = await readAttachmentFileState(path, params.sessionId);
+    if (info.version === 1 && current.status === 'present' && current.info.version === 2) {
+      return;
+    }
+    if (current.status === 'unreadable') {
+      throw new Error('terminal_attachment_descriptor_unreadable');
+    }
+    await writeJsonAtomic(path, info);
+  });
   await chmod(path, 0o600).catch(() => {});
 }
 
@@ -178,6 +218,7 @@ export async function removeTerminalAttachmentInfo(params: {
   happyHomeDir: string;
   sessionId: string;
   expectedAttachmentId?: TerminalAttachmentId | string | undefined;
+  expectedLegacyAttachment?: LegacyTerminalAttachmentInfo | undefined;
   expectedTerminal?: NonNullable<Metadata['terminal']> | undefined;
 }): Promise<boolean> {
   const encodedPath = sessionFilePath(params.happyHomeDir, params.sessionId);
@@ -185,6 +226,7 @@ export async function removeTerminalAttachmentInfo(params: {
     path: encodedPath,
     sessionId: params.sessionId,
     expectedAttachmentId: params.expectedAttachmentId,
+    expectedLegacyAttachment: params.expectedLegacyAttachment,
     expectedTerminal: params.expectedTerminal,
   })) {
     return true;
@@ -196,6 +238,7 @@ export async function removeTerminalAttachmentInfo(params: {
     path: legacyPath,
     sessionId: params.sessionId,
     expectedAttachmentId: params.expectedAttachmentId,
+    expectedLegacyAttachment: params.expectedLegacyAttachment,
     expectedTerminal: params.expectedTerminal,
   });
 }

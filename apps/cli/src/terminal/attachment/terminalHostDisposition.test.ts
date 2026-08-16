@@ -1,16 +1,19 @@
 import { describe, expect, it, vi } from 'vitest';
 import * as tmp from 'tmp';
 
-import type { TerminalHostAdapter, TerminalHostHandle } from '@/integrations/terminalHost/_types';
+import type { TerminalAttachmentId, TerminalHostAdapter, TerminalHostHandle } from '@/integrations/terminalHost/_types';
 
 import {
   readTerminalAttachmentInfo,
   writeTerminalAttachmentInfo,
 } from './terminalAttachmentInfo';
-import { executeTerminalHostDisposition } from './terminalHostDisposition';
+import {
+  executeConfirmedDeadTerminalAttachmentRetirement,
+  executeTerminalHostDisposition,
+} from './terminalHostDisposition';
 
-const HANDLE: TerminalHostHandle = {
-  attachmentId: 'attachment-current' as TerminalHostHandle['attachmentId'],
+const HANDLE = {
+  attachmentId: 'attachment-current' as TerminalAttachmentId,
   kind: 'tmux',
   sessionName: 'happy',
   paneId: 'owned-window',
@@ -23,7 +26,7 @@ const HANDLE: TerminalHostHandle = {
     requiresLocalAttachmentInfo: true,
     liveProbe: 'required',
   },
-};
+} satisfies TerminalHostHandle & Readonly<{ attachmentId: TerminalAttachmentId }>;
 
 async function persistBoundAttachment(happyHomeDir: string): Promise<void> {
   await writeTerminalAttachmentInfo({
@@ -250,6 +253,39 @@ describe('executeTerminalHostDisposition', () => {
         adapter: buildAdapter(dispose),
       })).resolves.toMatchObject({ status: 'parked', reason: 'legacy_attachment' });
       expect(dispose).not.toHaveBeenCalled();
+    } finally {
+      dir.removeCallback();
+    }
+  });
+
+  it('retires an unchanged legacy attachment after its host was positively proven dead', async () => {
+    const dir = tmp.dirSync({ unsafeCleanup: true });
+    try {
+      await writeTerminalAttachmentInfo({
+        happyHomeDir: dir.name,
+        sessionId: 'legacy-dead-session',
+        terminal: {
+          mode: 'tmux',
+          tmux: { target: 'happy:legacy-window', tmpDir: '/tmp/happier-tmux' },
+        },
+      });
+      const attachmentInfo = await readTerminalAttachmentInfo({
+        happyHomeDir: dir.name,
+        sessionId: 'legacy-dead-session',
+      });
+      if (!attachmentInfo || attachmentInfo.version !== 1) {
+        throw new Error('Expected a legacy attachment fixture');
+      }
+      await expect(executeConfirmedDeadTerminalAttachmentRetirement({
+        happyHomeDir: dir.name,
+        sessionId: 'legacy-dead-session',
+        expectedAttachmentInfo: attachmentInfo,
+      })).resolves.toEqual({ status: 'retired', attachmentId: null });
+
+      await expect(readTerminalAttachmentInfo({
+        happyHomeDir: dir.name,
+        sessionId: 'legacy-dead-session',
+      })).resolves.toBeNull();
     } finally {
       dir.removeCallback();
     }

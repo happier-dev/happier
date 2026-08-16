@@ -111,7 +111,6 @@ import type { MessageBatch } from '@/agent/runtime/sessionInput/types';
 import type { Metadata } from '@/api/types';
 import {
   buildTerminalAttachmentMetadataFromHostHandle,
-  buildTerminalHostHandleFromAttachmentMetadata,
 } from '@/agent/runtime/terminal/attachmentMetadata';
 import type {
   TerminalHostAdapter,
@@ -125,8 +124,14 @@ import {
   readTerminalAttachmentInfo,
   writeTerminalAttachmentInfo,
   createTerminalAttachmentId,
+  type LegacyTerminalAttachmentInfo,
+  type TerminalAttachmentInfo,
 } from '@/terminal/attachment/terminalAttachmentInfo';
-import { executeTerminalHostDisposition } from '@/terminal/attachment/terminalHostDisposition';
+import {
+  executeConfirmedDeadTerminalAttachmentRetirement,
+  executeTerminalHostDisposition,
+} from '@/terminal/attachment/terminalHostDisposition';
+import { buildLegacyTerminalAttachmentHostHandle } from '@/terminal/attachment/legacyTerminalAttachmentHandle';
 import {
   evaluateTerminalHostLivenessForRecovery,
   isTerminalHostConfirmedDeadForRelaunch,
@@ -453,7 +458,8 @@ export type ClaudeUnifiedTerminalSessionOptions<Mode extends EnhancedMode = Enha
   }>) => void | Promise<void>) | undefined;
   removeTerminalHostAttachmentInfo?: ((params: Readonly<{
     sessionId: string;
-    expectedAttachmentId: NonNullable<TerminalHostHandle['attachmentId']>;
+    expectedAttachmentId?: NonNullable<TerminalHostHandle['attachmentId']>;
+    expectedLegacyAttachment?: LegacyTerminalAttachmentInfo;
     terminal: NonNullable<Metadata['terminal']>;
   }>) => void | Promise<void>) | undefined;
   clearSessionMarkerTerminalHostHealth?: typeof clearSessionMarkerTerminalHostHealth | undefined;
@@ -661,6 +667,7 @@ async function buildDefaultSpawn(params: Readonly<{
 }
 
 type ExistingTerminalHostAttachment = Readonly<{
+  attachmentInfo: TerminalAttachmentInfo;
   handle: TerminalHostHandle;
   terminal: NonNullable<Metadata['terminal']>;
   attachmentId: NonNullable<TerminalHostHandle['attachmentId']> | null;
@@ -679,9 +686,10 @@ async function readExistingTerminalHostAttachment(params: Readonly<{
   if (!info) return null;
   const handle = info.version === 2
     ? info.handle
-    : buildTerminalHostHandleFromAttachmentMetadata(info.terminal);
+    : buildLegacyTerminalAttachmentHostHandle(info, configuration.happyHomeDir);
   if (!handle) return null;
   return {
+    attachmentInfo: info,
     handle,
     terminal: info.terminal,
     attachmentId: info.version === 2 ? info.attachmentId : null,
@@ -1030,18 +1038,6 @@ export async function runClaudeUnifiedTerminalSession<Mode extends EnhancedMode 
     reason: string,
     proof: TerminalHostConfirmedDeadProbeResult,
   ): Promise<void> => {
-    if (!existing.attachmentId) {
-      throw new TerminalHostStartupError({
-        hostKind: existing.handle.kind,
-        reason: 'recovery_probe_inconclusive',
-        message: 'Legacy terminal attachment has no immutable identity; retaining it for manual recovery',
-        diagnostics: {
-          reason,
-          sessionName: existing.handle.sessionName,
-          probeCount: proof.probeCount,
-        },
-      });
-    }
     const sessionId = typeof opts.happySessionId === 'string' ? opts.happySessionId.trim() : '';
     if (!sessionId) {
       throw new TerminalHostStartupError({
@@ -1051,20 +1047,26 @@ export async function runClaudeUnifiedTerminalSession<Mode extends EnhancedMode 
         diagnostics: { reason, sessionName: existing.handle.sessionName, probeCount: proof.probeCount },
       });
     }
-    const disposition = await executeTerminalHostDisposition({
+    const disposition = await executeConfirmedDeadTerminalAttachmentRetirement({
       happyHomeDir: configuration.happyHomeDir,
       sessionId,
-      expectedAttachmentId: existing.attachmentId,
-      intent: { kind: 'retire_confirmed_dead_attachment', reason: 'positive_dead_recovery' },
-      adapter: hostResolution.adapter,
+      expectedAttachmentInfo: existing.attachmentInfo,
       readAttachmentInfo: opts.readTerminalHostAttachmentInfo ?? readTerminalAttachmentInfo,
       ...(opts.removeTerminalHostAttachmentInfo
         ? {
-            removeAttachmentInfo: async ({ sessionId: claimedSessionId, expectedAttachmentId, expectedTerminal }) => {
+            removeAttachmentInfo: async ({
+              sessionId: claimedSessionId,
+              expectedAttachmentId,
+              expectedLegacyAttachment,
+              expectedTerminal,
+            }) => {
               await opts.removeTerminalHostAttachmentInfo?.({
                 sessionId: claimedSessionId,
-                expectedAttachmentId: expectedAttachmentId as NonNullable<TerminalHostHandle['attachmentId']>,
-                terminal: expectedTerminal,
+                ...(expectedAttachmentId
+                  ? { expectedAttachmentId: expectedAttachmentId as NonNullable<TerminalHostHandle['attachmentId']> }
+                  : {}),
+                ...(expectedLegacyAttachment ? { expectedLegacyAttachment } : {}),
+                terminal: expectedTerminal ?? existing.terminal,
               });
               return true;
             },
@@ -1079,24 +1081,26 @@ export async function runClaudeUnifiedTerminalSession<Mode extends EnhancedMode 
         diagnostics: { reason, sessionName: existing.handle.sessionName, probeCount: proof.probeCount },
       });
     }
-    const endpointRetirement = await retireClaudeEndpointArtifactsForTerminalAttachment({
-      happyHomeDir: configuration.happyHomeDir,
-      sessionId,
-      retiredAttachmentId: existing.attachmentId,
-    }).catch((error) => {
-      logger.debug('[unified]: terminal host retired; Claude endpoint cleanup failed and remains pending', {
-        sessionName: existing.handle.sessionName,
-        attachmentId: existing.attachmentId,
-        error,
+    if (existing.attachmentId) {
+      const endpointRetirement = await retireClaudeEndpointArtifactsForTerminalAttachment({
+        happyHomeDir: configuration.happyHomeDir,
+        sessionId,
+        retiredAttachmentId: existing.attachmentId,
+      }).catch((error) => {
+        logger.debug('[unified]: terminal host retired; Claude endpoint cleanup failed and remains pending', {
+          sessionName: existing.handle.sessionName,
+          attachmentId: existing.attachmentId,
+          error,
+        });
+        return null;
       });
-      return null;
-    });
-    if (endpointRetirement?.status === 'retained') {
-      logger.debug('[unified]: terminal host retired; Claude endpoint cleanup remains pending', {
-        reason: endpointRetirement.reason,
-        sessionName: existing.handle.sessionName,
-        attachmentId: existing.attachmentId,
-      });
+      if (endpointRetirement?.status === 'retained') {
+        logger.debug('[unified]: terminal host retired; Claude endpoint cleanup remains pending', {
+          reason: endpointRetirement.reason,
+          sessionName: existing.handle.sessionName,
+          attachmentId: existing.attachmentId,
+        });
+      }
     }
   };
   if (existingTerminalHost) {

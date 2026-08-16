@@ -35,6 +35,10 @@ vi.mock('@/utils/spawnHappyCLI', () => ({
   buildHappyCliSubprocessLaunchSpec: (args: string[]) => ({ runtime: 'node', filePath: 'node', args }),
 }));
 
+vi.mock('@/terminal/attachment/terminalAttachmentInfo', () => ({
+  createTerminalAttachmentId: () => 'attachment-standalone-tmux',
+}));
+
 describe.sequential('startHappyHeadlessInTmux', () => {
   const trackedEnvKeys = ['TMUX', 'TMUX_PANE', 'HAPPY_TEST_FOO'] as const;
   const baselineEnv: Record<string, string | undefined> = Object.fromEntries(
@@ -115,6 +119,17 @@ describe.sequential('startHappyHeadlessInTmux', () => {
       'claude',
       '--happy-starting-mode',
       'unified',
+    ]));
+  });
+
+  it('hands the canonical attachment identity to the hosted runner', async () => {
+    const { startHappyHeadlessInTmux } = await import('./startHappyHeadlessInTmux');
+
+    await startHappyHeadlessInTmux([]);
+
+    expect(mockSpawnInTmux.mock.calls[0]?.[0]).toEqual(expect.arrayContaining([
+      '--happy-terminal-attachment-id',
+      'attachment-standalone-tmux',
     ]));
   });
 });

@@ -1,11 +1,37 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { primeAgentStateForUi, reportSessionToDaemonIfRunning } from '@/agent/runtime/startupSideEffects';
+import {
+  primeAgentStateForUi,
+  reportSessionToDaemonIfRunning,
+  resolveTerminalAttachmentPersistenceBinding,
+} from '@/agent/runtime/startupSideEffects';
 import type { Metadata } from '@/api/types';
 
 const metadataStub = {} as Metadata;
 
 describe('startup side effects: daemon session reporting retry', () => {
+  it('resolves the existing bound tmux identity for local attachment persistence', () => {
+    expect(resolveTerminalAttachmentPersistenceBinding({
+      mode: 'tmux',
+      tmux: { target: 'happy:window-1', tmpDir: '/tmp/custom-tmux' },
+      controlServiceabilityV1: {
+        v: 1,
+        attachmentId: 'attachment-1',
+        state: 'servable',
+        observedAt: 1,
+      },
+    })).toMatchObject({
+      attachmentId: 'attachment-1',
+      handle: {
+        attachmentId: 'attachment-1',
+        kind: 'tmux',
+        sessionName: 'happy',
+        paneId: 'window-1',
+        socketDir: '/tmp/custom-tmux',
+      },
+    });
+  });
+
   it('reports newer concurrent metadata even when the older in-flight report succeeds', async () => {
     let releaseFirstAttempt!: (value: { error?: string }) => void;
     const firstAttempt = new Promise<{ error?: string }>((resolve) => {
