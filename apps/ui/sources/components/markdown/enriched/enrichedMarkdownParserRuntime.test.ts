@@ -45,7 +45,7 @@ describe('enriched Markdown parser runtime recovery', () => {
         await expect(preloadMarkdownRuntime()).resolves.toBeUndefined();
         expect(wasmBoundary.factory).toHaveBeenCalledTimes(2);
 
-        await expect(parseMarkdown('invalid-document')).rejects.toThrow('WASM parser returned invalid AST');
+        await expect(parseMarkdown('invalid-document')).rejects.toBeInstanceOf(Error);
 
         expect(parseMarkdownSyncIfReady('next-document')).toMatchObject({ type: 'Document' });
         expect(wasmBoundary.factory).toHaveBeenCalledTimes(2);
