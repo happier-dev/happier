@@ -74,7 +74,7 @@ Do not group by wording, label, platform, or nearby files alone. Mark weak links
 
 ## 6. Build diagnosis bundles
 
-Each bundle should be independently diagnosable and internally coherent around one plausible mechanism, owner, invariant, compatibility direction, release authority, or reproduction environment.
+Each bundle should be independently diagnosable and internally coherent around one plausible mechanism, owner, invariant, compatibility direction, release authority, or reproduction environment. For independent Happier sessions, it should also form one coherent maintainer decision and durable conversation. A shared feature area, provider, platform, owner, or release environment is insufficient when the issues are likely to require different approvals, evidence requests, product choices, or release actions.
 
 For every bundle, record:
 

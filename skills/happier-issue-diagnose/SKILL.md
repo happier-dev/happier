@@ -112,6 +112,8 @@ Follow [report-contract.md](references/report-contract.md). The session that per
 - a parent lane presents after native subagents report back and their load-bearing claims are verified;
 - an independently spawned Happier session presents its own diagnosis directly.
 
+Write for the primary maintainer: plain-language decision first, engineering audit second. Explain the user-visible before/after behavior and end with one exact recommended next action or product choice. The report contract owns the detailed presentation of ownership, reuse, competing logic, minimality, deletion-test results, and genuinely viable alternatives with their tradeoffs; do not duplicate that doctrine here.
+
 Recommend concrete changes at the canonical owner, including reuse, extraction, consolidation, migration, or removal needed to eliminate active split-brains. Do not implement them unless the user authorizes implementation; then hand the established evidence to `skills/happier-implement`.
 
 GitHub comments, labels, assignments, edits, closure, reopening, and locking require separate explicit authority and the write-back safeguards in `skills/happier-github-ops`.
