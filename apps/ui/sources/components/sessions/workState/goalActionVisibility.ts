@@ -54,14 +54,12 @@ function resolveFromGoalCapabilities(
 /**
  * Capability-driven visibility for goal actions. The rule is back-compat safe and entirely
  * provider-name-free:
- *  - PRESENT goal-item `goalCapabilities` (e.g. Claude's `{ canEdit, canClear }`) → expose ONLY the
- *    declared controls. Pause/resume/complete and the token budget are gated behind `canStop`, which
- *    Claude does not publish, so Claude shows edit/set + clear only. The goal item always wins when
- *    it carries capabilities.
- *  - NO goal-item capabilities but a provider `fallbackProfile` is supplied → use the provider's
- *    session-level profile. This drives the "Set goal" form BEFORE any goal item exists (e.g. a fresh
- *    Claude session, whose goal item only appears after a native `goal_status`), preventing the
- *    Codex-only budget UI from leaking onto Claude (QA-CHIP-2, found in manual QA).
+ *  - PRESENT goal-item `goalCapabilities` (e.g. Claude's `{ canEdit, canClear }`) → expose only the
+ *    semantic controls that are also reachable through the live session profile. A persisted item
+ *    can therefore describe clear support without advertising a currently unavailable RPC.
+ *  - NO goal-item capabilities but a provider `fallbackProfile` is supplied → use the live profile.
+ *    This also drives the "Set goal" form before any goal item exists, preventing the Codex-only
+ *    budget UI from leaking onto Claude.
  *  - ABSENT both (Codex legacy, or no provider profile) → FULL control surface, so existing Codex
  *    behavior is unchanged.
  */
@@ -70,7 +68,16 @@ export function resolveGoalActionCapabilities(
     fallbackProfile?: GoalActionCapabilities | null,
 ): GoalActionCapabilities {
     const capabilities = goal?.goalCapabilities;
-    if (capabilities) return resolveFromGoalCapabilities(capabilities);
+    if (capabilities) {
+        const semantic = resolveFromGoalCapabilities(capabilities);
+        if (!fallbackProfile) return semantic;
+        return {
+            canEdit: semantic.canEdit && fallbackProfile.canEdit,
+            canStop: semantic.canStop && fallbackProfile.canStop,
+            canClear: semantic.canClear && fallbackProfile.canClear,
+            canConfigureBudget: semantic.canConfigureBudget && fallbackProfile.canConfigureBudget,
+        };
+    }
     if (fallbackProfile) return fallbackProfile;
     return FULL_GOAL_ACTION_CAPABILITIES;
 }

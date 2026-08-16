@@ -56,22 +56,13 @@ export const CLAUDE_UI_DESCRIPTOR = Object.freeze({
   },
   behavior: {
     descriptorId: 'claude.uiBehavior.v1',
-    // Capability-driven editable-goal gating. Unlike Codex (which gates on the app-server backend
-    // mode), Claude's native `/goal` support is capability-driven. Two provider-derived signals make
-    // the goal chip available (no provider-name branching in generic UI):
-    //  1. Session-level `/goal` capability — `metadata.slashCommands` includes `goal` (published on
-    //     every Claude launcher path). Present BEFORE any goal item is derived, so the chip can be the
-    //     first-goal entry point on a fresh ACTIVE session (the goal item only appears after a native
-    //     `goal_status`, which is never emitted until a goal is set). Resolves the chicken-and-egg.
-    //  2. A persisted goal item carrying `goalCapabilities.canEdit` — the resumable/detached fallback.
+    // Capability-driven editable-goal gating. Active sessions use the runner's live session RPC
+    // registry; a persisted goal item carrying `goalCapabilities.canEdit` is only the detached-session
+    // semantic fallback. This keeps provider support and actual remote reachability separate.
     workState: {
       editableGoals: {
         providerId: 'claude',
         capabilityDriven: true,
-        sessionCapability: {
-          path: ['slashCommands'],
-          includesValue: 'goal',
-        },
         persistedGoalSnapshot: {
           path: ['sessionWorkStateV1'],
           itemKind: 'goal',

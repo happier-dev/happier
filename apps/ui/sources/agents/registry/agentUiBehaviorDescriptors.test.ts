@@ -301,7 +301,7 @@ describe('createAgentUiBehaviorFromDescriptor', () => {
         })).toBe(true);
     });
 
-    it('materializes capability-driven editable goals (Claude) gated on goalCapabilities.canEdit', () => {
+    it('intersects capability-driven goal semantics with active runner controls', () => {
         const { behavior, diagnostics } = createAgentUiBehaviorFromDescriptor({
             descriptorId: 'claude.uiBehavior.v1',
             workState: {
@@ -334,29 +334,33 @@ describe('createAgentUiBehaviorFromDescriptor', () => {
             } as any,
         })).toBe(false);
 
-        // Goal item WITH canEdit capability → editable (works detached too, since the capability is
-        // only published alongside an observed goal).
+        // Persisted goal semantics are not enough to promise a live RPC on an active session.
         const withCapability = {
             metadata: { sessionWorkStateV1: { v: 1, agentId: 'claude', items: [{ kind: 'goal', goalCapabilities: { canEdit: true, canClear: true } }] } },
         };
-        expect(behavior.workState?.supportsEditableGoals?.({ agentId: 'claude', session: { active: true, ...withCapability } as any })).toBe(true);
+        expect(behavior.workState?.supportsEditableGoals?.({ agentId: 'claude', session: { active: true, ...withCapability } as any })).toBe(false);
+        expect(behavior.workState?.supportsEditableGoals?.({
+            agentId: 'claude',
+            session: {
+                active: true,
+                ...withCapability,
+                agentState: { capabilities: { sessionGoalSetSupported: true } },
+            } as any,
+        })).toBe(true);
+        // Detached sessions retain their existing inactive-control path.
         expect(behavior.workState?.supportsEditableGoals?.({ agentId: 'claude', session: { active: false, ...withCapability } as any })).toBe(true);
 
         // Wrong provider id → not editable.
         expect(behavior.workState?.supportsEditableGoals?.({ agentId: 'codex', session: { active: true, ...withCapability } as any })).toBe(false);
     });
 
-    it('materializes session-level /goal capability for an ACTIVE Claude session with no goal item (QA-CHIP-1)', () => {
+    it('uses the attached runner control capability for a fresh active Claude session', () => {
         const { behavior, diagnostics } = createAgentUiBehaviorFromDescriptor({
             descriptorId: 'claude.uiBehavior.v1',
             workState: {
                 editableGoals: {
                     providerId: 'claude',
                     capabilityDriven: true,
-                    sessionCapability: {
-                        path: ['slashCommands'],
-                        includesValue: 'goal',
-                    },
                     persistedGoalSnapshot: {
                         path: ['sessionWorkStateV1'],
                         itemKind: 'goal',
@@ -367,18 +371,21 @@ describe('createAgentUiBehaviorFromDescriptor', () => {
         });
         expect(diagnostics).toEqual([]);
 
-        // ACTIVE session whose slash_commands include `goal` → editable BEFORE any goal item exists
-        // (chip is the first-goal entry point; resolves the chicken-and-egg).
+        // Provider command metadata is semantic support, not proof that the session RPC exists.
         expect(behavior.workState?.supportsEditableGoals?.({
             agentId: 'claude',
             session: { active: true, metadata: { slashCommands: ['help', 'compact', 'goal'] } } as any,
-        })).toBe(true);
+        })).toBe(false);
 
-        // D2: the slash-prefixed `/goal` shape must ALSO enable the chip (the runtime list is
-        // inconsistent about the leading slash; the shared normalizer handles both shapes).
+        // The live session-control registry is the execution-reachability owner and enables the
+        // first-goal entry point before a goal item exists.
         expect(behavior.workState?.supportsEditableGoals?.({
             agentId: 'claude',
-            session: { active: true, metadata: { slashCommands: ['help', '/goal'] } } as any,
+            session: {
+                active: true,
+                metadata: { slashCommands: ['help', '/goal'] },
+                agentState: { capabilities: { sessionGoalSetSupported: true } },
+            } as any,
         })).toBe(true);
 
         // ACTIVE session whose slash_commands LACK `goal` → not editable (fail-closed).
@@ -412,7 +419,6 @@ describe('createAgentUiBehaviorFromDescriptor', () => {
                 editableGoals: {
                     providerId: 'claude',
                     capabilityDriven: true,
-                    sessionCapability: { path: ['slashCommands'], includesValue: 'goal' },
                     persistedGoalSnapshot: {
                         path: ['sessionWorkStateV1'],
                         itemKind: 'goal',
@@ -423,14 +429,23 @@ describe('createAgentUiBehaviorFromDescriptor', () => {
         });
         expect(diagnostics).toEqual([]);
 
-        // ACTIVE goal-editable Claude session (slash_commands include goal, no goal item) → restricted
-        // profile (edit + clear, no stop/budget), so the Set-goal form hides the Codex budget editor.
+        // Active controls are projected independently so the UI never advertises clear merely
+        // because set is reachable (or vice versa).
         expect(behavior.workState?.resolveGoalActionCapabilityProfile?.({
             agentId: 'claude',
-            session: { active: true, metadata: { slashCommands: ['help', 'goal'] } } as any,
-        })).toEqual({ canEdit: true, canStop: false, canClear: true, canConfigureBudget: false });
+            session: {
+                active: true,
+                metadata: { slashCommands: ['help', 'goal'] },
+                agentState: {
+                    capabilities: {
+                        sessionGoalSetSupported: true,
+                        sessionGoalClearSupported: false,
+                    },
+                },
+            } as any,
+        })).toEqual({ canEdit: true, canStop: false, canClear: false, canConfigureBudget: false });
 
-        // NOT goal-editable (no /goal capability, no goal item) → null (no profile; the gate keeps the
+        // NOT goal-editable (no live goal control, no goal item) → null (no profile; the gate keeps the
         // chip hidden, so the profile is irrelevant; null = full legacy surface for safety).
         expect(behavior.workState?.resolveGoalActionCapabilityProfile?.({
             agentId: 'claude',

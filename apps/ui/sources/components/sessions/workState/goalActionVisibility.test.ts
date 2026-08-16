@@ -54,13 +54,12 @@ describe('resolveGoalActionCapabilities', () => {
         expect(resolveGoalActionCapabilities(null, claudeProfile)).toEqual(claudeProfile);
     });
 
-    it('prefers the goal item capabilities over a supplied fallback profile when both exist', () => {
-        const fullProfile = { canEdit: true, canStop: true, canClear: true, canConfigureBudget: true } as const;
-        // A Claude goal item present → goal-item capabilities win (edit/clear only), fallback ignored.
-        expect(resolveGoalActionCapabilities(goal({ goalCapabilities: { canEdit: true, canClear: true } }), fullProfile)).toEqual({
+    it('intersects goal-item semantics with the live session capability profile', () => {
+        const runtimeProfile = { canEdit: true, canStop: false, canClear: false, canConfigureBudget: false } as const;
+        expect(resolveGoalActionCapabilities(goal({ goalCapabilities: { canEdit: true, canClear: true } }), runtimeProfile)).toEqual({
             canEdit: true,
             canStop: false,
-            canClear: true,
+            canClear: false,
             canConfigureBudget: false,
         });
     });

@@ -182,13 +182,7 @@ export const BUNDLED_CANONICAL_AGENT_UI_BEHAVIOR_DESCRIPTORS: Readonly<
           "backendId"
         ]
       },
-      "providerId": "claude",
-      "sessionCapability": {
-        "includesValue": "goal",
-        "path": [
-          "slashCommands"
-        ]
-      }
+      "providerId": "claude"
     }
   }
 } as const),

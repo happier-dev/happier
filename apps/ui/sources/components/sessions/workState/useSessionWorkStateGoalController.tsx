@@ -5,6 +5,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Modal } from '@/modal';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
+import { resolveSessionGoalFailurePresentation } from '@/sync/ops/sessionGoalOperationFailure';
 import type { SessionWorkStateSnapshot } from '@/sync/domains/session/workState/sessionWorkStateTypes';
 
 import type { GoalActionCapabilities } from './goalActionVisibility';
@@ -151,7 +152,8 @@ export function useSessionWorkStateGoalController(params: Readonly<{
                 }
             } else {
                 onRequestClose();
-                Modal.alert(t('common.error'), result.error);
+                const presentation = resolveSessionGoalFailurePresentation(result);
+                Modal.alert(presentation.title, presentation.message);
             }
         } finally {
             setBusy(false);
@@ -172,7 +174,10 @@ export function useSessionWorkStateGoalController(params: Readonly<{
         setBusy(true);
         try {
             const result = await onClearGoal();
-            if (!result.ok) Modal.alert(t('common.error'), result.error);
+            if (!result.ok) {
+                const presentation = resolveSessionGoalFailurePresentation(result);
+                Modal.alert(presentation.title, presentation.message);
+            }
         } finally {
             setBusy(false);
         }

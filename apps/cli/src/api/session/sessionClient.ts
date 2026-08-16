@@ -81,6 +81,7 @@ import {
     type RuntimeSessionTurnMutationV1,
 } from './client/transport/mutations/createRuntimeSessionClientDurableMutationOutbox';
 import { applySessionRuntimeControls } from './sessionRuntimeControls';
+import { updateAgentStateBestEffort } from './sessionWritesBestEffort';
 import {
     createTranscriptMessageAppendMutation,
     createVoiceAgentTranscriptTurnMutation,
@@ -1380,7 +1381,48 @@ export class ApiSessionClient extends EventEmitter {
     }
 
     setSessionRuntimeControls(controls: SessionRuntimeControls | null): void {
+        const hadGoalControls = typeof this.sessionRuntimeControls.setGoal === 'function'
+            || typeof this.sessionRuntimeControls.clearGoal === 'function';
         applySessionRuntimeControls(this.sessionRuntimeControls, controls);
+        this.publishSessionGoalControlCapabilities({ forceUnsupportedWrite: hadGoalControls });
+    }
+
+    private publishSessionGoalControlCapabilities(options?: Readonly<{ forceUnsupportedWrite?: boolean }>): void {
+        const sessionGoalSetSupported = typeof this.sessionRuntimeControls.setGoal === 'function';
+        const sessionGoalClearSupported = typeof this.sessionRuntimeControls.clearGoal === 'function';
+        const currentCapabilities = this.agentState?.capabilities;
+        if (
+            currentCapabilities?.sessionGoalSetSupported === sessionGoalSetSupported
+            && currentCapabilities?.sessionGoalClearSupported === sessionGoalClearSupported
+        ) {
+            return;
+        }
+        // Missing fields already mean unsupported to new clients. Avoid an extra write for every
+        // older session, while still clearing a stale positive snapshot left by a previous runner.
+        if (
+            !sessionGoalSetSupported
+            && !sessionGoalClearSupported
+            && options?.forceUnsupportedWrite !== true
+            && currentCapabilities?.sessionGoalSetSupported === undefined
+            && currentCapabilities?.sessionGoalClearSupported === undefined
+        ) {
+            return;
+        }
+        updateAgentStateBestEffort(
+            this,
+            (currentState) => ({
+                ...currentState,
+                capabilities: {
+                    ...(currentState.capabilities && typeof currentState.capabilities === 'object'
+                        ? currentState.capabilities
+                        : {}),
+                    sessionGoalSetSupported,
+                    sessionGoalClearSupported,
+                },
+            }),
+            '[session]',
+            'goal_runtime_control_capabilities',
+        );
     }
 
     private async readCurrentOwnerCredentials(): Promise<Credentials | null> {

@@ -2101,8 +2101,8 @@ function SessionViewLoaded({
     const attachmentsUploadsTransferAvailable = useSessionFileUploadAvailability(sessionId);
     const attachmentsUploadsEnabled = attachmentsUploadsFeatureEnabled && attachmentsUploadsTransferAvailable;
     // Generalized goal umbrella gate (provider-agnostic). The provider-specific discriminator is the
-    // capability gate `supportsEditableSessionGoals` (Codex: app-server mode; Claude: observed
-    // goal_status + /goal capability), so this stays a single umbrella flag for all providers.
+    // capability gate `supportsEditableSessionGoals` (Codex: app-server mode; Claude: live runner
+    // goal-control registration), so this stays a single umbrella flag for all providers.
     const agentGoalsFeatureEnabled = useFeatureEnabled('agents.goals');
     const sessionWorkStateSnapshot = React.useMemo(
         () => readSessionWorkStateFromMetadata(ownerMetadata),
@@ -2129,13 +2129,17 @@ function SessionViewLoaded({
         status: StaleSessionRunnerOperationStatus;
     }> | null>(null);
     const hasWriteAccess = hasSessionWriteAccess(session.accessLevel);
+    const providerSupportsEditableSessionGoals = React.useMemo(
+        () => agentId ? supportsEditableSessionGoals({ agentId, session }) : false,
+        [agentId, session],
+    );
     const canEditSessionGoals = React.useMemo(
         () => isSessionGoalEditingAvailable({
-            providerSupportsEditableGoals: agentId ? supportsEditableSessionGoals({ agentId, session }) : false,
+            providerSupportsEditableGoals: providerSupportsEditableSessionGoals,
             goalsFeatureEnabled: agentGoalsFeatureEnabled,
             hasWriteAccess,
         }),
-        [agentId, agentGoalsFeatureEnabled, hasWriteAccess, session],
+        [agentGoalsFeatureEnabled, hasWriteAccess, providerSupportsEditableSessionGoals],
     );
     // Provider goal-action capability profile for the "Set goal" form (no goal item yet). Lets a
     // provider (e.g. Claude) restrict the control surface to edit/clear, hiding the Codex-only budget
@@ -5185,7 +5189,12 @@ function SessionViewLoaded({
                     };
 
                     const promptInvocationsV1 = storage.getState().settings.promptInvocationsV1;
-                    const resolved = resolveSessionComposerSend({ input: composerMessage, executionRunsEnabled, promptInvocationsV1 });
+                    const resolved = resolveSessionComposerSend({
+                        input: composerMessage,
+                        executionRunsEnabled,
+                        goalControlsAvailable: providerSupportsEditableSessionGoals,
+                        promptInvocationsV1,
+                    });
                     if (resolved.kind === 'noop') {
                         return;
                     }

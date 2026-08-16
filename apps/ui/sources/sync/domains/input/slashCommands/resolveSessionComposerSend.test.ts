@@ -36,6 +36,17 @@ describe('resolveSessionComposerSend', () => {
         });
     });
 
+    it('passes /goal through to the Agent when local goal controls are unavailable', () => {
+        expect(resolveSessionComposerSend({
+            input: '/goal clear',
+            executionRunsEnabled: true,
+            goalControlsAvailable: false,
+        })).toEqual({
+            kind: 'send',
+            text: '/goal clear',
+        });
+    });
+
     it('intercepts configured template tokens', () => {
         const resolved = resolveSessionComposerSend({
             input: '/foo bar',

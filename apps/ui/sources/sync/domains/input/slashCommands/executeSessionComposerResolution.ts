@@ -13,6 +13,7 @@ import { storage } from '@/sync/domains/state/storage';
 import { buildExecutionRunActionDraftInputForUi } from '@/sync/domains/actions/buildExecutionRunActionDraftInputForUi';
 import { resolveExecutionRunActionDefaultPermissionMode } from '@/sync/domains/actions/resolveExecutionRunActionDefaultPermissionMode';
 import { resolveActionExecutionFailureMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
+import { resolveSessionGoalFailurePresentation } from '@/sync/ops/sessionGoalOperationFailure';
 import { t } from '@/text';
 
 export type SessionComposerActionExecutor = Readonly<{
@@ -35,50 +36,14 @@ type SessionComposerTextSnapshot = Readonly<{
   text: string;
 }>;
 
-// A genuine, permanent backend limitation: the provider does not expose editable goals at all.
-// The disabled-feature signal arrives as a human-readable error string (no stable errorCode).
-function isUnsupportedGoalOperationResult(result: SessionGoalOperationResult): boolean {
-  if (result.ok) return false;
-  return /goals?\s+feature\s+is\s+disabled/i.test(result.error);
-}
-
-// A transient state: a freshly-opened active session's live session RPC reports the goal method as
-// not yet registered (`unsupported_session_runtime_method`) before its runtime controls finish
-// wiring. This is a load-time race, not a permanent backend limitation, so it must surface as a
-// retryable "not ready yet" message rather than the permanent-sounding "does not support" message.
-function isGoalControlNotReadyResult(result: SessionGoalOperationResult): boolean {
-  if (result.ok) return false;
-  return result.errorCode === 'unsupported_session_runtime_method';
-}
-
-function isMissingCurrentGoalOperationResult(result: SessionGoalOperationResult): boolean {
-  if (result.ok) return false;
-  return result.errorCode === 'goal_objective_required'
-    || result.error === 'goal_objective_required'
-    || result.errorCode === 'invalid_parameters'
-    || result.error === 'invalid_parameters';
-}
-
 function showGoalOperationFailure(
   result: SessionGoalOperationResult,
   modalAlert: (title: string, message: string) => void,
   options?: Readonly<{ statusOnly?: boolean }>,
 ): void {
-  if (options?.statusOnly === true && isMissingCurrentGoalOperationResult(result)) {
-    modalAlert(t('session.workState.noCurrentGoalTitle'), t('session.workState.noCurrentGoalMessage'));
-    return;
-  }
-  if (isGoalControlNotReadyResult(result)) {
-    modalAlert(t('session.workState.notReadyTitle'), t('session.workState.notReadyMessage'));
-    return;
-  }
-  if (isUnsupportedGoalOperationResult(result)) {
-    modalAlert(t('session.workState.unsupportedTitle'), t('session.workState.unsupportedMessage'));
-    return;
-  }
-  if (!result.ok) {
-    modalAlert(t('common.error'), result.error);
-  }
+  if (result.ok) return;
+  const presentation = resolveSessionGoalFailurePresentation(result, options);
+  modalAlert(presentation.title, presentation.message);
 }
 
 function restorePreviousComposerSnapshot(

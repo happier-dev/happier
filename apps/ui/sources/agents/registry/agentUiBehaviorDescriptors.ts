@@ -10,7 +10,6 @@ import {
     readMetadataAliasValue,
     SESSION_CONFIG_OPTION_OVERRIDES_KEY,
 } from '@happier-dev/agents';
-import { isSlashCommandSupported } from '@happier-dev/protocol';
 
 import type {
     AgentSessionComposerNonSteerablePayloadContext,
@@ -147,10 +146,6 @@ export type PluginUiBehaviorDescriptor = Readonly<{
             activeWhenNoPersistedMode?: boolean;
             aliases?: Readonly<Record<string, string>>;
             modeCandidates?: readonly ModeCandidatePathDescriptor[];
-            sessionCapability?: Readonly<{
-                path?: readonly string[];
-                includesValue?: string;
-            }>;
             persistedGoalSnapshot?: Readonly<{
                 path?: readonly string[];
                 itemKind?: string;
@@ -244,11 +239,6 @@ type SessionExtrasDescriptor = Readonly<{
     metadataCandidates: readonly ModeCandidatePathDescriptor[];
 }>;
 
-type EditableGoalsSessionCapabilityDescriptor = Readonly<{
-    path: readonly string[];
-    includesValue: string;
-}>;
-
 type EditableGoalsDescriptor = Readonly<{
     providerId: string;
     // Capability-driven gating (e.g. Claude): edit availability is read from the persisted goal
@@ -260,10 +250,6 @@ type EditableGoalsDescriptor = Readonly<{
     activeWhenNoPersistedMode: boolean;
     aliases?: Readonly<Record<string, string>>;
     modeCandidates: readonly ModeCandidatePathDescriptor[];
-    // Session-level capability signal (e.g. Claude `/goal`): when an ACTIVE session's metadata at
-    // `path` is an array that includes `includesValue`, the session is goal-editable BEFORE any goal
-    // item exists — so the chip can be the first-goal entry point (resolves the chicken-and-egg).
-    sessionCapability?: EditableGoalsSessionCapabilityDescriptor;
     persistedGoalSnapshot?: Readonly<{
         path: readonly string[];
         itemKind: string;
@@ -528,13 +514,6 @@ function readEditableGoalsDescriptor(
             return candidate ? [candidate] : [];
         })
         : [];
-    const sessionCapabilityRaw = isRecord(value.sessionCapability) ? value.sessionCapability : null;
-    const sessionCapabilityPath = readStringArray(sessionCapabilityRaw?.path);
-    const sessionCapabilityIncludesValue = readString(sessionCapabilityRaw?.includesValue);
-    const sessionCapability: EditableGoalsSessionCapabilityDescriptor | undefined =
-        sessionCapabilityPath.length > 0 && sessionCapabilityIncludesValue
-            ? { path: sessionCapabilityPath, includesValue: sessionCapabilityIncludesValue }
-            : undefined;
     const persistedGoalSnapshot = isRecord(value.persistedGoalSnapshot)
         ? {
             path: readStringArray(value.persistedGoalSnapshot.path),
@@ -574,7 +553,6 @@ function readEditableGoalsDescriptor(
             activeWhenNoPersistedMode: value.activeWhenNoPersistedMode === true,
             aliases,
             modeCandidates,
-            ...(sessionCapability ? { sessionCapability } : {}),
             persistedGoalSnapshot: validPersistedGoalSnapshot,
         };
     }
@@ -595,7 +573,6 @@ function readEditableGoalsDescriptor(
         activeWhenNoPersistedMode: value.activeWhenNoPersistedMode === true,
         aliases,
         modeCandidates,
-        ...(sessionCapability ? { sessionCapability } : {}),
         ...(validPersistedGoalSnapshot ? { persistedGoalSnapshot: validPersistedGoalSnapshot } : {}),
     };
 }
@@ -634,24 +611,28 @@ function hasEditableGoalCapability(
     });
 }
 
-/**
- * Session-level goal capability (e.g. Claude `/goal`): the metadata value at the descriptor path is
- * an array that includes the configured value (e.g. `metadata.slashCommands` includes `'goal'`).
- * Published on every Claude launcher path, so it is present BEFORE any goal item is derived — which
- * is what lets the goal chip be the first-goal entry point on a fresh session. Provider-agnostic:
- * the descriptor supplies the metadata path and the required value. Fail-closed: absent/non-array.
- */
-function hasSessionGoalCapability(
-    metadata: unknown,
-    descriptor: EditableGoalsDescriptor,
-): boolean {
-    const capability = descriptor.sessionCapability;
-    if (!capability) return false;
-    const value = readValueAtPath(metadata, capability.path);
-    // Normalize the slash-command shape so `goal` and `/goal` both satisfy a `goal` capability (D2):
-    // the runtime `slash_commands` list is inconsistent about the leading slash. Shared with the CLI
-    // goal source through the same protocol helper, so the parity is defined once and cannot drift.
-    return isSlashCommandSupported(value, capability.includesValue);
+type SessionGoalControlCapabilities = Readonly<{
+    sessionGoalSetSupported?: boolean | null;
+    sessionGoalClearSupported?: boolean | null;
+}>;
+
+type EditableGoalsSession = Readonly<{
+    active?: boolean;
+    metadata?: unknown;
+    agentState?: Readonly<{
+        capabilities?: SessionGoalControlCapabilities | null;
+    }> | null;
+}>;
+
+function readLiveGoalActionCapabilityProfile(
+    session: EditableGoalsSession,
+): Readonly<{ canEdit: boolean; canStop: false; canClear: boolean; canConfigureBudget: false }> | null {
+    if (session.active !== true) return null;
+    const capabilities = session.agentState?.capabilities;
+    const canEdit = capabilities?.sessionGoalSetSupported === true;
+    const canClear = capabilities?.sessionGoalClearSupported === true;
+    if (!canEdit && !canClear) return null;
+    return { canEdit, canStop: false, canClear, canConfigureBudget: false };
 }
 
 function createWorkStateBehavior(
@@ -669,23 +650,15 @@ function createWorkStateBehavior(
         metadataCandidates: editableGoals.modeCandidates,
     };
 
-    const supportsEditableGoals = (ctx: { agentId: string; session: { active?: boolean; metadata?: unknown } }): boolean => {
+    const supportsEditableGoals = (ctx: { agentId: string; session: EditableGoalsSession }): boolean => {
         if (ctx.agentId !== editableGoals.providerId) return false;
         const session = ctx.session;
         const metadata = readOwnerMetadataFromSessionLike(session);
         if (editableGoals.capabilityDriven) {
-            // Two provider-derived signals (no provider-name branching beyond the descriptor's
-            // own providerId), mirroring remote-dev's capability-driven Claude gate:
-            //  1. Session-level `/goal` capability (e.g. `metadata.slashCommands` includes `goal`)
-            //     — present BEFORE any goal item, so the chip is the first-goal entry point.
-            //     Requires an ACTIVE session because `/goal` is injected live; inactive sessions
-            //     seed through the goal-item path below. (QA-CHIP-1: resolves the chicken-and-egg.)
-            if (session.active === true && hasSessionGoalCapability(metadata, editableGoals)) {
-                return true;
-            }
-            //  2. A goal item already advertising `goalCapabilities.canEdit` — covers a resumable
-            //     (detached) session restored from metadata that carries a prior goal, even while
-            //     `slashCommands` is not re-published.
+            // Active sessions trust the live session RPC registry, not a semantic provider signal
+            // such as `/goal` discovery or a persisted goal item. Detached sessions retain the
+            // persisted item capability so resume-oriented surfaces keep their semantic context.
+            if (session.active === true) return readLiveGoalActionCapabilityProfile(session) !== null;
             return hasEditableGoalCapability(metadata, editableGoals);
         }
         const mode = resolveSessionExtraModeFromCandidates(
@@ -710,6 +683,9 @@ function createWorkStateBehavior(
         ...(editableGoals.capabilityDriven
             ? {
                 resolveGoalActionCapabilityProfile: ({ agentId, session }) => {
+                    if (agentId !== editableGoals.providerId) return null;
+                    const liveProfile = readLiveGoalActionCapabilityProfile(session);
+                    if (session.active === true) return liveProfile;
                     if (!supportsEditableGoals({ agentId, session })) return null;
                     return { canEdit: true, canStop: false, canClear: true, canConfigureBudget: false };
                 },

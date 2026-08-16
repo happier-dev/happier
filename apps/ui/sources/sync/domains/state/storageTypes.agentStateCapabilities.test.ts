@@ -68,6 +68,22 @@ describe('AgentStateSchema capabilities', () => {
         expect(legacy.capabilities?.terminalComposerDraftPresent ?? null).toBeNull();
     });
 
+    it('preserves session goal control reachability and fails closed for older runners', () => {
+        const parsed = AgentStateSchema.parse({
+            capabilities: {
+                sessionGoalSetSupported: true,
+                sessionGoalClearSupported: false,
+            },
+        });
+
+        expect(parsed.capabilities?.sessionGoalSetSupported).toBe(true);
+        expect(parsed.capabilities?.sessionGoalClearSupported).toBe(false);
+
+        const legacy = AgentStateSchema.parse({ capabilities: {} });
+        expect(legacy.capabilities?.sessionGoalSetSupported).toBeUndefined();
+        expect(legacy.capabilities?.sessionGoalClearSupported).toBeUndefined();
+    });
+
     it('preserves localPermissionBridgeInLocalMode capability when present', () => {
         const parsed = AgentStateSchema.parse({
             capabilities: { localPermissionBridgeInLocalMode: true },

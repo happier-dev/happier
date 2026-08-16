@@ -975,7 +975,10 @@ describe('SessionWorkStatePopover', () => {
             await tree?.root.findByProps({ testID: 'session-goal-pause-resume-button' }).props.onPress();
         });
 
-        expect(alert).toHaveBeenCalledWith('common.error:', 'session_goal_control_remote_unavailable');
+        expect(alert).toHaveBeenCalledWith(
+            'session.workState.notReadyTitle:',
+            'session.workState.notReadyMessage:',
+        );
         expect(onRequestClose).toHaveBeenCalledTimes(1);
         expect(onRequestClose.mock.invocationCallOrder[0]).toBeLessThan(alert.mock.invocationCallOrder[0]);
 

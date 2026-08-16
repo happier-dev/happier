@@ -57,6 +57,7 @@ function resolveGoalCommand(input: string): Extract<SessionComposerSendResolutio
 export function resolveSessionComposerSend(args: {
     input: string;
     executionRunsEnabled: boolean;
+    goalControlsAvailable?: boolean;
     promptInvocationsV1?: PromptInvocationsV1 | null;
 }): SessionComposerSendResolution {
     const trimmedStart = args.input.trimStart();
@@ -82,7 +83,11 @@ export function resolveSessionComposerSend(args: {
     }
 
     const goalCommand = resolveGoalCommand(args.input);
-    if (goalCommand) return goalCommand;
+    if (goalCommand) {
+        return args.goalControlsAvailable === false
+            ? { kind: 'send', text: args.input }
+            : goalCommand;
+    }
 
     // Built-in core slash prompts (for example /happier-diagnose) are available without
     // a live provider process and cannot be shadowed by user prompt invocations.

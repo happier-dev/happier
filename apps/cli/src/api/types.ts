@@ -888,6 +888,9 @@ export type AgentState = {
     terminalComposerDraftPresent?: boolean | null | undefined
     /** Whether this runtime can clear its provider terminal composer on explicit user request. */
     terminalComposerClearSupported?: boolean | null | undefined
+    /** Session-scoped goal operations currently registered by the attached runner. */
+    sessionGoalSetSupported?: boolean | null | undefined
+    sessionGoalClearSupported?: boolean | null | undefined
     pendingInputInterruptAndRunLocalId?: string | null | undefined
     pendingInputInterruptAndRunStateAt?: number | null | undefined
     /** Whether permission-intent updates can be applied to the active provider turn. */

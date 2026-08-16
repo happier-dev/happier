@@ -129,4 +129,35 @@ describe('ApiSessionClient runtime controls', () => {
     expect(invalidateConnectedServiceAuthTransports).toHaveBeenCalledTimes(1);
   });
 
+  it('publishes the goal controls currently installed on the session RPC registry', async () => {
+    sessionSocketStub = createApiSessionSocketStub({ connected: true });
+    userSocketStub = createApiSessionSocketStub({ connected: true });
+    const client = new ApiSessionClient('tok', createPlainSessionFixture({ id: 's1' }));
+    let state = client.getAgentStateSnapshot() ?? {};
+    vi.spyOn(client, 'updateAgentState').mockImplementation(async (updater) => {
+      state = updater(state);
+    });
+
+    client.setSessionRuntimeControls({
+      setGoal: vi.fn(),
+      clearGoal: vi.fn(),
+    });
+
+    await vi.waitFor(() => {
+      expect(state.capabilities).toMatchObject({
+        sessionGoalSetSupported: true,
+        sessionGoalClearSupported: true,
+      });
+    });
+
+    client.setSessionRuntimeControls(null);
+
+    await vi.waitFor(() => {
+      expect(state.capabilities).toMatchObject({
+        sessionGoalSetSupported: false,
+        sessionGoalClearSupported: false,
+      });
+    });
+  });
+
 });
