@@ -34,6 +34,7 @@ type MarkdownViewRendererProps = Readonly<{
     onPressSourceRange?: (action: MarkdownSourceRangeAction) => void;
     renderAfterSourceRange?: (action: MarkdownSourceRangeAction) => React.ReactNode;
     highlightSourceRange?: MarkdownSourceRange | null;
+    agentTexMath: boolean;
 }>;
 
 function readStreamingSegmentCache(params: Readonly<{
@@ -134,6 +135,7 @@ export const MarkdownViewRenderer = React.memo((props: MarkdownViewRendererProps
                         onPressSourceRange={props.onPressSourceRange}
                         renderAfterSourceRange={props.renderAfterSourceRange}
                         highlightSourceRange={props.highlightSourceRange}
+                        agentTexMath={props.agentTexMath}
                     />
                 ))}
             </View>

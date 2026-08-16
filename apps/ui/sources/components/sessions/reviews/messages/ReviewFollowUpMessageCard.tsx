@@ -11,7 +11,7 @@ export function ReviewFollowUpMessageCard(props: Readonly<{ payload: ReviewFollo
     return (
         <View style={styles.container}>
             <MarkdownView markdown={props.payload.requestMarkdown} textStyle={styles.markdownText} />
-            <MarkdownView markdown={props.payload.answerMarkdown} textStyle={styles.markdownText} />
+            <MarkdownView markdown={props.payload.answerMarkdown} textStyle={styles.markdownText} agentTexMath />
             {props.payload.updatedFindings?.length ? (
                 <View style={styles.findingsBlock}>
                     {props.payload.updatedFindings.map((finding) => (

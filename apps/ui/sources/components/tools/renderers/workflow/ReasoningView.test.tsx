@@ -47,6 +47,7 @@ describe('ReasoningView', () => {
         expect(markdownViewSpy).toHaveBeenCalled();
         const lastCall = markdownViewSpy.mock.calls.at(-1)?.[0];
         expect(lastCall?.markdown).toBe('Hello **world**');
+        expect(lastCall?.agentTexMath).toBe(true);
     });
 
     it('truncates long reasoning by default and preserves full content when detailLevel=full', async () => {
