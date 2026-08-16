@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
-import { mergeUsageLimitRecoveryFieldIntoMetadata } from './persistUsageLimitRecoveryFieldDurably';
+import {
+  cancelLatestUsageLimitRecoveryInMetadataAfterExplicitStop,
+  mergeUsageLimitRecoveryFieldIntoMetadata,
+} from './persistUsageLimitRecoveryFieldDurably';
 
 const key = 'sessionUsageLimitRecoveryV1';
 
@@ -92,5 +95,31 @@ describe('mergeUsageLimitRecoveryFieldIntoMetadata', () => {
     });
 
     expect(merged).toEqual({ untouched: true });
+  });
+});
+
+describe('cancelLatestUsageLimitRecoveryInMetadataAfterExplicitStop', () => {
+  it('cancels the latest active generation instead of preserving a replacement attempt', () => {
+    const replacement = intent('new');
+
+    expect(cancelLatestUsageLimitRecoveryInMetadataAfterExplicitStop({
+      untouched: true,
+      [key]: replacement,
+    })).toEqual({
+      untouched: true,
+      [key]: {
+        ...replacement,
+        status: 'cancelled',
+        nextCheckAtMs: null,
+      },
+    });
+  });
+
+  it('leaves terminal and malformed metadata unchanged', () => {
+    const terminalMetadata = { [key]: intent('same', { status: 'cancelled', nextCheckAtMs: null }) };
+    const malformedMetadata = { [key]: { v: 'invalid' } };
+
+    expect(cancelLatestUsageLimitRecoveryInMetadataAfterExplicitStop(terminalMetadata)).toEqual(terminalMetadata);
+    expect(cancelLatestUsageLimitRecoveryInMetadataAfterExplicitStop(malformedMetadata)).toEqual(malformedMetadata);
   });
 });

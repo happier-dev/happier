@@ -34,6 +34,28 @@ function readAttemptIdentity(value: unknown): Readonly<{
     : null;
 }
 
+export function cancelLatestUsageLimitRecoveryInMetadataAfterExplicitStop(
+  metadata: Record<string, unknown>,
+): Record<string, unknown> {
+  const parsed = SessionUsageLimitRecoveryV1Schema.safeParse(
+    metadata[SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY],
+  );
+  if (!parsed.success) return metadata;
+  if (
+    parsed.data.status !== 'waiting'
+    && parsed.data.status !== 'armed'
+    && parsed.data.status !== 'checking'
+  ) return metadata;
+  return {
+    ...metadata,
+    [SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY]: {
+      ...parsed.data,
+      status: 'cancelled',
+      nextCheckAtMs: null,
+    },
+  };
+}
+
 export function mergeUsageLimitRecoveryFieldIntoMetadata(input: Readonly<{
   latestMetadata: Record<string, unknown>;
   baseMetadata: Record<string, unknown>;
@@ -103,6 +125,22 @@ export async function persistUsageLimitRecoveryFieldDurably(params: Readonly<{
       candidateMetadata: params.nextMetadata,
       ...(params.mode ? { mode: params.mode } : {}),
     }),
+  });
+  return persisted.metadata;
+}
+
+export async function persistExplicitSessionStopUsageLimitRecoveryCancellation(params: Readonly<{
+  token: string;
+  credentials: Credentials;
+  sessionId: string;
+  rawSession: RawSessionRecord;
+}>): Promise<Record<string, unknown>> {
+  const persisted = await updateSessionMetadataWithRetry({
+    token: params.token,
+    credentials: params.credentials,
+    sessionId: params.sessionId,
+    rawSession: params.rawSession,
+    updater: cancelLatestUsageLimitRecoveryInMetadataAfterExplicitStop,
   });
   return persisted.metadata;
 }

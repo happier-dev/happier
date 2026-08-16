@@ -188,6 +188,7 @@ export class UsageLimitRecoveryScheduler {
       markCancelled: (intent) => ({
         ...intent,
         status: 'cancelled',
+        nextCheckAtMs: null,
       }),
       markExhausted: (intent, input) => ({
         ...intent,

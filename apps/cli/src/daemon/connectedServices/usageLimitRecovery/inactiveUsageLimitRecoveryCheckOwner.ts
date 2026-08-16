@@ -2,6 +2,7 @@ import type { SessionUsageLimitRecoveryV1 } from '@happier-dev/protocol';
 import { hasSameUsageLimitRecoveryIdentity } from '@/session/usageLimitRecoveryControls/mergeUsageLimitRecoveryIntent';
 
 import {
+  type UsageLimitRecoveryIntent,
   type UsageLimitRecoveryCancelExactResult,
   UsageLimitRecoveryScheduler,
 } from './UsageLimitRecoveryScheduler';
@@ -89,6 +90,14 @@ export function createInactiveUsageLimitRecoveryCheckOwner() {
       if (runner && hasSameUsageLimitRecoveryIdentity(runner, input)) {
         runnersBySessionId.delete(input.sessionId);
       }
+      return result;
+    },
+    cancelSession: async (input: Readonly<{
+      sessionId: string;
+      scheduler: UsageLimitRecoveryScheduler;
+    }>): Promise<UsageLimitRecoveryIntent | null> => {
+      const result = await input.scheduler.cancel({ sessionId: input.sessionId });
+      runnersBySessionId.delete(input.sessionId);
       return result;
     },
   };

@@ -29,6 +29,24 @@ function recovery(
   };
 }
 
+it('cancels the current session recovery and removes its runnable check after explicit Stop', async () => {
+  const scheduler = new UsageLimitRecoveryScheduler({ nowMs: () => 1_000 });
+  const owner = createInactiveUsageLimitRecoveryCheckOwner();
+  const current = recovery('usage-limit:stop', 1_000);
+  await scheduler.upsert({ sessionId: 'session-stop', intent: current });
+  owner.observe({
+    sessionId: 'session-stop',
+    recovery: current,
+    runCheckNow: async () => ({ ok: true }),
+  });
+
+  await expect(owner.cancelSession({
+    sessionId: 'session-stop',
+    scheduler,
+  })).resolves.toMatchObject({ status: 'cancelled', nextCheckAtMs: null });
+  expect(owner.hasRunner('session-stop')).toBe(false);
+});
+
 it('keeps attempt B runner ownership when its real file-store write races exact cancellation of A', async () => {
   const root = await createTempDir('inactive-usage-limit-owner-race-');
   try {

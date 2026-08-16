@@ -277,6 +277,12 @@ describe('Action Spec Registry', () => {
     expect(consumeResetCredit.surfaces.session_agent).toBe(true);
     expect(enable.inputSchema).toBe(SessionUsageLimitWaitResumeEnableRequestV1Schema);
     expect(cancel.inputSchema).toBe(SessionUsageLimitWaitResumeCancelRequestV1Schema);
+    expect(cancel.inputHints?.fields).toEqual(expect.arrayContaining([
+      expect.objectContaining({ path: 'issueFingerprint' }),
+      expect.objectContaining({ path: 'armedAtMs' }),
+      expect.objectContaining({ path: 'runtimeAuthRecoveryAttemptId' }),
+    ]));
+    expect(cancel.examples?.mcp?.argsExample).toContain('armedAtMs');
     expect(checkNow.inputSchema).toBe(SessionUsageLimitCheckNowRequestV1Schema);
     expect(consumeResetCredit.inputSchema).toBe(SessionUsageLimitConsumeResetCreditRequestV1Schema);
     expect(checkNow.inputSchema.safeParse({

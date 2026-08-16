@@ -2595,7 +2595,9 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
     placements: [],
     bindings: { mcpToolName: 'session_usage_limit_wait_resume_cancel' },
     examples: {
-      mcp: { argsExample: '{"sessionId":"{{sessionId}}"}' },
+      mcp: {
+        argsExample: '{"sessionId":"{{sessionId}}","issueFingerprint":"{{issueFingerprint}}","armedAtMs":1700000000000,"runtimeAuthRecoveryAttemptId":"{{runtimeAuthRecoveryAttemptId}}"}',
+      },
     },
     surfaces: {
       ui_button: false,
@@ -2611,6 +2613,8 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       fields: [
         { path: 'sessionId', title: 'Session id', widget: 'text', required: true },
         { path: 'issueFingerprint', title: 'Issue fingerprint', widget: 'text' },
+        { path: 'armedAtMs', title: 'Recovery armed timestamp', widget: 'text' },
+        { path: 'runtimeAuthRecoveryAttemptId', title: 'Runtime recovery attempt id', widget: 'text' },
       ],
     },
     inputSchema: SessionUsageLimitWaitResumeCancelRequestV1Schema,

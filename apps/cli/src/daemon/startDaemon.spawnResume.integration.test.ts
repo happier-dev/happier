@@ -26,6 +26,8 @@ import type { ConnectedServicesMaterializationDiagnostic } from './connectedServ
 import { ConnectedServiceAuthGroupQuotaProbeIncompleteError } from './connectedServices/accountGroups/switching/ConnectedServiceAuthGroupSwitchCoordinator';
 import { isConnectedServiceUxDiagnosticSpawnErrorDetail } from '@happier-dev/protocol';
 import { UsageLimitRecoveryScheduler } from './connectedServices/usageLimitRecovery/UsageLimitRecoveryScheduler';
+import { RuntimeAuthRecoveryScheduler } from './connectedServices/runtimeAuth/RuntimeAuthRecoveryScheduler';
+import { TemporaryThrottleRecoveryScheduler } from './connectedServices/temporaryThrottle/TemporaryThrottleRecoveryScheduler';
 import type { StopSessionResult } from './sessions/stopSessionContract';
 import type { TerminalHostAdapter } from '@/integrations/terminalHost/_types';
 import type { TerminalAttachmentInfo } from '@/terminal/attachment/terminalAttachmentInfo';
@@ -3944,6 +3946,88 @@ describe('startDaemon spawn resume wiring (integration)', () => {
         orphanedDeadDaemonSessions: [],
         connectedServiceRestartIntents: [],
       });
+      if (refreshEnvOriginal === undefined) delete process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED;
+      else process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED = refreshEnvOriginal;
+      exitSpy.mockRestore();
+    }
+  });
+
+  it('makes explicit Stop supersede every automatic recovery owner without letting cleanup failure block retirement', async () => {
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
+    const refreshEnvOriginal = process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED;
+    process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED = 'false';
+    const usageLimitCancelSpy = vi.spyOn(UsageLimitRecoveryScheduler.prototype, 'cancel');
+    const runtimeAuthCancelSpy = vi.spyOn(RuntimeAuthRecoveryScheduler.prototype, 'cancel');
+    const temporaryThrottleCancelSpy = vi.spyOn(TemporaryThrottleRecoveryScheduler.prototype, 'stopRetrying');
+    const sessionId = 'sess_explicit_stop_recovery';
+    const recovery = {
+      v: 1 as const,
+      issueFingerprint: 'usage-limit:claude:turn-1:1000:2000',
+      status: 'waiting' as const,
+      armedAtMs: 1_000,
+      resetAtMs: 2_000,
+      nextCheckAtMs: 2_000,
+      attemptCount: 0,
+      maxAttempts: 3,
+      lastProbeError: null,
+      resumePromptMode: 'standard' as const,
+      selectedAuth: { kind: 'native' as const },
+    };
+    let run: Promise<void> | null = null;
+
+    try {
+      vi.mocked(fetchSessionByIdCompat).mockResolvedValue(createSessionRecordFixture({
+        id: sessionId,
+        active: true,
+        encryptionMode: 'plain',
+        metadata: JSON.stringify({ sessionUsageLimitRecoveryV1: recovery }),
+        dataEncryptionKey: null,
+      }));
+      updateSessionMetadataWithRetryMock.mockImplementationOnce(async (params) => ({
+        version: (params.rawSession.metadataVersion ?? 0) + 1,
+        metadata: params.updater({ sessionUsageLimitRecoveryV1: recovery }),
+      }));
+
+      const { startDaemon } = await import('./startDaemon');
+      run = startDaemon();
+      let stopSession = harness.getStopSession();
+      for (let attempt = 0; attempt < 20 && !stopSession; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        stopSession = harness.getStopSession();
+      }
+      if (!stopSession) throw new Error('Expected stopSession to be registered');
+
+      await expect(stopSession(sessionId)).resolves.toEqual({ status: 'stopped' });
+
+      expect(usageLimitCancelSpy).toHaveBeenCalledWith({ sessionId });
+      expect(runtimeAuthCancelSpy).toHaveBeenCalledWith({ sessionId });
+      expect(temporaryThrottleCancelSpy).toHaveBeenCalledWith({ sessionId });
+      const metadataUpdate = updateSessionMetadataWithRetryMock.mock.calls.find(
+        ([call]) => (call as { sessionId?: string }).sessionId === sessionId,
+      )?.[0];
+      expect(metadataUpdate?.updater({ sessionUsageLimitRecoveryV1: recovery })).toMatchObject({
+        sessionUsageLimitRecoveryV1: {
+          issueFingerprint: recovery.issueFingerprint,
+          armedAtMs: recovery.armedAtMs,
+          status: 'cancelled',
+          nextCheckAtMs: null,
+        },
+      });
+
+      usageLimitCancelSpy.mockRejectedValueOnce(new Error('durable recovery store unavailable'));
+      await expect(stopSession(sessionId)).resolves.toEqual({ status: 'stopped' });
+
+      harness.requestShutdown('happier-cli');
+      await run;
+      run = null;
+    } finally {
+      if (run) {
+        harness.requestShutdown('happier-cli');
+        await run;
+      }
+      usageLimitCancelSpy.mockRestore();
+      runtimeAuthCancelSpy.mockRestore();
+      temporaryThrottleCancelSpy.mockRestore();
       if (refreshEnvOriginal === undefined) delete process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED;
       else process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED = refreshEnvOriginal;
       exitSpy.mockRestore();

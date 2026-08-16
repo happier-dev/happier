@@ -422,6 +422,7 @@ import { getActiveAccountSettingsSnapshot } from '@/settings/accountSettings/act
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { fetchSessionByIdCompat, fetchSessionsPage, type RawSessionRecord } from '@/session/transport/http/sessionsHttp';
 import { updateSessionMetadataWithRetry } from '@/session/metadata/updateSessionMetadataWithRetry';
+import { persistExplicitSessionStopUsageLimitRecoveryCancellation } from '@/session/usageLimitRecoveryControls/persistUsageLimitRecoveryFieldDurably';
 import { UsageLimitRecoveryScheduler } from './connectedServices/usageLimitRecovery/UsageLimitRecoveryScheduler';
 import { createInactiveUsageLimitRecoveryCheckOwner } from './connectedServices/usageLimitRecovery/inactiveUsageLimitRecoveryCheckOwner';
 import { resolveInactiveUsageLimitRecoverySchedulerResult } from './connectedServices/usageLimitRecovery/resolveInactiveUsageLimitRecoverySchedulerResult';
@@ -834,6 +835,23 @@ async function resumeInactiveSessionWhenUsageLimitReady(params: Readonly<{
   if (!spawnOptions) return false;
   const result = await params.spawnSession(spawnOptions);
   return result.type === 'success';
+}
+
+async function persistExplicitSessionStopRecoveryCancellation(params: Readonly<{
+  credentials: Credentials;
+  sessionId: string;
+}>): Promise<void> {
+  const rawSession = await fetchSessionByIdCompat({
+    token: params.credentials.token,
+    sessionId: params.sessionId,
+  });
+  if (!rawSession) return;
+  await persistExplicitSessionStopUsageLimitRecoveryCancellation({
+    token: params.credentials.token,
+    credentials: params.credentials,
+    sessionId: params.sessionId,
+    rawSession,
+  });
 }
 
 async function resolvePersistedConnectedServiceSwitchSessionMetadata(params: Readonly<{
@@ -5409,6 +5427,25 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
           if (existingStop) return await existingStop;
 
           const operation = Promise.resolve().then(async (): Promise<StopSessionResult> => {
+            sessionRunnerRespawnManager.markStopRequested(normalizedSessionId, { reason: 'daemon_stop_session', requestedAtMs: Date.now() });
+            const automaticRecoveryCancellations = await Promise.allSettled([
+              inactiveUsageLimitRecoveryCheckOwner.cancelSession({
+                sessionId: normalizedSessionId,
+                scheduler: inactiveUsageLimitRecoveryScheduler,
+              }),
+              runtimeAuthRecoveryScheduler?.cancel({ sessionId: normalizedSessionId }) ?? Promise.resolve(null),
+              temporaryThrottleRecoveryScheduler.stopRetrying({ sessionId: normalizedSessionId }),
+            ]);
+            const automaticRecoveryOwners = ['inactive_usage_limit', 'runtime_auth', 'temporary_throttle'] as const;
+            automaticRecoveryCancellations.forEach((result, index) => {
+              if (result.status !== 'rejected') return;
+              logger.warn('[DAEMON RUN] Automatic recovery cancellation failed after explicit Stop', {
+                sessionId: normalizedSessionId,
+                owner: automaticRecoveryOwners[index],
+                error: serializeAxiosErrorForLog(result.reason),
+              });
+            });
+            temporaryThrottleResumeSnapshotsBySessionId.delete(normalizedSessionId);
             await clearConnectedServiceRecoveryAfterSupersession({
               sessionId: normalizedSessionId,
               event: {
@@ -5416,7 +5453,15 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
                 reason: 'stop',
               },
             });
-            sessionRunnerRespawnManager.markStopRequested(normalizedSessionId, { reason: 'daemon_stop_session', requestedAtMs: Date.now() });
+            await persistExplicitSessionStopRecoveryCancellation({
+              credentials,
+              sessionId: normalizedSessionId,
+            }).catch((error) => {
+              logger.warn('[DAEMON RUN] Failed to publish usage-limit recovery cancellation after explicit Stop', {
+                sessionId: normalizedSessionId,
+                error: serializeAxiosErrorForLog(error),
+              });
+            });
             physicallyRetiredTerminalAttachmentIdBySessionId.delete(normalizedSessionId);
             const trackedStopResult = await stopSessionCore(normalizedSessionId);
             const physicallyRetiredAttachmentId = physicallyRetiredTerminalAttachmentIdBySessionId.get(normalizedSessionId);
