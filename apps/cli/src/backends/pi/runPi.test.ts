@@ -54,13 +54,14 @@ describe('runPi', () => {
     runStandardAcpProviderMock.mockResolvedValue(undefined);
   });
 
-  it('disables MCP server resolution for Pi sessions', async () => {
+  it('disables MCP server resolution and declares spawn-time system prompt delivery for Pi sessions', async () => {
     await runPi({ credentials });
 
     expect(runStandardAcpProviderMock).toHaveBeenCalledTimes(1);
     expect(runStandardAcpProviderMock.mock.calls[0]?.[1]).toMatchObject({
       flavor: 'pi',
       supportsMcpServers: false,
+      deliversSystemPromptAtSpawn: true,
     });
   });
 

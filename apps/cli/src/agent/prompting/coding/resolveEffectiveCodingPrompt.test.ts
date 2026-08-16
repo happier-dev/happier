@@ -241,6 +241,28 @@ describe('resolveEffectiveCodingPromptText', () => {
     expect(out).not.toContain('again if the task changes significantly');
   });
 
+  it('renders only tool-delivery blocks when renderBlockScopes restricts the rendered scopes', async () => {
+    const credentials = createCredentials();
+
+    const out = await resolveEffectiveCodingPromptText({
+      credentials,
+      settings: {},
+      profileId: null,
+      baseOverride: 'BASE',
+      executionRunsFeatureEnabled: false,
+      toolDelivery: 'shell_bridge',
+      toolDeliverySessionId: 's1',
+      toolDeliveryDirectory: '/tmp/worktree',
+      renderBlockScopes: ['tool_delivery'],
+      fetchPromptArtifactRecord: async () => null,
+    });
+
+    expect(out).toContain('Happier tools are available through the CLI bridge');
+    expect(out).toContain("'--session-id' 's1'");
+    expect(out).not.toContain('BASE');
+    expect(out).not.toContain('# Attachments');
+  });
+
   it('applies prompt personalization settings to the effective coding prompt', async () => {
     const credentials = createCredentials();
 

@@ -22,6 +22,7 @@ export async function runPi(opts: StandardAcpProviderRunOptions & {
     agentMessageType: 'pi',
     supportsMcpServers: false,
     resolveToolsDeliveryAvailability: resolvePiToolsDeliveryAvailability,
+    deliversSystemPromptAtSpawn: true,
     machineMetadata: initialMachineMetadata,
     terminalDisplay: PiTerminalDisplay,
     resolvePermissionModeQueueKey: (permissionMode) => buildPiToolsForPermissionMode(permissionMode)?.join(',') ?? 'native',

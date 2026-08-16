@@ -155,6 +155,14 @@ export type StandardAcpProviderConfig = {
   onDispose?: (params: { session: ApiSessionClient; runtime: RuntimeForLoop }) => void | Promise<void>;
   startRuntimeBeforeFirstPrompt?: boolean;
   failClosedOnResumeFailure?: boolean;
+  /**
+   * True when the backend applies the effective coding system prompt itself at
+   * process spawn (e.g. pi's --append-system-prompt flag). The fresh-session
+   * first-message prepend then carries only tool-delivery blocks plus any
+   * explicit per-message base override, instead of duplicating the
+   * spawn-delivered system prompt.
+   */
+  deliversSystemPromptAtSpawn?: boolean;
   onTerminalDisplayControllerReady?: (controller: TerminalDisplayController) => void;
   shouldRenderTerminalDisplay?: (params: { opts: StandardAcpProviderRunOptions; session: ApiSessionClient; metadata: Metadata }) => boolean;
   resolveKeepAliveMode?: () => KeepAliveMode;
@@ -657,12 +665,11 @@ export async function runStandardAcpProvider(
       strictInitialResume: initialResumeId.length > 0,
       failClosedOnResumeFailure: config.failClosedOnResumeFailure === true,
       startRuntimeBeforeFirstPrompt: config.startRuntimeBeforeFirstPrompt === true,
-      resolveFreshSessionSystemPrompt: async ({ baseOverride }) =>
-        await resolveEffectiveCodingPromptText({
+      resolveFreshSessionSystemPrompt: async ({ baseOverride }) => {
+        const commonArgs = {
           credentials: opts.credentials,
           settings: opts.accountSettingsContext?.settings ?? null,
           profileId: session.getMetadataSnapshot()?.profileId ?? null,
-          baseOverride,
           executionRunsFeatureEnabled: resolveCliFeatureDecision({
             featureId: 'execution.runs',
             env: process.env,
@@ -674,7 +681,26 @@ export async function runStandardAcpProvider(
           memoryMachineId: machineId,
           memoryRecallGuidanceEnabled,
           cache: promptArtifactBodyCache,
-        }),
+        };
+        if (config.deliversSystemPromptAtSpawn !== true) {
+          return await resolveEffectiveCodingPromptText({ ...commonArgs, baseOverride });
+        }
+        // The backend applies the session system prompt at process spawn (e.g.
+        // pi's --append-system-prompt flag); the first-message prepend must not
+        // duplicate it. Carry only the tool-delivery bridge blocks, plus an
+        // explicit per-message base override, which cannot ride the spawn flag.
+        const explicitBaseOverride = typeof baseOverride === 'string' && baseOverride.trim()
+          ? baseOverride.trim()
+          : '';
+        const toolDeliveryText = await resolveEffectiveCodingPromptText({
+          ...commonArgs,
+          renderBlockScopes: ['tool_delivery'],
+        });
+        if (explicitBaseOverride && toolDeliveryText) {
+          return `${explicitBaseOverride}\n\n${toolDeliveryText}`;
+        }
+        return explicitBaseOverride || toolDeliveryText;
+      },
       onAfterStart: config.onAfterStart ? () => config.onAfterStart?.({ session, runtime }) : undefined,
       onAfterReset: config.onAfterReset ? () => config.onAfterReset?.({ session, runtime }) : undefined,
       formatPromptErrorMessage: config.formatPromptErrorMessage,
