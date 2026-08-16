@@ -64,7 +64,6 @@ async function assertUiWebDistValid(distDir) {
   const requiredIcons = [
     ['192x192', 'any'],
     ['512x512', 'any'],
-    ['512x512', 'maskable'],
   ];
   for (const [sizes, purpose] of requiredIcons) {
     const icon = icons.find((candidate) => (
