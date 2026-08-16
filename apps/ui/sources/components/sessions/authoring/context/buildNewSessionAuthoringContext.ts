@@ -4,10 +4,7 @@ import {
     resolveEffectiveAutomationDraft,
     shouldShowAutomationActionChips,
 } from '@/components/sessions/new/modules/automationFeatureGate';
-import {
-    resolveMachineSpawnReadiness,
-    type MachineSpawnReadiness,
-} from '@/sync/domains/machines/identity/resolveMachineSpawnReadiness';
+import type { MachineSpawnReadiness } from '@/sync/domains/machines/identity/resolveMachineSpawnReadiness';
 import type { NewSessionAutomationDraft } from '@/sync/domains/automations/automationDraft';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 
@@ -70,11 +67,7 @@ export function buildNewSessionAuthoringContext(params: Readonly<{
             selectedMachine: params.selectedMachine,
             selectedPath: params.selectedPath,
             allowOfflineMachine: effectiveAutomationDraft.enabled,
-            spawnReadiness: params.selectedMachineSpawnReadiness
-                ?? resolveMachineSpawnReadiness({
-                    machine: params.selectedMachine,
-                    selectedMachineId: params.selectedMachineId,
-                }),
+            spawnReadiness: params.selectedMachineSpawnReadiness,
         }),
         submissionMode,
         submitAccessibilityLabelKey: resolveSubmitAccessibilityLabelKey(submissionMode),

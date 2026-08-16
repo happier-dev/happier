@@ -1,6 +1,5 @@
 import type { Machine } from '@/sync/domains/state/storageTypes';
-import { resolveMachineSpawnReadiness, type MachineSpawnReadiness } from '@/sync/domains/machines/identity/resolveMachineSpawnReadiness';
-import { isMachineOnline } from '@/utils/sessions/machineUtils';
+import { canAttemptMachineSpawn, type MachineSpawnReadiness } from '@/sync/domains/machines/identity/resolveMachineSpawnReadiness';
 
 export function canCreateNewSession(params: Readonly<{
     selectedMachineId: string | null;
@@ -13,13 +12,9 @@ export function canCreateNewSession(params: Readonly<{
     if (!params.selectedPath.trim()) return false;
     if (!params.selectedMachine) return false;
     if (params.allowOfflineMachine === true) return true;
-    const readiness = params.spawnReadiness ?? resolveMachineSpawnReadiness({
+    return canAttemptMachineSpawn({
         selectedMachineId: params.selectedMachineId,
         machine: params.selectedMachine,
+        spawnReadiness: params.spawnReadiness,
     });
-    if (readiness.status === 'ready') return true;
-    if (readiness.status === 'unknown' || readiness.status === 'probing') {
-        return isMachineOnline(params.selectedMachine);
-    }
-    return false;
 }

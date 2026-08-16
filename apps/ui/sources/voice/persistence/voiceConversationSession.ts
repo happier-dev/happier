@@ -23,7 +23,7 @@ import { resolvePreferredBackendTargetFromProjection } from '@/agents/backendCat
 import { loadDaemonMergedProjectionInputs } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
 import { resolveBundledAgentIdFromContributionIdentity } from '@/agents/catalog/catalog';
 import { isAgentId } from '@/agents/registry/registryCore';
-import { resolveMachineSpawnReadiness } from '@/sync/domains/machines/identity/resolveMachineSpawnReadiness';
+import { canAttemptMachineSpawn } from '@/sync/domains/machines/identity/resolveMachineSpawnReadiness';
 import { resolveMachineAbsolutePath } from '@/sync/domains/fileSystem/resolveMachineAbsolutePath';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { storage } from '@/sync/domains/state/storage';
@@ -423,7 +423,7 @@ function resolveTargetMachineForSpawn(state: any, machineId: string): any {
 function assertTargetMachineStructurallyReadyForSpawn(machineId: string): void {
     const state = storage.getState();
     const machine = resolveTargetMachineForSpawn(state, machineId);
-    if (resolveMachineSpawnReadiness({ selectedMachineId: machineId, machine }).status === 'ready') return;
+    if (canAttemptMachineSpawn({ selectedMachineId: machineId, machine })) return;
     throw Object.assign(
         new Error('Target machine daemon is offline. Start or reconnect the daemon before starting local voice.'),
         { code: 'VOICE_AGENT_TARGET_MACHINE_OFFLINE' },

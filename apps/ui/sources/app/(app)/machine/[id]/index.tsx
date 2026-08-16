@@ -83,7 +83,7 @@ import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { WINDOWS_REMOTE_SESSION_LAUNCH_MODE_OPTIONS } from '@/sync/domains/session/spawn/windowsRemoteSessionLaunchModeOptions';
 import { readDisplayMachineIdForSession, readDisplayPathForSession } from '@/sync/ops/sessionMachineTarget';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
-import { resolveMachineSpawnReadiness } from '@/sync/domains/machines/identity/resolveMachineSpawnReadiness';
+import { canAttemptMachineSpawn } from '@/sync/domains/machines/identity/resolveMachineSpawnReadiness';
 import {
     MachineReplacementPickerModal,
     type MachineReplacementPickerCandidate,
@@ -228,11 +228,10 @@ export default function MachineDetailScreen() {
     const [isHydratingMachine, setIsHydratingMachine] = useState(() => Boolean(machineId) && !machine);
     const machineHydrationRequestedRef = useRef(false);
     const isOnline = !!machine && isMachineOnline(machine);
-    const machineSpawnReadiness = useMemo(
-        () => resolveMachineSpawnReadiness({ machine, selectedMachineId: machineId }),
+    const machineCanSpawn = useMemo(
+        () => canAttemptMachineSpawn({ machine, selectedMachineId: machineId }),
         [machine, machineId],
     );
-    const machineCanSpawn = machineSpawnReadiness.status === 'ready';
     const metadata = machine?.metadata;
     const isWindowsMachine = metadata?.platform === 'win32';
     const machineWindowsRemoteSessionLaunchMode = readMachineWindowsRemoteSessionLaunchMode(metadata);

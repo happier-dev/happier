@@ -75,3 +75,23 @@ export function resolveMachineSpawnReadiness(params: Readonly<{
 
     return { status: 'ready', machineId: selectedMachineId };
 }
+
+export function canAttemptMachineSpawn(params: Readonly<{
+    selectedMachineId?: string | null;
+    machine?: Parameters<typeof resolveMachineSpawnReadiness>[0]['machine'];
+    spawnReadiness?: MachineSpawnReadiness | null;
+    nowMs?: number;
+}>): boolean {
+    const readiness = params.spawnReadiness ?? resolveMachineSpawnReadiness({
+        selectedMachineId: params.selectedMachineId,
+        machine: params.machine,
+        requireExactSpawnReadiness: true,
+        nowMs: params.nowMs,
+    });
+
+    if (readiness.status === 'ready') return true;
+    if (readiness.status === 'unknown' || readiness.status === 'probing') {
+        return Boolean(params.machine && isMachineOnline(params.machine, params.nowMs));
+    }
+    return false;
+}
