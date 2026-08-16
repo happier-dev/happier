@@ -59,7 +59,7 @@ function isCommandOnly(command: string): boolean {
   return true;
 }
 
-function isWindowsShellShimPath(pathLike: string): boolean {
+export function isWindowsShellShimPath(pathLike: string): boolean {
   return /\.(cmd|bat)$/i.test(String(pathLike ?? '').trim());
 }
 

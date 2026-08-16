@@ -14,12 +14,15 @@ import { resolveAgentCliManagedCommandPath } from './agentCliResolution';
 const envKeys = [
   'PATH',
   'HAPPIER_HOME_DIR',
+  'HAPPIER_CLAUDE_PATH',
   'HAPPIER_GEMINI_PATH',
   'HAPPIER_OHMYPI_PATH',
   'HAPPIER_JS_RUNTIME_PATH',
   'HAPPIER_MANAGED_NODE_BIN',
   'HAPPIER_NODE_PATH',
 ] as const;
+
+const originalPlatformDescriptor = Object.getOwnPropertyDescriptor(process, 'platform');
 
 const tempDirs = new Set<string>();
 let envScope = createEnvKeyScope(envKeys);
@@ -41,6 +44,9 @@ async function writeManagedExecutable(filePath: string, contents: string): Promi
 }
 
 afterEach(async () => {
+  if (originalPlatformDescriptor) {
+    Object.defineProperty(process, 'platform', originalPlatformDescriptor);
+  }
   envScope.restore();
   envScope = createEnvKeyScope(envKeys);
 
@@ -51,6 +57,29 @@ afterEach(async () => {
 });
 
 describe('requireAgentCliLaunchSpec', () => {
+  it('routes Windows command shims through the managed Agent CLI runner', async () => {
+    if (!originalPlatformDescriptor) {
+      throw new Error('Expected process.platform to be configurable for this test');
+    }
+    Object.defineProperty(process, 'platform', { ...originalPlatformDescriptor, value: 'win32' });
+
+    const root = await createTempDir('happier-agent-launch-windows-shim-', tmpdir());
+    tempDirs.add(root);
+    const shimPath = await createExecutable(root, 'claude.cmd', '@echo off\r\n');
+
+    process.env.HAPPIER_CLAUDE_PATH = shimPath;
+    process.env.HAPPIER_JS_RUNTIME_PATH = process.execPath;
+
+    const launch = requireAgentCliLaunchSpec('claude');
+
+    expect(launch).toMatchObject({
+      source: 'override',
+      resolvedPath: shimPath,
+      command: process.execPath,
+      args: [expect.stringMatching(/agent_cli_windows_shim_runner\.cjs$/u), shimPath],
+    });
+  });
+
   it('wraps system node-shebang agent scripts with the configured JS runtime', async () => {
     const root = await createTempDir('happier-agent-launch-', tmpdir());
     tempDirs.add(root);

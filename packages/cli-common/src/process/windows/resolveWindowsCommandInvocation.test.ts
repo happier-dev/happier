@@ -4,6 +4,8 @@ import { join } from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
+import { isWindowsShellShimPath } from './resolveWindowsCommandInvocation.js';
+
 const originalPlatformDescriptor = Object.getOwnPropertyDescriptor(process, 'platform');
 
 describe('resolveWindowsCommandInvocation', () => {
@@ -17,6 +19,12 @@ describe('resolveWindowsCommandInvocation', () => {
       rmSync(dir, { recursive: true, force: true });
     }
     tempDirs.clear();
+  });
+
+  it('recognizes both Windows command-script extensions without classifying executables', () => {
+    expect(isWindowsShellShimPath('C:\\bin\\claude.cmd')).toBe(true);
+    expect(isWindowsShellShimPath('C:\\bin\\claude.BAT')).toBe(true);
+    expect(isWindowsShellShimPath('C:\\bin\\claude.exe')).toBe(false);
   });
 
   it('prefers PATHEXT-resolved commands over extensionless files when both exist on PATH', async () => {

@@ -112,6 +112,9 @@ function runLaunchSpec(spec) {
             shell: false,
             stdio: 'inherit',
             windowsHide: true,
+            ...(spec.windowsVerbatimArguments === true
+                ? { windowsVerbatimArguments: true }
+                : {}),
         });
         const removeSignalGuards = installTerminalSignalGuards();
         let settled = false;

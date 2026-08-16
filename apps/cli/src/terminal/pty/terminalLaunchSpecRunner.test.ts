@@ -39,7 +39,7 @@ function createRunnerScriptHarness() {
 
 describe('terminal_launch_spec_runner.cjs', () => {
   it('ignores terminal interrupt signals while the child is alive', async () => {
-    const { child, fakeProcess, module } = createRunnerScriptHarness();
+    const { child, fakeProcess, module, spawn } = createRunnerScriptHarness();
     const runLaunchSpec = module.exports.runLaunchSpec as (spec: {
       command: string;
       args: string[];
@@ -56,8 +56,36 @@ describe('terminal_launch_spec_runner.cjs', () => {
     child.emit('close', 0, null);
 
     await expect(result).resolves.toBe(0);
+    expect(spawn.mock.calls[0]?.[2]).not.toHaveProperty('windowsVerbatimArguments');
     expect(fakeProcess.listenerCount('SIGINT')).toBe(0);
     expect(fakeProcess.listenerCount('SIGQUIT')).toBe(0);
     expect(fakeProcess.listenerCount('SIGTSTP')).toBe(0);
+  });
+
+  it('preserves Windows verbatim-argument semantics for a resolved shell shim', async () => {
+    const { child, module, spawn } = createRunnerScriptHarness();
+    const runLaunchSpec = module.exports.runLaunchSpec as (spec: {
+      command: string;
+      args: string[];
+      cwd: string;
+      env: NodeJS.ProcessEnv;
+      windowsVerbatimArguments?: boolean;
+    }) => Promise<number>;
+
+    const result = runLaunchSpec({
+      command: 'C:\\Windows\\System32\\cmd.exe',
+      args: ['/d', '/s', '/c', '"C:\\Users\\alice\\claude.cmd" --continue'],
+      cwd: 'C:\\workspace',
+      env: {},
+      windowsVerbatimArguments: true,
+    });
+
+    expect(spawn).toHaveBeenCalledWith(
+      'C:\\Windows\\System32\\cmd.exe',
+      ['/d', '/s', '/c', '"C:\\Users\\alice\\claude.cmd" --continue'],
+      expect.objectContaining({ windowsVerbatimArguments: true }),
+    );
+    child.emit('close', 0, null);
+    await expect(result).resolves.toBe(0);
   });
 });

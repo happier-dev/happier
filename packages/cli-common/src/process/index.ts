@@ -3,6 +3,7 @@ export { commandExistsOnPath } from './commandExists.js';
 export { runCommandStreaming } from './runCommandStreaming.js';
 export { sanitizeDaemonSpawnEnv } from './sanitizeDaemonSpawnEnv.js';
 export {
+  isWindowsShellShimPath,
   resolveWindowsCommandInvocation,
   resolveWindowsCommandOnPath,
   resolveWindowsCommandPath,

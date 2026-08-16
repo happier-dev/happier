@@ -142,6 +142,15 @@ function isManagedJavaScriptRuntimeWrapperPath(execPath: string): boolean {
   return normalized === 'happier-js-runtime' || normalized === 'happier-js-runtime.cmd';
 }
 
+function resolveManagedJavaScriptRuntimeBinaryFromWrapper(
+  wrapperPath: string,
+): string | null {
+  const runtimeBinaryPath = process.platform === 'win32'
+    ? join(dirname(wrapperPath), '..', 'runtime', 'node.exe')
+    : join(dirname(wrapperPath), '..', 'runtime', 'bin', 'node');
+  return isRunnableExecutablePath(runtimeBinaryPath) ? runtimeBinaryPath : null;
+}
+
 function isRunnableExecutablePath(pathLike: string | null | undefined): boolean {
   const candidate = String(pathLike ?? '').trim();
   if (!candidate) return false;
@@ -185,6 +194,25 @@ export function resolveJavaScriptRuntimeCommand(params: Readonly<{
   }
   if (isDirectBunExecutablePath(currentExecPath)) return currentExecPath;
   return resolveExistingManagedJavaScriptRuntimeCommand(processEnv);
+}
+
+export function resolveDirectJavaScriptRuntimeCommand(params: Readonly<{
+  isBunRuntime: boolean;
+  processEnv?: NodeJS.ProcessEnv;
+  currentExecPath?: string | null;
+}>): string | null {
+  const runtimeCommand = resolveJavaScriptRuntimeCommand(params);
+  if (!runtimeCommand) return null;
+  if (
+    isDirectNodeExecutablePath(runtimeCommand)
+    || isDirectBunExecutablePath(runtimeCommand)
+  ) {
+    return runtimeCommand;
+  }
+  if (isManagedJavaScriptRuntimeWrapperPath(runtimeCommand)) {
+    return resolveManagedJavaScriptRuntimeBinaryFromWrapper(runtimeCommand);
+  }
+  return null;
 }
 
 async function writeManagedJavaScriptRuntimeWrapper(params: Readonly<{
