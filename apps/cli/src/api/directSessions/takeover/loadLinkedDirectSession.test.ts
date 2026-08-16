@@ -19,6 +19,62 @@ describe('loadLinkedDirectSession', () => {
     vi.clearAllMocks();
   });
 
+  it('re-links a converted session from its external history import record', async () => {
+    fetchSessionByIdMock.mockResolvedValueOnce({ id: 'sess_converted' });
+    tryDecryptSessionMetadataMock.mockReturnValueOnce({
+      path: '/home/kunde21',
+      tag: 'direct:v1:a94278a6cd532c1f472c99c66d7c6ade3ef4a38565ebded7bcfc1d76b6948841',
+      // takeover.persist deletes directSessionV1 after import and records the provenance instead.
+      externalHistoryImportV1: {
+        v: 1,
+        providerId: 'pi',
+        remoteSessionId: '01a00481-8cdc-78ff-a4aa-9b243badd9fb',
+        importedAtMs: 123,
+        source: { kind: 'piAgentDir', agentDir: '/home/kunde21/.pi/agent' },
+      },
+    });
+
+    const result = await loadLinkedDirectSession({
+      credentials: { token: 'token', encryption: { type: 'legacy', secret: new Uint8Array([1]) } },
+      sessionId: 'sess_converted',
+      machineId: 'machine_1',
+    });
+
+    expect(result).toEqual({
+      ok: true,
+      session: expect.objectContaining({
+        providerId: 'pi',
+        machineId: 'machine_1',
+        remoteSessionId: '01a00481-8cdc-78ff-a4aa-9b243badd9fb',
+        source: { kind: 'piAgentDir', agentDir: '/home/kunde21/.pi/agent' },
+      }),
+    });
+  });
+
+  it('still rejects a converted session when no machine scope can back the relink', async () => {
+    fetchSessionByIdMock.mockResolvedValueOnce({ id: 'sess_converted_no_machine' });
+    tryDecryptSessionMetadataMock.mockReturnValueOnce({
+      externalHistoryImportV1: {
+        v: 1,
+        providerId: 'pi',
+        remoteSessionId: '01a00481-8cdc-78ff-a4aa-9b243badd9fb',
+        importedAtMs: 123,
+        source: { kind: 'piAgentDir', agentDir: '/home/kunde21/.pi/agent' },
+      },
+    });
+
+    const result = await loadLinkedDirectSession({
+      credentials: { token: 'token', encryption: { type: 'legacy', secret: new Uint8Array([1]) } },
+      sessionId: 'sess_converted_no_machine',
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      errorCode: 'invalid_request',
+      error: 'session_is_not_direct',
+    });
+  });
+
   it('prefers the nested OpenCode runtime descriptor over stale legacy metadata', async () => {
     fetchSessionByIdMock.mockResolvedValueOnce({ id: 'sess_1' });
     tryDecryptSessionMetadataMock.mockReturnValueOnce({
