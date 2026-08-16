@@ -1,6 +1,7 @@
 import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
 
 import { resolveClaudeConfigDirOverride } from '../surfaces/sessions/handoff/path.js';
+import { resolveClaudeExternalSandboxEnv } from '../runtime/launchSettings.js';
 
 type ClaudeDaemonResolvedTool =
     | Readonly<{
@@ -85,12 +86,11 @@ export async function resolveClaudeDaemonSpawnPrerequisites(
 }
 
 export function augmentClaudeDaemonSpawnEnv(event: unknown): Record<string, string> {
-    const claudeConfigDir = resolveClaudeConfigDirOverride(readEnvFromEvent(event));
-    if (!claudeConfigDir) {
-        return {};
-    }
+    const env = readEnvFromEvent(event);
+    const claudeConfigDir = resolveClaudeConfigDirOverride(env);
 
     return {
-        CLAUDE_CONFIG_DIR: claudeConfigDir,
+        ...(claudeConfigDir ? { CLAUDE_CONFIG_DIR: claudeConfigDir } : {}),
+        ...resolveClaudeExternalSandboxEnv(env),
     };
 }

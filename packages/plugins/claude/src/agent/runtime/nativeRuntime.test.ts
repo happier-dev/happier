@@ -15,6 +15,7 @@ import {
   createClaudeNativeSessionOpener,
   createClaudeNativeRuntime,
   prepareClaudeQualifiedConnectedAccountLaunch,
+  resolveClaudeInstalledEffortSupport,
   type ClaudeNativeSessionOperations,
   type ClaudeNativeSessionFactory,
 } from './nativeRuntime.js';
@@ -1961,5 +1962,52 @@ describe('createClaudeNativeRuntime', () => {
       kind: 'input-custody-unknown',
       inputIds: ['input-unknown'],
     }));
+  });
+
+  it('preserves the ambient external sandbox assertion in the installed-effort probe', async () => {
+    const previousSandbox = process.env.IS_SANDBOX;
+    process.env.IS_SANDBOX = '1';
+    const runs: Array<Readonly<{ env?: Readonly<Record<string, string>> }>> = [];
+    const contextWithExec = {
+      services: {
+        exec: {
+          systemTools: {
+            resolve: async () => ({
+              executable: { kind: 'systemTool' as const, id: 'claude-cli' },
+              executablePath: '/managed/sandbox-probe/claude',
+            }),
+          },
+          run: async (input: Readonly<{ env?: Readonly<Record<string, string>> }>) => {
+            runs.push(input);
+            return {
+              termination: {
+                observed: { kind: 'exit' as const, exitCode: 0 },
+                requestedBy: { kind: 'none' as const },
+              },
+              stdout: new TextEncoder().encode('--effort <level>'),
+              stderr: new Uint8Array(),
+              stdoutTruncated: false,
+              stderrTruncated: false,
+            };
+          },
+        },
+      },
+    } as unknown as AgentSessionRuntimeContext;
+
+    try {
+      await expect(resolveClaudeInstalledEffortSupport({
+        request: {
+          kind: 'create',
+          sessionId: 'sandbox-effort-probe',
+          cwd: '/repo',
+          launchEnvironment: { values: {}, unset: [] },
+        },
+        context: contextWithExec,
+      })).resolves.toBe(true);
+      expect(runs[0]?.env).toMatchObject({ IS_SANDBOX: '1' });
+    } finally {
+      if (previousSandbox === undefined) delete process.env.IS_SANDBOX;
+      else process.env.IS_SANDBOX = previousSandbox;
+    }
   });
 });

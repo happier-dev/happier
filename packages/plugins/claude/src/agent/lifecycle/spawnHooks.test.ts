@@ -80,4 +80,24 @@ describe('augmentClaudeDaemonSpawnEnv', () => {
             CLAUDE_CONFIG_DIR: '/tmp/claude-primary',
         });
     });
+
+    it('preserves only Claude\'s exact external sandbox assertion for the session runner', () => {
+        expect(augmentClaudeDaemonSpawnEnv({
+            payload: {
+                env: {
+                    IS_SANDBOX: '1',
+                },
+            },
+        })).toEqual({
+            IS_SANDBOX: '1',
+        });
+
+        expect(augmentClaudeDaemonSpawnEnv({
+            payload: {
+                env: {
+                    IS_SANDBOX: '0',
+                },
+            },
+        })).toEqual({});
+    });
 });

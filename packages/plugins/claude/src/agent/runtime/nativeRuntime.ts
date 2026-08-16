@@ -433,12 +433,15 @@ export function createClaudeNativeSessionOpener(openers: Readonly<{
   };
 }
 
-async function resolveClaudeInstalledEffortSupport(input: Parameters<ClaudeSupportsEffortResolver>[0]) {
+export async function resolveClaudeInstalledEffortSupport(input: Parameters<ClaudeSupportsEffortResolver>[0]) {
   return await probeClaudeSupportsEffortRaw({
     exec: input.context.services.exec,
     cwd: input.request.cwd,
     timeoutMs: 5_000,
-    env: input.request.launchEnvironment?.values,
+    env: resolveClaudeNativeBaseLaunchEnvironment({
+      launchEnvironment: input.request.launchEnvironment,
+      processEnv: process.env,
+    }),
   });
 }
 

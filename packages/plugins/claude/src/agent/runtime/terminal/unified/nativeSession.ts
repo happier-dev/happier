@@ -30,7 +30,10 @@ import {
   createClaudeUnifiedTerminalTurnOperations,
   type ClaudeUnifiedTerminalContext,
 } from './turnOperations.js';
-import { resolveClaudeNativeLaunchSettings } from '../../launchSettings.js';
+import {
+  resolveClaudeNativeBaseLaunchEnvironment,
+  resolveClaudeNativeLaunchSettings,
+} from '../../launchSettings.js';
 import {
   isClaudeUltracodeSupportedModelId,
   resolveClaudeEffortForModel,
@@ -196,7 +199,10 @@ export async function openClaudeNativeUnifiedTerminalSession(
   ]);
   const launchSettings = await resolveClaudeNativeLaunchSettings({
     settings: input.context.services.settings,
-    launchEnv: isolateClaudeRuntimeAuthEnv(input.request.launchEnvironment?.values ?? {}),
+    launchEnv: isolateClaudeRuntimeAuthEnv(resolveClaudeNativeBaseLaunchEnvironment({
+      launchEnvironment: input.request.launchEnvironment,
+      processEnv: process.env,
+    })),
     includeAdvancedOptions: false,
   });
   const launchEnv = launchSettings.launchEnv;
