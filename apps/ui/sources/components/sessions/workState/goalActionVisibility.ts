@@ -55,9 +55,9 @@ function resolveFromGoalCapabilities(
  * Capability-driven visibility for goal actions (H2). The rule is back-compat safe and entirely
  * provider-name-free:
  *  - PRESENT goal-item `goalCapabilities` (e.g. Claude's `{ canEdit, canClear }`) → expose ONLY the
- *    declared controls. Pause/resume/complete and the token budget are gated behind `canStop`, which
- *    Claude does not publish, so Claude shows edit/set + clear only. The goal item always wins when
- *    it carries capabilities.
+ *    declared controls. When a provider also supplies a session-level profile, intersect the two:
+ *    goal metadata describes provider semantics while the profile describes what the attached
+ *    runtime can execute now.
  *  - NO goal-item capabilities but a provider `fallbackProfile` is supplied → use the provider's
  *    session-level profile. This is what drives the "Set goal" form BEFORE any goal item exists
  *    (e.g. a fresh Claude session, whose goal item only appears after a native `goal_status`),
@@ -70,7 +70,16 @@ export function resolveGoalActionCapabilities(
     fallbackProfile?: GoalActionCapabilities | null,
 ): GoalActionCapabilities {
     const capabilities = goal?.goalCapabilities;
-    if (capabilities) return resolveFromGoalCapabilities(capabilities);
+    if (capabilities) {
+        const itemProfile = resolveFromGoalCapabilities(capabilities);
+        if (!fallbackProfile) return itemProfile;
+        return {
+            canEdit: itemProfile.canEdit && fallbackProfile.canEdit,
+            canStop: itemProfile.canStop && fallbackProfile.canStop,
+            canClear: itemProfile.canClear && fallbackProfile.canClear,
+            canConfigureBudget: itemProfile.canConfigureBudget && fallbackProfile.canConfigureBudget,
+        };
+    }
     if (fallbackProfile) return fallbackProfile;
     return FULL_GOAL_ACTION_CAPABILITIES;
 }

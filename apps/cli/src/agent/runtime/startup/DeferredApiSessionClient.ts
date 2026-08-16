@@ -14,10 +14,14 @@ import type { PendingQueueReadOptions, PendingQueueReconcileWhenEmpty } from '@/
 import type { ProviderOwnedUserMessageEchoClassifier } from '@/api/session/providerOwnedUserMessageEcho';
 import type { SessionRuntimeActivitySnapshotPublisher } from '@/session/runtimeActivity/types';
 import type { SessionUserMessageEnqueueResult } from '@/rpc/handlers/sessionUserMessageSend';
+import type { SessionRuntimeControls } from '@/rpc/handlers/sessionControls';
+import { cloneCallableSessionRuntimeControls } from '@/api/session/sessionRuntimeControls';
 
 export type DeferredApiSessionTarget = Readonly<{
   sessionId: string;
   rpcHandlerManager: RpcHandlerManagerLike;
+  setSessionRuntimeControls?: (controls: SessionRuntimeControls | null) => void;
+  registerSessionRuntimeControls?: (controls: Partial<SessionRuntimeControls> | null) => () => void;
   beginRuntimeTermination?: () => void;
   hasRuntimeTerminationStarted?: () => boolean;
   sendSessionEvent: (event: unknown, id?: string) => void;
@@ -79,7 +83,14 @@ export class DeferredApiSessionClient {
   sessionId: string;
   private readonly limits: DeferredSessionBufferLimits;
   readonly rpcHandlerManager: RpcHandlerManagerLike;
+  readonly startupRpcHandlerManager: RpcHandlerManagerLike;
   private readonly registeredHandlers = new Map<string, RpcHandler>();
+  private readonly startupHandlers = new Map<string, RpcHandler>();
+  private baseSessionRuntimeControls: Partial<SessionRuntimeControls> = {};
+  private readonly sessionRuntimeControlRegistrations = new Set<{
+    controls: Partial<SessionRuntimeControls>;
+    targetDispose: (() => void) | null;
+  }>();
   private target: DeferredApiSessionTarget | null = null;
   private attachPromise: Promise<void> | null = null;
   private flushInFlight: Promise<void> | null = null;
@@ -110,12 +121,53 @@ export class DeferredApiSessionClient {
         }
       },
       invokeLocal: async (method: string, params: unknown): Promise<unknown> => {
+        const target = this.target;
+        if (target) return await target.rpcHandlerManager.invokeLocal(method, params);
         const handler = this.registeredHandlers.get(method);
         if (!handler) {
           return { error: RPC_ERROR_MESSAGES.METHOD_NOT_FOUND, errorCode: RPC_ERROR_CODES.METHOD_NOT_FOUND };
         }
         return await handler(params);
       },
+    };
+    this.startupRpcHandlerManager = {
+      registerHandler: <TRequest = any, TResponse = any>(
+        method: string,
+        handler: RpcHandler<TRequest, TResponse>,
+      ) => {
+        this.startupHandlers.set(method, handler as RpcHandler);
+      },
+      invokeLocal: async (method: string, params: unknown): Promise<unknown> => {
+        const handler = this.startupHandlers.get(method);
+        if (!handler) {
+          return { error: RPC_ERROR_MESSAGES.METHOD_NOT_FOUND, errorCode: RPC_ERROR_CODES.METHOD_NOT_FOUND };
+        }
+        return await handler(params);
+      },
+    };
+  }
+
+  setSessionRuntimeControls(controls: SessionRuntimeControls | null): void {
+    this.baseSessionRuntimeControls = cloneCallableSessionRuntimeControls(controls);
+    this.target?.setSessionRuntimeControls?.(this.baseSessionRuntimeControls);
+  }
+
+  registerSessionRuntimeControls(controls: Partial<SessionRuntimeControls> | null): () => void {
+    const copiedControls = cloneCallableSessionRuntimeControls(controls);
+    if (Object.keys(copiedControls).length === 0) return () => {};
+
+    const registration = {
+      controls: copiedControls,
+      targetDispose: this.target?.registerSessionRuntimeControls?.(copiedControls) ?? null,
+    };
+    this.sessionRuntimeControlRegistrations.add(registration);
+    let disposed = false;
+    return () => {
+      if (disposed) return;
+      disposed = true;
+      this.sessionRuntimeControlRegistrations.delete(registration);
+      registration.targetDispose?.();
+      registration.targetDispose = null;
     };
   }
 
@@ -520,6 +572,11 @@ export class DeferredApiSessionClient {
 
     for (const [method, handler] of this.registeredHandlers.entries()) {
       _real.rpcHandlerManager.registerHandler(method, handler);
+    }
+
+    _real.setSessionRuntimeControls?.(this.baseSessionRuntimeControls);
+    for (const registration of this.sessionRuntimeControlRegistrations) {
+      registration.targetDispose = _real.registerSessionRuntimeControls?.(registration.controls) ?? null;
     }
 
     if (this.pendingWakeDebt) {

@@ -2539,15 +2539,19 @@ function SessionViewLoaded({
         [agentId, enabledAgentIds, session],
     );
     const hasWriteAccess = hasSessionWriteAccess(session.accessLevel);
+    const providerSupportsEditableSessionGoals = React.useMemo(
+        () => supportsEditableSessionGoals({ agentId, session }),
+        [agentId, session],
+    );
     const canEditSessionGoals = React.useMemo(
         () => isSessionGoalEditingAvailable({
-            providerSupportsEditableGoals: supportsEditableSessionGoals({ agentId, session }),
+            providerSupportsEditableGoals: providerSupportsEditableSessionGoals,
             goalsFeatureEnabled: agentGoalsFeatureEnabled,
             // View-only sessions (`accessLevel === 'view'`) may DISPLAY goal/work-state but must not
             // expose enabled goal mutation controls — goal editing requires write access (G5).
             hasWriteAccess,
         }),
-        [agentId, agentGoalsFeatureEnabled, hasWriteAccess, session],
+        [agentGoalsFeatureEnabled, hasWriteAccess, providerSupportsEditableSessionGoals],
     );
     // Provider goal-action capability profile applied to the set-first-goal form (before any native
     // goal item exists), so a provider like Claude shows only edit/clear with no budget/lifecycle
@@ -5063,7 +5067,12 @@ function SessionViewLoaded({
         };
 
         const promptInvocationsV1 = storage.getState().settings.promptInvocationsV1;
-        const resolved = resolveSessionComposerSend({ input: composerMessage, executionRunsEnabled, promptInvocationsV1 });
+        const resolved = resolveSessionComposerSend({
+            input: composerMessage,
+            executionRunsEnabled,
+            goalControlsAvailable: providerSupportsEditableSessionGoals,
+            promptInvocationsV1,
+        });
         if (resolved.kind === 'noop') {
             return;
         }

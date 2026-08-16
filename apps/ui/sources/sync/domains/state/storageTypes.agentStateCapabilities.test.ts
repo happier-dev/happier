@@ -46,6 +46,18 @@ describe('AgentStateSchema capabilities', () => {
         expect(parsed.capabilities?.terminalComposerDraftPresent).toBe(true);
     });
 
+    it('preserves session goal runtime-control capability fields when present', () => {
+        const parsed = AgentStateSchema.parse({
+            capabilities: {
+                sessionGoalSetSupported: true,
+                sessionGoalClearSupported: false,
+            },
+        });
+
+        expect(parsed.capabilities?.sessionGoalSetSupported).toBe(true);
+        expect(parsed.capabilities?.sessionGoalClearSupported).toBe(false);
+    });
+
     it('preserves request source fields when present', () => {
         const parsed = AgentStateSchema.parse({
             requests: {

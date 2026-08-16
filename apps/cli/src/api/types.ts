@@ -844,6 +844,9 @@ export type AgentState = {
      */
     terminalComposerClearSupported?: boolean | null | undefined
     terminalComposerDraftPresent?: boolean | null | undefined
+    /** Session-scoped goal operations currently registered by the attached runner. */
+    sessionGoalSetSupported?: boolean | null | undefined
+    sessionGoalClearSupported?: boolean | null | undefined
     /** Exact current native-custody head eligible for the transient interrupt-and-run control. */
     pendingInputInterruptAndRunLocalId?: string | null | undefined
     /** Timestamp (ms) of the exact custody capability observation. */

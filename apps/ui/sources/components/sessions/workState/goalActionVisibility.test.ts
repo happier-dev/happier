@@ -46,16 +46,17 @@ describe('resolveGoalActionCapabilities', () => {
         });
     });
 
-    it('prefers the goal item capabilities over the fallback profile when a goal item is present', () => {
-        // A goal item that advertises full caps wins even if a restrictive fallback is supplied.
+    it('intersects goal-item capabilities with a supplied runtime capability profile', () => {
+        // Provider metadata describes semantic support, while the session profile describes the
+        // controls the attached runtime can execute. Neither signal can grant an action alone.
         expect(resolveGoalActionCapabilities(
             goal({ goalCapabilities: { canEdit: true, canStop: true, canClear: true } }),
-            { canEdit: true, canStop: false, canClear: true, canConfigureBudget: false },
+            { canEdit: false, canStop: false, canClear: true, canConfigureBudget: false },
         )).toEqual({
-            canEdit: true,
-            canStop: true,
+            canEdit: false,
+            canStop: false,
             canClear: true,
-            canConfigureBudget: true,
+            canConfigureBudget: false,
         });
     });
 

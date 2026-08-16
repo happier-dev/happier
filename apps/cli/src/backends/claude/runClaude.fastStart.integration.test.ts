@@ -10,6 +10,7 @@ import { configuration } from '@/configuration';
 import type { registerRunnerTerminationHandlers as registerRunnerTerminationHandlersFn } from '@/agent/runtime/runnerTerminationHandlers';
 import type { RunnerTerminationEvent, RunnerTerminationOutcome } from '@/agent/runtime/runnerTerminationOutcome';
 import type { AgentModelDescriptor } from '@happier-dev/agents';
+import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 type Deferred<T> = { promise: Promise<T>; resolve: (value: T) => void; reject: (error: unknown) => void };
 
@@ -1236,7 +1237,7 @@ describe('runClaude fast-start', () => {
     }
   });
 
-  it('publishes fast-start user-message readiness only after the runtime RPC handler is registered', async () => {
+  it('publishes fast-start user-message readiness only after the startup-only RPC handler is registered', async () => {
     vi.resetModules();
     agentStateUpdateSnapshots.length = 0;
     loopStarted = createDeferred<void>();
@@ -1271,7 +1272,9 @@ describe('runClaude fast-start', () => {
             const startedAt = Date.now();
             const tick = () => {
               const handlerRegistered =
-                ((getLastRuntimeSessionClient() as any)?.rpcHandlerManager.registerHandler.mock.calls.length ?? 0) > 0;
+                (lastLoopOpts?.session as any)?.startupHandlers?.has(
+                  SESSION_RPC_METHODS.SESSION_USER_MESSAGE_SEND,
+                ) === true;
               const initialStatePublished =
                 agentStateUpdateSnapshots.some((snapshot) => snapshot.reason === 'initial_agent_state');
               if (handlerRegistered && initialStatePublished) return resolve();
@@ -1292,8 +1295,9 @@ describe('runClaude fast-start', () => {
       const initialState = agentStateUpdateSnapshots.find((snapshot) => snapshot.reason === 'initial_agent_state')?.state;
       expect(initialState?.capabilities).toMatchObject({ userMessageHandlerReady: true });
       const runtimeSessionClient = getLastRuntimeSessionClient() as any;
-      expect(runtimeSessionClient?.rpcHandlerManager.registerHandler.mock.invocationCallOrder[0]).toBeLessThan(
-        updateMock.mock.invocationCallOrder[initialUpdateIndex]!,
+      expect(runtimeSessionClient?.rpcHandlerManager.registerHandler).not.toHaveBeenCalledWith(
+        SESSION_RPC_METHODS.SESSION_USER_MESSAGE_SEND,
+        expect.any(Function),
       );
     } finally {
       loopExit.resolve(0);

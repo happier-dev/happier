@@ -25,6 +25,10 @@ import { AsyncLock } from '@/utils/lock';
 import { RpcHandlerManager } from '../rpc/RpcHandlerManager';
 import { registerSessionHandlers } from '@/rpc/handlers/registerSessionHandlers';
 import type { SessionRuntimeControls } from '@/rpc/handlers/sessionControls';
+import {
+    clearSessionRuntimeControls,
+    copyCallableSessionRuntimeControls,
+} from './sessionRuntimeControls';
 import { registerExecutionRunHandlers } from '@/rpc/handlers/executionRuns';
 import { createExecutionRunTranscriptWriter } from '@/api/session/executionRunTranscriptWriter';
 import { registerEphemeralTaskHandlers } from '@/rpc/handlers/ephemeralTasks';
@@ -261,7 +265,7 @@ import {
 import { normalizeExecutionRunWaitTimeoutMs } from '@/session/services/executionRunWaitTiming';
 import { createEventShapeLoggerForLog } from '@/diagnostics/eventShapeForLog';
 import { runSupervisedRequest } from '@/api/connection/requestSupervision/runSupervisedRequest';
-import { updateMetadataBestEffort } from './sessionWritesBestEffort';
+import { updateAgentStateBestEffort, updateMetadataBestEffort } from './sessionWritesBestEffort';
 import { readCliClientUpgradeRequired } from '@/api/clientCompatibility/cliClientCompatibility';
 import { normalizeAgentPromptPayload } from '@/agent/core/AgentPromptPayload';
 import type {
@@ -388,8 +392,6 @@ type RpcLifecycleRegistration = Readonly<{
     dispose: () => Promise<void>;
 }>;
 
-type SessionRuntimeControlKey = keyof SessionRuntimeControls;
-
 const STALE_LOCAL_ACTIVE_TURN_RECONCILE_MS = 5 * 60 * 1000;
 
 function isProviderProgressTranscriptBody(value: unknown): boolean {
@@ -403,46 +405,6 @@ function readPlannedServerRestartRetryAfterMs(payload: unknown): number | undefi
     const raw = (payload as { retryAfterMs?: unknown }).retryAfterMs;
     if (typeof raw !== 'number' || !Number.isFinite(raw) || raw < 0) return undefined;
     return Math.trunc(raw);
-}
-
-const SESSION_RUNTIME_CONTROL_KEYS = [
-    'refreshGoal',
-    'setGoal',
-    'clearGoal',
-    'listVendorPlugins',
-    'listSkills',
-    'startInlineReview',
-    'invalidateConnectedServiceAuthTransports',
-    'applyConnectedServiceAuthGeneration',
-    'readConnectedServiceRuntimeIdentity',
-    'enableUsageLimitWaitResume',
-    'cancelUsageLimitWaitResume',
-    'checkUsageLimitRecoveryNow',
-    'clearTerminalComposer',
-    'interruptPendingInputAndRun',
-    'handleUserMessage',
-    'wakePendingMaterialization',
-    'isPendingMaterializationAvailable',
-] as const satisfies readonly SessionRuntimeControlKey[];
-
-function copyCallableSessionRuntimeControls(
-    target: Partial<SessionRuntimeControls>,
-    controls: SessionRuntimeControls | Partial<SessionRuntimeControls> | null | undefined,
-): void {
-    if (!controls) return;
-    const writableTarget = target as Record<SessionRuntimeControlKey, unknown>;
-    const source = controls as Record<SessionRuntimeControlKey, unknown>;
-    for (const key of SESSION_RUNTIME_CONTROL_KEYS) {
-        const value = source[key];
-        if (typeof value === 'function') writableTarget[key] = value;
-    }
-}
-
-function clearSessionRuntimeControls(target: Partial<SessionRuntimeControls>): void {
-    const writableTarget = target as Record<SessionRuntimeControlKey, unknown>;
-    for (const key of SESSION_RUNTIME_CONTROL_KEYS) {
-        delete writableTarget[key];
-    }
 }
 
 function arePendingQueueStatesEqual(left: PendingQueueState, right: PendingQueueState): boolean {
@@ -1365,6 +1327,7 @@ export class ApiSessionClient extends EventEmitter {
         });
 
         void this.sessionConnectionSupervisor.start();
+        this.publishSessionGoalControlCapabilities();
     }
 
     private rebuildSessionRuntimeControls(): void {
@@ -1376,6 +1339,43 @@ export class ApiSessionClient extends EventEmitter {
         this.sessionRuntimeControls.wakePendingMaterialization = () => this.wakePendingMaterialization();
         this.sessionRuntimeControls.isPendingMaterializationAvailable = () => (
             !this.closed && !this.runtimeTerminationStarted
+        );
+    }
+
+    private publishSessionGoalControlCapabilities(): void {
+        const sessionGoalSetSupported = typeof this.sessionRuntimeControls.setGoal === 'function';
+        const sessionGoalClearSupported = typeof this.sessionRuntimeControls.clearGoal === 'function';
+        const currentCapabilities = this.agentState?.capabilities;
+        if (
+            currentCapabilities?.sessionGoalSetSupported === sessionGoalSetSupported
+            && currentCapabilities?.sessionGoalClearSupported === sessionGoalClearSupported
+        ) {
+            return;
+        }
+        // Missing fields already mean unsupported to new clients. Avoid an extra write for every
+        // older session, while still clearing a stale positive snapshot left by a previous runner.
+        if (
+            !sessionGoalSetSupported
+            && !sessionGoalClearSupported
+            && currentCapabilities?.sessionGoalSetSupported === undefined
+            && currentCapabilities?.sessionGoalClearSupported === undefined
+        ) {
+            return;
+        }
+        updateAgentStateBestEffort(
+            this,
+            (currentState) => ({
+                ...currentState,
+                capabilities: {
+                    ...(currentState.capabilities && typeof currentState.capabilities === 'object'
+                        ? currentState.capabilities
+                        : {}),
+                    sessionGoalSetSupported,
+                    sessionGoalClearSupported,
+                },
+            }),
+            '[session]',
+            'goal_runtime_control_capabilities',
         );
     }
 
@@ -1391,6 +1391,7 @@ export class ApiSessionClient extends EventEmitter {
         clearSessionRuntimeControls(this.baseSessionRuntimeControls);
         copyCallableSessionRuntimeControls(this.baseSessionRuntimeControls, controls);
         this.rebuildSessionRuntimeControls();
+        this.publishSessionGoalControlCapabilities();
     }
 
     registerSessionRuntimeControls(controls: Partial<SessionRuntimeControls> | null): () => void {
@@ -1401,12 +1402,14 @@ export class ApiSessionClient extends EventEmitter {
         }
         this.sessionRuntimeControlRegistrations.add(registration);
         this.rebuildSessionRuntimeControls();
+        this.publishSessionGoalControlCapabilities();
         let disposed = false;
         return () => {
             if (disposed) return;
             disposed = true;
             this.sessionRuntimeControlRegistrations.delete(registration);
             this.rebuildSessionRuntimeControls();
+            this.publishSessionGoalControlCapabilities();
         };
     }
 

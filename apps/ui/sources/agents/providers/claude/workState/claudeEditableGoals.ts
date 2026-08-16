@@ -17,6 +17,17 @@ function readClaudeGoalWorkStateItem(metadata: unknown): Record<string, unknown>
     return null;
 }
 
+type ClaudeGoalSession = Readonly<{
+    active?: boolean;
+    metadata?: unknown;
+    agentState?: Readonly<{
+        capabilities?: Readonly<{
+            sessionGoalSetSupported?: boolean | null;
+            sessionGoalClearSupported?: boolean | null;
+        }> | null;
+    }> | null;
+}>;
+
 /**
  * Capability-driven goal-edit gate for Claude (mirrors the provider-derived approach used for
  * Codex). The Claude work-state source publishes a `kind:'goal'` item carrying
@@ -51,33 +62,49 @@ export function claudeGoalCommandSupported(metadata: unknown): boolean {
 
 export function claudeSupportsEditableGoals(ctx: Readonly<{
     agentId: string;
-    session: Readonly<{ active?: boolean; metadata?: unknown }>;
+    session: ClaudeGoalSession;
 }>): boolean {
-    if (ctx.agentId !== 'claude') return false;
-    const metadata = ctx.session.metadata ?? null;
-    // Two capability signals, both provider-derived (no `agentId` branching beyond the Claude gate):
-    //  1. Session-level `/goal` support from `metadata.slashCommands` — present BEFORE any goal is
-    //     set, so the chip can be the first-goal entry point. Requires an active session because the
-    //     `/goal` command is injected live; inactive sessions seed through the goal-item path below.
-    //  2. A goal item already advertising `goalCapabilities.canEdit` — covers a resumable (detached)
-    //     session restored from metadata that carries a prior goal, even while `slashCommands` is not
-    //     re-published.
-    if (ctx.session.active === true && claudeGoalCommandSupported(metadata)) return true;
-    return claudeGoalEditCapabilityPresent(metadata);
+    const profile = claudeGoalActionCapabilityProfile(ctx);
+    return profile?.canEdit === true || profile?.canClear === true;
 }
 
 /**
- * Claude's goal-action capability profile (edit + clear only; no pause/resume/complete, no token
- * budget). Used as the fallback control surface for the "Set goal" form before a native
- * `goal_status` item exists, so the Codex-only budget/lifecycle controls never appear on a Claude
- * session. Mirrors the `{ canEdit, canClear }` capabilities the Claude work-state source attaches to
- * a goal item once one exists. Returns null when the session is not goal-editable so the gate
- * (`claudeSupportsEditableGoals`) remains the single source of truth for visibility.
+ * Claude's effective goal-action profile (edit + clear only; no pause/resume/complete, no token
+ * budget). Provider work-state and `/goal` metadata own semantic support; active runner controls own
+ * execution reachability. Keeping both signals in this provider profile lets the generic goal UI
+ * intersect them without learning Claude modes or treating persisted metadata as a live RPC promise.
  */
 export function claudeGoalActionCapabilityProfile(ctx: Readonly<{
     agentId: string;
-    session: Readonly<{ active?: boolean; metadata?: unknown }>;
+    session: ClaudeGoalSession;
 }>): Readonly<{ canEdit: boolean; canStop: boolean; canClear: boolean; canConfigureBudget: boolean }> | null {
-    if (!claudeSupportsEditableGoals(ctx)) return null;
-    return { canEdit: true, canStop: false, canClear: true, canConfigureBudget: false };
+    if (ctx.agentId !== 'claude') return null;
+    const metadata = ctx.session.metadata ?? null;
+    const goal = readClaudeGoalWorkStateItem(metadata);
+    const goalCapabilities = asRecord(goal?.goalCapabilities);
+    const itemCanEdit = goalCapabilities?.canEdit === true;
+    const itemCanClear = goalCapabilities?.canClear === true || itemCanEdit;
+    const commandSupported = ctx.session.active === true && claudeGoalCommandSupported(metadata);
+    const semanticCanEdit = itemCanEdit || commandSupported;
+    const semanticCanClear = itemCanClear || commandSupported;
+    if (!semanticCanEdit && !semanticCanClear) return null;
+
+    // Inactive-session mutations are handled by the existing resume/metadata adapter. Active
+    // sessions must also prove that the attached runner currently registered each live control;
+    // provider `/goal` support alone is not an execution-reachability guarantee.
+    if (ctx.session.active !== true) {
+        return {
+            canEdit: semanticCanEdit,
+            canStop: false,
+            canClear: semanticCanClear,
+            canConfigureBudget: false,
+        };
+    }
+    const runtimeCapabilities = ctx.session.agentState?.capabilities;
+    return {
+        canEdit: semanticCanEdit && runtimeCapabilities?.sessionGoalSetSupported === true,
+        canStop: false,
+        canClear: semanticCanClear && runtimeCapabilities?.sessionGoalClearSupported === true,
+        canConfigureBudget: false,
+    };
 }

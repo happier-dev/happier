@@ -1692,6 +1692,62 @@ describe('ApiSessionClient connection handling', () => {
         expect(invalidateConnectedServiceAuthTransports).toHaveBeenCalledTimes(2);
     });
 
+    it('publishes goal operation support from the canonical runtime-control registry', async () => {
+        mockSession.encryptionMode = 'plain';
+        let agentStateVersion = Number.isFinite(mockSession.agentStateVersion)
+            ? mockSession.agentStateVersion
+            : 0;
+        replaceSocketPair({
+            sessionSocket: createConfiguredSocket({
+                connected: true,
+                emitWithAck: (event, payload) => {
+                    if (event !== 'update-state') return { ok: true, id: 'm1', seq: 1, localId: 'l1' };
+                    agentStateVersion += 1;
+                    return {
+                        result: 'success',
+                        version: agentStateVersion,
+                        agentState: (payload as { agentState: unknown }).agentState,
+                    };
+                },
+            }),
+        });
+        const client = createClient('fake-token', mockSession);
+        const setGoal = vi.fn(async () => ({ ok: true as const }));
+        const clearGoal = vi.fn(async () => ({ ok: true as const }));
+
+        const unregisterSet = client.registerSessionRuntimeControls({ setGoal });
+        await vi.waitFor(() => {
+            expect(client.getAgentStateSnapshot()?.capabilities).toMatchObject({
+                sessionGoalSetSupported: true,
+                sessionGoalClearSupported: false,
+            });
+        });
+
+        const unregisterClear = client.registerSessionRuntimeControls({ clearGoal });
+        await vi.waitFor(() => {
+            expect(client.getAgentStateSnapshot()?.capabilities).toMatchObject({
+                sessionGoalSetSupported: true,
+                sessionGoalClearSupported: true,
+            });
+        });
+
+        unregisterSet();
+        await vi.waitFor(() => {
+            expect(client.getAgentStateSnapshot()?.capabilities).toMatchObject({
+                sessionGoalSetSupported: false,
+                sessionGoalClearSupported: true,
+            });
+        });
+
+        unregisterClear();
+        await vi.waitFor(() => {
+            expect(client.getAgentStateSnapshot()?.capabilities).toMatchObject({
+                sessionGoalSetSupported: false,
+                sessionGoalClearSupported: false,
+            });
+        });
+    });
+
     it('runs one transcript catch-up on first callback attach but does not deliver without an explicit cursor', async () => {
         const axiosMod = await import('axios');
         const axios = axiosMod.default as any;

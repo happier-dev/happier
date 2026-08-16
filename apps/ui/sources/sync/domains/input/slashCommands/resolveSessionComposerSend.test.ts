@@ -169,6 +169,17 @@ describe('resolveSessionComposerSend', () => {
         });
     });
 
+    it('passes /goal through to the provider when the session runtime exposes no goal controls', () => {
+        expect(resolveSessionComposerSend({
+            input: '/goal clear',
+            executionRunsEnabled: true,
+            goalControlsAvailable: false,
+        })).toEqual({
+            kind: 'send',
+            text: '/goal clear',
+        });
+    });
+
     it('preserves multiline /goal objective text as a native set-goal command', () => {
         expect(resolveSessionComposerSend({
             input: '/goal line one\nline two',

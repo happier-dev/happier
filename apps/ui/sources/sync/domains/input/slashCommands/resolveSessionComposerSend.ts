@@ -46,6 +46,7 @@ function resolveGoalCommand(input: string): SessionComposerSendResolution | null
 export function resolveSessionComposerSend(args: {
     input: string;
     executionRunsEnabled: boolean;
+    goalControlsAvailable?: boolean;
     promptInvocationsV1?: PromptInvocationsV1 | null;
 }): SessionComposerSendResolution {
     const trimmedStart = args.input.trimStart();
@@ -71,7 +72,11 @@ export function resolveSessionComposerSend(args: {
     }
 
     const goalCommand = resolveGoalCommand(args.input);
-    if (goalCommand) return goalCommand;
+    if (goalCommand) {
+        return args.goalControlsAvailable === false
+            ? { kind: 'send', text: args.input }
+            : goalCommand;
+    }
 
     // Built-in core slash commands (e.g. /happier-diagnose). Resolved before
     // user-defined template invocations so they cannot be shadowed by an entry

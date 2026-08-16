@@ -309,6 +309,37 @@ describe('executeSessionComposerResolution', () => {
     expect(modalAlert).not.toHaveBeenCalledWith('Goal unavailable', 'This backend does not support editable session goals yet.');
   });
 
+  it('treats a remote-unavailable goal control as a not-ready state', async () => {
+    const executeSessionComposerResolution = await loadSubject();
+    const modalAlert = vi.fn();
+    const setSessionGoal = vi.fn(async () => ({
+      ok: false as const,
+      error: 'session_goal_control_remote_unavailable',
+      errorCode: 'session_goal_control_remote_unavailable',
+    }));
+
+    await executeSessionComposerResolution({
+      resolved: { kind: 'goal', command: 'set', objective: 'migrate plugin support' } as any,
+      sessionId: 's1',
+      agentId: 'claude',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      permissionMode: 'default',
+      actionExecutor: { execute: vi.fn() },
+      previousMessage: '/goal migrate plugin support',
+      setMessage: vi.fn(),
+      clearDraft: vi.fn(),
+      trackMessageSent: vi.fn(),
+      navigateToRuns: vi.fn(),
+      modalAlert,
+      setSessionGoal,
+    } as any);
+
+    expect(modalAlert).toHaveBeenCalledWith(
+      'Goal controls not ready yet',
+      'This session is still starting up. Try setting the goal again in a moment.',
+    );
+  });
+
   it('normalizes disabled goal feature failures to goal unavailable feedback', async () => {
     const executeSessionComposerResolution = await loadSubject();
     const modalAlert = vi.fn();

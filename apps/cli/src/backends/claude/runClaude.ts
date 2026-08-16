@@ -1622,7 +1622,7 @@ async function runClaudeLocalFastStart(credentials: Credentials, options: StartO
     const startupSpec = createClaudeStartupSpec({
         deps: {
             registerRpcHandlers: ({ artifacts }) => {
-                registerSessionHandlers(artifacts.deferredSession.rpcHandlerManager, workingDirectory, {
+                registerSessionHandlers(artifacts.deferredSession.startupRpcHandlerManager, workingDirectory, {
                     sessionRuntimeControls: {
                         // K5:passive_apply session RPC applies current auth in place; it never restarts or spawns
                         applyConnectedServiceAuthGeneration: async (request) => {

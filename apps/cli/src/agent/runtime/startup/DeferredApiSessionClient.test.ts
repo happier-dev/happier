@@ -26,7 +26,7 @@ describe('DeferredApiSessionClient', () => {
       placeholderSessionId: 'PID-overflow-enqueue',
       limits: { maxEntries: 1, maxBytes: 10_000 },
     });
-    registerSessionHandlers(deferred.rpcHandlerManager, process.cwd(), {
+    registerSessionHandlers(deferred.startupRpcHandlerManager, process.cwd(), {
       sessionRuntimeControls: {
         handleUserMessage: createClaudeUnifiedUserMessageHandler({
           enqueueSessionUserMessage: (request) => deferred.enqueueSessionUserMessage(request),
@@ -34,7 +34,7 @@ describe('DeferredApiSessionClient', () => {
       },
     });
     const request = { text: 'queued', localId: 'overflow-id', meta: {} };
-    const pending = deferred.rpcHandlerManager.invokeLocal(SESSION_RPC_METHODS.SESSION_USER_MESSAGE_SEND, request);
+    const pending = deferred.startupRpcHandlerManager.invokeLocal(SESSION_RPC_METHODS.SESSION_USER_MESSAGE_SEND, request);
     await vi.waitFor(() => {
       expect(deferred.getBufferStats().entryCount).toBe(1);
     });
@@ -47,7 +47,7 @@ describe('DeferredApiSessionClient', () => {
       error: 'session_user_message_startup_buffer_overflow',
     };
     await expect(pending).resolves.toEqual(expected);
-    await expect(deferred.rpcHandlerManager.invokeLocal(
+    await expect(deferred.startupRpcHandlerManager.invokeLocal(
       SESSION_RPC_METHODS.SESSION_USER_MESSAGE_SEND,
       request,
     )).resolves.toEqual(expected);
@@ -67,7 +67,7 @@ describe('DeferredApiSessionClient', () => {
       placeholderSessionId: 'PID-cancel-enqueue',
       limits: { maxEntries: 10, maxBytes: 10_000 },
     });
-    registerSessionHandlers(deferred.rpcHandlerManager, process.cwd(), {
+    registerSessionHandlers(deferred.startupRpcHandlerManager, process.cwd(), {
       sessionRuntimeControls: {
         handleUserMessage: createClaudeUnifiedUserMessageHandler({
           enqueueSessionUserMessage: (request) => deferred.enqueueSessionUserMessage(request),
@@ -75,7 +75,7 @@ describe('DeferredApiSessionClient', () => {
       },
     });
     const request = { text: 'queued', localId: 'cancel-id', meta: {} };
-    const pending = deferred.rpcHandlerManager.invokeLocal(SESSION_RPC_METHODS.SESSION_USER_MESSAGE_SEND, request);
+    const pending = deferred.startupRpcHandlerManager.invokeLocal(SESSION_RPC_METHODS.SESSION_USER_MESSAGE_SEND, request);
     await Promise.resolve();
     deferred.cancel();
     const expected = {
@@ -85,7 +85,7 @@ describe('DeferredApiSessionClient', () => {
       error: 'session_user_message_startup_cancelled',
     };
     await expect(pending).resolves.toEqual(expected);
-    await expect(deferred.rpcHandlerManager.invokeLocal(
+    await expect(deferred.startupRpcHandlerManager.invokeLocal(
       SESSION_RPC_METHODS.SESSION_USER_MESSAGE_SEND,
       request,
     )).resolves.toEqual(expected);
@@ -97,7 +97,7 @@ describe('DeferredApiSessionClient', () => {
       placeholderSessionId: 'PID-flush-error-enqueue',
       limits: { maxEntries: 10, maxBytes: 10_000 },
     });
-    registerSessionHandlers(deferred.rpcHandlerManager, process.cwd(), {
+    registerSessionHandlers(deferred.startupRpcHandlerManager, process.cwd(), {
       sessionRuntimeControls: {
         handleUserMessage: createClaudeUnifiedUserMessageHandler({
           enqueueSessionUserMessage: (request) => deferred.enqueueSessionUserMessage(request),
@@ -105,7 +105,7 @@ describe('DeferredApiSessionClient', () => {
       },
     });
     const request = { text: 'queued', localId: 'flush-error-id', meta: {} };
-    const pending = deferred.rpcHandlerManager.invokeLocal(SESSION_RPC_METHODS.SESSION_USER_MESSAGE_SEND, request);
+    const pending = deferred.startupRpcHandlerManager.invokeLocal(SESSION_RPC_METHODS.SESSION_USER_MESSAGE_SEND, request);
     await Promise.resolve();
     const enqueueSessionUserMessage = vi.fn(async () => {
       throw new Error('target enqueue failed');
@@ -123,7 +123,7 @@ describe('DeferredApiSessionClient', () => {
       error: 'session_user_message_startup_flush_error',
     };
     await expect(pending).resolves.toEqual(expected);
-    await expect(deferred.rpcHandlerManager.invokeLocal(
+    await expect(deferred.startupRpcHandlerManager.invokeLocal(
       SESSION_RPC_METHODS.SESSION_USER_MESSAGE_SEND,
       request,
     )).resolves.toEqual(expected);
@@ -148,7 +148,7 @@ describe('DeferredApiSessionClient', () => {
     } as unknown as DeferredApiSessionTarget;
     await deferred.attach(target);
 
-    registerSessionHandlers(deferred.rpcHandlerManager, process.cwd(), {
+    registerSessionHandlers(deferred.startupRpcHandlerManager, process.cwd(), {
       sessionRuntimeControls: {
         handleUserMessage: createClaudeUnifiedUserMessageHandler({
           enqueueSessionUserMessage: (request) => deferred.enqueueSessionUserMessage(request),
@@ -167,11 +167,11 @@ describe('DeferredApiSessionClient', () => {
       error: 'session_user_message_recovery_pending',
     };
 
-    await expect(deferred.rpcHandlerManager.invokeLocal(
+    await expect(deferred.startupRpcHandlerManager.invokeLocal(
       SESSION_RPC_METHODS.SESSION_USER_MESSAGE_SEND,
       request,
     )).resolves.toEqual(expected);
-    await expect(deferred.rpcHandlerManager.invokeLocal(
+    await expect(deferred.startupRpcHandlerManager.invokeLocal(
       SESSION_RPC_METHODS.SESSION_USER_MESSAGE_SEND,
       request,
     )).resolves.toEqual(expected);
@@ -224,6 +224,79 @@ describe('DeferredApiSessionClient', () => {
       ok: true,
       params: { a: 1 },
     });
+  });
+
+  it('keeps startup-only RPC handlers local without overwriting the attached canonical registry', async () => {
+    const deferred = new DeferredApiSessionClient({
+      placeholderSessionId: 'PID-startup-rpc',
+      limits: { maxEntries: 10, maxBytes: 10_000 },
+    });
+    const startupHandler = vi.fn(async () => ({ source: 'startup' }));
+    deferred.startupRpcHandlerManager.registerHandler('session.goal.clear', startupHandler);
+
+    await expect(
+      deferred.startupRpcHandlerManager.invokeLocal('session.goal.clear', {}),
+    ).resolves.toEqual({ source: 'startup' });
+
+    const registerHandler = vi.fn();
+    const invokeLocal = vi.fn(async () => ({ source: 'attached' }));
+    await deferred.attach({
+      sessionId: 'sess-startup-rpc',
+      rpcHandlerManager: { registerHandler, invokeLocal },
+    } as unknown as DeferredApiSessionTarget);
+
+    expect(registerHandler).not.toHaveBeenCalledWith('session.goal.clear', startupHandler);
+    await expect(
+      deferred.startupRpcHandlerManager.invokeLocal('session.goal.clear', { attached: true }),
+    ).resolves.toEqual({ source: 'startup' });
+    expect(invokeLocal).not.toHaveBeenCalled();
+    expect(startupHandler).toHaveBeenCalledTimes(2);
+  });
+
+  it('replays runtime-control registrations on attach and disposes the attached registration once', async () => {
+    const deferred = new DeferredApiSessionClient({
+      placeholderSessionId: 'PID-runtime-controls',
+      limits: { maxEntries: 10, maxBytes: 10_000 },
+    });
+    const setGoal = vi.fn(async () => ({ ok: true as const }));
+    const clearGoal = vi.fn(async () => ({ ok: true as const }));
+    const unregister = vi.fn();
+    const registerSessionRuntimeControls = vi.fn(() => unregister);
+
+    const dispose = deferred.registerSessionRuntimeControls({ setGoal, clearGoal });
+    expect(registerSessionRuntimeControls).not.toHaveBeenCalled();
+
+    await deferred.attach({
+      sessionId: 'sess-runtime-controls',
+      rpcHandlerManager: { registerHandler: vi.fn(), invokeLocal: vi.fn(async () => ({})) },
+      registerSessionRuntimeControls,
+    } as unknown as DeferredApiSessionTarget);
+
+    expect(registerSessionRuntimeControls).toHaveBeenCalledExactlyOnceWith({ setGoal, clearGoal });
+    dispose();
+    dispose();
+    expect(unregister).toHaveBeenCalledTimes(1);
+  });
+
+  it('forwards runtime-control registrations made after attach', async () => {
+    const deferred = new DeferredApiSessionClient({
+      placeholderSessionId: 'PID-attached-runtime-controls',
+      limits: { maxEntries: 10, maxBytes: 10_000 },
+    });
+    const unregister = vi.fn();
+    const registerSessionRuntimeControls = vi.fn(() => unregister);
+    await deferred.attach({
+      sessionId: 'sess-attached-runtime-controls',
+      rpcHandlerManager: { registerHandler: vi.fn(), invokeLocal: vi.fn(async () => ({})) },
+      registerSessionRuntimeControls,
+    } as unknown as DeferredApiSessionTarget);
+
+    const clearGoal = vi.fn(async () => ({ ok: true as const }));
+    const dispose = deferred.registerSessionRuntimeControls({ clearGoal });
+
+    expect(registerSessionRuntimeControls).toHaveBeenCalledExactlyOnceWith({ clearGoal });
+    dispose();
+    expect(unregister).toHaveBeenCalledTimes(1);
   });
 
   it('delegates session control methods after attach', async () => {

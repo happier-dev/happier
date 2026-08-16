@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { claudeSupportsEditableGoals } from './claudeEditableGoals';
+import { claudeGoalActionCapabilityProfile, claudeSupportsEditableGoals } from './claudeEditableGoals';
 
 function metadataWithGoal(canEdit: boolean | undefined) {
     return {
@@ -32,8 +32,23 @@ describe('claudeSupportsEditableGoals', () => {
     it('is true for an active Claude session whose goal item advertises canEdit', () => {
         expect(claudeSupportsEditableGoals({
             agentId: 'claude',
-            session: { active: true, metadata: metadataWithGoal(true) },
+            session: {
+                active: true,
+                metadata: metadataWithGoal(true),
+                agentState: { capabilities: { sessionGoalSetSupported: true, sessionGoalClearSupported: true } },
+            },
         })).toBe(true);
+    });
+
+    it('fails closed for an active session when provider goal metadata outlives its runtime controls', () => {
+        const session = { active: true, metadata: metadataWithGoal(true) };
+        expect(claudeSupportsEditableGoals({ agentId: 'claude', session })).toBe(false);
+        expect(claudeGoalActionCapabilityProfile({ agentId: 'claude', session })).toEqual({
+            canEdit: false,
+            canStop: false,
+            canClear: false,
+            canConfigureBudget: false,
+        });
     });
 
     it('is true for a resumable (inactive) Claude session carrying an editable goal item', () => {
@@ -85,7 +100,11 @@ describe('claudeSupportsEditableGoals', () => {
     it('is true for an active Claude session that advertises the /goal command with no goal set yet', () => {
         expect(claudeSupportsEditableGoals({
             agentId: 'claude',
-            session: { active: true, metadata: metadataWithSlashCommands(['goal', 'help']) },
+            session: {
+                active: true,
+                metadata: metadataWithSlashCommands(['goal', 'help']),
+                agentState: { capabilities: { sessionGoalSetSupported: true, sessionGoalClearSupported: true } },
+            },
         })).toBe(true);
     });
 
@@ -94,12 +113,40 @@ describe('claudeSupportsEditableGoals', () => {
     it('accepts the slash-prefixed /goal command shape (G1 parity)', () => {
         expect(claudeSupportsEditableGoals({
             agentId: 'claude',
-            session: { active: true, metadata: metadataWithSlashCommands(['/goal']) },
+            session: {
+                active: true,
+                metadata: metadataWithSlashCommands(['/goal']),
+                agentState: { capabilities: { sessionGoalSetSupported: true, sessionGoalClearSupported: true } },
+            },
         })).toBe(true);
         expect(claudeSupportsEditableGoals({
             agentId: 'claude',
-            session: { active: true, metadata: metadataWithSlashCommands(['  /Goal ']) },
+            session: {
+                active: true,
+                metadata: metadataWithSlashCommands(['  /Goal ']),
+                agentState: { capabilities: { sessionGoalSetSupported: true, sessionGoalClearSupported: true } },
+            },
         })).toBe(true);
+    });
+
+    it('publishes set and clear independently from the controls registered by the active runtime', () => {
+        const metadata = metadataWithSlashCommands(['/goal']);
+        expect(claudeGoalActionCapabilityProfile({
+            agentId: 'claude',
+            session: {
+                active: true,
+                metadata,
+                agentState: { capabilities: { sessionGoalSetSupported: true, sessionGoalClearSupported: false } },
+            },
+        })).toEqual({ canEdit: true, canStop: false, canClear: false, canConfigureBudget: false });
+        expect(claudeGoalActionCapabilityProfile({
+            agentId: 'claude',
+            session: {
+                active: true,
+                metadata,
+                agentState: { capabilities: { sessionGoalSetSupported: false, sessionGoalClearSupported: true } },
+            },
+        })).toEqual({ canEdit: false, canStop: false, canClear: true, canConfigureBudget: false });
     });
 
     it('requires an active session for the slash-command capability (inactive without a goal item is not editable)', () => {

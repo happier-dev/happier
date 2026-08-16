@@ -395,6 +395,8 @@ const AgentStateObjectSchema = z.object({
          */
         terminalComposerClearSupported: z.boolean().nullish(),
         terminalComposerDraftPresent: z.boolean().nullish(),
+        sessionGoalSetSupported: z.boolean().nullish(),
+        sessionGoalClearSupported: z.boolean().nullish(),
         pendingInputInterruptAndRunLocalId: z.string().trim().min(1).nullish(),
         pendingInputInterruptAndRunStateAt: z.number().int().nonnegative().nullish(),
         localPermissionBridgeInLocalMode: z.boolean().optional(),

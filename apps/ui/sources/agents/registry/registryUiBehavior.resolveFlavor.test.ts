@@ -77,9 +77,17 @@ describe('resolveAgentUiBehaviorFromFlavor', () => {
     it('restricts the goal action profile for an editable Claude session (edit/clear only, no budget)', () => {
         const profile = resolveSessionGoalActionCapabilityProfile({
             agentId: 'claude',
-            session: createRegistryBehaviorSession({
-                flavor: 'claude', path: '/repo', host: 'host', slashCommands: ['goal', 'help'],
-            }),
+            session: {
+                ...createRegistryBehaviorSession({
+                    flavor: 'claude', path: '/repo', host: 'host', slashCommands: ['goal', 'help'],
+                }),
+                agentState: {
+                    capabilities: {
+                        sessionGoalSetSupported: true,
+                        sessionGoalClearSupported: true,
+                    },
+                },
+            },
         });
         expect(profile).toEqual({ canEdit: true, canStop: false, canClear: true, canConfigureBudget: false });
     });
