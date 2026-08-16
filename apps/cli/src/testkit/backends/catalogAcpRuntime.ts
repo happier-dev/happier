@@ -11,6 +11,7 @@ export type CatalogAcpRuntimeCreateCall = {
     permissionMode: PermissionMode | null | undefined;
     happierSessionId?: string | null;
     env?: NodeJS.ProcessEnv;
+    appendSystemPromptText?: string;
 };
 
 export type CatalogAcpSessionOpenCall = Readonly<{
@@ -46,12 +47,14 @@ export function createCatalogAcpBackendSpy(
             permissionMode?: PermissionMode | null;
             happierSessionId?: string | null;
             env?: NodeJS.ProcessEnv;
+            appendSystemPromptText?: string;
         };
         createCalls.push({
             agentId,
             permissionMode: catalogOptions.permissionMode,
             ...(catalogOptions.happierSessionId !== undefined ? { happierSessionId: catalogOptions.happierSessionId } : {}),
             ...(catalogOptions.env !== undefined ? { env: catalogOptions.env } : {}),
+            ...(catalogOptions.appendSystemPromptText !== undefined ? { appendSystemPromptText: catalogOptions.appendSystemPromptText } : {}),
         });
 
         return {
