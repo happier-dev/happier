@@ -1381,9 +1381,17 @@ export class ApiSessionClient extends EventEmitter {
 
     wakePendingMaterialization(): void {
         if (this.closed) return;
-        this.pendingWakeSeq += 1;
-        this.emit('metadata-updated');
-        this.emitPendingEligibilityUpdated();
+        void this.reconcilePendingQueueState({ force: true })
+            .catch((error) => {
+                logger.debug('[pendingQueue] explicit wake reconciliation failed; publishing the wake with retained state', {
+                    sessionId: this.sessionId,
+                    error: serializeAxiosErrorForLog(error),
+                });
+            })
+            .finally(() => {
+                if (this.closed) return;
+                this.publishPendingEligibilityWake();
+            });
     }
 
 
@@ -1896,9 +1904,7 @@ export class ApiSessionClient extends EventEmitter {
             terminalStatus: terminalStatus ?? null,
             pendingCount: this.pendingQueueState.known ? this.pendingQueueState.pendingCount : null,
         });
-        this.pendingWakeSeq += 1;
-        this.emit('metadata-updated');
-        this.emitPendingEligibilityUpdated();
+        this.publishPendingEligibilityWake();
         void this.reconcilePendingQueueState({ force: false }).catch(() => undefined);
     }
 

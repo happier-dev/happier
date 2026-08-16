@@ -835,6 +835,54 @@ describe('ApiSessionClient pending-queue turn-end drain', () => {
     }
   });
 
+  it('force-reconciles stale pending state before publishing an explicit materialization wake', async () => {
+    const client = await createClient({
+      latestTurnStatus: 'completed',
+      pendingCount: 0,
+      pendingVersion: 0,
+    });
+    const snapshot = createDeferred<Record<string, unknown>>();
+    fetchSnapshotMock.mockClear();
+    fetchSnapshotMock.mockReturnValueOnce(snapshot.promise);
+    const onWake = vi.fn();
+    client.on('pending-eligibility-updated', onWake);
+
+    client.wakePendingMaterialization();
+
+    await vi.waitFor(() => expect(fetchSnapshotMock).toHaveBeenCalledTimes(1));
+    expect(onWake).not.toHaveBeenCalled();
+
+    snapshot.resolve({
+      latestTurnStatus: 'completed',
+      pendingQueueState: {
+        known: true,
+        pendingCount: 1,
+        pendingBlockedCount: 0,
+        pendingVersion: 1,
+      },
+    });
+
+    await vi.waitFor(() => expect(onWake).toHaveBeenCalled());
+    expect(client.shouldAttemptPendingMaterialization()).toBe(true);
+  });
+
+  it('still publishes an explicit materialization wake when forced reconciliation fails', async () => {
+    const client = await createClient({
+      latestTurnStatus: 'completed',
+      pendingCount: 0,
+      pendingVersion: 0,
+    });
+    fetchSnapshotMock.mockClear();
+    fetchSnapshotMock.mockRejectedValueOnce(new Error('snapshot unavailable'));
+    const onWake = vi.fn();
+    client.on('pending-eligibility-updated', onWake);
+
+    client.wakePendingMaterialization();
+
+    await vi.waitFor(() => expect(fetchSnapshotMock).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(onWake).toHaveBeenCalled());
+  });
+
   it('uses a strict request-only settings refresh for reconnect convergence without the cache-writing bootstrap owner', async () => {
     const previous = getActiveAccountSettingsSnapshot();
     try {
