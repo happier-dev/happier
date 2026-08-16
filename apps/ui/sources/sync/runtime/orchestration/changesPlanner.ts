@@ -31,6 +31,12 @@ export type UnsupportedChangeMarker = {
     entityId: string;
 };
 
+export type PlannedSessionTranscriptRepair = Readonly<{
+    sessionId: string;
+    minSeq: number;
+    messageIds: string[];
+}>;
+
 export type ChangeCheckpointDecision =
     | 'critical'
     | 'unsupported';
@@ -78,6 +84,7 @@ export const CHANGE_CHECKPOINT_COVERAGE = {
 export type PlannedChangeActions = {
     changes: ApiChangeEntry[];
     sessionIdsToCatchUp: string[];
+    sessionTranscriptRepairs: PlannedSessionTranscriptRepair[];
     unsupportedChanges: UnsupportedChangeMarker[];
     invalidate: {
         sessions: boolean;
@@ -190,6 +197,18 @@ export function getChangeTargetMessageSeq(change: ApiChangeEntry): number | null
     return Math.trunc(candidate);
 }
 
+export function getChangeUpdatedMessageHint(
+    change: ApiChangeEntry,
+): Readonly<{ seq: number; messageId: string }> | null {
+    if (change.kind !== 'session' && change.kind !== 'share') return null;
+    const hint = change.hint;
+    if (!isRecord(hint)) return null;
+    const seq = hint.updatedMessageSeq;
+    const messageId = typeof hint.updatedMessageId === 'string' ? hint.updatedMessageId.trim() : '';
+    if (typeof seq !== 'number' || !Number.isFinite(seq) || seq < 0 || !messageId) return null;
+    return { seq: Math.trunc(seq), messageId };
+}
+
 export function classifyChangeForCheckpoint(
     change: ApiChangeEntry,
     _clientState: ChangeCheckpointClientState,
@@ -250,6 +269,7 @@ export function classifyChangeForCheckpoint(
 
 export function planSyncActionsFromChanges(changes: ApiChangeEntry[]): PlannedChangeActions {
     const sessionIds = new Set<string>();
+    const sessionTranscriptRepairs = new Map<string, { minSeq: number; messageIds: Set<string> }>();
     const unsupportedChanges: UnsupportedChangeMarker[] = [];
     let invalidateSessions = false;
     let invalidateMachines = false;
@@ -335,6 +355,19 @@ export function planSyncActionsFromChanges(changes: ApiChangeEntry[]): PlannedCh
             invalidateSessions = true;
             if (typeof change.entityId === 'string' && change.entityId.length > 0) {
                 sessionIds.add(change.entityId);
+                const updatedMessage = getChangeUpdatedMessageHint(change);
+                if (updatedMessage) {
+                    const existing = sessionTranscriptRepairs.get(change.entityId);
+                    if (existing) {
+                        existing.minSeq = Math.min(existing.minSeq, updatedMessage.seq);
+                        existing.messageIds.add(updatedMessage.messageId);
+                    } else {
+                        sessionTranscriptRepairs.set(change.entityId, {
+                            minSeq: updatedMessage.seq,
+                            messageIds: new Set([updatedMessage.messageId]),
+                        });
+                    }
+                }
             }
             continue;
         }
@@ -432,6 +465,13 @@ export function planSyncActionsFromChanges(changes: ApiChangeEntry[]): PlannedCh
     return {
         changes: [...changes],
         sessionIdsToCatchUp: Array.from(sessionIds).sort(),
+        sessionTranscriptRepairs: Array.from(sessionTranscriptRepairs.entries())
+            .map(([sessionId, repair]) => ({
+                sessionId,
+                minSeq: repair.minSeq,
+                messageIds: Array.from(repair.messageIds).sort(),
+            }))
+            .sort((left, right) => left.sessionId.localeCompare(right.sessionId)),
         unsupportedChanges,
         invalidate: {
             sessions: invalidateSessions,

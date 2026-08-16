@@ -9,6 +9,7 @@ const credentials: AuthCredentials = { token: 't', secret: 's' };
 function buildPlanned(partial: {
     changes?: ApiChangeEntry[];
     sessionIdsToCatchUp?: string[];
+    sessionTranscriptRepairs?: PlannedChangeActions['sessionTranscriptRepairs'];
     unsupportedChanges?: PlannedChangeActions['unsupportedChanges'];
     invalidate?: Partial<PlannedChangeActions['invalidate']>;
     kv?: PlannedChangeActions['kv'];
@@ -16,6 +17,7 @@ function buildPlanned(partial: {
     return {
         changes: partial.changes ?? [],
         sessionIdsToCatchUp: partial.sessionIdsToCatchUp ?? [],
+        sessionTranscriptRepairs: partial.sessionTranscriptRepairs ?? [],
         unsupportedChanges: partial.unsupportedChanges ?? [],
         invalidate: {
             sessions: false,
@@ -820,6 +822,75 @@ describe('changesApplier', () => {
             safeAdvanceCursor: '1',
             processedChanges: 1,
             blockedChanges: 0,
+        });
+    });
+
+    it('repairs durable in-place transcript revisions before advancing their cursor', async () => {
+        const repairSessionTranscriptRevision = vi.fn(async () => {});
+        const change = buildChange({
+            cursor: 1,
+            kind: 'session',
+            entityId: 's1',
+            hint: { updatedMessageSeq: 15, updatedMessageId: 'm15' },
+        });
+
+        const result = await applyPlannedChangeActions({
+            planned: buildPlanned({
+                changes: [change],
+                sessionIdsToCatchUp: ['s1'],
+                sessionTranscriptRepairs: [{ sessionId: 's1', minSeq: 15, messageIds: ['m15'] }],
+            }),
+            credentials,
+            isSessionMessagesLoaded: () => true,
+            getSessionMaterializedMaxSeq: () => 15,
+            invalidate: {},
+            invalidateMessagesForSession: async () => {},
+            repairSessionTranscriptRevision,
+            invalidateScmStatusForSession: () => {},
+            applyTodoSocketUpdates: async () => {},
+            kvBulkGet: async () => ({ values: [] }),
+        });
+
+        expect(repairSessionTranscriptRevision).toHaveBeenCalledWith({
+            sessionId: 's1',
+            minSeq: 15,
+            messageIds: ['m15'],
+        });
+        expect(result).toMatchObject({ status: 'complete', safeAdvanceCursor: '1' });
+    });
+
+    it('keeps the changes cursor before a durable transcript revision whose repair fails', async () => {
+        const change = buildChange({
+            cursor: 1,
+            kind: 'session',
+            entityId: 's1',
+            hint: { updatedMessageSeq: 15, updatedMessageId: 'm15' },
+        });
+
+        const result = await applyPlannedChangeActions({
+            planned: buildPlanned({
+                changes: [change],
+                sessionIdsToCatchUp: ['s1'],
+                sessionTranscriptRepairs: [{ sessionId: 's1', minSeq: 15, messageIds: ['m15'] }],
+            }),
+            credentials,
+            isSessionMessagesLoaded: () => true,
+            getSessionMaterializedMaxSeq: () => 15,
+            invalidate: {},
+            invalidateMessagesForSession: async () => {},
+            repairSessionTranscriptRevision: async () => {
+                throw new Error('revision fetch failed');
+            },
+            invalidateScmStatusForSession: () => {},
+            applyTodoSocketUpdates: async () => {},
+            kvBulkGet: async () => ({ values: [] }),
+        });
+
+        expect(result).toMatchObject({
+            status: 'partial',
+            safeAdvanceCursor: null,
+            blockedCursor: '1',
+            blockedReason: 'partial-materialization',
         });
     });
 

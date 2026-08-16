@@ -18,6 +18,7 @@ export function decideMessageCatchUpPolicy(input: Readonly<{
     sessionSeqHint: number;
     offlineForMs: number;
     hasAcceptedLocalPending?: boolean;
+    hasExplicitTailProbe?: boolean;
     thresholds: MessageCatchUpThresholds;
 }>): MessageCatchUpDecision {
     const thresholds = input.thresholds;
@@ -32,6 +33,13 @@ export function decideMessageCatchUpPolicy(input: Readonly<{
     const materializedMaxSeq = Math.max(0, Math.trunc(input.materializedMaxSeq));
     const sessionSeqHint = Math.max(0, Math.trunc(input.sessionSeqHint));
     const gapSeq = sessionSeqHint - materializedMaxSeq;
+
+    // Opening an already-loaded transcript is an explicit recovery boundary. The local
+    // sequence hint can be stale when a realtime append was missed, so make one bounded
+    // request from the materialized tail rather than treating an apparent zero gap as proof.
+    if (gapSeq <= 0 && input.hasExplicitTailProbe === true) {
+        return { kind: 'incremental_batched', maxPages: 1 };
+    }
 
     // If we recently reconnected, the session seq hint can be stale (e.g. when the changes feed
     // does not include message entries for the gap). Force a single incremental page so we

@@ -80,6 +80,29 @@ describe('planSyncActionsFromChanges', () => {
         expect(planned.kv).toEqual({ type: 'none' });
     });
 
+    it('plans exact transcript revision repair from durable message-update hints', () => {
+        const planned = planSyncActionsFromChanges([
+            buildChange({
+                cursor: 1,
+                kind: 'session',
+                entityId: 's1',
+                hint: { updatedMessageSeq: 15, updatedMessageId: 'm15' },
+            }),
+            buildChange({
+                cursor: 2,
+                kind: 'session',
+                entityId: 's1',
+                hint: { updatedMessageSeq: 10, updatedMessageId: 'm10' },
+            }),
+        ]);
+
+        expect(planned.sessionTranscriptRepairs).toEqual([{
+            sessionId: 's1',
+            minSeq: 10,
+            messageIds: ['m10', 'm15'],
+        }]);
+    });
+
     it('plans session folder assignment refresh without session materialization', () => {
         const planned = planSyncActionsFromChanges([
             buildChange({

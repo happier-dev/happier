@@ -2,6 +2,7 @@ import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import {
     classifyChangeForCheckpoint,
     getChangeTargetMessageSeq,
+    getChangeUpdatedMessageHint,
     type ChangeCheckpointBlockedReason,
     type PlannedChangeActions,
 } from './changesPlanner';
@@ -56,6 +57,7 @@ export async function applyPlannedChangeActions(params: {
     refreshSessionFolderAssignments?: (plan: Exclude<PlannedChangeActions['sessionFolderAssignments'], { mode: 'none' }>) => Promise<void>;
     refreshSessionOrganization?: (plan: Exclude<PlannedChangeActions['sessionOrganization'], { mode: 'none' }>) => Promise<void>;
     invalidateMessagesForSession: (sessionId: string) => Promise<void>;
+    repairSessionTranscriptRevision?: (repair: PlannedChangeActions['sessionTranscriptRepairs'][number]) => Promise<void>;
     invalidateScmStatusForSession: (sessionId: string) => void;
     applyTodoSocketUpdates: (changes: TodoSocketUpdate[]) => Promise<void>;
     kvBulkGet: (credentials: AuthCredentials, keys: string[]) => Promise<{ values: TodoSocketUpdate[] }>;
@@ -70,12 +72,17 @@ export async function applyPlannedChangeActions(params: {
     const tasks: Array<() => Promise<void>> = [];
     const completedMessageCatchUpSessionIds = new Set<string>();
     const failedMessageCatchUpSessionIds = new Set<string>();
+    const completedTranscriptRepairSessionIds = new Set<string>();
+    const failedTranscriptRepairSessionIds = new Set<string>();
     const completedPendingSessionIds = new Set<string>();
     const failedPendingSessionIds = new Set<string>();
     let sessionFolderAssignmentsRefreshFailed = false;
     let sessionOrganizationRefreshFailed = false;
     const loadedCatchUpSessionIds = planned.sessionIdsToCatchUp.filter((sessionId) =>
         params.isSessionMessagesLoaded(sessionId),
+    );
+    const transcriptRepairBySessionId = new Map(
+        planned.sessionTranscriptRepairs.map((repair) => [repair.sessionId, repair] as const),
     );
     const changedSessionIds = planned.sessionIdsToCatchUp;
     const sessionListInvalidationContext: SessionListInvalidationContext = {
@@ -163,6 +170,21 @@ export async function applyPlannedChangeActions(params: {
                 completedMessageCatchUpSessionIds.add(sessionId);
             } catch {
                 failedMessageCatchUpSessionIds.add(sessionId);
+                return;
+            }
+
+            const repair = transcriptRepairBySessionId.get(sessionId);
+            if (repair) {
+                try {
+                    if (!params.repairSessionTranscriptRevision) {
+                        failedTranscriptRepairSessionIds.add(sessionId);
+                        return;
+                    }
+                    await params.repairSessionTranscriptRevision(repair);
+                    completedTranscriptRepairSessionIds.add(sessionId);
+                } catch {
+                    failedTranscriptRepairSessionIds.add(sessionId);
+                }
             }
         });
         params.invalidateScmStatusForSession(sessionId);
@@ -306,6 +328,25 @@ export async function applyPlannedChangeActions(params: {
             (classification.kind === 'session' || classification.kind === 'share')
             && params.isSessionMessagesLoaded(classification.entityId)
             && (!completedMessageCatchUpSessionIds.has(classification.entityId) || failedMessageCatchUpSessionIds.has(classification.entityId))
+        ) {
+            return {
+                status: 'partial',
+                safeAdvanceCursor,
+                blockedCursor: classification.cursor,
+                blockedReason: 'partial-materialization',
+                processedChanges,
+                blockedChanges: planned.changes.length - processedChanges,
+            };
+        }
+
+        const updatedMessage = getChangeUpdatedMessageHint(change);
+        if (
+            updatedMessage
+            && params.isSessionMessagesLoaded(classification.entityId)
+            && (
+                !completedTranscriptRepairSessionIds.has(classification.entityId)
+                || failedTranscriptRepairSessionIds.has(classification.entityId)
+            )
         ) {
             return {
                 status: 'partial',
