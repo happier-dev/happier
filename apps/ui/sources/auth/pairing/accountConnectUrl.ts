@@ -5,6 +5,8 @@ export type ParsedAccountConnectDeepLink = Readonly<{
     publicKeyB64Url: string;
 }>;
 
+export const ACCOUNT_CONNECT_ROUTE_PARAM = 'accountConnectKey';
+
 function isValidAccountLinkTarget(hostname: string, pathname: string): boolean {
     const normalizedPathname = pathname === 'account' ? '/account' : pathname;
 
@@ -28,4 +30,9 @@ export function parseAccountConnectDeepLink(rawLink: string): ParsedAccountConne
 export function buildAccountConnectDeepLink(input: Readonly<{ publicKeyB64Url: string }>): string {
     const publicKeyB64Url = String(input.publicKeyB64Url ?? '').trim();
     return `${resolveAppUrlScheme()}:///account?${publicKeyB64Url}`;
+}
+
+export function buildAccountConnectRoutePath(input: Readonly<{ publicKeyB64Url: string }>): string {
+    const publicKeyB64Url = String(input.publicKeyB64Url ?? '').trim();
+    return `/account?${ACCOUNT_CONNECT_ROUTE_PARAM}=${encodeURIComponent(publicKeyB64Url)}`;
 }

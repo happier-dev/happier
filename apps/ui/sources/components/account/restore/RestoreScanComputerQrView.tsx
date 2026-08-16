@@ -10,6 +10,7 @@ import { useAuth } from '@/auth/context/AuthContext';
 import { generateAuthKeyPair, authQRStart } from '@/auth/flows/qrStart';
 import { authQRWait } from '@/auth/flows/qrWait';
 import { buildPairingDeepLink, parsePairingDeepLink } from '@/auth/pairing/pairingUrl';
+import { parseAccountConnectDeepLink } from '@/auth/pairing/accountConnectUrl';
 import { encodeBase64 } from '@/encryption/base64';
 import { Modal } from '@/modal';
 import { t } from '@/text';
@@ -23,6 +24,7 @@ import { Text } from '@/components/ui/text/Text';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Typography } from '@/constants/Typography';
 import { QrCodeScannerView } from '@/components/qr/QrCodeScannerView';
+import { promptAccountConnectApprovalRequired } from './accountConnectApprovalGuidance';
 
 const stylesheet = StyleSheet.create((theme) => ({
     scrollView: {
@@ -112,6 +114,14 @@ export const RestoreScanComputerQrView = React.memo(function RestoreScanComputer
 
     const processPairingLink = React.useCallback(
         async (rawUrl: string) => {
+            if (parseAccountConnectDeepLink(rawUrl.trim())) {
+                const action = await promptAccountConnectApprovalRequired();
+                if (action === 'showQr') {
+                    router.push('/restore/show-qr');
+                }
+                return;
+            }
+
             const parsed = parsePairingDeepLink(rawUrl.trim());
             if (!parsed) {
                 await Modal.alertAsync(t('common.error'), t('modals.invalidAuthUrl'));

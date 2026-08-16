@@ -18,6 +18,9 @@ export function isPublicRouteForUnauthenticated(segments: string[]): boolean {
     // Terminal connect links must be reachable before authentication so users can sign in and continue.
     if (first === 'terminal') return true;
 
+    // Account-connect links must reach their route so signed-out users get recovery guidance.
+    if (first === 'account') return true;
+
     // The transparent desktop pet overlay window is shell-owned and must not be redirected into setup.
     if (first === 'desktop' && normalized[1] === 'pet-overlay') return true;
 

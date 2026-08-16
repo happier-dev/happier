@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
 import {
@@ -14,8 +15,13 @@ type ReactActEnvironmentGlobal = typeof globalThis & {
 const navigationState = vi.hoisted(() => ({
     isFocused: true,
 }));
+const modalAlertSpy = vi.hoisted(() => vi.fn(async () => {}));
 
 installRestoreScanComputerQrViewCommonModuleMocks({
+    modal: async () => {
+        const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+        return createModalModuleMock({ spies: { alertAsync: modalAlertSpy } }).module;
+    },
     reactNative: async () => {
         const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
         return createReactNativeWebMock({
@@ -94,6 +100,7 @@ describe('RestoreScanComputerQrView (web phone)', () => {
         resetRestoreScanComputerQrViewCommonModuleMockState();
         navigationState.isFocused = true;
         lastScannerProps = null;
+        modalAlertSpy.mockClear();
     });
 
     it('renders the QR scanner in idle state on web', async () => {
@@ -114,5 +121,22 @@ describe('RestoreScanComputerQrView (web phone)', () => {
         await renderScreen(<RestoreScanComputerQrView />);
 
         expect(lastScannerProps?.active).toBe(false);
+    });
+
+    it('explains that an account-connect QR must be scanned from a signed-in device', async () => {
+        const { RestoreScanComputerQrView } = await import('./RestoreScanComputerQrView');
+
+        await renderScreen(<RestoreScanComputerQrView />);
+
+        await act(async () => {
+            await lastScannerProps?.onScan('happier:///account?abc123');
+        });
+
+        expect(modalAlertSpy).toHaveBeenCalledWith(
+            'connect.restoreAccount',
+            'connect.restoreQrInstructions',
+            expect.any(Array),
+        );
+        expect(modalAlertSpy).not.toHaveBeenCalledWith('common.error', 'modals.invalidAuthUrl');
     });
 });

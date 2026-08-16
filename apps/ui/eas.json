@@ -36,7 +36,6 @@
         "EXPO_APP_NAME": "Happier (internal dev)",
         "EXPO_APP_BUNDLE_ID": "dev.happier.app.dev.internal",
         "EXPO_ANDROID_PACKAGE": "dev.happier.app.internaldev",
-        "EXPO_APP_SCHEME": "happier-internaldev",
         "HAPPIER_EXPO_DEVCLIENT_LAUNCH_MODE": "most-recent",
         "HAPPIER_EXPO_DEVCLIENT_SILENT_LAUNCH": "true",
         "HAPPIER_EXPO_USE_NATIVE_DEBUG": "true",
@@ -63,8 +62,7 @@
         "EXPO_UPDATES_CHANNEL": "internaldev",
         "EXPO_APP_NAME": "Happier (internal dev)",
         "EXPO_APP_BUNDLE_ID": "dev.happier.app.dev.internal",
-        "EXPO_ANDROID_PACKAGE": "dev.happier.app.internaldev",
-        "EXPO_APP_SCHEME": "happier-internaldev"
+        "EXPO_ANDROID_PACKAGE": "dev.happier.app.internaldev"
       }
     },
     "internalpreview": {
@@ -77,8 +75,7 @@
         "APP_ENV": "internalpreview",
         "EXPO_UPDATES_CHANNEL": "internalpreview",
         "EXPO_APP_NAME": "Happier (internal preview)",
-        "EXPO_APP_BUNDLE_ID": "dev.happier.app.internalpreview",
-        "EXPO_APP_SCHEME": "happier-internalpreview"
+        "EXPO_APP_BUNDLE_ID": "dev.happier.app.internalpreview"
       }
     },
     "internalpreview-apk": {
@@ -95,8 +92,7 @@
         "APP_ENV": "internalpreview",
         "EXPO_UPDATES_CHANNEL": "internalpreview",
         "EXPO_APP_NAME": "Happier (internal preview)",
-        "EXPO_APP_BUNDLE_ID": "dev.happier.app.internalpreview",
-        "EXPO_APP_SCHEME": "happier-internalpreview"
+        "EXPO_APP_BUNDLE_ID": "dev.happier.app.internalpreview"
       }
     },
     "publicdev": {
@@ -109,8 +105,7 @@
         "APP_ENV": "publicdev",
         "EXPO_UPDATES_CHANNEL": "dev",
         "EXPO_APP_NAME": "Happier (dev)",
-        "EXPO_APP_BUNDLE_ID": "dev.happier.app.publicdev",
-        "EXPO_APP_SCHEME": "happier-dev"
+        "EXPO_APP_BUNDLE_ID": "dev.happier.app.publicdev"
       }
     },
     "publicdev-apk": {
@@ -128,7 +123,6 @@
         "EXPO_UPDATES_CHANNEL": "dev",
         "EXPO_APP_NAME": "Happier (dev)",
         "EXPO_APP_BUNDLE_ID": "dev.happier.app.publicdev",
-        "EXPO_APP_SCHEME": "happier-dev",
         "HAPPIER_ANDROID_BUILD_ARCHS": "arm64-v8a",
         "HAPPIER_ANDROID_ENABLE_MINIFY": "1",
         "HAPPIER_ANDROID_ENABLE_SHRINK_RESOURCES": "1",

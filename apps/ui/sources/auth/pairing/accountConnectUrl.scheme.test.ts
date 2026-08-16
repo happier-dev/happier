@@ -11,9 +11,16 @@ describe('accountConnectUrl scheme override', () => {
             },
         }));
 
-        const { buildAccountConnectDeepLink, parseAccountConnectDeepLink } = await import('./accountConnectUrl');
+        const {
+            buildAccountConnectDeepLink,
+            buildAccountConnectRoutePath,
+            parseAccountConnectDeepLink,
+        } = await import('./accountConnectUrl');
 
         expect(buildAccountConnectDeepLink({ publicKeyB64Url: 'abc123' })).toBe('happier-dev:///account?abc123');
+        expect(buildAccountConnectRoutePath({ publicKeyB64Url: 'abc+123/=' })).toBe(
+            '/account?accountConnectKey=abc%2B123%2F%3D',
+        );
         expect(parseAccountConnectDeepLink('happier-dev:///account?abc123')).toEqual({ publicKeyB64Url: 'abc123' });
         expect(parseAccountConnectDeepLink('happier:///account?abc123')).toEqual({ publicKeyB64Url: 'abc123' });
         expect(parseAccountConnectDeepLink('happier:account?abc123')).toEqual({ publicKeyB64Url: 'abc123' });
