@@ -14,10 +14,10 @@ import { configuration } from '@/configuration';
 import { deterministicStringify } from '@/utils/deterministicJson';
 import { resolveTrustedSessionAttachmentLocalImagePaths } from '../../session/attachments/resolveTrustedSessionAttachmentLocalImagePaths';
 import type { SessionRuntimeControls } from './sessionControls';
-
-type ExplicitUserRecoveryDecision =
-  | Readonly<{ status: 'ready' }>
-  | Readonly<{ status: 'waiting' | 'action_required' | 'unavailable'; errorCode: string }>;
+import {
+  resolveExplicitUserPromptRecoveryDecision,
+  type ExplicitUserPromptRecoveryDecision,
+} from '@/session/usageLimitRecoveryControls/sessionUsageLimitRecoveryOperationResult';
 
 const MAX_EXACT_USER_MESSAGE_OUTCOMES = 1_000;
 
@@ -31,26 +31,6 @@ function hasBlockingExplicitUserRecoveryEvidence(metadata: unknown): boolean {
     || parsed.data.status === 'armed'
     || parsed.data.status === 'checking'
   );
-}
-
-function normalizeExplicitUserRecoveryDecision(result: unknown): ExplicitUserRecoveryDecision {
-  if (!result || typeof result !== 'object' || Array.isArray(result)) {
-    return { status: 'unavailable', errorCode: 'session_user_message_recovery_control_unavailable' };
-  }
-  const record = result as Record<string, unknown>;
-  if (record.ok === true) {
-    const status = typeof record.status === 'string' ? record.status : '';
-    if (status === 'ready' || status === 'resumed' || status === 'cancelled') return { status: 'ready' };
-    if (status === 'waiting' || status === 'checking' || status === 'armed') {
-      return { status: 'waiting', errorCode: 'session_user_message_recovery_pending' };
-    }
-  }
-  return {
-    status: 'action_required',
-    errorCode: typeof record.errorCode === 'string' && record.errorCode.trim().length > 0
-      ? record.errorCode
-      : 'session_user_message_recovery_action_required',
-  };
 }
 
 function normalizeUserIntentMessageSendMeta(meta: Record<string, unknown>): Record<string, unknown> {
@@ -103,7 +83,14 @@ export function registerSessionUserMessageSendHandler(
       ]).finally(() => {
         if (deadline) clearTimeout(deadline);
       });
-      return normalizeExplicitUserRecoveryDecision(result);
+      if (result === null) {
+        return { status: 'unavailable', errorCode: 'session_user_message_recovery_control_unavailable' };
+      }
+      return resolveExplicitUserPromptRecoveryDecision({
+        sessionId: opts.sessionId,
+        result,
+        hasBlockingRecoveryEvidence: hasBlockingExplicitUserRecoveryEvidence(opts.getSessionMetadata?.()),
+      });
     } catch {
       return { status: 'unavailable', errorCode: 'session_user_message_recovery_control_unavailable' };
     }
