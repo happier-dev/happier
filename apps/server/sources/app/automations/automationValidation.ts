@@ -37,6 +37,9 @@ const ScheduleSchema = z.discriminatedUnion("kind", [
         scheduleExpr: z.string().trim().min(1).max(256),
         timezone: z.string().trim().min(1).optional().nullable(),
     }).strict(),
+    z.object({
+        kind: z.literal("manual"),
+    }).strict(),
 ]);
 
 const TemplateEnvelopeSchema = z.object({
@@ -149,7 +152,10 @@ export function assertAutomationTemplateEnvelopeForAccountMode(
     }
 }
 
-function assertScheduleIsComputable(schedule: { kind: "interval" | "cron"; everyMs?: number; scheduleExpr?: string; timezone?: string | null }): void {
+function assertScheduleIsComputable(schedule: AutomationUpsertInput["schedule"]): void {
+    if (schedule.kind === "manual") {
+        return;
+    }
     const now = new Date();
     const due = computeNextDueAtForAutomation({
         now,

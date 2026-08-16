@@ -2,7 +2,7 @@ export type NewSessionAutomationDraft = Readonly<{
     enabled: boolean;
     name: string;
     description: string;
-    scheduleKind: 'interval' | 'cron';
+    scheduleKind: 'interval' | 'cron' | 'manual';
     everyMinutes: number;
     cronExpr: string;
     timezone: string | null;
@@ -40,8 +40,9 @@ function normalizeEveryMinutes(input: unknown): number {
     return Math.min(Math.max(Math.floor(input), 1), 24 * 60);
 }
 
-function normalizeScheduleKind(input: unknown): 'interval' | 'cron' {
-    return input === 'cron' ? 'cron' : 'interval';
+function normalizeScheduleKind(input: unknown): 'interval' | 'cron' | 'manual' {
+    if (input === 'cron' || input === 'manual') return input;
+    return 'interval';
 }
 
 function normalizeCronExpr(input: unknown): string {

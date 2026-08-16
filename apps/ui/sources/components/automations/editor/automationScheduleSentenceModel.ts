@@ -150,6 +150,9 @@ export function formatAutomationCronPresetLabel(preset: AutomationCronPreset): s
 }
 
 export function formatAutomationScheduleTriggerLabel(draft: NewSessionAutomationDraft): string {
+    if (draft.scheduleKind === 'manual') {
+        return t('automations.form.schedule.manualTitle');
+    }
     if (draft.scheduleKind === 'cron') {
         const expr = draft.cronExpr.trim();
         const preset = AUTOMATION_CRON_PRESETS.find((item) => item.expression === expr);
@@ -160,6 +163,9 @@ export function formatAutomationScheduleTriggerLabel(draft: NewSessionAutomation
 }
 
 export function formatAutomationCadenceLabel(draft: NewSessionAutomationDraft): string {
+    if (draft.scheduleKind === 'manual') {
+        return t('automations.form.schedule.manualSubtitle');
+    }
     if (draft.scheduleKind === 'cron') {
         const expr = draft.cronExpr.trim();
         const preset = AUTOMATION_CRON_PRESETS.find((item) => item.expression === expr);

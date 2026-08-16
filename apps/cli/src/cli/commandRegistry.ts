@@ -3,6 +3,7 @@ import type { TerminalRuntimeFlags } from '@/terminal/runtime/terminalRuntimeFla
 import { AGENTS, type AgentCatalogEntry } from '@/backends/catalog';
 
 import { handleAttachCliCommand } from './commands/attach';
+import { handleAutomationCliCommand } from './commands/automation';
 import { handleAuthCliCommand } from './commands/auth';
 import { handleBugReportCliCommand } from './commands/bugReport';
 import { handleCapabilitiesCliCommand } from './commands/capabilities';
@@ -51,6 +52,8 @@ function buildAgentCommandRegistry(): Readonly<Record<string, CommandHandler>> {
 
 export const commandRegistry: Readonly<Record<string, CommandHandler>> = {
   attach: handleAttachCliCommand,
+  automation: handleAutomationCliCommand,
+  automations: handleAutomationCliCommand,
   'acp-catalog': handleConfiguredAcpCatalogCliCommand,
   auth: handleAuthCliCommand,
   'bug-report': handleBugReportCliCommand,

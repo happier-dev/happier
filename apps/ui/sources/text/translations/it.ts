@@ -1008,6 +1008,8 @@ export const it: TranslationStructure = {
         intervalSubtitle: "Esegui ogni N minuti.",
         cronTitle: "Espressione cron",
         cronSubtitle: "Espressione di pianificazione avanzata.",
+        manualTitle: "Manuale",
+        manualSubtitle: "Esegui solo quando attivata dall’app, dall’API o dalla CLI.",
         cronHelpText:
           "Cron standard a 5 campi: minuto ora giorno-del-mese mese giorno-della-settimana.",
       },

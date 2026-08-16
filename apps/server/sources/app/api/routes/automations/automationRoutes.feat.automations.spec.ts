@@ -36,6 +36,27 @@ const createAutomation = vi.fn(async () => ({
     assignments: [{ machineId: "m1", enabled: true, priority: 0 }],
 }));
 const updateAutomation = vi.fn(async () => null);
+class AutomationDisabledError extends Error {}
+const runAutomationNow = vi.fn(async () => ({
+    id: "run-now-1",
+    automationId: "a1",
+    accountId: "u1",
+    state: "queued",
+    scheduledAt: new Date("2026-02-12T10:00:00.000Z"),
+    dueAt: new Date("2026-02-12T10:00:00.000Z"),
+    claimedAt: null,
+    startedAt: null,
+    finishedAt: null,
+    claimedByMachineId: null,
+    leaseExpiresAt: null,
+    attempt: 0,
+    summaryCiphertext: null,
+    errorCode: null,
+    errorMessage: null,
+    producedSessionId: null,
+    createdAt: new Date("2026-02-12T10:00:00.000Z"),
+    updatedAt: new Date("2026-02-12T10:00:00.000Z"),
+}));
 const claimAutomationRun = vi.fn(async () => ({
     run: {
         id: "run-1",
@@ -63,6 +84,8 @@ vi.mock("@/app/automations/automationCrudService", () => ({
     listAutomations,
     createAutomation,
     updateAutomation,
+    AutomationDisabledError,
+    runAutomationNow,
 }));
 vi.mock("@/app/automations/automationClaimService", () => ({
     claimAutomationRun,
@@ -163,6 +186,37 @@ describe("automationRoutes", () => {
 
         expect(createAutomation).toHaveBeenCalledWith(expect.objectContaining({ accountId: "u1" }));
         expect(response).toEqual(expect.objectContaining({ id: "a1", name: "Daily sweep" }));
+    });
+
+    it("forwards run-now idempotency keys and reports paused automations explicitly", async () => {
+        const { automationRoutes } = await import("./automationRoutes");
+        const route = createRouteTestBuilder({
+            method: "POST",
+            path: "/v2/automations/:id/run-now",
+            registerRoutes(app) {
+                automationRoutes(app as any);
+            },
+        });
+
+        await route.invoke({
+            userId: "u1",
+            params: { id: "a1" },
+            headers: { "idempotency-key": "ci-build-42" },
+        });
+        expect(runAutomationNow).toHaveBeenCalledWith({
+            accountId: "u1",
+            automationId: "a1",
+            idempotencyKey: "ci-build-42",
+        });
+
+        runAutomationNow.mockRejectedValueOnce(new AutomationDisabledError());
+        const { response, reply } = await route.invoke({
+            userId: "u1",
+            params: { id: "a1" },
+            headers: {},
+        });
+        expect(reply.code).toHaveBeenCalledWith(409);
+        expect(response).toEqual({ error: "automation_disabled" });
     });
 
     it("returns 400 for invalid automation payloads", async () => {

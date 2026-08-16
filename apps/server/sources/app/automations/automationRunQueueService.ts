@@ -30,36 +30,57 @@ export async function enqueueImmediateRunTx(params: {
     automationId: string;
     accountId: string;
     now: Date;
+    idempotencyKey?: string | null;
 }) {
-    return await params.tx.automationRun.create({
-        data: {
-            automationId: params.automationId,
-            accountId: params.accountId,
-            state: "queued",
-            scheduledAt: params.now,
-            dueAt: params.now,
-        },
-        select: {
-            id: true,
-            automationId: true,
-            accountId: true,
-            state: true,
-            scheduledAt: true,
-            dueAt: true,
-            claimedAt: true,
-            startedAt: true,
-            finishedAt: true,
-            claimedByMachineId: true,
-            leaseExpiresAt: true,
-            attempt: true,
-            summaryCiphertext: true,
-            errorCode: true,
-            errorMessage: true,
-            producedSessionId: true,
-            createdAt: true,
-            updatedAt: true,
-        },
+    const data = {
+        automationId: params.automationId,
+        accountId: params.accountId,
+        state: "queued" as const,
+        scheduledAt: params.now,
+        dueAt: params.now,
+        idempotencyKey: params.idempotencyKey ?? null,
+    };
+    const select = {
+        id: true,
+        automationId: true,
+        accountId: true,
+        state: true,
+        scheduledAt: true,
+        dueAt: true,
+        claimedAt: true,
+        startedAt: true,
+        finishedAt: true,
+        claimedByMachineId: true,
+        leaseExpiresAt: true,
+        attempt: true,
+        summaryCiphertext: true,
+        errorCode: true,
+        errorMessage: true,
+        producedSessionId: true,
+        createdAt: true,
+        updatedAt: true,
+    } as const;
+
+    if (params.idempotencyKey) {
+        const run = await params.tx.automationRun.upsert({
+            where: {
+                automationId_idempotencyKey: {
+                    automationId: params.automationId,
+                    idempotencyKey: params.idempotencyKey,
+                },
+            },
+            create: data,
+            update: {},
+            select,
+        });
+        return run;
+    }
+
+    const run = await params.tx.automationRun.create({
+        data,
+        select,
     });
+    return run;
 }
 
 export async function enqueueNextScheduledRunIfMissingTx(params: {

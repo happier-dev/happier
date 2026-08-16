@@ -78,7 +78,7 @@ export async function listDaemonAssignments(params: {
     accountId: string;
     machineId: string;
 }) {
-    return await db.automationAssignment.findMany({
+    const rows = await db.automationAssignment.findMany({
         where: {
             machineId: params.machineId,
             enabled: true,
@@ -108,9 +108,31 @@ export async function listDaemonAssignments(params: {
                     nextRunAt: true,
                     lastRunAt: true,
                     updatedAt: true,
+                    runs: {
+                        where: { state: "queued" },
+                        orderBy: [{ dueAt: "asc" }],
+                        take: 1,
+                        select: { dueAt: true },
+                    },
                 },
             },
         },
         orderBy: [{ priority: "desc" }, { updatedAt: "desc" }],
+    });
+
+    return rows.map((row) => {
+        const queuedDueAt = row.automation.runs[0]?.dueAt ?? null;
+        const scheduledDueAt = row.automation.nextRunAt;
+        const nextClaimAt = queuedDueAt && scheduledDueAt
+            ? new Date(Math.min(queuedDueAt.getTime(), scheduledDueAt.getTime()))
+            : queuedDueAt ?? scheduledDueAt;
+        const { runs: _runs, ...automation } = row.automation;
+        return {
+            ...row,
+            automation: {
+                ...automation,
+                nextClaimAt,
+            },
+        };
     });
 }

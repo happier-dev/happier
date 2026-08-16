@@ -84,10 +84,18 @@ export const AutomationSettingsForm = React.memo((props: Props) => {
             subtitle: t('automations.form.schedule.cronSubtitle'),
             icon: <Icon name="calendar" size={16} color={theme.colors.text.secondary} />,
         },
+        {
+            id: 'manual',
+            title: t('automations.form.schedule.manualTitle'),
+            subtitle: t('automations.form.schedule.manualSubtitle'),
+            icon: <Icon name="play" size={16} color={theme.colors.text.secondary} />,
+        },
     ]), [theme.colors.text.secondary]);
     const selectedScheduleIcon = props.value.scheduleKind === 'cron'
         ? <Icon name="calendar" size={16} color={theme.colors.text.secondary} />
-        : <Icon name="repeat" size={16} color={theme.colors.text.secondary} />;
+        : props.value.scheduleKind === 'manual'
+            ? <Icon name="play" size={16} color={theme.colors.text.secondary} />
+            : <Icon name="repeat" size={16} color={theme.colors.text.secondary} />;
 
     const compactHeaderStyle = React.useMemo<ViewStyle | undefined>(() => {
         if ((props.groupHeaderDensity ?? 'default') !== 'compact') return undefined;
@@ -169,11 +177,12 @@ export const AutomationSettingsForm = React.memo((props: Props) => {
                             }}
                             items={scheduleItems}
                             onSelect={(itemId) => {
-                                update({ scheduleKind: itemId === 'cron' ? 'cron' : 'interval' });
+                                update({ scheduleKind: itemId === 'cron' ? 'cron' : itemId === 'manual' ? 'manual' : 'interval' });
                                 setScheduleMenuOpen(false);
                             }}
                         />
 
+                        {props.value.scheduleKind !== 'manual' ? (
                         <ItemGroupColumns paddingVertical={14} rowGap={18}>
                             {props.value.scheduleKind === 'interval' ? (
                                 <>
@@ -243,6 +252,7 @@ export const AutomationSettingsForm = React.memo((props: Props) => {
                                 </>
                             )}
                         </ItemGroupColumns>
+                        ) : null}
                     </ItemGroup>
                 </>
             ) : null}

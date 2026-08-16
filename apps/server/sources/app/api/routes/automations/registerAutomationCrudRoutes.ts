@@ -9,6 +9,7 @@ import {
     getAutomation,
     listAutomationRuns,
     listAutomations,
+    AutomationDisabledError,
     runAutomationNow,
     setAutomationEnabled,
     updateAutomation,
@@ -161,12 +162,24 @@ export function registerAutomationCrudRoutes(app: Fastify): void {
         preHandler: app.authenticate,
         schema: {
             params: z.object({ id: z.string() }),
+            headers: z.object({
+                'idempotency-key': z.string().trim().min(1).max(191).optional(),
+            }).passthrough(),
         },
     }, async (request, reply) => {
-        const run = await runAutomationNow({
-            accountId: request.userId,
-            automationId: request.params.id,
-        });
+        let run;
+        try {
+            run = await runAutomationNow({
+                accountId: request.userId,
+                automationId: request.params.id,
+                idempotencyKey: request.headers['idempotency-key'],
+            });
+        } catch (error) {
+            if (error instanceof AutomationDisabledError) {
+                return reply.code(409).send({ error: 'automation_disabled' });
+            }
+            throw error;
+        }
         if (!run) {
             return reply.code(404).send({ error: 'automation_not_found' });
         }

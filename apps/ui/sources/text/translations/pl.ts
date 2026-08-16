@@ -1031,6 +1031,8 @@ export const pl: TranslationStructure = {
         intervalSubtitle: "Uruchamiaj co N minut.",
         cronTitle: "Wyrażenie cron",
         cronSubtitle: "Zaawansowane wyrażenie harmonogramu.",
+        manualTitle: "Ręcznie",
+        manualSubtitle: "Uruchamiaj tylko po wyzwoleniu z aplikacji, API lub CLI.",
         cronHelpText:
           "Standardowy cron 5‑polowy: minuta godzina dzień-miesiąca miesiąc dzień-tygodnia.",
       },

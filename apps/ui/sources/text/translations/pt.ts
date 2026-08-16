@@ -1059,6 +1059,8 @@ export const pt: TranslationStructure = {
         intervalSubtitle: "Executar a cada N minutos.",
         cronTitle: "Expressão cron",
         cronSubtitle: "Expressão de agendamento avançada.",
+        manualTitle: "Manual",
+        manualSubtitle: "Executar apenas quando acionada pelo aplicativo, API ou CLI.",
         cronHelpText:
           "Cron padrão de 5 campos: minuto hora dia-do-mês mês dia-da-semana.",
       },

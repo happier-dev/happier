@@ -11,7 +11,7 @@ import { executeClaimedRun, type ClaimableRunPayload } from './automationRunExec
 import { resolveAutomationPollingConfig } from './automationScheduler';
 import type { AutomationTemplateEncryption } from './automationTemplateExecution';
 import { logAutomationInfo, logAutomationWarn } from './automationTelemetry';
-import type { AutomationClaimRunResponse } from './automationTypes';
+import type { AutomationClaimRunResponse, AutomationDaemonAssignmentsResponse } from './automationTypes';
 import type { ExecutionBudgetRegistry } from '@/daemon/executionBudget/ExecutionBudgetRegistry';
 import type { Update } from '@/api/types';
 
@@ -22,6 +22,20 @@ export type AutomationWorkerHandle = Readonly<{
   pause: () => void;
   resume: () => void;
 }>;
+
+export function resolveNextAutomationClaimAtMs(
+  rows: AutomationDaemonAssignmentsResponse['assignments'],
+): number | null {
+  let next: number | null = null;
+  for (const row of rows) {
+    const candidate = row.automation.nextClaimAt ?? row.automation.nextRunAt;
+    if (typeof candidate !== 'number' || !Number.isFinite(candidate)) continue;
+    if (next === null || candidate < next) {
+      next = candidate;
+    }
+  }
+  return next;
+}
 
 function toClaimableRunPayload(claimResult: AutomationClaimRunResponse): ClaimableRunPayload | null {
   if (!claimResult.run || !claimResult.automation) {
@@ -158,16 +172,7 @@ export function startAutomationWorker(params: {
   }
 
   function getNextAssignedRunAtMs(): number | null {
-    const rows = assignments.getAll();
-    let next: number | null = null;
-    for (const row of rows) {
-      const candidate = row.automation.nextRunAt;
-      if (typeof candidate !== 'number' || !Number.isFinite(candidate)) continue;
-      if (next === null || candidate < next) {
-        next = candidate;
-      }
-    }
-    return next;
+    return resolveNextAutomationClaimAtMs(assignments.getAll());
   }
 
   function rescheduleClaim(reason: string) {

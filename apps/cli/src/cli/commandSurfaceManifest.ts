@@ -22,6 +22,12 @@ const COMMAND_SURFACE_MANIFEST: readonly CliCommandSurfaceEntry[] = [
     allowTmux: false,
   },
   {
+    command: 'automation',
+    rootHelpLabel: 'happier automation',
+    rootHelpDescription: 'Trigger and manage automations',
+    allowTmux: false,
+  },
+  {
     command: 'mcp',
     rootHelpLabel: 'happier mcp',
     rootHelpDescription: 'Expose the MCP server and manage MCP clients',
@@ -124,6 +130,11 @@ const COMMAND_SURFACE_MANIFEST: readonly CliCommandSurfaceEntry[] = [
   {
     // Compatibility alias: intentionally accepted but omitted from root help.
     command: 'sessions',
+    allowTmux: false,
+  },
+  {
+    // Compatibility alias: intentionally accepted but omitted from root help.
+    command: 'automations',
     allowTmux: false,
   },
 ];

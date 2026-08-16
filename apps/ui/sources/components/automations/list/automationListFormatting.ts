@@ -1,6 +1,11 @@
+import { t } from '@/text';
+
 export function formatAutomationScheduleLabel(automation: {
-    schedule: { kind: 'cron' | 'interval'; everyMs: number | null; scheduleExpr: string | null; timezone?: string | null };
+    schedule: { kind: 'cron' | 'interval' | 'manual'; everyMs: number | null; scheduleExpr: string | null; timezone?: string | null };
 }): string {
+    if (automation.schedule.kind === 'manual') {
+        return t('automations.form.schedule.manualTitle');
+    }
     if (automation.schedule.kind === 'interval' && typeof automation.schedule.everyMs === 'number') {
         const minutes = Math.max(1, Math.round(automation.schedule.everyMs / 60_000));
         const tz = typeof automation.schedule.timezone === 'string' && automation.schedule.timezone.trim().length > 0

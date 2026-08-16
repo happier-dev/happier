@@ -993,6 +993,8 @@ export const ja: TranslationStructure = {
         intervalSubtitle: "N 分ごとに実行します。",
         cronTitle: "Cron 式",
         cronSubtitle: "高度なスケジュール式。",
+        manualTitle: "手動",
+        manualSubtitle: "アプリ、API、または CLI からトリガーされた場合にのみ実行します。",
         cronHelpText: "標準の 5 フィールド cron: 分 時 日 月 曜日。",
       },
       sentence: {

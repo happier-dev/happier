@@ -41,6 +41,18 @@ describe("parseAutomationUpsertInput", () => {
         expect(parsed.assignments).toHaveLength(1);
     });
 
+    it("accepts manual automations without schedule fields", () => {
+        const parsed = parseAutomationUpsertInput({
+            name: "Triggered by CI",
+            enabled: true,
+            schedule: { kind: "manual" },
+            targetType: "new_session",
+            templateCiphertext: TEST_TEMPLATE_ENVELOPE,
+        });
+
+        expect(parsed.schedule).toEqual({ kind: "manual" });
+    });
+
     it("rejects interval schedules without everyMs", () => {
         expect(() =>
             parseAutomationUpsertInput({

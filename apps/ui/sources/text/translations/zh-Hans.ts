@@ -1001,6 +1001,8 @@ export const zhHans: TranslationStructure = {
         intervalSubtitle: "每 N 分钟运行一次。",
         cronTitle: "Cron 表达式",
         cronSubtitle: "高级计划表达式。",
+        manualTitle: "手动",
+        manualSubtitle: "仅在应用、API 或 CLI 触发时运行。",
         cronHelpText: "标准 5 段 cron：分钟 小时 月日 月 星期。",
       },
       sentence: {

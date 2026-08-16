@@ -816,6 +816,7 @@ model Machine {
 enum AutomationScheduleKind {
     cron
     interval
+    manual
 }
 
 enum AutomationTargetType {
@@ -883,6 +884,7 @@ model AutomationRun {
     state              AutomationRunState @default(queued)
     scheduledAt        DateTime
     dueAt              DateTime
+    idempotencyKey     String?
     claimedAt          DateTime?
     startedAt          DateTime?
     finishedAt         DateTime?
@@ -900,6 +902,7 @@ model AutomationRun {
     events             AutomationRunEvent[]
 
     @@index([accountId, state, dueAt])
+    @@unique([automationId, idempotencyKey])
     @@index([automationId, dueAt])
     @@index([claimedByMachineId, leaseExpiresAt])
     @@index([state, finishedAt])

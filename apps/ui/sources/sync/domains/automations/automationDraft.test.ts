@@ -7,4 +7,8 @@ describe('automationDraft', () => {
         expect(DEFAULT_NEW_SESSION_AUTOMATION_DRAFT.name).toBe('');
         expect(sanitizeNewSessionAutomationDraft(null).name).toBe('');
     });
+
+    it('preserves manual trigger definitions when hydrating an existing automation', () => {
+        expect(sanitizeNewSessionAutomationDraft({ scheduleKind: 'manual' }).scheduleKind).toBe('manual');
+    });
 });

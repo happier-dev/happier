@@ -713,7 +713,7 @@ describe('automationWorker integration', () => {
       await waitForCondition(() => server.state.succeeded.length === 1);
       expect(server.state.pendingEnqueue).toHaveLength(1);
       expect(server.state.pendingEnqueue[0]).toEqual(expect.objectContaining({
-        localId: expect.any(String),
+        localId: 'automation:run:run-6-plain',
         content: {
           t: 'plain',
           v: expect.objectContaining({

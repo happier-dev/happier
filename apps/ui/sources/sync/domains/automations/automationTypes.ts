@@ -4,7 +4,7 @@ import type { CodexBackendMode } from '@happier-dev/agents';
 import type { NewSessionCheckoutCreationDraft } from '@/sync/domains/state/newSessionCheckoutDraft';
 
 export type AutomationSchedule = Readonly<{
-    kind: 'cron' | 'interval';
+    kind: 'cron' | 'interval' | 'manual';
     scheduleExpr: string | null;
     everyMs: number | null;
     timezone: string | null;

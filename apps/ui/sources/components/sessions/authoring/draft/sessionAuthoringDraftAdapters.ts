@@ -614,7 +614,7 @@ export async function buildAutomationEditTemplateSeed(params: Readonly<{
         name: string;
         description?: string | null;
         schedule: Readonly<{
-            kind: 'interval' | 'cron';
+            kind: 'interval' | 'cron' | 'manual';
             everyMs?: number | null;
             scheduleExpr?: string | null;
             timezone?: string | null;

@@ -19,6 +19,10 @@ export function computeNextDueAtForAutomation(params: {
         return new Date(params.now.getTime() + Math.floor(params.everyMs));
     }
 
+    if (params.scheduleKind === "manual") {
+        return null;
+    }
+
     const expr = typeof params.scheduleExpr === "string" ? params.scheduleExpr.trim() : "";
     if (!expr) return null;
 

@@ -72,6 +72,29 @@ describe('automationWorker', () => {
     vi.useRealTimers();
   });
 
+  it('uses queued-run claim timing for manual automations with no scheduled run', async () => {
+    const { resolveNextAutomationClaimAtMs } = await import('./automationWorker');
+    expect(resolveNextAutomationClaimAtMs([{
+      machineId: 'machine-1',
+      enabled: true,
+      priority: 0,
+      updatedAt: 1,
+      automation: {
+        id: 'automation-1',
+        name: 'Triggered by CI',
+        enabled: true,
+        schedule: { kind: 'manual', scheduleExpr: null, everyMs: null, timezone: null },
+        targetType: 'new_session',
+        templateCiphertext: 'ciphertext',
+        templateVersion: 1,
+        nextRunAt: null,
+        nextClaimAt: 42,
+        lastRunAt: null,
+        updatedAt: 1,
+      },
+    }])).toBe(42);
+  });
+
   afterEach(() => {
     vi.restoreAllMocks();
     vi.resetModules();

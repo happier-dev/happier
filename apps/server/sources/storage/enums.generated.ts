@@ -28,6 +28,7 @@ export type PendingProviderAction = (typeof PendingProviderAction)[keyof typeof 
 export const AutomationScheduleKind = {
     cron: "cron",
     interval: "interval",
+    manual: "manual",
 } as const;
 
 export type AutomationScheduleKind = (typeof AutomationScheduleKind)[keyof typeof AutomationScheduleKind];

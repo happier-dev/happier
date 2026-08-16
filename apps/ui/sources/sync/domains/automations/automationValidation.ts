@@ -6,7 +6,8 @@ import type { AutomationTargetType, AutomationTemplate } from './automationTypes
 
 export type AutomationScheduleInput =
     | Readonly<{ kind: 'interval'; everyMs: number; scheduleExpr?: undefined; timezone?: string | null }>
-    | Readonly<{ kind: 'cron'; scheduleExpr: string; everyMs?: undefined; timezone?: string | null }>;
+    | Readonly<{ kind: 'cron'; scheduleExpr: string; everyMs?: undefined; timezone?: string | null }>
+    | Readonly<{ kind: 'manual'; everyMs?: undefined; scheduleExpr?: undefined; timezone?: undefined }>;
 
 export const DEFAULT_AUTOMATION_NAME_FALLBACK = 'Scheduled automation';
 
@@ -24,6 +25,9 @@ export function normalizeAutomationDescription(input: string): string | null {
 }
 
 export function buildAutomationScheduleFromDraft(draft: NewSessionAutomationDraft): AutomationScheduleInput {
+    if (draft.scheduleKind === 'manual') {
+        return { kind: 'manual' };
+    }
     const timezone = draft.timezone ?? null;
     if (draft.scheduleKind === 'cron') {
         const scheduleExpr = typeof draft.cronExpr === 'string' ? draft.cronExpr.trim() : '';

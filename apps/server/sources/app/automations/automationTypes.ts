@@ -1,4 +1,4 @@
-export type AutomationScheduleKind = 'cron' | 'interval';
+export type AutomationScheduleKind = 'cron' | 'interval' | 'manual';
 export type AutomationTargetType = 'new_session' | 'existing_session';
 export type AutomationRunState = 'queued' | 'claimed' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'expired';
 
@@ -18,6 +18,11 @@ export type AutomationScheduleInput = Readonly<{
     scheduleExpr: string;
     everyMs?: undefined;
     timezone?: string | null;
+}> | Readonly<{
+    kind: 'manual';
+    everyMs?: undefined;
+    scheduleExpr?: undefined;
+    timezone?: undefined;
 }>;
 
 export type AutomationUpsertInput = Readonly<{

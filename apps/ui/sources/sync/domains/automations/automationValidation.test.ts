@@ -47,6 +47,18 @@ describe('automationValidation', () => {
         });
     });
 
+    it('builds manual triggers without schedule fields', () => {
+        expect(buildAutomationScheduleFromDraft({
+            enabled: true,
+            name: 'Triggered by CI',
+            description: '',
+            scheduleKind: 'manual',
+            everyMinutes: 10,
+            cronExpr: '*/5 * * * *',
+            timezone: 'UTC',
+        })).toEqual({ kind: 'manual' });
+    });
+
     it('requires existingSessionId for existing_session target', () => {
         expect(() => validateAutomationTemplateTarget({
             targetType: 'existing_session',

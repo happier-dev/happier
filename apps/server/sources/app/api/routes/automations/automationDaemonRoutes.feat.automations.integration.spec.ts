@@ -234,13 +234,23 @@ describe("automation daemon routes (integration)", () => {
                 accountId: account.id,
                 name: "Assigned run",
                 enabled: true,
-                scheduleKind: "interval",
-                everyMs: 120_000,
+                scheduleKind: "manual",
                 targetType: "new_session",
                 templateCiphertext: buildTemplateEnvelope(),
                 templateVersion: 1,
             },
             select: { id: true },
+        });
+        const queuedDueAt = new Date(Date.now() - 5_000);
+        await db.automationRun.create({
+            data: {
+                automationId: automation.id,
+                accountId: account.id,
+                state: "queued",
+                scheduledAt: queuedDueAt,
+                dueAt: queuedDueAt,
+                idempotencyKey: "offline-trigger-1",
+            },
         });
         await db.automationAssignment.createMany({
             data: [
@@ -280,6 +290,8 @@ describe("automation daemon routes (integration)", () => {
                         automation: expect.objectContaining({
                             id: automation.id,
                             name: "Assigned run",
+                            nextRunAt: null,
+                            nextClaimAt: queuedDueAt.getTime(),
                         }),
                     }),
                 );

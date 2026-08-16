@@ -1037,6 +1037,8 @@ export const ru: TranslationStructure = {
         intervalSubtitle: "Запускать каждые N минут.",
         cronTitle: "Cron-выражение",
         cronSubtitle: "Продвинутое выражение расписания.",
+        manualTitle: "Вручную",
+        manualSubtitle: "Запускать только по команде из приложения, API или CLI.",
         cronHelpText:
           "Стандартный cron из 5 полей: минута час день-месяца месяц день-недели.",
       },

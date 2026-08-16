@@ -168,6 +168,7 @@ export async function executeClaimedRun(params: {
             prompt: template.prompt,
             ...(typeof template.displayText === 'string' ? { displayText: template.displayText } : {}),
             sessionEncryptionMode,
+            localId: `automation:run:${claimed.run.id}`,
             ...(sessionEncryptionMode === 'plain' ? {} : { sessionEncryptionKeyBase64 }),
           });
         } catch (error) {

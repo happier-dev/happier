@@ -8,6 +8,7 @@ describe('CLI command-surface manifest', () => {
     expect(entries.map((entry) => entry.command)).toEqual([
       null,
       'auth',
+      'automation',
       'mcp',
       'codex',
       'opencode',
@@ -37,6 +38,7 @@ describe('CLI command-surface manifest', () => {
     expect(isTmuxAllowedCommand('status')).toBe(false);
     expect(isTmuxAllowedCommand('session')).toBe(false);
     expect(isTmuxAllowedCommand('sessions')).toBe(false);
+    expect(isTmuxAllowedCommand('automation')).toBe(false);
     expect(isTmuxAllowedCommand('install')).toBe(false);
   });
 });

@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 export const ApiAutomationScheduleSchema = z.object({
-    kind: z.enum(['cron', 'interval']),
+    kind: z.enum(['cron', 'interval', 'manual']),
     scheduleExpr: z.string().nullable(),
     everyMs: z.number().int().nullable(),
     timezone: z.string().nullable(),

@@ -31,6 +31,18 @@ describe("automationSchedulingService", () => {
         expect(due).toBeNull();
     });
 
+    it("never computes a scheduled due time for manual automations", () => {
+        const due = computeNextDueAtForAutomation({
+            now: new Date("2026-02-12T10:00:00.000Z"),
+            scheduleKind: "manual",
+            everyMs: null,
+            scheduleExpr: null,
+            timezone: null,
+        });
+
+        expect(due).toBeNull();
+    });
+
     it("computes next due time for cron schedules in UTC", () => {
         const now = new Date("2026-02-12T10:00:00.000Z");
         const due = computeNextDueAtForAutomation({

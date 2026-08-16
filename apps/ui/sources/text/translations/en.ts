@@ -872,6 +872,8 @@ export const en = {
                 intervalSubtitle: 'Run every N minutes.',
                 cronTitle: 'Cron',
                 cronSubtitle: 'Advanced schedule expression.',
+                manualTitle: 'Manual',
+                manualSubtitle: 'Run only when triggered from the app, API, or CLI.',
                 cronHelpText: 'Standard 5-field cron: minute hour day-of-month month day-of-week.',
             },
             sentence: {

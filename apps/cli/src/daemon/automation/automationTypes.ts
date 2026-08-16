@@ -40,7 +40,7 @@ export type AutomationDaemonAssignmentsResponse = Readonly<{
       name: string;
       enabled: boolean;
       schedule: {
-        kind: 'cron' | 'interval';
+        kind: 'cron' | 'interval' | 'manual';
         scheduleExpr: string | null;
         everyMs: number | null;
         timezone: string | null;
@@ -49,6 +49,7 @@ export type AutomationDaemonAssignmentsResponse = Readonly<{
       templateCiphertext: string;
       templateVersion: number;
       nextRunAt: number | null;
+      nextClaimAt?: number | null;
       lastRunAt: number | null;
       updatedAt: number;
     };

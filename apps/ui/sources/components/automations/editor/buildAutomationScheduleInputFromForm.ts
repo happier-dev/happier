@@ -3,6 +3,9 @@ import type { AutomationScheduleInput } from '@/sync/domains/automations/automat
 import type { AutomationSettingsValue } from './AutomationSettingsForm';
 
 export function buildAutomationScheduleInputFromForm(form: AutomationSettingsValue): AutomationScheduleInput {
+    if (form.scheduleKind === 'manual') {
+        return { kind: 'manual' };
+    }
     const timezone = form.timezone ?? null;
     if (form.scheduleKind === 'cron') {
         const scheduleExpr = form.cronExpr.trim().length > 0 ? form.cronExpr.trim() : '0 * * * *';

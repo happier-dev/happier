@@ -6,6 +6,7 @@ import type {
   ConnectedServiceCredentialApi,
 } from '@/api/connectedServices/connectedServiceCredentialApi';
 import type { ConnectedServiceCredentialLifecycleDescriptor } from './connectedServices/credentials/lifecycleTypes';
+import type { ConnectedServiceRuntimeRegistry as ConnectedServiceRuntimeRegistryType } from './connectedServices/runtimeRegistry/registry';
 import { HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY } from './connectedServices/connectedServiceChildEnvironment';
 import { DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1 } from './connectedServices/accountGroups/selection/selectConnectedServiceAuthGroupCandidate';
 import type { TrackedSession } from './types';
@@ -1794,6 +1795,107 @@ describe('startDaemon automation wiring (integration)', () => {
       });
     } finally {
       quotaReadiness.resolve(true);
+      if (app) await app.close();
+      harness.requestShutdown('happier-cli');
+      if (run) await run;
+      exitSpy.mockRestore();
+    }
+  });
+
+  it('indexes a terminal-started broker runtime from its first durable session report', async () => {
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
+    const pid = 7429;
+    const sessionId = 'session-terminal-opencode-broker';
+    const brokerSelectionIdentity =
+      'opencode|connected|broker:1|openai-codex:work:account-1|group:team';
+    let run: Promise<void> | null = null;
+    let app: Awaited<ReturnType<typeof createCapturedDaemonControlApp>> | null = null;
+    let runtimeRegistry: ConnectedServiceRuntimeRegistryType | null = null;
+    harness.setAutoShutdownAfterAutomationStart(false);
+
+    try {
+      const catalog = await import('@/backends/catalog');
+      vi.mocked(catalog.resolveCatalogAgentId).mockReturnValue('opencode');
+      const { ConnectedServiceRuntimeRegistry } = await import(
+        './connectedServices/runtimeRegistry/registry'
+      );
+      const originalSubscribe = ConnectedServiceRuntimeRegistry.prototype.onTargetRegistration;
+      vi.spyOn(ConnectedServiceRuntimeRegistry.prototype, 'onTargetRegistration').mockImplementation(function (
+        this: ConnectedServiceRuntimeRegistryType,
+        listener,
+      ) {
+        runtimeRegistry = this;
+        return originalSubscribe.call(this, listener);
+      });
+      const webhookModule = await import('./sessions/onHappySessionWebhook');
+      const actualWebhookModule = await vi.importActual<typeof import('./sessions/onHappySessionWebhook')>(
+        './sessions/onHappySessionWebhook',
+      );
+      vi.mocked(webhookModule.createOnHappySessionWebhook).mockImplementation((params) => {
+        params.pidToTrackedSession.set(pid, {
+          pid,
+          startedBy: 'happy directly - likely by user from terminal',
+          happySessionId: `PID-${pid}`,
+        });
+        return actualWebhookModule.createOnHappySessionWebhook({
+          ...params,
+          findHappyProcessByPidFn: async () => null,
+          writeSessionMarkerFn: async () => {},
+          readCredentialsFn: async () => automationCredentials,
+        });
+      });
+
+      const { startDaemon } = await import('./startDaemon');
+      run = startDaemon();
+      await waitForCondition(
+        () => harness.getDaemonControlServerParams() !== null && runtimeRegistry !== null,
+        'Expected daemon control server and Connected Services runtime registry',
+      );
+      app = await createCapturedDaemonControlApp();
+      const response = await app.inject({
+        method: 'POST',
+        url: '/session-started',
+        headers: { 'x-happier-daemon-token': readCapturedDaemonControlToken() },
+        payload: {
+          sessionId,
+          metadata: {
+            path: '/tmp/terminal-opencode',
+            host: 'test-host',
+            homeDir: '/tmp',
+            happyHomeDir: '/tmp/home',
+            happyLibDir: '/tmp/lib',
+            happyToolsDir: '/tmp/tools',
+            hostPid: pid,
+            startedBy: 'happy directly - likely by user from terminal',
+            machineId: 'machine-automation',
+            flavor: 'opencode',
+            connectedServices: {
+              v: 1,
+              bindingsByServiceId: {
+                'openai-codex': {
+                  source: 'connected',
+                  selection: 'group',
+                  groupId: 'team',
+                  profileId: 'work',
+                },
+              },
+            },
+            connectedServiceBrokerSelectionIdentityV1: brokerSelectionIdentity,
+          },
+        },
+      });
+
+      expect(response.statusCode).toBe(200);
+      await waitForCondition(
+        () => runtimeRegistry?.getByBrokerSelectionIdentity(brokerSelectionIdentity)?.sessionId === sessionId,
+        'Expected the terminal-started broker identity to reach the canonical runtime registry',
+      );
+      expect(runtimeRegistry?.getByBrokerSelectionIdentity(brokerSelectionIdentity)).toMatchObject({
+        pid,
+        agentId: 'opencode',
+        sessionId,
+      });
+    } finally {
       if (app) await app.close();
       harness.requestShutdown('happier-cli');
       if (run) await run;

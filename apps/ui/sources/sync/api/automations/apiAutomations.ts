@@ -11,7 +11,8 @@ import { getAutomationAuthHeaders, readAutomationJsonOrThrow } from './apiAutoma
 
 export type AutomationScheduleInput =
     | Readonly<{ kind: 'interval'; everyMs: number; scheduleExpr?: undefined; timezone?: string | null }>
-    | Readonly<{ kind: 'cron'; scheduleExpr: string; everyMs?: undefined; timezone?: string | null }>;
+    | Readonly<{ kind: 'cron'; scheduleExpr: string; everyMs?: undefined; timezone?: string | null }>
+    | Readonly<{ kind: 'manual'; everyMs?: undefined; scheduleExpr?: undefined; timezone?: undefined }>;
 
 export type AutomationAssignmentInput = Readonly<{
     machineId: string;

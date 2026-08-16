@@ -96,6 +96,7 @@ export function registerAutomationDaemonRoutes(app: Fastify): void {
                     templateCiphertext: row.automation.templateCiphertext,
                     templateVersion: row.automation.templateVersion,
                     nextRunAt: row.automation.nextRunAt ? row.automation.nextRunAt.getTime() : null,
+                    nextClaimAt: row.automation.nextClaimAt ? row.automation.nextClaimAt.getTime() : null,
                     lastRunAt: row.automation.lastRunAt ? row.automation.lastRunAt.getTime() : null,
                     updatedAt: row.automation.updatedAt.getTime(),
                 },

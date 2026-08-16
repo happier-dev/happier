@@ -49,7 +49,7 @@ export const SessionAuthoringAutomationV1Schema = z.object({
   enabled: z.boolean(),
   name: z.string(),
   description: z.string(),
-  scheduleKind: z.enum(['interval', 'cron']),
+  scheduleKind: z.enum(['interval', 'cron', 'manual']),
   everyMinutes: z.number().int().min(1).max(24 * 60),
   cronExpr: z.string(),
   timezone: z.string().nullable(),
