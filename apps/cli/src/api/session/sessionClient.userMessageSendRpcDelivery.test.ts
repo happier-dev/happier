@@ -790,6 +790,30 @@ describe('ApiSessionClient session.userMessage.send delivery', () => {
     expect(received).toHaveLength(0);
   });
 
+  it('delivers a first prompt when recovery control is unsupported before the provider runtime exists', async () => {
+    sessionSocketStub = createApiSessionSocketStub({
+      connected: true,
+      emitWithAckResult: { ok: true, id: 'm-first', seq: 1, localId: 'first-prompt' },
+    });
+    userSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true } });
+    const client = new ApiSessionClient('tok', createPlainSessionFixture({ id: 's1' }));
+    const checkUsageLimitRecoveryNow = vi.fn(async () => ({
+      ok: false,
+      errorCode: 'unsupported_session_runtime_method',
+      error: 'unsupported_session_runtime_method:session.usageLimit.checkNow',
+    }));
+    (client as any).sessionRuntimeControls.checkUsageLimitRecoveryNow = checkUsageLimitRecoveryNow;
+    client.onUserMessage(() => undefined);
+
+    await expect((client as any).enqueueSessionUserMessage({
+      text: 'create the first provider turn',
+      localId: 'first-prompt',
+      meta: { source: 'ui' },
+    })).resolves.toBeUndefined();
+
+    expect(checkUsageLimitRecoveryNow).toHaveBeenCalledTimes(1);
+  });
+
   it('delivers ordinary input while provider-ready recovery remains paused for later exact proof', async () => {
     sessionSocketStub = createApiSessionSocketStub({
       connected: true,

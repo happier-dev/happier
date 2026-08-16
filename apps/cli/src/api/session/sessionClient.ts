@@ -62,6 +62,10 @@ import type {
     SessionRuntimeActivitySnapshotPublisher,
 } from '@/session/runtimeActivity/types';
 import {
+    resolveExplicitUserPromptRecoveryDecision,
+    type ExplicitUserPromptRecoveryDecision,
+} from '@/session/usageLimitRecoveryControls/sessionUsageLimitRecoveryOperationResult';
+import {
     RUNTIME_ACTIVITY_DESIRED_REOFFER_REQUEST,
     createRuntimeActivitySnapshotSessionMutationPublisher,
     type RuntimeActivitySnapshotSessionMutationPublisher,
@@ -109,12 +113,7 @@ function requireExactCommitResult(
     };
 }
 
-type ExplicitUserRecoveryDecision =
-    | Readonly<{ status: 'ready' }>
-    | Readonly<{
-        status: 'waiting' | 'action_required' | 'unavailable';
-        errorCode: string;
-    }>;
+type ExplicitUserRecoveryDecision = ExplicitUserPromptRecoveryDecision;
 
 function readExplicitUserRecoveryStatus(metadata: Metadata | null) {
     if (!metadata || typeof metadata !== 'object') return null;
@@ -2250,28 +2249,17 @@ export class ApiSessionClient extends EventEmitter {
                 ]).finally(() => {
                     if (deadline) clearTimeout(deadline);
                 });
-                if (!result || typeof result !== 'object' || Array.isArray(result)) {
+                if (result === null) {
                     return {
                         status: 'unavailable',
                         errorCode: 'session_user_message_recovery_control_unavailable',
                     };
                 }
-                const record = result as Record<string, unknown>;
-                if (record.ok === true) {
-                    const status = typeof record.status === 'string' ? record.status : '';
-                    if (status === 'ready' || status === 'resumed' || status === 'cancelled') {
-                        return { status: 'ready' };
-                    }
-                    if (status === 'waiting' || status === 'checking' || status === 'armed') {
-                        return { status: 'waiting', errorCode: 'session_user_message_recovery_pending' };
-                    }
-                }
-                return {
-                    status: 'action_required',
-                    errorCode: typeof record.errorCode === 'string' && record.errorCode.trim().length > 0
-                        ? record.errorCode
-                        : 'session_user_message_recovery_action_required',
-                };
+                return resolveExplicitUserPromptRecoveryDecision({
+                    sessionId: this.sessionId,
+                    result,
+                    hasBlockingRecoveryEvidence: hasBlockingExplicitUserRecoveryEvidence(this.metadata),
+                });
             } catch (error) {
                 logger.debug('[SESSION CLIENT] Explicit user-request recovery check failed; blocking prompt delivery', {
                     sessionId: this.sessionId,
