@@ -432,6 +432,12 @@ describe('claudeRemoteAgentSdk stream events', () => {
                 if (second !== timeout && !second.done) {
                     interruptObservedBeforeSecondPrompt = didInterrupt;
                 }
+                yield {
+                    type: 'result',
+                    subtype: 'error_during_execution',
+                    is_error: true,
+                    result: 'Request interrupted by user',
+                } as any;
                 yield { type: 'result' } as any;
             },
             interrupt,
@@ -473,6 +479,7 @@ describe('claudeRemoteAgentSdk stream events', () => {
 
         expect(interrupt).toHaveBeenCalledTimes(1);
         expect(interruptObservedBeforeSecondPrompt).toBe(true);
+        expect(createQuery).toHaveBeenCalledTimes(1);
     });
 
     it('keeps Agent SDK provider input closed when Runtime Activity observer activation rejects', async () => {

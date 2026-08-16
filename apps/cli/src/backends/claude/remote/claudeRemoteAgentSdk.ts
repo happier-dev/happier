@@ -1010,6 +1010,7 @@ export async function claudeRemoteAgentSdk(opts: {
 	    };
 
 	    let didRequestTurnInterrupt = false;
+	    let awaitingRequestedTurnInterruptResult = false;
 	    const repairTranscriptAfterAbort = async () => {
 	        if (!didRequestTurnInterrupt && !abortSignal.aborted) return;
 	        try {
@@ -1123,11 +1124,13 @@ export async function claudeRemoteAgentSdk(opts: {
                         if (typeof taskId === 'string' && taskId.trim().length > 0) {
                             didRequestTurnInterrupt = true;
                             deferredInterruptedReason = deferredInterruptedReason ?? 'turn-interrupt';
+                            awaitingRequestedTurnInterruptResult = true;
                             try {
                                 await stopTask.call(response, taskId);
                                 stopTaskSucceeded = true;
                                 return;
                             } catch {
+                                awaitingRequestedTurnInterruptResult = false;
                                 // Best-effort: if stopTask fails, fall back to interrupt().
                             }
                         }
@@ -1137,9 +1140,11 @@ export async function claudeRemoteAgentSdk(opts: {
 	                if (typeof interrupt === 'function') {
 	                    didRequestTurnInterrupt = true;
                         deferredInterruptedReason = deferredInterruptedReason ?? 'turn-interrupt';
+	                    awaitingRequestedTurnInterruptResult = true;
 	                    await interrupt.call(response);
 	                }
 	            } catch {
+	                awaitingRequestedTurnInterruptResult = false;
 	                // Best-effort: interrupt is optional and should not crash cancellation.
 	            } finally {
 	                // Ensure UI thinking state is released even if Claude does not emit a clean result.
@@ -1646,10 +1651,12 @@ export async function claudeRemoteAgentSdk(opts: {
                             try {
                                 didRequestTurnInterrupt = true;
                                 deferredInterruptedReason = deferredInterruptedReason ?? 'pending-interrupt-and-send';
+                                awaitingRequestedTurnInterruptResult = true;
                                 await interrupt.call(response);
                                 cleanupBufferedAssistantMessages?.(null);
                                 await flushStreamedTranscriptWriter('abort', 'pending-interrupt-and-send');
                             } catch {
+                                awaitingRequestedTurnInterruptResult = false;
                                 reportClaudeRemoteProviderPromptTransportFailure(
                                     opts.onPromptTransportFailure,
                                     next,
@@ -2305,8 +2312,16 @@ export async function claudeRemoteAgentSdk(opts: {
             }
 
             if (message && message.type === 'result') {
+                const didRequestThisResult = awaitingRequestedTurnInterruptResult;
+                awaitingRequestedTurnInterruptResult = false;
                 const failure = readAgentSdkResultFailure(message);
                 if (failure) {
+                    if (didRequestThisResult && message.subtype === 'error_during_execution') {
+                        if (!didFinalizeTurn) {
+                            await releaseCurrentTurnForResult();
+                        }
+                        continue;
+                    }
                     await reconcileRuntimeActivityForResult();
                     throw new Error(failure);
                 }
