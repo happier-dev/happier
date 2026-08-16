@@ -68,6 +68,13 @@ describe('agent-style TeX delimiters in the enriched Markdown parser', () => {
         expect(collectMath(ast)).toEqual([
             { type: 'LatexMathInline', content: 'x' },
         ]);
+        const nodes = collectNodes(ast);
+        expect(nodes.filter((node) => node.type === 'Code').map(extractNodeText)).toContain('\\(inline code\\)');
+        expect(nodes.filter((node) => node.type === 'CodeBlock').map((node) => extractNodeText(node).trim())).toEqual(
+            expect.arrayContaining(['\\(fenced code\\)', '\\(indented code\\)']),
+        );
+        // MD4C applies the ordinary Markdown escape in destinations, but the path is not claimed as math.
+        expect(nodes.find((node) => node.type === 'Link')?.attributes?.url).toBe('https://example.com/(path)');
     });
 
     it('keeps agent-style delimiters as ordinary Markdown escapes when the syntax mode is disabled', async () => {

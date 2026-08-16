@@ -1183,10 +1183,10 @@ index c6c73b0..96c805e 100644
    return /*#__PURE__*/_jsx("div", {
      style: wrapperStyle,
 diff --git a/node_modules/react-native-enriched-markdown/lib/module/web/parseMarkdown.js b/node_modules/react-native-enriched-markdown/lib/module/web/parseMarkdown.js
-index 7604c13..83adf7a 100644
+index 7604c13..e8f6607 100644
 --- a/node_modules/react-native-enriched-markdown/lib/module/web/parseMarkdown.js
 +++ b/node_modules/react-native-enriched-markdown/lib/module/web/parseMarkdown.js
-@@ -1,32 +1,173 @@
+@@ -1,32 +1,169 @@
  "use strict";
  
 +import createMd4cModule from './wasm/md4c.js';
@@ -1328,10 +1328,6 @@ index 7604c13..83adf7a 100644
 +    if (cacheKey) {
 +      parseCache.delete(cacheKey);
 +    }
-+    parseCache.clear();
-+    parseResultCache.clear();
-+    parserPromise = null;
-+    parserRuntime = null;
 +    throw error;
 +  }
 +}
@@ -2256,7 +2252,7 @@ index 70eb3a4..2440c90 100644
  
    return (
 diff --git a/node_modules/react-native-enriched-markdown/src/web/parseMarkdown.ts b/node_modules/react-native-enriched-markdown/src/web/parseMarkdown.ts
-index 911e3f1..711132e 100644
+index 911e3f1..1dff70c 100644
 --- a/node_modules/react-native-enriched-markdown/src/web/parseMarkdown.ts
 +++ b/node_modules/react-native-enriched-markdown/src/web/parseMarkdown.ts
 @@ -1,37 +1,104 @@
@@ -2377,7 +2373,7 @@ index 911e3f1..711132e 100644
  function isASTNode(value: unknown): value is ASTNode {
    return (
      typeof value === 'object' &&
-@@ -41,19 +108,152 @@ function isASTNode(value: unknown): value is ASTNode {
+@@ -41,19 +108,148 @@ function isASTNode(value: unknown): value is ASTNode {
    );
  }
  
@@ -2497,10 +2493,6 @@ index 911e3f1..711132e 100644
 +    if (cacheKey) {
 +      parseCache.delete(cacheKey);
 +    }
-+    parseCache.clear();
-+    parseResultCache.clear();
-+    parserPromise = null;
-+    parserRuntime = null;
 +    throw error;
 +  }
 +}

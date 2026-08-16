@@ -745,11 +745,22 @@ describe('EnrichedMarkdownText web streaming reveal', () => {
         expect(parserSource).not.toContain("['string',");
     });
 
-    it('clears parser state after web parse-call failures', () => {
+    it('keeps the warm parser after a document parse failure while initialization failures remain retryable', () => {
         const parserSource = readPatchedPackageFile('src/web/parseMarkdown.ts');
+        const parseFunctionStart = parserSource.indexOf('export async function parseMarkdown(');
+        const syncFunctionStart = parserSource.indexOf('export function parseMarkdownSyncIfReady(', parseFunctionStart);
+        const parseFunction = parserSource.slice(parseFunctionStart, syncFunctionStart);
+        const initializeFunctionStart = parserSource.indexOf('function initializeParser()');
+        const preloadFunctionStart = parserSource.indexOf('export async function preloadMarkdownRuntime()', initializeFunctionStart);
+        const initializeFunction = parserSource.slice(initializeFunctionStart, preloadFunctionStart);
 
-        expect(parserSource).toContain('parseCache.clear()');
-        expect(parserSource).toContain('parserPromise = null');
+        expect(parseFunction).toContain('parseCache.delete(cacheKey)');
+        expect(parseFunction).not.toContain('parseCache.clear()');
+        expect(parseFunction).not.toContain('parseResultCache.clear()');
+        expect(parseFunction).not.toContain('parserPromise = null');
+        expect(parseFunction).not.toContain('parserRuntime = null');
+        expect(initializeFunction).toContain('parserPromise = null');
+        expect(initializeFunction).toContain('parserRuntime = null');
     });
 
     it('uses themed paragraph fallback for web parse errors', () => {
