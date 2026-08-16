@@ -2719,27 +2719,58 @@ export class PiRpcBackend implements AgentBackend {
     }
   }
 
+  /**
+   * Longest known provider id that prefixes the raw model reference
+   * (`provider/model`). Provider ids may themselves contain slashes (e.g.
+   * `lmstudio/hadees`), so a naive first-slash split is not sound.
+   */
+  private resolveKnownProviderPrefix(modelIdRaw: string): string | null {
+    let best: string | null = null;
+    for (const provider of this.modelProviderById.values()) {
+      if (!modelIdRaw.startsWith(`${provider}/`)) continue;
+      if (best === null || provider.length > best.length) best = provider;
+    }
+    return best;
+  }
+
   private async resolveModelSelection(modelIdRaw: string): Promise<{ provider: string; modelId: string }> {
+    // The catalog map is authoritative: it holds both bare model ids and
+    // `provider/model` composite keys exactly as pi reports them.
+    const fromKnownMap = this.modelProviderById.get(modelIdRaw);
+    if (fromKnownMap) {
+      const bareModelId = modelIdRaw.startsWith(`${fromKnownMap}/`)
+        ? modelIdRaw.slice(fromKnownMap.length + 1)
+        : modelIdRaw;
+      return { provider: fromKnownMap, modelId: bareModelId };
+    }
+
     if (modelIdRaw.includes('/')) {
+      // Composite reference: split at a known provider boundary when one
+      // matches, so multi-segment provider ids resolve correctly.
+      const prefixProvider = this.resolveKnownProviderPrefix(modelIdRaw);
+      if (prefixProvider) {
+        const modelId = modelIdRaw.slice(prefixProvider.length + 1).trim();
+        if (modelId) {
+          this.modelProviderById.set(modelId, prefixProvider);
+          this.modelProviderById.set(`${prefixProvider}/${modelId}`, prefixProvider);
+          return { provider: prefixProvider, modelId };
+        }
+      }
+
+      // Unknown composite: keep the historical first-slash split for
+      // single-segment providers, but do not cache the guess so a wrong
+      // split cannot poison later catalog-backed resolutions.
       const [provider, ...rest] = modelIdRaw.split('/');
       const modelId = rest.join('/').trim();
       const normalizedProvider = provider.trim();
       if (normalizedProvider && modelId) {
-        this.modelProviderById.set(modelId, normalizedProvider);
-        this.modelProviderById.set(`${normalizedProvider}/${modelId}`, normalizedProvider);
         return { provider: normalizedProvider, modelId };
       }
-    }
-
-    const fromKnownMap = this.modelProviderById.get(modelIdRaw);
-    if (fromKnownMap) {
-      return { provider: fromKnownMap, modelId: modelIdRaw };
-    }
-
-    if (this.currentModelProvider) {
+    } else if (this.currentModelProvider) {
       return { provider: this.currentModelProvider, modelId: modelIdRaw };
     }
 
+    // Bare id with no cached provider: resolve from the live session state.
     const state = await this.getState();
     const model = asRecord(state.model);
     const provider = asNonEmptyString(model?.provider);
