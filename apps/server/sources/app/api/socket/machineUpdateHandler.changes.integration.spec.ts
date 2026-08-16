@@ -113,6 +113,28 @@ describe("machineUpdateHandler (AccountChange integration)", () => {
         expect(callback).toHaveBeenCalledWith({ result: "success", version: 2, metadata: "new-meta" });
     });
 
+    it.each([
+        ["explicit user-scoped", { clientType: "user-scoped" }],
+        ["legacy omitted client type", {}],
+    ])("allows %s sockets to update metadata for an account-owned machine", async (_label, data) => {
+        const { machineUpdateHandler } = await import("./machineUpdateHandler");
+
+        const socket = createFakeSocket({ data });
+        machineUpdateHandler("u1", socket as any);
+        const handler = getSocketHandler(socket, "machine-update-metadata");
+
+        const callback = vi.fn();
+        await handler({ machineId: "m1", metadata: "new-meta", expectedVersion: 1 }, callback);
+
+        expect(txDbMocks.db.machine.findFirst).toHaveBeenCalledWith(expect.objectContaining({
+            where: { accountId: "u1", id: "m1" },
+        }));
+        expect(txDbMocks.db.machine.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+            where: expect.objectContaining({ accountId: "u1", id: "m1" }),
+        }));
+        expect(callback).toHaveBeenCalledWith({ result: "success", version: 2, metadata: "new-meta" });
+    });
+
     it("marks machine daemonState changes and emits updates using the returned cursor", async () => {
         const { machineUpdateHandler } = await import("./machineUpdateHandler");
 
@@ -172,6 +194,35 @@ describe("machineUpdateHandler (AccountChange integration)", () => {
         expect(markAccountChanged).not.toHaveBeenCalled();
         expect(emitUpdate).not.toHaveBeenCalled();
         expect(callback).toHaveBeenCalledWith(expect.objectContaining({ result: "error" }));
+    });
+
+    it("returns machine-not-found when the machine disappears during a metadata compare-and-swap", async () => {
+        txDbMocks.db.machine.findFirst
+            .mockResolvedValueOnce({
+                metadataVersion: 1,
+                metadata: "old-meta",
+                revokedAt: null,
+                replacedByMachineId: null,
+            })
+            .mockResolvedValueOnce(null);
+        txDbMocks.db.machine.updateMany.mockResolvedValueOnce({ count: 0 });
+
+        const { machineUpdateHandler } = await import("./machineUpdateHandler");
+        const socket = createFakeSocket({
+            data: {
+                clientType: "machine-scoped",
+                machineId: "m1",
+            },
+        });
+        machineUpdateHandler("u1", socket as any);
+
+        const callback = vi.fn();
+        await getSocketHandler(socket, "machine-update-metadata")(
+            { machineId: "m1", metadata: "new-meta", expectedVersion: 1 },
+            callback,
+        );
+
+        expect(callback).toHaveBeenCalledWith({ result: "error", message: "Machine not found" });
     });
 
     it("rejects metadata updates from already-connected replaced daemons", async () => {

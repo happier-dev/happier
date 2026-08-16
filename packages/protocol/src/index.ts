@@ -1,6 +1,13 @@
 export const HAPPY_PROTOCOL_PACKAGE = '@happier-dev/protocol';
 
 export {
+  MachineUpdateMetadataRequestSchema,
+  MachineUpdateMetadataResponseSchema,
+  type MachineUpdateMetadataRequest,
+  type MachineUpdateMetadataResponse,
+} from './machines/metadataUpdate.js';
+
+export {
   ServerRetentionDomainPolicyV2Schema,
   ServerRetentionDomainV2Schema,
   ServerRetentionPolicyV2Schema,

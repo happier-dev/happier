@@ -8,8 +8,13 @@ import { randomKeyNaked } from "@/utils/keys/randomKeyNaked";
 import { afterTx, inTx } from "@/storage/inTx";
 import { markAccountChanged } from "@/app/changes/markAccountChanged";
 import { recordMachineAlive } from "@/app/presence/presenceRecorder";
-import { DirectSessionTranscriptDeltaEphemeralSchema } from "@happier-dev/protocol";
+import {
+    DirectSessionTranscriptDeltaEphemeralSchema,
+    MachineUpdateMetadataRequestSchema,
+    type MachineUpdateMetadataResponse,
+} from "@happier-dev/protocol";
 import { validateCurrentMachineSocket } from "@/app/machines/validateCurrentMachineSocket";
+import { readHappierSocketData } from "./socketData";
 
 function readAuthenticatedMachineId(socket: Socket): string | null {
     const clientType = typeof (socket.data as any)?.clientType === 'string'
@@ -26,6 +31,32 @@ function readAuthenticatedMachineId(socket: Socket): string | null {
 
 function payloadMachineIdMatches(socketMachineId: string, payloadMachineId: unknown): boolean {
     return typeof payloadMachineId !== 'string' || !payloadMachineId || payloadMachineId === socketMachineId;
+}
+
+function resolveMachineMetadataTarget(
+    socket: Socket,
+    payloadMachineId: string | undefined,
+): { ok: true; machineId: string } | { ok: false; message: string } {
+    const { clientType, machineId: socketMachineId } = readHappierSocketData(socket);
+
+    if (clientType === 'machine-scoped') {
+        if (!socketMachineId) {
+            return { ok: false, message: 'Machine-scoped socket required' };
+        }
+        if (!payloadMachineIdMatches(socketMachineId, payloadMachineId)) {
+            return { ok: false, message: 'Machine id mismatch' };
+        }
+        return { ok: true, machineId: socketMachineId };
+    }
+
+    if (clientType === 'user-scoped' || clientType === undefined) {
+        if (!payloadMachineId) {
+            return { ok: false, message: 'Machine id required' };
+        }
+        return { ok: true, machineId: payloadMachineId };
+    }
+
+    return { ok: false, message: 'User- or machine-scoped socket required' };
 }
 
 export function machineUpdateHandler(userId: string, socket: Socket) {
@@ -123,37 +154,30 @@ export function machineUpdateHandler(userId: string, socket: Socket) {
     });
 
     // Machine metadata update with optimistic concurrency control
-    socket.on('machine-update-metadata', async (data: any, callback: (response: any) => void) => {
+    socket.on('machine-update-metadata', async (data: unknown, callback: (response: MachineUpdateMetadataResponse) => void) => {
         try {
-            const authenticatedMachineId = readAuthenticatedMachineId(socket);
-            if (!authenticatedMachineId) {
-                callback?.({ result: 'error', message: 'Machine-scoped socket required' });
+            const parsed = MachineUpdateMetadataRequestSchema.safeParse(data);
+            if (!parsed.success) {
+                callback?.({ result: 'error', message: 'Invalid parameters' });
                 return;
             }
 
-            const { machineId: payloadMachineId, metadata, expectedVersion } = data;
-            if (!payloadMachineIdMatches(authenticatedMachineId, payloadMachineId)) {
+            const { machineId: payloadMachineId, metadata, expectedVersion } = parsed.data;
+            const target = resolveMachineMetadataTarget(socket, payloadMachineId);
+            if (!target.ok) {
                 log(
                     {
                         module: 'websocket',
                         level: 'warn',
-                        socketMachineId: authenticatedMachineId,
+                        socketMachineId: readHappierSocketData(socket).machineId,
                         payloadMachineId,
                     },
-                    'Rejecting machine metadata update for mismatched machine id',
+                    'Rejecting machine metadata update for socket scope',
                 );
-                callback?.({ result: 'error', message: 'Machine id mismatch' });
+                callback?.({ result: 'error', message: target.message });
                 return;
             }
-            const machineId = authenticatedMachineId;
-
-            // Validate input
-            if (typeof metadata !== 'string' || typeof expectedVersion !== 'number') {
-                if (callback) {
-                    callback({ result: 'error', message: 'Invalid parameters' });
-                }
-                return;
-            }
+            const machineId = target.machineId;
 
             await inTx(async (tx) => {
                 const machine = await tx.machine.findFirst({
@@ -196,7 +220,11 @@ export function machineUpdateHandler(userId: string, socket: Socket) {
                         afterTx(tx, () => callback?.({ result: 'error', message: 'Machine replaced' }));
                         return null;
                     }
-                    afterTx(tx, () => callback?.({ result: 'version-mismatch', version: fresh?.metadataVersion ?? expectedVersion, metadata: fresh?.metadata }));
+                    if (!fresh) {
+                        afterTx(tx, () => callback?.({ result: 'error', message: 'Machine not found' }));
+                        return null;
+                    }
+                    afterTx(tx, () => callback?.({ result: 'version-mismatch', version: fresh.metadataVersion, metadata: fresh.metadata }));
                     return null;
                 }
 
