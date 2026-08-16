@@ -50,6 +50,7 @@ describe('buildCliDist', () => {
           subprocessNodeOptions.push(options.env.NODE_OPTIONS ?? '');
         },
         finalizeDistImpl: () => {},
+        syncPackageDistImpl: () => {},
       });
 
       expect(subprocessNodeOptions).toEqual([
@@ -190,6 +191,46 @@ describe('buildCliDist', () => {
     }
   });
 
+  it('republishes package-dist from the promoted dist inside the held lock after finalize', async () => {
+    const packageRoot = createTempDirSync('happier-cli-build-sync-package-dist-');
+    try {
+      writeRuntimeManifest(packageRoot);
+      const physicalPackageRoot = realpathSync.native(packageRoot);
+      const events: string[] = [];
+      let syncArgs: Record<string, unknown> | null = null;
+
+      await buildCliDist({
+        packageRoot,
+        skipLock: true,
+        env: { ...process.env },
+        rmDistImpl: async () => {},
+        resolveTypeScriptCliPathImpl: () => '/repo/node_modules/@typescript/native/bin/tsc',
+        runTypecheckImpl: () => { events.push('typecheck'); },
+        runPkgrollBuildImpl: () => { events.push('bundle'); },
+        probeDistRuntimeImportImpl: () => { events.push('probe'); },
+        finalizeDistImpl: () => { events.push('finalize'); },
+        syncPackageDistImpl: (args: Record<string, unknown>) => {
+          events.push('sync');
+          syncArgs = args;
+        },
+      });
+
+      // The runtime entrypoint resolver prefers package-dist/ over dist/ whenever
+      // both exist, so the build must republish package-dist from the dist it just
+      // promoted — otherwise a stale checkout package-dist silently shadows the
+      // fresh build for every daemon-spawned session runner.
+      expect(events).toEqual(['typecheck', 'bundle', 'probe', 'finalize', 'sync']);
+      expect(syncArgs).toMatchObject({
+        packageRoot: physicalPackageRoot,
+        distDir: join(physicalPackageRoot, 'dist'),
+        skipLock: true,
+      });
+      expect(syncArgs).toHaveProperty('env');
+    } finally {
+      rmSync(packageRoot, { recursive: true, force: true });
+    }
+  });
+
   it('finalizes an immutable admitted source generation when live CLI source changes during the build', async () => {
     const packageRoot = createTempDirSync('happier-cli-build-immutable-source-');
     try {
@@ -220,6 +261,7 @@ describe('buildCliDist', () => {
         finalizeDistImpl: ({ stagingDir }: { stagingDir: string }) => {
           finalizedStagingDir = stagingDir;
         },
+        syncPackageDistImpl: () => {},
       });
 
       expect(typecheckRoot).not.toBe(realpathSync.native(packageRoot));
@@ -264,6 +306,7 @@ describe('buildCliDist', () => {
         finalizeDistImpl: ({ buildVersion }: { buildVersion?: string }) => {
           finalizedBuildVersion = buildVersion ?? '';
         },
+        syncPackageDistImpl: () => {},
       });
 
       expect(bundledVersion).toBe('0.2.10-dev.61');
@@ -375,7 +418,7 @@ describe('buildCliDist', () => {
             runPkgrollBuildImpl: () => { events.push('bundle'); },
             probeDistRuntimeImportImpl: () => { events.push('probe'); },
             finalizeDistImpl: () => { events.push('finalize'); },
-            syncPackageDistImpl: () => { events.push('unexpected-sync'); },
+            syncPackageDistImpl: () => { events.push('sync'); },
           });
         },
         {
@@ -386,7 +429,7 @@ describe('buildCliDist', () => {
         },
       );
 
-      expect(events).toEqual(['rm', 'typecheck', 'bundle', 'probe', 'finalize']);
+      expect(events).toEqual(['rm', 'typecheck', 'bundle', 'probe', 'finalize', 'sync']);
     } finally {
       rmSync(packageRoot, { recursive: true, force: true });
     }
@@ -452,11 +495,22 @@ describe('buildCliDist', () => {
           writeFileSync(eventsPath, 'finalize\n', { flag: 'a' });
         },
         syncPackageDistImpl: () => {
-          writeFileSync(eventsPath, 'unexpected-sync\n', { flag: 'a' });
+          expect(() =>
+            withWorkspaceBundleLockSync(
+              () => undefined,
+              {
+                lockPath,
+                timeoutMs: 50,
+                pollIntervalMs: 10,
+                staleAfterMs: 1_000,
+              },
+            )
+          ).toThrow(/Timed out waiting for workspace bundle lock/);
+          writeFileSync(eventsPath, 'sync\n', { flag: 'a' });
         },
       });
 
-      expect(readFileSync(eventsPath, 'utf8')).toBe('rm\ntypecheck\nbundle\nprobe\nfinalize\n');
+      expect(readFileSync(eventsPath, 'utf8')).toBe('rm\ntypecheck\nbundle\nprobe\nfinalize\nsync\n');
     } finally {
       rmSync(packageRoot, { recursive: true, force: true });
     }
@@ -505,6 +559,7 @@ describe('buildCliDist', () => {
         },
         resolveDistRuntimeEntrypointsImpl: () => [],
         finalizeDistImpl: () => {},
+        syncPackageDistImpl: () => {},
       });
 
       expect(observedPackageJsonPath).toBe(join(physicalPackageRoot, 'package.json'));

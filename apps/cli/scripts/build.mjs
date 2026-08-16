@@ -10,6 +10,7 @@ import { withOptionalCliSharedDepsBuildLock } from './optionalWorkspaceBundleLoc
 import { main as rmDist } from './rmDist.mjs';
 import { collectPkgrollInputPaths, runPkgrollBuild } from './runPkgrollBuild.mjs';
 import { DEFAULT_CLI_RUNTIME_IMPORT_TIMEOUT_MS } from './runtimeImportProbePolicy.mjs';
+import { syncPackageDist } from './syncPackageDist.mjs';
 import { DEFAULT_CLI_NODE_HEAP_MB, upsertMaxOldSpaceSize } from './withNodeHeapLimit.mjs';
 
 function resolveBuildOutput(env = process.env) {
@@ -176,6 +177,7 @@ async function buildCliDistUnlocked(options = {}) {
   const probeDistRuntimeImportImpl = options.probeDistRuntimeImportImpl ?? probeDistRuntimeImport;
   const resolveDistRuntimeEntrypointsImpl = options.resolveDistRuntimeEntrypointsImpl ?? resolveDistRuntimeEntrypoints;
   const finalizeDistImpl = options.finalizeDistImpl ?? finalizeDist;
+  const syncPackageDistImpl = options.syncPackageDistImpl ?? syncPackageDist;
   await reclaimAbandonedCliBuildDirs(packageRoot, outputDir);
   const immutableSource = builderOwnsOutput
     ? await (options.createImmutableBuildSourceImpl ?? createImmutableBuildSource)({
@@ -221,6 +223,17 @@ async function buildCliDistUnlocked(options = {}) {
       stagingDir: resolvedOutputDir,
       expectedCurrentFingerprint,
       ...(buildVersion ? { buildVersion } : {}),
+    });
+    // The runtime entrypoint resolver prefers package-dist/ over dist/ whenever both
+    // exist, so republish package-dist from the dist this build just promoted. Without
+    // this, a checkout holding a stale package-dist (e.g. left by a previous sync)
+    // silently shadows the fresh build for every daemon-spawned session runner.
+    // skipLock: we already hold the workspace bundle lock for this build.
+    syncPackageDistImpl({
+      packageRoot,
+      distDir: resolve(packageRoot, 'dist'),
+      env,
+      skipLock: true,
     });
     return {
       outputDir: resolve(packageRoot, 'dist'),
