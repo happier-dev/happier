@@ -2376,81 +2376,37 @@ describe('sync.sendMessage optimistic thinking', () => {
         expect(storage.getState().sessions[sessionId].optimisticThinkingAt ?? null).toBeNull();
     });
 
-    it('rejects legacy no-intent pending send-now for inactive replay forks before socket emit', async () => {
-        const sessionId = 's_pending_send_now_consumed_replay';
+    it('normalizes an omitted pending delivery intent onto the canonical durable action path', async () => {
+        const sessionId = 's_pending_default_action';
+        const localId = 'pending-default-action-local';
+        const outboxScope = storage.getState().profileScope!;
+        const pending = pendingOutboxFixture({ sessionId, localId, text: 'send this now' });
         storage.getState().applySessions([{
-            ...createSession({
-                sessionId,
-                metadata: {
-                    flavor: 'claude',
-                    claudeSessionId: '',
-                    forkV1: {
-                        v: 1,
-                        parentSessionId: 'parent-session',
-                        parentCutoffSeqInclusive: 7,
-                        createdAtMs: 1000,
-                        strategy: 'replay',
-                        providerHint: { providerId: 'claude' },
-                    },
-                    replaySeedV1: {
-                        v: 1,
-                        seedText: '',
-                        sourceSessionId: 'parent-session',
-                        sourceCutoffSeqInclusive: 7,
-                        createdAtMs: 1000,
-                        appliedToLocalId: 'local-1',
-                        appliedAtMs: 2000,
-                    },
-                } as any,
-            }),
-            active: false,
-            presence: 'online',
+            ...createSession({ sessionId }),
             encryptionMode: 'plain',
-        } as any]);
-
-        const rawRecord = {
-            role: 'user',
-            content: { type: 'text', text: 'do not send' },
-            meta: {},
-        } as const;
-
-        storage.getState().upsertPendingMessage(sessionId, {
-            id: 'p-blocked',
-            localId: 'p-blocked',
-            createdAt: 111,
-            updatedAt: 111,
-            text: 'do not send',
-            rawRecord,
-        });
-
-        const emitWithAck = vi.fn(async () => ({
-            ok: true,
-            id: 'm-blocked',
-            seq: 42,
-            localId: null,
-            didWrite: true,
-        })) as any;
+        }]);
+        savePendingOutboxMessage(pending, outboxScope);
+        replayPersistedPendingOutboxForSession(sessionId, outboxScope);
 
         const { sync } = await import('./sync');
-        sync.encryption = { getSessionEncryption: () => null } as unknown as Encryption;
-        sync.setMessageTransport({
-            emitWithAck,
-            send: vi.fn(),
+        sync.encryption = await Encryption.create(new Uint8Array(32).fill(7));
+        const requests: Array<{ path: string; method: string }> = [];
+        vi.spyOn(apiSocket, 'request').mockImplementation(async (path, init) => {
+            requests.push({ path, method: init?.method ?? 'GET' });
+            return Response.json({ didUpdate: true });
         });
 
         await expect(sync.sendPendingMessageNow(sessionId, {
-            localId: 'p-blocked',
-            createdAt: 111,
-            rawRecord,
-            text: 'do not send',
-        })).rejects.toMatchObject({
-            code: 'SESSION_NOT_RESUMABLE',
-        });
+            localId,
+            createdAt: pending.createdAt,
+            rawRecord: pending.rawRecord,
+            text: pending.text,
+        })).resolves.toMatchObject({ type: 'retry_scheduled' });
 
-        expect(emitWithAck).not.toHaveBeenCalled();
-        expect(resumeSessionMock).not.toHaveBeenCalled();
-        expect(storage.getState().sessionPending[sessionId]?.messages ?? []).toHaveLength(0);
-        expect(storage.getState().sessions[sessionId].optimisticThinkingAt ?? null).toBeNull();
+        expect(requests).toContainEqual({
+            path: `/v2/sessions/${sessionId}/pending/${localId}/action`,
+            method: 'PATCH',
+        });
     });
 
     it('commits pending retry messages for plaintext sessions without requiring session encryption', async () => {

@@ -2864,199 +2864,56 @@ class Sync {
 
         assertPendingMessageProjectionTransportableV2(sessionId, pending.localId);
 
-        if (!pending.deliveryIntent) {
-            try {
-                assertCanSendUserMessageToSession(session, {
-                    resumeCapabilityOptions: { accountSettings: storage.getState().settings },
-                });
-            } catch (error) {
-                storage.getState().removePendingMessage(sessionId, pending.localId);
-                storage.getState().clearSessionOptimisticThinking(sessionId);
-                throw error;
-            }
-        }
-
+        const deliveryIntent = pending.deliveryIntent ?? 'interrupt_and_send';
         this.markSessionLiveTailIntent(sessionId);
         storage.getState().markSessionOptimisticThinking(sessionId);
 
-        if (pending.deliveryIntent) {
-            try {
-                const state = storage.getState();
-                const result = await submitSessionUserMessage(this.createSessionSubmitPort(), {
-                    sessionId,
-                    session,
-                    text: pending.text,
-                    displayText: pending.displayText,
-                    metaOverrides: sanitizePendingMessageMetaForExplicitSubmit(pending.rawRecord),
-                    localId: pending.localId,
-                    configuredMode: state.settings.sessionMessageSendMode,
-                    busySteerSendPolicy: state.settings.sessionBusySteerSendPolicy,
-                    resumeCapabilityOptions: { accountSettings: state.settings },
-                    permissionOverride: getPermissionModeOverrideForSpawn(session),
-                    callerSurface: pending.deliveryIntent === 'interrupt_and_send'
-                        ? 'pending_message_send_now'
-                        : 'pending_message_steer_now',
-                    requestedAction: pending.deliveryIntent === 'steer_now'
-                        ? { v: 1, kind: 'steer_now' }
-                        : { v: 1, kind: 'send_now' },
-                    ...(pending.deliveryIntent === 'interrupt_and_send'
-                        ? { explicitMode: 'interrupt' as const }
-                        : { forceImmediate: true }),
-                    existingDurablePendingMessage: true,
-                });
-
-                if (result.type === 'send_failed' || result.type === 'rejected' || result.type === 'wake_failed') {
-                    storage.getState().clearSessionOptimisticThinking(sessionId);
-                    if (result.errorCode === SESSION_MESSAGE_SEND_NOT_RESUMABLE_ERROR_CODE) {
-                        throw new HappyError(
-                            result.errorMessage ?? 'This inactive session cannot be resumed; the pending message remains queued.',
-                            false,
-                            { kind: 'config', code: SESSION_MESSAGE_SEND_NOT_RESUMABLE_ERROR_CODE },
-                        );
-                    }
-                    throw new Error(result.errorMessage ?? 'Message send rejected');
-                }
-
-                if (result.persistence === 'provider_direct' || result.persistence === 'transcript_committed') {
-                    return {
-                        type: 'committed',
-                        persistence: result.persistence,
-                        ...(result.providerAcceptancePending === true ? { providerAcceptancePending: true } : {}),
-                    };
-                }
-
-                return { type: 'retry_scheduled' };
-            } catch (e) {
-                if (isTerminalAuthError(e)) {
-                    recordTerminalAuthSyncError(e);
-                }
-                storage.getState().clearSessionOptimisticThinking(sessionId);
-                throw e;
-            }
-        }
-
         try {
-            const sessionEncryptionMode: 'e2ee' | 'plain' = session.encryptionMode === 'plain' ? 'plain' : 'e2ee';
-            const sessionEncryption = sessionEncryptionMode === 'plain' ? null : this.encryption.getSessionEncryption(sessionId);
-            if (sessionEncryptionMode === 'e2ee' && !sessionEncryption) {
-                storage.getState().clearSessionOptimisticThinking(sessionId);
-                throw new Error(`Session ${sessionId} encryption not found`);
-            }
-
-            const permissionMode = session.permissionMode || 'default';
-
-            const parsed = RawRecordSchema.safeParse(pending.rawRecord);
-            const content: RawRecord = parsed.success ? parsed.data : await (async () => {
-                const agentId = resolveAgentIdFromSessionMetadata(readSessionOwnerMetadataView(session));
-                return buildOutgoingUserTextRecord({
-                    text: pending.text,
-                    displayText: pending.displayText,
-                    permissionMode,
-                    agentId,
-                    modelMode: session.modelMode,
-                    settings: storage.getState().settings,
-                    session,
-                });
-            })();
-
-            const messagePayload =
-                sessionEncryptionMode === 'plain'
-                    ? { t: 'plain' as const, v: content }
-                    : await sessionEncryption!.encryptRawRecord(content);
-
-            const localId = pending.localId;
-            const payload = {
-                sid: sessionId,
-                message: messagePayload,
-                localId,
-                sentFrom: 'pending_send_now',
-                permissionMode: permissionMode || 'default',
-                messageRole: 'user' as const,
-            };
-
-            const rawAck = await (async () => {
-                try {
-                    await this.assertActiveEndpointAuthenticated();
-                    return await socketEmitWithAckFallback<MessageAckResponse>({
-                        emitWithAck: (event, payload, opts) =>
-                            this.messageTransport.emitWithAck<MessageAckResponse>(event, payload, opts),
-                        send: (event, payload) => this.messageTransport.send(event, payload),
-                        event: 'message',
-                        payload,
-                        timeoutMs: this.syncTuning.socketAckTimeoutMs,
-                        onNoAck: () => this.schedulePendingMessageCommitRetry({ sessionId, localId }),
-                        beforeFallback: () => this.assertActiveEndpointAuthenticated({ forceProbe: true }),
-                    });
-                } catch (error) {
-                    if (this.keepPendingMessageForRetryableCommitFailure({ sessionId, localId, error })) {
-                        return null;
-                    }
-                    storage.getState().removePendingMessage(sessionId, localId);
-                    throw error;
-                }
-            })();
-
-            if (!rawAck) {
-                storage.getState().clearSessionOptimisticThinking(sessionId);
-                return { type: 'retry_scheduled' };
-            }
-
-            const parsedAck = MessageAckResponseSchema.safeParse(rawAck);
-            if (!parsedAck.success) {
-                this.schedulePendingMessageCommitRetry({ sessionId, localId });
-                return { type: 'retry_scheduled' };
-            }
-
-            const ack = parsedAck.data;
-
-            if (ack.ok !== true) {
-                storage.getState().removePendingMessage(sessionId, pending.localId);
-                throw new Error(ack.error || 'Message send rejected');
-            }
-
-            this.commitAckedOutboundUserMessage({
-                sessionId,
-                localId,
-                createdAt: pending.createdAt,
-                rawRecord: content,
-                ack,
-            });
-
-            const settingsApplyTiming = storage.getState().settings.sessionPermissionModeApplyTiming ?? 'immediate';
-            if (settingsApplyTiming === 'next_prompt') {
-                const latestSession = storage.getState().sessions[sessionId] ?? null;
-                const localUpdatedAt = latestSession?.permissionModeUpdatedAt ?? null;
-                const metadataUpdatedAtRaw = latestSession
-                    ? readSessionOwnerMetadataView(latestSession)?.permissionModeUpdatedAt ?? null
-                    : null;
-                const metadataUpdatedAt =
-                    typeof metadataUpdatedAtRaw === 'number' && Number.isFinite(metadataUpdatedAtRaw)
-                        ? metadataUpdatedAtRaw
-                        : 0;
-
-                if (typeof localUpdatedAt === 'number' && Number.isFinite(localUpdatedAt) && localUpdatedAt > metadataUpdatedAt) {
-                    const modeToPublish = (latestSession?.permissionMode ?? 'default') as PermissionMode;
-                    try {
-                        await this.publishSessionPermissionModeToMetadata({
-                            sessionId,
-                            permissionMode: modeToPublish,
-                            permissionModeUpdatedAt: localUpdatedAt,
-                        });
-                    } catch {
-                        // Best-effort only.
-                    }
-                }
-            }
-
-            wakeInactiveSessionAfterCommittedPrompt({
+            const state = storage.getState();
+            const result = await submitSessionUserMessage(this.createSessionSubmitPort(), {
                 sessionId,
                 session,
-                seq: ack.seq,
-                tag: 'Sync.sendPendingMessageNow.wakeAfterSend',
+                text: pending.text,
+                displayText: pending.displayText,
+                metaOverrides: sanitizePendingMessageMetaForExplicitSubmit(pending.rawRecord),
+                localId: pending.localId,
+                configuredMode: state.settings.sessionMessageSendMode,
+                busySteerSendPolicy: state.settings.sessionBusySteerSendPolicy,
+                resumeCapabilityOptions: { accountSettings: state.settings },
+                permissionOverride: getPermissionModeOverrideForSpawn(session),
+                callerSurface: deliveryIntent === 'interrupt_and_send'
+                    ? 'pending_message_send_now'
+                    : 'pending_message_steer_now',
+                requestedAction: deliveryIntent === 'steer_now'
+                    ? { v: 1, kind: 'steer_now' }
+                    : { v: 1, kind: 'send_now' },
+                ...(deliveryIntent === 'interrupt_and_send'
+                    ? { explicitMode: 'interrupt' as const }
+                    : { forceImmediate: true }),
+                existingDurablePendingMessage: true,
             });
 
-            // Same policy as sendMessage(): keep optimistic thinking until lifecycle clears.
-            return { type: 'committed', persistence: 'transcript_committed' };
+            if (result.type === 'send_failed' || result.type === 'rejected' || result.type === 'wake_failed') {
+                storage.getState().clearSessionOptimisticThinking(sessionId);
+                if (result.errorCode === SESSION_MESSAGE_SEND_NOT_RESUMABLE_ERROR_CODE) {
+                    throw new HappyError(
+                        result.errorMessage ?? 'This inactive session cannot be resumed; the pending message remains queued.',
+                        false,
+                        { kind: 'config', code: SESSION_MESSAGE_SEND_NOT_RESUMABLE_ERROR_CODE },
+                    );
+                }
+                throw new Error(result.errorMessage ?? 'Message send rejected');
+            }
+
+            if (result.persistence === 'provider_direct' || result.persistence === 'transcript_committed') {
+                return {
+                    type: 'committed',
+                    persistence: result.persistence,
+                    ...(result.providerAcceptancePending === true ? { providerAcceptancePending: true } : {}),
+                };
+            }
+
+            return { type: 'retry_scheduled' };
         } catch (e) {
             if (isTerminalAuthError(e)) {
                 recordTerminalAuthSyncError(e);
