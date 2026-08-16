@@ -23,7 +23,7 @@ test('apps/ui/eas.json defines internalpreview profiles for release-like private
   assert.equal(internalpreview?.env?.EXPO_UPDATES_CHANNEL, 'internalpreview');
   assert.equal(internalpreview?.env?.EXPO_APP_NAME, 'Happier (internal preview)');
   assert.equal(internalpreview?.env?.EXPO_APP_BUNDLE_ID, 'dev.happier.app.internalpreview');
-  assert.equal(internalpreview?.env?.EXPO_APP_SCHEME, 'happier-internalpreview');
+  assert.equal(internalpreview?.env?.EXPO_APP_SCHEME, undefined);
 
   const internalpreviewApk = build?.['internalpreview-apk'] ?? null;
   assert.equal(typeof internalpreviewApk, 'object');
@@ -36,5 +36,5 @@ test('apps/ui/eas.json defines internalpreview profiles for release-like private
   assert.equal(internalpreviewApk?.env?.EXPO_UPDATES_CHANNEL, 'internalpreview');
   assert.equal(internalpreviewApk?.env?.EXPO_APP_NAME, 'Happier (internal preview)');
   assert.equal(internalpreviewApk?.env?.EXPO_APP_BUNDLE_ID, 'dev.happier.app.internalpreview');
-  assert.equal(internalpreviewApk?.env?.EXPO_APP_SCHEME, 'happier-internalpreview');
+  assert.equal(internalpreviewApk?.env?.EXPO_APP_SCHEME, undefined);
 });

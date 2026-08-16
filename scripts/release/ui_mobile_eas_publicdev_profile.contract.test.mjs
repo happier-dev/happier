@@ -25,7 +25,7 @@ test('apps/ui/eas.json defines publicdev profiles for the public nightly dev lan
   assert.equal(publicdev?.env?.EXPO_UPDATES_CHANNEL, 'dev');
   assert.equal(publicdev?.env?.EXPO_APP_NAME, 'Happier (dev)');
   assert.equal(publicdev?.env?.EXPO_APP_BUNDLE_ID, 'dev.happier.app.publicdev');
-  assert.equal(publicdev?.env?.EXPO_APP_SCHEME, 'happier-dev');
+  assert.equal(publicdev?.env?.EXPO_APP_SCHEME, undefined);
 
   const publicdevApk = build?.['publicdev-apk'] ?? null;
   assert.equal(typeof publicdevApk, 'object');
@@ -38,7 +38,7 @@ test('apps/ui/eas.json defines publicdev profiles for the public nightly dev lan
   assert.equal(publicdevApk?.env?.EXPO_UPDATES_CHANNEL, 'dev');
   assert.equal(publicdevApk?.env?.EXPO_APP_NAME, 'Happier (dev)');
   assert.equal(publicdevApk?.env?.EXPO_APP_BUNDLE_ID, 'dev.happier.app.publicdev');
-  assert.equal(publicdevApk?.env?.EXPO_APP_SCHEME, 'happier-dev');
+  assert.equal(publicdevApk?.env?.EXPO_APP_SCHEME, undefined);
 
   const publicdevDevClient = build?.['publicdev-dev-client'] ?? null;
   assert.ok(publicdevDevClient, 'expected publicdev-dev-client build profile');

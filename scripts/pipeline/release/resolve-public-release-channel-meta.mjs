@@ -66,6 +66,7 @@ function main() {
     app_env: resolveExpoAppEnvironmentForChannel(channel),
     embedded_policy_env: resolveEmbeddedPolicyForChannel(channel),
     expo_updates_channel: entry.expoUpdatesChannel,
+    app_scheme: entry.appScheme,
     manifest_channel: entry.manifestChannel ?? '',
     rolling_release_suffix: entry.rollingReleaseSuffix ?? '',
   };
@@ -78,6 +79,7 @@ function main() {
     app_env: payload.app_env,
     embedded_policy_env: payload.embedded_policy_env,
     expo_updates_channel: payload.expo_updates_channel,
+    app_scheme: payload.app_scheme,
     manifest_channel: payload.manifest_channel,
     rolling_release_suffix: payload.rolling_release_suffix,
   });

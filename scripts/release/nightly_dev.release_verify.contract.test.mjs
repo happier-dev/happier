@@ -92,6 +92,21 @@ test('nightly-dev propagates generic unattended copy and terminal status', async
   );
 });
 
+test('ordinary nightlies advance the pre-bound source issue snapshot only after dev promotion is verified', async () => {
+  const raw = await readFile(join(repoRoot, '.github', 'workflows', 'nightly-dev.yml'), 'utf8');
+
+  assert.match(raw, /snapshot_source_issues:[\s\S]*?issues:\s*read[\s\S]*?reconcile-issue-stage\.mjs snapshot[\s\S]*?from-stage "stage:source"/);
+  assert.match(raw, /prepare_release_candidate:[\s\S]*?needs:\s*\[resolve_resume, snapshot_source_issues\]/);
+  assert.match(
+    raw,
+    /advance_source_issues_to_dev:[\s\S]*?needs:\s*\[snapshot_source_issues, verify_promoted\][\s\S]*?issues:\s*write[\s\S]*?reconcile-issue-stage\.mjs advance[\s\S]*?from-stage "stage:source"[\s\S]*?to-stage "stage:dev"/,
+  );
+  assert.match(raw, /SOURCE_ISSUES_JSON:\s*\$\{\{ needs\.snapshot_source_issues\.outputs\.issues_json \}\}/);
+  assert.match(raw, /RESUME_RUN_ID:\s*\$\{\{ inputs\.resume_run_id \}\}[\s\S]*?SOURCE_REF:\s*\$\{\{ inputs\.source_ref \}\}/);
+  assert.match(raw, /\[ -n "\$RESUME_RUN_ID" \][\s\S]*?"\$SOURCE_REF" != "dev"/);
+  assert.match(raw, /"\$SOURCE_REF" != "dev"[\s\S]*?eligible=false/);
+});
+
 test('nightly status projector emits the strict summarizer contract', () => {
   const sourceSha = 'a'.repeat(40);
   const producerEnv = {

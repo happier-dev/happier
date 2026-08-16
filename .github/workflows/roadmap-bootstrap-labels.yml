@@ -35,6 +35,37 @@ jobs:
             const force = Boolean(${{ inputs.force_update }});
             const { owner, repo } = context.repo;
 
+            const stageMigrations = [
+              { from: 'stage:not-shipped', to: 'stage:source', color: 'bfdadc', description: 'Correction is integrated and verified on the canonical dev branch.' },
+              { from: 'stage:experimental', to: 'stage:dev', color: '1d76db', description: 'Correction is available on the automated dev channel.' },
+              { from: 'stage:beta', to: 'stage:preview', color: '0e8a16', description: 'Correction is available on the preview channel.' },
+              { from: 'stage:ga', to: 'stage:stable', color: '0052cc', description: 'Correction is available on the stable channel.' },
+            ];
+
+            for (const migration of stageMigrations) {
+              try {
+                await github.rest.issues.getLabel({ owner, repo, name: migration.from });
+              } catch (error) {
+                if (error?.status === 404) continue;
+                throw error;
+              }
+              try {
+                await github.rest.issues.getLabel({ owner, repo, name: migration.to });
+                throw new Error(`Cannot migrate ${migration.from}: target label ${migration.to} already exists.`);
+              } catch (error) {
+                if (error?.status !== 404) throw error;
+              }
+              await github.rest.issues.updateLabel({
+                owner,
+                repo,
+                name: migration.from,
+                new_name: migration.to,
+                color: migration.color,
+                description: migration.description,
+              });
+              core.info(`Migrated label: ${migration.from} -> ${migration.to}`);
+            }
+
             /** @type {Array<{name: string, color: string, description: string}>} */
             const labels = [
               { name: 'roadmap', color: '5319e7', description: 'Include on the public roadmap project.' },
@@ -44,10 +75,10 @@ jobs:
               { name: 'priority:p2', color: 'fbca04', description: 'Normal priority.' },
               { name: 'priority:p3', color: 'c2e0c6', description: 'Low priority.' },
 
-              { name: 'stage:not-shipped', color: 'bfdadc', description: 'Not shipped yet.' },
-              { name: 'stage:experimental', color: '1d76db', description: 'Shipped behind experimental / preview.' },
-              { name: 'stage:beta', color: '0e8a16', description: 'Shipped to beta users.' },
-              { name: 'stage:ga', color: '0052cc', description: 'Generally available.' },
+              { name: 'stage:source', color: 'bfdadc', description: 'Correction is integrated and verified on the canonical dev branch.' },
+              { name: 'stage:dev', color: '1d76db', description: 'Correction is available on the automated dev channel.' },
+              { name: 'stage:preview', color: '0e8a16', description: 'Correction is available on the preview channel.' },
+              { name: 'stage:stable', color: '0052cc', description: 'Correction is available on the stable channel.' },
 
               { name: 'type: bug', color: 'd73a4a', description: 'Bug or regression.' },
               { name: 'type: feature', color: 'a2eeef', description: 'New feature or enhancement.' },

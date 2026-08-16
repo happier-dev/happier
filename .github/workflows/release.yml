@@ -184,6 +184,61 @@ jobs:
       expected_source_sha: ${{ inputs.authorized_promotion_source_sha }}
       expected_operation_id: ${{ inputs.hmaint_operation_id }}
 
+  snapshot_release_issues:
+    name: Snapshot issues eligible for this channel release
+    needs: [release_actor_guard]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: read
+    outputs:
+      eligible: ${{ steps.snapshot.outputs.eligible }}
+      source_issues_json: ${{ steps.snapshot.outputs.source_issues_json }}
+      dev_issues_json: ${{ steps.snapshot.outputs.dev_issues_json }}
+      preview_issues_json: ${{ steps.snapshot.outputs.preview_issues_json }}
+    steps:
+      - name: Checkout trusted release control
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22.x
+      - name: Snapshot open issues from the source channel
+        id: snapshot
+        env:
+          DRY_RUN: ${{ inputs.dry_run }}
+          GITHUB_TOKEN: ${{ github.token }}
+          INCLUDE_DEVELOPMENT_STAGES: ${{ inputs.environment == 'preview' || (inputs.environment == 'production' && (inputs.confirm == 'release dev to main' || inputs.confirm == 'reset main from dev')) }}
+          INCLUDE_PREVIEW_STAGE: ${{ inputs.environment == 'production' && (inputs.confirm == 'release preview to main' || inputs.confirm == 'reset main from preview') }}
+        run: |
+          set -euo pipefail
+          if [ "$DRY_RUN" = "true" ]; then
+            echo "eligible=false" >> "$GITHUB_OUTPUT"
+            echo "source_issues_json=[]" >> "$GITHUB_OUTPUT"
+            echo "dev_issues_json=[]" >> "$GITHUB_OUTPUT"
+            echo "preview_issues_json=[]" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          source_issues_json="[]"
+          dev_issues_json="[]"
+          preview_issues_json="[]"
+          if [ "$INCLUDE_DEVELOPMENT_STAGES" = "true" ]; then
+            source_issues_json="$(node scripts/pipeline/github/reconcile-issue-stage.mjs snapshot --repo "$GITHUB_REPOSITORY" --from-stage "stage:source")"
+            dev_issues_json="$(node scripts/pipeline/github/reconcile-issue-stage.mjs snapshot --repo "$GITHUB_REPOSITORY" --from-stage "stage:dev")"
+          fi
+          if [ "$INCLUDE_PREVIEW_STAGE" = "true" ]; then
+            preview_issues_json="$(node scripts/pipeline/github/reconcile-issue-stage.mjs snapshot --repo "$GITHUB_REPOSITORY" --from-stage "stage:preview")"
+          fi
+          echo "source_issues_json=$source_issues_json" >> "$GITHUB_OUTPUT"
+          echo "dev_issues_json=$dev_issues_json" >> "$GITHUB_OUTPUT"
+          echo "preview_issues_json=$preview_issues_json" >> "$GITHUB_OUTPUT"
+          echo "eligible=true" >> "$GITHUB_OUTPUT"
+
   resolve_validation_profile:
     name: Resolve bounded release validation profile
     needs: [release_actor_guard]
@@ -273,8 +328,8 @@ jobs:
 
   plan:
     name: Release Plan (inputs + changes + bump/publish decisions)
-    needs: [release_actor_guard, resolve_resume, resolve_validation_profile, ci]
-    if: ${{ always() && needs.release_actor_guard.result == 'success' && needs.resolve_resume.result == 'success' && needs.resolve_validation_profile.result == 'success' && needs.ci.result == 'success' }}
+    needs: [release_actor_guard, resolve_resume, resolve_validation_profile, ci, snapshot_release_issues]
+    if: ${{ always() && needs.release_actor_guard.result == 'success' && needs.resolve_resume.result == 'success' && needs.resolve_validation_profile.result == 'success' && needs.ci.result == 'success' && needs.snapshot_release_issues.result == 'success' }}
     permissions:
       contents: read
     runs-on: ubuntu-latest
@@ -1121,10 +1176,58 @@ jobs:
       run_self_host_schtasks: false
       run_self_host_daemon: false
 
+  advance_release_issues:
+    name: Advance issues to the released channel
+    if: ${{ needs.release_verify.result == 'success' && needs.snapshot_release_issues.outputs.eligible == 'true' }}
+    needs: [snapshot_release_issues, release_verify]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Checkout trusted workflow control bytes
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22.x
+      - name: Reconcile the snapshotted issues
+        env:
+          DEV_ISSUES_JSON: ${{ needs.snapshot_release_issues.outputs.dev_issues_json }}
+          GITHUB_TOKEN: ${{ github.token }}
+          INCLUDE_PREVIEW_STAGE: ${{ inputs.environment == 'production' && (inputs.confirm == 'release preview to main' || inputs.confirm == 'reset main from preview') }}
+          PREVIEW_ISSUES_JSON: ${{ needs.snapshot_release_issues.outputs.preview_issues_json }}
+          SOURCE_ISSUES_JSON: ${{ needs.snapshot_release_issues.outputs.source_issues_json }}
+          TO_STAGE: ${{ inputs.environment == 'production' && 'stage:stable' || 'stage:preview' }}
+        run: |
+          set -euo pipefail
+          node scripts/pipeline/github/reconcile-issue-stage.mjs advance \
+            --repo "$GITHUB_REPOSITORY" \
+            --issues-json "$SOURCE_ISSUES_JSON" \
+            --from-stage "stage:source" \
+            --to-stage "$TO_STAGE"
+          node scripts/pipeline/github/reconcile-issue-stage.mjs advance \
+            --repo "$GITHUB_REPOSITORY" \
+            --issues-json "$DEV_ISSUES_JSON" \
+            --from-stage "stage:dev" \
+            --to-stage "$TO_STAGE"
+          if [ "$INCLUDE_PREVIEW_STAGE" = "true" ]; then
+            node scripts/pipeline/github/reconcile-issue-stage.mjs advance \
+              --repo "$GITHUB_REPOSITORY" \
+              --issues-json "$PREVIEW_ISSUES_JSON" \
+              --from-stage "stage:preview" \
+              --to-stage "$TO_STAGE"
+          fi
+
   release_status:
     name: Project terminal release status
     if: ${{ always() && inputs.dry_run != true }}
-    needs: [resolve_resume, plan, deploy_plan, prepare_release_candidate, publish_cli_binaries, publish_hstack_binaries, publish_server_runtime, publish_ui_web, verify_release_candidates, verify_resume_candidates, promote_cli_binaries, promote_hstack_binaries, promote_server_runtime, promote_ui_web, deploy_ui, deploy_server, deploy_website, deploy_docs, publish_docker, publish_npm, release_verify, sync_dev]
+    needs: [resolve_resume, plan, deploy_plan, prepare_release_candidate, publish_cli_binaries, publish_hstack_binaries, publish_server_runtime, publish_ui_web, verify_release_candidates, verify_resume_candidates, promote_cli_binaries, promote_hstack_binaries, promote_server_runtime, promote_ui_web, deploy_ui, deploy_server, deploy_website, deploy_docs, publish_docker, publish_npm, release_verify, advance_release_issues, sync_dev]
     runs-on: ubuntu-latest
     permissions:
       contents: read

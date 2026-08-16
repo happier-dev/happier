@@ -38,7 +38,24 @@ yarn ghops issue view -R happier-dev/happier <number> \
   --json number,title,body,url,state,labels,author,comments,createdAt,updatedAt
 ```
 
-Treat reporter diagnoses, proposed fixes, severity, and duplicate claims as assertions to verify. Private bug-report diagnostics are not a GitHub read concern; resolve them through the maintainer evidence capability described in `docs/issue-triage.md`.
+`issue view` does not include timeline cross-references. For every issue selected for deep diagnosis, retrieve a bounded first-order relationship inventory: explicit links in the body/comments, timeline cross-references and connected events, closing or referencing pull requests, referenced commits, and explicitly related issues.
+
+```bash
+yarn ghops api -H 'Accept: application/vnd.github+json' \
+  repos/happier-dev/happier/issues/<number>/timeline --paginate
+```
+
+Start with relationship identity and live state. For a pull request that could change the diagnosis or maintainer action, inspect compact metadata before its diff and discussion:
+
+```bash
+yarn ghops pr view -R happier-dev/happier <number> \
+  --json number,title,url,state,isDraft,author,baseRefName,headRefName,mergeStateStatus,reviewDecision,body,files,commits,comments,reviews,createdAt,updatedAt
+yarn ghops pr diff -R happier-dev/happier <number>
+```
+
+Do not recursively expand every mention or bot link. Follow another relationship only when it can change grouping, root cause, fix fitness, closure, release status, or the next maintainer decision. A missing cross-reference is not proof that no related work exists; use bounded signature search when the issue claims a PR, duplicate, regression, or prior fix that the timeline does not expose.
+
+Treat issue and PR descriptions, review comments, proposed patches, passing checks, approvals, reporter diagnoses, proposed fixes, severity, and duplicate claims as assertions to verify. Private bug-report diagnostics are not a GitHub read concern; resolve them through the maintainer evidence capability described in `docs/issue-triage.md`.
 
 ## Authority-gated issue write-back
 
@@ -51,6 +68,8 @@ Every GitHub mutation uses a mandatory two-phase protocol:
 
 Approval applies only to the previewed mutation set. Never infer approval from silence, a previous batch, general repository authority, or authorization to diagnose or implement code. Read-only retrieval does not require approval.
 
+The only pre-authorized exception is the repository-owned release automation documented in `docs/issue-triage.md`. Its job-scoped token may move a pre-release snapshot forward to the verified target `stage:*` after the owning release verifier succeeds, including a higher-channel release that bypasses a lower channel. That exception permits only the exact label add/remove operation performed by `scripts/pipeline/github/reconcile-issue-stage.mjs`; it does not authorize comments, closure, assignment, edits, manual invocation, backward transitions, or any other issue mutation.
+
 Before an authorized mutation:
 
 1. confirm every target belongs to the user-approved issue set;
@@ -60,7 +79,7 @@ Before an authorized mutation:
 5. apply only the bounded approved actions;
 6. re-read the affected issues and report every applied mutation with its URL and any failure or partial result.
 
-Use GitHub as the durable triage store; do not create a local status ledger. Keep public comments concise and evidence-based, and distinguish observed facts from hypotheses. Never paste private logs, diagnostic excerpts, secrets, machine identities, personal paths, or full session ids.
+Use GitHub as the durable triage store; do not create a local status ledger. Keep public comments focused and evidence-based, and distinguish observed facts from hypotheses. Never paste private logs, diagnostic excerpts, secrets, machine identities, personal paths, or full session ids.
 
 Hard safeguards:
 
@@ -131,6 +150,18 @@ Write public issues, pull-request text, and comments in Happier's voice: warm, d
 
 For a progress update, usually cover the outcome or current status, the evidence or user impact, and the next step or blocker. This is a content checklist, not a mandatory heading template.
 
+For a confirmed correction, developers benefit from the reasoning. Include the causal mechanism, the canonical owner, the exact correction, important alternatives rejected because they would leave a workaround or split-brain, materially unchanged behavior, compatibility or migration effects, deciding tests or live validation, public commit/PR provenance, current channel availability, and the exact closure or follow-up condition. When the reporter or a commenter materially shaped the implemented correction, acknowledge that contribution and ensure the proposed commit contains their verified `Co-authored-by:` trailer. Omit an item only when it is genuinely irrelevant or unsupported; do not compress a diagnosis into `fixed in source` when the evidence can help reviewers or reporters catch a missed case.
+
+Make follow-up conditional on the reporter's actual channel:
+
+- dev reporter: request a retry after `stage:dev`;
+- preview reporter: say `will reach preview on the next preview release` and request a retry after `stage:preview`;
+- stable reporter: request a retry after `stage:stable`;
+- unknown channel: state the highest verified channel and request the relevant channel plus only the component versions needed for this flow;
+- same/newer corrected version still affected: acknowledge the contradiction and request the exact reproduction, relevant versions, platform, and smallest useful diagnostic evidence.
+
+Do not ask preview or stable users to validate a dev build unless they volunteer to test another channel. Do not say `next successful release`, discuss the absence of an artifact, or promise `soon` when `on the next preview release` or `on the next stable release` is the complete supported claim.
+
 ## Common commands
 
 Verify identity (must be the bot user):
@@ -153,9 +184,11 @@ These labels are intended to keep the public roadmap curated and consistent:
 
 - `roadmap` (triage-owned): include this item on the public roadmap project
 - `priority:p0`, `priority:p1`, `priority:p2`, `priority:p3` (triage-owned)
-- `stage:not-shipped`, `stage:experimental`, `stage:beta`, `stage:ga` (optional; rollout state)
+- `stage:source`, `stage:dev`, `stage:preview`, `stage:stable` (optional, mutually exclusive correction availability; see `docs/issue-triage.md`)
 - `type: bug`, `type: feature`, `type: task` (recommended)
 - `source: bug-report` (applied automatically by the bug-report service)
+
+For an open issue with a complete correction integrated and verified on canonical `dev`, the next exact mutation preview must add `stage:source` and remove any conflicting `stage:*` label. Omit this only when the issue is already at the same or a higher verified stage, or the evidence-backed disposition establishes that no correction exists to release; state the reason in the preview. Do not apply the label before integration, infer a later stage, or silently omit the proposal because approval has not yet been granted.
 
 Roadmap inclusion is opt-in. Do not add `roadmap`, add a project item, or change project fields unless the user explicitly approves that exact issue for roadmap inclusion.
 

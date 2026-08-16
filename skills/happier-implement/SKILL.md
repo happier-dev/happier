@@ -108,6 +108,19 @@ After a fix batch, recheck the accepted-finding delta and affected corridor. Rep
 
 ## 10. Close from evidence
 
+For work linked to a GitHub issue, keep the source correction, commit relationship, public response, release availability, and issue closure as distinct facts:
+
+- preserve unrelated work and form one coherent correction per commit; one correction may resolve several issues, while one issue may legitimately require several commits;
+- select exact paths or hunks when committing in a dirty worktree, and keep the defining regression test with the behavior it proves;
+- use `Refs #N` for partial fixes, mitigations, release-gated corrections, or work that should leave the issue open;
+- use `Fixes #N` only when integration into the default branch satisfies the issue's actual closure gate; because `dev` is the default branch, a closing keyword can close an issue before preview or stable users receive the correction;
+- inspect the issue author and comments for material contributions embodied in the correction. A supplied causal insight, decisive reproduction, design, patch, or substantially adopted solution earns a verified `Co-authored-by: Name <email>` trailer on each commit that incorporates it; a routine report, requested log, confirmation, or generic suggestion does not automatically earn code co-authorship;
+- resolve the contributor's GitHub-associated email or GitHub-provided noreply identity before committing. Never put an `@handle` in the trailer, guess or expose a private email, silently drop an unresolved attribution candidate, or let attribution change the independently selected `Refs`/`Fixes` relationship;
+- after implementation, propose a Conventional Commit message and a detailed GitHub response grounded in the verified cause, owner-level correction, choices, tests, public provenance, current stage, and reporter-channel follow-up;
+- do not apply labels, post comments, or close the issue without the separate exact mutation preview and approval required by `skills/happier-github-ops`.
+
+When the complete correction is integrated and verified on canonical `dev`, include `stage:source` for every affected open issue in the next exact GitHub mutation preview. Omit it only when the issue already has the same or a higher verified stage, or the evidence-backed disposition establishes that no correction exists to release; state that reason explicitly. If mutation authority is absent, report the pending proposal instead of applying it or silently leaving the issue outside the release queue. Local work, `remote-dev`, an open pull request, or an unmerged commit does not qualify. Normal release workflows advance later labels; implementation agents do not predict or pre-advance channels.
+
 Use these outcomes:
 
 - `VERIFIED_COMPLETE`: the real owner, wiring, removals, tests, broader checks, and required live evidence establish the complete outcome;

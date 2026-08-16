@@ -28,6 +28,16 @@ There is no invented “after the fix” behavior and no implementation approval
 
 Shared release work is explained once. The issue with a different evidence need is not forced into the same brief merely because all three involve publication.
 
+## Corrected in source, reporter on preview
+
+> The tag-selection crash came from conditional hooks in the result-row component: selecting a tag changed which hooks React evaluated, so the next render violated hook ordering and failed before the selection could be applied.
+>
+> The correction keeps hook evaluation unconditional in the existing row component and derives the conditional display afterward. That fixes the originating lifecycle invariant without adding a second selection path; filtering, keyboard navigation, and non-tag rows keep their existing owners. The regression now covers repeated tag selection and clearing through the real component boundary.
+>
+> This is integrated and verified on `dev`, so it is currently `stage:source` and will reach preview on the next preview release. The issue should remain open through `stage:preview`. Once it reaches that channel, please retry the original tag sequence on preview; if it still fails, send the app version from Settings, platform, and exact selection/clearing sequence because that would contradict the corrected path.
+
+This response gives a developer enough mechanism, ownership, design, validation, availability, and conditional follow-up to challenge the conclusion. It does not ask a preview user to validate dev or narrate private evidence collection.
+
 ## Avoid the form-shaped version
 
 Do not restate the same conclusion under `User-facing problem`, `Status today`, `Recommended next move`, `GitHub disposition`, `Can close now?`, `Decision needed`, `Disposition`, and `Exact next action`. Use headings or a table when they clarify real differences, not to expose the investigation's internal checklist.

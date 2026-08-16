@@ -118,3 +118,5 @@ cd apps/ui && yarn vitest run --config vitest.config.ts \
 These checks validate structure, source identity, selected bounded fields, and
 asset/translation references. They must not judge editorial wording or release
 selection.
+
+Issue `stage:*` labels and issue comments are not release-note source. The owning release workflow reconciles availability after verification according to `docs/issue-triage.md`; keep editorial projection and issue lifecycle as separate consumers of the same proven release.

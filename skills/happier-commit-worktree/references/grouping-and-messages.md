@@ -125,6 +125,10 @@ disconnect, resume, and terminal completion ordering.
 
 The body must explain why the files belong together, not enumerate filenames. Mention a major deletion or compatibility decision when a reviewer could otherwise misread it as accidental.
 
+For issue-linked packets, use `Refs #N` when the correction is partial, a mitigation, still release-gated, or must remain open for reporter-channel verification. Use `Fixes #N` only when merging the commit into the repository's default branch satisfies the issue's actual closure gate. Do not force one issue per commit: keep one coherent correction per commit, grouping several issues only when that one correction fully explains them and splitting one issue when it contains independently coherent changes.
+
+Preserve material issue-contributor authorship in the packet. If an issue author or commenter supplied a causal insight, decisive reproduction, design, patch, or solution direction substantially embodied in the packet, add one `Co-authored-by: Name <email>` trailer for that contributor after the blank line that starts the footer block. Prefer an explicitly supplied GitHub-associated email; otherwise resolve the authenticated GitHub user's numeric id, current login, and display name and use the GitHub-provided `ID+LOGIN@users.noreply.github.com` form, falling back to the login as the name. Do not use `@handle`, guess a private email, duplicate a contributor trailer, or grant co-authorship merely for filing a routine report. If identity resolution is unavailable, mark the commit packet attribution-blocked rather than silently losing credit.
+
 ## 6. Group review checklist
 
 Before staging, answer:
@@ -137,5 +141,6 @@ Before staging, answer:
 - Is any output generated, private, temporary, oversized, or unexplained?
 - Can the subject distinguish this commit from every neighboring commit?
 - Does the body explain ownership and non-obvious semantics?
+- Did any issue author or commenter materially shape this packet, and is their verified co-author trailer present exactly once?
 - Which focused checks decide whether the group is sound?
 - Has every path assigned to this reconnaissance lane been placed in a packet, excluded with evidence, or reported with an exact unresolved fact?

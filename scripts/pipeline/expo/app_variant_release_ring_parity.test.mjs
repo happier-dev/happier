@@ -2,10 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 
-import { getReleaseRingCatalogEntry } from '@happier-dev/release-runtime/releaseRings';
-
 const require = createRequire(import.meta.url);
 const { APP_ENVIRONMENT_CONFIGS } = require('../../../apps/ui/appVariantConfig.cjs');
+const { getReleaseRingCatalogEntry } = require('../../../packages/release-runtime/releaseRings.cjs');
 
 const environmentToReleaseRing = Object.freeze({
   internaldev: 'internaldev',
@@ -15,7 +14,7 @@ const environmentToReleaseRing = Object.freeze({
   production: 'stable',
 });
 
-test('appVariantConfig stays in sync with release ring catalog (updates + policy env)', () => {
+test('appVariantConfig stays in sync with release ring catalog', () => {
   for (const [environment, ringId] of Object.entries(environmentToReleaseRing)) {
     const config = APP_ENVIRONMENT_CONFIGS[environment];
     assert.ok(config, `missing app environment config for ${environment}`);
@@ -30,6 +29,11 @@ test('appVariantConfig stays in sync with release ring catalog (updates + policy
       config.featurePolicyEnv,
       ring.embeddedPolicyEnv,
       `${environment}.featurePolicyEnv must match release ring ${ringId}.embeddedPolicyEnv`,
+    );
+    assert.equal(
+      config.scheme,
+      ring.appScheme,
+      `${environment}.scheme must match release ring ${ringId}.appScheme`,
     );
 
     const expectedLogicalVariant =
@@ -60,4 +64,3 @@ test('mobile app variants can be installed side-by-side (unique bundle ids, pack
   assert.ok(publicdevName.includes('dev'), 'public dev variant name should include "dev"');
   assert.ok(!publicdevName.includes('publicdev'), 'public dev variant name must not expose internal ring id "publicdev"');
 });
-

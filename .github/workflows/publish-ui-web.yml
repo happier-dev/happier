@@ -181,6 +181,7 @@ jobs:
       source_sha: ${{ steps.source.outputs.source_sha }}
       app_env: ${{ steps.channel_meta.outputs.app_env }}
       expo_updates_channel: ${{ steps.channel_meta.outputs.expo_updates_channel }}
+      app_scheme: ${{ steps.channel_meta.outputs.app_scheme }}
       embedded_policy_env: ${{ steps.channel_meta.outputs.embedded_policy_env }}
     steps:
       - name: Enforce stable publishing gate
@@ -327,6 +328,7 @@ jobs:
           npm_config_production: "false"
           APP_ENV: ${{ needs.prepare.outputs.app_env }}
           EXPO_UPDATES_CHANNEL: ${{ needs.prepare.outputs.expo_updates_channel }}
+          EXPO_APP_SCHEME: ${{ needs.prepare.outputs.app_scheme }}
           HAPPIER_EMBEDDED_POLICY_ENV: ${{ needs.prepare.outputs.embedded_policy_env }}
         uses: ./.github/actions/install-yarn-dependencies
         with:
@@ -349,6 +351,7 @@ jobs:
           MINISIGN_PASSPHRASE: ""
           APP_ENV: ${{ needs.prepare.outputs.app_env }}
           EXPO_UPDATES_CHANNEL: ${{ needs.prepare.outputs.expo_updates_channel }}
+          EXPO_APP_SCHEME: ${{ needs.prepare.outputs.app_scheme }}
           HAPPIER_EMBEDDED_POLICY_ENV: ${{ needs.prepare.outputs.embedded_policy_env }}
           CHANNEL: ${{ inputs.channel }}
           VERSION: ${{ needs.prepare.outputs.version }}

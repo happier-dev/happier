@@ -64,6 +64,11 @@ test('publish-ui-web embeds build feature policy defaults and exports production
   );
   assert.match(
     raw,
+    /EXPO_APP_SCHEME:\s*\$\{\{\s*needs\.prepare\.outputs\.app_scheme\s*\}\}/,
+    'ui web publishing should emit account-connect URLs for the matching native release ring',
+  );
+  assert.match(
+    raw,
     /EXPO_UPDATES_CHANNEL:\s*\$\{\{\s*needs\.prepare\.outputs\.expo_updates_channel\s*\}\}/,
     'ui web publishing should set EXPO_UPDATES_CHANNEL so updates headers match stable, preview, and dev channels',
   );

@@ -50,7 +50,7 @@ test('release workflow verifies immutable candidates before promoting preview or
   );
   assert.match(
     raw,
-    /plan:[\s\S]*?needs:\s*\[release_actor_guard, resolve_resume, resolve_validation_profile, ci\][\s\S]*?needs\.resolve_resume\.result == 'success'[\s\S]*?needs\.resolve_validation_profile\.result == 'success'[\s\S]*?needs\.ci\.result == 'success'/,
+    /plan:[\s\S]*?needs:\s*\[release_actor_guard, resolve_resume, resolve_validation_profile, ci, snapshot_release_issues\][\s\S]*?needs\.resolve_resume\.result == 'success'[\s\S]*?needs\.resolve_validation_profile\.result == 'success'[\s\S]*?needs\.ci\.result == 'success'[\s\S]*?needs\.snapshot_release_issues\.result == 'success'/,
     'release.yml planning must fail closed unless resume admission, the canonical profile, and pre-release CI all succeed',
   );
   assert.match(
@@ -88,6 +88,43 @@ test('post-promotion verification receives the selected server runtime probe URL
     /checks_profile == 'full'/,
     'post-promotion verification must run for preview and stable releases',
   );
+});
+
+test('preview and stable releases advance a pre-promotion issue snapshot only after release verification', async () => {
+  const raw = await readFile(join(repoRoot, '.github', 'workflows', 'release.yml'), 'utf8');
+  const workflow = YAML.parse(raw);
+  const snapshot = workflow.jobs.snapshot_release_issues;
+  const advance = workflow.jobs.advance_release_issues;
+
+  assert.ok(snapshot.needs.includes('release_actor_guard'));
+  assert.equal(snapshot.permissions.issues, 'read');
+  assert.match(JSON.stringify(snapshot.steps), /reconcile-issue-stage\.mjs snapshot/);
+  assert.match(JSON.stringify(snapshot.steps), /stage:source/);
+  assert.match(JSON.stringify(snapshot.steps), /stage:dev/);
+  assert.match(JSON.stringify(snapshot.steps), /stage:preview/);
+  assert.match(JSON.stringify(snapshot.steps), /INCLUDE_DEVELOPMENT_STAGES/);
+  assert.match(JSON.stringify(snapshot.steps), /inputs\.environment == 'preview'/);
+  assert.match(JSON.stringify(snapshot.steps), /release dev to main/);
+  assert.match(JSON.stringify(snapshot.steps), /reset main from dev/);
+  assert.match(JSON.stringify(snapshot.steps), /release preview to main/);
+  assert.match(JSON.stringify(snapshot.steps), /reset main from preview/);
+  const snapshotRun = String(snapshot.steps.find((step) => step.id === 'snapshot')?.run ?? '');
+  assert.match(
+    snapshotRun,
+    /source_issues_json="\[\]"[\s\S]*?dev_issues_json="\[\]"[\s\S]*?if \[ "\$INCLUDE_DEVELOPMENT_STAGES" = "true" \]; then[\s\S]*?stage:source[\s\S]*?stage:dev[\s\S]*?fi/,
+    'source/dev queues must only be captured when the selected candidate comes from dev',
+  );
+  assert.ok(workflow.jobs.plan.needs.includes('snapshot_release_issues'));
+
+  assert.deepEqual(advance.needs, ['snapshot_release_issues', 'release_verify']);
+  assert.equal(advance.permissions.issues, 'write');
+  assert.match(String(advance.if), /needs\.release_verify\.result == 'success'/);
+  assert.match(JSON.stringify(advance.steps), /reconcile-issue-stage\.mjs advance/);
+  assert.match(JSON.stringify(advance.steps), /stage:source/);
+  assert.match(JSON.stringify(advance.steps), /stage:dev/);
+  assert.match(JSON.stringify(advance.steps), /stage:preview/);
+  assert.match(JSON.stringify(advance.steps), /release preview to main/);
+  assert.match(JSON.stringify(advance.steps), /inputs\.environment == 'production' && 'stage:stable' \|\| 'stage:preview'/);
 });
 
 test('release workflow admits exact candidate notes before branch promotion and rechecks the promoted candidate', async () => {

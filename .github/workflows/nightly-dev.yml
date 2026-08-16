@@ -34,9 +34,53 @@ jobs:
       expected_workflow: .github/workflows/nightly-dev.yml
       expected_channel: dev
 
+  snapshot_source_issues:
+    name: Snapshot source-stage issues for this nightly
+    needs: [resolve_resume]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: read
+    outputs:
+      eligible: ${{ steps.snapshot.outputs.eligible }}
+      issues_json: ${{ steps.snapshot.outputs.issues_json }}
+      issue_count: ${{ steps.snapshot.outputs.issue_count }}
+    steps:
+      - name: Checkout trusted workflow control bytes
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22.x
+      - name: Snapshot open source-stage issues
+        id: snapshot
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
+          RESUME_RUN_ID: ${{ inputs.resume_run_id }}
+          SOURCE_REF: ${{ inputs.source_ref }}
+        run: |
+          set -euo pipefail
+          if [ -n "$RESUME_RUN_ID" ] || { [ "$EVENT_NAME" = "workflow_dispatch" ] && [ "$SOURCE_REF" != "dev" ]; }; then
+            echo "eligible=false" >> "$GITHUB_OUTPUT"
+            echo "issues_json=[]" >> "$GITHUB_OUTPUT"
+            echo "issue_count=0" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          node scripts/pipeline/github/reconcile-issue-stage.mjs snapshot \
+            --repo "$GITHUB_REPOSITORY" \
+            --from-stage "stage:source" \
+            --github-output "$GITHUB_OUTPUT"
+          echo "eligible=true" >> "$GITHUB_OUTPUT"
+
   prepare_release_candidate:
     name: Prepare exact nightly candidate
-    needs: [resolve_resume]
+    needs: [resolve_resume, snapshot_source_issues]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -311,10 +355,42 @@ jobs:
             test "$actual" = "$EXPECTED_SHA"
           done
 
+  advance_source_issues_to_dev:
+    name: Advance shipped issues from source to dev
+    if: ${{ needs.verify_promoted.result == 'success' && needs.snapshot_source_issues.outputs.eligible == 'true' && needs.snapshot_source_issues.outputs.issue_count != '0' }}
+    needs: [snapshot_source_issues, verify_promoted]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Checkout trusted workflow control bytes
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22.x
+      - name: Reconcile the snapshotted issues
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          SOURCE_ISSUES_JSON: ${{ needs.snapshot_source_issues.outputs.issues_json }}
+        run: |
+          set -euo pipefail
+          node scripts/pipeline/github/reconcile-issue-stage.mjs advance \
+            --repo "$GITHUB_REPOSITORY" \
+            --issues-json "$SOURCE_ISSUES_JSON" \
+            --from-stage "stage:source" \
+            --to-stage "stage:dev"
+
   release_status:
     name: Project terminal nightly release status
     if: ${{ always() }}
-    needs: [prepare_release_candidate, cli, hstack, server_runtime, ui_web, release_verify, verify_resume_candidates, promote_server, promote_hstack, promote_cli, promote_ui_web, ui_mobile, ui_desktop, docker, verify_promoted]
+    needs: [prepare_release_candidate, cli, hstack, server_runtime, ui_web, release_verify, verify_resume_candidates, promote_server, promote_hstack, promote_cli, promote_ui_web, ui_mobile, ui_desktop, docker, verify_promoted, advance_source_issues_to_dev]
     runs-on: ubuntu-latest
     permissions:
       contents: read

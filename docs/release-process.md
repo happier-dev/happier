@@ -98,6 +98,7 @@ When you want to publish/deploy a new preview build:
    - `confirm=release dev to preview`
 2. The workflow runs the configured checks against already materialized release-note/version source, then promotes `dev` → `preview` (fast-forward).
 3. Deploy/publish steps for the preview environment build from `preview` (not `dev`).
+4. After post-promotion verification, the workflow advances its pre-promotion snapshots of open `stage:source` and `stage:dev` issues to `stage:preview`.
 
 ### Production release (preview → main)
 
@@ -107,10 +108,13 @@ When you want to ship what’s currently in `preview` to production:
    - `environment=production`
    - `confirm=release preview to main`
 2. The workflow promotes `preview` → `main` (fast-forward by default; guarded reset is available), then deploys/publishes from `main`.
+3. After post-promotion verification, the workflow advances its pre-promotion snapshot of `stage:preview` issues to `stage:stable`.
 
 Notes:
 
-- Urgent path (avoid preview): `confirm=release dev to main` (or `reset main from dev`).
+- Urgent path (avoid preview): `confirm=release dev to main` (or `reset main from dev`). Because that candidate comes from `dev`, it advances only snapshotted `stage:source` and `stage:dev` issues to `stage:stable`; it does not claim that unrelated preview-only corrections were included.
+
+Issue availability is tracked by the mutually exclusive `stage:source`, `stage:dev`, `stage:preview`, and `stage:stable` labels documented in `docs/issue-triage.md`. Ordinary current-`dev` nightlies perform `source → dev`; preview and production releases perform the transitions above. Failed and dry-run releases move nothing. The reconciler re-reads each snapshotted issue, preserves unrelated labels, and skips closed or manually restaged issues. It never comments on or closes an issue.
 
 Deploy branches typically include `deploy/<env>/ui`, `deploy/<env>/server`, `deploy/<env>/website`, and `deploy/<env>/docs` (depending on what changed and which options you select).
 
