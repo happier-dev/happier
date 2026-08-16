@@ -1,5 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+
 import { createTempDirSync, removeTempDirSync } from '@/testkit/fs/tempDir';
 
 import type { Credentials } from '@/persistence';
@@ -19,69 +22,87 @@ const credentials: Credentials = {
 describe('Pi ACP runtime spawn system prompt', () => {
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.unstubAllEnvs();
   });
 
-  it('delivers the shell-bridge tool appendix in the spawn-time system prompt', async () => {
-    const createCalls: CatalogAcpRuntimeCreateCall[] = [];
-    createCatalogAcpBackendSpy(createCalls);
-    const session = Object.assign(createApiSessionClientFixture(), {
-      sessionId: 'happy-session-1',
-    });
+  it('delivers base and tool guidance through the bridge flags, not the spawn prompt', async () => {
+    const agentDir = createTempDirSync('happier-pi-bridge-runtime-');
+    vi.stubEnv('PI_CODING_AGENT_DIR', agentDir);
+    try {
+      const createCalls: CatalogAcpRuntimeCreateCall[] = [];
+      createCatalogAcpBackendSpy(createCalls);
+      const session = Object.assign(createApiSessionClientFixture(), {
+        sessionId: 'happy-session-1',
+      });
 
-    const runtime = createPiAcpRuntime({
-      directory: '/tmp/repo',
-      machineId: 'machine-1',
-      session,
-      messageBuffer: createMessageBufferFixture(),
-      mcpServers: {},
-      permissionHandler: createApprovedPermissionHandler(),
-      onThinkingChange() {},
-      getPermissionMode: () => 'default',
-      providerInputConsumer: createSessionProviderInputConsumerFixture(),
-      credentials,
-      accountSettings: {},
-    });
+      const runtime = createPiAcpRuntime({
+        directory: '/tmp/repo',
+        machineId: 'machine-1',
+        session,
+        messageBuffer: createMessageBufferFixture(),
+        mcpServers: {},
+        permissionHandler: createApprovedPermissionHandler(),
+        onThinkingChange() {},
+        getPermissionMode: () => 'default',
+        providerInputConsumer: createSessionProviderInputConsumerFixture(),
+        credentials,
+        accountSettings: {},
+      });
 
-    await runtime.startOrLoad({});
+      await runtime.startOrLoad({});
 
-    const appendSystemPromptText = createCalls[0]?.appendSystemPromptText ?? '';
-    expect(appendSystemPromptText).toContain('Happier tools are available through the CLI bridge');
-    expect(appendSystemPromptText).toContain("'--session-id' 'happy-session-1'");
-    expect(appendSystemPromptText).toContain("'--directory' '/tmp/repo'");
+      // The bridge extension owns the base prompt blocks (session title, response
+      // options, attachments, memory recall) and the bridge tool guidance, driven by
+      // its launch flags. The spawn-time append prompt must not duplicate any of it:
+      // with no prompt stacks or execution-runs guidance configured there is nothing
+      // left for the daemon to deliver.
+      expect(createCalls[0]?.appendSystemPromptText).toBeUndefined();
+      expect(createCalls[0]?.happyToolsBridge).toBeDefined();
+      expect(createCalls[0]?.happyToolsBridge?.sessionRenameMode).toBe('ongoing');
+      expect(createCalls[0]?.happyToolsBridge?.promptOptionsEnabled).toBe(true);
+      expect(createCalls[0]?.happyToolsBridge?.memoryMachineId).toBeNull();
+    } finally {
+      removeTempDirSync(agentDir);
+    }
   });
 
-  it('includes memory recall guidance in the spawn-time system prompt when enabled', async () => {
-    const createCalls: CatalogAcpRuntimeCreateCall[] = [];
-    createCatalogAcpBackendSpy(createCalls);
-    const session = Object.assign(createApiSessionClientFixture(), {
-      sessionId: 'happy-session-2',
-    });
+  it('binds memory guidance to the machine id through the bridge, not the spawn prompt', async () => {
+    const agentDir = createTempDirSync('happier-pi-bridge-runtime-');
+    vi.stubEnv('PI_CODING_AGENT_DIR', agentDir);
+    try {
+      const createCalls: CatalogAcpRuntimeCreateCall[] = [];
+      createCatalogAcpBackendSpy(createCalls);
+      const session = Object.assign(createApiSessionClientFixture(), {
+        sessionId: 'happy-session-2',
+      });
 
-    const runtime = createPiAcpRuntime({
-      directory: '/tmp/repo',
-      machineId: 'machine-9',
-      session,
-      messageBuffer: createMessageBufferFixture(),
-      mcpServers: {},
-      permissionHandler: createApprovedPermissionHandler(),
-      onThinkingChange() {},
-      getPermissionMode: () => 'default',
-      providerInputConsumer: createSessionProviderInputConsumerFixture(),
-      credentials,
-      accountSettings: {},
-      memoryRecallGuidanceEnabled: true,
-    });
+      const runtime = createPiAcpRuntime({
+        directory: '/tmp/repo',
+        machineId: 'machine-9',
+        session,
+        messageBuffer: createMessageBufferFixture(),
+        mcpServers: {},
+        permissionHandler: createApprovedPermissionHandler(),
+        onThinkingChange() {},
+        getPermissionMode: () => 'default',
+        providerInputConsumer: createSessionProviderInputConsumerFixture(),
+        credentials,
+        accountSettings: {},
+        memoryRecallGuidanceEnabled: true,
+      });
 
-    await runtime.startOrLoad({});
+      await runtime.startOrLoad({});
 
-    const appendSystemPromptText = createCalls[0]?.appendSystemPromptText ?? '';
-    expect(appendSystemPromptText).toContain('memory_search');
-    expect(appendSystemPromptText).toContain('machine-9');
+      const appendSystemPromptText = createCalls[0]?.appendSystemPromptText ?? '';
+      expect(appendSystemPromptText).not.toContain('memory_search');
+      expect(appendSystemPromptText).not.toContain('machine-9');
+      expect(createCalls[0]?.happyToolsBridge?.memoryMachineId).toBe('machine-9');
+    } finally {
+      removeTempDirSync(agentDir);
+    }
   });
 
-  it('derives the tools-bridge rename flag and the appendix from the profile override, not raw global settings', async () => {
-    // Point the bridge asset materializer at a temp dir: the runtime falls back to the
-    // real ~/.pi/agent when PI_CODING_AGENT_DIR is unset, and tests must not write there.
+  it('derives the bridge config from the profile override, not raw global settings', async () => {
     const agentDir = createTempDirSync('happier-pi-bridge-runtime-');
     vi.stubEnv('PI_CODING_AGENT_DIR', agentDir);
     try {
@@ -126,19 +147,19 @@ describe('Pi ACP runtime spawn system prompt', () => {
 
       await runtime.startOrLoad({});
 
-      // Both halves of the decision must come from the merged profile override: the
-      // prompt appendix carries no rename guidance AND the bridge registers no rename
-      // tool. Either half alone is the split-brain this test pins.
+      // The bridge config must come from the merged profile override: the profile
+      // disables title updates while still inheriting the global response-options
+      // setting, so the config flags carry exactly that merged decision.
       expect(createCalls[0]?.appendSystemPromptText ?? '').not.toContain('change_title');
       expect(createCalls[0]?.happyToolsBridge).toBeDefined();
-      expect(createCalls[0]?.happyToolsBridge?.disableRename).toBe(true);
+      expect(createCalls[0]?.happyToolsBridge?.sessionRenameMode).toBe('disabled');
+      expect(createCalls[0]?.happyToolsBridge?.promptOptionsEnabled).toBe(true);
     } finally {
-      vi.unstubAllEnvs();
       removeTempDirSync(agentDir);
     }
   });
 
-  it('keeps the tools-bridge rename flag enabled without a profile override (REQ-2)', async () => {
+  it('keeps rename enabled without a profile override (REQ-2)', async () => {
     const agentDir = createTempDirSync('happier-pi-bridge-runtime-');
     vi.stubEnv('PI_CODING_AGENT_DIR', agentDir);
     try {
@@ -173,11 +194,54 @@ describe('Pi ACP runtime spawn system prompt', () => {
 
       await runtime.startOrLoad({});
 
-      expect(createCalls[0]?.appendSystemPromptText ?? '').toContain('change_title');
-      expect(createCalls[0]?.happyToolsBridge?.disableRename).toBe(false);
+      expect(createCalls[0]?.appendSystemPromptText ?? '').not.toContain('change_title');
+      expect(createCalls[0]?.happyToolsBridge?.sessionRenameMode).toBe('ongoing');
+      expect(createCalls[0]?.happyToolsBridge?.promptOptionsEnabled).toBe(true);
     } finally {
-      vi.unstubAllEnvs();
       removeTempDirSync(agentDir);
+    }
+  });
+
+  it('falls back to the full spawn-time prompt (shell-bridge appendix included) when the bridge cannot bind', async () => {
+    // Point the bridge materializer at a regular file: every mkdir/write under it
+    // throws ENOTDIR, so the runtime's best-effort bridge resolution fails and the
+    // spawn must fall back to delivering the complete prompt itself.
+    const notADir = createTempDirSync('happier-pi-bridge-notadir-');
+    const agentDir = join(notADir, 'agent-file');
+    writeFileSync(agentDir, 'not a directory', 'utf8');
+    vi.stubEnv('PI_CODING_AGENT_DIR', agentDir);
+    try {
+      const createCalls: CatalogAcpRuntimeCreateCall[] = [];
+      createCatalogAcpBackendSpy(createCalls);
+      const session = Object.assign(createApiSessionClientFixture(), {
+        sessionId: 'happy-session-5',
+      });
+
+      const runtime = createPiAcpRuntime({
+        directory: '/tmp/repo',
+        machineId: 'machine-1',
+        session,
+        messageBuffer: createMessageBufferFixture(),
+        mcpServers: {},
+        permissionHandler: createApprovedPermissionHandler(),
+        onThinkingChange() {},
+        getPermissionMode: () => 'default',
+        providerInputConsumer: createSessionProviderInputConsumerFixture(),
+        credentials,
+        accountSettings: {},
+      });
+
+      await runtime.startOrLoad({});
+
+      // No bridge: the daemon delivers the complete effective prompt itself,
+      // including the CLI shell-bridge tool appendix, via --append-system-prompt.
+      const appendSystemPromptText = createCalls[0]?.appendSystemPromptText ?? '';
+      expect(appendSystemPromptText).toContain('Happier tools are available through the CLI bridge');
+      expect(appendSystemPromptText).toContain("'--session-id' 'happy-session-5'");
+      expect(appendSystemPromptText).toContain("'--directory' '/tmp/repo'");
+      expect(createCalls[0]?.happyToolsBridge).toBeUndefined();
+    } finally {
+      removeTempDirSync(notADir);
     }
   });
 });
