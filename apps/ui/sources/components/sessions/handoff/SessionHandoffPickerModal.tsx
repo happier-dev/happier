@@ -6,7 +6,6 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import type { CustomModalInjectedProps } from '@/modal';
 import { useModalCardChrome } from '@/modal/components/card/useModalCardChrome';
-import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 import { MachineSelector } from '@/components/sessions/new/components/MachineSelector';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
@@ -51,12 +50,7 @@ type Props = CustomModalInjectedProps & Readonly<{
     onRequestClose?: () => void;
 }>;
 
-const stylesheet = StyleSheet.create((theme) => ({
-    subtitle: {
-        fontSize: 13,
-        color: theme.colors.text.secondary,
-        ...Typography.default(),
-    },
+const stylesheet = StyleSheet.create(() => ({
     body: {
         flex: 1,
     },
@@ -67,11 +61,6 @@ const stylesheet = StyleSheet.create((theme) => ({
         alignItems: 'center',
         justifyContent: 'flex-end',
         gap: 10,
-    },
-    bodyHeader: {
-        paddingHorizontal: 16,
-        paddingTop: 12,
-        paddingBottom: 6,
     },
 }));
 
@@ -292,9 +281,6 @@ export function SessionHandoffPickerModal({ onClose, setChrome, onResolve, sessi
 
     return (
         <View style={styles.body}>
-                <View style={styles.bodyHeader}>
-                    <Text style={styles.subtitle}>{t('newSession.selectMachineTitle')}</Text>
-                </View>
                 <ItemList style={{ paddingTop: 0 }}>
                     <MachineSelector
                         machines={machines as any}
@@ -304,10 +290,12 @@ export function SessionHandoffPickerModal({ onClose, setChrome, onResolve, sessi
                         showFavorites={favoriteMachines.length > 0}
                         showRecent={recentMachines.length > 0}
                         showSearch={true}
+                        presentation="dropdown"
                         showCliGlyphs={false}
                         autoDetectCliGlyphs={false}
                         disableOfflineMachines={true}
                         testIdPrefix="session-handoff-machine"
+                        dropdownTestID="session-handoff-machine-dropdown-trigger"
                         onSelect={(machine: any) => {
                             setSelectedMachineId(normalizeId(machine?.id) || null);
                         }}

@@ -50,7 +50,9 @@ export function useScrollViewWheelScrollTo(
             event?.preventDefault?.();
         }
         event?.stopPropagation?.();
-        scrollRef.current?.scrollTo({ y: Math.max(0, scrollYRef.current + deltaY), animated: false });
+        const nextScrollY = Math.max(0, scrollYRef.current + deltaY);
+        scrollYRef.current = nextScrollY;
+        scrollRef.current?.scrollTo({ y: nextScrollY, animated: false });
     }, [enabled, onWheelOption, scrollRef]);
 
     return { onScroll, onWheel };

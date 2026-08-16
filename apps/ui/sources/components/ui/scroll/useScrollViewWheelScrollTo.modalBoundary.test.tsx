@@ -69,9 +69,11 @@ describe('useScrollViewWheelScrollTo (modal boundary)', () => {
 
         resolvedHandlers.onScroll({ nativeEvent: { contentOffset: { y: 40 } } });
         resolvedHandlers.onWheel({ deltaY: 80, cancelable: true, preventDefault, stopPropagation });
+        resolvedHandlers.onWheel({ deltaY: 80, cancelable: true, preventDefault, stopPropagation });
 
-        expect(preventDefault).toHaveBeenCalledTimes(1);
-        expect(stopPropagation).toHaveBeenCalledTimes(1);
-        expect(scrollTo).toHaveBeenCalledWith({ y: 120, animated: false });
+        expect(preventDefault).toHaveBeenCalledTimes(2);
+        expect(stopPropagation).toHaveBeenCalledTimes(2);
+        expect(scrollTo).toHaveBeenNthCalledWith(1, { y: 120, animated: false });
+        expect(scrollTo).toHaveBeenNthCalledWith(2, { y: 200, animated: false });
     });
 });
