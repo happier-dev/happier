@@ -110,6 +110,23 @@ describe('ApiSessionClient runtime controls', () => {
     expect(wakePendingMaterialization).toHaveBeenCalledTimes(1);
   });
 
+  it('force-reconciles pending state before publishing an explicit materialization wake', async () => {
+    sessionSocketStub = createApiSessionSocketStub({ connected: true });
+    userSocketStub = createApiSessionSocketStub({ connected: true });
+    const client = new ApiSessionClient('tok', createPlainSessionFixture({ id: 's1' }));
+    const calls: string[] = [];
+    vi.spyOn(client, 'reconcilePendingQueueState').mockImplementation(async (options) => {
+      expect(options).toEqual({ force: true });
+      calls.push('reconcile');
+      return true;
+    });
+    client.on('metadata-updated', () => calls.push('wake'));
+
+    client.wakePendingMaterialization();
+
+    await vi.waitFor(() => expect(calls).toEqual(['reconcile', 'wake']));
+  });
+
   it('routes connected-service auth invalidation RPCs through installed runtime controls', async () => {
     sessionSocketStub = createApiSessionSocketStub({ connected: true });
     userSocketStub = createApiSessionSocketStub({ connected: true });

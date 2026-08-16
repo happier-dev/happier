@@ -2843,8 +2843,18 @@ export class ApiSessionClient extends EventEmitter {
 
     wakePendingMaterialization(): void {
         if (this.closed) return;
-        this.pendingWakeSeq += 1;
-        this.emit('metadata-updated');
+        void this.reconcilePendingQueueState({ force: true })
+            .catch((error) => {
+                logger.debug('[pendingQueue] explicit wake reconciliation failed; publishing the wake with retained state', {
+                    sessionId: this.sessionId,
+                    error: serializeAxiosErrorForLog(error),
+                });
+            })
+            .finally(() => {
+                if (this.closed) return;
+                this.pendingWakeSeq += 1;
+                this.emit('metadata-updated');
+            });
     }
 
     async discardPendingMessageQueueV2All(opts: { reason: 'switch_to_local' | 'manual' }): Promise<number> {
