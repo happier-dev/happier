@@ -301,7 +301,10 @@ export function mergeSessionMetadataForStartup(opts: {
                 'happyToolsDir',
                 'machineId',
                 'os',
-                'version',
+                // Note: `version` is intentionally NOT preserved. It is the runtime build
+                // stamp the UI capability-gates on (pending queue, RPC paths), so it must
+                // describe the runner now serving the session; preserving a predecessor's
+                // stamp keeps sessions poisoned after the runtime is replaced or upgraded.
                 'profileId',
                 'flavor',
             ];

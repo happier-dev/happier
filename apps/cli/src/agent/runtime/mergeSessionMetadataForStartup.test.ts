@@ -42,6 +42,23 @@ describe('mergeSessionMetadataForStartup', () => {
         expect(merged.hostPid).toBe(2);
     });
 
+    it('refreshes the runtime version from the attaching runner when attaching to an existing session', () => {
+        const nowMs = 1;
+        const merged = mergeSessionMetadataForStartup({
+            current: { path: '/workspace/real', version: '0.2.10-local.3' } as any,
+            next: { path: '/workspace/wrong', version: '0.2.10', hostPid: 2 } as any,
+            nowMs,
+            mode: 'attach',
+        });
+
+        // The UI capability-gates on metadata.version (e.g. pending queue), so it must
+        // describe the runner now serving the session — not the one that created it.
+        // Otherwise a session created by an unparseable-stamp build stays poisoned forever.
+        expect(merged.version).toBe('0.2.10');
+        expect(merged.path).toBe('/workspace/real');
+        expect(merged.hostPid).toBe(2);
+    });
+
     it('uses runtime machine identity fields when attaching with runtime identity replacement', () => {
         const nowMs = 1;
         const merged = mergeSessionMetadataForStartup({
