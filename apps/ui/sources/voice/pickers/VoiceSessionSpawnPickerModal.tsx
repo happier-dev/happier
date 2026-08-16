@@ -21,7 +21,7 @@ import {
 } from '@/utils/sessions/useStableRecentPathsForMachine';
 import { resolvePreferredMachineId } from '@/components/settings/pickers/resolvePreferredMachineId';
 import { Text } from '@/components/ui/text/Text';
-import { resolveMachineExactSpawnReadiness } from '@/sync/domains/machines/identity/resolveMachineExactSpawnReadiness';
+import { canAttemptMachineSpawn } from '@/sync/domains/machines/identity/resolveMachineSpawnReadiness';
 import {
   resolveDirectoryFavoriteComparisonKey,
   toggleHomeAwareDirectoryFavorite,
@@ -142,13 +142,13 @@ export function VoiceSessionSpawnPickerModal(props: Props) {
   const canCreate = Boolean(
     selectedMachineId
     && selectedMachine
-    && resolveMachineExactSpawnReadiness(selectedMachine as any, selectedMachineId).status === 'ready'
+    && canAttemptMachineSpawn({ selectedMachineId, machine: selectedMachine })
     && (selectedPath.trim() || selectedMachine?.metadata?.homeDir),
   );
 
   const handleCreate = React.useCallback(() => {
     if (!selectedMachineId) return;
-    if (resolveMachineExactSpawnReadiness(selectedMachine as any, selectedMachineId).status !== 'ready') return;
+    if (!canAttemptMachineSpawn({ selectedMachineId, machine: selectedMachine })) return;
     const directory = selectedPath.trim() || selectedMachine?.metadata?.homeDir || '/home';
     onResolve({ machineId: selectedMachineId, directory });
     onClose();

@@ -125,7 +125,6 @@ function createScopedMachine(
         ...machine,
         serverId: scope.serverId,
         serverName: scope.serverName,
-        spawnReadinessStatus: 'ready',
     };
 }
 

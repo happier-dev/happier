@@ -300,8 +300,8 @@ describe('MachineSelector (disable offline)', () => {
         captured.reset();
 
         const allMachine: any = { id: 'm-all', active: true, activeAt: Date.now(), revokedAt: null, metadata: { displayName: 'All' } };
-        const recentMachine: any = { id: 'm-recent', active: true, activeAt: Date.now(), revokedAt: null, spawnReadinessStatus: 'ready', metadata: { displayName: 'Recent' } };
-        const favoriteMachine: any = { id: 'm-favorite', active: true, activeAt: Date.now(), revokedAt: null, spawnReadinessStatus: 'ready', metadata: { displayName: 'Favorite' } };
+        const recentMachine: any = { id: 'm-recent', active: true, activeAt: Date.now(), revokedAt: null, metadata: { displayName: 'Recent' } };
+        const favoriteMachine: any = { id: 'm-favorite', active: true, activeAt: Date.now(), revokedAt: null, metadata: { displayName: 'Favorite' } };
         const onSelect = vi.fn();
 
         await renderScreen(React.createElement(MachineSelector as any, {

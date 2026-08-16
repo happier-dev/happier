@@ -292,7 +292,7 @@ describe('MachineDetailScreen (revoke/forget machine)', () => {
         onlineMachineIds.delete('machine-2');
         machineState.all = machineState.all.map((machine) =>
             machine.id === 'machine-2'
-                ? { ...machine, active: false, activeAt: 0, spawnReadinessStatus: 'unknown' }
+                ? { ...machine, active: false, activeAt: 0 }
                 : machine,
         );
         confirmSpy.mockResolvedValueOnce(true);

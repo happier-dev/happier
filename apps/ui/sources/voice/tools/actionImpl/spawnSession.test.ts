@@ -46,7 +46,6 @@ describe('spawnSessionForVoiceTool', () => {
                 id: 'machine-current',
                 active: true,
                 activeAt: Date.now(),
-                spawnReadinessStatus: 'ready',
                 metadata: { host: 'mac', displayName: 'Mac', homeDir: '/Users/test' },
             },
         };
@@ -75,7 +74,6 @@ describe('spawnSessionForVoiceTool', () => {
                 id: 'machine-current',
                 active: true,
                 activeAt: Date.now(),
-                spawnReadinessStatus: 'ready',
                 metadata: { host: 'mac', displayName: 'Mac', homeDir: '/Users/test' },
             },
         };
@@ -132,7 +130,6 @@ describe('spawnSessionForVoiceTool', () => {
                 id: 'machine-current',
                 active: true,
                 activeAt: Date.now(),
-                spawnReadinessStatus: 'ready',
                 metadata: { host: 'mac', displayName: 'Mac', homeDir: '/Users/test' },
             },
         };

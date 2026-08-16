@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 
-import { resolveMachineSpawnReadiness } from './resolveMachineSpawnReadiness';
+import { canAttemptMachineSpawn, resolveMachineSpawnReadiness } from './resolveMachineSpawnReadiness';
 
 const onlineMachine: Machine = {
     id: 'machine-1',
@@ -46,5 +46,26 @@ describe('resolveMachineSpawnReadiness', () => {
             status: 'ready',
             machineId: 'machine-1',
         });
+    });
+
+    it('allows an online machine attempt while exact readiness is unknown or probing', () => {
+        expect(canAttemptMachineSpawn({ selectedMachineId: 'machine-1', machine: onlineMachine })).toBe(true);
+        expect(canAttemptMachineSpawn({
+            selectedMachineId: 'machine-1',
+            machine: onlineMachine,
+            spawnReadiness: { status: 'probing', machineId: 'machine-1' },
+        })).toBe(true);
+    });
+
+    it('rejects an attempt when the owner has established that the target is unavailable', () => {
+        expect(canAttemptMachineSpawn({
+            selectedMachineId: 'machine-1',
+            machine: onlineMachine,
+            spawnReadiness: { status: 'rpcUnavailable', machineId: 'machine-1' },
+        })).toBe(false);
+        expect(canAttemptMachineSpawn({
+            selectedMachineId: 'machine-1',
+            machine: { ...onlineMachine, active: false, activeAt: 0 },
+        })).toBe(false);
     });
 });

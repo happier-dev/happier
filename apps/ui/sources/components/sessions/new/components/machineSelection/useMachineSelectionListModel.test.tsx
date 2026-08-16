@@ -58,7 +58,6 @@ function createScopedMachine(machine: Machine): ServerScopedMachine {
         ...machine,
         serverId: 'server-a',
         serverName: 'Server A',
-        spawnReadinessStatus: 'ready',
     };
 }
 

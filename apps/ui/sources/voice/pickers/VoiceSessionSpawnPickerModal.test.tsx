@@ -79,7 +79,6 @@ describe('VoiceSessionSpawnPickerModal', () => {
       id: 'machine-1',
       active: true,
       activeAt: Date.now(),
-      spawnReadinessStatus: 'ready',
       metadata: { homeDir: '/Users/test' },
     }];
   });
@@ -111,14 +110,12 @@ describe('VoiceSessionSpawnPickerModal', () => {
                 id: 'machine-1',
                 active: true,
                 activeAt: Date.now(),
-                spawnReadinessStatus: 'ready',
                 metadata: { homeDir: '/Users/test' },
             },
             {
                 id: 'machine-2',
                 active: true,
                 activeAt: Date.now(),
-                spawnReadinessStatus: 'ready',
                 metadata: { homeDir: '/srv/test' },
             },
         ];
@@ -226,7 +223,7 @@ describe('VoiceSessionSpawnPickerModal', () => {
         expect(setFavoriteDirectoriesSpy).toHaveBeenCalledWith([]);
     });
 
-    it('disables create when the selected machine is online but exact spawn readiness is unknown', async () => {
+    it('allows create when the selected storage machine is online but exact spawn readiness is unknown', async () => {
         machinesState = [{
             id: 'machine-1',
             active: true,
@@ -234,12 +231,14 @@ describe('VoiceSessionSpawnPickerModal', () => {
             metadata: { homeDir: '/Users/test' },
         }];
         const setChrome = vi.fn();
+        const onResolve = vi.fn();
+        const onClose = vi.fn();
         const { VoiceSessionSpawnPickerModal } = await import('./VoiceSessionSpawnPickerModal');
 
         const screen = await renderScreen(
             <VoiceSessionSpawnPickerModal
-                onClose={() => {}}
-                onResolve={() => {}}
+                onClose={onClose}
+                onResolve={onResolve}
                 setChrome={setChrome}
             />,
         );
@@ -251,8 +250,19 @@ describe('VoiceSessionSpawnPickerModal', () => {
 
         const lastChrome = setChrome.mock.calls.at(-1)?.[0] as any;
         const createButton = React.Children.toArray(lastChrome.footer.props.children)
-            .find((child: any) => child?.props?.title === 'common.create') as React.ReactElement<{ disabled?: boolean }> | undefined;
+            .find((child: any) => child?.props?.title === 'common.create') as React.ReactElement<{
+                disabled?: boolean;
+                onPress?: () => void;
+            }> | undefined;
 
-        expect(createButton?.props.disabled).toBe(true);
+        expect(createButton?.props.disabled).toBe(false);
+        await act(async () => {
+            createButton?.props.onPress?.();
+        });
+        expect(onResolve).toHaveBeenCalledWith({
+            machineId: 'machine-1',
+            directory: '/Users/test',
+        });
+        expect(onClose).toHaveBeenCalledTimes(1);
     });
 });

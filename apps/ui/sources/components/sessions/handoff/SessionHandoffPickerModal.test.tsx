@@ -50,7 +50,6 @@ function makeReadyTargetMachine(overrides: Record<string, unknown> = {}): Record
         id: 'machine_target',
         active: true,
         activeAt: Date.now(),
-        spawnReadinessStatus: 'ready',
         metadata: { displayName: 'Target machine', host: 'target.local' },
         ...overrides,
     };
@@ -250,7 +249,7 @@ describe('SessionHandoffPickerModal', () => {
         expect(onClose).not.toHaveBeenCalled();
     });
 
-    it('does not resolve handoff when selected machine exact readiness is unknown', async () => {
+    it('allows handoff to an online storage machine before exact readiness is known', async () => {
         const unknownTarget = {
             id: 'machine_target',
             active: true,
@@ -285,7 +284,7 @@ describe('SessionHandoffPickerModal', () => {
             disabled?: boolean;
             onPress?: () => unknown;
         }> | null;
-        expect(startButton?.props.disabled).toBe(true);
+        expect(startButton?.props.disabled).toBe(false);
 
         await act(async () => {
             const onPress = startButton?.props.onPress;
@@ -295,7 +294,9 @@ describe('SessionHandoffPickerModal', () => {
             await onPress();
         });
 
-        expect(onResolve).not.toHaveBeenCalled();
+        expect(onResolve).toHaveBeenCalledWith(expect.objectContaining({
+            targetMachineId: 'machine_target',
+        }));
     });
 
     it('forces conflictPolicy=replace_existing when workspace transfer strategy is sync_changes', async () => {

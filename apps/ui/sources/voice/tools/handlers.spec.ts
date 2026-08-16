@@ -125,8 +125,8 @@ function createBaseState(): any {
       ],
     },
     machines: {
-      m1: { id: 'm1', active: true, metadata: { host: 'a-host' }, spawnReadinessStatus: 'ready' },
-      m2: { id: 'm2', active: true, metadata: { host: 'b-host' }, spawnReadinessStatus: 'ready' },
+      m1: { id: 'm1', active: true, activeAt: Date.now(), metadata: { host: 'a-host' } },
+      m2: { id: 'm2', active: true, activeAt: Date.now(), metadata: { host: 'b-host' } },
     },
     sessionMessages: {
       s1: {

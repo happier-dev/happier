@@ -18,7 +18,6 @@ const state: any = {
       id: 'm2',
       active: true,
       activeAt: Date.now(),
-      spawnReadinessStatus: 'ready',
       metadata: {},
       daemonState: { startedWithCliVersion: '0.2.10-dev.41' },
     },
@@ -85,7 +84,6 @@ describe('spawnSessionWithPickerForVoiceTool', () => {
         id: 'm2',
         active: true,
         activeAt: Date.now(),
-        spawnReadinessStatus: 'ready',
         metadata: {},
         daemonState: { startedWithCliVersion: '0.2.10-dev.41' },
       },
@@ -155,7 +153,7 @@ describe('spawnSessionWithPickerForVoiceTool', () => {
     expect(submitMessage).not.toHaveBeenCalled();
   });
 
-  it('does not spawn when the picker returns a machine whose exact readiness is unknown', async () => {
+  it('attempts spawn when the picker returns an online storage machine whose exact readiness is unknown', async () => {
     modalShow.mockImplementationOnce((cfg: any) => {
       cfg?.props?.onResolve?.({ machineId: 'm2', directory: '/tmp/s2' });
       return 'modal_1';
@@ -168,15 +166,24 @@ describe('spawnSessionWithPickerForVoiceTool', () => {
         metadata: {},
       },
     };
+    machineSpawnNewSession.mockImplementation(async (params: any) => ({
+      type: 'success',
+      sessionId: 's_new',
+      spawnAttemptCustody: {
+        status: 'completed',
+        userAttemptId: params.userAttemptId,
+        spawnNonce: 'nonce-s-new',
+        targetFingerprint: 'target-s-new',
+      },
+    }));
 
     const { spawnSessionWithPickerForVoiceTool } = await import('./spawnSessionPicker');
     const res = await spawnSessionWithPickerForVoiceTool({});
 
-    expect(res).toMatchObject({
-      ok: false,
-      errorCode: 'spawn_target_unavailable',
-      readinessStatus: 'unknown',
-    });
-    expect(machineSpawnNewSession).not.toHaveBeenCalled();
+    expect(res).toMatchObject({ type: 'success', sessionId: 's_new' });
+    expect(machineSpawnNewSession).toHaveBeenCalledWith(expect.objectContaining({
+      machineId: 'm2',
+      directory: '/tmp/s2',
+    }));
   });
 });

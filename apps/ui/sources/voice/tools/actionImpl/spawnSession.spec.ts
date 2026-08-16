@@ -33,7 +33,6 @@ function createState(): any {
         id: 'm1',
         active: true,
         activeAt: Date.now(),
-        spawnReadinessStatus: 'ready',
         metadata: { displayName: 'Leeroy MacBook Pro', host: 'leeroy-mbp' },
         daemonState: { startedWithCliVersion: '0.2.10-dev.41' },
       },
@@ -227,14 +226,12 @@ describe('spawnSessionForVoiceTool', () => {
         id: 'm_old',
         active: true,
         activeAt: Date.now(),
-        spawnReadinessStatus: 'ready',
         metadata: { displayName: 'Old', host: 'leeroy-mbp' },
       },
       m_current: {
         id: 'm_current',
         active: true,
         activeAt: Date.now(),
-        spawnReadinessStatus: 'ready',
         metadata: { displayName: 'Current', host: 'leeroy-mbp' },
       },
     };
@@ -264,7 +261,6 @@ describe('spawnSessionForVoiceTool', () => {
         id: 'm_voice',
         active: true,
         activeAt: Date.now(),
-        spawnReadinessStatus: 'ready',
         metadata: { displayName: 'Voice Host', host: 'voice-host' },
       },
     };
@@ -293,14 +289,12 @@ describe('spawnSessionForVoiceTool', () => {
         id: 'm_fallback',
         active: true,
         activeAt: Date.now(),
-        spawnReadinessStatus: 'ready',
         metadata: { displayName: 'Fallback Host', host: 'fallback-host' },
       },
       m_requested: {
         id: 'm_requested',
         active: true,
         activeAt: Date.now(),
-        spawnReadinessStatus: 'ready',
         metadata: { displayName: 'Requested Host', host: 'requested-host' },
       },
     };
@@ -331,14 +325,12 @@ describe('spawnSessionForVoiceTool', () => {
         id: 'm_fallback',
         active: true,
         activeAt: Date.now(),
-        spawnReadinessStatus: 'ready',
         metadata: { displayName: 'Fallback Host', host: 'fallback-host' },
       },
       m_requested: {
         id: 'm_requested',
         active: true,
         activeAt: Date.now(),
-        spawnReadinessStatus: 'ready',
         metadata: { displayName: 'Requested Host', host: 'requested-host' },
       },
     };
@@ -368,14 +360,12 @@ describe('spawnSessionForVoiceTool', () => {
         id: 'm_a',
         active: true,
         activeAt: Date.now(),
-        spawnReadinessStatus: 'ready',
         metadata: { displayName: 'A', host: 'duplicate-host' },
       },
       m_b: {
         id: 'm_b',
         active: true,
         activeAt: Date.now(),
-        spawnReadinessStatus: 'ready',
         metadata: { displayName: 'B', host: 'duplicate-host' },
       },
     };
@@ -397,7 +387,7 @@ describe('spawnSessionForVoiceTool', () => {
     });
   });
 
-  it('does not spawn when the only matching machine is online but exact readiness is unknown', async () => {
+  it('attempts spawn when the only matching storage machine is online but exact readiness is unknown', async () => {
     state.machines = {
       m_unknown: {
         id: 'm_unknown',
@@ -417,13 +407,10 @@ describe('spawnSessionForVoiceTool', () => {
       path: '/Users/leeroy/projects/voice',
     });
 
-    expect(machineSpawnNewSession).not.toHaveBeenCalled();
-    expect(result).toEqual({
-      type: 'error',
-      errorCode: 'spawn_target_unavailable',
-      errorMessage: 'spawn_target_unavailable',
+    expect(machineSpawnNewSession).toHaveBeenCalledWith(expect.objectContaining({
       machineId: 'm_unknown',
-      readinessStatus: 'unknown',
-    });
+      directory: '/Users/leeroy/projects/voice',
+    }));
+    expect(result).toMatchObject({ type: 'success', sessionId: 's_new' });
   });
 });

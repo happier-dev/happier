@@ -14,7 +14,7 @@ import { resolveSpawnAgentIdFromState } from './spawnSessionAgent';
 import { isAgentId } from '@/agents/registry/registryCore';
 import { resolveVoiceSessionRef } from './sessionReference';
 import { resolveCanonicalMachineId } from '@/sync/domains/machines/identity/resolveCanonicalMachineId';
-import { resolveMachineExactSpawnReadiness } from '@/sync/domains/machines/identity/resolveMachineExactSpawnReadiness';
+import { canAttemptMachineSpawn, resolveMachineSpawnReadiness } from '@/sync/domains/machines/identity/resolveMachineSpawnReadiness';
 import {
   resolveMachineTargetForSessionFromState,
   type SessionMachineTargetState,
@@ -142,8 +142,12 @@ export async function spawnSessionForVoiceTool(params: Readonly<{
     return { type: 'error', errorCode: 'spawn_target_missing', errorMessage: 'spawn_target_missing' };
   }
   const targetMachine = machinesObj[machineId] ?? null;
-  const targetReadiness = resolveMachineExactSpawnReadiness(targetMachine);
-  if (targetReadiness.status !== 'ready') {
+  const targetReadiness = resolveMachineSpawnReadiness({
+    selectedMachineId: machineId,
+    machine: targetMachine,
+    requireExactSpawnReadiness: true,
+  });
+  if (!canAttemptMachineSpawn({ selectedMachineId: machineId, machine: targetMachine, spawnReadiness: targetReadiness })) {
     return {
       type: 'error',
       errorCode: 'spawn_target_unavailable',
