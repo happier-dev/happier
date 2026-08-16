@@ -34,6 +34,8 @@ For a very large corpus, native subagents may scout bounded subsets in parallel 
 
 Build the compact issue card in [clustering-and-routing.md](references/clustering-and-routing.md). Split compound reports into distinct behavioral claims while preserving their shared issue identity.
 
+Read enough of each issue to verify the provider, component role, user-visible contract, and likely maintainer action before routing it. A title, label, or triage summary is not sufficient when it could place the issue in the wrong provider or decision bundle.
+
 Separate:
 
 - observed behavior from expected behavior;
@@ -74,7 +76,9 @@ Do not group by wording, label, platform, or nearby files alone. Mark weak links
 
 ## 6. Build diagnosis bundles
 
-Each bundle should be independently diagnosable and internally coherent around one plausible mechanism, owner, invariant, compatibility direction, release authority, or reproduction environment. For independent Happier sessions, it should also form one coherent maintainer decision and durable conversation. A shared feature area, provider, platform, owner, or release environment is insufficient when the issues are likely to require different approvals, evidence requests, product choices, or release actions.
+Each bundle should be independently diagnosable and internally coherent around one plausible mechanism, owner, invariant, compatibility direction, release authority, or reproduction environment. For an independent Happier session, apply a harder gate: state in one sentence which single maintainer decision or tightly coupled decision set the session is expected to produce. If that sentence cannot be written without `and then separately`, split the bundle before spawning it.
+
+A shared feature area, provider, platform, owner, or release environment is insufficient when the issues are likely to require different corrections, evidence requests, product choices, release actions, or follow-up conversations. A shared correction or release operation may remain one bundle even when its issues have different symptoms or closure checks.
 
 For every bundle, record:
 

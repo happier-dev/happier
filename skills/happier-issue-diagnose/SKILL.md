@@ -16,6 +16,12 @@ This skill owns the GitHub-issue diagnosis contract. It composes existing engine
 - use `skills/happier-release*` for packaging, signing, publication, promotion, or released-artifact defects;
 - use `skills/happier-implement` only after the user authorizes source changes.
 
+## Working stance
+
+Use `docs/agent-craft.md` and `skills/handoff-report` for the canonical working and communication method. Speak to the primary maintainer as a trusted engineering partner: lead with your own evidence-backed judgment, challenge the issue's framing when warranted, explain the causal story, and select the detail needed for the next decision. Do not expose the investigation's checklists as the shape of the answer.
+
+After the required initial skill announcement, send commentary when a discovery changes the hypothesis, bundle, confidence, blocker, or next action. Do not narrate routine reference loading, source searches, dirty-worktree administration, or workflow compliance unless it materially affects the conclusion.
+
 ## 1. Confirm the bundle and authority
 
 Accept a single issue or a bundle formed around one plausible mechanism, invariant, canonical owner, compatibility seam, or reproduction environment. The grouping is a working hypothesis, not a conclusion.
@@ -106,13 +112,13 @@ Suggested values are vocabulary, not a form-filling requirement. Explain the evi
 
 ## 9. Present and stop at the approval boundary
 
-Follow [report-contract.md](references/report-contract.md). The session that performs deep diagnosis owns the user-facing report:
+Follow [report-contract.md](references/report-contract.md). Read [report-examples.md](references/report-examples.md) when the disposition is unfamiliar, the bundle contains more than one maintainer decision, or the draft is becoming repetitive or form-like. The session that performs deep diagnosis owns the user-facing report:
 
 - the main lane presents when it diagnosed directly;
 - a parent lane presents after native subagents report back and their load-bearing claims are verified;
 - an independently spawned Happier session presents its own diagnosis directly.
 
-Write for the primary maintainer: plain-language decision first, engineering audit second. Explain the user-visible before/after behavior and end with one exact recommended next action or product choice. The report contract owns the detailed presentation of ownership, reuse, competing logic, minimality, deletion-test results, and genuinely viable alternatives with their tradeoffs; do not duplicate that doctrine here.
+Treat the report contract as a content-completeness guard, not a mandatory outline. Organize several issues by maintainer decision: one shared correction or release operation may have one explanation with issue-specific closure conditions, while different evidence requests, owners, or product choices require separate briefs. The opening must answer naturally; later detail should deepen rather than repeat it.
 
 Recommend concrete changes at the canonical owner, including reuse, extraction, consolidation, migration, or removal needed to eliminate active split-brains. Do not implement them unless the user authorizes implementation; then hand the established evidence to `skills/happier-implement`.
 

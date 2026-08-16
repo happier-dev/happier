@@ -1,96 +1,46 @@
 # Issue diagnosis report contract
 
-Write for the primary maintainer. Put the plain-language decision first and the engineering audit second. The maintainer should be able to understand the user problem, the proposed outcome, and the next decision from the first screen without knowing the affected symbols or architecture.
+`docs/agent-craft.md` and `skills/handoff-report` own voice, ordering, epistemic clarity, and handoff style. This reference protects issue-specific content from omission; it is not an outline or field list.
 
-### Maintainer brief
+## Give the maintainer the answer
 
-For every issue, state:
+Open naturally with your judgment: what users experience, whether the report is valid, how firmly the cause is established, and the recommended response or next discriminator. Include the largest release, validation, or evidence caveat when it changes the action.
 
-- **User-facing problem:** what the user does, what happens, and what they expected instead.
-- **After the recommended response:** the concrete behavior users and operators will observe after implementation, release, guidance, or the requested evidence step, including an important unchanged or failure behavior when material.
-- **Status today:** confirmed current defect, fixed but not shipped, needs evidence, intended behavior, feature/product decision, or no change justified, in ordinary language.
-- **Recommended next move:** one concrete action and its owner: implement, validate, release, request specific evidence, provide guidance, make a product decision, consolidate a duplicate, or take no action.
-- **GitHub disposition:** keep open until a named condition, request information, close after proof, retain as a product request, or another explicit recommendation. This is a proposal, not authorization to mutate GitHub.
-- **Decision needed:** one explicit maintainer approval or choice, or `none yet` when evidence must come first.
+Do not lead with code paths, commits, internal status constants, capability names, or architecture vocabulary. Translate those facts into their consequence. Avoid separate `Problem`, `Status`, `Disposition`, `Can close?`, and `Decision needed` fields when one paragraph communicates the decision.
 
-Keep this brief to one readable screen. Do not lead with code paths, commits, internal status constants, `PRIVATE_DIAGNOSTICS_UNAVAILABLE`, or terms such as canonical owner, split-brain, producer/consumer contract, or version vector. Translate uncertainty into how it changes the recommended action.
+For several issues, organize by maintainer decision rather than issue count. Issues sharing one correction or release operation may share one explanation with issue-specific closure conditions. Different evidence requests, owners, product choices, or actions need separate briefs even when they share a code area.
 
-For a multi-issue bundle, give every issue its own row or brief. Do not hide materially different actions behind one bundle conclusion. State whether each issue can be closed now and why.
+## Tell the causal story
 
-### Disposition and established facts
+Explain the shortest auditable chain from the user's action through the relevant input or state, owning decision, failure or divergence, and visible outcome. Make observed, derived, and unverified claims distinguishable without automatically turning them into three sections.
 
-State the three disposition axes in compact prose:
+Name the originating failure layer, canonical owner, affected corridor, and why the correction belongs there. Discuss competing logic only when it caused the failure or would remain a reachable bypass. State whether each material competing path should be removed, migrated, consolidated, or intentionally retained. Do not mistake an intentional bounded context or provenance-backed compatibility adapter for a split-brain.
 
-- behavior evidence;
-- version/release status with named basis;
-- recommended response.
+If the cause is not established, say so and name the cheapest observation that would decide between the plausible owners. Do not design a complete fix for an unverified cause.
 
-Then separate:
+## Explain only the response that is justified
 
-- **Observed:** directly present in issue data, logs, diagnostics, source, artifacts, or reproduction.
-- **Derived:** follows from named observed facts and the verified code/contract path.
-- **Unverified:** reporter claims, plausible causes, version assumptions, or missing evidence.
+For a verified defect, cover the user-visible before and after, important unchanged failure or recovery behavior, the existing owner or logic to reuse, and why the response is the smallest coherent systemic correction. Name a tempting smaller workaround only when it would leave the failure or a competing path reachable. Say what broader machinery is unnecessary when that prevents overengineering.
 
-### Root cause and owner
+Apply the deletion test internally to every proposed mechanism. Surface it only when it explains a design decision. Compare alternatives only when more than one is genuinely viable or a product choice remains open; do not manufacture an option matrix around an established owner-level correction. Distinguish mitigation from root correction when it affects the decision.
 
-When verified, name the originating failure layer, failure mechanism, canonical owner, affected corridor, and why the behavior belongs there. If not verified, say `INCONCLUSIVE` or `LIKELY_NOT_VERIFIED` and identify the cheapest missing discriminator. Do not substitute a nearby error or suspicious function for a root cause.
+Let the disposition determine the emphasis:
 
-Describe competing logic accurately:
+- **Confirmed defect:** causal mechanism, owner-level correction, and deciding validation.
+- **Needs evidence:** what is ruled in or out, the cheapest discriminator, and why implementation is premature.
+- **Fixed in source but not shipped:** first proven corrected artifact or remaining release operation.
+- **Release or artifact defect:** immutable provenance and the release authority, without private operational details.
+- **Product choice:** the real options and a recommended default when justified.
+- **Guidance, intended behavior, or no change:** the user-facing resolution and why code change is not justified.
 
-- identify a **causal split-brain** when multiple decisions directly produced the failure;
-- identify an **adjacent split-brain or bypass** when it would remain a reachable competing owner after the proposed fix;
-- distinguish intentional bounded contexts and provenance-pinned compatibility adapters that delegate to the canonical owner;
-- say that no competing owner was found when that is the supported conclusion rather than inventing one.
+## Keep evidence subordinate and end once
 
-For every competing path, say whether to remove, migrate, consolidate, or intentionally retain it and why.
+Include only evidence that proves or limits a load-bearing claim: deciding issue facts, source/tests, private diagnostic categories, reproduction results, and relevant artifact provenance. Name unavailable checks when they constrain confidence. Exact version vectors and commit tables belong after the explanation and only when they change status, compatibility, release, or closure.
 
-### Recommended change and solution shape
+End with one next maintainer action and what could still invalidate the conclusion. Collapse implementation approval, GitHub disposition, closure condition, and release action when they are the same decision. Ask for approval only when the next action requires it. Verify issue numbers, titles, links, and release claims before presenting.
 
-Explain the concrete before-to-after system behavior:
-
-- what happens today and what will happen after the change;
-- affected users, surfaces, component roles, platforms, and relevant lifecycle or recovery paths;
-- important behavior that deliberately remains unchanged;
-- how failure and recovery will work after the change.
-
-Then explain the solution in ownership terms:
-
-- the existing logic or owner to reuse, extend, refine, extract, or consolidate;
-- duplicate decisions, workarounds, or bypasses to remove or migrate;
-- why the change belongs at this choke point rather than at a consumer;
-- why this is the smallest coherent systemic fix, not merely the smallest diff;
-- what apparently smaller response would leave the defect or a competing path reachable;
-- what broader machinery or adjacent work is unnecessary.
-
-Apply the deletion test to each material proposed mechanism such as new state, registry, adapter, fallback, gate, background job, compatibility path, or decision point. Name the required outcome it serves and what fails if the mechanism is removed. If the existing owner can satisfy the outcome more directly, recommend that instead. If no required outcome fails, omit the mechanism. For a simple correction or non-code response, state briefly that no new mechanism is justified rather than manufacturing ceremony.
-
-When multiple resolutions are genuinely viable, compare them in plain terms. For each option, explain:
-
-- the user-visible and system behavior it produces;
-- its owner and which existing logic it reuses or replaces;
-- benefits, tradeoffs, risks, and failure modes;
-- compatibility, migration, release, validation, reversibility, and follow-up implications when material.
-
-Give one clear recommendation and explain why its tradeoffs best satisfy the established requirement. Explicitly reject options that create another owner, preserve the root cause, rely on unsupported requirements, or fail the deletion test. Do not manufacture alternatives after evidence has established one correct response. If the choice depends on an unresolved product decision, state the decision and recommend a default when evidence supports one.
-
-Separate a narrow mitigation from the root-cause correction and state what remains unresolved if only the mitigation is chosen.
-
-### Version and release basis
-
-Name the reported, source, loaded, fix, and released-artifact bases that were actually established. Explicitly distinguish fixed-in-source from shipped.
-
-### Evidence and validation
-
-List only deciding issue fields, source/tests, private diagnostic categories, reproduction recipe/result, and artifact/release evidence. Redact sensitive data and state any checks that could not run. Keep supporting detail subordinate to the maintainer decision.
-
-### Approval boundary and residual risk
-
-End with the single recommended next action, not generic approval boilerplate. When action requires approval, ask for that exact implementation, GitHub preview, release operation, or product choice. When evidence must come first, state that no implementation approval is justified yet. End with what could still invalidate the conclusion.
-
-Before presenting, verify that every issue number, title, and link belongs to the current bundle; every issue has a next action and GitHub disposition; excluded issues are not cited accidentally; and fixed-in-source is not described as released.
+Read [report-examples.md](report-examples.md) when the disposition is unfamiliar, the bundle contains more than one decision, or the draft is becoming form-like or repetitive.
 
 ## GitHub-facing summary
 
-If the user later authorizes a public comment, derive a short sanitized summary covering user-visible behavior and version basis, the verified or explicitly tentative cause, the next action or precise missing information, and public links to commits, releases, PRs, or canonical issues.
-
-Never include private diagnostics, raw logs, credentials, machine identities, personal paths, or unsupported confidence scores.
+If the user later authorizes a public comment, derive a short sanitized summary of the user-visible behavior and version basis, verified or tentative cause, next action or missing information, and public provenance links. Never include private diagnostics, raw logs, credentials, machine identities, personal paths, or unsupported confidence scores.
