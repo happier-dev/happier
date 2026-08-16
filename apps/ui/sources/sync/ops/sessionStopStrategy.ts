@@ -9,6 +9,7 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { StopSessionResultSchema, type StopSessionResult } from '@happier-dev/protocol';
 import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 import { readMachineControlTargetForSession, shouldFallbackFromMachineRpc } from './sessionMachineTarget';
+import { log } from '@/log';
 
 type SessionKillRequest = Record<string, never>;
 
@@ -62,6 +63,38 @@ function unknownErrorMessage(error: unknown): string {
 function readStrictStopSessionResult(response: unknown): StopSessionResult | null {
     const parsed = StopSessionResultSchema.safeParse(response);
     return parsed.success ? parsed.data : null;
+}
+
+function readSafeDiagnosticToken(value: unknown): string | undefined {
+    if (typeof value !== 'string' || !/^[a-zA-Z0-9_.:-]{1,64}$/.test(value)) return undefined;
+    return value;
+}
+
+function describeUnsupportedMachineStopResponse(response: unknown): Readonly<{
+    type: string;
+    keys?: readonly string[];
+    status?: string;
+    reason?: string;
+}> {
+    const type = response === null ? 'null' : Array.isArray(response) ? 'array' : typeof response;
+    if (!response || typeof response !== 'object' || Array.isArray(response)) return { type };
+    try {
+        const record = response as Record<string, unknown>;
+        const keys = Object.keys(record)
+            .sort()
+            .slice(0, 24)
+            .map((key) => readSafeDiagnosticToken(key) ?? '<redacted_key>');
+        const status = readSafeDiagnosticToken(record.status);
+        const reason = readSafeDiagnosticToken(record.reason);
+        return {
+            type,
+            keys,
+            ...(status ? { status } : {}),
+            ...(reason ? { reason } : {}),
+        };
+    } catch {
+        return { type };
+    }
 }
 
 function isReleasedMachineStopAcknowledgement(response: unknown): boolean {
@@ -144,6 +177,9 @@ export async function stopSessionViaDaemonMachineRpc(params: Readonly<{
                 ...(fallbackEnvelope.errorCode ? { errorCode: fallbackEnvelope.errorCode } : {}),
             };
         }
+        log.log(`[SESSION STOP] Unsupported machine RPC response ${JSON.stringify(
+            describeUnsupportedMachineStopResponse(response),
+        )}`);
         return { type: 'failed', message: 'Unsupported response from machine RPC' };
     } catch (error) {
         const message = unknownErrorMessage(error);
