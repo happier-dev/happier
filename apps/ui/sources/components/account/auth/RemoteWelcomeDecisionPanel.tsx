@@ -83,8 +83,8 @@ function resolvePrimaryAction(
         RemoteWelcomeDecisionPanelProps,
         'onAnonymousSignup' | 'onKeylessProviderLogin' | 'onMtlsLogin' | 'onProviderSignup'
     >,
-): () => AuthActionResult {
-    switch (options.primarySignupKind) {
+): (() => AuthActionResult) | null {
+    switch (options.primaryAction?.kind) {
         case 'provider-keyed':
             return () => {
                 if (options.providerId) props.onProviderSignup(options.providerId);
@@ -97,6 +97,8 @@ function resolvePrimaryAction(
             };
         case 'anonymous':
             return props.onAnonymousSignup;
+        case undefined:
+            return null;
     }
 }
 
@@ -295,7 +297,7 @@ export function RemoteWelcomeDecisionPanel(props: RemoteWelcomeDecisionPanelProp
                             ? t('welcome.serverIncompatibleTitle')
                             : t('welcome.serverUnavailableTitle')}
                     </Text>
-                    <Text style={styles.serverUnavailableBody}>
+                    <Text style={styles.serverStatusBody}>
                         {options.serverAvailability === 'incompatible'
                             ? t('welcome.serverIncompatibleBody', { serverUrl: options.serverUrlForCopy })
                             : t('welcome.serverUnavailableBody', { serverUrl: options.serverUrlForCopy })}
@@ -353,6 +355,11 @@ export function RemoteWelcomeDecisionPanel(props: RemoteWelcomeDecisionPanelProp
                     <Text style={styles.intentBody}>{t('setupOnboarding.resumeIntentBody')}</Text>
                 </View>
             ) : null}
+            {options.showAuthActions && options.primaryAction === null ? (
+                <Text testID="welcome-signup-disabled" style={[styles.serverStatusBody, styles.signupDisabledNotice]}>
+                    {t('errors.signupDisabled')}
+                </Text>
+            ) : null}
             {options.serverAvailability === 'loading' ? (
                 <View style={styles.serverLoadingBlock}>
                     <ActivitySpinner />
@@ -370,7 +377,11 @@ export function RemoteWelcomeDecisionPanel(props: RemoteWelcomeDecisionPanelProp
                         // almost certainly want to sign back into their existing
                         // account, so we give the filled black slot to Login and
                         // demote Start fresh to the bordered card below.
-                        const startFreshButton = options.showAnonymousSignup ? (
+                        // When the server disables every signup method, the
+                        // primary slot stays empty and Login carries the panel.
+                        const startFreshButton = options.primaryAction === null || primarySignupAction === null
+                            ? null
+                            : options.showAnonymousSignup ? (
                             <DecisionActionRow
                                 testID="welcome-primary-start"
                                 primary={!isReturningUser}
@@ -382,20 +393,20 @@ export function RemoteWelcomeDecisionPanel(props: RemoteWelcomeDecisionPanelProp
                         ) : (
                             <DecisionActionRow
                                 testID={
-                                    options.primarySignupKind === 'provider-keyed'
+                                    options.primaryAction.kind === 'provider-keyed'
                                         ? 'welcome-signup-provider'
                                         : 'welcome-create-account'
                                 }
                                 primary
-                                title={options.primarySignupTitle}
-                                iconName={options.primarySignupKind === 'mtls' ? 'shield-check' : 'arrow-right'}
+                                title={options.primaryAction.title}
+                                iconName={options.primaryAction.kind === 'mtls' ? 'shield-check' : 'arrow-right'}
                                 onPress={primarySignupAction}
                             />
                         );
                         const loginButton = (
                             <DecisionActionRow
                                 testID="welcome-secondary-login"
-                                primary={isReturningUser && options.showAnonymousSignup}
+                                primary={(isReturningUser && options.showAnonymousSignup) || options.primaryAction === null}
                                 title={isReturningUser && options.showAnonymousSignup
                                     ? t('welcome.welcomeReturningLoginButton')
                                     : t('welcome.welcomeSecondaryButton')}
@@ -538,7 +549,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         textAlign: 'center',
         marginBottom: 8,
     },
-    serverUnavailableBody: {
+    serverStatusBody: {
         ...Typography.default(),
         fontSize: 14,
         color: theme.colors.text.secondary,
@@ -558,6 +569,11 @@ const stylesheet = StyleSheet.create((theme) => ({
         color: theme.colors.text.secondary,
         textAlign: 'center',
         marginTop: 10,
+    },
+    signupDisabledNotice: {
+        width: '100%',
+        maxWidth: 520,
+        textAlign: 'left',
     },
     actionStack: {
         width: '100%',

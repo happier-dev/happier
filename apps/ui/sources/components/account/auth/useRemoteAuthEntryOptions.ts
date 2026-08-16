@@ -20,6 +20,10 @@ export type RemoteLoginOptions = Readonly<{
 }>;
 
 export type RemoteAuthEntryPrimaryKind = 'anonymous' | 'provider-keyed' | 'mtls' | 'keyless';
+export type RemoteAuthEntryPrimaryAction = Readonly<{
+    kind: RemoteAuthEntryPrimaryKind;
+    title: string;
+}>;
 
 export type RemoteAuthCapabilityOptions = Readonly<{
     signupOptions: RemoteSignupOptions;
@@ -59,8 +63,7 @@ export type RemoteAuthEntryOptions = Readonly<{
     keylessPrimary: boolean;
     providerKeylessTitle: string;
     anonymousSignupTitle: string;
-    primarySignupTitle: string;
-    primarySignupKind: RemoteAuthEntryPrimaryKind;
+    primaryAction: RemoteAuthEntryPrimaryAction | null;
     showTerminalConnectIntent: boolean;
     showSetupIntent: boolean;
     showAuthActions: boolean;
@@ -219,20 +222,15 @@ export function deriveRemoteAuthEntryOptions(input: RemoteAuthEntryOptionsInput)
     const showKeylessProviderLogin = Boolean(keylessProviderId) && keylessProviderId !== providerId;
     const mtlsPrimary = showMtlsLogin && !showProviderSignup && !showAnonymousSignup;
     const keylessPrimary = showKeylessProviderLogin && !showProviderSignup && !showAnonymousSignup && !showMtlsLogin;
-    const primarySignupKind: RemoteAuthEntryPrimaryKind = mtlsPrimary
-        ? 'mtls'
+    const primaryAction: RemoteAuthEntryPrimaryAction | null = mtlsPrimary
+        ? { kind: 'mtls', title: mtlsTitle }
         : keylessPrimary
-          ? 'keyless'
+          ? { kind: 'keyless', title: providerKeylessTitle }
           : showProviderSignup
-            ? 'provider-keyed'
-            : 'anonymous';
-    const primarySignupTitle = mtlsPrimary
-        ? mtlsTitle
-        : keylessPrimary
-          ? providerKeylessTitle
-          : showProviderSignup
-            ? providerSignupTitle
-            : anonymousSignupTitle;
+            ? { kind: 'provider-keyed', title: providerSignupTitle }
+            : showAnonymousSignup
+              ? { kind: 'anonymous', title: anonymousSignupTitle }
+              : null;
 
     return {
         serverAvailability: input.serverAvailability,
@@ -250,8 +248,7 @@ export function deriveRemoteAuthEntryOptions(input: RemoteAuthEntryOptionsInput)
         keylessPrimary,
         providerKeylessTitle,
         anonymousSignupTitle,
-        primarySignupTitle,
-        primarySignupKind,
+        primaryAction,
         showTerminalConnectIntent: input.hasPendingTerminalConnect,
         showSetupIntent: input.hasPendingSetupIntent,
         showAuthActions: input.serverAvailability === 'ready' || input.serverAvailability === 'legacy',

@@ -4238,6 +4238,7 @@ export const fr: TranslationStructure = {
         fileNotFound: 'Fichier introuvable',
         invalidFormat: 'Format invalide',
         operationFailed: 'L’opération a échoué',
+        signupDisabled: 'Les inscriptions de nouveaux comptes sont désactivées sur ce serveur. Connectez-vous avec un compte existant ou demandez à l’administrateur du serveur d’activer les inscriptions.',
         failedToForkSession: 'Impossible de forker la session',
         daemonUnavailableTitle: 'Daemon indisponible',
         daemonUnavailableBody:

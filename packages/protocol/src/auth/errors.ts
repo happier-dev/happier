@@ -2,6 +2,7 @@ import { z } from 'zod';
 
 export const AUTH_ERROR_CODES = [
   // Provider / policy
+  'signup-disabled',
   'unsupported-provider',
   'signup-provider-disabled',
   'provider-required',

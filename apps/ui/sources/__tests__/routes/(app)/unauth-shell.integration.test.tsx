@@ -49,6 +49,21 @@ const serverRuntimeState = vi.hoisted(() => ({
 
 const getServerFeaturesSnapshotMock = vi.hoisted(() => vi.fn());
 
+const runtimeFetchMock = vi.hoisted(() => vi.fn(async (input: RequestInfo | URL) => {
+    const url = String(input);
+    const token = url.endsWith('/v1/auth/mtls')
+        ? 'mtls-token'
+        : url.endsWith('/v1/auth')
+          ? 'account-token'
+          : 'oauth-token';
+    return new Response(JSON.stringify({ token }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+    });
+}));
+
+const modalAlertSpy = vi.hoisted(() => vi.fn());
+
 vi.mock('react-native-reanimated', async () => {
     const { createReanimatedModuleMock } = await import('@/dev/testkit/mocks/reanimated');
     return createReanimatedModuleMock();
@@ -137,7 +152,7 @@ vi.mock('@/components/navigation/shell/MainView', () => ({ MainView: () => null 
 
 vi.mock('@/modal', async () => {
     const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock().module;
+    return createModalModuleMock({ spies: { alert: modalAlertSpy } }).module;
 });
 
 vi.mock('@/auth/context/AuthContext', () => ({
@@ -161,10 +176,6 @@ vi.mock('@/sync/api/capabilities/getReadyServerFeatures', () => ({
 vi.mock('@/platform/cryptoRandom', () => ({
     getRandomBytes: vi.fn((size: number) => new Uint8Array(size).fill(3)),
     getRandomBytesAsync: vi.fn(async (size: number) => new Uint8Array(size).fill(7)),
-}));
-
-vi.mock('@/auth/flows/getToken', () => ({
-    authGetToken: vi.fn(async () => 'account-token'),
 }));
 
 vi.mock('@/auth/flows/qrStart', () => ({
@@ -255,10 +266,7 @@ vi.mock('@/utils/system/fireAndForget', () => ({
 }));
 
 vi.mock('@/utils/system/runtimeFetch', () => ({
-    runtimeFetch: vi.fn(async () => new Response(JSON.stringify({ token: 'mtls-token' }), {
-        status: 200,
-        headers: { 'Content-Type': 'application/json' },
-    })),
+    runtimeFetch: runtimeFetchMock,
 }));
 
 vi.mock('@/auth/flows/buildDataKeyCredentialsForToken', () => ({
@@ -267,13 +275,6 @@ vi.mock('@/auth/flows/buildDataKeyCredentialsForToken', () => ({
 
 vi.mock('@/auth/providers/registry', () => ({
     getAuthProvider: (id: string) => ({ id, displayName: id === 'github' ? 'GitHub' : id }),
-}));
-
-vi.mock('@/sync/http/client', () => ({
-    serverFetch: vi.fn(async () => new Response(JSON.stringify({ token: 'oauth-token' }), {
-        status: 200,
-        headers: { 'Content-Type': 'application/json' },
-    })),
 }));
 
 vi.mock('@/sync/api/capabilities/sessionSharingSupport', () => ({
@@ -364,6 +365,20 @@ describe('unauthenticated route shell integration', () => {
         authMock.isAuthenticated = false;
         authMock.login.mockClear();
         authMock.loginWithCredentials.mockClear();
+        runtimeFetchMock.mockReset();
+        runtimeFetchMock.mockImplementation(async (input: RequestInfo | URL) => {
+            const url = String(input);
+            const token = url.endsWith('/v1/auth/mtls')
+                ? 'mtls-token'
+                : url.endsWith('/v1/auth')
+                  ? 'account-token'
+                  : 'oauth-token';
+            return new Response(JSON.stringify({ token }), {
+                status: 200,
+                headers: { 'Content-Type': 'application/json' },
+            });
+        });
+        modalAlertSpy.mockClear();
         routerMocks.push.mockClear();
         routerMocks.replace.mockClear();
         routerMocks.back.mockClear();
@@ -419,6 +434,66 @@ describe('unauthenticated route shell integration', () => {
 
         await screen.pressByTestIdAsync('welcome-footer-relay-action');
         expect(routerMocks.push).toHaveBeenCalledWith('/setup?openCustom=1');
+    });
+
+    it('shows a specific friendly message when account creation races a signup-disabled server', async () => {
+        const signupEnabled = createWelcomeFeaturesResponse({
+            signupMethods: [{ id: 'anonymous', enabled: true }],
+            loginMethods: [{ id: 'key_challenge', enabled: true }],
+            requiredProviders: [],
+            autoRedirectEnabled: false,
+            autoRedirectProviderId: null,
+        });
+        const signupDisabled = createWelcomeFeaturesResponse({
+            signupMethods: [{ id: 'anonymous', enabled: false }],
+            loginMethods: [{ id: 'key_challenge', enabled: true }],
+            authMethods: [
+                {
+                    id: 'key_challenge',
+                    actions: [
+                        { id: 'login', enabled: true, mode: 'keyed' },
+                        { id: 'provision', enabled: false, mode: 'keyed' },
+                    ],
+                    ui: { displayName: 'Device key', iconHint: null },
+                },
+            ],
+            requiredProviders: [],
+            autoRedirectEnabled: false,
+            autoRedirectProviderId: null,
+        });
+        getServerFeaturesSnapshotMock.mockReset();
+        getServerFeaturesSnapshotMock
+            .mockResolvedValueOnce({ status: 'ready', features: signupEnabled })
+            .mockResolvedValue({ status: 'ready', features: signupDisabled });
+        runtimeFetchMock.mockImplementation(async (input: RequestInfo | URL) => {
+            const url = String(input);
+            if (url.endsWith('/v1/auth')) {
+                return new Response(JSON.stringify({ error: 'signup-disabled' }), {
+                    status: 403,
+                    headers: { 'Content-Type': 'application/json' },
+                });
+            }
+            return new Response(JSON.stringify({ ok: true }), {
+                status: 200,
+                headers: { 'Content-Type': 'application/json' },
+            });
+        });
+
+        const screen = await renderWelcomeScreen();
+        await act(async () => {
+            screen.pressByTestId('brand-hero-get-started');
+        });
+        await flushHookEffects();
+        expect(await waitForWelcomeTestId(screen, 'welcome-primary-start')).toBeGreaterThan(0);
+
+        await screen.pressByTestIdAsync('welcome-primary-start');
+        await flushHookEffects();
+
+        expect(authMock.login).not.toHaveBeenCalled();
+        expect(modalAlertSpy).toHaveBeenCalledWith('common.error', 'errors.signupDisabled');
+        expect(await waitForWelcomeTestId(screen, 'welcome-signup-disabled')).toBeGreaterThan(0);
+        expect(screen.findAllByTestId('welcome-primary-start')).toHaveLength(0);
+        expect(getServerFeaturesSnapshotMock).toHaveBeenLastCalledWith(expect.objectContaining({ force: true }));
     });
 
     it('renders welcome as a desktop split without consuming the mobile hero flag', async () => {

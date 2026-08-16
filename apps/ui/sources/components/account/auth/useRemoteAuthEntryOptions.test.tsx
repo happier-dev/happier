@@ -48,7 +48,7 @@ describe('deriveRemoteAuthEntryOptions', () => {
     it('maps anonymous signup availability to the anonymous primary action kind', () => {
         const options = deriveRemoteAuthEntryOptions(createInput());
 
-        expect(options.primarySignupKind).toBe('anonymous');
+        expect(options.primaryAction).toMatchObject({ kind: 'anonymous' });
         expect(options.showAnonymousSignup).toBe(true);
         expect(options.showProviderSignup).toBe(false);
         expect(options.providerId).toBeNull();
@@ -65,7 +65,7 @@ describe('deriveRemoteAuthEntryOptions', () => {
             }),
         );
 
-        expect(options.primarySignupKind).toBe('provider-keyed');
+        expect(options.primaryAction).toMatchObject({ kind: 'provider-keyed' });
         expect(options.showAnonymousSignup).toBe(false);
         expect(options.showProviderSignup).toBe(true);
         expect(options.providerId).toBe('github');
@@ -87,7 +87,7 @@ describe('deriveRemoteAuthEntryOptions', () => {
             }),
         );
 
-        expect(options.primarySignupKind).toBe('mtls');
+        expect(options.primaryAction).toMatchObject({ kind: 'mtls' });
         expect(options.showMtlsLogin).toBe(true);
         expect(options.mtlsPrimary).toBe(true);
     });
@@ -108,10 +108,26 @@ describe('deriveRemoteAuthEntryOptions', () => {
             }),
         );
 
-        expect(options.primarySignupKind).toBe('keyless');
+        expect(options.primaryAction).toMatchObject({ kind: 'keyless' });
         expect(options.showKeylessProviderLogin).toBe(true);
         expect(options.keylessProviderId).toBe('github');
         expect(options.keylessPrimary).toBe(true);
+    });
+
+    it('represents disabled signup as an explicit empty primary action', () => {
+        const options = deriveRemoteAuthEntryOptions(
+            createInput({
+                signupOptions: {
+                    anonymousEnabled: false,
+                    providerIds: Object.freeze([]),
+                    preferredProviderId: null,
+                },
+            }),
+        );
+
+        expect(options.primaryAction).toBeNull();
+        expect(options.showAnonymousSignup).toBe(false);
+        expect(options.showProviderSignup).toBe(false);
     });
 });
 
@@ -157,6 +173,37 @@ describe('RemoteWelcomeDecisionPanel', () => {
         const primarySubtitleStyle = flattenStyle(screen.findByTestId('welcome-primary-start-subtitle')?.props.style);
         expect(primaryTitleStyle.color).toBe(lightTheme.colors.button.primary.tint);
         expect(primarySubtitleStyle.color).toBe(lightTheme.colors.button.primary.tint);
+    });
+
+    it('explains disabled signup while keeping login as the primary recovery action', async () => {
+        const options = deriveRemoteAuthEntryOptions(
+            createInput({
+                signupOptions: {
+                    anonymousEnabled: false,
+                    providerIds: Object.freeze([]),
+                    preferredProviderId: null,
+                },
+            }),
+        );
+        const screen = await renderScreen(
+            <RemoteWelcomeDecisionPanel
+                options={options}
+                isDesktopShell={false}
+                layout="portrait"
+                onAnonymousSignup={noop}
+                onChangeRelay={noop}
+                onKeylessProviderLogin={noop}
+                onMtlsLogin={noop}
+                onOpenSetup={noop}
+                onProviderSignup={noop}
+                onRestore={noop}
+            />,
+        );
+
+        expect(screen.findByTestId('welcome-signup-disabled')).toBeTruthy();
+        expect(screen.findAllByTestId('welcome-primary-start')).toHaveLength(0);
+        expect(flattenStyle(screen.findByTestId('welcome-secondary-login')?.props.style).backgroundColor)
+            .toBe(lightTheme.colors.button.primary.background);
     });
 
     it('routes the restore action through the supplied login callback', async () => {

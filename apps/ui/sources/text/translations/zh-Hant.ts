@@ -4096,6 +4096,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
         fileNotFound: '檔案未找到',
         invalidFormat: '格式無效',
         operationFailed: '操作失敗',
+        signupDisabled: '此伺服器已停用新帳號註冊。請使用現有帳號登入，或聯絡伺服器管理員開啟註冊。',
         failedToForkSession: '分支工作階段失敗',
         daemonUnavailableTitle: '守護程序無法使用',
         daemonUnavailableBody:

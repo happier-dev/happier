@@ -4413,6 +4413,7 @@ export const zhHans: TranslationStructure = {
       fileNotFound: "文件未找到",
       invalidFormat: "格式无效",
       operationFailed: "操作失败",
+      signupDisabled: "该服务器已禁用新账户注册。请使用现有账户登录，或联系服务器管理员开启注册。",
       failedToForkSession: "分叉会话失败",
       daemonUnavailableTitle: "守护进程不可用",
       daemonUnavailableBody:
