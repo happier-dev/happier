@@ -1162,6 +1162,36 @@ describe('SessionProviderInputConsumer waitForNextInput', () => {
     expect(onMetadataUpdate).not.toHaveBeenCalled();
   });
 
+  it('releases a queued input wait when metadata reconciliation never settles and the session closes', async () => {
+    const abortController = new AbortController();
+    const messageQueue = new MessageQueue2<TestMode>(() => 'hash');
+    const metadataStarted = createDeferred<void>();
+    const onMetadataUpdate = vi.fn(async () => {
+      metadataStarted.resolve();
+      await new Promise<void>(() => {});
+    });
+    const consumer = createSessionProviderInputConsumer({
+      messageQueue,
+      session: {
+        materializeNextPendingMessageSafely: vi.fn(async () => ({ type: 'no_pending' as const })),
+        waitForPendingEligibilityUpdate: vi.fn(async () => false),
+      },
+      onMetadataUpdate,
+      reconcileWhenEmpty: 'skip',
+    });
+
+    messageQueue.push('queued before close', { id: 'mode' });
+    const waitPromise = consumer.waitForNextInput({ abortSignal: abortController.signal });
+    await metadataStarted.promise;
+    abortController.abort();
+
+    await expect(Promise.race([
+      waitPromise.then((value) => ({ status: 'settled' as const, value })),
+      new Promise<{ status: 'timed_out' }>((resolve) => setTimeout(() => resolve({ status: 'timed_out' }), 25)),
+    ])).resolves.toEqual({ status: 'settled', value: null });
+    expect(onMetadataUpdate).toHaveBeenCalledTimes(1);
+  });
+
   it('waits for a fresh eligibility event before retrying transient transport', async () => {
     const abortController = new AbortController();
     const eligibilityWake = createDeferred<boolean>();

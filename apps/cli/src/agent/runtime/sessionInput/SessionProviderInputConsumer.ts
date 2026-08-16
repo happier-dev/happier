@@ -21,6 +21,8 @@ import { PENDING_QUEUE_ONE_AT_A_TIME_MAX_POP_PER_WAKE } from './pendingQueueDrai
 import { readPendingLocalId } from '@happier-dev/protocol';
 import type { RuntimeActivitySnapshotTail } from '@/api/session/mutations/createSessionMutationOutbox';
 
+const PENDING_INPUT_SLOW_PHASE_DIAGNOSTIC_MS = 30_000;
+
 export class PendingQueueMaterializationAuthError extends Error {
   constructor() {
     super('Pending queue materialization stopped after supervisor authentication failure');
@@ -53,7 +55,7 @@ export interface SessionProviderInputConsumerSession {
 export interface SessionProviderInputConsumerOptions<Mode, Message> {
   messageQueue: MessageQueue2<Mode, Message>;
   session: SessionProviderInputConsumerSession;
-  onMetadataUpdate?: (() => void | Promise<void>) | null | undefined;
+  onMetadataUpdate?: ((abortSignal: AbortSignal) => void | Promise<void>) | null | undefined;
   reconcileWhenEmpty?: PendingMaterializationReconcileWhenEmpty | undefined;
   activeTurnSteerability?: PendingForegroundSteerability | undefined;
   resolveActiveTurnSteerability?: (() => PendingForegroundSteerability) | undefined;
@@ -114,7 +116,10 @@ async function materializeWithRuntimeActivityTail(
   options: ReturnType<typeof buildMaterializeOptions>,
   abortSignal: AbortSignal,
 ): Promise<PendingMaterializationResult> {
-  const first = await session.materializeNextPendingMessageSafely(options);
+  const first = await observePendingInputPhase(
+    'materialize',
+    async () => await session.materializeNextPendingMessageSafely(options),
+  );
   if (
     options.pendingQueueDeliveryTiming !== 'after_runtime_idle'
     || first.type !== 'deferred'
@@ -126,10 +131,13 @@ async function materializeWithRuntimeActivityTail(
     if (!tail) return first;
     const expectedRuntimeActivityRevision = readCommittedIdleRuntimeActivityRevision(tail);
     if (expectedRuntimeActivityRevision !== undefined) {
-      return await session.materializeNextPendingMessageSafely({
-        ...options,
-        expectedRuntimeActivityRevision,
-      });
+      return await observePendingInputPhase(
+        'materialize_runtime_tail_retry',
+        async () => await session.materializeNextPendingMessageSafely({
+          ...options,
+          expectedRuntimeActivityRevision,
+        }),
+      );
     }
     if (tail.custody === null || !session.waitForRuntimeActivitySnapshotTailChange) return first;
     if (!await session.waitForRuntimeActivitySnapshotTailChange(tail.sequence, abortSignal)) return first;
@@ -536,7 +544,7 @@ async function waitForNextInput<Mode, Message>(
       controller.abort('sessionProviderInputConsumer-batch');
       opts.abortSignal.removeEventListener('abort', onAbort);
       if (!opts.isProviderInputAdmissionOpen()) return null;
-      await callMetadataUpdate(opts.onMetadataUpdate);
+      await callMetadataUpdate(opts.onMetadataUpdate, opts.abortSignal);
       if (opts.abortSignal.aborted) {
         return null;
       }
@@ -550,7 +558,7 @@ async function waitForNextInput<Mode, Message>(
     if (materializedBatch) {
       controller.abort('sessionProviderInputConsumer-materialized');
       opts.abortSignal.removeEventListener('abort', onAbort);
-      await callMetadataUpdate(opts.onMetadataUpdate);
+      await callMetadataUpdate(opts.onMetadataUpdate, opts.abortSignal);
       if (opts.abortSignal.aborted) {
         return null;
       }
@@ -572,7 +580,7 @@ async function waitForNextInput<Mode, Message>(
       if (retryOrWake.kind === 'wake') {
         if (retryOrWake.winner.kind === 'queue' && !retryOrWake.winner.hasMessages) return null;
         if (retryOrWake.winner.kind === 'meta' && retryOrWake.winner.ok) {
-          await callMetadataUpdate(opts.onMetadataUpdate);
+          await callMetadataUpdate(opts.onMetadataUpdate, opts.abortSignal);
         }
       }
       continue;
@@ -584,7 +592,9 @@ async function waitForNextInput<Mode, Message>(
         if (!opts.isProviderInputAdmissionOpen()) return null;
         if (passDirty) {
           const dirtyWinner = await wakePromise;
-          if (dirtyWinner.kind === 'meta' && dirtyWinner.ok) await callMetadataUpdate(opts.onMetadataUpdate);
+          if (dirtyWinner.kind === 'meta' && dirtyWinner.ok) {
+            await callMetadataUpdate(opts.onMetadataUpdate, opts.abortSignal);
+          }
         }
         continue;
       }
@@ -605,7 +615,7 @@ async function waitForNextInput<Mode, Message>(
 
       if (winner.kind === 'queue' && !winner.hasMessages) return null;
       if (winner.kind === 'meta' && winner.ok) {
-        await callMetadataUpdate(opts.onMetadataUpdate);
+        await callMetadataUpdate(opts.onMetadataUpdate, opts.abortSignal);
       }
       controller.abort('sessionProviderInputConsumer-rerun');
       continue;
@@ -865,10 +875,59 @@ async function waitForWakeSignal<Mode, Message>(opts: {
   }
 }
 
-async function callMetadataUpdate(onMetadataUpdate: (() => void | Promise<void>) | null | undefined): Promise<void> {
+async function callMetadataUpdate(
+  onMetadataUpdate: ((abortSignal: AbortSignal) => void | Promise<void>) | null | undefined,
+  abortSignal: AbortSignal,
+): Promise<void> {
+  if (!onMetadataUpdate || abortSignal.aborted) return;
+
+  let releaseAbort: (() => void) | undefined;
+  const aborted = new Promise<'aborted'>((resolve) => {
+    const onAbort = () => resolve('aborted');
+    abortSignal.addEventListener('abort', onAbort, { once: true });
+    releaseAbort = () => abortSignal.removeEventListener('abort', onAbort);
+  });
+  const reconciled = Promise.resolve()
+    .then(async () => await observePendingInputPhase(
+      'metadata_reconcile',
+      async () => await onMetadataUpdate(abortSignal),
+    ))
+    .then(
+      () => 'reconciled' as const,
+      () => 'failed' as const,
+    );
+
   try {
-    await onMetadataUpdate?.();
-  } catch {
-    // Non-fatal: metadata reconciliation should not break the message loop.
+    await Promise.race([reconciled, aborted]);
+  } finally {
+    releaseAbort?.();
+  }
+}
+
+async function observePendingInputPhase<T>(
+  phase: 'materialize' | 'materialize_runtime_tail_retry' | 'metadata_reconcile',
+  operation: () => Promise<T>,
+): Promise<T> {
+  const startedAt = Date.now();
+  let slowDiagnosticEmitted = false;
+  const timer = setTimeout(() => {
+    slowDiagnosticEmitted = true;
+    logger.infoFile('[pendingQueue] input consumer phase remains unsettled', {
+      elapsedMs: Date.now() - startedAt,
+      phase,
+    });
+  }, PENDING_INPUT_SLOW_PHASE_DIAGNOSTIC_MS);
+  timer.unref?.();
+
+  try {
+    return await operation();
+  } finally {
+    clearTimeout(timer);
+    if (slowDiagnosticEmitted) {
+      logger.infoFile('[pendingQueue] input consumer slow phase settled', {
+        elapsedMs: Date.now() - startedAt,
+        phase,
+      });
+    }
   }
 }
