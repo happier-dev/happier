@@ -34,7 +34,6 @@ async function writeInstallablePwaFixture(distDir) {
       icons: [
         { src: '/icons/icon-192.png', sizes: '192x192', type: 'image/png', purpose: 'any' },
         { src: '/icons/icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'any' },
-        { src: '/icons/icon-maskable-512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
       ],
     })}\n`,
     'utf8',
@@ -42,7 +41,6 @@ async function writeInstallablePwaFixture(distDir) {
   await Promise.all([
     writeFile(join(distDir, 'icons', 'icon-192.png'), '192'),
     writeFile(join(distDir, 'icons', 'icon-512.png'), '512'),
-    writeFile(join(distDir, 'icons', 'icon-maskable-512.png'), 'maskable'),
     writeFile(join(distDir, 'icons', 'apple-touch-icon.png'), 'apple'),
   ]);
 }
