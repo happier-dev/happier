@@ -20,6 +20,10 @@ export type RemoteLoginOptions = Readonly<{
 }>;
 
 export type RemoteAuthEntryPrimaryKind = 'anonymous' | 'provider-keyed' | 'mtls' | 'keyless';
+export type RemoteAuthEntryPrimaryAction = Readonly<{
+    kind: RemoteAuthEntryPrimaryKind;
+    title: string;
+}>;
 
 export type RemoteAuthCapabilityOptions = Readonly<{
     signupOptions: RemoteSignupOptions;
@@ -59,9 +63,7 @@ export type RemoteAuthEntryOptions = Readonly<{
     keylessPrimary: boolean;
     providerKeylessTitle: string;
     anonymousSignupTitle: string;
-    primarySignupTitle: string;
-    primarySignupKind: RemoteAuthEntryPrimaryKind;
-    showPrimarySignup: boolean;
+    primaryAction: RemoteAuthEntryPrimaryAction | null;
     showTerminalConnectIntent: boolean;
     showSetupIntent: boolean;
     showAuthActions: boolean;
@@ -220,26 +222,15 @@ export function deriveRemoteAuthEntryOptions(input: RemoteAuthEntryOptionsInput)
     const showKeylessProviderLogin = Boolean(keylessProviderId) && keylessProviderId !== providerId;
     const mtlsPrimary = showMtlsLogin && !showProviderSignup && !showAnonymousSignup;
     const keylessPrimary = showKeylessProviderLogin && !showProviderSignup && !showAnonymousSignup && !showMtlsLogin;
-    const primarySignupKind: RemoteAuthEntryPrimaryKind = mtlsPrimary
-        ? 'mtls'
+    const primaryAction: RemoteAuthEntryPrimaryAction | null = mtlsPrimary
+        ? { kind: 'mtls', title: mtlsTitle }
         : keylessPrimary
-          ? 'keyless'
+          ? { kind: 'keyless', title: providerKeylessTitle }
           : showProviderSignup
-            ? 'provider-keyed'
-            : 'anonymous';
-    const primarySignupTitle = mtlsPrimary
-        ? mtlsTitle
-        : keylessPrimary
-          ? providerKeylessTitle
-          : showProviderSignup
-            ? providerSignupTitle
-            : anonymousSignupTitle;
-    // The primary slot only exists when some enabled method backs it. Without
-    // this, primarySignupKind falls through to 'anonymous' and a server with
-    // every signup method disabled (e.g. AUTH_ANONYMOUS_SIGNUP_ENABLED=0 and
-    // no OAuth/mTLS) would still get a Create account button that the server
-    // rejects with 403 signup-disabled.
-    const showPrimarySignup = showAnonymousSignup || showProviderSignup || mtlsPrimary || keylessPrimary;
+            ? { kind: 'provider-keyed', title: providerSignupTitle }
+            : showAnonymousSignup
+              ? { kind: 'anonymous', title: anonymousSignupTitle }
+              : null;
 
     return {
         serverAvailability: input.serverAvailability,
@@ -257,9 +248,7 @@ export function deriveRemoteAuthEntryOptions(input: RemoteAuthEntryOptionsInput)
         keylessPrimary,
         providerKeylessTitle,
         anonymousSignupTitle,
-        primarySignupTitle,
-        primarySignupKind,
-        showPrimarySignup,
+        primaryAction,
         showTerminalConnectIntent: input.hasPendingTerminalConnect,
         showSetupIntent: input.hasPendingSetupIntent,
         showAuthActions: input.serverAvailability === 'ready' || input.serverAvailability === 'legacy',

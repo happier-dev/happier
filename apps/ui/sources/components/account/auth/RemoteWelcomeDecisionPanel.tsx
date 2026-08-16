@@ -83,8 +83,8 @@ function resolvePrimaryAction(
         RemoteWelcomeDecisionPanelProps,
         'onAnonymousSignup' | 'onKeylessProviderLogin' | 'onMtlsLogin' | 'onProviderSignup'
     >,
-): () => AuthActionResult {
-    switch (options.primarySignupKind) {
+): (() => AuthActionResult) | null {
+    switch (options.primaryAction?.kind) {
         case 'provider-keyed':
             return () => {
                 if (options.providerId) props.onProviderSignup(options.providerId);
@@ -97,6 +97,8 @@ function resolvePrimaryAction(
             };
         case 'anonymous':
             return props.onAnonymousSignup;
+        case undefined:
+            return null;
     }
 }
 
@@ -353,6 +355,11 @@ export function RemoteWelcomeDecisionPanel(props: RemoteWelcomeDecisionPanelProp
                     <Text style={styles.intentBody}>{t('setupOnboarding.resumeIntentBody')}</Text>
                 </View>
             ) : null}
+            {options.showAuthActions && options.primaryAction === null ? (
+                <Text testID="welcome-signup-disabled" style={styles.signupDisabledNotice}>
+                    {t('errors.signupDisabled')}
+                </Text>
+            ) : null}
             {options.serverAvailability === 'loading' ? (
                 <View style={styles.serverLoadingBlock}>
                     <ActivitySpinner />
@@ -372,7 +379,9 @@ export function RemoteWelcomeDecisionPanel(props: RemoteWelcomeDecisionPanelProp
                         // demote Start fresh to the bordered card below.
                         // When the server disables every signup method, the
                         // primary slot stays empty and Login carries the panel.
-                        const startFreshButton = !options.showPrimarySignup ? null : options.showAnonymousSignup ? (
+                        const startFreshButton = options.primaryAction === null || primarySignupAction === null
+                            ? null
+                            : options.showAnonymousSignup ? (
                             <DecisionActionRow
                                 testID="welcome-primary-start"
                                 primary={!isReturningUser}
@@ -384,20 +393,20 @@ export function RemoteWelcomeDecisionPanel(props: RemoteWelcomeDecisionPanelProp
                         ) : (
                             <DecisionActionRow
                                 testID={
-                                    options.primarySignupKind === 'provider-keyed'
+                                    options.primaryAction.kind === 'provider-keyed'
                                         ? 'welcome-signup-provider'
                                         : 'welcome-create-account'
                                 }
                                 primary
-                                title={options.primarySignupTitle}
-                                iconName={options.primarySignupKind === 'mtls' ? 'shield-check' : 'arrow-right'}
+                                title={options.primaryAction.title}
+                                iconName={options.primaryAction.kind === 'mtls' ? 'shield-check' : 'arrow-right'}
                                 onPress={primarySignupAction}
                             />
                         );
                         const loginButton = (
                             <DecisionActionRow
                                 testID="welcome-secondary-login"
-                                primary={(isReturningUser && options.showAnonymousSignup) || !options.showPrimarySignup}
+                                primary={(isReturningUser && options.showAnonymousSignup) || options.primaryAction === null}
                                 title={isReturningUser && options.showAnonymousSignup
                                     ? t('welcome.welcomeReturningLoginButton')
                                     : t('welcome.welcomeSecondaryButton')}
@@ -560,6 +569,15 @@ const stylesheet = StyleSheet.create((theme) => ({
         color: theme.colors.text.secondary,
         textAlign: 'center',
         marginTop: 10,
+    },
+    signupDisabledNotice: {
+        ...Typography.default(),
+        width: '100%',
+        maxWidth: 520,
+        fontSize: 14,
+        lineHeight: 20,
+        color: theme.colors.text.secondary,
+        textAlign: 'left',
     },
     actionStack: {
         width: '100%',

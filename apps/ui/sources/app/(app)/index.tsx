@@ -2,7 +2,7 @@ import { useAuth } from "@/auth/context/AuthContext";
 import { View, Platform, Linking } from 'react-native';
 import * as React from 'react';
 import { encodeBase64 } from "@/encryption/base64";
-import { authGetToken, AuthTokenRequestError } from "@/auth/flows/getToken";
+import { authGetToken } from "@/auth/flows/getToken";
 import { router, useRouter, useLocalSearchParams } from "expo-router";
 import { StyleSheet } from "react-native-unistyles";
 import { getRandomBytesAsync } from "@/platform/cryptoRandom";
@@ -17,6 +17,7 @@ import { getPendingTerminalConnect } from "@/sync/domains/pending/pendingTermina
 import { isSafeExternalAuthUrl } from "@/auth/providers/externalAuthUrl";
 import { fireAndForget } from "@/utils/system/fireAndForget";
 import { formatOperationFailedDebugMessage } from "@/utils/errors/formatOperationFailedDebugMessage";
+import { HappyError } from "@/utils/errors/errors";
 import { getActiveServerSnapshot } from "@/sync/domains/server/serverRuntime";
 import { getServerFeaturesSnapshot } from "@/sync/api/capabilities/serverFeaturesClient";
 import { getServerRetentionPolicy } from '@/sync/api/capabilities/serverRetentionPolicyClient';
@@ -259,7 +260,8 @@ function NotAuthenticated() {
                 trackAccountCreated();
             }
         } catch (error) {
-            if (error instanceof AuthTokenRequestError && error.code === 'signup-disabled') {
+            if (error instanceof HappyError && error.code === 'signup-disabled') {
+                setServerCheckNonce((value) => value + 1);
                 await Modal.alert(t('common.error'), t('errors.signupDisabled'));
                 return;
             }
