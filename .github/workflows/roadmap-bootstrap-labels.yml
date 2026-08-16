@@ -75,6 +75,9 @@ jobs:
               { name: 'priority:p2', color: 'fbca04', description: 'Normal priority.' },
               { name: 'priority:p3', color: 'c2e0c6', description: 'Low priority.' },
 
+              { name: 'needs:maintainer', color: '1d76db', description: 'Project review or action is required.' },
+              { name: 'needs:reporter', color: 'd876e3', description: 'Waiting for new information or confirmation from an external participant.' },
+
               { name: 'stage:source', color: 'bfdadc', description: 'Correction is integrated and verified on the canonical dev branch.' },
               { name: 'stage:dev', color: '1d76db', description: 'Correction is available on the automated dev channel.' },
               { name: 'stage:preview', color: '0e8a16', description: 'Correction is available on the preview channel.' },

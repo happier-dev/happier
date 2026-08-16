@@ -121,6 +121,8 @@ For work linked to a GitHub issue, keep the source correction, commit relationsh
 
 When the complete correction is integrated and verified on canonical `dev`, include `stage:source` for every affected open issue in the next exact GitHub mutation preview. Omit it only when the issue already has the same or a higher verified stage, or the evidence-backed disposition establishes that no correction exists to release; state that reason explicitly. If mutation authority is absent, report the pending proposal instead of applying it or silently leaving the issue outside the release queue. Local work, `remote-dev`, an open pull request, or an unmerged commit does not qualify. Normal release workflows advance later labels; implementation agents do not predict or pre-advance channels.
 
+Keep conversational ownership separate from availability. After a source correction, the issue normally remains or returns to `needs:maintainer` while merge, release, or channel-specific follow-up is still a project action. Add `needs:reporter` only alongside a detailed approved public request for information or confirmation that genuinely blocks further progress, and remove `needs:maintainer` in the same exact mutation preview. Do not use hidden saved-reply directives in an agent-authored comment to bypass that preview.
+
 Use these outcomes:
 
 - `VERIFIED_COMPLETE`: the real owner, wiring, removals, tests, broader checks, and required live evidence establish the complete outcome;

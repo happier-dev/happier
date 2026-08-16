@@ -60,7 +60,7 @@ Check whether the reported behavior may be:
 
 Use `skills/happier-compatibility` for release provenance. Do not collapse `fixed at HEAD` into `fixed for the reporter`.
 
-When a correction may already exist, also record the reporter's stated channel and the issue's current `stage:*` label under the lifecycle in `docs/issue-triage.md`. Missing channel identity is a targeted evidence gap; a higher source/release status is not permission to ask a reporter on a lower channel to retest early.
+When a correction may already exist, also record the reporter's stated channel and the issue's current `stage:*` label under the lifecycle in `docs/issue-triage.md`. Record the current `needs:*` handoff separately: stage is availability, while needs is whose action can move the issue forward. Missing channel identity is a targeted evidence gap; a higher source/release status is not permission to ask a reporter on a lower channel to retest early.
 
 Route a proven complete correction already integrated and verified on canonical `dev` with a required proposed `stage:source` mutation for each affected open issue, unless the issue already has the same or a higher verified stage. Triage does not apply the mutation; it must not silently drop the issue from the later release queue.
 
@@ -131,6 +131,6 @@ When the main lane diagnoses one bundle, report through `skills/happier-issue-di
 
 ## 9. Keep mutations separate
 
-Triage findings may propose labels, comments, duplicate links, assignments, or state changes, but do not apply them without the mandatory two-phase protocol in `skills/happier-github-ops`: show the user the complete exact payload, obtain explicit approval for that payload, then re-read the live targets before applying it. Re-preview and request renewed approval when a target or payload changes. Never auto-close, auto-lock, or let a duplicate chain remove the only open canonical issue.
+Triage findings may propose labels, comments, duplicate links, assignments, or state changes, but do not apply them without the mandatory two-phase protocol in `skills/happier-github-ops`: show the user the complete exact payload, obtain explicit approval for that payload, then re-read the live targets before applying it. Include the exact `needs:*` transition in that preview whenever the response changes whose action is next. Asking for blocking reporter evidence normally adds `needs:reporter` and removes `needs:maintainer`; a maintainer-owned next step does the inverse. Do not emit saved-reply directives as a way around preview authority. Re-preview and request renewed approval when a target or payload changes. Never auto-close, auto-lock, or let a duplicate chain remove the only open canonical issue.
 
 Do not create a local triage ledger. GitHub is the durable store when write-back is authorized; the user-facing report is the record otherwise.

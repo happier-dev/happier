@@ -68,7 +68,12 @@ Every GitHub mutation uses a mandatory two-phase protocol:
 
 Approval applies only to the previewed mutation set. Never infer approval from silence, a previous batch, general repository authority, or authorization to diagnose or implement code. Read-only retrieval does not require approval.
 
-The only pre-authorized exception is the repository-owned release automation documented in `docs/issue-triage.md`. Its job-scoped token may move a pre-release snapshot forward to the verified target `stage:*` after the owning release verifier succeeds, including a higher-channel release that bypasses a lower channel. That exception permits only the exact label add/remove operation performed by `scripts/pipeline/github/reconcile-issue-stage.mjs`; it does not authorize comments, closure, assignment, edits, manual invocation, backward transitions, or any other issue mutation.
+There are only two pre-authorized exceptions, both repository-owned and documented in `docs/issue-triage.md`:
+
+- release automation may move a pre-release snapshot forward to the verified target `stage:*` after the owning release verifier succeeds, including a higher-channel release that bypasses a lower channel; this permits only the exact label add/remove operation performed by `scripts/pipeline/github/reconcile-issue-stage.mjs`;
+- issue handoff automation may set `needs:maintainer` for opened/reopened issues, move an open `needs:reporter` issue to `needs:maintainer` after an external human response, or execute exact allowlisted saved-reply directives posted by a project-side commenter; this permits only the incremental label operations performed by `scripts/pipeline/github/reconcile-issue-needs.mjs`.
+
+Neither exception authorizes comments, closure, assignment, issue edits, arbitrary labels, backward stage transitions, or any other mutation. Interactive agents remain subject to the exact preview-and-approval protocol; they do not gain implicit write authority from the saved-reply syntax.
 
 Before an authorized mutation:
 
@@ -120,10 +125,24 @@ This skill owns the quality and safety of outgoing GitHub payloads. Triage, diag
 
 Write public issues, pull-request text, and comments in Happier's voice: warm, direct, concrete, technically honest, and useful without sounding like customer-support automation. Be concise because the response is focused, not because evidence, consequences, or caveats were removed.
 
+Before proposing an agent-authored public comment on a Happier GitHub issue, resolve the local maintainer from the machine's normal authenticated GitHub CLI account:
+
+```bash
+gh api user --jq .login
+```
+
+Use the returned login in a standalone final line of every comment: `cc: @<local-gh-login>`. Resolve this identity with ordinary `gh`, never `yarn ghops`: `ghops` is deliberately authenticated as the bot that transports issue reads and writes, not the local maintainer who should receive notifications. Do not substitute the bot login, repository owner, operating-system username, Git author, a hardcoded handle, or a previously observed account. If ordinary `gh` is unavailable, unauthenticated, or returns no login, stop before the mutation preview and ask the user to authenticate with `gh auth login` or explicitly supply the mention target.
+
+This direct mention keeps the local maintainer participating in the issue conversation. Apply it to initial responses, evidence requests, progress updates, release updates, and closure recommendations. Include the resolved line in the complete comment shown during the exact mutation preview; never add it after approval or omit it based on inferred subscription status, an earlier mention, or prior participation. After approval, post the exact approved handle even if the active local account changes; an identity change requires a revised preview. This rule applies to issue comments, not issue bodies or the release automation's label-only mutations. Use a different handle or omit the line only when the user explicitly approves that exact payload.
+
 ### Voice and identity
 
 - Sound like a thoughtful project collaborator, not a corporate account, growth bot, legal notice, or generic AI assistant.
-- Acknowledge the reporter's actual symptom or contribution when useful; do not substitute canned thanks such as `Thank you for bringing this to our attention` or promise that `our team is actively investigating` without current evidence.
+- Treat a real issue report as a contribution to the project. In the first project response, thank the author naturally for taking the time to report it unless someone speaking for the project has already done so in the thread. This still applies when the behavior is not reproduced, turns out to be intended, or needs more evidence.
+- When the author or a commenter supplied a useful reproduction detail, diagnostic insight, correction, or fix direction, thank them for that specific contribution and say briefly how it helped. Prefer a human sentence such as `Thanks for tracking this down—the detail about reconnecting after resume pointed us to the lifecycle boundary` over a generic acknowledgment.
+- Do not make gratitude sound procedural. Place it where it fits naturally, vary the wording, and then continue into the substance. Do not repeat the same thank-you in every update when the thread has already acknowledged the contribution; a new material contribution can receive a new specific thanks.
+- Gratitude does not validate an unverified diagnosis. Thank the person for the evidence or reasoning they contributed, then distinguish what the project confirmed, what remains a hypothesis, and what changed.
+- Avoid canned support phrases such as `Thank you for bringing this to our attention` and unsupported promises such as `our team is actively investigating`.
 - Never invent personal experience, quotes, maintainer decisions, or feelings. Do not write `I built`, `I decided`, or `I've been working on` unless the exact user-approved payload deliberately speaks in that maintainer's voice.
 - Use `we` only for a project-level action or status established by evidence or supplied in the exact approved text. Otherwise prefer neutral factual constructions such as `This reproduces on...`, `The current implementation...`, and `The remaining gap is...`.
 - Preserve personality and earned enthusiasm, but avoid promotional fog, slogans, hype, artificial urgency, unsupported superlatives, and competitor comparisons.
@@ -184,6 +203,7 @@ These labels are intended to keep the public roadmap curated and consistent:
 
 - `roadmap` (triage-owned): include this item on the public roadmap project
 - `priority:p0`, `priority:p1`, `priority:p2`, `priority:p3` (triage-owned)
+- `needs:maintainer`, `needs:reporter` (optional, mutually exclusive conversational ownership; see `docs/issue-triage.md`)
 - `stage:source`, `stage:dev`, `stage:preview`, `stage:stable` (optional, mutually exclusive correction availability; see `docs/issue-triage.md`)
 - `type: bug`, `type: feature`, `type: task` (recommended)
 - `source: bug-report` (applied automatically by the bug-report service)
@@ -191,6 +211,16 @@ These labels are intended to keep the public roadmap curated and consistent:
 For an open issue with a complete correction integrated and verified on canonical `dev`, the next exact mutation preview must add `stage:source` and remove any conflicting `stage:*` label. Omit this only when the issue is already at the same or a higher verified stage, or the evidence-backed disposition establishes that no correction exists to release; state the reason in the preview. Do not apply the label before integration, infer a later stage, or silently omit the proposal because approval has not yet been granted.
 
 Roadmap inclusion is opt-in. Do not add `roadmap`, add a project item, or change project fields unless the user explicitly approves that exact issue for roadmap inclusion.
+
+Use a GitHub milestone such as `v0.3` for planned release scope. Do not duplicate that fact with a version-specific label. A milestone does not imply implementation or release availability, so preserve any independent `needs:*` and `stage:*` state.
+
+### Handoff labels and saved replies
+
+Use `needs:maintainer` when a project decision or action is next. Use `needs:reporter` only after the project has asked an external participant for decision-material information or confirmation that is genuinely needed to continue. If useful progress remains possible without that answer, keep the issue with the maintainer instead of parking it.
+
+For agent-authored GitHub updates, show the exact `needs:*` addition/removal beside the complete comment in the normal mutation preview. Do not hide an unpreviewed agent mutation inside comment text. Manual maintainers may use the exact saved-reply directives documented in `docs/issue-triage.md`; the workflow recognizes only standalone directives and initially allows `needs:*`, `type:*`, and `priority:*`. It rejects `stage:*`, `source:*`, `roadmap`, `ai-triage`, milestones, assignments, disposition labels, contradictory operations, and a result containing both handoff labels.
+
+An external human comment automatically changes `needs:reporter` to `needs:maintainer`, regardless of whether the commenter is the original issue author. Treat this only as a wake-up signal: read and evaluate the response before deciding whether the requested evidence is sufficient. Bots and Apps are ignored, and comments on issues not marked `needs:reporter` do not change handoff state.
 
 When asked to “create an issue and put it on the roadmap with P0”, do:
 
@@ -227,7 +257,9 @@ yarn ghops api repos/happier-dev/happier/issues \
 Comment on an issue:
 
 ```bash
-yarn ghops api repos/happier-dev/happier/issues/123/comments -f body="Update: ..."
+local_gh_login="$(gh api user --jq .login)"
+comment_body="$(printf 'Update: ...\n\ncc: @%s' "$local_gh_login")"
+yarn ghops api repos/happier-dev/happier/issues/123/comments -f "body=$comment_body"
 ```
 
 Apply labels (example):

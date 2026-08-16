@@ -17,6 +17,7 @@ Happier separates issue evidence transport, triage routing, deep diagnosis, GitH
 | Independent Happier session creation and monitoring | `skills/happier-session-control` |
 | Approved source correction | `skills/happier-implement` |
 | Correction availability across source, dev, preview, and stable | release workflows through `scripts/pipeline/github/reconcile-issue-stage.mjs` |
+| Whose response or action is currently required | `.github/workflows/issue-needs-handoff.yml` through `scripts/pipeline/github/reconcile-issue-needs.mjs` |
 
 The maintainer CLI deliberately does not own an `issue triage` reviewer, prompt generator, classifier, or coding-agent assignment command. Skills are the diagnosis doctrine; maintainer tooling is bounded evidence and reproduction transport.
 
@@ -64,7 +65,76 @@ This also covers a channel bypass: a preview release can move a still-`stage:sou
 
 The workflow's job-scoped token is a narrow exception to the ordinary interactive two-phase GitHub mutation approval rule. The exception covers only these forward, pre-bound stage transitions after the owning release verifier succeeds. Interactive agents and maintainers still use `skills/happier-github-ops` and preview every other mutation.
 
+## Issue handoff and saved replies
+
+Use at most one `needs:*` label to show whose response or action can move an open issue forward:
+
+- `needs:maintainer`: project review, diagnosis, implementation, release follow-up, or another maintainer decision is required;
+- `needs:reporter`: the project asked an external participant for information or confirmation and cannot make useful progress without their response.
+
+These labels describe conversational ownership, not diagnosis, priority, roadmap intent, or fix availability. They are mutually exclusive and independent of `type:*`, `priority:*`, the release milestone, and `stage:*`. In particular, do not replace `needs:*` with a stage label when a correction exists: an issue can be available in source while still awaiting reporter confirmation or maintainer release follow-up.
+
+The issue handoff workflow performs only three pre-authorized transitions:
+
+1. a newly opened or reopened issue becomes `needs:maintainer`;
+2. when an external human comments on an open `needs:reporter` issue, it becomes `needs:maintainer`;
+3. a project-side commenter with `admin`, `maintain`, `write`, or `triage` permission may apply the exact allowlisted hidden directives below.
+
+Bots and GitHub Apps do not trigger the external-response transition. Any external human response wakes the maintainer queue; the workflow does not decide that the answer is complete or correct. An external comment on an issue that was not waiting on a reporter changes nothing. A normal maintainer comment also changes nothing unless it contains directives. The workflow preserves unrelated labels, validates every requested label against the live repository label list, never comments, and never closes, reopens, assigns, or edits an issue.
+
+GitHub saved replies can combine editable prose with exact standalone directives. `%cursor%` is GitHub's saved-reply cursor placeholder; replace it with the human response before posting.
+
+Request information and hand the issue to the reporter:
+
+```markdown
+%cursor%
+
+<!-- happier-label:add=needs:reporter -->
+<!-- happier-label:remove=needs:maintainer -->
+```
+
+Return an issue to the maintainer queue manually:
+
+```markdown
+%cursor%
+
+<!-- happier-label:add=needs:maintainer -->
+<!-- happier-label:remove=needs:reporter -->
+```
+
+Clear either handoff state without choosing a new owner:
+
+```markdown
+%cursor%
+
+<!-- happier-label:remove=needs:maintainer -->
+<!-- happier-label:remove=needs:reporter -->
+```
+
+The directive form is generic:
+
+```markdown
+<!-- happier-label:add=type: bug -->
+<!-- happier-label:remove=type: feature -->
+```
+
+The initial allowlist is deliberately limited to `needs:*`, `type:*`, and `priority:*`. The workflow rejects malformed directives, a label requested for both addition and removal, a result containing both `needs:*` labels, labels absent from the live repository, and protected families such as `stage:*`, `source:*`, `roadmap`, `ai-triage`, milestones, assignments, and disposition labels. Add and remove operations are incremental and idempotent; the workflow never replaces the complete label set.
+
+Agent-authored comments continue to use the ordinary exact mutation preview and should propose the `needs:*` label change separately from the public text. Hidden directives are primarily a manual saved-reply affordance, and they must not be appended after an agent comment's final `cc: @<local-gh-login>` line.
+
+The workflow's job-scoped token is a second narrow exception to the interactive two-phase approval rule. It authorizes only the three transitions above. Editing this policy or broadening its allowlist is a production behavior change and requires the normal repository review and test gates.
+
+## Milestones and release intent
+
+Use the `v0.3` milestone for issues intentionally targeted to the 0.3 release/roadmap outcome. A milestone expresses planning intent and scope; it is not proof that a correction exists, has merged, or has reached any channel. Do not create `roadmap:0.3` or `release:0.3` labels for the same fact. Keep the milestone until the project deliberately retargets or removes the issue, and let `stage:*` independently record verified availability as the implementation moves through source, dev, preview, and stable.
+
 ## Reporter response and closure
+
+Respond as a grateful project collaborator, not a status bot. If the thread does not already contain a project thank-you, thank the author naturally for taking the time to report the issue. When a report or comment contributed a useful reproduction detail, diagnostic insight, or fix direction, name that contribution and how it helped. Do not repeat a ceremonial thank-you in every update, and do not let appreciation imply that an unverified diagnosis has been accepted.
+
+Every agent-authored public issue comment ends with a standalone `cc: @<local-gh-login>` line. Resolve that login immediately before the mutation preview with the machine's ordinary authenticated `gh` account (`gh api user --jq .login`), never with bot-authenticated `yarn ghops`. `ghops` remains the transport for issue reads and approved writes; it is not the maintainer identity to mention. Do not hardcode a username or substitute the repository owner, operating-system user, Git author, or bot. If the local login cannot be resolved, ask the user to authenticate or explicitly supply the mention target before previewing the comment.
+
+The direct mention keeps the local maintainer participating in the conversation and must be part of the complete comment shown in the exact GitHub mutation preview. Do not infer that an earlier mention or subscription makes the line optional. After approval, use the exact approved handle rather than resolving it again; an identity change requires a revised preview. This does not apply to issue bodies or the release workflows' label-only reconciliation.
 
 Base the public response on the reporter's stated channel and the relevant component versions:
 
