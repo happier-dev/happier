@@ -105,7 +105,7 @@ describe('authGetToken key-challenge gate', () => {
         });
     });
 
-    it('does not promote unknown or non-JSON response bodies to typed auth codes', async () => {
+    it('does not promote unknown response codes to typed auth codes', async () => {
         mocks.serverFetch
             .mockResolvedValueOnce(
                 jsonResponse({
@@ -125,9 +125,9 @@ describe('authGetToken key-challenge gate', () => {
 
         expect(unknownCodeFailure).toBeInstanceOf(HappyError);
         expect(unknownCodeFailure).toMatchObject({ code: undefined, kind: 'auth', status: 403 });
+    });
 
-        resetServerFeaturesClientForTests();
-        mocks.serverFetch.mockReset();
+    it('keeps a non-JSON server failure retryable without inventing an auth code', async () => {
         mocks.serverFetch
             .mockResolvedValueOnce(
                 jsonResponse({
@@ -146,6 +146,11 @@ describe('authGetToken key-challenge gate', () => {
         );
 
         expect(nonJsonFailure).toBeInstanceOf(HappyError);
-        expect(nonJsonFailure).toMatchObject({ code: undefined, kind: 'server', status: 500 });
+        expect(nonJsonFailure).toMatchObject({
+            canTryAgain: true,
+            code: undefined,
+            kind: 'server',
+            status: 500,
+        });
     });
 });

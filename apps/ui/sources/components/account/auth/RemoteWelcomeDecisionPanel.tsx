@@ -297,7 +297,7 @@ export function RemoteWelcomeDecisionPanel(props: RemoteWelcomeDecisionPanelProp
                             ? t('welcome.serverIncompatibleTitle')
                             : t('welcome.serverUnavailableTitle')}
                     </Text>
-                    <Text style={styles.serverUnavailableBody}>
+                    <Text style={styles.serverStatusBody}>
                         {options.serverAvailability === 'incompatible'
                             ? t('welcome.serverIncompatibleBody', { serverUrl: options.serverUrlForCopy })
                             : t('welcome.serverUnavailableBody', { serverUrl: options.serverUrlForCopy })}
@@ -356,7 +356,7 @@ export function RemoteWelcomeDecisionPanel(props: RemoteWelcomeDecisionPanelProp
                 </View>
             ) : null}
             {options.showAuthActions && options.primaryAction === null ? (
-                <Text testID="welcome-signup-disabled" style={styles.signupDisabledNotice}>
+                <Text testID="welcome-signup-disabled" style={[styles.serverStatusBody, styles.signupDisabledNotice]}>
                     {t('errors.signupDisabled')}
                 </Text>
             ) : null}
@@ -549,7 +549,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         textAlign: 'center',
         marginBottom: 8,
     },
-    serverUnavailableBody: {
+    serverStatusBody: {
         ...Typography.default(),
         fontSize: 14,
         color: theme.colors.text.secondary,
@@ -571,12 +571,8 @@ const stylesheet = StyleSheet.create((theme) => ({
         marginTop: 10,
     },
     signupDisabledNotice: {
-        ...Typography.default(),
         width: '100%',
         maxWidth: 520,
-        fontSize: 14,
-        lineHeight: 20,
-        color: theme.colors.text.secondary,
         textAlign: 'left',
     },
     actionStack: {
