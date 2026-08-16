@@ -6,7 +6,6 @@ import {
   resolveRuntimeEntrypoint,
   resolveValidRuntimeEntrypoint,
 } from './_resolveRuntimeEntrypoint.mjs';
-import { withOptionalCliSharedDepsBuildLock } from '../scripts/optionalWorkspaceBundleLock.mjs';
 
 function resolveLocalRepoRoot(projectRoot) {
   const root = String(projectRoot ?? '').trim();
@@ -60,6 +59,11 @@ export async function prepareRuntimeEntrypoint(projectRoot, relativePath, opts =
     return readyEntrypoint;
   }
 
+  // Load the build lock lazily: this module sits on every `happier` launcher
+  // invocation, and the lock helper's module resolves @happier-dev/cli-common,
+  // which bare dependency-preflight sandboxes deliberately do not provide. Only
+  // the cold-build path below needs the lock; ready entrypoints return above.
+  const { withOptionalCliSharedDepsBuildLock } = await import('../scripts/optionalWorkspaceBundleLock.mjs');
   return await withOptionalCliSharedDepsBuildLock(async ({ heldLockValue }) => {
     // A writer may have completed while this cold reader waited for the build lock.
     const concurrentlyBuiltEntrypoint = resolveValidRuntimeEntrypoint(projectRoot, relativePath);
