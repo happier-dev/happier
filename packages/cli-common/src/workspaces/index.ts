@@ -1,6 +1,6 @@
-import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
-import { basename, dirname, resolve } from 'node:path';
+import { basename, dirname, relative, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 export function findRepoRoot(startDir: string): string {
@@ -394,6 +394,7 @@ export function bundleWorkspacePackageWithRuntimeDependencies(params: Readonly<{
   destDir: string;
   includeFiles?: string[];
   resolveFromPackageJsonPath?: string;
+  excludePackageNames?: ReadonlySet<string>;
 }>): void {
   const packageDetails = readWorkspacePackageDetails(params);
 
@@ -411,6 +412,7 @@ export function bundleWorkspacePackageWithRuntimeDependencies(params: Readonly<{
         packageJsonPath: packageDetails.srcPackageJsonPath,
         resolveFromPackageJsonPath: params.resolveFromPackageJsonPath,
         destNodeModulesDir: resolve(tempDir, 'node_modules'),
+        excludePackageNames: params.excludePackageNames,
       });
     },
   });
@@ -540,21 +542,69 @@ function resolveInstalledPackage(params: Readonly<{ require: NodeRequire; packag
   throw new Error(`Failed to locate installed package.json for ${params.packageName} (resolved: ${resolvedEntry})`);
 }
 
+// name@version alone doesn't prove two resolved package directories are actually identical --
+// different resolution paths could in principle land on different builds/patches published under
+// the same version string. Before symlinking one onto the other, verify the two trees have the
+// same relative file paths and byte sizes. This is not a full content hash (that would defeat much
+// of the point of skipping a redundant copy for large trees), but it catches the realistic failure
+// mode of the two directories actually differing while remaining cheap.
+function collectRelativeFileSizes(rootDir: string): Map<string, number> {
+  const result = new Map<string, number>();
+  const stack: string[] = [rootDir];
+  while (stack.length > 0) {
+    const dir = stack.pop();
+    if (!dir) continue;
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const entryPath = resolve(dir, entry.name);
+      if (entry.isDirectory()) {
+        stack.push(entryPath);
+        continue;
+      }
+      if (!entry.isFile() && !entry.isSymbolicLink()) continue;
+      // A dangling symlink must not abort vendoring here. Record NaN as a sentinel so this entry
+      // always compares as a mismatch (NaN !== NaN) -- the pair conservatively falls through to a
+      // normal copy instead of throwing.
+      let size: number;
+      try {
+        size = statSync(entryPath).size;
+      } catch {
+        size = Number.NaN;
+      }
+      result.set(relative(rootDir, entryPath), size);
+    }
+  }
+  return result;
+}
+
+function areDirectoryTreesEquivalent(dirA: string, dirB: string): boolean {
+  const filesA = collectRelativeFileSizes(dirA);
+  const filesB = collectRelativeFileSizes(dirB);
+  if (filesA.size !== filesB.size) return false;
+  for (const [relPath, size] of filesA) {
+    if (filesB.get(relPath) !== size) return false;
+  }
+  return true;
+}
+
 function vendorRuntimeDependencyTree(params: Readonly<{
   packageJsonPath: string;
   resolveFromPackageJsonPath?: string;
   destNodeModulesDir: string;
   visited?: Set<string>;
+  dedupeByNameVersion?: Map<string, string>;
+  excludePackageNames?: ReadonlySet<string>;
 }>): void {
   const pkgJson = readJson(params.packageJsonPath);
-  const roots = collectExternalRuntimeDepNamesFromPackageJson(pkgJson);
+  const roots = collectExternalRuntimeDepNamesFromPackageJson(pkgJson)
+    .filter((dep) => !params.excludePackageNames?.has(dep.name));
   const require = createRequire(pathToFileURL(params.resolveFromPackageJsonPath ?? params.packageJsonPath).href);
 
   const visited = params.visited ?? new Set<string>();
+  const dedupeByNameVersion = params.dedupeByNameVersion ?? new Map<string, string>();
   mkdirSync(params.destNodeModulesDir, { recursive: true });
 
   for (const dep of roots) {
-    let resolved: Readonly<{ packageDir: string; packageJsonPath: string }>;
+    let resolved: Readonly<{ packageDir: string; packageJsonPath: string; packageJson: any }>;
     try {
       resolved = resolveInstalledPackage({ require, packageName: dep.name });
     } catch (error) {
@@ -566,13 +616,51 @@ function vendorRuntimeDependencyTree(params: Readonly<{
     if (visited.has(depDestDir)) continue;
     visited.add(depDestDir);
 
+    const version = typeof resolved.packageJson?.version === 'string' ? resolved.packageJson.version : undefined;
+    const dedupeKey = version ? `${dep.name}@${version}` : undefined;
+    const existingDedupePath = dedupeKey ? dedupeByNameVersion.get(dedupeKey) : undefined;
+
+    // name@version alone doesn't prove the two resolved package directories are actually
+    // identical (see areDirectoryTreesEquivalent above) -- verify before deduping. If they differ,
+    // fall through to a normal copy rather than symlinking to the wrong content.
+    if (existingDedupePath && areDirectoryTreesEquivalent(resolved.packageDir, existingDedupePath)) {
+      // Already vendored elsewhere in this same tree at the identical name+version, with verified
+      // matching content. Symlink to the surviving copy instead of copying again -- behaviorally
+      // identical for any consumer (including one that reads from disk directly). Skip recursing
+      // into its subtree: those deps were already vendored under the first copy.
+      //
+      // Use a relative link target: both paths currently live inside the same not-yet-renamed
+      // atomic-build staging tree, and the whole tree (staging dir and all its contents, symlink
+      // included) gets renamed as one unit into its final place. An absolute target captured now
+      // would point at the staging path and dangle once that rename happens; a relative target
+      // survives the rename because the relationship between the two paths doesn't change.
+      rmDirSafeSync(depDestDir);
+      mkdirSync(dirname(depDestDir), { recursive: true });
+      try {
+        symlinkSync(relative(dirname(depDestDir), existingDedupePath), depDestDir, 'dir');
+      } catch (error) {
+        // Directory symlinks require elevated privileges or Developer Mode on Windows and can
+        // throw EPERM on an ordinary build host. Fall back to a real copy -- larger on disk than
+        // a symlink, but still avoids re-vendoring this dependency's own transitive tree (we still
+        // skip the recursive vendorRuntimeDependencyTree call below), and behaves identically for
+        // any consumer.
+        const code = error && typeof error === 'object' && 'code' in error ? String(Reflect.get(error, 'code')) : '';
+        if (code !== 'EPERM' && code !== 'ENOSYS' && code !== 'EACCES') throw error;
+        copyDirSafeSync(existingDedupePath, depDestDir, { dereference: true });
+      }
+      continue;
+    }
+
     resetDir(depDestDir);
     copyDirSafeSync(resolved.packageDir, depDestDir, { dereference: true });
+    if (dedupeKey && !existingDedupePath) dedupeByNameVersion.set(dedupeKey, depDestDir);
 
     vendorRuntimeDependencyTree({
       packageJsonPath: resolved.packageJsonPath,
       destNodeModulesDir: resolve(depDestDir, 'node_modules'),
       visited,
+      dedupeByNameVersion,
+      excludePackageNames: params.excludePackageNames,
     });
   }
 }
@@ -581,6 +669,7 @@ export function vendorBundledPackageRuntimeDependencies(params: Readonly<{
   srcPackageJsonPath: string;
   resolveFromPackageJsonPath?: string;
   destPackageDir: string;
+  excludePackageNames?: ReadonlySet<string>;
 }>): void {
   if (!existsSync(params.srcPackageJsonPath)) {
     throw new Error(`Missing package.json: ${params.srcPackageJsonPath}`);
@@ -602,6 +691,7 @@ export function vendorBundledPackageRuntimeDependencies(params: Readonly<{
         packageJsonPath: params.srcPackageJsonPath,
         resolveFromPackageJsonPath: params.resolveFromPackageJsonPath,
         destNodeModulesDir: tempNodeModulesDir,
+        excludePackageNames: params.excludePackageNames,
       });
     },
   });

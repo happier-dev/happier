@@ -42,6 +42,68 @@ const CLI_RUNTIME_EXTERNAL_PACKAGES = [
   '@homebridge/node-pty-prebuilt-multiarch',
 ] as const;
 
+// Bun's `--compile` tree-shakes apps/cli's own source into the compiled binary (confirmed via
+// `strings` on the real shipped binary: reachable files carry provenance comments, unreachable
+// ones don't), so any statically-imported, non-external dependency reachable from that source is
+// already embedded in the executable. These declared apps/cli dependencies were audited (see
+// investigate/compiled-in-vs-vendored-audit) and confirmed to have no runtime code path --
+// bin/*.mjs entrypoint, scripts/*.cjs sidecar, or dynamic require()/import() with a non-static
+// path -- that reads them from an on-disk node_modules copy. Vendoring a duplicate loose copy of
+// these onto disk alongside the compiled binary is therefore pure waste.
+//
+// This exclusion is scoped to the compiled CLI binary payload only (copyCliNodeRuntimePayload,
+// below). Other vendorBundledPackageRuntimeDependencies call sites (npm-published tarball builds,
+// apps/stack, packages/relay-server) do not compile their source into a binary and must keep
+// vendoring these packages in full.
+//
+// Keep this list scoped to packages with concrete, checked evidence; when in doubt, leave a
+// package vendored. Notably `sharp` is NOT included here: it does a runtime-constructed
+// `require()` of a platform-specific native `.node` binding, the same reason node-pty is external
+// above, so it must stay vendored on disk.
+// Same rationale and audit trail as CLI_BINARY_PAYLOAD_VENDORING_EXCLUDED_PACKAGES above, but for
+// the runtime dependencies declared by apps/cli's own bundled @happier-dev/* workspace packages
+// (see bundleWorkspacePackageWithRuntimeDependencies below), rather than apps/cli's own
+// dependencies. Confirmed via `strings` on a real compiled binary that these packages' distinctive
+// exports (not just an inert package-name string) are compiled in -- e.g. @happier-dev/protocol's
+// own nested tweetnacl/@noble/hashes/base64-js/zod-to-json-schema copies -- and that no sidecar or
+// dynamic require() reads any of them from disk. See investigate/workspace-bundle-vendoring-audit.
+//
+// Scoped to the compiled CLI binary payload only, same as CLI_BINARY_PAYLOAD_VENDORING_EXCLUDED_PACKAGES.
+const CLI_BINARY_PAYLOAD_WORKSPACE_BUNDLE_VENDORING_EXCLUDED_PACKAGES = new Set<string>([
+  '@noble/hashes',
+  'base64-js',
+  'tweetnacl',
+  'zod-to-json-schema',
+]);
+
+const CLI_BINARY_PAYLOAD_VENDORING_EXCLUDED_PACKAGES = new Set<string>([
+  '@agentclientprotocol/sdk',
+  '@anthropic-ai/claude-agent-sdk',
+  '@modelcontextprotocol/sdk',
+  '@stablelib/hex',
+  'archiver',
+  'axios',
+  'chalk',
+  'cross-spawn',
+  'diff',
+  'expo-server-sdk',
+  'fastify',
+  'fastify-type-provider-zod',
+  'http-proxy',
+  'https-proxy-agent',
+  'ink',
+  'open',
+  'openapi-types',
+  'ps-list',
+  'qrcode-terminal',
+  'react',
+  'react-devtools-core',
+  'socket.io-client',
+  'tar',
+  'tmp',
+  'zod',
+]);
+
 type CliToolUnpackModule = {
   unpackTools?: (options: Readonly<{ platformDir: string; toolsDir: string }>) => Promise<unknown> | unknown;
 };
@@ -117,12 +179,14 @@ async function copyCliNodeRuntimePayload(
   vendorBundledPackageRuntimeDependencies({
     srcPackageJsonPath: join(cliDir, 'package.json'),
     destPackageDir: payloadDir,
+    excludePackageNames: CLI_BINARY_PAYLOAD_VENDORING_EXCLUDED_PACKAGES,
   });
   for (const { packageName, srcDir } of workspaceBundles) {
     bundleWorkspacePackageWithRuntimeDependencies({
       packageName,
       srcDir,
       destDir: join(payloadDir, 'node_modules', ...packageName.split('/')),
+      excludePackageNames: CLI_BINARY_PAYLOAD_WORKSPACE_BUNDLE_VENDORING_EXCLUDED_PACKAGES,
     });
   }
 }

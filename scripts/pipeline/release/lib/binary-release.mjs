@@ -553,7 +553,7 @@ function packageDirMatchesTarget(packageJson, target) {
   return true;
 }
 
-async function sanitizePackagedNodeModulesTree(params) {
+export async function sanitizePackagedNodeModulesTree(params) {
   const stageDir = String(params?.stageDir ?? '').trim();
   if (!stageDir) return;
 
@@ -561,6 +561,7 @@ async function sanitizePackagedNodeModulesTree(params) {
     directoryPath: stageDir,
     target: params.target,
     inNodeModulesTree: false,
+    stageRootDir: stageDir,
   });
 }
 
@@ -568,11 +569,209 @@ function isNestedNodeModulesBinDir(path) {
   return path.includes('/node_modules/.bin') || path.includes('\\node_modules\\.bin');
 }
 
+// Some packages bundle prebuilt native binaries for every supported platform/arch
+// inside their own tree instead of splitting them into per-target
+// optionalDependencies, so package.json os/cpu constraints alone can't prune them.
+// Match known bundle root directories and drop the platform/arch combinations that
+// don't match the packaging target.
+//
+// Two layouts are recognized:
+//  - nested:  <root>/<platform>/<arch>/...            (e.g. onnxruntime-node)
+//  - flat:    <root>/<platform>-<arch>/...             (e.g. node-pty, node-pty-prebuilt-multiarch)
+const NESTED_BUNDLED_NATIVE_PLATFORM_ROOT_DIR_PATTERNS = [
+  // onnxruntime-node: bin/napi-v<N>/<platform>/<arch>/...
+  /\/node_modules\/onnxruntime-node\/bin\/napi-v\d+$/,
+];
+
+const FLAT_BUNDLED_NATIVE_PLATFORM_ROOT_DIR_PATTERNS = [
+  // node-pty, @homebridge/node-pty-prebuilt-multiarch: prebuilds/<platform>-<arch>/...
+  /\/node_modules\/(?:node-pty|@homebridge\/node-pty-prebuilt-multiarch)\/prebuilds$/,
+  // bare-fs, bare-url, bare-os (nested under archiver -> tar-stream): prebuilds/<platform>-<arch>/...
+  /\/node_modules\/bare-(?:fs|url|os)\/prebuilds$/,
+];
+
+// The independent per-package vendoring entry points (vendorBundledPackageRuntimeDependencies
+// for apps/cli's own deps vs. bundleInstalledPackageWithRuntimeDependencies for each
+// CLI_RUNTIME_EXTERNAL_PACKAGES package) don't share a "visited" set with each other, so a
+// transitive dependency already present at the top-level node_modules can also get copied again
+// into a nested package's own node_modules. These nested copies are confirmed exact duplicates
+// (same version, byte-identical trees) of a package already present at the payload's top-level
+// node_modules, so ordinary upward-walking Node/Bun module resolution finds the top-level copy
+// once the nested duplicate is removed. Delete the whole nested directory outright.
+const DUPLICATE_VENDORED_PACKAGE_DIR_PATTERNS = [
+  // tar duplicated inside onnxruntime-node's own node_modules (only used by onnxruntime-node's
+  // postinstall script, which never runs against the shipped prebuilt payload).
+  /\/node_modules\/@huggingface\/transformers\/node_modules\/onnxruntime-node\/node_modules\/tar$/,
+  // @modelcontextprotocol/sdk duplicated inside claude-agent-sdk's own node_modules.
+  /\/node_modules\/@anthropic-ai\/claude-agent-sdk\/node_modules\/@modelcontextprotocol\/sdk$/,
+  // zod duplicated inside @modelcontextprotocol/sdk's, @happier-dev/agents's,
+  // @happier-dev/protocol's, and @happier-dev/protocol's own zod-to-json-schema's node_modules.
+  // Confirmed byte-identical to the top-level zod (same version, apps/cli depends on zod
+  // directly, so a top-level copy is always vendored).
+  /\/node_modules\/@modelcontextprotocol\/sdk\/node_modules\/zod$/,
+  /\/node_modules\/@happier-dev\/agents\/node_modules\/zod$/,
+  /\/node_modules\/@happier-dev\/protocol\/node_modules\/zod$/,
+  /\/node_modules\/@happier-dev\/protocol\/node_modules\/zod-to-json-schema\/node_modules\/zod$/,
+  // NOTE: an "ajv duplicated across fastify/@modelcontextprotocol-sdk" pattern was considered
+  // here but rejected on re-verification: although the 4 copies found are byte-identical to
+  // *each other*, none of them has any surviving ancestor `node_modules/ajv` to fall back to --
+  // there is no top-level ajv in the payload at all, so each copy is the only copy reachable
+  // from its respective dependent and must be kept. Do not add an ajv pattern without a
+  // verified surviving ancestor for every occurrence being removed.
+  // archiver-utils duplicated inside archiver's own zip-stream dependency's node_modules.
+  // Confirmed byte-identical to archiver's own archiver-utils copy. Removing this also removes
+  // its nested lazystream/readable-stream (v2.3.8) subtree as a byproduct, which is fine: that
+  // subtree isn't independently referenced elsewhere.
+  /\/node_modules\/archiver\/node_modules\/zip-stream\/node_modules\/archiver-utils$/,
+  // qs duplicated inside @modelcontextprotocol/sdk's express's own body-parser dependency's
+  // node_modules. Confirmed byte-identical (and same version) to express's own top-level qs
+  // copy, which is resolvable by walking up from body-parser. Apply this before the
+  // get-intrinsic pattern below: it removes most of the get-intrinsic duplication under this
+  // qs copy as a byproduct.
+  /\/node_modules\/@modelcontextprotocol\/sdk\/node_modules\/express\/node_modules\/body-parser\/node_modules\/qs$/,
+  // get-intrinsic duplicated inside a sibling call-bound package's own node_modules. call-bound
+  // itself depends on get-intrinsic, but each of these copies is confirmed byte-identical to
+  // the get-intrinsic already vendored one level up (call-bound's own parent package's
+  // node_modules), which upward-walking resolution finds once the nested copy is removed.
+  /\/node_modules\/call-bound\/node_modules\/get-intrinsic$/,
+  // readable-stream duplicated across archiver's own nested zip-stream/archiver-utils/
+  // compress-commons/crc32-stream dependency chain. All confirmed byte-identical (same v4.7.0)
+  // to archiver's own top-level readable-stream copy, resolvable by walking up once each nested
+  // duplicate is removed (verified via simulated multi-deletion + fresh resolution walk).
+  /\/node_modules\/archiver\/node_modules\/zip-stream\/node_modules\/readable-stream$/,
+  /\/node_modules\/archiver\/node_modules\/archiver-utils\/node_modules\/readable-stream$/,
+  /\/node_modules\/archiver\/node_modules\/zip-stream\/node_modules\/compress-commons\/node_modules\/readable-stream$/,
+  /\/node_modules\/archiver\/node_modules\/zip-stream\/node_modules\/compress-commons\/node_modules\/crc32-stream\/node_modules\/readable-stream$/,
+];
+
+// @modelcontextprotocol/sdk vendors several optional-feature dependencies (HTTP server
+// framework, OAuth helpers) inside its own node_modules that are only required by SDK source
+// files happier never imports (server/express.js, server/auth/router.js,
+// server/auth/handlers/*.js, client/auth-extensions.js) or, for `hono`, only referenced from
+// type-only .d.ts files never executed by @hono/node-server (which IS used and stays). Verified
+// by tracing every require() from happier's actual reachable SDK entry points (server/mcp.js,
+// server/stdio.js, server/streamableHttp.js, client/*.js) and cross-checking against `strings`
+// on the compiled darwin-arm64 binary, which shows zero occurrences of these package names
+// despite the surrounding SDK source being compiled in directly. Do NOT extend this list to
+// cover first-party SDK source under dist/{cjs,esm}/server/auth -- server/auth/errors.js is on
+// the reachable path (via client/auth.js) and must not be deleted.
+const UNUSED_VENDORED_MCP_SDK_DEPENDENCY_DIR_PATTERNS = [
+  /\/node_modules\/@modelcontextprotocol\/sdk\/node_modules\/express$/,
+  /\/node_modules\/@modelcontextprotocol\/sdk\/node_modules\/express-rate-limit$/,
+  /\/node_modules\/@modelcontextprotocol\/sdk\/node_modules\/cors$/,
+  /\/node_modules\/@modelcontextprotocol\/sdk\/node_modules\/jose$/,
+  /\/node_modules\/@modelcontextprotocol\/sdk\/node_modules\/hono$/,
+];
+
+function matchesAnyPattern(path, patterns) {
+  const normalized = path.replaceAll('\\', '/');
+  return patterns.some((pattern) => pattern.test(normalized));
+}
+
+async function pruneNestedBundledNativePlatformRootDir(params) {
+  const targetNodePlatform = resolveTargetNodePlatform(params.target);
+  const targetArch = String(params.target?.arch ?? '').trim().toLowerCase();
+  const entries = await readdir(params.directoryPath, { withFileTypes: true }).catch(() => []);
+
+  for (const entry of entries) {
+    const childPath = join(params.directoryPath, entry.name);
+
+    if (!entry.isDirectory() || entry.name.toLowerCase() !== targetNodePlatform) {
+      await rm(childPath, { recursive: true, force: true });
+      continue;
+    }
+
+    const archEntries = await readdir(childPath, { withFileTypes: true }).catch(() => []);
+    for (const archEntry of archEntries) {
+      if (archEntry.isDirectory() && archEntry.name.toLowerCase() !== targetArch) {
+        await rm(join(childPath, archEntry.name), { recursive: true, force: true });
+      }
+    }
+  }
+}
+
+async function pruneFlatBundledNativePlatformRootDir(params) {
+  const targetNodePlatform = resolveTargetNodePlatform(params.target);
+  const targetArch = String(params.target?.arch ?? '').trim().toLowerCase();
+  const targetDirName = `${targetNodePlatform}-${targetArch}`;
+  const entries = await readdir(params.directoryPath, { withFileTypes: true }).catch(() => []);
+
+  for (const entry of entries) {
+    if (!entry.isDirectory() || entry.name.toLowerCase() !== targetDirName) {
+      await rm(join(params.directoryPath, entry.name), { recursive: true, force: true });
+    }
+  }
+}
+
+// Some vendored packages ship a dist/ with build outputs for every consumer (browser, CJS,
+// minified, ...) even though this payload -- a Bun/Node-only CLI, never a browser or a require()
+// consumer -- only ever reaches one of them via the package's own package.json `exports` map.
+// Match the package's dist/ root and keep only the listed files (relative to that dist/ dir);
+// everything else in the directory (recursively) is deleted.
+//
+// @huggingface/transformers: its package.json `exports.node.import.default` points at
+// dist/transformers.node.mjs, which is exactly what createLocalTransformersEmbeddingsProvider.ts's
+// `await import('@huggingface/transformers')` resolves to on Node/Bun (confirmed: its own error
+// handling explicitly checks for this filename). The other dist/ entries (transformers.js/.min.js,
+// transformers.web.js/.min.js, transformers.node.cjs/.min.cjs/.min.mjs, and their .map files) are
+// for browser and CommonJS require() consumers this payload never becomes. The bundled
+// ort-wasm-simd-threaded.jsep.{mjs,wasm} pair is onnxruntime-web's browser-only WASM backend --
+// the node build imports onnxruntime-node (native binding) instead, confirmed by
+// transformers.node.mjs's own bundler comments ("onnxruntime-web (ignored)" in the node build).
+const DIST_ROOT_KEEP_FILE_ALLOWLIST = [
+  {
+    dirPattern: /\/node_modules\/@huggingface\/transformers\/dist$/,
+    keepFileNames: new Set(['transformers.node.mjs', 'transformers.node.mjs.map']),
+  },
+];
+
+async function pruneDistRootToAllowlist(params) {
+  const entries = await readdir(params.directoryPath, { withFileTypes: true }).catch(() => []);
+
+  for (const entry of entries) {
+    if (!params.keepFileNames.has(entry.name)) {
+      await rm(join(params.directoryPath, entry.name), { recursive: true, force: true });
+    }
+  }
+}
+
+async function prunePackageDistDualFormatDir(params) {
+  const entries = await readdir(params.directoryPath, { withFileTypes: true }).catch(() => []);
+
+  for (const entry of entries) {
+    const childPath = join(params.directoryPath, entry.name);
+    if (entry.isDirectory()) {
+      await prunePackageDistDualFormatDir({ directoryPath: childPath });
+      continue;
+    }
+    if (
+      entry.isFile() &&
+      (entry.name.endsWith('.cjs') || entry.name.endsWith('.d.mts') || entry.name.endsWith('.d.cts'))
+    ) {
+      await rm(childPath, { force: true });
+    }
+  }
+}
+
+// ps-list bundles Windows-only fastlist helper binaries unconditionally (no os/cpu
+// package.json gating), so they should be stripped whenever the packaging target
+// isn't Windows.
+const WINDOWS_ONLY_VENDOR_EXECUTABLE_PATTERNS = [
+  /\/node_modules\/ps-list\/vendor\/.*\.exe$/i,
+];
+
 async function prunePackagedTreeDirectory(params) {
   const entries = await readdir(params.directoryPath, { withFileTypes: true }).catch(() => []);
 
   for (const entry of entries) {
     if (!entry.isDirectory()) {
+      const childPath = join(params.directoryPath, entry.name);
+      if (
+        params.target?.os !== 'windows' &&
+        matchesAnyPattern(childPath, WINDOWS_ONLY_VENDOR_EXECUTABLE_PATTERNS)
+      ) {
+        await rm(childPath, { force: true });
+      }
       continue;
     }
 
@@ -582,6 +781,19 @@ async function prunePackagedTreeDirectory(params) {
     if (entry.name === '.bin' && childInNodeModulesTree && isNestedNodeModulesBinDir(childPath)) {
       await rm(childPath, { recursive: true, force: true });
       continue;
+    }
+
+    if (entry.name === 'package-dist' && params.directoryPath === params.stageRootDir) {
+      await prunePackageDistDualFormatDir({ directoryPath: childPath });
+      continue;
+    }
+
+    {
+      const distAllowlist = DIST_ROOT_KEEP_FILE_ALLOWLIST.find((entry_) => entry_.dirPattern.test(childPath.replaceAll('\\', '/')));
+      if (distAllowlist) {
+        await pruneDistRootToAllowlist({ directoryPath: childPath, keepFileNames: distAllowlist.keepFileNames });
+        continue;
+      }
     }
 
     if (childInNodeModulesTree) {
@@ -595,10 +807,31 @@ async function prunePackagedTreeDirectory(params) {
       }
     }
 
+    if (matchesAnyPattern(childPath, NESTED_BUNDLED_NATIVE_PLATFORM_ROOT_DIR_PATTERNS)) {
+      await pruneNestedBundledNativePlatformRootDir({ directoryPath: childPath, target: params.target });
+      continue;
+    }
+
+    if (matchesAnyPattern(childPath, FLAT_BUNDLED_NATIVE_PLATFORM_ROOT_DIR_PATTERNS)) {
+      await pruneFlatBundledNativePlatformRootDir({ directoryPath: childPath, target: params.target });
+      continue;
+    }
+
+    if (matchesAnyPattern(childPath, DUPLICATE_VENDORED_PACKAGE_DIR_PATTERNS)) {
+      await rm(childPath, { recursive: true, force: true });
+      continue;
+    }
+
+    if (matchesAnyPattern(childPath, UNUSED_VENDORED_MCP_SDK_DEPENDENCY_DIR_PATTERNS)) {
+      await rm(childPath, { recursive: true, force: true });
+      continue;
+    }
+
     await prunePackagedTreeDirectory({
       directoryPath: childPath,
       target: params.target,
       inNodeModulesTree: childInNodeModulesTree,
+      stageRootDir: params.stageRootDir,
     });
   }
 }
