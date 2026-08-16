@@ -26,6 +26,7 @@ export type DeferredApiSessionTarget = Readonly<{
   hasRuntimeTerminationStarted?: () => boolean;
   sendSessionEvent: (event: unknown, id?: string) => void;
   sendClaudeSessionMessage: (message: unknown, meta?: unknown) => void;
+  sendClaudeSessionMessageCommittedExact?: (message: unknown, meta?: Record<string, unknown>) => Promise<void>;
   recordClaudeJsonlMessageConsumed?: (message: unknown, meta?: unknown) => void;
   setProviderOwnedUserMessageEchoClassifier?: (classifier: ProviderOwnedUserMessageEchoClassifier | null) => void;
   fetchCommittedClaudeJsonlMessageBaseline?: (opts?: { take?: number }) => Promise<import('@/backends/claude/utils/claudeJsonlMessageKey').CommittedClaudeJsonlMessageBaseline>;
@@ -195,6 +196,19 @@ export class DeferredApiSessionClient {
       return;
     }
     this.pushBufferedCall((t) => t.sendClaudeSessionMessage(_message, _meta), { hint: 'sendClaudeSessionMessage' });
+  }
+
+  sendClaudeSessionMessageCommittedExact(
+    _message: unknown,
+    _meta?: Record<string, unknown>,
+  ): Promise<void> {
+    return this.forwardCommittedCall(async (target) => {
+      const commit = target.sendClaudeSessionMessageCommittedExact;
+      if (!commit) {
+        throw new Error('Attached session client does not support exact Claude transcript commits');
+      }
+      await commit.call(target, _message, _meta);
+    }, 'sendClaudeSessionMessageCommittedExact');
   }
 
   hasActiveCanonicalTurn(): boolean {

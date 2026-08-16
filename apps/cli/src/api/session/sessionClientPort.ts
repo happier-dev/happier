@@ -68,6 +68,10 @@ export interface SessionClientPort {
 
   sendSessionEvent(event: SessionEventMessage, id?: string): void;
   sendClaudeSessionMessage(message: RawJSONLines, meta?: Record<string, unknown>): void;
+  sendClaudeSessionMessageCommittedExact?(
+    message: RawJSONLines,
+    meta?: Record<string, unknown>,
+  ): Promise<void>;
   sendClaudeSessionMessageCommitted?(
     message: RawJSONLines,
     opts: Readonly<{

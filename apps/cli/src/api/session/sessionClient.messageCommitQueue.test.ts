@@ -460,6 +460,48 @@ describe('ApiSessionClient message commit queue', () => {
     expect(client.getCommittedUserMessageSeq('prompt-1')).toBe(42);
   });
 
+  it('awaits the exact Claude transcript commit before releasing its caller', async () => {
+    vi.resetModules();
+    supervisorStartCount = 0;
+    const messageAck = createDeferred<Ack>();
+    let messagePayload: any = null;
+    sessionSocketStub = createApiSessionSocketStub({
+      connected: true,
+      emitWithAck: async (event: string, payload: any) => {
+        if (event === 'message') {
+          messagePayload = payload;
+          return await messageAck.promise;
+        }
+        return { ok: true };
+      },
+    });
+    userSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true } });
+
+    const { ApiSessionClient } = await import('./sessionClient');
+    const client = new ApiSessionClient('tok', createPlainSessionFixture({ id: 's1' }));
+    let didCommit = false;
+    const commit = client.sendClaudeSessionMessageCommittedExact({
+      type: 'assistant',
+      uuid: 'assistant-parent-1',
+      message: { role: 'assistant', content: [{ type: 'text', text: 'parent row' }] },
+    } as any).then(() => {
+      didCommit = true;
+    });
+
+    await vi.waitFor(() => expect(messagePayload).not.toBeNull());
+    expect(didCommit).toBe(false);
+    messageAck.resolve({
+      ok: true,
+      id: 'message-parent-1',
+      seq: 42,
+      localId: messagePayload.localId,
+      didWrite: true,
+    });
+    await commit;
+    expect(didCommit).toBe(true);
+    await client.close();
+  });
+
   it('awaits caller-identified Codex transcript custody and reports an idempotent duplicate', async () => {
     vi.resetModules();
     supervisorStartCount = 0;

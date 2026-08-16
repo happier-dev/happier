@@ -3905,6 +3905,45 @@ export class ApiSessionClient extends EventEmitter {
         this.applyClaudeSessionMessageAuxiliaryEffects(body);
     }
 
+    async sendClaudeSessionMessageCommittedExact(
+        body: RawJSONLines,
+        meta?: Record<string, unknown>,
+    ): Promise<void> {
+        if (isToolTraceEnabled()) {
+            recordClaudeToolTraceEvents({ sessionId: this.sessionId, body });
+        }
+        const { content, localId, sidechainId } = this.prepareClaudeSessionMessage(body, meta);
+        requireExactCommitLocalId(localId);
+
+        this.logSendWhileDisconnected('Claude session message', { type: body.type });
+        const commitResult = await this.enqueueMessageCommit('required', {
+            operation: 'claude-message-exact-commit',
+            details: {
+                localId,
+                messageType: body.type,
+                requireCommit: true,
+                connectionEpoch: this.userSocketSettingsConnectionEpoch,
+            },
+        }, () =>
+            this.commitSessionMessage({
+                message: this.buildOutboundSessionMessagePayload(content),
+                localId,
+                sidechainId,
+                messageRole: resolveClaudeSessionMessageRole(body),
+                requireCommit: true,
+                requireWriteDisposition: true,
+            }),
+        );
+        this.observeTurnAssistantTextFromSessionContent(content, {
+            source: 'committed',
+            seq: commitResult?.seq ?? null,
+            localId,
+            sidechainId,
+            provider: 'claude',
+        });
+        this.applyClaudeSessionMessageAuxiliaryEffects(body);
+    }
+
     async sendClaudeSessionMessageCommitted(
         body: RawJSONLines,
         opts: Readonly<{

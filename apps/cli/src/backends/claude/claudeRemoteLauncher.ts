@@ -556,7 +556,13 @@ export async function claudeRemoteLauncher(
 
     // Create outgoing message queue
     const messageQueue = new OutgoingMessageQueue(
-        (logMessage, meta) => session.client.sendClaudeSessionMessage(logMessage, meta)
+        async (logMessage, meta) => {
+            const commit = session.client.sendClaudeSessionMessageCommittedExact;
+            if (!commit) {
+                throw new Error('Claude transcript ordering requires exact session message commits');
+            }
+            await commit.call(session.client, logMessage, meta);
+        },
     );
 
     const streamedTranscriptWriter: StreamedTranscriptWriter = createStreamedTranscriptWriter({

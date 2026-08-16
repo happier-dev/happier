@@ -21,6 +21,35 @@ function createMetadataStub(overrides?: Partial<Metadata>): Metadata {
 }
 
 describe('DeferredApiSessionClient', () => {
+  it('buffers exact Claude transcript commits until the real session client attaches', async () => {
+    const deferred = new DeferredApiSessionClient({
+      placeholderSessionId: 'PID-claude-exact-commit',
+      limits: { maxEntries: 10, maxBytes: 10_000 },
+    });
+    const commit = vi.fn(async () => {});
+    let settled = false;
+    const pending = deferred.sendClaudeSessionMessageCommittedExact(
+      { type: 'assistant', uuid: 'assistant-parent' },
+      { importedFrom: 'live' },
+    ).then(() => {
+      settled = true;
+    });
+    await Promise.resolve();
+    expect(settled).toBe(false);
+
+    await deferred.attach({
+      sessionId: 'session-claude-exact-commit',
+      rpcHandlerManager: { registerHandler: vi.fn(), invokeLocal: vi.fn(async () => ({})) },
+      sendClaudeSessionMessageCommittedExact: commit,
+    } as unknown as DeferredApiSessionTarget);
+
+    await pending;
+    expect(commit).toHaveBeenCalledExactlyOnceWith(
+      { type: 'assistant', uuid: 'assistant-parent' },
+      { importedFrom: 'live' },
+    );
+  });
+
   it('returns and exactly replays a typed non-success when a pre-attach Claude enqueue overflows', async () => {
     const deferred = new DeferredApiSessionClient({
       placeholderSessionId: 'PID-overflow-enqueue',

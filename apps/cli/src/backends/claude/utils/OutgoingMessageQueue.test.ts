@@ -23,6 +23,31 @@ describe('OutgoingMessageQueue', () => {
     );
   });
 
+  it('does not finish a turn flush until every released message is committed', async () => {
+    let releaseCommit!: () => void;
+    const commit = new Promise<void>((resolve) => {
+      releaseCommit = resolve;
+    });
+    let didStartCommit = false;
+    const queue = new OutgoingMessageQueue(async () => {
+      didStartCommit = true;
+      await commit;
+    });
+    queue.enqueue({ type: 'assistant', message: { role: 'assistant', content: 'parent row' } });
+    await vi.waitFor(() => expect(didStartCommit).toBe(true));
+
+    let didFlush = false;
+    const flush = queue.flush().then(() => {
+      didFlush = true;
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    expect(didFlush).toBe(false);
+    releaseCommit();
+    await flush;
+    expect(didFlush).toBe(true);
+  });
+
   it('does not send messages behind an unreleased delayed head item (head-of-line blocking)', async () => {
     vi.useFakeTimers();
     const send = vi.fn();
