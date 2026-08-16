@@ -361,7 +361,7 @@ describe('claude endpoint recovery respawn options', () => {
     }));
   });
 
-  it('parks dead legacy attachment recovery without inferred destruction', async () => {
+  it('retires a dead legacy attachment without inferring destructive ownership', async () => {
     const removeTerminalAttachmentInfo = vi.fn(async () => true);
     const adapter: TerminalHostAdapter = {
       kind: 'tmux',
@@ -388,7 +388,11 @@ describe('claude endpoint recovery respawn options', () => {
     })).resolves.toBe(defaultOptions);
 
     expect(adapter.dispose).not.toHaveBeenCalled();
-    expect(removeTerminalAttachmentInfo).not.toHaveBeenCalled();
+    expect(removeTerminalAttachmentInfo).toHaveBeenCalledWith({
+      happyHomeDir: '/tmp/happy',
+      sessionId: 'sess-claude',
+      expectedLegacyAttachment: attachment,
+    });
   });
 
   it('uses the released v1 Zellij writer socket root to prove an abandoned attachment dead', async () => {
@@ -406,6 +410,7 @@ describe('claude endpoint recovery respawn options', () => {
       updatedAt: 1,
     };
     const expectedSocketDir = resolveZellijSocketDir(happyHomeDir);
+    const removeTerminalAttachmentInfo = vi.fn(async () => true);
     const adapter: TerminalHostAdapter = {
       kind: 'zellij',
       createOrAttachHost: vi.fn(),
@@ -427,6 +432,7 @@ describe('claude endpoint recovery respawn options', () => {
       sessionId: 'sess-claude',
       defaultOptions,
       readTerminalAttachmentInfo: async () => releasedV1Attachment,
+      removeTerminalAttachmentInfo,
       terminalHostAdapters: { zellij: adapter },
     })).resolves.toBe(defaultOptions);
 
@@ -437,6 +443,11 @@ describe('claude endpoint recovery respawn options', () => {
       socketDir: expectedSocketDir,
     }));
     expect(adapter.dispose).not.toHaveBeenCalled();
+    expect(removeTerminalAttachmentInfo).toHaveBeenCalledWith({
+      happyHomeDir,
+      sessionId: 'sess-claude',
+      expectedLegacyAttachment: releasedV1Attachment,
+    });
   });
 
   it('continues fresh respawn after exact positive-dead retirement even when provider cleanup remains pending', async () => {

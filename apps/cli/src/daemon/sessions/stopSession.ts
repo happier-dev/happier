@@ -7,9 +7,15 @@ import {
   readTerminalAttachmentState,
   removeTerminalAttachmentInfo,
   type BoundTerminalAttachmentInfo,
+  type LegacyTerminalAttachmentInfo,
   type TerminalAttachmentReadState,
 } from '@/terminal/attachment/terminalAttachmentInfo';
-import { executeTerminalHostDisposition } from '@/terminal/attachment/terminalHostDisposition';
+import {
+  executeConfirmedDeadTerminalAttachmentRetirement,
+  executeTerminalHostDisposition,
+} from '@/terminal/attachment/terminalHostDisposition';
+import { buildLegacyTerminalAttachmentHostHandle } from '@/terminal/attachment/legacyTerminalAttachmentHandle';
+import { evaluateTerminalHostLivenessForRecovery } from '@/integrations/terminalHost/livenessPolicy';
 import { configuration } from '@/configuration';
 
 import { isPidSafeHappySessionProcess } from '../pidSafety';
@@ -187,13 +193,6 @@ export function createStopSession(params: Readonly<{
       });
     };
     if (!isPidFallback) {
-      if (attachmentInfo) {
-        if (attachmentInfo.version !== 2) {
-          logWarning(`[DAEMON RUN] Refusing to destroy legacy terminal attachment without immutable identity for session ${normalizedSessionId}`);
-          return incompleteStopSession('legacy_attachment');
-        }
-      }
-
       const terminalModes = pidsToStop.map((pid) => {
         const provenTerminalHostKind = params.provenTerminalHostKindsByPid?.get(pid);
         if (provenTerminalHostKind) return provenTerminalHostKind;
@@ -218,7 +217,71 @@ export function createStopSession(params: Readonly<{
       }
     }
 
+    let terminalHostAdaptersPromise: Promise<TerminalHostRegistry | null> | null = null;
+    const loadTerminalHostAdapters = async (): Promise<TerminalHostRegistry | null> => {
+      if (params.terminalHostAdapters) return params.terminalHostAdapters;
+      terminalHostAdaptersPromise ??= params.loadTerminalHostAdapters?.().catch((error) => {
+        logWarning(`[DAEMON RUN] Failed to acquire terminal host cleanup adapters for session ${normalizedSessionId}`, error);
+        return null;
+      }) ?? Promise.resolve(null);
+      return await terminalHostAdaptersPromise;
+    };
+    const retireLegacyAttachmentAfterPositiveDeath = async (
+      legacyAttachment: LegacyTerminalAttachmentInfo,
+      options: Readonly<{ runnerExitProven: boolean; trackedPids: readonly number[] }>,
+    ): Promise<StopSessionResult> => {
+      const handle = buildLegacyTerminalAttachmentHostHandle(
+        legacyAttachment,
+        configuration.happyHomeDir,
+      );
+      if (!handle) {
+        const persistedWindowsPid = legacyAttachment.terminal.mode === 'windows_terminal'
+          || legacyAttachment.terminal.mode === 'windows_console'
+          ? legacyAttachment.terminal.windows?.pid
+          : undefined;
+        const exactWindowsRunnerExited = options.runnerExitProven
+          && typeof persistedWindowsPid === 'number'
+          && Number.isSafeInteger(persistedWindowsPid)
+          && persistedWindowsPid > 0
+          && options.trackedPids.includes(persistedWindowsPid);
+        if (
+          !exactWindowsRunnerExited
+          && (legacyAttachment.terminal.mode !== 'plain' || !options.runnerExitProven)
+        ) {
+          return incompleteStopSession('legacy_attachment');
+        }
+      } else {
+        const adapters = await loadTerminalHostAdapters();
+        const adapter = adapters?.[handle.kind];
+        if (!adapter) return incompleteStopSession('terminal_host_adapter_unavailable');
+        const probe = await evaluateTerminalHostLivenessForRecovery(adapter, handle);
+        if (probe.status === 'alive') return incompleteStopSession('legacy_attachment');
+        if (probe.status === 'inconclusive') return incompleteStopSession('missing_topology_proof');
+      }
+
+      const disposition = await executeConfirmedDeadTerminalAttachmentRetirement({
+        happyHomeDir: configuration.happyHomeDir,
+        sessionId: normalizedSessionId,
+        expectedAttachmentInfo: legacyAttachment,
+        readAttachmentInfo,
+        removeAttachmentInfo: params.removeAttachmentInfo ?? removeTerminalAttachmentInfo,
+      });
+      return disposition.status === 'retired'
+        ? { status: 'stopped' }
+        : incompleteStopSession(
+            disposition.status === 'parked'
+              ? mapDispositionFailureReason(disposition.reason)
+              : 'terminal_attachment_descriptor_retirement_failed',
+          );
+    };
+
     if (pidsToStop.length === 0) {
+      if (attachmentInfo?.version === 1) {
+        return await retireLegacyAttachmentAfterPositiveDeath(attachmentInfo, {
+          runnerExitProven: false,
+          trackedPids: [],
+        });
+      }
       if (!isPidFallback && params.recoverStrandedTerminalControlServiceability) {
         try {
           const recovered = await params.recoverStrandedTerminalControlServiceability({
@@ -255,11 +318,7 @@ export function createStopSession(params: Readonly<{
 
     let terminalHostAdapterForDisposition: TerminalHostAdapter | null = null;
     if (attachmentInfo?.version === 2) {
-      const adapters = params.terminalHostAdapters
-        ?? await params.loadTerminalHostAdapters?.().catch((error) => {
-          logWarning(`[DAEMON RUN] Failed to acquire terminal host cleanup adapters for session ${normalizedSessionId}`, error);
-          return null;
-        });
+      const adapters = await loadTerminalHostAdapters();
       terminalHostAdapterForDisposition = adapters?.[attachmentInfo.handle.kind] ?? null;
       if (!terminalHostAdapterForDisposition) {
         return incompleteStopSession('terminal_host_adapter_unavailable');
@@ -439,6 +498,12 @@ export function createStopSession(params: Readonly<{
       return disposition.status === 'parked'
         ? incompleteStopSession(mapDispositionFailureReason(disposition.reason))
         : incompleteStopSession('destroy_failed');
+    }
+    if (attachmentInfo?.version === 1) {
+      return await retireLegacyAttachmentAfterPositiveDeath(attachmentInfo, {
+        runnerExitProven: true,
+        trackedPids: pidsToStop,
+      });
     }
     return { status: 'stopped' };
   };

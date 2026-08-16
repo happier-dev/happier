@@ -411,6 +411,7 @@ import { decodeJwtPayload } from '@/cloud/decodeJwtPayload';
 import { parseBooleanEnv, resolveConnectedServicesProviderStateSharingPolicyV1, type AccountSettings, type BackendTargetRefV1, type ConnectedServiceId } from '@happier-dev/protocol';
 import type { CatalogAgentId, ConnectedServiceSwitchEffectiveBinding } from '@/backends/types';
 import { readTerminalAttachmentInfo, writeTerminalAttachmentInfo } from '@/terminal/attachment/terminalAttachmentInfo';
+import { bindSpawnedTmuxTerminalAttachment } from './sessions/bindSpawnedTmuxTerminalAttachment';
 import {
   isAccountSettingsVersionAtLeast,
   normalizeAccountSettingsVersionHint,
@@ -3856,6 +3857,21 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
                 pidToTrackedSession,
                 warn: (message) => logger.warn(message),
               });
+              if (resolved.type === 'success' && resolved.sessionId) {
+                await bindSpawnedTmuxTerminalAttachment({
+                  happyHomeDir: configuration.happyHomeDir,
+                  sessionId: resolved.sessionId,
+                  tmuxSessionName: tmuxSession,
+                  tmuxWindowName: tmuxResult.windowName ?? windowName,
+                  ...(tmuxTmpDir ? { tmuxTmpDir } : {}),
+                  disposeUnboundHost: async () => {
+                    const target = `${tmuxSession}:${tmuxResult.windowName ?? windowName}`;
+                    if (!await tmux.killWindow(target)) {
+                      throw new Error(`Failed to dispose unbound tmux window ${target}`);
+                    }
+                  },
+                });
+              }
               daemonSpawnAttemptRegistry.settle(trackedSpawnOptions.spawnNonce ?? '', resolved);
               const nudgeResult = await nudgeAttachedExistingSessionPendingQueue({
                 requestedExistingSessionId: normalizedExistingSessionId,

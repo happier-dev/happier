@@ -2,7 +2,9 @@ import type { TerminalAttachmentId, TerminalHostAdapter } from '@/integrations/t
 import {
   readTerminalAttachmentInfo,
   removeTerminalAttachmentInfo,
+  matchesLegacyTerminalAttachmentSnapshot,
   type BoundTerminalAttachmentInfo,
+  type LegacyTerminalAttachmentInfo,
   type TerminalAttachmentInfo,
 } from './terminalAttachmentInfo';
 
@@ -23,7 +25,7 @@ export type TerminalHostDispositionIntent =
 
 export type TerminalHostDispositionResult =
   | Readonly<{ status: 'preserved'; attachmentId: TerminalAttachmentId }>
-  | Readonly<{ status: 'retired'; attachmentId: TerminalAttachmentId }>
+  | Readonly<{ status: 'retired'; attachmentId: TerminalAttachmentId | null }>
   | Readonly<{
       status: 'destroyed';
       attachmentId: TerminalAttachmentId;
@@ -145,6 +147,68 @@ export async function executeTerminalHostDisposition(input: Readonly<{
     return removed
       ? { status: 'destroyed', attachmentId: current.attachmentId }
       : { status: 'destroyed', attachmentId: current.attachmentId, descriptorRetained: true };
+  } finally {
+    activeDispositionClaims.delete(claimKey);
+  }
+}
+
+export async function executeConfirmedDeadTerminalAttachmentRetirement(input: Readonly<{
+  happyHomeDir: string;
+  sessionId: string;
+  expectedAttachmentInfo: TerminalAttachmentInfo;
+  readAttachmentInfo?: (input: Readonly<{
+    happyHomeDir: string;
+    sessionId: string;
+  }>) => Promise<TerminalAttachmentInfo | null>;
+  removeAttachmentInfo?: (input: Readonly<{
+    happyHomeDir: string;
+    sessionId: string;
+    expectedAttachmentId?: TerminalAttachmentId | string;
+    expectedLegacyAttachment?: LegacyTerminalAttachmentInfo;
+    expectedTerminal?: TerminalAttachmentInfo['terminal'];
+  }>) => Promise<boolean>;
+  beforeDescriptorRetirement?: (input: Readonly<{
+    happyHomeDir: string;
+    sessionId: string;
+    attachmentInfo: BoundTerminalAttachmentInfo;
+  }>) => Promise<void>;
+}>): Promise<TerminalHostDispositionResult> {
+  if (input.expectedAttachmentInfo.version === 2) {
+    return await executeTerminalHostDisposition({
+      happyHomeDir: input.happyHomeDir,
+      sessionId: input.sessionId,
+      expectedAttachmentId: input.expectedAttachmentInfo.attachmentId,
+      intent: { kind: 'retire_confirmed_dead_attachment', reason: 'positive_dead_recovery' },
+      readAttachmentInfo: input.readAttachmentInfo,
+      removeAttachmentInfo: input.removeAttachmentInfo,
+      beforeDescriptorRetirement: input.beforeDescriptorRetirement,
+    });
+  }
+
+  const readAttachment = input.readAttachmentInfo ?? readTerminalAttachmentInfo;
+  const removeAttachment = input.removeAttachmentInfo ?? removeTerminalAttachmentInfo;
+  const expected = input.expectedAttachmentInfo;
+  const claimKey = `${input.happyHomeDir}\u0000${input.sessionId}\u0000legacy:${expected.updatedAt}`;
+  if (activeDispositionClaims.has(claimKey)) {
+    return { status: 'parked', reason: 'disposition_in_progress' };
+  }
+  activeDispositionClaims.add(claimKey);
+  try {
+    const current = await readAttachment({
+      happyHomeDir: input.happyHomeDir,
+      sessionId: input.sessionId,
+    });
+    if (current?.version !== 1 || !matchesLegacyTerminalAttachmentSnapshot(current, expected)) {
+      return { status: 'parked', reason: 'attachment_mismatch' };
+    }
+    const removed = await removeAttachment({
+      happyHomeDir: input.happyHomeDir,
+      sessionId: input.sessionId,
+      expectedLegacyAttachment: current,
+    });
+    return removed
+      ? { status: 'retired', attachmentId: null }
+      : { status: 'parked', reason: 'attachment_mismatch' };
   } finally {
     activeDispositionClaims.delete(claimKey);
   }

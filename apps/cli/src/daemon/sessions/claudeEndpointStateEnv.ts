@@ -1,9 +1,7 @@
-import { buildTerminalHostHandleFromAttachmentMetadata } from '@/agent/runtime/terminal/attachmentMetadata';
 import type { TerminalHostAdapter } from '@/integrations/terminalHost/_types';
 import {
   evaluateTerminalHostLivenessForRecovery,
 } from '@/integrations/terminalHost/livenessPolicy';
-import { resolveZellijSocketDir } from '@/integrations/zellij/socketDir';
 import {
   HAPPIER_CLAUDE_ENDPOINT_STATE_ENV_KEY,
   readClaudeEndpointDescriptor as readDefaultClaudeEndpointDescriptor,
@@ -20,7 +18,11 @@ import {
   type BoundTerminalAttachmentInfo,
   type TerminalAttachmentInfo,
 } from '@/terminal/attachment/terminalAttachmentInfo';
-import { executeTerminalHostDisposition } from '@/terminal/attachment/terminalHostDisposition';
+import {
+  executeConfirmedDeadTerminalAttachmentRetirement,
+  executeTerminalHostDisposition,
+} from '@/terminal/attachment/terminalHostDisposition';
+import { buildLegacyTerminalAttachmentHostHandle } from '@/terminal/attachment/legacyTerminalAttachmentHandle';
 import type { SpawnSessionOptions } from '@/rpc/handlers/registerSessionHandlers';
 import { logger } from '@/ui/logger';
 import {
@@ -95,22 +97,6 @@ function clearClaudeEndpointStateFromSpawnOptions(spawnOptions: SpawnSessionOpti
   };
 }
 
-function buildReleasedV1RecoveryProbeHandle(
-  attachmentInfo: Extract<TerminalAttachmentInfo, Readonly<{ version: 1 }>>,
-  happyHomeDir: string,
-) {
-  const handle = buildTerminalHostHandleFromAttachmentMetadata(attachmentInfo.terminal);
-  if (!handle || handle.kind !== 'zellij' || handle.socketDir) return handle;
-
-  // Released v1 Zellij writers derived this root deterministically from their
-  // owning Happier home but did not persist it. Reconstruct it only at this
-  // upgrade boundary so the generic terminal-host probe remains fail-closed.
-  return {
-    ...handle,
-    socketDir: resolveZellijSocketDir(happyHomeDir),
-  };
-}
-
 export async function resolveClaudeEndpointRecoverySpawnOptions(params: Readonly<{
   previousPid?: number;
   happyHomeDir?: string;
@@ -130,6 +116,7 @@ export async function resolveClaudeEndpointRecoverySpawnOptions(params: Readonly
     happyHomeDir: string;
     sessionId: string;
     expectedAttachmentId?: string;
+    expectedLegacyAttachment?: Extract<TerminalAttachmentInfo, Readonly<{ version: 1 }>>;
     expectedTerminal?: TerminalAttachmentInfo['terminal'];
   }>) => Promise<boolean>;
   terminalHostAdapters?: TerminalHostAdapters;
@@ -178,7 +165,7 @@ export async function resolveClaudeEndpointRecoverySpawnOptions(params: Readonly
 
   const handle = attachmentInfo.version === 2
     ? attachmentInfo.handle
-    : buildReleasedV1RecoveryProbeHandle(attachmentInfo, happyHomeDir);
+    : buildLegacyTerminalAttachmentHostHandle(attachmentInfo, happyHomeDir);
   if (!handle) return freshSpawnOptions;
 
   const terminalHostAdapters = params.terminalHostAdapters ?? await params.loadTerminalHostAdapters?.();
@@ -250,31 +237,32 @@ export async function resolveClaudeEndpointRecoverySpawnOptions(params: Readonly
   }
 
   if (probe.status === 'dead') {
-    if (attachmentInfo.version !== 2) return freshSpawnOptions;
-    const disposition = await executeTerminalHostDisposition({
+    const disposition = await executeConfirmedDeadTerminalAttachmentRetirement({
       happyHomeDir,
       sessionId: params.sessionId,
-      expectedAttachmentId: attachmentInfo.attachmentId,
-      intent: { kind: 'retire_confirmed_dead_attachment', reason: 'positive_dead_recovery' },
-      adapter,
+      expectedAttachmentInfo: attachmentInfo,
       readAttachmentInfo: params.readTerminalAttachmentInfo ?? readDefaultTerminalAttachmentInfo,
       removeAttachmentInfo: params.removeTerminalAttachmentInfo ?? removeDefaultTerminalAttachmentInfo,
-      beforeDescriptorRetirement,
+      ...(attachmentInfo.version === 2 && beforeDescriptorRetirement
+        ? { beforeDescriptorRetirement }
+        : {}),
     }).catch(() => ({ status: 'parked' as const, reason: 'destroy_failed' as const }));
     if (disposition.status !== 'retired') {
       throw new ClaudeEndpointRecoveryFenceError('serviceability_retirement_failed');
     }
-    await (params.onExactTerminalAttachmentRetired ?? notifyTerminalAttachmentRetiredThroughCatalog)({
-      happyHomeDir,
-      sessionId: params.sessionId,
-      attachmentInfo,
-    }).catch((error) => {
-      logger.debug('[DAEMON RUN] Terminal host retired; Claude endpoint cleanup remains pending', {
+    if (attachmentInfo.version === 2) {
+      await (params.onExactTerminalAttachmentRetired ?? notifyTerminalAttachmentRetiredThroughCatalog)({
+        happyHomeDir,
         sessionId: params.sessionId,
-        attachmentId: attachmentInfo.attachmentId,
-        error,
+        attachmentInfo,
+      }).catch((error) => {
+        logger.debug('[DAEMON RUN] Terminal host retired; Claude endpoint cleanup remains pending', {
+          sessionId: params.sessionId,
+          attachmentId: attachmentInfo.attachmentId,
+          error,
+        });
       });
-    });
+    }
   }
 
   return freshSpawnOptions;

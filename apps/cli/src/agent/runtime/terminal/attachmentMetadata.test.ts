@@ -27,6 +27,25 @@ describe('buildTerminalAttachmentMetadataFromHostHandle', () => {
     });
   });
 
+  it('round-trips the tmux socket root used by released v1 attachments', () => {
+    const terminal = {
+      mode: 'tmux',
+      tmux: {
+        target: 'happy:legacy-window',
+        tmpDir: '/tmp/happier-tmux-root',
+      },
+    } as const;
+
+    const handle = buildTerminalHostHandleFromAttachmentMetadata(terminal);
+    expect(handle).toMatchObject({
+      kind: 'tmux',
+      sessionName: 'happy',
+      paneId: 'legacy-window',
+      socketDir: '/tmp/happier-tmux-root',
+    });
+    expect(handle && buildTerminalAttachmentMetadataFromHostHandle(handle)).toEqual(terminal);
+  });
+
   it('builds zellij terminal metadata from a host handle', () => {
     const handle: TerminalHostHandle = {
       kind: 'zellij',

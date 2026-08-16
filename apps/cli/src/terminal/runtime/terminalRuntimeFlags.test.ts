@@ -11,6 +11,8 @@ describe('parseAndStripTerminalRuntimeFlags', () => {
       'happy:win-123',
       '--happy-tmux-tmpdir',
       '/tmp/happy-tmux',
+      '--happy-terminal-attachment-id',
+      'attachment-123',
       '--model',
       'sonnet',
     ]);
@@ -20,6 +22,7 @@ describe('parseAndStripTerminalRuntimeFlags', () => {
         mode: 'tmux',
         tmuxTarget: 'happy:win-123',
         tmuxTmpDir: '/tmp/happy-tmux',
+        attachmentId: 'attachment-123',
       },
       argv: ['claude', '--model', 'sonnet'],
     });

@@ -3,7 +3,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createClaudePromptSubmitVerificationPolicy } from '@/backends/claude/unifiedTerminal/claudePromptSubmitVerification';
 import { parseClaudeScreenState, resolveClaudeScreenInFlightSteerVeto } from '@/backends/claude/unifiedTerminal/tuiControls/screenState';
 
-import { createTmuxTerminalHostAdapter } from './adapter';
+import {
+  createTmuxTerminalHostAdapter,
+  resolveTmuxCommandEnvironmentForHostHandle,
+} from './adapter';
 import { TmuxUtilities } from './TmuxUtilities';
 
 const TMUX_HANDLE = {
@@ -106,6 +109,14 @@ describe('createTmuxTerminalHostAdapter', () => {
       },
       { HAPPIER_CLAUDE_PATH: '/opt/claude/cli.js' },
     );
+  });
+
+  it('routes a persisted tmux host through its exact socket root', () => {
+    expect(resolveTmuxCommandEnvironmentForHostHandle({
+      ...TMUX_HANDLE,
+      socketDir: '/tmp/happier-tmux-root',
+    })).toEqual({ TMUX_TMPDIR: '/tmp/happier-tmux-root' });
+    expect(resolveTmuxCommandEnvironmentForHostHandle(TMUX_HANDLE)).toBeUndefined();
   });
 
   it('adopts an existing live tmux host without spawning a new window', async () => {
