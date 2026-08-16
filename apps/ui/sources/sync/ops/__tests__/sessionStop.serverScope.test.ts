@@ -40,6 +40,7 @@ vi.mock('../../sync', () => ({
 }));
 
 import { sessionStopWithServerScope } from '../../ops';
+import { log } from '@/log';
 
 describe('sessionStopWithServerScope', () => {
   beforeEach(() => {
@@ -547,7 +548,13 @@ describe('sessionStopWithServerScope', () => {
     mockStorageState.machines = {
       'machine-1': { id: 'machine-1', active: true, activeAt: Date.now() },
     };
-    mockMachineRpcWithServerScope.mockResolvedValue({ status: 'stopped', unexpected: true });
+    const diagnosticLog = vi.spyOn(log, 'log').mockImplementation(() => {});
+    mockMachineRpcWithServerScope.mockResolvedValue({
+      status: 'stopped',
+      reason: 'unknown_reason',
+      unexpected: true,
+      detail: 'private response detail must not be logged',
+    });
 
     await expect(sessionStopWithServerScope('sid-protocol-mismatch', { serverId: 'server-b' })).resolves.toEqual({
       success: false,
@@ -555,6 +562,11 @@ describe('sessionStopWithServerScope', () => {
       code: 'session_stop_failed',
     });
     expect(mockSessionRpcWithServerScope).not.toHaveBeenCalled();
+    expect(diagnosticLog).toHaveBeenCalledWith(expect.stringContaining('"type":"object"'));
+    expect(diagnosticLog).toHaveBeenCalledWith(expect.stringContaining('"keys":["detail","reason","status","unexpected"]'));
+    expect(diagnosticLog).toHaveBeenCalledWith(expect.stringContaining('"status":"stopped"'));
+    expect(diagnosticLog).toHaveBeenCalledWith(expect.stringContaining('"reason":"unknown_reason"'));
+    expect(diagnosticLog.mock.calls.flat().join('\n')).not.toContain('private response detail must not be logged');
     expect(mockStorageState.applySessionListRenderablePatches).not.toHaveBeenCalled();
     expect(mockStorageState.applySessions).not.toHaveBeenCalled();
   });
