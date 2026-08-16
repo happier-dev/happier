@@ -13,6 +13,8 @@ import {
   type ExternalSessionOperationSocketResponseV1,
   type ExternalSessionStatusDemandDaemonMessageV1,
   type MachineLiveStreamRelayEnvelopeV1,
+  type MachineUpdateMetadataRequest,
+  type MachineUpdateMetadataResponse,
   type MachineSessionTerminalCaptureRequestV1,
   type MachineSessionTerminalCaptureResponseV1,
   type MachineSessionTerminalFinalizeRequestV1,
@@ -56,13 +58,8 @@ export interface DaemonToServerEvents {
   ) => void;
 
   'machine-update-metadata': (
-    data: { machineId: string; metadata: string; expectedVersion: number },
-    cb: (
-      answer:
-        | { result: 'error' }
-        | { result: 'version-mismatch'; version: number; metadata: string }
-        | { result: 'success'; version: number; metadata: string }
-    ) => void
+    data: MachineUpdateMetadataRequest,
+    cb: (answer: MachineUpdateMetadataResponse) => void
   ) => void;
 
   'machine-update-state': (

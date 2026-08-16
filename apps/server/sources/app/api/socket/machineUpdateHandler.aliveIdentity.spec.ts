@@ -340,10 +340,10 @@ describe("machineUpdateHandler authenticated machine identity binding", () => {
         expect(emitEphemeral).not.toHaveBeenCalled();
     });
 
-    it("rejects metadata updates from user-scoped sockets", async () => {
+    it("rejects metadata updates from session-scoped sockets", async () => {
         const { machineUpdateHandler } = await import("./machineUpdateHandler");
 
-        const socket = createFakeSocket({ data: { clientType: "user-scoped" } });
+        const socket = createFakeSocket({ data: { clientType: "session-scoped", sessionId: "s1" } });
         machineUpdateHandler("u1", socket as any, defaultMachineUpdateHandlerOptions);
 
         const callback = vi.fn();

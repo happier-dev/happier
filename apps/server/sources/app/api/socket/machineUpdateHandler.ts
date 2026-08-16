@@ -16,6 +16,8 @@ import {
     MACHINE_SESSION_TERMINAL_FINALIZE_EVENT_V1,
     MachineSessionTerminalCaptureRequestV1Schema,
     MachineSessionTerminalFinalizeRequestV1Schema,
+    MachineUpdateMetadataRequestSchema,
+    type MachineUpdateMetadataResponse,
     type ExternalSessionOperationSocketBatchLimitResolutionV1,
 } from "@happier-dev/protocol";
 import { executeExternalSessionHistoricalImportCommand } from "@/app/session/externalSessionHistoricalImportCommand";
@@ -39,6 +41,21 @@ function resolveMachineScopedPayloadMachineId(socket: Socket, payloadMachineId: 
         return null;
     }
     return authenticatedMachineId;
+}
+
+function resolveMachineMetadataTarget(
+    socket: Socket,
+    payloadMachineId: string | undefined,
+): string | null {
+    const socketData = socket.data as { clientType?: unknown } | undefined;
+    const clientType = socketData?.clientType;
+    if (clientType === 'machine-scoped') {
+        return resolveMachineScopedPayloadMachineId(socket, payloadMachineId);
+    }
+    if (clientType === 'user-scoped' || clientType === undefined) {
+        return payloadMachineId ?? null;
+    }
+    return null;
 }
 
 async function isMachineAvailableForSocket(accountId: string, machineId: string): Promise<boolean> {
@@ -371,18 +388,24 @@ export function machineUpdateHandler(
     });
 
     // Machine metadata update with optimistic concurrency control
-    socket.on('machine-update-metadata', async (data: any, callback: (response: any) => void) => {
+    socket.on('machine-update-metadata', async (
+        data: unknown,
+        callback: (response: MachineUpdateMetadataResponse) => void,
+    ) => {
         try {
-            const { metadata, expectedVersion } = data;
-            const machineId = resolveMachineScopedPayloadMachineId(socket, data?.machineId);
+            const parsed = MachineUpdateMetadataRequestSchema.safeParse(data);
+            const machineId = parsed.success
+                ? resolveMachineMetadataTarget(socket, parsed.data.machineId)
+                : null;
 
             // Validate input
-            if (!machineId || typeof metadata !== 'string' || typeof expectedVersion !== 'number') {
+            if (!parsed.success || !machineId) {
                 if (callback) {
                     callback({ result: 'error', message: 'Invalid parameters' });
                 }
                 return;
             }
+            const { metadata, expectedVersion } = parsed.data;
 
             await inTx(async (tx) => {
                 const machine = await tx.machine.findFirst({
@@ -425,7 +448,11 @@ export function machineUpdateHandler(
                         afterTx(tx, () => callback?.({ result: 'error', message: 'Machine replaced' }));
                         return null;
                     }
-                    afterTx(tx, () => callback?.({ result: 'version-mismatch', version: fresh?.metadataVersion ?? expectedVersion, metadata: fresh?.metadata }));
+                    if (!fresh) {
+                        afterTx(tx, () => callback?.({ result: 'error', message: 'Machine not found' }));
+                        return null;
+                    }
+                    afterTx(tx, () => callback?.({ result: 'version-mismatch', version: fresh.metadataVersion, metadata: fresh.metadata }));
                     return null;
                 }
 

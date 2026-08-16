@@ -5,6 +5,8 @@
 import type {
     AgentSessionStartupInstructionsV1,
     BugReportMachineDiagnosticsSnapshot,
+    MachineUpdateMetadataRequest,
+    MachineUpdateMetadataResponse,
     SpawnSessionResult,
 } from '@happier-dev/protocol';
 import {
@@ -1080,16 +1082,15 @@ export async function machineUpdateMetadata(
             async () => await machineEncryption.encryptRaw(currentMetadata),
         );
 
-        const result = await apiSocket.emitWithAck<{
-            result: 'success' | 'version-mismatch' | 'error';
-            version?: number;
-            metadata?: string;
-            message?: string;
-        }>('machine-update-metadata', {
+        const request = {
             machineId,
             metadata: encryptedMetadata,
-            expectedVersion: currentVersion
-        });
+            expectedVersion: currentVersion,
+        } satisfies MachineUpdateMetadataRequest;
+        const result = await apiSocket.emitWithAck<MachineUpdateMetadataResponse>(
+            'machine-update-metadata',
+            request,
+        );
 
         if (result.result === 'success') {
             const currentMachine = storage.getState().machines[machineId] ?? null;
@@ -1097,17 +1098,17 @@ export async function machineUpdateMetadata(
                 storage.getState().applyMachines([{
                     ...currentMachine,
                     metadata: currentMetadata,
-                    metadataVersion: result.version!,
+                    metadataVersion: result.version,
                 }]);
             }
             return {
-                version: result.version!,
-                metadata: result.metadata!
+                version: result.version,
+                metadata: result.metadata
             };
         } else if (result.result === 'version-mismatch') {
             // Get the latest version and metadata from the response
-            currentVersion = result.version!;
-            const latestMetadata = await machineEncryption.decryptRaw(result.metadata!) as MachineMetadata;
+            currentVersion = result.version;
+            const latestMetadata = await machineEncryption.decryptRaw(result.metadata) as MachineMetadata;
 
             currentMetadata = mergeMachineMetadataForVersionMismatch({
                 latest: latestMetadata,
