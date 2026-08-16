@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="%LANG_ISO_CODE%">
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, shrink-to-fit=no, viewport-fit=cover"
+    />
+    <meta name="theme-color" content="#F5F5F5" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#181818" media="(prefers-color-scheme: dark)" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+    <title>%WEB_TITLE%</title>
+    <!-- Keep this in sync with Expo's SPA template and the app startup backgrounds. -->
+    <style id="expo-reset">
+      html,
+      body {
+        height: 100%;
+        background-color: #F5F5F5;
+      }
+      body {
+        overflow: hidden;
+      }
+      #root {
+        display: flex;
+        height: 100%;
+        flex: 1;
+      }
+      @media (prefers-color-scheme: dark) {
+        html,
+        body {
+          background-color: #181818;
+        }
+      }
+    </style>
+  </head>
+
+  <body>
+    <noscript>You need to enable JavaScript to run this app.</noscript>
+    <div id="root"></div>
+  </body>
+</html>

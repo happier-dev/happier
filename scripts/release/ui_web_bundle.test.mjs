@@ -11,6 +11,42 @@ import { createUiWebReleaseArtifacts } from '../pipeline/release/lib/ui-web-bund
 process.env.LC_ALL = 'C';
 process.env.LANG = 'C';
 
+async function writeInstallablePwaFixture(distDir) {
+  await mkdir(join(distDir, 'icons'), { recursive: true });
+  await writeFile(
+    join(distDir, 'index.html'),
+    [
+      '<!doctype html><html><head>',
+      '<link rel="manifest" href="/manifest.webmanifest">',
+      '<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">',
+      '</head></html>\n',
+    ].join(''),
+    'utf8',
+  );
+  await writeFile(
+    join(distDir, 'manifest.webmanifest'),
+    `${JSON.stringify({
+      name: 'Happier',
+      short_name: 'Happier',
+      start_url: '/',
+      scope: '/',
+      display: 'standalone',
+      icons: [
+        { src: '/icons/icon-192.png', sizes: '192x192', type: 'image/png', purpose: 'any' },
+        { src: '/icons/icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'any' },
+        { src: '/icons/icon-maskable-512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
+      ],
+    })}\n`,
+    'utf8',
+  );
+  await Promise.all([
+    writeFile(join(distDir, 'icons', 'icon-192.png'), '192'),
+    writeFile(join(distDir, 'icons', 'icon-512.png'), '512'),
+    writeFile(join(distDir, 'icons', 'icon-maskable-512.png'), 'maskable'),
+    writeFile(join(distDir, 'icons', 'apple-touch-icon.png'), 'apple'),
+  ]);
+}
+
 test('createUiWebReleaseArtifacts packages dist into a deterministic ui-web tarball', async () => {
   const prevKey = process.env.MINISIGN_SECRET_KEY;
   const prevPassphrase = process.env.MINISIGN_PASSPHRASE;
@@ -22,7 +58,7 @@ test('createUiWebReleaseArtifacts packages dist into a deterministic ui-web tarb
     const distDir = join(root, 'dist');
     const outDir = join(root, 'out');
     await mkdir(join(distDir, 'assets'), { recursive: true });
-    await writeFile(join(distDir, 'index.html'), '<!doctype html><html></html>\n', 'utf8');
+    await writeInstallablePwaFixture(distDir);
     await writeFile(join(distDir, 'main.js'), 'console.log("hello from happier");\n'.repeat(200), 'utf8');
     await writeFile(join(distDir, 'assets', 'health.txt'), 'ok\n', 'utf8');
 
@@ -61,6 +97,40 @@ test('createUiWebReleaseArtifacts packages dist into a deterministic ui-web tarb
     else process.env.MINISIGN_SECRET_KEY = prevKey;
     if (prevPassphrase == null) delete process.env.MINISIGN_PASSPHRASE;
     else process.env.MINISIGN_PASSPHRASE = prevPassphrase;
+  }
+});
+
+test('createUiWebReleaseArtifacts rejects a web dist without its installable PWA contract', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'happier-ui-web-bundle-pwa-missing-'));
+  try {
+    const distDir = join(root, 'dist');
+    const outDir = join(root, 'out');
+    await mkdir(distDir, { recursive: true });
+    await writeFile(join(distDir, 'index.html'), '<!doctype html><html></html>\n', 'utf8');
+
+    await assert.rejects(
+      () => createUiWebReleaseArtifacts({ version: '1.2.3', distDir, outDir }),
+      /manifest/i,
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('createUiWebReleaseArtifacts rejects a PWA manifest with a missing icon asset', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'happier-ui-web-bundle-pwa-icon-missing-'));
+  try {
+    const distDir = join(root, 'dist');
+    const outDir = join(root, 'out');
+    await writeInstallablePwaFixture(distDir);
+    await rm(join(distDir, 'icons', 'icon-512.png'));
+
+    await assert.rejects(
+      () => createUiWebReleaseArtifacts({ version: '1.2.3', distDir, outDir }),
+      /icon-512\.png/i,
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
   }
 });
 
