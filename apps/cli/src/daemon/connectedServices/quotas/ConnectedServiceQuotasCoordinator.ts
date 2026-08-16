@@ -14,6 +14,7 @@ import {
   type ConnectedServiceCredentialHealthV1,
   type ConnectedServiceCredentialHealthStatusV1,
   type ConnectedServiceCredentialRecordV1,
+  type ConnectedServiceCredentialRevisionV1,
   type ConnectedServiceId,
   type ConnectedServiceUsageSourceV1,
   type ProviderAccountUsageRecordKeyV1,
@@ -2598,6 +2599,7 @@ export class ConnectedServiceQuotasCoordinator {
   private async persistCredentialHealthForQuotaFailure(input: Readonly<{
     serviceId: ConnectedServiceId;
     profileId: string;
+    expectedCredentialRevision: ConnectedServiceCredentialRevisionV1 | null;
     error: unknown;
     now: number;
   }>): Promise<ConnectedServiceCredentialHealthV1['status'] | null> {
@@ -2628,10 +2630,19 @@ export class ConnectedServiceQuotasCoordinator {
         // (codex4 quota_bridge retry storm, 2026-07-09).
         return 'needs_reauth';
       }
+      if (probe?.record) {
+        // The refresh owner already persisted connected health for the newly
+        // committed revision. The quota failure belongs to the predecessor
+        // credential and must not overwrite that successful refresh result.
+        return 'connected';
+      }
     }
     await updateHealth.call(this.api, {
       serviceId: input.serviceId,
       profileId: input.profileId,
+      ...(input.expectedCredentialRevision
+        ? { expectedCredentialRevision: input.expectedCredentialRevision }
+        : {}),
       health,
     });
     return health.status;
@@ -2907,6 +2918,7 @@ export class ConnectedServiceQuotasCoordinator {
           outcome = result('incomplete', 'deadline_exceeded');
           return outcome;
         }
+        let expectedCredentialRevision: ConnectedServiceCredentialRevisionV1 | null = null;
         try {
           // Lease acquisition is a mutation. Do not start it after expiry and always await it once started.
           const lease = await this.acquireQuotaFetchLease({ serviceId, profileId });
@@ -2977,6 +2989,7 @@ export class ConnectedServiceQuotasCoordinator {
             profileId,
             signal: deadlineAtMs === null ? undefined : deadlineController.signal,
           });
+          expectedCredentialRevision = credential.credentialRevision;
           if (deadlineExceeded()) {
             outcome = result('incomplete', 'deadline_exceeded');
             return outcome;
@@ -3044,7 +3057,13 @@ export class ConnectedServiceQuotasCoordinator {
             outcome = result('incomplete', 'deadline_exceeded');
             return outcome;
           }
-          await this.persistCredentialHealthForQuotaFailure({ serviceId, profileId, error, now }).catch(() => false);
+          await this.persistCredentialHealthForQuotaFailure({
+            serviceId,
+            profileId,
+            expectedCredentialRevision,
+            error,
+            now,
+          }).catch(() => false);
           const key = this.makeBindingKey({ serviceId, profileId });
           this.applyFailureBackoff({
             now,
@@ -3157,6 +3176,7 @@ export class ConnectedServiceQuotasCoordinator {
   }>): Promise<Readonly<{
     storageMode: ResolvedQuotaStorageMode;
     record: ConnectedServiceCredentialRecordV1 | null;
+    credentialRevision: ConnectedServiceCredentialRevisionV1 | null;
   }>> {
     if (input.accountMode !== 'e2ee' && typeof this.api.getConnectedServiceCredentialPlain === 'function') {
       const plain = await this.api.getConnectedServiceCredentialPlain({
@@ -3168,6 +3188,7 @@ export class ConnectedServiceQuotasCoordinator {
       if (record) {
         return {
           storageMode: 'plain',
+          credentialRevision: plain.revisionSemantics === 'revisioned' ? plain.credentialRevision : null,
           record: assertConnectedServiceCredentialRecordBinding({
             binding: input,
             record: ConnectedServiceCredentialRecordV1Schema.parse(record),
@@ -3175,7 +3196,7 @@ export class ConnectedServiceQuotasCoordinator {
         };
       }
       if (input.accountMode === 'plain') {
-        return { storageMode: 'plain', record: null };
+        return { storageMode: 'plain', record: null, credentialRevision: null };
       }
     }
 
@@ -3185,7 +3206,7 @@ export class ConnectedServiceQuotasCoordinator {
       signal: input.signal,
     });
     if (!sealed?.sealed?.ciphertext) {
-      return { storageMode: 'e2ee', record: null };
+      return { storageMode: 'e2ee', record: null, credentialRevision: null };
     }
     const opened = openConnectedServiceCredentialCiphertext({
       material: input.material,
@@ -3193,6 +3214,7 @@ export class ConnectedServiceQuotasCoordinator {
     });
     return {
       storageMode: 'e2ee',
+      credentialRevision: sealed.revisionSemantics === 'revisioned' ? sealed.credentialRevision : null,
       record: opened?.value
         ? assertConnectedServiceCredentialRecordBinding({
             binding: input,
@@ -3888,6 +3910,7 @@ export class ConnectedServiceQuotasCoordinator {
         // X8: capture any stale snapshot found during read so the catch path can
         // surface it with a stale_quota annotation instead of discarding it.
         let staleSnapshotForFallback: ConnectedServiceQuotaSnapshotV1 | null = null;
+        let expectedCredentialRevision: ConnectedServiceCredentialRevisionV1 | null = null;
         try {
           const bindingKey = this.makeBindingKey({ serviceId, profileId });
           const directGroupTargets = groupSwitchTargetsByBindingKey.get(bindingKey) ?? [];
@@ -3965,6 +3988,7 @@ export class ConnectedServiceQuotasCoordinator {
             serviceId,
             profileId,
           });
+          expectedCredentialRevision = credential.credentialRevision;
           const record = credential.record;
           if (!record) continue;
 
@@ -4013,6 +4037,7 @@ export class ConnectedServiceQuotasCoordinator {
           const credentialHealthStatus = await this.persistCredentialHealthForQuotaFailure({
             serviceId,
             profileId,
+            expectedCredentialRevision,
             error,
             now,
           }).catch(() => null);

@@ -9679,7 +9679,11 @@ describe('ConnectedServiceQuotasCoordinator', () => {
     const api = {
       getAccountEncryptionMode: vi.fn(async () => 'plain' as const),
       getConnectedServiceQuotaSnapshotPlain: vi.fn(async () => null),
-      getConnectedServiceCredentialPlain: vi.fn(async () => ({ content: { t: 'plain' as const, v: record } })),
+      getConnectedServiceCredentialPlain: vi.fn(async () => ({
+        revisionSemantics: 'revisioned' as const,
+        credentialRevision: 'csr_abcdefghijklmnopqrstuv',
+        content: { t: 'plain' as const, v: record },
+      })),
       getConnectedServiceQuotaSnapshotSealed: vi.fn(async () => null),
       getConnectedServiceCredentialSealed: vi.fn(async () => null),
       updateConnectedServiceCredentialHealth: vi.fn(async () => {}),
@@ -9730,6 +9734,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
     expect(api.updateConnectedServiceCredentialHealth).toHaveBeenNthCalledWith(5, {
       serviceId: 'claude-subscription',
       profileId: 'work',
+      expectedCredentialRevision: 'csr_abcdefghijklmnopqrstuv',
       health: {
         v: 1,
         status: 'refresh_failed_retryable',
@@ -9740,6 +9745,107 @@ describe('ConnectedServiceQuotasCoordinator', () => {
         providerHttpStatus: 401,
       },
     });
+  });
+
+  it('does not overwrite successful quota-triggered refresh health with the stale quota failure', async () => {
+    let now = 1_000_000;
+    const credentials: Credentials = {
+      token: 'happy-token',
+      encryption: { type: 'legacy', secret: new Uint8Array(32).fill(9) },
+    };
+    const record = buildConnectedServiceCredentialRecord({
+      now,
+      serviceId: 'claude-subscription',
+      profileId: 'work',
+      kind: 'oauth',
+      expiresAt: now + 3_600_000,
+      oauth: {
+        accessToken: 'access-before-refresh',
+        refreshToken: 'refresh-before-refresh',
+        idToken: null,
+        scope: 'user:inference user:profile',
+        tokenType: null,
+        providerAccountId: 'acct',
+        providerEmail: 'user@example.com',
+      },
+    });
+    const refreshedRecord = buildConnectedServiceCredentialRecord({
+      now,
+      serviceId: 'claude-subscription',
+      profileId: 'work',
+      kind: 'oauth',
+      expiresAt: now + 8 * 3_600_000,
+      oauth: {
+        accessToken: 'access-after-refresh',
+        refreshToken: 'refresh-after-refresh',
+        idToken: null,
+        scope: 'user:inference user:profile',
+        tokenType: null,
+        providerAccountId: 'acct',
+        providerEmail: 'user@example.com',
+      },
+    });
+    const updateConnectedServiceCredentialHealth = vi.fn(async () => {});
+    const api = {
+      getAccountEncryptionMode: vi.fn(async () => 'plain' as const),
+      getConnectedServiceQuotaSnapshotPlain: vi.fn(async () => null),
+      getConnectedServiceCredentialPlain: vi.fn(async () => ({
+        revisionSemantics: 'revisioned' as const,
+        credentialRevision: 'csr_abcdefghijklmnopqrstuv',
+        content: { t: 'plain' as const, v: record },
+      })),
+      getConnectedServiceQuotaSnapshotSealed: vi.fn(async () => null),
+      getConnectedServiceCredentialSealed: vi.fn(async () => null),
+      updateConnectedServiceCredentialHealth,
+    } as unknown as QuotaApi;
+    const refreshConnectedServiceCredentialForQuota = vi.fn(async () => ({
+      record: refreshedRecord,
+      reauthRequired: false,
+    }));
+    const fetcher: ConnectedServiceQuotaFetcher = {
+      serviceId: 'claude-subscription',
+      fetch: vi.fn(async () => {
+        throw Object.assign(new Error('provider auth failed'), {
+          quotaFetchErrorCode: 'auth_failure',
+          status: 401,
+        });
+      }),
+    };
+
+    const coordinator = new ConnectedServiceQuotasCoordinator({
+      api,
+      credentials,
+      quotaFetchers: [fetcher],
+      now: () => now,
+      randomBytes: (length: number) => new Uint8Array(length).fill(1),
+      failureBackoffMinMs: 10_000,
+      failureBackoffMaxMs: 60_000,
+      failureBackoffJitterPct: 0,
+      refreshConnectedServiceCredentialForQuota,
+    });
+    coordinator.registerSpawnTarget({
+      pid: 123,
+      connectedServicesBindingsRaw: {
+        v: 1,
+        bindingsByServiceId: { 'claude-subscription': { source: 'connected', profileId: 'work' } },
+      },
+    });
+
+    for (const advanceMs of [0, 10_000, 20_000, 40_000, 60_000]) {
+      now += advanceMs;
+      await coordinator.tickOnce();
+    }
+
+    expect(refreshConnectedServiceCredentialForQuota).toHaveBeenCalledTimes(1);
+    expect(updateConnectedServiceCredentialHealth).toHaveBeenCalledTimes(4);
+    for (const [input] of updateConnectedServiceCredentialHealth.mock.calls) {
+      expect(input).toMatchObject({
+        serviceId: 'claude-subscription',
+        profileId: 'work',
+        expectedCredentialRevision: 'csr_abcdefghijklmnopqrstuv',
+        health: { status: 'refresh_failed_retryable' },
+      });
+    }
   });
 
   it('latches needs_reauth and stops probing when the refresh probe proves reconnect is required', async () => {
