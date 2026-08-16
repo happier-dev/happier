@@ -14,7 +14,6 @@ import type { StreamingTextRevealPreset } from './streaming/streamingTextRevealC
 import { CopiedPill } from '@/components/ui/copy/CopiedPill';
 import { useTemporaryCopyFeedback } from '@/components/ui/copy/useTemporaryCopyFeedback';
 import { EnrichedMarkdownTextAdapter } from './enriched/EnrichedMarkdownTextAdapter';
-import { containsRenderableEnrichedMarkdownMath } from './enriched/normalizeEnrichedMarkdownMathDelimiters';
 import type { MarkdownRenderingProfile } from './rendering/MarkdownRenderingProfile';
 
 // Option type for callback
@@ -37,6 +36,7 @@ type MarkdownBlockViewProps = {
     variant: 'default' | 'thinking';
     streamingReveal: boolean;
     streamingRevealPreset?: StreamingTextRevealPreset;
+    agentTexMath: boolean;
 };
 
 function areMarkdownBlockViewPropsEqual(prev: MarkdownBlockViewProps, next: MarkdownBlockViewProps): boolean {
@@ -51,7 +51,8 @@ function areMarkdownBlockViewPropsEqual(prev: MarkdownBlockViewProps, next: Mark
         && prev.profile === next.profile
         && prev.variant === next.variant
         && prev.streamingReveal === next.streamingReveal
-        && prev.streamingRevealPreset === next.streamingRevealPreset;
+        && prev.streamingRevealPreset === next.streamingRevealPreset
+        && prev.agentTexMath === next.agentTexMath;
 }
 
 export const MarkdownBlockView = React.memo((props: MarkdownBlockViewProps) => {
@@ -89,6 +90,7 @@ export const MarkdownBlockView = React.memo((props: MarkdownBlockViewProps) => {
                 profile={props.profile}
                 streamingReveal={props.streamingReveal}
                 streamingRevealPreset={props.streamingRevealPreset}
+                agentTexMath={props.agentTexMath}
             />
         );
     }
@@ -324,6 +326,7 @@ function RenderTableBlock(props: {
     profile: MarkdownRenderingProfile,
     streamingReveal: boolean,
     streamingRevealPreset?: StreamingTextRevealPreset,
+    agentTexMath: boolean,
 }) {
   const columnCount = props.headers.length;
   const rowCount = props.rows.length;
@@ -357,6 +360,7 @@ function RenderTableBlock(props: {
                           profile={props.profile}
                           streamingReveal={props.streamingReveal}
                           streamingRevealPreset={props.streamingRevealPreset}
+                          agentTexMath={props.agentTexMath}
                       />
                   </View>
                   {/* Data cells for this column */}
@@ -377,6 +381,7 @@ function RenderTableBlock(props: {
                               profile={props.profile}
                               streamingReveal={props.streamingReveal}
                               streamingRevealPreset={props.streamingRevealPreset}
+                              agentTexMath={props.agentTexMath}
                           />
                       </View>
                   ))}
@@ -407,8 +412,9 @@ function RenderTableCellContent(props: Readonly<{
     profile: MarkdownRenderingProfile;
     streamingReveal: boolean;
     streamingRevealPreset?: StreamingTextRevealPreset;
+    agentTexMath: boolean;
 }>) {
-    if (!containsRenderableEnrichedMarkdownMath(props.markdown)) {
+    if (!containsPotentialEnrichedMath(props.markdown, props.agentTexMath)) {
         return <Text selectable={props.selectable} style={props.textStyle}>{props.markdown}</Text>;
     }
 
@@ -424,8 +430,14 @@ function RenderTableCellContent(props: Readonly<{
             testID="markdown-table-cell-enriched"
             suppressLeadingTopMargin
             fillContainer={false}
+            agentTexMath={props.agentTexMath}
         />
     );
+}
+
+function containsPotentialEnrichedMath(markdown: string, agentTexMath: boolean): boolean {
+    return markdown.includes('$')
+        || (agentTexMath && (markdown.includes('\\(') || markdown.includes('\\[')));
 }
 
 function getTableCellAlignmentStyle(alignment: MarkdownTableAlignment) {

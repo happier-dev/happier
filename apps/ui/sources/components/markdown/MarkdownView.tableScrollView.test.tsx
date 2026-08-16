@@ -103,13 +103,17 @@ describe('MarkdownView (tables)', () => {
         ].join('\n');
 
         const screen = await renderScreen(
-            <MarkdownView markdown={markdown} selectable profile="transcript" />,
+            <MarkdownView markdown={markdown} selectable profile="transcript" agentTexMath />,
         );
 
         expect(screen.findAllByType('GestureHandlerScrollView' as any)).toHaveLength(1);
         expect(screen.findAllByType('EnrichedMarkdownText').map((node) => node.props.markdown)).toEqual([
-            '$x_i$',
+            '\\(x_i\\)',
             '$y_i$',
+        ]);
+        expect(screen.findAllByType('EnrichedMarkdownText').map((node) => node.props.md4cFlags)).toEqual([
+            { latexMath: true, texMathBackslashDelimiters: true },
+            { latexMath: true, texMathBackslashDelimiters: true },
         ]);
         expect(screen.findAllByType('Text' as any).some((node) => node.props.children === 'value')).toBe(true);
     }, 60_000);

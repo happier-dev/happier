@@ -2,9 +2,8 @@ import * as React from 'react';
 import { Platform, type StyleProp, type TextStyle } from 'react-native';
 import { EnrichedMarkdownText, type EnrichedMarkdownTextProps } from 'react-native-enriched-markdown';
 
-import { ENRICHED_MARKDOWN_MD4C_FLAGS } from './enrichedMarkdownConstants';
+import { resolveEnrichedMarkdownMd4cFlags } from './enrichedMarkdownConstants';
 import { normalizeMarkdownLinkUrl, openMarkdownLinkUrl, sanitizeEnrichedMarkdownLinkTargets } from './enrichedMarkdownLinkHandling';
-import { normalizeEnrichedMarkdownMathDelimiters } from './normalizeEnrichedMarkdownMathDelimiters';
 import { useEnrichedMarkdownRuntimeStatus } from './preloadEnrichedMarkdownRuntime';
 import { resolveEnrichedMarkdownFlavor } from './resolveEnrichedMarkdownFlavor';
 import { useEnrichedMarkdownStyle } from './useEnrichedMarkdownStyle';
@@ -84,6 +83,7 @@ type EnrichedMarkdownTextAdapterProps = Readonly<{
     testID?: string;
     suppressLeadingTopMargin?: boolean;
     fillContainer?: boolean;
+    agentTexMath: boolean;
 }>;
 
 export const EnrichedMarkdownTextAdapter = React.memo((props: EnrichedMarkdownTextAdapterProps) => {
@@ -93,11 +93,10 @@ export const EnrichedMarkdownTextAdapter = React.memo((props: EnrichedMarkdownTe
         textStyle: props.textStyle,
     });
     const sanitizedMarkdown = React.useMemo(
-        () => sanitizeEnrichedMarkdownLinkTargets(
-            normalizeEnrichedMarkdownMathDelimiters(props.markdown),
-        ),
+        () => sanitizeEnrichedMarkdownLinkTargets(props.markdown),
         [props.markdown],
     );
+    const md4cFlags = resolveEnrichedMarkdownMd4cFlags(props.agentTexMath);
 
     const handleLinkPress = React.useCallback((event: { url: string }) => {
         const normalizedUrl = normalizeMarkdownLinkUrl(event.url);
@@ -173,7 +172,7 @@ export const EnrichedMarkdownTextAdapter = React.memo((props: EnrichedMarkdownTe
             markdown={sanitizedMarkdown}
             markdownStyle={styleBundle.markdownStyle}
             containerStyle={containerStyle}
-            md4cFlags={ENRICHED_MARKDOWN_MD4C_FLAGS}
+            md4cFlags={md4cFlags}
             onLinkPress={handleLinkPress}
             selectable={props.selectable}
             allowTrailingMargin={false}

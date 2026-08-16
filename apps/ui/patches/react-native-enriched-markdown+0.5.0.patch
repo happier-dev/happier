@@ -1,3 +1,120 @@
+diff --git a/node_modules/react-native-enriched-markdown/android/generated/jni/react/renderer/components/EnrichedMarkdownTextSpec/Props.h b/node_modules/react-native-enriched-markdown/android/generated/jni/react/renderer/components/EnrichedMarkdownTextSpec/Props.h
+index c9e1984..4f75d3a 100644
+--- a/node_modules/react-native-enriched-markdown/android/generated/jni/react/renderer/components/EnrichedMarkdownTextSpec/Props.h
++++ b/node_modules/react-native-enriched-markdown/android/generated/jni/react/renderer/components/EnrichedMarkdownTextSpec/Props.h
+@@ -1857,6 +1857,7 @@ static inline folly::dynamic toDynamic(const EnrichedMarkdownMarkdownStyleStruct
+ struct EnrichedMarkdownMd4cFlagsStruct {
+   bool underline{false};
+   bool latexMath{false};
++  bool texMathBackslashDelimiters{false};
+ 
+ 
+ #ifdef RN_SERIALIZABLE_STATE
+@@ -1866,6 +1867,7 @@ struct EnrichedMarkdownMd4cFlagsStruct {
+     folly::dynamic result = folly::dynamic::object();
+     result["underline"] = underline;
+     result["latexMath"] = latexMath;
++    result["texMathBackslashDelimiters"] = texMathBackslashDelimiters;
+     return result;
+   }
+ #endif
+@@ -1882,6 +1884,10 @@ static inline void fromRawValue(const PropsParserContext& context, const RawValu
+   if (tmp_latexMath != map.end()) {
+     fromRawValue(context, tmp_latexMath->second, result.latexMath);
+   }
++  auto tmp_texMathBackslashDelimiters = map.find("texMathBackslashDelimiters");
++  if (tmp_texMathBackslashDelimiters != map.end()) {
++    fromRawValue(context, tmp_texMathBackslashDelimiters->second, result.texMathBackslashDelimiters);
++  }
+ }
+ 
+ static inline std::string toString(const EnrichedMarkdownMd4cFlagsStruct &value) {
+@@ -4153,6 +4159,7 @@ static inline folly::dynamic toDynamic(const EnrichedMarkdownTextMarkdownStyleSt
+ struct EnrichedMarkdownTextMd4cFlagsStruct {
+   bool underline{false};
+   bool latexMath{false};
++  bool texMathBackslashDelimiters{false};
+ 
+ 
+ #ifdef RN_SERIALIZABLE_STATE
+@@ -4162,6 +4169,7 @@ struct EnrichedMarkdownTextMd4cFlagsStruct {
+     folly::dynamic result = folly::dynamic::object();
+     result["underline"] = underline;
+     result["latexMath"] = latexMath;
++    result["texMathBackslashDelimiters"] = texMathBackslashDelimiters;
+     return result;
+   }
+ #endif
+@@ -4178,6 +4186,10 @@ static inline void fromRawValue(const PropsParserContext& context, const RawValu
+   if (tmp_latexMath != map.end()) {
+     fromRawValue(context, tmp_latexMath->second, result.latexMath);
+   }
++  auto tmp_texMathBackslashDelimiters = map.find("texMathBackslashDelimiters");
++  if (tmp_texMathBackslashDelimiters != map.end()) {
++    fromRawValue(context, tmp_texMathBackslashDelimiters->second, result.texMathBackslashDelimiters);
++  }
+ }
+ 
+ static inline std::string toString(const EnrichedMarkdownTextMd4cFlagsStruct &value) {
+diff --git a/node_modules/react-native-enriched-markdown/android/src/main/cpp/jni-adapter.cpp b/node_modules/react-native-enriched-markdown/android/src/main/cpp/jni-adapter.cpp
+index 16137fa..0eb4004 100644
+--- a/node_modules/react-native-enriched-markdown/android/src/main/cpp/jni-adapter.cpp
++++ b/node_modules/react-native-enriched-markdown/android/src/main/cpp/jni-adapter.cpp
+@@ -206,6 +206,10 @@ JNIEXPORT jobject JNICALL Java_com_swmansion_enriched_markdown_parser_Parser_nat
+         if (latexMathField) {
+           md4cFlags.latexMath = env->GetBooleanField(flags, latexMathField) == JNI_TRUE;
+         }
++        jfieldID texMathBackslashDelimitersField = env->GetFieldID(flagsClass, "texMathBackslashDelimiters", "Z");
++        if (texMathBackslashDelimitersField) {
++          md4cFlags.texMathBackslashDelimiters = env->GetBooleanField(flags, texMathBackslashDelimitersField) == JNI_TRUE;
++        }
+         jfieldID permissiveAutolinksField = env->GetFieldID(flagsClass, "permissiveAutolinks", "Z");
+         if (permissiveAutolinksField) {
+           md4cFlags.permissiveAutolinks = env->GetBooleanField(flags, permissiveAutolinksField) == JNI_TRUE;
+diff --git a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/MeasurementStore.kt b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/MeasurementStore.kt
+index 0abbba9..e101f37 100644
+--- a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/MeasurementStore.kt
++++ b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/MeasurementStore.kt
+@@ -245,6 +245,7 @@ object MeasurementStore {
+       Md4cFlags(
+         underline = props.getMapOrNull("md4cFlags").getBooleanOrDefault("underline", false),
+         latexMath = FeatureFlags.IS_MATH_ENABLED && props.getMapOrNull("md4cFlags").getBooleanOrDefault("latexMath", true),
++        texMathBackslashDelimiters = FeatureFlags.IS_MATH_ENABLED && props.getMapOrNull("md4cFlags").getBooleanOrDefault("texMathBackslashDelimiters", false),
+       )
+ 
+     val fontSize = getInitialFontSize(styleMap, context, allowFontScaling, fontScale, maxFontSizeMultiplier)
+@@ -295,6 +296,7 @@ object MeasurementStore {
+       Md4cFlags(
+         underline = props.getMapOrNull("md4cFlags").getBooleanOrDefault("underline", false),
+         latexMath = FeatureFlags.IS_MATH_ENABLED && props.getMapOrNull("md4cFlags").getBooleanOrDefault("latexMath", true),
++        texMathBackslashDelimiters = FeatureFlags.IS_MATH_ENABLED && props.getMapOrNull("md4cFlags").getBooleanOrDefault("texMathBackslashDelimiters", false),
+       )
+     val allowTrailingMargin = props.getBooleanOrDefault("allowTrailingMargin", false)
+     val propsHash = computePropsHash(props, allowFontScaling, fontScale, maxFontSizeMultiplier)
+diff --git a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/parser/Parser.kt b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/parser/Parser.kt
+index 08b031d..d817f1b 100644
+--- a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/parser/Parser.kt
++++ b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/parser/Parser.kt
+@@ -6,6 +6,7 @@ import com.swmansion.enriched.markdown.utils.common.FeatureFlags
+ data class Md4cFlags(
+   val underline: Boolean = false,
+   val latexMath: Boolean = FeatureFlags.IS_MATH_ENABLED,
++  val texMathBackslashDelimiters: Boolean = false,
+   val permissiveAutolinks: Boolean = true,
+ ) {
+   companion object {
+diff --git a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/utils/common/MarkdownViewManagerUtils.kt b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/utils/common/MarkdownViewManagerUtils.kt
+index 9f3152d..38fd365 100644
+--- a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/utils/common/MarkdownViewManagerUtils.kt
++++ b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/utils/common/MarkdownViewManagerUtils.kt
+@@ -82,6 +82,7 @@ fun parseMd4cFlags(flags: ReadableMap?): Md4cFlags =
+   Md4cFlags(
+     underline = flags?.getBoolean("underline") ?: false,
+     latexMath = FeatureFlags.IS_MATH_ENABLED && (flags?.getBoolean("latexMath") ?: true),
++    texMathBackslashDelimiters = FeatureFlags.IS_MATH_ENABLED && (flags?.getBoolean("texMathBackslashDelimiters") ?: false),
+   )
+ 
+ fun parseContextMenuItems(value: ReadableArray?): List<String> =
 diff --git a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/utils/text/TailFadeInAnimator.kt b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/utils/text/TailFadeInAnimator.kt
 index 9feea24..7c5d540 100644
 --- a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/utils/text/TailFadeInAnimator.kt
@@ -160,6 +277,227 @@ index 9feea24..7c5d540 100644
    }
  
    companion object {
+diff --git a/node_modules/react-native-enriched-markdown/cpp/md4c/md4c.c b/node_modules/react-native-enriched-markdown/cpp/md4c/md4c.c
+index 76a66d2..197ec38 100644
+--- a/node_modules/react-native-enriched-markdown/cpp/md4c/md4c.c
++++ b/node_modules/react-native-enriched-markdown/cpp/md4c/md4c.c
+@@ -201,7 +201,7 @@ struct MD_CTX_tag {
+ #endif
+ 
+     /* For resolving of inline spans. */
+-    MD_MARKSTACK opener_stacks[17];
++    MD_MARKSTACK opener_stacks[19];
+ #define ASTERISK_OPENERS_oo_mod3_0      (ctx->opener_stacks[0])     /* Opener-only */
+ #define ASTERISK_OPENERS_oo_mod3_1      (ctx->opener_stacks[1])
+ #define ASTERISK_OPENERS_oo_mod3_2      (ctx->opener_stacks[2])
+@@ -219,6 +219,8 @@ struct MD_CTX_tag {
+ #define BRACKET_OPENERS                 (ctx->opener_stacks[14])
+ #define DOLLAR_OPENERS                  (ctx->opener_stacks[15])
+ #define PIPE_OPENERS                    (ctx->opener_stacks[16])
++#define BACKSLASH_TEX_INLINE_OPENERS        (ctx->opener_stacks[17])
++#define BACKSLASH_TEX_DISPLAY_OPENERS       (ctx->opener_stacks[18])
+ 
+     /* Stack of dummies which need to call free() for pointers stored in them.
+      * These are constructed during inline parsing and freed after all the block
+@@ -2553,6 +2555,7 @@ struct MD_MARK_tag {
+ #define MD_MARK_AUTOLINK_MISSING_MAILTO     0x40
+ #define MD_MARK_VALIDPERMISSIVEAUTOLINK     0x20  /* For permissive autolinks. */
+ #define MD_MARK_HASNESTEDBRACKETS           0x20  /* For '[' to rule out invalid link labels early */
++#define MD_MARK_BACKSLASH_TEX_DISPLAY            0x20  /* For '\\' backslash-delimited math delimiters. */
+ 
+ static MD_MARKSTACK*
+ md_emph_stack(MD_CTX* ctx, MD_CHAR ch, unsigned flags)
+@@ -3041,6 +3044,49 @@ md_collect_marks(MD_CTX* ctx, const MD_LINE* lines, MD_SIZE n_lines, int table_m
+ 
+             ch = CH(off);
+ 
++            /* Backslash-delimited TeX math delimiters. Handle these before CommonMark
++             * backslash escapes so incomplete input can remain literal until
++             * a matching delimiter arrives. */
++            if(ch == _T('\\')  &&  (ctx->parser.flags & MD_FLAG_BACKSLASHTEXMATHSPANS)  &&  off+1 < line->end) {
++                CHAR delimiter = CH(off+1);
++
++                if(delimiter == _T('(')  ||  delimiter == _T(')')) {
++                    ADD_MARK(ch, off, off+2,
++                             delimiter == _T('(') ? MD_MARK_POTENTIAL_OPENER : MD_MARK_POTENTIAL_CLOSER);
++                    off += 2;
++                    continue;
++                }
++
++                if(delimiter == _T('[')  ||  delimiter == _T(']')) {
++                    OFF cursor;
++                    int standalone = TRUE;
++
++                    if(delimiter == _T('[')) {
++                        for(cursor = line->beg; cursor < off; cursor++) {
++                            if(!ISBLANK(cursor)) {
++                                standalone = FALSE;
++                                break;
++                            }
++                        }
++                    } else {
++                        for(cursor = off+2; cursor < line->end; cursor++) {
++                            if(!ISBLANK(cursor)) {
++                                standalone = FALSE;
++                                break;
++                            }
++                        }
++                    }
++
++                    if(standalone) {
++                        ADD_MARK(ch, off, off+2,
++                                 (delimiter == _T('[') ? MD_MARK_POTENTIAL_OPENER : MD_MARK_POTENTIAL_CLOSER) |
++                                     MD_MARK_BACKSLASH_TEX_DISPLAY);
++                        off += 2;
++                        continue;
++                    }
++                }
++            }
++
+             /* A backslash escape.
+              * It can go beyond line->end as it may involve escaped new
+              * line to form a hard break. */
+@@ -3867,6 +3913,39 @@ md_analyze_dollar(MD_CTX* ctx, int mark_index)
+         md_mark_stack_push(ctx, &DOLLAR_OPENERS, mark_index);
+ }
+ 
++static void
++md_analyze_backslash_tex_math(MD_CTX* ctx, int mark_index)
++{
++    MD_MARK* mark = &ctx->marks[mark_index];
++    int is_display = (mark->flags & MD_MARK_BACKSLASH_TEX_DISPLAY) != 0;
++    MD_MARKSTACK* stack = is_display ? &BACKSLASH_TEX_DISPLAY_OPENERS : &BACKSLASH_TEX_INLINE_OPENERS;
++
++    if((mark->flags & MD_MARK_POTENTIAL_CLOSER)  &&  stack->top >= 0) {
++        int opener_index = md_mark_stack_pop(ctx, stack);
++        MD_MARK* opener = &ctx->marks[opener_index];
++        OFF off;
++        int has_content = FALSE;
++        int crosses_line = FALSE;
++
++        for(off = opener->end; off < mark->beg; off++) {
++            if(ISNEWLINE(off))
++                crosses_line = TRUE;
++            else if(!ISUNICODEWHITESPACE(off))
++                has_content = TRUE;
++        }
++
++        if(has_content  &&  (is_display || !crosses_line)) {
++            md_rollback(ctx, opener_index, mark_index, MD_ROLLBACK_ALL);
++            md_resolve_range(ctx, opener_index, mark_index);
++            stack->top = -1;
++            return;
++        }
++    }
++
++    if(mark->flags & MD_MARK_POTENTIAL_OPENER)
++        md_mark_stack_push(ctx, stack, mark_index);
++}
++
+ static void
+ md_analyze_pipe(MD_CTX* ctx, int mark_index)
+ {
+@@ -4128,6 +4207,7 @@ md_analyze_marks(MD_CTX* ctx, const MD_LINE* lines, MD_SIZE n_lines,
+             case '*':   md_analyze_emph(ctx, i); break;
+             case '~':   md_analyze_tilde(ctx, i); break;
+             case '$':   md_analyze_dollar(ctx, i); break;
++            case '\\':  md_analyze_backslash_tex_math(ctx, i); break;
+             case '.':   /* Pass through. */
+             case ':':   /* Pass through. */
+             case '@':   md_analyze_permissive_autolink(ctx, i); break;
+@@ -4208,6 +4288,10 @@ md_analyze_link_contents(MD_CTX* ctx, const MD_LINE* lines, MD_SIZE n_lines,
+         md_analyze_marks(ctx, lines, n_lines, mark_beg, mark_end, _T("@:."), MD_ANALYZE_NOSKIP_EMPH);
+     }
+ 
++    /* Let the existing autolink owner claim URL ranges before backslash-delimited
++     * math. NOSKIP_EMPH still permits math nested inside resolved emphasis. */
++    md_analyze_marks(ctx, lines, n_lines, mark_beg, mark_end, _T("\\"), MD_ANALYZE_NOSKIP_EMPH);
++
+     for(i = 0; i < (int) SIZEOF_ARRAY(ctx->opener_stacks); i++)
+         ctx->opener_stacks[i].top = -1;
+ }
+@@ -4297,11 +4381,24 @@ md_process_inlines(MD_CTX* ctx, const MD_LINE* lines, MD_SIZE n_lines)
+         /* If reached the mark, process it and move to next one. */
+         if(off >= mark->beg) {
+             switch(mark->ch) {
+-                case '\\':      /* Backslash escape. */
+-                    if(ISNEWLINE(mark->beg+1))
++                case '\\':      /* Backslash escape or backslash-delimited TeX math. */
++                    if((mark->flags & MD_MARK_OPENER) != 0) {
++                        MD_ENTER_SPAN((mark->flags & MD_MARK_BACKSLASH_TEX_DISPLAY) != 0
++                                          ? MD_SPAN_LATEXMATH_DISPLAY
++                                          : MD_SPAN_LATEXMATH,
++                                      NULL);
++                        text_type = MD_TEXT_LATEXMATH;
++                    } else if((mark->flags & MD_MARK_CLOSER) != 0) {
++                        MD_LEAVE_SPAN((mark->flags & MD_MARK_BACKSLASH_TEX_DISPLAY) != 0
++                                          ? MD_SPAN_LATEXMATH_DISPLAY
++                                          : MD_SPAN_LATEXMATH,
++                                      NULL);
++                        text_type = MD_TEXT_NORMAL;
++                    } else if(ISNEWLINE(mark->beg+1)) {
+                         enforce_hardbreak = 1;
+-                    else
++                    } else {
+                         MD_TEXT(text_type, STR(mark->beg+1), 1);
++                    }
+                     break;
+ 
+                 case ' ':       /* Non-trivial space. */
+@@ -4511,8 +4608,8 @@ md_process_inlines(MD_CTX* ctx, const MD_LINE* lines, MD_SIZE n_lines)
+ 
+             if(text_type == MD_TEXT_CODE || text_type == MD_TEXT_LATEXMATH) {
+                 MD_ASSERT(prev_mark != NULL);
+-                MD_ASSERT(ISANYOF2_(prev_mark->ch, '`', '$')  &&  (prev_mark->flags & MD_MARK_OPENER));
+-                MD_ASSERT(ISANYOF2_(mark->ch, '`', '$')  &&  (mark->flags & MD_MARK_CLOSER));
++                MD_ASSERT(ISANYOF3_(prev_mark->ch, '`', '$', '\\')  &&  (prev_mark->flags & MD_MARK_OPENER));
++                MD_ASSERT(ISANYOF3_(mark->ch, '`', '$', '\\')  &&  (mark->flags & MD_MARK_CLOSER));
+ 
+                 /* Inside a code span, trailing line whitespace has to be
+                  * outputted. */
+diff --git a/node_modules/react-native-enriched-markdown/cpp/md4c/md4c.h b/node_modules/react-native-enriched-markdown/cpp/md4c/md4c.h
+index 00f8cc7..f949146 100644
+--- a/node_modules/react-native-enriched-markdown/cpp/md4c/md4c.h
++++ b/node_modules/react-native-enriched-markdown/cpp/md4c/md4c.h
+@@ -321,6 +321,7 @@ typedef struct MD_SPAN_WIKILINK {
+ #define MD_FLAG_UNDERLINE 0x4000        /* Enable underline extension (and disables '_' for normal emphasis). */
+ #define MD_FLAG_HARD_SOFT_BREAKS 0x8000 /* Force all soft breaks to act as hard breaks. */
+ #define MD_FLAG_SPOILER 0x10000         /* Enable ||hidden text|| spoiler spans. */
++#define MD_FLAG_BACKSLASHTEXMATHSPANS 0x20000 /* Enable backslash-delimited \(...\) and standalone \[...\] equations. */
+ 
+ #define MD_FLAG_PERMISSIVEAUTOLINKS                                                                                    \
+   (MD_FLAG_PERMISSIVEEMAILAUTOLINKS | MD_FLAG_PERMISSIVEURLAUTOLINKS | MD_FLAG_PERMISSIVEWWWAUTOLINKS)
+diff --git a/node_modules/react-native-enriched-markdown/cpp/parser/MD4CParser.cpp b/node_modules/react-native-enriched-markdown/cpp/parser/MD4CParser.cpp
+index bbc0b0e..91f6a9c 100644
+--- a/node_modules/react-native-enriched-markdown/cpp/parser/MD4CParser.cpp
++++ b/node_modules/react-native-enriched-markdown/cpp/parser/MD4CParser.cpp
+@@ -474,6 +474,9 @@ std::shared_ptr<MarkdownASTNode> MD4CParser::parse(const std::string &markdown,
+   if (md4cFlags.latexMath) {
+     flags |= MD_FLAG_LATEXMATHSPANS;
+   }
++  if (md4cFlags.texMathBackslashDelimiters) {
++    flags |= MD_FLAG_BACKSLASHTEXMATHSPANS;
++  }
+   if (md4cFlags.underline) {
+     flags |= MD_FLAG_UNDERLINE;
+   }
+diff --git a/node_modules/react-native-enriched-markdown/cpp/parser/MD4CParser.hpp b/node_modules/react-native-enriched-markdown/cpp/parser/MD4CParser.hpp
+index 6d5eb2f..d3ae3c6 100644
+--- a/node_modules/react-native-enriched-markdown/cpp/parser/MD4CParser.hpp
++++ b/node_modules/react-native-enriched-markdown/cpp/parser/MD4CParser.hpp
+@@ -9,6 +9,7 @@ namespace Markdown {
+ struct Md4cFlags {
+     bool underline = false;
+     bool latexMath = true;
++    bool texMathBackslashDelimiters = false;
+     bool permissiveAutolinks = true;
+ };
+ 
+@@ -26,4 +27,3 @@ private:
+ };
+ 
+ } // namespace Markdown
+-
 diff --git a/node_modules/react-native-enriched-markdown/cpp/wasm/build.sh b/node_modules/react-native-enriched-markdown/cpp/wasm/build.sh
 index e60ff0d..0a14c68 100755
 --- a/node_modules/react-native-enriched-markdown/cpp/wasm/build.sh
@@ -189,6 +527,202 @@ index e60ff0d..0a14c68 100755
  rm "$OUT_DIR/md4c.o"
  
  echo "Done → $OUT_DIR/md4c.js"
+diff --git a/node_modules/react-native-enriched-markdown/cpp/wasm/md4c_wasm.cpp b/node_modules/react-native-enriched-markdown/cpp/wasm/md4c_wasm.cpp
+index 7c40b40..3084d0c 100644
+--- a/node_modules/react-native-enriched-markdown/cpp/wasm/md4c_wasm.cpp
++++ b/node_modules/react-native-enriched-markdown/cpp/wasm/md4c_wasm.cpp
+@@ -15,9 +15,10 @@ extern "C" {
+  * @param markdown   Null-terminated UTF-8 markdown input.
+  * @param underline  1 → enable __ underline extension; 0 → __ means emphasis.
+  * @param latexMath  1 → enable $…$ / $$…$$ LaTeX math spans; 0 → disable.
++ * @param texMathBackslashDelimiters 1 → enable \(…\) / standalone \[…\] math spans; 0 → disable.
+  * @return           Null-terminated UTF-8 JSON string, valid until the next call.
+  */
+-const char *parseMarkdown(const char *markdown, int underline, int latexMath) {
++const char *parseMarkdown(const char *markdown, int underline, int latexMath, int texMathBackslashDelimiters) {
+   if (!markdown) {
+     g_resultBuffer = "{\"type\":\"Document\"}";
+     return g_resultBuffer.c_str();
+@@ -26,6 +27,7 @@ const char *parseMarkdown(const char *markdown, int underline, int latexMath) {
+   Markdown::Md4cFlags flags;
+   flags.underline = (underline != 0);
+   flags.latexMath = (latexMath != 0);
++  flags.texMathBackslashDelimiters = (texMathBackslashDelimiters != 0);
+ 
+   Markdown::MD4CParser parser;
+   auto root = parser.parse(std::string(markdown), flags);
+diff --git a/node_modules/react-native-enriched-markdown/ios/EnrichedMarkdown.mm b/node_modules/react-native-enriched-markdown/ios/EnrichedMarkdown.mm
+index 9227b78..5b19c1b 100644
+--- a/node_modules/react-native-enriched-markdown/ios/EnrichedMarkdown.mm
++++ b/node_modules/react-native-enriched-markdown/ios/EnrichedMarkdown.mm
+@@ -637,6 +637,10 @@ - (void)updateProps:(Props::Shared const &)props oldProps:(Props::Shared const &
+     _md4cFlags.latexMath = newViewProps.md4cFlags.latexMath;
+     md4cFlagsChanged = YES;
+   }
++  if (newViewProps.md4cFlags.texMathBackslashDelimiters != oldViewProps.md4cFlags.texMathBackslashDelimiters) {
++    _md4cFlags.texMathBackslashDelimiters = newViewProps.md4cFlags.texMathBackslashDelimiters;
++    md4cFlagsChanged = YES;
++  }
+   BOOL markdownChanged = oldViewProps.markdown != newViewProps.markdown;
+   BOOL allowTrailingMarginChanged = newViewProps.allowTrailingMargin != oldViewProps.allowTrailingMargin;
+ 
+diff --git a/node_modules/react-native-enriched-markdown/ios/EnrichedMarkdownText.mm b/node_modules/react-native-enriched-markdown/ios/EnrichedMarkdownText.mm
+index 239e435..d74e7a3 100644
+--- a/node_modules/react-native-enriched-markdown/ios/EnrichedMarkdownText.mm
++++ b/node_modules/react-native-enriched-markdown/ios/EnrichedMarkdownText.mm
+@@ -444,6 +444,10 @@ - (void)updateProps:(Props::Shared const &)props oldProps:(Props::Shared const &
+     _md4cFlags.latexMath = newViewProps.md4cFlags.latexMath;
+     md4cFlagsChanged = YES;
+   }
++  if (newViewProps.md4cFlags.texMathBackslashDelimiters != oldViewProps.md4cFlags.texMathBackslashDelimiters) {
++    _md4cFlags.texMathBackslashDelimiters = newViewProps.md4cFlags.texMathBackslashDelimiters;
++    md4cFlagsChanged = YES;
++  }
+   BOOL markdownChanged = oldViewProps.markdown != newViewProps.markdown;
+   BOOL allowTrailingMarginChanged = newViewProps.allowTrailingMargin != oldViewProps.allowTrailingMargin;
+ 
+diff --git a/node_modules/react-native-enriched-markdown/ios/generated/ReactCodegen/EnrichedMarkdownTextSpec/Props.h b/node_modules/react-native-enriched-markdown/ios/generated/ReactCodegen/EnrichedMarkdownTextSpec/Props.h
+index c9e1984..4f75d3a 100644
+--- a/node_modules/react-native-enriched-markdown/ios/generated/ReactCodegen/EnrichedMarkdownTextSpec/Props.h
++++ b/node_modules/react-native-enriched-markdown/ios/generated/ReactCodegen/EnrichedMarkdownTextSpec/Props.h
+@@ -1857,6 +1857,7 @@ static inline folly::dynamic toDynamic(const EnrichedMarkdownMarkdownStyleStruct
+ struct EnrichedMarkdownMd4cFlagsStruct {
+   bool underline{false};
+   bool latexMath{false};
++  bool texMathBackslashDelimiters{false};
+ 
+ 
+ #ifdef RN_SERIALIZABLE_STATE
+@@ -1866,6 +1867,7 @@ struct EnrichedMarkdownMd4cFlagsStruct {
+     folly::dynamic result = folly::dynamic::object();
+     result["underline"] = underline;
+     result["latexMath"] = latexMath;
++    result["texMathBackslashDelimiters"] = texMathBackslashDelimiters;
+     return result;
+   }
+ #endif
+@@ -1882,6 +1884,10 @@ static inline void fromRawValue(const PropsParserContext& context, const RawValu
+   if (tmp_latexMath != map.end()) {
+     fromRawValue(context, tmp_latexMath->second, result.latexMath);
+   }
++  auto tmp_texMathBackslashDelimiters = map.find("texMathBackslashDelimiters");
++  if (tmp_texMathBackslashDelimiters != map.end()) {
++    fromRawValue(context, tmp_texMathBackslashDelimiters->second, result.texMathBackslashDelimiters);
++  }
+ }
+ 
+ static inline std::string toString(const EnrichedMarkdownMd4cFlagsStruct &value) {
+@@ -4153,6 +4159,7 @@ static inline folly::dynamic toDynamic(const EnrichedMarkdownTextMarkdownStyleSt
+ struct EnrichedMarkdownTextMd4cFlagsStruct {
+   bool underline{false};
+   bool latexMath{false};
++  bool texMathBackslashDelimiters{false};
+ 
+ 
+ #ifdef RN_SERIALIZABLE_STATE
+@@ -4162,6 +4169,7 @@ struct EnrichedMarkdownTextMd4cFlagsStruct {
+     folly::dynamic result = folly::dynamic::object();
+     result["underline"] = underline;
+     result["latexMath"] = latexMath;
++    result["texMathBackslashDelimiters"] = texMathBackslashDelimiters;
+     return result;
+   }
+ #endif
+@@ -4178,6 +4186,10 @@ static inline void fromRawValue(const PropsParserContext& context, const RawValu
+   if (tmp_latexMath != map.end()) {
+     fromRawValue(context, tmp_latexMath->second, result.latexMath);
+   }
++  auto tmp_texMathBackslashDelimiters = map.find("texMathBackslashDelimiters");
++  if (tmp_texMathBackslashDelimiters != map.end()) {
++    fromRawValue(context, tmp_texMathBackslashDelimiters->second, result.texMathBackslashDelimiters);
++  }
+ }
+ 
+ static inline std::string toString(const EnrichedMarkdownTextMd4cFlagsStruct &value) {
+diff --git a/node_modules/react-native-enriched-markdown/ios/internals/MeasurementCache.h b/node_modules/react-native-enriched-markdown/ios/internals/MeasurementCache.h
+index e669d6c..46bde8c 100644
+--- a/node_modules/react-native-enriched-markdown/ios/internals/MeasurementCache.h
++++ b/node_modules/react-native-enriched-markdown/ios/internals/MeasurementCache.h
+@@ -37,6 +37,7 @@ struct MeasurementCacheKey {
+   double maxFontSizeMultiplier;
+   bool md4cFlagsUnderline;
+   bool md4cFlagsLatexMath;
++  bool md4cFlagsTexMathBackslashDelimiters;
+   size_t styleFingerprint;
+   CGFloat fontScale;
+   MarkdownFlavor flavor;
+@@ -44,9 +45,10 @@ struct MeasurementCacheKey {
+   bool operator==(const MeasurementCacheKey &other) const
+   {
+     return std::tie(markdown, maxWidth, allowTrailingMargin, allowFontScaling, maxFontSizeMultiplier,
+-                    md4cFlagsUnderline, md4cFlagsLatexMath, styleFingerprint, fontScale, flavor) ==
++                    md4cFlagsUnderline, md4cFlagsLatexMath, md4cFlagsTexMathBackslashDelimiters, styleFingerprint, fontScale, flavor) ==
+            std::tie(other.markdown, other.maxWidth, other.allowTrailingMargin, other.allowFontScaling,
+                     other.maxFontSizeMultiplier, other.md4cFlagsUnderline, other.md4cFlagsLatexMath,
++                    other.md4cFlagsTexMathBackslashDelimiters,
+                     other.styleFingerprint, other.fontScale, other.flavor);
+   }
+ };
+@@ -62,6 +64,7 @@ struct MeasurementCacheKeyHash {
+     HashUtils::hash_one(h, key.maxFontSizeMultiplier);
+     HashUtils::hash_one(h, key.md4cFlagsUnderline);
+     HashUtils::hash_one(h, key.md4cFlagsLatexMath);
++    HashUtils::hash_one(h, key.md4cFlagsTexMathBackslashDelimiters);
+     HashUtils::hash_one(h, key.styleFingerprint);
+     HashUtils::hash_one(h, key.fontScale);
+     HashUtils::hash_one(h, static_cast<uint8_t>(key.flavor));
+@@ -139,6 +142,7 @@ inline MeasurementCacheKey buildMeasurementCacheKey(const PropsType &props, CGFl
+       .maxFontSizeMultiplier = props.maxFontSizeMultiplier,
+       .md4cFlagsUnderline = props.md4cFlags.underline,
+       .md4cFlagsLatexMath = props.md4cFlags.latexMath,
++      .md4cFlagsTexMathBackslashDelimiters = props.md4cFlags.texMathBackslashDelimiters,
+       .styleFingerprint = computeStyleFingerprint(props.markdownStyle),
+       .fontScale = fontScale,
+       .flavor = flavor,
+diff --git a/node_modules/react-native-enriched-markdown/ios/parser/ENRMMarkdownParser.h b/node_modules/react-native-enriched-markdown/ios/parser/ENRMMarkdownParser.h
+index 8844fe3..01b85df 100644
+--- a/node_modules/react-native-enriched-markdown/ios/parser/ENRMMarkdownParser.h
++++ b/node_modules/react-native-enriched-markdown/ios/parser/ENRMMarkdownParser.h
+@@ -5,6 +5,7 @@
+ 
+ @property (nonatomic, assign) BOOL underline;
+ @property (nonatomic, assign) BOOL latexMath;
++@property (nonatomic, assign) BOOL texMathBackslashDelimiters;
+ 
+ + (instancetype)defaultFlags;
+ 
+diff --git a/node_modules/react-native-enriched-markdown/ios/parser/ENRMMarkdownParser.mm b/node_modules/react-native-enriched-markdown/ios/parser/ENRMMarkdownParser.mm
+index 558f29f..4b1d822 100644
+--- a/node_modules/react-native-enriched-markdown/ios/parser/ENRMMarkdownParser.mm
++++ b/node_modules/react-native-enriched-markdown/ios/parser/ENRMMarkdownParser.mm
+@@ -10,6 +10,7 @@ - (instancetype)init
+   if (self = [super init]) {
+     _underline = NO;
+     _latexMath = YES;
++    _texMathBackslashDelimiters = NO;
+   }
+   return self;
+ }
+@@ -24,6 +25,7 @@ - (id)copyWithZone:(NSZone *)zone
+   ENRMMd4cFlags *copy = [[ENRMMd4cFlags allocWithZone:zone] init];
+   copy.underline = self.underline;
+   copy.latexMath = self.latexMath;
++  copy.texMathBackslashDelimiters = self.texMathBackslashDelimiters;
+   return copy;
+ }
+ 
+diff --git a/node_modules/react-native-enriched-markdown/ios/parser/MarkdownParserBridge.mm b/node_modules/react-native-enriched-markdown/ios/parser/MarkdownParserBridge.mm
+index 0a3a40c..b32a4c4 100644
+--- a/node_modules/react-native-enriched-markdown/ios/parser/MarkdownParserBridge.mm
++++ b/node_modules/react-native-enriched-markdown/ios/parser/MarkdownParserBridge.mm
+@@ -140,6 +140,7 @@
+   Markdown::Md4cFlags cppFlags;
+   cppFlags.underline = flags.underline;
+   cppFlags.latexMath = flags.latexMath;
++  cppFlags.texMathBackslashDelimiters = flags.texMathBackslashDelimiters;
+ 
+   Markdown::MD4CParser parser;
+   auto cppAST = parser.parse(cppMarkdown, cppFlags);
 diff --git a/node_modules/react-native-enriched-markdown/ios/utils/ENRMTailFadeInAnimator.m b/node_modules/react-native-enriched-markdown/ios/utils/ENRMTailFadeInAnimator.m
 index e3630fb..4175787 100644
 --- a/node_modules/react-native-enriched-markdown/ios/utils/ENRMTailFadeInAnimator.m
@@ -393,6 +927,30 @@ index e3630fb..4175787 100644
  }
  
  - (void)cleanupEntries
+diff --git a/node_modules/react-native-enriched-markdown/lib/module/EnrichedMarkdownNativeComponent.ts b/node_modules/react-native-enriched-markdown/lib/module/EnrichedMarkdownNativeComponent.ts
+index 06024b4..9353921 100644
+--- a/node_modules/react-native-enriched-markdown/lib/module/EnrichedMarkdownNativeComponent.ts
++++ b/node_modules/react-native-enriched-markdown/lib/module/EnrichedMarkdownNativeComponent.ts
+@@ -224,6 +224,7 @@ export interface Md4cFlagsInternal {
+    * @default true
+    */
+   latexMath: boolean;
++  texMathBackslashDelimiters: boolean;
+ }
+ 
+ export interface NativeProps extends ViewProps {
+diff --git a/node_modules/react-native-enriched-markdown/lib/module/EnrichedMarkdownTextNativeComponent.ts b/node_modules/react-native-enriched-markdown/lib/module/EnrichedMarkdownTextNativeComponent.ts
+index e238ecf..e3639f6 100644
+--- a/node_modules/react-native-enriched-markdown/lib/module/EnrichedMarkdownTextNativeComponent.ts
++++ b/node_modules/react-native-enriched-markdown/lib/module/EnrichedMarkdownTextNativeComponent.ts
+@@ -224,6 +224,7 @@ export interface Md4cFlagsInternal {
+    * @default true
+    */
+   latexMath: boolean;
++  texMathBackslashDelimiters: boolean;
+ }
+ 
+ export interface NativeProps extends ViewProps {
 diff --git a/node_modules/react-native-enriched-markdown/lib/module/index.web.js b/node_modules/react-native-enriched-markdown/lib/module/index.web.js
 index d8308e6..98e32e6 100644
 --- a/node_modules/react-native-enriched-markdown/lib/module/index.web.js
@@ -404,8 +962,32 @@ index d8308e6..98e32e6 100644
 +export { preloadMarkdownRuntime } from "./web/parseMarkdown.js";
  //# sourceMappingURL=index.web.js.map
 \ No newline at end of file
+diff --git a/node_modules/react-native-enriched-markdown/lib/module/native/EnrichedMarkdownText.js b/node_modules/react-native-enriched-markdown/lib/module/native/EnrichedMarkdownText.js
+index 490b567..d25e727 100644
+--- a/node_modules/react-native-enriched-markdown/lib/module/native/EnrichedMarkdownText.js
++++ b/node_modules/react-native-enriched-markdown/lib/module/native/EnrichedMarkdownText.js
+@@ -7,7 +7,8 @@ import { normalizeMarkdownStyle } from '../normalizeMarkdownStyle';
+ import { jsx as _jsx } from "react/jsx-runtime";
+ const defaultMd4cFlags = {
+   underline: false,
+-  latexMath: true
++  latexMath: true,
++  texMathBackslashDelimiters: false
+ };
+ export const EnrichedMarkdownText = ({
+   markdown,
+@@ -38,7 +39,8 @@ export const EnrichedMarkdownText = ({
+   const normalizedStyle = normalizedStyleRef.current;
+   const normalizedMd4cFlags = useMemo(() => ({
+     underline: md4cFlags.underline ?? false,
+-    latexMath: md4cFlags.latexMath ?? true
++    latexMath: md4cFlags.latexMath ?? true,
++    texMathBackslashDelimiters: md4cFlags.texMathBackslashDelimiters ?? false
+   }), [md4cFlags]);
+   const contextMenuCallbacksRef = useRef(new Map());
+   useEffect(() => {
 diff --git a/node_modules/react-native-enriched-markdown/lib/module/web/EnrichedMarkdownText.js b/node_modules/react-native-enriched-markdown/lib/module/web/EnrichedMarkdownText.js
-index c6c73b0..397b78a 100644
+index c6c73b0..96c805e 100644
 --- a/node_modules/react-native-enriched-markdown/lib/module/web/EnrichedMarkdownText.js
 +++ b/node_modules/react-native-enriched-markdown/lib/module/web/EnrichedMarkdownText.js
 @@ -1,13 +1,22 @@
@@ -434,7 +1016,7 @@ index c6c73b0..397b78a 100644
  export const EnrichedMarkdownText = ({
    markdown,
    markdownStyle = {},
-@@ -18,17 +27,26 @@ export const EnrichedMarkdownText = ({
+@@ -18,30 +27,40 @@ export const EnrichedMarkdownText = ({
    allowTrailingMargin = false,
    containerStyle,
    selectable = true,
@@ -449,23 +1031,29 @@ index c6c73b0..397b78a 100644
 -  const [parseError, setParseError] = useState(false);
    const {
      underline = false,
-     latexMath = true
+-    latexMath = true
++    latexMath = true,
++    texMathBackslashDelimiters = false
    } = md4cFlags;
 +  const syncAst = useMemo(() => {
 +    const parsed = parseMarkdownSyncIfReady(markdown, {
 +      underline,
-+      latexMath
++      latexMath,
++      texMathBackslashDelimiters
 +    });
 +    return parsed ? prepareAstForRendering(parsed) : null;
-+  }, [markdown, underline, latexMath]);
++  }, [markdown, underline, latexMath, texMathBackslashDelimiters]);
 +  const [ast, setAst] = useState(syncAst);
 +  const [katex, setKatex] = useState(null);
 +  const [parseError, setParseError] = useState(false);
    useEffect(() => {
      let cancelled = false;
      const katexPromise = latexMath ? loadKaTeX() : Promise.resolve(null);
-@@ -37,11 +55,9 @@ export const EnrichedMarkdownText = ({
-       latexMath
+     Promise.all([parseMarkdown(markdown, {
+       underline,
+-      latexMath
++      latexMath,
++      texMathBackslashDelimiters
      }), katexPromise]).then(([result, katexInstance]) => {
        if (!cancelled) {
 -        indexTaskItems(result);
@@ -477,10 +1065,12 @@ index c6c73b0..397b78a 100644
        }
      }).catch(error => {
        if (!cancelled) {
-@@ -57,14 +73,66 @@ export const EnrichedMarkdownText = ({
+@@ -56,15 +75,67 @@ export const EnrichedMarkdownText = ({
+     return () => {
        cancelled = true;
      };
-   }, [markdown, underline, latexMath]);
+-  }, [markdown, underline, latexMath]);
++  }, [markdown, underline, latexMath, texMathBackslashDelimiters]);
 +  const renderedAst = syncAst ?? ast;
    const callbacks = useMemo(() => ({
      onLinkPress,
@@ -546,7 +1136,7 @@ index c6c73b0..397b78a 100644
    const lastChildStyle = useMemo(() => allowTrailingMargin ? normalizedStyle : zeroTrailingMargins(normalizedStyle), [normalizedStyle, allowTrailingMargin]);
    const styles = useMemo(() => buildStyles(normalizedStyle), [normalizedStyle]);
    const lastChildStyles = useMemo(() => buildStyles(lastChildStyle), [lastChildStyle]);
-@@ -81,14 +149,41 @@ export const EnrichedMarkdownText = ({
+@@ -81,14 +152,41 @@ export const EnrichedMarkdownText = ({
        style: wrapperStyle,
        dir: dir,
        ...rest,
@@ -593,10 +1183,10 @@ index c6c73b0..397b78a 100644
    return /*#__PURE__*/_jsx("div", {
      style: wrapperStyle,
 diff --git a/node_modules/react-native-enriched-markdown/lib/module/web/parseMarkdown.js b/node_modules/react-native-enriched-markdown/lib/module/web/parseMarkdown.js
-index 7604c13..011e0e6 100644
+index 7604c13..83adf7a 100644
 --- a/node_modules/react-native-enriched-markdown/lib/module/web/parseMarkdown.js
 +++ b/node_modules/react-native-enriched-markdown/lib/module/web/parseMarkdown.js
-@@ -1,32 +1,171 @@
+@@ -1,32 +1,173 @@
  "use strict";
  
 +import createMd4cModule from './wasm/md4c.js';
@@ -633,7 +1223,7 @@ index 7604c13..011e0e6 100644
 +      }
 +      return factory();
 +    }).then(wasmModule => ({
-+      parse: wasmModule.cwrap('parseMarkdown', 'string', ['number', 'number', 'number']),
++      parse: wasmModule.cwrap('parseMarkdown', 'string', ['number', 'number', 'number', 'number']),
 +      wasmModule
 +    })).then(runtime => {
 +      parserRuntime = runtime;
@@ -662,8 +1252,8 @@ index 7604c13..011e0e6 100644
 +function shouldCacheParseResult(markdown) {
 +  return markdown.length <= PARSE_CACHE_MAX_MARKDOWN_CHARS;
 +}
-+function buildCacheKey(markdown, underline, latexMath) {
-+  return shouldCacheParseResult(markdown) ? `${underline ? 1 : 0}\0${latexMath ? 1 : 0}\0${markdown}` : null;
++function buildCacheKey(markdown, underline, latexMath, texMathBackslashDelimiters) {
++  return shouldCacheParseResult(markdown) ? `${underline ? 1 : 0}\0${latexMath ? 1 : 0}\0${texMathBackslashDelimiters ? 1 : 0}\0${markdown}` : null;
 +}
 +function rememberParsedResult(cacheKey, ast) {
 +  if (!cacheKey) return;
@@ -683,7 +1273,7 @@ index 7604c13..011e0e6 100644
 +  parseResultCache.set(cacheKey, cached);
 +  return cloneAst(cached);
 +}
-+function parseMarkdownWithHeapInput(runtime, markdown, underline, latexMath) {
++function parseMarkdownWithHeapInput(runtime, markdown, underline, latexMath, texMathBackslashDelimiters) {
 +  const {
 +    wasmModule
 +  } = runtime;
@@ -694,20 +1284,18 @@ index 7604c13..011e0e6 100644
 +  }
 +  try {
 +    wasmModule.stringToUTF8(markdown, inputPointer, inputBytes);
-+    return runtime.parse(inputPointer, underline ? 1 : 0, latexMath ? 1 : 0);
++    return runtime.parse(inputPointer, underline ? 1 : 0, latexMath ? 1 : 0, texMathBackslashDelimiters ? 1 : 0);
 +  } finally {
 +    wasmModule._free(inputPointer);
 +  }
 +}
  export async function parseMarkdown(markdown, {
    underline = false,
-   latexMath = true
- } = {}) {
--  const parse = await initializeParser();
--  const result = JSON.parse(parse(markdown, underline ? 1 : 0, latexMath ? 1 : 0));
--  if (!isASTNode(result)) {
--    throw new Error('WASM parser returned invalid AST');
-+  const cacheKey = buildCacheKey(markdown, underline, latexMath);
+-  latexMath = true
++  latexMath = true,
++  texMathBackslashDelimiters = false
++} = {}) {
++  const cacheKey = buildCacheKey(markdown, underline, latexMath, texMathBackslashDelimiters);
 +  const cachedResult = readCachedParsedResult(cacheKey);
 +  if (cachedResult) return cachedResult;
 +  if (cacheKey) {
@@ -719,7 +1307,7 @@ index 7604c13..011e0e6 100644
 +    }
 +  }
 +  const parsed = initializeParser().then(runtime => {
-+    const result = JSON.parse(parseMarkdownWithHeapInput(runtime, markdown, underline, latexMath));
++    const result = JSON.parse(parseMarkdownWithHeapInput(runtime, markdown, underline, latexMath, texMathBackslashDelimiters));
 +    if (!isASTNode(result)) {
 +      throw new Error('WASM parser returned invalid AST');
 +    }
@@ -749,14 +1337,19 @@ index 7604c13..011e0e6 100644
 +}
 +export function parseMarkdownSyncIfReady(markdown, {
 +  underline = false,
-+  latexMath = true
-+} = {}) {
-+  const cacheKey = buildCacheKey(markdown, underline, latexMath);
++  latexMath = true,
++  texMathBackslashDelimiters = false
+ } = {}) {
+-  const parse = await initializeParser();
+-  const result = JSON.parse(parse(markdown, underline ? 1 : 0, latexMath ? 1 : 0));
+-  if (!isASTNode(result)) {
+-    throw new Error('WASM parser returned invalid AST');
++  const cacheKey = buildCacheKey(markdown, underline, latexMath, texMathBackslashDelimiters);
 +  const cachedResult = readCachedParsedResult(cacheKey);
 +  if (cachedResult) return cachedResult;
 +  if (!parserRuntime) return null;
 +  try {
-+    const result = JSON.parse(parseMarkdownWithHeapInput(parserRuntime, markdown, underline, latexMath));
++    const result = JSON.parse(parseMarkdownWithHeapInput(parserRuntime, markdown, underline, latexMath, texMathBackslashDelimiters));
 +    if (!isASTNode(result)) {
 +      throw new Error('WASM parser returned invalid AST');
 +    }
@@ -775,7 +1368,6 @@ index 7604c13..011e0e6 100644
 +  return JSON.parse(JSON.stringify(ast));
  }
  //# sourceMappingURL=parseMarkdown.js.map
-\ No newline at end of file
 diff --git a/node_modules/react-native-enriched-markdown/lib/module/web/renderers/BlockRenderers.js b/node_modules/react-native-enriched-markdown/lib/module/web/renderers/BlockRenderers.js
 index 5bdaee9..ab8bc37 100644
 --- a/node_modules/react-native-enriched-markdown/lib/module/web/renderers/BlockRenderers.js
@@ -1136,6 +1728,30 @@ index 1c5a293..875211f 100644
      h1: headingStyle(style, '1'),
      h2: headingStyle(style, '2'),
      h3: headingStyle(style, '3'),
+diff --git a/node_modules/react-native-enriched-markdown/lib/typescript/src/EnrichedMarkdownNativeComponent.d.ts b/node_modules/react-native-enriched-markdown/lib/typescript/src/EnrichedMarkdownNativeComponent.d.ts
+index 567cc1e..fa903a4 100644
+--- a/node_modules/react-native-enriched-markdown/lib/typescript/src/EnrichedMarkdownNativeComponent.d.ts
++++ b/node_modules/react-native-enriched-markdown/lib/typescript/src/EnrichedMarkdownNativeComponent.d.ts
+@@ -189,6 +189,7 @@ export interface Md4cFlagsInternal {
+      * @default true
+      */
+     latexMath: boolean;
++    texMathBackslashDelimiters: boolean;
+ }
+ export interface NativeProps extends ViewProps {
+     /**
+diff --git a/node_modules/react-native-enriched-markdown/lib/typescript/src/EnrichedMarkdownTextNativeComponent.d.ts b/node_modules/react-native-enriched-markdown/lib/typescript/src/EnrichedMarkdownTextNativeComponent.d.ts
+index 4254d5d..8a7ca5c 100644
+--- a/node_modules/react-native-enriched-markdown/lib/typescript/src/EnrichedMarkdownTextNativeComponent.d.ts
++++ b/node_modules/react-native-enriched-markdown/lib/typescript/src/EnrichedMarkdownTextNativeComponent.d.ts
+@@ -189,6 +189,7 @@ export interface Md4cFlagsInternal {
+      * @default true
+      */
+     latexMath: boolean;
++    texMathBackslashDelimiters: boolean;
+ }
+ export interface NativeProps extends ViewProps {
+     /**
 diff --git a/node_modules/react-native-enriched-markdown/lib/typescript/src/index.web.d.ts b/node_modules/react-native-enriched-markdown/lib/typescript/src/index.web.d.ts
 index 3513fc6..cc06a72 100644
 --- a/node_modules/react-native-enriched-markdown/lib/typescript/src/index.web.d.ts
@@ -1146,6 +1762,22 @@ index 3513fc6..cc06a72 100644
  export type { EnrichedMarkdownTextProps } from './types/MarkdownTextProps.web';
  export type { MarkdownStyle, Md4cFlags } from './types/MarkdownStyle';
  export type { LinkPressEvent, LinkLongPressEvent, TaskListItemPressEvent, } from './types/events';
+diff --git a/node_modules/react-native-enriched-markdown/lib/typescript/src/types/MarkdownStyle.d.ts b/node_modules/react-native-enriched-markdown/lib/typescript/src/types/MarkdownStyle.d.ts
+index b2c9fb9..68c249a 100644
+--- a/node_modules/react-native-enriched-markdown/lib/typescript/src/types/MarkdownStyle.d.ts
++++ b/node_modules/react-native-enriched-markdown/lib/typescript/src/types/MarkdownStyle.d.ts
+@@ -208,6 +208,11 @@ export interface Md4cFlags {
+      * @default true
+      */
+     latexMath?: boolean;
++    /**
++     * Enable backslash-delimited TeX math spans: \\(..\\) inline and standalone \\[..\\] display math.
++     * @default false
++     */
++    texMathBackslashDelimiters?: boolean;
+ }
+ export {};
+ //# sourceMappingURL=MarkdownStyle.d.ts.map
 diff --git a/node_modules/react-native-enriched-markdown/lib/typescript/src/types/MarkdownTextProps.web.d.ts b/node_modules/react-native-enriched-markdown/lib/typescript/src/types/MarkdownTextProps.web.d.ts
 index 609252d..3e6bc94 100644
 --- a/node_modules/react-native-enriched-markdown/lib/typescript/src/types/MarkdownTextProps.web.d.ts
@@ -1288,6 +1920,32 @@ index 5bf4501..980dfbe 100644
      callbacks: RendererCallbacks;
      capabilities: RenderCapabilities;
      renderChildren: (node: ASTNode) => ReactNode;
+diff --git a/node_modules/react-native-enriched-markdown/src/EnrichedMarkdownNativeComponent.ts b/node_modules/react-native-enriched-markdown/src/EnrichedMarkdownNativeComponent.ts
+index 06024b4..bf9532a 100644
+--- a/node_modules/react-native-enriched-markdown/src/EnrichedMarkdownNativeComponent.ts
++++ b/node_modules/react-native-enriched-markdown/src/EnrichedMarkdownNativeComponent.ts
+@@ -224,6 +224,8 @@ export interface Md4cFlagsInternal {
+    * @default true
+    */
+   latexMath: boolean;
++  /** Enable backslash-delimited TeX math delimiters (\\(..\\) and standalone \\[..\\]). */
++  texMathBackslashDelimiters: boolean;
+ }
+ 
+ export interface NativeProps extends ViewProps {
+diff --git a/node_modules/react-native-enriched-markdown/src/EnrichedMarkdownTextNativeComponent.ts b/node_modules/react-native-enriched-markdown/src/EnrichedMarkdownTextNativeComponent.ts
+index e238ecf..e4a6367 100644
+--- a/node_modules/react-native-enriched-markdown/src/EnrichedMarkdownTextNativeComponent.ts
++++ b/node_modules/react-native-enriched-markdown/src/EnrichedMarkdownTextNativeComponent.ts
+@@ -224,6 +224,8 @@ export interface Md4cFlagsInternal {
+    * @default true
+    */
+   latexMath: boolean;
++  /** Enable backslash-delimited TeX math delimiters (\\(..\\) and standalone \\[..\\]). */
++  texMathBackslashDelimiters: boolean;
+ }
+ 
+ export interface NativeProps extends ViewProps {
 diff --git a/node_modules/react-native-enriched-markdown/src/index.web.tsx b/node_modules/react-native-enriched-markdown/src/index.web.tsx
 index 4b4305c..c6aa6a4 100644
 --- a/node_modules/react-native-enriched-markdown/src/index.web.tsx
@@ -1298,6 +1956,42 @@ index 4b4305c..c6aa6a4 100644
  export type { EnrichedMarkdownTextProps } from './types/MarkdownTextProps.web';
  export type { MarkdownStyle, Md4cFlags } from './types/MarkdownStyle';
  export type {
+diff --git a/node_modules/react-native-enriched-markdown/src/native/EnrichedMarkdownText.tsx b/node_modules/react-native-enriched-markdown/src/native/EnrichedMarkdownText.tsx
+index 236c2b7..1e893f5 100644
+--- a/node_modules/react-native-enriched-markdown/src/native/EnrichedMarkdownText.tsx
++++ b/node_modules/react-native-enriched-markdown/src/native/EnrichedMarkdownText.tsx
+@@ -23,6 +23,7 @@ export type { LinkPressEvent, LinkLongPressEvent, TaskListItemPressEvent };
+ const defaultMd4cFlags: Md4cFlags = {
+   underline: false,
+   latexMath: true,
++  texMathBackslashDelimiters: false,
+ };
+ 
+ export const EnrichedMarkdownText = ({
+@@ -57,6 +58,7 @@ export const EnrichedMarkdownText = ({
+     () => ({
+       underline: md4cFlags.underline ?? false,
+       latexMath: md4cFlags.latexMath ?? true,
++      texMathBackslashDelimiters: md4cFlags.texMathBackslashDelimiters ?? false,
+     }),
+     [md4cFlags]
+   );
+diff --git a/node_modules/react-native-enriched-markdown/src/types/MarkdownStyle.ts b/node_modules/react-native-enriched-markdown/src/types/MarkdownStyle.ts
+index c05a97a..f70b8af 100644
+--- a/node_modules/react-native-enriched-markdown/src/types/MarkdownStyle.ts
++++ b/node_modules/react-native-enriched-markdown/src/types/MarkdownStyle.ts
+@@ -232,4 +232,11 @@ export interface Md4cFlags {
+    * @default true
+    */
+   latexMath?: boolean;
++  /**
++   * Enable backslash-delimited TeX delimiters (\\(..\\) and standalone \\[..\\]).
++   * This is separate from latexMath because CommonMark also uses backslashes
++   * to escape literal parentheses and brackets.
++   * @default false
++   */
++  texMathBackslashDelimiters?: boolean;
+ }
 diff --git a/node_modules/react-native-enriched-markdown/src/types/MarkdownTextProps.web.ts b/node_modules/react-native-enriched-markdown/src/types/MarkdownTextProps.web.ts
 index fa9d401..90d9e21 100644
 --- a/node_modules/react-native-enriched-markdown/src/types/MarkdownTextProps.web.ts
@@ -1327,7 +2021,7 @@ index fa9d401..90d9e21 100644
     * When false (default), removes trailing margin from the last element to
     * eliminate bottom spacing.
 diff --git a/node_modules/react-native-enriched-markdown/src/web/EnrichedMarkdownText.tsx b/node_modules/react-native-enriched-markdown/src/web/EnrichedMarkdownText.tsx
-index 70eb3a4..7bcdecb 100644
+index 70eb3a4..2440c90 100644
 --- a/node_modules/react-native-enriched-markdown/src/web/EnrichedMarkdownText.tsx
 +++ b/node_modules/react-native-enriched-markdown/src/web/EnrichedMarkdownText.tsx
 @@ -1,17 +1,40 @@
@@ -1383,17 +2077,17 @@ index 70eb3a4..7bcdecb 100644
    dir,
    ...rest
  }: EnrichedMarkdownTextProps) => {
-@@ -30,13 +55,16 @@ export const EnrichedMarkdownText = ({
+@@ -30,30 +55,30 @@ export const EnrichedMarkdownText = ({
      () => normalizeMarkdownStyle(markdownStyle),
      [markdownStyle]
    );
-+  const { underline = false, latexMath = true } = md4cFlags;
++  const { underline = false, latexMath = true, texMathBackslashDelimiters = false } = md4cFlags;
  
 -  const [ast, setAst] = useState<ASTNode | null>(null);
 +  const syncAst = useMemo(() => {
-+    const parsed = parseMarkdownSyncIfReady(markdown, { underline, latexMath });
++    const parsed = parseMarkdownSyncIfReady(markdown, { underline, latexMath, texMathBackslashDelimiters });
 +    return parsed ? prepareAstForRendering(parsed) : null;
-+  }, [markdown, underline, latexMath]);
++  }, [markdown, underline, latexMath, texMathBackslashDelimiters]);
 +  const [ast, setAst] = useState<ASTNode | null>(syncAst);
    const [katex, setKatex] = useState<KaTeXInstance | null>(null);
    const [parseError, setParseError] = useState<boolean>(false);
@@ -1403,7 +2097,12 @@ index 70eb3a4..7bcdecb 100644
    useEffect(() => {
      let cancelled = false;
  
-@@ -48,12 +76,9 @@ export const EnrichedMarkdownText = ({
+     const katexPromise = latexMath ? loadKaTeX() : Promise.resolve(null);
+ 
+     Promise.all([
+-      parseMarkdown(markdown, { underline, latexMath }),
++      parseMarkdown(markdown, { underline, latexMath, texMathBackslashDelimiters }),
+       katexPromise,
      ])
        .then(([result, katexInstance]) => {
          if (!cancelled) {
@@ -1417,12 +2116,15 @@ index 70eb3a4..7bcdecb 100644
          }
        })
        .catch((error) => {
-@@ -73,12 +98,91 @@ export const EnrichedMarkdownText = ({
+@@ -71,14 +96,93 @@ export const EnrichedMarkdownText = ({
+     return () => {
+       cancelled = true;
      };
-   }, [markdown, underline, latexMath]);
- 
-+  const renderedAst = syncAst ?? ast;
+-  }, [markdown, underline, latexMath]);
++  }, [markdown, underline, latexMath, texMathBackslashDelimiters]);
 +
++  const renderedAst = syncAst ?? ast;
+ 
    const callbacks = useMemo<RendererCallbacks>(
      () => ({ onLinkPress, onLinkLongPress, onTaskListItemPress }),
      [onLinkPress, onLinkLongPress, onTaskListItemPress]
@@ -1554,10 +2256,10 @@ index 70eb3a4..7bcdecb 100644
  
    return (
 diff --git a/node_modules/react-native-enriched-markdown/src/web/parseMarkdown.ts b/node_modules/react-native-enriched-markdown/src/web/parseMarkdown.ts
-index 911e3f1..d10ff3a 100644
+index 911e3f1..711132e 100644
 --- a/node_modules/react-native-enriched-markdown/src/web/parseMarkdown.ts
 +++ b/node_modules/react-native-enriched-markdown/src/web/parseMarkdown.ts
-@@ -1,37 +1,102 @@
+@@ -1,37 +1,104 @@
  import type { ASTNode } from './types';
  import type { Md4cFlags } from '../types/MarkdownStyle';
 +import createMd4cModule from './wasm/md4c.js';
@@ -1566,7 +2268,9 @@ index 911e3f1..d10ff3a 100644
 -  markdown: string,
 +  markdownPointer: number,
    underline: number,
-   latexMath: number
+-  latexMath: number
++  latexMath: number,
++  texMathBackslashDelimiters: number
  ) => string;
 +type Md4cModule = {
 +  cwrap(name: string, returnType: string, argTypes: string[]): ParseFn;
@@ -1636,6 +2340,7 @@ index 911e3f1..d10ff3a 100644
 -        ])
 -      )
 +          'number',
++          'number',
 +        ]),
 +        wasmModule,
 +      }))
@@ -1672,7 +2377,7 @@ index 911e3f1..d10ff3a 100644
  function isASTNode(value: unknown): value is ASTNode {
    return (
      typeof value === 'object' &&
-@@ -41,19 +106,145 @@ function isASTNode(value: unknown): value is ASTNode {
+@@ -41,19 +108,152 @@ function isASTNode(value: unknown): value is ASTNode {
    );
  }
  
@@ -1683,10 +2388,11 @@ index 911e3f1..d10ff3a 100644
 +function buildCacheKey(
 +  markdown: string,
 +  underline: boolean,
-+  latexMath: boolean
++  latexMath: boolean,
++  texMathBackslashDelimiters: boolean
 +): string | null {
 +  return shouldCacheParseResult(markdown)
-+    ? `${underline ? 1 : 0}\u0000${latexMath ? 1 : 0}\u0000${markdown}`
++    ? `${underline ? 1 : 0}\u0000${latexMath ? 1 : 0}\u0000${texMathBackslashDelimiters ? 1 : 0}\u0000${markdown}`
 +    : null;
 +}
 +
@@ -1716,7 +2422,8 @@ index 911e3f1..d10ff3a 100644
 +  runtime: ParserRuntime,
 +  markdown: string,
 +  underline: boolean,
-+  latexMath: boolean
++  latexMath: boolean,
++  texMathBackslashDelimiters: boolean
 +): string {
 +  const { wasmModule } = runtime;
 +  const inputBytes = wasmModule.lengthBytesUTF8(markdown) + 1;
@@ -1727,7 +2434,12 @@ index 911e3f1..d10ff3a 100644
 +
 +  try {
 +    wasmModule.stringToUTF8(markdown, inputPointer, inputBytes);
-+    return runtime.parse(inputPointer, underline ? 1 : 0, latexMath ? 1 : 0);
++    return runtime.parse(
++      inputPointer,
++      underline ? 1 : 0,
++      latexMath ? 1 : 0,
++      texMathBackslashDelimiters ? 1 : 0
++    );
 +  } finally {
 +    wasmModule._free(inputPointer);
 +  }
@@ -1735,10 +2447,11 @@ index 911e3f1..d10ff3a 100644
 +
  export async function parseMarkdown(
    markdown: string,
-   { underline = false, latexMath = true }: Md4cFlags = {}
+-  { underline = false, latexMath = true }: Md4cFlags = {}
++  { underline = false, latexMath = true, texMathBackslashDelimiters = false }: Md4cFlags = {}
  ): Promise<ASTNode> {
 -  const parse = await initializeParser();
-+  const cacheKey = buildCacheKey(markdown, underline, latexMath);
++  const cacheKey = buildCacheKey(markdown, underline, latexMath, texMathBackslashDelimiters);
 +  const cachedResult = readCachedParsedResult(cacheKey);
 +  if (cachedResult) return cachedResult;
  
@@ -1756,15 +2469,15 @@ index 911e3f1..d10ff3a 100644
 +
 +  const parsed = initializeParser().then((runtime) => {
 +    const result: unknown = JSON.parse(
-+      parseMarkdownWithHeapInput(runtime, markdown, underline, latexMath)
++      parseMarkdownWithHeapInput(runtime, markdown, underline, latexMath, texMathBackslashDelimiters)
 +    );
-+
-+    if (!isASTNode(result)) {
-+      throw new Error('WASM parser returned invalid AST');
-+    }
  
 -  if (!isASTNode(result)) {
 -    throw new Error('WASM parser returned invalid AST');
++    if (!isASTNode(result)) {
++      throw new Error('WASM parser returned invalid AST');
++    }
++
 +    rememberParsedResult(cacheKey, result);
 +    return result;
 +  });
@@ -1794,16 +2507,16 @@ index 911e3f1..d10ff3a 100644
 +
 +export function parseMarkdownSyncIfReady(
 +  markdown: string,
-+  { underline = false, latexMath = true }: Md4cFlags = {}
++  { underline = false, latexMath = true, texMathBackslashDelimiters = false }: Md4cFlags = {}
 +): ASTNode | null {
-+  const cacheKey = buildCacheKey(markdown, underline, latexMath);
++  const cacheKey = buildCacheKey(markdown, underline, latexMath, texMathBackslashDelimiters);
 +  const cachedResult = readCachedParsedResult(cacheKey);
 +  if (cachedResult) return cachedResult;
 +  if (!parserRuntime) return null;
 +
 +  try {
 +    const result: unknown = JSON.parse(
-+      parseMarkdownWithHeapInput(parserRuntime, markdown, underline, latexMath)
++      parseMarkdownWithHeapInput(parserRuntime, markdown, underline, latexMath, texMathBackslashDelimiters)
 +    );
 +
 +    if (!isASTNode(result)) {

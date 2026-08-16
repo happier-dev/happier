@@ -342,7 +342,7 @@ export function ReviewFindingsMessageCard(props: {
         <View style={styles.container}>
             <Text style={styles.headerText}>{t('session.reviewFindings.title', { count: findings.length })}</Text>
             <Text style={styles.summaryText}>{normalized.summary}</Text>
-            <MarkdownView markdown={normalized.overviewMarkdown} textStyle={styles.markdownText} />
+            <MarkdownView markdown={normalized.overviewMarkdown} textStyle={styles.markdownText} agentTexMath />
 
             {normalized.questions.length > 0 ? (
                 <View style={styles.section}>

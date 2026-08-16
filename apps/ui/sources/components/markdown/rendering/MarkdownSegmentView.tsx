@@ -24,6 +24,7 @@ type MarkdownSegmentViewProps = Readonly<{
     onPressSourceRange?: (action: MarkdownSourceRangeAction) => void;
     renderAfterSourceRange?: (action: MarkdownSourceRangeAction) => React.ReactNode;
     highlightSourceRange?: MarkdownSourceRange | null;
+    agentTexMath: boolean;
 }>;
 
 export const MarkdownSegmentView = React.memo((props: MarkdownSegmentViewProps) => {
@@ -46,6 +47,7 @@ export const MarkdownSegmentView = React.memo((props: MarkdownSegmentViewProps) 
                 streamingRevealPreset={props.streamingRevealPreset}
                 testID="markdown-enriched-run"
                 suppressLeadingTopMargin={props.segment.first}
+                agentTexMath={props.agentTexMath}
             />
         )
         : (
@@ -61,6 +63,7 @@ export const MarkdownSegmentView = React.memo((props: MarkdownSegmentViewProps) 
             profile={props.profile}
             streamingReveal={props.streamingReveal}
             streamingRevealPreset={props.streamingRevealPreset}
+            agentTexMath={props.agentTexMath}
         />
     );
 
