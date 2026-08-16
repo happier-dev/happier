@@ -54,6 +54,8 @@ describe('isPublicRouteForUnauthenticated', () => {
         { name: 'nested share route', segments: ['(app)', 'share', 'abc123'], expected: true },
         { name: 'terminal route', segments: ['terminal'], expected: true },
         { name: 'nested terminal route', segments: ['(app)', 'terminal', 'connect'], expected: true },
+        { name: 'account connect route', segments: ['account'], expected: true },
+        { name: 'grouped account connect route', segments: ['(app)', 'account'], expected: true },
         { name: 'oauth return route', segments: ['oauth', 'github'], expected: true },
         { name: 'grouped oauth return route', segments: ['(app)', 'oauth', 'github'], expected: true },
         { name: 'desktop activity overlay route', segments: ['desktop', 'activity-overlay'], expected: true },

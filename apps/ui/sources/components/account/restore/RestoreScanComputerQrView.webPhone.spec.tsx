@@ -25,6 +25,11 @@ type ReactActEnvironmentGlobal = typeof globalThis & {
 const navigationState = vi.hoisted(() => ({
     isFocused: true,
 }));
+const modalAlertSpy = vi.hoisted(() => vi.fn(async (
+    _title?: string,
+    _message?: string,
+    _buttons?: Array<{ text?: string; onPress?: () => void }>,
+) => {}));
 
 const restoreScanSuccessState = vi.hoisted(() => ({
     loginSpy: vi.fn(async () => {}),
@@ -41,6 +46,10 @@ const restoreScanSuccessState = vi.hoisted(() => ({
 }));
 
 installRestoreScanComputerQrViewCommonModuleMocks({
+    modal: async () => {
+        const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+        return createModalModuleMock({ spies: { alertAsync: modalAlertSpy } }).module;
+    },
     reactNative: async () => {
         const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
         return createReactNativeWebMock({
@@ -123,6 +132,7 @@ describe('RestoreScanComputerQrView (web phone)', () => {
         resetRestoreScanComputerQrViewCommonModuleMockState();
         navigationState.isFocused = true;
         lastScannerProps = null;
+        modalAlertSpy.mockClear();
     });
 
     it('renders the QR scanner in idle state on web', async () => {
@@ -145,6 +155,27 @@ describe('RestoreScanComputerQrView (web phone)', () => {
         await renderScreen(<RestoreScanComputerQrView />);
 
         expect(lastScannerProps?.active).toBe(false);
+    });
+
+    it('routes an account-connect QR through the embedded restore owner instead of treating it as invalid', async () => {
+        modalAlertSpy.mockImplementationOnce(async (_title, _message, buttons) => {
+            buttons?.find((button: { text?: string }) => button.text === 'connect.showQrInstead')?.onPress?.();
+        });
+        const onShowQrInstead = vi.fn();
+        const { RestoreScanComputerQrView } = await import('./RestoreScanComputerQrView');
+
+        await renderScreen(<RestoreScanComputerQrView embedded onShowQrInstead={onShowQrInstead} />);
+        await act(async () => {
+            await lastScannerProps?.onScan('happier:///account?abc123');
+        });
+
+        expect(modalAlertSpy).toHaveBeenCalledWith(
+            'connect.restoreAccount',
+            'connect.restoreQrInstructions',
+            expect.any(Array),
+        );
+        expect(onShowQrInstead).toHaveBeenCalledOnce();
+        expect(restoreScanSuccessState.parsePairingDeepLinkSpy).not.toHaveBeenCalled();
     });
 
     it('tracks account restoration after a successful computer-QR restore flow', async () => {

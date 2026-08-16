@@ -208,6 +208,7 @@ jobs:
           npm_config_production: "false"
           APP_ENV: ${{ steps.channel_meta.outputs.app_env }}
           EXPO_UPDATES_CHANNEL: ${{ steps.channel_meta.outputs.expo_updates_channel }}
+          EXPO_APP_SCHEME: ${{ steps.channel_meta.outputs.app_scheme }}
           HAPPIER_EMBEDDED_POLICY_ENV: ${{ steps.channel_meta.outputs.embedded_policy_env }}
         uses: ./.github/actions/install-yarn-dependencies
         with:
@@ -243,6 +244,7 @@ jobs:
           MINISIGN_PASSPHRASE: ${{ secrets.MINISIGN_PASSPHRASE }}
           APP_ENV: ${{ steps.channel_meta.outputs.app_env }}
           EXPO_UPDATES_CHANNEL: ${{ steps.channel_meta.outputs.expo_updates_channel }}
+          EXPO_APP_SCHEME: ${{ steps.channel_meta.outputs.app_scheme }}
           HAPPIER_EMBEDDED_POLICY_ENV: ${{ steps.channel_meta.outputs.embedded_policy_env }}
         run: |
           set -euo pipefail

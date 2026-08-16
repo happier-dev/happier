@@ -26,6 +26,7 @@ test('resolve-public-release-channel-meta normalizes dev input to the publicdev 
   assert.equal(parsed.channel_label, 'dev');
   assert.equal(parsed.source_ref, 'dev');
   assert.equal(parsed.app_env, 'preview');
+  assert.equal(parsed.app_scheme, 'happier-dev');
   assert.equal(parsed.embedded_policy_env, 'preview');
   assert.equal(parsed.expo_updates_channel, 'dev');
   assert.equal(parsed.rolling_release_suffix, 'dev');
@@ -39,6 +40,7 @@ test('resolve-public-release-channel-meta preserves explicit source refs', () =>
   assert.equal(parsed.channel_label, 'preview');
   assert.equal(parsed.source_ref, 'feature/my-sha');
   assert.equal(parsed.app_env, 'preview');
+  assert.equal(parsed.app_scheme, 'happier-preview');
   assert.equal(parsed.embedded_policy_env, 'preview');
   assert.equal(parsed.expo_updates_channel, 'preview');
   assert.equal(parsed.rolling_release_suffix, 'preview');

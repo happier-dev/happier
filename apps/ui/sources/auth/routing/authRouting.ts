@@ -19,6 +19,9 @@ export function isPublicRouteForUnauthenticated(segments: string[]): boolean {
     // Terminal connect links must be reachable before authentication so users can sign in and continue.
     if (first === 'terminal') return true;
 
+    // Account-connect links must reach their route so signed-out users get recovery guidance.
+    if (first === 'account') return true;
+
     // Restore / link account flows must work unauthenticated.
     if (first === 'restore') return true;
 
