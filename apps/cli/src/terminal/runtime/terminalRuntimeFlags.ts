@@ -6,6 +6,7 @@ export type TerminalRuntimeFlags = {
   fallbackReason?: string;
   tmuxTarget?: string;
   tmuxTmpDir?: string;
+  attachmentId?: string;
   windowId?: string;
   title?: string;
 };
@@ -83,6 +84,15 @@ export function parseAndStripTerminalRuntimeFlags(argv: string[]): {
       }
       continue;
     }
+    if (arg === '--happy-terminal-attachment-id') {
+      const consumed = consumeFlagValue(argv, i);
+      i = consumed.nextIndex;
+      const value = consumed.value;
+      if (typeof value === 'string' && value.trim().length > 0) {
+        terminal.attachmentId = value.trim();
+      }
+      continue;
+    }
     if (arg === '--happy-terminal-window-id') {
       const consumed = consumeFlagValue(argv, i);
       i = consumed.nextIndex;
@@ -116,6 +126,7 @@ export function parseAndStripTerminalRuntimeFlags(argv: string[]): {
     terminal.fallbackReason !== undefined ||
     terminal.tmuxTarget !== undefined ||
     terminal.tmuxTmpDir !== undefined ||
+    terminal.attachmentId !== undefined ||
     terminal.windowId !== undefined ||
     terminal.title !== undefined;
 

@@ -3,6 +3,7 @@ import chalk from 'chalk';
 import { buildHappyCliSubprocessLaunchSpec } from '@/utils/spawnHappyCLI';
 import { isTmuxAvailable, selectPreferredTmuxSessionName, TmuxUtilities } from '@/integrations/tmux';
 import { resolveHeadlessTmuxAgentLaunchConfig } from './resolveHeadlessTmuxAgentLaunchConfig';
+import { createTerminalAttachmentId } from '@/terminal/attachment/terminalAttachmentInfo';
 
 function removeFlag(argv: string[], flag: string): string[] {
   return argv.filter((arg) => arg !== flag);
@@ -53,6 +54,7 @@ export async function startHappyHeadlessInTmux(
 
   const windowName = `happy-${Date.now()}-${agent}`;
   const tmuxTarget = `${resolvedSessionName}:${windowName}`;
+  const attachmentId = createTerminalAttachmentId();
 
   const terminalRuntimeArgs = [
     '--happy-terminal-mode',
@@ -61,6 +63,8 @@ export async function startHappyHeadlessInTmux(
     'tmux',
     '--happy-tmux-target',
     tmuxTarget,
+    '--happy-terminal-attachment-id',
+    attachmentId,
   ];
 
   const launchSpec = buildHappyCliSubprocessLaunchSpec([...childArgs, ...terminalRuntimeArgs]);

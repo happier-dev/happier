@@ -3,11 +3,31 @@ import { describe, expect, it } from 'vitest';
 import type { TerminalHostHandle } from '@happier-dev/agents';
 
 import {
+  buildTerminalHostProbeHandleFromMetadata,
   buildTerminalMetadataFromHostHandle,
   buildTerminalMetadataFromRuntimeFlags,
 } from './terminalMetadata';
 
 describe('buildTerminalMetadataFromRuntimeFlags', () => {
+  it('publishes the bound attachment identity for a tmux runtime', () => {
+    expect(buildTerminalMetadataFromRuntimeFlags({
+      mode: 'tmux',
+      requested: 'tmux',
+      tmuxTarget: 'happy:window-1',
+      attachmentId: 'attachment-1',
+    })).toEqual({
+      mode: 'tmux',
+      requested: 'tmux',
+      tmux: { target: 'happy:window-1' },
+      controlServiceabilityV1: {
+        v: 1,
+        attachmentId: 'attachment-1',
+        state: 'servable',
+        observedAt: expect.any(Number),
+      },
+    });
+  });
+
   it('builds windows terminal metadata from runtime flags', () => {
     expect(buildTerminalMetadataFromRuntimeFlags({
       mode: 'windows_terminal',
@@ -103,5 +123,21 @@ describe('buildTerminalMetadataFromHostHandle', () => {
         windowId: 'window-7',
       },
     });
+  });
+});
+
+describe('buildTerminalHostProbeHandleFromMetadata', () => {
+  it('reconstructs only an exact tmux target that the current metadata persists', () => {
+    expect(buildTerminalHostProbeHandleFromMetadata({
+      mode: 'tmux',
+      tmux: { target: 'native-terminal:2', tmpDir: '/tmp/happier-tmux' },
+    })).toEqual(expect.objectContaining({
+      kind: 'tmux',
+      sessionName: 'native-terminal',
+      paneId: '2',
+      socketDir: '/tmp/happier-tmux',
+    }));
+    expect(buildTerminalHostProbeHandleFromMetadata({ mode: 'zellij' })).toBeNull();
+    expect(buildTerminalHostProbeHandleFromMetadata({ mode: 'windows_console' })).toBeNull();
   });
 });

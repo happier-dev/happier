@@ -2,7 +2,13 @@ import type { ApiSessionClient } from '@/api/session/sessionClient';
 import type { Metadata } from '@/api/types';
 import { configuration } from '@/configuration';
 import { notifyDaemonSessionStarted } from '@/daemon/controlClient';
-import { writeTerminalAttachmentInfo } from '@/terminal/attachment/terminalAttachmentInfo';
+import {
+    writeTerminalAttachmentInfo,
+    writeTerminalHostAttachmentInfo,
+    type TerminalAttachmentId,
+} from '@/terminal/attachment/terminalAttachmentInfo';
+import { buildTerminalHostProbeHandleFromMetadata } from '@/terminal/runtime/terminalMetadata';
+import type { TerminalHostHandle } from '@happier-dev/agents';
 import { buildTerminalFallbackMessage } from '@/terminal/attachment/terminalFallbackMessage';
 import { logger } from '@/ui/logger';
 import { updateAgentStateBestEffort } from '@/api/session/sessionWritesBestEffort';
@@ -136,12 +142,43 @@ export function primeAgentStateForUi(session: ApiSessionClient, logPrefix: strin
     );
 }
 
+export function resolveTerminalAttachmentPersistenceBinding(
+    terminal: NonNullable<Metadata['terminal']>,
+): Readonly<{
+    attachmentId: TerminalAttachmentId;
+    handle: TerminalHostHandle & Readonly<{ attachmentId: TerminalAttachmentId }>;
+}> | null {
+    const serviceability = terminal.controlServiceabilityV1;
+    const attachmentIdRaw = serviceability?.v === 1
+        && serviceability.retired !== true
+        && (serviceability.state === 'servable' || serviceability.state === 'recoverable_unservable')
+        && typeof serviceability.attachmentId === 'string'
+        ? serviceability.attachmentId.trim()
+        : '';
+    if (!attachmentIdRaw) return null;
+    const attachmentId = attachmentIdRaw as TerminalAttachmentId;
+    const handle = buildTerminalHostProbeHandleFromMetadata(terminal);
+    if (!handle) return null;
+    return {
+        attachmentId,
+        handle: { ...handle, attachmentId },
+    };
+}
+
 export async function persistTerminalAttachmentInfoIfNeeded(opts: {
     sessionId: string;
     terminal: Metadata['terminal'] | undefined;
 }): Promise<void> {
     if (!opts.terminal) return;
+    const binding = resolveTerminalAttachmentPersistenceBinding(opts.terminal);
     try {
+        if (binding) {
+            await writeTerminalHostAttachmentInfo({
+                happyHomeDir: configuration.happyHomeDir,
+                sessionId: opts.sessionId,
+                handle: binding.handle,
+            });
+        }
         await writeTerminalAttachmentInfo({
             happyHomeDir: configuration.happyHomeDir,
             sessionId: opts.sessionId,
@@ -149,6 +186,7 @@ export async function persistTerminalAttachmentInfoIfNeeded(opts: {
         });
     } catch (error) {
         logger.debug('[START] Failed to persist terminal attachment info', error);
+        if (binding) throw error;
     }
 }
 

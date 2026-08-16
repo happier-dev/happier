@@ -37,6 +37,7 @@ import {
   readTerminalHostAttachmentInfo,
   readTerminalHostAttachmentState,
   disposeTerminalAttachmentInfoForSession,
+  removeTerminalAttachmentInfo,
   removeTerminalHostAttachmentInfo,
   writeTerminalAttachmentInfo,
   writeTerminalHostAttachmentInfo,
@@ -146,6 +147,71 @@ describe('terminalAttachmentInfo', () => {
         happyHomeDir: dir.name,
         sessionId: 'session-1',
       })).resolves.toMatchObject({ terminal: { mode: 'zellij' } });
+    } finally {
+      dir.removeCallback();
+    }
+  });
+
+  it('reads and retires a Remote Dev v2 descriptor from the predecessor metadata path', async () => {
+    const dir = tmp.dirSync({ unsafeCleanup: true });
+    const sessionId = 'session-remote-v2';
+    const sessionsDir = join(dir.name, 'terminal', 'sessions');
+    const handle = {
+      attachmentId: 'attachment-remote-v2' as NonNullable<TerminalHostHandle['attachmentId']>,
+      kind: 'tmux' as const,
+      sessionName: 'happy',
+      paneId: 'remote-window',
+      socketDir: '/tmp/remote-tmux',
+      attachMetadata: {
+        attachStrategy: 'terminal_host' as const,
+        topology: 'shared' as const,
+        locality: 'same_machine' as const,
+        maxClients: null,
+        requiresLocalAttachmentInfo: true,
+        liveProbe: 'required' as const,
+      },
+    };
+    try {
+      await mkdir(sessionsDir, { recursive: true });
+      await writeFile(join(sessionsDir, `${sessionId}.json`), JSON.stringify({
+        version: 2,
+        attachmentId: handle.attachmentId,
+        sessionId,
+        handle,
+        terminal: {
+          mode: 'tmux',
+          tmux: { target: 'happy:remote-window', tmpDir: '/tmp/remote-tmux' },
+        },
+        updatedAt: 1,
+      }), 'utf8');
+
+      await expect(readTerminalHostAttachmentInfo({
+        happyHomeDir: dir.name,
+        sessionId,
+      })).resolves.toEqual({
+        version: 2,
+        attachmentId: handle.attachmentId,
+        sessionId,
+        handle,
+        updatedAt: 1,
+      });
+      await expect(readTerminalAttachmentInfo({
+        happyHomeDir: dir.name,
+        sessionId,
+      })).resolves.toMatchObject({
+        version: 1,
+        terminal: { mode: 'tmux' },
+      });
+      await expect(removeTerminalHostAttachmentInfo({
+        happyHomeDir: dir.name,
+        sessionId,
+        expectedAttachmentId: handle.attachmentId,
+        expectedHandle: handle,
+      })).resolves.toBe(true);
+      await expect(readTerminalHostAttachmentInfo({
+        happyHomeDir: dir.name,
+        sessionId,
+      })).resolves.toBeNull();
     } finally {
       dir.removeCallback();
     }
@@ -267,6 +333,47 @@ describe('terminalAttachmentInfo', () => {
         version: 2,
         sessionId: 'session-final-cleanup',
         handle: { sessionName: 'happier-session-final-cleanup' },
+      });
+    } finally {
+      dir.removeCallback();
+    }
+  });
+
+  it('generic session cleanup preserves a Remote Dev v2 descriptor until host disposition owns retirement', async () => {
+    const dir = tmp.dirSync({ unsafeCleanup: true });
+    const sessionId = 'session-remote-v2-cleanup';
+    const sessionsDir = join(dir.name, 'terminal', 'sessions');
+    const handle = {
+      attachmentId: 'attachment-remote-v2-cleanup' as NonNullable<TerminalHostHandle['attachmentId']>,
+      kind: 'tmux' as const,
+      sessionName: 'happy',
+      paneId: 'remote-window',
+      attachMetadata: {
+        attachStrategy: 'terminal_host' as const,
+        topology: 'shared' as const,
+        locality: 'same_machine' as const,
+        liveProbe: 'required' as const,
+      },
+    };
+    try {
+      await mkdir(sessionsDir, { recursive: true });
+      await writeFile(join(sessionsDir, `${sessionId}.json`), JSON.stringify({
+        version: 2,
+        attachmentId: handle.attachmentId,
+        sessionId,
+        handle,
+        terminal: { mode: 'tmux', tmux: { target: 'happy:remote-window' } },
+        updatedAt: 1,
+      }), 'utf8');
+
+      await disposeTerminalAttachmentInfoForSession({ happyHomeDir: dir.name, sessionId });
+
+      await expect(readTerminalHostAttachmentInfo({
+        happyHomeDir: dir.name,
+        sessionId,
+      })).resolves.toMatchObject({
+        version: 2,
+        attachmentId: handle.attachmentId,
       });
     } finally {
       dir.removeCallback();
@@ -537,6 +644,42 @@ describe('terminalAttachmentInfo', () => {
 
       const info = await readTerminalAttachmentInfo({ happyHomeDir: dir.name, sessionId });
       expect(info).toBeNull();
+    } finally {
+      dir.removeCallback();
+    }
+  });
+
+  it('removes terminal metadata only when the persisted snapshot is unchanged', async () => {
+    const dir = tmp.dirSync({ unsafeCleanup: true });
+    try {
+      const sessionId = 'sess-terminal-metadata-cas';
+      await writeTerminalAttachmentInfo({
+        happyHomeDir: dir.name,
+        sessionId,
+        terminal: { mode: 'tmux', tmux: { target: 'happy:old-window' } },
+      });
+      const old = await readTerminalAttachmentInfo({ happyHomeDir: dir.name, sessionId });
+      expect(old).not.toBeNull();
+
+      await writeTerminalAttachmentInfo({
+        happyHomeDir: dir.name,
+        sessionId,
+        terminal: { mode: 'tmux', tmux: { target: 'happy:new-window' } },
+      });
+      await expect(removeTerminalAttachmentInfo({
+        happyHomeDir: dir.name,
+        sessionId,
+        expected: old!,
+      })).resolves.toBe(false);
+
+      const current = await readTerminalAttachmentInfo({ happyHomeDir: dir.name, sessionId });
+      expect(current?.terminal.tmux?.target).toBe('happy:new-window');
+      await expect(removeTerminalAttachmentInfo({
+        happyHomeDir: dir.name,
+        sessionId,
+        expected: current!,
+      })).resolves.toBe(true);
+      await expect(readTerminalAttachmentInfo({ happyHomeDir: dir.name, sessionId })).resolves.toBeNull();
     } finally {
       dir.removeCallback();
     }

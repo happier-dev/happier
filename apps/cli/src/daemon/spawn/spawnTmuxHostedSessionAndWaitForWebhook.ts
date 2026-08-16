@@ -12,6 +12,9 @@ import {
 import type { SpawnSessionOptions, SpawnSessionResult } from '@/session/shared/spawnSessionContract';
 import { SPAWN_SESSION_ERROR_CODES } from '@/session/shared/spawnSessionContract';
 import type { ResolvedTerminalRequest } from '@/terminal/runtime/terminalConfig';
+import { configuration } from '@/configuration';
+import { createTmuxTerminalHostHandle } from '@/integrations/tmux/hostHandle';
+import { writeTerminalHostAttachmentInfo } from '@/terminal/attachment/terminalAttachmentInfo';
 
 import { resolveDaemonCliSubcommandFromBackendTarget } from '../backendTargetRouting';
 import { buildTmuxSpawnConfig } from '../platform/tmux/spawnConfig';
@@ -360,6 +363,35 @@ export async function spawnTmuxHostedSessionAndWaitForWebhook(params: Readonly<{
         type: 'error',
         errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_FAILED,
         errorMessage: incompleteRetirement,
+      };
+    }
+  }
+  if (spawnResult.type === 'success') {
+    const sessionId = spawnResult.sessionId?.trim() ?? '';
+    try {
+      if (!sessionId) throw new Error('canonical_session_id_missing');
+      await writeTerminalHostAttachmentInfo({
+        happyHomeDir: configuration.happyHomeDir,
+        sessionId,
+        handle: createTmuxTerminalHostHandle({
+          sessionName: tmuxSession,
+          windowName: tmuxResult.windowName ?? windowName,
+          ...(tmuxTmpDir ? { tmuxTmpDir } : {}),
+          topology: 'shared',
+        }),
+      });
+    } catch (error) {
+      params.logDebug(
+        '[DAEMON RUN] Failed to bind the spawned tmux host to its canonical session',
+        sanitizeDiagnosticText(error instanceof Error ? error.message : String(error)),
+      );
+      const incompleteRetirement = resolveSpawnErrorAfterStartupCancellation(
+        await cancelStartupLaunch(),
+      );
+      spawnResult = {
+        type: 'error',
+        errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_FAILED,
+        errorMessage: incompleteRetirement ?? 'terminal_attachment_binding_failed',
       };
     }
   }

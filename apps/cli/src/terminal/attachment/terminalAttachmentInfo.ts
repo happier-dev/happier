@@ -1,4 +1,4 @@
-import { chmod, mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readFile, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 
@@ -9,6 +9,8 @@ import { writeJsonAtomic } from '@/utils/fs/writeJsonAtomic';
 
 const TERMINAL_HOST_DESCRIPTOR_LOCK_TIMEOUT_MS = 5_000;
 const TERMINAL_HOST_DESCRIPTOR_LOCK_STALE_AFTER_MS = 30_000;
+const TERMINAL_ATTACHMENT_METADATA_LOCK_TIMEOUT_MS = 5_000;
+const TERMINAL_ATTACHMENT_METADATA_LOCK_STALE_AFTER_MS = 30_000;
 
 export type TerminalAttachmentInfo = {
   version: 1;
@@ -61,6 +63,18 @@ function terminalHostFilePath(happyHomeDir: string, sessionId: string): string {
   return join(sessionsDir(happyHomeDir), `${sessionIdToFilename(sessionId)}.host.json`);
 }
 
+async function withTerminalAttachmentMetadataLock<TResult>(
+  path: string,
+  effect: () => Promise<TResult>,
+): Promise<TResult> {
+  return await withJsonOwnerFileLock({
+    lockPath: `${path}.lock`,
+    timeoutMs: TERMINAL_ATTACHMENT_METADATA_LOCK_TIMEOUT_MS,
+    staleAfterMs: TERMINAL_ATTACHMENT_METADATA_LOCK_STALE_AFTER_MS,
+    errorCode: 'terminal_attachment_metadata_lock_unavailable',
+  }, effect);
+}
+
 async function withTerminalHostDescriptorLock<TResult>(params: Readonly<{
   happyHomeDir: string;
   sessionId: string;
@@ -95,11 +109,9 @@ export async function writeTerminalAttachmentInfo(params: {
   };
 
   const path = sessionFilePath(params.happyHomeDir, params.sessionId);
-  const tmpPath = `${path}.tmp`;
-
-  await writeFile(tmpPath, JSON.stringify(info, null, 2), { encoding: 'utf8', mode: 0o600 });
-  await rename(tmpPath, path);
-  await chmod(path, 0o600).catch(() => {});
+  await withTerminalAttachmentMetadataLock(path, async () => {
+    await writeJsonAtomic(path, info);
+  });
 }
 
 function parseTerminalHostHandle(value: unknown): TerminalHostHandle | null {
@@ -150,6 +162,94 @@ function terminalHostHandlesEqual(left: TerminalHostHandle, right: TerminalHostH
   return JSON.stringify(left) === JSON.stringify(right);
 }
 
+function terminalMetadataMatchesHostHandle(
+  terminal: NonNullable<Metadata['terminal']>,
+  handle: TerminalHostHandle,
+): boolean {
+  const socketDir = typeof handle.socketDir === 'string' ? handle.socketDir.trim() : '';
+  if (handle.kind === 'tmux') {
+    const paneId = typeof handle.paneId === 'string' ? handle.paneId.trim() : '';
+    const target = paneId ? `${handle.sessionName.trim()}:${paneId}` : handle.sessionName.trim();
+    const persistedTmpDir = typeof terminal.tmux?.tmpDir === 'string' ? terminal.tmux.tmpDir.trim() : '';
+    return terminal.mode === 'tmux'
+      && terminal.tmux?.target.trim() === target
+      && persistedTmpDir === socketDir;
+  }
+  if (handle.kind === 'zellij') {
+    const terminalRecord = terminal as typeof terminal & Readonly<{
+      zellij?: Readonly<{ sessionName?: unknown; paneId?: unknown; socketDirV1?: unknown }>;
+    }>;
+    const sessionName = typeof terminalRecord.zellij?.sessionName === 'string'
+      ? terminalRecord.zellij.sessionName.trim()
+      : '';
+    const paneId = typeof terminalRecord.zellij?.paneId === 'string'
+      ? terminalRecord.zellij.paneId.trim()
+      : '';
+    const persistedSocketDir = typeof terminalRecord.zellij?.socketDirV1 === 'string'
+      ? terminalRecord.zellij.socketDirV1.trim()
+      : '';
+    return terminal.mode === 'zellij'
+      && sessionName === handle.sessionName.trim()
+      && paneId === (handle.paneId?.trim() ?? '')
+      && persistedSocketDir === socketDir;
+  }
+  return false;
+}
+
+function parseRemoteDevBoundTerminalAttachmentInfo(
+  raw: string,
+  sessionId: string,
+): BoundTerminalHostAttachmentInfo | null {
+  const parsed = JSON.parse(raw) as Record<string, unknown>;
+  if (parsed.version !== 2 || parsed.sessionId !== sessionId) return null;
+  if (typeof parsed.attachmentId !== 'string' || !parsed.attachmentId.trim()) return null;
+  if (typeof parsed.updatedAt !== 'number' || !Number.isFinite(parsed.updatedAt)) return null;
+  if (!parsed.terminal || typeof parsed.terminal !== 'object' || Array.isArray(parsed.terminal)) return null;
+  const terminal = parsed.terminal as NonNullable<Metadata['terminal']>;
+  const handle = parseTerminalHostHandle(parsed.handle);
+  if (!handle || handle.attachmentId !== parsed.attachmentId) return null;
+  if (!terminalMetadataMatchesHostHandle(terminal, handle)) return null;
+  return {
+    version: 2,
+    attachmentId: parsed.attachmentId as TerminalAttachmentId,
+    sessionId,
+    handle: handle as TerminalHostHandle & Readonly<{ attachmentId: TerminalAttachmentId }>,
+    updatedAt: parsed.updatedAt,
+  };
+}
+
+async function readRemoteDevBoundTerminalAttachmentState(params: Readonly<{
+  happyHomeDir: string;
+  sessionId: string;
+}>): Promise<TerminalHostAttachmentReadState> {
+  const encodedPath = sessionFilePath(params.happyHomeDir, params.sessionId);
+  const paths = [encodedPath];
+  if (!params.sessionId.includes('/') && !params.sessionId.includes('\\')) {
+    const legacyPath = legacySessionFilePath(params.happyHomeDir, params.sessionId);
+    if (legacyPath !== encodedPath) paths.push(legacyPath);
+  }
+  for (const path of paths) {
+    let raw: string;
+    try {
+      raw = await readFile(path, 'utf8');
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') continue;
+      return { status: 'unreadable', reason: 'io_error' };
+    }
+    try {
+      const parsedRaw = JSON.parse(raw) as { version?: unknown };
+      if (parsedRaw.version !== 2) return { status: 'absent' };
+      const info = parseRemoteDevBoundTerminalAttachmentInfo(raw, params.sessionId);
+      return info
+        ? { status: 'present', info }
+        : { status: 'unreadable', reason: 'invalid' };
+    } catch {
+      return { status: 'absent' };
+    }
+  }
+  return { status: 'absent' };
+}
+
 export async function writeTerminalHostAttachmentInfo(params: Readonly<{
   happyHomeDir: string;
   sessionId: string;
@@ -184,7 +284,7 @@ export async function readTerminalHostAttachmentState(params: Readonly<{
     raw = await readFile(terminalHostFilePath(params.happyHomeDir, params.sessionId), 'utf8');
   } catch (error) {
     return (error as NodeJS.ErrnoException)?.code === 'ENOENT'
-      ? { status: 'absent' }
+      ? await readRemoteDevBoundTerminalAttachmentState(params)
       : { status: 'unreadable', reason: 'io_error' };
   }
 
@@ -231,6 +331,40 @@ export async function readTerminalHostAttachmentInfo(params: Readonly<{
   return state.status === 'present' ? state.info : null;
 }
 
+async function removeRemoteDevBoundTerminalAttachmentInfo(params: Readonly<{
+  happyHomeDir: string;
+  sessionId: string;
+  expectedHandle?: TerminalHostHandle;
+  expectedAttachmentId?: TerminalAttachmentId | string;
+}>): Promise<boolean> {
+  const encodedPath = sessionFilePath(params.happyHomeDir, params.sessionId);
+  const paths = [encodedPath];
+  if (!params.sessionId.includes('/') && !params.sessionId.includes('\\')) {
+    const legacyPath = legacySessionFilePath(params.happyHomeDir, params.sessionId);
+    if (legacyPath !== encodedPath) paths.push(legacyPath);
+  }
+  for (const path of paths) {
+    const removed = await withTerminalAttachmentMetadataLock(path, async () => {
+      let raw: string;
+      try {
+        raw = await readFile(path, 'utf8');
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') return false;
+        throw error;
+      }
+      const current = parseRemoteDevBoundTerminalAttachmentInfo(raw, params.sessionId);
+      if (!current) return false;
+      const expectedAttachmentId = params.expectedAttachmentId ?? params.expectedHandle?.attachmentId;
+      if (!expectedAttachmentId || current.attachmentId !== expectedAttachmentId) return false;
+      if (params.expectedHandle && !terminalHostHandlesEqual(current.handle, params.expectedHandle)) return false;
+      await unlink(path);
+      return true;
+    });
+    if (removed) return true;
+  }
+  return false;
+}
+
 export async function removeTerminalHostAttachmentInfo(params: Readonly<{
   happyHomeDir: string;
   sessionId: string;
@@ -251,9 +385,101 @@ export async function removeTerminalHostAttachmentInfo(params: Readonly<{
       await unlink(terminalHostFilePath(params.happyHomeDir, params.sessionId));
       return true;
     } catch (error) {
+      if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') {
+        return await removeRemoteDevBoundTerminalAttachmentInfo({
+          ...params,
+          expectedHandle: expectedHandle ?? undefined,
+        });
+      }
+      throw error;
+    }
+  });
+}
+
+function parseTerminalAttachmentInfo(
+  raw: string,
+  sessionId: string,
+): TerminalAttachmentInfo | null {
+  try {
+    const parsed = JSON.parse(raw) as Record<string, unknown> | null;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+    if ((parsed.version !== 1 && parsed.version !== 2) || parsed.sessionId !== sessionId) return null;
+    if (!parsed.terminal || typeof parsed.terminal !== 'object') return null;
+    const terminal = parsed.terminal as NonNullable<Metadata['terminal']>;
+    if (
+      terminal.mode !== 'plain'
+      && terminal.mode !== 'tmux'
+      && terminal.mode !== 'zellij'
+      && terminal.mode !== 'windows_terminal'
+      && terminal.mode !== 'windows_console'
+    ) {
+      return null;
+    }
+    if (typeof parsed.updatedAt !== 'number' || !Number.isFinite(parsed.updatedAt)) return null;
+    if (parsed.version === 2 && !parseRemoteDevBoundTerminalAttachmentInfo(raw, sessionId)) return null;
+    return {
+      version: 1,
+      sessionId,
+      terminal,
+      updatedAt: parsed.updatedAt,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function terminalAttachmentSnapshotsEqual(
+  current: TerminalAttachmentInfo,
+  expected: TerminalAttachmentInfo,
+): boolean {
+  return JSON.stringify(current) === JSON.stringify(expected);
+}
+
+async function removeTerminalAttachmentInfoPath(params: Readonly<{
+  path: string;
+  sessionId: string;
+  expected: TerminalAttachmentInfo;
+}>): Promise<boolean> {
+  return await withTerminalAttachmentMetadataLock(params.path, async () => {
+    let raw: string;
+    try {
+      raw = await readFile(params.path, 'utf8');
+    } catch (error) {
       if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') return false;
       throw error;
     }
+    const current = parseTerminalAttachmentInfo(raw, params.sessionId);
+    if (!current || !terminalAttachmentSnapshotsEqual(current, params.expected)) return false;
+    try {
+      await unlink(params.path);
+      return true;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') return false;
+      throw error;
+    }
+  });
+}
+
+export async function removeTerminalAttachmentInfo(params: Readonly<{
+  happyHomeDir: string;
+  sessionId: string;
+  expected: TerminalAttachmentInfo;
+}>): Promise<boolean> {
+  const encodedPath = sessionFilePath(params.happyHomeDir, params.sessionId);
+  if (await removeTerminalAttachmentInfoPath({
+    path: encodedPath,
+    sessionId: params.sessionId,
+    expected: params.expected,
+  })) {
+    return true;
+  }
+  if (params.sessionId.includes('/') || params.sessionId.includes('\\')) return false;
+  const legacyPath = legacySessionFilePath(params.happyHomeDir, params.sessionId);
+  if (legacyPath === encodedPath) return false;
+  return await removeTerminalAttachmentInfoPath({
+    path: legacyPath,
+    sessionId: params.sessionId,
+    expected: params.expected,
   });
 }
 
@@ -269,8 +495,19 @@ export async function disposeTerminalAttachmentInfoForSession(params: Readonly<{
     if (legacyPath !== encodedPath) paths.push(legacyPath);
   }
   await Promise.all(paths.map(async (path) => {
-    await unlink(path).catch((error: unknown) => {
-      if ((error as NodeJS.ErrnoException)?.code !== 'ENOENT') throw error;
+    await withTerminalAttachmentMetadataLock(path, async () => {
+      let raw: string;
+      try {
+        raw = await readFile(path, 'utf8');
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') return;
+        throw error;
+      }
+      // Remote Dev stored its exact v2 host descriptor at the display-metadata
+      // path. Preserve that supported predecessor until terminal-host disposition
+      // proves and retires the exact host.
+      if (parseRemoteDevBoundTerminalAttachmentInfo(raw, params.sessionId)) return;
+      await unlink(path);
     });
   }));
 }
@@ -295,21 +532,7 @@ export async function readTerminalAttachmentInfo(params: {
       if (legacyPath === encodedPath) throw e;
       raw = await readFile(legacyPath, 'utf8');
     }
-    const parsed = JSON.parse(raw) as Partial<TerminalAttachmentInfo> | null;
-    if (!parsed || typeof parsed !== 'object') return null;
-    if (parsed.version !== 1) return null;
-    if (parsed.sessionId !== params.sessionId) return null;
-    if (!parsed.terminal || typeof parsed.terminal !== 'object') return null;
-    if (
-      parsed.terminal.mode !== 'plain'
-      && parsed.terminal.mode !== 'tmux'
-      && parsed.terminal.mode !== 'zellij'
-      && parsed.terminal.mode !== 'windows_terminal'
-      && parsed.terminal.mode !== 'windows_console'
-    ) {
-      return null;
-    }
-    return parsed as TerminalAttachmentInfo;
+    return parseTerminalAttachmentInfo(raw, params.sessionId);
   } catch {
     return null;
   }

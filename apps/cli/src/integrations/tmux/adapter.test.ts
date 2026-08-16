@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { createTmuxTerminalHostAdapter, type TmuxTerminalHostUtility } from './adapter';
+import {
+  createTmuxTerminalHostAdapter,
+  resolveTmuxCommandEnvironmentForHostHandle,
+  type TmuxTerminalHostUtility,
+} from './adapter';
 import { TmuxUtilities } from './TmuxUtilities';
 import type { TmuxCommandResult } from './types';
 
@@ -22,6 +26,21 @@ function createUtility(overrides?: Partial<TmuxTerminalHostUtility>): TmuxTermin
 }
 
 describe('createTmuxTerminalHostAdapter', () => {
+  it('routes a persisted custom tmux root through the host handle', () => {
+    expect(resolveTmuxCommandEnvironmentForHostHandle({
+      kind: 'tmux',
+      sessionName: 'happy',
+      paneId: 'owned-window',
+      socketDir: '/tmp/happier-tmux-root',
+      attachMetadata: {
+        attachStrategy: 'terminal_host',
+        topology: 'shared',
+        locality: 'same_machine',
+        liveProbe: 'required',
+      },
+    })).toEqual({ TMUX_TMPDIR: '/tmp/happier-tmux-root' });
+  });
+
   it('forwards inherited environment removals to the tmux window owner', async () => {
     const utility = createUtility();
     const adapter = createTmuxTerminalHostAdapter({ tmux: utility });

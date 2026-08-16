@@ -1,15 +1,13 @@
-import type { TerminalHostAdapter } from '@happier-dev/agents';
-import type { AgentSessionHostServices } from '@happier-dev/plugin-sdk/agent-runtime';
+import type { TerminalHostAdapter, TerminalHostHandle } from '@happier-dev/agents';
+import type { AgentTerminalHostDisposeIntent } from '@happier-dev/plugin-sdk/agents/runtime';
 
 import {
   readTerminalHostAttachmentInfo,
   removeTerminalHostAttachmentInfo,
+  type BoundTerminalHostAttachmentInfo,
   type TerminalAttachmentId,
   type TerminalHostAttachmentInfo,
 } from './terminalAttachmentInfo';
-
-type AgentTerminalHostDisposeIntent =
-  Parameters<NonNullable<AgentSessionHostServices['terminalHost']>['dispose']>[1];
 
 export type TerminalHostDispositionIntent =
   | Readonly<{
@@ -22,11 +20,16 @@ export type TerminalHostDispositionIntent =
 
 export type TerminalHostDispositionResult =
   | Readonly<{ status: 'preserved'; attachmentId: TerminalAttachmentId }>
-  | Readonly<{ status: 'retired'; attachmentId: TerminalAttachmentId }>
-  | Readonly<{ status: 'destroyed'; attachmentId: TerminalAttachmentId; descriptorRetained?: true }>
+  | Readonly<{ status: 'retired'; attachmentId: TerminalAttachmentId | null }>
+  | Readonly<{
+      status: 'destroyed';
+      attachmentId: TerminalAttachmentId;
+      descriptorRetained?: true;
+      retirementFailed?: true;
+    }>
   | Readonly<{
       status: 'parked';
-      reason: 'legacy_attachment' | 'attachment_mismatch' | 'missing_topology_proof' | 'disposition_in_progress' | 'destroy_failed';
+      reason: 'legacy_attachment' | 'attachment_mismatch' | 'missing_topology_proof' | 'disposition_in_progress' | 'destroy_failed' | 'retirement_failed';
     }>;
 
 const activeDispositionClaims = new Set<string>();
@@ -60,6 +63,11 @@ export async function executeTerminalHostDisposition(input: Readonly<{
     sessionId: string;
     expectedAttachmentId: TerminalAttachmentId | string;
   }>) => Promise<boolean>;
+  beforeDescriptorRetirement?: (input: Readonly<{
+    happyHomeDir: string;
+    sessionId: string;
+    attachmentInfo: BoundTerminalHostAttachmentInfo;
+  }>) => Promise<void>;
 }>): Promise<TerminalHostDispositionResult> {
   const readAttachment = input.readAttachmentInfo ?? readTerminalHostAttachmentInfo;
   const removeAttachment = input.removeAttachmentInfo ?? removeTerminalHostAttachmentInfo;
@@ -85,6 +93,15 @@ export async function executeTerminalHostDisposition(input: Readonly<{
       return { status: 'parked', reason: 'attachment_mismatch' };
     }
     if (input.intent.kind === 'retire_confirmed_dead_attachment') {
+      try {
+        await input.beforeDescriptorRetirement?.({
+          happyHomeDir: input.happyHomeDir,
+          sessionId: input.sessionId,
+          attachmentInfo: current,
+        });
+      } catch {
+        return { status: 'parked', reason: 'retirement_failed' };
+      }
       const removed = await removeAttachment({
         happyHomeDir: input.happyHomeDir,
         sessionId: input.sessionId,
@@ -107,6 +124,20 @@ export async function executeTerminalHostDisposition(input: Readonly<{
     } catch {
       return { status: 'parked', reason: 'destroy_failed' };
     }
+    try {
+      await input.beforeDescriptorRetirement?.({
+        happyHomeDir: input.happyHomeDir,
+        sessionId: input.sessionId,
+        attachmentInfo: current,
+      });
+    } catch {
+      return {
+        status: 'destroyed',
+        attachmentId: current.attachmentId,
+        descriptorRetained: true,
+        retirementFailed: true,
+      };
+    }
     const removed = await removeAttachment({
       happyHomeDir: input.happyHomeDir,
       sessionId: input.sessionId,
@@ -115,6 +146,59 @@ export async function executeTerminalHostDisposition(input: Readonly<{
     return removed
       ? { status: 'destroyed', attachmentId: current.attachmentId }
       : { status: 'destroyed', attachmentId: current.attachmentId, descriptorRetained: true };
+  } finally {
+    activeDispositionClaims.delete(claimKey);
+  }
+}
+
+export async function executeConfirmedDeadTerminalHostAttachmentRetirement(input: Readonly<{
+  happyHomeDir: string;
+  sessionId: string;
+  expectedAttachmentInfo: TerminalHostAttachmentInfo;
+  readAttachmentInfo?: (input: Readonly<{
+    happyHomeDir: string;
+    sessionId: string;
+  }>) => Promise<TerminalHostAttachmentInfo | null>;
+  removeAttachmentInfo?: (input: Readonly<{
+    happyHomeDir: string;
+    sessionId: string;
+    expectedAttachmentId?: TerminalAttachmentId | string;
+    expectedHandle?: TerminalHostHandle;
+  }>) => Promise<boolean>;
+  beforeDescriptorRetirement?: (input: Readonly<{
+    happyHomeDir: string;
+    sessionId: string;
+    attachmentInfo: BoundTerminalHostAttachmentInfo;
+  }>) => Promise<void>;
+}>): Promise<TerminalHostDispositionResult> {
+  if (input.expectedAttachmentInfo.version === 2) {
+    return await executeTerminalHostDisposition({
+      happyHomeDir: input.happyHomeDir,
+      sessionId: input.sessionId,
+      expectedAttachmentId: input.expectedAttachmentInfo.attachmentId,
+      intent: { kind: 'retire_confirmed_dead_attachment', reason: 'positive_dead_recovery' },
+      readAttachmentInfo: input.readAttachmentInfo,
+      removeAttachmentInfo: input.removeAttachmentInfo,
+      beforeDescriptorRetirement: input.beforeDescriptorRetirement,
+    });
+  }
+
+  const expected = input.expectedAttachmentInfo;
+  const claimKey = `${input.happyHomeDir}\u0000${input.sessionId}\u0000legacy:${expected.updatedAt}`;
+  if (activeDispositionClaims.has(claimKey)) {
+    return { status: 'parked', reason: 'disposition_in_progress' };
+  }
+  activeDispositionClaims.add(claimKey);
+  try {
+    const removeAttachment = input.removeAttachmentInfo ?? removeTerminalHostAttachmentInfo;
+    const removed = await removeAttachment({
+      happyHomeDir: input.happyHomeDir,
+      sessionId: input.sessionId,
+      expectedHandle: expected.handle,
+    }).catch(() => false);
+    return removed
+      ? { status: 'retired', attachmentId: null }
+      : { status: 'parked', reason: 'attachment_mismatch' };
   } finally {
     activeDispositionClaims.delete(claimKey);
   }

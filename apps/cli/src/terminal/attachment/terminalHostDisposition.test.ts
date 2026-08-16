@@ -7,6 +7,7 @@ import {
   writeTerminalHostAttachmentInfo,
 } from './terminalAttachmentInfo';
 import {
+  executeConfirmedDeadTerminalHostAttachmentRetirement,
   executeTerminalHostDisposition,
   resolveRuntimeTerminalHostDispositionIntent,
 } from './terminalHostDisposition';
@@ -124,6 +125,64 @@ describe('executeTerminalHostDisposition', () => {
     expect(dispose).toHaveBeenCalledTimes(1);
   });
 
+  it('retires remote ownership evidence before removing the local descriptor', async () => {
+    const events: string[] = [];
+    const attachment = {
+      version: 2 as const,
+      attachmentId: HANDLE.attachmentId!,
+      sessionId: 'session-retirement-order',
+      handle: { ...HANDLE, attachmentId: HANDLE.attachmentId! },
+      updatedAt: 1,
+    };
+    await expect(executeTerminalHostDisposition({
+      happyHomeDir: '/tmp/happy',
+      sessionId: attachment.sessionId,
+      expectedAttachmentId: attachment.attachmentId,
+      intent: { kind: 'destroy_owned_host', reason: 'explicit_user_stop' },
+      adapter: buildAdapter(async () => {
+        events.push('destroy');
+      }),
+      readAttachmentInfo: vi.fn(async () => attachment),
+      beforeDescriptorRetirement: async () => {
+        events.push('remote');
+      },
+      removeAttachmentInfo: vi.fn(async () => {
+        events.push('local');
+        return true;
+      }),
+    })).resolves.toEqual({ status: 'destroyed', attachmentId: HANDLE.attachmentId });
+    expect(events).toEqual(['destroy', 'remote', 'local']);
+  });
+
+  it('retains the local descriptor when remote ownership retirement fails after destruction', async () => {
+    const attachment = {
+      version: 2 as const,
+      attachmentId: HANDLE.attachmentId!,
+      sessionId: 'session-retirement-failure',
+      handle: { ...HANDLE, attachmentId: HANDLE.attachmentId! },
+      updatedAt: 1,
+    };
+    const removeAttachmentInfo = vi.fn(async () => true);
+    await expect(executeTerminalHostDisposition({
+      happyHomeDir: '/tmp/happy',
+      sessionId: attachment.sessionId,
+      expectedAttachmentId: attachment.attachmentId,
+      intent: { kind: 'destroy_owned_host', reason: 'explicit_user_stop' },
+      adapter: buildAdapter(async () => undefined),
+      readAttachmentInfo: vi.fn(async () => attachment),
+      beforeDescriptorRetirement: async () => {
+        throw new Error('remote unavailable');
+      },
+      removeAttachmentInfo,
+    })).resolves.toEqual({
+      status: 'destroyed',
+      attachmentId: HANDLE.attachmentId,
+      descriptorRetained: true,
+      retirementFailed: true,
+    });
+    expect(removeAttachmentInfo).not.toHaveBeenCalled();
+  });
+
   it('claims explicit stop once, destroys the exact persisted handle, and removes it by id', async () => {
     const dir = tmp.dirSync({ unsafeCleanup: true });
     try {
@@ -177,5 +236,28 @@ describe('executeTerminalHostDisposition', () => {
     } finally {
       dir.removeCallback();
     }
+  });
+
+  it('retires an unchanged legacy host descriptor after positive death proof', async () => {
+    const legacy = {
+      version: 1 as const,
+      sessionId: 'session-legacy-dead',
+      handle: { ...HANDLE, attachmentId: undefined },
+      updatedAt: 1,
+    };
+    const removeAttachmentInfo = vi.fn(async () => true);
+
+    await expect(executeConfirmedDeadTerminalHostAttachmentRetirement({
+      happyHomeDir: '/tmp/happy',
+      sessionId: legacy.sessionId,
+      expectedAttachmentInfo: legacy,
+      readAttachmentInfo: vi.fn(async () => legacy),
+      removeAttachmentInfo,
+    })).resolves.toEqual({ status: 'retired', attachmentId: null });
+    expect(removeAttachmentInfo).toHaveBeenCalledWith({
+      happyHomeDir: '/tmp/happy',
+      sessionId: legacy.sessionId,
+      expectedHandle: legacy.handle,
+    });
   });
 });

@@ -3,6 +3,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({
   spawnInTmux: vi.fn(),
   killWindow: vi.fn(async () => true),
+  writeTerminalHostAttachmentInfo: vi.fn(async () => ({
+    version: 2 as const,
+    attachmentId: 'attachment-bound',
+  })),
 }));
 
 vi.mock('@/integrations/tmux', () => ({
@@ -23,6 +27,14 @@ vi.mock('../platform/tmux/spawnConfig', () => ({
 vi.mock('../backendTargetRouting', () => ({
   resolveDaemonCliSubcommandFromBackendTarget: () => 'codex',
 }));
+
+vi.mock('@/terminal/attachment/terminalAttachmentInfo', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/terminal/attachment/terminalAttachmentInfo')>();
+  return {
+    ...actual,
+    writeTerminalHostAttachmentInfo: mocks.writeTerminalHostAttachmentInfo,
+  };
+});
 
 function params() {
   const pidToTrackedSession = new Map();
@@ -181,6 +193,16 @@ describe('spawnTmuxHostedSessionAndWaitForWebhook', () => {
     expect(input.spawnLifecycleCallbacks.registerSpawnResourceCleanupForPid).toHaveBeenCalledWith(4242);
     expect(input.spawnLifecycleCallbacks.consumeSessionAttachCleanupForPid).toHaveBeenCalledWith(4242);
     expect(input.spawnLifecycleCallbacks.persistAcceptedSpawnMarker).toHaveBeenCalledWith(tracked);
+    expect(mocks.writeTerminalHostAttachmentInfo).toHaveBeenCalledWith({
+      happyHomeDir: expect.any(String),
+      sessionId: 'session-a',
+      handle: expect.objectContaining({
+        kind: 'tmux',
+        sessionName: 'happy',
+        paneId: expect.stringMatching(/^happy-/u),
+        attachMetadata: expect.objectContaining({ topology: 'shared' }),
+      }),
+    });
   });
 
   it('installs webhook custody before accepted marker persistence can complete', async () => {
@@ -216,6 +238,35 @@ describe('spawnTmuxHostedSessionAndWaitForWebhook', () => {
     await expect(pending).resolves.toMatchObject({
       spawnResult: { type: 'success', sessionId: 'session-early' },
     });
+  });
+
+  it('retires the exact tmux startup owner when bound attachment persistence fails', async () => {
+    mocks.spawnInTmux.mockResolvedValueOnce({
+      success: true,
+      creationDisposition: 'created_or_uncertain',
+      sessionId: 'happy:binding-failure',
+      sessionName: 'happy',
+      windowName: 'binding-failure',
+      pid: 4260,
+    });
+    mocks.writeTerminalHostAttachmentInfo.mockRejectedValueOnce(new Error('synthetic descriptor failure'));
+    const input = params();
+    const { spawnTmuxHostedSessionAndWaitForWebhook } = await import('./spawnTmuxHostedSessionAndWaitForWebhook');
+
+    const pending = spawnTmuxHostedSessionAndWaitForWebhook(input);
+    await vi.waitFor(() => expect(input.pidToAwaiter.has(4260)).toBe(true));
+    const tracked = input.pidToTrackedSession.get(4260)!;
+    input.pidToAwaiter.get(4260)?.({ ...tracked, happySessionId: 'session-binding-failure' });
+
+    await expect(pending).resolves.toMatchObject({
+      spawnResult: {
+        type: 'error',
+        errorCode: 'SPAWN_FAILED',
+        errorMessage: 'terminal_attachment_binding_failed',
+      },
+    });
+    expect(mocks.killWindow).toHaveBeenCalledWith('happy:binding-failure');
+    expect(input.pidToTrackedSession.has(4260)).toBe(false);
   });
 
   it('cancels exact tmux custody when marker publication fails before ACK', async () => {

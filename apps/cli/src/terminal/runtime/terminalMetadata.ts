@@ -3,6 +3,37 @@ import type { TerminalHostHandle } from '@happier-dev/agents';
 
 import type { TerminalRuntimeFlags } from './terminalRuntimeFlags';
 
+export function buildTerminalHostProbeHandleFromMetadata(
+  terminal: NonNullable<Metadata['terminal']>,
+): TerminalHostHandle | null {
+  if (terminal.mode !== 'tmux') return null;
+  const target = typeof terminal.tmux?.target === 'string'
+    ? terminal.tmux.target.trim()
+    : '';
+  const separatorIndex = target.lastIndexOf(':');
+  if (separatorIndex <= 0 || separatorIndex >= target.length - 1) return null;
+  const sessionName = target.slice(0, separatorIndex).trim();
+  const paneId = target.slice(separatorIndex + 1).trim();
+  if (!sessionName || !paneId) return null;
+  const socketDir = typeof terminal.tmux?.tmpDir === 'string'
+    ? terminal.tmux.tmpDir.trim()
+    : '';
+  return {
+    kind: 'tmux',
+    sessionName,
+    paneId,
+    ...(socketDir ? { socketDir } : {}),
+    attachMetadata: {
+      attachStrategy: 'terminal_host',
+      topology: 'shared',
+      locality: 'same_machine',
+      maxClients: null,
+      requiresLocalAttachmentInfo: true,
+      liveProbe: 'required',
+    },
+  };
+}
+
 export function buildTerminalMetadataFromHostHandle(
   handle: TerminalHostHandle,
 ): NonNullable<Metadata['terminal']> {
@@ -42,6 +73,16 @@ export function buildTerminalMetadataFromRuntimeFlags(
   const terminal: NonNullable<Metadata['terminal']> = {
     mode,
   };
+
+  const attachmentId = typeof flags.attachmentId === 'string' ? flags.attachmentId.trim() : '';
+  if (attachmentId) {
+    terminal.controlServiceabilityV1 = {
+      v: 1,
+      attachmentId,
+      state: 'servable',
+      observedAt: Date.now(),
+    };
+  }
 
   if (
     flags.requested === 'plain'
