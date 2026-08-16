@@ -4,26 +4,10 @@ import { Encryption } from "@/sync/encryption/encryption";
 import sodium from '@/encryption/libsodium.lib';
 import { getReadyServerFeatures } from '@/sync/api/capabilities/getReadyServerFeatures';
 import { serverFetch } from '@/sync/http/client';
-import { readServerEnabledBit } from '@happier-dev/protocol';
+import { HappyError } from '@/utils/errors/errors';
+import { AuthErrorCodeSchema, readServerEnabledBit } from '@happier-dev/protocol';
 
 const CONTENT_KEY_BINDING_PREFIX = new TextEncoder().encode('Happy content key v1\u0000');
-
-/**
- * Auth token request failure carrying the server's typed error code
- * (e.g. `signup-disabled` from POST /v1/auth) so call sites can map it
- * to a specific user-facing message instead of a generic failure.
- */
-export class AuthTokenRequestError extends Error {
-    readonly status: number;
-    readonly code: string | null;
-
-    constructor(status: number, code: string | null) {
-        super(code ? `Authentication failed: ${status} (${code})` : `Authentication failed: ${status}`);
-        this.name = 'AuthTokenRequestError';
-        this.status = status;
-        this.code = code;
-    }
-}
 
 export async function authGetToken(secret: Uint8Array) {
     const serverFeatures = await getReadyServerFeatures({ timeoutMs: 800 });
@@ -76,8 +60,19 @@ export async function authGetToken(secret: Uint8Array) {
         const errorCodeRaw = errorBody !== null && typeof errorBody === 'object' && !Array.isArray(errorBody)
             ? (errorBody as Record<string, unknown>).error
             : null;
-        const errorCode = typeof errorCodeRaw === 'string' && errorCodeRaw ? errorCodeRaw : null;
-        throw new AuthTokenRequestError(response.status, errorCode);
+        const parsedErrorCode = AuthErrorCodeSchema.safeParse(errorCodeRaw);
+        const errorCode = parsedErrorCode.success ? parsedErrorCode.data : undefined;
+        throw new HappyError(
+            errorCode
+                ? `Authentication failed: ${response.status} (${errorCode})`
+                : `Authentication failed: ${response.status}`,
+            response.status >= 500,
+            {
+                status: response.status,
+                kind: response.status >= 500 ? 'server' : 'auth',
+                ...(errorCode ? { code: errorCode } : {}),
+            },
+        );
     }
     const data = await response.json() as { token: string };
     return data.token;

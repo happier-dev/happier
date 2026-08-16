@@ -12,6 +12,7 @@ vi.mock('@/sync/http/client', () => ({
 
 import { authGetToken } from './getToken';
 import { resetServerFeaturesClientForTests } from '@/sync/api/capabilities/serverFeaturesClient';
+import { HappyError } from '@/utils/errors/errors';
 
 function jsonResponse(body: unknown, status = 200): Response {
     return new Response(JSON.stringify(body), {
@@ -75,5 +76,76 @@ describe('authGetToken key-challenge gate', () => {
         expect(mocks.serverFetch).toHaveBeenCalledTimes(2);
         expect(mocks.serverFetch.mock.calls[0]?.[0]).toBe('/v1/features');
         expect(mocks.serverFetch.mock.calls[1]?.[0]).toBe('/v1/auth');
+    });
+
+    it('surfaces signup-disabled through the canonical typed auth error', async () => {
+        mocks.serverFetch
+            .mockResolvedValueOnce(
+                jsonResponse({
+                    features: {
+                        auth: { login: { keyChallenge: { enabled: true } } },
+                        sharing: { contentKeys: { enabled: false } },
+                    },
+                    capabilities: {},
+                }),
+            )
+            .mockResolvedValueOnce(jsonResponse({ error: 'signup-disabled' }, 403));
+
+        const failure = await authGetToken(new Uint8Array(32)).then(
+            () => null,
+            (error: unknown) => error,
+        );
+
+        expect(failure).toBeInstanceOf(HappyError);
+        expect(failure).toMatchObject({
+            canTryAgain: false,
+            code: 'signup-disabled',
+            kind: 'auth',
+            status: 403,
+        });
+    });
+
+    it('does not promote unknown or non-JSON response bodies to typed auth codes', async () => {
+        mocks.serverFetch
+            .mockResolvedValueOnce(
+                jsonResponse({
+                    features: {
+                        auth: { login: { keyChallenge: { enabled: true } } },
+                        sharing: { contentKeys: { enabled: false } },
+                    },
+                    capabilities: {},
+                }),
+            )
+            .mockResolvedValueOnce(jsonResponse({ error: 'future-policy-code' }, 403));
+
+        const unknownCodeFailure = await authGetToken(new Uint8Array(32)).then(
+            () => null,
+            (error: unknown) => error,
+        );
+
+        expect(unknownCodeFailure).toBeInstanceOf(HappyError);
+        expect(unknownCodeFailure).toMatchObject({ code: undefined, kind: 'auth', status: 403 });
+
+        resetServerFeaturesClientForTests();
+        mocks.serverFetch.mockReset();
+        mocks.serverFetch
+            .mockResolvedValueOnce(
+                jsonResponse({
+                    features: {
+                        auth: { login: { keyChallenge: { enabled: true } } },
+                        sharing: { contentKeys: { enabled: false } },
+                    },
+                    capabilities: {},
+                }),
+            )
+            .mockResolvedValueOnce(new Response('Internal Server Error', { status: 500 }));
+
+        const nonJsonFailure = await authGetToken(new Uint8Array(32)).then(
+            () => null,
+            (error: unknown) => error,
+        );
+
+        expect(nonJsonFailure).toBeInstanceOf(HappyError);
+        expect(nonJsonFailure).toMatchObject({ code: undefined, kind: 'server', status: 500 });
     });
 });
