@@ -3,6 +3,7 @@ import { storage } from '@/sync/domains/state/storage';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { useVoiceTargetStore } from '@/voice/runtime/voiceTargetStore';
 import { resolveEffectiveWindowsRemoteSessionLaunchMode } from '@/sync/domains/session/spawn/windowsRemoteSessionLaunchMode';
+import { supportsSpawnPendingFirstInput } from '@/sync/domains/session/spawn/spawnSessionPayload';
 import { buildSafeWorkspaceLabel } from '@/utils/worktree/workspaceHandles';
 import type { Machine, Session } from '@/sync/domains/state/storageTypes';
 import type { StorageState } from '@/sync/store/types';
@@ -173,6 +174,8 @@ export async function spawnSessionForVoiceTool(params: Readonly<{
   });
 
   const spawnAttempt = createVoiceSpawnAttempt();
+  const initialMessage = normalizeNonEmptyString(params.initialMessage);
+  const daemonOwnsFirstTurn = supportsSpawnPendingFirstInput(targetMachine?.daemonState?.startedWithCliVersion);
   const spawned = await machineSpawnNewSessionUntilResolved({
     machineId,
     directory,
@@ -181,6 +184,9 @@ export async function spawnSessionForVoiceTool(params: Readonly<{
     userAttemptId: spawnAttempt.userAttemptId,
     firstTurnLocalId: spawnAttempt.firstTurnLocalId,
     attachmentMessageLocalId: spawnAttempt.attachmentMessageLocalId,
+    ...(daemonOwnsFirstTurn && initialMessage
+      ? { pendingFirstInput: { text: initialMessage, localId: spawnAttempt.firstTurnLocalId } }
+      : {}),
     ...(windowsRemoteSessionLaunchMode ? { windowsRemoteSessionLaunchMode } : {}),
     ...(modelId ? { modelId, modelUpdatedAt: modelUpdatedAt ?? Date.now() } : {}),
   });
@@ -188,13 +194,12 @@ export async function spawnSessionForVoiceTool(params: Readonly<{
   const spawnedSessionId = readVoiceSpawnedSessionIdForAttempt(spawned, spawnAttempt);
 
   const tag = normalizeNonEmptyString(params.tag);
-  const initialMessage = normalizeNonEmptyString(params.initialMessage);
   if (spawnedSessionId) {
     await postprocessSpawnedSession({
       sessionId: spawnedSessionId,
       serverId,
       tag,
-      initialMessage,
+      initialMessage: daemonOwnsFirstTurn ? null : initialMessage,
       firstTurnLocalId: spawnAttempt.firstTurnLocalId,
     });
     await completeVoiceSpawnAttemptCustody({

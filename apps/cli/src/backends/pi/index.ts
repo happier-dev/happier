@@ -11,6 +11,7 @@ import { resolvePiConnectedServiceCandidatePersistedSessionFile } from '@/backen
 import { resolvePiConnectedServiceSwitchContinuity } from '@/backends/pi/connectedServices/resolvePiConnectedServiceSwitchContinuity';
 import type { AgentCatalogEntry } from '../types';
 import type { ConnectedServiceCredentialLifecycleDescriptor } from '@/daemon/connectedServices/credentials/lifecycleTypes';
+import { piDaemonSpawnHooks } from '@/backends/pi/daemon/spawnHooks';
 
 const piConnectedServiceCredentialLifecycleDescriptor: ConnectedServiceCredentialLifecycleDescriptor = {
   providerId: 'pi',
@@ -34,7 +35,17 @@ const piConnectedServiceCredentialLifecycleDescriptor: ConnectedServiceCredentia
   predictiveSoftSwitch: { mode: 'unsupported' },
   sameAccountFanoutStrategy: 'shared_group_auth_surface',
   generationApplicationScope: 'per_session_runtime',
-  runtimeAuthApply: { directLiveHotAuth: 'unsupported' },
+  runtimeAuthApply: {
+    directLiveHotAuth: {
+      supportsInTurnApply: false,
+      requiresExactRuntimeIdentity: false,
+      refreshSelectionResync: 'not_applicable',
+      authMode: {
+        kind: 'provider_owned',
+        name: 'broker_selection_indirection',
+      },
+    },
+  },
 };
 
 export const agent = {
@@ -54,6 +65,7 @@ export const agent = {
   verifyResumeReachable: async (input) =>
     await (await import('@/backends/pi/connectedServices/verifyResumeReachablePi')).verifyResumeReachablePi(input),
   getSessionUsageLimitRecoveryControlAdapter: async () => piUsageLimitRecoveryControlAdapter,
+  getDaemonSpawnHooks: async () => piDaemonSpawnHooks,
   vendorResumeSupport: AGENTS_CORE.pi.resume.vendorResume,
   getPreflightSessionControlsProbeAdapter: async () =>
     (await import('@/backends/pi/preflight/piPreflightModelsProbeAdapter')).piPreflightModelsProbeAdapter,

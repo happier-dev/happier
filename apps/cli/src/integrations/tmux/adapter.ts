@@ -17,7 +17,11 @@ import { resolveTmuxPromptSubmitDelayMs } from './env';
 import { evaluateTmuxPaneLiveness } from './paneLiveness';
 import { TmuxUtilities } from './TmuxUtilities';
 import { pasteTextViaTmuxBuffer } from './typeText';
-import type { TerminalPromptSubmitVerificationPolicy } from '../terminalHost/promptSubmitVerification';
+import {
+  resolveTerminalPromptSubmissionFailureReason,
+  type TerminalPromptSubmitVerificationPolicy,
+} from '../terminalHost/promptSubmitVerification';
+import { resolveTerminalPromptWriteTimeoutMs } from '@/agent/runtime/terminal/injection/promptWriteTimeout';
 
 /**
  * Stability sampling delay between the two full-pane captures used to detect that the user is
@@ -194,7 +198,7 @@ export function createTmuxTerminalHostAdapter(params?: Readonly<{
         bufferName: createTmuxPromptBufferName(),
         submitDelayMs: resolveTmuxPromptSubmitDelayMs(),
         submitRetryDelayMs: resolveTmuxPromptSubmitDelayMs(),
-        timeoutMs: input.scheduling.timeoutMs,
+        timeoutMs: input.scheduling.timeoutMs ?? resolveTerminalPromptWriteTimeoutMs(input.text),
         ...(writeBoundary
           ? {
               authorizeBeforeWrite: async () => {
@@ -206,6 +210,10 @@ export function createTmuxTerminalHostAdapter(params?: Readonly<{
           : {}),
         ...(promptSubmitVerification?.shouldVerifyAfterSubmit(input.text)
           ? {
+            verifyStagedBeforeSubmit: async ({ text }) => promptSubmitVerification.isPromptStagedBeforeSubmit({
+              promptText: text,
+              screenText: await tmux.captureCurrentInput(targetFromHandle(handle)),
+            }),
             verifyAfterSubmit: async ({ text }) => promptSubmitVerification.isPromptStillPendingAfterSubmit({
               promptText: text,
               screenText: await tmux.captureCurrentInput(targetFromHandle(handle)),
@@ -232,7 +240,7 @@ export function createTmuxTerminalHostAdapter(params?: Readonly<{
           });
         }
         return failedInjectionResult({
-          reason: result.reason === 'timeout' ? 'timeout' : 'host_unreachable',
+          reason: resolveTerminalPromptSubmissionFailureReason(result.reason),
           phase: writeAuthorized && result.phase === 'before_write' ? 'during_write' : result.phase,
           duplicateRisk: writeAuthorized && result.duplicateRisk === 'none' ? 'possible' : result.duplicateRisk,
           recoverable: true,

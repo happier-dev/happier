@@ -33,9 +33,14 @@ export type LightSqliteHarnessOptions = Readonly<{
 }>;
 
 function runSqliteMigrations(params: { cwd: string; env: NodeJS.ProcessEnv }): void {
+    const packageManagerScript = process.env.npm_execpath;
+    const command = packageManagerScript ? process.execPath : "yarn";
+    const args = packageManagerScript
+        ? [packageManagerScript, "-s", "migrate:sqlite:deploy"]
+        : ["-s", "migrate:sqlite:deploy"];
     const res = spawnSync(
-        "yarn",
-        ["-s", "migrate:sqlite:deploy"],
+        command,
+        args,
         {
             cwd: params.cwd,
             env: { ...(params.env as Record<string, string>), RUST_LOG: "info" },

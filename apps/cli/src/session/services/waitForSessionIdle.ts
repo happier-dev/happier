@@ -24,7 +24,7 @@ export async function waitForSessionIdle(params: Readonly<{
   timeoutMs: number;
 }>): Promise<
   | Readonly<{ ok: true; sessionId: string; idle: true; observedAt: number }>
-  | Readonly<{ ok: false; code: 'session_not_found' | 'session_id_ambiguous' | 'unsupported' | 'timeout'; candidates?: string[] }>
+  | Readonly<{ ok: false; code: 'session_not_found' | 'session_id_ambiguous' | 'session_lookup_timeout' | 'unsupported' | 'timeout'; candidates?: string[] }>
 > {
   const timeoutMs = Math.max(1, Math.trunc(params.timeoutMs));
   const deadlineMs = Date.now() + timeoutMs;

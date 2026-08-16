@@ -23,6 +23,7 @@ import {
 import { waitForSessionWebhook } from './spawn/waitForSessionWebhook';
 import { readPendingFirstInputFromEnv } from './spawn/pendingFirstInput';
 import type { ConnectedServicesMaterializationDiagnostic } from './connectedServices/materialize/providerMaterializerTypes';
+import { ConnectedServiceAuthGroupQuotaProbeIncompleteError } from './connectedServices/accountGroups/switching/ConnectedServiceAuthGroupSwitchCoordinator';
 import { isConnectedServiceUxDiagnosticSpawnErrorDetail } from '@happier-dev/protocol';
 import { UsageLimitRecoveryScheduler } from './connectedServices/usageLimitRecovery/UsageLimitRecoveryScheduler';
 import type { StopSessionResult } from './sessions/stopSessionContract';
@@ -214,6 +215,7 @@ const harness = vi.hoisted(() => {
     event: string;
     terminalStatus?: string;
   }) => Promise<unknown>) | null = null;
+  let resolveSpawnSessionByNonceRef: ((spawnNonce: string) => Promise<unknown> | unknown) | null = null;
   let pendingSessionActivationHintListenerRef: ((hint: {
     sessionId: string;
     requestId: string;
@@ -257,6 +259,7 @@ const harness = vi.hoisted(() => {
     updateMachineMetadata: vi.fn(async () => {}),
     updateDaemonState: vi.fn(async () => {}),
     awaitPendingRpcRequests: vi.fn(async () => {}),
+    getActiveRpcHandlerExecutions: vi.fn(() => []),
     shutdown: vi.fn(),
   };
 
@@ -268,6 +271,10 @@ const harness = vi.hoisted(() => {
       spawnSessionRef = fn;
     },
     getSpawnSession: () => spawnSessionRef,
+    setResolveSpawnSessionByNonce: (fn: (spawnNonce: string) => Promise<unknown> | unknown) => {
+      resolveSpawnSessionByNonceRef = fn;
+    },
+    getResolveSpawnSessionByNonce: () => resolveSpawnSessionByNonceRef,
     setStopSession: (fn: (sessionId: string) => Promise<import('./sessions/stopSessionContract').StopSessionResult>) => {
       stopSessionRef = fn;
     },
@@ -305,6 +312,7 @@ const harness = vi.hoisted(() => {
       beforeShutdownRef = null;
       isShuttingDownRef = null;
       turnLifecycleHandlerRef = null;
+      resolveSpawnSessionByNonceRef = null;
       pendingSessionActivationHintListenerRef = null;
     },
   };
@@ -356,6 +364,7 @@ vi.mock('@/ui/logger', () => ({
     debug: vi.fn(),
     debugLargeJson: vi.fn(),
     info: vi.fn(),
+    infoFile: vi.fn(),
     warn: vi.fn(),
     logFilePath: '/tmp/happier-daemon.log',
   },
@@ -649,6 +658,7 @@ vi.mock('./controlServer', () => ({
     beforeShutdown,
     isShuttingDown,
     handleConnectedServiceTurnLifecycle,
+    resolveSpawnSessionByNonce,
   }: {
     spawnSession: (options: any) => Promise<any>;
     stopSession: (sessionId: string) => Promise<import('./sessions/stopSessionContract').StopSessionResult>;
@@ -660,6 +670,7 @@ vi.mock('./controlServer', () => ({
       event: string;
       terminalStatus?: string;
     }) => Promise<unknown>;
+    resolveSpawnSessionByNonce?: (spawnNonce: string) => Promise<unknown> | unknown;
   }) => {
     harness.setSpawnSession(spawnSession);
     harness.setStopSession(stopSession);
@@ -674,6 +685,9 @@ vi.mock('./controlServer', () => ({
     }
     if (handleConnectedServiceTurnLifecycle) {
       harness.setTurnLifecycleHandler(handleConnectedServiceTurnLifecycle);
+    }
+    if (resolveSpawnSessionByNonce) {
+      harness.setResolveSpawnSessionByNonce(resolveSpawnSessionByNonce);
     }
     return {
       port: 43210,
@@ -1127,15 +1141,21 @@ describe('startDaemon spawn resume wiring (integration)', () => {
     }
   });
 
-  it('acks new session spawn after child launch without waiting for the session webhook', async () => {
+  it('settles an accepted nonce when the child exits before its webhook', async () => {
     const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
     const refreshEnvOriginal = process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED;
     process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED = 'false';
     const waitForSessionWebhookMock = vi.mocked(waitForSessionWebhook);
     const webhookControl: {
-      resolve: ((value: { type: 'success'; sessionId: string }) => void) | null;
+      resolve: ((value:
+        | { type: 'success'; sessionId: string }
+        | { type: 'error'; errorCode: 'CHILD_EXITED_BEFORE_WEBHOOK'; errorMessage: string }
+      ) => void) | null;
     } = { resolve: null };
-    const webhookPromise = new Promise<{ type: 'success'; sessionId: string }>((resolve) => {
+    const webhookPromise = new Promise<
+      | { type: 'success'; sessionId: string }
+      | { type: 'error'; errorCode: 'CHILD_EXITED_BEFORE_WEBHOOK'; errorMessage: string }
+    >((resolve) => {
       webhookControl.resolve = resolve;
     });
     waitForSessionWebhookMock.mockImplementationOnce(async () => await webhookPromise);
@@ -1216,8 +1236,23 @@ describe('startDaemon spawn resume wiring (integration)', () => {
       const launchedChildEnv = (spawnHappyCLI.mock.calls[0]?.[1] as { env?: NodeJS.ProcessEnv } | undefined)?.env;
       expect(readPendingFirstInputFromEnv(launchedChildEnv)).toEqual(spawnOptions.pendingFirstInput);
 
-      webhookControl.resolve?.({ type: 'success', sessionId: 'sess_late_webhook' });
+      const childExitError = {
+        type: 'error' as const,
+        errorCode: 'CHILD_EXITED_BEFORE_WEBHOOK' as const,
+        errorMessage: 'Child process exited before session webhook (pid=12345, code=1, signal=null)',
+      };
+      webhookControl.resolve?.(childExitError);
       await new Promise((resolve) => setTimeout(resolve, 0));
+
+      const resolveSpawnSessionByNonce = harness.getResolveSpawnSessionByNonce();
+      expect(resolveSpawnSessionByNonce).not.toBeNull();
+      await expect(resolveSpawnSessionByNonce?.('spawn-nonce-fast-ack')).resolves.toEqual({
+        status: 'error',
+        errorCode: 'CHILD_EXITED_BEFORE_WEBHOOK',
+        errorMessage: childExitError.errorMessage,
+      });
+      await expect(spawnSession(spawnOptions)).resolves.toEqual(childExitError);
+      expect(spawnHappyCLI).toHaveBeenCalledTimes(1);
 
       harness.requestShutdown('happier-cli');
       await run;
@@ -1238,7 +1273,7 @@ describe('startDaemon spawn resume wiring (integration)', () => {
       exitSpy.mockRestore();
       featureDecisionSpy.mockRestore();
     }
-  });
+  }, 120_000);
 
   it('rejoins an accepted existing-session launch while its exact live child is still awaiting the webhook', async () => {
     const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
@@ -2014,6 +2049,57 @@ describe('startDaemon spawn resume wiring (integration)', () => {
       } else {
         process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED = refreshEnvOriginal;
       }
+      exitSpy.mockRestore();
+    }
+  });
+
+  it('fails closed with a stable validation result when hard-limit quota evidence is incomplete', async () => {
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
+    const refreshEnvOriginal = process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED;
+    process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED = 'false';
+    let run: Promise<unknown> | null = null;
+    let shutdownRequested = false;
+    try {
+      resolveConnectedServiceAuthForSpawnMock.mockRejectedValueOnce(
+        new ConnectedServiceAuthGroupQuotaProbeIncompleteError('deadline_exceeded'),
+      );
+      const { startDaemon } = await import('./startDaemon');
+      run = startDaemon();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      const spawnSession = await waitForSpawnSessionRegistration();
+
+      await expect(spawnSession({
+        directory: '/tmp',
+        backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+        connectedServices: {
+          v: 1,
+          bindingsByServiceId: {
+            'openai-codex': {
+              source: 'connected',
+              selection: 'group',
+              groupId: 'happier',
+              profileId: 'primary',
+            },
+          },
+        },
+        token: 't',
+      })).resolves.toEqual({
+        type: 'error',
+        errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
+        errorMessage: 'Connected service account availability could not be verified before launch. Please retry.',
+      });
+      expect(spawnHappyCLI).not.toHaveBeenCalled();
+
+      shutdownRequested = true;
+      harness.requestShutdown('happier-cli');
+      await run;
+    } finally {
+      if (!shutdownRequested) {
+        harness.requestShutdown('happier-cli');
+        await run?.catch(() => {});
+      }
+      if (refreshEnvOriginal === undefined) delete process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED;
+      else process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED = refreshEnvOriginal;
       exitSpy.mockRestore();
     }
   });

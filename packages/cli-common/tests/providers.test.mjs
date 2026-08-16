@@ -1,10 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 
 import {
   ensureManagedJavaScriptRuntimeCommand,
@@ -19,7 +19,6 @@ import {
   resolveProviderCliManagedCommandPath,
   resolveExistingPnpmCommand,
 } from '../dist/providers/index.js';
-import { resolveCodexReleaseAsset } from '../dist/providers/codexRelease.js';
 import { resolvePnpmReleaseAsset } from '../dist/providers/pnpmRelease.js';
 
 function currentProviderInstallPlatform() {
@@ -31,12 +30,12 @@ function currentProviderInstallPlatform() {
 }
 
 function currentCodexReleaseAssetName() {
-  if (process.platform === 'darwin' && process.arch === 'arm64') return 'codex-aarch64-apple-darwin.tar.gz';
-  if (process.platform === 'darwin' && process.arch === 'x64') return 'codex-x86_64-apple-darwin.tar.gz';
-  if (process.platform === 'linux' && process.arch === 'arm64') return 'codex-aarch64-unknown-linux-musl.tar.gz';
-  if (process.platform === 'linux' && process.arch === 'x64') return 'codex-x86_64-unknown-linux-musl.tar.gz';
-  if (process.platform === 'win32' && process.arch === 'arm64') return 'codex-aarch64-pc-windows-msvc.exe.zip';
-  if (process.platform === 'win32' && process.arch === 'x64') return 'codex-x86_64-pc-windows-msvc.exe.zip';
+  if (process.platform === 'darwin' && process.arch === 'arm64') return 'codex-package-aarch64-apple-darwin.tar.gz';
+  if (process.platform === 'darwin' && process.arch === 'x64') return 'codex-package-x86_64-apple-darwin.tar.gz';
+  if (process.platform === 'linux' && process.arch === 'arm64') return 'codex-package-aarch64-unknown-linux-musl.tar.gz';
+  if (process.platform === 'linux' && process.arch === 'x64') return 'codex-package-x86_64-unknown-linux-musl.tar.gz';
+  if (process.platform === 'win32' && process.arch === 'arm64') return 'codex-package-aarch64-pc-windows-msvc.tar.gz';
+  if (process.platform === 'win32' && process.arch === 'x64') return 'codex-package-x86_64-pc-windows-msvc.tar.gz';
   throw new Error(`Unsupported test arch: ${process.platform}/${process.arch}`);
 }
 
@@ -193,26 +192,6 @@ test('resolvePlatformFromNodePlatform maps supported node platforms and rejects 
   assert.equal(resolvePlatformFromNodePlatform('linux'), 'linux');
   assert.equal(resolvePlatformFromNodePlatform('win32'), 'win32');
   assert.equal(resolvePlatformFromNodePlatform('freebsd'), null);
-});
-
-test('resolveCodexReleaseAsset parses versions from normal release tags', () => {
-  const resolved = resolveCodexReleaseAsset({
-    tag_name: 'rust-v0.111.0',
-    assets: [{
-      name: currentCodexReleaseAssetName(),
-      browser_download_url: 'https://example.invalid/codex.tar.gz',
-      digest: 'sha256:deadbeef',
-    }],
-  });
-
-  assert.equal(resolved.version, '0.111.0');
-});
-
-test('resolveCodexReleaseAsset rejects selected assets without a digest', () => {
-  assert.throws(() => resolveCodexReleaseAsset({
-    tag_name: 'rust-v0.111.0',
-    assets: [{ name: currentCodexReleaseAssetName(), browser_download_url: 'https://example.invalid/codex.tar.gz' }],
-  }), /digest/i);
 });
 
 test('resolvePnpmReleaseAsset parses versions from normal release tags', () => {
@@ -1034,6 +1013,8 @@ test('installProviderCli installs managed github-release CLIs into the managed p
     const homeDir = join(dir, 'home');
     const expectedScratchRoot = join(homeDir, 'tools', 'providers', 'codex', '.tmp');
     let downloadedArchivePath = null;
+    let receivedArchiveExtractionLimits = null;
+    let receivedArchiveEntries = null;
     await mkdir(homeDir, { recursive: true });
 
     const result = await installProviderCli({
@@ -1058,10 +1039,18 @@ test('installProviderCli installs managed github-release CLIs into the managed p
           downloadedArchivePath = destinationPath;
           await writeFile(destinationPath, 'archive', 'utf8');
         },
-        extractGitHubReleaseAsset: async ({ outputPath }) => {
-          await mkdir(dirname(outputPath), { recursive: true });
-          await writeFile(outputPath, '#!/bin/sh\necho codex\n', 'utf8');
-          await chmod(outputPath, 0o755);
+        extractGitHubReleaseAsset: async ({ outputDir, archiveEntries, archiveExtractionLimits }) => {
+          receivedArchiveExtractionLimits = archiveExtractionLimits;
+          receivedArchiveEntries = archiveEntries;
+          for (const entry of archiveEntries) {
+            const outputPath = join(outputDir, ...entry.destinationPath.split('/'));
+            await mkdir(dirname(outputPath), { recursive: true });
+            const commandOutput = /(^|\/)codex(?:\.exe)?$/.test(entry.destinationPath)
+              ? 'codex'
+              : entry.archivePath;
+            await writeFile(outputPath, `#!/bin/sh\necho ${commandOutput}\n`, 'utf8');
+            await chmod(outputPath, 0o755);
+          }
         },
       },
     });
@@ -1069,10 +1058,121 @@ test('installProviderCli installs managed github-release CLIs into the managed p
     assert.equal(result.ok, true);
     assert.equal(result.plan.installMode, 'github_release_binary');
     assert.equal(downloadedArchivePath?.startsWith(expectedScratchRoot), true);
+    assert.deepEqual(receivedArchiveExtractionLimits, {
+      maxFileBytes: 384 * 1024 * 1024,
+      maxExpandedBytes: 384 * 1024 * 1024,
+    });
+    assert.equal(receivedArchiveEntries.some((entry) => entry.archivePath.includes('codex-code-mode-host')), true);
 
     const managedPath = resolveProviderCliManagedCommandPath('codex', { happyHomeDir: homeDir });
     const binary = await readFile(managedPath, 'utf8');
     assert.match(binary, /echo codex/);
+    const managedReleaseDir = join(dirname(managedPath), '..');
+    const codeModeHostName = process.platform === 'win32' ? 'codex-code-mode-host.exe' : 'codex-code-mode-host';
+    assert.equal(existsSync(join(managedReleaseDir, 'bin', codeModeHostName)), true);
+    if (process.platform === 'win32') {
+      assert.equal(existsSync(join(managedReleaseDir, 'codex-resources', 'codex-command-runner.exe')), true);
+      assert.equal(existsSync(join(managedReleaseDir, 'codex-resources', 'codex-windows-sandbox-setup.exe')), true);
+    }
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('installProviderCli keeps the previous managed release active when a required archive member is missing', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'happier-provider-install-managed-binary-incomplete-'));
+  try {
+    const homeDir = join(dir, 'home');
+    const managedPath = resolveProviderCliManagedCommandPath('codex', { happyHomeDir: homeDir });
+    await mkdir(dirname(managedPath), { recursive: true });
+    await writeFile(managedPath, 'previous codex', 'utf8');
+
+    const result = await installProviderCli({
+      providerId: 'codex',
+      platform: currentProviderInstallPlatform(),
+      skipIfInstalled: false,
+      env: {
+        ...process.env,
+        HAPPIER_HOME_DIR: homeDir,
+        PATH: '',
+      },
+      deps: {
+        fetchGitHubLatestRelease: async () => ({
+          tag_name: 'rust-v0.147.0',
+          assets: [
+            {
+              name: currentCodexReleaseAssetName(),
+              browser_download_url: 'https://example.invalid/codex-package.tar.gz',
+              digest: 'sha256:feedface',
+            },
+          ],
+        }),
+        downloadGitHubReleaseAsset: async ({ destinationPath }) => {
+          await writeFile(destinationPath, 'archive', 'utf8');
+        },
+        extractGitHubReleaseAsset: async ({ outputPath }) => {
+          await mkdir(dirname(outputPath), { recursive: true });
+          await writeFile(outputPath, 'incomplete next codex', 'utf8');
+        },
+      },
+    });
+
+    assert.equal(result.ok, false);
+    assert.match(result.errorMessage ?? '', /required archive member/i);
+    assert.equal(await readFile(managedPath, 'utf8'), 'previous codex');
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('installProviderCli restores the previous managed release when candidate promotion fails', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'happier-provider-install-managed-binary-promotion-failure-'));
+  try {
+    const homeDir = join(dir, 'home');
+    const managedPath = resolveProviderCliManagedCommandPath('codex', { happyHomeDir: homeDir });
+    await mkdir(dirname(managedPath), { recursive: true });
+    await writeFile(managedPath, 'previous codex', 'utf8');
+
+    const result = await installProviderCli({
+      providerId: 'codex',
+      platform: currentProviderInstallPlatform(),
+      skipIfInstalled: false,
+      env: {
+        ...process.env,
+        HAPPIER_HOME_DIR: homeDir,
+        PATH: '',
+      },
+      deps: {
+        fetchGitHubLatestRelease: async () => ({
+          tag_name: 'rust-v0.147.0',
+          assets: [{
+            name: currentCodexReleaseAssetName(),
+            browser_download_url: 'https://example.invalid/codex-package.tar.gz',
+            digest: 'sha256:feedface',
+          }],
+        }),
+        downloadGitHubReleaseAsset: async ({ destinationPath }) => {
+          await writeFile(destinationPath, 'archive', 'utf8');
+        },
+        extractGitHubReleaseAsset: async ({ outputDir, archiveEntries }) => {
+          for (const entry of archiveEntries) {
+            const outputPath = join(outputDir, ...entry.destinationPath.split('/'));
+            await mkdir(dirname(outputPath), { recursive: true });
+            await writeFile(outputPath, `next ${entry.archivePath}`, 'utf8');
+          }
+        },
+        renameManagedInstallPath: async (from, to) => {
+          if (basename(from) === 'next' && basename(to) === 'current') {
+            throw new Error('injected candidate promotion failure');
+          }
+          await rename(from, to);
+        },
+      },
+    });
+
+    assert.equal(result.ok, false);
+    assert.match(result.errorMessage ?? '', /injected candidate promotion failure/i);
+    assert.equal(await readFile(managedPath, 'utf8'), 'previous codex');
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

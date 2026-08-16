@@ -1,5 +1,5 @@
 import {
-  SESSION_PERMISSION_MODES,
+  parseSessionPermissionModeAlias,
   type SessionPermissionMode,
 } from '../sessionMetadata/sessionPermissionModes.js';
 
@@ -32,71 +32,9 @@ export type PermissionEscalationDecision =
       callerOrdinal: PermissionPrivilegeOrdinal;
     }>;
 
-const SESSION_PERMISSION_MODE_SET = new Set<string>(SESSION_PERMISSION_MODES);
-
-function normalizePermissionToken(raw: string): string {
-  return raw
-    .trim()
-    .toLowerCase()
-    .replace(/[\s_]+/g, '-')
-    .replace(/-+/g, '-');
-}
-
 function parsePermissionModeForPrivilege(raw: unknown): SessionPermissionMode | null {
   if (typeof raw !== 'string') return null;
-  const trimmed = raw.trim();
-  if (!trimmed) return null;
-  if (SESSION_PERMISSION_MODE_SET.has(trimmed)) return trimmed as SessionPermissionMode;
-
-  switch (normalizePermissionToken(trimmed)) {
-    case 'plan':
-      return 'plan';
-
-    case 'read':
-    case 'read-only':
-    case 'readonly':
-    case 'no-tools':
-    case 'notools':
-    case 'ro':
-      return 'read-only';
-
-    case 'default':
-    case 'ask':
-    case 'prompt':
-    case 'normal':
-      return 'default';
-
-    case 'acceptedits':
-    case 'accept-edits':
-      return 'acceptEdits';
-
-    case 'safe':
-    case 'safe-yolo':
-    case 'safeyolo':
-    case 'workspace':
-    case 'workspace-write':
-    case 'workspacewrite':
-    case 'auto':
-    case 'auto-edit':
-      return 'safe-yolo';
-
-    case 'bypasspermissions':
-    case 'bypass-permissions':
-      return 'bypassPermissions';
-
-    case 'yolo':
-    case 'full':
-    case 'full-access':
-    case 'bypass':
-    case 'dontask':
-    case 'dont-ask':
-    case 'danger':
-    case 'danger-full-access':
-      return 'yolo';
-
-    default:
-      return null;
-  }
+  return parseSessionPermissionModeAlias(raw);
 }
 
 function ordinalForSessionPermissionMode(mode: SessionPermissionMode): PermissionPrivilegeOrdinal {

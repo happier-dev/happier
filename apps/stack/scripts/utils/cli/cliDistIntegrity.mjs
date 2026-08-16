@@ -2,9 +2,11 @@ import { spawn } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
+import { DEFAULT_CLI_RUNTIME_IMPORT_TIMEOUT_MS } from '../../../../cli/scripts/runtimeImportProbePolicy.mjs';
+
 export const CLI_DIST_INTEGRITY_PROBE_ENV = 'HAPPIER_CLI_DIST_INTEGRITY_PROBE';
 export const CLI_DIST_BUILD_MANIFEST = '.build-manifest.json';
-export const DEFAULT_CLI_DIST_RUNTIME_IMPORT_TIMEOUT_MS = 120_000;
+export const DEFAULT_CLI_DIST_RUNTIME_IMPORT_TIMEOUT_MS = DEFAULT_CLI_RUNTIME_IMPORT_TIMEOUT_MS;
 
 export function isCliScriptEntrypoint(pathLike) {
   const value = String(pathLike ?? '').trim().toLowerCase();

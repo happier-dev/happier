@@ -225,6 +225,29 @@ describe('createActionExecutor (session control)', () => {
     expect(result).toEqual({ ok: true, result: dependencyResult });
   });
 
+  it('preserves structured session.stop outcomes as top-level action success', async () => {
+    const dependencyResult = {
+      ok: true as const,
+      sessionId: 's1',
+      stopped: false as const,
+      stopOutcome: {
+        status: 'stopped_cleanup_incomplete' as const,
+        reason: 'terminal_attachment_descriptor_retirement_failed' as const,
+      },
+    };
+    const executor = createExecutor({
+      sessionStop: vi.fn(async () => dependencyResult),
+    });
+
+    const result = await executor.execute(
+      'session.stop' as any,
+      { sessionId: 's1' },
+      { surface: 'cli', defaultSessionId: null },
+    );
+
+    expect(result).toEqual({ ok: true, result: dependencyResult });
+  });
+
   it('executes session.permission_mode.set via deps.sessionPermissionModeSet', async () => {
     const sessionPermissionModeSet = vi.fn(async () => ({ ok: true }));
     const executor = createExecutor({

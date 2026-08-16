@@ -13,7 +13,7 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
 import { createTempDirSync } from '../src/testkit/fs/tempDir';
-import { buildCliDist } from './build.mjs';
+import { buildCliDist, probeDistRuntimeImport } from './build.mjs';
 import { withWorkspaceBundleLock, withWorkspaceBundleLockSync } from './optionalWorkspaceBundleLock.mjs';
 import { resolveTypeScriptCliPath } from '../../../scripts/workspaces/typescriptCommand.mjs';
 
@@ -57,6 +57,50 @@ describe('buildCliDist', () => {
         '--trace-warnings --max-old-space-size=8192',
         '--trace-warnings --max-old-space-size=8192',
       ]);
+    } finally {
+      rmSync(packageRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('uses the canonical source-runtime import budget for every staged entrypoint', async () => {
+    const packageRoot = createTempDirSync('happier-cli-build-runtime-probe-budget-');
+    try {
+      writeRuntimeManifest(packageRoot);
+      const timeoutBudgets: number[] = [];
+      await buildCliDist({
+        packageRoot,
+        skipLock: true,
+        env: { ...process.env },
+        rmDistImpl: async () => {},
+        resolveTypeScriptCliPathImpl: () => '/repo/node_modules/@typescript/native/bin/tsc',
+        runTypecheckImpl: () => {},
+        runPkgrollBuildImpl: () => {},
+        resolveDistRuntimeEntrypointsImpl: () => ['/tmp/index.mjs', '/tmp/bridge.mjs'],
+        probeDistRuntimeImportImpl: (
+          _entrypoint: string,
+          options: { timeoutMs?: number },
+        ) => {
+          timeoutBudgets.push(options.timeoutMs ?? 0);
+        },
+        finalizeDistImpl: () => {},
+      });
+
+      expect(timeoutBudgets).toEqual([120_000, 120_000]);
+    } finally {
+      rmSync(packageRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('accepts an importable staged entrypoint even when imported modules retain event-loop handles', () => {
+    const packageRoot = createTempDirSync('happier-cli-build-runtime-probe-handles-');
+    try {
+      const entrypoint = join(packageRoot, 'index.mjs');
+      writeFileSync(entrypoint, 'setInterval(() => {}, 1_000); export const ready = true;\n', 'utf8');
+
+      expect(() => probeDistRuntimeImport(entrypoint, {
+        cwd: packageRoot,
+        timeoutMs: 250,
+      })).not.toThrow();
     } finally {
       rmSync(packageRoot, { recursive: true, force: true });
     }

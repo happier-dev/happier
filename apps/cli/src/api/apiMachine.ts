@@ -22,7 +22,7 @@ import { encodeBase64, decodeBase64, encrypt, decrypt } from './encryption';
 import { backoff } from '@/utils/time';
 import { createConnectedServicesProjectionRetryScheduler } from './connectedServices/connectedServicesProjectionRetryScheduler';
 import { isConnectedServiceGenerationReconciliationNotAcknowledgeableError } from '@/daemon/connectedServices/accountGroups/generation/reconcileConnectedServiceAuthGroupGenerations';
-import { RpcHandlerManager } from './rpc/RpcHandlerManager';
+import { RpcHandlerManager, type RpcHandlerRegistrationReadiness } from './rpc/RpcHandlerManager';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import {
@@ -69,6 +69,7 @@ import { readMachineOwnerConflictFromSocketError, type MachineOwnerConflictDetai
 import { readAccountSettingsVersionFromHint } from '@/settings/accountSettings/accountSettingsVersion';
 import { resolveServerHttpBaseUrl } from '@/session/transport/http/serverHttpBaseUrl';
 import { fetchAccountProfile } from '@/api/accountProfile';
+import type { RpcHandlerActiveExecution } from '@/api/rpc/types';
 
 export type ApiMachineClientDeps = Readonly<{
     connectedAccounts?: ScmConnectedAccountCredentialResolver;
@@ -198,6 +199,11 @@ export class ApiMachineClient {
         serviceLabel?: string;
     }>;
     private activeTransportGeneration = 0;
+    private machineControlRunningGeneration: number | null = null;
+    private machineControlReadinessPublication: Readonly<{
+        generation: number;
+        promise: Promise<boolean>;
+    }> | null = null;
     private currentConnectionState: ManagedConnectionState = {
         phase: 'idle',
         reason: null,
@@ -238,6 +244,75 @@ export class ApiMachineClient {
         this.teardownActiveSocket();
     }
 
+    private async publishMachineControlRunningWhenReady(params: Readonly<{
+        socket: Socket<ServerToDaemonEvents, DaemonToServerEvents>;
+        transportGeneration: number;
+        timeoutMs: number;
+    }>): Promise<Readonly<{
+        ready: boolean;
+        readiness: RpcHandlerRegistrationReadiness;
+    }>> {
+        const { socket, transportGeneration, timeoutMs } = params;
+        const unregisteredCoreHandlers = REQUIRED_MACHINE_CONTROL_RPC_METHODS.filter(
+            (method) => !this.rpcHandlerManager.hasHandler(method),
+        );
+        if (unregisteredCoreHandlers.length > 0) {
+            return {
+                ready: false,
+                readiness: { status: 'disconnected', missingMethods: unregisteredCoreHandlers },
+            };
+        }
+
+        const readiness = await this.rpcHandlerManager.waitForRegisteredHandlers(
+            REQUIRED_MACHINE_CONTROL_RPC_METHODS,
+            { timeoutMs },
+        );
+        if (
+            readiness.status !== 'ready'
+            || this.socket !== socket
+            || this.activeTransportGeneration !== transportGeneration
+            || socket.connected !== true
+        ) {
+            return { ready: false, readiness };
+        }
+        if (this.machineControlRunningGeneration === transportGeneration) {
+            return { ready: true, readiness };
+        }
+        if (this.machineControlReadinessPublication?.generation === transportGeneration) {
+            const published = await this.machineControlReadinessPublication.promise;
+            return { ready: published, readiness };
+        }
+
+        const promise = this.updateDaemonState((state) => ({
+            ...state,
+            status: 'running',
+            pid: process.pid,
+            httpPort: this.machine.daemonState?.httpPort,
+            startedAt: Date.now(),
+        })).then(() => {
+            if (
+                this.socket === socket
+                && this.activeTransportGeneration === transportGeneration
+                && socket.connected === true
+            ) {
+                this.machineControlRunningGeneration = transportGeneration;
+            }
+            return true;
+        }).catch((error) => {
+            logger.warn('[API MACHINE] Failed to update daemon state after machine-control readiness', {
+                message: error instanceof Error ? error.message : String(error),
+            });
+            return false;
+        }).finally(() => {
+            if (this.machineControlReadinessPublication?.generation === transportGeneration) {
+                this.machineControlReadinessPublication = null;
+            }
+        });
+        this.machineControlReadinessPublication = { generation: transportGeneration, promise };
+        const published = await promise;
+        return { ready: published, readiness };
+    }
+
     constructor(
         private token: string,
         private machine: Machine,
@@ -263,6 +338,17 @@ export class ApiMachineClient {
                 if (probe) {
                     this.connectionSupervisor?.reportProbeResult?.(probe);
                 }
+            },
+            onRegistrationAcknowledged: () => {
+                const socket = this.socket;
+                if (!socket) {
+                    return;
+                }
+                void this.publishMachineControlRunningWhenReady({
+                    socket,
+                    transportGeneration: this.activeTransportGeneration,
+                    timeoutMs: 0,
+                });
             },
             authorizeRequest: authorizeMachineRpcRequest,
             projectTransportAcknowledgement: projectMachineRpcTransportAcknowledgement,
@@ -696,35 +782,19 @@ export class ApiMachineClient {
                                 missingMethods: unregisteredCoreHandlers,
                             });
                         } else {
-                            const readiness = await this.rpcHandlerManager.waitForRegisteredHandlers(
-                                REQUIRED_MACHINE_CONTROL_RPC_METHODS,
-                                { timeoutMs: MACHINE_CONTROL_RPC_REGISTRATION_TIMEOUT_MS },
-                            );
-                            controlReady = readiness.status === 'ready'
-                                && this.socket === socket
-                                && this.activeTransportGeneration === transportGeneration
-                                && socket.connected === true;
-                            if (!controlReady) {
+                            const registrationResult = await this.publishMachineControlRunningWhenReady({
+                                socket,
+                                transportGeneration,
+                                timeoutMs: MACHINE_CONTROL_RPC_REGISTRATION_TIMEOUT_MS,
+                            });
+                            controlReady = registrationResult.ready;
+                            if (registrationResult.readiness.status !== 'ready') {
                                 logger.warn('[API MACHINE] Machine-control registration did not become ready; daemon remains offline', {
-                                    status: readiness.status,
-                                    missingMethods: readiness.status === 'ready' ? [] : readiness.missingMethods,
+                                    status: registrationResult.readiness.status,
+                                    missingMethods: registrationResult.readiness.missingMethods,
                                 });
                             }
                         }
-                    }
-
-                    if (controlReady) {
-                        void this.updateDaemonState((state) => ({
-                            ...state,
-                            status: 'running',
-                            pid: process.pid,
-                            httpPort: this.machine.daemonState?.httpPort,
-                            startedAt: Date.now()
-                        })).catch((error) => {
-                            logger.warn('[API MACHINE] Failed to update daemon state after machine-control readiness', {
-                                message: error instanceof Error ? error.message : String(error),
-                            });
-                        });
                     }
 
                     this.startChangesSyncWithRetry({ reason: isReconnect ? 'reconnect' : 'connect' });
@@ -915,6 +985,10 @@ export class ApiMachineClient {
 
     async awaitPendingRpcRequests(): Promise<void> {
         await this.rpcHandlerManager.waitForIdle();
+    }
+
+    getActiveRpcHandlerExecutions(): readonly RpcHandlerActiveExecution[] {
+        return this.rpcHandlerManager.getActiveHandlerExecutions();
     }
 
     private async getAccountId(signal?: AbortSignal): Promise<string | null> {

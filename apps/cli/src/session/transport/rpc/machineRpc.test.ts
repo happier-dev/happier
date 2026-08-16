@@ -31,6 +31,7 @@ describe('callMachineRpc', () => {
     socket.emit.mockImplementation((_event, payload, callback) => {
       expect(payload.method).toBe('machine-session:spawn-happy-session');
       expect(decrypt(machineKey, 'dataKey', decodeBase64(payload.params, 'base64'))).toEqual({ sessionId: 'session-1' });
+      expect(payload.authorization).toEqual({ kind: 'session.write', sessionId: 'session-1' });
       callback({
         ok: true,
         result: encodeBase64(encrypt(machineKey, 'dataKey', { type: 'success', sessionId: 'session-1' })),
@@ -42,6 +43,7 @@ describe('callMachineRpc', () => {
       machineId: 'machine-session',
       method: 'spawn-happy-session',
       request: { sessionId: 'session-1' },
+      authorization: { kind: 'session.write', sessionId: 'session-1' },
       timeoutMs: 100,
     })).resolves.toEqual({ type: 'success', sessionId: 'session-1' });
 

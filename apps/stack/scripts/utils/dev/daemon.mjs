@@ -95,6 +95,43 @@ async function hasLiveRuntimeDaemonPid({
   return collectRuntimeDaemonPids(runtimeState).some((pid) => isPidAliveImpl(pid));
 }
 
+function normalizeDistClosureFingerprint(value) {
+  const fingerprint = String(value ?? '').trim().toLowerCase();
+  return /^[a-f0-9]{16}$/.test(fingerprint) ? fingerprint : null;
+}
+
+async function isCandidateDistAlreadyActive({
+  ping,
+  successorDistClosureFingerprint,
+  runtimeStatePath,
+}, {
+  readStackRuntimeStateFileImpl = readStackRuntimeStateFile,
+} = {}) {
+  const candidateFingerprint = normalizeDistClosureFingerprint(successorDistClosureFingerprint);
+  const activeFingerprint = normalizeDistClosureFingerprint(ping?.distClosureFingerprint);
+  const activePid = normalizeDaemonPid(ping?.pid);
+  const statePath = String(runtimeStatePath ?? '').trim();
+  if (
+    ping?.ok !== true
+    || !candidateFingerprint
+    || activeFingerprint !== candidateFingerprint
+    || !activePid
+    || !statePath
+  ) {
+    return false;
+  }
+
+  let runtimeState = null;
+  try {
+    runtimeState = await readStackRuntimeStateFileImpl(statePath);
+  } catch {
+    return false;
+  }
+  return normalizeDaemonPid(runtimeState?.processes?.daemonPid) === activePid
+    && normalizeDistClosureFingerprint(runtimeState?.daemon?.distClosureFingerprint)
+      === candidateFingerprint;
+}
+
 async function shouldColdStartAfterDaemonControlMiss({
   ping,
   runtimeStatePath,
@@ -367,6 +404,15 @@ export function createHappyCliReloadExecutor({
         }
       }
       if (ping?.ok === true) {
+        if (await isCandidateDistAlreadyActive(
+          { ping, successorDistClosureFingerprint, runtimeStatePath },
+          { readStackRuntimeStateFileImpl },
+        )) {
+          logger.log(
+            '[local] watch: the healthy daemon already runs the current happier-cli dist; skipping restart.',
+          );
+          return { skipped: true, reason: 'daemon-dist-already-active' };
+        }
         if (!successorActivationMayOutliveGeneration && !await generationIsCurrent()) {
           return { skipped: true, reason: 'stale-generation' };
         }

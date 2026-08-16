@@ -475,6 +475,62 @@ describe('modelOptions', () => {
 
         expect(out.map((option) => option.value)).toEqual(['default', 'grok-4.5']);
     });
+
+    it('reuses a uniquely matching provider-qualified model for an unqualified persisted selection', () => {
+        const out = getModelOptionsForSession(
+            'pi',
+            withMetadata({
+                modelOverrideV1: {
+                    v: 1,
+                    modelId: 'gpt-5.6-luna',
+                    updatedAt: 20,
+                },
+                sessionModelsV1: {
+                    v: 1,
+                    provider: 'pi',
+                    updatedAt: 10,
+                    currentModelId: 'openai-codex/gpt-5.6-luna',
+                    availableModels: [{
+                        id: 'openai-codex/gpt-5.6-luna',
+                        name: 'GPT-5.6 Luna',
+                        modelOptions: [{
+                            id: 'reasoning_effort',
+                            name: 'Thinking',
+                            type: 'select',
+                            currentValue: 'medium',
+                            options: [
+                                { value: 'low', name: 'Low' },
+                                { value: 'medium', name: 'Medium' },
+                            ],
+                        }],
+                    }],
+                },
+            }),
+        );
+
+        expect(out.map((option) => option.value)).toEqual([
+            'default',
+            'openai-codex/gpt-5.6-luna',
+        ]);
+        expect(findModelOptionForEffectiveModelId(out, 'gpt-5.6-luna')).toMatchObject({
+            value: 'openai-codex/gpt-5.6-luna',
+            modelOptions: [expect.objectContaining({ id: 'reasoning_effort' })],
+        });
+    });
+
+    it('does not treat ambiguous or nonmatching unqualified custom ids as canonical options', () => {
+        const options = getModelOptionsForPreflightModelList({
+            supportsFreeform: true,
+            availableModels: [
+                { id: 'openai/gpt-shared', name: 'OpenAI shared' },
+                { id: 'openai-codex/gpt-shared', name: 'Codex shared' },
+                { id: 'openai-codex/gpt-known', name: 'Codex known' },
+            ],
+        });
+
+        expect(findModelOptionForEffectiveModelId(options, 'gpt-shared')).toBeNull();
+        expect(findModelOptionForEffectiveModelId(options, 'private-custom-model')).toBeNull();
+    });
 });
 
 describe('modelOptions — ultracode and extended context (Claude)', () => {

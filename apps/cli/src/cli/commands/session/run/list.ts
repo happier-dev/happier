@@ -5,45 +5,73 @@ import {
   ExecutionRunStatusSchema,
 } from '@happier-dev/protocol';
 
-import { wantsJson, printJsonEnvelope } from '@/cli/output/jsonEnvelope';
-import { readFlagValue, readIntFlagValue } from '@/cli/commands/shared/argvFlags';
+import { wantsJson, printJsonEnvelope, writeJsonStdout } from '@/cli/output/jsonEnvelope';
+import { hasFlag, readCommandPositionals, readFlagValue, readIntFlagValue } from '@/cli/commands/shared/argvFlags';
 import { parseSingleBackendTargetFromFlag } from '@/cli/commands/session/shared/parseSingleBackendTargetFromFlag';
 import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
 import { normalizeActionExecuteResult } from '@/cli/commands/session/shared/normalizeActionExecuteResult';
+import { resolveSessionTransportContext } from '@/session/services/resolveSessionTransportContext';
+import {
+  formatProtocolEnumUsage,
+  parseProtocolEnumFlag,
+} from '@/cli/commands/shared/parseProtocolEnumFlag';
+
+const EXECUTION_RUN_STATUS_USAGE = formatProtocolEnumUsage(ExecutionRunStatusSchema);
+
+export const SESSION_RUN_LIST_USAGE = `happier session run list <session-id-or-prefix-or-tag> [--backend <backend-target>] [--status <${EXECUTION_RUN_STATUS_USAGE}>] [--limit <count>] [--json]`;
 
 export async function cmdSessionRunList(
   argv: string[],
   deps: Readonly<{ readCredentialsFn: () => Promise<Credentials | null> }>,
 ): Promise<void> {
   const json = wantsJson(argv);
-  const idOrPrefix = String(argv[2] ?? '').trim();
+  const [idOrPrefix = ''] = readCommandPositionals(argv, {
+    startIndex: 2,
+    valueFlags: ['--backend', '--status', '--limit'],
+  });
   if (!idOrPrefix) {
-    throw new Error('Usage: happier session run list <session-id-or-prefix> [--backend <backend-target>] [--status <status>] [--limit <count>] [--json]');
+    throw new Error(`Usage: ${SESSION_RUN_LIST_USAGE}`);
   }
+  const limit = readIntFlagValue(argv, '--limit', { min: 1, max: 200 });
+  const backendRaw = (readFlagValue(argv, '--backend') ?? '').trim();
+  const backendTarget = backendRaw ? parseSingleBackendTargetFromFlag(backendRaw) : undefined;
+  if (hasFlag(argv, '--backend') && !backendTarget) {
+    throw new Error(`Usage: ${SESSION_RUN_LIST_USAGE}`);
+  }
+  const statusRaw = (readFlagValue(argv, '--status') ?? '').trim();
+  const status = hasFlag(argv, '--status')
+    ? parseProtocolEnumFlag({ flag: '--status', rawValue: statusRaw, schema: ExecutionRunStatusSchema })
+    : undefined;
 
   const credentials = await deps.readCredentialsFn();
   if (!credentials) {
     if (json) {
-      printJsonEnvelope({ ok: false, kind: 'session_run_list', error: { code: 'not_authenticated' } });
+      await printJsonEnvelope({ ok: false, kind: 'session_run_list', error: { code: 'not_authenticated' } });
       return;
     }
     console.error(chalk.red('Error:'), 'Not authenticated. Run "happier auth login" first.');
     process.exit(1);
   }
 
-  const backendRaw = (readFlagValue(argv, '--backend') ?? '').trim();
-  const backendTarget = backendRaw ? parseSingleBackendTargetFromFlag(backendRaw) : undefined;
-  if (backendRaw && !backendTarget) {
-    throw new Error('Usage: happier session run list <session-id-or-prefix> [--backend <backend-target>] [--status <status>] [--limit <count>] [--json]');
+  const sessionTarget = await resolveSessionTransportContext({ credentials, idOrPrefix });
+  if (!sessionTarget.ok) {
+    if (json) {
+      await printJsonEnvelope({
+        ok: false,
+        kind: 'session_run_list',
+        error: { code: sessionTarget.code, ...(sessionTarget.candidates ? { candidates: sessionTarget.candidates } : {}) },
+      });
+      return;
+    }
+    throw new Error(sessionTarget.code);
   }
-  const statusRaw = (readFlagValue(argv, '--status') ?? '').trim();
-  const status = statusRaw ? ExecutionRunStatusSchema.parse(statusRaw) : undefined;
-  const limit = readIntFlagValue(argv, '--limit');
+  const sessionId = sessionTarget.sessionId;
+
   const executor = createCliActionExecutorFromCredentials({ credentials });
   const actionRes = await executor.execute(
     'execution.run.list',
     {
-      sessionId: idOrPrefix,
+      sessionId,
       ...(backendTarget ? { backendTarget } : {}),
       ...(status ? { status } : {}),
       ...(typeof limit === 'number' ? { limit } : {}),
@@ -53,7 +81,7 @@ export async function cmdSessionRunList(
   const normalized = normalizeActionExecuteResult(actionRes);
   if (!normalized.ok) {
     if (json) {
-      printJsonEnvelope({
+      await printJsonEnvelope({
         ok: false,
         kind: 'session_run_list',
         error: { code: normalized.errorCode, ...(normalized.errorMessage ? { message: normalized.errorMessage } : {}) },
@@ -67,10 +95,10 @@ export async function cmdSessionRunList(
   const runPayload = result && typeof result === 'object' && result.ok === true ? result.data : null;
 
   if (json) {
-    printJsonEnvelope({ ok: true, kind: 'session_run_list', data: { sessionId: idOrPrefix, ...(runPayload as any) } });
+    await printJsonEnvelope({ ok: true, kind: 'session_run_list', data: { sessionId, ...(runPayload as any) } });
     return;
   }
 
   console.log(chalk.green('✓'), 'execution runs listed');
-  console.log(JSON.stringify(runPayload, null, 2));
+  await writeJsonStdout(runPayload, { pretty: true });
 }

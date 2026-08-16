@@ -3,6 +3,10 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
 import { installAgentInputCommonModuleMocks } from '@/components/sessions/agentInput/agentInputTestHelpers';
+import {
+    useHostListMotionQuiet,
+    type ListMotionQuiet,
+} from '@/components/sessions/agentActivity/list/listMotionQuiet';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -71,5 +75,42 @@ describe('AgentInputContentPopover', () => {
         const screen = await renderPopover(false);
 
         expect(screen.findAllByTestId('agent-input-popover-keyboard-inset')).toHaveLength(0);
+    });
+
+    /**
+     * The surface owns the scroller; its content only ever receives a node.
+     *
+     * A list inside a popover therefore cannot know it is being flicked, and a roster that
+     * re-groups itself mid-flick moves rows out from under the finger doing the flicking. The pane
+     * hands its own window to the roster directly; a popover host has nothing to hand, so the
+     * scroller publishes it here instead of every host remembering to drill it through.
+     */
+    it('publishes its scroller to the content it is showing', async () => {
+        keyboardHeightValue = 0;
+        let published: ListMotionQuiet | null = null;
+
+        function QuietProbe() {
+            published = useHostListMotionQuiet();
+            return React.createElement('QuietProbe');
+        }
+
+        const screen = await renderScreen(
+            <AgentInputContentPopover
+                open
+                anchorRef={anchorRef}
+                onRequestClose={vi.fn()}
+                content={<QuietProbe />}
+            />,
+        );
+
+        expect(published).not.toBeNull();
+        expect(published!.isQuiet()).toBe(true);
+
+        const surface = screen.findByType('AgentInputPopoverSurface');
+        expect(typeof surface?.props.onScroll).toBe('function');
+
+        // The scroller moving is what closes the window — the one signal a list inside cannot see.
+        surface!.props.onScroll();
+        expect(published!.isQuiet()).toBe(false);
     });
 });

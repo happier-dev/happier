@@ -234,23 +234,46 @@ describe('composer session suggestion source with no current session (new-sessio
     });
 });
 
+describe('the provider a row draws a logo for', () => {
+    function agentIdFor(flavor: unknown) {
+        const [item] = projectComposerSessionSuggestionItems(
+            state({
+                byServer: {
+                    'server-a': [renderable('peer', {
+                        metadata: { name: 'Session peer', path: '/repo', flavor },
+                    })],
+                },
+            }),
+            inSession('current'),
+        );
+        return item?.agentId;
+    }
+
+    it('resolves the session flavor to a registry provider', () => {
+        expect(agentIdFor('codex')).toBe('codex');
+        expect(agentIdFor('claude')).toBe('claude');
+    });
+
+    /**
+     * A flavor this build has no registry entry for must stay unresolved rather than
+     * collapse onto the default provider: the row would then show a confident logo for
+     * an agent that is not the one running in that session.
+     */
+    it('leaves a provider this build does not know unresolved', () => {
+        expect(agentIdFor('some-future-agent')).toBeNull();
+        expect(agentIdFor(undefined)).toBeNull();
+    });
+});
+
 describe('composer session token slug (INV-3)', () => {
     it('disambiguates identical titles with the session id tail', () => {
         const left = buildComposerSessionTokenSlug({
             id: 'cmslj08960ku1tmhrd0v4a0a7',
             title: 'Fix Detached Dev Stack Startup',
-            workspaceLabel: null,
-            agentLabel: null,
-            updatedAt: 1,
-            active: true,
         });
         const right = buildComposerSessionTokenSlug({
             id: 'cmsg29n8n06ovtm0ylmic48wj',
             title: 'Fix Detached Dev Stack Startup',
-            workspaceLabel: null,
-            agentLabel: null,
-            updatedAt: 1,
-            active: true,
         });
 
         expect(left).toBe('fix-detached-dev-stack-startup-v4a0a7');
@@ -262,10 +285,6 @@ describe('composer session token slug (INV-3)', () => {
         const slug = buildComposerSessionTokenSlug({
             id: 'abcdef123456',
             title: 'Review PR #42 (urgent!), then ship',
-            workspaceLabel: null,
-            agentLabel: null,
-            updatedAt: 1,
-            active: true,
         });
 
         expect(slug).toBe('review-pr-42-urgent-then-ship-123456');
@@ -276,10 +295,6 @@ describe('composer session token slug (INV-3)', () => {
         expect(buildComposerSessionTokenSlug({
             id: 'abcdef123456',
             title: '???',
-            workspaceLabel: null,
-            agentLabel: null,
-            updatedAt: 1,
-            active: true,
         })).toBe('session-123456');
     });
 });

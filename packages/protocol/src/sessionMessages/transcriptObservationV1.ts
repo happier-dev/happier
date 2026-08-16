@@ -20,6 +20,13 @@ export const SessionTranscriptObservationProvenanceV1Schema = z.object({
 
 export type SessionTranscriptObservationProvenanceV1 = z.infer<typeof SessionTranscriptObservationProvenanceV1Schema>;
 
+export function isRecoveredHistoryTranscriptObservationProvenance(
+  value: unknown,
+): value is SessionTranscriptObservationProvenanceV1 & { source: 'history' } {
+  const provenance = SessionTranscriptObservationProvenanceV1Schema.safeParse(value);
+  return provenance.success && provenance.data.source === 'history';
+}
+
 export const SessionTranscriptObservationV1Schema = z.object({
   v: z.literal(1),
   sessionId: NonBlankString,

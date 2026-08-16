@@ -5,6 +5,7 @@ import {
 } from '@/sync/domains/sessionControl/configOptionsControl';
 
 import { collectNewSessionModelScopedOptionIds } from './collectNewSessionModelScopedOptionIds';
+import { findModelOptionForEffectiveModelId } from '@/sync/domains/models/modelOptions';
 import {
     readNonBlankSessionControlIdentifier,
     readSessionControlValueId,
@@ -60,7 +61,7 @@ export function sanitizeNewSessionConfigOverridesForModelSelection(params: Reado
         hideModeOption: true,
         hideModelOption: params.modelOptions.length > 0,
     }) ?? null);
-    const selectedModel = params.modelOptions.find((option) => option.value === params.selectedModelId) ?? null;
+    const selectedModel = findModelOptionForEffectiveModelId(params.modelOptions, params.selectedModelId);
     const selectedModelControls = controlsByOptionId(computeSessionConfigOptionControlsForProvider({
         providerId: params.providerId,
         configOptions: selectedModel?.modelOptions ?? null,

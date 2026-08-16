@@ -848,9 +848,14 @@ export function Popover(props: PopoverWithBackdrop | PopoverWithoutBackdrop) {
             });
         };
 
-        scheduleFrame(() => {
-            void measureWithRetries(0);
-        });
+        // Measure immediately rather than a frame later. The popover is INVISIBLE until this lands
+        // (`portalOpacity` returns 0 while `anchorRectState` is null) and the enter animation is
+        // gated on the same state, so a leading frame is dead time on every open — the user sees
+        // nothing at all, not a slow popover. The anchor is already laid out (it is the element
+        // that was tapped) and Fabric resolves `measure` in-tick off the shadow tree, so there is
+        // nothing to wait for. The retry ladder above still yields a frame BETWEEN attempts, which
+        // is what actually handles the "layout settles late" case this used to cover.
+        void measureWithRetries(0);
     }, [anchorRef, anchorRectFromProp, boundaryRef, edgeInsets.horizontal, edgeInsets.vertical, gap, keyboardBottomInsetProp, maxHeightCap, maxWidthCap, open, placement, resolvedAnchorMode, shouldPortalNative, shouldPortalWeb, windowHeight, windowWidth, portalTarget]);
 
     React.useLayoutEffect(() => {

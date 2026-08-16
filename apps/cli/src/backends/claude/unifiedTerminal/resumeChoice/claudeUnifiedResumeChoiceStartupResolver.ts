@@ -6,7 +6,8 @@ import { mapEnhancedModeToDesiredRuntimeConfig } from '../runtimeControlIntegrat
 import type { ClaudeUnifiedStartupDialogResolver } from '../createClaudeUnifiedTerminalReadinessBridge';
 import {
   answerClaudeResumeChoiceDialog,
-  type ClaudeUnifiedResumeChoiceAnswer,
+  isClaudeUnifiedResumeFromSummaryChoice,
+  resolveClaudeUnifiedResumeChoiceAnswer,
 } from '../tuiControls/resumeChoice';
 import {
   captureFailureToResult,
@@ -148,13 +149,18 @@ export function createClaudeUnifiedResumeChoiceStartupResolver(params: Readonly<
     if (!captured || captured.dialogId !== 'resume_choice') return;
     pendingAnswerTask = params.broker.requestDialogChoice({ dialog: captured, signal })
       .then(async (decision) => {
+        const choice = resolveClaudeUnifiedResumeChoiceAnswer(decision.choice);
+        if (!choice) {
+          userChoiceClosed = true;
+          return;
+        }
         terminalAnswerInFlight = true;
         const result = await answerClaudeResumeChoiceDialog({
           port: params.port,
-          choice: decision.choice as ClaudeUnifiedResumeChoiceAnswer,
+          choice,
           wait: params.wait,
           settleMs: params.settleMs,
-          onSubmitted: decision.choice === 'resume_from_summary'
+          onSubmitted: isClaudeUnifiedResumeFromSummaryChoice(choice)
             ? params.onResumeSummaryCompactionSubmitted
             : undefined,
         }).finally(() => {
@@ -212,7 +218,7 @@ export function createClaudeUnifiedResumeChoiceStartupResolver(params: Readonly<
         return { status: 'unhandled' };
       }
       startUserChoice(abortSignal);
-      return params.broker.hasPendingChoice('resume_choice') || terminalAnswerInFlight
+      return pendingAnswerTask || params.broker.hasPendingChoice('resume_choice') || terminalAnswerInFlight
         ? { status: 'waiting_for_user' }
         : { status: 'unhandled' };
     }

@@ -51,6 +51,8 @@ import {
   RestartSessionRunnerResultV1Schema,
   SessionRunnerRuntimeStateV1Schema,
   SessionRunnerStatusGetRequestV1Schema,
+  SPAWN_SESSION_ERROR_CODES,
+  isSpawnSessionErrorDetail,
   type ConnectedServiceBindingsV1,
   type ConnectedServiceId,
   type RestartAllSessionRunnersRequestV1,
@@ -60,6 +62,7 @@ import {
   type SessionRunnerRestartModeV1,
   type SessionRunnerRuntimeStateV1,
   type SessionRunnerStatusGetRequestV1,
+  type SpawnSessionNonceResolution,
 } from '@happier-dev/protocol';
 import {
   StopSessionResultSchema,
@@ -69,6 +72,7 @@ import { readProcessRunState } from './processRunState';
 
 export type DaemonControlRequestOptions = {
   timeoutMs?: number;
+  signal?: AbortSignal;
 };
 
 type DaemonPostAuthScope = 'daemon-control' | 'connected-service-broker-refresh' | 'connected-service-run-materialize';
@@ -365,7 +369,9 @@ async function daemonPost(path: string, body?: any, options: DaemonPostOptions =
       headers,
       body: JSON.stringify(body || {}),
       // Mostly increased for stress test
-      signal: AbortSignal.timeout(timeout)
+      signal: options.signal
+        ? AbortSignal.any([options.signal, AbortSignal.timeout(timeout)])
+        : AbortSignal.timeout(timeout)
     });
     
     const rawBody = await response.text();
@@ -451,7 +457,10 @@ export async function notifyDaemonSessionStarted(
 
 const DAEMON_SESSION_CONNECTED_SERVICE_AUTH_SWITCH_TIMEOUT_ENV_KEY =
   'HAPPIER_DAEMON_SESSION_CONNECTED_SERVICE_AUTH_SWITCH_HTTP_TIMEOUT_MS';
-const DEFAULT_DAEMON_SESSION_CONNECTED_SERVICE_AUTH_SWITCH_TIMEOUT_MS = 120_000;
+// The daemon may consume a 60s safe-boundary wait and a separate 60s bounded
+// application window. The HTTP caller must leave enough transport/materialization
+// margin for that canonical operation to settle before timing out.
+const DEFAULT_DAEMON_SESSION_CONNECTED_SERVICE_AUTH_SWITCH_TIMEOUT_MS = 180_000;
 
 export function resolveDaemonSessionConnectedServiceAuthSwitchTimeoutMs(
   env: NodeJS.ProcessEnv = process.env,
@@ -802,11 +811,7 @@ export async function spawnDaemonSession(
   return result;
 }
 
-export type DaemonSpawnSessionResolveStatus =
-  | { status: 'success'; sessionId: string }
-  | { status: 'pending' }
-  | { status: 'not_found' }
-  | { status: 'unsupported' };
+export type DaemonSpawnSessionResolveStatus = SpawnSessionNonceResolution;
 
 export async function resolveDaemonSpawnSessionByNonce(spawnNonce: string): Promise<DaemonSpawnSessionResolveStatus> {
   const normalizedSpawnNonce = spawnNonce.trim();
@@ -818,6 +823,24 @@ export async function resolveDaemonSpawnSessionByNonce(spawnNonce: string): Prom
     const status = (result as { status: string }).status;
     if (status === 'pending') return { status: 'pending' };
     if (status === 'not_found') return { status: 'not_found' };
+    if (status === 'error') {
+      const errorCode = typeof (result as { errorCode?: unknown }).errorCode === 'string'
+        ? (result as { errorCode: string }).errorCode
+        : '';
+      const errorMessage = typeof (result as { errorMessage?: unknown }).errorMessage === 'string'
+        ? (result as { errorMessage: string }).errorMessage.trim()
+        : '';
+      if ((Object.values(SPAWN_SESSION_ERROR_CODES) as string[]).includes(errorCode) && errorMessage) {
+        const errorDetailRaw = (result as { errorDetail?: unknown }).errorDetail;
+        return {
+          status: 'error',
+          errorCode: errorCode as (typeof SPAWN_SESSION_ERROR_CODES)[keyof typeof SPAWN_SESSION_ERROR_CODES],
+          errorMessage,
+          ...(isSpawnSessionErrorDetail(errorDetailRaw) ? { errorDetail: errorDetailRaw } : {}),
+        };
+      }
+      return { status: 'not_found' };
+    }
     if (status === 'success') {
       const sessionId = typeof (result as { sessionId?: unknown }).sessionId === 'string'
         ? (result as { sessionId: string }).sessionId.trim()

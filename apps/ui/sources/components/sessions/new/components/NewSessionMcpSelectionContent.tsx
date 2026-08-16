@@ -83,6 +83,40 @@ export function NewSessionMcpSelectionContent(props: NewSessionMcpSelectionConte
         [mcpServersSettingsRaw],
     );
 
+    // The row/header handlers are BEHAVIOUR, not data, so they are held in a
+    // ref and invoked through stable wrappers instead of being memo
+    // dependencies.
+    //
+    // The MCP chip hosts this content through `renderContent({ maxHeight })`,
+    // and `useNewSessionMcpSelection` rebuilds the props object it spreads in
+    // whenever its own `params` object literal changes — which is every render
+    // of the new session screen. With the raw handlers in the dependency lists
+    // below, each of those renders rebuilt the entire step tree plus both
+    // header accessory elements, so React lost element identity for every
+    // section and re-rendered each MCP row instead of skipping it. Only the
+    // DATA inputs may invalidate the model; a replaced handler is picked up
+    // through the ref on the next activation.
+    const handlersRef = React.useRef({
+        onSelectionChange: props.onSelectionChange,
+        onRefresh: props.onRefresh,
+        onOpenSettings: props.onOpenSettings,
+    });
+    handlersRef.current = {
+        onSelectionChange: props.onSelectionChange,
+        onRefresh: props.onRefresh,
+        onOpenSettings: props.onOpenSettings,
+    };
+
+    const onSelectionChange = React.useCallback((next: SessionMcpSelectionV1) => {
+        handlersRef.current.onSelectionChange(next);
+    }, []);
+    const onRefresh = React.useCallback(() => {
+        handlersRef.current.onRefresh();
+    }, []);
+    const onOpenSettings = React.useCallback(() => {
+        handlersRef.current.onOpenSettings();
+    }, []);
+
     const happierHeaderRightAccessory = React.useMemo(() => (
         <View style={styles.groupActions}>
             <GroupActionButton
@@ -90,16 +124,16 @@ export function NewSessionMcpSelectionContent(props: NewSessionMcpSelectionConte
                 accessibilityLabel={t('common.refresh')}
                 icon="arrow-clockwise"
                 loading={props.loading}
-                onPress={props.onRefresh}
+                onPress={onRefresh}
             />
             <GroupActionButton
                 testID="new-session.mcp.happier.open-settings"
                 accessibilityLabel={t('tabs.settings')}
                 icon="sliders-horizontal"
-                onPress={props.onOpenSettings}
+                onPress={onOpenSettings}
             />
         </View>
-    ), [props.loading, props.onOpenSettings, props.onRefresh, styles.groupActions]);
+    ), [onOpenSettings, onRefresh, props.loading, styles.groupActions]);
 
     const detectedHeaderRightAccessory = React.useMemo(() => (
         <GroupActionButton
@@ -107,9 +141,9 @@ export function NewSessionMcpSelectionContent(props: NewSessionMcpSelectionConte
             accessibilityLabel={t('common.refresh')}
             icon="arrow-clockwise"
             loading={props.loading}
-            onPress={props.onRefresh}
+            onPress={onRefresh}
         />
-    ), [props.loading, props.onRefresh]);
+    ), [onRefresh, props.loading]);
 
     const rootStep = React.useMemo(() => buildNewSessionMcpSelectionListStep({
         machineId: props.machineId,
@@ -124,18 +158,18 @@ export function NewSessionMcpSelectionContent(props: NewSessionMcpSelectionConte
         mcpServersSettings,
         happierHeaderRightAccessory,
         detectedHeaderRightAccessory,
-        onSelectionChange: props.onSelectionChange,
+        onSelectionChange,
     }), [
         detectedHeaderRightAccessory,
         happierHeaderRightAccessory,
         mcpServersSettings,
+        onSelectionChange,
         props.agentType,
         props.directory,
         props.error,
         props.hasContext,
         props.loading,
         props.machineId,
-        props.onSelectionChange,
         props.preview,
         props.previewUnsupported,
         props.selection,

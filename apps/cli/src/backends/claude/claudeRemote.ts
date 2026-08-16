@@ -32,6 +32,7 @@ import {
 } from './remote/providerPromptAcceptance';
 import type { createClaudeProviderRuntimeActivityAdapter } from './providerActivity/createClaudeProviderRuntimeActivityAdapter';
 import { isClaudeLegacyRequiredHookObservationFailure } from './remote/runtimeActivityEvidence';
+import { materializeClaudeMcpConfigArgsForSpawn } from './utils/materializeClaudeMcpConfigArgsForSpawn';
 
 function buildClaudeEffortArgs(params: Readonly<{
     modelId: unknown;
@@ -235,7 +236,7 @@ export async function claudeRemote(opts: {
         effort: argOverrides.effort ?? initial.mode.reasoningEffort,
         supportedLevels: resolveModeEffortLevelsForModel(initial.mode, argOverrides.model ?? initial.mode.model),
     });
-    const extraArgs = [
+    const rawExtraArgs = [
         ...(opts.hookPluginDir ? ['--plugin-dir', opts.hookPluginDir] : []),
         ...effortArgs,
         ...(settingSourcesArgs ?? []),
@@ -261,6 +262,8 @@ export async function claudeRemote(opts: {
         childEnv: launcherEnv,
     });
 
+    const materializedMcpConfig = await materializeClaudeMcpConfigArgsForSpawn(rawExtraArgs);
+    try {
     const sdkOptions: QueryOptions = {
         cwd: opts.path,
         continue: shouldContinue || undefined,
@@ -271,7 +274,7 @@ export async function claudeRemote(opts: {
         maxTurns: argOverrides.maxTurns,
         customSystemPrompt: customSystemPrompt || undefined,
         appendSystemPrompt: (appendSystemPrompt ? appendSystemPrompt + '\n\n' : '') + remoteSystemPrompt,
-        extraArgs: extraArgs.length > 0 ? extraArgs : undefined,
+        extraArgs: materializedMcpConfig.args.length > 0 ? materializedMcpConfig.args : undefined,
         strictMcpConfig: argOverrides.strictMcpConfig,
         includeHookEvents: true,
         canCallTool: (toolName: string, input: unknown, options: { signal: AbortSignal; toolUseId?: string | null }) =>
@@ -447,5 +450,8 @@ export async function claudeRemote(opts: {
         opts.setTurnInterrupt?.(null);
         opts.setUserMessageSender?.(null);
         updateThinking(false);
+    }
+    } finally {
+        await materializedMcpConfig.cleanup();
     }
 }

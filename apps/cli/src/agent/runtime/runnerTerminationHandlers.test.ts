@@ -3,7 +3,15 @@ import { mkdtemp, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+const { fatalSpy } = vi.hoisted(() => ({
+  fatalSpy: vi.fn(),
+}));
+
+vi.mock('@/ui/logger', () => ({
+  logger: { fatal: fatalSpy },
+}));
 
 vi.mock('../../configuration', () => ({
   configuration: {
@@ -18,6 +26,10 @@ function createFakeProcess() {
 }
 
 describe('registerRunnerTerminationHandlers', () => {
+  beforeEach(() => {
+    fatalSpy.mockClear();
+  });
+
   it('closes runtime input admission synchronously before asynchronous termination cleanup starts', async () => {
     const fakeProcess = createFakeProcess();
     const events: string[] = [];
@@ -92,13 +104,39 @@ describe('registerRunnerTerminationHandlers', () => {
     });
 
     try {
-      fakeProcess.emit('unhandledRejection', new Error('boom'), Promise.resolve());
+      const error = new Error('boom');
+      fakeProcess.emit('unhandledRejection', error, Promise.resolve());
       fakeProcess.emit('uncaughtException', new Error('ignored')); // should be ignored after first termination
 
       await handlers.whenTerminated;
 
       expect(onTerminate).toHaveBeenCalledTimes(1);
+      expect(fatalSpy).toHaveBeenCalledTimes(1);
+      expect(fatalSpy).toHaveBeenCalledWith(error);
       expect(exit).toHaveBeenCalledTimes(1);
+      expect(exit).toHaveBeenCalledWith(1);
+    } finally {
+      handlers.dispose();
+    }
+  });
+
+  it('durably reports an uncaughtException exactly once before exiting non-zero', async () => {
+    const fakeProcess = createFakeProcess();
+    const exit = vi.fn();
+    const error = new Error('uncaught boom');
+    const handlers = registerRunnerTerminationHandlers({
+      process: fakeProcess,
+      exit,
+      onTerminate: async () => undefined,
+    });
+
+    try {
+      fakeProcess.emit('uncaughtException', error);
+      fakeProcess.emit('unhandledRejection', new Error('ignored'), Promise.resolve());
+      await handlers.whenTerminated;
+
+      expect(fatalSpy).toHaveBeenCalledTimes(1);
+      expect(fatalSpy).toHaveBeenCalledWith(error);
       expect(exit).toHaveBeenCalledWith(1);
     } finally {
       handlers.dispose();
@@ -121,6 +159,7 @@ describe('registerRunnerTerminationHandlers', () => {
       fakeProcess.emit('unhandledRejection', new Error('ignored'), Promise.resolve());
 
       await expect(Promise.race([handlers.whenTerminated, Promise.resolve('nope')])).resolves.toBe('nope');
+      expect(fatalSpy).not.toHaveBeenCalled();
       expect(onTerminate).not.toHaveBeenCalled();
       expect(exit).not.toHaveBeenCalled();
 

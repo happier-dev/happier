@@ -22,7 +22,7 @@ import {
 } from '@/sync/ops';
 import { useSetting } from '@/sync/domains/state/storage';
 import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
-import { readMachineTargetForSession } from '@/sync/ops/sessionMachineTarget';
+import { useSessionMachineTarget } from '@/components/sessions/model/useSessionMachineTarget';
 import { showSwitchBranchWithChangesDialog } from './SwitchBranchWithChangesDialog';
 import { t } from '@/text';
 import { scmStatusSync } from '@/scm/scmStatusSync';
@@ -53,7 +53,7 @@ export function SourceControlBranchMenu(props: SourceControlBranchMenuProps): Re
     const writeEnabled = props.writeEnabled !== false;
     const snapshot = props.snapshot;
     const currentBranch = props.currentBranch;
-    const machineTarget = readMachineTargetForSession(props.sessionId);
+    const machineTarget = useSessionMachineTarget(props.sessionId);
 
     const branchSwitchSettingRaw = useSetting('scmUncommittedChangesStrategy');
     const branchSwitchSetting = normalizeBranchSwitchSetting(branchSwitchSettingRaw);

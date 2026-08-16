@@ -278,7 +278,17 @@ describe('AGENTS', () => {
       refreshedCredentialApplication: { mode: 'restart_required' },
       predictiveSoftSwitch: { mode: 'unsupported' },
       sameAccountFanoutStrategy: 'shared_group_auth_surface',
-      runtimeAuthApply: { directLiveHotAuth: 'unsupported' },
+      runtimeAuthApply: {
+        directLiveHotAuth: {
+          supportsInTurnApply: false,
+          requiresExactRuntimeIdentity: false,
+          refreshSelectionResync: 'not_applicable',
+          authMode: {
+            kind: 'provider_owned',
+            name: 'broker_selection_indirection',
+          },
+        },
+      },
     });
     await expect(resolveDescriptor('opencode')).resolves.toMatchObject({
       providerId: 'opencode',

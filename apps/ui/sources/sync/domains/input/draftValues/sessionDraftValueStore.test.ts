@@ -41,8 +41,6 @@ type ComposerStructuredInputMention =
     | Readonly<{
         kind: 'vendorPlugin';
         tokenText: string;
-        start: number;
-        end: number;
         vendorPluginRef: string;
         label?: string;
         backendId?: string;
@@ -51,8 +49,6 @@ type ComposerStructuredInputMention =
     | Readonly<{
         kind: 'skill';
         tokenText: string;
-        start: number;
-        end: number;
         name: string;
         path?: string;
         displayName?: string;
@@ -64,8 +60,6 @@ type ComposerStructuredInputMention =
     | Readonly<{
         kind: string;
         tokenText: string;
-        start: number;
-        end: number;
     }>;
 
 type SessionDraftValueByFieldId = Readonly<{
@@ -252,8 +246,6 @@ describe('session draft-value store', () => {
         draftValues.writeSessionDraftValue(scopeA, 'sessionA', 'structuredInput.mentions', [{
             kind: 'skill',
             tokenText: '@skill',
-            start: 0,
-            end: 6,
             name: 'skill',
         }], { now: 102, flush: false });
 
@@ -314,14 +306,14 @@ describe('session draft-value store', () => {
 
     it('keeps the surviving draft mentions when one persisted element is malformed (D-14)', async () => {
         const persistence = await importPersistence();
-        const good = { kind: 'skill' as const, tokenText: '$review', start: 0, end: 7, name: 'review' };
+        const good = { kind: 'skill' as const, tokenText: '$review', name: 'review' };
         persistence.savePersistedSessionDraftValues({
             sessionA: {
                 'structuredInput.mentions': {
                     v: 1,
                     lastEditedAt: 100,
                     // The second element has no `name`, so the skill arm rejects it.
-                    value: [good, { kind: 'skill', tokenText: '$broken', start: 8, end: 15 }],
+                    value: [good, { kind: 'skill', tokenText: '$broken' }],
                 },
             },
         }, scopeA);
@@ -333,7 +325,7 @@ describe('session draft-value store', () => {
 
     it('preserves a mention of an unknown kind through load, re-save and read (INV-4)', async () => {
         const persistence = await importPersistence();
-        const unknown = { kind: 'happier.session', tokenText: '@session:abc', start: 0, end: 12 };
+        const unknown = { kind: 'happier.session', tokenText: '@session:abc' };
         persistence.savePersistedSessionDraftValues({
             sessionA: {
                 'structuredInput.mentions': { v: 1, lastEditedAt: 100, value: [unknown] },
@@ -362,8 +354,6 @@ describe('session draft-value store', () => {
         const skill = {
             kind: 'skill' as const,
             tokenText: '$review',
-            start: 0,
-            end: 7,
             id: 'vendor:codex:review',
             name: 'review',
             path: '/w/.codex/skills/review/SKILL.md',
@@ -392,8 +382,6 @@ describe('session draft-value store', () => {
         const session = {
             kind: 'session' as const,
             tokenText: '@session:fix-startup-v4a0a7',
-            start: 0,
-            end: 27,
             sessionId: 'cmslj08960ku1tmhrd0v4a0a7',
             label: 'Fix Detached Dev Stack Startup',
         };
@@ -405,6 +393,33 @@ describe('session draft-value store', () => {
         const draftValues = await importStore();
 
         expect(draftValues.readSessionDraftValue(scopeA, 'sessionA', 'structuredInput.mentions')).toEqual([session]);
+    });
+
+    it('loads a draft written before mentions dropped their positions', async () => {
+        // Positions were part of the persisted shape until they stopped gating anything. A
+        // draft that still carries them must load, not be discarded as malformed: the known
+        // arms are plain objects so zod strips the extra keys, and the unknown arm is
+        // passthrough so a newer build's fields still survive this build (INV-4).
+        const persistence = await importPersistence();
+        persistence.savePersistedSessionDraftValues({
+            sessionA: {
+                'structuredInput.mentions': {
+                    v: 1,
+                    lastEditedAt: 100,
+                    value: [
+                        { kind: 'skill', tokenText: '$review', start: 0, end: 7, name: 'review' },
+                        { kind: 'acme.ticket', tokenText: '@ACME-1', start: 8, end: 15 },
+                    ],
+                },
+            },
+        }, scopeA);
+
+        const draftValues = await importStore();
+
+        expect(draftValues.readSessionDraftValue(scopeA, 'sessionA', 'structuredInput.mentions')).toEqual([
+            { kind: 'skill', tokenText: '$review', name: 'review' },
+            { kind: 'acme.ticket', tokenText: '@ACME-1', start: 8, end: 15 },
+        ]);
     });
 
     it('reloads scoped values after cache invalidation without leaking another scope', async () => {

@@ -36,6 +36,7 @@ import { normalizeStackNameFirstArgs, resolveTopLevelNodeScriptFile, stackNameFr
 import { getStackHelpUsageLine, renderStackRootHelpText, renderStackSubcommandHelpText, STACK_HELP_COMMANDS } from './stack/help_text.mjs';
 import { copyAuthFromStackIntoNewStack } from './stack/copy_auth_from_stack.mjs';
 import {
+  createStackEnv,
   getRuntimePortExtraEnv,
   parseServerComponentFromEnv,
   readStackEnvObject,
@@ -111,6 +112,13 @@ const STACK_REPO_OVERRIDE_SCRIPT_BY_COMMAND = new Map([
   ['review', resolveTopLevelNodeScriptFile('review') || 'review.mjs'],
 ]);
 
+function stackAlreadyExistsError(stackName) {
+  return new Error(
+    `[stack] stack already exists: ${stackName}\n` +
+      `[stack] Use \`hstack stack edit ${stackName} --interactive\` or \`hstack stack env ${stackName} ...\` to change it.`,
+  );
+}
+
 async function cmdNew({ rootDir, argv, emit = true }) {
   const { flags, kv } = parseArgs(argv);
   const positionals = argv.filter((a) => !a.startsWith('--'));
@@ -178,6 +186,9 @@ async function cmdNew({ rootDir, argv, emit = true }) {
   }
   if (stackName === 'main') {
     throw new Error('[stack] stack name \"main\" is reserved (use the default stack without creating it)');
+  }
+  if (stackExistsSync(stackName)) {
+    throw stackAlreadyExistsError(stackName);
   }
 
   const serverComponent = (config.serverComponent || 'happier-server-light').trim();
@@ -390,7 +401,10 @@ async function cmdNew({ rootDir, argv, emit = true }) {
       });
   }
 
-  const envPath = await writeStackEnv({ stackName, env: stackEnv });
+  const { created, envPath } = await createStackEnv({ stackName, env: stackEnv });
+  if (!created) {
+    throw stackAlreadyExistsError(stackName);
+  }
   const res = { ok: true, stackName, envPath, port: port ?? null, serverComponent, portsMode: port == null ? 'ephemeral' : 'pinned' };
   if (emit) {
     printResult({

@@ -98,7 +98,7 @@ async function cmdInspectTarget(args: string[]): Promise<void> {
   };
 
   if (json) {
-    printJsonEnvelope({ ok: true, kind: 'relay_inspect_target', data: payload });
+    await printJsonEnvelope({ ok: true, kind: 'relay_inspect_target', data: payload });
     return;
   }
 
@@ -172,7 +172,7 @@ async function cmdSet(args: string[], options: CmdSetOptions = {}): Promise<void
   };
 
   if (json) {
-    printJsonEnvelope({ ok: true, kind: 'relay_set', data: payload });
+    await printJsonEnvelope({ ok: true, kind: 'relay_set', data: payload });
     return;
   }
 

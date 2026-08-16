@@ -1,6 +1,6 @@
 ---
 name: happier-session-control
-description: Manage Happier sessions (list/status/send/wait/history/stop + execution runs) via the happier CLI JSON contract.
+description: Manage Happier sessions and execution runs through the CLI JSON contract, and create independent Happier diagnosis sessions with explicit ownership, safe options, and fire-and-forget presentation semantics.
 metadata: {"openclaw":{"requires":{"bins":["happier"]},"homepage":"https://github.com/happier-dev/happier"}}
 ---
 
@@ -35,6 +35,31 @@ Common error codes to handle:
 - `session_id_ambiguous`: pick deterministically from `error.candidates` (prefer exact id; otherwise ask the user).
 - `session_not_found`: call `happier session list --json` and retry.
 - `unsupported`: feature disabled by server policy or backend doesn’t support the requested intent.
+
+## Independent session delegation
+
+Use an independent Happier session only when the user asks for new sessions or when an invoking workflow explicitly selects that topology. Native subagents remain the owner for in-session delegation.
+
+When an independent session owns a complete work bundle:
+
+- create it with a self-contained `initialMessage`, descriptive `title` and `tag`, the intended repository `path`, and only user-selected or safely resolved machine/profile/backend/model options;
+- use canonical `read-only` permission mode for diagnosis when the selected backend supports it, plus an explicit no-write constraint in the brief. Permission modes are backend-applied policy, not a universal security sandbox; do not overclaim enforcement;
+- treat a successful accepted spawn as the triage lane's completion for that bundle;
+- return the new session id/title and allocation to the user, then stop by default;
+- let the spawned session present its diagnosis directly to the user;
+- do not wait for idle or pull its transcript merely to re-present the same result;
+- do not instruct the spawned session to create further independent sessions unless the user explicitly requested recursive orchestration.
+
+Use monitoring only when the user asks the parent to supervise, consolidate, or continue after the child. In that case, `session.wait.idle`, `session.transcript.get`, and `session.message.send` are optional follow-up tools, not part of the default spawn flow.
+
+The Happier MCP action ids are:
+
+- `session.spawn_new` — accepts `initialMessage`, `title`, `tag`, `path`, `machineId`, `profileId`, backend/model selection, and `permissionMode`;
+- `session.wait.idle` — optional monitoring;
+- `session.transcript.get` — optional transcript retrieval;
+- `session.message.send` — optional follow-up or correction.
+
+The MCP binding names are `session_spawn_new`, `session_wait_idle`, `session_transcript_get`, and `session_message_send`. When actions are unavailable, use the corresponding CLI JSON commands below where the needed options are supported, or report the missing capability instead of silently changing topology.
 
 ## Auth Commands (JSON)
 
@@ -195,4 +220,3 @@ Set a one-off custom server as active:
 ```bash
 happier server set --server-url https://example.com --webapp-url https://example.com --json
 ```
-

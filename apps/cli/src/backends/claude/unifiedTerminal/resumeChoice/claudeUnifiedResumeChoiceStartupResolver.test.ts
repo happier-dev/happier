@@ -75,12 +75,16 @@ const CLAUDE_UNIFIED_RESUME_CHOICE_QUESTION = 'How should Claude resume this ses
 
 describe('createClaudeUnifiedResumeChoiceStartupResolver', () => {
   it('keeps readiness paused for a non-resume startup dialog owned by the generalized broker', async () => {
-    const { session } = createPermissionHandlerSessionStub('workspace-trust-session');
+    const { session, client } = createPermissionHandlerSessionStub('workspace-trust-session');
     const broker = new ClaudeUnifiedDialogChoiceBroker(session, { createRequestId: () => 'claude_trust_choice_1' });
+    broker.activate();
     const screenState = parseClaudeScreenState(TRUST_FOLDER_DIALOG);
     const dialog = resolveClaudeUnifiedVisibleDialog(screenState);
     expect(dialog?.dialogId).toBe('trust_folder');
     void broker.requestDialogChoice({ dialog: dialog! }).catch(() => undefined);
+    await vi.waitFor(() => {
+      expect(Object.keys(client.getAgentStateSnapshot().requests)).toEqual(['claude_trust_choice_1']);
+    });
     const resolver = createClaudeUnifiedResumeChoiceStartupResolver({
       choice: 'ask_every_time',
       broker,
@@ -207,6 +211,37 @@ describe('createClaudeUnifiedResumeChoiceStartupResolver', () => {
       expect(port.sentLiteral).toEqual(['1']);
       expect(port.sentKeys).toEqual([]);
     });
+  });
+
+  it('submits and marks compaction for the remembered summary choice', async () => {
+    const { session, client } = createPermissionHandlerSessionStub('resume-choice-session');
+    const broker = new ClaudeUnifiedDialogChoiceBroker(session, { createRequestId: () => 'claude_resume_choice_1' });
+    broker.activate();
+    const port = createFakeControlPort({ captures: [RESUME_DIALOG, IDLE] });
+    const onResumeSummaryCompactionSubmitted = vi.fn();
+    const resolver = createClaudeUnifiedResumeChoiceStartupResolver({
+      choice: 'ask_every_time',
+      broker,
+      port,
+      wait: async () => undefined,
+      settleMs: 1,
+      onResumeSummaryCompactionSubmitted,
+    });
+
+    await expect(resolver({
+      screenState: parseClaudeScreenState(RESUME_DIALOG),
+      observedAtMs: 1,
+      abortSignal: new AbortController().signal,
+    })).resolves.toEqual({ status: 'waiting_for_user' });
+
+    await client.rpcHandlerManager.getHandler('permission')?.({
+      id: 'claude_resume_choice_1',
+      approved: true,
+      answers: { [CLAUDE_UNIFIED_RESUME_CHOICE_QUESTION]: 'Always resume from summary' },
+    });
+
+    await vi.waitFor(() => expect(port.sentLiteral).toEqual(['1']));
+    expect(onResumeSummaryCompactionSubmitted).toHaveBeenCalledTimes(1);
   });
 
   it('keeps startup timeout paused while an answered ask-every-time choice is still being typed', async () => {

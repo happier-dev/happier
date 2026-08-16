@@ -66,12 +66,77 @@ export type PendingQueueMaterializeDeferredReason =
     | 'waiting_for_predecessor'
     | 'waiting_for_foreground_turn';
 
+export type PendingQueueMaterializationTransportClassification =
+    | 'server_rejected'
+    | 'server_retryable'
+    | 'socket_disconnected'
+    | 'ack_timeout'
+    | 'malformed_ack'
+    | 'transport_failure';
+
+export type PendingQueueMaterializationTransportErrorCode =
+    | 'pending_queue_materialization_server_rejected'
+    | 'pending_queue_materialization_server_retryable'
+    | 'pending_queue_materialization_socket_disconnected'
+    | 'pending_queue_materialization_ack_timeout'
+    | 'pending_queue_materialization_ack_malformed'
+    | 'pending_queue_materialization_transport_failure';
+
+const PENDING_QUEUE_MATERIALIZATION_TRANSPORT_ERROR_CODES = {
+    server_rejected: 'pending_queue_materialization_server_rejected',
+    server_retryable: 'pending_queue_materialization_server_retryable',
+    socket_disconnected: 'pending_queue_materialization_socket_disconnected',
+    ack_timeout: 'pending_queue_materialization_ack_timeout',
+    malformed_ack: 'pending_queue_materialization_ack_malformed',
+    transport_failure: 'pending_queue_materialization_transport_failure',
+} as const satisfies Record<
+    PendingQueueMaterializationTransportClassification,
+    PendingQueueMaterializationTransportErrorCode
+>;
+
+function readSafePendingQueueMaterializationDiagnosticValue(value: unknown): string | undefined {
+    if (typeof value !== 'string') return undefined;
+    const diagnosticValue = value.trim();
+    return /^[A-Za-z0-9_.:-]{1,160}$/u.test(diagnosticValue) ? diagnosticValue : undefined;
+}
+
+function readErrorCode(value: unknown): string | undefined {
+    if (!value || typeof value !== 'object') return undefined;
+    const code = (value as { code?: unknown }).code;
+    return typeof code === 'string' ? code : undefined;
+}
+
+function classifyPendingQueueMaterializationTransportCause(
+    cause: unknown,
+): PendingQueueMaterializationTransportClassification {
+    const code = readErrorCode(cause);
+    if (code === 'socket_ack_timeout') return 'ack_timeout';
+    if (code === 'socket_not_connected') return 'socket_disconnected';
+    return 'transport_failure';
+}
+
 export class PendingQueueMaterializationTransportAmbiguousError extends Error {
     readonly code = 'pending_queue_materialization_transport_ambiguous' as const;
+    readonly diagnosticCode: PendingQueueMaterializationTransportErrorCode;
+    readonly classification: PendingQueueMaterializationTransportClassification;
+    readonly serverError?: string;
+    readonly retryAfterMs?: number;
 
-    constructor(cause: unknown) {
+    constructor(
+        cause: unknown,
+        classification: PendingQueueMaterializationTransportClassification = classifyPendingQueueMaterializationTransportCause(cause),
+        serverError?: string,
+        retryAfterMs?: number,
+    ) {
         super('Connected pending queue materialization did not return a valid acknowledgement');
         this.name = 'PendingQueueMaterializationTransportAmbiguousError';
+        this.diagnosticCode = PENDING_QUEUE_MATERIALIZATION_TRANSPORT_ERROR_CODES[classification];
+        this.classification = classification;
+        const safeServerError = readSafePendingQueueMaterializationDiagnosticValue(serverError);
+        if (safeServerError !== undefined) this.serverError = safeServerError;
+        if (typeof retryAfterMs === 'number' && Number.isSafeInteger(retryAfterMs) && retryAfterMs >= 0) {
+            this.retryAfterMs = retryAfterMs;
+        }
         (this as Error & { cause?: unknown }).cause = cause;
     }
 }
@@ -287,6 +352,10 @@ function hasExactKeys(record: Record<string, unknown>, keys: readonly string[]):
     const actual = Object.keys(record).sort();
     const expected = [...keys].sort();
     return actual.length === expected.length && actual.every((key, index) => key === expected[index]);
+}
+
+function readSafePendingMaterializeServerError(value: unknown): string | null {
+    return readSafePendingQueueMaterializationDiagnosticValue(value) ?? null;
 }
 
 function requirePendingLocalId(value: unknown): string {
@@ -901,11 +970,40 @@ async function tryMaterializeNextViaSocket(params: {
                 ...(params.foregroundState ? { foregroundState: params.foregroundState } : {}),
             },
         });
-        if (!rawAck || typeof rawAck !== 'object') {
-            return { ok: false, error: new Error('Invalid pending queue materialize socket acknowledgement') };
+        if (!rawAck || typeof rawAck !== 'object' || Array.isArray(rawAck)) {
+            return {
+                ok: false,
+                error: new PendingQueueMaterializationTransportAmbiguousError(
+                    new Error('Invalid pending queue materialize socket acknowledgement'),
+                    'malformed_ack',
+                ),
+            };
+        }
+        if (rawAck.ok === false) {
+            const serverError = readSafePendingMaterializeServerError(rawAck.error);
+            if (serverError) {
+                const retryAfterMs = serverError === 'transaction-unavailable'
+                    ? readPendingMaterializeRetryAfterMs(rawAck)
+                    : undefined;
+                return {
+                    ok: false,
+                    error: new PendingQueueMaterializationTransportAmbiguousError(
+                        new Error(`Pending queue materialize server acknowledgement: ${serverError}`),
+                        retryAfterMs === undefined ? 'server_rejected' : 'server_retryable',
+                        serverError,
+                        retryAfterMs,
+                    ),
+                };
+            }
         }
         if (rawAck.ok !== true) {
-            return { ok: false, error: new Error('Pending queue materialize socket acknowledgement was not successful') };
+            return {
+                ok: false,
+                error: new PendingQueueMaterializationTransportAmbiguousError(
+                    new Error('Invalid pending queue materialize socket acknowledgement'),
+                    'malformed_ack',
+                ),
+            };
         }
         const pendingQueueState = readKnownPendingQueueState(rawAck);
         if (rawAck.didMaterialize !== true) {
@@ -938,7 +1036,12 @@ async function tryMaterializeNextViaSocket(params: {
         if (isAuthenticationError(error)) {
             throw error;
         }
-        return { ok: false, error };
+        return {
+            ok: false,
+            error: error instanceof PendingQueueMaterializationTransportAmbiguousError
+                ? error
+                : new PendingQueueMaterializationTransportAmbiguousError(error),
+        };
     }
 }
 
@@ -1074,6 +1177,7 @@ export async function materializeNextPendingQueueV2Message(params: {
     if (params.socket && params.socket.connected !== true) {
         throw new PendingQueueMaterializationTransportAmbiguousError(
             new Error('Selected pending queue materialize socket is disconnected'),
+            'socket_disconnected',
         );
     }
     const connectedSocket = params.socket?.connected === true ? params.socket : null;
@@ -1093,7 +1197,9 @@ export async function materializeNextPendingQueueV2Message(params: {
     if (socketRes?.ok) {
         res = socketRes;
     } else if (connectedSocket) {
-        throw new PendingQueueMaterializationTransportAmbiguousError(socketRes?.error);
+        throw socketRes?.error instanceof PendingQueueMaterializationTransportAmbiguousError
+            ? socketRes.error
+            : new PendingQueueMaterializationTransportAmbiguousError(socketRes?.error);
     } else {
         res = await tryMaterializeNextViaHttp({
             token: params.token,

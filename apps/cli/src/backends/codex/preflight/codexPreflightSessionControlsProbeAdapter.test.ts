@@ -4,10 +4,9 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:f
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import type { ConnectedServiceBindingsV1 } from '@happier-dev/protocol';
 
 import { createEnvKeyScope } from '@/testkit/env/envScope';
-import { configuration, reloadConfiguration } from '@/configuration';
+import { reloadConfiguration } from '@/configuration';
 
 import { codexPreflightSessionControlsProbeAdapter } from './codexPreflightSessionControlsProbeAdapter';
 
@@ -91,19 +90,17 @@ describe('codexPreflightSessionControlsProbeAdapter', () => {
         });
     }
 
-    it('uses the stable group codex-home for connected-service group probes', async () => {
-        tempDir = makeTempDir('happier-codex-preflight-group-home-');
+    it('uses the materialized process environment supplied by the connected-service preflight owner', async () => {
+        tempDir = makeTempDir('happier-codex-preflight-materialized-home-');
         process.env.HAPPIER_HOME_DIR = tempDir;
         reloadConfiguration();
 
         const codexHome = join(
-            configuration.activeServerDir,
+            tempDir,
             'daemon',
             'connected-services',
-            'homes',
-            'openai-codex',
-            '__groups',
-            'happier',
+            'materialized',
+            'csm_probe',
             'codex',
             'codex-home',
         );
@@ -114,24 +111,16 @@ describe('codexPreflightSessionControlsProbeAdapter', () => {
         process.env.HAPPIER_FAKE_CODEX_APP_SERVER_DELAY_MS = '1';
         process.env.HAPPIER_FAKE_CODEX_APP_SERVER_ENV_CAPTURE_FILE = captureFile;
 
-        const connectedServices: ConnectedServiceBindingsV1 = {
-            v: 1,
-            bindingsByServiceId: {
-                'openai-codex': {
-                    source: 'connected',
-                    selection: 'group',
-                    groupId: 'happier',
-                    profileId: 'leeroy',
-                },
-            },
-        };
-
         const raw = await codexPreflightSessionControlsProbeAdapter.probeModelsRaw?.({
             cwd: tempDir,
             timeoutMs: 2_000,
             backendTarget: undefined,
             accountSettings: { codexBackendMode: 'appServer' },
-            connectedServices,
+            processEnv: {
+                ...process.env,
+                CODEX_HOME: codexHome,
+                CODEX_SQLITE_HOME: codexHome,
+            },
         });
 
         expect(raw).toEqual(expect.any(Array));
@@ -139,55 +128,7 @@ describe('codexPreflightSessionControlsProbeAdapter', () => {
         expect(JSON.parse(readFileSync(captureFile, 'utf8'))).toEqual({
             CODEX_HOME: codexHome,
             CODEX_SQLITE_HOME: codexHome,
-        });
-    });
-
-    it('uses the stable profile codex-home for connected-service profile probes', async () => {
-        tempDir = makeTempDir('happier-codex-preflight-profile-home-');
-        process.env.HAPPIER_HOME_DIR = tempDir;
-        reloadConfiguration();
-
-        const codexHome = join(
-            configuration.activeServerDir,
-            'daemon',
-            'connected-services',
-            'homes',
-            'openai-codex',
-            'leeroy',
-            'codex',
-            'codex-home',
-        );
-        mkdirSync(codexHome, { recursive: true });
-
-        const captureFile = join(tempDir, 'captured-env.json');
-        process.env.HAPPIER_CODEX_APP_SERVER_BIN = fileURLToPath(new URL('./__fixtures__/fakeCodexAppServer.mjs', import.meta.url));
-        process.env.HAPPIER_FAKE_CODEX_APP_SERVER_DELAY_MS = '1';
-        process.env.HAPPIER_FAKE_CODEX_APP_SERVER_ENV_CAPTURE_FILE = captureFile;
-
-        const connectedServices: ConnectedServiceBindingsV1 = {
-            v: 1,
-            bindingsByServiceId: {
-                'openai-codex': {
-                    source: 'connected',
-                    selection: 'profile',
-                    profileId: 'leeroy',
-                },
-            },
-        };
-
-        const raw = await codexPreflightSessionControlsProbeAdapter.probeModelsRaw?.({
-            cwd: tempDir,
-            timeoutMs: 2_000,
-            backendTarget: undefined,
-            accountSettings: { codexBackendMode: 'appServer' },
-            connectedServices,
-        });
-
-        expect(raw).toEqual(expect.any(Array));
-        expect(existsSync(captureFile)).toBe(true);
-        expect(JSON.parse(readFileSync(captureFile, 'utf8'))).toEqual({
-            CODEX_HOME: codexHome,
-            CODEX_SQLITE_HOME: codexHome,
+            CODEX_AUTH_FILE_PRESENT: false,
         });
     });
 });

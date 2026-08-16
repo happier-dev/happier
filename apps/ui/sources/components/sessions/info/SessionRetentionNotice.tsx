@@ -1,5 +1,7 @@
 import * as React from 'react';
+import { useUnistyles } from 'react-native-unistyles';
 
+import { Icon } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { useServerRetentionPolicy } from '@/hooks/server/useServerRetentionPolicy';
@@ -12,10 +14,12 @@ type SessionRetentionNoticeProps = Readonly<{
 }>;
 
 export function SessionRetentionNotice(props: SessionRetentionNoticeProps) {
+    const { theme } = useUnistyles();
     const serverId = React.useMemo(() => resolveServerIdForSessionIdFromLocalCache(props.sessionId), [props.sessionId]);
     const policy = useServerRetentionPolicy(serverId);
+    const sessionPolicy = policy?.domains.find((domain) => domain.id === 'sessions')?.policy;
 
-    if (!serverId || !policy || !policy.enabled || policy.sessions.mode === 'keep_forever') {
+    if (!serverId || !policy || !policy.enabled || sessionPolicy?.mode !== 'delete_inactive') {
         return null;
     }
 
@@ -25,6 +29,14 @@ export function SessionRetentionNotice(props: SessionRetentionNoticeProps) {
                 testID="session-retention-notice"
                 title={t('server.retention.sessions')}
                 subtitle={formatSessionRetentionSummary(policy) ?? t('server.retention.keepForever')}
+                icon={(
+                    <Icon
+                        testID="session-retention-notice-icon"
+                        name="clock-counter-clockwise"
+                        color={theme.colors.text.secondary}
+                    />
+                )}
+                mode="info"
                 showChevron={false}
             />
         </ItemGroup>

@@ -26,6 +26,10 @@ import {
 import { t } from '@/text';
 import { readNonBlankSessionControlIdentifier } from '@/sync/domains/sessionControl/opaqueIdentifiers';
 import { Icon } from '@/components/ui/icons/Icon';
+import {
+    findModelOptionForEffectiveModelId,
+    resolveCanonicalModelOptionId,
+} from '@/sync/domains/models/modelOptions';
 
 export type NewSessionEngineOptionDetailProps = Readonly<{
     backendTarget: BackendTargetRefV1;
@@ -226,6 +230,10 @@ export function NewSessionEngineOptionDetail(props: NewSessionEngineOptionDetail
         : props.backendTarget.agentId;
     const providerSupportsFreeform = providerCore.model.supportsFreeform === true;
     const canEnterCustomModel = preflightModels?.supportsFreeform === true || providerSupportsFreeform;
+    const canonicalSelectedModelId = React.useMemo(
+        () => resolveCanonicalModelOptionId(modelOptions, selectedModelId),
+        [modelOptions, selectedModelId],
+    );
     const configControls = React.useMemo(
         () => removeModelScopedConfigControls({
             controls: computeSessionConfigOptionControlsForProvider({
@@ -243,7 +251,7 @@ export function NewSessionEngineOptionDetail(props: NewSessionEngineOptionDetail
     );
 
     const selectedModelOptionControls = React.useMemo(() => {
-        const selectedModel = modelOptions.find((option) => option.value === selectedModelId) ?? null;
+        const selectedModel = findModelOptionForEffectiveModelId(modelOptions, canonicalSelectedModelId);
         if (!selectedModel?.modelOptions?.length) return null;
         return computeSessionConfigOptionControlsForProvider({
             providerId,
@@ -252,7 +260,7 @@ export function NewSessionEngineOptionDetail(props: NewSessionEngineOptionDetail
                 Object.entries(selectedConfigOverrides).map(([optionId, value]) => [optionId, { value }]),
             ),
         }) ?? null;
-    }, [modelOptions, providerId, selectedConfigOverrides, selectedModelId]);
+    }, [canonicalSelectedModelId, modelOptions, providerId, selectedConfigOverrides]);
 
     const sanitizeConfigOverridesForModel = React.useCallback((
         modelId: string,
@@ -264,6 +272,18 @@ export function NewSessionEngineOptionDetail(props: NewSessionEngineOptionDetail
         selectedModelId: modelId,
         selectedConfigOverrides: configOverrides,
     }), [configOptions, modelOptions, providerId]);
+
+    React.useEffect(() => {
+        if (canonicalSelectedModelId === selectionRef.current.modelId) return;
+        publishSelection({
+            ...selectionRef.current,
+            modelId: canonicalSelectedModelId,
+            configOverrides: sanitizeConfigOverridesForModel(
+                canonicalSelectedModelId,
+                selectionRef.current.configOverrides,
+            ),
+        });
+    }, [canonicalSelectedModelId, publishSelection, sanitizeConfigOverridesForModel]);
 
     const favoriteBackendIdentity = React.useMemo<FavoriteModelBackendIdentity>(() => ({
         backendTargetKey: buildBackendTargetKey(props.backendTarget),
@@ -306,7 +326,7 @@ export function NewSessionEngineOptionDetail(props: NewSessionEngineOptionDetail
     return (
         <AgentInputEngineDetail
             modelOptions={modelOptions}
-            selectedModelId={selectedModelId}
+            selectedModelId={canonicalSelectedModelId}
             modelNotes={[]}
             modelEmptyText={t('agentInput.model.configureInCli')}
             canEnterCustomModel={canEnterCustomModel}
@@ -326,18 +346,20 @@ export function NewSessionEngineOptionDetail(props: NewSessionEngineOptionDetail
                 });
             } : undefined}
             onSelectModel={(modelId) => {
-                const configOverrides = sanitizeConfigOverridesForModel(modelId, selectionRef.current.configOverrides);
+                const canonicalModelId = resolveCanonicalModelOptionId(modelOptions, modelId);
+                const configOverrides = sanitizeConfigOverridesForModel(canonicalModelId, selectionRef.current.configOverrides);
                 publishSelection({
                     ...selectionRef.current,
-                    modelId,
+                    modelId: canonicalModelId,
                     configOverrides,
                 });
             }}
             onSubmitCustomValue={canEnterCustomModel ? (modelId) => {
-                const configOverrides = sanitizeConfigOverridesForModel(modelId, selectionRef.current.configOverrides);
+                const canonicalModelId = resolveCanonicalModelOptionId(modelOptions, modelId);
+                const configOverrides = sanitizeConfigOverridesForModel(canonicalModelId, selectionRef.current.configOverrides);
                 publishSelection({
                     ...selectionRef.current,
-                    modelId,
+                    modelId: canonicalModelId,
                     configOverrides,
                 });
             } : undefined}

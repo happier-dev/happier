@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
+import { sanitizeSessionUserMessageSendMeta } from '@happier-dev/protocol';
 
 import {
     buildStructuredInputMetaOverrides,
     mergeMessageMetaOverrides,
-    reconcileStructuredInputMentionsWithTextChange,
     reconcileStructuredInputMentionsWithText,
     type ComposerStructuredInputMention,
 } from './structuredInputMentions';
@@ -11,8 +11,6 @@ import {
 const vendorPluginMention = {
     kind: 'vendorPlugin',
     tokenText: '@gmail',
-    start: 5,
-    end: 11,
     vendorPluginRef: 'plugin://gmail@openai-curated',
     label: 'Gmail',
 } satisfies ComposerStructuredInputMention;
@@ -23,8 +21,6 @@ const vendorPluginMention = {
 const skillMention = {
     kind: 'skill',
     tokenText: '$review',
-    start: 12,
-    end: 19,
     name: 'review',
     path: '/skills/review/SKILL.md',
     displayName: 'Review',
@@ -32,58 +28,39 @@ const skillMention = {
 } satisfies ComposerStructuredInputMention;
 
 describe('structured input mentions', () => {
-    it('keeps a selected mention when text changes before the token', () => {
-        const mentions = reconcileStructuredInputMentionsWithText({
-            previousText: 'Call @gmail',
-            nextText: 'Please Call @gmail',
-            mentions: [vendorPluginMention],
-        });
-
-        expect(mentions).toEqual([
-            expect.objectContaining({
-                kind: 'vendorPlugin',
-                start: 12,
-                end: 18,
-                vendorPluginRef: 'plugin://gmail@openai-curated',
-            }),
-        ]);
+    it.each([
+        { what: 'text inserted before the token', text: 'Please Call @gmail' },
+        { what: 'text inserted after the token', text: 'Call @gmail now' },
+        { what: 'the whole prefix removed', text: '@gmail' },
+        { what: 'a leading newline', text: '\nCall @gmail' },
+    ])('keeps a selected mention through $what', ({ text }) => {
+        expect(reconcileStructuredInputMentionsWithText({ text, mentions: [vendorPluginMention] }))
+            .toEqual([vendorPluginMention]);
     });
 
     it('drops a selected mention when the token text is edited', () => {
         const mentions = reconcileStructuredInputMentionsWithText({
-            previousText: 'Call @gmail',
-            nextText: 'Call @gmai',
+            text: 'Call @gmai',
             mentions: [vendorPluginMention],
         });
 
         expect(mentions).toEqual([]);
     });
 
-    it('uses selection-based reconciliation for large insertions before a mention', () => {
-        const prefix = 'x'.repeat(300_000);
-        const insertedText = '<div>/'.repeat(50_000);
-        const previousText = `${prefix} @gmail tail`;
-        const mention = {
-            ...vendorPluginMention,
-            start: prefix.length + 1,
-            end: prefix.length + 7,
-        } satisfies ComposerStructuredInputMention;
-        const nextText = `${prefix} ${insertedText}@gmail tail`;
-
-        const mentions = reconcileStructuredInputMentionsWithTextChange({
-            previousText,
-            nextText,
-            previousSelection: { start: prefix.length + 1, end: prefix.length + 1 },
-            mentions: [mention],
+    // The composer authors against its own text; `SessionView` submits a TRANSFORM of it
+    // (`messageToSend.trim()`, and for attachments/review comments a wrapped form). A
+    // reference must survive that transform: the user picked it and the token it named is
+    // still in the message.
+    it('survives the composer text being transformed on the way to the request boundary', () => {
+        const composerText = `\nask @gmail about it`;
+        const overrides = buildStructuredInputMetaOverrides({
+            mentions: [vendorPluginMention],
+            text: composerText,
         });
+        const admitted = sanitizeSessionUserMessageSendMeta(overrides, { text: composerText.trim() });
+        const envelope = admitted.happierStructuredInputV1 as { mentions?: readonly unknown[] };
 
-        expect(mentions).toEqual([
-            expect.objectContaining({
-                kind: 'vendorPlugin',
-                start: prefix.length + 1 + insertedText.length,
-                end: prefix.length + 7 + insertedText.length,
-            }),
-        ]);
+        expect(envelope?.mentions).toHaveLength(1);
     });
 
     it('does not infer a manually typed vendor plugin token', () => {
@@ -148,16 +125,12 @@ describe('structured input mentions', () => {
                     kind: 'happier.vendorPlugin',
                     ref: 'vendorPlugin:plugin://gmail@openai-curated',
                     token: '@gmail',
-                    start: 5,
-                    end: 11,
                     label: 'Gmail',
                 },
                 {
                     kind: 'happier.skill',
                     ref: 'skill:vendor:codex:review',
                     token: '$review',
-                    start: 12,
-                    end: 19,
                     label: 'Review',
                 },
             ]);
@@ -186,8 +159,6 @@ describe('structured input mentions', () => {
                 mentions: [{
                     kind: 'session',
                     tokenText: '@session:fix-startup-v4a0a7',
-                    start: 0,
-                    end: 27,
                     sessionId: 'cmslj08960ku1tmhrd0v4a0a7',
                     label: 'Fix Detached Dev Stack Startup',
                 }],
@@ -198,8 +169,6 @@ describe('structured input mentions', () => {
                 kind: 'happier.session',
                 ref: 'session:cmslj08960ku1tmhrd0v4a0a7',
                 token: '@session:fix-startup-v4a0a7',
-                start: 0,
-                end: 27,
                 label: 'Fix Detached Dev Stack Startup',
             }]);
             expect(envelope.mentions[0].ref).not.toContain('//');
@@ -209,18 +178,15 @@ describe('structured input mentions', () => {
             expect(envelope.skillMentions).toBeUndefined();
         });
 
-        it('emits exactly one provider reference per unique {kind, ref} (D-26)', () => {
+        it('emits exactly one reference per unique {kind, ref} (D-26)', () => {
             const envelope = readEnvelope(buildStructuredInputMetaOverrides({
-                mentions: [
-                    { ...vendorPluginMention, tokenText: '@gmail', start: 0, end: 6 },
-                    { ...vendorPluginMention, tokenText: '@gmail', start: 7, end: 13 },
-                ],
+                mentions: [vendorPluginMention, vendorPluginMention],
                 text: '@gmail @gmail',
             }));
 
-            // Every textual occurrence stays in mentions[] because range reconciliation needs
-            // it; provider context is deduplicated by {kind, ref} and ordered by first use.
-            expect(envelope.mentions).toHaveLength(2);
+            // `mentions[]` is the SET of references the message carries. A second entry for the
+            // same reference is byte-identical to the first now that neither carries a position.
+            expect(envelope.mentions).toHaveLength(1);
             expect(envelope.vendorPluginMentions).toEqual([
                 { vendorPluginRef: 'plugin://gmail@openai-curated', label: 'Gmail' },
             ]);
@@ -254,14 +220,12 @@ describe('structured input mentions', () => {
                     kind: 'happier.futureThing',
                     ref: 'futureThing:abc',
                     tokenText: '@future:abc',
-                    start: 0,
-                    end: 11,
                 }],
                 text: '@future:abc',
             }));
 
             expect(envelope.mentions).toEqual([
-                { kind: 'happier.futureThing', ref: 'futureThing:abc', token: '@future:abc', start: 0, end: 11 },
+                { kind: 'happier.futureThing', ref: 'futureThing:abc', token: '@future:abc' },
             ]);
             expect(envelope.vendorPluginMentions).toBeUndefined();
             expect(envelope.skillMentions).toBeUndefined();
@@ -283,57 +247,44 @@ describe('structured input mentions', () => {
         });
     });
 
-    it('leaves a mention alone when text is inserted after its token', () => {
+    it('decides each mention independently of its siblings', () => {
         expect(reconcileStructuredInputMentionsWithText({
-            previousText: 'Call @gmail',
-            nextText: 'Call @gmail now',
-            mentions: [vendorPluginMention],
-        })).toEqual([expect.objectContaining({ start: 5, end: 11 })]);
+            text: 'Hey @gmail',
+            mentions: [vendorPluginMention, skillMention],
+        })).toEqual([vendorPluginMention]);
     });
 
-    it('shifts every following mention when a selection before them is replaced', () => {
-        // 'Call ' -> 'Hey ': one code unit shorter, so both tokens move back by one.
-        expect(reconcileStructuredInputMentionsWithTextChange({
-            previousText: 'Call @gmail$review',
-            nextText: 'Hey @gmail$review',
-            previousSelection: { start: 0, end: 5 },
-            mentions: [
-                { ...vendorPluginMention, start: 5, end: 11 },
-                { ...skillMention, start: 11, end: 18 },
-            ],
-        })).toEqual([
-            expect.objectContaining({ kind: 'vendorPlugin', start: 4, end: 10 }),
-            expect.objectContaining({ kind: 'skill', start: 10, end: 17 }),
-        ]);
-    });
+    it('matches a token containing an astral code point', () => {
+        // Containment compares strings, so a surrogate pair needs no special handling — but a
+        // token that differs only in its emoji must still not match.
+        const emojiMention = {
+            ...vendorPluginMention,
+            tokenText: '@"notes \u{1F600}.md"',
+        } satisfies ComposerStructuredInputMention;
 
-    it('shifts a mention by UTF-16 code units when a surrogate pair is inserted before it', () => {
-        // A single astral code point occupies two UTF-16 code units, which is the unit the
-        // range contract and `String.prototype.slice` both use.
         expect(reconcileStructuredInputMentionsWithText({
-            previousText: 'Call @gmail',
-            nextText: 'Call \u{1F600}@gmail',
-            mentions: [vendorPluginMention],
-        })).toEqual([expect.objectContaining({ start: 7, end: 13 })]);
+            text: 'read @"notes \u{1F600}.md" first',
+            mentions: [emojiMention],
+        })).toEqual([emojiMention]);
+        expect(reconcileStructuredInputMentionsWithText({
+            text: 'read @"notes \u{1F601}.md" first',
+            mentions: [emojiMention],
+        })).toEqual([]);
     });
 
     it('reconciles a mention of an unknown kind through the same generic path (INV-4)', () => {
         const unknownMention = {
             kind: 'happier.session',
             tokenText: '@session:abc',
-            start: 5,
-            end: 17,
         } satisfies ComposerStructuredInputMention;
 
         expect(reconcileStructuredInputMentionsWithText({
-            previousText: 'Call @session:abc',
-            nextText: 'Please Call @session:abc',
+            text: 'Please Call @session:abc',
             mentions: [unknownMention],
-        })).toEqual([expect.objectContaining({ kind: 'happier.session', start: 12, end: 24 })]);
+        })).toEqual([unknownMention]);
 
         expect(reconcileStructuredInputMentionsWithText({
-            previousText: 'Call @session:abc',
-            nextText: 'Call @session:ab',
+            text: 'Call @session:ab',
             mentions: [unknownMention],
         })).toEqual([]);
     });
@@ -343,8 +294,6 @@ describe('structured input mentions', () => {
             mentions: [{
                 kind: 'happier.session',
                 tokenText: '@session:abc',
-                start: 5,
-                end: 17,
             }],
             text: 'Call @session:abc',
         });

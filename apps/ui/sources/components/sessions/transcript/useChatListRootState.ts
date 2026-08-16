@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { isRecoveredHistoryTranscriptObservationProvenance } from '@happier-dev/protocol';
 import {
     useSessionActionDrafts,
     useSessionPendingMessages,
@@ -26,7 +27,6 @@ import { useTranscriptRootThinkingState } from '@/components/sessions/transcript
 import { useTranscriptRootMessages } from '@/components/sessions/transcript/items/useTranscriptRootMessages';
 import { resolveTranscriptEventEmphasisByMessageId } from '@/components/sessions/transcript/events/transcriptEventEmphasis';
 import type { Message } from '@/sync/domains/messages/messageTypes';
-import { isRecoveredHistoryTranscriptObservation } from '@/sync/domains/messages/transcriptObservationProvenance';
 
 export function resolveLatestCommittedActivityKey(params: Readonly<{
     messageIdsOldestFirst: readonly string[];
@@ -37,7 +37,10 @@ export function resolveLatestCommittedActivityKey(params: Readonly<{
         const message = params.messagesById[id];
         // A temporarily unavailable message retains the legacy live behavior. Only authenticated,
         // explicit recovered-history provenance is allowed to suppress tail activity.
-        if (!message || !isRecoveredHistoryTranscriptObservation(message)) return id;
+        if (
+            !message
+            || !isRecoveredHistoryTranscriptObservationProvenance(message.transcriptObservationProvenance)
+        ) return id;
     }
     return null;
 }

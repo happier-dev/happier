@@ -32,10 +32,30 @@ const runSnapshots = vi.hoisted(() => new Map<string, unknown>());
 /** Every sidechain this render actually asked the server for, in order. */
 const ensureSidechainSpy = vi.hoisted(() => vi.fn(async () => 'loaded' as const));
 
+/**
+ * The layout the hosts are asked about. Both hosts now put a press wherever the layout can host it —
+ * a details pane, or a full screen — so a parity test that could only render one layout would
+ * certify half the contract. The pane host normalizes web to `tablet`, so the phone case is only
+ * reachable on a native platform.
+ */
+const layoutState = vi.hoisted(() => ({
+    deviceType: 'tablet' as 'phone' | 'tablet',
+    platformOS: 'web' as 'web' | 'ios',
+}));
+
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock();
+    return createReactNativeWebMock({
+        Platform: Object.defineProperty({}, 'OS', {
+            get: () => layoutState.platformOS,
+            enumerable: true,
+        }) as any,
+    });
 });
+
+vi.mock('@/utils/platform/responsive', () => ({
+    useDeviceType: () => layoutState.deviceType,
+}));
 
 vi.mock('react-native-unistyles', async () => {
     const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
@@ -376,6 +396,8 @@ describe('one agent-activity surface, two hosts', () => {
 
     beforeEach(() => {
         previousStorageState = storage.getState();
+        layoutState.deviceType = 'tablet';
+        layoutState.platformOS = 'web';
         routerPushSpy.mockClear();
         openDetailsTabSpy.mockClear();
         ensureSidechainSpy.mockClear();
@@ -547,18 +569,33 @@ describe('one agent-activity surface, two hosts', () => {
         expect(openDetailsTabSpy).toHaveBeenCalled();
         await pane.unmount();
 
+        openDetailsTabSpy.mockClear();
         const compact = await testkit.renderScreen(<CompactHost sessionId={SESSION_ID} />);
         await testkit.flushHookEffects();
         const compactRow = compact.findByTestId(`${COMPACT_TEST_ID}:row:${subagentId}`);
         expect(compactRow?.props.accessibilityRole).toBe('button');
         compact.pressByTestId(`${COMPACT_TEST_ID}:row:${subagentId}`);
-        // Same work, same destination: the transcript message the pane's details tab resolves, on
-        // the route a phone can actually reach.
+        // Same work, same destination as the pane. This host used to push the full-screen route on
+        // EVERY device, on the reasoning that a popover has no pane to open a tab in — but a pane
+        // scope is addressed by session id, exactly as a transcript file link addresses it.
+        expect(openDetailsTabSpy).toHaveBeenCalled();
+        expect(routerPushSpy).not.toHaveBeenCalled();
+        await compact.unmount();
+
+        // And on a phone, where no pane is ever drawn, the SAME press reaches the same work by the
+        // route that device can actually serve.
+        openDetailsTabSpy.mockClear();
+        layoutState.deviceType = 'phone';
+        layoutState.platformOS = 'ios';
+        const phone = await testkit.renderScreen(<CompactHost sessionId={SESSION_ID} />);
+        await testkit.flushHookEffects();
+        phone.pressByTestId(`${COMPACT_TEST_ID}:row:${subagentId}`);
         expect(routerPushSpy).toHaveBeenCalledWith(
             `/session/${SESSION_ID}/message/${encodeURIComponent(`tool:${testkit.agentActivityFixtureSidechainId('alpha')}`)}`,
         );
-        await compact.unmount();
-    }, 120_000);
+        expect(openDetailsTabSpy).not.toHaveBeenCalled();
+        await phone.unmount();
+    }, 180_000);
 
     /**
      * (W23-d2) The two gestures on one row, and neither eats the other.
@@ -817,10 +854,135 @@ describe('one agent-activity surface, two hosts', () => {
             expect(text, `${agent.title} line`).toContain(agent.line);
             expect(text, `${agent.title} step`).toContain(`${agent.agentId}.ts`);
         }
-        // An orphan sidechain has no owning tool message, so nothing may advertise a screen for it.
-        expect(pane.findByTestId(
-            `${PANE_TEST_ID}:preview:${buildAgentActivityEntryId({ kind: 'workflow_agent', runId, agentId: 'a1' })}:open-details`,
-        )).toBeNull();
+        await pane.unmount();
+    }, 180_000);
+
+    /**
+     * (W32-a, revised W33) The imported transcript has a destination in BOTH hosts.
+     *
+     * An orphan workflow sidechain has no owning tool message, so no *subagent* route can address it
+     * and the row press still discloses rather than navigating. W32 gave it a scoped transcript
+     * details tab and stopped there, so the popover — the only agent surface a phone shows — could
+     * preview one and open nothing. W33 gave the same target a scoped SCREEN, and both hosts now ask
+     * one question: can this layout host a details pane? So the discriminating pair is no longer
+     * pane-versus-popover but wide-versus-phone, asserted here on the same seeded agent in both.
+     */
+    it('opens the imported transcript from BOTH hosts — a details tab, or its own screen', async () => {
+        const runId = 'wf_host';
+        const entryId = buildAgentActivityEntryId({ kind: 'workflow_agent', runId, agentId: 'a1' });
+        const fixture = testkit.makeSessionAgentActivityFixture({
+            sessionId: SESSION_ID,
+            session: {
+                metadata: unifiedHeadline({
+                    activeEntries: [workflowAgentEntry({
+                        runId,
+                        agentId: 'a1',
+                        title: 'Reviewer',
+                        status: 'running',
+                        parented: false,
+                        sidechainId: 'wf_host/a1',
+                    })],
+                }) as never,
+            },
+        });
+        fixture.reducerState.sidechains.set('wf_host/a1', [
+            testkit.makeAgentActivitySidechainMessage({ id: 'host_line', createdAt: 1_000, text: 'Reviewed the auth flow' }),
+        ]);
+        seed(fixture);
+
+        const pane = await testkit.renderScreen(
+            <SessionRightPanelAgentsView sessionId={SESSION_ID} scopeId="session:s1" />,
+        );
+        await testkit.flushHookEffects();
+        pane.pressByTestId(`${PANE_TEST_ID}:row:${entryId}`);
+        await testkit.flushHookEffects();
+        const fetchedToDraw = sidechainRequests();
+        expect(fetchedToDraw).toEqual(['wf_host/a1']);
+
+        expect(pane.findByTestId(`${PANE_TEST_ID}:preview:${entryId}:open-details`)).toBeTruthy();
+        pane.pressByTestId(`${PANE_TEST_ID}:preview:${entryId}:open-details`);
+        expect(openDetailsTabSpy).toHaveBeenCalledTimes(1);
+        expect(openDetailsTabSpy.mock.calls[0]?.[0]).toMatchObject({
+            kind: 'transcript',
+            title: 'Reviewer',
+            resource: {
+                kind: 'transcript',
+                scope: { kind: 'sidechain', sessionId: SESSION_ID, sidechainId: 'wf_host/a1' },
+            },
+        });
+        // Opening the transcript reuses what the preview already loaded; it does not re-ask.
+        expect(sidechainRequests()).toEqual(fetchedToDraw);
+        // No route was claimed: there is still no screen for a sidechain nobody owns.
+        expect(routerPushSpy).not.toHaveBeenCalled();
+        await pane.unmount();
+
+        openDetailsTabSpy.mockClear();
+        const compact = await testkit.renderScreen(<CompactHost sessionId={SESSION_ID} />);
+        await testkit.flushHookEffects();
+        compact.pressByTestId(`${COMPACT_TEST_ID}:row:${entryId}`);
+        await testkit.flushHookEffects();
+        expect(compact.findByTestId(`${COMPACT_TEST_ID}:preview:${entryId}`)).toBeTruthy();
+        // The affordance this surface used to lack entirely. An imported sidecar has no route of its
+        // own, so "no pane here" meant "openable nowhere" — on the only agent surface a phone shows.
+        expect(compact.findByTestId(`${COMPACT_TEST_ID}:preview:${entryId}:open-details`)).toBeTruthy();
+        compact.pressByTestId(`${COMPACT_TEST_ID}:preview:${entryId}:open-details`);
+        expect(openDetailsTabSpy.mock.calls[0]?.[0]).toMatchObject({
+            kind: 'transcript',
+            resource: { scope: { kind: 'sidechain', sessionId: SESSION_ID, sidechainId: 'wf_host/a1' } },
+        });
+        await compact.unmount();
+
+        // On a phone the same press reaches the scoped transcript screen instead — the destination
+        // that makes an imported sidecar readable at all on that device.
+        openDetailsTabSpy.mockClear();
+        routerPushSpy.mockClear();
+        layoutState.deviceType = 'phone';
+        layoutState.platformOS = 'ios';
+        const phone = await testkit.renderScreen(<CompactHost sessionId={SESSION_ID} />);
+        await testkit.flushHookEffects();
+        phone.pressByTestId(`${COMPACT_TEST_ID}:row:${entryId}`);
+        await testkit.flushHookEffects();
+        phone.pressByTestId(`${COMPACT_TEST_ID}:preview:${entryId}:open-details`);
+        expect(routerPushSpy).toHaveBeenCalledWith(
+            `/session/${SESSION_ID}/transcript?sidechainId=${encodeURIComponent('wf_host/a1')}&title=Reviewer`,
+        );
+        expect(openDetailsTabSpy).not.toHaveBeenCalled();
+        await phone.unmount();
+    }, 240_000);
+
+    /**
+     * (W32-b) The other direction: an imported transcript is what earns the affordance, not the
+     * kind. A workflow agent with no sidecar discloses nothing and is announced as nothing.
+     */
+    it('draws no body and no affordance for a workflow agent with no imported transcript', async () => {
+        const runId = 'wf_bare';
+        const entryId = buildAgentActivityEntryId({ kind: 'workflow_agent', runId, agentId: 'a1' });
+        seed(testkit.makeSessionAgentActivityFixture({
+            sessionId: SESSION_ID,
+            session: {
+                metadata: unifiedHeadline({
+                    activeEntries: [workflowAgentEntry({
+                        runId,
+                        agentId: 'a1',
+                        title: 'Reviewer',
+                        status: 'running',
+                        parented: false,
+                    })],
+                }) as never,
+            },
+        }));
+
+        const pane = await testkit.renderScreen(
+            <SessionRightPanelAgentsView sessionId={SESSION_ID} scopeId="session:s1" />,
+        );
+        await testkit.flushHookEffects();
+        const row = pane.findByTestId(`${PANE_TEST_ID}:row:${entryId}`);
+        expect(row).toBeTruthy();
+        expect(row?.props.onPress).toBeUndefined();
+        expect(row?.props.accessibilityRole).not.toBe('button');
+        expect(pane.findByTestId(`${PANE_TEST_ID}:preview:${entryId}`)).toBeNull();
+        expect(pane.findByTestId(`${PANE_TEST_ID}:preview:${entryId}:open-details`)).toBeNull();
+        expect(sidechainRequests()).toEqual([]);
         await pane.unmount();
     }, 180_000);
 

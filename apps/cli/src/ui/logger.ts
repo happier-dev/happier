@@ -14,6 +14,7 @@ import { configuration } from '@/configuration'
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { basename, dirname, join } from 'node:path'
 import { inspect } from 'node:util'
+import { redactBugReportSensitiveText } from '@happier-dev/protocol'
 import { writeConsoleErrorBestEffort, writeConsoleLogBestEffort } from '@/utils/writeConsoleBestEffort'
 import { pruneLogsByCount } from '@/utils/logs/pruneLogsByCount'
 import {
@@ -27,6 +28,44 @@ import { BufferedFileAppender } from './logFileAppender'
 import { isFileLogLevelEnabled, resolveFileLogLevel, type FileLogLevel } from './logFileLevel'
 // Note: readDaemonState is imported lazily inside listDaemonLogFiles() to avoid
 // circular dependency: logger.ts ↔ persistence.ts
+
+const MAX_FATAL_ERROR_LOG_CHARS = 50_000
+
+function readStringPropertyBestEffort(value: object, key: 'message' | 'name' | 'stack'): string | null {
+  try {
+    const candidate = (value as Record<string, unknown>)[key]
+    return typeof candidate === 'string' && candidate.trim() ? candidate : null
+  } catch {
+    return null
+  }
+}
+
+function formatFatalErrorForLog(error: unknown): string {
+  try {
+    let detail: string
+    if (error && typeof error === 'object') {
+      const stack = readStringPropertyBestEffort(error, 'stack')
+      const message = readStringPropertyBestEffort(error, 'message')
+      const name = readStringPropertyBestEffort(error, 'name')
+      detail = stack ?? (message ? `${name ?? 'Error'}: ${message}` : 'Unknown error')
+    } else if (typeof error === 'string') {
+      detail = error
+    } else {
+      try {
+        detail = String(error ?? 'Unknown error')
+      } catch {
+        detail = 'Unknown error'
+      }
+    }
+
+    const redacted = redactBugReportSensitiveText(detail)
+    return redacted.length > MAX_FATAL_ERROR_LOG_CHARS
+      ? `${redacted.slice(0, MAX_FATAL_ERROR_LOG_CHARS)}\n…[truncated]`
+      : redacted
+  } catch {
+    return 'Unknown error'
+  }
+}
 
 /**
  * Consistent date/time formatting functions
@@ -342,6 +381,11 @@ class Logger {
     this.logToFile(`[${this.localTimezoneTimestamp()}]`, message, ...args)
   }
 
+  infoFile(message: string, ...args: unknown[]): void {
+    if (!this.infoFileEnabled) return
+    this.logToFile(`[${this.localTimezoneTimestamp()}]`, message, ...args)
+  }
+
   infoDeveloper(message: string, ...args: unknown[]): void {
     // Developer diagnostics are debug-level file entries.
     this.debug(message, ...args)
@@ -356,6 +400,32 @@ class Logger {
     this.logToConsole('warn', '', message, ...args)
     if (!this.warnFileEnabled) return
     this.logToFile(`[${this.localTimezoneTimestamp()}]`, `[WARN] ${message}`, ...args)
+  }
+
+  /**
+   * Persist an unhandled CLI failure before a detached runner exits. This deliberately
+   * records only sanitized Error text: enumerable fields can contain argv or environment
+   * snapshots and are never serialized. The write and synchronous drain are best-effort.
+   */
+  fatal(error: unknown): void {
+    try {
+      const detail = formatFatalErrorForLog(error)
+      this.fileAppender.append(
+        `[${this.localTimezoneTimestamp()}] [FATAL] Unhandled CLI error ${detail}\n`,
+      )
+    } catch {
+      try {
+        this.fileAppender.append('[FATAL] Unhandled CLI error Unknown error\n')
+      } catch {
+        // Fatal reporting must never replace or mask the originating failure.
+      }
+    } finally {
+      try {
+        this.flushSync()
+      } catch {
+        // Keep fatal reporting best-effort even if the logger implementation evolves.
+      }
+    }
   }
 
   getLogPath(): string {

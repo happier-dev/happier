@@ -19,8 +19,10 @@ function runAfterNativePopoverDismiss(action: () => void): void {
         action();
         return;
     }
-    // A saturated JS thread can starve InteractionManager indefinitely; the fallback
-    // guarantees the picker still opens after a bounded delay.
+    // On RN 0.81 New Arch this is a microtask, not a real deferral (see the helper's doc comment):
+    // InteractionManager is the no-op stub, so nothing can starve it and nothing waits for the
+    // popover's exit animation. The bounded `setTimeout` below is what actually lets the popover
+    // dismiss before the OS picker takes over the screen.
     runAfterInteractionsWithFallback(() => {
         setTimeout(action, NATIVE_PICKER_OPEN_AFTER_POPOVER_DISMISS_DELAY_MS);
     });

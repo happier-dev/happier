@@ -115,6 +115,12 @@ type Deferred<T> = {
   reject: (error: unknown) => void;
 };
 
+type RequiredMcpServerReadinessOutcome = Readonly<
+  | { status: 'ready' }
+  | { status: 'failed'; error: unknown }
+  | { status: 'superseded' }
+>;
+
 type OpenCodeToolObservationProvenance = Readonly<
   | { source: 'provider-live-subscription' }
   | { source: 'control-plane-history' }
@@ -213,12 +219,18 @@ export type OpenCodeServerRuntimeDeps = Readonly<{
   createClient?: typeof createOpenCodeServerRuntimeClient;
 }>;
 
+export type OpenCodeHappierMcpAdmission = Readonly<
+  | { kind: 'required' }
+  | { kind: 'not_available_for_execution_run' }
+>;
+
 export function createOpenCodeServerRuntime(params: {
   directory: string;
   env?: NodeJS.ProcessEnv;
   session: ApiSessionClient;
   messageBuffer: MessageBuffer;
   mcpServers: Record<string, McpServerConfig>;
+  happierMcpAdmission: OpenCodeHappierMcpAdmission;
   permissionHandler: ProviderEnforcedPermissionHandler;
   onThinkingChange: (thinking: boolean) => void;
   getPermissionMode?: () => PermissionMode | null | undefined;
@@ -321,12 +333,28 @@ export function createOpenCodeServerRuntime(params: {
 
   let selectedAgent: string | null = null;
   let selectedModel: OpenCodeModelRef | null = null;
+  let selectedModelWasQualifiedOverride = false;
   const configOverrides: Record<string, unknown> = {};
   let omitCustomMessageIdForResumedSession = false;
   let ensuredMcpServersForDirectory = false;
   let mcpServerRegistrationInFlight: Promise<void> | null = null;
   let mcpServerRegistrationRerunRequested = false;
   const ensuredMcpServerNames = new Set<string>();
+  const requiredMcpServerName = params.happierMcpAdmission.kind === 'required'
+    ? 'happier'
+    : null;
+  let requiredMcpServerReadiness = {
+    deferred: createDeferred<RequiredMcpServerReadinessOutcome>(),
+  };
+  if (
+    requiredMcpServerName
+    && !Object.prototype.hasOwnProperty.call(params.mcpServers, requiredMcpServerName)
+  ) {
+    requiredMcpServerReadiness.deferred.resolve({
+      status: 'failed',
+      error: new Error('required Happier MCP server configuration is missing'),
+    });
+  }
 
   let turnDeferred: Deferred<void> | null = null;
   let turnInFlight = false;
@@ -954,13 +982,51 @@ export function createOpenCodeServerRuntime(params: {
       : null;
   };
 
-  const resolveModelOverride = async (rawModelId: string): Promise<OpenCodeModelRef | null> => {
+  const validateQualifiedModelAgainstProviderInventory = async (
+    model: OpenCodeModelRef,
+  ): Promise<OpenCodeModelRef> => {
+    const c = await ensureClient();
+    let providers: Awaited<ReturnType<OpenCodeServerRuntimeClient['providersList']>>;
+    try {
+      providers = await c.providersList();
+    } catch {
+      // Preserve OpenCode custom-model behavior when the provider inventory is unavailable. A
+      // successful inventory response is authoritative; a transport/runtime failure is not.
+      return model;
+    }
+
+    const providerInfo = providers.find(
+      (providerRecord) => normalizeString(providerRecord.id) === model.providerID,
+    );
+    if (asRecord(providerInfo?.models)) {
+      const inventoryMatch = findModelForProvider(
+        providers,
+        model.providerID,
+        model.modelID,
+      );
+      if (inventoryMatch) return inventoryMatch;
+    }
+
+    const modelId = `${model.providerID}/${model.modelID}`;
+    throw new ProviderPromptSubmissionRejectedBeforeEffectError(
+      'provider_rejected_before_acceptance',
+      new Error(`OpenCode model is not available from the current provider inventory: ${modelId}`),
+    );
+  };
+
+  const resolveModelOverride = async (
+    rawModelId: string,
+    options: Readonly<{ validateQualifiedModel?: boolean }> = {},
+  ): Promise<OpenCodeModelRef | null> => {
     const trimmed = rawModelId.trim();
     if (!trimmed) return null;
 
     const parsed = parseOpenCodeModelId(trimmed);
     if (parsed) {
-      return modelIsSelectable(parsed) ? parsed : null;
+      if (!modelIsSelectable(parsed)) return null;
+      return options.validateQualifiedModel === true
+        ? await validateQualifiedModelAgainstProviderInventory(parsed)
+        : parsed;
     }
 
     const c = await ensureClient();
@@ -992,8 +1058,13 @@ export function createOpenCodeServerRuntime(params: {
 
   const resolvePromptModelOverride = async (meta: unknown): Promise<OpenCodeModelRef | undefined> => {
     const rawModelId = normalizeString(asRecord(meta)?.model).trim();
-    if (!rawModelId) return selectedModel ?? undefined;
-    return (await resolveModelOverride(rawModelId)) ?? undefined;
+    if (rawModelId) {
+      return (await resolveModelOverride(rawModelId, { validateQualifiedModel: true })) ?? undefined;
+    }
+    if (!selectedModel) return undefined;
+    return selectedModelWasQualifiedOverride
+      ? await validateQualifiedModelAgainstProviderInventory(selectedModel)
+      : selectedModel;
   };
 
   const isPrePromptMessageId = (messageId: string): boolean => {
@@ -2415,7 +2486,11 @@ export function createOpenCodeServerRuntime(params: {
         reason: 'abort',
         interruptedReason: 'provider_session_error',
       });
-      surfaceOpenCodeRuntimeFailure('session_error', candidate.providerError, terminalMarkerId);
+      if (isAbortLikeError(failureError)) {
+        params.session.sendAgentMessage(provider, { type: 'turn_aborted', id: terminalMarkerId });
+      } else {
+        surfaceOpenCodeRuntimeFailure('session_error', candidate.providerError, terminalMarkerId);
+      }
       rejectTurn(failureError);
       return false;
     }
@@ -3722,6 +3797,13 @@ export function createOpenCodeServerRuntime(params: {
         });
         return;
       }
+      if (turnPromptActive && !isExpectedExplicitCancelError) {
+        // OpenCode publishes session.error before it marks the assistant message terminal and then
+        // publishes idle. Treat this live frame as a nonterminal hint: the exact-parent authoritative
+        // message inventory in maybeResolveTurnOnIdleSignal owns success/error adjudication. This
+        // also prevents an unrelated same-session error from failing the current Happier turn.
+        return;
+      }
       const failureError = detail ? new Error(detail) : rec.error ?? new Error('OpenCode session error');
       const isAbortLikeSessionError = isAbortLikeError(failureError);
       const terminalMarkerId = ensureActiveLifecycleMarkerId();
@@ -3755,16 +3837,55 @@ export function createOpenCodeServerRuntime(params: {
     resetTurnEventState();
   };
 
+  const invalidateMcpServersForCurrentDirectory = (): void => {
+    ensuredMcpServersForDirectory = false;
+    if (!requiredMcpServerName) return;
+    requiredMcpServerReadiness.deferred.resolve({ status: 'superseded' });
+    requiredMcpServerReadiness = {
+      deferred: createDeferred<RequiredMcpServerReadinessOutcome>(),
+    };
+    if (!Object.prototype.hasOwnProperty.call(params.mcpServers, requiredMcpServerName)) {
+      requiredMcpServerReadiness.deferred.resolve({
+        status: 'failed',
+        error: new Error('required Happier MCP server configuration is missing'),
+      });
+    }
+  };
+
   const registerMcpServersForCurrentDirectoryBestEffort = async (): Promise<void> => {
     if (ensuredMcpServersForDirectory) return;
     if (!params.mcpServers || Object.keys(params.mcpServers).length === 0) return;
-    const c = await ensureClient();
+    const requiredReadinessForRegistration = requiredMcpServerReadiness;
+    let c: OpenCodeServerRuntimeClient;
+    try {
+      c = await ensureClient();
+    } catch (error) {
+      if (
+        requiredMcpServerName
+        && requiredMcpServerReadiness === requiredReadinessForRegistration
+      ) {
+        requiredReadinessForRegistration.deferred.resolve({ status: 'failed', error });
+      }
+      throw error;
+    }
     let hadFailures = false;
     for (const [name, cfg] of Object.entries(params.mcpServers)) {
       const serverName = typeof name === 'string' ? name.trim() : '';
       if (!serverName) continue;
       const cmd = typeof cfg?.command === 'string' ? cfg.command.trim() : '';
-      if (!cmd) continue;
+      if (!cmd) {
+        if (
+          serverName === requiredMcpServerName
+          && requiredMcpServerReadiness === requiredReadinessForRegistration
+        ) {
+          requiredReadinessForRegistration.deferred.resolve({
+            status: 'failed',
+            error: new Error('required Happier MCP server command is missing'),
+          });
+        }
+        hadFailures = true;
+        continue;
+      }
       const args = Array.isArray(cfg.args) ? cfg.args.filter((v) => typeof v === 'string' && v.trim().length > 0).map((v) => v.trim()) : [];
       const env = cfg.env && typeof cfg.env === 'object' && !Array.isArray(cfg.env)
         ? Object.fromEntries(
@@ -3773,7 +3894,7 @@ export function createOpenCodeServerRuntime(params: {
         : undefined;
 
       try {
-        await c.mcpAdd({
+        const registrationStatus = await c.mcpAdd({
           name: serverName,
           config: {
             type: 'local',
@@ -3782,10 +3903,33 @@ export function createOpenCodeServerRuntime(params: {
             ...(env && Object.keys(env).length > 0 ? { environment: env } : {}),
           },
         });
+        if (registrationStatus.status !== 'connected') {
+          const detail = 'error' in registrationStatus ? `: ${registrationStatus.error}` : '';
+          throw new Error(
+            `OpenCode MCP server "${serverName}" returned status "${registrationStatus.status}"${detail}`,
+          );
+        }
         ensuredMcpServerNames.add(serverName);
+        if (
+          serverName === requiredMcpServerName
+          && requiredMcpServerReadiness === requiredReadinessForRegistration
+        ) {
+          requiredReadinessForRegistration.deferred.resolve({ status: 'ready' });
+        }
       } catch (error) {
         hadFailures = true;
-        logger.debug('[OpenCodeServer] Failed to register MCP server (non-fatal)', { serverName, error });
+        if (
+          serverName === requiredMcpServerName
+          && requiredMcpServerReadiness === requiredReadinessForRegistration
+        ) {
+          requiredReadinessForRegistration.deferred.resolve({ status: 'failed', error });
+        }
+        logger.debug(
+          serverName === requiredMcpServerName
+            ? '[OpenCodeServer] Required Happier MCP server registration failed; prompt admission will fail closed'
+            : '[OpenCodeServer] Failed to register MCP server (non-fatal)',
+          { serverName, error },
+        );
       }
     }
     ensuredMcpServersForDirectory = hadFailures !== true;
@@ -3809,6 +3953,32 @@ export function createOpenCodeServerRuntime(params: {
         ensuredMcpServersForDirectory = false;
         scheduleMcpServersForCurrentDirectoryBestEffort();
       });
+  };
+
+  const waitForRequiredMcpServerBeforePrompt = async (
+    turn: Deferred<void>,
+    targetSessionId: string,
+  ): Promise<RequiredMcpServerReadinessOutcome | null> => {
+    if (!requiredMcpServerName) return { status: 'ready' };
+    for (;;) {
+      if (!isActivePromptTurn(turn, targetSessionId)) return null;
+      const readiness = requiredMcpServerReadiness;
+      const outcome = await Promise.race([
+        readiness.deferred.promise.then((result) => ({ type: 'readiness' as const, result })),
+        turn.promise.then(
+          () => ({ type: 'turn_resolved' as const }),
+          (error: unknown) => ({ type: 'turn_rejected' as const, error }),
+        ),
+      ]);
+
+      if (outcome.type === 'turn_rejected') throw outcome.error;
+      if (outcome.type === 'turn_resolved') return null;
+      if (!isActivePromptTurn(turn, targetSessionId)) return null;
+      if (readiness !== requiredMcpServerReadiness || outcome.result.status === 'superseded') {
+        continue;
+      }
+      return outcome.result;
+    }
   };
 
   const drainPendingAfterStartOrLoad = async (): Promise<void> => {
@@ -3861,7 +4031,7 @@ export function createOpenCodeServerRuntime(params: {
     },
 
     async startOrLoad(opts: { resumeId?: string | null } = {}): Promise<string> {
-      ensuredMcpServersForDirectory = false;
+      invalidateMcpServersForCurrentDirectory();
       await attachSubscriptionIfNeeded();
       const c = await ensureClient();
 
@@ -3876,11 +4046,13 @@ export function createOpenCodeServerRuntime(params: {
         const sessionDirectory = normalizeString(existing.directory).trim();
         if (sessionDirectory) {
           try {
-            c.setDirectoryOverride(sessionDirectory);
+            if (c.setDirectoryOverride(sessionDirectory)) {
+              resetServerConnectedReadiness();
+            }
           } catch {
             // non-fatal
           }
-          ensuredMcpServersForDirectory = false;
+          invalidateMcpServersForCurrentDirectory();
           scheduleMcpServersForCurrentDirectoryBestEffort();
         }
         await c.sessionUpdate({ sessionId: sessionId!, permission: [...resolveSessionPermissionRuleset()] as unknown[] });
@@ -3941,11 +4113,13 @@ export function createOpenCodeServerRuntime(params: {
       const createdDirectory = normalizeString(created.directory).trim();
       if (createdDirectory) {
         try {
-          c.setDirectoryOverride(createdDirectory);
+          if (c.setDirectoryOverride(createdDirectory)) {
+            resetServerConnectedReadiness();
+          }
         } catch {
           // non-fatal
         }
-        ensuredMcpServersForDirectory = false;
+        invalidateMcpServersForCurrentDirectory();
         scheduleMcpServersForCurrentDirectoryBestEffort();
       }
       publishDynamicSessionOptionsBestEffort();
@@ -3965,7 +4139,6 @@ export function createOpenCodeServerRuntime(params: {
       const promptSessionId = sessionId;
       if (!promptSessionId) throw new Error('OpenCode server session was not started');
       const c = await ensureClient();
-      scheduleMcpServersForCurrentDirectoryBestEffort();
       const effectiveText = typeof paramsWithMeta.text === 'string' ? paramsWithMeta.text : '';
 
       const shouldOmitCustomMessageId = omitCustomMessageIdForResumedSession === true;
@@ -4016,6 +4189,32 @@ export function createOpenCodeServerRuntime(params: {
         return;
       }
 
+      const requiredMcpReadiness = await waitForRequiredMcpServerBeforePrompt(thisTurnDeferred, promptSessionId);
+      if (requiredMcpReadiness === null) {
+        throwPromptNotDispatched('required Happier MCP readiness ended before prompt_async');
+      } else if (requiredMcpReadiness.status === 'failed') {
+        const detail = requiredMcpReadiness.error instanceof Error
+          ? requiredMcpReadiness.error.message
+          : formatErrorForUi(requiredMcpReadiness.error, { maxChars: 1_000 }).trim();
+        throwPromptNotDispatched(
+          `required Happier MCP registration failed${detail ? `: ${detail}` : ''}`,
+        );
+      }
+
+      let model: OpenCodeModelRef | undefined;
+      try {
+        model = await resolvePromptModelOverride(paramsWithMeta.meta);
+      } catch (error) {
+        setThinking(false);
+        await flushAndClearStreamWriters({
+          reason: 'abort',
+          interruptedReason: 'provider_session_error',
+        });
+        surfaceOpenCodeRuntimeFailure('session_error', error);
+        rejectTurn(error);
+        throw error;
+      }
+
       const controlAbort = new AbortController();
       turnControlAbort = controlAbort;
       const deadlockGuardLoop = runTurnDeadlockGuard(controlAbort.signal).catch((error) => {
@@ -4057,7 +4256,6 @@ export function createOpenCodeServerRuntime(params: {
       }
 
       try {
-        const model = await resolvePromptModelOverride(paramsWithMeta.meta);
         const promptAsyncPromise = c.sessionPromptAsync({
           sessionId: promptSessionId,
           messageId: messageID,
@@ -4319,11 +4517,12 @@ export function createOpenCodeServerRuntime(params: {
       foregroundToolTracker.resetForProviderSession(null);
       selectedAgent = null;
       selectedModel = null;
+      selectedModelWasQualifiedOverride = false;
       currentContextWindowTokens = null;
       omitCustomMessageIdForResumedSession = false;
       suppressSessionErrorAbortNotificationForSessionId = null;
       for (const key of Object.keys(configOverrides)) delete configOverrides[key];
-      ensuredMcpServersForDirectory = false;
+      invalidateMcpServersForCurrentDirectory();
       mcpServerRegistrationRerunRequested = false;
       if (ensuredMcpServerNames.size > 0) {
         try {
@@ -4386,10 +4585,12 @@ export function createOpenCodeServerRuntime(params: {
       const trimmed = typeof modelId === 'string' ? modelId.trim() : '';
       if (!trimmed) {
         selectedModel = null;
+        selectedModelWasQualifiedOverride = false;
         publishDynamicSessionOptionsBestEffort();
         return;
       }
       selectedModel = await resolveModelOverride(trimmed);
+      selectedModelWasQualifiedOverride = parseOpenCodeModelId(trimmed) !== null;
       publishDynamicSessionOptionsBestEffort();
     },
   };

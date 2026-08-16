@@ -20,6 +20,7 @@ const state: any = {
       activeAt: Date.now(),
       spawnReadinessStatus: 'ready',
       metadata: {},
+      daemonState: { startedWithCliVersion: '0.2.10-dev.41' },
     },
   },
 };
@@ -86,6 +87,7 @@ describe('spawnSessionWithPickerForVoiceTool', () => {
         activeAt: Date.now(),
         spawnReadinessStatus: 'ready',
         metadata: {},
+        daemonState: { startedWithCliVersion: '0.2.10-dev.41' },
       },
     };
   });
@@ -115,16 +117,14 @@ describe('spawnSessionWithPickerForVoiceTool', () => {
       directory: '/tmp/s2',
       backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
       serverId: 'server-a',
+      pendingFirstInput: {
+        text: 'Hi',
+        localId: expect.stringMatching(/^voice-spawn-first-turn:/),
+      },
     }));
     expect(refreshSessions).toHaveBeenCalled();
     expect(patchSessionMetadataWithRetry).toHaveBeenCalledWith('s_new', expect.any(Function));
-    const spawnRequest = machineSpawnNewSession.mock.calls[0]?.[0] as { userAttemptId: string };
-    expect(followUpSpawnedSessionWithServerScope).toHaveBeenCalledWith({
-      sessionId: 's_new',
-      targetServerId: 'server-a',
-      initialMessageText: 'Hi',
-      messageLocalId: `voice-spawn-first-turn:${spawnRequest.userAttemptId}`,
-    });
+    expect(followUpSpawnedSessionWithServerScope).not.toHaveBeenCalled();
     expect(submitMessage).not.toHaveBeenCalled();
   });
 

@@ -119,6 +119,8 @@ describe('materializeConnectedServicesForSpawn', () => {
     expect(result!.env[HAPPIER_CONNECTED_SERVICE_TARGET_MATERIALIZED_ROOT_ENV_KEY]).toBe(
       expectedCodexRoot,
     );
+    expect(result!.materializationRoot).toBe(expectedCodexRoot);
+    expect(result!.cleanupMaterializationRoot).toEqual(expect.any(Function));
     expect(result!.cleanupOnFailure).toBeNull();
     expect(result!.cleanupOnExit).toBeNull();
 

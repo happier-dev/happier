@@ -490,3 +490,148 @@ describe('NewSessionMcpSelectionContent', () => {
         expectDisplayOnlyOption(requireSelectionList().rootStep, 'detected', 'new-session.mcp.detected-error');
     });
 });
+
+/**
+ * The MCP chip hosts this content through `renderContent({ maxHeight })`, and
+ * `useNewSessionMcpSelection` rebuilds the props object it spreads in whenever
+ * its own `params` object literal changes — which is every render of the new
+ * session screen. So `onSelectionChange` / `onRefresh` / `onOpenSettings`
+ * arrive with fresh identities constantly, while the DATA behind the list is
+ * unchanged.
+ */
+const STABLE_PREVIEW: PreviewSuccessFixture = {
+    ok: true,
+    builtIn: [],
+    managed: [],
+    detected: [],
+};
+const STABLE_SELECTION: SessionMcpSelectionV1 = {
+    v: 1,
+    managedServersEnabled: true,
+    forceIncludeServerIds: [],
+    forceExcludeServerIds: [],
+};
+
+type PreviewSuccessFixture = React.ComponentProps<
+    typeof import('./NewSessionMcpSelectionContent')['NewSessionMcpSelectionContent']
+>['preview'];
+
+type McpChurningHandlers = Readonly<{
+    selectionSpy: ReturnType<typeof vi.fn>;
+    refreshSpy: ReturnType<typeof vi.fn>;
+    settingsSpy: ReturnType<typeof vi.fn>;
+    onSelectionChange: (next: SessionMcpSelectionV1) => void;
+    onRefresh: () => void;
+    onOpenSettings: () => void;
+}>;
+
+/**
+ * `React.ReactElement['props']` is `unknown`, so narrow it to the one prop this
+ * assertion drives rather than reaching through it untyped.
+ */
+function pressAccessoryButton(accessory: SelectionListAccessory | undefined, testID: string): void {
+    const button = findElementByTestId(accessory, testID);
+    expect(button).not.toBeNull();
+    const buttonProps = button?.props as { onPress?: () => void } | undefined;
+    expect(typeof buttonProps?.onPress).toBe('function');
+    buttonProps?.onPress?.();
+}
+
+function makeMcpChurningHandlers(): McpChurningHandlers {
+    const selectionSpy = vi.fn();
+    const refreshSpy = vi.fn();
+    const settingsSpy = vi.fn();
+    return {
+        selectionSpy,
+        refreshSpy,
+        settingsSpy,
+        onSelectionChange: (next) => selectionSpy(next),
+        onRefresh: () => refreshSpy(),
+        onOpenSettings: () => settingsSpy(),
+    };
+}
+
+describe('NewSessionMcpSelectionContent model stability', () => {
+    beforeEach(() => {
+        capturedSelectionLists.length = 0;
+        currentMcpServersSettings = mcpServersSettingsFixture;
+    });
+
+    async function element(handlers: McpChurningHandlers, selectionValue = STABLE_SELECTION) {
+        const { NewSessionMcpSelectionContent } = await import('./NewSessionMcpSelectionContent');
+        return (
+            <NewSessionMcpSelectionContent
+                machineId="machine-1"
+                machineName="Builder"
+                directory="/repo"
+                agentType="claude"
+                hasContext={true}
+                preview={STABLE_PREVIEW}
+                selection={selectionValue}
+                loading={false}
+                error={null}
+                onSelectionChange={handlers.onSelectionChange}
+                onRefresh={handlers.onRefresh}
+                onOpenSettings={handlers.onOpenSettings}
+                maxHeight={520}
+            />
+        );
+    }
+
+    it('reuses the built step tree and header accessories when only handler identities change', async () => {
+        const rendered = await renderScreen(await element(makeMcpChurningHandlers()));
+        await rendered.update(await element(makeMcpChurningHandlers()));
+
+        expect(capturedSelectionLists.length).toBeGreaterThanOrEqual(2);
+        const first = capturedSelectionLists[0]!;
+        const last = capturedSelectionLists[capturedSelectionLists.length - 1]!;
+
+        // Handlers are behaviour, not data. Rebuilding the step tree for them
+        // throws away every option object plus the memoised header accessory
+        // elements, so React can no longer skip those subtrees on re-render.
+        expect(last.rootStep).toBe(first.rootStep);
+        expect(last.rootStep.sections).toBe(first.rootStep.sections);
+        expect(requireSection(last.rootStep, 'happier').headerRightAccessory)
+            .toBe(requireSection(first.rootStep, 'happier').headerRightAccessory);
+
+        await rendered.unmount();
+    });
+
+    it('routes activations to the LATEST handlers after the host replaced them', async () => {
+        const initial = makeMcpChurningHandlers();
+        const rendered = await renderScreen(await element(initial));
+        const next = makeMcpChurningHandlers();
+        await rendered.update(await element(next));
+
+        const step = capturedSelectionLists[capturedSelectionLists.length - 1]!.rootStep;
+        const happierSection = requireSection(step, 'happier');
+        requireOption(happierSection, 'new-session.mcp.managed-enabled').onSelect?.();
+        pressAccessoryButton(happierSection.headerRightAccessory, 'new-session.mcp.happier.refresh');
+        pressAccessoryButton(happierSection.headerRightAccessory, 'new-session.mcp.happier.open-settings');
+
+        expect(next.selectionSpy).toHaveBeenCalledTimes(1);
+        expect(next.refreshSpy).toHaveBeenCalledTimes(1);
+        expect(next.settingsSpy).toHaveBeenCalledTimes(1);
+        expect(initial.selectionSpy).not.toHaveBeenCalled();
+        expect(initial.refreshSpy).not.toHaveBeenCalled();
+        expect(initial.settingsSpy).not.toHaveBeenCalled();
+
+        await rendered.unmount();
+    });
+
+    it('still rebuilds the step tree when the selection data actually changes', async () => {
+        const handlers = makeMcpChurningHandlers();
+        const rendered = await renderScreen(await element(handlers));
+        const before = capturedSelectionLists[capturedSelectionLists.length - 1]!.rootStep;
+
+        await rendered.update(await element(handlers, {
+            ...STABLE_SELECTION,
+            managedServersEnabled: false,
+        }));
+        const after = capturedSelectionLists[capturedSelectionLists.length - 1]!.rootStep;
+
+        expect(after).not.toBe(before);
+
+        await rendered.unmount();
+    });
+});

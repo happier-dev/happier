@@ -7,24 +7,20 @@ function metaWithMentions(mentions: readonly Record<string, unknown>[]): Record<
     return { happierStructuredInputV1: { v: 1, mentions } };
 }
 
-function sessionMention(sessionId: string, token: string, start: number, label?: string) {
+function sessionMention(sessionId: string, token: string, label?: string) {
     return {
         kind: MENTION_KIND_V1.session,
         ref: buildMentionRefForKindV1(MENTION_KIND_V1.session, sessionId),
         token,
-        start,
-        end: start + token.length,
         ...(label ? { label } : {}),
     };
 }
 
-function fileMention(path: string, token: string, start: number) {
+function fileMention(path: string, token: string) {
     return {
         kind: MENTION_KIND_V1.file,
         ref: buildMentionRefForKindV1(MENTION_KIND_V1.file, path),
         token,
-        start,
-        end: start + token.length,
     };
 }
 
@@ -33,7 +29,7 @@ describe('resolveMessageStructuredReferences', () => {
         const text = 'compare with @session:release-prep-a1b2c3';
 
         const withEnvelope = resolveMessageStructuredReferences({
-            meta: metaWithMentions([sessionMention('sess_42', '@session:release-prep-a1b2c3', 13, 'Release prep')]),
+            meta: metaWithMentions([sessionMention('sess_42', '@session:release-prep-a1b2c3', 'Release prep')]),
             text,
         });
         const withoutEnvelope = resolveMessageStructuredReferences({ meta: undefined, text });
@@ -50,7 +46,7 @@ describe('resolveMessageStructuredReferences', () => {
         const text = 'open @"my file.ts" please';
 
         const references = resolveMessageStructuredReferences({
-            meta: metaWithMentions([fileMention('my file.ts', '@"my file.ts"', 5)]),
+            meta: metaWithMentions([fileMention('my file.ts', '@"my file.ts"')]),
             text,
         });
 
@@ -70,7 +66,7 @@ describe('resolveMessageStructuredReferences', () => {
 
     it('collapses an envelope file reference and its text-scan twin into one chip', () => {
         const references = resolveMessageStructuredReferences({
-            meta: metaWithMentions([fileMention('src/api.ts', '@src/api.ts', 4)]),
+            meta: metaWithMentions([fileMention('src/api.ts', '@src/api.ts')]),
             text: 'see @src/api.ts twice: @src/api.ts',
         });
 
@@ -80,8 +76,8 @@ describe('resolveMessageStructuredReferences', () => {
     it('leaves a well-formed unknown kind inert and never reinterprets it as a known one', () => {
         const references = resolveMessageStructuredReferences({
             meta: metaWithMentions([
-                { kind: 'acme.ticket', ref: 'session:sess_42', token: '@acme:1', start: 0, end: 7 },
-                sessionMention('sess_real', '@session:real', 8),
+                { kind: 'acme.ticket', ref: 'session:sess_42', token: '@acme:1' },
+                sessionMention('sess_real', '@session:real'),
             ]),
             text: '@acme:1 @session:real',
         });
@@ -96,8 +92,6 @@ describe('resolveMessageStructuredReferences', () => {
                     kind: MENTION_KIND_V1.file,
                     ref: buildMentionRefForKindV1(MENTION_KIND_V1.file, '../../etc/passwd'),
                     token: '@x',
-                    start: 0,
-                    end: 2,
                 },
             ]),
             text: '@x',
@@ -117,16 +111,16 @@ describe('resolveMessageStructuredReferences', () => {
                 happierStructuredInputV1: {
                     v: 1,
                     mentions: [
-                        // Out-of-order range: rejected element-wise by `sanitizeMentionRefsV1`,
-                        // which runs inside `readHappierStructuredInputV1FromMeta`. This
-                        // projection checks only kind + ref scheme, so bypassing that reader and
-                        // taking `meta.happierStructuredInputV1.mentions` off the RAW meta would
-                        // render it — verified RED. Swapping only
+                        // No `token`: rejected element-wise by `sanitizeMentionRefsV1`, which
+                        // runs inside `readHappierStructuredInputV1FromMeta`. This projection
+                        // checks only kind + ref scheme and never reads `token`, so bypassing
+                        // that reader and taking `meta.happierStructuredInputV1.mentions` off
+                        // the RAW meta would render it — verified RED. Swapping only
                         // `readStructuredInputMentionSourcesV1` for `envelope.mentions` is NOT
                         // caught here and must not be claimed: by that point the envelope is
                         // already sanitized. D-4 precedence is pinned at the protocol owner.
-                        { ...sessionMention('sess_bad', '@session:bad', 0), start: 5, end: 2 },
-                        sessionMention('sess_ok', '@session:ok', 13),
+                        { kind: MENTION_KIND_V1.session, ref: buildMentionRefForKindV1(MENTION_KIND_V1.session, 'sess_bad') },
+                        sessionMention('sess_ok', '@session:ok'),
                     ],
                     skillMentions: [{ name: 'review', path: '/skills/review' }],
                 },

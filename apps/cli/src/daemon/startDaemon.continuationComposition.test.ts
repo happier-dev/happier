@@ -313,7 +313,7 @@ describe('startDaemon connected-service continuation composition', () => {
   it('shares exact live source resolution between in-band reports and scheduler retries', async () => {
     const source = await readFile(new URL('./startDaemon.ts', import.meta.url), 'utf8');
     expect(
-      source.match(/resolveCurrentRuntimeAuthFailureSource: resolveCurrentCodexRuntimeAuthFailureSourceForSession/g),
+      source.match(/resolveCurrentRuntimeAuthFailureSource: resolveCurrentRuntimeAuthFailureSourceForSession/g),
     ).toHaveLength(2);
   });
 });

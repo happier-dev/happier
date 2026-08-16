@@ -110,14 +110,19 @@ describe('useServerRetentionPolicies', () => {
         expect(seen.at(-1)).toMatchObject({
             [serverA.id]: {
                 enabled: true,
-                sessions: {
-                    mode: 'delete_inactive',
-                    inactivityDays: 30,
-                },
+                completeness: 'legacy_partial',
+                domains: expect.arrayContaining([{
+                    id: 'sessions',
+                    policy: { mode: 'delete_inactive', inactivityDays: 30 },
+                }]),
             },
             [serverB.id]: {
                 enabled: false,
-                sessions: { mode: 'keep_forever' },
+                completeness: 'legacy_partial',
+                domains: expect.arrayContaining([{
+                    id: 'sessions',
+                    policy: { mode: 'keep_forever' },
+                }]),
             },
         });
     });
@@ -174,10 +179,11 @@ describe('useServerRetentionPolicies', () => {
         expect(seen.at(-1)).toMatchObject({
             [server.id]: {
                 enabled: true,
-                sessions: {
-                    mode: 'delete_inactive',
-                    inactivityDays: 14,
-                },
+                completeness: 'legacy_partial',
+                domains: expect.arrayContaining([{
+                    id: 'sessions',
+                    policy: { mode: 'delete_inactive', inactivityDays: 14 },
+                }]),
             },
         });
     }, 5_000);

@@ -226,7 +226,7 @@ export async function initializeBackendRunSession(
     const result = await session.enqueueSessionUserMessage({
       text: pendingFirstInput.text,
       localId: pendingFirstInput.localId,
-      meta: { source: 'ui', sentFrom: 'cli' },
+      meta: { ...pendingFirstInput.meta, source: 'ui', sentFrom: 'cli' },
     })
     if (result?.recoveryBlocked) {
       throw new Error(`Pending first input was blocked: ${result.recoveryBlocked.status}`)

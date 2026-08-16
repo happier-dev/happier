@@ -14,6 +14,7 @@ export type SessionActionId =
     | 'ui.session.mark-read'
     | 'ui.session.mark-unread'
     | 'ui.session.rename'
+    | 'ui.session.resume'
     | 'ui.session.stop'
     | 'ui.session.archive'
     | 'ui.session.unarchive'
@@ -39,6 +40,7 @@ export type SessionActionTarget = Readonly<{
     canStop: boolean;
     canArchive: boolean;
     canRename: boolean;
+    canResume: boolean;
     canDelete: boolean;
     readStateAction: SessionReadStateAction;
 }>;
@@ -72,6 +74,7 @@ export type SessionActionExecutionOperations = Readonly<{
     archiveSession?: (sessionId: string, opts?: Readonly<{ serverId?: string | null }>) => Promise<SessionActionOperationResult>;
     unarchiveSession?: (sessionId: string, opts?: Readonly<{ serverId?: string | null }>) => Promise<SessionActionOperationResult>;
     renameSession?: (sessionId: string, title: string, opts?: Readonly<{ serverId?: string | null }>) => Promise<SessionActionOperationResult>;
+    resumeSession?: (sessionId: string) => void | Promise<void>;
     deleteSession?: (sessionId: string, opts?: Readonly<{ serverId?: string | null }>) => Promise<SessionActionOperationResult>;
     setPinned?: (
         sessionId: string,

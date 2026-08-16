@@ -6,7 +6,7 @@ import {
 
 describe('resolveDaemonSessionConnectedServiceAuthSwitchTimeoutMs', () => {
   it('defaults to a completion-sized bound for continuity checks and one bounded group convergence', () => {
-    expect(resolveDaemonSessionConnectedServiceAuthSwitchTimeoutMs({})).toBe(120_000);
+    expect(resolveDaemonSessionConnectedServiceAuthSwitchTimeoutMs({})).toBe(180_000);
   });
 
   it('honors the operation-specific override within daemon-control bounds', () => {

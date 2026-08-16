@@ -19,6 +19,8 @@ import { fireAndForget } from "@/utils/system/fireAndForget";
 import { formatOperationFailedDebugMessage } from "@/utils/errors/formatOperationFailedDebugMessage";
 import { getActiveServerSnapshot } from "@/sync/domains/server/serverRuntime";
 import { getServerFeaturesSnapshot } from "@/sync/api/capabilities/serverFeaturesClient";
+import { getServerRetentionPolicy } from '@/sync/api/capabilities/serverRetentionPolicyClient';
+import { formatServerRetentionDisclosure } from '@/sync/domains/server/retention/formatServerRetentionPolicy';
 import { buildDataKeyCredentialsForToken } from "@/auth/flows/buildDataKeyCredentialsForToken";
 import { digest } from "@/platform/digest";
 import { encodeHex } from "@/encryption/hex";
@@ -142,6 +144,7 @@ function NotAuthenticated() {
         keylessProviderIds: Object.freeze([]),
         preferredKeylessProviderId: null,
     });
+    const [retentionSummary, setRetentionSummary] = React.useState<string | null>(null);
     const autoRedirectAttemptedRef = React.useRef(false);
     const hasPendingTerminalConnect = Boolean(getPendingTerminalConnect());
     const firstLaunchSetupRedirectedRef = React.useRef(false);
@@ -209,6 +212,10 @@ function NotAuthenticated() {
                     setLoginOptions(capabilityOptions.loginOptions);
                     setServerAvailability(capabilityOptions.serverAvailability);
                 }
+                fireAndForget((async () => {
+                    const retentionPolicy = await getServerRetentionPolicy();
+                    if (mounted) setRetentionSummary(formatServerRetentionDisclosure(retentionPolicy));
+                })(), { tag: 'welcome.retentionPolicy' });
 
                 if (
                     !autoRedirectAttemptedRef.current &&
@@ -444,6 +451,7 @@ function NotAuthenticated() {
             allowMobileBrandHero
             onOpenRelayCustomFlow={() => router.push('/setup?openCustom=1')}
             onBrandHeroGetStarted={applyBrandHeroSeen}
+            retentionSummary={retentionSummary}
             testID="unauth-shell-route-welcome"
         >
             <View style={styles.welcomeBody}>

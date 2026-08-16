@@ -18,6 +18,19 @@ async function getFeaturesPayload() {
     return response as any;
 }
 
+async function getRetentionPolicyPayload() {
+    const { featuresRoutes } = await import('./featuresRoutes');
+    const route = createRouteTestBuilder({
+        method: 'GET',
+        path: '/v2/retention-policy',
+        registerRoutes(app) {
+            featuresRoutes(app as any);
+        },
+    });
+    const { response } = await route.invoke();
+    return response as any;
+}
+
 describe("featuresRoutes", () => {
     beforeEach(() => {
         vi.resetModules();
@@ -46,6 +59,28 @@ describe("featuresRoutes", () => {
 
             expect(payload.capabilities.serverIdentity).toEqual({
                 serverIdentityId: null,
+            });
+        });
+    });
+
+    describe('retention policy', () => {
+        it('reports every active retention domain through an extensible complete payload', async () => {
+            resetEnv({
+                HAPPIER_SERVER_RETENTION__ENABLED: '1',
+                HAPPIER_SERVER_RETENTION__SESSION_SIDECHAIN_MESSAGES__MODE: 'delete_older_than',
+                HAPPIER_SERVER_RETENTION__SESSION_SIDECHAIN_MESSAGES__DAYS: '7',
+            });
+
+            const payload = await getRetentionPolicyPayload();
+
+            expect(payload).toMatchObject({
+                version: 2,
+                enabled: true,
+                complete: true,
+            });
+            expect(payload.domains).toContainEqual({
+                id: 'sessionSidechainMessages',
+                policy: { mode: 'delete_older_than', days: 7 },
             });
         });
     });

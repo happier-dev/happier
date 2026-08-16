@@ -19,9 +19,9 @@ import { buildAgentInputCommandMenuItems } from './buildAgentInputCommandMenuIte
  * adapter does NOT replace any of that logic — it only shapes the output for
  * the primitive.
  *
- * Note: `activeWord` is `string | null` (from `useActiveWord`), not the full
- * `ActiveWord` object from `findActiveWord`. It contains the active word text
- * including the trigger prefix (e.g. "/goal", "@file").
+ * Note: `activeWord` is `string | null` — the `activeWord` field of the host's
+ * `findActiveWord` result, not the full `ActiveWord` object. It contains the
+ * token text from the trigger up to the cursor (e.g. "/goal", "@file").
  */
 export function useAgentInputCommandMenu(input: Readonly<{
     suggestions: readonly AutocompleteSuggestion[];

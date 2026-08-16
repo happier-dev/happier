@@ -4,7 +4,12 @@ import { mkdtemp, readFile, rm, stat, utimes, writeFile } from 'node:fs/promises
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { compareAndSetEnvFileValue, ensureEnvFilePruned, ensureEnvFileUpdated } from './env_file.mjs';
+import {
+  compareAndSetEnvFileValue,
+  createEnvFileExclusive,
+  ensureEnvFilePruned,
+  ensureEnvFileUpdated,
+} from './env_file.mjs';
 
 async function withTempRoot(t) {
   const dir = await mkdtemp(join(tmpdir(), 'happy-stacks-env-file-'));
@@ -21,6 +26,29 @@ test('ensureEnvFileUpdated appends new key and ensures trailing newline', async 
   await ensureEnvFileUpdated({ envPath, updates: [{ key: 'OPENAI_API_KEY', value: 'sk-test' }] });
   const next = await readFile(envPath, 'utf-8');
   assert.equal(next, 'OPENAI_API_KEY=sk-test\n');
+});
+
+test('createEnvFileExclusive permits exactly one concurrent creator', async (t) => {
+  const dir = await withTempRoot(t);
+  const envPath = join(dir, 'env');
+
+  const results = await Promise.all([
+    createEnvFileExclusive({ envPath, content: 'CREATOR=first\n' }),
+    createEnvFileExclusive({ envPath, content: 'CREATOR=second\n' }),
+  ]);
+
+  assert.deepEqual(results.toSorted(), [false, true]);
+  assert.match(await readFile(envPath, 'utf-8'), /^CREATOR=(first|second)\n$/);
+});
+
+test('createEnvFileExclusive preserves an existing env byte-for-byte', async (t) => {
+  const dir = await withTempRoot(t);
+  const envPath = join(dir, 'env');
+  const existing = 'SENTINEL=preserve-me\nHAPPIER_STACK_RUNTIME_MODE=require\n';
+  await writeFile(envPath, existing, 'utf-8');
+
+  assert.equal(await createEnvFileExclusive({ envPath, content: 'REPLACEMENT=forbidden\n' }), false);
+  assert.equal(await readFile(envPath, 'utf-8'), existing);
 });
 
 test('ensureEnvFileUpdated does not touch file when no content changes', async (t) => {

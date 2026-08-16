@@ -3,6 +3,7 @@ import { configuration } from '@/configuration';
 import { logger } from '@/ui/logger';
 
 import { inferAgentIdFromSessionMetadata, resolveVendorResumeIdFromSessionMetadata } from '@happier-dev/agents';
+import { readProcessInstanceFingerprintSync } from '@happier-dev/cli-common/processInstance';
 import { execFileSync } from 'node:child_process';
 import { expandHomeDirPath } from '@/utils/path/expandHomeDirPath';
 import { readCredentials } from '@/persistence';
@@ -344,6 +345,8 @@ export function createOnHappySessionWebhook(params: Readonly<{
           : undefined;
       const processCommand = discoveredProcessCommand ?? trackedProcessCommand ?? daemonChildSpawnArgsCommand;
       const processCommandHash = processCommand ? hashProcessCommand(processCommand) : undefined;
+      const processInstanceFingerprint = readProcessInstanceFingerprintSync(pid)
+        ?? trackedForPid?.processInstanceFingerprint;
       if (processCommandHash) {
         // Store on the tracked session too so stopSession can require a match.
         if (trackedForPid) {
@@ -352,6 +355,9 @@ export function createOnHappySessionWebhook(params: Readonly<{
         }
       } else {
         logger.debug(`[DAEMON RUN] Could not determine process command for PID ${pid}; marker will be weaker`);
+      }
+      if (trackedForPid && processInstanceFingerprint) {
+        trackedForPid.processInstanceFingerprint = processInstanceFingerprint;
       }
 
       const storedCredentials =
@@ -378,6 +384,7 @@ export function createOnHappySessionWebhook(params: Readonly<{
         startedBy: normalizedMetadata.startedBy ?? 'terminal',
         cwd: normalizedPath,
         processCommandHash,
+        processInstanceFingerprint,
         processCommand,
         metadata: normalizedMetadata,
         ...(respawn ? { respawn } : {}),

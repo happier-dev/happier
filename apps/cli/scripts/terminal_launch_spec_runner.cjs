@@ -3,10 +3,12 @@
 const fs = require('node:fs/promises');
 const fsSync = require('node:fs');
 const { spawn } = require('node:child_process');
+const os = require('node:os');
 const path = require('node:path');
 
 const terminalSignalNames = ['SIGINT', 'SIGQUIT'];
 const stderrTailMaxChars = 64 * 1024;
+const claudeMcpConfigFilePrefix = 'happier-claude-mcp-config';
 
 function isPlainObject(value) {
     return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -22,6 +24,30 @@ function readStringArray(value, name) {
 function readOptionalStringArray(value, name) {
     if (value === undefined) return [];
     return readStringArray(value, name);
+}
+
+function isSafeClaudeMcpConfigCleanupPath(filePath) {
+    if (typeof filePath !== 'string' || filePath.length === 0) return false;
+    const tmpRoot = path.resolve(os.tmpdir());
+    const resolved = path.resolve(filePath);
+    const relative = path.relative(tmpRoot, resolved);
+    if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) return false;
+    const name = path.basename(resolved);
+    return name.startsWith(`${claudeMcpConfigFilePrefix}.`) && name.endsWith('.json');
+}
+
+async function cleanupLaunchSpecPaths(paths) {
+    await Promise.allSettled(
+        paths
+            .filter(isSafeClaudeMcpConfigCleanupPath)
+            .map(async (filePath) => {
+                await fs.unlink(filePath).catch(() => undefined);
+                const directory = path.dirname(filePath);
+                if (path.basename(directory).startsWith(`${claudeMcpConfigFilePrefix}-`)) {
+                    await fs.rmdir(directory).catch(() => undefined);
+                }
+            }),
+    );
 }
 
 function readEnv(value) {
@@ -98,6 +124,7 @@ async function readLaunchSpecFile(specPath) {
         args: readStringArray(parsed.args, 'args'),
         cwd: parsed.cwd,
         env: buildChildEnv(readEnv(parsed.env), readOptionalStringArray(parsed.envPassthroughKeys, 'envPassthroughKeys')),
+        cleanupPaths: readOptionalStringArray(parsed.cleanupPaths, 'cleanupPaths'),
         diagnostics: readOptionalDiagnostics(parsed.diagnostics),
     };
 }
@@ -214,13 +241,19 @@ function installTerminalSignalGuards() {
 
 function runLaunchSpec(spec) {
     return new Promise((resolve, reject) => {
-        const child = spawn(spec.command, spec.args, {
-            cwd: spec.cwd,
-            env: spec.env,
-            shell: false,
-            stdio: ['inherit', 'inherit', 'pipe'],
-            windowsHide: true,
-        });
+        let child;
+        try {
+            child = spawn(spec.command, spec.args, {
+                cwd: spec.cwd,
+                env: spec.env,
+                shell: false,
+                stdio: ['inherit', 'inherit', 'pipe'],
+                windowsHide: true,
+            });
+        } catch (error) {
+            void cleanupLaunchSpecPaths(spec.cleanupPaths ?? []).then(() => reject(error));
+            return;
+        }
         const stderrDiagnostics = createChildStderrDiagnostics(spec.diagnostics, child.pid);
         child.stderr?.on('data', (chunk) => {
             stderrDiagnostics?.observeStderr(chunk);
@@ -233,6 +266,7 @@ function runLaunchSpec(spec) {
             settled = true;
             removeSignalGuards();
             await stderrDiagnostics?.close();
+            await cleanupLaunchSpecPaths(spec.cleanupPaths ?? []);
             await fn();
         };
         child.on('error', (error) => {

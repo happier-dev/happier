@@ -1,6 +1,7 @@
 import chalk from 'chalk';
 
 import type { Credentials } from '@/persistence';
+import { readCommandPositionals } from '@/cli/commands/shared/argvFlags';
 import { wantsJson, printJsonEnvelope } from '@/cli/output/jsonEnvelope';
 import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
 import { normalizeActionExecuteResult } from './shared/normalizeActionExecuteResult';
@@ -11,7 +12,7 @@ export async function cmdSessionStop(
   deps: Readonly<{ readCredentialsFn: () => Promise<Credentials | null> }>,
 ): Promise<void> {
   const json = wantsJson(argv);
-  const idOrPrefix = String(argv[1] ?? '').trim();
+  const [idOrPrefix = ''] = readCommandPositionals(argv, { startIndex: 1 });
   if (!idOrPrefix) {
     throw new Error('Usage: happier session stop <session-id-or-prefix> [--json]');
   }
@@ -19,7 +20,7 @@ export async function cmdSessionStop(
   const credentials = await deps.readCredentialsFn();
   if (!credentials) {
     if (json) {
-      printJsonEnvelope({ ok: false, kind: 'session_stop', error: { code: 'not_authenticated' } });
+      await printJsonEnvelope({ ok: false, kind: 'session_stop', error: { code: 'not_authenticated' } });
       return;
     }
     console.error(chalk.red('Error:'), 'Not authenticated. Run "happier auth login" first.');
@@ -35,7 +36,7 @@ export async function cmdSessionStop(
   const normalized = normalizeActionExecuteResult(actionRes as any);
   if (!normalized.ok) {
     if (json) {
-      printJsonEnvelope({
+      await printJsonEnvelope({
         ok: false,
         kind: 'session_stop',
         error: { code: normalized.errorCode, ...(normalized.candidates ? { candidates: normalized.candidates } : {}), ...(normalized.errorMessage ? { message: normalized.errorMessage } : {}) },
@@ -46,11 +47,19 @@ export async function cmdSessionStop(
   }
 
   const result = normalized.data as any;
-  if (tryHandleApprovalRequestCreated({ envelopeKind: 'session_stop', json, result })) {
+  if (await tryHandleApprovalRequestCreated({ envelopeKind: 'session_stop', json, result })) {
     return;
   }
   if (json) {
-    printJsonEnvelope({ ok: true, kind: 'session_stop', data: { sessionId: result.sessionId, stopped: result.stopped } });
+    await printJsonEnvelope({
+      ok: true,
+      kind: 'session_stop',
+      data: {
+        sessionId: result.sessionId,
+        stopped: result.stopped,
+        ...(result.stopOutcome ? { stopOutcome: result.stopOutcome } : {}),
+      },
+    });
     return;
   }
 
@@ -59,5 +68,15 @@ export async function cmdSessionStop(
     return;
   }
 
-  console.log(chalk.yellow('!'), 'stop requested but session is still active');
+  if (result.stopOutcome?.status === 'stopped_projection_unconfirmed') {
+    console.log(chalk.yellow('!'), 'session stopped; status update not yet observed');
+    return;
+  }
+
+  if (result.stopOutcome?.status === 'stopped_cleanup_incomplete') {
+    console.log(chalk.yellow('!'), 'session stopped; local cleanup could not be completed');
+    return;
+  }
+
+  console.log(chalk.yellow('!'), 'stop could not be confirmed');
 }

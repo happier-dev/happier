@@ -124,10 +124,8 @@ export function createClaudeUnifiedDialogChoiceScreenProbe(params: Readonly<{
     return params.isDialogOwned(dialog.dialogId);
   };
 
-  const cancelPendingIfResolved = (): void => {
-    if (params.broker.hasPendingChoice()) {
-      params.broker.noteDialogResolvedInTerminal('claude_dialog_resolved_in_terminal');
-    }
+  const cancelPendingIfResolved = async (): Promise<void> => {
+    await params.broker.noteDialogResolvedInTerminal('claude_dialog_resolved_in_terminal');
   };
 
   const startAnswerTask = (
@@ -190,10 +188,13 @@ export function createClaudeUnifiedDialogChoiceScreenProbe(params: Readonly<{
     if (disposed) return { kind: 'failed', reason: 'disposed' };
     const initialDialog = resolveClaudeUnifiedVisibleDialog(state);
     if (!initialDialog) {
-      cancelPendingIfResolved();
+      await cancelPendingIfResolved();
       return { kind: 'not_visible' };
     }
     if (dialogIsOwned(initialDialog)) {
+      if (!params.broker.hasPendingChoiceForDialog(initialDialog)) {
+        await params.broker.noteDialogResolvedInTerminal('claude_dialog_owned_by_control_path');
+      }
       return { kind: 'owned', dialogId: initialDialog.dialogId };
     }
 
@@ -205,10 +206,13 @@ export function createClaudeUnifiedDialogChoiceScreenProbe(params: Readonly<{
     if (recaptured.kind !== 'state') return { kind: 'failed', reason: 'capture_failed' };
     const dialog = resolveClaudeUnifiedVisibleDialog(recaptured.state);
     if (!dialog) {
-      cancelPendingIfResolved();
+      await cancelPendingIfResolved();
       return { kind: 'not_visible' };
     }
     if (dialogIsOwned(dialog)) {
+      if (!params.broker.hasPendingChoiceForDialog(dialog)) {
+        await params.broker.noteDialogResolvedInTerminal('claude_dialog_owned_by_control_path');
+      }
       return { kind: 'owned', dialogId: dialog.dialogId };
     }
 

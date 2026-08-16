@@ -2971,7 +2971,7 @@ localTailscale: {
       recoveryCreditExpires: ({ time }: { time: string }) => `Expires: ${time}`,
       recoveryCreditApplying: "リセットを適用中…",
       recoveryCreditMachineUnavailable: "このリセットを適用できるアクティブなマシンがありません。",
-      recoveryCreditNothingToReset: "No exhausted usage window currently needs a reset.",
+      recoveryCreditNothingToReset: "現在、リセットが必要な使用量上限の枠はありません。",
       recoveryCreditBadge: ({ count }: { count: number }) => count === 1 ? "1 reset" : `${count} resets`,
       remaining: ({ percent }: { percent: string }) => `残り${percent}`,
       remainingWithReset: ({ percent, reset }: { percent: string; reset: string }) =>
@@ -4241,20 +4241,20 @@ localTailscale: {
                         }
                     },
                     claudeUnifiedTerminalWorkspaceTrust: {
-                        title: "Workspace trust",
-                        subtitle: "Choose how Happier responds when Claude asks whether to trust a workspace.",
+                        title: "ワークスペースの信頼",
+                        subtitle: "Claude がワークスペースを信頼するか尋ねたときの Happier の応答方法を選択します。",
                         options: {
                             ask_every_time: {
-                                title: "Ask every time",
-                                subtitle: "Show the exact workspace trust question in the session."
+                                title: "毎回確認する",
+                                subtitle: "ワークスペースの信頼に関する質問をそのままセッションに表示します。"
                             },
                             always_trust_happier_workspaces: {
-                                title: "Always trust Happier workspaces",
-                                subtitle: "Trust the current recaptured Claude prompt for workspaces opened by Happier."
+                                title: "Happier のワークスペースを常に信頼する",
+                                subtitle: "Happier が開いたワークスペースでは、再取得された現在の Claude プロンプトを信頼します。"
                             },
                             always_reject_happier_workspaces: {
-                                title: "Always reject Happier workspaces",
-                                subtitle: "Reject the current recaptured Claude prompt for workspaces opened by Happier."
+                                title: "Happier のワークスペースを常に拒否する",
+                                subtitle: "Happier が開いたワークスペースでは、再取得された現在の Claude プロンプトを拒否します。"
                             }
                         }
                     },
@@ -5498,6 +5498,8 @@ localTailscale: {
                 backgroundTasksRunning: ({ count }: { count: number }) => `バックグラウンドコマンド ${count} 件が実行中`,
             },
           untitled: "名称未設定のエージェント",
+          screenTitle: "エージェント",
+          transcriptScreenTitle: "エージェントの記録",
           menuTitle: "エージェントの操作",
           row: {
             a11yLabel: ({ title, status }: { title: string; status: string }) => `${title}、${status}`,
@@ -5645,6 +5647,7 @@ localTailscale: {
       detailsPanel: {
         emptyHint: "右側パネルからファイルまたは差分を開いてください。",
         unsupportedTab: "未対応の詳細タブです。",
+        transcriptFromOtherSession: "このトランスクリプトは別のセッションのものです。",
         closeA11y: "詳細を閉じる",
           openRightSidebarA11y: "右サイドバーを開く",
           closeRightSidebarA11y: "右サイドバーを閉じる",
@@ -6176,10 +6179,18 @@ localTailscale: {
       title: "保持ポリシー",
       summary: "概要",
       keepForever: "自動削除なし",
+      automaticDeletionEnabled: "自動削除が有効です",
+      detailsUnavailable: "自動削除は有効ですが、このクライアントでは有効なポリシーをすべて表示できません",
+      singlePolicySummary: ({ domain, policy }: { domain: string; policy: string }) => `${domain}: ${policy}`,
+      relayCleanupSummary: ({ policies }: { policies: string }) => `このリレーは${policies}をクリーンアップします。`,
+      relayCleanupAfterDays: ({ domain, count }: { domain: string; count: number }) => `${domain}（${count}日後）`,
+      relayCleanupInactiveSessionsAfterDays: ({ count }: { count: number }) => `非アクティブなセッション（${count}日後）`,
       deleteInactiveSessionsDays: ({ count }: { count: number }) => `${count}日後に非アクティブなセッションを削除します。`,
       deleteOlderThanDays: ({ count }: { count: number }) => `${count}日後にデータを削除します。`,
       sessionNotice: ({ count }: { count: number }) => `このサーバーは、${count}日間非アクティブなセッションを削除します。`,
       sessions: "セッション",
+      sessionMessages: "セッションの記録",
+      sidechainMessages: "サブエージェントの記録",
       accountChanges: "アカウント変更",
       voiceSessionLeases: "音声セッションのリース",
       feedItems: "フィード項目",

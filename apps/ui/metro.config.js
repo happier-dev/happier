@@ -202,16 +202,19 @@ config.transformer.getTransformOptions = async () => ({
 const testRouteBlockList = /[\\/]sources[\\/]app[\\/].*\.(test|spec)\.[jt]sx?$/;
 const projectArtifactsBlockList = /[\\/]\.project[\\/]/;
 const nextBuildArtifactsBlockList = /[\\/]\.next[\\/]/;
+// CLI runtime snapshots are generated deployment artifacts, not application inputs. In stack runs,
+// Expo watches the CLI workspace and otherwise crawls every retained snapshot on each platform.
+const cliRunnerSnapshotsBlockList = /[\\/]apps[\\/]cli[\\/]\.runner-snapshots(?:[\\/]|$)/;
 // Avoid scanning duplicate workspace-local `node_modules/**` trees (typically symlink-heavy) when Metro falls back
 // to the native `find` crawler (no Watchman). We still keep the monorepo root `node_modules` and `apps/ui/node_modules`.
 const workspaceNodeModulesBlockList =
   /[\\/]apps[\\/](?!ui[\\/])[^\\/]+[\\/]node_modules[\\/]|[\\/]packages[\\/][^\\/]+[\\/]node_modules[\\/]/;
 const existingBlockList = config.resolver.blockList;
 config.resolver.blockList = Array.isArray(existingBlockList)
-  ? [...existingBlockList, testRouteBlockList, projectArtifactsBlockList, nextBuildArtifactsBlockList, workspaceNodeModulesBlockList]
+  ? [...existingBlockList, testRouteBlockList, projectArtifactsBlockList, nextBuildArtifactsBlockList, cliRunnerSnapshotsBlockList, workspaceNodeModulesBlockList]
   : existingBlockList
-    ? [existingBlockList, testRouteBlockList, projectArtifactsBlockList, nextBuildArtifactsBlockList, workspaceNodeModulesBlockList]
-    : [testRouteBlockList, projectArtifactsBlockList, nextBuildArtifactsBlockList, workspaceNodeModulesBlockList];
+    ? [existingBlockList, testRouteBlockList, projectArtifactsBlockList, nextBuildArtifactsBlockList, cliRunnerSnapshotsBlockList, workspaceNodeModulesBlockList]
+    : [testRouteBlockList, projectArtifactsBlockList, nextBuildArtifactsBlockList, cliRunnerSnapshotsBlockList, workspaceNodeModulesBlockList];
 
 const existingWatchFolders = Array.isArray(config.watchFolders) ? config.watchFolders : [];
 config.watchFolders = existingWatchFolders.filter(

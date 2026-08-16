@@ -2607,7 +2607,7 @@ export const pl: TranslationStructure = {
       recoveryCreditExpires: ({ time }: { time: string }) => `Expires: ${time}`,
       recoveryCreditApplying: "Stosowanie resetu…",
       recoveryCreditMachineUnavailable: "Brak aktywnej maszyny, na której można zastosować ten reset.",
-      recoveryCreditNothingToReset: "No exhausted usage window currently needs a reset.",
+      recoveryCreditNothingToReset: "Żadne wyczerpane okno użycia nie wymaga obecnie resetu.",
       recoveryCreditBadge: ({ count }: { count: number }) => count === 1 ? "1 reset" : `${count} resets`,
       remaining: ({ percent }: { percent: string }) => `Pozostało ${percent}`,
       remainingWithReset: ({ percent, reset }: { percent: string; reset: string }) =>
@@ -3986,20 +3986,20 @@ export const pl: TranslationStructure = {
                         }
                     },
                     claudeUnifiedTerminalWorkspaceTrust: {
-                        title: "Workspace trust",
-                        subtitle: "Choose how Happier responds when Claude asks whether to trust a workspace.",
+                        title: "Zaufanie do obszaru roboczego",
+                        subtitle: "Wybierz, jak Happier ma odpowiadać, gdy Claude pyta, czy zaufać obszarowi roboczemu.",
                         options: {
                             ask_every_time: {
-                                title: "Ask every time",
-                                subtitle: "Show the exact workspace trust question in the session."
+                                title: "Pytaj za każdym razem",
+                                subtitle: "Pokaż w sesji dokładne pytanie o zaufanie do obszaru roboczego."
                             },
                             always_trust_happier_workspaces: {
-                                title: "Always trust Happier workspaces",
-                                subtitle: "Trust the current recaptured Claude prompt for workspaces opened by Happier."
+                                title: "Zawsze ufaj obszarom roboczym Happier",
+                                subtitle: "Ufaj bieżącemu ponownie przechwyconemu monitowi Claude dla obszarów roboczych otwartych przez Happier."
                             },
                             always_reject_happier_workspaces: {
-                                title: "Always reject Happier workspaces",
-                                subtitle: "Reject the current recaptured Claude prompt for workspaces opened by Happier."
+                                title: "Zawsze odrzucaj obszary robocze Happier",
+                                subtitle: "Odrzucaj bieżący ponownie przechwycony monit Claude dla obszarów roboczych otwartych przez Happier."
                             }
                         }
                     },
@@ -5252,6 +5252,8 @@ export const pl: TranslationStructure = {
                     `${count} ${plural({ count, one: 'polecenie w tle', few: 'polecenia w tle', many: 'poleceń w tle' })} ${plural({ count, one: 'działa', few: 'działają', many: 'działa' })}`,
             },
           untitled: "Agent bez nazwy",
+          screenTitle: "Agenci",
+          transcriptScreenTitle: "Zapis agenta",
           menuTitle: "Akcje agenta",
           row: {
             a11yLabel: ({ title, status }: { title: string; status: string }) => `${title}, ${status}`,
@@ -5399,6 +5401,7 @@ export const pl: TranslationStructure = {
       detailsPanel: {
         emptyHint: "Otwórz plik lub diff z prawego panelu.",
         unsupportedTab: "Nieobsługiwana karta szczegółów.",
+        transcriptFromOtherSession: "Ten zapis rozmowy należy do innej sesji.",
         closeA11y: "Zamknij szczegóły",
           openRightSidebarA11y: "Otwórz prawy pasek boczny",
           closeRightSidebarA11y: "Zamknij prawy pasek boczny",
@@ -5934,10 +5937,18 @@ export const pl: TranslationStructure = {
       title: "Polityka retencji",
       summary: "Podsumowanie",
       keepForever: "Bez automatycznego usuwania",
+      automaticDeletionEnabled: "Automatyczne usuwanie jest włączone",
+      detailsUnavailable: "Automatyczne usuwanie jest włączone, ale ten klient nie może wyświetlić wszystkich aktywnych zasad",
+      singlePolicySummary: ({ domain, policy }: { domain: string; policy: string }) => `${domain}: ${policy}`,
+      relayCleanupSummary: ({ policies }: { policies: string }) => `Ten relay usuwa ${policies}.`,
+      relayCleanupAfterDays: ({ domain, count }: { domain: string; count: number }) => `${domain} po ${count} ${plural({ count, one: 'dniu', few: 'dniach', many: 'dniach' })}`,
+      relayCleanupInactiveSessionsAfterDays: ({ count }: { count: number }) => `nieaktywne sesje po ${count} ${plural({ count, one: 'dniu', few: 'dniach', many: 'dniach' })}`,
       deleteInactiveSessionsDays: ({ count }: { count: number }) => `Usuwa nieaktywne sesje po ${count} ${plural({ count, one: 'dniu', few: 'dniach', many: 'dniach' })}.`,
       deleteOlderThanDays: ({ count }: { count: number }) => `Usuwa dane po ${count} ${plural({ count, one: 'dniu', few: 'dniach', many: 'dniach' })}.`,
       sessionNotice: ({ count }: { count: number }) => `Ten serwer usuwa nieaktywne sesje po ${count} ${plural({ count, one: 'dniu', few: 'dniach', many: 'dniach' })} bezczynności.`,
       sessions: "Sesje",
+      sessionMessages: "Transkrypcje sesji",
+      sidechainMessages: "Transkrypcje podagentów",
       accountChanges: "Zmiany konta",
       voiceSessionLeases: "Dzierzawy sesji glosowych",
       feedItems: "Elementy kanalu",

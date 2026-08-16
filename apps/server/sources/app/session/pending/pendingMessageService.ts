@@ -1797,6 +1797,8 @@ export async function reorderPendingMessages(params: {
 
 export type { MaterializeNextPendingMessageResult } from "@/app/session/pending/materializeNextPendingMessage";
 export {
+    mapPendingMaterializationError,
     materializeNextPendingMessage,
     materializeNextPendingMessageForCurrentPublisher,
+    materializeNextPendingMessageForCurrentPublisherInTx,
 } from "@/app/session/pending/materializeNextPendingMessage";

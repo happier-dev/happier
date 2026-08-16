@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { mkdtemp, writeFile } from 'node:fs/promises';
+import { mkdtemp, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { SDKMessage, SDKUserMessage } from '@/backends/claude/sdk';
@@ -349,7 +349,7 @@ describe('claudeRemote', () => {
     expect(call?.options?.continue).toBe(true);
   });
 
-  it('passes through --mcp-config to the underlying Claude Code CLI (no parsing/merging)', async () => {
+  it('materializes inline --mcp-config JSON before invoking the underlying Claude Code CLI', async () => {
     mockQuery.mockReturnValue(messageStream(resultMessage()));
 
     const { claudeRemote } = await import('./claudeRemote');
@@ -363,10 +363,14 @@ describe('claudeRemote', () => {
 
     expect(mockQuery).toHaveBeenCalledTimes(1);
     const call = mockQuery.mock.calls[0]?.[0] as QueryCall | undefined;
-    expect(call?.options?.extraArgs).toEqual(['--mcp-config', mcpRaw]);
+    expect(call?.options?.extraArgs?.[0]).toBe('--mcp-config');
+    const configPath = call?.options?.extraArgs?.[1];
+    expect(configPath).not.toBe(mcpRaw);
+    expect(JSON.stringify(call?.options?.extraArgs)).not.toContain('server.mjs');
+    await expect(stat(configPath!)).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
-  it('passes through --mcp-config=<json> to the underlying Claude Code CLI (no parsing/merging)', async () => {
+  it('materializes inline --mcp-config=<json> before invoking the underlying Claude Code CLI', async () => {
     mockQuery.mockReturnValue(messageStream(resultMessage()));
 
     const { claudeRemote } = await import('./claudeRemote');
@@ -381,7 +385,36 @@ describe('claudeRemote', () => {
 
     expect(mockQuery).toHaveBeenCalledTimes(1);
     const call = mockQuery.mock.calls[0]?.[0] as QueryCall | undefined;
-    expect(call?.options?.extraArgs).toEqual([arg]);
+    const materializedArg = call?.options?.extraArgs?.[0];
+    expect(materializedArg).toMatch(/^--mcp-config=.+/);
+    expect(materializedArg).not.toBe(arg);
+    expect(materializedArg).not.toContain('server.mjs');
+    await expect(stat(materializedArg!.slice('--mcp-config='.length))).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it('removes materialized MCP config when the remote Claude query is aborted', async () => {
+    let configPath: string | undefined;
+    mockQuery.mockImplementation((call: QueryCall) => {
+      configPath = call.options?.extraArgs?.[1];
+      return {
+        async *[Symbol.asyncIterator]() {
+          const { AbortError } = await import('@/backends/claude/sdk');
+          throw new AbortError('synthetic abort');
+        },
+      };
+    });
+
+    const { claudeRemote } = await import('./claudeRemote');
+    const mcpRaw = JSON.stringify({
+      mcpServers: { fixture: { type: 'stdio', command: 'mcp-server', env: { TOKEN: 'synthetic-abort' } } },
+    });
+
+    await claudeRemote(createBaseOptions({
+      claudeArgs: ['--mcp-config', mcpRaw],
+    }));
+
+    expect(configPath).toBeTruthy();
+    await expect(stat(configPath!)).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
   it('injects --effort when the mode specifies a non-default reasoningEffort', async () => {
@@ -545,7 +578,7 @@ describe('claudeRemote', () => {
     expect(call?.options?.extraArgs).toBeUndefined();
   });
 
-  it('appends Happier MCP config when provided, while preserving user --mcp-config passthrough', async () => {
+  it('appends Happier MCP config after user MCP config while keeping both payloads out of argv', async () => {
     mockQuery.mockReturnValue(messageStream(resultMessage()));
 
     const { claudeRemote } = await import('./claudeRemote');
@@ -564,7 +597,15 @@ describe('claudeRemote', () => {
 
     expect(mockQuery).toHaveBeenCalledTimes(1);
     const call = mockQuery.mock.calls[0]?.[0] as QueryCall | undefined;
-    expect(call?.options?.extraArgs).toEqual(['--mcp-config', userMcp, '--mcp-config', happierMcp]);
+    expect(call?.options?.extraArgs?.filter((arg) => arg === '--mcp-config')).toHaveLength(2);
+    expect(JSON.stringify(call?.options?.extraArgs)).not.toContain('server.mjs');
+    expect(JSON.stringify(call?.options?.extraArgs)).not.toContain('happier-mcp.mjs');
+    const configPaths = [call?.options?.extraArgs?.[1], call?.options?.extraArgs?.[3]];
+    for (const configPath of configPaths) {
+      expect(configPath).not.toBe(userMcp);
+      expect(configPath).not.toBe(happierMcp);
+      await expect(stat(configPath!)).rejects.toMatchObject({ code: 'ENOENT' });
+    }
   });
 
   it('treats --resume (no id) as resume-last-session in remote mode', async () => {

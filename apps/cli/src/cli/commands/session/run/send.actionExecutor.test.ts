@@ -1,12 +1,17 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { captureConsoleJsonOutput } from '@/testkit/logger/captureOutput';
-
 const execute = vi.fn();
 const createCliActionExecutorFromCredentials = vi.fn(() => ({ execute }));
+const resolveSessionTransportContext = vi.fn(async () => ({ ok: true, sessionId: 'sess-canonical' }));
+const printJsonEnvelope = vi.fn(async () => {});
 
 vi.mock('@/session/actions/createCliActionExecutorFromCredentials', () => ({
   createCliActionExecutorFromCredentials,
+}));
+vi.mock('@/session/services/resolveSessionTransportContext', () => ({ resolveSessionTransportContext }));
+vi.mock('@/cli/output/jsonEnvelope', () => ({
+  wantsJson: (argv: readonly string[]) => argv.includes('--json'),
+  printJsonEnvelope,
 }));
 
 describe('happier session run send (action executor)', () => {
@@ -16,11 +21,9 @@ describe('happier session run send (action executor)', () => {
       result: { ok: true, delivered: true },
     });
 
-    const { handleSessionCommand } = await import('../handleSessionCommand');
+    const { cmdSessionRunSend } = await import('./send');
 
-    const output = captureConsoleJsonOutput();
-    try {
-      await handleSessionCommand(['run', 'send', 'sess-1', 'run-1', 'Hello', '--resume', '--json'], {
+    await cmdSessionRunSend(['session', 'run', 'sess-prefix', 'run-1', 'Hello', '--resume', '--json'], {
         readCredentialsFn: async () => ({
           token: 'token_test',
           encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
@@ -30,16 +33,14 @@ describe('happier session run send (action executor)', () => {
       expect(createCliActionExecutorFromCredentials).toHaveBeenCalledTimes(1);
       expect(execute).toHaveBeenCalledWith(
         'execution.run.send',
-        { sessionId: 'sess-1', runId: 'run-1', message: 'Hello', delivery: 'steer_if_supported', resume: true },
+        { sessionId: 'sess-canonical', runId: 'run-1', message: 'Hello', delivery: 'steer_if_supported', resume: true },
         { surface: 'cli', defaultSessionId: null },
       );
 
-      expect(output.json()).toEqual(expect.objectContaining({
+      expect(printJsonEnvelope).toHaveBeenCalledWith(expect.objectContaining({
         ok: true,
         kind: 'session_run_send',
+        data: { sessionId: 'sess-canonical', runId: 'run-1', sent: true },
       }));
-    } finally {
-      output.restore();
-    }
   });
 });

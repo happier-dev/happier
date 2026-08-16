@@ -1461,7 +1461,10 @@ describe('createCliActionExecutor', () => {
       ok: false,
     });
     expect(resolveDaemonSpawnSessionByNonce).toHaveBeenCalledTimes(1);
-    expect(resolveDaemonSpawnSessionByNonce).toHaveBeenCalledWith(expect.stringMatching(/^[0-9a-f-]{36}$/i));
+    expect(resolveDaemonSpawnSessionByNonce).toHaveBeenCalledWith(
+      expect.stringMatching(/^[0-9a-f-]{36}$/i),
+      expect.any(Number),
+    );
     expect(fetchSessionsPage).not.toHaveBeenCalled();
   });
 
@@ -1506,7 +1509,10 @@ describe('createCliActionExecutor', () => {
 
     expect(spawnDaemonSession).toHaveBeenCalledTimes(1);
     expect(resolveDaemonSpawnSessionByNonce).toHaveBeenCalledTimes(2);
-    expect(resolveDaemonSpawnSessionByNonce).toHaveBeenCalledWith('session.spawn_new:sess-1:attempt-1');
+    expect(resolveDaemonSpawnSessionByNonce).toHaveBeenCalledWith(
+      'session.spawn_new:sess-1:attempt-1',
+      expect.any(Number),
+    );
   });
 
   it('recovers session.spawn_new via spawn nonce resolution before fallback row scans', async () => {
@@ -1569,7 +1575,7 @@ describe('createCliActionExecutor', () => {
     expect(fetchSessionsPage).not.toHaveBeenCalled();
   });
 
-  it('recovers session.spawn_new when daemon reports child exited before webhook', async () => {
+  it('preserves a terminal child-exit failure without attempting nonce recovery', async () => {
     const executor = createPlainExecutor({
       rawSession: {
         metadata: {
@@ -1583,32 +1589,6 @@ describe('createCliActionExecutor', () => {
       error: 'Failed to spawn session: Child process exited before session webhook (pid=1234, code=null, signal=SIGKILL)',
       errorCode: 'CHILD_EXITED_BEFORE_WEBHOOK',
     });
-    resolveDaemonSpawnSessionByNonce.mockResolvedValue({
-      status: 'success',
-      sessionId: 'sess-recovered-webhook-exit',
-    });
-    fetchSessionById.mockResolvedValue({
-      id: 'sess-recovered-webhook-exit',
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
-      active: true,
-      activeAt: Date.now(),
-      pendingCount: 0,
-      metadataVersion: 1,
-      metadata: {
-        path: '/repo/current',
-        host: 'leeroy-mbp',
-      },
-    });
-    updateSessionMetadataWithRetry.mockResolvedValue({
-      version: 1,
-      metadata: {
-        machineId: 'machine-1',
-        path: '/repo/current',
-        host: 'leeroy-mbp',
-      },
-    });
-
     const result = await executor.execute(
       'session.spawn_new',
       {
@@ -1618,15 +1598,9 @@ describe('createCliActionExecutor', () => {
       { surface: 'cli', defaultSessionId: 'sess-1' },
     );
 
-    expect(result).toMatchObject({
-      ok: true,
-      result: {
-        type: 'success',
-        sessionId: 'sess-recovered-webhook-exit',
-        created: true,
-      },
-    });
-    expect(resolveDaemonSpawnSessionByNonce).toHaveBeenCalledTimes(1);
+    expect(result).toMatchObject({ ok: false });
+    expect(resolveDaemonSpawnSessionByNonce).not.toHaveBeenCalled();
+    expect(fetchSessionById).not.toHaveBeenCalled();
     expect(fetchSessionsPage).not.toHaveBeenCalled();
   });
 
@@ -1765,7 +1739,7 @@ describe('createCliActionExecutor', () => {
     expect(resolveDaemonSpawnSessionByNonce).toHaveBeenCalledTimes(5);
     const sentSpawnNonce = spawnDaemonSession.mock.calls[0]?.[0]?.spawnNonce;
     expect(sentSpawnNonce).toEqual(expect.stringMatching(/^[0-9a-f-]{36}$/i));
-    expect(resolveDaemonSpawnSessionByNonce).toHaveBeenCalledWith(sentSpawnNonce);
+    expect(resolveDaemonSpawnSessionByNonce).toHaveBeenCalledWith(sentSpawnNonce, expect.any(Number));
     expect(fetchSessionsPage).not.toHaveBeenCalled();
   });
 

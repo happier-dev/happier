@@ -311,10 +311,10 @@ export function admitStructuredInputMentionsForText(
 
 /**
  * `text` is the composed admission input. The envelope sanitizer parses metadata
- * independently of the message it accompanies, so the half of the range contract that needs
- * the text — `text.slice(start, end) === token` — can only be enforced where both are in
- * hand. Pass it at the request boundary; a reference that does not describe its own token in
- * the submitted text is rejected there, and its siblings are admitted (INV-4).
+ * independently of the message it accompanies, so the half of the token contract that needs
+ * the text — the message still contains the token — can only be enforced where both are in
+ * hand. Pass it at the request boundary; a reference whose token the submitted text no longer
+ * carries is rejected there, and its siblings are admitted (INV-4).
  */
 export function sanitizeSessionUserMessageSendMeta(
   value: MetadataRecord,

@@ -322,6 +322,104 @@ describe('useSessions', () => {
         }
     });
 
+    it('does not re-sign session list rows a push carried over by identity', async () => {
+        const previousState = storage.getState();
+        try {
+            const makeSessionRow = (id: string): SessionListViewItem => ({
+                type: 'session',
+                section: 'active',
+                groupKey: 'server:server-a:active',
+                groupKind: 'active',
+                serverId: 'server-a',
+                session: {
+                    id,
+                    seq: 1,
+                    createdAt: 10,
+                    updatedAt: 20,
+                    active: true,
+                    activeAt: 20,
+                    archivedAt: null,
+                    pendingCount: 0,
+                    metadataVersion: 1,
+                    agentStateVersion: 1,
+                    metadata: { path: '/repo', host: 'localhost', machineId: 'm-1' },
+                    thinking: false,
+                    thinkingAt: 0,
+                    presence: 'online',
+                },
+            });
+            const firstData: SessionListViewItem[] = [
+                {
+                    type: 'header',
+                    title: 'Active',
+                    headerKind: 'active',
+                    groupKey: 'server:server-a:active',
+                    serverId: 'server-a',
+                },
+                makeSessionRow('s-1'),
+                makeSessionRow('s-2'),
+            ];
+
+            storage.setState((state) => ({
+                ...state,
+                isDataReady: true,
+                sessionListViewData: firstData,
+            }));
+
+            const hook = await renderHook(() => useSessionListViewData(), {
+                flushOptions: { cycles: 1, turns: 4 },
+            });
+            const first = hook.getCurrent();
+            expect(first).toBe(firstData);
+
+            const changedRow = firstData[2];
+            if (changedRow.type !== 'session') {
+                throw new Error('expected session test fixture');
+            }
+            // A push rebuilds the array but carries every row it did not change by identity.
+            for (const carriedRow of [firstData[0], firstData[1]]) {
+                Object.defineProperty(carriedRow, 'groupKey', {
+                    configurable: true,
+                    get: () => {
+                        throw new Error('carried session list rows must not be signed again');
+                    },
+                });
+            }
+
+            await act(async () => {
+                storage.setState((state) => ({
+                    ...state,
+                    sessionListViewData: [
+                        firstData[0],
+                        firstData[1],
+                        { ...changedRow, session: { ...changedRow.session, pendingCount: 4 } },
+                    ],
+                }));
+            });
+
+            const second = hook.getCurrent();
+            expect(second).not.toBe(first);
+            expect(second?.[0]).toBe(firstData[0]);
+            expect(second?.[1]).toBe(firstData[1]);
+            expect(second?.[2]?.type === 'session' ? second[2].session.pendingCount : null).toBe(4);
+
+            // The module-level shell cache still holds these rows, so the probes must not outlive
+            // the assertion or a later test signs a throwing row.
+            for (const carriedRow of [firstData[0], firstData[1]]) {
+                Object.defineProperty(carriedRow, 'groupKey', {
+                    configurable: true,
+                    enumerable: true,
+                    value: 'server:server-a:active',
+                    writable: true,
+                });
+            }
+
+            await hook.unmount();
+        } finally {
+            storage.setState(previousState);
+        }
+    });
+
     it('does not rescan unchanged session list shell data on unrelated store publishes', async () => {
         const previousState = storage.getState();
         try {

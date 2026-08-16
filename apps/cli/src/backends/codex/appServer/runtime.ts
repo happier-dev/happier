@@ -36,6 +36,7 @@ import { TurnChangeSetCollector } from '@/agent/tools/diff/turnChangeSetCollecto
 import { emitCanonicalTurnDiffTool } from '@/agent/runtime/emitCanonicalTurnDiffTool';
 import { logger } from '@/ui/logger';
 import { delay } from '@/utils/time';
+import { createSerializedWorkQueueDiagnostics, type SerializedWorkDiagnosticContext } from '@/utils/serializedWorkQueueDiagnostics';
 import { readNonBlankOpaqueIdentifier } from '@/utils/opaqueIdentifiers';
 import type {
     ActiveTurnPendingPumpOptions,
@@ -1851,6 +1852,13 @@ export function createCodexAppServerRuntime(params: Readonly<{
         session: params.session,
     });
     let bridgeWork = Promise.resolve();
+    const bridgeWorkDiagnostics = createSerializedWorkQueueDiagnostics({
+        queueName: 'codex-app-server-bridge',
+        slowAfterMs: 30_000,
+        report: (report) => {
+            logger.infoFile('[codex-app-server] Serialized bridge queue diagnostic', report);
+        },
+    });
 
     const getCurrentPermissionMode = (): PermissionMode => params.getPermissionMode?.() ?? params.permissionMode ?? 'default';
 
@@ -2034,8 +2042,13 @@ export function createCodexAppServerRuntime(params: Readonly<{
         }
     };
 
-    const runBridgeWork = async <T>(work: () => Promise<T>): Promise<T> => {
-        const next = bridgeWork.then(work);
+    const runBridgeWork = async <T>(
+        context: SerializedWorkDiagnosticContext,
+        work: () => Promise<T>,
+    ): Promise<T> => {
+        const tracked = bridgeWorkDiagnostics.track(context);
+        const run = () => tracked.run(work);
+        const next = bridgeWork.then(run, run);
         bridgeWork = next.then(() => undefined, () => undefined);
         return await next;
     };
@@ -2861,7 +2874,10 @@ export function createCodexAppServerRuntime(params: Readonly<{
                 }
                 await flushStreamState(streamFlushReason);
             } else {
-                await runBridgeWork(async () => {
+                await runBridgeWork({
+                    operation: 'flush-stream-state',
+                    details: { flushReason: options.flushReason },
+                }, async () => {
                     if (options.flushReason === 'turn-end') {
                         commitPendingRawAssistantFinals();
                     }
@@ -2955,7 +2971,10 @@ export function createCodexAppServerRuntime(params: Readonly<{
             if (!pendingTurn || scheduledPendingTurnFlushReason !== 'turn-end') return;
             activeProviderTurnItemIds.clear();
             scheduledPendingTurnFlushReason = null;
-            void runBridgeWork(async () => {
+            void runBridgeWork({
+                operation: 'finalize-turn-after-item-drain',
+                details: { flushReason: 'turn-end' },
+            }, async () => {
                 if (!pendingTurn) return;
                 await finishPendingTurn({
                     flushReason: 'turn-end',
@@ -2988,7 +3007,10 @@ export function createCodexAppServerRuntime(params: Readonly<{
                 return;
             }
             scheduledPendingTurnFlushReason = null;
-            void runBridgeWork(async () => {
+            void runBridgeWork({
+                operation: 'finalize-turn-after-settle',
+                details: { flushReason: nextFlushReason },
+            }, async () => {
                 if (!pendingTurn) return;
                 await finishPendingTurn({
                     flushReason: nextFlushReason,
@@ -3466,7 +3488,10 @@ export function createCodexAppServerRuntime(params: Readonly<{
             })();
             return historyBoundary.onNotification(
                 { method, params: historyIdentityParams },
-                () => runBridgeWork(async () => {
+                () => runBridgeWork({
+                    operation: 'provider-notification',
+                    details: { method },
+                }, async () => {
                     if (attachedClientGeneration !== clientLifecycleGeneration) return;
                     const context = await resolveStreamUpdateContext(method, notificationParams);
                     if (!context) {
@@ -3525,7 +3550,7 @@ export function createCodexAppServerRuntime(params: Readonly<{
                     client.onExit((failure) => {
                         if (attachedClientGeneration !== clientLifecycleGeneration) return;
                         clientPromise = null;
-                        void runBridgeWork(async () => {
+                        void runBridgeWork({ operation: 'provider-exit' }, async () => {
                             if (attachedClientGeneration !== clientLifecycleGeneration) return;
                             if (!pendingTurn) return;
                             await abortPendingTurnWithFailure(failure);
@@ -3537,7 +3562,10 @@ export function createCodexAppServerRuntime(params: Readonly<{
                         if (attachedClientGeneration !== clientLifecycleGeneration) return;
                         void historyBoundary.onNotification(
                             { method: 'turn/started', params: notificationParams },
-                            () => runBridgeWork(async () => {
+                            () => runBridgeWork({
+                                operation: 'provider-notification',
+                                details: { method: 'turn/started' },
+                            }, async () => {
                                 if (attachedClientGeneration !== clientLifecycleGeneration) return;
                                 const notificationTurnId = readProviderEventTurnId(notificationParams, {
                                     allowTopLevelId: true,
@@ -3575,7 +3603,10 @@ export function createCodexAppServerRuntime(params: Readonly<{
                         });
                     });
                     client.registerNotificationHandler('thread/tokenUsage/updated', (notificationParams) => {
-                        void runBridgeWork(async () => {
+                        void runBridgeWork({
+                            operation: 'provider-notification',
+                            details: { method: 'thread/tokenUsage/updated' },
+                        }, async () => {
                             if (attachedClientGeneration !== clientLifecycleGeneration) return;
                             const notificationThreadId = readThreadId(notificationParams);
                             if (notificationThreadId && threadId && notificationThreadId !== threadId) {
@@ -3602,13 +3633,19 @@ export function createCodexAppServerRuntime(params: Readonly<{
                         });
                     });
                     client.registerNotificationHandler('account/rateLimits/updated', (notificationParams) => {
-                        void runBridgeWork(async () => {
+                        void runBridgeWork({
+                            operation: 'provider-notification',
+                            details: { method: 'account/rateLimits/updated' },
+                        }, async () => {
                             if (attachedClientGeneration !== clientLifecycleGeneration) return;
                             await publishRateLimitSnapshot(notificationParams, { mergeWithLast: true });
                         });
                     });
                     client.registerNotificationHandler('thread/goal/updated', (notificationParams) => {
-                        void runBridgeWork(async () => {
+                        void runBridgeWork({
+                            operation: 'provider-notification',
+                            details: { method: 'thread/goal/updated' },
+                        }, async () => {
                             if (attachedClientGeneration !== clientLifecycleGeneration) return;
                             const notificationThreadId = readThreadId(notificationParams);
                             if (notificationThreadId && threadId && notificationThreadId !== threadId) {
@@ -3619,7 +3656,10 @@ export function createCodexAppServerRuntime(params: Readonly<{
                         });
                     });
                     client.registerNotificationHandler('thread/goal/cleared', (notificationParams) => {
-                        void runBridgeWork(async () => {
+                        void runBridgeWork({
+                            operation: 'provider-notification',
+                            details: { method: 'thread/goal/cleared' },
+                        }, async () => {
                             if (attachedClientGeneration !== clientLifecycleGeneration) return;
                             const notificationThreadId = readThreadId(notificationParams);
                             if (notificationThreadId && threadId && notificationThreadId !== threadId) {
@@ -3632,7 +3672,10 @@ export function createCodexAppServerRuntime(params: Readonly<{
                         if (attachedClientGeneration !== clientLifecycleGeneration) return;
                         void historyBoundary.onNotification(
                             { method: 'error', params: notificationParams },
-                            () => runBridgeWork(async () => {
+                            () => runBridgeWork({
+                                operation: 'provider-notification',
+                                details: { method: 'error' },
+                            }, async () => {
                                 if (attachedClientGeneration !== clientLifecycleGeneration) return;
                                 if (!notificationMatchesPendingTurn(notificationParams)) return;
                                 // App-server `error` is diagnostic and can be followed by more
@@ -3660,8 +3703,8 @@ export function createCodexAppServerRuntime(params: Readonly<{
                     const registerHistoryBoundedServerRequest = (method: string): void => {
                         client.registerRequestHandler(method, (requestParams) => historyBoundary.onRequest(
                             { method, params: requestParams },
-                            () => runBridgeWork(() => handleServerRequest(method, requestParams, { allowProviderEffects: false })),
-                            () => runBridgeWork(() => handleServerRequest(method, requestParams)),
+                            () => runBridgeWork({ operation: 'provider-request-history', details: { method } }, () => handleServerRequest(method, requestParams, { allowProviderEffects: false })),
+                            () => runBridgeWork({ operation: 'provider-request', details: { method } }, () => handleServerRequest(method, requestParams)),
                         ));
                     };
                     registerHistoryBoundedServerRequest('item/commandExecution/requestApproval');
@@ -3671,10 +3714,16 @@ export function createCodexAppServerRuntime(params: Readonly<{
                     client.registerRequestHandler('mcpServer/elicitation/request', (requestParams, message) => historyBoundary.onRequest(
                         { method: 'mcpServer/elicitation/request', params: requestParams },
                         () => mapMcpElicitationResponse({ decision: 'denied' }),
-                        () => runBridgeWork(() => handleMcpElicitationRequest(requestParams, message)),
+                        () => runBridgeWork({
+                            operation: 'provider-request',
+                            details: { method: 'mcpServer/elicitation/request' },
+                        }, () => handleMcpElicitationRequest(requestParams, message)),
                     ));
                     client.registerRequestHandler('account/chatgptAuthTokens/refresh', (requestParams) => {
-                        return runBridgeWork(async () => {
+                        return runBridgeWork({
+                            operation: 'provider-request',
+                            details: { method: 'account/chatgptAuthTokens/refresh' },
+                        }, async () => {
                             if (typeof params.onChatGptAuthTokensRefresh !== 'function') {
                                 throw new Error('connected_service_chatgpt_refresh_unavailable');
                             }
@@ -3703,7 +3752,10 @@ export function createCodexAppServerRuntime(params: Readonly<{
                             if (attachedClientGeneration !== clientLifecycleGeneration) return;
                             await historyBoundary.onNotification(
                                 { method, params: notificationParams },
-                                () => runBridgeWork(async () => {
+                                () => runBridgeWork({
+                                    operation: 'provider-notification',
+                                    details: { method },
+                                }, async () => {
                                 if (attachedClientGeneration !== clientLifecycleGeneration) return;
                                 const terminalTurnId = readProviderEventTurnId(notificationParams, {
                                     allowTopLevelId: true,

@@ -3,8 +3,8 @@ import chalk from 'chalk';
 import type { Credentials } from '@/persistence';
 import { ExecutionRunTurnStreamReadRequestSchema } from '@happier-dev/protocol';
 
-import { wantsJson, printJsonEnvelope } from '@/cli/output/jsonEnvelope';
-import { readIntFlagValue } from '@/cli/commands/shared/argvFlags';
+import { wantsJson, printJsonEnvelope, writeJsonStdout } from '@/cli/output/jsonEnvelope';
+import { readCommandPositionals, readIntFlagValue } from '@/cli/commands/shared/argvFlags';
 import { readExecutionRunStream } from '@/session/services/executionRuns';
 import { resolveSessionTransportContext } from '@/session/services/resolveSessionTransportContext';
 
@@ -13,11 +13,13 @@ export async function cmdSessionRunStreamRead(
   deps: Readonly<{ readCredentialsFn: () => Promise<Credentials | null> }>,
 ): Promise<void> {
   const json = wantsJson(argv);
-  const idOrPrefix = String(argv[2] ?? '').trim();
-  const runId = String(argv[3] ?? '').trim();
-  const streamId = String(argv[4] ?? '').trim();
-  const cursor = readIntFlagValue(argv, '--cursor');
-  const maxEvents = readIntFlagValue(argv, '--max-events') ?? readIntFlagValue(argv, '--maxEvents');
+  const [idOrPrefix = '', runId = '', streamId = ''] = readCommandPositionals(argv, {
+    startIndex: 2,
+    valueFlags: ['--cursor', '--max-events', '--maxEvents'],
+  });
+  const cursor = readIntFlagValue(argv, '--cursor', { min: 0 });
+  const maxEvents = readIntFlagValue(argv, '--max-events', { min: 1, max: 256 })
+    ?? readIntFlagValue(argv, '--maxEvents', { min: 1, max: 256 });
 
   if (!idOrPrefix || !runId || !streamId || cursor === null) {
     throw new Error(
@@ -28,7 +30,7 @@ export async function cmdSessionRunStreamRead(
   const credentials = await deps.readCredentialsFn();
   if (!credentials) {
     if (json) {
-      printJsonEnvelope({ ok: false, kind: 'session_run_stream_read', error: { code: 'not_authenticated' } });
+      await printJsonEnvelope({ ok: false, kind: 'session_run_stream_read', error: { code: 'not_authenticated' } });
       return;
     }
     console.error(chalk.red('Error:'), 'Not authenticated. Run "happier auth login" first.');
@@ -38,7 +40,7 @@ export async function cmdSessionRunStreamRead(
   const sessionTarget = await resolveSessionTransportContext({ credentials, idOrPrefix });
   if (!sessionTarget.ok) {
     if (json) {
-      printJsonEnvelope({
+      await printJsonEnvelope({
         ok: false,
         kind: 'session_run_stream_read',
         error: { code: sessionTarget.code, ...(sessionTarget.candidates ? { candidates: sessionTarget.candidates } : {}) },
@@ -58,7 +60,7 @@ export async function cmdSessionRunStreamRead(
 
   if (!result.ok) {
     if (json) {
-      printJsonEnvelope({
+      await printJsonEnvelope({
         ok: false,
         kind: 'session_run_stream_read',
         error: { code: result.code, ...(result.message ? { message: result.message } : {}) },
@@ -69,10 +71,10 @@ export async function cmdSessionRunStreamRead(
   }
 
   if (json) {
-    printJsonEnvelope({ ok: true, kind: 'session_run_stream_read', data: { sessionId, runId, ...(result.data as any) } });
+    await printJsonEnvelope({ ok: true, kind: 'session_run_stream_read', data: { sessionId, runId, ...(result.data as any) } });
     return;
   }
 
   console.log(chalk.green('✓'), 'run stream read');
-  console.log(JSON.stringify(result.data, null, 2));
+  await writeJsonStdout(result.data, { pretty: true });
 }

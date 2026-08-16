@@ -3,9 +3,10 @@ import { createEnvPatcher } from "@/testkit/env";
 import { createDbMocks, installDbModuleMock } from "../api/testkit/dbMocks";
 
 let currentTx: any;
+let transactionQueue: any[] = [];
 
 vi.mock("@/storage/inTx", () => ({
-    inTx: async (fn: any) => await fn(currentTx),
+    inTx: async (fn: any) => await fn(transactionQueue.shift() ?? currentTx),
 }));
 
 const getSessionParticipantUserIds = vi.fn();
@@ -21,7 +22,7 @@ vi.mock("@/app/changes/markAccountChanged", () => ({
 const dbMocks = createDbMocks({
     session: ["findUnique"],
     sessionShare: ["findUnique"],
-    sessionMessage: ["findUnique"],
+    sessionMessage: ["findUnique", "findFirst", "findMany"],
     sessionTurnMutationReceipt: ["findUnique"],
 } as const);
 installDbModuleMock({ db: dbMocks.db });
@@ -58,6 +59,7 @@ describe("sessionWriteService", () => {
         markAccountChanged.mockReset();
         dbMocks.reset();
         storagePolicyEnv.restore();
+        transactionQueue = [];
 
         currentTx = {
             accessKey: {
@@ -3666,8 +3668,280 @@ describe("sessionWriteService", () => {
     });
 
     describe("applySessionReadCursorOperation", () => {
+        it("does not scan transcript messages when the actor is unauthorized", async () => {
+            const initialAuthorizationTx = {
+                session: {
+                    findUnique: vi.fn().mockResolvedValue({ accountId: "owner" }),
+                },
+                sessionShare: {
+                    findUnique: vi.fn().mockResolvedValue(null),
+                },
+            };
+            transactionQueue.push(initialAuthorizationTx);
+
+            const res = await applySessionReadCursorOperation({
+                actorUserId: "intruder",
+                sessionId: "s1",
+                operation: { kind: "mark-unread" },
+            });
+
+            expect(res).toEqual({ ok: false, error: "forbidden" });
+            expect(dbMocks.db.sessionMessage.findFirst).not.toHaveBeenCalled();
+            expect(dbMocks.db.sessionMessage.findMany).not.toHaveBeenCalled();
+        });
+
+        it("scans outside transactions, then reauthorizes and conservatively lowers from fresh state", async () => {
+            const lifecycle: string[] = [];
+            const initialAuthorizationTx = {
+                session: {
+                    findUnique: vi.fn()
+                        .mockImplementationOnce(async () => {
+                            lifecycle.push("initial-authorization");
+                            return { accountId: "u1" };
+                        })
+                        .mockResolvedValueOnce({ seq: 11 }),
+                },
+                sessionShare: {
+                    findUnique: vi.fn(),
+                },
+                sessionMessage: {
+                    findFirst: vi.fn(() => {
+                        throw new Error("transcript scan must not use the authorization transaction");
+                    }),
+                    findMany: vi.fn(() => {
+                        throw new Error("transcript scan must not use the authorization transaction");
+                    }),
+                },
+            };
+            const finalTx = {
+                session: {
+                    findUnique: vi.fn()
+                        .mockImplementationOnce(async () => {
+                            lifecycle.push("final-authorization");
+                            return { accountId: "u1" };
+                        })
+                        .mockImplementationOnce(async () => {
+                            lifecycle.push("fresh-session");
+                            return {
+                                seq: 11,
+                                lastViewedSessionSeq: 11,
+                                latestReadyEventSeq: null,
+                                latestTurnStatus: "in_progress",
+                                pendingCount: 0,
+                                pendingBlockedCount: 0,
+                                pendingPermissionRequestCount: 0,
+                                pendingUserActionRequestCount: 0,
+                                active: true,
+                                archivedAt: null,
+                            };
+                        }),
+                    updateMany: vi.fn(async () => {
+                        lifecycle.push("lower-cursor");
+                        return { count: 1 };
+                    }),
+                },
+                sessionShare: {
+                    findUnique: vi.fn(),
+                },
+            };
+            transactionQueue.push(initialAuthorizationTx, finalTx);
+            dbMocks.db.sessionMessage.findMany.mockImplementation(async (args: any) => {
+                if (args.select?.transcriptObservationProvenance) {
+                    lifecycle.push("external-scan");
+                    return [
+                        {
+                            id: "m11",
+                            seq: 11,
+                            transcriptObservationProvenance: { kind: "non_dependent", source: "history" },
+                        },
+                        {
+                            id: "m10",
+                            seq: 10,
+                            transcriptObservationProvenance: { kind: "non_dependent", source: "background" },
+                        },
+                        {
+                            id: "m9",
+                            seq: 9,
+                            transcriptObservationProvenance: { kind: "non_dependent", source: "external" },
+                        },
+                        {
+                            id: "m8",
+                            seq: 8,
+                            transcriptObservationProvenance: { kind: "non_dependent", source: "sidechain" },
+                        },
+                        { id: "m7", seq: 7, transcriptObservationProvenance: { kind: "non_dependent", source: "guessed" } },
+                    ];
+                }
+                return [
+                    {
+                        id: "m10",
+                        content: {
+                            t: "plain",
+                            v: {
+                                role: "agent",
+                                content: {
+                                    type: "event",
+                                    id: "quota-wait-event",
+                                    data: {
+                                        type: "provider-quota-wait",
+                                        serviceId: "openai-codex",
+                                        groupId: "main",
+                                        resetAtMs: 1_900_000,
+                                        reason: "connected_service_group_quota_exhausted",
+                                    },
+                                },
+                            },
+                        },
+                    },
+                    {
+                        id: "m9",
+                        content: {
+                            t: "plain",
+                            v: {
+                                role: "agent",
+                                content: {
+                                    type: "event",
+                                    id: "quota-wait-event-external",
+                                    data: {
+                                        type: "provider-quota-wait",
+                                        serviceId: "openai-codex",
+                                        groupId: "main",
+                                        resetAtMs: 1_900_000,
+                                        reason: "connected_service_group_quota_exhausted",
+                                    },
+                                },
+                            },
+                        },
+                    },
+                    {
+                        id: "m8",
+                        content: {
+                            t: "plain",
+                            v: {
+                                role: "agent",
+                                content: {
+                                    type: "event",
+                                    id: "quota-wait-event-sidechain",
+                                    data: {
+                                        type: "provider-quota-wait",
+                                        serviceId: "openai-codex",
+                                        groupId: "main",
+                                        resetAtMs: 1_900_000,
+                                        reason: "connected_service_group_quota_exhausted",
+                                    },
+                                },
+                            },
+                        },
+                    },
+                    { id: "m7", content: { malformed: true } },
+                ];
+            });
+            getSessionParticipantUserIds.mockResolvedValue(["u1"]);
+            markAccountChanged.mockResolvedValueOnce(200);
+
+            const res = await applySessionReadCursorOperation({
+                actorUserId: "u1",
+                sessionId: "s1",
+                operation: { kind: "mark-unread" },
+            });
+
+            expect(lifecycle).toEqual([
+                "initial-authorization",
+                "external-scan",
+                "final-authorization",
+                "fresh-session",
+                "lower-cursor",
+            ]);
+            expect(initialAuthorizationTx.sessionMessage.findFirst).not.toHaveBeenCalled();
+            expect(initialAuthorizationTx.sessionMessage.findMany).not.toHaveBeenCalled();
+            expect(dbMocks.db.sessionMessage.findMany).toHaveBeenNthCalledWith(2, {
+                where: {
+                    sessionId: "s1",
+                    sidechainId: null,
+                    id: { in: ["m10", "m9", "m8", "m7"] },
+                },
+                select: { id: true, content: true },
+            });
+            expect(finalTx.session.updateMany).toHaveBeenCalledWith({
+                where: {
+                    id: "s1",
+                    lastViewedSessionSeq: { gt: 6 },
+                },
+                data: { lastViewedSessionSeq: 6, unreadSince: expect.any(Date) },
+            });
+            expect(res).toEqual({
+                ok: true,
+                lastViewedSessionSeq: 6,
+                participantCursors: [{ accountId: "u1", cursor: 200 }],
+                badgeAttentionChanged: true,
+                didChange: true,
+                readState: "unread",
+            });
+        });
+
+        it("does not lower from a stale scan boundary when fresh state is already unread", async () => {
+            const initialAuthorizationTx = {
+                session: {
+                    findUnique: vi.fn()
+                        .mockResolvedValueOnce({ accountId: "u1" })
+                        .mockResolvedValueOnce({ seq: 7 }),
+                },
+                sessionShare: { findUnique: vi.fn() },
+            };
+            const finalTx = {
+                session: {
+                    findUnique: vi.fn()
+                        .mockResolvedValueOnce({ accountId: "u1" })
+                        .mockResolvedValueOnce({
+                            seq: 9,
+                            lastViewedSessionSeq: 7,
+                            latestReadyEventSeq: null,
+                            latestTurnStatus: "in_progress",
+                            pendingCount: 0,
+                            pendingBlockedCount: 0,
+                            pendingPermissionRequestCount: 0,
+                            pendingUserActionRequestCount: 0,
+                            active: true,
+                            archivedAt: null,
+                        }),
+                    updateMany: vi.fn(),
+                },
+                sessionShare: { findUnique: vi.fn() },
+            };
+            transactionQueue.push(initialAuthorizationTx, finalTx);
+            dbMocks.db.sessionMessage.findMany
+                .mockResolvedValueOnce([{
+                    id: "m7",
+                    seq: 7,
+                    transcriptObservationProvenance: null,
+                }])
+                .mockResolvedValueOnce([{
+                    id: "m7",
+                    content: { t: "encrypted", c: "ciphertext" },
+                }]);
+
+            const res = await applySessionReadCursorOperation({
+                actorUserId: "u1",
+                sessionId: "s1",
+                operation: { kind: "mark-unread" },
+            });
+
+            expect(finalTx.session.updateMany).not.toHaveBeenCalled();
+            expect(markAccountChanged).not.toHaveBeenCalled();
+            expect(res).toEqual({
+                ok: true,
+                lastViewedSessionSeq: 7,
+                participantCursors: [],
+                badgeAttentionChanged: false,
+                didChange: false,
+                readState: "unread",
+            });
+        });
+
         it("marks unread by lowering the cursor with a lowering-aware write", async () => {
             currentTx.session.findUnique
+                .mockResolvedValueOnce({ accountId: "u1" })
+                .mockResolvedValueOnce({ seq: 8 })
                 .mockResolvedValueOnce({ accountId: "u1" })
                 .mockResolvedValueOnce({
                     seq: 8,
@@ -3709,6 +3983,8 @@ describe("sessionWriteService", () => {
         it("marks unread below the latest readable main transcript seq when raw session seq is ahead", async () => {
             currentTx.session.findUnique
                 .mockResolvedValueOnce({ accountId: "u1" })
+                .mockResolvedValueOnce({ seq: 742 })
+                .mockResolvedValueOnce({ accountId: "u1" })
                 .mockResolvedValueOnce({
                     seq: 742,
                     lastViewedSessionSeq: 742,
@@ -3721,32 +3997,16 @@ describe("sessionWriteService", () => {
                     active: true,
                     archivedAt: null,
                 });
-            currentTx.sessionMessage.findMany.mockResolvedValue([
-                {
-                    seq: 742,
-                    localId: "connected-service-account-switch-attempt:ok:restart_requested:manual:restart:succeeded:restarted:none",
-                    messageRole: "event",
-                    content: { t: "encrypted", c: "cipher-742" },
-                },
-                {
-                    seq: 741,
-                    localId: "connected-service-account-switch-attempt:failed:hot_applied:manual:hot_apply:failed:none:post_switch_verification_failed",
-                    messageRole: "event",
-                    content: { t: "encrypted", c: "cipher-741" },
-                },
-                {
-                    seq: 740,
-                    localId: "connected-service-account-switch-attempt:failed:restart_requested:manual:restart:failed:none:profile_action_required",
-                    messageRole: "event",
-                    content: { t: "encrypted", c: "cipher-740" },
-                },
-                {
+            dbMocks.db.sessionMessage.findMany
+                .mockResolvedValueOnce([{
+                    id: "m739",
                     seq: 739,
-                    localId: "claude-jsonl:main:assistant:0a9393af-3ed1-4933-ade2-c7e2b0389c00",
-                    messageRole: "agent",
-                    content: { t: "encrypted", c: "cipher-739" },
-                },
-            ]);
+                    transcriptObservationProvenance: null,
+                }])
+                .mockResolvedValueOnce([{
+                    id: "m739",
+                    content: { t: "encrypted", c: "ciphertext" },
+                }]);
             currentTx.sessionShare.findUnique.mockResolvedValue(null);
             currentTx.session.updateMany.mockResolvedValue({ count: 1 });
             getSessionParticipantUserIds.mockResolvedValue(["u1"]);
@@ -3758,7 +4018,7 @@ describe("sessionWriteService", () => {
                 operation: { kind: "mark-unread" },
             });
 
-            expect(currentTx.sessionMessage.findMany).toHaveBeenCalledWith({
+            expect(dbMocks.db.sessionMessage.findMany).toHaveBeenCalledWith({
                 where: {
                     sessionId: "s1",
                     sidechainId: null,
@@ -3766,12 +4026,13 @@ describe("sessionWriteService", () => {
                 orderBy: { seq: "desc" },
                 take: 100,
                 select: {
+                    id: true,
                     seq: true,
-                    localId: true,
-                    messageRole: true,
-                    content: true,
+                    transcriptObservationProvenance: true,
                 },
             });
+            expect(currentTx.sessionMessage.findFirst).not.toHaveBeenCalled();
+            expect(currentTx.sessionMessage.findMany).not.toHaveBeenCalled();
             expect(currentTx.session.updateMany).toHaveBeenCalledWith({
                 where: {
                     id: "s1",
@@ -3791,6 +4052,8 @@ describe("sessionWriteService", () => {
 
         it("preserves null when marking unread is already represented by a missing cursor", async () => {
             currentTx.session.findUnique
+                .mockResolvedValueOnce({ accountId: "u1" })
+                .mockResolvedValueOnce({ seq: 8 })
                 .mockResolvedValueOnce({ accountId: "u1" })
                 .mockResolvedValueOnce({
                     seq: 8,
@@ -3823,6 +4086,8 @@ describe("sessionWriteService", () => {
 
         it("does not make archived sessions contribute badge attention when marked unread", async () => {
             currentTx.session.findUnique
+                .mockResolvedValueOnce({ accountId: "u1" })
+                .mockResolvedValueOnce({ seq: 8 })
                 .mockResolvedValueOnce({ accountId: "u1" })
                 .mockResolvedValueOnce({
                     seq: 8,

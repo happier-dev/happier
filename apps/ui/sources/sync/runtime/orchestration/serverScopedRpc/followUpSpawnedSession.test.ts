@@ -9,6 +9,10 @@ vi.mock('@/sync/api/capabilities/serverFeaturesClient', () => ({
 import { fetchAndApplySessionById } from '@/sync/engine/sessions/sessionById';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { createNotAuthenticatedError } from '@/sync/runtime/connectivity/authErrors';
+import {
+    createFollowUpSpawnedSessionWithServerScope,
+    readRecoverableFollowUpPayload,
+} from './followUpSpawnedSession';
 
 describe('followUpSpawnedSessionWithServerScope', () => {
     beforeEach(() => {
@@ -50,7 +54,6 @@ describe('followUpSpawnedSessionWithServerScope', () => {
         } as Session;
         const ensureSessionVisibleForMessageRoute = vi.fn(async () => {});
 
-        const { createFollowUpSpawnedSessionWithServerScope, readRecoverableFollowUpPayload } = await import('./followUpSpawnedSession');
         const { followUpSpawnedSessionWithServerScope } = createFollowUpSpawnedSessionWithServerScope({
             resolveContext: async () => ({
                 scope: 'active',
@@ -159,7 +162,7 @@ describe('followUpSpawnedSessionWithServerScope', () => {
             { profileId: 'profile-work' },
             {
                 localId: 'first-turn-local',
-                requestedAction: { v: 1, kind: 'send_now' },
+                requestedAction: { v: 1, kind: 'enqueue' },
             },
         );
     });
@@ -529,7 +532,7 @@ describe('followUpSpawnedSessionWithServerScope', () => {
             undefined,
             {
                 localId: 'first-turn-local',
-                requestedAction: { v: 1, kind: 'send_now' },
+                requestedAction: { v: 1, kind: 'enqueue' },
             },
         );
         expect(ensureSessionVisibleForMessageRoute).toHaveBeenCalledWith(
@@ -541,18 +544,24 @@ describe('followUpSpawnedSessionWithServerScope', () => {
     it('does not send active-scope follow-up when local hydration still lags behind', async () => {
         const refreshSessions = vi.fn(async () => {});
         const ensureSessionVisibleForMessageRoute = vi.fn(async () => {});
+        let nowMs = 1_000;
+        const sleep = vi.fn(async (ms: number) => {
+            nowMs += ms;
+        });
 
         const { createFollowUpSpawnedSessionWithServerScope } = await import('./followUpSpawnedSession');
         const { followUpSpawnedSessionWithServerScope } = createFollowUpSpawnedSessionWithServerScope({
             resolveContext: async () => ({
                 scope: 'active',
-                timeoutMs: 5_000,
+                timeoutMs: 500,
             }),
             activeSync: {
                 refreshSessions,
             },
             ensureSessionVisibleForMessageRoute,
             getStoredSession: () => null,
+            sleep,
+            now: () => nowMs,
         });
 
         await expect(followUpSpawnedSessionWithServerScope({
@@ -567,9 +576,80 @@ describe('followUpSpawnedSessionWithServerScope', () => {
         });
 
         expect(refreshSessions).not.toHaveBeenCalled();
-        expect(ensureSessionVisibleForMessageRoute).toHaveBeenCalledWith(
+        expect(ensureSessionVisibleForMessageRoute).toHaveBeenCalledTimes(3);
+        expect(ensureSessionVisibleForMessageRoute).toHaveBeenLastCalledWith(
             'sess_target',
             { forceRefresh: true, serverId: 'server-b' },
+        );
+        expect(sleep).toHaveBeenCalledTimes(2);
+    });
+
+    it('waits within the bounded post-spawn grace for active-scope session visibility before sending once', async () => {
+        const refreshSessions = vi.fn(async () => {});
+        const enqueuePendingMessage = vi.fn(async () => ({
+            localId: 'first-turn-local',
+            accepted: true,
+        }));
+        let nowMs = 1_000;
+        let storedSession: Session | null = null;
+        const ensureSessionVisibleForMessageRoute = vi.fn(async () => {
+            if (ensureSessionVisibleForMessageRoute.mock.calls.length === 3) {
+                storedSession = {
+                    id: 'sess_target',
+                    createdAt: 1,
+                    updatedAt: 2,
+                    seq: 1,
+                    active: true,
+                    activeAt: 2,
+                    encryptionMode: 'plain',
+                    metadataVersion: 1,
+                    metadata: { path: '/tmp/repo' },
+                    agentStateVersion: 1,
+                    agentState: null,
+                    presence: 'online',
+                } as Session;
+            }
+        });
+        const sleep = vi.fn(async (ms: number) => {
+            nowMs += ms;
+        });
+
+        const { createFollowUpSpawnedSessionWithServerScope } = await import('./followUpSpawnedSession');
+        const factoryDeps = {
+            resolveContext: async () => ({
+                scope: 'active' as const,
+                timeoutMs: 5_000,
+            }),
+            activeSync: {
+                refreshSessions,
+                enqueuePendingMessage,
+            },
+            ensureSessionVisibleForMessageRoute,
+            getStoredSession: () => storedSession,
+            sleep,
+            now: () => nowMs,
+        } satisfies NonNullable<Parameters<typeof createFollowUpSpawnedSessionWithServerScope>[0]>;
+        const { followUpSpawnedSessionWithServerScope } = createFollowUpSpawnedSessionWithServerScope(factoryDeps);
+
+        await expect(followUpSpawnedSessionWithServerScope({
+            sessionId: 'sess_target',
+            targetServerId: 'server-b',
+            initialMessageText: 'hello after sync propagation',
+            messageLocalId: 'first-turn-local',
+        })).resolves.toBeUndefined();
+
+        expect(ensureSessionVisibleForMessageRoute).toHaveBeenCalledTimes(3);
+        expect(sleep).toHaveBeenCalledTimes(2);
+        expect(enqueuePendingMessage).toHaveBeenCalledTimes(1);
+        expect(enqueuePendingMessage).toHaveBeenCalledWith(
+            'sess_target',
+            'hello after sync propagation',
+            undefined,
+            undefined,
+            {
+                localId: 'first-turn-local',
+                requestedAction: { v: 1, kind: 'enqueue' },
+            },
         );
     });
 
@@ -697,7 +777,7 @@ describe('followUpSpawnedSessionWithServerScope', () => {
             },
             {
                 localId: expect.any(String),
-                requestedAction: { v: 1, kind: 'send_now' },
+                requestedAction: { v: 1, kind: 'enqueue' },
             },
         );
     });

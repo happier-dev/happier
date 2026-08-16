@@ -12,6 +12,7 @@ import {
     normalizeConnectedServiceCredentialMetadataV3,
 } from "../connect/connectedServicesV3/credentialMetadataV3";
 import { deriveConnectedServiceCredentialStatus } from "../connect/credentialHealthMetadata";
+import { resolveConnectedServiceCredentialRevision } from "../connect/credentials/credentialRevision";
 
 export type AccountConnectedServicesProjection = Pick<
     AccountProfile,
@@ -24,6 +25,7 @@ type ConnectedServiceGroup = AccountProfile["connectedServicesV2"][number]["grou
 type ConnectedServiceEntry = AccountProfile["connectedServicesV2"][number];
 
 type ServiceAccountTokenProjectionRow = Readonly<{
+    id: string;
     vendor: string;
     profileId: string;
     metadata: unknown;
@@ -95,6 +97,7 @@ export async function buildAccountConnectedServicesProjection(params: Readonly<{
     const tokens = await params.tx.serviceAccountToken.findMany({
         where: { accountId: params.accountId },
         select: {
+            id: true,
             vendor: true,
             profileId: true,
             metadata: true,
@@ -107,16 +110,16 @@ export async function buildAccountConnectedServicesProjection(params: Readonly<{
     const connectedServices = buildConnectedVendors(tokens);
     const connectedServicesV2 = buildConnectedServicesV2FromTokens(tokens);
     const connectedServiceCredentialRevisionsV1 = tokens.flatMap((row) => {
-        const metadataV2 = isConnectedServiceCredentialMetadataV2(row.metadata)
-            ? normalizeConnectedServiceCredentialMetadataV2(row.metadata)
-            : null;
-        const metadataV3 = !metadataV2 && isConnectedServiceCredentialMetadataV3(row.metadata)
-            ? normalizeConnectedServiceCredentialMetadataV3(row.metadata)
-            : null;
-        const credentialRevision = (metadataV2 ?? metadataV3)?.credentialRevision;
         const serviceId = ConnectedServiceIdSchema.safeParse(row.vendor);
-        return serviceId.success && credentialRevision
-            ? [{ serviceId: serviceId.data, profileId: row.profileId, credentialRevision }]
+        return serviceId.success
+            ? [{
+                serviceId: serviceId.data,
+                profileId: row.profileId,
+                credentialRevision: resolveConnectedServiceCredentialRevision({
+                    rowId: row.id,
+                    metadata: row.metadata,
+                }),
+            }]
             : [];
     });
 

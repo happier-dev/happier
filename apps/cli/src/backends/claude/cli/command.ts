@@ -27,7 +27,6 @@ import { isBun } from '@/utils/runtime';
 import { fetchSessionById } from '@/session/transport/http/sessionsHttp';
 import { handleResumeCommand } from '@/cli/commands/resume';
 import { partitionProviderSessionArgs, type ProviderSessionArgPartitionResult } from '@/cli/providerSessionArgPartition';
-import { serializeAxiosErrorForLog } from '@/api/client/serializeAxiosErrorForLog';
 import { HAPPY_STARTING_MODE_UNIFIED } from '@/terminal/tmux/headlessTmuxArgs';
 import {
   overlayDirectConnectedServiceEnvironment,
@@ -392,7 +391,7 @@ ${chalk.bold.cyan(`Claude Code Options (from \`${providerHelpCommand}\`):`)}
     await runClaude(credentials, options);
     runCompleted = true;
   } catch (error) {
-    logger.debug('[claude] Fatal command error', serializeAxiosErrorForLog(error));
+    logger.fatal(error);
     console.error(chalk.red('Error:'), error instanceof Error ? error.message : 'Unknown error');
     if (process.env.DEBUG) {
       console.error(error);

@@ -324,8 +324,8 @@ export type ClaudeUnifiedTerminalSessionOptions<Mode extends EnhancedMode = Enha
   allowFirstInputBeforeSessionStart?: boolean | undefined;
   /** Canonical session-turn lifecycle probe for the arbiter's stale-turn recovery (Lane N2). */
   isCanonicalTurnActive?: (() => boolean) | undefined;
-  /** Canonical session delivery-state probe used to suppress ambiguous retries already accepted by the provider. */
-  isPromptDeliveryAccepted?: ((batch: ClaudeUnifiedPromptBatch<Mode>) => boolean) | undefined;
+  /** Canonical Pending delivery-state probe used to reconcile ambiguous terminal custody. */
+  resolvePromptDeliveryState?: ((batch: ClaudeUnifiedPromptBatch<Mode>) => import('./_types').ClaudeUnifiedPromptDeliveryState) | undefined;
   /**
    * Lane P (O-design Seam A): de-duplicated session-level steer availability tee from the steer
    * evaluator. Launchers publish it to agentState via the capability publisher.
@@ -689,6 +689,10 @@ async function readExistingTerminalHostAttachment(params: Readonly<{
 }
 
 async function removeUnreadLaunchSpec(spawn: ClaudeUnifiedTerminalSpawn): Promise<void> {
+  if (spawn.cleanupUnreadArtifacts) {
+    await spawn.cleanupUnreadArtifacts().catch(() => undefined);
+    return;
+  }
   if (!spawn.launchSpecPath) return;
   await unlink(spawn.launchSpecPath).catch(() => undefined);
   const specDir = dirname(spawn.launchSpecPath);
@@ -1113,6 +1117,7 @@ export async function runClaudeUnifiedTerminalSession<Mode extends EnhancedMode 
     }
   }
   let spawn: ClaudeUnifiedTerminalSpawn | null = null;
+  let spawnArtifactsHandedOff = false;
   let spawnEnvForRuntimeControl: Readonly<Record<string, string>> | null = null;
   const ensureSpawn = async (): Promise<ClaudeUnifiedTerminalSpawn> => {
     if (spawn) return spawn;
@@ -1259,6 +1264,7 @@ export async function runClaudeUnifiedTerminalSession<Mode extends EnhancedMode 
           spawnEnv: fallbackSpawn.spawnEnv,
           isolatedEnv: true,
         });
+        spawnArtifactsHandedOff = true;
       }
     } else {
       if (existingTerminalHost) {
@@ -1281,19 +1287,20 @@ export async function runClaudeUnifiedTerminalSession<Mode extends EnhancedMode 
         explicitResumeIdentityRequired = expectedProviderResumeSessionId !== null;
         await opts.onProviderLaunchStarting?.();
         handle = await hostResolution.adapter.createOrAttachHost(createOptions);
+        spawnArtifactsHandedOff = true;
       }
     }
   } catch (error) {
     removeProcessSignalCleanup?.();
     removeProcessSignalCleanup = null;
     disposeReplayableHookSubscription(hookSubscription);
-    if (spawn) await removeUnreadLaunchSpec(spawn);
+    if (spawn && !spawnArtifactsHandedOff) await removeUnreadLaunchSpec(spawn);
     throw error;
   }
   if (processSignalAbortController.signal.aborted) {
     removeProcessSignalCleanup?.();
     disposeReplayableHookSubscription(hookSubscription);
-    if (spawn) await removeUnreadLaunchSpec(spawn);
+    if (spawn && !spawnArtifactsHandedOff) await removeUnreadLaunchSpec(spawn);
     return;
   }
   const activeHandle = handle;
@@ -1898,17 +1905,13 @@ export async function runClaudeUnifiedTerminalSession<Mode extends EnhancedMode 
         interruptActiveTurn: () => hostResolution.adapter.interruptTurn(activeHandle),
         onSteerAcceptanceArmed: steerWiring.onSteerAcceptanceArmed,
         isCanonicalTurnActive: opts.isCanonicalTurnActive,
-        isPromptDeliveryAccepted: opts.isPromptDeliveryAccepted,
+        resolvePromptDeliveryState: opts.resolvePromptDeliveryState,
         onPendingInputInterruptAndRunLocalIdChange: (localId) => {
           opts.onPendingInputInterruptAndRunLocalIdChange?.(
             pendingInputInterruptAndRunEnabled ? localId : null,
           );
         },
         onInjectionFailure: async (failure) => {
-          if (failure.failureState === 'failed_ambiguous') {
-            ambiguousPromptAcceptanceBatches.add(failure.batch);
-            recordPromptAcceptanceCorrelation(failure.batch);
-          }
           const error = new ClaudeUnifiedTerminalInjectionFailureError(failure);
           const notifyTerminalInjectionFailure = async (logContext: string) => {
             try {
@@ -1940,9 +1943,11 @@ export async function runClaudeUnifiedTerminalSession<Mode extends EnhancedMode 
           }
           return await notifyTerminalInjectionFailure('[unified]: failed to surface Claude unified terminal injection failure (non-fatal)');
         },
-        onPromptInjected: async (batch, acceptance, result) => {
+        onProviderAcceptancePending: (batch, _acceptance, observedAtMs) => {
+          recordPromptAcceptanceCorrelation(batch, observedAtMs);
+        },
+        onPromptInjected: async (batch, acceptance) => {
           steerWiring.observeInjectedPrompt(batch, acceptance);
-          recordPromptAcceptanceCorrelation(batch, result.at);
           if (batch.mode === undefined) return undefined;
           endStartupHostLivenessGrace();
           return opts.onTerminalPromptInjected?.({
@@ -2089,7 +2094,6 @@ export async function runClaudeUnifiedTerminalSession<Mode extends EnhancedMode 
         && confirmPromptAcceptedFromTranscript([...recentAcceptedTranscriptCandidates], { rememberUnmatched: false })
       );
       const promptAcceptanceCorrelationRecordedBatches = new WeakSet<object>();
-      const ambiguousPromptAcceptanceBatches = new WeakSet<object>();
       const recordPromptAcceptanceCorrelation = (
         batch: ClaudeUnifiedPromptBatch<Mode>,
         acceptedAtMs?: number | undefined,

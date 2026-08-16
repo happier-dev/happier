@@ -1,9 +1,11 @@
 import { type SessionParticipantCursor } from "@/app/session/changeTracking/markSessionParticipantsChanged";
 import { markPendingStateChangedParticipants } from "@/app/session/pending/markPendingStateChangedParticipants";
-import { resolveSessionPendingOwnerAccess } from "@/app/session/pending/resolveSessionPendingAccess";
-import { inTx } from "@/storage/inTx";
-import { db } from "@/storage/db";
-import { isPrismaErrorCode } from "@/storage/prisma";
+import {
+    inTx,
+    isTransactionAcquisitionUnavailableError,
+    isTransactionDeadlineExceededError,
+    type Tx,
+} from "@/storage/inTx";
 import { readEncryptionFeatureEnv } from "@/app/features/catalog/readFeatureEnv";
 import {
     decideRuntimeIdleAdmission,
@@ -75,25 +77,20 @@ export type MaterializeNextPendingMessageResult =
         badgeAttentionChanged: boolean;
         deliveryState?: PendingMaterializationDeliveryState;
       }
+    | { ok: false; error: "transaction-unavailable"; retryAfterMs: number }
     | { ok: false; error: "session-not-found" | "forbidden" | "invalid-params" | "requested-action-conflict" | "transcript-conflict" | "internal" };
 
 function toSessionMessageContentFromPending(content: PrismaJson.SessionPendingMessageContent): PrismaJson.SessionMessageContent {
     return content;
 }
 
-async function tryRejoinProviderClaim(params: Readonly<{
+async function tryRejoinProviderClaimInTx(params: Readonly<{
+    tx: Tx;
     actorUserId: string;
     sessionId: string;
     trustedPublisherFence: TrustedPendingPublisherFence;
 }>): Promise<MaterializeNextPendingMessageResult | null> {
-    try {
-        return await inTx(async (tx): Promise<MaterializeNextPendingMessageResult | null> => {
-            if (!await isTrustedPendingPublisherFenceCurrent({
-                tx,
-                actorUserId: params.actorUserId,
-                sessionId: params.sessionId,
-                fence: params.trustedPublisherFence,
-            })) return { ok: false, error: "forbidden" };
+        const tx = params.tx;
             const claimed = await tx.sessionPendingMessage.findFirst({
                 where: {
                     sessionId: params.sessionId,
@@ -176,12 +173,6 @@ async function tryRejoinProviderClaim(params: Readonly<{
                 !requestedAction.success
                 || (providerAction !== "send" && providerAction !== "steer" && providerAction !== "interrupt_and_send")
             ) return { ok: false, error: "invalid-params" };
-            if (!await isTrustedPendingPublisherFenceCurrent({
-                tx,
-                actorUserId: params.actorUserId,
-                sessionId: params.sessionId,
-                fence: params.trustedPublisherFence,
-            })) return { ok: false, error: "forbidden" };
             const session = await tx.session.findUniqueOrThrow({
                 where: { id: params.sessionId },
                 select: { pendingCount: true, pendingBlockedCount: true, pendingVersion: true },
@@ -220,11 +211,6 @@ async function tryRejoinProviderClaim(params: Readonly<{
                 deliveryState: { mode: "provider", unresolved: true },
                 badgeAttentionChanged: false,
             };
-        });
-    } catch (error) {
-        if (error instanceof PublisherAuthorityLostError) return { ok: false, error: "forbidden" };
-        return { ok: false, error: "internal" };
-    }
 }
 
 export async function materializeNextPendingMessageForCurrentPublisher(params: Readonly<{
@@ -235,10 +221,29 @@ export async function materializeNextPendingMessageForCurrentPublisher(params: R
     deliveryTiming: SessionPendingQueueDeliveryTiming;
     foregroundState: PendingForegroundState;
     expectedRuntimeActivityRevision?: number;
+    deadlineAtMs?: number;
 }>): Promise<MaterializeNextPendingMessageResult> {
-    return await materializeNextPendingMessage({
-        ...params,
-    });
+    try {
+        return await inTx(
+            async (tx) => await materializeNextPendingMessageForCurrentPublisherInTx({ ...params, tx }),
+            params.deadlineAtMs === undefined ? {} : { deadlineAtMs: params.deadlineAtMs },
+        );
+    } catch (error) {
+        return mapPendingMaterializationError(error);
+    }
+}
+
+export async function materializeNextPendingMessageForCurrentPublisherInTx(params: Readonly<{
+    tx: Tx;
+    actorUserId: string;
+    sessionId: string;
+    trustedPublisherFence: TrustedPendingPublisherFence;
+    expectedPendingVersion?: number;
+    deliveryTiming: SessionPendingQueueDeliveryTiming;
+    foregroundState: PendingForegroundState;
+    expectedRuntimeActivityRevision?: number;
+}>): Promise<MaterializeNextPendingMessageResult> {
+    return await materializeNextPendingMessageInTx(params);
 }
 
 type MaterializeNextPendingMessageCommonParams = Readonly<{
@@ -257,13 +262,25 @@ type MaterializeNextPendingMessageParams =
 export async function materializeNextPendingMessage(
     params: MaterializeNextPendingMessageParams,
 ): Promise<MaterializeNextPendingMessageResult> {
-    return await materializeNextPendingMessageWithRaceRetry(params, true);
+    return await materializeNextPendingMessageForCurrentPublisher({
+        ...params,
+        deliveryTiming: params.deliveryTiming ?? "after_foreground_ready",
+        foregroundState: params.foregroundState ?? "ready",
+    });
 }
 
-async function materializeNextPendingMessageWithRaceRetry(
-    params: MaterializeNextPendingMessageParams,
-    retryRace: boolean,
+export function mapPendingMaterializationError(error: unknown): MaterializeNextPendingMessageResult {
+    if (error instanceof PublisherAuthorityLostError) return { ok: false, error: "forbidden" };
+    if (isTransactionDeadlineExceededError(error) || isTransactionAcquisitionUnavailableError(error)) {
+        return { ok: false, error: "transaction-unavailable", retryAfterMs: 1_000 };
+    }
+    return { ok: false, error: "internal" };
+}
+
+async function materializeNextPendingMessageInTx(
+    params: MaterializeNextPendingMessageParams & Readonly<{ tx: Tx }>,
 ): Promise<MaterializeNextPendingMessageResult> {
+    const tx = params.tx;
     const actorUserId = typeof params.actorUserId === "string" ? params.actorUserId : "";
     const sessionId = typeof params.sessionId === "string" ? params.sessionId : "";
     const materializedDeliveryState = {
@@ -280,7 +297,14 @@ async function materializeNextPendingMessageWithRaceRetry(
     if (!params.trustedPublisherFence) {
         return { ok: false, error: "forbidden" };
     }
-    const rejoined = await tryRejoinProviderClaim({
+    if (!await isTrustedPendingPublisherFenceCurrent({
+        tx,
+        actorUserId,
+        sessionId,
+        fence: params.trustedPublisherFence,
+    })) return { ok: false, error: "forbidden" };
+    const rejoined = await tryRejoinProviderClaimInTx({
+        tx,
         actorUserId,
         sessionId,
         trustedPublisherFence: params.trustedPublisherFence,
@@ -303,14 +327,11 @@ async function materializeNextPendingMessageWithRaceRetry(
         )
     ) return { ok: false, error: "invalid-params" };
 
-    const access = await resolveSessionPendingOwnerAccess(actorUserId, sessionId);
-    if (!access.ok) return { ok: false, error: access.error };
-
     // Released claim writers omitted this field and historically meant foreground-ready.
     // Current writers resolve the canonical account preference and send it explicitly.
     const deliveryTiming = params.deliveryTiming ?? "after_foreground_ready";
 
-    const sessionRow = await db.session.findUnique({
+    const sessionRow = await tx.session.findUnique({
         where: { id: sessionId },
         select: {
             encryptionMode: true,
@@ -333,13 +354,13 @@ async function materializeNextPendingMessageWithRaceRetry(
     if ((sessionRow.pendingCount ?? 0) <= 0 && params.expectedPendingVersion === undefined) {
         // pendingCount is a denormalized counter; treat it as a fast-path hint, not a source of truth.
         // If the counter is inconsistent (e.g. race/data corruption), fall back to checking the queue.
-        const hasEligibleQueued = await db.sessionPendingMessage.findFirst({
+        const hasEligibleQueued = await tx.sessionPendingMessage.findFirst({
             where: { sessionId, ...pendingMessageMaterializationWhere },
             orderBy: [{ position: "asc" }, { createdAt: "asc" }, { localId: "asc" }],
             select: { localId: true },
         });
         if (!hasEligibleQueued) {
-            const pendingCount = await db.sessionPendingMessage.count({
+            const pendingCount = await tx.sessionPendingMessage.count({
                 where: { sessionId, status: "queued" },
             });
             if (pendingCount > 0) {
@@ -361,8 +382,7 @@ async function materializeNextPendingMessageWithRaceRetry(
     const sessionEncryptionMode: "e2ee" | "plain" = sessionRow.encryptionMode === "plain" ? "plain" : "e2ee";
     const policy = readEncryptionFeatureEnv(process.env);
 
-    try {
-        const result = await inTx(async (tx) => {
+        const result = await (async () => {
             const sessionBefore = await tx.session.findUniqueOrThrow({
                 where: { id: sessionId },
                 select: {
@@ -713,7 +733,7 @@ async function materializeNextPendingMessageWithRaceRetry(
                 } as const;
             }
 
-        });
+        })();
         if (result.ok && result.didMaterialize) {
             logger.debug({
                 sessionId,
@@ -728,11 +748,4 @@ async function materializeNextPendingMessageWithRaceRetry(
             }, "session.pending.materialize");
         }
         return result;
-    } catch (error) {
-        if (error instanceof PublisherAuthorityLostError) return { ok: false, error: "forbidden" };
-        if (retryRace && (isPrismaErrorCode(error, "P2002") || isPrismaErrorCode(error, "P2025"))) {
-            return await materializeNextPendingMessageWithRaceRetry(params, false);
-        }
-        return { ok: false, error: "internal" };
-    }
 }

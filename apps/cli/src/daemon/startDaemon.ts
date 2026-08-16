@@ -17,6 +17,7 @@ import {
   probeSessionPendingQueueWakeCapabilityV1,
   requestSessionPendingQueueWakeV1,
 } from './sessions/pendingQueueWake';
+import { publishSessionPendingQueueWake } from './sessions/publishSessionPendingQueueWake';
 import { createRuntimeAuthRecoverySchedulerForDaemon } from './connectedServices/runtimeAuth/createRuntimeAuthRecoverySchedulerForDaemon';
 import { deriveConnectedServiceBrokerRefreshToken } from './connectedServices/broker/brokerRefreshCapabilityToken';
 import { createConnectedServiceCredentialApi } from '@/api/connectedServices/connectedServiceCredentialApi';
@@ -59,6 +60,7 @@ import {
   notifyTerminalAttachmentRetiredThroughCatalog,
 } from '@/backends/catalog';
 import { CATALOG_AGENT_IDS } from '@/backends/types';
+import { readProcessInstanceFingerprintSync } from '@happier-dev/cli-common/processInstance';
 import {
   writeDaemonStateIfLockOwned,
   writeConnectedServiceBrokerState,
@@ -220,6 +222,7 @@ import { resolveWaitForAuthConfig } from './startup/waitForAuthConfig';
 import { ensureSessionDirectory } from './startup/ensureSessionDirectory';
 import { waitForInitialCredentials } from './startup/waitForInitialCredentials';
 import { resolveDaemonDiagnosticSubsystemGates } from './startup/diagnosticSubsystemGates';
+import { createDaemonEventLoopStallMonitor } from './diagnostics/daemonEventLoopStallMonitor';
 import { resolveStartDaemonMachinePreflightDecision } from './startup/machinePreflightDecision';
 import { waitForSessionWebhook } from './spawn/waitForSessionWebhook';
 import { resolveSpawnChildEnvironment } from './spawn/resolveSpawnChildEnvironment';
@@ -227,6 +230,7 @@ import { buildSpawnChildProcessEnv } from './spawn/buildSpawnChildProcessEnv';
 import { resolveStackProcessKindOverrideForSessionSpawn } from './spawn/resolveStackProcessKindOverrideForSessionSpawn';
 import { createSpawnConcurrencyGate } from './spawn/createSpawnConcurrencyGate';
 import { computeDaemonSpawnRequestKey, createSpawnRequestCoalescer } from './spawn/spawnRequestCoalescer';
+import { createDaemonSpawnAttemptRegistry } from './spawn/daemonSpawnAttemptRegistry';
 import { normalizeSpawnSessionDirectory } from '@/rpc/handlers/spawnSessionOptionsContract';
 import { startAutomationWorker, type AutomationWorkerHandle } from './automation/automationWorker';
 import { startMemoryWorker, type MemoryWorkerHandle } from './memory/memoryWorker';
@@ -252,9 +256,13 @@ import { buildConnectedServiceUxDiagnostic } from './connectedServices/diagnosti
 import { shouldResolveConnectedServiceAuthForSpawn } from './connectedServices/shouldResolveConnectedServiceAuthForSpawn';
 import { ConnectedServiceRefreshCoordinator } from './connectedServices/refresh/ConnectedServiceRefreshCoordinator';
 import { prepareConnectedServiceAuthGroupCandidateForSwitch } from './connectedServices/refresh/prepareConnectedServiceAuthGroupCandidateForSwitch';
+import { ConnectedServiceAuthGroupQuotaProbeIncompleteError } from './connectedServices/accountGroups/switching/ConnectedServiceAuthGroupSwitchCoordinator';
 import { createConnectedServiceGroupMutationCurrentnessValidator } from './connectedServices/credentials/createConnectedServiceGroupMutationCurrentnessValidator';
 import { createConnectedServicesAuthUpdatedRestartHandler } from './connectedServices/refresh/createConnectedServicesAuthUpdatedRestartHandler';
-import { ConnectedServiceQuotasCoordinator } from './connectedServices/quotas/ConnectedServiceQuotasCoordinator';
+import {
+  ConnectedServiceQuotasCoordinator,
+  DEFAULT_CONNECTED_SERVICE_QUOTA_FETCH_TIMEOUT_MS,
+} from './connectedServices/quotas/ConnectedServiceQuotasCoordinator';
 import { createConnectedServiceQuotaFetchers } from './connectedServices/quotas/createConnectedServiceQuotaFetchers';
 import {
   ConnectedServiceRuntimeRegistry,
@@ -267,6 +275,7 @@ import { createQuotaDrivenConnectedServiceAuthGroupSwitchCoordinator } from './c
 import { ConnectedServiceAuthGroupGenerationConsumer } from './connectedServices/accountGroups/generation/ConnectedServiceAuthGroupGenerationConsumer';
 import { createConnectedServiceCurrentGroupTruthNotifier } from './connectedServices/accountGroups/generation/createConnectedServiceCurrentGroupTruthNotifier';
 import {
+  getBrokerBridgeEffectiveSelection,
   isBrokerBridgeCurrentGroupTruthCompatible,
   markBrokerBridgeEffectiveSelectionUnavailable,
 } from './connectedServices/broker/brokerBridgeEffectiveSelectionRegistry';
@@ -1477,25 +1486,6 @@ async function probePendingQueueServiceability(params: Readonly<{
   });
 }
 
-function publishSessionPendingQueueWakeV1(params: Readonly<{
-  sessionId: string;
-  credentials: Credentials;
-  isShutdownRequested: () => boolean;
-  logLabel: string;
-}>): void {
-  if (params.isShutdownRequested()) return;
-  void requestPendingQueueWake({
-    sessionId: params.sessionId,
-    credentials: params.credentials,
-    isShutdownRequested: params.isShutdownRequested,
-  }).catch((error) => {
-    logger.debug(`[DAEMON RUN] ${params.logLabel} pending queue wake failed`, {
-      sessionId: params.sessionId,
-      error: serializeAxiosErrorForLog(error),
-    });
-  });
-}
-
 export async function sleepMsOrShutdown(delayMs: number, shutdownPromise: Promise<unknown>): Promise<'elapsed' | 'shutdown'> {
   if (delayMs <= 0) return 'elapsed';
   return await new Promise<'elapsed' | 'shutdown'>((resolveSleep) => {
@@ -1540,11 +1530,15 @@ async function nudgeAttachedExistingSessionPendingQueue(params: Readonly<{
     return params.resolved;
   }
 
-  publishSessionPendingQueueWakeV1({
+  publishSessionPendingQueueWake({
     sessionId: resolvedSessionId,
-    credentials: params.credentials,
     isShutdownRequested: params.isShutdownRequested,
     logLabel: 'attach',
+    requestWake: async () => await requestPendingQueueWake({
+      sessionId: resolvedSessionId,
+      credentials: params.credentials,
+      isShutdownRequested: params.isShutdownRequested,
+    }),
   });
   return params.resolved;
 }
@@ -2096,6 +2090,11 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
       let automationWorker: AutomationWorkerHandle | null = null;
       let memoryWorker: MemoryWorkerHandle | null = null;
       let apiMachine: ApiMachineClient | null = null;
+      const eventLoopStallMonitor = createDaemonEventLoopStallMonitor({
+        getActiveRpcOperations: () => apiMachineForSessions?.getActiveRpcHandlerExecutions() ?? [],
+        warn: (message, data) => logger.warn(message, data),
+      });
+      eventLoopStallMonitor.start();
 	      let machineConnectionStateCleanup: (() => void) | null = null;
 	      let shutdownInitiated = false;
 	      let connectedServiceQuotaProducersQuiesced = false;
@@ -2152,11 +2151,9 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
           15 * 60_000,
           { min: 1000, max: 60 * 60_000 },
         );
-        const acceptedSpawnByNonce = new Map<string, {
-          pid: number;
-          result: Extract<SpawnSessionResult, { type: 'success' }>;
-          expiresAtMs: number;
-        }>();
+        const daemonSpawnAttemptRegistry = createDaemonSpawnAttemptRegistry({
+          ttlMs: acceptedSpawnNonceTtlMs,
+        });
         const shutdownSpawnDrainGraceMs = resolvePositiveIntEnv(
           process.env.HAPPIER_DAEMON_SHUTDOWN_SPAWN_DRAIN_GRACE_MS,
           10_000,
@@ -2342,11 +2339,12 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
         const stopSessionCore = createStopSession({
           pidToTrackedSession,
           loadTerminalHostAdapters,
-          recoverStrandedTerminalControlServiceability: async ({ sessionId }) => await recoverStrandedTerminalControlServiceability({
+          recoverStrandedTerminalControlServiceability: async ({ sessionId, expectedAttachmentId }) => await recoverStrandedTerminalControlServiceability({
             credentials,
             currentMachineId: machineId,
             happyHomeDir: configuration.happyHomeDir,
             sessionId,
+            ...(expectedAttachmentId ? { expectedAttachmentId } : {}),
             loadTerminalHostAdapters,
             retireExactTerminalControlServiceability: retireTerminalControlServiceabilityForCurrentAccount,
           }),
@@ -2847,49 +2845,26 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
             ...(spawnNonce ? { spawnNonce } : {}),
           };
         };
-        const pruneAcceptedSpawnNonces = (nowMs: number = Date.now()): void => {
-          for (const [spawnNonce, record] of acceptedSpawnByNonce.entries()) {
-            if (record.expiresAtMs <= nowMs) {
-              acceptedSpawnByNonce.delete(spawnNonce);
+        const resolveTrackedSpawnByNonce = async (spawnNonce: string): Promise<SpawnSessionResult | null> => {
+          for (const [pid, tracked] of pidToTrackedSession) {
+            if (
+              tracked.startedBy !== 'daemon'
+              || tracked.pid !== pid
+              || normalizeSpawnNonceForAck(tracked.spawnOptions?.spawnNonce) !== spawnNonce
+            ) {
+              continue;
             }
+            const runState = await readProcessRunState(pid).catch(() => null);
+            if (runState !== 'servable') continue;
+            const result = buildSpawnAcceptedResult({
+              pid,
+              spawnNonce,
+            });
+            result.runnerAcceptance = 'same_request_runner';
+            daemonSpawnAttemptRegistry.rememberAccepted({ spawnNonce, result });
+            return result;
           }
-        };
-        const rememberAcceptedSpawnByNonce = (params: Readonly<{
-          spawnNonce?: string;
-          pid: number;
-          result: Extract<SpawnSessionResult, { type: 'success' }>;
-        }>): void => {
-          const spawnNonce = normalizeSpawnNonceForAck(params.spawnNonce);
-          if (!spawnNonce) return;
-          const nowMs = Date.now();
-          pruneAcceptedSpawnNonces(nowMs);
-          acceptedSpawnByNonce.set(spawnNonce, {
-            pid: params.pid,
-            result: params.result,
-            expiresAtMs: nowMs + acceptedSpawnNonceTtlMs,
-          });
-        };
-        const resolveAcceptedSpawnByNonce = async (
-          spawnNonce: string,
-        ): Promise<SpawnSessionResult | null> => {
-          const normalizedSpawnNonce = normalizeSpawnNonceForAck(spawnNonce);
-          if (!normalizedSpawnNonce) return null;
-          const nowMs = Date.now();
-          pruneAcceptedSpawnNonces(nowMs);
-          const accepted = acceptedSpawnByNonce.get(normalizedSpawnNonce);
-          if (!accepted) return null;
-          const result = buildSpawnAcceptedResult({
-            pid: accepted.pid,
-            spawnNonce: normalizedSpawnNonce,
-            fallbackSessionId: accepted.result.sessionId,
-          });
-          result.runnerAcceptance = 'same_request_runner';
-          acceptedSpawnByNonce.set(normalizedSpawnNonce, {
-            ...accepted,
-            result,
-            expiresAtMs: nowMs + acceptedSpawnNonceTtlMs,
-          });
-          return result;
+          return null;
         };
         const persistAcceptedSpawnMarker = async (params: Readonly<{
           pid: number;
@@ -2910,11 +2885,13 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
           const existingSessionId = typeof params.existingSessionId === 'string'
             ? params.existingSessionId.trim()
             : '';
+          const processInstanceFingerprint = readProcessInstanceFingerprintSync(params.pid) ?? undefined;
           await writeSessionMarker({
             pid: params.pid,
             happySessionId: existingSessionId || `PID-${params.pid}`,
             startedBy: 'daemon',
             cwd: params.directory,
+            ...(processInstanceFingerprint ? { processInstanceFingerprint } : {}),
             respawn,
           });
         };
@@ -2934,9 +2911,13 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
               ...normalizedOptions,
               spawnNonce: requestedSpawnNonce,
             };
-            const acceptedResult = await resolveAcceptedSpawnByNonce(requestedSpawnNonce);
+            const acceptedResult = daemonSpawnAttemptRegistry.replay(requestedSpawnNonce);
             if (acceptedResult) {
               return acceptedResult;
+            }
+            const trackedResult = await resolveTrackedSpawnByNonce(requestedSpawnNonce);
+            if (trackedResult) {
+              return trackedResult;
             }
           }
           const key = computeDaemonSpawnRequestKey(normalizedOptions);
@@ -3421,16 +3402,18 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
                     }
                   }
                   materializationKey = connectedServiceMaterializationIdentityV1.id;
-	                  normalizedOptions = {
-	                    ...normalizedOptions,
-	                    connectedServiceMaterializationIdentityV1,
-	                  };
-	                  try {
-	                    const connectedServiceAuthQuotaFreshnessMs = resolvePositiveIntEnv(
+                  normalizedOptions = {
+                    ...normalizedOptions,
+                    connectedServiceMaterializationIdentityV1,
+                  };
+                  try {
+                    const connectedServiceAuthQuotaFreshnessMs = resolvePositiveIntEnv(
                       process.env.HAPPIER_CONNECTED_SERVICES_AUTH_GROUP_QUOTA_FRESHNESS_MS,
                       5 * 60_000,
                       { min: 1_000, max: 60 * 60_000 },
                     );
+                    const connectedServiceSpawnQuotaProbeDeadlineAtMs = Date.now()
+                      + DEFAULT_CONNECTED_SERVICE_QUOTA_FETCH_TIMEOUT_MS;
                     const preTurnSwitchCoordinator = createDaemonConnectedServiceAuthGroupSwitchCoordinator({
                       api,
                       prepareCandidateForSwitch: prepareAuthGroupCandidateForSwitch,
@@ -3445,7 +3428,14 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
                       nowMs: () => Date.now(),
                       restartSession: async () => {},
                       probeQuotaSnapshotsForGroup: async (input) => {
-                        await connectedServiceQuotasCoordinator?.probeGroupQuotaSnapshots(input);
+                        if (!connectedServiceQuotasCoordinator) return {
+                          status: 'incomplete' as const,
+                          requestedProfileCount: input.profileIds.length,
+                          completedProfileCount: 0,
+                          completedProfileIds: [],
+                          reason: 'probe_unavailable' as const,
+                        };
+                        return await connectedServiceQuotasCoordinator.probeGroupQuotaSnapshots(input);
                       },
                       emitEvent: (event) => {
                         if (!event.success || event.resultStatus !== 'switched') return;
@@ -3489,6 +3479,7 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
                       nowMs: () => Date.now(),
                       sessionId: connectedServiceAuthSessionId,
                       authGroupSwitchCoordinator: preTurnSwitchCoordinator,
+                      quotaProbeDeadlineAtMs: connectedServiceSpawnQuotaProbeDeadlineAtMs,
                       accountSettings: activeAccountSettings?.settings ?? null,
                       processEnv: process.env,
                       credentialRefreshService: connectedServiceRefreshCoordinator,
@@ -3507,31 +3498,42 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
                     // SPAWN_VALIDATION_FAILED code + message (legacy consumers unchanged) AND attach a
                     // structured `errorDetail` so the client can programmatically recognize "resume
                     // unreachable" and offer "start fresh under the new account".
-	                    if (error instanceof ConnectedServiceSpawnResumeUnreachableError) {
-	                      logger.warn('[DAEMON RUN] Connected services resume reachability re-verify failed; failing closed before spawn', {
-	                        agentId: error.agentId,
+                    if (error instanceof ConnectedServiceSpawnResumeUnreachableError) {
+                      logger.warn('[DAEMON RUN] Connected services resume reachability re-verify failed; failing closed before spawn', {
+                        agentId: error.agentId,
                         errorCode: error.errorCode,
                         failurePhase: error.failurePhase,
                         vendorResumeId: error.vendorResumeId,
                         cwd: error.cwd,
                         targetMaterializedRoot: error.targetMaterializedRoot,
                         reason: error.reason,
-	                      });
-	                      return buildSpawnResumeUnreachableErrorResult(error);
-	                    }
-	                    if (error instanceof ConnectedServiceSpawnMaterializationError) {
-	                      logger.warn('[DAEMON RUN] Connected services materialization failed; failing closed before spawn', {
-	                        agentId: error.agentId,
-	                        diagnostics: error.diagnostics.map((diagnostic) => ({
-	                          code: diagnostic.code,
-	                          providerId: diagnostic.providerId,
-	                          serviceId: diagnostic.serviceId,
-	                          reason: diagnostic.reason,
-	                          severity: diagnostic.severity,
-	                        })),
-	                      });
-	                      return buildConnectedServiceMaterializationSpawnErrorResult(error);
-	                    }
+                      });
+                      return buildSpawnResumeUnreachableErrorResult(error);
+                    }
+                    if (error instanceof ConnectedServiceAuthGroupQuotaProbeIncompleteError) {
+                      logger.warn('[DAEMON RUN] Connected-service quota evidence refresh did not complete before spawn; failing closed', {
+                        agentId: catalogAgentId,
+                        reason: error.reason ?? 'unknown',
+                      });
+                      return {
+                        type: 'error',
+                        errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
+                        errorMessage: 'Connected service account availability could not be verified before launch. Please retry.',
+                      };
+                    }
+                    if (error instanceof ConnectedServiceSpawnMaterializationError) {
+                      logger.warn('[DAEMON RUN] Connected services materialization failed; failing closed before spawn', {
+                        agentId: error.agentId,
+                        diagnostics: error.diagnostics.map((diagnostic) => ({
+                          code: diagnostic.code,
+                          providerId: diagnostic.providerId,
+                          serviceId: diagnostic.serviceId,
+                          reason: diagnostic.reason,
+                          severity: diagnostic.severity,
+                        })),
+                      });
+                      return buildConnectedServiceMaterializationSpawnErrorResult(error);
+                    }
                     const credentialRefreshErrorResult = buildConnectedServiceCredentialSpawnErrorResult({
                       agentId: catalogAgentId,
                       error,
@@ -3543,7 +3545,7 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
                       });
                       return credentialRefreshErrorResult;
                     }
-	                    logger.debug('[DAEMON RUN] Connected services resolution failed', error);
+                    logger.debug('[DAEMON RUN] Connected services resolution failed', error);
                     return {
                       type: 'error',
                       errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
@@ -3848,16 +3850,18 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
                 logger.debug(`[DAEMON RUN] Session ${completedSession.happySessionId} fully spawned with webhook (tmux)`);
               },
             }).then(async (result) => {
-              const nudgeResult = await nudgeAttachedExistingSessionPendingQueue({
-                requestedExistingSessionId: normalizedExistingSessionId,
-                credentials,
-                isShutdownRequested: () => shutdownInitiated,
-                resolved: resolveSpawnWebhookResult({
+              const resolved = resolveSpawnWebhookResult({
                 pid: tmuxPid,
                 result,
                 pidToTrackedSession,
                 warn: (message) => logger.warn(message),
-              }),
+              });
+              daemonSpawnAttemptRegistry.settle(trackedSpawnOptions.spawnNonce ?? '', resolved);
+              const nudgeResult = await nudgeAttachedExistingSessionPendingQueue({
+                requestedExistingSessionId: normalizedExistingSessionId,
+                credentials,
+                isShutdownRequested: () => shutdownInitiated,
+                resolved,
               });
               if (nudgeResult.type === 'error') {
                 logger.warn(`[DAEMON RUN] Pending queue wake failed after webhook for PID ${tmuxPid} (tmux): ${nudgeResult.errorMessage}`);
@@ -3865,14 +3869,15 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
               return nudgeResult;
             }).catch((error) => {
               logger.warn(`[DAEMON RUN] Session webhook monitor failed for PID ${tmuxPid} (tmux): ${error instanceof Error ? error.message : String(error)}`);
-              return {
+              const result = {
                 type: 'error' as const,
                 errorCode: SPAWN_SESSION_ERROR_CODES.UNEXPECTED,
                 errorMessage: error instanceof Error ? error.message : String(error),
               };
+              daemonSpawnAttemptRegistry.settle(trackedSpawnOptions.spawnNonce ?? '', result);
+              return result;
             });
-            rememberAcceptedSpawnByNonce({
-              pid: tmuxPid,
+            daemonSpawnAttemptRegistry.rememberAccepted({
               spawnNonce: trackedSpawnOptions.spawnNonce,
               result: acceptedResult,
             });
@@ -3988,13 +3993,12 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
                   spawnNonce: trackedSpawnOptions.spawnNonce,
                   fallbackSessionId: normalizedExistingSessionId,
                 });
-                rememberAcceptedSpawnByNonce({
-                  pid: params.pid,
+                daemonSpawnAttemptRegistry.rememberAccepted({
                   spawnNonce: trackedSpawnOptions.spawnNonce,
                   result: acceptedResult,
                 });
 
-                void waitForVisibleConsoleSessionWebhook({
+                const webhookCompletion = waitForVisibleConsoleSessionWebhook({
                   pid: params.pid,
                   pollMs,
                   pidToAwaiter,
@@ -4008,6 +4012,7 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
                     pidToTrackedSession,
                     warn: (message) => logger.warn(message),
                   });
+                  daemonSpawnAttemptRegistry.settle(trackedSpawnOptions.spawnNonce ?? '', resolved);
                   if (resolved.type === 'success') {
                     logger.debug(
                       `[DAEMON RUN] Session ${resolved.sessionId} fully spawned with webhook (${params.logLabel})`,
@@ -4046,7 +4051,13 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
                   }
                 }).catch((error) => {
                   logger.warn(`[DAEMON RUN] Session webhook monitor failed for PID ${params.pid} (${params.logLabel}): ${error instanceof Error ? error.message : String(error)}`);
+                  daemonSpawnAttemptRegistry.settle(trackedSpawnOptions.spawnNonce ?? '', {
+                    type: 'error',
+                    errorCode: SPAWN_SESSION_ERROR_CODES.UNEXPECTED,
+                    errorMessage: error instanceof Error ? error.message : String(error),
+                  });
                 });
+                void webhookCompletion;
                 return acceptedResult;
               };
 
@@ -4350,16 +4361,18 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
                   logger.debug(`[DAEMON RUN] Session ${completedSession.happySessionId} fully spawned with webhook`);
             },
           }).then(async (result) => {
-            const nudgeResult = await nudgeAttachedExistingSessionPendingQueue({
-              requestedExistingSessionId: normalizedExistingSessionId,
-              credentials,
-              isShutdownRequested: () => shutdownInitiated,
-              resolved: resolveSpawnWebhookResult({
+            const resolved = resolveSpawnWebhookResult({
               pid: happyProcess.pid!,
               result,
               pidToTrackedSession,
               warn: (message) => logger.warn(message),
-            }),
+            });
+            daemonSpawnAttemptRegistry.settle(trackedSpawnOptions.spawnNonce ?? '', resolved);
+            const nudgeResult = await nudgeAttachedExistingSessionPendingQueue({
+              requestedExistingSessionId: normalizedExistingSessionId,
+              credentials,
+              isShutdownRequested: () => shutdownInitiated,
+              resolved,
             });
             if (nudgeResult.type === 'error') {
               logger.warn(`[DAEMON RUN] Pending queue wake failed after webhook for PID ${happyProcess.pid}: ${nudgeResult.errorMessage}`);
@@ -4367,14 +4380,15 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
             return nudgeResult;
           }).catch((error) => {
             logger.warn(`[DAEMON RUN] Session webhook monitor failed for PID ${happyProcess.pid}: ${error instanceof Error ? error.message : String(error)}`);
-            return {
+            const result = {
               type: 'error' as const,
               errorCode: SPAWN_SESSION_ERROR_CODES.UNEXPECTED,
               errorMessage: error instanceof Error ? error.message : String(error),
             };
+            daemonSpawnAttemptRegistry.settle(trackedSpawnOptions.spawnNonce ?? '', result);
+            return result;
           });
-          rememberAcceptedSpawnByNonce({
-            pid: happyProcess.pid,
+          daemonSpawnAttemptRegistry.rememberAccepted({
             spawnNonce: trackedSpawnOptions.spawnNonce,
             result: acceptedResult,
           });
@@ -5517,9 +5531,36 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
             ? descriptor.runtimeAuthApply
             : null;
         };
-        const resolveCurrentCodexRuntimeAuthFailureSourceForSession: NonNullable<
+        const resolveCurrentRuntimeAuthFailureSourceForSession: NonNullable<
           Parameters<typeof authorizeConnectedServiceRuntimeAuthFailureSource>[0]['resolveCurrentRuntimeAuthFailureSource']
         > = async ({ sessionId: liveSessionId, classification: liveClassification }) => {
+          const runtimeTarget = connectedServiceRuntimeRegistry.getBySessionId(liveSessionId);
+          const brokerSelectionIdentity = runtimeTarget?.brokerSelectionIdentity ?? null;
+          if (brokerSelectionIdentity) {
+            const serviceId = ConnectedServiceIdSchema.safeParse(liveClassification.serviceId);
+            if (!serviceId.success) return null;
+            const brokerSelection = getBrokerBridgeEffectiveSelection({
+              selectionIdentity: brokerSelectionIdentity,
+              serviceId: serviceId.data,
+            });
+            if (brokerSelection?.availability !== 'available') return null;
+            const selection = brokerSelection.selection;
+            return selection.kind === 'group'
+              ? {
+                  serviceId: selection.serviceId,
+                  groupId: selection.groupId,
+                  profileId: selection.activeProfileId,
+                  generation: selection.generation,
+                  credentialRevision: selection.credentialRevision ?? null,
+                }
+              : {
+                  serviceId: selection.serviceId,
+                  groupId: null,
+                  profileId: selection.profileId,
+                  generation: null,
+                  credentialRevision: null,
+                };
+          }
           return await resolveCurrentCodexRuntimeAuthFailureSource({
             classification: liveClassification,
             readRuntimeIdentity: async (request) => await readConnectedServiceRuntimeIdentityForQuotaFanout({
@@ -5801,7 +5842,7 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
                 serviceId: classification.serviceId,
               }),
             resolveRegisteredRuntimeAuthFailureSource: resolveRegisteredRuntimeAuthFailureSourceForSession,
-            resolveCurrentRuntimeAuthFailureSource: resolveCurrentCodexRuntimeAuthFailureSourceForSession,
+            resolveCurrentRuntimeAuthFailureSource: resolveCurrentRuntimeAuthFailureSourceForSession,
             runtimeAuthApply,
             temporaryThrottleRecovery,
             credentialRefreshService: connectedServiceRefreshCoordinator,
@@ -6279,6 +6320,7 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
       stopSession,
       prepareStopSession: prepareStopSessionForDaemonStop,
       spawnSession,
+      resolveSpawnSessionByNonce: async (spawnNonce) => daemonSpawnAttemptRegistry.resolve(spawnNonce),
       requestShutdown: () => requestShutdown('happier-cli'),
       beforeShutdown,
       onHappySessionWebhook,
@@ -6628,7 +6670,7 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
               serviceId: durableClassification.serviceId,
           }),
           resolveRegisteredRuntimeAuthFailureSource: resolveRegisteredRuntimeAuthFailureSourceForSession,
-          resolveCurrentRuntimeAuthFailureSource: resolveCurrentCodexRuntimeAuthFailureSourceForSession,
+          resolveCurrentRuntimeAuthFailureSource: resolveCurrentRuntimeAuthFailureSourceForSession,
           runtimeAuthApply,
         });
       },
@@ -8372,6 +8414,7 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
             // Setup signal handlers
                 const cleanupAndShutdown = async (source: 'happier-app' | 'happier-cli' | 'os-signal' | 'exception', errorMessage?: string) => {
           shutdownInitiated = true;
+          eventLoopStallMonitor.stop();
           connectedServiceTurnDeferralQueue.cancelAll('daemon_shutdown');
           // Lane F: stop exposing turn-in-flight state once the queue is torn down so a tearing-down
           // daemon never reports a stale in-flight turn to the managed-server release path.

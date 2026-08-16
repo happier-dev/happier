@@ -1238,7 +1238,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
             recoveryCreditExpires: ({ time }: { time: string }) => `Expires: ${time}`,
             recoveryCreditApplying: '正在套用重置…',
             recoveryCreditMachineUnavailable: '沒有可用來套用此重置的作用中機器。',
-            recoveryCreditNothingToReset: 'No exhausted usage window currently needs a reset.',
+            recoveryCreditNothingToReset: '目前沒有需要重置的已用盡用量視窗。',
             recoveryCreditBadge: ({ count }: { count: number }) => count === 1 ? '1 reset' : `${count} resets`,
             remaining: ({ percent }: { percent: string }) => `剩餘 ${percent}`,
             remainingWithReset: ({ percent, reset }: { percent: string; reset: string }) =>
@@ -3580,6 +3580,24 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
                             }
                         }
                     },
+                    claudeUnifiedTerminalWorkspaceTrust: {
+                        title: "工作區信任",
+                        subtitle: "選擇當 Claude 詢問是否信任工作區時 Happier 的回應方式。",
+                        options: {
+                            ask_every_time: {
+                                title: "每次詢問",
+                                subtitle: "在工作階段中顯示確切的工作區信任問題。"
+                            },
+                            always_trust_happier_workspaces: {
+                                title: "一律信任 Happier 工作區",
+                                subtitle: "信任 Happier 開啟的工作區中目前重新擷取的 Claude 提示。"
+                            },
+                            always_reject_happier_workspaces: {
+                                title: "一律拒絕 Happier 工作區",
+                                subtitle: "拒絕 Happier 開啟的工作區中目前重新擷取的 Claude 提示。"
+                            }
+                        }
+                    },
                     claudeUnifiedTerminalResumeChoice: {
                         title: "大型會話恢復",
                         subtitle: "選擇當 Claude 詢問如何恢復大型會話時 Happier 的回應方式。",
@@ -4522,6 +4540,8 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
                     backgroundTasksRunning: ({ count }: { count: number }) => `${count} 個背景指令正在執行`,
                 },
                 untitled: "未命名代理",
+                screenTitle: "代理",
+                transcriptScreenTitle: "代理記錄",
                 menuTitle: "代理操作",
                 row: {
                     a11yLabel: ({ title, status }: { title: string; status: string }) => `${title}，${status}`,
@@ -4666,6 +4686,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
             detailsPanel: {
                 emptyHint: '從右側面板開啟檔案或差異。',
                 unsupportedTab: '不支援的詳細分頁。',
+                transcriptFromOtherSession: '此對話記錄屬於其他工作階段。',
                 closeA11y: '關閉詳細資料',
                 openRightSidebarA11y: '開啟右側邊欄',
                 closeRightSidebarA11y: '關閉右側邊欄',
@@ -4950,10 +4971,18 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
             title: '資料保留政策',
             summary: '摘要',
             keepForever: '不自動刪除',
+            automaticDeletionEnabled: '已啟用自動刪除',
+            detailsUnavailable: '已啟用自動刪除，但此用戶端無法顯示所有生效的保留政策',
+            singlePolicySummary: ({ domain, policy }: { domain: string; policy: string }) => `${domain}：${policy}`,
+            relayCleanupSummary: ({ policies }: { policies: string }) => `此 Relay 會清理${policies}。`,
+            relayCleanupAfterDays: ({ domain, count }: { domain: string; count: number }) => `${domain}（${count} 天後）`,
+            relayCleanupInactiveSessionsAfterDays: ({ count }: { count: number }) => `非活躍工作階段（${count} 天後）`,
             deleteInactiveSessionsDays: ({ count }: { count: number }) => `在 ${count} ${plural({ count, singular: '天', plural: '天' })}後刪除非活躍工作階段。`,
             deleteOlderThanDays: ({ count }: { count: number }) => `在 ${count} ${plural({ count, singular: '天', plural: '天' })}後刪除資料。`,
             sessionNotice: ({ count }: { count: number }) => `此 Relay 會在工作階段非活躍 ${count} ${plural({ count, singular: '天', plural: '天' })}後自動刪除。`,
             sessions: '工作階段',
+            sessionMessages: '工作階段記錄',
+            sidechainMessages: '子代理記錄',
             accountChanges: '帳戶變更',
             voiceSessionLeases: '語音工作階段租約',
             feedItems: '動態項目',

@@ -595,6 +595,7 @@ export type ConnectedServiceAuthGroupSwitchPipelineRequest = Readonly<{
   planType?: string | null;
   switchesThisTurn?: number;
   sessionSwitchesThisHour?: number;
+  deadlineAtMs?: number;
 }>;
 
 export type ConnectedServiceAuthGroupSwitchPipelinePhase =

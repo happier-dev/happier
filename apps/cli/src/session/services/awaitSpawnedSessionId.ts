@@ -21,7 +21,10 @@ import { delay } from '@/utils/time';
  * `settleSpawnSessionNonce`; this module adapts them to the CLI's
  * `SpawnSessionResult` envelope.
  */
-export type SpawnSessionNonceResolver = (spawnNonce: string) => Promise<SpawnSessionNonceResolution>;
+export type SpawnSessionNonceResolver = (
+  spawnNonce: string,
+  remainingTimeoutMs?: number,
+) => Promise<SpawnSessionNonceResolution>;
 
 export type AwaitSpawnedSessionIdResult =
   | { type: 'success'; sessionId: string }
@@ -173,6 +176,13 @@ export async function awaitSpawnedSessionId(params: Readonly<{
   switch (settled.status) {
     case 'success':
       return { type: 'success', sessionId: settled.sessionId };
+    case 'error':
+      return {
+        type: 'error',
+        errorCode: settled.errorCode,
+        errorMessage: settled.errorMessage,
+        ...(settled.errorDetail ? { errorDetail: settled.errorDetail } : {}),
+      };
     case 'unsupported':
       return {
         type: 'error',
@@ -215,7 +225,7 @@ export async function abandonSpawnedSessionUntilCompleted(params: Readonly<{
     return { status: 'failed' };
   }
   if (resolution.status !== 'success') {
-    return { status: resolution.status };
+    return { status: resolution.status === 'error' ? 'failed' : resolution.status };
   }
 
   try {

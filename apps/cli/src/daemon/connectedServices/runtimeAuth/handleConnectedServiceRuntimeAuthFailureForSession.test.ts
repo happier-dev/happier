@@ -37,6 +37,18 @@ const registryOnlyRuntimeAuthCapability = {
   directLiveHotAuth: 'unsupported',
 } satisfies ConnectedServiceRuntimeAuthApplyCapability;
 
+const providerOwnedBrokerRuntimeAuthCapability = {
+  directLiveHotAuth: {
+    supportsInTurnApply: false,
+    requiresExactRuntimeIdentity: false,
+    refreshSelectionResync: 'not_applicable',
+    authMode: {
+      kind: 'provider_owned',
+      name: 'broker_selection_indirection',
+    },
+  },
+} satisfies ConnectedServiceRuntimeAuthApplyCapability;
+
 function createTemporaryThrottleClassification(
   overrides?: Partial<ConnectedServiceRuntimeFailureClassification>,
 ): ConnectedServiceRuntimeFailureClassification {
@@ -922,6 +934,56 @@ describe('handleConnectedServiceRuntimeAuthFailureForSession', () => {
       runtimeAuthApply: registryOnlyRuntimeAuthCapability,
     })).resolves.toEqual({ status: 'authorized', tracked });
     expect(resolveCurrentRuntimeAuthFailureSource).not.toHaveBeenCalled();
+  });
+
+  it('attributes a provider-owned broker failure from its effective selection instead of immutable launch metadata', async () => {
+    const tracked = {
+      startedBy: 'daemon' as const,
+      happySessionId: 'sess_provider_owned_broker_failure',
+      pid: 123,
+      spawnOptions: { directory: '/tmp/project' },
+    } satisfies TrackedSession;
+    const resolveCurrentRuntimeAuthFailureSource = vi.fn(async () => ({
+      serviceId: 'openai-codex' as const,
+      groupId: 'main',
+      profileId: 'effective-broker-profile',
+      generation: 7,
+      credentialRevision: 'csr_bbbbbbbbbbbbbbbbbbbbbb' as const,
+    }));
+
+    await expect(authorizeConnectedServiceRuntimeAuthFailureSource({
+      getChildren: () => [tracked],
+      sessionId: tracked.happySessionId,
+      classification: {
+        kind: 'usage_limit',
+        serviceId: 'openai-codex',
+        profileId: 'stale-launch-profile',
+        groupId: 'main',
+        groupGeneration: null,
+        credentialRevision: null,
+        resetsAtMs: null,
+        planType: null,
+        rateLimits: null,
+        source: 'structured_provider_error',
+        recoveryAction: { kind: 'quota_recovery_required' },
+      },
+      resolveRegisteredRuntimeAuthFailureSource: () => ({
+        serviceId: 'openai-codex',
+        groupId: 'main',
+        profileId: 'current-group-profile',
+        generation: 8,
+        credentialRevision: 'csr_cccccccccccccccccccccc',
+      }),
+      resolveCurrentRuntimeAuthFailureSource,
+      runtimeAuthApply: providerOwnedBrokerRuntimeAuthCapability,
+    })).resolves.toEqual({
+      status: 'recovery_superseded',
+      reason: 'source_tuple_mismatch',
+      serviceId: 'openai-codex',
+      groupId: 'main',
+      profileId: 'effective-broker-profile',
+    });
+    expect(resolveCurrentRuntimeAuthFailureSource).toHaveBeenCalledOnce();
   });
 
   it('authorizes a supported predecessor report only after the applicable exact live resolver proves it', async () => {

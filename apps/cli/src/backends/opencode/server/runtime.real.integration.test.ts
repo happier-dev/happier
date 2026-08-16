@@ -297,7 +297,7 @@ function createFakeSession() {
 
 describe('OpenCode server runtime (real integration)', () => {
   it.skipIf(!shouldRunOpenCodeServerIntegration())(
-    'starts a managed server and receives global SSE events (no LLM calls)',
+    'starts a managed server and receives instance SSE events (no LLM calls)',
     async () => {
       const client = await createOpenCodeServerRuntimeClient({
         directory: process.cwd(),
@@ -467,6 +467,7 @@ describe('OpenCode server runtime (real integration)', () => {
         session,
         messageBuffer: new MessageBuffer(),
         mcpServers: {},
+        happierMcpAdmission: { kind: 'not_available_for_execution_run' },
         permissionHandler: { handleToolCall: async () => ({ decision: 'approved' }) } as any,
         onThinkingChange: () => {},
         getPermissionMode: () => 'default',

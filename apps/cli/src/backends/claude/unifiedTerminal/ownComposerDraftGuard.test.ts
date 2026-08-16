@@ -1,9 +1,11 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 import { createClaudeOwnComposerTextLog } from './ownComposerTextLog';
 import { clearOwnLeftoverComposerDraft } from './ownComposerDraftGuard';
+import { createClaudeUnifiedPromptInjector } from './createClaudeUnifiedPromptInjector';
+import { isClaudeScreenReadyForInput } from './tuiControls/screenState';
 
 const OWN_TEXT = 'Reply with exactly: C11-baseline-ok';
 
@@ -294,6 +296,85 @@ describe('clearOwnLeftoverComposerDraft (C11: idle pre-injection own-leftover gu
     });
     expect(result).toMatchObject({ status: 'cleared', attempts: 1 });
     expect(clears).toBe(1);
+  });
+
+  it('does not report cleared when an effort residue clear is followed by a screen with no composer', async () => {
+    const captures = [
+      idleScreen('/effort low'),
+      [
+        'Applied runtime control; transcript is redrawing',
+        '  ⏵⏵ accept edits on (shift+tab to cycle)',
+      ].join('\n'),
+    ];
+    let clears = 0;
+    const result = await clearOwnLeftoverComposerDraft({
+      captureInputState: async () => ({ currentInput: captures.shift() ?? idleScreen('') }),
+      sendClearKey: async () => {
+        clears += 1;
+      },
+      ownComposerTexts: ownLog('some earlier real prompt'),
+      wait: async () => undefined,
+    });
+
+    expect(result).toMatchObject({
+      status: 'blocked_non_input_state',
+      blockedReason: 'no_interactive_composer',
+    });
+    expect(clears).toBe(1);
+  });
+
+  it('withholds prompt bytes after clearing effort residue until a later capture has a ready composer', async () => {
+    const prompt = 'exact pending prompt that must wait for the composer'.padEnd(310, '.');
+    expect(Buffer.byteLength(prompt, 'utf8')).toBe(310);
+    const captures = [
+      idleScreen('/effort low'),
+      [
+        'Applied runtime control; transcript is redrawing',
+        '  ⏵⏵ accept edits on (shift+tab to cycle)',
+      ].join('\n'),
+      idleScreen(''),
+    ];
+    let latestGuardReady = false;
+    const injectUserPrompt = vi.fn(async () => ({
+      status: 'injected',
+      at: 1,
+      bytesWritten: Buffer.byteLength(prompt, 'utf8'),
+    } as const));
+    const injector = createClaudeUnifiedPromptInjector({
+      inputInjection: { hostKind: 'tmux', injectUserPrompt },
+      composerDraftGuard: async () => {
+        const result = await clearOwnLeftoverComposerDraft({
+          captureInputState: async () => ({ currentInput: captures.shift() ?? idleScreen('') }),
+          sendClearKey: async () => undefined,
+          ownComposerTexts: ownLog('some earlier real prompt'),
+          wait: async () => undefined,
+        });
+        latestGuardReady = 'screen' in result && isClaudeScreenReadyForInput(result.screen);
+        return {
+          status: result.status,
+          ...(result.status === 'cleared' ? { attempts: result.attempts } : {}),
+          ...(result.status === 'blocked_non_input_state'
+            ? { blockedReason: result.blockedReason }
+            : {}),
+        };
+      },
+      createNonce: () => 'nonce-no-composer-after-clear',
+    });
+    const batch = {
+      message: prompt,
+      origin: { kind: 'ui_pending' as const, clientId: 'client-1' },
+    };
+
+    await expect(injector.injectPrompt(batch)).resolves.toMatchObject({
+      status: 'deferred',
+      reason: 'terminal_busy',
+    });
+    expect(injectUserPrompt).not.toHaveBeenCalled();
+
+    await expect(injector.injectPrompt(batch)).resolves.toMatchObject({ status: 'injected' });
+    expect(latestGuardReady).toBe(true);
+    expect(injectUserPrompt).toHaveBeenCalledTimes(1);
+    expect(injectUserPrompt).toHaveBeenCalledWith(expect.objectContaining({ text: prompt }));
   });
 
   it('clears concatenated controller slash residue (/effort medium/effort medium, U1 class) after respawn', async () => {

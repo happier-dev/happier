@@ -4,7 +4,7 @@ import { join, resolve } from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { authorizeFilesystemPath } from './filesystemPathAuthorization';
+import { authorizeFilesystemPath, prepareFilesystemPathAuthorizer } from './filesystemPathAuthorization';
 
 const createdPaths = new Set<string>();
 
@@ -105,7 +105,7 @@ describe('authorizeFilesystemPath', () => {
     symlinkSync(outside, link);
 
     const result = authorizeFilesystemPath({
-      targetPath: join(link, 'secret.txt'),
+      targetPath: join(link, 'missing', 'secret.txt'),
       defaultDirectory: allowed,
       accessPolicy: { kind: 'restrictedRoots', roots: [allowed] },
     });
@@ -150,5 +150,66 @@ describe('authorizeFilesystemPath', () => {
       platform: 'win32',
     });
     expect(rejected.valid).toBe(false);
+  });
+});
+
+describe('prepareFilesystemPathAuthorizer', () => {
+  it('preserves os-user path resolution without filesystem canonicalization', async () => {
+    const authorizePath = await prepareFilesystemPathAuthorizer({
+      defaultDirectory: '/home/alice',
+      accessPolicy: { kind: 'osUser' },
+    });
+
+    await expect(authorizePath('notes/todo.txt')).resolves.toEqual({
+      valid: true,
+      resolvedPath: resolve('/home/alice/notes/todo.txt'),
+    });
+  });
+
+  it('rejects symlinks that escape a restricted root', async () => {
+    const allowed = createTempRoot('happier-fs-policy-async-allowed');
+    const outside = createTempRoot('happier-fs-policy-async-outside');
+    const link = join(allowed, 'link');
+    symlinkSync(outside, link);
+
+    const authorizePath = await prepareFilesystemPathAuthorizer({
+      defaultDirectory: allowed,
+      accessPolicy: { kind: 'restrictedRoots', roots: [allowed] },
+    });
+
+    await expect(authorizePath(join(link, 'missing', 'secret.txt'))).resolves.toMatchObject({ valid: false });
+  });
+
+  it('allows a missing descendant through a symlink-aliased restricted root', async () => {
+    const container = createTempRoot('happier-fs-policy-async-alias');
+    const realRoot = join(container, 'real-root');
+    const aliasRoot = join(container, 'alias-root');
+    mkdirSync(realRoot, { recursive: true });
+    symlinkSync(realRoot, aliasRoot);
+
+    const authorizePath = await prepareFilesystemPathAuthorizer({
+      defaultDirectory: aliasRoot,
+      accessPolicy: { kind: 'restrictedRoots', roots: [aliasRoot] },
+    });
+    const targetPath = join(aliasRoot, '.happier', 'uploads', 'generated');
+
+    await expect(authorizePath(targetPath)).resolves.toEqual({
+      valid: true,
+      resolvedPath: targetPath,
+    });
+  });
+
+  it('handles Windows sibling-prefix collisions and mixed separators without host filesystem calls', async () => {
+    const authorizePath = await prepareFilesystemPathAuthorizer({
+      defaultDirectory: 'C:\\Users\\alice',
+      accessPolicy: { kind: 'restrictedRoots', roots: ['C:\\Users\\alice\\work'] },
+      platform: 'win32',
+    });
+
+    await expect(authorizePath('C:/Users/alice/work\\repo/file.txt')).resolves.toEqual({
+      valid: true,
+      resolvedPath: 'C:\\Users\\alice\\work\\repo\\file.txt',
+    });
+    await expect(authorizePath('C:\\Users\\alice2\\work\\repo\\file.txt')).resolves.toMatchObject({ valid: false });
   });
 });

@@ -11,6 +11,7 @@ import {
     SESSION_ACTION_MOVE_TO_FOLDER_ID,
     SESSION_ACTION_MARK_UNREAD_ID,
     SESSION_ACTION_RENAME_ID,
+    SESSION_ACTION_RESUME_ID,
     SESSION_ACTION_STOP_ID,
 } from './sessionActionIds';
 import { listVisibleSessionActionIds } from './sessionActionAvailability';
@@ -39,6 +40,44 @@ function createOwnedRawSession(overrides: Partial<Session> = {}): Session {
 }
 
 describe('session action availability', () => {
+    it('offers standalone Resume only for an inactive resumable session', () => {
+        const createTarget = (overrides: Partial<Session>) => createSessionActionTarget({
+            session: createOwnedRawSession(overrides),
+            currentUserId: 'current_user',
+            isConnected: overrides.active === true,
+            resumeCapabilityOptions: { accountSettings: {} },
+        });
+        const resumableTarget = createTarget({
+            active: false,
+            metadata: {
+                path: '/workspace',
+                host: 'machine',
+                flavor: 'claude',
+                claudeSessionId: 'claude_vendor_session',
+            },
+        });
+        const activeTarget = createTarget({
+            active: true,
+            metadata: {
+                path: '/workspace',
+                host: 'machine',
+                flavor: 'claude',
+                claudeSessionId: 'claude_vendor_session',
+            },
+        });
+        const nonResumableTarget = createTarget({
+            active: false,
+            metadata: { path: '/workspace', host: 'machine', flavor: 'unknown-provider' },
+        });
+
+        expect(listVisibleSessionActionIds({ target: resumableTarget, surface: 'sessionHeader' }))
+            .toContain(SESSION_ACTION_RESUME_ID);
+        expect(listVisibleSessionActionIds({ target: activeTarget, surface: 'sessionHeader' }))
+            .not.toContain(SESSION_ACTION_RESUME_ID);
+        expect(listVisibleSessionActionIds({ target: nonResumableTarget, surface: 'sessionHeader' }))
+            .not.toContain(SESSION_ACTION_RESUME_ID);
+    });
+
     it('keeps a created-but-unregistered row non-working and hides Stop without terminal-host evidence', () => {
         const session = createOwnedRawSession({
             resumingAt: 900,

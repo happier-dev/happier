@@ -1,8 +1,80 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { runTerminalPromptSubmission } from './promptSubmitVerification';
 
 describe('runTerminalPromptSubmission', () => {
+  it('waits for exact prompt staging before sending Enter', async () => {
+    const calls: string[] = [];
+    let staged = false;
+
+    await expect(runTerminalPromptSubmission({
+      promptText: 'first\nsecond',
+      verifyStagedBeforeSubmit: async () => {
+        calls.push('verify-staged');
+        const result = staged;
+        staged = true;
+        return result;
+      },
+      submitEnter: async () => {
+        calls.push('enter');
+        return 'success';
+      },
+      remainingTimeoutMs: () => 1_000,
+      wait: async (delayMs) => {
+        calls.push(`wait:${delayMs}`);
+      },
+    })).resolves.toEqual({ success: true });
+
+    expect(calls).toEqual([
+      'verify-staged',
+      'wait:250',
+      'verify-staged',
+      'enter',
+    ]);
+  });
+
+  it('does not send Enter when exact prompt staging exhausts the write deadline', async () => {
+    const verifyStagedBeforeSubmit = vi.fn(async () => false);
+    const submitEnter = vi.fn();
+
+    await expect(runTerminalPromptSubmission({
+      promptText: 'first\nsecond',
+      verifyStagedBeforeSubmit,
+      submitEnter,
+      remainingTimeoutMs: () => 0,
+      wait: async () => {},
+    })).resolves.toEqual({
+      success: false,
+      reason: 'timeout',
+      phase: 'after_write_before_enter',
+      duplicateRisk: 'possible',
+      submitMayHaveReachedPane: false,
+    });
+
+    expect(verifyStagedBeforeSubmit).toHaveBeenCalledOnce();
+    expect(submitEnter).not.toHaveBeenCalled();
+  });
+
+  it('submits when the final deadline observation proves the exact prompt is staged', async () => {
+    const submitEnter = vi.fn(async ({ remainingTimeoutMs }: Readonly<{ remainingTimeoutMs?: number | undefined }>) => {
+      expect(remainingTimeoutMs).toBeUndefined();
+      return 'success' as const;
+    });
+
+    await expect(runTerminalPromptSubmission({
+      promptText: 'first\nsecond',
+      verifyStagedBeforeSubmit: async ({ remainingTimeoutMs }) => {
+        expect(remainingTimeoutMs).toBeUndefined();
+        return true;
+      },
+      submitEnter,
+      remainingTimeoutMs: () => 0,
+      wait: async () => {},
+    })).resolves.toEqual({ success: true });
+
+    expect(submitEnter).toHaveBeenCalledOnce();
+  });
+
   it('submits immediately and then verifies the composer', async () => {
     const calls: string[] = [];
 
@@ -19,7 +91,7 @@ describe('runTerminalPromptSubmission', () => {
       wait: async () => {},
     })).resolves.toEqual({ success: true });
 
-    expect(calls).toEqual(['enter', 'verify-after']);
+    expect(calls).toEqual(['enter', 'verify-after', 'verify-after']);
   });
 
   it('settles before verifying and retries enter once when the pasted prompt remains in the composer', async () => {
@@ -50,6 +122,8 @@ describe('runTerminalPromptSubmission', () => {
       'verify-after',
       'wait:10',
       'enter',
+      'wait:10',
+      'verify-after',
       'wait:10',
       'verify-after',
     ]);

@@ -1,4 +1,5 @@
 import {
+  SessionStopCleanupIncompleteReasonSchema,
   type StopSessionIncompleteReason,
   type StopSessionResult,
 } from '@happier-dev/protocol';
@@ -18,9 +19,6 @@ export function isTerminalHostPhysicallyRetiredStopResult(result: StopSessionRes
   return result.status === 'stopped'
     || (
       result.status === 'incomplete'
-      && (
-        result.reason === 'terminal_control_serviceability_retirement_failed'
-        || result.reason === 'terminal_attachment_descriptor_retirement_failed'
-      )
+      && SessionStopCleanupIncompleteReasonSchema.safeParse(result.reason).success
     );
 }

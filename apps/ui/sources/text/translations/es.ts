@@ -2675,7 +2675,7 @@ export const es: TranslationStructure = {
       recoveryCreditExpires: ({ time }: { time: string }) => `Expires: ${time}`,
       recoveryCreditApplying: "Aplicando restablecimiento…",
       recoveryCreditMachineUnavailable: "No hay ninguna máquina activa disponible para aplicar este restablecimiento.",
-      recoveryCreditNothingToReset: "No exhausted usage window currently needs a reset.",
+      recoveryCreditNothingToReset: "Actualmente no hay ninguna ventana de uso agotada que necesite restablecerse.",
       recoveryCreditBadge: ({ count }: { count: number }) => count === 1 ? "1 reset" : `${count} resets`,
       remaining: ({ percent }: { percent: string }) => `${percent} restante`,
       remainingWithReset: ({ percent, reset }: { percent: string; reset: string }) =>
@@ -3953,20 +3953,20 @@ export const es: TranslationStructure = {
                         }
                     },
                     claudeUnifiedTerminalWorkspaceTrust: {
-                        title: "Workspace trust",
-                        subtitle: "Choose how Happier responds when Claude asks whether to trust a workspace.",
+                        title: "Confianza del espacio de trabajo",
+                        subtitle: "Elige cómo responde Happier cuando Claude pregunta si debe confiar en un espacio de trabajo.",
                         options: {
                             ask_every_time: {
-                                title: "Ask every time",
-                                subtitle: "Show the exact workspace trust question in the session."
+                                title: "Preguntar siempre",
+                                subtitle: "Muestra en la sesión la pregunta exacta sobre la confianza del espacio de trabajo."
                             },
                             always_trust_happier_workspaces: {
-                                title: "Always trust Happier workspaces",
-                                subtitle: "Trust the current recaptured Claude prompt for workspaces opened by Happier."
+                                title: "Confiar siempre en los espacios de trabajo de Happier",
+                                subtitle: "Confía en la solicitud actual de Claude recuperada para los espacios de trabajo abiertos por Happier."
                             },
                             always_reject_happier_workspaces: {
-                                title: "Always reject Happier workspaces",
-                                subtitle: "Reject the current recaptured Claude prompt for workspaces opened by Happier."
+                                title: "Rechazar siempre los espacios de trabajo de Happier",
+                                subtitle: "Rechaza la solicitud actual de Claude recuperada para los espacios de trabajo abiertos por Happier."
                             }
                         }
                     },
@@ -5228,6 +5228,8 @@ export const es: TranslationStructure = {
                   backgroundTasksRunning: ({ count }: { count: number }) => (count === 1 ? '1 comando en segundo plano en curso' : `${count} comandos en segundo plano en curso`),
               },
             untitled: "Agente sin nombre",
+            screenTitle: "Agentes",
+            transcriptScreenTitle: "Transcripción del agente",
             menuTitle: "Acciones del agente",
             row: {
               a11yLabel: ({ title, status }: { title: string; status: string }) => `${title}, ${status}`,
@@ -5375,6 +5377,7 @@ export const es: TranslationStructure = {
         detailsPanel: {
             emptyHint: "Abre un archivo o un diff desde el panel derecho.",
             unsupportedTab: "Pestaña de detalles no compatible.",
+            transcriptFromOtherSession: "Esta transcripción pertenece a otra sesión.",
             closeA11y: "Cerrar detalles",
                 openRightSidebarA11y: "Abrir barra lateral derecha",
                 closeRightSidebarA11y: "Cerrar barra lateral derecha",
@@ -5915,10 +5918,18 @@ export const es: TranslationStructure = {
       title: "Politica de retencion",
       summary: "Resumen",
       keepForever: "Sin eliminacion automatica",
+      automaticDeletionEnabled: "La eliminación automática está activada",
+      detailsUnavailable: "La eliminación automática está activada, pero este cliente no puede mostrar todas las políticas activas",
+      singlePolicySummary: ({ domain, policy }: { domain: string; policy: string }) => `${domain}: ${policy}`,
+      relayCleanupSummary: ({ policies }: { policies: string }) => `Este relay limpia ${policies}.`,
+      relayCleanupAfterDays: ({ domain, count }: { domain: string; count: number }) => `${domain} después de ${count} ${plural({ count, singular: 'día', plural: 'días' })}`,
+      relayCleanupInactiveSessionsAfterDays: ({ count }: { count: number }) => `sesiones inactivas después de ${count} ${plural({ count, singular: 'día', plural: 'días' })}`,
       deleteInactiveSessionsDays: ({ count }: { count: number }) => `Elimina sesiones inactivas despues de ${count} ${plural({ count, singular: 'dia', plural: 'dias' })}.`,
       deleteOlderThanDays: ({ count }: { count: number }) => `Elimina datos despues de ${count} ${plural({ count, singular: 'dia', plural: 'dias' })}.`,
       sessionNotice: ({ count }: { count: number }) => `Este servidor elimina sesiones inactivas despues de ${count} ${plural({ count, singular: 'dia', plural: 'dias' })} de inactividad.`,
       sessions: "Sesiones",
+      sessionMessages: "Transcripciones de sesión",
+      sidechainMessages: "Transcripciones de subagentes",
       accountChanges: "Cambios de la cuenta",
       voiceSessionLeases: "Arrendamientos de sesiones de voz",
       feedItems: "Elementos del feed",

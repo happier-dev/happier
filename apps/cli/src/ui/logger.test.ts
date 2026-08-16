@@ -103,6 +103,58 @@ describe('logger', () => {
         expect(content).toContain('[WARN] [TEST] warn entry');
     });
 
+    it('writes file-only info diagnostics without polluting the interactive console', async () => {
+        const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+        const { logger } = (await import('@/ui/logger')) as typeof import('@/ui/logger');
+
+        logger.infoFile('[TEST] file-only incident', { queueName: 'test-queue' });
+        logger.flushSync();
+
+        expect(logSpy).not.toHaveBeenCalled();
+        expect(readFileSync(logger.getLogPath(), 'utf8')).toContain('[TEST] file-only incident');
+        logSpy.mockRestore();
+    });
+
+    it('durably records sanitized fatal errors without serializing argv or env fields', async () => {
+        const { logger } = (await import('@/ui/logger')) as typeof import('@/ui/logger');
+        const error = Object.assign(
+            new Error('provider startup rejected; Authorization: Bearer fatal-secret-token'),
+            {
+                argv: ['--token', 'argv-secret-value'],
+                env: { OPENAI_API_KEY: 'env-secret-value' },
+            },
+        );
+
+        expect(() => logger.fatal(error)).not.toThrow();
+
+        const content = readFileSync(logger.getLogPath(), 'utf8');
+        expect(content).toContain('[FATAL] Unhandled CLI error');
+        expect(content).toContain('provider startup rejected');
+        expect(content).toContain('[REDACTED]');
+        expect(content).not.toContain('fatal-secret-token');
+        expect(content).not.toContain('argv-secret-value');
+        expect(content).not.toContain('env-secret-value');
+        expect(content).not.toContain('OPENAI_API_KEY');
+    });
+
+    it('keeps fatal reporting best-effort when thrown values cannot be inspected', async () => {
+        const { logger } = (await import('@/ui/logger')) as typeof import('@/ui/logger');
+        const hostileError = {
+            get stack(): string {
+                throw new Error('stack getter failed');
+            },
+            get message(): string {
+                throw new Error('message getter failed');
+            },
+            toString(): string {
+                throw new Error('toString failed');
+            },
+        };
+
+        expect(() => logger.fatal(hostileError)).not.toThrow();
+        expect(readFileSync(logger.getLogPath(), 'utf8')).toContain('[FATAL] Unhandled CLI error');
+    });
+
     it('writes Error objects with message/stack instead of "{}" when DEBUG is set', async () => {
         process.env.DEBUG = '1';
 

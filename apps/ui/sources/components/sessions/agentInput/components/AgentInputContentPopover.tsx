@@ -1,6 +1,10 @@
 import * as React from 'react';
 import { View } from 'react-native';
 
+import {
+    ListMotionQuietProvider,
+    useListMotionQuiet,
+} from '@/components/sessions/agentActivity/list/listMotionQuiet';
 import type { FloatingOverlayEdgeFades } from '@/components/ui/overlays/FloatingOverlay';
 import type { ScrollEdgeVisibility } from '@/components/ui/scroll/useScrollEdgeFades';
 import { AgentInputSelectionPopover } from '@/components/sessions/agentInput/selection/AgentInputSelectionPopover';
@@ -69,6 +73,16 @@ export function AgentInputContentPopover(props: AgentInputContentPopoverProps) {
     // actual scroll.
     const keyboardHeight = useKeyboardHeight();
     const keyboardInset = props.reserveKeyboardInset ? keyboardHeight : 0;
+    /**
+     * This popover's scroller, published to whatever it is showing.
+     *
+     * The content is a node handed in by a caller, so a list inside it has no way to learn that the
+     * surface around it is being flicked — and a list that re-groups itself mid-scroll moves rows
+     * under the finger doing the scrolling. The pane hands its own window to the roster directly;
+     * this is the same window for the hosts whose scroller is this shared surface. Cheap enough to
+     * create unconditionally: an object and, only while a flick is in flight, one timer.
+     */
+    const listMotion = useListMotionQuiet();
     return (
         <AgentInputSelectionPopover
             open={props.open}
@@ -87,11 +101,14 @@ export function AgentInputContentPopover(props: AgentInputContentPopoverProps) {
                     edgeFades={props.edgeFades}
                     edgeIndicators={props.edgeIndicators}
                     initialVisibility={props.initialVisibility}
+                    onScroll={listMotion.scrollProps.onScroll}
                 >
-                    {renderPopoverContent(props.content, {
-                        requestClose: props.onRequestClose,
-                        maxHeight,
-                    })}
+                    <ListMotionQuietProvider quiet={listMotion.quiet}>
+                        {renderPopoverContent(props.content, {
+                            requestClose: props.onRequestClose,
+                            maxHeight,
+                        })}
+                    </ListMotionQuietProvider>
                     {keyboardInset > 0 ? (
                         <View testID="agent-input-popover-keyboard-inset" style={{ height: keyboardInset }} />
                     ) : null}

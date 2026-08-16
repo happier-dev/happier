@@ -56,21 +56,22 @@ function parseWindowsProcessAncestry(output: string): number[] {
 
 function resolveWindowsProcessAncestry(listenerPid: number): number[] {
   const script = [
-    `$pid = ${listenerPid}`,
+    `$currentPid = ${listenerPid}`,
     '$rows = @()',
     '$seen = @{}',
-    'while ($pid -gt 0 -and -not $seen.ContainsKey($pid)) {',
-    '  $seen[$pid] = $true',
-    '  $proc = Get-CimInstance Win32_Process -Filter "ProcessId=$pid"',
+    'while ($currentPid -gt 0 -and -not $seen.ContainsKey($currentPid)) {',
+    '  $seen[$currentPid] = $true',
+    '  $proc = Get-CimInstance Win32_Process -Filter "ProcessId=$currentPid"',
     '  if ($null -eq $proc) { break }',
     '  $rows += [pscustomobject]@{ ProcessId = [int]$proc.ProcessId; ParentProcessId = [int]$proc.ParentProcessId }',
-    '  $pid = [int]$proc.ParentProcessId',
+    '  $currentPid = [int]$proc.ParentProcessId',
     '}',
     '$rows | ConvertTo-Json -Compress',
   ].join('; ');
   const output = execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], {
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'ignore'],
+    windowsHide: true,
   });
   return parseWindowsProcessAncestry(output);
 }

@@ -7,6 +7,7 @@ import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
 
 const mocks = vi.hoisted(() => ({
   resolveSessionIdOrPrefix: vi.fn(),
+  callMachineRpc: vi.fn(),
   stopDaemonSession: vi.fn(),
   listSessionMarkers: vi.fn(),
   removeSessionMarker: vi.fn(),
@@ -20,6 +21,10 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('@/session/query/resolveSessionId', () => ({
   resolveSessionIdOrPrefix: mocks.resolveSessionIdOrPrefix,
+}));
+
+vi.mock('@/session/transport/rpc/machineRpc', () => ({
+  callMachineRpc: mocks.callMachineRpc,
 }));
 
 vi.mock('@/daemon/controlClient', () => ({
@@ -73,7 +78,12 @@ describe('requestSessionStop marker fallback', () => {
     happyHomeDir = await createTempDir('happier-marker-stop-');
     process.env.HAPPIER_HOME_DIR = happyHomeDir;
     reloadConfiguration();
-    mocks.resolveSessionIdOrPrefix.mockResolvedValue({ ok: true, sessionId: 'sess-marker-stop' });
+    mocks.resolveSessionIdOrPrefix.mockResolvedValue({
+      ok: true,
+      sessionId: 'sess-marker-stop',
+      rawSession: { id: 'sess-marker-stop', active: false },
+    });
+    mocks.callMachineRpc.mockReset();
     mocks.stopDaemonSession.mockResolvedValue({ status: 'not_found' });
     mocks.listSessionMarkers.mockResolvedValue([{
       pid: 4242,
@@ -98,6 +108,74 @@ describe('requestSessionStop marker fallback', () => {
       return { version: 2, metadata: mocks.persistedMetadata };
     });
     vi.spyOn(process, 'kill').mockImplementation(() => true as never);
+  });
+
+  it('routes a stop only to the exact machine recorded by the session', async () => {
+    mocks.resolveSessionIdOrPrefix.mockResolvedValue({
+      ok: true,
+      sessionId: 'sess-marker-stop',
+      rawSession: {
+        id: 'sess-marker-stop',
+        active: true,
+        machineId: 'machine-owning-session',
+      },
+    });
+    mocks.fetchSessionByIdCompat.mockResolvedValue({
+      id: 'sess-marker-stop',
+      active: false,
+      machineId: 'machine-owning-session',
+    });
+    mocks.callMachineRpc.mockResolvedValue({ status: 'stopped' });
+
+    const { requestSessionStop } = await import('./requestSessionStop');
+
+    await expect(requestSessionStop({ credentials, idOrPrefix: 'sess-marker-stop' })).resolves.toEqual({
+      ok: true,
+      sessionId: 'sess-marker-stop',
+      stopped: true,
+    });
+    expect(mocks.callMachineRpc).toHaveBeenCalledOnce();
+    expect(mocks.callMachineRpc).toHaveBeenCalledWith({
+      credentials,
+      machineId: 'machine-owning-session',
+      method: 'stop-session',
+      request: { sessionId: 'sess-marker-stop' },
+      authorization: { kind: 'session.write', sessionId: 'sess-marker-stop' },
+    });
+    expect(mocks.stopDaemonSession).not.toHaveBeenCalled();
+    expect(mocks.listSessionMarkers).not.toHaveBeenCalled();
+  });
+
+  it('reports the exact target daemon as unavailable without trying caller-local control', async () => {
+    mocks.resolveSessionIdOrPrefix.mockResolvedValue({
+      ok: true,
+      sessionId: 'sess-marker-stop',
+      rawSession: {
+        id: 'sess-marker-stop',
+        active: true,
+        machineId: 'machine-owning-session',
+      },
+    });
+    mocks.fetchSessionByIdCompat.mockResolvedValue({
+      id: 'sess-marker-stop',
+      active: true,
+      machineId: 'machine-owning-session',
+    });
+    mocks.callMachineRpc.mockRejectedValue(new Error('Machine RPC target unavailable'));
+
+    const { requestSessionStop } = await import('./requestSessionStop');
+
+    await expect(requestSessionStop({ credentials, idOrPrefix: 'sess-marker-stop' })).resolves.toEqual({
+      ok: true,
+      sessionId: 'sess-marker-stop',
+      stopped: false,
+      stopOutcome: {
+        status: 'physical_stop_unconfirmed',
+        reason: 'target_daemon_unavailable',
+      },
+    });
+    expect(mocks.stopDaemonSession).not.toHaveBeenCalled();
+    expect(mocks.listSessionMarkers).not.toHaveBeenCalled();
   });
 
   afterEach(async () => {
@@ -125,6 +203,35 @@ describe('requestSessionStop marker fallback', () => {
     });
   });
 
+  it('distinguishes a proven physical stop when relay inactivity is not yet observed', async () => {
+    const previousStopTimeoutMs = process.env.HAPPIER_SESSION_STOP_TIMEOUT_MS;
+    const previousStopPollIntervalMs = process.env.HAPPIER_SESSION_STOP_POLL_INTERVAL_MS;
+    process.env.HAPPIER_SESSION_STOP_TIMEOUT_MS = '1';
+    process.env.HAPPIER_SESSION_STOP_POLL_INTERVAL_MS = '1';
+    reloadConfiguration();
+    mocks.stopDaemonSession.mockResolvedValue({ status: 'stopped' });
+    mocks.fetchSessionByIdCompat.mockResolvedValue({ id: 'sess-marker-stop', active: true });
+
+    try {
+      const { requestSessionStop } = await import('./requestSessionStop');
+      await expect(requestSessionStop({ credentials, idOrPrefix: 'sess-marker-stop' })).resolves.toEqual({
+        ok: true,
+        sessionId: 'sess-marker-stop',
+        stopped: false,
+        stopOutcome: {
+          status: 'stopped_projection_unconfirmed',
+          reason: 'relay_inactive_not_observed',
+        },
+      });
+    } finally {
+      if (previousStopTimeoutMs === undefined) delete process.env.HAPPIER_SESSION_STOP_TIMEOUT_MS;
+      else process.env.HAPPIER_SESSION_STOP_TIMEOUT_MS = previousStopTimeoutMs;
+      if (previousStopPollIntervalMs === undefined) delete process.env.HAPPIER_SESSION_STOP_POLL_INTERVAL_MS;
+      else process.env.HAPPIER_SESSION_STOP_POLL_INTERVAL_MS = previousStopPollIntervalMs;
+      reloadConfiguration();
+    }
+  });
+
   it('does not start marker fallback for a transport-ambiguous plain runner without exact attachment identity', async () => {
     mocks.stopDaemonSession.mockRejectedValue(new Error('local control timeout'));
 
@@ -133,6 +240,7 @@ describe('requestSessionStop marker fallback', () => {
       ok: true,
       sessionId: 'sess-marker-stop',
       stopped: false,
+      stopOutcome: { status: 'physical_stop_unconfirmed', reason: 'transport_ambiguous' },
     });
 
     expect(mocks.waitForTrackedRunnerProcessesExit).not.toHaveBeenCalled();
@@ -149,6 +257,10 @@ describe('requestSessionStop marker fallback', () => {
       ok: true,
       sessionId: 'sess-marker-stop',
       stopped: false,
+      stopOutcome: {
+        status: 'physical_stop_unconfirmed',
+        reason: 'runner_exit_timeout',
+      },
     });
 
     expect(mocks.waitForTrackedRunnerProcessesExit).not.toHaveBeenCalled();
@@ -163,6 +275,7 @@ describe('requestSessionStop marker fallback', () => {
       ok: true,
       sessionId: 'sess-marker-stop',
       stopped: false,
+      stopOutcome: { status: 'physical_stop_unconfirmed', reason: 'runner_exit_timeout' },
     });
 
     expect(mocks.fetchSessionByIdCompat).not.toHaveBeenCalled();
@@ -189,6 +302,7 @@ describe('requestSessionStop marker fallback', () => {
       ok: true,
       sessionId: 'sess-marker-stop',
       stopped: false,
+      stopOutcome: { status: 'physical_stop_unconfirmed', reason: 'missing_topology_proof' },
     });
 
     expect(mocks.removeSessionMarker).not.toHaveBeenCalled();
@@ -213,6 +327,7 @@ describe('requestSessionStop marker fallback', () => {
       ok: true,
       sessionId: 'sess-marker-stop',
       stopped: false,
+      stopOutcome: { status: 'physical_stop_unconfirmed', reason: 'missing_attachment_identity' },
     });
 
     expect(mocks.removeSessionMarker).not.toHaveBeenCalled();
@@ -398,6 +513,7 @@ describe('requestSessionStop marker fallback', () => {
       ok: true,
       sessionId: 'sess-marker-stop',
       stopped: false,
+      stopOutcome: { status: 'physical_stop_unconfirmed', reason: 'attachment_mismatch' },
     });
     expect(mocks.disposeTerminalHost).not.toHaveBeenCalled();
   });
@@ -440,7 +556,29 @@ describe('requestSessionStop marker fallback', () => {
       ok: true,
       sessionId: 'sess-marker-stop',
       stopped: false,
+      stopOutcome: {
+        status: 'stopped_cleanup_incomplete',
+        reason: 'terminal_control_serviceability_retirement_failed',
+      },
     });
     expect(mocks.disposeTerminalHost).toHaveBeenCalledTimes(1);
+  });
+
+  it('reports descriptor retirement failure as cleanup-incomplete after proven host destruction', async () => {
+    mocks.stopDaemonSession.mockResolvedValue({
+      status: 'incomplete',
+      reason: 'terminal_attachment_descriptor_retirement_failed',
+    });
+
+    const { requestSessionStop } = await import('./requestSessionStop');
+    await expect(requestSessionStop({ credentials, idOrPrefix: 'sess-marker-stop' })).resolves.toEqual({
+      ok: true,
+      sessionId: 'sess-marker-stop',
+      stopped: false,
+      stopOutcome: {
+        status: 'stopped_cleanup_incomplete',
+        reason: 'terminal_attachment_descriptor_retirement_failed',
+      },
+    });
   });
 });

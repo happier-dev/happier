@@ -17,6 +17,10 @@ import {
 import { delay } from '@/utils/timing/time';
 
 import type { ServerScopedMachineRpcParams, SocketRpcResult } from './serverScopedRpcTypes';
+import {
+    MACHINE_RPC_TIMEOUT_ERROR_CODE,
+    isMachineRpcTimeoutError,
+} from './machineRpcTimeoutError';
 
 const SCOPED_MACHINE_RPC_SESSION_WRITE_METHODS = new Set<string>([
     RPC_METHODS.SPAWN_HAPPY_SESSION,
@@ -47,16 +51,8 @@ function createMachineRpcTimeoutError(params: Readonly<{
     const error = new Error(
         `Machine RPC timed out after ${params.timeoutMs}ms while using ${params.scope} scope for ${params.method}`,
     );
-    Object.assign(error, { code: 'MACHINE_RPC_TIMEOUT' });
+    Object.assign(error, { code: MACHINE_RPC_TIMEOUT_ERROR_CODE });
     return error;
-}
-
-function isMachineRpcTimeoutError(error: unknown): boolean {
-    return Boolean(
-        error
-        && typeof error === 'object'
-        && (error as { code?: unknown }).code === 'MACHINE_RPC_TIMEOUT',
-    );
 }
 
 function normalizeScopedMachineRpcEncryptedResult(value: unknown): string {

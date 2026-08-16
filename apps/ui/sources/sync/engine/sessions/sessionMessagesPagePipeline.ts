@@ -1,4 +1,7 @@
-import type { SessionMessageRole } from '@happier-dev/protocol';
+import {
+    isRecoveredHistoryTranscriptObservationProvenance,
+    type SessionMessageRole,
+} from '@happier-dev/protocol';
 
 import type { ApiMessage, ApiSessionMessagesResponse } from '@/sync/api/types/apiTypes';
 import { parseSessionMessagesResponseJson, type SessionMessagesPageScope } from '@/sync/api/session/sessionMessagesApi';
@@ -7,10 +10,7 @@ import { readStoredSessionMessage } from '@/sync/runtime/readStoredSessionConten
 import { writeSyncDebugLog } from '@/sync/runtime/syncDebugLogging';
 import { syncPerformanceTelemetry } from '@/sync/runtime/syncPerformanceTelemetry';
 import { normalizeRawMessage, type NormalizedMessage } from '@/sync/typesRaw';
-import {
-    applyTranscriptObservationMetadata,
-    isRecoveredHistoryTranscriptObservation,
-} from '@/sync/domains/messages/transcriptObservationProvenance';
+import { applyTranscriptObservationMetadata } from '@/sync/domains/messages/transcriptObservationProvenance';
 import { getTaskLifecycleEventFromRawContent, type TaskLifecycleEvent } from './taskLifecycle';
 
 export type SessionMessagesEncryption = {
@@ -419,7 +419,10 @@ export async function runSessionMessagesPagePipeline(params: {
             if (isLegacyMemoryArtifactTranscriptRow(decrypted)) {
                 continue;
             }
-            if (params.lifecyclePolicy === 'emit' && !isRecoveredHistoryTranscriptObservation(inputMessage)) {
+            if (
+                params.lifecyclePolicy === 'emit'
+                && !isRecoveredHistoryTranscriptObservationProvenance(inputMessage.transcriptObservationProvenance)
+            ) {
                 const lifecycleEvent = getTaskLifecycleEventFromRawContent(decrypted.content, decrypted.createdAt);
                 if (lifecycleEvent) {
                     params.onTaskLifecycleEvent?.(lifecycleEvent);

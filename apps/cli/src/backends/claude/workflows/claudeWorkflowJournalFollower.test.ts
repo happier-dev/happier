@@ -1,4 +1,4 @@
-import { appendFile, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -62,6 +62,94 @@ describe('createClaudeWorkflowJournalFollower', () => {
     });
     return { values, follower };
   };
+
+  /**
+   * The run's durable record lives BESIDE the sidecar directory, not inside it.
+   *
+   * Verified layout (both spellings of the Claude home resolve to one inode on this machine):
+   *   `<sessionRoot>/subagents/workflows/<runId>/`   <- `transcriptDir`
+   *   `<sessionRoot>/workflows/<runId>.json`         <- the record
+   * Nothing in the corridor constructed that second path before, which is why the one artifact
+   * carrying per-agent `phaseIndex`/`label`/`tokens` was never read. It is written once at terminal
+   * state — across the 51 runs of session `b4416eda`, 458 agent states with none non-terminal, and
+   * two runs that started but never finished have no record at all — so "absent" is the normal
+   * state of a live run and must stay retryable rather than latch.
+   */
+  describe('createClaudeWorkflowJournalFollower — the run’s durable record', () => {
+    let sessionRoot = '';
+    let runDir = '';
+
+    beforeEach(async () => {
+      sessionRoot = await mkdtemp(join(tmpdir(), 'claude-workflow-session-'));
+      runDir = join(sessionRoot, 'subagents', 'workflows', 'wf_e1bd2111-9e1');
+      await mkdir(runDir, { recursive: true });
+      await mkdir(join(sessionRoot, 'workflows'), { recursive: true });
+      await writeFile(join(runDir, 'journal.jsonl'), '', 'utf8');
+    });
+
+    afterEach(async () => {
+      await rm(sessionRoot, { recursive: true, force: true });
+    });
+
+    const launchInto = (transcriptDir: string) => ({
+      type: 'user',
+      session_id: 'claude-session-1',
+      uuid: 'uuid-launch',
+      message: {
+        content: [{ type: 'tool_result', tool_use_id: 'toolu_wf', is_error: false, content: 'Workflow launched in background.' }],
+      },
+      toolUseResult: {
+        status: 'async_launched',
+        taskType: 'local_workflow',
+        taskId: 'task-1',
+        workflowName: 'composer-target-shape-pressure-test',
+        runId: 'wf_e1bd2111-9e1',
+        transcriptDir,
+      },
+    });
+
+    it('reads the record from the sibling directory and replays its workflowProgress', async () => {
+      await writeFile(join(sessionRoot, 'workflows', 'wf_e1bd2111-9e1.json'), JSON.stringify({
+        runId: 'wf_e1bd2111-9e1',
+        status: 'completed',
+        workflowProgress: [
+          { type: 'workflow_phase', index: 1, title: 'Attack' },
+          { type: 'workflow_agent', index: 1, label: 'r1-unification', phaseIndex: 1, phaseTitle: 'Attack', agentId: 'a685f959c06b2f9dd', state: 'done', tokens: 133193 },
+        ],
+      }), 'utf8');
+
+      const { values, follower } = collect();
+      follower.observeTranscriptMessage(launchInto(runDir));
+      await follower.syncAll();
+      follower.dispose();
+
+      expect(values).toContainEqual({
+        type: 'happier_workflow_run_record',
+        workflowToolUseId: 'toolu_wf',
+        workflowProgress: [
+          { type: 'workflow_phase', index: 1, title: 'Attack' },
+          { type: 'workflow_agent', index: 1, label: 'r1-unification', phaseIndex: 1, phaseTitle: 'Attack', agentId: 'a685f959c06b2f9dd', state: 'done', tokens: 133193 },
+        ],
+        sourceSessionId: 'claude-session-1',
+      });
+    });
+
+    it('keeps looking for a record that does not exist yet, and never fails the run over it', async () => {
+      const { values, follower } = collect();
+      follower.observeTranscriptMessage(launchInto(runDir));
+      await follower.syncAll();
+      expect(values.some((v) => (v as { type?: string }).type === 'happier_workflow_run_record')).toBe(false);
+
+      // The run terminalizes and the record lands; the next drain must still pick it up.
+      await writeFile(join(sessionRoot, 'workflows', 'wf_e1bd2111-9e1.json'), JSON.stringify({
+        workflowProgress: [{ type: 'workflow_agent', index: 1, label: 'late', agentId: 'a1', state: 'done' }],
+      }), 'utf8');
+      await follower.syncAll();
+      follower.dispose();
+
+      expect(values.some((v) => (v as { type?: string }).type === 'happier_workflow_run_record')).toBe(true);
+    });
+  });
 
   it('reads the script FILE a launch names and replays its bytes as a workflow script fact', async () => {
     await writeFile(scriptPath, "export const meta = { name: 'aau-wave-20' }\n", 'utf8');

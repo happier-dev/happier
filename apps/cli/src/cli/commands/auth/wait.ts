@@ -5,6 +5,7 @@ import axios from 'axios';
 import tweetnacl from 'tweetnacl';
 
 import { decodeBase64 } from '@/api/encryption';
+import { writeJsonStdout } from '@/cli/output/jsonEnvelope';
 import { configuration } from '@/configuration';
 import { readCredentials, writeCredentialsDataKey, writeCredentialsLegacy, type Credentials } from '@/persistence';
 import { applyServerSelectionFromArgs } from '@/server/serverSelection';
@@ -123,12 +124,12 @@ export async function handleAuthWait(argsRaw: string[]): Promise<void> {
   const existing = await readCredentials();
   if (existing) {
     const { machineId } = await ensureMachineIdForCredentials(existing);
-    console.log(JSON.stringify({
+    await writeJsonStdout({
       success: true,
       token: existing.token,
       encryptionType: existing.encryption.type,
       machineId,
-    }));
+    });
     return;
   }
   if (pairingRequirement === 'v3' && !pairing) {
@@ -195,13 +196,13 @@ export async function handleAuthWait(argsRaw: string[]): Promise<void> {
         };
         const { machineId } = await ensureMachineIdForCredentials(credentials);
         await unlink(statePath).catch(() => {});
-        console.log(JSON.stringify({
+        await writeJsonStdout({
           success: true,
           token,
           encryptionType: 'legacy' as const,
           pairingAuthentication: opened.authenticated ? 'v3' : 'legacy',
           machineId,
-        }));
+        });
         return;
       }
 
@@ -219,13 +220,13 @@ export async function handleAuthWait(argsRaw: string[]): Promise<void> {
         };
         const { machineId } = await ensureMachineIdForCredentials(credentials);
         await unlink(statePath).catch(() => {});
-        console.log(JSON.stringify({
+        await writeJsonStdout({
           success: true,
           token,
           encryptionType: 'dataKey' as const,
           pairingAuthentication: opened.authenticated ? 'v3' : 'legacy',
           machineId,
-        }));
+        });
         return;
       }
 

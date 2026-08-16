@@ -21,6 +21,13 @@ const CLAUDE_2_1_228_USAGE_LIMIT_DIALOG = [
   'Enter to confirm · Esc to cancel',
 ].join('\n');
 
+const CROPPED_SINGLE_OPTION_USAGE_LIMIT_DIALOG = [
+  'What do you want to do?',
+  '❯ 1. Stop and wait for limit to reset',
+  '',
+  'Enter to confirm · Esc to cancel',
+].join('\n');
+
 /**
  * Fixtures are derived from the live probe captures documented in
  * `.reviews/20260610-claude-unified-independent-audit/probes/probe-log.md` (Claude Code 2.1.170, tmux).
@@ -158,6 +165,17 @@ describe('parseClaudeScreenState — usage-limit chooser', () => {
 
     expect(state.usageLimitDialogVisible).toBe(false);
     expect(state.unrecognizedConfirmationDialogVisible).toBe(true);
+  });
+
+  it('recognizes the cropped one-choice usage-limit chooser from the live terminal viewport', () => {
+    const state = parseClaudeScreenState(CROPPED_SINGLE_OPTION_USAGE_LIMIT_DIALOG);
+
+    expect(state.usageLimitDialogVisible).toBe(true);
+    expect(state.unrecognizedConfirmationDialogVisible).toBe(false);
+    expect(state.visibleNumberedDialog?.options).toEqual([
+      { choice: '1', label: 'Stop and wait for limit to reset' },
+    ]);
+    expect(resolveClaudeScreenInFlightSteerVeto(state)).toBe('usage_limit_dialog');
   });
 });
 
@@ -814,6 +832,20 @@ describe('startup readiness predicate (D15 shared-parser unification)', () => {
       'Resuming session abc123 from on-disk history…\n(rendered 3,128 lines of prior transcript; input not yet ready)',
     ))).toBe(false);
   });
+
+  it('does not infer readiness from a mode footer while the composer is absent', () => {
+    const state = parseClaudeScreenState([
+      'Applied runtime control; transcript is redrawing',
+      '  ⏵⏵ accept edits on (shift+tab to cycle)',
+    ].join('\n'));
+
+    expect(state.composerContent).toBeNull();
+    expect(state.inputBoxInteractive).toBe(true);
+    expect(isClaudeScreenReadyForInput(state)).toBe(false);
+    expect(isSafeWindowForSlashControl(state)).toBe(false);
+    expect(isSafeWindowForModeCycle(state)).toBe(false);
+    expect(resolveClaudeScreenInFlightSteerVeto(state)).toBe('no_interactive_composer');
+  });
 });
 
 describe('parseClaudeScreenState — unrecognized confirmation dialogs (P-B fail-closed)', () => {
@@ -984,6 +1016,37 @@ describe('parseClaudeScreenState — soft-wrapped composer draft (C11)', () => {
       '╰──────────────────────────────╯',
     ].join('\n'));
     expect(state.composerContent).toBe('first wrapped segment\nsecond wrapped segment');
+  });
+
+  it('captures direct-rendered multi-paragraph drafts across blank composer rows', () => {
+    const state = parseClaudeScreenState([
+      '────────────────────────────────────────────────',
+      '❯ great, awesome! great work',
+      '',
+      '  but seems like a lot of texts are still not translated?',
+      '  http://localhost:5173/zh-Hant',
+      '────────────────────────────────────────────────',
+      '  ⏵⏵ auto mode on (shift+tab to cycle)',
+    ].join('\n'));
+
+    expect(state.composerContent).toBe([
+      'great, awesome! great work',
+      '',
+      'but seems like a lot of texts are still not translated?',
+      'http://localhost:5173/zh-Hant',
+    ].join('\n'));
+  });
+
+  it('keeps blank paragraph rows inside a box-bordered composer', () => {
+    const state = parseClaudeScreenState([
+      '╭──────────────────────────────╮',
+      '│ ❯ first paragraph            │',
+      '│                              │',
+      '│   second paragraph           │',
+      '╰──────────────────────────────╯',
+    ].join('\n'));
+
+    expect(state.composerContent).toBe('first paragraph\n\nsecond paragraph');
   });
 
   it('keeps single-line drafts and empty composers unchanged', () => {

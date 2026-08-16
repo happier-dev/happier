@@ -36,6 +36,7 @@ import {
   createExpoCrashOutputTracker,
   describeExpoTermination,
   isIntentionalExpoTermination,
+  resolveNextExpoRestartAttempt,
   resolveExpoRestartPolicy,
 } from './expo_dev_supervision.mjs';
 
@@ -799,6 +800,7 @@ export async function ensureDevExpoServer({
     });
     children.push(proc);
     const trackedSnapshot = await trackedProc.setCurrentProc(proc);
+    const trackedSpawn = { ...trackedSnapshot, currentProc: proc, certifiedAtMs: null };
 
     proc.once('exit', (code, signal) => {
       void (async () => {
@@ -822,7 +824,12 @@ export async function ensureDevExpoServer({
           await finalizeCurrentExit();
           return;
         }
-        const nextAttempt = restartAttempt + 1;
+        const nextAttempt = resolveNextExpoRestartAttempt({
+          restartAttempt,
+          certifiedAtMs: trackedSpawn.certifiedAtMs,
+          exitedAtMs: Date.now(),
+          policy: restartPolicy,
+        });
         if (nextAttempt > restartPolicy.maxAttempts) {
           writeSupervisorLine(
             `Expo exited unexpectedly (${describeExpoTermination({ code, signal, outputTracker })}); restart suppressed after ${restartPolicy.maxAttempts} attempts.`
@@ -886,7 +893,7 @@ export async function ensureDevExpoServer({
       })();
     });
 
-    return { ...trackedSnapshot, currentProc: proc };
+    return trackedSpawn;
   };
 
   const certifyTrackedSpawn = async (trackedSpawn) => {
@@ -914,6 +921,7 @@ export async function ensureDevExpoServer({
       port: ready.port,
     });
     assertCurrentCertificate(certificate);
+    trackedSpawn.certifiedAtMs = Date.now();
     return certificate;
   };
 

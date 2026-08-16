@@ -5,8 +5,10 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vites
 import { createSessionPublisherPresence } from "@/app/presence/sessionPublisherPresence";
 import { enqueuePendingMessage } from "@/app/session/pending/pendingMessageService";
 import { db } from "@/storage/db";
+import { inTx } from "@/storage/inTx";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 import { createFakeSocket, getSocketHandler } from "../testkit/socketHarness";
+import { authorizeSessionRelayPublish } from "./sessionRelayAuthCache";
 
 import { sessionUpdateHandler } from "./sessionUpdateHandler";
 
@@ -127,5 +129,118 @@ describe("accepted Pending settlement publisher replacement race on SQLite", () 
             select: { status: true, deliveryState: true, deliveryBlockedReason: true },
         })).resolves.toEqual(replacementBaseline);
         await expect(db.sessionMessage.count({ where: { sessionId: session.id, localId } })).resolves.toBe(0);
+    });
+
+    it("returns typed overload without killing the socket event loop when publisher authority cannot acquire a transaction", async () => {
+        harness.resetEnv({
+            HAPPIER_DB_TX_MAX_RETRIES: "0",
+            HAPPIER_DB_TX_MAX_WAIT_MS: "1000",
+            HAPPIER_DB_TX_TIMEOUT_MS: "30000",
+        });
+        const owner = await db.account.create({
+            data: { publicKey: `pk-${randomUUID()}` },
+            select: { id: true },
+        });
+        const session = await db.session.create({
+            data: {
+                tag: `session-${randomUUID()}`,
+                accountId: owner.id,
+                metadata: "{}",
+                metadataVersion: 0,
+                agentState: null,
+                agentStateVersion: 0,
+            },
+            select: { id: true },
+        });
+        const machineId = `machine-${randomUUID()}`;
+        await db.machine.create({ data: { id: machineId, accountId: owner.id, metadata: "{}" } });
+        await db.accessKey.create({
+            data: { accountId: owner.id, machineId, sessionId: session.id, data: "encrypted" },
+        });
+        const localId = `pending-${randomUUID()}`;
+        await enqueuePendingMessage({
+            actorUserId: owner.id,
+            sessionId: session.id,
+            localId,
+            ciphertext: "ciphertext",
+            requestedAction: { v: 1, kind: "enqueue" },
+        });
+        await db.sessionPendingMessage.update({
+            where: { sessionId_localId: { sessionId: session.id, localId } },
+            data: { deliveryState: "delivering", providerAction: "send" },
+        });
+
+        const presence = createSessionPublisherPresence();
+        const socket = createFakeSocket({
+            id: "transaction-unavailable-socket",
+            data: {
+                clientType: "session-scoped",
+                sessionScopedBinding: {
+                    sessionId: session.id,
+                    machineId,
+                    proof: "machine-access-key",
+                },
+            },
+        });
+        const binding = { accountId: owner.id, machineId, sessionId: session.id };
+        await expect(presence.registerPublisher({
+            socket,
+            binding,
+            completeActivitySnapshot: { state: "idle", activeCount: 0 },
+        })).resolves.toMatchObject({ status: "registered" });
+        const connection = {
+            connectionType: "session-scoped",
+            socket,
+            userId: owner.id,
+            sessionId: session.id,
+        } as any;
+        await expect(authorizeSessionRelayPublish({
+            socket: socket as any,
+            connection,
+            userId: owner.id,
+            sessionId: session.id,
+        })).resolves.toContain(owner.id);
+        sessionUpdateHandler(owner.id, socket as any, connection, { presence, binding });
+        const handler = getSocketHandler(socket, "pending-delivery-accepted-v1");
+        const pendingBaseline = await db.sessionPendingMessage.findUniqueOrThrow({
+            where: { sessionId_localId: { sessionId: session.id, localId } },
+            select: { status: true, deliveryState: true },
+        });
+
+        let markHolderEntered!: () => void;
+        const holderEntered = new Promise<void>((resolve) => { markHolderEntered = resolve; });
+        let releaseHolder!: () => void;
+        const holderRelease = new Promise<void>((resolve) => { releaseHolder = resolve; });
+        const holder = inTx(async () => {
+            markHolderEntered();
+            await holderRelease;
+        });
+        await holderEntered;
+
+        const overloadedAck = vi.fn();
+        try {
+            await expect(handler({ v: 1, sessionId: session.id, localId }, overloadedAck)).resolves.toBeUndefined();
+            expect(overloadedAck).toHaveBeenCalledTimes(1);
+            expect(overloadedAck).toHaveBeenCalledWith({
+                ok: false,
+                error: "transaction-unavailable",
+                retryAfterMs: 1_000,
+            });
+        } finally {
+            releaseHolder();
+            await holder;
+        }
+
+        await expect(db.sessionPendingMessage.findUniqueOrThrow({
+            where: { sessionId_localId: { sessionId: session.id, localId } },
+            select: { status: true, deliveryState: true },
+        })).resolves.toEqual(pendingBaseline);
+        await expect(db.sessionMessage.count({ where: { sessionId: session.id, localId } })).resolves.toBe(0);
+
+        const recoveredAck = vi.fn();
+        await expect(handler({ v: 1, sessionId: session.id, localId }, recoveredAck)).resolves.toBeUndefined();
+        expect(recoveredAck).toHaveBeenCalledTimes(1);
+        expect(recoveredAck).toHaveBeenCalledWith(expect.objectContaining({ ok: true, didResolve: true }));
+        await expect(db.sessionMessage.count({ where: { sessionId: session.id, localId } })).resolves.toBe(1);
     });
 });

@@ -1,16 +1,13 @@
 import * as React from 'react';
-import { Pressable, View, useWindowDimensions } from 'react-native';
+import { Pressable, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useRouter } from 'expo-router';
 
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
 import { Typography } from '@/constants/Typography';
-import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneScope';
-import { resolvePaneLayout } from '@/components/ui/panels/paneBreakpoints';
-import { PANE_SIZING_DEFAULTS } from '@/components/appShell/panes/layout/paneSizing';
-import { useDeviceType } from '@/utils/platform/responsive';
-import { useLocalSetting, useSessionReferenceTarget } from '@/sync/domains/state/storage';
+import { useOpenSessionTarget } from '@/components/sessions/panes/open/useOpenSessionTarget';
+import { useSessionReferenceTarget } from '@/sync/domains/state/storage';
 import * as FlashListCompat from '@/components/ui/lists/flashListCompat/FlashListCompat';
 import { Icon } from '@/components/ui/icons/Icon';
 import { getSessionName } from '@/utils/sessions/sessionUtils';
@@ -158,40 +155,14 @@ const SessionReferenceChip = React.memo((props: Readonly<{
 export const StructuredReferencesRow = React.memo((props: StructuredReferencesRowProps) => {
     const styles = stylesheet;
     const { theme } = useUnistyles();
-    const router = useRouter();
-    const { width: windowWidth } = useWindowDimensions();
-    const deviceType = useDeviceType();
-    const multiPaneEnabled = useLocalSetting('uiMultiPanePanelsEnabled') !== false;
     const { getMappingKey } = useReferenceMappingHelper();
 
-    const scopeId = React.useMemo(() => `session:${props.sessionId}`, [props.sessionId]);
-    const pane = useAppPaneScope(scopeId);
-
+    // The layout decision this row used to make inline is now the app's one answer to it, so a file
+    // link and an agent row open the same way and neither can drift into a dead control.
+    const openTarget = useOpenSessionTarget({ sessionId: props.sessionId });
     const openFile = React.useCallback((path: string) => {
-        const layoutIfOpened = resolvePaneLayout({
-            containerWidthPx: windowWidth,
-            deviceType,
-            multiPaneEnabled,
-            rightOpen: false,
-            detailsOpen: true,
-            mainMinPx: PANE_SIZING_DEFAULTS.mainMinPx,
-            rightMinPx: PANE_SIZING_DEFAULTS.right.minPx,
-            detailsMinPx: PANE_SIZING_DEFAULTS.details.minPx,
-        });
-
-        if (layoutIfOpened.kind === 'single') {
-            const href = `/session/${props.sessionId}/file?path=${encodeURIComponent(path)}`;
-            router.push(href as never);
-            return;
-        }
-
-        pane.openDetailsTab({
-            key: `file:${path}`,
-            kind: 'file',
-            title: getBasename(path),
-            resource: { kind: 'file', path },
-        });
-    }, [deviceType, multiPaneEnabled, pane, props.sessionId, router, windowWidth]);
+        openTarget({ kind: 'file', path });
+    }, [openTarget]);
 
     if (props.references.length === 0) return null;
 

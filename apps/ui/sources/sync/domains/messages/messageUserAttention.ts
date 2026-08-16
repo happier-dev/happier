@@ -4,16 +4,18 @@ import {
     SessionMessageAttentionImpactSchema,
     TranscriptRawRecordV1Schema,
     agentEventAttentionImpact,
+    isRecoveredHistoryTranscriptObservationProvenance,
     type SessionMessageAttentionImpact,
 } from '@happier-dev/protocol';
 
 import type { Message } from './messageTypes';
-import { isRecoveredHistoryTranscriptObservation } from './transcriptObservationProvenance';
 
 export function messageAttentionImpact(
     message: Pick<Message, 'kind' | 'transcriptObservationProvenance'> & Partial<Pick<Extract<Message, { kind: 'agent-event' }>, 'event'>>,
 ): SessionMessageAttentionImpact {
-    if (isRecoveredHistoryTranscriptObservation(message)) return SESSION_MESSAGE_NO_USER_ATTENTION_IMPACT;
+    if (isRecoveredHistoryTranscriptObservationProvenance(message.transcriptObservationProvenance)) {
+        return SESSION_MESSAGE_NO_USER_ATTENTION_IMPACT;
+    }
     if (message.kind !== 'agent-event') return SESSION_MESSAGE_USER_ATTENTION_IMPACT;
     return agentEventAttentionImpact(message.event ?? null);
 }
@@ -48,7 +50,7 @@ export function storedSessionMessageAttentionImpactOrNull(message: Readonly<{
     content?: unknown;
     transcriptObservationProvenance?: Message['transcriptObservationProvenance'];
 }> | null | undefined): SessionMessageAttentionImpact | null {
-    if (isRecoveredHistoryTranscriptObservation(message)) {
+    if (isRecoveredHistoryTranscriptObservationProvenance(message?.transcriptObservationProvenance)) {
         return SESSION_MESSAGE_NO_USER_ATTENTION_IMPACT;
     }
     if (message?.attentionImpact !== undefined) {

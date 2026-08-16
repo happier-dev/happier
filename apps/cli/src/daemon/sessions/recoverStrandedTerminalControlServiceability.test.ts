@@ -147,4 +147,55 @@ describe('recoverStrandedTerminalControlServiceability', () => {
       retireExactTerminalControlServiceability: async () => 'superseded',
     })).resolves.toEqual({ status: 'incomplete', reason: 'attachment_mismatch' });
   });
+
+  it('reproves a pinned dead host so local cleanup can retry after server retirement', async () => {
+    const evaluateLiveness = vi.fn(async () => ({ paneAlive: false, paneDead: true, observedAt: 200 }));
+    const retireExactTerminalControlServiceability = vi.fn(async () => 'retired' as const);
+    const retiredMetadata = createMetadata({
+      terminal: {
+        mode: 'tmux',
+        tmux: { target: 'happy-session:owned-pane' },
+        controlServiceabilityV1: {
+          v: 1,
+          attachmentId: 'attachment-1',
+          state: 'recoverable_unservable',
+          observedAt: 100,
+          retired: true,
+        },
+      },
+    });
+
+    await expect(recoverStrandedTerminalControlServiceability({
+      credentials,
+      currentMachineId: 'machine-current',
+      happyHomeDir: '/happy-home',
+      sessionId: 'session-1',
+      expectedAttachmentId: 'attachment-1',
+      loadTerminalHostAdapters: async () => ({ tmux: createAdapter(evaluateLiveness) }),
+      fetchSession: async () => createRawSession(retiredMetadata),
+      retireExactTerminalControlServiceability,
+    })).resolves.toEqual({ status: 'stopped' });
+    expect(evaluateLiveness).toHaveBeenCalledOnce();
+    expect(retireExactTerminalControlServiceability).not.toHaveBeenCalled();
+  });
+
+  it('does not probe or retire serviceability for a replacement attachment', async () => {
+    const evaluateLiveness = vi.fn(async () => ({ paneAlive: false, observedAt: 200 }));
+    const retireExactTerminalControlServiceability = vi.fn(async () => 'retired' as const);
+    const request = {
+      credentials,
+      currentMachineId: 'machine-current',
+      happyHomeDir: '/happy-home',
+      sessionId: 'session-1',
+      expectedAttachmentId: 'attachment-local',
+      loadTerminalHostAdapters: async () => ({ tmux: createAdapter(evaluateLiveness) }),
+      fetchSession: async () => createRawSession(createMetadata()),
+      retireExactTerminalControlServiceability,
+    };
+
+    await expect(recoverStrandedTerminalControlServiceability(request))
+      .resolves.toEqual({ status: 'incomplete', reason: 'attachment_mismatch' });
+    expect(evaluateLiveness).not.toHaveBeenCalled();
+    expect(retireExactTerminalControlServiceability).not.toHaveBeenCalled();
+  });
 });

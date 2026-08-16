@@ -396,7 +396,7 @@ describe('runClaudeUnifiedTerminalSession resumed hook activation', () => {
     }
   });
 
-  it('settles an ambiguous terminal attempt from its exact hook and suppresses only that later JSONL echo', async () => {
+  it('settles an after-write timeout from the exact resumed-session JSONL prompt after the native continuation hook', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'happier-claude-late-exact-acceptance-'));
     tempDirs.push(dir);
     const workspaceDir = join(dir, 'workspace');
@@ -410,17 +410,15 @@ describe('runClaudeUnifiedTerminalSession resumed hook activation', () => {
     const previousClaudeConfigDir = process.env.CLAUDE_CONFIG_DIR;
     process.env.CLAUDE_CONFIG_DIR = claudeConfigDir;
 
-    const prompt = 'Prompt whose Enter result becomes ambiguous before Claude records it.';
+    const prompt = 'Prompt accepted after a resumed terminal write times out before Enter is verified.';
+    const nextPrompt = 'Next durable prompt drains after exact acceptance.';
     const abortController = new AbortController();
     const onPromptAcceptedByProvider = vi.fn();
-    const onMessage = vi.fn();
-    const onTranscriptMessageSuppressed = vi.fn();
     const onTerminalInjectionFailure = vi.fn(async () => (
       { action: 'claimed_pending_delivery' as const }
     ));
     let subscribedHook: ((data: SessionHookData) => void) | undefined;
-    let pendingPulled = false;
-    let injectionAttempted = false;
+    let pendingPullCount = 0;
     const handle: TerminalHostHandle = {
       kind: 'tmux',
       sessionName: 'happier-claude-late-exact-acceptance-test',
@@ -432,19 +430,26 @@ describe('runClaudeUnifiedTerminalSession resumed hook activation', () => {
         liveProbe: 'required',
       },
     };
-    const adapter: TerminalHostAdapter = {
-      kind: 'tmux',
-      createOrAttachHost: vi.fn(async () => handle),
-      injectUserPrompt: vi.fn(async () => {
-        injectionAttempted = true;
+    const injectUserPrompt = vi.fn<TerminalHostAdapter['injectUserPrompt']>(async () => {
+      if (injectUserPrompt.mock.calls.length === 1) {
         return {
           status: 'failed',
-          reason: 'host_unreachable',
-          phase: 'after_enter_unknown',
+          reason: 'timeout',
+          phase: 'after_write_before_enter',
           duplicateRisk: 'possible',
           recoverable: true,
         } as const;
-      }),
+      }
+      return {
+        status: 'injected',
+        at: Date.now(),
+        bytesWritten: nextPrompt.length,
+      } as const;
+    });
+    const adapter: TerminalHostAdapter = {
+      kind: 'tmux',
+      createOrAttachHost: vi.fn(async () => handle),
+      injectUserPrompt,
       evaluateLiveness: vi.fn(async () => ({ paneAlive: true, observedAt: Date.now() })),
       captureInputState: vi.fn(async () => ({
         stable: true,
@@ -463,17 +468,15 @@ describe('runClaudeUnifiedTerminalSession resumed hook activation', () => {
       hookPluginDir: join(dir, 'owned-happier-hook-plugin'),
       signal: abortController.signal,
       nextMessage: async () => {
-        if (pendingPulled) return await new Promise(() => undefined);
-        pendingPulled = true;
+        pendingPullCount += 1;
+        if (pendingPullCount > 2) return await new Promise(() => undefined);
         return {
-          message: prompt,
+          message: pendingPullCount === 1 ? prompt : nextPrompt,
           mode: { permissionMode: 'default', claudeUnifiedTerminalHost: 'tmux' },
-          userMessageLocalIds: ['late-exact-pending-local'],
+          userMessageLocalIds: [pendingPullCount === 1 ? 'late-exact-pending-local' : 'next-pending-local'],
         };
       },
       onPromptAcceptedByProvider,
-      onMessage,
-      onTranscriptMessageSuppressed,
       onTerminalInjectionFailure,
       resolveHostAdapter: async () => ({ status: 'resolved', adapter, reason: 'test' }),
       buildSpawn: async () => ({ spawnArgv: ['/bin/claude'], spawnEnv: {} }),
@@ -489,14 +492,14 @@ describe('runClaudeUnifiedTerminalSession resumed hook activation', () => {
     });
 
     try {
-      await waitUntil(() => injectionAttempted);
+      await waitUntil(() => injectUserPrompt.mock.calls.length === 1);
       const hook = subscribedHook;
       if (!hook) throw new Error('Claude session hook subscription was not registered before injection');
       hook({
         hook_event_name: 'SessionStart',
         session_id: claudeSessionId,
         transcript_path: transcriptPath,
-        source: 'startup',
+        source: 'resume',
       });
       hook({
         hook_event_name: 'UserPromptSubmit',
@@ -504,7 +507,7 @@ describe('runClaudeUnifiedTerminalSession resumed hook activation', () => {
         prompt_id: 'late-exact-prompt-id',
         prompt,
       });
-      await waitUntil(() => onPromptAcceptedByProvider.mock.calls.length === 1);
+      expect(onPromptAcceptedByProvider).not.toHaveBeenCalled();
 
       const acceptedTimestamp = new Date().toISOString();
       await appendFile(transcriptPath, `${JSON.stringify({
@@ -516,34 +519,19 @@ describe('runClaudeUnifiedTerminalSession resumed hook activation', () => {
         isSidechain: false,
         message: { role: 'user', content: prompt },
       })}\n`);
-      await waitUntil(() => onTranscriptMessageSuppressed.mock.calls.length === 1);
-
-      await appendFile(transcriptPath, `${JSON.stringify({
-        type: 'user',
-        uuid: 'same-text-independent-user-row',
-        promptId: 'same-text-independent-prompt-id',
-        sessionId: claudeSessionId,
-        timestamp: new Date(Date.parse(acceptedTimestamp) + 1).toISOString(),
-        isSidechain: false,
-        message: { role: 'user', content: prompt },
-      })}\n`);
-
-      await waitUntil(() => onMessage.mock.calls.length === 1);
-      expect(onTerminalInjectionFailure).toHaveBeenCalledTimes(1);
+      await waitUntil(() => onPromptAcceptedByProvider.mock.calls.length === 1);
+      await waitUntil(() => injectUserPrompt.mock.calls.length === 2);
+      expect(onTerminalInjectionFailure).not.toHaveBeenCalled();
       expect(onPromptAcceptedByProvider).toHaveBeenCalledWith({
         message: prompt,
         maxUserMessageSeq: null,
         userMessageLocalIds: ['late-exact-pending-local'],
       });
-      expect(onTranscriptMessageSuppressed).toHaveBeenCalledWith(expect.objectContaining({
-        uuid: 'late-exact-accepted-user-row',
-        promptId: 'late-exact-prompt-id',
-      }));
-      expect(onMessage).toHaveBeenCalledTimes(1);
-      expect(onMessage).toHaveBeenCalledWith(expect.objectContaining({
-        uuid: 'same-text-independent-user-row',
-        promptId: 'same-text-independent-prompt-id',
-      }));
+      expect(injectUserPrompt).toHaveBeenNthCalledWith(
+        2,
+        handle,
+        expect.objectContaining({ text: nextPrompt }),
+      );
     } finally {
       abortController.abort();
       await sessionPromise;

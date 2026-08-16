@@ -1,11 +1,12 @@
 import { createHash } from 'node:crypto';
+import {
+  PendingFirstInputV1Schema,
+  type PendingFirstInputV1,
+} from '@happier-dev/protocol';
 
 export const HAPPIER_DAEMON_PENDING_FIRST_INPUT_ENV_KEY = 'HAPPIER_DAEMON_PENDING_FIRST_INPUT';
 
-export type PendingFirstInput = Readonly<{
-  text: string;
-  localId: string;
-}>;
+export type PendingFirstInput = Readonly<PendingFirstInputV1>;
 
 function requireNonBlank(value: unknown, field: string): string {
   if (typeof value !== 'string' || value.trim().length === 0) {
@@ -28,10 +29,7 @@ export function createPendingFirstInput(params: Readonly<{
 }
 
 export function serializePendingFirstInputForEnv(input: PendingFirstInput): string {
-  return JSON.stringify({
-    text: requireNonBlank(input.text, 'text'),
-    localId: requireNonBlank(input.localId, 'localId'),
-  });
+  return JSON.stringify(PendingFirstInputV1Schema.parse(input));
 }
 
 export function readPendingFirstInputFromEnv(
@@ -45,14 +43,11 @@ export function readPendingFirstInputFromEnv(
   } catch {
     throw new Error('Pending first input handoff is malformed');
   }
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+  const result = PendingFirstInputV1Schema.safeParse(parsed);
+  if (!result.success) {
     throw new Error('Pending first input handoff is malformed');
   }
-  const value = parsed as Record<string, unknown>;
-  return Object.freeze({
-    text: requireNonBlank(value.text, 'text'),
-    localId: requireNonBlank(value.localId, 'localId'),
-  });
+  return Object.freeze(result.data);
 }
 
 export function clearPendingFirstInputFromEnv(env: NodeJS.ProcessEnv = process.env): void {

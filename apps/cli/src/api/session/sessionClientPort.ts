@@ -130,6 +130,7 @@ export interface SessionClientPort {
 
   getMetadataSnapshot(): Metadata | null;
   hasPendingProviderInputAcceptance?(localId: string): boolean;
+  hasCanonicalPendingProviderInputDelivery?(localId: string): boolean;
   blockPendingMessageDelivery?(params: Readonly<{
     localIds: readonly string[] | null | undefined;
     reason: PendingQueueDeliveryBlockedReason;

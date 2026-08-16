@@ -46,7 +46,8 @@ import { resolveSessionHandoffSourceMachineId } from '@/sync/domains/sessionHand
 import {
     resolveSessionHandoffUiAvailability,
 } from '@/sync/domains/sessionHandoff/resolveSessionHandoffUiAvailability';
-import { readDisplayMachineTargetForSession, readMachineTargetForSession } from '@/sync/ops/sessionMachineTarget';
+import { readDisplayMachineTargetForSession } from '@/sync/ops/sessionMachineTarget';
+import { useSessionMachineTarget } from '@/components/sessions/model/useSessionMachineTarget';
 import { getActionSpec } from '@happier-dev/protocol';
 import { SessionRetentionNotice } from '@/components/sessions/info/SessionRetentionNotice';
 import { useSessionRouteServerScope, type SessionRouteServerScope } from '@/hooks/session/sessionRouteServerScope';
@@ -578,9 +579,7 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
                 return null;
         }
     }, [expandedRawJsonSection, rawSessionStatus, session]);
-    const reachableMachineTarget = React.useMemo(() => {
-        return readMachineTargetForSession(session.id);
-    }, [session.id, session.updatedAt, session.metadata]);
+    const reachableMachineTarget = useSessionMachineTarget(session.id);
     const displayMachineTarget = React.useMemo(() => {
         return readDisplayMachineTargetForSession({
             sessionId: session.id,
@@ -1400,10 +1399,7 @@ export default () => {
     const session = useSession(sessionId);
     const isDataReady = useIsDataReady();
     const sessionServerId = usePreferredServerIdForSession(sessionId);
-    const reachableMachineIdForHandoff = React.useMemo(
-        () => (session ? readMachineTargetForSession(session.id)?.machineId ?? null : null),
-        [session?.id, session?.updatedAt, session?.metadata],
-    );
+    const reachableMachineIdForHandoff = useSessionMachineTarget(sessionId)?.machineId ?? null;
     const sourceMachineIdForHandoff = React.useMemo(
         () => resolveSessionHandoffSourceMachineId({
             reachableMachineId: reachableMachineIdForHandoff,

@@ -6,6 +6,7 @@ import { join } from 'node:path';
 
 import { HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY } from '@/daemon/connectedServices/connectedServiceChildEnvironment';
 import { logger } from '@/ui/logger';
+import type { AgentMessage } from '@/agent/core';
 
 import { PiRpcBackend } from './PiRpcBackend';
 
@@ -17,6 +18,17 @@ vi.mock('@/daemon/controlClient', () => ({
 
 function makeTempDir(prefix: string): string {
   return mkdtempSync(join(tmpdir(), prefix));
+}
+
+function readProviderFailureToolResults(
+  messages: readonly AgentMessage[],
+): Array<Extract<AgentMessage, { type: 'tool-result' }>> {
+  return messages.filter(
+    (message): message is Extract<AgentMessage, { type: 'tool-result' }> =>
+      message.type === 'tool-result'
+      && message.toolName === 'terminal-output'
+      && message.isError === true,
+  );
 }
 
 function makeFakePiRpcProcessScript(dir: string): string {
@@ -707,6 +719,79 @@ rl.on('line', (line) => {
   return scriptPath;
 }
 
+function makeFakePiRpcStructuredAssistantFailureScript(dir: string): string {
+  const scriptPath = join(dir, 'fake-pi-rpc-structured-assistant-failure.js');
+  const script = `
+const readline = require('node:readline');
+const rl = readline.createInterface({ input: process.stdin });
+const out = (obj) => process.stdout.write(JSON.stringify(obj) + '\\n');
+
+rl.on('line', (line) => {
+  let command;
+  try {
+    command = JSON.parse(line);
+  } catch {
+    return;
+  }
+
+  switch (command.type) {
+    case 'new_session':
+      out({ id: command.id, type: 'response', command: 'new_session', success: true, data: { cancelled: false } });
+      break;
+    case 'get_state':
+      out({
+        id: command.id,
+        type: 'response',
+        command: 'get_state',
+        success: true,
+        data: {
+          sessionId: 'pi-session-structured-assistant-failure',
+          isStreaming: false,
+          isCompacting: false,
+          model: { id: 'gpt-5.6-luna', provider: 'openai-codex', name: 'GPT-5.6 Luna' }
+        }
+      });
+      break;
+    case 'get_available_models':
+      out({
+        id: command.id,
+        type: 'response',
+        command: 'get_available_models',
+        success: true,
+        data: { models: [{ id: 'gpt-5.6-luna', provider: 'openai-codex', name: 'GPT-5.6 Luna' }] }
+      });
+      break;
+    case 'get_commands':
+      out({ id: command.id, type: 'response', command: 'get_commands', success: true, data: { commands: [] } });
+      break;
+    case 'prompt':
+      out({ id: command.id, type: 'response', command: 'prompt', success: true });
+      setTimeout(() => {
+        out({ type: 'agent_start' });
+        out({
+          type: 'message_end',
+          message: {
+            role: 'assistant',
+            provider: 'openai-codex',
+            model: 'gpt-5.6-luna',
+            stopReason: 'error',
+            errorMessage: '401: {"error":{"code":"provider_auth_failed","message":"Credential sk-proj-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa was rejected"},"request_body":"secret prompt payload"}'
+          }
+        });
+        out({ type: 'agent_end', willRetry: false });
+      }, 10);
+      break;
+    default:
+      out({ id: command.id, type: 'response', command: command.type, success: true });
+      break;
+  }
+});
+`;
+  writeFileSync(scriptPath, script, 'utf8');
+  chmodSync(scriptPath, 0o755);
+  return scriptPath;
+}
+
 function makeFakePiRpcBusyThenIdleScript(dir: string): string {
   const scriptPath = join(dir, 'fake-pi-rpc-busy-then-idle.js');
   const script = `
@@ -1078,6 +1163,8 @@ function makeFakePiRpcStderrLeakScript(dir: string): string {
         break;
       case 'prompt':
         out({ id: command.id, type: 'response', command: 'prompt', success: true });
+        process.stdout.write("neutral stdout diagnostic\\n");
+        process.stderr.write("neutral stderr diagnostic\\n");
         process.stderr.write("OPENAI_API_KEY=sk-aaaaaaaaaaaaaaaaaaaaaaaaaaaa\\n");
         setTimeout(() => {
           out({ type: 'turn_end' });
@@ -1540,11 +1627,11 @@ describe('PiRpcBackend prompt error handling', () => {
     }
   });
 
-  it('emits a redacted terminal diagnostic when a prompt RPC fails before the provider turn starts', async () => {
+  it('emits redacted error tool results with unique call ids when prompt RPCs fail before the provider turn starts', async () => {
     const workDir = makeTempDir('happier-pi-rpc-immediate-failure-');
     tempDirs.push(workDir);
     const fakeScript = makeFakePiRpcImmediatePromptFailureScript(workDir);
-    const diagnostics: string[] = [];
+    const messages: AgentMessage[] = [];
 
     const backend = new PiRpcBackend({
       cwd: workDir,
@@ -1552,18 +1639,31 @@ describe('PiRpcBackend prompt error handling', () => {
       args: [fakeScript],
       env: {},
     });
-    backend.onMessage((message) => {
-      if (message.type === 'terminal-output') diagnostics.push(String(message.data));
-    });
+    backend.onMessage((message) => messages.push(message));
 
     try {
       const session = await backend.startSession();
 
       await expect(backend.sendPrompt(session.sessionId, 'hello')).rejects.toThrow(/OpenAI Codex auth failed/i);
-      expect(diagnostics).toEqual([
-        expect.stringContaining('Pi RPC prompt rejected before acceptance: OpenAI Codex auth failed'),
+      await expect(backend.sendPrompt(session.sessionId, 'hello again')).rejects.toThrow(/OpenAI Codex auth failed/i);
+
+      const failureResults = readProviderFailureToolResults(messages);
+      expect(failureResults).toEqual([
+        expect.objectContaining({
+          type: 'tool-result',
+          toolName: 'terminal-output',
+          result: 'Pi provider rejected the prompt before acceptance: message=OpenAI Codex auth failed for access token [REDACTED]',
+          isError: true,
+        }),
+        expect.objectContaining({
+          type: 'tool-result',
+          toolName: 'terminal-output',
+          result: 'Pi provider rejected the prompt before acceptance: message=OpenAI Codex auth failed for access token [REDACTED]',
+          isError: true,
+        }),
       ]);
-      expect(diagnostics.join('\n')).not.toContain('sk-proj-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
+      expect(new Set(failureResults.map((message) => message.callId)).size).toBe(2);
+      expect(JSON.stringify(failureResults)).not.toContain('sk-proj-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
     } finally {
       await backend.dispose();
     }
@@ -1574,6 +1674,7 @@ describe('PiRpcBackend prompt error handling', () => {
     tempDirs.push(workDir);
     const fakeScript = makeFakePiRpcImmediateGenericPromptFailureScript(workDir);
 
+    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => undefined);
     const backend = new PiRpcBackend({
       cwd: workDir,
       command: process.execPath,
@@ -1587,13 +1688,30 @@ describe('PiRpcBackend prompt error handling', () => {
     try {
       const session = await backend.startSession();
 
-      await expect(backend.sendPrompt(session.sessionId, 'hello')).rejects.toThrow(/Provider session failed/i);
+      await expect(backend.sendPrompt(session.sessionId, 'hello')).rejects.toMatchObject({
+        piProviderFailure: {
+          code: 'pi_provider_session_error',
+          sanitizedPreview: 'Pi provider rejected the prompt before acceptance without details',
+        },
+      });
 
-      expect(messages).toContainEqual(expect.objectContaining({
-        type: 'terminal-output',
-        data: 'Pi RPC prompt rejected before acceptance: Provider session failed',
-      }));
+      expect(readProviderFailureToolResults(messages)).toEqual([
+        expect.objectContaining({
+          result: 'Pi provider rejected the prompt before acceptance without details',
+        }),
+      ]);
+      expect(warnSpy.mock.calls.filter(([message]) => message === '[pi] Provider turn failed')).toEqual([
+        [
+          '[pi] Provider turn failed',
+          expect.objectContaining({
+            classification: 'pi_provider_failure',
+            providerCode: 'pi_provider_session_error',
+            sanitizedPreview: 'Pi provider rejected the prompt before acceptance without details',
+          }),
+        ],
+      ]);
     } finally {
+      warnSpy.mockRestore();
       await backend.dispose();
     }
   });
@@ -1702,10 +1820,11 @@ describe('PiRpcBackend prompt error handling', () => {
         status: 'error',
         detail: 'Pi provider reported provider session failure after prompt acceptance',
       }));
-      expect(messages).toContainEqual(expect.objectContaining({
-        type: 'terminal-output',
-        data: 'Pi provider reported provider session failure after prompt acceptance',
-      }));
+      expect(readProviderFailureToolResults(messages)).toEqual([
+        expect.objectContaining({
+          result: 'Pi provider reported provider session failure after prompt acceptance',
+        }),
+      ]);
     } finally {
       await backend.dispose();
     }
@@ -1738,10 +1857,15 @@ describe('PiRpcBackend prompt error handling', () => {
         status: 'error',
         detail: 'Pi provider reported turn_failed without details after prompt acceptance',
       }));
-      expect(messages).toContainEqual(expect.objectContaining({
-        type: 'terminal-output',
-        data: 'Pi provider reported turn_failed without details after prompt acceptance',
-      }));
+      expect(readProviderFailureToolResults(messages)).toEqual([
+        expect.objectContaining({
+          type: 'tool-result',
+          toolName: 'terminal-output',
+          result: 'Pi provider reported turn_failed without details after prompt acceptance',
+          isError: true,
+          callId: expect.any(String),
+        }),
+      ]);
       expect(JSON.stringify(messages)).not.toContain('sk-');
     } finally {
       await backend.dispose();
@@ -1769,18 +1893,19 @@ describe('PiRpcBackend prompt error handling', () => {
       const session = await backend.startSession();
 
       await expect(backend.sendPrompt(session.sessionId, 'hello')).rejects.toThrow(
-        /Pi provider reported assistant_message_end failed without details after prompt acceptance/i,
+        /Pi provider reported provider failure without details after prompt acceptance/i,
       );
 
       expect(messages).toContainEqual(expect.objectContaining({
         type: 'status',
         status: 'error',
-        detail: 'Pi provider reported assistant_message_end failed without details after prompt acceptance',
+        detail: 'Pi provider reported provider failure without details after prompt acceptance',
       }));
-      expect(messages).toContainEqual(expect.objectContaining({
-        type: 'terminal-output',
-        data: 'Pi provider reported assistant_message_end failed without details after prompt acceptance',
-      }));
+      expect(readProviderFailureToolResults(messages)).toEqual([
+        expect.objectContaining({
+          result: 'Pi provider reported provider failure without details after prompt acceptance',
+        }),
+      ]);
       expect(JSON.stringify(messages)).not.toContain('sk-');
     } finally {
       await backend.dispose();
@@ -1879,11 +2004,70 @@ describe('PiRpcBackend prompt error handling', () => {
 
       const status = messages.find((message) => message?.type === 'status' && message.status === 'error');
       expect(status?.detail).toContain('code=provider_auth_failed');
-      expect(status?.detail).toContain('errorMessage=OpenAI Codex token');
-      expect(status?.detail).toContain('data.status=401');
+      expect(status?.detail).toContain('message=OpenAI Codex token');
+      expect(status?.detail).toContain('status=401');
       expect(status?.detail).not.toContain('sk-proj-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
       expect(JSON.stringify(messages)).not.toContain('sk-proj-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
     } finally {
+      await backend.dispose();
+    }
+  });
+
+  it('records a sanitized always-on diagnostic for a terminal structured Pi assistant failure', async () => {
+    const workDir = makeTempDir('happier-pi-rpc-structured-assistant-failure-');
+    tempDirs.push(workDir);
+    const fakeScript = makeFakePiRpcStructuredAssistantFailureScript(workDir);
+    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => undefined);
+
+    const backend = new PiRpcBackend({
+      cwd: workDir,
+      command: process.execPath,
+      args: [fakeScript],
+      env: {},
+    });
+
+    const messages: any[] = [];
+    backend.onMessage((message) => messages.push(message));
+
+    try {
+      const session = await backend.startSession();
+      const originalCreatePendingTurn = (backend as any).createPendingTurn.bind(backend) as (timeoutMs: number) => Promise<void>;
+      (backend as any).createPendingTurn = () => originalCreatePendingTurn(25);
+
+      await expect(backend.sendPrompt(session.sessionId, 'hello')).rejects.toMatchObject({
+        piProviderFailure: {
+          code: 'provider_auth_failed',
+          sanitizedPreview: expect.stringContaining('Credential [REDACTED] was rejected'),
+        },
+      });
+
+      const status = messages.find((message) => message?.type === 'status' && message.status === 'error');
+      expect(status?.detail).toContain('code=provider_auth_failed');
+      expect(status?.detail).toContain('message=Credential [REDACTED] was rejected');
+
+      expect(readProviderFailureToolResults(messages)).toEqual([
+        expect.objectContaining({
+          type: 'tool-result',
+          toolName: 'terminal-output',
+          result: 'Pi provider reported provider failure after prompt acceptance: code=provider_auth_failed, status=401, message=Credential [REDACTED] was rejected',
+          isError: true,
+          callId: expect.any(String),
+        }),
+      ]);
+
+      const logCalls = warnSpy.mock.calls.filter(([message]) => message === '[pi] Provider turn failed');
+      expect(logCalls).toHaveLength(1);
+      expect(logCalls[0]?.[1]).toMatchObject({
+        classification: 'pi_provider_failure',
+        providerCode: 'provider_auth_failed',
+        sanitizedPreview: expect.stringContaining('Credential [REDACTED] was rejected'),
+      });
+
+      const serialized = JSON.stringify({ messages, logCalls });
+      expect(serialized).not.toContain('sk-proj-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
+      expect(serialized).not.toContain('secret prompt payload');
+    } finally {
+      warnSpy.mockRestore();
       await backend.dispose();
     }
   });
@@ -2366,10 +2550,45 @@ describe('PiRpcBackend prompt error handling', () => {
       await backend.sendPrompt(session.sessionId, 'hello');
       await new Promise((r) => setTimeout(r, 50));
 
-      const terminal = messages.find((m) => m && m.type === 'terminal-output') ?? null;
+      const terminal = messages.find(
+        (message) => message?.type === 'terminal-output' && String(message.data).includes('[REDACTED]'),
+      ) ?? null;
       expect(terminal).toBeTruthy();
       expect(String(terminal.data)).toContain('[REDACTED]');
       expect(String(terminal.data)).not.toContain('sk-aaaaaaaa');
+    } finally {
+      await backend.dispose();
+    }
+  });
+
+  it('keeps neutral raw stdout and stderr as neutral terminal output', async () => {
+    const workDir = makeTempDir('happier-pi-rpc-neutral-output-');
+    tempDirs.push(workDir);
+    const fakeScript = makeFakePiRpcStderrLeakScript(workDir);
+
+    const backend = new PiRpcBackend({
+      cwd: workDir,
+      command: process.execPath,
+      args: [fakeScript],
+      env: {},
+    });
+
+    const messages: AgentMessage[] = [];
+    backend.onMessage((message) => messages.push(message));
+
+    try {
+      const session = await backend.startSession();
+      await backend.sendPrompt(session.sessionId, 'hello');
+
+      expect(messages).toContainEqual({
+        type: 'terminal-output',
+        data: 'neutral stdout diagnostic',
+      });
+      expect(messages).toContainEqual({
+        type: 'terminal-output',
+        data: 'neutral stderr diagnostic',
+      });
+      expect(readProviderFailureToolResults(messages)).toEqual([]);
     } finally {
       await backend.dispose();
     }

@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 
-vi.mock('fs/promises', () => ({
+vi.mock('fs/promises', async (importOriginal) => ({
+  ...await importOriginal<typeof import('fs/promises')>(),
   readFile: vi.fn(async () => Buffer.from('hello')),
   writeFile: vi.fn(async () => undefined),
   mkdir: vi.fn(async () => undefined),

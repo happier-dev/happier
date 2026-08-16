@@ -11,7 +11,24 @@ import {
   resolveClaudeUnifiedRegisteredDialogOption,
 } from './dialogRegistry';
 
-export type ClaudeUnifiedResumeChoiceAnswer = 'resume_from_summary' | 'resume_full_session';
+export type ClaudeUnifiedResumeChoiceAnswer =
+  | 'resume_from_summary'
+  | 'always_resume_from_summary'
+  | 'resume_full_session'
+  | 'always_resume_full_session';
+
+export function resolveClaudeUnifiedResumeChoiceAnswer(value: string): ClaudeUnifiedResumeChoiceAnswer | null {
+  return value === 'resume_from_summary'
+    || value === 'always_resume_from_summary'
+    || value === 'resume_full_session'
+    || value === 'always_resume_full_session'
+    ? value
+    : null;
+}
+
+export function isClaudeUnifiedResumeFromSummaryChoice(choice: ClaudeUnifiedResumeChoiceAnswer): boolean {
+  return choice === 'resume_from_summary' || choice === 'always_resume_from_summary';
+}
 
 export type ClaudeResumeChoiceDialogAnswerResult =
   | Readonly<{ kind: 'answered'; choice: ClaudeUnifiedResumeChoiceAnswer }>

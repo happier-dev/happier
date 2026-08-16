@@ -89,6 +89,40 @@ describe('typeTextViaSendKeys', () => {
 });
 
 describe('pasteTextViaTmuxBuffer', () => {
+  it('gives staging and Enter their own bounded phase after a slow successful paste', async () => {
+    let nowMs = 1_000;
+    const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => nowMs);
+    const calls: string[] = [];
+    const executor: TmuxCommandExecutor = async (args) => {
+      calls.push(args[0] ?? '');
+      if (args[0] === 'paste-buffer') nowMs += 100;
+      return {
+        returncode: 0,
+        stdout: '',
+        stderr: '',
+        command: [],
+      };
+    };
+
+    try {
+      await expect(pasteTextViaTmuxBuffer({
+        executor,
+        target: 'happy:claude.1',
+        text: 'queued prompt',
+        bufferName: 'happier-test-buffer',
+        timeoutMs: 100,
+        verifyStagedBeforeSubmit: async ({ remainingTimeoutMs }) => {
+          expect(remainingTimeoutMs).toBeGreaterThan(0);
+          return true;
+        },
+      })).resolves.toEqual({ success: true });
+    } finally {
+      nowSpy.mockRestore();
+    }
+
+    expect(calls).toContain('send-keys');
+  });
+
   it('loads prompt text through stdin, pastes with raw bracketed mode, and submits separately', async () => {
     const calls: Array<{ args: readonly string[]; stdin?: string | undefined }> = [];
     const executor: TmuxCommandExecutor = async (args, options) => {
@@ -297,7 +331,7 @@ describe('pasteTextViaTmuxBuffer', () => {
       ['send-keys', '-t', 'happy:claude.1', 'C-m'],
       ['send-keys', '-t', 'happy:claude.1', 'C-m'],
     ]);
-    expect(verifyAfterSubmit).toHaveBeenCalledTimes(2);
+    expect(verifyAfterSubmit).toHaveBeenCalledTimes(3);
   });
 
   it('reports ambiguous failure when the collapsed paste marker remains after the bounded Enter retry', async () => {

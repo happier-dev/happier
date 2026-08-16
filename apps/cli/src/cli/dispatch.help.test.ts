@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { captureConsoleLogAndMuteStdout } from '@/testkit/logger/captureOutput';
+import { captureConsoleText } from '@/testkit/logger/captureOutput';
 
 const defaultHandlerSpy = vi.fn(async () => {});
 
@@ -16,12 +16,12 @@ vi.mock('@/backends/catalog', async (importOriginal) => {
 import { dispatchCli } from './dispatch';
 
 describe('dispatchCli root help', () => {
-  let output = captureConsoleLogAndMuteStdout();
+  let output = captureConsoleText();
 
   beforeEach(() => {
     defaultHandlerSpy.mockClear();
     output.restore();
-    output = captureConsoleLogAndMuteStdout();
+    output = captureConsoleText();
   });
 
   afterEach(() => {
@@ -36,9 +36,12 @@ describe('dispatchCli root help', () => {
     });
 
     expect(defaultHandlerSpy).not.toHaveBeenCalled();
-    expect(output.logs).toContainEqual(expect.stringContaining('happier - AI CLI On the Go'));
-    expect(output.logs).toContainEqual(expect.stringContaining('happier codex'));
-    expect(output.logs).not.toContainEqual(expect.stringContaining('Claude Code Options'));
+    expect(output.lines).toContainEqual(expect.stringContaining('happier - AI CLI On the Go'));
+    expect(output.lines).toContainEqual(expect.stringContaining('happier codex'));
+    expect(output.lines).toContainEqual(expect.stringContaining('happier session'));
+    expect(output.lines).toContainEqual(expect.stringContaining('happier resume [<session-id-or-prefix>]'));
+    expect(output.lines.join('\n')).not.toMatch(/^\s*happier sessions(?:\s|$)/m);
+    expect(output.lines).not.toContainEqual(expect.stringContaining('Claude Code Options'));
   });
 
   it('routes capabilities JSON requests without invoking the default backend handler', async () => {
@@ -49,10 +52,10 @@ describe('dispatchCli root help', () => {
     });
 
     expect(defaultHandlerSpy).not.toHaveBeenCalled();
-    expect(output.logs).toContainEqual(expect.stringContaining('"kind":"capabilities_describe"'));
+    expect(output.lines).toContainEqual(expect.stringContaining('"kind":"capabilities_describe"'));
   });
 
-  it('routes the plural sessions alias without invoking the default backend handler', async () => {
+  it('routes the hidden plural sessions compatibility alias without invoking the default backend handler', async () => {
     await dispatchCli({
       args: ['sessions', '--help'],
       rawArgv: ['happier', 'sessions', '--help'],
@@ -60,5 +63,21 @@ describe('dispatchCli root help', () => {
     });
 
     expect(defaultHandlerSpy).not.toHaveBeenCalled();
+  });
+
+  it('returns the predecessor empty plugin catalog without starting the default agent', async () => {
+    await dispatchCli({
+      args: ['plugins', 'list', '--json'],
+      rawArgv: ['happier', 'plugins', 'list', '--json'],
+      terminalRuntime: null,
+    });
+
+    expect(defaultHandlerSpy).not.toHaveBeenCalled();
+    expect(output.lines).toContainEqual(JSON.stringify({
+      v: 1,
+      ok: true,
+      kind: 'plugins_list',
+      data: { plugins: [] },
+    }));
   });
 });

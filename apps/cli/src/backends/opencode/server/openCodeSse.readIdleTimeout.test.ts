@@ -146,7 +146,7 @@ describe('createOpenCodeServerRuntimeClient read idle configuration', () => {
     vi.unstubAllGlobals();
   });
 
-  it('passes the resolved read-idle timeout to the global SSE subscription', async () => {
+  it('passes the resolved read-idle timeout to the instance SSE subscription', async () => {
     vi.resetModules();
 
     const subscribeSseJsonMock = vi.fn(async (params: unknown) => {

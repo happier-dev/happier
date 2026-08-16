@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import axios from 'axios';
+import { serializeOutboundError } from './outboundErrorSerialization';
 
 import {
     blockPendingQueueV2Delivery,
@@ -26,6 +27,7 @@ vi.mock('axios', () => ({
     default: {
         get: mockGet,
         post: mockPost,
+        isAxiosError: () => false,
     },
 }));
 
@@ -245,11 +247,18 @@ describe('pendingQueueV2Transport', () => {
     });
 
     it('fails closed instead of using HTTP provider materialization when the selected socket disconnects', async () => {
-        await expect(materializeNextPendingQueueV2Message({
+        const materialization = materializeNextPendingQueueV2Message({
             token: 'token',
             sessionId: 'session-1',
             socket: { connected: false } as any,
-        })).rejects.toBeInstanceOf(PendingQueueMaterializationTransportAmbiguousError);
+        });
+
+        await expect(materialization).rejects.toMatchObject({
+            code: 'pending_queue_materialization_transport_ambiguous',
+            diagnosticCode: 'pending_queue_materialization_socket_disconnected',
+            classification: 'socket_disconnected',
+        });
+        await expect(materialization).rejects.toBeInstanceOf(PendingQueueMaterializationTransportAmbiguousError);
 
         expect(mockPost).not.toHaveBeenCalled();
     });
@@ -595,6 +604,8 @@ describe('pendingQueueV2Transport', () => {
             expectedPendingVersion: 7,
         })).rejects.toMatchObject({
             code: 'pending_queue_materialization_transport_ambiguous',
+            diagnosticCode: 'pending_queue_materialization_transport_failure',
+            classification: 'transport_failure',
         });
 
         expect(socket.emitWithAck).toHaveBeenCalledWith('pending-materialize-next', {
@@ -617,9 +628,99 @@ describe('pendingQueueV2Transport', () => {
             socket: socket as any,
         })).rejects.toMatchObject({
             code: 'pending_queue_materialization_transport_ambiguous',
+            diagnosticCode: 'pending_queue_materialization_ack_malformed',
+            classification: 'malformed_ack',
         });
 
         expect(mockPost).not.toHaveBeenCalled();
+    });
+
+    it('preserves a typed negative materialization ACK as a safe server rejection diagnostic', async () => {
+        const socket = {
+            connected: true,
+            timeout: vi.fn(() => socket),
+            emitWithAck: vi.fn(async () => ({ ok: false, error: 'forbidden' })),
+        };
+
+        const materialization = materializeNextPendingQueueV2Message({
+            token: 'token',
+            sessionId: 'session-1',
+            socket: socket as any,
+        });
+
+        await expect(materialization).rejects.toMatchObject({
+            code: 'pending_queue_materialization_transport_ambiguous',
+            diagnosticCode: 'pending_queue_materialization_server_rejected',
+            classification: 'server_rejected',
+            serverError: 'forbidden',
+        });
+        const error = await materialization.catch((cause) => cause);
+        expect(serializeOutboundError(error)).toMatchObject({
+            code: 'pending_queue_materialization_transport_ambiguous',
+            message: 'Connected pending queue materialization did not return a valid acknowledgement',
+        });
+        expect(mockPost).not.toHaveBeenCalled();
+    });
+
+    it('preserves a typed transaction-unavailable materialization ACK and its server retry delay', async () => {
+        const socket = {
+            connected: true,
+            timeout: vi.fn(() => socket),
+            emitWithAck: vi.fn(async () => ({
+                ok: false,
+                error: 'transaction-unavailable',
+                retryAfterMs: 1_000,
+            })),
+        };
+
+        await expect(materializeNextPendingQueueV2Message({
+            token: 'token',
+            sessionId: 'session-1',
+            socket: socket as any,
+        })).rejects.toMatchObject({
+            code: 'pending_queue_materialization_transport_ambiguous',
+            diagnosticCode: 'pending_queue_materialization_server_retryable',
+            classification: 'server_retryable',
+            serverError: 'transaction-unavailable',
+            retryAfterMs: 1_000,
+        });
+        expect(mockPost).not.toHaveBeenCalled();
+    });
+
+    it('classifies a missing materialization ACK at the local deadline and preserves its safe cause', async () => {
+        vi.useFakeTimers();
+        try {
+            const socket = {
+                connected: true,
+                timeout: vi.fn(() => socket),
+                emitWithAck: vi.fn(() => new Promise<never>(() => {})),
+            };
+            const materialization = materializeNextPendingQueueV2Message({
+                token: 'token',
+                sessionId: 'session-1',
+                socket: socket as any,
+            });
+            const observed = materialization.catch((error) => error);
+
+            await vi.advanceTimersByTimeAsync(10_000);
+
+            const error = await observed;
+            expect(error).toMatchObject({
+                code: 'pending_queue_materialization_transport_ambiguous',
+                diagnosticCode: 'pending_queue_materialization_ack_timeout',
+                classification: 'ack_timeout',
+            });
+            expect(serializeOutboundError(error)).toMatchObject({
+                code: 'pending_queue_materialization_transport_ambiguous',
+                cause: {
+                    code: 'socket_ack_timeout',
+                    message: 'pending-materialize-next ack timed out after 10000ms',
+                },
+            });
+            expect(mockPost).not.toHaveBeenCalled();
+        } finally {
+            vi.useRealTimers();
+        }
     });
 
     it('parses row-first provider delivery materialization with a durable transcript row', async () => {

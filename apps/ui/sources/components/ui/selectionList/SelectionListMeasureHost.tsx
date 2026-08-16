@@ -5,16 +5,21 @@ import { selectionListTestId } from './_shared';
 
 type SelectionListMeasureHostProps = Readonly<{
     rootTestID?: string;
+    /**
+     * The measure-only mirror subtree. This host renders NOTHING the user
+     * sees — every child mounted here is a second, offscreen copy — so the
+     * caller passes the identity-free mirror (`SelectionListBody mode='measure'`)
+     * and nothing else.
+     */
     children: React.ReactNode;
-    measureChildren?: React.ReactNode;
     measureMaxHeight?: number;
     onMeasureLayout: (event: LayoutChangeEvent) => void;
 }>;
 
 export function SelectionListMeasureHost(props: SelectionListMeasureHostProps): React.ReactElement {
     const measureSubtree = React.useMemo(
-        () => stripIdentityProps(props.measureChildren ?? props.children),
-        [props.measureChildren, props.children],
+        () => stripIdentityProps(props.children),
+        [props.children],
     );
 
     const measureStyle: StyleProp<ViewStyle> = props.measureMaxHeight !== undefined
@@ -39,9 +44,9 @@ export function SelectionListMeasureHost(props: SelectionListMeasureHostProps): 
 /**
  * Hidden measure host. Positioned absolutely so it never participates in
  * the visible flex layout. We bound its width by the parent (left:0,
- * right:0) and its height grows up to the dynamic `maxHeight` cap injected
- * by the wrapper's own onLayout — so the reported height matches what the
- * popover surface will actually paint.
+ * right:0) and its height grows up to the caller-supplied `maxHeight` cap
+ * (the popover surface's own cap) — so the reported height never exceeds
+ * what the surface will actually paint.
  */
 const hiddenMeasureStyle: ViewStyle = {
     position: 'absolute',

@@ -343,6 +343,81 @@ test('reload executor restarts from an already-current dist and preserves the st
   assert.equal(restartCalls, 1, 'a watcher generation must not be consumed without activating the current dist');
 });
 
+test('reload executor coalesces consecutive current and superseded generations already active in the healthy daemon', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'hs-daemon-reload-same-dist-'));
+  t.after(async () => rm(root, { recursive: true, force: true }));
+
+  const cliDir = join(root, 'apps', 'cli');
+  const distIndexPath = join(cliDir, 'dist', 'index.mjs');
+  await mkdir(dirname(distIndexPath), { recursive: true });
+  await writeFile(distIndexPath, 'export const daemon = true;\n', 'utf-8');
+  await writeDistBuildManifest(distIndexPath, 'abcdef1234567890');
+
+  const env = { HAPPIER_STACK_CLI_BUILD_MODE: 'auto', STACK_TOKEN: 'preserved' };
+  const buildResults = [
+    { built: false, current: true, reason: 'cache_hit' },
+    { built: true, current: false, reason: 'inputs_changed_during_build' },
+    { built: false, current: true, reason: 'cache_hit' },
+  ];
+  const runtimeState = {
+    processes: { daemonPid: 111, daemonPids: [111] },
+    daemon: { distClosureFingerprint: 'abcdef1234567890' },
+  };
+  let pingPid = 111;
+  let restartCalls = 0;
+  const executor = createHappyCliReloadExecutor(
+    {
+      startDaemon: true,
+      buildCli: true,
+      cliDir,
+      cliBin: join(cliDir, 'bin', 'happier.mjs'),
+      cliHomeDir: join(root, 'home'),
+      internalServerUrl: 'http://127.0.0.1:3009',
+      publicServerUrl: 'http://localhost:3009',
+      runtimeStatePath: join(root, 'stack.runtime.json'),
+      isShuttingDown: () => false,
+      env,
+      stackName: 'dev',
+    },
+    {
+      ensureCliBuiltImpl: async () => buildResults.shift(),
+      pingDaemonImpl: async () => ({
+        ok: true,
+        pid: pingPid,
+        distClosureFingerprint: 'abcdef1234567890',
+      }),
+      readStackRuntimeStateFileImpl: async () => runtimeState,
+      restartDaemonViaControlServerImpl: async () => {
+        restartCalls += 1;
+        return { status: 'already_restarting', previousPid: 111, pid: 222 };
+      },
+      syncStackRuntimeDaemonPidFromDaemonStateImpl: async () => {},
+      logger: { log() {}, warn() {}, error() {} },
+    },
+  );
+
+  assert.deepEqual(await executor.build(), { ok: true });
+  assert.deepEqual(
+    await executor.restart({ revalidateGeneration: async () => true }),
+    { skipped: true, reason: 'daemon-dist-already-active' },
+  );
+
+  assert.deepEqual(await executor.build(), {
+    ok: true,
+    allowSupersededActivation: true,
+  });
+  assert.deepEqual(
+    await executor.restart({ revalidateGeneration: async () => false }),
+    { skipped: true, reason: 'daemon-dist-already-active' },
+  );
+  assert.equal(restartCalls, 0, 'same-fingerprint generations must not request a replacement daemon');
+
+  pingPid = 222;
+  assert.deepEqual(await executor.build(), { ok: true });
+  assert.deepEqual(await executor.restart(), { restarted: true, mode: 'overlap' });
+  assert.equal(restartCalls, 1, 'an unprojected same-fingerprint activation must remain unresolved');
+});
+
 test('reload executor retries lock contention and activates the concurrently published CLI build even after newer edits', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'hs-daemon-reload-lock-adoption-'));
   t.after(async () => rm(root, { recursive: true, force: true }));
@@ -542,7 +617,11 @@ test('reload executor persists the authenticated overlap successor for new and a
       },
       {
         ensureCliBuiltImpl: async () => ({ built: true, current: true, reason: 'test' }),
-        pingDaemonImpl: async () => ({ ok: true, pid: 111 }),
+        pingDaemonImpl: async () => ({
+          ok: true,
+          pid: 111,
+          distClosureFingerprint: '0000000000000000',
+        }),
         restartDaemonViaControlServerImpl: async (args) => {
           restartFingerprint = args.successorDistClosureFingerprint;
           return { status: restartStatus, previousPid: 111, pid: 222 };

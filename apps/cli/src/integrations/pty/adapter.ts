@@ -24,6 +24,7 @@ import {
 } from '../terminalHost/deadline';
 import {
   runTerminalPromptSubmission,
+  resolveTerminalPromptSubmissionFailureReason,
   type TerminalPromptSubmitVerificationPolicy,
 } from '../terminalHost/promptSubmitVerification';
 import { wrapBracketedPaste } from '@/agent/runtime/terminal/injection/bracketedPaste';
@@ -37,7 +38,6 @@ const DEFAULT_COLS = 120;
 const DEFAULT_ROWS = 40;
 const INPUT_STABILITY_DELAY_MS = 50;
 const POST_WRITE_LIVENESS_DELAY_MS = 25;
-const PROMPT_STAGING_POLL_INTERVAL_MS = 25;
 
 type PtyTerminalHostSession = {
   pty: PtyProcess;
@@ -144,35 +144,6 @@ export function createPtyTerminalHostAdapter(params?: Readonly<{
       await Promise.resolve();
     }
     return !session.ended;
-  }
-
-  async function waitForPromptStaging(params: Readonly<{
-    session: PtyTerminalHostSession;
-    promptText: string;
-    deadline: number | undefined;
-  }>): Promise<'staged' | 'timeout' | 'failed'> {
-    if (!promptSubmitVerification) return 'staged';
-    while (!params.session.ended) {
-      try {
-        const isPromptStagedBeforeSubmit = promptSubmitVerification.isPromptStagedBeforeSubmit
-          ?? promptSubmitVerification.isPromptStillPendingAfterSubmit;
-        if (isPromptStagedBeforeSubmit({
-          promptText: params.promptText,
-          screenText: params.session.screen.capture().text,
-        })) {
-          return 'staged';
-        }
-      } catch {
-        return 'failed';
-      }
-      const remainingTimeoutMs = remainingTerminalHostDeadlineMs(params.deadline);
-      if (remainingTimeoutMs === 0) return 'timeout';
-      await delay(Math.min(
-        PROMPT_STAGING_POLL_INTERVAL_MS,
-        remainingTimeoutMs ?? PROMPT_STAGING_POLL_INTERVAL_MS,
-      ));
-    }
-    return 'failed';
   }
 
   async function captureInputState(handle: TerminalHostHandle): Promise<TerminalInputState> {
@@ -356,9 +327,6 @@ export function createPtyTerminalHostAdapter(params?: Readonly<{
         }
       }
       const shouldStagePrompt = promptSubmitVerification?.shouldVerifyAfterSubmit(input.text) === true;
-      const deadline = createTerminalHostDeadline(
-        input.scheduling.timeoutMs ?? resolveTerminalPromptWriteTimeoutMs(input.text),
-      );
       const textToWrite = input.multiline && shouldStagePrompt ? wrapBracketedPaste(input.text) : input.text;
       if (!writeToSession(session, textToWrite)) {
         return failedInjectionResult({
@@ -368,33 +336,35 @@ export function createPtyTerminalHostAdapter(params?: Readonly<{
           recoverable: true,
         });
       }
-      if (shouldStagePrompt) {
-        const staging = await waitForPromptStaging({
-          session,
-          promptText: input.text,
-          deadline,
-        });
-        if (staging !== 'staged') {
-          return failedInjectionResult({
-            reason: staging === 'timeout' ? 'timeout' : 'host_unreachable',
-            phase: 'during_write',
-            duplicateRisk: 'possible',
-            recoverable: true,
-          });
-        }
-      }
+      // Writing and submitting are independent PTY operations. Preserve the bounded timeout for
+      // each phase instead of letting a slow successful write exhaust staging/Enter verification.
+      const submissionDeadline = createTerminalHostDeadline(
+        input.scheduling.timeoutMs ?? resolveTerminalPromptWriteTimeoutMs(input.text),
+      );
       const submission = await runTerminalPromptSubmission({
         promptText: input.text,
+        ...(shouldStagePrompt
+          ? {
+            verifyStagedBeforeSubmit: async ({ promptText }) => promptSubmitVerification.isPromptStagedBeforeSubmit({
+              promptText,
+              screenText: session.screen.capture().text,
+            }),
+            verifyAfterSubmit: async ({ promptText }) => promptSubmitVerification.isPromptStillPendingAfterSubmit({
+              promptText,
+              screenText: session.screen.capture().text,
+            }),
+          }
+          : {}),
         submitEnter: async ({ remainingTimeoutMs }) => {
           if (remainingTimeoutMs === 0) return 'timeout';
           if (!writeToSession(session, '\r')) return 'failed';
           return await waitForPostWriteLiveness(session) ? 'success' : 'failed';
         },
-        remainingTimeoutMs: () => remainingTerminalHostDeadlineMs(deadline),
+        remainingTimeoutMs: () => remainingTerminalHostDeadlineMs(submissionDeadline),
       });
       if (!submission.success) {
         return failedInjectionResult({
-          reason: submission.reason === 'timeout' ? 'timeout' : 'host_unreachable',
+          reason: resolveTerminalPromptSubmissionFailureReason(submission.reason),
           phase: submission.phase,
           duplicateRisk: submission.duplicateRisk,
           recoverable: true,

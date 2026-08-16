@@ -3,6 +3,8 @@ import { Pressable } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneScope';
+import { canLayoutHostSessionPane } from '@/components/sessions/panes/open/sessionOpenTarget';
+import { useSessionOpenLayout } from '@/components/sessions/panes/open/useSessionOpenLayout';
 import { SidebarCollapseIcon, SidebarExpandIcon } from '@/components/navigation/shell/SidebarIcons';
 import { t } from '@/text';
 import { useOptionalSessionScreenTestId } from '../shell/sessionScreenTestIds';
@@ -20,6 +22,10 @@ import { SESSION_HEADER_ICON_SIZE_PX } from '@/components/sessions/actions/sessi
  *
  * `edge="right"` mirrors the glyph: it draws a panel on the left by default, which pointed at the
  * opposite side of the screen from the sidebar this actually opens.
+ *
+ * It renders only where the sidebar it toggles can exist. This control is drawn from ~520pt up,
+ * which a landscape phone reaches — and a phone never draws a right pane, so there the toggle was
+ * visible and inert. A show/hide control for a panel that cannot be shown is not a control.
  */
 export const SessionHeaderRightSidebarButton = React.memo((props: Readonly<{
     scopeId: string;
@@ -27,6 +33,8 @@ export const SessionHeaderRightSidebarButton = React.memo((props: Readonly<{
     const { theme } = useUnistyles();
     const pane = useAppPaneScope(props.scopeId);
     const testId = useOptionalSessionScreenTestId('session-header-right-sidebar-button');
+    const layout = useSessionOpenLayout();
+    const canHostRightPane = canLayoutHostSessionPane(layout, 'right');
     const isOpen = pane.scopeState?.right?.isOpen === true;
 
     const onPress = React.useCallback(() => {
@@ -37,6 +45,8 @@ export const SessionHeaderRightSidebarButton = React.memo((props: Readonly<{
         // No tabId: the pane restores whatever was last open, so toggling is lossless.
         pane.openRight();
     }, [isOpen, pane]);
+
+    if (!canHostRightPane) return null;
 
     return (
         <Pressable

@@ -133,7 +133,7 @@ describe('createClaudeUnifiedInputArbiter', () => {
       quietPeriodMs: 0,
       injectPrompt: vi.fn(async () => ({
         status: 'failed' as const,
-        reason: 'host_unreachable' as const,
+        reason: 'verification_failed' as const,
         phase: 'after_enter_unknown' as const,
         duplicateRisk: 'possible' as const,
         recoverable: true,
@@ -169,6 +169,102 @@ describe('createClaudeUnifiedInputArbiter', () => {
     expect(arbiter.snapshot()).toMatchObject({
       queuedCount: 0,
       terminalCustodyCount: 0,
+    });
+
+    await arbiter.dispose();
+  });
+
+  it('moves a prompt into non-blocking terminal custody when Enter was never attempted', async () => {
+    const onProviderAcceptancePending = vi.fn();
+    const onInjectionFailure = vi.fn(async () => ({ action: 'claimed_pending_delivery' as const }));
+    const arbiter = createClaudeUnifiedInputArbiter({
+      nowMs: () => 10_000,
+      quietPeriodMs: 0,
+      injectPrompt: vi.fn(async () => ({
+        status: 'failed' as const,
+        reason: 'timeout' as const,
+        phase: 'after_write_before_enter' as const,
+        duplicateRisk: 'possible' as const,
+        recoverable: true,
+      })),
+      onProviderAcceptancePending,
+      onInjectionFailure,
+    });
+
+    arbiter.observeLifecycle({ type: 'turn_state', state: 'idle', observedAtMs: 10_000 });
+    arbiter.observeLifecycle({ type: 'output', observedAtMs: 10_000 });
+    await arbiter.enqueueUiMessage({
+      message: 'prompt accepted after terminal verification timed out',
+      origin: { kind: 'ui_pending' },
+      userMessageLocalIds: ['after-write-local'],
+    });
+    await arbiter.drainWhenSafe();
+
+    expect(onProviderAcceptancePending).toHaveBeenCalledOnce();
+    expect(onProviderAcceptancePending).toHaveBeenCalledWith(
+      expect.objectContaining({ userMessageLocalIds: ['after-write-local'] }),
+      expect.objectContaining({ acceptedAs: 'new_turn' }),
+    );
+    expect(onInjectionFailure).toHaveBeenCalledWith(expect.objectContaining({
+      failureState: 'failed_ambiguous',
+      result: expect.objectContaining({
+        phase: 'after_write_before_enter',
+      }),
+    }));
+    expect(arbiter.snapshot()).toMatchObject({
+      queuedCount: 0,
+      pendingInjectionCount: 0,
+      providerAcceptancePendingCount: 0,
+      terminalCustodyCount: 1,
+      headInputState: 'terminal_custody',
+    });
+
+    await arbiter.dispose();
+  });
+
+  it('retires exact terminal custody after the canonical Pending row is discarded', async () => {
+    let deliveryState: 'pending' | 'accepted' | 'retired' = 'pending';
+    const arbiter = createClaudeUnifiedInputArbiter({
+      nowMs: () => 10_000,
+      quietPeriodMs: 0,
+      injectPrompt: vi.fn()
+        .mockResolvedValueOnce({
+          status: 'failed' as const,
+          reason: 'timeout' as const,
+          phase: 'after_write_before_enter' as const,
+          duplicateRisk: 'possible' as const,
+          recoverable: true,
+        })
+        .mockResolvedValueOnce({
+          status: 'injected' as const,
+          at: 10_001,
+          bytesWritten: 11,
+        }),
+      onInjectionFailure: vi.fn(async () => ({ action: 'claimed_pending_delivery' as const })),
+      resolvePromptDeliveryState: () => deliveryState,
+    });
+
+    arbiter.observeLifecycle({ type: 'turn_state', state: 'idle', observedAtMs: 10_000 });
+    arbiter.observeLifecycle({ type: 'output', observedAtMs: 10_000 });
+    await arbiter.enqueueUiMessage({
+      message: 'old prompt',
+      origin: { kind: 'ui_pending' },
+      userMessageLocalIds: ['discarded-local'],
+    });
+    await arbiter.drainWhenSafe();
+    expect(arbiter.snapshot().terminalCustodyCount).toBe(1);
+
+    deliveryState = 'retired';
+    await arbiter.enqueueUiMessage({
+      message: 'new prompt',
+      origin: { kind: 'ui_pending' },
+      userMessageLocalIds: ['new-local'],
+    });
+    await arbiter.drainWhenSafe();
+
+    expect(arbiter.snapshot()).toMatchObject({
+      terminalCustodyCount: 0,
+      providerAcceptancePendingCount: 1,
     });
 
     await arbiter.dispose();

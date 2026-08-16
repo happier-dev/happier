@@ -1,6 +1,7 @@
 import { logger } from '@/ui/logger';
 import type { Credentials } from '@/persistence';
 import { parseOptionalBooleanEnv } from '@happier-dev/protocol';
+import { readProcessInstanceFingerprintSync } from '@happier-dev/cli-common/processInstance';
 import {
   hasTerminalAttachmentControlDescriptorThroughCatalog,
   resolveCatalogAgentIdForCliSubcommand,
@@ -294,11 +295,13 @@ async function recoverMarkerlessDaemonSpawnedSessions(params: Readonly<{
       metadata: incompleteMarker?.metadata,
       vendorResumeId,
     });
+    const processInstanceFingerprint = readProcessInstanceFingerprintSync(processInfo.pid) ?? undefined;
     const trackedSession: TrackedSession = {
       startedBy: 'daemon',
       happySessionId,
       pid: processInfo.pid,
       processCommandHash,
+      ...(processInstanceFingerprint ? { processInstanceFingerprint } : {}),
       processCommand: processInfo.command,
       reattachedFromDiskMarker: true,
       ...(vendorResumeId ? { vendorResumeId } : {}),
@@ -318,6 +321,9 @@ async function recoverMarkerlessDaemonSpawnedSessions(params: Readonly<{
       startedBy: 'daemon',
       ...(spawnOptions?.directory ? { cwd: spawnOptions.directory } : {}),
       processCommandHash,
+      ...(trackedSession.processInstanceFingerprint
+        ? { processInstanceFingerprint: trackedSession.processInstanceFingerprint }
+        : {}),
       processCommand: processInfo.command,
       ...(respawn ? { respawn } : {}),
       ...(incompleteMarker?.connectedServiceRestartIntent

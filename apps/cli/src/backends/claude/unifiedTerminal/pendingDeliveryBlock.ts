@@ -177,7 +177,7 @@ export function resolveClaudeUnifiedPendingDeliveryBlock(
   const pendingProviderAction = (error as { pendingProviderAction?: unknown }).pendingProviderAction;
 
   if (
-    failureState === 'failed_terminal'
+    (failureState === 'failed_terminal' || failureState === 'failed_ambiguous')
     && pendingProviderAction === 'steer'
     && reason === 'no_target'
     && phase === 'before_write'
@@ -192,7 +192,7 @@ export function resolveClaudeUnifiedPendingDeliveryBlock(
 
   if (
     failureState === 'failed_ambiguous'
-    && reason === 'host_unreachable'
+    && (reason === 'host_unreachable' || reason === 'verification_failed')
     && phase === 'after_enter_unknown'
     && duplicateRisk !== 'none'
     && recoverable === true
@@ -200,6 +200,19 @@ export function resolveClaudeUnifiedPendingDeliveryBlock(
     return {
       localIds,
       reason: 'ambiguous_terminal_delivery',
+    };
+  }
+
+  if (
+    failureState === 'failed_ambiguous'
+    && (reason === 'timeout' || reason === 'verification_failed')
+    && (phase === 'during_write' || phase === 'after_write_before_enter')
+    && duplicateRisk !== 'none'
+    && recoverable === true
+  ) {
+    return {
+      localIds,
+      reason: 'delivery_outcome_uncertain',
     };
   }
 

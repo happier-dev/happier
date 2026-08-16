@@ -132,6 +132,27 @@ describe('callBuiltInHappierTool', () => {
     });
   });
 
+  it('reports session lookup timeouts without relabeling them as not-found', async () => {
+    resolveSessionTransportContext.mockResolvedValueOnce({
+      ok: false,
+      code: 'session_lookup_timeout',
+    });
+
+    const { callBuiltInHappierTool } = await import('./callBuiltInHappierTool');
+    const result = await callBuiltInHappierTool({
+      credentials: { token: 'token', encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) } },
+      sessionId: 'c000000000000000000000000',
+      toolName: 'change_title',
+      args: { title: 'Renamed' },
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      errorCode: 'session_lookup_timeout',
+      error: 'Session lookup timed out; try again',
+    });
+  });
+
   it('routes change_title through the shared action executor on the CLI surface', async () => {
     execute.mockResolvedValueOnce({
       ok: true,

@@ -1,3 +1,4 @@
+import { resolveAgentIdFromFlavor, type AgentId } from '@/agents/registry/registryCore';
 import { resolveServerIdForSessionIdFromLocalState } from '@/sync/runtime/orchestration/serverScopedRpc/resolveServerIdForSessionIdFromLocalCache';
 import type { SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
 import type { SessionListViewItem } from '@/sync/domains/session/listing/sessionListViewData';
@@ -9,7 +10,7 @@ import { formatPathRelativeToHome } from '@/utils/sessions/formatPathRelativeToH
 /**
  * The `@session` picker's candidate source (D-7).
  *
- * It is a narrow projection over the session-listing store: six declared fields, read
+ * It is a narrow projection over the session-listing store: seven declared fields, read
  * imperatively at query time exactly like the vendor-plugin and skill catalogs. It never
  * touches a whole `Session` record, and it reads no turn, thinking, presence, runtime-activity
  * or seq field — so the churn those produce cannot reach the composer.
@@ -31,6 +32,17 @@ export type ComposerSessionSuggestionItem = Readonly<{
     title: string;
     workspaceLabel: string | null;
     agentLabel: string | null;
+    /**
+     * The provider the picker row draws a logo for, resolved from the same
+     * `metadata.flavor` that `agentLabel` carries raw.
+     *
+     * Resolved HERE rather than at the row, because this projection is the only
+     * module that knows the string came from `flavor` — and because `AgentIcon`
+     * needs a registry-validated id, so an unresolvable flavor has to stay
+     * distinguishable. `null` means this build has no entry for that provider and
+     * the row keeps the kind's generic glyph.
+     */
+    agentId: AgentId | null;
     updatedAt: number;
     active: boolean;
 }>;
@@ -58,11 +70,13 @@ function projectSession(session: SessionListRenderableSession): ComposerSessionS
     // handed-off machine target through a second store read per row, and this label is
     // advisory row text the picker recomputes on every keystroke.
     const workspaceLabel = path ? formatPathRelativeToHome(path, metadata?.homeDir ?? undefined) : null;
+    const flavor = normalizeTrimmed(metadata?.flavor);
     return {
         id: session.id,
         title: getSessionName(session),
         workspaceLabel,
-        agentLabel: normalizeTrimmed(metadata?.flavor),
+        agentLabel: flavor,
+        agentId: resolveAgentIdFromFlavor(flavor),
         updatedAt: typeof session.updatedAt === 'number' ? session.updatedAt : 0,
         active: session.active === true,
     };
@@ -153,7 +167,9 @@ export function readComposerSessionSuggestionItems(
  * carries the full session id — so a rename changes the token a user sees next time without
  * invalidating anything already sent.
  */
-export function buildComposerSessionTokenSlug(item: ComposerSessionSuggestionItem): string {
+export function buildComposerSessionTokenSlug(
+    item: Pick<ComposerSessionSuggestionItem, 'id' | 'title'>,
+): string {
     const slug = item.title
         .toLowerCase()
         .replace(/[^a-z0-9]+/g, '-')

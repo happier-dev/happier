@@ -7,6 +7,8 @@ export type DaemonSpawnRuntimeSelection = Readonly<{
   experimentalCodexAcp?: boolean;
   codexBackendMode?: CodexBackendMode;
   agentRuntimeDescriptorV1?: AgentRuntimeDescriptorV1;
+  directory?: string;
+  environmentVariables?: NodeJS.ProcessEnv;
 }>;
 
 export function resolveDaemonSpawnRuntimeCodexBackendMode(selection: DaemonSpawnRuntimeSelection): CodexBackendMode | undefined {

@@ -4,6 +4,7 @@ import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import { classifyClaudeOwnComposerDraft } from './ownComposerDraftClassification';
+import { createClaudeOwnComposerTextLog } from './ownComposerTextLog';
 import { parseClaudeScreenState } from './tuiControls/screenState';
 
 function readFixture(name: string): string {
@@ -50,13 +51,21 @@ describe('classifyClaudeOwnComposerDraft', () => {
     expect(classifyScreen(rawText)).toBe('provider_unavailable');
   });
 
-  it('treats Claude resume prefill as empty composer content', () => {
+  it('preserves unproven resume-prefill text so controller provenance can classify its own residue', () => {
     const rawText = boxedComposer('Continue where you left off');
     const screen = parseClaudeScreenState(rawText);
+    const ownComposerTexts = createClaudeOwnComposerTextLog();
+    ownComposerTexts.record('Continue where you left off');
 
-    expect(screen.composerContent).toBe('');
-    expect(screen.userDraftPresent).toBe(false);
-    expect(classifyScreen(rawText)).toBe('empty');
+    expect(screen.composerContent).toBe('Continue where you left off');
+    expect(screen.userDraftPresent).toBe(true);
+    expect(classifyScreen(rawText)).toBe('capture_style_unavailable');
+    expect(classifyClaudeOwnComposerDraft({
+      screen,
+      rawText,
+      ownComposerTexts,
+      stopOnGenerating: false,
+    })).toBe('own');
   });
 
   it.each([
@@ -91,5 +100,17 @@ describe('classifyClaudeOwnComposerDraft', () => {
 
     expect(screen.composerContent).toBe('/effort medium');
     expect(classifyScreen(rawText)).toBe('own');
+  });
+
+  it('classifies a non-dialog screen with no composer as non-input, not empty', () => {
+    const rawText = [
+      'Applied runtime control; transcript is redrawing',
+      '  ⏵⏵ accept edits on (shift+tab to cycle)',
+    ].join('\n');
+    const screen = parseClaudeScreenState(rawText);
+
+    expect(screen.composerContent).toBeNull();
+    expect(screen.inputBoxInteractive).toBe(true);
+    expect(classifyScreen(rawText)).toBe('non_input_state');
   });
 });

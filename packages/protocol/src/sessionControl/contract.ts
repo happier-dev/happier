@@ -10,6 +10,7 @@ import {
 import { ActionIdSchema, ActionInputHintsSchema, ActionSafetySchema, ActionSurfaceSchema } from '../actions/index.js';
 import { ActionUiPlacementSchema } from '../actions/actionUiPlacements.js';
 import { SubAgentRunResultV2Schema } from '../tools/v2/index.js';
+import { StopSessionIncompleteReasonSchema } from '../sessionStop.js';
 import { AccountEncryptionModeSchema } from '../features/payload/capabilities/encryptionCapabilities.js';
 import {
   PrimaryTurnStatusV1Schema,
@@ -136,6 +137,8 @@ export const SessionControlErrorCodeSchema = z.enum([
   'execution_run_invalid_action_input',
   'execution_run_stream_not_found',
   'execution_run_not_allowed',
+  'execution_run_protocol_unsupported',
+  'execution_run_target_unavailable',
   'run_depth_exceeded',
   'conflict',
   'timeout',
@@ -473,10 +476,59 @@ export const SessionWaitResultSchema = z.object({
 }).passthrough();
 export type SessionWaitResult = z.infer<typeof SessionWaitResultSchema>;
 
-export const SessionStopResultSchema = z.object({
+export const SessionStopCleanupIncompleteReasonSchema = StopSessionIncompleteReasonSchema.extract([
+  'terminal_control_serviceability_retirement_failed',
+  'terminal_attachment_descriptor_retirement_failed',
+]);
+export type SessionStopCleanupIncompleteReason = z.infer<typeof SessionStopCleanupIncompleteReasonSchema>;
+
+const SessionStopPhysicalUnconfirmedReasonSchema = z.union([
+  StopSessionIncompleteReasonSchema.exclude([
+    'terminal_control_serviceability_retirement_failed',
+    'terminal_attachment_descriptor_retirement_failed',
+  ]),
+  z.enum([
+    'transport_ambiguous',
+    'marker_fallback_failed',
+    'local_session_not_found',
+    'target_daemon_unavailable',
+    'target_session_not_found',
+    'daemon_stop_requested',
+    'unexpected_error',
+  ]),
+]);
+
+export const SessionStopOutcomeSchema = z.discriminatedUnion('status', [
+  z.object({
+    status: z.literal('stopped_projection_unconfirmed'),
+    reason: z.literal('relay_inactive_not_observed'),
+  }).strict(),
+  z.object({
+    status: z.literal('stopped_cleanup_incomplete'),
+    reason: SessionStopCleanupIncompleteReasonSchema,
+  }).strict(),
+  z.object({
+    status: z.literal('physical_stop_unconfirmed'),
+    reason: SessionStopPhysicalUnconfirmedReasonSchema,
+  }).strict(),
+]);
+export type SessionStopOutcome = z.infer<typeof SessionStopOutcomeSchema>;
+
+const SessionStopResultBaseSchema = z.object({
   sessionId: z.string().min(1),
-  stopped: z.literal(true),
-}).passthrough();
+});
+
+export const SessionStopResultSchema = z.discriminatedUnion('stopped', [
+  SessionStopResultBaseSchema.extend({
+    stopped: z.literal(true),
+  }).passthrough(),
+  SessionStopResultBaseSchema.extend({
+    stopped: z.literal(false),
+    // cli-v0.2.0 and cli-v0.2.1 emitted `{ stopped: false }`; keep reading that
+    // released shape while current writers add the structured reason.
+    stopOutcome: SessionStopOutcomeSchema.optional(),
+  }).passthrough(),
+]);
 export type SessionStopResult = z.infer<typeof SessionStopResultSchema>;
 
 export const SessionArchiveResultSchema = z.object({

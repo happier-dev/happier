@@ -1,7 +1,7 @@
-import { chmodSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
-import { chmod, mkdtemp, writeFile } from 'node:fs/promises';
+import { chmodSync, existsSync, writeFileSync } from 'node:fs';
+import { chmod, mkdtemp, rmdir, unlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 
 import type { CommandInvocation } from '@happier-dev/cli-common/process';
 import { resolveWindowsCommandInvocation } from '@happier-dev/cli-common/process';
@@ -34,11 +34,17 @@ import {
   type ClaudeTerminalCliOptionsDiagnostic,
 } from '../cli/terminalOptions';
 import { claudeCliFlagCanConsumeNextArg } from '../cli/flagArity';
+import {
+  buildClaudePermissionModeLaunchSettings,
+  resolveClaudeLaunchSettingsOverlayArg,
+} from '../utils/resolveClaudeLaunchSettingsOverlay';
+import { materializeClaudeMcpConfigArgsForSpawn } from '../utils/materializeClaudeMcpConfigArgsForSpawn';
 
 export type ClaudeUnifiedTerminalSpawn = Readonly<{
   spawnArgv: readonly string[];
   spawnEnv: Readonly<Record<string, string>>;
   launchSpecPath?: string | undefined;
+  cleanupUnreadArtifacts?: (() => Promise<void>) | undefined;
 }>;
 
 export class ClaudeUnifiedTerminalUnsupportedOptionError extends Error {
@@ -187,62 +193,6 @@ function assertNoUserSettingsArg(claudeArgs: readonly string[] | undefined): voi
   }
 }
 
-/**
- * Resolve the single `--settings` overlay value for the spawned Claude CLI.
- *
- * Claude Code keeps only the FIRST `--settings` overlay, so ultracode and the statusline
- * forwarder cannot ride a second flag next to the hook settings file: when either is needed,
- * the hook settings content is merged with `{"ultracode":true}` / `{"statusLine":{...}}` and
- * passed as one inline JSON overlay (`--settings` accepts a file path or a JSON string).
- * Otherwise the file path is passed through untouched.
- *
- * Merged overlays are written to a 0600 SIBLING FILE of the hook settings file and passed as a
- * path. The statusline forwarder secret rides in a separate 0600 sibling file; the command string
- * contains only that path, never the secret itself. If the sibling cannot be written, the
- * statusline overlay is dropped fail-open and the secret-free remainder is passed inline.
- */
-function resolveSettingsOverlayArg(params: Readonly<{
-  hookSettingsPath: string | undefined;
-  ultracodeEnabled: boolean;
-  statuslineSettings: ClaudeStatuslineOverlaySettings | undefined;
-}>): string | undefined {
-  if (!params.ultracodeEnabled && !params.statuslineSettings) return params.hookSettingsPath;
-
-  let base: Record<string, unknown> = {};
-  if (params.hookSettingsPath) {
-    try {
-      const parsed = JSON.parse(readFileSync(params.hookSettingsPath, 'utf8')) as unknown;
-      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-        base = parsed as Record<string, unknown>;
-      }
-    } catch {
-      // Unreadable hook settings: fall through to the merged-only overlay — passing the
-      // broken file path would lose the merged keys AND the hook settings alike.
-    }
-  }
-  const merged = {
-    ...base,
-    ...(params.ultracodeEnabled ? { ultracode: true } : {}),
-    ...(params.statuslineSettings ? { statusLine: params.statuslineSettings } : {}),
-  };
-  if (params.hookSettingsPath) {
-    const overlayPath = params.hookSettingsPath.replace(/\.json$/, '.overlay.json');
-    try {
-      writeFileSync(overlayPath, JSON.stringify(merged, null, 2), { mode: 0o600 });
-      chmodPrivateFileIfSupported(overlayPath);
-      return overlayPath;
-    } catch {
-      // Cannot write the 0600 sibling: never put the secret-bearing statusline command into
-      // argv — drop it (the user's own statusline stays in charge) and inline the remainder.
-      const { statusLine: _dropped, ...withoutStatusline } = merged;
-      return JSON.stringify(withoutStatusline);
-    }
-  }
-  // No hook settings file (hooks disabled) also means no hook server, hence no statusline
-  // forwarder/secret — the remaining ultracode-only overlay is safe inline.
-  return JSON.stringify(merged);
-}
-
 function writePrivateStatuslineSecretFile(params: Readonly<{
   hookSettingsPath: string;
   secret: string;
@@ -323,10 +273,15 @@ function buildClaudeArgs<Mode extends EnhancedMode>(
   if (input.hookPluginDir) {
     args.push('--plugin-dir', input.hookPluginDir);
   }
-  const settingsOverlay = resolveSettingsOverlayArg({
-    hookSettingsPath: input.hookSettingsPath,
-    ultracodeEnabled: terminalOptions.ultracodeEnabled,
-    statuslineSettings,
+  const permissionMode = resolveClaudeSdkPermissionModeFromEnhancedMode(input.first.mode);
+  const settingsOverlay = resolveClaudeLaunchSettingsOverlayArg({
+    settingsPath: input.hookSettingsPath,
+    launchSettings: {
+      ...(terminalOptions.ultracodeEnabled ? { ultracode: true } : {}),
+      ...(statuslineSettings ? { statusLine: statuslineSettings } : {}),
+      ...buildClaudePermissionModeLaunchSettings(permissionMode),
+    },
+    unsafeInlineKeys: ['statusLine'],
   });
   if (settingsOverlay) {
     args.push('--settings', settingsOverlay);
@@ -337,7 +292,6 @@ function buildClaudeArgs<Mode extends EnhancedMode>(
 
   args.push('--allow-dangerously-skip-permissions');
 
-  const permissionMode = resolveClaudeSdkPermissionModeFromEnhancedMode(input.first.mode);
   if (permissionMode !== 'default') {
     args.push('--permission-mode', permissionMode);
   }
@@ -403,6 +357,7 @@ type TerminalLaunchSpec = Readonly<{
   cwd: string;
   env: Readonly<Record<string, string>>;
   envPassthroughKeys?: readonly string[] | undefined;
+  cleanupPaths?: readonly string[] | undefined;
   diagnostics?: Readonly<{
     sessionId: string;
     logsDir: string;
@@ -439,11 +394,35 @@ function splitTerminalLaunchSpecEnv(env: Readonly<Record<string, string>>): Spli
 async function writeTerminalLaunchSpec(spec: TerminalLaunchSpec): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), 'happier-terminal-launch-'));
   const path = join(dir, 'launch.json');
-  await writeFile(path, JSON.stringify(spec), { mode: 0o600 });
-  if (process.platform !== 'win32') {
-    await chmod(path, 0o600);
+  try {
+    await writeFile(path, JSON.stringify(spec), { mode: 0o600 });
+    if (process.platform !== 'win32') {
+      await chmod(path, 0o600);
+    }
+    return path;
+  } catch (error) {
+    await unlink(path).catch(() => undefined);
+    await rmdir(dir).catch(() => undefined);
+    throw error;
   }
-  return path;
+}
+
+function createUnreadSpawnArtifactsCleanup(params: Readonly<{
+  launchSpecPath: string;
+  cleanupMcpConfig: () => Promise<void>;
+}>): () => Promise<void> {
+  let cleanupPromise: Promise<void> | null = null;
+  return () => {
+    cleanupPromise ??= (async () => {
+      await unlink(params.launchSpecPath).catch(() => undefined);
+      const specDir = dirname(params.launchSpecPath);
+      if (basename(specDir).startsWith('happier-terminal-launch-')) {
+        await rmdir(specDir).catch(() => undefined);
+      }
+      await params.cleanupMcpConfig();
+    })();
+    return cleanupPromise;
+  };
 }
 
 function defaultDeps(inputDeps: Partial<ClaudeUnifiedTerminalSpawnDeps> | undefined): ClaudeUnifiedTerminalSpawnDeps {
@@ -482,70 +461,85 @@ export async function buildClaudeUnifiedTerminalSpawn<Mode extends EnhancedMode 
   // EFFECTIVE config root of the spawned process (CLAUDE_CONFIG_DIR / HOME in the child env).
   const env = buildClaudeEnv(input.envOverlay);
   const statuslineSettings = resolveStatuslineOverlaySettings({ input, deps, env });
-  const args = buildClaudeArgs(input, statuslineSettings);
+  const materializedMcpConfig = await materializeClaudeMcpConfigArgsForSpawn(
+    buildClaudeArgs(input, statuslineSettings),
+  );
+  const args = materializedMcpConfig.args;
 
-  const nodeExecutable = await deps.ensureClaudeJsRuntimeExecutable();
-  if (!nodeExecutable) {
-    throw new ReferenceError(buildMissingJavaScriptRuntimeMessage('Claude unified terminal launcher'));
-  }
-  if (
-    !existsSync(deps.terminalLaunchSpecRunnerPath)
-    && !isEmbeddedBunBundlePath(deps.terminalLaunchSpecRunnerPath)
-    && !input.deps?.terminalLaunchSpecRunnerPath
-  ) {
-    throw new Error('Claude unified terminal launch-spec runner not found. Please ensure CLI runtime assets are present next to the running bundle.');
-  }
-
-  let childCommand: string;
-  let childArgs: readonly string[];
-  if (deps.isClaudeCliJavaScriptFile(resolvedClaudeCliPath)) {
+  try {
+    const nodeExecutable = await deps.ensureClaudeJsRuntimeExecutable();
+    if (!nodeExecutable) {
+      throw new ReferenceError(buildMissingJavaScriptRuntimeMessage('Claude unified terminal launcher'));
+    }
     if (
-      !existsSync(deps.claudeLocalLauncherPath)
-      && !isEmbeddedBunBundlePath(deps.claudeLocalLauncherPath)
-      && !input.deps?.claudeLocalLauncherPath
+      !existsSync(deps.terminalLaunchSpecRunnerPath)
+      && !isEmbeddedBunBundlePath(deps.terminalLaunchSpecRunnerPath)
+      && !input.deps?.terminalLaunchSpecRunnerPath
     ) {
-      throw new Error('Claude local launcher not found. Please ensure CLI runtime assets are present next to the running bundle.');
+      throw new Error('Claude unified terminal launch-spec runner not found. Please ensure CLI runtime assets are present next to the running bundle.');
     }
-    if (!env.HAPPIER_CLAUDE_PATH && !env.HAPPY_CLAUDE_PATH) {
-      env.HAPPIER_CLAUDE_PATH = resolvedClaudeCliPath;
+
+    let childCommand: string;
+    let childArgs: readonly string[];
+    if (deps.isClaudeCliJavaScriptFile(resolvedClaudeCliPath)) {
+      if (
+        !existsSync(deps.claudeLocalLauncherPath)
+        && !isEmbeddedBunBundlePath(deps.claudeLocalLauncherPath)
+        && !input.deps?.claudeLocalLauncherPath
+      ) {
+        throw new Error('Claude local launcher not found. Please ensure CLI runtime assets are present next to the running bundle.');
+      }
+      if (!env.HAPPIER_CLAUDE_PATH && !env.HAPPY_CLAUDE_PATH) {
+        env.HAPPIER_CLAUDE_PATH = resolvedClaudeCliPath;
+      }
+      childCommand = nodeExecutable;
+      childArgs = [deps.claudeLocalLauncherPath, ...args];
+    } else {
+      const invocation = deps.resolveCommandInvocation({
+        command: resolvedClaudeCliPath,
+        args,
+        env,
+      });
+      childCommand = invocation.command;
+      childArgs = invocation.args;
     }
-    childCommand = nodeExecutable;
-    childArgs = [deps.claudeLocalLauncherPath, ...args];
-  } else {
-    const invocation = deps.resolveCommandInvocation({
-      command: resolvedClaudeCliPath,
-      args,
-      env,
+
+    const splitEnv = splitTerminalLaunchSpecEnv(env);
+    const happySessionId = typeof input.happySessionId === 'string' ? input.happySessionId.trim() : '';
+    const specPath = await writeTerminalLaunchSpec({
+      command: childCommand,
+      args: childArgs,
+      cwd: input.path,
+      env: splitEnv.persistedEnv,
+      ...(splitEnv.passthroughKeys.length > 0 ? { envPassthroughKeys: splitEnv.passthroughKeys } : {}),
+      ...(materializedMcpConfig.cleanupPaths.length > 0
+        ? { cleanupPaths: materializedMcpConfig.cleanupPaths }
+        : {}),
+      ...(happySessionId.length > 0
+        ? {
+            diagnostics: {
+              sessionId: happySessionId,
+              logsDir: join(configuration.logsDir, 'terminal-runner'),
+              sessionExitDir: join(configuration.logsDir, 'session-exit'),
+            },
+          }
+        : {}),
     });
-    childCommand = invocation.command;
-    childArgs = invocation.args;
+
+    return {
+      spawnArgv: [nodeExecutable, deps.terminalLaunchSpecRunnerPath, specPath],
+      spawnEnv: {
+        ...buildTerminalLauncherProcessEnv(),
+        ...splitEnv.passthroughEnv,
+      },
+      launchSpecPath: specPath,
+      cleanupUnreadArtifacts: createUnreadSpawnArtifactsCleanup({
+        launchSpecPath: specPath,
+        cleanupMcpConfig: materializedMcpConfig.cleanup,
+      }),
+    };
+  } catch (error) {
+    await materializedMcpConfig.cleanup();
+    throw error;
   }
-
-  const splitEnv = splitTerminalLaunchSpecEnv(env);
-  const happySessionId = typeof input.happySessionId === 'string' ? input.happySessionId.trim() : '';
-  const specPath = await writeTerminalLaunchSpec({
-    command: childCommand,
-    args: childArgs,
-    cwd: input.path,
-    env: splitEnv.persistedEnv,
-    ...(splitEnv.passthroughKeys.length > 0 ? { envPassthroughKeys: splitEnv.passthroughKeys } : {}),
-    ...(happySessionId.length > 0
-      ? {
-          diagnostics: {
-            sessionId: happySessionId,
-            logsDir: join(configuration.logsDir, 'terminal-runner'),
-            sessionExitDir: join(configuration.logsDir, 'session-exit'),
-          },
-        }
-      : {}),
-  });
-
-  return {
-    spawnArgv: [nodeExecutable, deps.terminalLaunchSpecRunnerPath, specPath],
-    spawnEnv: {
-      ...buildTerminalLauncherProcessEnv(),
-      ...splitEnv.passthroughEnv,
-    },
-    launchSpecPath: specPath,
-  };
 }

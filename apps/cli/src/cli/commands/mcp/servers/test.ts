@@ -23,7 +23,7 @@ export async function cmdMcpServersTest(
   const credentials = await deps.readCredentials();
   if (!credentials) {
     if (opts.json) {
-      printJsonEnvelope({ ok: false, kind: 'mcp_servers_test', error: { code: 'not_authenticated' } }, { exitCode: 1 });
+      await printJsonEnvelope({ ok: false, kind: 'mcp_servers_test', error: { code: 'not_authenticated' } }, { exitCode: 1 });
       return;
     }
     console.error(chalk.red('Error:'), 'Not authenticated. Run "happier auth login" first.');
@@ -76,7 +76,7 @@ export async function cmdMcpServersTest(
     const durationMs = Math.max(0, deps.nowMs() - startedAt);
 
     if (opts.json) {
-      printJsonEnvelope({
+      await printJsonEnvelope({
         ok: true,
         kind: 'mcp_servers_test',
         data: {
@@ -93,7 +93,7 @@ export async function cmdMcpServersTest(
   } catch (error) {
     const message = redactMcpServerProbeError(error);
     if (opts.json) {
-      printJsonEnvelope({
+      await printJsonEnvelope({
         ok: false,
         kind: 'mcp_servers_test',
         error: {

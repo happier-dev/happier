@@ -1,12 +1,11 @@
 import * as React from 'react';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { Platform, View, useWindowDimensions } from 'react-native';
+import { Platform, View } from 'react-native';
 import { decodeSessionFilePathParam } from '@/scm/utils/filePathParam';
 import { parseSessionFileDeepLinkAnchor } from '@/utils/url/sessionFileDeepLink';
 import { SessionFileDetailsView } from '@/components/sessions/files/views/SessionFileDetailsView';
-import { useDeviceType } from '@/utils/platform/responsive';
-import { useLocalSetting } from '@/sync/domains/state/storage';
-import { shouldRedirectDetailsRouteToPanes } from '@/components/ui/panels/shouldRedirectDetailsRouteToPanes';
+import { useCanDockSessionPane } from '@/components/sessions/panes/open/useSessionOpenLayout';
+import { resolveSessionPaneScopeId } from '@/components/sessions/panes/sessionPaneScopeId';
 import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneScope';
 import { serializeSessionPaneUrlState } from '@/components/sessions/panes/url/sessionPaneUrlState';
 import { useSessionRouteServerScope } from '@/hooks/session/sessionRouteServerScope';
@@ -39,15 +38,13 @@ export default function FileScreen() {
         [params]
     );
 
-    const multiPaneEnabled = useLocalSetting('uiMultiPanePanelsEnabled');
-    const deviceType = useDeviceType();
-    const { width: containerWidthPx } = useWindowDimensions();
-    const shouldRedirect =
-        Boolean(sessionId)
-        && Boolean(filePath)
-        && shouldRedirectDetailsRouteToPanes({ containerWidthPx, deviceType, multiPaneEnabled });
+    // The same layout question the open direction asks, read through the same owner: this route was
+    // reading a RAW `useDeviceType()` and a raw `uiMultiPanePanelsEnabled` (undefined -> "off"), so
+    // it could refuse to hand back to a details pane the host would have docked.
+    const canDockDetailsPane = useCanDockSessionPane('details');
+    const shouldRedirect = Boolean(sessionId) && Boolean(filePath) && canDockDetailsPane;
 
-    const pane = useAppPaneScope(`session:${sessionId}`);
+    const pane = useAppPaneScope(resolveSessionPaneScopeId(sessionId));
 
     const shouldUseDetailsScreen = Platform.OS !== 'web';
     const hasRedirectedToDetailsRef = React.useRef(false);
@@ -116,5 +113,5 @@ export default function FileScreen() {
     if (isUnsafeFilePath) return null;
     if (shouldRedirect) return null;
     if (shouldUseDetailsScreen) return null;
-    return <SessionFileDetailsView sessionId={sessionId} scopeId={`session:${sessionId}`} filePath={filePath} deepLinkAnchor={deepLinkAnchor} />;
+    return <SessionFileDetailsView sessionId={sessionId} scopeId={resolveSessionPaneScopeId(sessionId)} filePath={filePath} deepLinkAnchor={deepLinkAnchor} />;
 }

@@ -65,6 +65,28 @@ export function isComposerTokenBoundaryChar(char: string): boolean {
     return char.length === 0 || TOKEN_WHITESPACE.has(char) || TOKEN_DELIMITERS.has(char);
 }
 
+/** Whitespace, or the end of the content. `charAt` returns `''` past the end. */
+function isTokenWhitespaceOrEnd(char: string): boolean {
+    return char.length === 0 || TOKEN_WHITESPACE.has(char);
+}
+
+/**
+ * Whether the `"` at `quoteIndex` opens a quoted span, or is just a quote.
+ *
+ * A quoted span suspends the whitespace rule so one token can hold a name with
+ * spaces, which means an opening quote that no value follows turns the rest of
+ * the line into a single token — `"@"` written in prose held the picker open
+ * across every word after it until the line ended.
+ *
+ * Requiring a value means the two shapes separate cleanly: `@"my session"` is a
+ * search, `"@"` is the mention character in quotation marks. The cost is that a
+ * value beginning with whitespace has no representation, since quoting is the
+ * only thing that could carry it; no candidate source produces one.
+ */
+function opensQuotedSpan(content: string, quoteIndex: number): boolean {
+    return content.charAt(quoteIndex) === '"' && !isTokenWhitespaceOrEnd(content.charAt(quoteIndex + 1));
+}
+
 /**
  * Returns the exclusive end offset of the token that starts at `triggerIndex`.
  *
@@ -78,7 +100,7 @@ export function parseComposerTokenEnd(content: string, triggerIndex: number, max
         : null;
     let index = triggerIndex + 1;
 
-    if (grammar?.quoting && content.charAt(index) === '"') {
+    if (grammar?.quoting && opensQuotedSpan(content, index)) {
         index += 1;
         while (index < maxEnd) {
             const char = content.charAt(index);
@@ -127,6 +149,10 @@ export function parseComposerSuggestionQuery(activeWord: string): Readonly<{
  * Writes `value` as a token for `trigger`, quoting when the raw value would not
  * re-parse to itself. This is the inverse of `parseComposerTokenEnd` +
  * `parseComposerSuggestionQuery`, which is what INV-3 depends on.
+ *
+ * One value shape is outside the grammar: a value beginning with whitespace,
+ * which `opensQuotedSpan` excludes so a bare quote cannot swallow a line. No
+ * candidate source produces one.
  */
 export function formatComposerSuggestionToken(trigger: ComposerSuggestionTrigger, value: string): string {
     if (!COMPOSER_SUGGESTION_TOKEN_GRAMMAR[trigger].quoting) return `${trigger}${value}`;

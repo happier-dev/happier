@@ -69,8 +69,9 @@ vi.mock('@/utils/platform/responsive', async (importOriginal) => {
     };
 });
 
-vi.mock('@/components/ui/panels/shouldRedirectDetailsRouteToPanes', () => ({
-    shouldRedirectDetailsRouteToPanes: () => false,
+vi.mock('@/components/sessions/panes/open/useSessionOpenLayout', () => ({
+    useCanDockSessionPane: () => false,
+    useSessionOpenLayout: () => ({ containerWidthPx: 390, deviceType: 'phone', multiPaneEnabled: true }),
 }));
 
 vi.mock('@/components/appShell/panes/hooks/useAppPaneScope', () => ({

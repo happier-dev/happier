@@ -2,7 +2,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { Metadata } from '@/api/types';
 import { logger } from '@/ui/logger';
-import { SESSION_WORKFLOW_RUN_SNAPSHOT_PROJECTION_VERSION } from '@happier-dev/protocol';
+import {
+  buildAgentActivityEntryId,
+  readSessionAgentActivityHeadlineFromMetadata,
+  SESSION_AGENT_ACTIVITY_HEADLINE_METADATA_KEY,
+  SESSION_WORKFLOW_RUN_SNAPSHOT_PROJECTION_VERSION,
+} from '@happier-dev/protocol';
 
 import { wireClaudeWorkflowActivitySource as wireProductionClaudeWorkflowActivitySource, type ClaudeWorkflowActivitySessionBinding } from './wireClaudeWorkflowActivitySource';
 type TestBinding = ClaudeWorkflowActivitySessionBinding;
@@ -241,6 +246,91 @@ describe('wireClaudeWorkflowActivitySource', () => {
     await vi.advanceTimersByTimeAsync(10);
 
     expect(upserts).toHaveLength(1);
+    source.dispose();
+  });
+
+  /**
+   * The residue a user actually reports is a ROSTER of agents that never stop working.
+   *
+   * OBSERVED on a live session: sixteen agent rows spinning against two real ones, every one of them
+   * "No update for over 10 min", surviving every restart — while the startup sweep logged
+   * `captured 0 candidate(s)` and was otherwise healthy. The two published headlines partition
+   * independently, so a process killed after its run reached a terminal status but before its agents
+   * did leaves a settled run beside live agent entries. Recovery read only `activeRuns`, found
+   * nothing to do, and therefore never rewrote the roster that holds the rows.
+   */
+  it('resolves agents a dead process left running under a run its headline already settled', async () => {
+    const runEntryId = buildAgentActivityEntryId({ kind: 'workflow_run', runId: 'toolu_orphaned' });
+    let metadata: Metadata = {
+      path: '/x',
+      host: 'h',
+      homeDir: '/home/tester',
+      happyHomeDir: '/home/tester/.happier',
+      happyLibDir: '/home/tester/.happier/lib',
+      happyToolsDir: '/home/tester/.happier/tools',
+      sessionWorkflowActivityHeadlineV1: {
+        v: 1,
+        backendId: 'claude',
+        updatedAt: 2_000,
+        primaryRunId: null,
+        activeRuns: [],
+        recentRuns: [{
+          runId: 'toolu_orphaned',
+          workflowToolUseId: 'toolu_orphaned',
+          title: 'pressure test',
+          status: 'complete',
+          updatedAt: 2_000,
+          recordRevision: '1',
+          recordUpdatedAt: 2_000,
+          totalAgents: 2,
+          completedAgents: 1,
+        }],
+      },
+      [SESSION_AGENT_ACTIVITY_HEADLINE_METADATA_KEY]: {
+        v: 1,
+        backendId: 'claude',
+        updatedAt: 2_000,
+        primaryEntryId: buildAgentActivityEntryId({ kind: 'workflow_agent', runId: 'toolu_orphaned', agentId: 'a1' }),
+        activeEntries: [{
+          entryId: buildAgentActivityEntryId({ kind: 'workflow_agent', runId: 'toolu_orphaned', agentId: 'a1' }),
+          kind: 'workflow_agent',
+          title: 'ATTACK R1',
+          status: 'running',
+          updatedAt: 1_800,
+          startedAt: 1_200,
+          runId: 'toolu_orphaned',
+          parentId: runEntryId,
+        }],
+      },
+    } as unknown as Metadata;
+
+    const source = wireClaudeWorkflowActivitySource({
+      backendId: 'claude',
+      startupReconcileGraceMs: 10,
+      binding: {
+        sessionId: 'sess',
+        metadataWriter: {
+          updateMetadata: (updater) => { metadata = updater(metadata); },
+          getMetadataSnapshot: () => metadata,
+        },
+        upsertSystemRecord: async () => {},
+        resolveEncryption: async () => ({ mode: 'plain' }),
+        getCurrentClaudeSessionId: () => 'claude-session-1',
+      },
+    });
+
+    source.armStartupReconciliation();
+    await vi.advanceTimersByTimeAsync(10);
+
+    const roster = readSessionAgentActivityHeadlineFromMetadata(metadata);
+    expect(roster?.activeEntries).toEqual([]);
+    expect(roster?.recentEntries).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: 'workflow_agent', title: 'ATTACK R1', status: 'cancelled', startedAt: 1_200 }),
+    ]));
+    // The run really did finish; only its agents were left behind, so recovery must not demote it.
+    expect(roster?.recentEntries).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: 'workflow_run', status: 'succeeded' }),
+    ]));
     source.dispose();
   });
 

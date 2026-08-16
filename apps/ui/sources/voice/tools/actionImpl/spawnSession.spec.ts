@@ -35,6 +35,7 @@ function createState(): any {
         activeAt: Date.now(),
         spawnReadinessStatus: 'ready',
         metadata: { displayName: 'Leeroy MacBook Pro', host: 'leeroy-mbp' },
+        daemonState: { startedWithCliVersion: '0.2.10-dev.41' },
       },
     },
     settings: {
@@ -152,6 +153,27 @@ describe('spawnSessionForVoiceTool', () => {
       userAttemptId: expect.stringMatching(/^ui-session-attempt-/),
     }));
     expect(postprocessSpawnedSession).not.toHaveBeenCalled();
+  });
+
+  it('hands the initial message to a compatible daemon instead of post-spawn processing', async () => {
+    const { spawnSessionForVoiceTool } = await import('./spawnSession');
+
+    await spawnSessionForVoiceTool({
+      path: '/Users/leeroy/projects/happier',
+      initialMessage: 'start durably',
+    });
+
+    const spawnRequest = machineSpawnNewSession.mock.calls[0]?.[0] as {
+      userAttemptId: string;
+      pendingFirstInput?: unknown;
+    };
+    expect(spawnRequest.pendingFirstInput).toEqual({
+      text: 'start durably',
+      localId: `voice-spawn-first-turn:${spawnRequest.userAttemptId}`,
+    });
+    expect(postprocessSpawnedSession).toHaveBeenCalledWith(expect.objectContaining({
+      initialMessage: null,
+    }));
   });
 
   it('falls back to the freshest recent target when no explicit path is provided', async () => {

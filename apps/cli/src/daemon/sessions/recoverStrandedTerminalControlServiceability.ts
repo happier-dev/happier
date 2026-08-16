@@ -19,6 +19,7 @@ export async function recoverStrandedTerminalControlServiceability(params: Reado
   currentMachineId: string;
   happyHomeDir: string;
   sessionId: string;
+  expectedAttachmentId?: string;
   loadTerminalHostAdapters: () => Promise<TerminalHostRegistry>;
   fetchSession?: (input: Readonly<{ token: string; sessionId: string }>) => Promise<RawSessionRecord | null>;
   retireExactTerminalControlServiceability: (input: Readonly<{
@@ -45,16 +46,20 @@ export async function recoverStrandedTerminalControlServiceability(params: Reado
   const terminal = parsedTerminal.data;
   const serviceability = terminal.controlServiceabilityV1;
   const attachmentId = readNonEmptyString(serviceability?.attachmentId);
+  const expectedAttachmentId = readNonEmptyString(params.expectedAttachmentId);
   if (
     !serviceability
     || serviceability.v !== 1
-    || serviceability.retired === true
     || !attachmentId
     || (serviceability.state !== 'servable' && serviceability.state !== 'recoverable_unservable')
     || !terminal.mode
     || terminal.mode === 'plain'
+    || (serviceability.retired === true && !expectedAttachmentId)
   ) {
     return null;
+  }
+  if (expectedAttachmentId && attachmentId !== expectedAttachmentId) {
+    return incompleteStopSession('attachment_mismatch');
   }
 
   const reconstructedHandle = buildTerminalHostHandleFromAttachmentMetadata(terminal);
@@ -70,6 +75,7 @@ export async function recoverStrandedTerminalControlServiceability(params: Reado
   const probe = await evaluateTerminalHostLivenessForRecovery(adapter, handle);
   if (probe.status === 'alive') return incompleteStopSession('tracked_runner_absent');
   if (probe.status === 'inconclusive') return incompleteStopSession('missing_topology_proof');
+  if (serviceability.retired === true) return { status: 'stopped' };
 
   try {
     const retirement = await params.retireExactTerminalControlServiceability({

@@ -2,11 +2,12 @@ import chalk from 'chalk';
 
 import { getActionSpec, serializeActionSpec } from '@happier-dev/protocol';
 
-import { wantsJson, printJsonEnvelope } from '@/cli/output/jsonEnvelope';
+import { wantsJson, printJsonEnvelope, writeJsonStdout } from '@/cli/output/jsonEnvelope';
+import { readCommandPositionals } from '@/cli/commands/shared/argvFlags';
 
 export async function cmdSessionActionsDescribe(argv: string[]): Promise<void> {
   const json = wantsJson(argv);
-  const id = String(argv[2] ?? '').trim();
+  const [id = ''] = readCommandPositionals(argv, { startIndex: 2 });
   if (!id) {
     throw new Error('Usage: happier session actions describe <action-id> [--json]');
   }
@@ -15,10 +16,10 @@ export async function cmdSessionActionsDescribe(argv: string[]): Promise<void> {
   const serialized = serializeActionSpec(spec);
 
   if (json) {
-    printJsonEnvelope({ ok: true, kind: 'session_actions_describe', data: { actionSpec: serialized } });
+    await printJsonEnvelope({ ok: true, kind: 'session_actions_describe', data: { actionSpec: serialized } });
     return;
   }
 
   console.log(chalk.green('✓'), 'action described');
-  console.log(JSON.stringify(serialized, null, 2));
+  await writeJsonStdout(serialized, { pretty: true });
 }

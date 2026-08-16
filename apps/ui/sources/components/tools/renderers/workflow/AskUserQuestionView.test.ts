@@ -15,6 +15,7 @@ const sessionAllowWithAnswers = vi.fn();
 const modalAlert = vi.fn();
 const openAttachedSessionTerminal = vi.fn();
 const setWorkspaceTrust = vi.fn();
+const setResumeChoice = vi.fn();
 let supportsAnswersInPermission = true;
 let attachedSessionTerminalAvailable = true;
 let attachedSessionTerminalUnavailableReason: 'missing_machine' | 'terminal_disabled' | 'cli_update_required' | null = null;
@@ -50,8 +51,14 @@ installWorkflowRendererCommonModuleMocks({
                 },
             }),
             useSettingMutable: (key: string) => [
-                key === 'claudeUnifiedTerminalWorkspaceTrust' ? 'ask_every_time' : null,
-                key === 'claudeUnifiedTerminalWorkspaceTrust' ? setWorkspaceTrust : vi.fn(),
+                key === 'claudeUnifiedTerminalWorkspaceTrust' || key === 'claudeUnifiedTerminalResumeChoice'
+                    ? 'ask_every_time'
+                    : null,
+                key === 'claudeUnifiedTerminalWorkspaceTrust'
+                    ? setWorkspaceTrust
+                    : key === 'claudeUnifiedTerminalResumeChoice'
+                        ? setResumeChoice
+                        : vi.fn(),
             ],
             storage: {
                 getState: () => ({
@@ -205,6 +212,7 @@ describe('AskUserQuestionView', () => {
         modalAlert.mockReset();
         openAttachedSessionTerminal.mockReset();
         setWorkspaceTrust.mockReset();
+        setResumeChoice.mockReset();
         supportsAnswersInPermission = true;
         attachedSessionTerminalAvailable = true;
         attachedSessionTerminalUnavailableReason = null;
@@ -393,6 +401,46 @@ describe('AskUserQuestionView', () => {
             answers: { 'How should Claude continue?': 'trust_always' },
         });
         expect(setWorkspaceTrust).toHaveBeenCalledWith('always_trust_happier_workspaces');
+    });
+
+    it('persists a remembered resume policy only after the canonical dialog answer succeeds', async () => {
+        activeAskUserQuestionRequest = {
+            tool: 'AskUserQuestion',
+            kind: 'user_action',
+            source: 'claude_unified_terminal_dialog_choice',
+        };
+        sessionAllowWithAnswers.mockResolvedValueOnce(undefined);
+        const screen = await renderView(makeTool({
+            input: {
+                happierDialog: {
+                    kind: 'recognized',
+                    dialogId: 'resume_choice',
+                    secondaryAction: 'open_terminal',
+                },
+                questions: [{
+                    header: 'Claude resume',
+                    question: 'How should Claude resume this session?',
+                    multiSelect: false,
+                    options: [{
+                        choice: 'always_resume_from_summary',
+                        label: 'Always resume from summary',
+                        description: '',
+                        settingMutation: {
+                            settingId: 'claudeUnifiedTerminalResumeChoice',
+                            value: 'resume_from_summary',
+                        },
+                    }],
+                }],
+            },
+        }));
+
+        await chooseOptionAndSubmit(screen, 'Always resume from summary');
+
+        expect(sessionAllowWithAnswers).toHaveBeenCalledWith('s1', 'toolu_1', {
+            protocol: 'legacy-permission',
+            answers: { 'How should Claude resume this session?': 'always_resume_from_summary' },
+        });
+        expect(setResumeChoice).toHaveBeenCalledWith('resume_from_summary');
     });
 
     it('ignores a forged workspace-trust mutation without canonical request-source proof', async () => {

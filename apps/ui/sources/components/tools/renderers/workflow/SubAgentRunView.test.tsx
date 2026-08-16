@@ -116,6 +116,68 @@ describe('SubAgentRunView', () => {
         expect(text).toContain('TICK 3');
     });
 
+    it('renders sidechain text messages when an interrupted call closed as completed', async () => {
+        // Same shape as the abort-like error above, but the outer call landed on `completed`. The
+        // status owner calls both ambiguous, so both surfaces must show the still-streaming
+        // sidechain rather than a finished-run card.
+        let tree!: renderer.ReactTestRenderer;
+        tree = (await renderScreen(<SubAgentRunView
+                    tool={{
+                        state: 'completed',
+                        input: { intent: 'delegate' },
+                        result: { error: 'Request interrupted' },
+                    } as any}
+                    metadata={null as any}
+                    messages={[
+                        { kind: 'agent-text', id: 'm1', localId: null, createdAt: 1, text: 'TICK 4', isThinking: false },
+                    ] as any}
+                    detailLevel="full"
+                />)).tree;
+
+        const text = collectHostText(tree).join('\n');
+        expect(text).toContain('TICK 4');
+        expect(structuredResultViewPropsSpy).not.toHaveBeenCalled();
+    });
+
+    it('does not resurrect an interrupted call that the run manager reported terminal', async () => {
+        // A structured status outranks the marker at the owner, so the renderer must still show the
+        // finished card here instead of a live-looking sidechain.
+        await renderScreen(<SubAgentRunView
+            tool={{
+                state: 'completed',
+                input: { intent: 'delegate' },
+                result: { status: 'failed', summary: 'Request interrupted while retrying' },
+            } as any}
+            metadata={null as any}
+            messages={[
+                { kind: 'agent-text', id: 'm1', localId: null, createdAt: 1, text: 'TICK 5', isThinking: false },
+            ] as any}
+            detailLevel="full"
+        />);
+
+        expect(structuredResultViewPropsSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not show a streaming card once the owning process is gone', async () => {
+        // `unavailable` is only reached when the session process that hosted the sidechain ended,
+        // so its transcript is not live no matter how much of it was captured.
+        let tree!: renderer.ReactTestRenderer;
+        tree = (await renderScreen(<SubAgentRunView
+                    tool={{
+                        state: 'unavailable',
+                        input: { intent: 'delegate' },
+                        result: null,
+                    } as any}
+                    metadata={null as any}
+                    messages={[
+                        { kind: 'agent-text', id: 'm1', localId: null, createdAt: 1, text: 'TICK 6', isThinking: false },
+                    ] as any}
+                    detailLevel="full"
+                />)).tree;
+
+        expect(collectHostText(tree).join('\n')).not.toContain('TICK 6');
+    });
+
     it('renders a review digest from findingsDigest v2 shape', async () => {
         let tree!: renderer.ReactTestRenderer;
         tree = (await renderScreen(<SubAgentRunView

@@ -109,13 +109,14 @@ export function isTerminalSubagentStatus(status: SessionSubagentStatus): boolean
  * A `SubAgentRun` call the parent turn interrupted leaves an abort placeholder rather than a run
  * outcome; it is ambiguous, not failed, so external/liveness evidence may still upgrade it.
  *
- * Exported because the renderer needs the same answer: `SubAgentRunView` shows the still-streaming
- * sidechain instead of an error card for exactly these results, and it carried its own copy of this
- * walk. Two copies of "is this an interruption?" is two places for the marker string, the escaped
- * quotes and the depth bound to drift, and the failure would be silent — an interrupted run quietly
- * rendering as failed on one surface and as running on the other.
+ * Module-private on purpose. Surfaces that need this answer ask
+ * `deriveTranscriptExecutionRunStatus` instead of re-testing the marker, so the precedence between
+ * a reported status and this placeholder is decided once. When `SubAgentRunView` held its own copy,
+ * the two drifted apart on the `completed` lifecycle state and the same run rendered as finished on
+ * one surface while the store still called it open — silently, because each copy was locally
+ * plausible.
  */
-export function valueHasRequestInterruptedSignal(value: unknown, depth = 0): boolean {
+function valueHasRequestInterruptedSignal(value: unknown, depth = 0): boolean {
     if (depth > 5 || value == null) return false;
     if (typeof value === 'string') return value.replaceAll('\\"', '"').toLowerCase().includes('request interrupted');
     if (Array.isArray(value)) return value.some((item) => valueHasRequestInterruptedSignal(item, depth + 1));
@@ -129,7 +130,12 @@ export function deriveTranscriptExecutionRunStatus(tool: ToolCall): SessionSubag
     const resultStatus = readExecutionRunResultStatus(tool.result);
     if (tool.state === 'running' || resultStatus === 'running') return 'running';
     if (resultStatus) return mapExecutionRunStatusToSubagentStatus(resultStatus);
-    if (tool.state === 'error') return valueHasRequestInterruptedSignal(tool.result) ? 'unknown' : 'failed';
+    // Below the reported status, above the lifecycle arms. An interrupted parent turn closes the
+    // outer call with an abort placeholder and no run outcome, and the lifecycle state it lands on
+    // is not ours to choose: `completed` carries the same placeholder as `error`, where the success
+    // arm below would turn an interruption marker into a fabricated `succeeded`.
+    if (valueHasRequestInterruptedSignal(tool.result)) return 'unknown';
+    if (tool.state === 'error') return 'failed';
     if (tool.state === 'completed') return 'succeeded';
     return 'unknown';
 }

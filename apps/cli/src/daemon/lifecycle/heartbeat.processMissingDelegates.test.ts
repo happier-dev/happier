@@ -104,7 +104,7 @@ describe('startDaemonHeartbeatLoop process-missing delegation', () => {
     expect(pidToTrackedSession.has(pid)).toBe(false);
   });
 
-  it('delegates live pids to onChildExited when their stored hash belongs to a non-Happier process', async () => {
+  it('does not treat legacy command drift as proof that a live pid was reused', async () => {
     vi.mocked(readDaemonState).mockResolvedValue({
       pid: process.pid,
       httpPort: 4001,
@@ -162,9 +162,28 @@ describe('startDaemonHeartbeatLoop process-missing delegation', () => {
 
     await tick!();
 
-    expect(onChildExitedMock).toHaveBeenCalledTimes(1);
-    expect(onChildExitedMock).toHaveBeenCalledWith(pid, expect.objectContaining({ reason: 'process-reused' }));
-    expect(pidToTrackedSession.has(pid)).toBe(false);
+    expect(onChildExitedMock).not.toHaveBeenCalled();
+    expect(pidToTrackedSession.has(pid)).toBe(true);
+  });
+
+  it('prunes a live pid when the process-instance fingerprint proves reuse', async () => {
+    const tracked = {
+      startedBy: 'terminal',
+      pid: 555557,
+      processCommandHash: 'a'.repeat(64),
+      processInstanceFingerprint: 'linux-proc:old',
+    } as const;
+    const { getTrackedSessionHeartbeatPruneReason } = await import('./heartbeat');
+
+    expect(getTrackedSessionHeartbeatPruneReason({
+      isPidAlive: true,
+      trackedSession: tracked,
+      currentIdentity: {
+        kind: 'happy',
+        processCommandHash: 'b'.repeat(64),
+        processInstanceFingerprint: 'linux-proc:new',
+      },
+    })).toBe('process-reused');
   });
 
   it('does not prune a daemon-owned session while its child process handle is still live', async () => {

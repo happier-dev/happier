@@ -82,14 +82,19 @@ export type ConnectedServiceCredentialPlainResponse = Readonly<{
 }> & ConnectedServiceCredentialRevisionBoundaryV1;
 
 export type ConnectedServiceCredentialApi = Readonly<{
-  getAccountEncryptionMode?: () => Promise<'e2ee' | 'plain' | 'unknown'>;
+  getAccountEncryptionMode?: (options?: Readonly<{
+    refresh?: boolean;
+    signal?: AbortSignal;
+  }>) => Promise<'e2ee' | 'plain' | 'unknown'>;
   getConnectedServiceCredentialSealed: (params: {
     serviceId: ConnectedServiceId;
     profileId: string;
+    signal?: AbortSignal;
   }) => Promise<ConnectedServiceCredentialSealedResponse | null>;
   getConnectedServiceCredentialPlain?: (params: {
     serviceId: ConnectedServiceId;
     profileId: string;
+    signal?: AbortSignal;
   }) => Promise<ConnectedServiceCredentialPlainResponse | null>;
 }>;
 
@@ -100,6 +105,7 @@ export type ConnectedServiceAuthGroupApi = Readonly<{
   getConnectedServiceAuthGroup: (params: {
     serviceId: ConnectedServiceId;
     groupId: string;
+    signal?: AbortSignal;
   }) => Promise<ConnectedServiceAuthGroupV1 | null>;
 }>;
 
@@ -146,7 +152,10 @@ export function createConnectedServiceCredentialApi(
   const token = credentials.token;
 
   return {
-    getAccountEncryptionMode: async () => getAccountEncryptionMode({ token }),
+    getAccountEncryptionMode: async (options) => getAccountEncryptionMode({
+      token,
+      ...(options?.signal ? { signal: options.signal } : {}),
+    }),
     getConnectedServiceCredentialSealed: async (params) => getConnectedServiceCredentialSealed({ token, ...params }),
     getConnectedServiceCredentialPlain: async (params) => getConnectedServiceCredentialPlain({ token, ...params }),
     listConnectedServiceAuthGroups: async (params) => listConnectedServiceAuthGroups({ token, ...params }),
@@ -156,6 +165,7 @@ export function createConnectedServiceCredentialApi(
 
 export async function getAccountEncryptionMode(params: Readonly<{
   token: string;
+  signal?: AbortSignal;
 }>): Promise<'e2ee' | 'plain' | 'unknown'> {
   const serverUrl = resolveServerHttpBaseUrl();
   try {
@@ -164,6 +174,7 @@ export async function getAccountEncryptionMode(params: Readonly<{
       {
         headers: authHeaders(params.token),
         timeout: resolveConnectedServicesServerApiTimeoutMs(),
+        signal: params.signal,
       },
     );
     if (response.status === 404) return 'e2ee';
@@ -188,6 +199,7 @@ export async function getConnectedServiceCredentialSealed(params: Readonly<{
   token: string;
   serviceId: ConnectedServiceId;
   profileId: string;
+  signal?: AbortSignal;
 }>): Promise<ConnectedServiceCredentialSealedResponse | null> {
   const serverUrl = resolveServerHttpBaseUrl();
   const serviceId = encodeURIComponent(params.serviceId);
@@ -199,6 +211,7 @@ export async function getConnectedServiceCredentialSealed(params: Readonly<{
       {
         headers: authHeaders(params.token),
         timeout: resolveConnectedServicesServerApiTimeoutMs(),
+        signal: params.signal,
       },
     );
     if (response.status !== 200) {
@@ -251,6 +264,7 @@ export async function getConnectedServiceCredentialPlain(params: Readonly<{
   token: string;
   serviceId: ConnectedServiceId;
   profileId: string;
+  signal?: AbortSignal;
 }>): Promise<ConnectedServiceCredentialPlainResponse | null> {
   const serverUrl = resolveServerHttpBaseUrl();
   const serviceId = encodeURIComponent(params.serviceId);
@@ -262,6 +276,7 @@ export async function getConnectedServiceCredentialPlain(params: Readonly<{
       {
         headers: authHeaders(params.token),
         timeout: resolveConnectedServicesServerApiTimeoutMs(),
+        signal: params.signal,
       },
     );
     if (response.status !== 200) {
@@ -350,6 +365,7 @@ export async function getConnectedServiceAuthGroup(params: Readonly<{
   token: string;
   serviceId: ConnectedServiceId;
   groupId: string;
+  signal?: AbortSignal;
 }>): Promise<ConnectedServiceAuthGroupV1 | null> {
   const serverUrl = resolveServerHttpBaseUrl();
   const serviceId = encodeURIComponent(params.serviceId);
@@ -361,6 +377,7 @@ export async function getConnectedServiceAuthGroup(params: Readonly<{
       {
         headers: authHeaders(params.token),
         timeout: resolveConnectedServicesServerApiTimeoutMs(),
+        signal: params.signal,
       },
     );
     if (response.status !== 200) {

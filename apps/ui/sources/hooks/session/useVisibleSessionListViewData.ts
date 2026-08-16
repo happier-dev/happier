@@ -231,6 +231,7 @@ function buildVisibleSessionListViewData(
         retainedAttentionPlacements?: ReadonlyArray<SessionListRetainedAttentionPlacement>;
         retainWorkingSessionKeys?: ReadonlyArray<string>;
         nowMs?: number;
+        previousVisible?: ReadonlyArray<SessionListViewItem> | null;
     }> = {},
 ): SessionListViewItem[] | null {
     if (!state.folderSource) return state.folderSource;
@@ -242,6 +243,7 @@ function buildVisibleSessionListViewData(
         index: indexResult.visibleIndex,
         source: state.folderSource,
         sourceIndex: indexResult.sourceIndex,
+        previous: options.previousVisible,
     });
 }
 
@@ -365,6 +367,7 @@ function useVisibleSessionListComputation(
                 retainedAttentionPlacements,
                 retainWorkingSessionKeys,
                 nowMs: runtimeNowMs,
+                previousVisible,
             });
         return {
             visible: reuseStableVisibleSessionListRows(
@@ -431,6 +434,16 @@ function areVisibleSessionListRowsEquivalent(
     return buildSessionListShellViewItemSignature(previousItem) === buildSessionListShellViewItemSignature(nextItem);
 }
 
+/**
+ * Value-equivalence backstop for rows the build could not preserve by identity.
+ *
+ * `buildSessionListViewDataFromIndex` owns identity for rows whose index item and source
+ * row are unchanged, which covers every row a normal push leaves alone; this pass only
+ * has to catch the narrower case where a row was rebuilt around a *different but equal*
+ * session object (a full source refresh), which identity cannot see. Rows the build
+ * already reused short-circuit on the first `previousItem === nextItem` comparison, so
+ * the signature scan runs for genuinely changed rows only.
+ */
 function reuseStableVisibleSessionListRows(
     previousVisible: ReadonlyArray<SessionListViewItem> | null | undefined,
     nextVisible: SessionListViewItem[] | null,

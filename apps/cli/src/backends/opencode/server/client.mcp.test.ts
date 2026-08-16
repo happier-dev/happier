@@ -47,11 +47,16 @@ describe('createOpenCodeServerRuntimeClient (MCP)', () => {
   });
 
   it('POSTs to /mcp with directory query and JSON body', async () => {
-    const fetchSpy = vi.fn(async (_url: any, _init?: any) => createOkJsonResponse({}) as any);
+    const fetchSpy = vi.fn(async (_url: any, _init?: any) => createOkJsonResponse({
+      'my-mcp': { status: 'connected' },
+    }) as any);
     vi.stubGlobal('fetch', fetchSpy as any);
 
     const client = await createOpenCodeServerRuntimeClient({ directory: '/tmp', messageBuffer: { push: () => {} } as any });
-    await client.mcpAdd({ name: 'my-mcp', config: { type: 'local', enabled: true } });
+    await expect(client.mcpAdd({
+      name: 'my-mcp',
+      config: { type: 'local', enabled: true },
+    })).resolves.toEqual({ status: 'connected' });
 
     const lastCall = fetchSpy.mock.calls.at(-1);
     expect(lastCall).toBeDefined();
@@ -66,6 +71,26 @@ describe('createOpenCodeServerRuntimeClient (MCP)', () => {
     expect(JSON.parse(String((init as any).body))).toEqual({
       name: 'my-mcp',
       config: { type: 'local', enabled: true },
+    });
+  });
+
+  it('returns the named MCP failure status from an HTTP 200 response', async () => {
+    const fetchSpy = vi.fn(async () => createOkJsonResponse({
+      happier: { status: 'failed', error: 'bridge startup failed' },
+    }) as any);
+    vi.stubGlobal('fetch', fetchSpy as any);
+
+    const client = await createOpenCodeServerRuntimeClient({
+      directory: '/tmp',
+      messageBuffer: { push: () => {} } as any,
+    });
+
+    await expect(client.mcpAdd({
+      name: 'happier',
+      config: { type: 'local', enabled: true },
+    })).resolves.toEqual({
+      status: 'failed',
+      error: 'bridge startup failed',
     });
   });
 

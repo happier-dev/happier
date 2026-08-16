@@ -18,6 +18,7 @@ export type SessionRetentionPolicy = KeepForeverRetentionPolicy | DeleteInactive
 export type RetentionDomainPolicies = Readonly<{
     sessions: SessionRetentionPolicy;
     sessionMessages: RetentionAgePolicy;
+    sessionSidechainMessages: RetentionAgePolicy;
     accountChanges: RetentionAgePolicy;
     voiceSessionLeases: RetentionAgePolicy;
     userFeedItems: RetentionAgePolicy;
@@ -38,5 +39,7 @@ export type RetentionPolicy = Readonly<{
     batchSize: number;
     dryRun: boolean;
     maxDeletesPerRulePerRun: number;
+    sweepTimeBudgetMs?: number;
+    maxCandidatesPerRulePerRun?: number;
     domains: RetentionDomainPolicies;
 }>;

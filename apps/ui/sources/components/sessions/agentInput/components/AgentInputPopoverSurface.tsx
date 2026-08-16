@@ -1,5 +1,5 @@
 import * as React from "react";
-import { View } from "react-native";
+import { View, type NativeScrollEvent, type NativeSyntheticEvent } from "react-native";
 import {
   FloatingOverlay,
   type FloatingOverlayArrow,
@@ -23,6 +23,13 @@ export type AgentInputPopoverSurfaceProps = Readonly<{
   edgeIndicators?: boolean | Readonly<{ size?: number; opacity?: number }>;
   arrow?: FloatingOverlayArrow;
   initialVisibility?: Partial<ScrollEdgeVisibility>;
+  /**
+   * Told that this surface's scroller moved, for content that must not re-lay-out mid-scroll.
+   *
+   * The surface owns the scroller its content does not, so a list inside it cannot know it is
+   * being scrolled without being told.
+   */
+  onScroll?: (event: NativeSyntheticEvent<NativeScrollEvent>) => void;
 }>;
 
 export const AgentInputPopoverSurface = React.memo(
@@ -38,6 +45,7 @@ export const AgentInputPopoverSurface = React.memo(
       edgeIndicators = true,
       arrow = false,
       initialVisibility,
+      onScroll,
     } = props;
 
     return (
@@ -52,6 +60,7 @@ export const AgentInputPopoverSurface = React.memo(
           arrow={arrow}
           surfaceChrome="theme"
           initialVisibility={initialVisibility}
+          onScrollViewScroll={onScroll}
         >
           {children}
         </FloatingOverlay>

@@ -32,8 +32,8 @@ import { teleportVoiceAgentToSessionRoot } from '@/voice/agent/teleportVoiceAgen
 import { useHasGlobalVoiceAgentConversation } from '@/voice/agent/useHasGlobalVoiceAgentConversation';
 import { navigateWithBlurOnWeb } from '@/utils/platform/navigateWithBlurOnWeb';
 import { deferOnWeb } from '@/utils/platform/deferOnWeb';
-import { readMachineTargetForSession } from '@/sync/ops/sessionMachineTarget';
 import { useSessionHandoffSourceReachability } from '@/sync/domains/sessionHandoff/useSessionHandoffSourceReachability';
+import { useSessionMachineTarget } from '@/components/sessions/model/useSessionMachineTarget';
 import { completeSessionForkNavigation } from '@/components/sessions/transcript/forkContext/completeSessionForkNavigation';
 import { createSessionActionTarget } from '@/components/sessions/actions/sessionActionContext';
 import { executeSessionAction } from '@/components/sessions/actions/sessionActionExecution';
@@ -45,6 +45,7 @@ import {
   SESSION_ACTION_MARK_READ_ID,
   SESSION_ACTION_MARK_UNREAD_ID,
   SESSION_ACTION_RENAME_ID,
+  SESSION_ACTION_RESUME_ID,
   SESSION_ACTION_STOP_ID,
   SESSION_ACTION_UNARCHIVE_ID,
 } from '@/components/sessions/actions/sessionActionIds';
@@ -52,6 +53,7 @@ import { buildSessionMetadataStabilitySignature } from '@/sync/domains/session/m
 import { getSessionName } from '@/utils/sessions/sessionUtils';
 import { SESSION_HEADER_ICON_SIZE_PX } from '@/components/sessions/actions/sessionHeaderIconMetrics';
 import { Icon } from '@/components/ui/icons/Icon';
+import { emitSessionResumeRequest } from '@/components/sessions/model/sessionResumeRequests';
 
 type SessionHeaderActionMenuProps = Readonly<{
   sessionId: string;
@@ -181,13 +183,11 @@ function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
       currentUserId: !session.accessLevel && typeof session.owner === 'string' ? session.owner : null,
       isConnected: session.active === true,
       isPinned: false,
+      resumeCapabilityOptions: { accountSettings: settings },
     }),
-    [readStateSignature, session, sessionServerId],
+    [readStateSignature, session, sessionServerId, settings],
   );
-  const reachableMachineId = React.useMemo(
-    () => readMachineTargetForSession(props.sessionId)?.machineId ?? null,
-    [props.sessionId, session.updatedAt, session.metadata],
-  );
+  const reachableMachineId = useSessionMachineTarget(props.sessionId)?.machineId ?? null;
   const sourceMachineId = React.useMemo(
     () => resolveSessionHandoffSourceMachineId({
       reachableMachineId,
@@ -354,6 +354,25 @@ function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
               );
             }
           })(), { tag: 'SessionHeaderActionMenu.execute.sessionRename' });
+          return;
+        }
+        if (actionId === SESSION_ACTION_RESUME_ID) {
+          fireAndForget(executeSessionAction({
+            actionId: SESSION_ACTION_RESUME_ID,
+            target: sessionActionTarget,
+            context: {
+              operations: {
+                resumeSession: async (sessionId) => {
+                  await emitSessionResumeRequest(sessionId);
+                },
+              },
+            },
+          }), {
+            tag: 'SessionHeaderActionMenu.execute.sessionResume',
+            onError: () => {
+              Modal.alert(t('common.error'), t('session.resumeFailed'));
+            },
+          });
           return;
         }
         if (actionId === SESSION_ACTION_STOP_ID || actionId === SESSION_ACTION_ARCHIVE_ID) {

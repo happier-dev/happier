@@ -7,6 +7,7 @@ import { decodeBase64, decrypt, encodeBase64, encrypt } from '../encryption';
 import { backoff, delayUnrefAbortable } from '@/utils/time';
 import { LruSet } from '@/utils/collections/lru';
 import { readNonBlankOpaqueIdentifier } from '@/utils/opaqueIdentifiers';
+import { createSerializedWorkQueueDiagnostics, type SerializedWorkDiagnosticContext } from '@/utils/serializedWorkQueueDiagnostics';
 import { readPendingLocalId } from '@happier-dev/protocol';
 import { inferAgentIdFromSessionMetadata } from '@happier-dev/agents';
 import { configuration } from '@/configuration';
@@ -617,8 +618,8 @@ export class ApiSessionClient extends EventEmitter {
     private readonly committedLocalIdsAwaitingEcho = new Set<string>();
     private readonly pendingQueueMaterializedLocalIds = new Set<string>();
     private readonly canonicalPendingDeliveryByLocalId = new Map<string, PendingMaterializationDeliveryState>();
-    // A successfully blocked server row is no longer an executable claim predecessor. Its local
-    // identity remains tracked only so exact late provider evidence can still settle that row.
+    // Generic reversible provider-path blocks retain identity so exact late provider evidence can
+    // still settle the row. A proven pre-provider lifecycle failure retires it after durable block.
     private readonly serverBlockedCanonicalPendingDeliveryLocalIds = new Set<string>();
     // A source-cutover deferral has proven no Provider effect. Preserve the server's delivering
     // claim through predecessor shutdown so the successor can rejoin its ordinary first delivery.
@@ -690,6 +691,7 @@ export class ApiSessionClient extends EventEmitter {
      */
     private sessionConnectionEpoch = 0;
     private sessionSyncPendingInputServerContract: SessionSyncPendingInputServerContractResult | null = null;
+    private pendingInputReadinessAbortController: AbortController | null = null;
     private changesSyncInFlight: Promise<void> | null = null;
     private readonly sessionChangesCursorByAccountId = new Map<string, number>();
     private accountIdPromise: Promise<string> | null = null;
@@ -710,6 +712,18 @@ export class ApiSessionClient extends EventEmitter {
     private readonly transcriptStorage: 'persisted' | 'direct';
     private readonly transcriptRecoveryErrorStateByLocalId = new Map<string, { lastLoggedAt: number; suppressed: number }>();
     private messageCommitQueueTail: Promise<unknown> = Promise.resolve();
+    private bestEffortMessageCommitQueueTail: Promise<unknown> = Promise.resolve();
+    private requiredMessageCommitQueueTail: Promise<unknown> = Promise.resolve();
+    private readonly messageCommitQueueDiagnostics = createSerializedWorkQueueDiagnostics({
+        queueName: 'session-message-commit',
+        slowAfterMs: 30_000,
+        report: (report) => {
+            logger.infoFile('[SOCKET] Serialized message commit queue diagnostic', {
+                sessionId: this.sessionId,
+                ...report,
+            });
+        },
+    });
     private daemonTurnLifecycleNotifyTail: Promise<void> = Promise.resolve();
     private readonly pendingSessionTurnWrites = new Set<Promise<void>>();
     private readonly committedUserMessageSeqTracker = new CommittedUserMessageSeqTracker();
@@ -1227,15 +1241,41 @@ export class ApiSessionClient extends EventEmitter {
                 ) {
                     return;
                 }
-                this.sessionSyncPendingInputServerContract = serverContract;
+                this.pendingInputReadinessAbortController?.abort();
+                const pendingInputReadinessAbortController = new AbortController();
+                this.pendingInputReadinessAbortController = pendingInputReadinessAbortController;
+                const isResolvedContractCurrent = () => (
+                    serverContract.sessionConnectionEpoch === this.sessionConnectionEpoch
+                    && serverContract.socket === this.socket
+                    && this.socket === currentTransportSocket
+                    && this.socket.connected === true
+                    && !this.closed
+                    && !this.runtimeTerminationStarted
+                );
+                const clearPendingInputReadiness = () => {
+                    if (this.pendingInputReadinessAbortController === pendingInputReadinessAbortController) {
+                        this.pendingInputReadinessAbortController = null;
+                    }
+                };
                 await this.sessionMutationOutbox.setSessionSyncPendingInputServerContract(serverContract);
                 if (serverContract.mode === 'auth_failed') {
+                    this.sessionSyncPendingInputServerContract = serverContract;
+                    clearPendingInputReadiness();
                     this.sessionConnectionSupervisor?.reportProbeResult?.({
                         status: 'auth_failed',
                         statusCode: 401,
                         errorMessage: 'Authentication failed while resolving session compatibility',
                     });
                     return;
+                }
+
+                const requiresRuntimeActivityPublisherReadiness = (
+                    supportsRuntimeActivityV2(serverContract)
+                    && supportsPendingInputV1(serverContract)
+                );
+                if (!requiresRuntimeActivityPublisherReadiness) {
+                    this.sessionSyncPendingInputServerContract = serverContract;
+                    clearPendingInputReadiness();
                 }
 
                 if (this.shouldKeepUserSocketConnected()) {
@@ -1253,6 +1293,31 @@ export class ApiSessionClient extends EventEmitter {
                     });
                 }
 
+                await this.sessionMutationOutbox.flush('connect').catch((error) => {
+                    logger.debug('[API] Failed to flush durable session mutations on reconnect', {
+                        error: serializeAxiosErrorForLog(error),
+                    });
+                });
+                if (requiresRuntimeActivityPublisherReadiness) {
+                    while (
+                        isResolvedContractCurrent()
+                        && this.pendingInputReadinessAbortController === pendingInputReadinessAbortController
+                    ) {
+                        const tail = this.sessionMutationOutbox.readRuntimeActivitySnapshotTail();
+                        if (tail.custody === null && tail.settlement !== null) {
+                            this.sessionSyncPendingInputServerContract = serverContract;
+                            clearPendingInputReadiness();
+                            break;
+                        }
+                        const changed = await this.sessionMutationOutbox.waitForRuntimeActivitySnapshotTailChange(
+                            tail.sequence,
+                            pendingInputReadinessAbortController.signal,
+                        );
+                        if (!changed) return;
+                    }
+                    if (!isResolvedContractCurrent()) return;
+                }
+
                 await this.syncChangesOnConnect({ reason: isReconnect ? 'reconnect' : 'connect' }).catch((error) => {
                     logger.debug('[API] Session changes sync on connect failed (non-fatal)', {
                         error: serializeAxiosErrorForLog(error),
@@ -1267,15 +1332,12 @@ export class ApiSessionClient extends EventEmitter {
                         error: serializeAxiosErrorForLog(error),
                     });
                 });
-                await this.sessionMutationOutbox.flush('connect').catch((error) => {
-                    logger.debug('[API] Failed to flush durable session mutations on reconnect', {
-                        error: serializeAxiosErrorForLog(error),
-                    });
-                });
             },
             onDisconnected: async ({ event }) => {
                 logger.debug('[API] Socket disconnected:', event.reason ?? 'unknown');
                 this.clearReconnectPresenceReassertTimer();
+                this.pendingInputReadinessAbortController?.abort();
+                this.pendingInputReadinessAbortController = null;
                 await invalidateServerContract();
                 if (this.socket === currentTransportSocket) {
                     this.rpcHandlerManager.onSocketDisconnect();
@@ -1288,6 +1350,8 @@ export class ApiSessionClient extends EventEmitter {
             },
             onAuthFailed: async () => {
                 this.clearReconnectPresenceReassertTimer();
+                this.pendingInputReadinessAbortController?.abort();
+                this.pendingInputReadinessAbortController = null;
                 await invalidateServerContract();
                 if (this.socket === currentTransportSocket) {
                     this.rpcHandlerManager.onSocketDisconnect();
@@ -2066,7 +2130,14 @@ export class ApiSessionClient extends EventEmitter {
             if (params.retryToken && !this.sessionMessageCommitRetry.readCurrent(params.retryToken)) {
                 continue;
             }
-            await this.enqueueMessageCommit(() =>
+            await this.enqueueMessageCommit('best-effort', {
+                operation: 'reconnect-flush',
+                details: {
+                    localId: params.localId,
+                    requireCommit: false,
+                    connectionEpoch: this.userSocketSettingsConnectionEpoch,
+                },
+            }, () =>
                 this.commitSessionMessage({
                     message: params.message,
                     localId: params.localId,
@@ -3548,19 +3619,50 @@ export class ApiSessionClient extends EventEmitter {
         return null;
     }
 
-    private enqueueMessageCommit<T>(fn: () => Promise<T>): Promise<T> {
-        const queued = this.messageCommitQueueTail.then(fn, fn);
-        this.messageCommitQueueTail = queued.then(
+    private enqueueMessageCommit<T>(
+        delivery: 'best-effort' | 'required',
+        context: SerializedWorkDiagnosticContext,
+        fn: () => Promise<T>,
+    ): Promise<T> {
+        const tracked = this.messageCommitQueueDiagnostics.track(context);
+        const laneTail = delivery === 'required'
+            ? this.requiredMessageCommitQueueTail
+            : this.bestEffortMessageCommitQueueTail;
+        // Keep each class ordered and paced, but do not make a slow/lost best-effort ACK the
+        // dispatch gate for required transcript and lifecycle commits. The relay remains the
+        // canonical per-socket mutation-order owner when the two lanes meet.
+        const dispatched = laneTail.then(
+            () => tracked.run(fn),
+            () => tracked.run(fn),
+        );
+        const settledLane = dispatched.then(
             () => undefined,
             () => undefined,
         );
-        return queued;
+        if (delivery === 'required') {
+            this.requiredMessageCommitQueueTail = settledLane;
+        } else {
+            this.bestEffortMessageCommitQueueTail = settledLane;
+        }
+        // Retain every bounded ACK settlement for flush()/close() without coupling dispatch.
+        this.messageCommitQueueTail = Promise.allSettled([
+            this.messageCommitQueueTail,
+            dispatched,
+        ]).then(() => undefined);
+        return dispatched;
     }
 
     private scheduleCommitRetry(retryToken: SessionMessageCommitRetryToken): void {
         if (!this.pendingMaterializedLocalIds.has(retryToken.localId)) return;
         const scheduled = this.sessionMessageCommitRetry.schedule(retryToken, (readyToken) => {
-            void this.enqueueMessageCommit(async () => {
+            void this.enqueueMessageCommit('best-effort', {
+                operation: 'best-effort-retry',
+                details: {
+                    localId: readyToken.localId,
+                    requireCommit: false,
+                    connectionEpoch: this.userSocketSettingsConnectionEpoch,
+                },
+            }, async () => {
                 const current = this.sessionMessageCommitRetry.readCurrent(readyToken);
                 if (!current || !this.pendingMaterializedLocalIds.has(readyToken.localId)) return null;
                 return await this.commitSessionMessage({
@@ -3603,7 +3705,16 @@ export class ApiSessionClient extends EventEmitter {
         logErrorMessage: string;
         markAsUserMessage?: boolean;
     }): void {
-        void this.enqueueMessageCommit(() =>
+        void this.enqueueMessageCommit('best-effort', {
+            operation: 'best-effort-commit',
+            details: {
+                localId: params.localId,
+                messageRole: params.messageRole ?? null,
+                sessionEventType: params.sessionEventType ?? null,
+                requireCommit: false,
+                connectionEpoch: this.userSocketSettingsConnectionEpoch,
+            },
+        }, () =>
             this.commitSessionMessage({
                 message: params.message,
                 localId: params.localId,
@@ -3926,7 +4037,15 @@ export class ApiSessionClient extends EventEmitter {
         recordCodexToolTraceEventIfNeeded({ sessionId: this.sessionId, body: normalizedBody });
         this.logSendWhileDisconnected('Codex message', { type: normalizedBody?.type });
 
-        const result = requireExactCommitResult(await this.enqueueMessageCommit(() =>
+        const result = requireExactCommitResult(await this.enqueueMessageCommit('required', {
+            operation: 'codex-message-commit',
+            details: {
+                localId,
+                messageType: typeof normalizedBody?.type === 'string' ? normalizedBody.type : null,
+                requireCommit: true,
+                connectionEpoch: this.userSocketSettingsConnectionEpoch,
+            },
+        }, () =>
             this.commitSessionMessage({
                 message: this.buildOutboundSessionMessagePayload(content),
                 localId,
@@ -4229,7 +4348,14 @@ export class ApiSessionClient extends EventEmitter {
     ): Promise<void> {
         const content = this.buildUserTextMessageContent(text, opts.meta);
         const payload = this.buildOutboundSessionMessagePayload(content);
-        await this.enqueueMessageCommit(() =>
+        await this.enqueueMessageCommit('required', {
+            operation: 'user-message-commit',
+            details: {
+                localId: opts.localId,
+                requireCommit: true,
+                connectionEpoch: this.userSocketSettingsConnectionEpoch,
+            },
+        }, () =>
             this.commitSessionMessage({
                 message: payload,
                 localId: opts.localId,
@@ -4411,7 +4537,16 @@ export class ApiSessionClient extends EventEmitter {
         }
 
         const payload = this.buildOutboundSessionMessagePayload(content);
-        const commitResult = await this.enqueueMessageCommit(() =>
+        const commitResult = await this.enqueueMessageCommit('required', {
+            operation: 'agent-message-commit',
+            details: {
+                localId,
+                provider,
+                messageType: normalizedBody.type,
+                requireCommit: true,
+                connectionEpoch: this.userSocketSettingsConnectionEpoch,
+            },
+        }, () =>
             this.commitSessionMessage({ message: payload, localId, sidechainId, messageRole: resolveAcpSessionMessageRole(normalizedBody), requireCommit: true }),
         );
         this.observeTurnAssistantTextFromSessionContent(content, {
@@ -4440,7 +4575,16 @@ export class ApiSessionClient extends EventEmitter {
             recordAcpToolTraceEventIfNeeded({ sessionId: this.sessionId, provider, body: normalizedBody, localId });
         }
 
-        const result = requireExactCommitResult(await this.enqueueMessageCommit(() =>
+        const result = requireExactCommitResult(await this.enqueueMessageCommit('required', {
+            operation: 'agent-message-exact-commit',
+            details: {
+                localId,
+                provider,
+                messageType: normalizedBody.type,
+                requireCommit: true,
+                connectionEpoch: this.userSocketSettingsConnectionEpoch,
+            },
+        }, () =>
             this.commitSessionMessage({
                 message: this.buildOutboundSessionMessagePayload(content),
                 localId,
@@ -4617,7 +4761,15 @@ export class ApiSessionClient extends EventEmitter {
 
         this.logSendWhileDisconnected('session event', { eventType: event.type });
 
-        return requireExactCommitResult(await this.enqueueMessageCommit(() =>
+        return requireExactCommitResult(await this.enqueueMessageCommit('required', {
+            operation: 'session-event-commit',
+            details: {
+                localId,
+                eventType: event.type,
+                requireCommit: true,
+                connectionEpoch: this.userSocketSettingsConnectionEpoch,
+            },
+        }, () =>
             this.commitSessionMessage({
                 message: this.buildOutboundSessionMessagePayload(content),
                 localId,
@@ -4649,8 +4801,9 @@ export class ApiSessionClient extends EventEmitter {
             });
         }
 
-        // Idle keep-alive remains volatile, while reconnect replay is non-volatile and includes
-        // the latest primary-turn snapshot so missed terminal writes self-heal.
+        // Presence remains reliable for an open canonical turn even when the provider's foreground
+        // thinking projection is idle (for example while Codex subagents/background work continue).
+        // This changes only transport reliability: the original thinking value stays authoritative.
         this.emitSessionAlive(payload, { volatileWhenIdle: true });
     }
 
@@ -4723,7 +4876,11 @@ export class ApiSessionClient extends EventEmitter {
             return false;
         }
 
-        if (payload.thinking || !options.volatileWhenIdle) {
+        if (
+            payload.thinking
+            || isActiveLatestTurnStatus(payload.latestTurnStatus)
+            || !options.volatileWhenIdle
+        ) {
             this.socket.emit('session-alive', payload);
             return true;
         }
@@ -5035,6 +5192,11 @@ export class ApiSessionClient extends EventEmitter {
         return exactLocalId !== null && this.acceptedProviderInputLocalIds.has(exactLocalId);
     }
 
+    hasCanonicalPendingProviderInputDelivery(localId: string): boolean {
+        const exactLocalId = readPendingLocalId(localId);
+        return exactLocalId !== null && this.canonicalPendingDeliveryByLocalId.has(exactLocalId);
+    }
+
     updateMetadata(handler: (metadata: Metadata) => Metadata): Promise<void> {
         return this.metadataLock.inLock(async () => {
             await this.waitForSessionSocketOnlineForAckWrite('update-metadata');
@@ -5333,6 +5495,8 @@ export class ApiSessionClient extends EventEmitter {
 
     async close() {
         logger.debug('[API] socket.close() called');
+        this.pendingInputReadinessAbortController?.abort();
+        this.pendingInputReadinessAbortController = null;
         this.acceptedCanonicalPendingDeliveryOperationAbortController.abort();
         this.sessionMessageCommitRetry.dispose();
         if (this.startupMessageCatchUpRetryTimer) {
@@ -5797,9 +5961,19 @@ export class ApiSessionClient extends EventEmitter {
                         },
                     };
                 }
-                logger.debug('[pendingQueue] materialize request failed', {
+                logger.infoFile('[pendingQueue] materialize request failed', {
                     sessionId: this.sessionId,
-                    error: serializeAxiosErrorForLog(error),
+                    error: {
+                        ...serializeOutboundError(error),
+                        ...(error instanceof PendingQueueMaterializationTransportAmbiguousError
+                            ? {
+                                diagnosticCode: error.diagnosticCode,
+                                classification: error.classification,
+                                ...(error.serverError ? { serverError: error.serverError } : {}),
+                                ...(error.retryAfterMs !== undefined ? { retryAfterMs: error.retryAfterMs } : {}),
+                            }
+                            : {}),
+                    },
                 });
                 return {
                     didMaterialize: false,
@@ -5809,7 +5983,7 @@ export class ApiSessionClient extends EventEmitter {
                         // claim on the server. Ask the consumer to rejoin that same claim after a
                         // short delay; other transport failures remain connection-event driven.
                         ...(error instanceof PendingQueueMaterializationTransportAmbiguousError
-                            ? { retryAfterMs: 250 }
+                            ? { retryAfterMs: error.retryAfterMs ?? 250 }
                             : {}),
                     },
                 };
@@ -5990,6 +6164,16 @@ export class ApiSessionClient extends EventEmitter {
                         { canonicalOnly: false },
                     )
                     : false;
+                // Only the durable block proves the server row is retryable again. Retire every
+                // process-local claim then so an explicit reopen of this exact localId can be
+                // materialized; a failed block keeps custody and therefore fails closed.
+                if (didBlock && materializedLocalId) {
+                    this.clearCanonicalPendingDeliveryLocalState(materializedLocalId);
+                    logger.debug('[pendingQueue] retired unanswered pre-provider local custody after durable block', {
+                        sessionId: this.sessionId,
+                        localId: materializedLocalId,
+                    });
+                }
                 return {
                     didMaterialize: false,
                     result: { type: didBlock ? 'no_pending' : 'retryable_transport' },

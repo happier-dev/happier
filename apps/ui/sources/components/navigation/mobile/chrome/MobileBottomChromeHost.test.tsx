@@ -528,6 +528,23 @@ describe('MobileBottomChromeHost', () => {
         expect(cockpitBar.props.activeSurface).toBe('browse');
     });
 
+    it('does not let the transparent full-width chrome layer intercept content outside the floating bar', async () => {
+        pathState.pathname = '/session/session-1';
+        searchParamsState.id = 'session-1';
+        settingsState.mobileWorkspaceExperienceV1 = 'cockpit';
+
+        const { MobileBottomChromeHost } = await import('./MobileBottomChromeHost');
+        const screen = await renderScreen(<MobileBottomChromeHost />);
+
+        const cockpitBar = screen.tree.findByType('SessionCockpitTabBar' as never);
+        let currentChromeLayer = cockpitBar.parent;
+        while (currentChromeLayer && String(currentChromeLayer.type) !== 'View') {
+            currentChromeLayer = currentChromeLayer.parent;
+        }
+        expect(String(currentChromeLayer?.type)).toBe('View');
+        expect(currentChromeLayer?.props.pointerEvents).toBe('box-none');
+    });
+
     it('renders registered session cockpit chrome when the current session path is not a modeled surface route', async () => {
         pathState.pathname = '/session/session-1/file/src%2Findex.ts';
         searchParamsState.id = 'session-1';

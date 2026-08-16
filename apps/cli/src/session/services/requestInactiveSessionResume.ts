@@ -1,15 +1,21 @@
+import {
+  SPAWN_SESSION_ERROR_CODES,
+  type SpawnSessionErrorCode,
+  type SpawnSessionNonceResolution,
+} from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import { buildInactiveSessionResumeSpawnOptions } from '@/daemon/sessions/runtimeSnapshot/buildInactiveSessionResumeSpawnOptions';
 import type { Credentials } from '@/persistence';
 import type { RawSessionRecord } from '@/session/transport/http/sessionsHttp';
 import { callMachineRpc } from '@/session/transport/rpc/machineRpc';
+import { awaitSpawnedSessionId } from './awaitSpawnedSessionId';
 
 export type InactiveSessionResumeResult =
   | Readonly<{ ok: true }>
   | Readonly<{
       ok: false;
-      code: 'unsupported' | 'timeout';
+      code: 'session_archived' | 'unsupported' | 'timeout';
       message: string;
     }>;
 
@@ -17,12 +23,44 @@ function readNonEmptyString(value: unknown): string | null {
   return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
 }
 
-function buildMachineResumeRequest(options: NonNullable<ReturnType<typeof buildInactiveSessionResumeSpawnOptions>>) {
+function readSpawnSessionNonceResolution(value: unknown): SpawnSessionNonceResolution {
+  if (!value || typeof value !== 'object') return { status: 'unsupported' };
+  const record = value as Record<string, unknown>;
+  if (record.status === 'success') {
+    const sessionId = readNonEmptyString(record.sessionId);
+    return sessionId ? { status: 'success', sessionId } : { status: 'pending' };
+  }
+  if (record.status === 'pending' || record.status === 'not_found' || record.status === 'unsupported') {
+    return { status: record.status };
+  }
+  if (record.status === 'error') {
+    const errorCode = readNonEmptyString(record.errorCode);
+    const errorMessage = readNonEmptyString(record.errorMessage);
+    if (
+      errorCode
+      && errorMessage
+      && (Object.values(SPAWN_SESSION_ERROR_CODES) as string[]).includes(errorCode)
+    ) {
+      return {
+        status: 'error',
+        errorCode: errorCode as SpawnSessionErrorCode,
+        errorMessage,
+      };
+    }
+  }
+  return { status: 'unsupported' };
+}
+
+function buildMachineResumeRequest(
+  options: NonNullable<ReturnType<typeof buildInactiveSessionResumeSpawnOptions>>,
+  spawnNonce?: string,
+) {
   return {
     type: 'resume-session' as const,
     sessionId: options.existingSessionId,
     directory: options.directory,
     backendTarget: options.backendTarget,
+    ...(spawnNonce ? { spawnNonce } : {}),
     ...(options.resume ? { resume: options.resume } : {}),
     ...(options.agentRuntimeDescriptorV1 ? { agentRuntimeDescriptorV1: options.agentRuntimeDescriptorV1 } : {}),
     ...(options.connectedServices ? { connectedServices: options.connectedServices } : {}),
@@ -56,7 +94,16 @@ export async function requestInactiveSessionResume(params: Readonly<{
   rawSession: RawSessionRecord;
   metadata: Record<string, unknown>;
   timeoutMs?: number;
+  waitForReady?: boolean;
 }>): Promise<InactiveSessionResumeResult> {
+  const archivedAt = (params.rawSession as { archivedAt?: unknown }).archivedAt;
+  if (archivedAt !== null && archivedAt !== undefined) {
+    return {
+      ok: false,
+      code: 'session_archived',
+      message: 'Archived sessions must be unarchived before resume',
+    };
+  }
   const rawSessionId = readNonEmptyString(params.rawSession.id);
   if (!rawSessionId || rawSessionId !== params.sessionId) {
     return {
@@ -101,12 +148,17 @@ export async function requestInactiveSessionResume(params: Readonly<{
     };
   }
 
+  const startedAtMs = Date.now();
+  const readinessSpawnNonce = params.waitForReady === true
+    ? `inactive-session.resume:${params.sessionId}:${params.localId}`
+    : undefined;
+
   try {
     const response = await callMachineRpc({
       credentials: params.credentials,
       machineId,
       method: RPC_METHODS.SPAWN_HAPPY_SESSION,
-      request: buildMachineResumeRequest(options),
+      request: buildMachineResumeRequest(options, readinessSpawnNonce),
       ...(params.timeoutMs ? { timeoutMs: params.timeoutMs } : {}),
     });
     const responseSessionId = response && typeof response === 'object'
@@ -122,6 +174,48 @@ export async function requestInactiveSessionResume(params: Readonly<{
         ? (response as { errorMessage: string }).errorMessage
         : 'Inactive session resume was rejected; pending custody was retained';
       return { ok: false, code: 'unsupported', message };
+    }
+    if (!readinessSpawnNonce) {
+      return { ok: true };
+    }
+
+    const remainingTimeoutMs = typeof params.timeoutMs === 'number'
+      ? Math.max(0, params.timeoutMs - (Date.now() - startedAtMs))
+      : undefined;
+    if (remainingTimeoutMs === 0) {
+      return {
+        ok: false,
+        code: 'timeout',
+        message: 'Timed out waiting for the inactive session to become ready',
+      };
+    }
+    const ready = await awaitSpawnedSessionId({
+      result: {
+        type: 'success',
+        sessionIdStatus: 'pending',
+        spawnNonce: readinessSpawnNonce,
+      },
+      resolveSpawnSessionByNonce: async (nonce, remainingTimeoutMs) => readSpawnSessionNonceResolution(
+        await callMachineRpc({
+          credentials: params.credentials,
+          machineId,
+          method: RPC_METHODS.DAEMON_SPAWN_SESSION_RESOLVE,
+          request: { spawnNonce: nonce },
+          ...(typeof remainingTimeoutMs === 'number' ? { timeoutMs: remainingTimeoutMs } : {}),
+        }),
+      ),
+      ...(typeof remainingTimeoutMs === 'number' ? { timeoutMs: remainingTimeoutMs } : {}),
+    });
+    if (ready.type !== 'success' || ready.sessionId !== params.sessionId) {
+      return {
+        ok: false,
+        code: ready.type === 'error' && ready.errorCode === SPAWN_SESSION_ERROR_CODES.SESSION_WEBHOOK_TIMEOUT
+          ? 'timeout'
+          : 'unsupported',
+        message: ready.type === 'error'
+          ? ready.errorMessage
+          : 'Inactive session readiness resolved to a different session',
+      };
     }
     return { ok: true };
   } catch (error) {

@@ -186,6 +186,9 @@
       "environment": "production",
       "autoIncrement": true,
       "channel": "production",
+      "android": {
+        "resourceClass": "large"
+      },
       "env": {
         "APP_ENV": "production"
       }

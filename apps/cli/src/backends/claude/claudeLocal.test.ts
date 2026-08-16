@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { basename, dirname, join } from 'node:path';
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { PassThrough } from 'node:stream';
 import { logger } from '@/ui/logger';
@@ -26,9 +27,13 @@ const { mockSpawn, mockClaudeFindLastSession, mockResolveClaudeCliPath, mockIsCl
     mockIsClaudeCliJavaScriptFile: vi.fn(),
 }));
 
-vi.mock('node:child_process', () => ({
-    spawn: mockSpawn
-}));
+vi.mock('node:child_process', async () => {
+    const actual = await vi.importActual<typeof import('node:child_process')>('node:child_process');
+    return {
+        ...actual,
+        spawn: mockSpawn,
+    };
+});
 
 vi.mock('@/ui/logger', () => ({
     logger: {
@@ -294,7 +299,7 @@ describe('claudeLocal --continue handling', () => {
         expect(spawnArgs[promptIndex - 1]).toBe('--');
     });
 
-    it('injects --mcp-config when happierMcpConfigJson is provided', async () => {
+    it('injects --mcp-config through a temporary file and removes it after Claude exits', async () => {
         const mcpJson = JSON.stringify({
             mcpServers: { happier: { command: 'node', args: ['happier-mcp.mjs', '--url', 'http://127.0.0.1:1234'] } },
         });
@@ -312,7 +317,10 @@ describe('claudeLocal --continue handling', () => {
         const spawnArgs = mockSpawn.mock.calls[0][1];
         const idx = spawnArgs.indexOf('--mcp-config');
         expect(idx).toBeGreaterThan(-1);
-        expect(spawnArgs[idx + 1]).toBe(mcpJson);
+        const configPath = spawnArgs[idx + 1];
+        expect(configPath).not.toBe(mcpJson);
+        expect(JSON.stringify(spawnArgs)).not.toContain('http://127.0.0.1:1234');
+        await expect(stat(configPath)).rejects.toMatchObject({ code: 'ENOENT' });
     });
 
     it('redacts MCP config payloads from Claude argument debug logs', async () => {
@@ -369,8 +377,13 @@ describe('claudeLocal --continue handling', () => {
             .filter((entry) => entry.value === '--mcp-config')
             .map((entry) => entry.index);
         expect(mcpFlags.length).toBe(2);
-        expect(spawnArgs[mcpFlags[0]! + 1]).toBe(userMcp);
-        expect(spawnArgs[mcpFlags[1]! + 1]).toBe(happierMcp);
+        const userMcpPath = spawnArgs[mcpFlags[0]! + 1]!;
+        const happierMcpPath = spawnArgs[mcpFlags[1]! + 1]!;
+        expect(userMcpPath).not.toBe(userMcp);
+        expect(happierMcpPath).not.toBe(happierMcp);
+        expect(JSON.stringify(spawnArgs)).not.toContain('happier-mcp.mjs');
+        await expect(stat(userMcpPath)).rejects.toMatchObject({ code: 'ENOENT' });
+        await expect(stat(happierMcpPath)).rejects.toMatchObject({ code: 'ENOENT' });
     });
 
     it('keeps values attached to flag arguments before injected settings and mcp config', async () => {
@@ -632,7 +645,7 @@ describe('claudeLocal --continue handling', () => {
         const spawnArgs = mockSpawn.mock.calls[0]?.[1] as unknown;
         const spawnOpts = mockSpawn.mock.calls[0]?.[2] as Record<string, unknown>;
 
-        expect(spawnCommand).toBe('cmd.exe');
+        expect(String(spawnCommand)).toMatch(/(?:^|[\\/])?cmd\.exe$/i);
         expect((spawnArgs as any)?.slice?.(0, 3)).toEqual(['/d', '/s', '/c']);
         expect(String((spawnArgs as any)?.[3])).toContain('claude.cmd');
         expect(spawnOpts.shell).not.toBe(true);
@@ -732,24 +745,40 @@ describe('claudeLocal --continue handling', () => {
     });
 
     it('normalizes equals-form permission mode so resumed launches keep --resume before the permission flag', async () => {
-        await claudeLocal({
-            abort: new AbortController().signal,
-            sessionId: null,
-            path: '/tmp',
-            onSessionFound,
-            hookSettingsPath: '/tmp/hooks.json',
-            claudeArgs: ['--permission-mode=bypassPermissions', '--resume'],
-        });
+        const root = mkdtempSync(join(tmpdir(), 'happier-claude-local-yolo-'));
+        const hookSettingsPath = join(root, 'hooks.json');
+        writeFileSync(hookSettingsPath, JSON.stringify({ permissions: { allow: ['mcp__happier__change_title'] } }));
 
-        const spawnArgs = mockSpawn.mock.calls[0][1] as string[];
-        const resumeIndex = spawnArgs.indexOf('--resume');
-        const permissionIndex = spawnArgs.indexOf('--permission-mode');
+        try {
+            await claudeLocal({
+                abort: new AbortController().signal,
+                sessionId: null,
+                path: '/tmp',
+                onSessionFound,
+                hookSettingsPath,
+                claudeArgs: ['--permission-mode=bypassPermissions', '--resume'],
+            });
 
-        expect(spawnArgs).not.toContain('--permission-mode=bypassPermissions');
-        expect(resumeIndex).toBeGreaterThan(-1);
-        expect(permissionIndex).toBeGreaterThan(-1);
-        expect(permissionIndex).toBeGreaterThan(resumeIndex);
-        expect(spawnArgs[permissionIndex + 1]).toBe('bypassPermissions');
+            const spawnArgs = mockSpawn.mock.calls[0][1] as string[];
+            const resumeIndex = spawnArgs.indexOf('--resume');
+            const permissionIndex = spawnArgs.indexOf('--permission-mode');
+            const settingsIndex = spawnArgs.indexOf('--settings');
+
+            expect(spawnArgs).not.toContain('--permission-mode=bypassPermissions');
+            expect(resumeIndex).toBeGreaterThan(-1);
+            expect(permissionIndex).toBeGreaterThan(-1);
+            expect(permissionIndex).toBeGreaterThan(resumeIndex);
+            expect(spawnArgs[permissionIndex + 1]).toBe('bypassPermissions');
+            expect(settingsIndex).toBeGreaterThan(-1);
+            expect(spawnArgs[settingsIndex + 1]).toBe(hookSettingsPath.replace(/\.json$/, '.overlay.json'));
+            expect(JSON.parse(readFileSync(spawnArgs[settingsIndex + 1]!, 'utf8'))).toEqual({
+                permissions: { allow: ['mcp__happier__change_title'] },
+                skipDangerousModePermissionPrompt: true,
+            });
+            expect(JSON.parse(readFileSync(hookSettingsPath, 'utf8'))).not.toHaveProperty('skipDangerousModePermissionPrompt');
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
     });
 
     it('does not let bare --resume consume a following permission flag', async () => {

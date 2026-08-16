@@ -94,6 +94,52 @@ describe('ToolCallsGroupUnitHeaderRow', () => {
         expect(screen.findByTestId('icon:warning-circle')).not.toBeNull();
     });
 
+    it('renders a failed aggregate when a completed delegate tool has a failed target result', async () => {
+        const screen = await renderHeaderRow({
+            toolMessages: [
+                createToolCallMessageFixture({
+                    id: 'm1',
+                    createdAt: 1,
+                    tool: {
+                        name: 'Bash',
+                        state: 'completed',
+                        result: {
+                            content: [{
+                                type: 'text',
+                                text: '{"v":1,"ok":true,"kind":"tools_call","data":{"source":"happier","tool":"subagents_delegate_start","isError":false,"output":{"intent":"delegate","sessionId":"cmst8oicm00xztmweb5hjqql6","results":[{"key":"agent:claude","ok":false,"error":"invalid_parameters","errorCode":"invalid_parameters"}]}}}\n',
+                            }],
+                            details: null,
+                        },
+                    } as any,
+                }),
+            ],
+        });
+
+        expect(screen.findByTestId('icon:warning-circle')).not.toBeNull();
+        expect(screen.findByTestId('icon:check-circle')).toBeNull();
+    });
+
+    it('renders a failed aggregate for an unavailable tool with a failed Happier envelope in stdout', async () => {
+        const screen = await renderHeaderRow({
+            toolMessages: [
+                createToolCallMessageFixture({
+                    id: 'm1',
+                    createdAt: 1,
+                    tool: {
+                        name: 'subagents.delegate.start',
+                        state: 'unavailable',
+                        result: {
+                            stdout: '{"v":1,"ok":false,"kind":"tools_call","error":{"code":"unknown_tool","message":"Unknown built-in Happier tool: subagents.delegate.start"}}\n',
+                        },
+                    } as any,
+                }),
+            ],
+        });
+
+        expect(screen.findByTestId('icon:warning-circle')).not.toBeNull();
+        expect(screen.findByTestId('icon:check-circle')).toBeNull();
+    });
+
     it('stops reporting running for pending-permission tools in inactive sessions, like the grouped row', async () => {
         const screen = await renderHeaderRow({
             interaction: {

@@ -31,6 +31,7 @@ import type {
     SelectionListProps,
     SelectionListStep,
 } from './_types';
+import { useSelectionListMeasuredBodyHeightStore } from './selectionListMeasuredBodyHeight';
 import { useSelectionListAutocomplete } from './useSelectionListAutocomplete';
 import { useSelectionListDynamicSections } from './useSelectionListDynamicSections';
 import { useSelectionListKeyboardNav } from './useSelectionListKeyboardNav';
@@ -110,14 +111,14 @@ export function SelectionList(props: SelectionListProps): React.ReactElement {
     // Phase 1A — rootStep prop-change resync. The step stack reducer initializes
     // from the FIRST `rootStep` and never re-reads the prop, so a parent that
     // swaps `rootStep` after mount would see the orchestrator stuck on the old
-    // root. Drain the stack back to the new root identity whenever the prop
-    // changes (keeps a clean back-chip state and matches expectations of the
-    // declarative API).
+    // root. Hand every new root to the stack, which decides whether it is a
+    // refresh of the root the user is on (same step id — keep whatever they
+    // pushed on top of it) or a different destination (drain the stack).
     const lastRootStepRef = React.useRef<SelectionListStep>(props.rootStep);
     React.useEffect(() => {
         if (lastRootStepRef.current === props.rootStep) return;
         lastRootStepRef.current = props.rootStep;
-        stack.resetTo(props.rootStep);
+        stack.adoptRootStep(props.rootStep);
     }, [props.rootStep, stack]);
     const detectedKeyboard = useHasHardwareKeyboard();
     const detectedReducedMotion = useReducedMotionPreference();
@@ -569,6 +570,7 @@ export function SelectionList(props: SelectionListProps): React.ReactElement {
         clearStabilizedHeightTimer();
     }, [clearStabilizedHeightTimer]);
     const measureNativeHeight = props.heightBehavior === 'measuredToMaxHeight';
+    const disableTransitions = props.disableTransitions === true || detectedReducedMotion;
     const measuredPopoverHeight = useSelectionListMeasuredPopoverHeight({
         enabled: measureNativeHeight,
         maxHeight: props.maxHeight,
@@ -597,7 +599,7 @@ export function SelectionList(props: SelectionListProps): React.ReactElement {
 
     // Pick a direction that maps step-stack changes to SlideTransitionSwitch.
     // The stack reducer emits 'forward' on push, 'backward' on pop, 'replace' on
-    // resetTo. We forward as-is.
+    // adoptRootStep. We forward as-is.
     const direction = stack.state.direction;
 
     const listboxId = React.useMemo(
@@ -624,13 +626,21 @@ export function SelectionList(props: SelectionListProps): React.ReactElement {
         />
     );
 
-    // FR3-1 / FR3-8 — identity-free measure mirror. Pass an explicit
-    // `mode='measure'` SelectionListBody to SelectionListAnimatedHeight so
-    // the hidden measure subtree never emits duplicate listbox / option
-    // testIDs, aria-* props, or roles in the live DOM. The boundary is
-    // expressed at the API level instead of relying on post-hoc cloneElement
-    // identity stripping.
-    const measureBody = (
+    // The current step body's natural height is ONE fact with TWO consumers:
+    // the native popover height gate (`useSelectionListMeasuredPopoverHeight`,
+    // which holds the surface at `opacity: 0` until a height is known) and the
+    // step-transition height animator (`SelectionListAnimatedHeight`). It is
+    // therefore measured exactly ONCE, here, by the single measure host below —
+    // every extra host is a second invisible mount of every row on the
+    // popover-open critical path, and a second owner of the same measurement.
+    const needsBodyMeasurement = measureNativeHeight || !disableTransitions;
+
+    // FR3-1 / FR3-8 — identity-free measure mirror. `mode='measure'` suppresses
+    // every identity-bearing prop the body owns, so the hidden measure subtree
+    // never emits duplicate listbox / option testIDs, aria-* props, or roles in
+    // the live DOM. The boundary is expressed at the API level instead of
+    // relying on post-hoc cloneElement identity stripping.
+    const measureBody = needsBodyMeasurement ? (
         <SelectionListBody
             mode="measure"
             step={currentStep}
@@ -644,9 +654,34 @@ export function SelectionList(props: SelectionListProps): React.ReactElement {
             onPushStep={handlePushStep}
             showsVerticalScrollIndicator={props.showsVerticalScrollIndicator === true}
         />
-    );
+    ) : null;
 
-    const disableTransitions = props.disableTransitions === true || detectedReducedMotion;
+    // The mirror's height report must not become orchestrator render state:
+    // this component owns BOTH `body` and `measureBody`, so one render here
+    // rebuilds both subtrees and re-renders every option row twice over. The
+    // mirror re-lays out on every content height change — on web that is every
+    // filter keystroke that changes the list height — so the animator reads the
+    // number from an external store instead, and a measurement outside a step
+    // transition costs nothing. The measurement is tagged with the step it
+    // describes so a mid-transition animator cannot mistake the OUTGOING step's
+    // height for the incoming target; the id is captured at layout time rather
+    // than mirrored through an effect that can lag an `onLayout`.
+    const measuredBodyHeights = useSelectionListMeasuredBodyHeightStore();
+    const onPopoverBodyLayout = measuredPopoverHeight.onBodyLayout;
+    const measuredStepId = currentStep.id;
+    const handleBodyMeasureLayout = React.useCallback((event: LayoutChangeEvent) => {
+        if (measureNativeHeight) onPopoverBodyLayout(event);
+        // With transitions disabled the height animator is never mounted, so
+        // there is no consumer for this measurement.
+        if (disableTransitions) return;
+        measuredBodyHeights.publish(measuredStepId, event.nativeEvent.layout.height);
+    }, [
+        disableTransitions,
+        measureNativeHeight,
+        measuredBodyHeights,
+        measuredStepId,
+        onPopoverBodyLayout,
+    ]);
 
     React.useEffect(() => {
         if (!IS_WEB || props.autoFocusInputOnWeb !== true || !showSearchHeader) return;
@@ -677,14 +712,13 @@ export function SelectionList(props: SelectionListProps): React.ReactElement {
             onLayout={stabilizeHeight ? handleContainerLayout : undefined}
             {...headerlessKeyHandler}
         >
-            {measureNativeHeight ? (
+            {needsBodyMeasurement ? (
                 <SelectionListMeasureHost
                     rootTestID={resolvedTestId}
-                    onMeasureLayout={measuredPopoverHeight.onBodyLayout}
+                    onMeasureLayout={handleBodyMeasureLayout}
                     measureMaxHeight={props.maxHeight}
-                    measureChildren={measureBody}
                 >
-                    {body}
+                    {measureBody}
                 </SelectionListMeasureHost>
             ) : null}
             {showSearchHeader ? (
@@ -732,12 +766,13 @@ export function SelectionList(props: SelectionListProps): React.ReactElement {
                     // than snapping abruptly when the spring settles. The
                     // animator pins height to the previous step's measured
                     // natural height, animates to the new step's natural
-                    // height (read from the offscreen measure host that
-                    // mirrors `body`), and releases back to `auto` on
-                    // completion. Reduced motion: snaps without animation.
+                    // height (supplied by the single measure host above,
+                    // which mirrors `body` offscreen), and releases back to
+                    // `auto` on completion. Reduced motion: snaps without
+                    // animation.
                     <SelectionListAnimatedHeight
                         stepKey={currentStep.id}
-                        measureChildren={measureBody}
+                        measuredHeights={measuredBodyHeights}
                         style={useContentSizedFrame ? styles.contentSizedAnimatedHeight : undefined}
                         testID={selectionListTestId(resolvedTestId, 'animatedHeight')}
                     >

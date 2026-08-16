@@ -865,6 +865,75 @@ test('proxy exclusiveDb restart enters maintenance, replaces backend on an ephem
   });
 });
 
+test('proxy reload stops the proven listener when its wrapper already exited', async (t) => {
+  await withTempServerDir(t, async (serverDir) => {
+    const wrapperPid = 101;
+    const incumbentListenerPid = 151;
+    const replacementWrapperPid = 202;
+    const replacementListenerPid = 252;
+    const killedPids = [];
+    const flippedPorts = [];
+    let incumbentListenerAlive = true;
+    const oldServer = { pid: wrapperPid, exitCode: 0, signalCode: null };
+    const options = createExecutorOptions(serverDir, {
+      serverProcRef: { current: oldServer },
+      proxyController: {
+        pid: process.pid,
+        async enterMaintenance() {
+          return { targetHost: '127.0.0.1', targetPort: 6101 };
+        },
+        async flipUpstream({ targetPort }) {
+          flippedPorts.push(Number(targetPort));
+        },
+        async drainConnections() {},
+      },
+    });
+    const executor = createDevServerReloadExecutor(options, {
+      preflightDevServerRestartImpl: async () => {},
+      listListenPidsImpl: async (port) => (
+        Number(port) === 5101 && incumbentListenerAlive
+          ? [incumbentListenerPid]
+          : Number(port) === 5102
+            ? [replacementListenerPid]
+            : []
+      ),
+      getProcessGroupIdImpl: async (pid) => (
+        Number(pid) === wrapperPid || Number(pid) === incumbentListenerPid
+          ? 900
+          : Number(pid) === replacementWrapperPid || Number(pid) === replacementListenerPid
+            ? 901
+            : Number(pid)
+      ),
+      killProcessGroupOwnedByStackImpl: async (pid) => {
+        const targetPid = Number(pid);
+        killedPids.push(targetPid);
+        if (targetPid === incumbentListenerPid) {
+          incumbentListenerAlive = false;
+          return { killed: true, reason: 'killed_pgid' };
+        }
+        return { killed: true, reason: 'already_exited' };
+      },
+      waitForTcpPortFreeImpl: async () => (
+        incumbentListenerAlive
+          ? { status: 'occupied', reason: 'listener-still-alive' }
+          : { status: 'free' }
+      ),
+      pickNextFreeTcpPortImpl: async () => 5102,
+      pmSpawnScriptImpl: async () => ({ pid: replacementWrapperPid, exitCode: null, signalCode: null }),
+      waitForServerReadyImpl: async () => {},
+      recordStackRuntimeServerActivationImpl: async () => {},
+      logger: { log() {}, error() {} },
+    });
+
+    const result = await executor.restart({ generation: 8, changedDescriptors: ['server:app'] });
+
+    assert.deepEqual(result, { restarted: true });
+    assert.deepEqual(killedPids, [incumbentListenerPid]);
+    assert.deepEqual(flippedPorts, [5102]);
+    assert.equal(options.serverProcRef.current.pid, replacementWrapperPid);
+  });
+});
+
 test('maintenance lifecycle publication failure restores the incumbent before any destructive stop', async (t) => {
   await withTempServerDir(t, async (serverDir) => {
     const options = createExecutorOptions(serverDir);

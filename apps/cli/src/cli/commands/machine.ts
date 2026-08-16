@@ -2,7 +2,7 @@ import chalk from 'chalk';
 
 import type { CommandContext } from '@/cli/commandRegistry';
 import { mapUnknownErrorToControlError } from '@/cli/control/controlErrorMapping';
-import { wantsJson, printJsonEnvelope } from '@/cli/output/jsonEnvelope';
+import { wantsJson, printJsonEnvelope, writeJsonStdout } from '@/cli/output/jsonEnvelope';
 import { resolveManagedCliReleaseChannelSync } from '@happier-dev/cli-common/firstPartyRuntime';
 import { getLiveSystemTasksRunnerAdapter } from '@/capabilities/systemTasks/liveSystemTasksRunner';
 import { configuration } from '@/configuration';
@@ -348,7 +348,7 @@ async function runSetupSubcommand(argsRaw: string[], deps: MachineCommandDeps): 
 
     for (const event of snapshot.events) {
       if (json) {
-        console.log(JSON.stringify(event));
+        await writeJsonStdout(event);
         if (event.type !== 'prompt') {
           continue;
         }
@@ -394,7 +394,7 @@ async function runSetupSubcommand(argsRaw: string[], deps: MachineCommandDeps): 
 
     if (snapshot.result) {
       if (json) {
-        console.log(JSON.stringify(snapshot.result));
+        await writeJsonStdout(snapshot.result);
         return;
       }
 
@@ -447,7 +447,7 @@ export async function handleMachineCommand(args: string[], deps: Partial<Machine
   } catch (error) {
     if (json) {
       const mapped = mapUnknownErrorToControlError(error);
-      printJsonEnvelope(
+      await printJsonEnvelope(
         {
           ok: false,
           kind: 'machine_setup',

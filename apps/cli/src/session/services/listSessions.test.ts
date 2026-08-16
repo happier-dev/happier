@@ -40,7 +40,7 @@ describe('listSessions', () => {
     getSessionTranscript.mockReset();
   });
 
-  it('omits terminal rows and hasNext from the default action result', async () => {
+  it('propagates a non-terminal server page without terminal rows by default', async () => {
     fetchSessionsPage.mockResolvedValue(createSessionListResponseFixture([
       createSessionRecordFixture({
         id: 'sess-1',
@@ -65,9 +65,31 @@ describe('listSessions', () => {
         }),
       ],
       nextCursor: 'cursor-2',
+      hasNext: true,
     });
     expect('rows' in result).toBe(false);
-    expect('hasNext' in result).toBe(false);
+  });
+
+  it('propagates a terminal server page', async () => {
+    fetchSessionsPage.mockResolvedValue(createSessionListResponseFixture([], {
+      nextCursor: null,
+      hasNext: false,
+    }));
+
+    const { listSessions } = await import('./listSessions');
+    const result = await listSessions({
+      credentials,
+      activeOnly: false,
+      archivedOnly: false,
+      includeSystem: false,
+      resumableOnly: false,
+    });
+
+    expect(result).toEqual({
+      sessions: [],
+      nextCursor: null,
+      hasNext: false,
+    });
   });
 
   it('includes terminal rows with deterministic session cardinality when requested', async () => {
@@ -144,6 +166,55 @@ describe('listSessions', () => {
     expect(result.rows?.map((row) => row.id)).toEqual(['sess-1', 'sess-2']);
     expect(result.nextCursor).toBe('cursor-2');
     expect(getSessionTranscript).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps fresh resumable page rows ahead of older pinned expansion rows before applying the limit', async () => {
+    const resumableMetadata = (title: string, vendorId: string) => encryptedMetadata({
+      summary: { text: title },
+      path: '/repo',
+      agent: 'claude',
+      flavor: 'claude',
+      claudeSessionId: vendorId,
+    });
+    fetchSessionsPage.mockResolvedValue(createSessionListResponseFixture([
+      createSessionRecordFixture({
+        id: 'pinned-oldest',
+        active: false,
+        updatedAt: 100,
+        meaningfulActivityAt: 100,
+        metadata: resumableMetadata('Pinned oldest', 'vendor-oldest'),
+      }),
+      createSessionRecordFixture({
+        id: 'pinned-older',
+        active: false,
+        updatedAt: 200,
+        meaningfulActivityAt: 200,
+        metadata: resumableMetadata('Pinned older', 'vendor-older'),
+      }),
+      createSessionRecordFixture({
+        id: 'fresh-page-row',
+        active: false,
+        updatedAt: 300,
+        meaningfulActivityAt: 300,
+        metadata: resumableMetadata('Fresh page row', 'vendor-fresh'),
+      }),
+    ], { nextCursor: 'cursor-after-fresh-page', hasNext: true }));
+
+    const { listSessions } = await import('./listSessions');
+    const result = await listSessions({
+      credentials,
+      activeOnly: false,
+      archivedOnly: false,
+      includeSystem: false,
+      resumableOnly: true,
+      includeRows: true,
+      limit: 2,
+    });
+
+    expect(result.sessions.map((session) => session.id)).toEqual(['fresh-page-row', 'pinned-older']);
+    expect(result.rows?.map((row) => row.id)).toEqual(['fresh-page-row', 'pinned-older']);
+    expect(result.nextCursor).toBe('cursor-after-fresh-page');
+    expect(result.hasNext).toBe(true);
   });
 
   it('adds a bounded semantic last message preview only when requested', async () => {

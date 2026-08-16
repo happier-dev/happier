@@ -27,6 +27,7 @@ const DaemonSessionMarkerSchema = z.object({
   cwd: z.string().optional(),
   // Process identity safety (PID reuse mitigation). Hash of the observed process command line.
   processCommandHash: z.string().regex(/^[a-f0-9]{64}$/).optional(),
+  processInstanceFingerprint: z.string().trim().min(1).max(512).optional(),
   // Optional debug-only sample of the observed command (best-effort; may be truncated by ps-list).
   processCommand: z.string().optional(),
   metadata: z.any().optional(),

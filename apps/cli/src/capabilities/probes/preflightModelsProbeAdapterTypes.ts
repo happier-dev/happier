@@ -7,6 +7,7 @@ export type PreflightModelsProbeParams = Readonly<{
   cwd: string;
   timeoutMs: number;
   accountSettings?: Readonly<Record<string, unknown>> | null;
+  processEnv?: NodeJS.ProcessEnv;
 }>;
 
 /**
@@ -19,6 +20,7 @@ export type PreflightModelsProbeParams = Readonly<{
  *   expose a `models` style command.
  */
 export type PreflightModelsProbeAdapter = Readonly<{
+  connectedServiceAuth?: 'materialized-env';
   failureCacheStrategy?: PreflightModelsProbeFailureCacheStrategy;
   probeModelsRaw?: (params: PreflightModelsProbeParams) => Promise<unknown | null>;
   cliModelsCommandArgs?: ReadonlyArray<string>;

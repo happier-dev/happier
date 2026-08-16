@@ -117,7 +117,7 @@ async function cmdList(args: string[]): Promise<void> {
   const active = await getActiveServerProfile();
   const profiles = await listServerProfiles();
   if (wantsJson(args)) {
-    printJsonEnvelope({
+    await printJsonEnvelope({
       ok: true,
       kind: 'server_list',
       data: {
@@ -146,7 +146,7 @@ async function cmdList(args: string[]): Promise<void> {
 async function cmdCurrent(args: string[]): Promise<void> {
   const active = await getActiveServerProfile();
   if (wantsJson(args)) {
-    printJsonEnvelope({
+    await printJsonEnvelope({
       ok: true,
       kind: 'server_current',
       data: { active: summarizeProfile(active) },
@@ -296,7 +296,7 @@ async function cmdAdd(args: string[]): Promise<void> {
   const active = shouldUse ? created : await getActiveServerProfile();
 
   if (json) {
-    printJsonEnvelope({
+    await printJsonEnvelope({
       ok: true,
       kind: 'server_add',
       data: { created: summarizeProfile(created), active: summarizeProfile(active), used: shouldUse },
@@ -342,7 +342,7 @@ async function cmdUse(args: string[]): Promise<void> {
   const active = await useServerProfile(identifier);
   reloadConfiguration();
   if (json) {
-    printJsonEnvelope({ ok: true, kind: 'server_use', data: { active: summarizeProfile(active) } });
+    await printJsonEnvelope({ ok: true, kind: 'server_use', data: { active: summarizeProfile(active) } });
     return;
   }
   console.log(chalk.green(`✓ Active relay: ${active.name} (${active.id})`));
@@ -362,7 +362,7 @@ async function cmdRemove(args: string[]): Promise<void> {
   const out = await removeServerProfile(identifier, { force });
   reloadConfiguration();
   if (json) {
-    printJsonEnvelope({
+    await printJsonEnvelope({
       ok: true,
       kind: 'server_remove',
       data: { removed: summarizeProfile(out.removed), active: summarizeProfile(out.active) },
@@ -380,7 +380,7 @@ async function cmdTest(args: string[]): Promise<void> {
   const profile = identifier ? await getServerProfile(identifier) : await getActiveServerProfile();
   const result = await probeServerVersion(profile.localServerUrl ?? profile.serverUrl);
   if (json) {
-    printJsonEnvelope(
+    await printJsonEnvelope(
       {
         ok: true,
         kind: 'server_test',
@@ -466,7 +466,7 @@ async function cmdSet(args: string[]): Promise<void> {
   const created = await upsertServerProfileByUrl({ name: 'custom', serverUrl, ...(localServerUrl ? { localServerUrl } : {}), webappUrl, use: true });
   reloadConfiguration();
   if (json) {
-    printJsonEnvelope({ ok: true, kind: 'server_set', data: { active: summarizeProfile(created) } });
+    await printJsonEnvelope({ ok: true, kind: 'server_set', data: { active: summarizeProfile(created) } });
     return;
   }
   console.log(chalk.green(`✓ Active relay: ${created.name} (${created.id})`));

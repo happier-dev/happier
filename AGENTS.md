@@ -2,6 +2,22 @@
 
 This file is the canonical cross-tool constitution for this repository.
 
+## What Happier is
+
+Happier is a cross-device client and companion for coding agents. Think of it as what you would get if Claude Desktop, Codex App, Cursor Glass and Conductor were merged into one open-source app.
+
+Agent sessions run on computers, VPSs and dev boxes users control. Happier can connect to one or many of these machines and lets users monitor, steer, approve, review, resume and continue their sessions from a phone, browser or desktop.
+
+People drive agents through Happier all day. It should feel warm, fluid, blazing-fast and delightful to use.
+
+We love ambitious product ideas and simple systems. Do not preserve complexity because it already exists or introduce machinery because it looks architecturally impressive. Understand the real constraint, intent and requirements. Do not overcomplicate the implementation or invent hard requirements for speculative, unreachable or low-impact edge cases. New guarantees and machinery must be justified by an explicit requirement, released contract, reproduced failure or reachable material risk.
+
+Do not promote an architectural possibility, speculative future consumer, generalized reuse opportunity, another proposed mechanism, or unsupported robustness/scalability target into a product requirement. Offline behavior, unattended execution, exact ordering or freshness, failover, trust models, and fixed capacity limits are path-specific contracts; establish each from current product evidence, a released security or compatibility obligation, or explicit approval.
+
+Cross-device reachability, execution placement, state ownership, persistence, availability, and consistency are separate contracts. A feature being available on several clients or scoped to an Account establishes neither a server-side source of truth nor a multi-writer problem. Add shared materialization or cross-machine coordination only for a named current flow that cannot be served by reaching the canonical authority through existing transport.
+
+Always make the smallest coherent systemic change at the correct canonical owner and choke point. Prevent split-brains: never add a second decision-maker, similar-but-different path or logic, or consumer-owned workaround for the same concept. Reuse, extend, extract, consolidate or refactor the relevant existing logic so the behavior is enforced by one canonical owner.
+
 ## Tier 0 — the ten invariants
 
 1. Git safety: never switch branches, reset, restore, clean, or otherwise discard local work in the primary checkout.
@@ -22,13 +38,18 @@ This file is the canonical cross-tool constitution for this repository.
    - CLI: `apps/cli/AGENTS.md`
    - Server: `apps/server/AGENTS.md`
    - Stack: `apps/stack/AGENTS.md`
+   - Docs: `apps/docs/AGENTS.md`
    If the relevant instructions are not already present in active context, read them before changing that package. Do not reread instructions already present unless they changed during the task or context loss made their contents unavailable.
 2. Use repository skills when relevant:
    - `skills/happier-plan` only when the user explicitly asks to create, replace, or materially refine a repository plan. Do not invoke it merely because work is complex or multi-step.
    - `skills/happier-implement` for repository feature, change, fix, refactor, migration, mechanical transformation, and accepted review-fix implementation. It owns the common implementation workflow whether or not a repository plan exists.
    - `skills/happier-implement-plan` additionally when the user explicitly asks to implement, execute, resume, or complete an approved repository plan. It layers plan authority, execution state, amendments, and completeness over `happier-implement`; it does not author or redesign the plan.
+   - `skills/happier-commit-worktree` when the user asks to reconnoiter, classify, group, validate, and commit a large or continuously changing uncommitted worktree. It owns coherent commit formation, private-index/CAS safety, artifact exclusion, recovery, and residual auditing; it is not the workflow for an ordinary already-scoped single commit.
    - `skills/happier-review` as the only general Happier review/QA orchestrator for plans, session changes, worktrees, branches/PRs, features, affected code corridors, and review-fix loops. The superseded generic `review-protocol` and `code-reviewer` skills are archived and must not be invoked for this repository.
    - `skills/happier-testing` for TDD, test quality, lane selection, and live validation.
+   - `skills/happier-docs` for internal technical docs and published user/operator/contributor documentation, including evidence, release status, voice, editing discipline, and validation.
+   - `skills/happier-issue-triage` for retrieving, normalizing, relating, clustering, and routing one or many GitHub issues before deep diagnosis. It owns execution topology and presentation ownership, not root-cause conclusions.
+   - `skills/happier-issue-diagnose` for deep read-only diagnosis of one GitHub issue or coherent issue bundle, including report-quality handling, private evidence capability checks, version/release basis, and an issue-specific disposition. It composes the runtime, compatibility, testing, release, and claim-verification skills rather than replacing them.
    - `skills/happier-diagnose` for read-only runtime/support diagnosis of daemon, session, provider, auth, or connectivity incidents. A requested repository fix proceeds through `happier-implement` after the evidence is established.
    - `skills/happier-profile-and-optimize` for profiling and optimization work whose success is a measured cost: slow open/foreground/navigation, jank, startup, blocked JS, hangs, memory, render churn, a slow query or bad query plan, or verifying a speedup claim. It owns instrument selection and falsification method for app/device and server/database alike; the implementation itself still proceeds through `happier-implement`. It is not the write-time checklist — the gotchas that apply while authoring UI code live in `apps/ui/AGENTS.md` → **Performance and continuity** and apply without routing to a skill.
    - `skills/happier-compatibility` for wire, persistence, mixed-version, upgrade, rollback, and `remote-dev` → `dev` compatibility work.
@@ -48,16 +69,18 @@ This file is the canonical cross-tool constitution for this repository.
 - Treat the task as incomplete until every requested item is handled or marked `[blocked]` with the missing fact and next action.
 - For multi-item work, track coverage internally and verify it before finalizing.
 - Parallelize independent retrieval; keep dependent work sequential and synthesize retrieved evidence before acting.
+- If an explicit authorized requirement or primary evidence genuinely conflicts with a repository or package rule, do not silently violate the rule, weaken the requirement, or route around the conflict. Name the exact conflict and obtain a human decision before proceeding with the affected work; continue independent unaffected work when safe.
+- A rule being inconvenient, requiring a broader coherent change, or invalidating the first implementation idea is not a conflict.
 
 ## Plan authority and lifecycle
 
 - Create, replace, materially refine, or expand a repository plan only when the user explicitly asks. An internal ephemeral checklist is not a repository plan; do not create plan files or invoke plan-authoring workflows on agent initiative.
 - After the user approves a plan, treat its required outcomes, ownership, interfaces, compatibility obligations, removals, user flows, exclusions, and acceptance criteria as the execution contract. Do not silently reinterpret, simplify, expand, substitute, or redesign them.
-- A mechanism-sized design decision must name the approved requirement, constitution rule, external contract, reproduced failure, or reachable derived risk it serves. Do not add coordination, exactly-once semantics, fencing, generations, new identities, timers, cross-restart durability, or similar topology merely as defensive hardening; apply the deletion test, and remove the mechanism when its requirement no longer exists. User approval of a plan authorizes the plan as a whole; item-level user re-ratification is required only for unresolved product decisions or material amendments.
+- A mechanism-sized design decision must trace through any dependent mechanisms to the approved requirement, constitution rule, external contract, reproduced failure, or reachable derived risk it ultimately serves. Apply the deletion test recursively: remove the mechanism and everything that exists only to support it, then name the required outcome that fails. Another proposed mechanism, future consumer, generalized reuse, or architectural completeness is not a terminal justification. Do not add coordination, exactly-once semantics, fencing, generations, new identities, timers, cross-restart durability, or similar topology merely as defensive hardening; if the root requirement disappears, remove its dependent machinery. User approval of a plan authorizes the plan as a whole; item-level user re-ratification is required only for unresolved product decisions or material amendments.
 - Before acting on an approved plan, read the complete plan if it is not already present in active context, orient to the assigned lane and current load-bearing code, and begin implementation. Do not create a separate plan-review or preflight-review phase unless the user requested one or the implementation basis materially changed.
 - Implementation may update execution status and evidence in the plan's designated tracking sections. It may not change the approved contract, acceptance criteria, or design decisions without user approval.
 - Use best judgment only for implementation details the plan intentionally leaves open. Material ambiguity requires clarification; unrelated discoveries are reported without expanding scope.
-- If new primary evidence shows that an approved requirement is unsafe, contradictory, impossible, based on a materially changed contract, or cannot serve the approved intent, pause the affected work. Record the evidence, propose the smallest amendment, and obtain user approval before deviating; continue independent unaffected work only when doing so cannot prejudge the amendment.
+- If new primary evidence shows that an approved requirement is unsafe, contradictory, impossible, based on a materially changed contract, cannot serve the approved intent, or requires a materially different topology, canonical owner, external dependency, compatibility transition, or product tradeoff than the approved plan disclosed, pause the affected work. Increased effort alone is not a material amendment. Record the evidence, propose the smallest amendment, and obtain user approval before deviating; continue independent unaffected work only when doing so cannot prejudge the amendment.
 - Evidence can challenge a plan but cannot supersede it by itself. Use `AMENDMENT_REQUIRED` while awaiting a decision and `SUPERSEDED_BY_APPROVED_AMENDMENT` only after the user approves the documented replacement.
 - For delegated implementation, each meaningful lane reads the complete approved plan unless it is already in active context, then receives a concise self-contained lane brief with exact ownership, paths, dependencies, acceptance checks, validation, and stop conditions. Do not duplicate the whole plan or parent transcript in the brief; reference the on-disk plan and use minimal inherited conversation context.
 
@@ -94,6 +117,7 @@ Before changing production behavior:
 - Identify the canonical owner, existing implementations, adjacent compatibility paths, and existing tests before choosing where to change behavior. Reuse, extend, refine, extract, consolidate, migrate, or remove at that owner before adding logic.
 - Before implementing against an external or another-program-owned contract, characterize its success, failure, cancellation, and recovery behavior from primary evidence and record the exact contract version or evidence basis used by the implementation/review slice.
 - An existing same-concept split-brain in the touched corridor is part of the correctness scope even when it predates the task. Do not build on one side, add a third path, or leave competing decision-makers active. If the canonical correction materially exceeds authorized scope, mark `[blocked]` rather than shipping another local path.
+- For user-visible or cross-component changes, identify every materially affected product surface reached by the changed owner or promised by the task: entry points, clients/platforms, runtime roles, agent/provider variants, lifecycle/recovery paths, and documentation. Mark unaffected surfaces not applicable with a reason. This is a reachability check, not authorization to manufacture parity, abstractions, compatibility machinery, or Cartesian test matrices.
 - Do not infer behavior solely from filenames, comments, or stale documentation; verify against implementation, tests, logs, schemas, or runtime observations.
 - Treat discovery as incomplete until you can name:
   - the canonical owner;
@@ -104,9 +128,20 @@ Before changing production behavior:
 - If one of those remains materially unknown, keep investigating. Once they are known and the required evidence is sufficient, stop searching rather than collecting optional confirmation.
 - State what evidence is missing and what would verify it when a conclusion remains uncertain.
 
+## Documentation ownership
+
+- `docs/**` owns internal technical and product-architecture documentation: protocols, canonical owners, data flows, compatibility, persistence, encryption, deployment internals, and contributor-facing architecture.
+- `apps/docs/content/docs/**` owns published documentation for users, operators, self-hosters, providers, and public contributors.
+- A behavior or contract change updates every materially affected canonical documentation page in the same coherent change, or the handoff explains why no documentation change was needed.
+- Search for and update the existing canonical page before creating another. Do not leave similar-but-different explanations of the same concept.
+- Documentation is a claim, not proof of implementation. Verify Happier behavior against the implementing code and the target release/channel before documenting it.
+- Distinguish shipped, preview, development-only, experimental, deprecated, and planned behavior explicitly. Do not present an unreleased intermediate as available.
+
 ## Risk-weighted execution
 
 - Risk is probability of error × cost of error × silence of failure. Persistence formats, dedupe keys, migrations, encryption envelopes, watermarks, and outward writes deserve more verification than loud compile/runtime failures.
+- A possible race or edge case is not itself a correctness requirement. Before adding reliability or coordination machinery, state the reachable consequence without it, the authority and state affected, observability, existing recovery, and reversibility. Distinguish authoritative or non-reconstructible state from a projection proven refreshable from an available source; do not infer disposability from a `cache` label.
+- A limit, quota, timeout, retry budget, or guard is product behavior. Name the actual resource or contract it protects, derive it from that boundary rather than a nearby number, and specify what happens when it fires. Preserve useful valid data through bounded projection, truncation, or explicit incompleteness when safe; reject only when correctness, security, or an external/platform contract requires it.
 - Before implementation, identify the two or three places where an error would be most damaging or least visible and design verification around them.
 - A fallback, retry, downgrade, or `catch` that cannot be observed in production is itself a defect: report it on a signal that is on by default, or fail loudly instead. A path gated behind opt-in telemetry is unobserved.
 - Coalescing, de-dupe, and cache keys must include every input that changes the result, and only work guaranteed to settle may be coalesced — one hung shared promise poisons every later caller. A read-await-write cache without in-flight sharing lets N concurrent callers each do the whole job, and a batch or threshold API called one item at a time silently disables the decision it exists to make.
@@ -131,8 +166,6 @@ Before changing production behavior:
   5. use an existing dependency already owned by the affected package when it reduces total lifetime complexity;
   6. otherwise add the smallest clear, coherent, consumed implementation.
 - Choose the earliest option that fully satisfies the complete contract and minimizes total lifetime complexity. Do not force an earlier rung when it worsens ownership, UX, compatibility, security, performance, platform behavior, or maintenance.
-- Optimize for fewer concepts, decision-makers, branches, dependencies, invalid states, failure paths, and facts callers must know—not the fewest characters, lines, files, tests, or diff hunks. Prefer direct idiomatic code over clever one-liners.
-- A broad refactor is not overengineering when evidence shows it is necessary to establish one authoritative behavior, migrate consumers, remove duplicated decisions or active split-brains, eliminate invalid states, or prevent predictable divergence. Do not absorb unrelated debt, but do not classify necessary systemic work as unrelated merely because it crosses files or packages.
 - When a deliberately simpler implementation relies on a bounded scale, topology, platform, or lifecycle assumption, encode that assumption through a type, invariant, assertion, or test when practical. Otherwise add a narrow owner-local explanation of the current ceiling and the observable condition that would invalidate it; do not build the hypothetical upgrade path or create a new debt ledger without a real requirement.
 - This discipline governs solution selection. It does not cap discovery, testing, QA, security analysis, compatibility validation, review findings, documentation, or an explanation the user requested.
 
@@ -142,7 +175,8 @@ Before changing production behavior:
 - Fix the owning cause rather than adding a workaround, duplicate path, or similar-but-different implementation. Design from the canonical owner and caller-visible contract so new behavior becomes a natural extension of the system rather than a bolted-on exception.
 - Before adding a protocol, state machine, registry, table, lease, credential, generation, gate, or parallel path, name the reproduced failure or live consumer it serves and why the existing owner cannot enforce the contract. Apply the deletion test: if removing the mechanism removes only complexity while the required behavior still holds, do not build it.
 - Land behavior as the smallest consumed vertical through its real entry point, owner, and output. Do not build a dormant horizontal replacement spine and weave its consumer branches into live paths while its producer or activation remains absent.
-- Prefer designs that increase locality and leverage: fewer places deciding the same rule, less knowledge required by callers, fewer invalid states, moving parts, and failure modes, and a clearer interface.
+- Optimize for fewer concepts, decision-makers, branches, dependencies, invalid states, failure paths, and facts callers must know—not the fewest characters, lines, files, tests, or diff hunks. Prefer direct idiomatic code over clever one-liners.
+- A broad refactor is not overengineering when evidence shows it is necessary to establish one authoritative behavior, migrate consumers, remove duplicated decisions or active split-brains, eliminate invalid states, or prevent predictable divergence. Do not absorb unrelated debt, but do not classify necessary systemic work as unrelated merely because it crosses files or packages.
 - Typed models, state machines, registries, lookup tables, interfaces, and adapters are tools, not defaults or anti-patterns. Use them when observed domain variation, lifecycle, ownership, or invariants justify them and they remove distributed branching, duplicated rules, lockstep edits, or invalid states.
 - A broader refactor is justified when evidence shows repeated or divergent logic, recurring special cases, cross-layer leakage, callers changing in lockstep, an interface exposing implementation knowledge, or repeated implementation friction caused by the current shape. Name that evidence and the complexity the refactor removes.
 - Reject an abstraction when it adds concepts, modes, configuration, dependencies, failure paths, or indirection without reducing caller knowledge, duplicate decisions, branching, lifecycle risk, or future change cost. A single implementation is a reason to examine the seam, not an automatic veto; a real external boundary or enforced invariant may justify it.
@@ -215,7 +249,8 @@ Before changing production behavior:
 
 - Keep TypeScript strict; do not weaken `tsconfig` or type rules to pass checks.
 - `@ts-ignore` is forbidden. Use `@ts-expect-error` only on the exact expected-failure line with a short rationale.
-- Broad `as any` is forbidden except in a narrow boundary fixture/harness with a one-line justification.
+- Prefer inference for local variables, private implementation details, and obvious return values. Add explicit types when they prevent widening, expose an invariant, stabilize inference, or define an exported/public, wire, persistence, package, or security-sensitive contract.
+- Production `any` types and broad `as any` casts are forbidden except at a narrowly isolated genuinely untyped external boundary or boundary fixture/harness with a one-line rationale. Prefer `unknown`, validate it, and narrow to a real type immediately.
 - Prefer `satisfies`, explicit interfaces, typed fixtures, and canonical schemas over casting.
 - No production TODO/FIXME placeholders, stray debug output, dead code, or commented-out blocks.
 

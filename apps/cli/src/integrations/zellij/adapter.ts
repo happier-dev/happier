@@ -38,9 +38,11 @@ import {
   type InspectZellijSessionSocketPresence,
 } from './socketPresence';
 import {
+  resolveTerminalPromptSubmissionFailureReason,
   runTerminalPromptSubmission,
   type TerminalPromptSubmitVerificationPolicy,
 } from '../terminalHost/promptSubmitVerification';
+import { resolveTerminalPromptWriteTimeoutMs } from '@/agent/runtime/terminal/injection/promptWriteTimeout';
 
 const DEFAULT_INPUT_STABILITY_DELAY_MS = 50;
 /**
@@ -1463,8 +1465,7 @@ export function createZellijTerminalHostAdapter(params: Readonly<{
         }
       }
 
-      const injectionTimeoutMs = input.scheduling.timeoutMs ?? actionTimeoutMs;
-      const deadline = createTerminalHostDeadline(injectionTimeoutMs);
+      const injectionTimeoutMs = input.scheduling.timeoutMs ?? resolveTerminalPromptWriteTimeoutMs(input.text);
       const textToWrite = input.text;
       const textToWriteBytes = Buffer.byteLength(textToWrite, 'utf8');
       let failurePhase: TerminalInjectionFailurePhase = 'during_write';
@@ -1511,10 +1512,33 @@ export function createZellijTerminalHostAdapter(params: Readonly<{
         } else {
           await writeBytes();
         }
+        // Prompt staging/Enter is a separate terminal operation from the completed paste/write.
+        // Give it its own bounded clock so a loaded host cannot consume the submission budget.
+        const submissionDeadline = createTerminalHostDeadline(
+          input.scheduling.timeoutMs ?? actionTimeoutMs,
+        );
         failurePhase = 'after_enter_unknown';
         duplicateRisk = 'likely';
         const submission = await runTerminalPromptSubmission({
           promptText: textToWrite,
+          ...(promptSubmitVerification?.shouldVerifyAfterSubmit(textToWrite)
+            ? {
+              verifyStagedBeforeSubmit: async ({ promptText, remainingTimeoutMs }) => {
+                const screenText = await actions.dumpScreen({
+                  zellijBinary: params.zellijBinary,
+                  env: sessionEnv(env, handle.sessionName),
+                  paneId,
+                  ...(remainingTimeoutMs !== undefined
+                    ? { timeoutMs: remainingTimeoutMs }
+                    : { timeoutMs: actionTimeoutMs }),
+                });
+                return promptSubmitVerification.isPromptStagedBeforeSubmit({
+                  promptText,
+                  screenText,
+                });
+              },
+            }
+            : {}),
           submitEnter: async ({ remainingTimeoutMs }) => {
             await actions.sendEnter({
               zellijBinary: params.zellijBinary,
@@ -1542,12 +1566,12 @@ export function createZellijTerminalHostAdapter(params: Readonly<{
               },
             }
             : {}),
-          remainingTimeoutMs: () => remainingTerminalHostDeadlineMs(deadline),
+          remainingTimeoutMs: () => remainingTerminalHostDeadlineMs(submissionDeadline),
           wait,
         });
         if (!submission.success) {
           return failedInjectionResult({
-            reason: submission.reason === 'timeout' ? 'timeout' : 'host_unreachable',
+            reason: resolveTerminalPromptSubmissionFailureReason(submission.reason),
             phase: submission.phase,
             duplicateRisk: submission.duplicateRisk,
             recoverable: true,

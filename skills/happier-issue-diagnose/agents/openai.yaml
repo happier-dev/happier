@@ -1,0 +1,4 @@
+interface:
+  display_name: "Happier Issue Diagnose"
+  short_description: "Diagnose a coherent GitHub issue bundle"
+  default_prompt: "Use $happier-issue-diagnose to determine what is true, explain the causal story naturally, and recommend the smallest coherent response for these GitHub issues."

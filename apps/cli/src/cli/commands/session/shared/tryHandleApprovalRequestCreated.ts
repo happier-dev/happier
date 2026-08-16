@@ -17,17 +17,17 @@ export function isApprovalRequestCreatedResult(value: unknown): value is Approva
     && record.artifactId.trim().length > 0;
 }
 
-export function tryHandleApprovalRequestCreated(params: Readonly<{
+export async function tryHandleApprovalRequestCreated(params: Readonly<{
   envelopeKind: string;
   json: boolean;
   result: unknown;
-}>): boolean {
+}>): Promise<boolean> {
   if (!isApprovalRequestCreatedResult(params.result)) {
     return false;
   }
 
   if (params.json) {
-    printJsonEnvelope({ ok: true, kind: params.envelopeKind, data: params.result });
+    await printJsonEnvelope({ ok: true, kind: params.envelopeKind, data: params.result });
     return true;
   }
 

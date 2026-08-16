@@ -1,4 +1,4 @@
-import type { PreflightModelsProbeAdapter } from '@/capabilities/probes/preflightModelsProbeAdapterTypes';
+import type { PreflightSessionControlsProbeAdapter } from '@/capabilities/probes/preflightSessionControlsProbeAdapterTypes';
 import { resolveProviderCliCommand } from '@/runtime/managedTools/providerCliResolution';
 import { resolveCliPathOverride } from '@/agent/acp/resolveCliPathOverride';
 import { resolveWindowsCommandInvocation } from '@happier-dev/cli-common/process';
@@ -59,10 +59,14 @@ function parsePiListModelsOutput(textRaw: string): PiProbedModelRow[] | null {
   return parsed.length > 0 ? parsed : null;
 }
 
-async function probePiListModels(params: Readonly<{ cwd: string; timeoutMs: number }>): Promise<PiProbedModelRow[] | null> {
+async function probePiListModels(params: Readonly<{
+  cwd: string;
+  timeoutMs: number;
+  processEnv?: NodeJS.ProcessEnv;
+}>): Promise<PiProbedModelRow[] | null> {
   const timeoutMs = Math.max(250, params.timeoutMs);
   const command =
-    resolveProviderCliCommand('pi')?.command
+    resolveProviderCliCommand('pi', { processEnv: params.processEnv ?? process.env })?.command
     ?? resolveCliPathOverride({ agentId: 'pi' })
     ?? 'pi';
   const args = ['--list-models'];
@@ -86,7 +90,7 @@ async function probePiListModels(params: Readonly<{ cwd: string; timeoutMs: numb
 
     const child = spawn(invocation.command, invocation.args, {
       cwd: params.cwd,
-      env: { ...process.env, CI: '1' },
+      env: { ...(params.processEnv ?? process.env), CI: '1' },
       stdio: ['ignore', 'pipe', 'pipe'],
       windowsHide: true,
       windowsVerbatimArguments: invocation.windowsVerbatimArguments,
@@ -132,10 +136,11 @@ async function probePiListModels(params: Readonly<{ cwd: string; timeoutMs: numb
   });
 }
 
-export const piPreflightModelsProbeAdapter: PreflightModelsProbeAdapter = {
+export const piPreflightModelsProbeAdapter: PreflightSessionControlsProbeAdapter = {
+  connectedServiceAuth: 'materialized-env',
   failureCacheStrategy: 'cooldown',
-  probeModelsRaw: async ({ cwd, timeoutMs }) => {
-    const models = await probePiListModels({ cwd, timeoutMs });
+  probeModelsRaw: async ({ cwd, timeoutMs, processEnv }) => {
+    const models = await probePiListModels({ cwd, timeoutMs, processEnv });
     if (!models) return null;
     return models.map((m) => ({
       id: m.id,

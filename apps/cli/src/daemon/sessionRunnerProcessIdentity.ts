@@ -1,10 +1,11 @@
 import { classifyProcessByPid } from './doctor';
 import { hashProcessCommand } from './sessionRegistry';
+import { readProcessInstanceFingerprintSync } from '@happier-dev/cli-common/processInstance';
 
 export type SessionRunnerProcessIdentity =
-  | Readonly<{ kind: 'happy'; processCommandHash: string }>
-  | Readonly<{ kind: 'not_happy' }>
-  | Readonly<{ kind: 'unknown' }>;
+  | Readonly<{ kind: 'happy'; processCommandHash: string; processInstanceFingerprint?: string }>
+  | Readonly<{ kind: 'not_happy'; processInstanceFingerprint?: string }>
+  | Readonly<{ kind: 'unknown'; processInstanceFingerprint?: string }>;
 
 /**
  * Test/adapter hook for process identity checks.
@@ -13,6 +14,7 @@ export type SessionRunnerProcessIdentity =
  * null when the PID was inspected and is not Happy, and throw when identity is unknown.
  */
 export type SessionRunnerProcessCommandHashReader = (pid: number) => Promise<string | null>;
+export type SessionRunnerProcessInstanceFingerprintReader = (pid: number) => string | null;
 
 export function isValidProcessCommandHash(value: string | null | undefined): value is string {
   return typeof value === 'string' && /^[a-f0-9]{64}$/.test(value);
@@ -21,52 +23,66 @@ export function isValidProcessCommandHash(value: string | null | undefined): val
 async function readInjectedProcessIdentity(
   pid: number,
   getProcessCommandHash: SessionRunnerProcessCommandHashReader,
+  getProcessInstanceFingerprint: SessionRunnerProcessInstanceFingerprintReader,
 ): Promise<SessionRunnerProcessIdentity> {
+  const processInstanceFingerprint = getProcessInstanceFingerprint(pid) ?? undefined;
   try {
     const processCommandHash = await getProcessCommandHash(pid);
     if (isValidProcessCommandHash(processCommandHash)) {
-      return { kind: 'happy', processCommandHash };
+      return { kind: 'happy', processCommandHash, ...(processInstanceFingerprint ? { processInstanceFingerprint } : {}) };
     }
-    return processCommandHash === null ? { kind: 'not_happy' } : { kind: 'unknown' };
+    return processCommandHash === null
+      ? { kind: 'not_happy', ...(processInstanceFingerprint ? { processInstanceFingerprint } : {}) }
+      : { kind: 'unknown', ...(processInstanceFingerprint ? { processInstanceFingerprint } : {}) };
   } catch {
-    return { kind: 'unknown' };
+    return { kind: 'unknown', ...(processInstanceFingerprint ? { processInstanceFingerprint } : {}) };
   }
 }
 
 export async function readSessionRunnerProcessIdentity(params: Readonly<{
   pid: number;
   getProcessCommandHash?: SessionRunnerProcessCommandHashReader;
+  getProcessInstanceFingerprint?: SessionRunnerProcessInstanceFingerprintReader;
 }>): Promise<SessionRunnerProcessIdentity> {
+  const getProcessInstanceFingerprint = params.getProcessInstanceFingerprint ?? readProcessInstanceFingerprintSync;
   if (params.getProcessCommandHash) {
-    return await readInjectedProcessIdentity(params.pid, params.getProcessCommandHash);
+    return await readInjectedProcessIdentity(params.pid, params.getProcessCommandHash, getProcessInstanceFingerprint);
   }
 
+  const processInstanceFingerprint = getProcessInstanceFingerprint(params.pid) ?? undefined;
   const classified = await classifyProcessByPid(params.pid).catch(() => ({ kind: 'unknown' as const }));
   if (classified.kind === 'happy') {
     return {
       kind: 'happy',
       processCommandHash: hashProcessCommand(classified.process.command),
+      ...(processInstanceFingerprint ? { processInstanceFingerprint } : {}),
     };
   }
-  if (classified.kind === 'not_happy') return { kind: 'not_happy' };
-  return { kind: 'unknown' };
+  if (classified.kind === 'not_happy') {
+    return { kind: 'not_happy', ...(processInstanceFingerprint ? { processInstanceFingerprint } : {}) };
+  }
+  return { kind: 'unknown', ...(processInstanceFingerprint ? { processInstanceFingerprint } : {}) };
 }
 
-export function storedProcessHashProvesPidReuse(params: Readonly<{
-  storedProcessCommandHash: string | null | undefined;
+export function storedProcessIdentityProvesPidReuse(params: Readonly<{
+  storedProcessInstanceFingerprint: string | null | undefined;
   currentIdentity: SessionRunnerProcessIdentity;
 }>): boolean {
-  if (!isValidProcessCommandHash(params.storedProcessCommandHash)) return false;
-  if (params.currentIdentity.kind === 'not_happy') return true;
-  return params.currentIdentity.kind === 'happy'
-    && params.currentIdentity.processCommandHash !== params.storedProcessCommandHash;
+  const stored = String(params.storedProcessInstanceFingerprint ?? '').trim();
+  const observed = String(params.currentIdentity.processInstanceFingerprint ?? '').trim();
+  return Boolean(stored && observed && stored !== observed);
 }
 
-export function storedProcessHashMatchesCurrentIdentity(params: Readonly<{
+export function storedProcessIdentityMatchesCurrentIdentity(params: Readonly<{
   storedProcessCommandHash: string | null | undefined;
+  storedProcessInstanceFingerprint: string | null | undefined;
   currentIdentity: SessionRunnerProcessIdentity;
 }>): boolean {
+  if (params.currentIdentity.kind !== 'happy') return false;
+  const storedFingerprint = String(params.storedProcessInstanceFingerprint ?? '').trim();
+  if (storedFingerprint) {
+    return params.currentIdentity.processInstanceFingerprint === storedFingerprint;
+  }
   return isValidProcessCommandHash(params.storedProcessCommandHash)
-    && params.currentIdentity.kind === 'happy'
     && params.currentIdentity.processCommandHash === params.storedProcessCommandHash;
 }

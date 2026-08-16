@@ -10,14 +10,28 @@
  * poll behavior cannot drift between consumers.
  */
 
+import type { SpawnSessionErrorCode, SpawnSessionErrorDetail } from './spawnSession.js';
+
 export type SpawnSessionNonceResolution =
   | { status: 'success'; sessionId: string }
+  | {
+      status: 'error';
+      errorCode: SpawnSessionErrorCode;
+      errorMessage: string;
+      errorDetail?: SpawnSessionErrorDetail;
+    }
   | { status: 'pending' }
   | { status: 'not_found' }
   | { status: 'unsupported' };
 
 export type SettleSpawnSessionNonceResult =
   | { status: 'success'; sessionId: string }
+  | {
+      status: 'error';
+      errorCode: SpawnSessionErrorCode;
+      errorMessage: string;
+      errorDetail?: SpawnSessionErrorDetail;
+    }
   /** Deadline elapsed while the spawn was still tracked (slow webhook). */
   | { status: 'timeout' }
   /**
@@ -36,7 +50,7 @@ function defaultSleep(ms: number): Promise<void> {
 
 export async function settleSpawnSessionNonce(params: Readonly<{
   spawnNonce: string;
-  resolve: (spawnNonce: string) => Promise<SpawnSessionNonceResolution>;
+  resolve: (spawnNonce: string, remainingTimeoutMs: number) => Promise<SpawnSessionNonceResolution>;
   timeoutMs: number;
   pollIntervalMs: number;
   /**
@@ -54,11 +68,17 @@ export async function settleSpawnSessionNonce(params: Readonly<{
   const deadlineMs = now() + Math.max(0, Math.trunc(params.timeoutMs));
 
   let notFoundSinceMs: number | null = null;
+  let isFirstProbe = true;
 
   while (true) {
+    const beforeProbeMs = now();
+    if (!isFirstProbe && beforeProbeMs >= deadlineMs) {
+      return { status: 'timeout' };
+    }
+    const remainingTimeoutMs = Math.max(1, deadlineMs - beforeProbeMs);
     let resolution: SpawnSessionNonceResolution;
     try {
-      resolution = await params.resolve(params.spawnNonce);
+      resolution = await params.resolve(params.spawnNonce, remainingTimeoutMs);
     } catch {
       // Transient transport failures are indistinguishable from "not tracked";
       // treat them as a not_found probe so a dead daemon still settles via the
@@ -76,6 +96,9 @@ export async function settleSpawnSessionNonce(params: Readonly<{
       }
       // A success without an id is a malformed resolver response; keep polling.
     }
+    if (resolution.status === 'error') {
+      return resolution;
+    }
     if (resolution.status === 'unsupported') {
       return { status: 'unsupported' };
     }
@@ -92,6 +115,7 @@ export async function settleSpawnSessionNonce(params: Readonly<{
     if (nowMs >= deadlineMs) {
       return { status: 'timeout' };
     }
-    await sleep(pollIntervalMs);
+    await sleep(Math.min(pollIntervalMs, deadlineMs - nowMs));
+    isFirstProbe = false;
   }
 }

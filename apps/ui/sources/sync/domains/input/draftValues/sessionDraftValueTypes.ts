@@ -23,25 +23,25 @@ export type SessionComposerExecutionRunDeliveryMode = z.infer<typeof SessionComp
  */
 
 /**
- * Positional half of the binding range contract: UTF-16 code units, half-open
- * `[start, end)`, integers with `0 <= start < end`. The `slice(start, end) === token` half
- * needs the composer text and is enforced by the mention reconciler.
+ * The textual half of a mention: the exact token the composer inserted. A mention belongs to
+ * the draft for as long as the draft text still contains it, which is what the reconciler
+ * enforces — there is deliberately no stored position (see `MentionRefV1Schema`).
+ *
+ * A draft written before positions were removed simply has two extra keys; the known-kind
+ * arms below are plain `z.object`, so zod strips them, and the unknown-kind arm is
+ * passthrough and carries them inertly.
  */
-const ComposerMentionRangeShape = {
+const ComposerMentionTokenShape = {
     tokenText: z.string().min(1),
-    start: z.number().int().min(0),
-    end: z.number().int().min(1),
 } as const;
 
 export const ComposerVendorPluginMentionSchema = z.object({
     kind: z.literal('vendorPlugin'),
-    ...ComposerMentionRangeShape,
+    ...ComposerMentionTokenShape,
     vendorPluginRef: z.string().min(1),
     label: z.string().min(1).optional(),
     backendId: z.string().min(1).optional(),
     agentId: z.string().min(1).optional(),
-}).refine((mention) => mention.end > mention.start, {
-    path: ['end'],
 });
 
 export type ComposerVendorPluginMention = z.infer<typeof ComposerVendorPluginMentionSchema>;
@@ -55,7 +55,7 @@ export type ComposerVendorPluginMention = z.infer<typeof ComposerVendorPluginMen
  */
 export const ComposerSkillMentionSchema = z.object({
     kind: z.literal('skill'),
-    ...ComposerMentionRangeShape,
+    ...ComposerMentionTokenShape,
     id: z.string().min(1).optional(),
     name: z.string().min(1),
     path: z.string().min(1).optional(),
@@ -66,8 +66,6 @@ export const ComposerSkillMentionSchema = z.object({
     projectionRef: z.string().min(1).optional(),
     backendId: z.string().min(1).optional(),
     agentId: z.string().min(1).optional(),
-}).refine((mention) => mention.end > mention.start, {
-    path: ['end'],
 });
 
 export type ComposerSkillMention = z.infer<typeof ComposerSkillMentionSchema>;
@@ -79,11 +77,9 @@ export type ComposerSkillMention = z.infer<typeof ComposerSkillMentionSchema>;
  */
 export const ComposerSessionMentionSchema = z.object({
     kind: z.literal('session'),
-    ...ComposerMentionRangeShape,
+    ...ComposerMentionTokenShape,
     sessionId: z.string().min(1),
     label: z.string().min(1).optional(),
-}).refine((mention) => mention.end > mention.start, {
-    path: ['end'],
 });
 
 export type ComposerSessionMention = z.infer<typeof ComposerSessionMentionSchema>;
@@ -99,10 +95,8 @@ export const ComposerUnknownMentionSchema = z.object({
     kind: z.string().min(1).refine((kind) => !KNOWN_COMPOSER_MENTION_KINDS.has(kind), {
         message: 'Known mention kinds must satisfy their own schema',
     }),
-    ...ComposerMentionRangeShape,
-}).passthrough().refine((mention) => mention.end > mention.start, {
-    path: ['end'],
-});
+    ...ComposerMentionTokenShape,
+}).passthrough();
 
 /**
  * Declared by hand rather than inferred so the union keeps discriminating on `kind`; the
@@ -115,8 +109,6 @@ export type ComposerUnknownMention = Readonly<{
     ref?: string;
     label?: string;
     tokenText: string;
-    start: number;
-    end: number;
 }>;
 
 export const ComposerStructuredInputMentionSchema = z.union([
@@ -133,13 +125,13 @@ export type ComposerStructuredInputMention =
     | ComposerUnknownMention;
 
 /**
- * A composer mention WITHOUT its positional fields — what a suggestion carries before it is
- * placed in the text. Derived from the same union so a new kind is never declared twice (SB-4).
+ * A composer mention WITHOUT its token — what a suggestion carries before it is placed in the
+ * text. Derived from the same union so a new kind is never declared twice (SB-4).
  */
 export type ComposerStructuredInputMentionPayload =
-    | Omit<ComposerVendorPluginMention, 'tokenText' | 'start' | 'end'>
-    | Omit<ComposerSkillMention, 'tokenText' | 'start' | 'end'>
-    | Omit<ComposerSessionMention, 'tokenText' | 'start' | 'end'>;
+    | Omit<ComposerVendorPluginMention, 'tokenText'>
+    | Omit<ComposerSkillMention, 'tokenText'>
+    | Omit<ComposerSessionMention, 'tokenText'>;
 
 /**
  * Element-wise (D-14). The previous whole-array parse discarded **every** draft mention when

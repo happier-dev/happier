@@ -1,0 +1,4 @@
+interface:
+  display_name: "Happier Issue Triage"
+  short_description: "Cluster and route GitHub issues"
+  default_prompt: "Use $happier-issue-triage to form decision-coherent bundles and route these GitHub issues for deep diagnosis."

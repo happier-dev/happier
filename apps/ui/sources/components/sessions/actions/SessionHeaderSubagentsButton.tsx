@@ -2,31 +2,40 @@ import * as React from 'react';
 import { Pressable, View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 
-import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneScope';
-import { Text } from '@/components/ui/text/Text';
+import { useOpenSessionTarget } from '@/components/sessions/panes/open/useOpenSessionTarget';
 import { t } from '@/text';
 import { useOptionalSessionScreenTestId } from '../shell/sessionScreenTestIds';
 import { SESSION_HEADER_ICON_SIZE_PX } from '@/components/sessions/actions/sessionHeaderIconMetrics';
 import { SessionHeaderIconWithCount } from '@/components/sessions/actions/SessionHeaderIconWithCount';
-import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
+import { Icon } from '@/components/ui/icons/Icon';
 
 /**
  * A live indicator: present exactly while agents are running in this session. `activeCount` is the
  * whole condition — there is no second "has any" flag, because a session that ran an agent an hour
  * ago is history, and history belongs in the overflow menu, not in a status slot.
+ *
+ * **It opens the roster wherever this layout can put it.** It used to open the right pane
+ * unconditionally, and the right pane is structurally hidden on a phone — so on the device where
+ * this glyph is the only way in, pressing it did nothing at all. The destination is now the shared
+ * open decision: the Agents tab where a right pane fits, the agents screen where it does not.
  */
 export const SessionHeaderSubagentsButton = React.memo((props: Readonly<{
+    sessionId: string;
     scopeId: string;
     activeCount: number;
+    serverId?: string | null;
 }>) => {
     const { theme } = useUnistyles();
-    const pane = useAppPaneScope(props.scopeId);
     const testId = useOptionalSessionScreenTestId('session-header-subagents-button');
+    const openTarget = useOpenSessionTarget({
+        sessionId: props.sessionId,
+        scopeId: props.scopeId,
+        ...(props.serverId ? { serverId: props.serverId } : null),
+    });
 
     const onPress = React.useCallback(() => {
-        pane.openRight({ tabId: 'agents' });
-        pane.setRightTab('agents');
-    }, [pane]);
+        openTarget({ kind: 'agentRoster' });
+    }, [openTarget]);
 
     if (props.activeCount <= 0) return null;
 

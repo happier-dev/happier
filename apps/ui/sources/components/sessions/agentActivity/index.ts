@@ -40,7 +40,9 @@ export {
 } from './list/AgentActivitySectionHeader';
 export {
     LIST_MOTION_SCROLL_IDLE_MS,
+    ListMotionQuietProvider,
     createListMotionQuiet,
+    useHostListMotionQuiet,
     useListMotionQuiet,
     type ListMotionQuiet,
     type ListMotionQuietHandle,

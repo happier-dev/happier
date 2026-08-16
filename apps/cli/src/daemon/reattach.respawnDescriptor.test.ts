@@ -12,6 +12,36 @@ import { resolveSessionRunnerRestartEligibility } from './sessionRunnerRuntime/r
 import type { Credentials } from '@/persistence';
 
 describe('adoptSessionsFromMarkers respawn descriptor', () => {
+  it('adopts a classified runner with command drift when its process-instance fingerprint matches', () => {
+    const markerCommand = 'happier plugins list --json';
+    const runningCommand = 'happier claude --resume sess-existing';
+    const marker = {
+      pid: 121,
+      happySessionId: 'sess-process-instance',
+      happyHomeDir: '/tmp/happy-home',
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      startedBy: 'terminal' as const,
+      processCommandHash: hashProcessCommand(markerCommand),
+      processInstanceFingerprint: 'linux-proc:12100',
+      processCommand: markerCommand,
+    };
+    const map = new Map<number, TrackedSession>();
+
+    const { adopted } = adoptSessionsFromMarkers({
+      markers: [marker],
+      happyProcesses: [{ pid: 121, command: runningCommand, type: 'user-session' } satisfies HappyProcessInfo],
+      pidToTrackedSession: map,
+      readProcessInstanceFingerprint: () => 'linux-proc:12100',
+    });
+
+    expect(adopted).toBe(1);
+    expect(map.get(121)).toMatchObject({
+      processCommandHash: hashProcessCommand(runningCommand),
+      processInstanceFingerprint: 'linux-proc:12100',
+    });
+  });
+
   it('restores the exact active turn from the adopted runner marker without inference', () => {
     const command = `${process.execPath} -e "setInterval(()=>{}, 1000)"`;
     const map = new Map<number, TrackedSession>();

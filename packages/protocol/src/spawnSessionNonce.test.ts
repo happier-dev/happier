@@ -17,7 +17,7 @@ describe('settleSpawnSessionNonce', () => {
       sleep: immediateSleep,
     });
     expect(result).toEqual({ status: 'success', sessionId: 'sess_1' });
-    expect(resolve).toHaveBeenCalledWith('nonce-1');
+    expect(resolve).toHaveBeenCalledWith('nonce-1', 5_000);
   });
 
   it('returns unsupported immediately without polling further', async () => {
@@ -33,6 +33,27 @@ describe('settleSpawnSessionNonce', () => {
     expect(resolve).toHaveBeenCalledTimes(1);
   });
 
+  it('returns a terminal operation error immediately without polling further', async () => {
+    const resolve = vi.fn(async () => ({
+      status: 'error' as const,
+      errorCode: 'CHILD_EXITED_BEFORE_WEBHOOK' as const,
+      errorMessage: 'Child process exited before session webhook (pid=8892, code=1, signal=null)',
+    }));
+    const result = await settleSpawnSessionNonce({
+      spawnNonce: 'nonce-child-exit',
+      resolve,
+      timeoutMs: 5_000,
+      pollIntervalMs: 10,
+      sleep: immediateSleep,
+    });
+    expect(result).toEqual({
+      status: 'error',
+      errorCode: 'CHILD_EXITED_BEFORE_WEBHOOK',
+      errorMessage: 'Child process exited before session webhook (pid=8892, code=1, signal=null)',
+    });
+    expect(resolve).toHaveBeenCalledTimes(1);
+  });
+
   it('times out while the resolver stays pending', async () => {
     let nowMs = 0;
     const resolve = vi.fn(async () => ({ status: 'pending' as const }));
@@ -45,6 +66,30 @@ describe('settleSpawnSessionNonce', () => {
       now: () => nowMs,
     });
     expect(result).toEqual({ status: 'timeout' });
+  });
+
+  it('passes the remaining deadline to each probe and bounds the final sleep', async () => {
+    let nowMs = 0;
+    const remainingBudgets: number[] = [];
+    const sleepDurations: number[] = [];
+    const result = await settleSpawnSessionNonce({
+      spawnNonce: 'nonce-deadline',
+      resolve: async (_spawnNonce, remainingTimeoutMs) => {
+        remainingBudgets.push(remainingTimeoutMs);
+        return { status: 'pending' as const };
+      },
+      timeoutMs: 10,
+      pollIntervalMs: 1_000,
+      sleep: async (ms) => {
+        sleepDurations.push(ms);
+        nowMs += ms;
+      },
+      now: () => nowMs,
+    });
+
+    expect(result).toEqual({ status: 'timeout' });
+    expect(remainingBudgets).toEqual([10]);
+    expect(sleepDurations).toEqual([10]);
   });
 
   it('fails fast with not_found when the nonce stays untracked beyond the grace window', async () => {

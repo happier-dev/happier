@@ -5,7 +5,10 @@
 import type { SpawnSessionResult } from '@happier-dev/protocol';
 import {
     SPAWN_SESSION_ERROR_CODES,
+    isSpawnSessionErrorDetail,
     settleSpawnSessionNonce,
+    type SpawnSessionErrorCode,
+    type SpawnSessionErrorDetail,
 } from '@happier-dev/protocol';
 import { RPC_ERROR_CODES, RPC_METHODS, isRpcMethodNotFoundResult } from '@happier-dev/protocol/rpc';
 
@@ -35,6 +38,7 @@ import { isPlainObject, normalizeSpawnSessionResult } from './_shared';
 import { isSocketIoAckTimeoutError } from '@/sync/runtime/socketIoAckTimeout';
 import { mergeMachineMetadataForVersionMismatch } from './machineMetadataMerge';
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
+import { isMachineRpcTimeoutError } from '@/sync/runtime/orchestration/serverScopedRpc/machineRpcTimeoutError';
 import { getSyncSingleton } from '@/sync/runtime/getSyncSingleton';
 import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 import { stopSessionViaDaemonMachineRpc } from './sessionStopStrategy';
@@ -51,6 +55,7 @@ export { buildSpawnHappySessionRpcParams } from '../domains/session/spawn/spawnS
 
 export type MachineSpawnSessionResolveStatus =
     | { status: 'success'; sessionId: string }
+    | { status: 'error'; errorCode: SpawnSessionErrorCode; errorMessage: string; errorDetail?: SpawnSessionErrorDetail }
     | { status: 'pending' }
     | { status: 'not_found' }
     | { status: 'unsupported' }
@@ -120,8 +125,16 @@ function resolveSpawnAttemptTargetFingerprint(params: Readonly<{
     }, machineHomeDir);
 }
 
-function readMachineDaemonCliVersion(machineId: string): string | null {
-    const rawVersion = storage.getState().machines[machineId]?.daemonState?.startedWithCliVersion;
+function readMachineDaemonCliVersion(params: Readonly<{
+    machineId: string;
+    effectiveServerId: string;
+    activeServerId: string;
+}>): string | null {
+    const state = storage.getState();
+    const machine = params.effectiveServerId === params.activeServerId
+        ? state.machines[params.machineId]
+        : state.machineListByServerId[params.effectiveServerId]?.find((candidate) => candidate.id === params.machineId);
+    const rawVersion = machine?.daemonState?.startedWithCliVersion;
     return typeof rawVersion === 'string' && rawVersion.trim().length > 0 ? rawVersion.trim() : null;
 }
 
@@ -194,7 +207,20 @@ export async function machineSpawnNewSession(options: SpawnSessionOptions): Prom
         };
         const { machineId } = preparedOptions;
         const serverId = typeof preparedOptions.serverId === 'string' ? preparedOptions.serverId.trim() : null;
-        const daemonCliVersion = readMachineDaemonCliVersion(machineId);
+        const profileScope = storage.getState().profileScope;
+        if (!profileScope) {
+            return {
+                type: 'error',
+                errorCode: SPAWN_SESSION_ERROR_CODES.ACCOUNT_SCOPE_CHANGED,
+                errorMessage: 'Account scope is unavailable for durable session launch recovery.',
+            };
+        }
+        const effectiveServerId = serverId || profileScope.serverId;
+        const daemonCliVersion = readMachineDaemonCliVersion({
+            machineId,
+            effectiveServerId,
+            activeServerId: profileScope.serverId,
+        });
 
         if (
             shouldUseLegacySpawnHappySessionRpcParams(daemonCliVersion)
@@ -209,16 +235,6 @@ export async function machineSpawnNewSession(options: SpawnSessionOptions): Prom
                     `or newer on this machine (detected ${versionLabel}).`,
             };
         }
-
-        const profileScope = storage.getState().profileScope;
-        if (!profileScope) {
-            return {
-                type: 'error',
-                errorCode: SPAWN_SESSION_ERROR_CODES.ACCOUNT_SCOPE_CHANGED,
-                errorMessage: 'Account scope is unavailable for durable session launch recovery.',
-            };
-        }
-        const effectiveServerId = serverId || profileScope.serverId;
         const targetFingerprint = resolveSpawnAttemptTargetFingerprint({
             options: preparedOptions,
             effectiveServerId,
@@ -304,6 +320,10 @@ export async function machineSpawnNewSession(options: SpawnSessionOptions): Prom
                     spawnAttemptCustody: completedCustody,
                 };
             }
+            if (resolved.status === 'error') {
+                await clearCustody();
+                return buildTerminalSpawnResolutionError(resolved);
+            }
             if (resolved.status !== 'not_found') {
                 return buildPendingSpawnResolutionError(resolved, activeAttempt.record);
             }
@@ -374,6 +394,10 @@ export async function machineSpawnNewSession(options: SpawnSessionOptions): Prom
                     spawnAttemptCustody: completedCustody,
                 };
             }
+            if (resolved.status === 'error') {
+                await clearCustody();
+                return buildTerminalSpawnResolutionError(resolved);
+            }
             return buildPendingSpawnResolutionError(resolved, activeAttempt.record);
         }
         const completedRecord = normalized.type === 'success' && normalized.sessionId
@@ -418,7 +442,7 @@ export async function machineSpawnNewSession(options: SpawnSessionOptions): Prom
                     `The daemon may be stopped, still starting, or not connected to the server.`,
             };
         }
-        if (isSocketIoAckTimeoutError(error)) {
+        if (isSocketIoAckTimeoutError(error) || isMachineRpcTimeoutError(error)) {
             if (custody) {
                 const resolved = await machineResolveSpawnSessionByNonceUntilSettled({
                     machineId: custody.machineId,
@@ -443,6 +467,10 @@ export async function machineSpawnNewSession(options: SpawnSessionOptions): Prom
                         sessionId: resolved.sessionId,
                         spawnAttemptCustody: completedCustody,
                     };
+                }
+                if (resolved.status === 'error') {
+                    await clearCustody();
+                    return buildTerminalSpawnResolutionError(resolved);
                 }
                 return buildPendingSpawnResolutionError(resolved, custody.record);
             }
@@ -546,7 +574,7 @@ function buildSpawnAttemptCustodyError(
 }
 
 function buildPendingSpawnResolutionError(
-    resolution: Exclude<MachineSpawnSessionResolveStatus, { status: 'success' }>,
+    resolution: Exclude<MachineSpawnSessionResolveStatus, { status: 'success' | 'error' }>,
     record: PersistedSpawnAttempt,
 ): Extract<MachineSpawnNewSessionUntilResolvedResult, { type: 'error' }> {
     return {
@@ -570,6 +598,17 @@ function buildPendingSpawnResolutionError(
     };
 }
 
+function buildTerminalSpawnResolutionError(
+    resolution: Extract<MachineSpawnSessionResolveStatus, { status: 'error' }>,
+): Extract<MachineSpawnNewSessionUntilResolvedResult, { type: 'error' }> {
+    return {
+        type: 'error',
+        errorCode: resolution.errorCode,
+        errorMessage: resolution.errorMessage,
+        ...(resolution.errorDetail ? { errorDetail: resolution.errorDetail } : {}),
+    };
+}
+
 export async function machineSpawnNewSessionUntilResolved(
     options: SpawnSessionOptions,
 ): Promise<MachineSpawnNewSessionUntilResolvedResult> {
@@ -589,6 +628,19 @@ function normalizeMachineSpawnSessionResolveStatus(value: unknown): MachineSpawn
     if (value.status === 'unsupported') {
         return { status: 'unsupported' };
     }
+    if (value.status === 'error') {
+        const errorCode = typeof value.errorCode === 'string' ? value.errorCode : '';
+        const errorMessage = typeof value.errorMessage === 'string' ? value.errorMessage.trim() : '';
+        if ((Object.values(SPAWN_SESSION_ERROR_CODES) as string[]).includes(errorCode) && errorMessage) {
+            return {
+                status: 'error',
+                errorCode: errorCode as SpawnSessionErrorCode,
+                errorMessage,
+                ...(isSpawnSessionErrorDetail(value.errorDetail) ? { errorDetail: value.errorDetail } : {}),
+            };
+        }
+        return { status: 'not_found' };
+    }
     if (value.status === 'success' && typeof value.sessionId === 'string' && value.sessionId.trim().length > 0) {
         return { status: 'success', sessionId: value.sessionId.trim() };
     }
@@ -599,6 +651,7 @@ export async function machineResolveSpawnSessionByNonce(options: Readonly<{
     machineId: string;
     serverId?: string | null;
     spawnNonce: string;
+    timeoutMs?: number;
 }>): Promise<MachineSpawnSessionResolveStatus> {
     const spawnNonce = options.spawnNonce.trim();
     if (!spawnNonce) {
@@ -611,6 +664,7 @@ export async function machineResolveSpawnSessionByNonce(options: Readonly<{
             method: RPC_METHODS.DAEMON_SPAWN_SESSION_RESOLVE,
             payload: { spawnNonce },
             serverId: options.serverId ?? null,
+            timeoutMs: options.timeoutMs,
         });
         return normalizeMachineSpawnSessionResolveStatus(result);
     } catch (error) {
@@ -649,8 +703,11 @@ export async function machineResolveSpawnSessionByNonceUntilSettled(options: Rea
     );
     const settled = await settleSpawnSessionNonce({
         spawnNonce: options.spawnNonce,
-        resolve: async () => {
-            const result = await machineResolveSpawnSessionByNonce(options);
+        resolve: async (_spawnNonce, remainingTimeoutMs) => {
+            const result = await machineResolveSpawnSessionByNonce({
+                ...options,
+                timeoutMs: remainingTimeoutMs,
+            });
             if (result.status === 'transport_error') {
                 throw new Error('Spawn nonce resolver transport failure');
             }

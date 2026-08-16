@@ -4,12 +4,23 @@ import { notifyTerminalAttachmentRetiredThroughCatalog } from '@/backends/catalo
 import { stopDaemonSession } from '@/daemon/controlClient';
 import { listSessionMarkers, removeSessionMarker } from '@/daemon/sessionRegistry';
 import { createStopSession } from '@/daemon/sessions/stopSession';
-import type { StopSessionResult } from '@/daemon/sessions/stopSessionContract';
+import {
+  SessionStopCleanupIncompleteReasonSchema,
+  SessionStopOutcomeSchema,
+  StopSessionResultSchema,
+  type SessionStopOutcome,
+  type SessionStopResult as SessionStopCommandResult,
+} from '@happier-dev/protocol';
+import type {
+  StopSessionResult,
+} from '@/daemon/sessions/stopSessionContract';
 import { waitForTrackedRunnerProcessesExit } from '@/daemon/sessions/waitForTrackedRunnerProcessesExit';
 import { retireExactTerminalControlServiceability } from '@/daemon/sessions/retireTerminalControlServiceability';
 import type { TrackedSession } from '@/daemon/types';
 import { resolveSessionIdOrPrefix } from '@/session/query/resolveSessionId';
 import { fetchSessionByIdCompat } from '@/session/transport/http/sessionsHttp';
+import { tryDecryptSessionMetadata } from '@/session/transport/encryption/sessionEncryptionContext';
+import { callMachineRpc } from '@/session/transport/rpc/machineRpc';
 import {
   resolveSessionControlStopPollIntervalMs,
   resolveSessionControlStopTimeoutMs,
@@ -18,11 +29,83 @@ import { delay } from '@/utils/time';
 import { readTerminalAttachmentState } from '@/terminal/attachment/terminalAttachmentInfo';
 import { createDefaultTerminalHostRegistry } from '@/integrations/terminalHost/defaultRegistry';
 import { logger } from '@/ui/logger';
+import { RPC_METHODS, SOCKET_RPC_AUTHORIZATION_CONTEXT_KINDS } from '@happier-dev/protocol/rpc';
 
 type StopSessionAttemptResult = StopSessionResult | Readonly<{
   status: 'incomplete';
-  reason: 'transport_ambiguous' | 'marker_fallback_failed';
+  reason: 'transport_ambiguous' | 'marker_fallback_failed' | 'target_daemon_unavailable';
 }>;
+
+function stopOutcomeFromAttemptResult(
+  result: Exclude<StopSessionAttemptResult, { status: 'stopped' }>,
+  targetKind: 'caller_local' | 'owning_machine' = 'caller_local',
+): SessionStopOutcome {
+  if (result.status === 'incomplete') {
+    const cleanupReason = SessionStopCleanupIncompleteReasonSchema.safeParse(result.reason);
+    if (cleanupReason.success) {
+      return SessionStopOutcomeSchema.parse({
+        status: 'stopped_cleanup_incomplete',
+        reason: cleanupReason.data,
+      });
+    }
+    return SessionStopOutcomeSchema.parse({ status: 'physical_stop_unconfirmed', reason: result.reason });
+  }
+  if (result.status === 'not_found') {
+    return SessionStopOutcomeSchema.parse({
+      status: 'physical_stop_unconfirmed',
+      reason: targetKind === 'owning_machine' ? 'target_session_not_found' : 'local_session_not_found',
+    });
+  }
+  return SessionStopOutcomeSchema.parse({
+    status: 'physical_stop_unconfirmed',
+    reason: 'daemon_stop_requested',
+  });
+}
+
+function readNonEmptyString(value: unknown): string | null {
+  return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
+}
+
+function resolveOwningMachineId(params: Readonly<{
+  credentials: Credentials;
+  rawSession: Awaited<ReturnType<typeof fetchSessionByIdCompat>>;
+}>): { ok: true; machineId: string | null } | { ok: false } {
+  if (!params.rawSession) return { ok: false };
+  const rawMachineId = readNonEmptyString(params.rawSession.machineId);
+  const metadata = tryDecryptSessionMetadata({
+    credentials: params.credentials,
+    rawSession: params.rawSession,
+  });
+  const metadataMachineId = readNonEmptyString(metadata?.machineId);
+  if (rawMachineId && metadataMachineId && rawMachineId !== metadataMachineId) {
+    return { ok: false };
+  }
+  return { ok: true, machineId: rawMachineId ?? metadataMachineId };
+}
+
+async function stopSessionOnOwningMachine(params: Readonly<{
+  credentials: Credentials;
+  sessionId: string;
+  machineId: string;
+}>): Promise<StopSessionAttemptResult> {
+  try {
+    const result = StopSessionResultSchema.safeParse(await callMachineRpc({
+      credentials: params.credentials,
+      machineId: params.machineId,
+      method: RPC_METHODS.STOP_SESSION,
+      request: { sessionId: params.sessionId },
+      authorization: {
+        kind: SOCKET_RPC_AUTHORIZATION_CONTEXT_KINDS.SESSION_WRITE,
+        sessionId: params.sessionId,
+      },
+    }));
+    return result.success
+      ? result.data
+      : { status: 'incomplete', reason: 'target_daemon_unavailable' };
+  } catch {
+    return { status: 'incomplete', reason: 'target_daemon_unavailable' };
+  }
+}
 
 async function waitForSessionStopResult(params: Readonly<{
   token: string;
@@ -69,6 +152,9 @@ async function stopSessionViaMarkersBestEffort(params: Readonly<{
         happySessionId: marker.happySessionId,
         pid: marker.pid,
         ...(typeof marker.processCommandHash === 'string' ? { processCommandHash: marker.processCommandHash } : {}),
+        ...(typeof marker.processInstanceFingerprint === 'string'
+          ? { processInstanceFingerprint: marker.processInstanceFingerprint }
+          : {}),
         ...(marker.respawn
           ? {
               spawnOptions: {
@@ -138,8 +224,8 @@ export async function requestSessionStop(params: Readonly<{
   credentials: Credentials;
   idOrPrefix: string;
 }>): Promise<
-  | Readonly<{ ok: true; sessionId: string; stopped: boolean }>
-  | Readonly<{ ok: false; code: 'session_not_found' | 'session_id_ambiguous' | 'unsupported'; candidates?: string[] }>
+  | (Readonly<{ ok: true }> & SessionStopCommandResult)
+  | Readonly<{ ok: false; code: 'session_not_found' | 'session_id_ambiguous' | 'session_lookup_timeout' | 'unsupported'; candidates?: string[] }>
 > {
   const resolved = await resolveSessionIdOrPrefix({
     credentials: params.credentials,
@@ -154,6 +240,52 @@ export async function requestSessionStop(params: Readonly<{
   }
 
   try {
+    const owningMachine = resolveOwningMachineId({
+      credentials: params.credentials,
+      rawSession: resolved.rawSession,
+    });
+    if (!owningMachine.ok) {
+      return {
+        ok: true,
+        sessionId: resolved.sessionId,
+        stopped: false,
+        stopOutcome: {
+          status: 'physical_stop_unconfirmed',
+          reason: 'target_daemon_unavailable',
+        },
+      };
+    }
+    if (owningMachine.machineId) {
+      const physicalStopResult = await stopSessionOnOwningMachine({
+        credentials: params.credentials,
+        sessionId: resolved.sessionId,
+        machineId: owningMachine.machineId,
+      });
+      if (physicalStopResult.status !== 'stopped') {
+        return {
+          ok: true,
+          sessionId: resolved.sessionId,
+          stopped: false,
+          stopOutcome: stopOutcomeFromAttemptResult(physicalStopResult, 'owning_machine'),
+        };
+      }
+      const stopped = await waitForSessionStopResult({
+        token: params.credentials.token,
+        sessionId: resolved.sessionId,
+      });
+      return stopped
+        ? { ok: true, sessionId: resolved.sessionId, stopped: true }
+        : {
+            ok: true,
+            sessionId: resolved.sessionId,
+            stopped: false,
+            stopOutcome: {
+              status: 'stopped_projection_unconfirmed',
+              reason: 'relay_inactive_not_observed',
+            },
+          };
+    }
+
     const exactAttachmentIdBeforeDaemonStop = await readExactTerminalAttachmentId(resolved.sessionId);
     let physicalStopResult: StopSessionAttemptResult;
     try {
@@ -178,25 +310,44 @@ export async function requestSessionStop(params: Readonly<{
         (): StopSessionAttemptResult => ({ status: 'incomplete', reason: 'marker_fallback_failed' }),
       );
     }
-    const stopped = physicalStopResult.status === 'stopped'
-      ? await waitForSessionStopResult({
-          token: params.credentials.token,
-          sessionId: resolved.sessionId,
-        })
-      : false;
+    if (physicalStopResult.status !== 'stopped') {
+      return {
+        ok: true,
+        sessionId: resolved.sessionId,
+        stopped: false,
+        stopOutcome: stopOutcomeFromAttemptResult(physicalStopResult),
+      };
+    }
+    const stopped = await waitForSessionStopResult({
+      token: params.credentials.token,
+      sessionId: resolved.sessionId,
+    });
     if (stopped) {
       await cleanupStoppedSessionMarkersBestEffort(resolved.sessionId).catch(() => undefined);
+      return {
+        ok: true,
+        sessionId: resolved.sessionId,
+        stopped: true,
+      };
     }
     return {
       ok: true,
       sessionId: resolved.sessionId,
-      stopped,
+      stopped: false,
+      stopOutcome: {
+        status: 'stopped_projection_unconfirmed',
+        reason: 'relay_inactive_not_observed',
+      },
     };
   } catch {
     return {
       ok: true,
       sessionId: resolved.sessionId,
       stopped: false,
+      stopOutcome: {
+        status: 'physical_stop_unconfirmed',
+        reason: 'unexpected_error',
+      },
     };
   }
 }

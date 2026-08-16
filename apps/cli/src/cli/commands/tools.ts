@@ -4,7 +4,7 @@ import type { CommandContext } from '@/cli/commandRegistry';
 import { mapUnknownErrorToControlError } from '@/cli/control/controlErrorMapping';
 import type { Credentials } from '@/persistence';
 import { readCredentials } from '@/persistence';
-import { wantsJson, printJsonEnvelope } from '@/cli/output/jsonEnvelope';
+import { wantsJson, printJsonEnvelope, writeJsonStdout } from '@/cli/output/jsonEnvelope';
 import { bootstrapAccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
 import { initialMachineMetadata } from '@/daemon/machine/metadata';
 import { initializeBackendApiContext } from '@/agent/runtime/initializeBackendApiContext';
@@ -19,6 +19,8 @@ import { callResolvedCustomHappierTool } from '@/agent/tools/happierTools/custom
 
 type BuiltInToolEntry = Awaited<ReturnType<typeof listBuiltInHappierTools>>[number];
 type CustomToolEntry = Awaited<ReturnType<typeof listResolvedCustomHappierTools>>['tools'][number];
+type ToolCallResult = Awaited<ReturnType<typeof callBuiltInHappierTool>>
+  | Awaited<ReturnType<typeof callResolvedCustomHappierTool>>;
 
 export type ToolsCommandDeps = Readonly<{
   readCredentials: () => Promise<Credentials | null>;
@@ -65,14 +67,50 @@ function resolveCommandKind(args: readonly string[]): string {
   return subcommand ? `tools_${subcommand}` : 'tools_unknown';
 }
 
-async function resolveToolsRuntimeContext(args: readonly string[], deps: ToolsCommandDeps): Promise<{
+async function resolveToolsBaseContext(args: readonly string[], deps: ToolsCommandDeps): Promise<{
+  credentials: Credentials;
+  sessionId: string | null;
+  directory: string;
+}>;
+
+async function resolveToolsBaseContext(
+  args: readonly string[],
+  deps: ToolsCommandDeps,
+  options: Readonly<{ requireSessionId: true }>,
+): Promise<{
+  credentials: Credentials;
+  sessionId: string;
+  directory: string;
+}>;
+
+async function resolveToolsBaseContext(
+  args: readonly string[],
+  deps: ToolsCommandDeps,
+  options?: Readonly<{ requireSessionId?: boolean }>,
+): Promise<{
+  credentials: Credentials;
+  sessionId: string | null;
+  directory: string;
+}> {
+  const credentials = await deps.readCredentials();
+  if (!credentials) throw new Error('Not authenticated. Run "happier auth login" first.');
+
+  const sessionId = options?.requireSessionId === true
+    ? requireFlagValue(args, '--session-id')
+    : getFlagValue(args, '--session-id');
+  const directory = getFlagValue(args, '--directory') ?? process.cwd();
+
+  return { credentials, sessionId, directory };
+}
+
+async function resolveCustomToolsRuntimeContext(args: readonly string[], deps: ToolsCommandDeps): Promise<{
   credentials: Credentials;
   sessionId: string | null;
   directory: string;
   mcpServers: Awaited<ReturnType<typeof resolveCustomHappierToolsContext>>['mcpServers'];
 }>;
 
-async function resolveToolsRuntimeContext(
+async function resolveCustomToolsRuntimeContext(
   args: readonly string[],
   deps: ToolsCommandDeps,
   options: Readonly<{ requireSessionId: true }>,
@@ -83,7 +121,7 @@ async function resolveToolsRuntimeContext(
   mcpServers: Awaited<ReturnType<typeof resolveCustomHappierToolsContext>>['mcpServers'];
 }>;
 
-async function resolveToolsRuntimeContext(
+async function resolveCustomToolsRuntimeContext(
   args: readonly string[],
   deps: ToolsCommandDeps,
   options?: Readonly<{ requireSessionId?: boolean }>,
@@ -93,13 +131,10 @@ async function resolveToolsRuntimeContext(
   directory: string;
   mcpServers: Awaited<ReturnType<typeof resolveCustomHappierToolsContext>>['mcpServers'];
 }> {
-  const credentials = await deps.readCredentials();
-  if (!credentials) throw new Error('Not authenticated. Run "happier auth login" first.');
-
-  const sessionId = options?.requireSessionId === true
-    ? requireFlagValue(args, '--session-id')
-    : getFlagValue(args, '--session-id');
-  const directory = getFlagValue(args, '--directory') ?? process.cwd();
+  const baseContext = options?.requireSessionId === true
+    ? await resolveToolsBaseContext(args, deps, { requireSessionId: true })
+    : await resolveToolsBaseContext(args, deps);
+  const { credentials, sessionId, directory } = baseContext;
   const { machineId } = await deps.initializeBackendApiContext({
     credentials,
     machineMetadata: initialMachineMetadata,
@@ -154,12 +189,12 @@ export async function handleToolsCommand(args: string[], overrides?: Partial<Too
 
   try {
     if (subcommand === 'list') {
-      const context = await resolveToolsRuntimeContext(args, deps);
+      const context = await resolveCustomToolsRuntimeContext(args, deps);
       const builtInTools = await deps.listBuiltInHappierTools();
       const { tools: customTools, warnings } = await deps.listResolvedCustomHappierTools({ mcpServers: context.mcpServers });
 
       if (json) {
-        printJsonEnvelope({
+        await printJsonEnvelope({
           ok: true,
           kind,
           data: {
@@ -199,29 +234,33 @@ export async function handleToolsCommand(args: string[], overrides?: Partial<Too
     }
 
     if (subcommand === 'call') {
-      const context = await resolveToolsRuntimeContext(args, deps, { requireSessionId: true });
       const source = requireFlagValue(args, '--source');
       const toolName = requireFlagValue(args, '--tool');
       const argsJson = requireFlagValue(args, '--args-json');
       const parsedArgs = JSON.parse(argsJson);
 
-      const result = source === 'happier'
-        ? await deps.callBuiltInHappierTool({
-            credentials: context.credentials,
-            sessionId: context.sessionId,
-            toolName,
-            args: parsedArgs,
-          })
-        : await deps.callResolvedCustomHappierTool({
-            source,
-            toolName,
-            args: parsedArgs,
-            mcpServers: context.mcpServers,
-          });
+      let result: ToolCallResult;
+      if (source === 'happier') {
+        const context = await resolveToolsBaseContext(args, deps, { requireSessionId: true });
+        result = await deps.callBuiltInHappierTool({
+          credentials: context.credentials,
+          sessionId: context.sessionId,
+          toolName,
+          args: parsedArgs,
+        });
+      } else {
+        const context = await resolveCustomToolsRuntimeContext(args, deps, { requireSessionId: true });
+        result = await deps.callResolvedCustomHappierTool({
+          source,
+          toolName,
+          args: parsedArgs,
+          mcpServers: context.mcpServers,
+        });
+      }
 
       if (json) {
         if (result.ok) {
-          printJsonEnvelope({
+          await printJsonEnvelope({
             ok: true,
             kind,
             data: {
@@ -235,7 +274,7 @@ export async function handleToolsCommand(args: string[], overrides?: Partial<Too
           const candidates = 'candidates' in result && Array.isArray(result.candidates)
             ? result.candidates
             : undefined;
-          printJsonEnvelope({
+          await printJsonEnvelope({
             ok: false,
             kind,
             error: {
@@ -249,7 +288,7 @@ export async function handleToolsCommand(args: string[], overrides?: Partial<Too
       }
 
       if (!result.ok) throw new Error(result.error);
-      console.log(JSON.stringify(result.result, null, 2));
+      await writeJsonStdout(result.result, { pretty: true });
       return;
     }
 
@@ -257,7 +296,7 @@ export async function handleToolsCommand(args: string[], overrides?: Partial<Too
   } catch (error) {
     if (!json) throw error;
     const mapped = mapUnknownErrorToControlError(error);
-    printJsonEnvelope(
+    await printJsonEnvelope(
       {
         ok: false,
         kind,
@@ -278,7 +317,7 @@ export async function handleToolsCliCommand(context: CommandContext): Promise<vo
   } catch (error) {
     if (json) {
       const mapped = mapUnknownErrorToControlError(error);
-      printJsonEnvelope(
+      await printJsonEnvelope(
         {
           ok: false,
           kind,

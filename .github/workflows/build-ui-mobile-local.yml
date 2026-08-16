@@ -1,4 +1,4 @@
-name: BUILD — UI Mobile (local runner)
+name: BUILD — UI Mobile
 
 on:
   workflow_dispatch:
@@ -45,6 +45,14 @@ on:
           - preview-apk
           - production
           - production-apk
+      native_build_mode:
+        description: "EAS build runner"
+        required: true
+        type: choice
+        default: local
+        options:
+          - cloud
+          - local
       action:
         description: "Build native binaries, submit store builds, or publish OTA"
         required: true
@@ -94,6 +102,10 @@ on:
       profile:
         required: false
         default: auto
+        type: string
+      native_build_mode:
+        required: false
+        default: local
         type: string
       action:
         required: false
@@ -188,7 +200,7 @@ jobs:
         run: |
           set -euo pipefail
           if [ -z "${{ secrets.EXPO_TOKEN }}" ]; then
-            echo "EXPO_TOKEN is required for BUILD — UI Mobile (local runner)." >&2
+            echo "EXPO_TOKEN is required for BUILD — UI Mobile." >&2
             echo "Set the repository secret EXPO_TOKEN, or call this workflow from a trusted workflow that provides it." >&2
             exit 1
           fi
@@ -264,7 +276,7 @@ jobs:
         with:
           args: --frozen-lockfile --ignore-engines
 
-      - name: EAS build (local runner) (pipeline)
+      - name: EAS build (pipeline)
         env:
           GH_TOKEN: ${{ steps.app_token.outputs.token }}
           GH_REPO: ${{ github.repository }}
@@ -277,7 +289,7 @@ jobs:
             --action "${{ inputs.action == 'build_and_submit' && 'native_submit' || 'native' }}" \
             --platform "${EAS_PLATFORM}" \
             --profile "${{ inputs.profile == 'auto' && inputs.environment || inputs.profile }}" \
-            --native-build-mode local \
+            --native-build-mode "${{ inputs.native_build_mode }}" \
             --build-json "/tmp/eas_build_${EAS_PLATFORM}.json" \
             --out-dir "dist/ui-mobile" \
             --publish-apk-release "${{ inputs.publish_apk_release }}" \
@@ -285,6 +297,7 @@ jobs:
             --secrets-source env
 
       - name: Upload mobile build artifact
+        if: ${{ inputs.native_build_mode == 'local' }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: ui-mobile-${{ inputs.environment }}-android
@@ -352,7 +365,7 @@ jobs:
         with:
           args: --frozen-lockfile --ignore-engines
 
-      - name: EAS build (local runner) (pipeline)
+      - name: EAS build (pipeline)
         run: |
           set -euo pipefail
           node scripts/pipeline/run.mjs ui-mobile-release \
@@ -360,7 +373,7 @@ jobs:
             --action "${{ inputs.action == 'build_and_submit' && 'native_submit' || 'native' }}" \
             --platform "${EAS_PLATFORM}" \
             --profile "${{ inputs.profile == 'auto' && inputs.environment || inputs.profile }}" \
-            --native-build-mode local \
+            --native-build-mode "${{ inputs.native_build_mode }}" \
             --build-json "/tmp/eas_build_${EAS_PLATFORM}.json" \
             --out-dir "dist/ui-mobile" \
             --publish-apk-release false \
@@ -368,6 +381,7 @@ jobs:
             --secrets-source env
 
       - name: Upload mobile build artifact
+        if: ${{ inputs.native_build_mode == 'local' }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: ui-mobile-${{ inputs.environment }}-ios

@@ -17,6 +17,7 @@ import type { PermissionRpcPayload } from '../../utils/permissionRpc';
 import type { PermissionRpcConsumerOutcome } from '../../utils/permissionRpcRouter';
 import type {
   ClaudeUnifiedDialogId,
+  ClaudeUnifiedDialogOption,
   ClaudeUnifiedVisibleDialog,
 } from '../tuiControls/dialogRegistry';
 import {
@@ -51,10 +52,7 @@ type RequestOption = Readonly<{
   choice: string;
   label: string;
   description: string;
-  settingMutation?: Readonly<{
-    settingId: 'claudeUnifiedTerminalWorkspaceTrust';
-    value: 'always_trust_happier_workspaces' | 'always_reject_happier_workspaces';
-  }> | undefined;
+  settingMutation?: ClaudeUnifiedDialogOption['settingMutation'];
 }>;
 
 function requestOptions(dialog: ClaudeUnifiedVisibleDialog): readonly RequestOption[] {
@@ -199,9 +197,7 @@ export class ClaudeUnifiedDialogChoiceBroker {
     }
     const identity = getClaudeUnifiedDialogIdentity(params.dialog);
     if (this.pendingChoice?.identity === identity) return this.pendingChoice.promise;
-    if (this.pendingChoice) {
-      await this.completeSourceOwnedCancellation(this.pendingChoice.requestId, 'claude_unified_dialog_changed');
-    }
+    await this.cancelAllSourceOwnedRequests('claude_unified_dialog_changed');
 
     const requestId = this.createRequestId();
     const toolInput = buildClaudeUnifiedDialogQuestionInput(params.dialog);
@@ -242,7 +238,7 @@ export class ClaudeUnifiedDialogChoiceBroker {
   }
 
   async noteDialogResolvedInTerminal(reason: string): Promise<void> {
-    await this.cancelPendingChoice(reason);
+    await this.cancelAllSourceOwnedRequests(reason);
   }
 
   async dispose(): Promise<void> {

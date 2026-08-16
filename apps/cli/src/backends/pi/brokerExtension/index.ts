@@ -28,6 +28,9 @@ export {
   ensurePiBrokerExtensionAsset,
 } from './piBrokerExtensionAssets';
 export {
+  PiBrokerReadinessError,
   verifyPiBrokerReadyForConnectedSession,
   type PiBrokerReadiness,
+  type PiBrokerReadinessFailure,
+  type PiBrokerReadinessFailureReason,
 } from './verifyPiBrokerReady';

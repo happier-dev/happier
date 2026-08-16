@@ -1978,10 +1978,13 @@ export async function claudeRemoteLauncher(
                                 providerInputOutcomes.observeAccepted({ userMessageLocalIds, appliedModelId });
                                 resetUnifiedParkRelaunchBudget();
                             },
-                            isPromptDeliveryAccepted: (batch) => {
+                            resolvePromptDeliveryState: (batch) => {
                                 const localId = readSinglePendingDeliveryLocalId(batch.userMessageLocalIds);
-                                return localId !== null
-                                    && session.client.hasPendingProviderInputAcceptance?.(localId) === true;
+                                if (localId === null) return 'pending';
+                                if (session.client.hasPendingProviderInputAcceptance?.(localId) === true) return 'accepted';
+                                return session.client.hasCanonicalPendingProviderInputDelivery?.(localId) === false
+                                    ? 'retired'
+                                    : 'pending';
                             },
                             onTerminalInjectionFailure: surfaceGenerationUnifiedTerminalRuntimeIssue,
                             registerTerminalComposerClearRuntimeControl: (clearTerminalComposer) =>

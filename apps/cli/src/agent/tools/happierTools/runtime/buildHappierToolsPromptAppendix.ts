@@ -139,7 +139,7 @@ ${renameCommandGuidance}
 
 ${memoryGuidance ? `${memoryGuidance}
 
-` : ''}For any other Happier or custom tool, call the same CLI bridge form with \`call --source <source> --tool <tool> --args-json '<json>' --json\`. When a custom tool is written as \`<source>/<tool>\`, pass the part before the slash to \`--source\` and the part after the slash to \`--tool\`.
+` : ''}For any other Happier or custom tool, call the same CLI bridge form with \`call --source <source> --tool <tool> --args-json '<json>' --json\`. Use the listed tool \`name\` verbatim for \`--tool\`; ActionSpec IDs (for example, \`subagents.delegate.start\`) are not tool names. If you start from an ActionSpec ID, invoke the listed \`action_execute\` tool and pass the ID as \`actionId\` in \`--args-json\`. When a custom tool is written as \`<source>/<tool>\`, pass the part before the slash to \`--source\` and the part after the slash to \`--tool\`.
 
 Never violate the user's explicit constraints on tool usage. If the user says to avoid tools or to use exactly one tool, follow that instruction even if it means skipping the title update for that turn.
 

@@ -7,6 +7,7 @@ import { TranscriptSameSessionHandoffProvider } from '@/components/sessions/tran
 import type { AttachmentDraft } from '@/components/sessions/attachments/attachmentDraftModel';
 import { parseSessionPaneUrlState } from '@/components/sessions/panes/url/sessionPaneUrlState';
 import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneScope';
+import { resolveSessionPaneScopeId } from '@/components/sessions/panes/sessionPaneScopeId';
 import { SessionCockpitShell } from '@/components/workspaceCockpit/session/SessionCockpitShell';
 import { selectSessionViewShellSessionForRouteState } from '@/components/sessions/shell/sessionViewStableSession';
 import { resolveSessionMobileSurfaceIntent } from '@/components/workspaceCockpit/session/sessionCockpitState';
@@ -134,7 +135,7 @@ export default React.memo(() => {
         return Array.isArray(data?.attachmentDrafts) ? data.attachmentDrafts : null;
     }, [recoveryDataId]);
     const paneUrlState = React.useMemo(() => parseSessionPaneUrlState(params as any), [params]);
-    const scopeId = React.useMemo(() => `session:${sessionId}`, [sessionId]);
+    const scopeId = React.useMemo(() => resolveSessionPaneScopeId(sessionId), [sessionId]);
     const pane = useAppPaneScope(scopeId);
     const { cockpitEnabled } = useMobileWorkspaceExperienceState();
     const { sidebarTabAvailable: terminalTabAvailable } = useSessionTerminalAvailability({

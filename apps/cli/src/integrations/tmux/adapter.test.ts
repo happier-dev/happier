@@ -14,9 +14,13 @@ const TMUX_HANDLE = {
 } as const;
 
 function createClaudeTmuxTerminalHostAdapter(tmux: TmuxUtilities) {
+  const policy = createClaudePromptSubmitVerificationPolicy();
   return createTmuxTerminalHostAdapter({
     tmux,
-    promptSubmitVerification: createClaudePromptSubmitVerificationPolicy(),
+    promptSubmitVerification: {
+      ...policy,
+      isPromptStagedBeforeSubmit: () => true,
+    },
   });
 }
 
@@ -244,12 +248,52 @@ describe('createTmuxTerminalHostAdapter', () => {
       ['send-keys', '-t', 'happy:claude.1', 'C-m'],
       ['send-keys', '-t', 'happy:claude.1', 'C-m'],
     ]);
-    expect(captureCurrentInput).toHaveBeenCalledTimes(2);
+    expect(captureCurrentInput).toHaveBeenCalledTimes(3);
   });
 
-  it('submits after a successful native paste without requiring pre-submit screen capture', async () => {
+  it('waits for the Claude composer to stage the exact prompt before sending Enter', async () => {
+    const prompt = 'continue';
+    const order: string[] = [];
     const tmux = new TmuxUtilities();
-    vi.spyOn(tmux, 'executeTmuxCommand').mockImplementation(async (args) => ({
+    vi.spyOn(tmux, 'executeTmuxCommand').mockImplementation(async (args) => {
+      order.push(args[0] ?? '');
+      return {
+        returncode: 0,
+        stdout: args[0] === 'display-message' ? '0\t12345\tclaude\n' : '',
+        stderr: '',
+        command: [...args],
+      };
+    });
+    let captureCount = 0;
+    vi.spyOn(tmux, 'captureCurrentInput').mockImplementation(async () => {
+      captureCount += 1;
+      order.push(`capture:${captureCount}`);
+      if (captureCount === 1) return 'Claude Code\n❯';
+      if (captureCount === 2) return `Claude Code\n❯ ${prompt}`;
+      return 'Claude Code\n❯';
+    });
+    const adapter = createTmuxTerminalHostAdapter({
+      tmux,
+      promptSubmitVerification: createClaudePromptSubmitVerificationPolicy(),
+    });
+
+    await expect(adapter.injectUserPrompt(
+      TMUX_HANDLE,
+      {
+        text: prompt,
+        multiline: false,
+        origin: { kind: 'ui_pending', nonce: 'nonce-stage-before-enter' },
+        scheduling: { timeoutMs: 500 },
+      },
+    )).resolves.toMatchObject({ status: 'injected' });
+
+    expect(order.indexOf('capture:2')).toBeLessThan(order.indexOf('send-keys'));
+    expect(captureCount).toBeGreaterThanOrEqual(4);
+  });
+
+  it('does not submit when pre-submit screen capture is unavailable', async () => {
+    const tmux = new TmuxUtilities();
+    const executeTmuxCommand = vi.spyOn(tmux, 'executeTmuxCommand').mockImplementation(async (args) => ({
       returncode: 0,
       stdout: args[0] === 'display-message' ? '0\t12345\tclaude\n' : '',
       stderr: '',
@@ -268,14 +312,12 @@ describe('createTmuxTerminalHostAdapter', () => {
       },
     )).resolves.toMatchObject({
       status: 'failed',
-      reason: 'host_unreachable',
-      phase: 'after_enter_unknown',
-      duplicateRisk: 'likely',
+      reason: 'verification_failed',
+      phase: 'after_write_before_enter',
+      duplicateRisk: 'possible',
     });
 
-    expect(tmux.executeTmuxCommand.mock.calls.map((call) => call[0]).filter((args) => args[0] === 'send-keys')).toEqual([
-      ['send-keys', '-t', 'happy:claude.1', 'C-m'],
-    ]);
+    expect(executeTmuxCommand.mock.calls.map((call) => call[0]).filter((args) => args[0] === 'send-keys')).toEqual([]);
   });
 
   it('pastes multiline prompts without sending tmux newline keys before submit', async () => {
@@ -367,10 +409,10 @@ describe('createTmuxTerminalHostAdapter', () => {
       ['send-keys', '-t', 'happy:claude.1', 'C-m'],
     ]);
     expect(calls.flatMap((call) => call[0])).not.toContain(prompt);
-    expect(captureCurrentInput).toHaveBeenCalledTimes(1);
+    expect(captureCurrentInput).toHaveBeenCalledTimes(3);
   });
 
-  it('submits a large tmux paste before checking whether it remains pending', async () => {
+  it('stages a large tmux paste before submit and then verifies that it cleared', async () => {
     const prompt = Array.from({ length: 6_000 }, (_, index) => `line ${index} ${'x'.repeat(36)}`).join('\n');
     expect(Buffer.byteLength(prompt, 'utf8')).toBeGreaterThan(250_000);
     const order: string[] = [];
@@ -413,7 +455,9 @@ describe('createTmuxTerminalHostAdapter', () => {
       'display-message',
       'load-buffer',
       'paste-buffer',
+      'capture-current-input',
       'send-keys',
+      'capture-current-input',
       'capture-current-input',
     ]);
   });
@@ -450,7 +494,7 @@ describe('createTmuxTerminalHostAdapter', () => {
     expect(executeTmuxCommand.mock.calls.map((call) => call[0]).filter((args) => args[0] === 'send-keys')).toEqual([
       ['send-keys', '-t', 'happy:claude.1', 'C-m'],
     ]);
-    expect(captureCurrentInput).toHaveBeenCalledTimes(1);
+    expect(captureCurrentInput).toHaveBeenCalledTimes(3);
   });
 
   it('does not retry Enter when only a stale visible placeholder matches after submit', async () => {
@@ -541,12 +585,13 @@ describe('createTmuxTerminalHostAdapter', () => {
     let captureCount = 0;
     vi.spyOn(tmux, 'captureCurrentInput').mockImplementation(async () => {
       captureCount += 1;
-      if (captureCount === 1) {
+      if (captureCount <= 2) {
         return [
-          '┄'.repeat(20),
-          '› [Pasted text #1 +40 lines]',
-          '─'.repeat(20),
-          '▶▶ auto mode on (shift+tab to cycle)',
+          '────────────────────────────────────────────────────────────────────────────────',
+          '❯\u00a0[Pasted text #1 +7 lines]',
+          '────────────────────────────────────────────────────────────────────────────────',
+          '                                                                     /rc active',
+          '⏵⏵ auto mode on (shift+tab to cycle)',
         ].join('\n');
       }
       return '';

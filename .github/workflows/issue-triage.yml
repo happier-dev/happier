@@ -106,14 +106,3 @@ jobs:
               issue_number: issue.number,
               body,
             });
-
-      - name: Assign coding agent
-        if: ${{ vars.TRIAGE_BOT_ID != '' }}
-        env:
-          MAINTAINER_SERVICE_BASE_URL: ${{ vars.MAINTAINER_SERVICE_BASE_URL }}
-          MAINTAINER_SERVICE_TOKEN: ${{ secrets.MAINTAINER_SERVICE_TOKEN }}
-          ISSUE_NUMBER: ${{ github.event.issue.number }}
-          TRIAGE_BOT_ID: ${{ vars.TRIAGE_BOT_ID }}
-        run: |
-          ISSUE_REF="${{ github.repository }}#${ISSUE_NUMBER}"
-          node maintainer-tools/packages/maintainer-cli/dist/index.js issue triage assign "$ISSUE_REF" --bot-id "$TRIAGE_BOT_ID"

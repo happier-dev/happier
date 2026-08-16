@@ -56,10 +56,11 @@ describe('useServerRetentionPolicy', () => {
 
         expect(seen.at(-1)).toMatchObject({
             enabled: true,
-            sessions: {
-                mode: 'delete_inactive',
-                inactivityDays: 30,
-            },
+            completeness: 'legacy_partial',
+            domains: expect.arrayContaining([{
+                id: 'sessions',
+                policy: { mode: 'delete_inactive', inactivityDays: 30 },
+            }]),
         });
     });
 });

@@ -96,17 +96,33 @@ function createFakePermissionHandler() {
 }
 
 function createOpenCodeServerRuntime(
-  params: Parameters<typeof createOpenCodeServerRuntimeProduction>[0],
+  params: Omit<Parameters<typeof createOpenCodeServerRuntimeProduction>[0], 'happierMcpAdmission'>
+    & Partial<Pick<Parameters<typeof createOpenCodeServerRuntimeProduction>[0], 'happierMcpAdmission'>>,
   deps?: Parameters<typeof createOpenCodeServerRuntimeProduction>[1],
 ): ReturnType<typeof createOpenCodeServerRuntimeProduction> {
+  const happierMcpAdmission = params.happierMcpAdmission ?? { kind: 'required' as const };
+  const mcpServers = params.happierMcpAdmission === undefined && Object.keys(params.mcpServers).length === 0
+    ? createReadyMcpServers()
+    : params.mcpServers;
   return createOpenCodeServerRuntimeProduction({
     ...params,
+    mcpServers,
+    happierMcpAdmission,
   }, deps);
 }
 
 type OpenCodeRuntimePromptHarness = Readonly<{
   sendPromptWithMeta(params: ProviderPromptWithMeta): Promise<void>;
 }>;
+
+function createReadyMcpServers() {
+  return {
+    happier: {
+      command: process.execPath,
+      args: ['--version'],
+    },
+  };
+}
 
 type OpenCodePromptAsyncCall = Parameters<OpenCodeServerRuntimeClient['sessionPromptAsync']>[0];
 
@@ -143,7 +159,9 @@ function createFakeClient(opts: Readonly<{
     sessionTodo: vi.fn(async () => ([] as unknown[])),
     sessionStatusList: vi.fn(async () => ({ ses_1: { type: statusType } })),
     setDirectoryOverride: vi.fn((next: string) => {
+      const changed = directoryOverride !== null && directoryOverride !== next;
       directoryOverride = next;
+      return changed;
     }),
     globalConfigGet: vi.fn(async () => ({ model: 'openai/gpt-5.2' })),
     agentsList: vi.fn(async () => ([{ name: 'build', description: 'Build agent' }])),
@@ -167,7 +185,7 @@ function createFakeClient(opts: Readonly<{
         }) as Record<string, unknown>,
       },
     ])),
-    mcpAdd: vi.fn(async (_input?: unknown) => {}),
+    mcpAdd: vi.fn(async (_input?: unknown) => ({ status: 'connected' as const })),
     mcpDisconnect: vi.fn(async (_input?: unknown) => {}),
     questionReply: vi.fn(async () => true),
     questionReject: vi.fn(async () => true),
@@ -225,6 +243,32 @@ function readOpenCodePromptAsyncCall(
     throw new Error(`Expected sessionPromptAsync call ${index}`);
   }
   return call[0];
+}
+
+function useCompletedProviderErrorInventory(
+  client: ReturnType<typeof createFakeClient>,
+  error: unknown,
+  messageId = 'msg_completed_provider_error',
+): void {
+  const promptMessageId = readOpenCodePromptAsyncCall(client, 0).messageId;
+  if (!promptMessageId) throw new Error('Expected prompt_async to include the current user message id');
+  client.sessionMessagesList = vi.fn(async () => [
+    {
+      info: { id: promptMessageId, role: 'user', sessionID: 'ses_1', time: { created: 10 } },
+      parts: [{ id: `part_${promptMessageId}`, type: 'text', text: 'hello' }],
+    },
+    {
+      info: {
+        id: messageId,
+        role: 'assistant',
+        sessionID: 'ses_1',
+        parentID: promptMessageId,
+        time: { created: 11, completed: 12 },
+        error,
+      },
+      parts: [],
+    },
+  ]);
 }
 
 function createFakeSession(sessionId = 'happy_sess_opencode') {
@@ -568,6 +612,305 @@ describe('createOpenCodeServerRuntime', () => {
     });
   });
 
+  it('keeps startup non-blocking but waits for required Happier MCP readiness before the first prompt', async () => {
+    const client = createFakeClient();
+    let resolveSlowCustomMcp!: () => void;
+    client.mcpAdd.mockImplementation(async (input?: unknown) => {
+      const name = (input as { name?: unknown } | undefined)?.name;
+      if (name === 'slow_custom') {
+        await new Promise<void>((resolve) => {
+          resolveSlowCustomMcp = resolve;
+        });
+      }
+      return { status: 'connected' as const };
+    });
+    const session = createFakeSession();
+    const runtime = createOpenCodeServerRuntime({
+      directory: '/tmp',
+      session,
+      messageBuffer: new MessageBuffer(),
+      mcpServers: {
+        slow_custom: {
+          command: process.execPath,
+          args: ['--version'],
+        },
+        happier: {
+          command: process.execPath,
+          args: ['--help'],
+        },
+      },
+      permissionHandler: createFakePermissionHandler() as unknown as ProviderEnforcedPermissionHandler,
+      onThinkingChange: vi.fn(),
+    }, {
+      createClient: async () => client as unknown as OpenCodeServerRuntimeClient,
+    });
+
+    try {
+      const startPromise = runtime.startOrLoad({});
+      const startOutcome = observePromiseSettlement(startPromise);
+      await flushTranscriptCommitMicrotasks();
+
+      expect(startOutcome.status).toBe('resolved');
+      expect(client.mcpAdd).toHaveBeenCalledTimes(1);
+
+      runtime.beginTurn();
+      const promptPromise = (runtime as unknown as OpenCodeRuntimePromptHarness).sendPromptWithMeta({
+        text: 'first prompt requiring Happier tools',
+        localId: 'local-required-happier-ready',
+      });
+      void promptPromise.catch(() => undefined);
+      const promptOutcome = observePromiseSettlement(promptPromise);
+
+      await flushTranscriptCommitMicrotasks();
+
+      expect(promptOutcome.status).toBe('pending');
+      expect(client.sessionPromptAsync).not.toHaveBeenCalled();
+
+      resolveSlowCustomMcp();
+
+      await expect.poll(() => client.mcpAdd.mock.calls.length).toBe(2);
+      expect(client.mcpAdd).toHaveBeenNthCalledWith(2, {
+        name: 'happier',
+        config: {
+          type: 'local',
+          enabled: true,
+          command: [process.execPath, '--help'],
+        },
+      });
+      await expect.poll(() => client.sessionPromptAsync.mock.calls.length).toBe(1);
+
+      await emitTerminalAssistantAndIdle(client, { messageId: 'msg_required_happier_ready_done' });
+      await expect(promptPromise).resolves.toBeUndefined();
+      await expect(startPromise).resolves.toBe('ses_1');
+    } finally {
+      resolveSlowCustomMcp?.();
+      await runtime.reset().catch(() => {});
+    }
+  });
+
+  it('fails the turn before provider acceptance when required Happier MCP registration fails', async () => {
+    const client = createFakeClient();
+    client.mcpAdd.mockRejectedValueOnce(new Error('required bridge add failed'));
+    const session = createFakeSession();
+    const runtime = createOpenCodeServerRuntime({
+      directory: '/tmp',
+      session,
+      messageBuffer: new MessageBuffer(),
+      mcpServers: {
+        happier: {
+          command: process.execPath,
+          args: ['--version'],
+        },
+      },
+      permissionHandler: createFakePermissionHandler() as unknown as ProviderEnforcedPermissionHandler,
+      onThinkingChange: vi.fn(),
+    }, {
+      createClient: async () => client as unknown as OpenCodeServerRuntimeClient,
+    });
+
+    try {
+      await runtime.startOrLoad({});
+      runtime.beginTurn();
+      const promptPromise = (runtime as unknown as OpenCodeRuntimePromptHarness).sendPromptWithMeta({
+        text: 'first prompt with unavailable Happier tools',
+        localId: 'local-required-happier-failed',
+      });
+      void promptPromise.catch(() => undefined);
+
+      await expect(promptPromise).rejects.toThrow(/required Happier MCP registration failed.*required bridge add failed/i);
+      expect(client.sessionPromptAsync).not.toHaveBeenCalled();
+      expect(session.sendAgentMessage).toHaveBeenCalledWith(
+        'opencode',
+        expect.objectContaining({
+          type: 'turn_failed',
+          code: 'opencode_prompt_not_dispatched',
+        }),
+      );
+    } finally {
+      await runtime.reset().catch(() => {});
+    }
+  });
+
+  it('fails the turn before provider acceptance when Happier MCP returns a non-connected status', async () => {
+    const client = createFakeClient();
+    client.mcpAdd.mockResolvedValueOnce({
+      status: 'failed',
+      error: 'bridge tools unavailable',
+    } as never);
+    const session = createFakeSession();
+    const runtime = createOpenCodeServerRuntime({
+      directory: '/tmp',
+      session,
+      messageBuffer: new MessageBuffer(),
+      mcpServers: {
+        happier: {
+          command: process.execPath,
+          args: ['--version'],
+        },
+      },
+      permissionHandler: createFakePermissionHandler() as unknown as ProviderEnforcedPermissionHandler,
+      onThinkingChange: vi.fn(),
+    }, {
+      createClient: async () => client as unknown as OpenCodeServerRuntimeClient,
+    });
+
+    try {
+      await runtime.startOrLoad({});
+      runtime.beginTurn();
+      const promptPromise = (runtime as unknown as OpenCodeRuntimePromptHarness).sendPromptWithMeta({
+        text: 'first prompt after disconnected Happier MCP',
+        localId: 'local-required-happier-status-failed',
+      });
+      void promptPromise.catch(() => undefined);
+
+      await expect(promptPromise).rejects.toThrow(/required Happier MCP registration failed.*bridge tools unavailable/i);
+      expect(client.sessionPromptAsync).not.toHaveBeenCalled();
+      expect(session.sendAgentMessage).toHaveBeenCalledWith(
+        'opencode',
+        expect.objectContaining({
+          type: 'turn_failed',
+          code: 'opencode_prompt_not_dispatched',
+        }),
+      );
+    } finally {
+      await runtime.reset().catch(() => {});
+    }
+  });
+
+  it('fails the turn before provider acceptance when required Happier MCP configuration is missing', async () => {
+    const client = createFakeClient();
+    const session = createFakeSession();
+    const runtime = createOpenCodeServerRuntime({
+      directory: '/tmp',
+      session,
+      messageBuffer: new MessageBuffer(),
+      mcpServers: {},
+      happierMcpAdmission: { kind: 'required' },
+      permissionHandler: createFakePermissionHandler() as unknown as ProviderEnforcedPermissionHandler,
+      onThinkingChange: vi.fn(),
+    }, {
+      createClient: async () => client as unknown as OpenCodeServerRuntimeClient,
+    });
+
+    try {
+      await runtime.startOrLoad({});
+      runtime.beginTurn();
+      const promptPromise = (runtime as unknown as OpenCodeRuntimePromptHarness).sendPromptWithMeta({
+        text: 'first prompt without Happier MCP configuration',
+        localId: 'local-required-happier-config-missing',
+      });
+      void promptPromise.catch(() => undefined);
+
+      await expect(promptPromise).rejects.toThrow(/required Happier MCP server configuration is missing/i);
+      expect(client.mcpAdd).not.toHaveBeenCalled();
+      expect(client.sessionPromptAsync).not.toHaveBeenCalled();
+      expect(session.sendAgentMessage).toHaveBeenCalledWith(
+        'opencode',
+        expect.objectContaining({
+          type: 'turn_failed',
+          code: 'opencode_prompt_not_dispatched',
+        }),
+      );
+    } finally {
+      await runtime.reset().catch(() => {});
+    }
+  });
+
+  it('allows the explicit execution-run admission mode to prompt without Happier MCP', async () => {
+    const client = createFakeClient();
+    const session = createFakeSession();
+    const runtime = createOpenCodeServerRuntime({
+      directory: '/tmp',
+      session,
+      messageBuffer: new MessageBuffer(),
+      mcpServers: {},
+      happierMcpAdmission: { kind: 'not_available_for_execution_run' },
+      permissionHandler: createFakePermissionHandler() as unknown as ProviderEnforcedPermissionHandler,
+      onThinkingChange: vi.fn(),
+    }, {
+      createClient: async () => client as unknown as OpenCodeServerRuntimeClient,
+    });
+
+    try {
+      await runtime.startOrLoad({});
+      runtime.beginTurn();
+      const promptPromise = (runtime as unknown as OpenCodeRuntimePromptHarness).sendPromptWithMeta({
+        text: 'execution run prompt without session MCP bridge',
+        localId: 'local-execution-run-without-happier-mcp',
+      });
+      void promptPromise.catch(() => undefined);
+
+      await expect.poll(() => client.sessionPromptAsync.mock.calls.length).toBe(1);
+      await emitTerminalAssistantAndIdle(client, { messageId: 'msg_execution_run_done' });
+      await expect(promptPromise).resolves.toBeUndefined();
+    } finally {
+      await runtime.reset().catch(() => {});
+    }
+  });
+
+  it('waits for required Happier MCP registration to rerun in the resumed session directory', async () => {
+    const client = createFakeClient();
+    let resolveInitialDirectoryMcp!: () => void;
+    client.mcpAdd
+      .mockImplementationOnce(async () => {
+        await new Promise<void>((resolve) => {
+          resolveInitialDirectoryMcp = resolve;
+        });
+        return { status: 'connected' as const };
+      })
+      .mockResolvedValueOnce({ status: 'connected' as const });
+    client.sessionGet = vi.fn(async ({ sessionId }: { sessionId: string }) => ({
+      id: sessionId,
+      directory: '/tmp/resumed-opencode',
+    }));
+    const session = createFakeSession();
+    const runtime = createOpenCodeServerRuntime({
+      directory: '/tmp',
+      session,
+      messageBuffer: new MessageBuffer(),
+      mcpServers: {
+        happier: {
+          command: process.execPath,
+          args: ['--version'],
+        },
+      },
+      permissionHandler: createFakePermissionHandler() as unknown as ProviderEnforcedPermissionHandler,
+      onThinkingChange: vi.fn(),
+    }, {
+      createClient: async () => client as unknown as OpenCodeServerRuntimeClient,
+    });
+
+    try {
+      await runtime.startOrLoad({ resumeId: 'ses_remote' });
+      runtime.beginTurn();
+      const promptPromise = (runtime as unknown as OpenCodeRuntimePromptHarness).sendPromptWithMeta({
+        text: 'first prompt after resume',
+        localId: 'local-required-happier-resume',
+      });
+      void promptPromise.catch(() => undefined);
+
+      await flushTranscriptCommitMicrotasks();
+
+      expect(client.setDirectoryOverride).toHaveBeenCalledWith('/tmp/resumed-opencode');
+      expect(client.mcpAdd).toHaveBeenCalledTimes(1);
+      expect(client.sessionPromptAsync).not.toHaveBeenCalled();
+
+      resolveInitialDirectoryMcp();
+
+      await expect.poll(() => client.mcpAdd.mock.calls.length).toBe(2);
+      await expect.poll(() => client.sessionPromptAsync.mock.calls.length).toBe(1);
+
+      await emitTerminalAssistantAndIdle(client, {
+        sessionId: 'ses_remote',
+        messageId: 'msg_required_happier_resume_done',
+      });
+      await expect(promptPromise).resolves.toBeUndefined();
+    } finally {
+      resolveInitialDirectoryMcp?.();
+      await runtime.reset().catch(() => {});
+    }
+  });
+
   it('waits for the OpenCode server.connected startup event before dispatching the first prompt', async () => {
     const client = createFakeClient({ emitServerConnectedOnSubscribe: false });
     const session = createFakeSession();
@@ -767,6 +1110,7 @@ describe('createOpenCodeServerRuntime', () => {
       await new Promise<void>((resolve) => {
         resolveMcpAdd = resolve;
       });
+      return { status: 'connected' as const };
     });
     const session = createFakeSession();
     const runtime = createOpenCodeServerRuntime({
@@ -806,8 +1150,9 @@ describe('createOpenCodeServerRuntime', () => {
         await new Promise<void>((resolve) => {
           resolveFirstMcpAdd = resolve;
         });
+        return { status: 'connected' as const };
       })
-      .mockResolvedValueOnce(undefined);
+      .mockResolvedValueOnce({ status: 'connected' as const });
     client.sessionCreate.mockResolvedValueOnce({ id: 'ses_1', directory: '/tmp/opencode-session-dir' });
     const session = createFakeSession();
     const runtime = createOpenCodeServerRuntime({
@@ -843,11 +1188,11 @@ describe('createOpenCodeServerRuntime', () => {
     });
   });
 
-	  it('continues registering later MCP servers when one MCP add fails', async () => {
+	  it('continues registering later MCP servers when one MCP returns a non-connected status', async () => {
 	    const client = createFakeClient();
 	    client.mcpAdd
-	      .mockRejectedValueOnce(new Error('first add failed'))
-	      .mockResolvedValueOnce(undefined);
+	      .mockResolvedValueOnce({ status: 'disabled' as const })
+	      .mockResolvedValueOnce({ status: 'connected' as const });
 	    const session = createFakeSession();
 	    const debugSpy = vi.spyOn(logger, 'debug').mockImplementation(() => {});
 	    const runtime = createOpenCodeServerRuntime({
@@ -2145,6 +2490,171 @@ describe('createOpenCodeServerRuntime', () => {
       payload: { type: 'message.part.delta', properties: { sessionID: 'ses_1', messageID: 'msg_asst_1', partID: 'part_1', delta: 'ok' } },
     });
     await emitTerminalAssistantAndIdle(client, { messageId: 'msg_asst_1' });
+
+    await expect(promptPromise).resolves.toBeUndefined();
+  });
+
+  it('rejects a qualified model absent from an authoritative provider inventory before prompt_async', async () => {
+    const client = createFakeClient();
+    client.providersList = vi.fn(async () => ([
+      {
+        id: 'openai',
+        env: ['OPENAI_API_KEY'],
+        models: ({
+          'gpt-5.6-luna': {
+            id: 'gpt-5.6-luna',
+            name: 'GPT-5.6 Luna',
+            status: 'active',
+            capabilities: { input: { text: true } },
+          },
+        }) as Record<string, unknown>,
+      },
+    ]));
+    client.sessionPromptAsync = vi.fn(async () => {
+      throw new Error('prompt_async must not be called for an unavailable qualified model');
+    });
+    const session = createFakeSession();
+    const runtime = createOpenCodeServerRuntime({
+      directory: '/tmp',
+      session,
+      messageBuffer: new MessageBuffer(),
+      mcpServers: {},
+      permissionHandler: createFakePermissionHandler() as unknown as ProviderEnforcedPermissionHandler,
+      onThinkingChange: vi.fn(),
+    }, {
+      createClient: async () => client as unknown as OpenCodeServerRuntimeClient,
+    });
+
+    await runtime.startOrLoad({});
+    await runtime.setSessionModel('openai-codex/gpt-5.6-luna');
+    runtime.beginTurn();
+
+    const promptPromise = (runtime as unknown as OpenCodeRuntimePromptHarness).sendPromptWithMeta({
+      text: 'hello',
+      localId: 'local-invalid-qualified-model',
+    });
+
+    await expect(promptPromise).rejects.toMatchObject({
+      name: 'ProviderPromptSubmissionRejectedBeforeEffectError',
+      reason: 'provider_rejected_before_acceptance',
+    });
+    expect(client.sessionPromptAsync).not.toHaveBeenCalled();
+    await expect.poll(() => session.sessionTurnLifecycle.failTurn.mock.calls.length).toBe(1);
+    expect(session.sessionTurnLifecycle.failTurn).toHaveBeenCalledWith(expect.objectContaining({
+      provider: 'opencode',
+      issue: expect.objectContaining({
+        source: 'provider_session_error',
+        providerTurnId: expect.any(String),
+      }),
+      providerTurnId: expect.any(String),
+    }));
+    expect(sentAgentMessagesOfType(session, 'turn_failed')).toHaveLength(0);
+
+    await runtime.reset();
+  });
+
+  it('dispatches an inventory-backed qualified model with its low variant', async () => {
+    const client = createFakeClient();
+    client.providersList = vi.fn(async () => ([
+      {
+        id: 'openai',
+        env: ['OPENAI_API_KEY'],
+        models: ({
+          'gpt-5.6-luna': {
+            id: 'gpt-5.6-luna',
+            name: 'GPT-5.6 Luna',
+            status: 'active',
+            capabilities: { input: { text: true } },
+            variants: { low: { reasoningEffort: 'low' } },
+          },
+        }) as Record<string, unknown>,
+      },
+    ]));
+    const session = createFakeSession();
+    const runtime = createOpenCodeServerRuntime({
+      directory: '/tmp',
+      session,
+      messageBuffer: new MessageBuffer(),
+      mcpServers: {},
+      permissionHandler: createFakePermissionHandler() as unknown as ProviderEnforcedPermissionHandler,
+      onThinkingChange: vi.fn(),
+    }, {
+      createClient: async () => client as unknown as OpenCodeServerRuntimeClient,
+    });
+
+    await runtime.startOrLoad({});
+    await runtime.setSessionModel('openai/gpt-5.6-luna');
+    await runtime.setSessionConfigOption('reasoning_effort', 'low');
+    runtime.beginTurn();
+
+    const promptPromise = (runtime as unknown as OpenCodeRuntimePromptHarness).sendPromptWithMeta({
+      text: 'hello',
+      localId: 'local-valid-qualified-model',
+    });
+
+    await expect.poll(() => client.sessionPromptAsync.mock.calls.length).toBe(1);
+    expect(readOpenCodePromptAsyncCall(client, 0)).toMatchObject({
+      sessionId: 'ses_1',
+      model: { providerID: 'openai', modelID: 'gpt-5.6-luna' },
+      variant: 'low',
+      parts: [{ type: 'text', text: 'hello' }],
+    });
+
+    client.__emit({
+      directory: '/tmp',
+      payload: { type: 'message.part.updated', properties: { part: { id: 'part_luna', type: 'text', sessionID: 'ses_1' } } },
+    });
+    client.__emit({
+      directory: '/tmp',
+      payload: { type: 'message.part.delta', properties: { sessionID: 'ses_1', messageID: 'msg_asst_luna', partID: 'part_luna', delta: 'ok' } },
+    });
+    await emitTerminalAssistantAndIdle(client, { messageId: 'msg_asst_luna' });
+
+    await expect(promptPromise).resolves.toBeUndefined();
+  });
+
+  it('preserves qualified custom-model dispatch when provider inventory is unavailable', async () => {
+    const client = createFakeClient();
+    client.providersList = vi.fn(async () => {
+      throw new Error('provider inventory unavailable');
+    });
+    const session = createFakeSession();
+    const runtime = createOpenCodeServerRuntime({
+      directory: '/tmp',
+      session,
+      messageBuffer: new MessageBuffer(),
+      mcpServers: {},
+      permissionHandler: createFakePermissionHandler() as unknown as ProviderEnforcedPermissionHandler,
+      onThinkingChange: vi.fn(),
+    }, {
+      createClient: async () => client as unknown as OpenCodeServerRuntimeClient,
+    });
+
+    await runtime.startOrLoad({});
+    await runtime.setSessionModel('custom-provider/custom-model');
+    runtime.beginTurn();
+
+    const promptPromise = (runtime as unknown as OpenCodeRuntimePromptHarness).sendPromptWithMeta({
+      text: 'hello',
+      localId: 'local-custom-model-inventory-unavailable',
+    });
+
+    await expect.poll(() => client.sessionPromptAsync.mock.calls.length).toBe(1);
+    expect(readOpenCodePromptAsyncCall(client, 0)).toMatchObject({
+      sessionId: 'ses_1',
+      model: { providerID: 'custom-provider', modelID: 'custom-model' },
+      parts: [{ type: 'text', text: 'hello' }],
+    });
+
+    client.__emit({
+      directory: '/tmp',
+      payload: { type: 'message.part.updated', properties: { part: { id: 'part_custom', type: 'text', sessionID: 'ses_1' } } },
+    });
+    client.__emit({
+      directory: '/tmp',
+      payload: { type: 'message.part.delta', properties: { sessionID: 'ses_1', messageID: 'msg_asst_custom', partID: 'part_custom', delta: 'ok' } },
+    });
+    await emitTerminalAssistantAndIdle(client, { messageId: 'msg_asst_custom' });
 
     await expect(promptPromise).resolves.toBeUndefined();
   });
@@ -5511,6 +6021,177 @@ describe('createOpenCodeServerRuntime', () => {
     }
   });
 
+  it('defers live session.error adjudication until idle confirms an exact-parent terminal provider error', async () => {
+    const restoreEnv = withEnvForTest({
+      HAPPIER_OPENCODE_SERVER_STATUS_POLL_ENABLED: '0',
+      HAPPIER_OPENCODE_SERVER_IDLE_WITHOUT_TERMINAL_ASSISTANT_TIMEOUT_MS: '1000',
+      HAPPIER_OPENCODE_SERVER_TURN_INACTIVITY_TIMEOUT_MS: '10000',
+    });
+    let runtime: ReturnType<typeof createOpenCodeServerRuntime> | null = null;
+    let promptPromise: Promise<void> | null = null;
+    try {
+      const client = createFakeClient();
+      let promptUserMessageId = '';
+      let terminalInventoryReady = false;
+      client.sessionPromptAsync = vi.fn(async (input) => {
+        promptUserMessageId = input.messageId ?? '';
+      });
+      client.sessionMessagesList = vi.fn(async () => terminalInventoryReady
+        ? [
+            {
+              info: { id: promptUserMessageId, role: 'user', sessionID: 'ses_1', time: { created: 10 } },
+              parts: [{ id: 'part_current_user', type: 'text', text: 'hello' }],
+            },
+            {
+              info: {
+                id: 'msg_current_provider_error',
+                role: 'assistant',
+                sessionID: 'ses_1',
+                parentID: promptUserMessageId,
+                time: { created: 11, completed: 12 },
+                error: {
+                  name: 'ProviderModelNotFoundError',
+                  data: { message: 'Model not found: openai-codex/gpt-5.6-luna' },
+                },
+              },
+              parts: [],
+            },
+          ]
+        : []);
+
+      const started = await beginOpenCodePromptForTest({
+        client,
+        session: mirrorLifecycleMarkersForTest(createFakeSession()),
+        localId: 'local-live-provider-error',
+      });
+      runtime = started.runtime;
+      promptPromise = started.promptPromise;
+      const outcome = observePromiseSettlement(promptPromise);
+
+      const liveError = {
+        directory: '/tmp',
+        payload: {
+          type: 'session.error',
+          properties: {
+            sessionID: 'ses_1',
+            error: {
+              name: 'ProviderModelNotFoundError',
+              data: { message: 'Model not found: openai-codex/gpt-5.6-luna' },
+            },
+          },
+        },
+      } satisfies OpenCodeGlobalEvent;
+      await client.__emit({
+        directory: '/tmp',
+        payload: { type: 'session.status', properties: { sessionID: 'ses_1', status: { type: 'busy' } } },
+      });
+      await client.__emit(liveError);
+      await client.__emit(liveError);
+      await flushTranscriptCommitMicrotasks();
+
+      expect(outcome.status).toBe('pending');
+      expect(started.session.sessionTurnLifecycle.failTurn).not.toHaveBeenCalled();
+      expect(sentAgentMessagesOfType(started.session, 'task_complete')).toHaveLength(0);
+
+      terminalInventoryReady = true;
+      await client.__emit({
+        directory: '/tmp',
+        payload: { type: 'session.status', properties: { sessionID: 'ses_1', status: { type: 'idle' } } },
+      });
+
+      await expect(promptPromise).rejects.toThrow('Model not found: openai-codex/gpt-5.6-luna');
+      await expect.poll(() => started.session.sessionTurnLifecycle.failTurn.mock.calls.length).toBe(1);
+      expect(sentAgentMessagesOfType(started.session, 'task_complete')).toHaveLength(0);
+
+      await emitAssistantMessageUpdated(client, {
+        messageId: 'msg_late_success_after_error',
+        finish: 'stop',
+        completed: 20,
+      });
+      expect(sentAgentMessagesOfType(started.session, 'task_complete')).toHaveLength(0);
+    } finally {
+      await runtime?.cancel().catch(() => {});
+      await promptPromise?.catch(() => undefined);
+      await runtime?.reset().catch(() => {});
+      restoreEnv();
+    }
+  });
+
+  it('does not let an uncorrelated live session.error fail a valid current assistant completion', async () => {
+    const restoreEnv = withEnvForTest({
+      HAPPIER_OPENCODE_SERVER_STATUS_POLL_ENABLED: '0',
+      HAPPIER_OPENCODE_SERVER_TURN_INACTIVITY_TIMEOUT_MS: '10000',
+    });
+    let runtime: ReturnType<typeof createOpenCodeServerRuntime> | null = null;
+    let promptPromise: Promise<void> | null = null;
+    try {
+      const client = createFakeClient();
+      let promptUserMessageId = '';
+      client.sessionPromptAsync = vi.fn(async (input) => {
+        promptUserMessageId = input.messageId ?? '';
+      });
+      client.sessionMessagesList = vi.fn(async () => [
+        {
+          info: { id: promptUserMessageId, role: 'user', sessionID: 'ses_1', time: { created: 10 } },
+          parts: [{ id: 'part_current_user', type: 'text', text: 'hello' }],
+        },
+        {
+          info: {
+            id: 'msg_current_success',
+            role: 'assistant',
+            sessionID: 'ses_1',
+            parentID: promptUserMessageId,
+            time: { created: 11, completed: 12 },
+            finish: 'stop',
+          },
+          parts: [{ id: 'part_current_success', type: 'text', text: 'ok' }],
+        },
+      ]);
+
+      const started = await beginOpenCodePromptForTest({
+        client,
+        session: mirrorLifecycleMarkersForTest(createFakeSession()),
+        localId: 'local-ignore-uncorrelated-live-error',
+      });
+      runtime = started.runtime;
+      promptPromise = started.promptPromise;
+      const outcome = observePromiseSettlement(promptPromise);
+
+      await client.__emit({
+        directory: '/tmp',
+        payload: {
+          type: 'session.error',
+          properties: {
+            sessionID: 'ses_1',
+            error: { name: 'UnknownError', data: { message: 'failure from another author' } },
+          },
+        },
+      });
+      await flushTranscriptCommitMicrotasks();
+      expect(outcome.status).toBe('pending');
+
+      await emitAssistantMessageUpdated(client, {
+        messageId: 'msg_current_success',
+        finish: 'stop',
+        completed: 12,
+        extraInfo: { parentID: promptUserMessageId },
+      });
+      await client.__emit({
+        directory: '/tmp',
+        payload: { type: 'session.idle', properties: { sessionID: 'ses_1' } },
+      });
+
+      await expect(promptPromise).resolves.toBeUndefined();
+      expect(sentAgentMessagesOfType(started.session, 'task_complete')).toHaveLength(1);
+      expect(started.session.sessionTurnLifecycle.failTurn).not.toHaveBeenCalled();
+    } finally {
+      await runtime?.cancel().catch(() => {});
+      await promptPromise?.catch(() => undefined);
+      await runtime?.reset().catch(() => {});
+      restoreEnv();
+    }
+  });
+
   it('rejects stale and wrong-parent terminal inventory instead of satisfying idle completion', async () => {
     const restoreEnv = withEnvForTest({
       HAPPIER_OPENCODE_SERVER_STATUS_POLL_ENABLED: '0',
@@ -7397,18 +8078,25 @@ describe('createOpenCodeServerRuntime', () => {
     const promptPromise = (runtime as any).sendPromptWithMeta({ text: 'hello', localId: 'local-error' });
     await expect.poll(() => client.sessionPromptAsync.mock.calls.length).toBe(1);
 
+    const providerError = {
+      name: 'UnknownError',
+      data: { message: 'Model not found: openai/does_not_exist.' },
+    };
+    useCompletedProviderErrorInventory(client, providerError);
+
     client.__emit({
       directory: '/tmp',
       payload: {
         type: 'session.error',
         properties: {
           sessionID: 'ses_1',
-          error: {
-            name: 'UnknownError',
-            data: { message: 'Model not found: openai/does_not_exist.' },
-          },
+          error: providerError,
         },
       },
+    });
+    await client.__emit({
+      directory: '/tmp',
+      payload: { type: 'session.status', properties: { sessionID: 'ses_1', status: { type: 'idle' } } },
     });
 
     await expect(promptPromise).rejects.toThrow('Model not found');
@@ -7465,21 +8153,28 @@ describe('createOpenCodeServerRuntime', () => {
     const promptPromise = (runtime as any).sendPromptWithMeta({ text: 'hello', localId: 'local-limit' });
     await expect.poll(() => client.sessionPromptAsync.mock.calls.length).toBe(1);
 
+    const providerError = {
+      name: 'GoUsageLimitError',
+      message: 'OpenCode account rate limit',
+      headers: { 'retry-after': '5' },
+      metadata: { workspace: 'team-a', limitName: 'daily_tokens' },
+      action: { url: 'https://opencode.ai/billing' },
+    };
+    useCompletedProviderErrorInventory(client, providerError);
+
     client.__emit({
       directory: '/tmp',
       payload: {
         type: 'session.error',
         properties: {
           sessionID: 'ses_1',
-          error: {
-            name: 'GoUsageLimitError',
-            message: 'OpenCode account rate limit',
-            headers: { 'retry-after': '5' },
-            metadata: { workspace: 'team-a', limitName: 'daily_tokens' },
-            action: { url: 'https://opencode.ai/billing' },
-          },
+          error: providerError,
         },
       },
+    });
+    await client.__emit({
+      directory: '/tmp',
+      payload: { type: 'session.status', properties: { sessionID: 'ses_1', status: { type: 'idle' } } },
     });
 
     await expect(promptPromise).rejects.toThrow('OpenCode account rate limit');
@@ -8129,18 +8824,25 @@ describe('createOpenCodeServerRuntime', () => {
     const promptPromise = (runtime as any).sendPromptWithMeta({ text: 'hello', localId: 'local-session-abort' });
     await expect.poll(() => client.sessionPromptAsync.mock.calls.length).toBe(1);
 
+    const providerError = {
+      name: 'AbortError',
+      message: 'The operation was aborted.',
+    };
+    useCompletedProviderErrorInventory(client, providerError);
+
     client.__emit({
       directory: '/tmp',
       payload: {
         type: 'session.error',
         properties: {
           sessionID: 'ses_1',
-          error: {
-            name: 'AbortError',
-            message: 'The operation was aborted.',
-          },
+          error: providerError,
         },
       },
+    });
+    await client.__emit({
+      directory: '/tmp',
+      payload: { type: 'session.status', properties: { sessionID: 'ses_1', status: { type: 'idle' } } },
     });
 
     await expect(promptPromise).rejects.toBeTruthy();
@@ -10667,6 +11369,14 @@ describe('createOpenCodeServerRuntime', () => {
             error: { name: 'UnknownError', message: 'first turn failed' },
           },
         },
+      });
+      useCompletedProviderErrorInventory(client, {
+        name: 'UnknownError',
+        message: 'first turn failed',
+      }, 'msg_first_turn_failed');
+      await client.__emit({
+        directory: '/tmp',
+        payload: { type: 'session.status', properties: { sessionID: 'ses_1', status: { type: 'idle' } } },
       });
       await expect(firstPromptPromise).rejects.toThrow('first turn failed');
 

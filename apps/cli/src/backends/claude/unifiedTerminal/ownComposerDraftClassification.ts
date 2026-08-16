@@ -30,10 +30,11 @@ export function classifyClaudeOwnComposerDraft(params: Readonly<{
   /** Clear-key guards must short-circuit on generation; read-only evaluators may still classify. */
   stopOnGenerating?: boolean | undefined;
 }>): ClaudeOwnComposerDraftClassification {
-  const content = params.screen.composerContent ?? '';
   if (params.screen.usageLimitDialogVisible) return 'provider_unavailable';
   if (params.stopOnGenerating !== false && params.screen.generating) return 'generating';
   if (hasNonInputComposerState(params.screen)) return 'non_input_state';
+  if (params.screen.composerContent === null) return 'non_input_state';
+  const content = params.screen.composerContent;
   if (content.length === 0) return 'empty';
   if (params.ownComposerTexts.matches(content)) return 'own';
   // Controller-typed slash commands are echo-suppressed out of the persisted transcript, so a

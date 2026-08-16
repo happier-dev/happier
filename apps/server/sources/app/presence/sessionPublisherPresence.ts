@@ -25,6 +25,8 @@ import { db } from "@/storage/db";
 import { inTx } from "@/storage/inTx";
 import { blockInheritedProviderDeliveryClaims } from "@/app/session/pending/providerDeliveryClaimStaleness";
 import { applyLatestSessionTurnEndInTx } from "@/app/session/sessionWriteService";
+import { AsyncLock } from "@/utils/runtime/lock";
+import type { Tx } from "@/storage/inTx";
 
 export interface PublisherBinding {
     readonly accountId: string;
@@ -108,13 +110,19 @@ export function createSessionPublisherPresence(options: Readonly<{ now?: () => D
     const registrations = new WeakMap<object, Registration>();
     const registrationAttempts = new WeakMap<object, RegistrationAttempt>();
     const closeResults = new WeakMap<object, Promise<ClosePublisherResult>>();
-    const operationTails = new WeakMap<object, Promise<void>>();
+    const operationLocks = new WeakMap<object, AsyncLock>();
 
-    const serialize = async <T>(socket: object, operation: () => Promise<T>): Promise<T> => {
-        const prior = operationTails.get(socket) ?? Promise.resolve();
-        const result = prior.catch(() => {}).then(operation);
-        operationTails.set(socket, result.then(() => {}, () => {}));
-        return await result;
+    const serialize = async <T>(
+        socket: object,
+        operation: () => Promise<T>,
+        options: Readonly<{ deadlineAtMs?: number }> = {},
+    ): Promise<T> => {
+        let lock = operationLocks.get(socket);
+        if (!lock) {
+            lock = new AsyncLock();
+            operationLocks.set(socket, lock);
+        }
+        return await lock.inLock(operation, options);
     };
 
     const registerOnce = async (binding: PublisherBinding, completeSnapshot: SessionRuntimeActivitySnapshot): Promise<RegisterPublisherResult> => {
@@ -531,9 +539,10 @@ export function createSessionPublisherPresence(options: Readonly<{ now?: () => D
         });
     };
 
-    const resolveCurrentPublisherOnce = async (params: Readonly<{
+    const resolveCurrentPublisherInTx = async (params: Readonly<{
         socket: object;
         binding: PublisherBinding;
+        tx: Tx;
     }>): Promise<CurrentPublisherResult> => {
         const registration = registrations.get(params.socket);
         if (!registration) return { status: "unregistered" };
@@ -544,8 +553,7 @@ export function createSessionPublisherPresence(options: Readonly<{ now?: () => D
         ) {
             return { status: "superseded" };
         }
-        return await inTx(async (tx): Promise<CurrentPublisherResult> => {
-            const session = await tx.session.findUnique({
+        const session = await params.tx.session.findUnique({
                 where: { id: registration.binding.sessionId },
                 select: {
                     active: true,
@@ -561,7 +569,7 @@ export function createSessionPublisherPresence(options: Readonly<{ now?: () => D
                 },
             });
             if (!session) return { status: "rejected", reason: "not_found" };
-            if (!await hasCurrentSessionScopedMachineAccessInTx({ tx, ...registration.binding })) {
+            if (!await hasCurrentSessionScopedMachineAccessInTx({ tx: params.tx, ...registration.binding })) {
                 return { status: "rejected", reason: "unauthorized" };
             }
             if (session.archivedAt !== null) return { status: "rejected", reason: "archived" };
@@ -573,13 +581,19 @@ export function createSessionPublisherPresence(options: Readonly<{ now?: () => D
             ) {
                 return { status: "superseded" };
             }
-            return {
+        return {
                 status: "current",
                 runtimeActivityProjectionRead: readStoredSessionRuntimeActivityProjectionResult(session),
                 committedFence: new Date(registration.committedFence.getTime()),
                 sessionUpdatedAt: session.updatedAt,
             };
-        });
+    };
+
+    const resolveCurrentPublisherOnce = async (params: Readonly<{
+        socket: object;
+        binding: PublisherBinding;
+    }>): Promise<CurrentPublisherResult> => {
+        return await inTx(async (tx) => await resolveCurrentPublisherInTx({ ...params, tx }));
     };
 
     const resolveCurrentPublisher = async (params: Readonly<{
@@ -600,6 +614,26 @@ export function createSessionPublisherPresence(options: Readonly<{ now?: () => D
             if (publisher.status !== "current") return publisher;
             return { status: "current", value: await params.action(publisher) };
         });
+    };
+
+    const runAsCurrentPublisherInTx = async <T>(params: Readonly<{
+        socket: object;
+        binding: PublisherBinding;
+        deadlineAtMs: number;
+        action: (
+            publisher: Extract<CurrentPublisherResult, { status: "current" }>,
+            tx: Tx,
+        ) => Promise<T>;
+    }>): Promise<Exclude<CurrentPublisherResult, { status: "current" }> | { status: "current"; value: T }> => {
+        return await serialize(params.socket, async () => await inTx(async (tx) => {
+            const publisher = await resolveCurrentPublisherInTx({
+                socket: params.socket,
+                binding: params.binding,
+                tx,
+            });
+            if (publisher.status !== "current") return publisher;
+            return { status: "current" as const, value: await params.action(publisher, tx) };
+        }, { deadlineAtMs: params.deadlineAtMs }), { deadlineAtMs: params.deadlineAtMs });
     };
 
     const publishSnapshotOnce = async (params: Readonly<{
@@ -663,6 +697,7 @@ export function createSessionPublisherPresence(options: Readonly<{ now?: () => D
         finalizeExplicitMachineStop,
         resolveCurrentPublisher,
         runAsCurrentPublisher,
+        runAsCurrentPublisherInTx,
         publishSnapshot,
         forgetDisconnectedPublisher: async (params: Readonly<{ socket: object }>) => await serialize(params.socket, async () => {
             try {

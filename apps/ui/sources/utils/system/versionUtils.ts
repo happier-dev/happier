@@ -13,6 +13,8 @@ export const MINIMUM_CLI_SESSION_USER_MESSAGE_RPC_VERSION = '0.1.0-dev.0';
 // Minimum CLI version that accepts the backendTarget-based spawn payload contract.
 // The protocol landed during 0.1.0 dev builds, before the 0.2.0 release line.
 export const MINIMUM_CLI_BACKEND_TARGET_SPAWN_VERSION = '0.1.0-dev.0';
+// First CLI build whose fresh-session runner consumes pendingFirstInput from daemon spawn custody.
+export const MINIMUM_CLI_SPAWN_PENDING_FIRST_INPUT_VERSION = '0.2.10-dev.41';
 function normalizeComparableVersion(version: string): {
     baseParts: number[];
     prereleaseChannel: 'dev' | 'preview' | null;

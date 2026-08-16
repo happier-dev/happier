@@ -135,6 +135,24 @@ describe('runPermissionModePromptLoop provider submission phase ownership', () =
       },
     },
     {
+      title: 'proven provider rejection before acceptance',
+      error: new ProviderPromptSubmissionRejectedBeforeEffectError(
+        'provider_rejected_before_acceptance',
+        Object.assign(new Error('Pi provider rejected the prompt before acceptance without details'), {
+          piProviderFailure: {
+            classification: 'pi_provider_failure',
+            code: 'pi_provider_session_error',
+            sanitizedPreview: 'Pi provider rejected the prompt before acceptance without details',
+          },
+        }),
+      ),
+      expectedOutcome: {
+        kind: 'rejected_before_effect',
+        localId: 'local-1',
+        reason: 'provider_rejected_before_acceptance',
+      },
+    },
+    {
       title: 'effect-possible response loss',
       error: new Error('ACP prompt response was lost'),
       expectedOutcome: {

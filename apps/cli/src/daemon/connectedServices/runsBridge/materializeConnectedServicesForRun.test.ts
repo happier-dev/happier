@@ -1,4 +1,4 @@
-import { mkdtemp, stat } from 'node:fs/promises';
+import { mkdtemp, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -20,6 +20,8 @@ const RUN_KEY = 'execution_run:run_codex_1';
 function buildResolved(cleanupOnExit: (() => void) | null = null) {
   return {
     env: { CODEX_HOME: '/materialized/run/codex/codex-home' },
+    materializationRoot: '/materialized/run/codex',
+    cleanupMaterializationRoot: () => {},
     cleanupOnFailure: null,
     cleanupOnExit,
     connectedServicesBindings: {
@@ -302,36 +304,57 @@ describe('createExecutionRunConnectedServicesBridge', () => {
     expect(cleanupOnExit).toHaveBeenCalledTimes(1);
   });
 
-  it('release removes the run-scoped materialized root even when the materializer reported no cleanupOnExit', async () => {
-    // The codex materializer (persistent session roots) returns cleanupOnExit:null — run roots are
-    // uuid-keyed and would otherwise accumulate forever. Release derives the root cleanup from the
-    // materialized env via the canonical createConnectedServiceMaterializedTargetRootCleanup owner.
+  it('reclaims the exact run allocation when target admission fails after materialization', async () => {
+    const registry = new ConnectedServiceRuntimeRegistry();
+    registry.onTargetRegistration(() => {
+      throw new Error('target admission rejected');
+    });
+    const cleanupMaterializationRoot = vi.fn();
+    const bridge = createExecutionRunConnectedServicesBridge({
+      resolveAuthForSpawn: (async () => ({
+        ...buildResolved(null),
+        cleanupMaterializationRoot,
+      })) as unknown as ResolveConnectedServiceAuthForRun,
+      runtimeRegistry: registry,
+    });
+
+    await expect(bridge.materialize(buildRequest())).rejects.toThrow('target admission rejected');
+    expect(cleanupMaterializationRoot).toHaveBeenCalledTimes(1);
+    expect(registry.listRefreshTargets()).toEqual([]);
+  });
+
+  it('release removes the run allocation without deleting a provider-owned target root', async () => {
     const runRoot = await mkdtemp(join(tmpdir(), 'happier-er-cs-run-root-'));
+    const providerTargetRoot = await mkdtemp(join(tmpdir(), 'happier-er-cs-provider-root-'));
+    const cleanupMaterializationRoot = vi.fn(async () => {
+      await rm(runRoot, { recursive: true, force: true });
+    });
     const registry = new ConnectedServiceRuntimeRegistry();
     const bridge = createExecutionRunConnectedServicesBridge({
       resolveAuthForSpawn: (async () => ({
         ...buildResolved(null),
+        materializationRoot: runRoot,
+        cleanupMaterializationRoot,
         env: {
-          CODEX_HOME: join(runRoot, 'codex-home'),
-          [HAPPIER_CONNECTED_SERVICE_TARGET_MATERIALIZED_ROOT_ENV_KEY]: runRoot,
+          CODEX_HOME: providerTargetRoot,
+          [HAPPIER_CONNECTED_SERVICE_TARGET_MATERIALIZED_ROOT_ENV_KEY]: providerTargetRoot,
         },
       })) as unknown as ResolveConnectedServiceAuthForRun,
       runtimeRegistry: registry,
     });
 
-    await bridge.materialize(buildRequest());
-    const released = await bridge.release({ runId: 'run_codex_1', pid: 4242, materializationKey: RUN_KEY });
-    expect(released.released).toBe(true);
-
-    // The root-cleanup owner fires rm without awaiting; poll briefly for the removal.
-    await expect.poll(async () => {
-      try {
-        await stat(runRoot);
-        return 'exists';
-      } catch {
-        return 'removed';
-      }
-    }, { timeout: 2_000 }).toBe('removed');
+    try {
+      const materialized = await bridge.materialize(buildRequest());
+      expect(materialized.registration.materializedRoot).toBe(runRoot);
+      const released = await bridge.release({ runId: 'run_codex_1', pid: 4242, materializationKey: RUN_KEY });
+      expect(released.released).toBe(true);
+      expect(cleanupMaterializationRoot).toHaveBeenCalledTimes(1);
+      await expect(stat(runRoot)).rejects.toThrow();
+      await expect(stat(providerTargetRoot)).resolves.toBeDefined();
+    } finally {
+      await rm(runRoot, { recursive: true, force: true });
+      await rm(providerTargetRoot, { recursive: true, force: true });
+    }
   });
 
   it('A1: a release racing an in-flight materialize still reclaims the late daemon-side success', async () => {

@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
-import { buildSpawnHappySessionRpcParams } from './spawnSessionPayload';
+import {
+    buildCompatibleSpawnHappySessionRpcParams,
+    buildSpawnHappySessionRpcParams,
+    supportsSpawnPendingFirstInput,
+} from './spawnSessionPayload';
 
 describe('buildSpawnHappySessionRpcParams', () => {
     it('preserves exact nonblank opaque model identifiers', () => {
@@ -162,24 +166,48 @@ describe('buildSpawnHappySessionRpcParams', () => {
         }));
     });
 
-    it('keeps first-input authority out of the daemon spawn wire', () => {
+    it('carries first-input authority on the daemon spawn wire', () => {
         const compatibilityInput = {
             machineId: 'machine-1',
             directory: '/tmp/workspace',
             backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
-            initialPrompt: '  preserve this exact prompt  ',
-            spawnNonce: ' spawn-nonce-opaque ',
-            executionAuthorization: {
-                provenance: 'user_request',
-                requestId: ' first-turn-123 ',
+            pendingFirstInput: {
+                text: '  preserve this exact prompt  ',
+                localId: 'first-turn-123',
+                meta: { profileId: 'profile-1' },
             },
+            spawnNonce: ' spawn-nonce-opaque ',
         } as unknown as Parameters<typeof buildSpawnHappySessionRpcParams>[0];
         const params = buildSpawnHappySessionRpcParams(compatibilityInput);
 
         expect(params).toEqual(expect.objectContaining({
             spawnNonce: ' spawn-nonce-opaque ',
+            pendingFirstInput: {
+                text: '  preserve this exact prompt  ',
+                localId: 'first-turn-123',
+                meta: { profileId: 'profile-1' },
+            },
         }));
-        expect(params).not.toHaveProperty('initialPrompt');
-        expect(params).not.toHaveProperty('executionAuthorization');
+    });
+
+    it('uses the durable handoff only for daemon versions that consume it', () => {
+        const options = {
+            machineId: 'machine-1',
+            directory: '/tmp/workspace',
+            backendTarget: { kind: 'builtInAgent', agentId: 'claude' as const },
+            pendingFirstInput: { text: 'prompt', localId: 'first-turn-1' },
+        } as const;
+
+        expect(supportsSpawnPendingFirstInput('0.2.10-dev.40')).toBe(false);
+        expect(supportsSpawnPendingFirstInput('0.2.10-dev.41')).toBe(true);
+        expect(supportsSpawnPendingFirstInput('0.2.10')).toBe(true);
+        expect(buildCompatibleSpawnHappySessionRpcParams({
+            options,
+            daemonCliVersion: '0.2.10-dev.40',
+        })).not.toHaveProperty('pendingFirstInput');
+        expect(buildCompatibleSpawnHappySessionRpcParams({
+            options,
+            daemonCliVersion: '0.2.10-dev.41',
+        })).toHaveProperty('pendingFirstInput', options.pendingFirstInput);
     });
 });

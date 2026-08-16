@@ -23,7 +23,7 @@ export type DaemonMachineSessionStopAttempt =
     | Readonly<{ type: 'requested' }>
     | Readonly<{
         type: 'fallback';
-        reason: 'not_found' | 'control_unavailable';
+        reason: 'not_found' | 'control_unavailable' | 'tracked_runner_absent';
         message: string;
         errorCode?: string;
     }>
@@ -144,6 +144,13 @@ export async function stopSessionViaDaemonMachineRpc(params: Readonly<{
             return { type: 'fallback', reason: 'not_found', message: 'Session not found' };
         }
         if (strictResult?.status === 'incomplete') {
+            if (strictResult.reason === 'tracked_runner_absent') {
+                return {
+                    type: 'fallback',
+                    reason: 'tracked_runner_absent',
+                    message: 'Session stop incomplete: tracked_runner_absent',
+                };
+            }
             return { type: 'failed', message: `Session stop incomplete: ${strictResult.reason}` };
         }
         if (isReleasedMachineStopAcknowledgement(response)) return { type: 'requested' };
@@ -290,6 +297,14 @@ export async function stopSessionUsingCanonicalStrategy(params: Readonly<{
                 success: false,
                 failedAt: 'daemon_machine_rpc',
                 reason: 'not_found',
+                message: daemonFallback.message,
+            };
+        }
+        if (daemonFallback?.reason === 'tracked_runner_absent') {
+            return {
+                success: false,
+                failedAt: 'daemon_machine_rpc',
+                reason: 'failed',
                 message: daemonFallback.message,
             };
         }

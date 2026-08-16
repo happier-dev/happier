@@ -209,10 +209,16 @@ vi.mock('@expo/vector-icons', () => ({
     Octicons: 'Octicons',
 }));
 
-vi.mock('@/sync/ops/sessionMachineTarget', () => ({
-    readMachineTargetForSession: (sessionId: string) => readMachineTargetForSessionSpy(sessionId),
-    readDisplayMachineTargetForSession: (params: any) => readDisplayMachineTargetForSessionSpy(params),
-}));
+vi.mock('@/sync/ops/sessionMachineTarget', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/sync/ops/sessionMachineTarget')>();
+    return {
+        ...actual,
+        readMachineTargetForSession: (sessionId: string) => readMachineTargetForSessionSpy(sessionId),
+        resolveMachineTargetForSessionFromState: (_state: unknown, sessionId: string) =>
+            readMachineTargetForSessionSpy(sessionId),
+        readDisplayMachineTargetForSession: (params: any) => readDisplayMachineTargetForSessionSpy(params),
+    };
+});
 
 vi.mock('@/hooks/session/useHydrateSessionForRoute', () => ({
     useHydrateSessionForRoute: (sessionId: string, tag: string, options?: { serverId?: string }) =>

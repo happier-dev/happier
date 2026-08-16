@@ -1,3 +1,5 @@
+import { resolveSessionPaneScopeId } from '@/components/sessions/panes/sessionPaneScopeId';
+
 export function resolvePaneFocusModeRouteScopeId(pathname: string | null | undefined): string | null {
     if (!pathname) return null;
 
@@ -6,8 +8,8 @@ export function resolvePaneFocusModeRouteScopeId(pathname: string | null | undef
     if (!match) return null;
 
     try {
-        return `session:${decodeURIComponent(match[1]!)}`;
+        return resolveSessionPaneScopeId(decodeURIComponent(match[1]!));
     } catch {
-        return `session:${match[1]!}`;
+        return resolveSessionPaneScopeId(match[1]!);
     }
 }

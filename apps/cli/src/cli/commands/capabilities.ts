@@ -1,7 +1,7 @@
 import chalk from 'chalk';
 
 import type { CommandContext } from '@/cli/commandRegistry';
-import { printJsonEnvelope, wantsJson } from '@/cli/output/jsonEnvelope';
+import { printJsonEnvelope, wantsJson, writeJsonStdout } from '@/cli/output/jsonEnvelope';
 import { createCliCapabilitiesService } from '@/rpc/handlers/capabilities';
 
 function usage(): string {
@@ -32,7 +32,7 @@ export async function handleCapabilitiesCliCommand(context: CommandContext): Pro
 
     if (subcommand !== 'describe') {
       if (json) {
-        printJsonEnvelope({
+        await printJsonEnvelope({
           ok: false,
           kind: 'capabilities_unknown',
           error: { code: 'unknown_subcommand', message: `Unknown capabilities subcommand: ${subcommand}` },
@@ -49,14 +49,14 @@ export async function handleCapabilitiesCliCommand(context: CommandContext): Pro
     const data = service.describe();
 
     if (json) {
-      printJsonEnvelope({ ok: true, kind: 'capabilities_describe', data });
+      await printJsonEnvelope({ ok: true, kind: 'capabilities_describe', data });
       return;
     }
 
-    console.log(JSON.stringify(data, null, 2));
+    await writeJsonStdout(data, { pretty: true });
   } catch (error) {
     if (json) {
-      printJsonEnvelope(
+      await printJsonEnvelope(
         {
           ok: false,
           kind: 'capabilities_describe',

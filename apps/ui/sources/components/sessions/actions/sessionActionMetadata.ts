@@ -11,6 +11,7 @@ import {
     SESSION_ACTION_MOVE_TO_FOLDER_ID,
     SESSION_ACTION_PIN_ID,
     SESSION_ACTION_RENAME_ID,
+    SESSION_ACTION_RESUME_ID,
     SESSION_ACTION_STOP_ID,
     SESSION_ACTION_UNARCHIVE_ID,
     SESSION_ACTION_UNPIN_ID,
@@ -43,6 +44,11 @@ const METADATA_BY_ACTION_ID: Readonly<Record<string, SessionActionMetadata>> = {
         titleKey: 'sessionInfo.renameSession',
         subtitleKey: 'sessionInfo.renameSessionSubtitle',
         icon: 'pencil',
+    },
+    [SESSION_ACTION_RESUME_ID]: {
+        titleKey: 'session.workState.goal.resume',
+        subtitleKey: 'session.inactiveResumable',
+        icon: 'play',
     },
     [SESSION_ACTION_STOP_ID]: {
         titleKey: 'sessionInfo.stopSession',

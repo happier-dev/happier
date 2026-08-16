@@ -1,7 +1,7 @@
 import { vi } from 'vitest';
 
 import * as acpModule from '@/agent/acp';
-import type { AgentBackend, AgentMessageHandler } from '@/agent/core';
+import type { AgentBackend, AgentMessageHandler, AgentSessionOpenOptions } from '@/agent/core';
 import type { PermissionMode } from '@/api/types';
 import { MessageBuffer } from '@/ui/ink/messageBuffer';
 import type { SessionProviderInputConsumer } from '@/agent/runtime/sessionInput/types';
@@ -13,11 +13,17 @@ export type CatalogAcpRuntimeCreateCall = {
     env?: NodeJS.ProcessEnv;
 };
 
-function createFakeBackend(id: number): AgentBackend {
+export type CatalogAcpSessionOpenCall = Readonly<{
+    initialPrompt?: string;
+    options?: AgentSessionOpenOptions;
+}>;
+
+function createFakeBackend(id: number, sessionOpenCalls?: CatalogAcpSessionOpenCall[]): AgentBackend {
     let onMessageHandler: AgentMessageHandler | null = null;
 
     return {
-        async startSession() {
+        async startSession(initialPrompt, options) {
+            sessionOpenCalls?.push({ initialPrompt, options });
             return { sessionId: `session-${id}` };
         },
         async sendPrompt() {},
@@ -31,7 +37,10 @@ function createFakeBackend(id: number): AgentBackend {
     };
 }
 
-export function createCatalogAcpBackendSpy(createCalls: CatalogAcpRuntimeCreateCall[]) {
+export function createCatalogAcpBackendSpy(
+    createCalls: CatalogAcpRuntimeCreateCall[],
+    sessionOpenCalls?: CatalogAcpSessionOpenCall[],
+) {
     return vi.spyOn(acpModule, 'createCatalogAcpBackend').mockImplementation(async (agentId, options) => {
         const catalogOptions = (options ?? {}) as {
             permissionMode?: PermissionMode | null;
@@ -46,7 +55,7 @@ export function createCatalogAcpBackendSpy(createCalls: CatalogAcpRuntimeCreateC
         });
 
         return {
-            backend: createFakeBackend(createCalls.length),
+            backend: createFakeBackend(createCalls.length, sessionOpenCalls),
         } as unknown as Awaited<ReturnType<typeof acpModule.createCatalogAcpBackend>>;
     });
 }

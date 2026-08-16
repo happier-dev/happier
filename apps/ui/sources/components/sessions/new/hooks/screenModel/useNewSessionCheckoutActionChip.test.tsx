@@ -344,6 +344,12 @@ describe('useNewSessionCheckoutActionChip', () => {
             // The chip must rebuild rootStep when nowMs ticks (referential identity change),
             // so RelativeTimeText / stale recomputation observes the new clock.
             expect(tickedRoot).not.toBe(initialRoot);
+            // ...but the rebuild describes the SAME destination. `SelectionList` keys its
+            // "a rebuilt root is a refresh, not navigation" rule on the root step id
+            // (`useSelectionListStepStack`), so a rebuild that changed the id would drain
+            // the step stack and throw the user out of the worktree name step — losing the
+            // name they were typing — once a minute.
+            expect(tickedRoot?.id).toBe(initialRoot?.id);
         } finally {
             vi.useRealTimers();
         }

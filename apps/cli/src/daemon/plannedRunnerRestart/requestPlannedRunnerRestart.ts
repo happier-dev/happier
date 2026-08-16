@@ -53,6 +53,7 @@ export async function requestPlannedRunnerRestart(input: Readonly<{
   isProcessSafeToSignal?: (params: Readonly<{
     pid: number;
     expectedProcessCommandHash?: string;
+    expectedProcessInstanceFingerprint?: string;
   }>) => Promise<boolean>;
   observeProcessMissing?: (tracked: TrackedSession) => void;
   clearRestartIntentForPid?: (pid: number) => void;
@@ -88,6 +89,9 @@ export async function requestPlannedRunnerRestart(input: Readonly<{
               pid: input.tracked.pid,
               ...(input.tracked.processCommandHash
                 ? { expectedProcessCommandHash: input.tracked.processCommandHash }
+                : {}),
+              ...(input.tracked.processInstanceFingerprint
+                ? { expectedProcessInstanceFingerprint: input.tracked.processInstanceFingerprint }
                 : {}),
             });
             if (!safe) {

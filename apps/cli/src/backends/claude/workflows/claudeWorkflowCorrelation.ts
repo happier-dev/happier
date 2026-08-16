@@ -241,6 +241,20 @@ export type SubagentResultFact = Readonly<{
   uuid?: string;
 }>;
 
+/**
+ * The run's durable on-disk record, carrying the SAME `workflow_progress[]` the live stream carries.
+ *
+ * A distinct fact rather than a synthesized `task-lifecycle`, because it must NOT be allowed to move
+ * the run's status: it is read at an arbitrary later moment (a resume, a reconcile), and a run's
+ * status is owned by its own lifecycle events. All it contributes is structure and metrics.
+ */
+export type WorkflowRunRecordFact = Readonly<{
+  kind: 'workflow-run-record';
+  workflowToolUseId: string;
+  workflowProgress: readonly WorkflowProgressEntryFact[];
+  sourceSessionId?: string;
+}>;
+
 export type ClaudeWorkflowFact =
   | WorkflowStartFact
   | WorkflowLaunchFact
@@ -248,6 +262,7 @@ export type ClaudeWorkflowFact =
   | SubagentStartFact
   | SubagentResultFact
   | WorkflowAgentProfileFact
+  | WorkflowRunRecordFact
   | WorkflowJournalFact;
 
 const TASK_LIFECYCLE_SUBTYPES = new Set([
@@ -322,7 +337,29 @@ function readWorkflowJournalAgentSpecs(input: Record<string, unknown> | null): W
   return script ? readScriptWorkflowJournalAgentSpecs(script) : undefined;
 }
 
-function parseWorkflowProgress(value: unknown): WorkflowProgressEntryFact[] | undefined {
+/**
+ * Which identifier a `workflow_progress[]` entry names its agent by.
+ *
+ * The two sources of this array disagree about what is knowable WHEN, so one policy cannot serve
+ * both:
+ *
+ * - `provisionalIndex` — the LIVE `task_progress` stream. It emits an agent before that agent has a
+ *   provider id at all, so the position is the only stable identity available and the concrete id
+ *   arrives later as `vendorRef` (pinned by "merges provisional index-only workflow agents with
+ *   later concrete agent ids").
+ * - `agentId` — the durable run record on disk. It is written once, at terminal state, and carries
+ *   the concrete id for every agent. Here the position must NOT win: the journal has already created
+ *   these agents under their real ids, so keying by position would file a SECOND row for each one and
+ *   publish fourteen agents for a seven-agent run.
+ *
+ * One parser, one output shape, one documented switch on provenance — not a second reader.
+ */
+type WorkflowProgressAgentIdentity = 'provisionalIndex' | 'agentId';
+
+function parseWorkflowProgress(
+  value: unknown,
+  identity: WorkflowProgressAgentIdentity = 'provisionalIndex',
+): WorkflowProgressEntryFact[] | undefined {
   if (!Array.isArray(value)) return undefined;
   const facts: WorkflowProgressEntryFact[] = [];
   for (const entry of value) {
@@ -338,7 +375,10 @@ function parseWorkflowProgress(value: unknown): WorkflowProgressEntryFact[] | un
     if (record.type === 'workflow_agent') {
       const index = readNumber(record.index);
       const agentId = readString(record.agentId);
-      const id = index !== undefined ? `workflow-agent:${Math.trunc(index)}` : agentId ?? readString(record.label);
+      const provisionalId = index !== undefined ? `workflow-agent:${Math.trunc(index)}` : undefined;
+      const id = identity === 'agentId'
+        ? agentId ?? provisionalId ?? readString(record.label)
+        : provisionalId ?? agentId ?? readString(record.label);
       if (!id) continue;
       const title = readString(record.label) ?? agentId ?? id;
       const status = normalizeClaudeActivityStatusSignal(record.state);
@@ -682,6 +722,33 @@ function parseTaskLifecycle(message: Record<string, unknown>): TaskLifecycleFact
 const WORKFLOW_JOURNAL_WRAPPER_TYPE = 'happier_workflow_journal';
 const WORKFLOW_SCRIPT_WRAPPER_TYPE = 'happier_workflow_script';
 const WORKFLOW_AGENT_PROFILE_WRAPPER_TYPE = 'happier_workflow_agent_profile';
+const WORKFLOW_RUN_RECORD_WRAPPER_TYPE = 'happier_workflow_run_record';
+
+/**
+ * Feed the run's DURABLE record — `<claudeProjectDir>/<sessionId>/workflows/<runId>.json` — through
+ * the same `workflow_progress[]` fact path the live `task_progress` stream takes.
+ *
+ * It carries what no other on-disk artifact does: each agent's `phaseIndex`/`phaseTitle`, the label
+ * the script assigned it, its model, tokens, tool calls and duration. Measured on the real run
+ * `wf_e1bd2111-9e1`: 7 agents, `phaseIndex` 1×6 + 2×1, every `agentId` matching the journal's.
+ *
+ * It is written ONCE, at terminal state — verified across the 51 runs of session `b4416eda`: 458
+ * agent states, none of them non-terminal, and two runs that started but never finished have no
+ * record at all. So this backfills a finished run; it can never drive a live roster, and it cannot
+ * resolve an interrupted one.
+ */
+export function createClaudeWorkflowRunRecordWrapper(params: Readonly<{
+  workflowToolUseId: string;
+  workflowProgress: unknown;
+  sourceSessionId?: string | undefined;
+}>): Record<string, unknown> {
+  return {
+    type: WORKFLOW_RUN_RECORD_WRAPPER_TYPE,
+    workflowToolUseId: params.workflowToolUseId,
+    workflowProgress: params.workflowProgress,
+    ...(params.sourceSessionId ? { sourceSessionId: params.sourceSessionId } : {}),
+  };
+}
 
 export function createClaudeWorkflowJournalWrapper(params: Readonly<{
   workflowToolUseId: string;
@@ -841,6 +908,23 @@ function parseWorkflowScriptFact(message: Record<string, unknown>): WorkflowStar
   };
 }
 
+function parseWorkflowRunRecordFact(message: Record<string, unknown>): WorkflowRunRecordFact | null {
+  if (message.type !== WORKFLOW_RUN_RECORD_WRAPPER_TYPE) return null;
+  const workflowToolUseId = readString(message.workflowToolUseId);
+  if (!workflowToolUseId) return null;
+  // Keyed by the concrete agent id: the journal already created these agents under it, and the
+  // record — being terminal — always has one.
+  const workflowProgress = parseWorkflowProgress(message.workflowProgress, 'agentId');
+  if (!workflowProgress?.length) return null;
+  const sourceSessionId = readString(message.sourceSessionId) ?? undefined;
+  return {
+    kind: 'workflow-run-record',
+    workflowToolUseId,
+    workflowProgress,
+    ...(sourceSessionId ? { sourceSessionId } : {}),
+  };
+}
+
 function parseWorkflowAgentProfileFact(message: Record<string, unknown>): WorkflowAgentProfileFact | null {
   if (message.type !== WORKFLOW_AGENT_PROFILE_WRAPPER_TYPE) return null;
   const workflowToolUseId = readString(message.workflowToolUseId);
@@ -965,6 +1049,7 @@ export function parseClaudeWorkflowFact(
     parseTaskNotificationMessage(message)
     ?? parseWorkflowJournalFact(message)
     ?? parseWorkflowScriptFact(message)
+    ?? parseWorkflowRunRecordFact(message)
     ?? parseWorkflowAgentProfileFact(message)
     ?? parseFailedWorkflowToolResult(message)
     ?? parseSuccessfulWorkflowTaskStopResult(message)

@@ -217,6 +217,7 @@ async function probeModelsFromCliModelsCommand(params: {
   args: ReadonlyArray<string>;
   cwd: string;
   timeoutMs: number;
+  processEnv?: NodeJS.ProcessEnv;
 }): Promise<ReadonlyArray<ProbedAgentModel> | null> {
   const timeoutMs = Math.max(250, params.timeoutMs);
   const stdoutMaxBytes = 256 * 1024;
@@ -240,7 +241,7 @@ async function probeModelsFromCliModelsCommand(params: {
 
     const child = spawn(invocation.command, invocation.args, {
       cwd: params.cwd,
-      env: { ...process.env, CI: '1' },
+      env: { ...(params.processEnv ?? process.env), CI: '1' },
       stdio: ['ignore', 'pipe', 'ignore'],
       windowsHide: true,
       windowsVerbatimArguments: invocation.windowsVerbatimArguments,
@@ -430,18 +431,23 @@ export async function probeAgentModelsBestEffort(params: {
   accountSettings?: Readonly<Record<string, unknown>> | null;
   credentials?: Credentials | null;
   connectedServices?: ConnectedServiceBindingsV1 | null;
+  processEnv?: NodeJS.ProcessEnv;
+  connectedServiceSelectionCacheKey?: string | null;
 }): Promise<ProbedAgentModelsResult> {
   const nowMs = Date.now();
   const cwd = typeof params.cwd === 'string' && params.cwd.trim().length > 0 ? params.cwd.trim() : process.cwd();
   const profileId = typeof params.profileId === 'string' && params.profileId.trim().length > 0
     ? params.profileId.trim()
     : null;
-  const probeVariant = resolveAgentProbeVariant({
+  const baseProbeVariant = resolveAgentProbeVariant({
     agentId: params.agentId,
     backendTarget: params.backendTarget,
     accountSettings: params.accountSettings,
     connectedServices: params.connectedServices ?? null,
   });
+  const probeVariant = params.connectedServiceSelectionCacheKey
+    ? `${baseProbeVariant}|connected:${params.connectedServiceSelectionCacheKey}`
+    : baseProbeVariant;
   const cacheKey = buildAgentProbeCacheKey({
     agentId: params.agentId,
     cwd,
@@ -517,6 +523,7 @@ export async function probeAgentModelsBestEffort(params: {
           accountSettings: params.accountSettings ?? null,
           credentials: params.credentials ?? null,
           connectedServices: params.connectedServices ?? null,
+          processEnv: params.processEnv,
         }).catch(() => null);
         return normalizeDynamicModels(modelsRaw);
       };
@@ -549,10 +556,16 @@ export async function probeAgentModelsBestEffort(params: {
     const cliProbeArgs = preflightModelsAdapter?.cliModelsCommandArgs ?? null;
     if (Array.isArray(cliProbeArgs) && cliProbeArgs.length > 0) {
       const command =
-        resolveProviderCliCommand(params.agentId)?.command
+        resolveProviderCliCommand(params.agentId, { processEnv: params.processEnv ?? process.env })?.command
         ?? resolveCliPathOverride({ agentId: params.agentId })
         ?? params.agentId;
-      const models = await probeModelsFromCliModelsCommand({ command, args: cliProbeArgs, cwd, timeoutMs }).catch(() => null);
+      const models = await probeModelsFromCliModelsCommand({
+        command,
+        args: cliProbeArgs,
+        cwd,
+        timeoutMs,
+        processEnv: params.processEnv,
+      }).catch(() => null);
       if (models) {
         const res: ProbedAgentModelsResult = { ...fallback, availableModels: models, source: 'dynamic' };
         if (!usesProviderOwnedCache) {

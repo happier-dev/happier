@@ -51,9 +51,12 @@ import type { AgentActivitySurfaceModel } from './useAgentActivitySurfaceModel';
  *   its own padding, so a padded host must cancel it or every status glyph sits indented past the
  *   header above it (the popover's 26px double indent), and an unpadded host must supply it or the
  *   run panels sit flush against the pane edge.
- * - `onOpenSubagent` / `onAction`: WHERE a press goes. The surface decides WHETHER a row is
- *   pressable — that is the A9 rule and it belongs here — but a details tab exists only where a
- *   pane scope does, and the compact surface is hosted inside a popover with no pane at all.
+ * - `onOpenSubagent` / `onOpenSidechainTranscript` / `onAction`: WHERE a press goes, and WHETHER the
+ *   corresponding affordance is drawn at all. Both hosts now answer both, through the one shared
+ *   open decision (`useOpenSessionTarget`): a pane scope is addressed by session id, so the compact
+ *   popover reaches one without hosting one, and a layout with no room for a pane resolves to a
+ *   full-screen route instead. A host that still declares neither callback is saying it has nowhere
+ *   to send a reader, and then no affordance is drawn rather than one that returns silently (A9).
  * - `metaPlacement`: whether the meta line gets the row's right slot or a line of its own. It is
  *   the same bounded/monitoring axis as `workingLimit`, and it is a parameter rather than a pin
  *   because the two hosts carry different payloads in that line: a workflow agent's metrics are
@@ -79,6 +82,19 @@ export type AgentActivitySurfaceProps = Readonly<{
      * reader — never a styling choice.
      */
     onOpenSubagent?: (subagent: SessionSubagent) => void;
+    /**
+     * Opens an imported sidechain transcript that no tool message owns — a workflow agent's sidecar.
+     *
+     * A SECOND callback rather than a widened `onOpenSubagent`, because the two targets are genuinely
+     * different things: a subagent is a local unit of work with a details surface of its own, while
+     * this is a transcript addressed by scope. Absent still means "this host has nowhere to put one",
+     * and then no "open details" is drawn for those rows at all rather than one that returns
+     * silently (A9) — but no host has to be pane-hosted to declare it, because the shared open
+     * decision resolves a details tab or a full-screen route from the layout.
+     */
+    onOpenSidechainTranscript?: (
+        target: Extract<AgentActivityOpenTarget, { kind: 'sidechain' }>,
+    ) => void;
     /** Row overflow actions. Absent means no overflow menu at all. */
     onAction?: (entryId: string, actionId: AgentActivityRowActionId) => void;
     /**
@@ -104,6 +120,7 @@ export const AgentActivitySurface = React.memo((props: AgentActivitySurfaceProps
         motionQuiet,
         onAction,
         onNavigateAway,
+        onOpenSidechainTranscript,
         onOpenSubagent,
         testID,
     } = props;
@@ -178,10 +195,23 @@ export const AgentActivitySurface = React.memo((props: AgentActivitySurfaceProps
         [],
     );
 
+    /**
+     * Whether THIS host can serve this target, which is a different question from whether the
+     * target resolves. Both answers are needed and neither implies the other: the resolver knows a
+     * destination exists, the host knows whether it has anywhere to put it.
+     */
+    const canOpenTarget = React.useCallback((target: AgentActivityOpenTarget): boolean => (
+        target.kind === 'subagent' ? onOpenSubagent != null : onOpenSidechainTranscript != null
+    ), [onOpenSidechainTranscript, onOpenSubagent]);
+
     const openTarget = React.useCallback((target: AgentActivityOpenTarget) => {
+        if (target.kind === 'sidechain') {
+            onOpenSidechainTranscript?.(target);
+            return;
+        }
         if (!isNavigableAgentActivityOpenTarget(target)) return;
         onOpenSubagent?.(target.subagent);
-    }, [onOpenSubagent]);
+    }, [onOpenSidechainTranscript, onOpenSubagent]);
 
     /**
      * One preview element per entry, for as long as its target is the same one.
@@ -191,7 +221,7 @@ export const AgentActivitySurface = React.memo((props: AgentActivitySurfaceProps
      */
     const previewBodyCache = React.useMemo(
         () => new Map<string, React.ReactNode>(),
-        [onNavigateAway, onOpenSubagent, targetsByEntryId, testID],
+        [onNavigateAway, onOpenSidechainTranscript, onOpenSubagent, targetsByEntryId, testID],
     );
 
     /**
@@ -202,8 +232,8 @@ export const AgentActivitySurface = React.memo((props: AgentActivitySurfaceProps
      */
     const handlePress = React.useCallback((entryId: string) => {
         const target = readTarget(entryId);
-        if (target) openTarget(target);
-    }, [openTarget, readTarget]);
+        if (target && canOpenTarget(target)) openTarget(target);
+    }, [canOpenTarget, openTarget, readTarget]);
 
     /**
      * What a row discloses when it is expanded.
@@ -231,16 +261,18 @@ export const AgentActivitySurface = React.memo((props: AgentActivitySurfaceProps
             // target map, so it cannot outlive the data it was built from.
             const cached = previewBodyCache.get(entryId);
             if (cached) return cached;
-            // Offered only for a NAVIGABLE target. An orphan workflow sidechain has no owning tool
-            // message, so nothing can address it as a screen and no "open details" may be drawn.
+            // Offered only where THIS host can serve this target's kind. A subagent has a route
+            // every host can push; an imported workflow sidechain has no route and opens as a
+            // scoped transcript details tab, which exists only where a pane scope does. A host that
+            // declared neither draws no "open details" rather than one that returns silently (A9).
             //
             // The handler re-reads the target at PRESS time rather than closing over this one, so a
             // cached element can never route to an agent the roster has since replaced.
-            const openDetails = isNavigableAgentActivityOpenTarget(target) && onOpenSubagent
+            const openDetails = canOpenTarget(target)
                 ? () => {
                     onNavigateAway?.();
                     const current = readTarget(entryId);
-                    if (current) openTarget(current);
+                    if (current && canOpenTarget(current)) openTarget(current);
                 }
                 : undefined;
             const body = (
@@ -276,8 +308,8 @@ export const AgentActivitySurface = React.memo((props: AgentActivitySurfaceProps
             />
         );
     }, [
+        canOpenTarget,
         onNavigateAway,
-        onOpenSubagent,
         openTarget,
         previewBodyCache,
         readBackgroundTaskForEntry,

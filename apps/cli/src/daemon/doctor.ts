@@ -36,14 +36,17 @@ export type HappyProcessInfo = {
   daemonOwnershipEnvironmentVariables?: DaemonOwnershipEnvironmentVariables;
 };
 
-type RawProcessInfo = {
+export type ProcessInfoByPid = {
   pid: number;
+  stat?: string;
   name?: string;
   cmd?: string;
   cwd?: string;
   environmentVariables?: Record<string, string>;
   daemonOwnershipEnvironmentVariables?: DaemonOwnershipEnvironmentVariables;
 };
+
+type RawProcessInfo = ProcessInfoByPid;
 
 function parseEnvironmentEntries(entries: readonly string[]): Array<readonly [string, string]> {
   return entries.flatMap((entry) => {
@@ -238,19 +241,28 @@ function getProcessInfoByPidPosix(pid: number): RawProcessInfo | null {
   if (process.platform === 'linux' || process.platform === 'win32') return null;
 
   try {
-    const name = execFileSync('ps', ['-p', String(pid), '-o', 'comm='], {
+    const output = execFileSync('ps', ['-o', 'stat=,ucomm=,command=', '-p', String(pid)], {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'ignore'],
     }).trim();
-    const cmd = execFileSync('ps', ['-p', String(pid), '-o', 'command='], {
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'ignore'],
-    }).trim();
+    const line = output
+      .split('\n')
+      .map((entry) => entry.trim())
+      .find((entry) => entry.length > 0);
+    if (!line) return null;
 
-    if (!name && !cmd) return null;
+    const match = /^(\S+)\s+(\S+)\s+(.*)$/.exec(line) ?? /^(\S+)\s+(\S+)$/.exec(line);
+    if (!match) return null;
+
+    const stat = match[1]?.trim() ?? '';
+    const name = match[2]?.trim() ?? '';
+    const cmd = match[3]?.trim() || name;
+
+    if (!stat || (!name && !cmd)) return null;
     const daemonOwnershipEnvironmentVariables = readDaemonOwnershipEnvironmentVariablesFromPosixPs(pid);
     return {
       pid,
+      stat,
       ...(name ? { name } : {}),
       ...(cmd ? { cmd } : {}),
       ...(daemonOwnershipEnvironmentVariables
@@ -260,6 +272,18 @@ function getProcessInfoByPidPosix(pid: number): RawProcessInfo | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * Canonical cross-platform PID inspection for callers that need the live executable/command line.
+ * Platform-specific retrieval stays here so lifecycle and provider code do not grow competing
+ * `ps`/procfs/CIM readers with divergent failure behavior.
+ */
+export async function readProcessInfoByPid(pid: number): Promise<ProcessInfoByPid | null> {
+  if (!Number.isInteger(pid) || pid <= 0) return null;
+  return await getProcessInfoByPidProcfs(pid)
+    ?? getProcessInfoByPidPosix(pid)
+    ?? await getProcessInfoByPidWindows(pid);
 }
 
 /**
@@ -409,17 +433,9 @@ function classifyRawProcessByPid(proc: RawProcessInfo): ProcessByPidClassificati
 }
 
 export async function classifyProcessByPid(pid: number): Promise<ProcessByPidClassification> {
-  const procfs = await getProcessInfoByPidProcfs(pid);
-  if (procfs) {
-    return classifyRawProcessByPid(procfs);
-  }
-  const posixProc = getProcessInfoByPidPosix(pid);
-  if (posixProc) {
-    return classifyRawProcessByPid(posixProc);
-  }
-  const windowsProc = await getProcessInfoByPidWindows(pid);
-  if (windowsProc) {
-    return classifyRawProcessByPid(windowsProc);
+  const processInfo = await readProcessInfoByPid(pid);
+  if (processInfo) {
+    return classifyRawProcessByPid(processInfo);
   }
   const all = await findAllHappyProcesses();
   const happy = all.find((p) => p.pid === pid);

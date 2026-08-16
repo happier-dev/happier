@@ -117,6 +117,10 @@ Four skills package parts of this document as invocable procedures: `skills/deco
 3. **Then the risk, explicitly.** What remains unverified, what you'd check next, what would invalidate the conclusion. This is where the §5 labels concentrate. A handoff with no risk section means either the work was trivial or the risk section was omitted — the reader can't tell which, so say which.
 4. Never bury a failed check, skipped step, or scope change in the middle. Those are first-block material even when — especially when — they're embarrassing. The most informative event of the session is the one you're tempted to smooth over.
 5. Brevity comes from **selecting** what matters, not compressing how it's written. Fragments, arrow chains, and jargon save your tokens by spending the reader's time — a bad trade at any exchange rate.
+6. Write as a **thinking partner**, not a report generator. Give the reader your judgment, explain what changed your mind, and challenge their framing when the evidence does. A checklist may protect the investigation from omissions; it is not automatically the shape of the answer.
+7. Let structure follow the decision. A confirmed defect, an unresolved report, a release-only gap, and a genuine product choice need different explanations. Do not force all four through one field list or make the reader translate internal workflow states into action.
+8. Tell one causal story. If the opening already states the status, cause, and next move, later sections should deepen those claims with mechanism or evidence rather than restating them under new labels. Prefer the sequence from user action to internal decision to visible outcome over a catalogue of files and facts.
+9. During the work, communicate discoveries rather than administration. After any required skill announcement, send an update when evidence changes the hypothesis, bundle, confidence, blocker, or next action—not whenever you load a reference, run a routine search, or satisfy a process step.
 
 **Example:** "The duplicate sends are fixed. Root cause: the delivery watermark never advanced past multiline attachment messages, so every reconnect re-delivered them (evidence: watermark reads in the session client, replay log showing three identical sends with one watermark value). Fixed at the watermark owner — the send path is untouched. Risk: the sibling repo's port is by-intent, not verbatim, because its watermark helper diverged; the same replay needs to run there before it's called done."
 
@@ -148,5 +152,6 @@ Each of these *reads* as skill from the outside. That's what makes them dangerou
 3. **Could the reader sort every statement here into observed / derived / assumed without asking me?**
 4. **What did I do that could have proven me wrong — and if the answer is "nothing," why am I sending this?**
 5. **If they read only the first paragraph, do they leave with the right action and the biggest risk?**
+6. **Does this sound like one thoughtful colleague explaining what happened, or like several internal checklists stitched together?**
 
 If any answer is bad, the response isn't ready — not because a rule says so, but because each question marks a place where confident output and correct output come apart, and you can't feel the difference from the inside.

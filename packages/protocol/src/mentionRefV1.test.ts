@@ -25,8 +25,6 @@ function mention(overrides: Partial<MentionRefV1> = {}): Record<string, unknown>
     kind: MENTION_KIND_V1.file,
     ref: 'file:src/index.ts',
     token: '@src/index.ts',
-    start: 0,
-    end: 13,
     ...overrides,
   };
 }
@@ -91,31 +89,31 @@ describe('built-in kind reference schemes', () => {
 describe('sanitizeMentionRefsV1', () => {
   it('drops a malformed element individually and keeps its siblings (INV-4)', () => {
     const sanitized = sanitizeMentionRefsV1([
-      mention({ start: 0, end: 5, token: '@a.ts', ref: 'file:a.ts' }),
-      { kind: 'happier.file', ref: 'file:b.ts', token: '@b.ts', start: 12, end: 9 },
-      mention({ start: 6, end: 11, token: '@c.ts', ref: 'file:c.ts' }),
+      mention({ token: '@a.ts', ref: 'file:a.ts' }),
+      // `b.ts` has no `<scheme>:` head, so it is not a reference at all.
+      { kind: 'happier.file', ref: 'b.ts', token: '@b.ts' },
+      mention({ token: '@c.ts', ref: 'file:c.ts' }),
     ]);
     expect(sanitized.map((entry) => entry.token)).toEqual(['@a.ts', '@c.ts']);
   });
 
   it('preserves an unknown kind inert and never reinterprets it as a known kind', () => {
     const sanitized = sanitizeMentionRefsV1([
-      mention({ kind: 'acme.ticket', ref: 'ticket:ACME-1', token: '@ACME-1', start: 0, end: 7 }),
+      mention({ kind: 'acme.ticket', ref: 'ticket:ACME-1', token: '@ACME-1' }),
     ]);
     expect(sanitized).toHaveLength(1);
     expect(sanitized[0]?.kind).toBe('acme.ticket');
   });
 
-  it('canonicalizes order, drops an overlapping element and enforces the bounds', () => {
+  it('keeps first-occurrence order, collapses a repeated reference and enforces the bounds', () => {
     expect(sanitizeMentionRefsV1([
-      mention({ start: 10, end: 15, token: '@b.ts', ref: 'file:b.ts' }),
-      mention({ start: 0, end: 5, token: '@a.ts', ref: 'file:a.ts' }),
-      mention({ start: 12, end: 18, token: '@c.ts', ref: 'file:c.ts' }),
-    ]).map((entry) => entry.start)).toEqual([0, 10]);
+      mention({ token: '@b.ts', ref: 'file:b.ts' }),
+      mention({ token: '@a.ts', ref: 'file:a.ts' }),
+      // The same reference mentioned a second time in the text carries nothing extra (D-26).
+      mention({ token: '@b.ts', ref: 'file:b.ts' }),
+    ]).map((entry) => entry.ref)).toEqual(['file:b.ts', 'file:a.ts']);
 
     const many = Array.from({ length: MENTION_BOUNDS.maxPerMessage + 5 }, (_, index) => mention({
-      start: index * 4,
-      end: index * 4 + 3,
       token: '@ab',
       ref: `file:${index}`,
     }));
@@ -130,22 +128,34 @@ describe('sanitizeMentionRefsV1', () => {
 describe('admitMentionRefsV1ForText', () => {
   const text = 'see @src/a.ts and @src/b.ts';
 
-  it('rejects a reference whose range does not match the submitted text, keeping siblings', () => {
+  it('rejects a reference whose token is gone from the submitted text, keeping siblings', () => {
     const refs = sanitizeMentionRefsV1([
-      mention({ ref: 'file:src/a.ts', token: '@src/a.ts', start: 4, end: 13 }),
-      mention({ ref: 'file:src/z.ts', token: '@src/z.ts', start: 18, end: 27 }),
+      mention({ ref: 'file:src/a.ts', token: '@src/a.ts' }),
+      mention({ ref: 'file:src/z.ts', token: '@src/z.ts' }),
     ]);
     expect(admitMentionRefsV1ForText(text, refs).map((entry) => entry.ref)).toEqual(['file:src/a.ts']);
   });
 
-  it('uses UTF-16 code-unit offsets so a surrogate pair shifts a following reference', () => {
-    const emojiText = '\u{1F600} @src/a.ts';
-    expect(admitMentionRefsV1ForText(emojiText, sanitizeMentionRefsV1([
-      mention({ ref: 'file:src/a.ts', token: '@src/a.ts', start: 3, end: 12 }),
-    ]))).toHaveLength(1);
-    expect(admitMentionRefsV1ForText(emojiText, sanitizeMentionRefsV1([
-      mention({ ref: 'file:src/a.ts', token: '@src/a.ts', start: 2, end: 11 }),
-    ]))).toEqual([]);
+  it('admits a reference whose token moved between composition and submission', () => {
+    // The submitted text is a TRANSFORM of the text the composer authored against: a trim,
+    // an attachments block, a review-comments wrapper. The reference is still the one the
+    // user picked, and it still names itself in the text, so it is admitted.
+    const composed = sanitizeMentionRefsV1([
+      mention({ ref: 'file:src/a.ts', token: '@src/a.ts' }),
+    ]);
+    expect(admitMentionRefsV1ForText('\nsee @src/a.ts', composed).map((entry) => entry.ref))
+      .toEqual(['file:src/a.ts']);
+    expect(admitMentionRefsV1ForText('review this\n\nsee @src/a.ts', composed).map((entry) => entry.ref))
+      .toEqual(['file:src/a.ts']);
+  });
+
+  it('matches the token verbatim, without trimming or normalizing it', () => {
+    const quoted = sanitizeMentionRefsV1([
+      mention({ ref: 'file:my notes.md', token: '@"my notes.md"' }),
+    ]);
+    expect(admitMentionRefsV1ForText('read @"my notes.md" first', quoted)).toHaveLength(1);
+    // The unquoted spelling is a different token, and is not what was inserted.
+    expect(admitMentionRefsV1ForText('read @my notes.md first', quoted)).toEqual([]);
   });
 });
 
@@ -225,13 +235,13 @@ describe('request admission composes references with the submitted text', () => 
     happierStructuredInputV1: {
       v: 1,
       mentions: [
-        mention({ ref: 'file:src/a.ts', token: '@src/a.ts', start: 4, end: 13 }),
-        mention({ ref: 'file:src/z.ts', token: '@src/z.ts', start: 18, end: 27 }),
+        mention({ ref: 'file:src/a.ts', token: '@src/a.ts' }),
+        mention({ ref: 'file:src/z.ts', token: '@src/z.ts' }),
       ],
     },
   };
 
-  it('rejects the reference whose range does not describe its token', () => {
+  it('rejects the reference whose token the submitted text does not carry', () => {
     const admitted = sanitizeSessionUserMessageSendMeta(meta, { text: 'see @src/a.ts and @src/b.ts' });
     const envelope = admitted.happierStructuredInputV1 as { mentions?: readonly MentionRefV1[] };
     expect(envelope.mentions?.map((entry) => entry.ref)).toEqual(['file:src/a.ts']);

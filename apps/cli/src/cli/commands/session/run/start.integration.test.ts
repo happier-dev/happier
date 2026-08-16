@@ -6,8 +6,14 @@ import {
   deriveBoxPublicKeyFromSeed,
   sealEncryptedDataKeyEnvelopeV1,
 } from '@happier-dev/protocol';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
-import { bindApiSessionSocketMock, createApiSessionSocketStub } from '@/testkit/backends/apiSessionSocketHarness';
+import {
+  bindApiSessionSocketMock,
+  bindApiSessionSocketSequenceMock,
+  createApiSessionSocketStub,
+  type ApiSessionSocketStub,
+} from '@/testkit/backends/apiSessionSocketHarness';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
 import { captureConsoleJsonOutput } from '@/testkit/logger/captureOutput';
@@ -25,9 +31,12 @@ describe('happier session run start (integration)', () => {
   let envScope = createEnvKeyScope(envKeys);
   let server: Server | null = null;
   let happyHomeDir = '';
+  let sessionActive = true;
+  let startRpcSocket: ApiSessionSocketStub;
 
   beforeEach(async () => {
     happyHomeDir = await createTempDir('happier-cli-session-run-start-');
+    sessionActive = true;
 
     const sessionId = 'sess_integration_run_start_123';
     const dek = new Uint8Array(32).fill(3);
@@ -41,7 +50,7 @@ describe('happier session run start (integration)', () => {
 
     const { encodeBase64: encodeBase64Session, encryptWithDataKey } = await import('@/api/encryption');
     const metadataCiphertext = encodeBase64Session(
-      encryptWithDataKey({ path: '/tmp', flavor: 'claude' }, dek),
+      encryptWithDataKey({ path: '/tmp', flavor: 'claude', machineId: 'machine-integration-1' }, dek),
       'base64',
     );
     const dataEncryptionKeyBase64 = encodeBase64Session(envelope, 'base64');
@@ -59,7 +68,7 @@ describe('happier session run start (integration)', () => {
                 seq: 1,
                 createdAt: 1,
                 updatedAt: 2,
-                active: false,
+                active: sessionActive,
                 activeAt: 0,
                 metadata: metadataCiphertext,
                 metadataVersion: 0,
@@ -68,6 +77,7 @@ describe('happier session run start (integration)', () => {
                 pendingCount: 0,
                 pendingVersion: 0,
                 dataEncryptionKey: dataEncryptionKeyBase64,
+                machineId: 'machine-integration-1',
                 share: null,
               },
             ],
@@ -93,7 +103,7 @@ describe('happier session run start (integration)', () => {
               seq: 1,
               createdAt: 1,
               updatedAt: 2,
-              active: false,
+              active: sessionActive,
               activeAt: 0,
               metadata: metadataCiphertext,
               metadataVersion: 0,
@@ -102,6 +112,7 @@ describe('happier session run start (integration)', () => {
               pendingCount: 0,
               pendingVersion: 0,
               dataEncryptionKey: dataEncryptionKeyBase64,
+              machineId: 'machine-integration-1',
               share: null,
             },
           }),
@@ -127,7 +138,7 @@ describe('happier session run start (integration)', () => {
 
     const { decodeBase64, decrypt, encodeBase64: encodeBase64Rpc, encrypt } = await import('@/api/encryption');
 
-    const socket = createApiSessionSocketStub({
+    startRpcSocket = createApiSessionSocketStub({
       emit: (event: string, args: unknown[]) => {
         const [data, cb] = args as [any, ((value: unknown) => void) | undefined];
         if (event !== SOCKET_RPC_EVENTS.CALL) return;
@@ -145,7 +156,7 @@ describe('happier session run start (integration)', () => {
         });
       },
     });
-    bindApiSessionSocketMock(mockIo, socket);
+    bindApiSessionSocketMock(mockIo, startRpcSocket);
   });
 
   afterEach(async () => {
@@ -199,6 +210,132 @@ describe('happier session run start (integration)', () => {
     }
   });
 
+  it('resumes an inactive resumable parent before starting its execution run', async () => {
+    const { handleSessionCommand } = await import('../index');
+    const { decodeBase64, decrypt, encodeBase64, encrypt } = await import('@/api/encryption');
+    const output = captureConsoleJsonOutput();
+    const machineKeySeed = new Uint8Array(32).fill(8);
+    const rpcOrder: string[] = [];
+    let submittedNonce = '';
+    sessionActive = false;
+
+    const userSocket = createApiSessionSocketStub({
+      emit: (event: string, args: unknown[]) => {
+        const [data, cb] = args as [any, ((value: unknown) => void) | undefined];
+        if (event !== SOCKET_RPC_EVENTS.CALL) return;
+        rpcOrder.push(String(data.method ?? ''));
+        const method = String(data.method ?? '');
+        const request = decrypt(
+          machineKeySeed,
+          'dataKey',
+          decodeBase64(String(data.params ?? ''), 'base64'),
+        ) as any;
+        if (method === `machine-integration-1:${RPC_METHODS.SPAWN_HAPPY_SESSION}`) {
+          expect(request).toMatchObject({
+            type: 'resume-session',
+            sessionId: 'sess_integration_run_start_123',
+            directory: '/tmp',
+            spawnNonce: expect.stringMatching(/^inactive-session\.resume:/u),
+          });
+          submittedNonce = String(request.spawnNonce);
+        } else {
+          expect(method).toBe(`machine-integration-1:${RPC_METHODS.DAEMON_SPAWN_SESSION_RESOLVE}`);
+          expect(request).toEqual({ spawnNonce: submittedNonce });
+        }
+        cb?.({
+          ok: true,
+          result: encodeBase64(
+            encrypt(machineKeySeed, 'dataKey', method.endsWith(RPC_METHODS.SPAWN_HAPPY_SESSION)
+              ? {
+                  type: 'success',
+                  sessionId: 'sess_integration_run_start_123',
+                }
+              : { status: 'success', sessionId: 'sess_integration_run_start_123' }),
+            'base64',
+          ),
+        });
+      },
+    });
+    const orderedStartSocket = createApiSessionSocketStub({
+      emit: (event: string, args: unknown[]) => {
+        const [data, cb] = args as [any, ((value: unknown) => void) | undefined];
+        if (event !== SOCKET_RPC_EVENTS.CALL) return;
+        rpcOrder.push(String(data.method ?? ''));
+        return startRpcSocket.emit(event, data, cb);
+      },
+    });
+    bindApiSessionSocketSequenceMock(mockIo, [userSocket, userSocket, orderedStartSocket]);
+
+    try {
+      await handleSessionCommand(
+        ['run', 'start', 'sess_integration_run_start_123', '--intent', 'review', '--backend', 'claude', '--json'],
+        {
+          readCredentialsFn: async () => ({
+            token: 'token_test',
+            encryption: {
+              type: 'dataKey',
+              publicKey: deriveBoxPublicKeyFromSeed(machineKeySeed),
+              machineKey: machineKeySeed,
+            },
+          }),
+        },
+      );
+
+      expect(output.json().ok).toBe(true);
+      expect(rpcOrder).toEqual([
+        `machine-integration-1:${RPC_METHODS.SPAWN_HAPPY_SESSION}`,
+        `machine-integration-1:${RPC_METHODS.DAEMON_SPAWN_SESSION_RESOLVE}`,
+        'sess_integration_run_start_123:execution.run.start',
+      ]);
+    } finally {
+      output.restore();
+    }
+  });
+
+  it('preserves protocol-unsupported for an already-active runtime without resuming it', async () => {
+    const { handleSessionCommand } = await import('../index');
+    const output = captureConsoleJsonOutput();
+    const calls: string[] = [];
+    const unsupportedSocket = createApiSessionSocketStub({
+      emit: (event: string, args: unknown[]) => {
+        const [data, cb] = args as [any, ((value: unknown) => void) | undefined];
+        if (event !== SOCKET_RPC_EVENTS.CALL) return;
+        calls.push(String(data.method ?? ''));
+        cb?.({
+          ok: false,
+          error: 'RPC method not available',
+          errorCode: 'RPC_METHOD_NOT_AVAILABLE',
+        });
+      },
+    });
+    bindApiSessionSocketMock(mockIo, unsupportedSocket);
+
+    try {
+      await handleSessionCommand(
+        ['run', 'start', 'sess_integration_run_start_123', '--intent', 'review', '--backend', 'claude', '--json'],
+        {
+          readCredentialsFn: async () => ({
+            token: 'token_test',
+            encryption: {
+              type: 'dataKey',
+              publicKey: deriveBoxPublicKeyFromSeed(new Uint8Array(32).fill(8)),
+              machineKey: new Uint8Array(32).fill(8),
+            },
+          }),
+        },
+      );
+
+      expect(output.json()).toMatchObject({
+        ok: false,
+        kind: 'session_run_start',
+        error: { code: 'execution_run_protocol_unsupported' },
+      });
+      expect(calls).toEqual(['sess_integration_run_start_123:execution.run.start']);
+    } finally {
+      output.restore();
+    }
+  });
+
   it('rejects multi-backend csv input for the single-target run start wrapper', async () => {
     const { handleSessionCommand } = await import('../index');
     const output = captureConsoleJsonOutput();
@@ -222,7 +359,110 @@ describe('happier session run start (integration)', () => {
       expect(parsed.ok).toBe(false);
       expect(parsed.kind).toBe('session_run_start');
       expect(parsed.error?.code).toBe('invalid_arguments');
-      expect(parsed.error?.message).toBe('Usage: happier session run start <session-id> --intent <intent> --backend <backend-target> [--json]');
+      expect(parsed.error?.message).toBe('Usage: happier session run start <session-id-or-prefix-or-tag> --intent <review|plan|delegate|voice_agent|memory_hints> --backend <backend-target> [--instructions <text>] [--permission-mode <mode>] [--retention <ephemeral|resumable>] [--run-class <bounded|long_lived>] [--io-mode <request_response|streaming>] [--json]');
+    } finally {
+      output.restore();
+    }
+  });
+
+  it('returns a stable invalid_arguments error for an unsupported intent', async () => {
+    const { handleSessionCommand } = await import('../index');
+    const output = captureConsoleJsonOutput();
+    const readCredentialsFn = vi.fn(async () => null);
+
+    try {
+      await handleSessionCommand(
+        ['run', 'start', 'sess_integration_run_start_123', '--intent', 'qa_cli_run', '--backend', 'codex', '--json'],
+        { readCredentialsFn },
+      );
+
+      const parsed = output.json();
+      expect(parsed.ok).toBe(false);
+      expect(parsed.kind).toBe('session_run_start');
+      expect(parsed.error).toEqual({
+        code: 'invalid_arguments',
+        message: 'Invalid --intent "qa_cli_run". Expected one of: review, plan, delegate, voice_agent, memory_hints.',
+      });
+      expect(readCredentialsFn).not.toHaveBeenCalled();
+    } finally {
+      output.restore();
+    }
+  });
+
+  it.each([
+    ['--retention', 'durable', 'ephemeral, resumable'],
+    ['--run-class', 'interactive', 'bounded, long_lived'],
+    ['--io-mode', 'batch', 'request_response, streaming'],
+  ] as const)('rejects an unsupported %s value before reading credentials', async (flag, value, expectedValues) => {
+    const { handleSessionCommand } = await import('../index');
+    const output = captureConsoleJsonOutput();
+    const readCredentialsFn = vi.fn(async () => null);
+
+    try {
+      await handleSessionCommand(
+        [
+          'run',
+          'start',
+          'sess_integration_run_start_123',
+          '--intent',
+          'review',
+          '--backend',
+          'codex',
+          flag,
+          value,
+          '--json',
+        ],
+        { readCredentialsFn },
+      );
+
+      expect(output.json()).toMatchObject({
+        ok: false,
+        kind: 'session_run_start',
+        error: {
+          code: 'invalid_arguments',
+          message: `Invalid ${flag} "${value}". Expected one of: ${expectedValues}.`,
+        },
+      });
+      expect(readCredentialsFn).not.toHaveBeenCalled();
+    } finally {
+      output.restore();
+    }
+  });
+
+  it.each([
+    ['--retention', 'ephemeral, resumable'],
+    ['--run-class', 'bounded, long_lived'],
+    ['--io-mode', 'request_response, streaming'],
+  ] as const)('rejects %s without a value before reading credentials', async (flag, expectedValues) => {
+    const { handleSessionCommand } = await import('../index');
+    const output = captureConsoleJsonOutput();
+    const readCredentialsFn = vi.fn(async () => null);
+
+    try {
+      await handleSessionCommand(
+        [
+          'run',
+          'start',
+          'sess_integration_run_start_123',
+          '--intent',
+          'review',
+          '--backend',
+          'codex',
+          '--json',
+          flag,
+        ],
+        { readCredentialsFn },
+      );
+
+      expect(output.json()).toMatchObject({
+        ok: false,
+        kind: 'session_run_start',
+        error: {
+          code: 'invalid_arguments',
+          message: `Invalid ${flag} "". Expected one of: ${expectedValues}.`,
+        },
+      });
+      expect(readCredentialsFn).not.toHaveBeenCalled();
     } finally {
       output.restore();
     }
@@ -394,7 +634,13 @@ describe('happier session run start (integration)', () => {
     try {
       const machineKeySeed = new Uint8Array(32).fill(8);
       await handleSessionCommand(
-        ['run', 'start', 'sess_integration_run_start_123', '--intent', 'delegate', '--backend', 'acpBackend:review-bot', '--json'],
+        [
+          'run', 'start', 'sess_integration_run_start_123',
+          '--intent', 'delegate',
+          '--backend', 'acpBackend:review-bot',
+          '--permission-mode', 'read_only',
+          '--json',
+        ],
         {
           readCredentialsFn: async () => ({
             token: 'token_test',

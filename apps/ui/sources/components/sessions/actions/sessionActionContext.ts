@@ -2,6 +2,12 @@ import { resolveSessionReadStateAction } from '@/sync/domains/session/readState/
 import type { Session } from '@/sync/domains/state/storageTypes';
 import type { SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
 import { resolveTerminalControlServiceabilityPolicy } from '@happier-dev/protocol';
+import {
+    canContinueSessionWithFreshSpawn,
+    canResumeSessionWithOptions,
+    type ResumeCapabilityOptions,
+    type SessionMetadata as ResumeSessionMetadata,
+} from '@/agents/runtime/resumeCapabilities';
 
 import type { SessionActionSession, SessionActionTarget } from './sessionActionTypes';
 
@@ -11,6 +17,7 @@ export function createSessionActionTarget(params: Readonly<{
     currentUserId?: string | null;
     isConnected?: boolean;
     isPinned?: boolean;
+    resumeCapabilityOptions?: ResumeCapabilityOptions;
 }>): SessionActionTarget {
     const session = params.session;
     const sessionOwnerId = typeof session.owner === 'string' ? session.owner : null;
@@ -34,6 +41,14 @@ export function createSessionActionTarget(params: Readonly<{
     const hasStoppableTerminalHost = terminalControlPolicy.canRequestStop;
     const canStop = isOwnedByCurrentUser;
     const canArchive = hasAdminAccess && !isArchived && (!isActive || canStop);
+    const hasWriteAccess = !session.accessLevel || session.accessLevel === 'edit' || session.accessLevel === 'admin';
+    const resumeMetadata = session.metadata as ResumeSessionMetadata | null;
+    const canResume = !isActive
+        && hasWriteAccess
+        && (
+            canResumeSessionWithOptions(resumeMetadata, params.resumeCapabilityOptions)
+            || canContinueSessionWithFreshSpawn(resumeMetadata, params.resumeCapabilityOptions)
+        );
 
     return {
         session,
@@ -49,6 +64,7 @@ export function createSessionActionTarget(params: Readonly<{
         canStop,
         canArchive,
         canRename: hasAdminAccess,
+        canResume,
         canDelete: isOwnedByCurrentUser && !isActive && !hasPreservedTerminalHost && params.isConnected !== true,
         readStateAction: isArchived
             ? { kind: 'none', visible: false }

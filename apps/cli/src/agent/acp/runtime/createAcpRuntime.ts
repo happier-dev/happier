@@ -166,13 +166,33 @@ function isGenericProviderSessionFailureRuntimeIssue(issue: SessionRuntimeIssueV
     && issue.sanitizedPreview === 'Provider session failed';
 }
 
+function findPiRuntimeIssueCarrier(
+  error: unknown,
+  property: 'piBrokerReadinessFailure' | 'piProviderFailure',
+): unknown | null {
+  const seen = new Set<object>();
+  let current: unknown = error;
+  for (let depth = 0; depth < 8; depth += 1) {
+    if (!current || typeof current !== 'object' || seen.has(current)) return null;
+    seen.add(current);
+    const record = current as Record<string, unknown>;
+    if (record[property] && typeof record[property] === 'object') return current;
+    current = record.cause;
+  }
+  return null;
+}
+
 function normalizeAcpPromptFailureRuntimeIssueError(params: Readonly<{
   provider: string;
   error: unknown;
   turnInFlight: boolean;
 }>): unknown {
   if (params.provider !== 'pi') return params.error;
+  const brokerReadinessCarrier = findPiRuntimeIssueCarrier(params.error, 'piBrokerReadinessFailure');
+  if (brokerReadinessCarrier) return brokerReadinessCarrier;
   if (!params.turnInFlight) return params.error;
+  const providerFailureCarrier = findPiRuntimeIssueCarrier(params.error, 'piProviderFailure');
+  if (providerFailureCarrier) return providerFailureCarrier;
   const issue = classifyPrimarySessionRuntimeIssue({
     cause: 'session_error',
     provider: params.provider,
@@ -435,6 +455,8 @@ export function createAcpRuntime(params: {
   permissionHandler: AcpPermissionHandler;
   onThinkingChange: (thinking: boolean) => void;
   ensureBackend: () => Promise<AcpRuntimeBackend>;
+  /** Provider opt-in for binding backend session open to the enclosing runner cancellation. */
+  getSessionOpenAbortSignal?: () => AbortSignal | undefined;
   /**
    * Defensive controls for the tool-call name cache (callId -> toolName).
    *
@@ -2196,7 +2218,9 @@ export function createAcpRuntime(params: {
           openSession: async (identityContext) => {
             const b = await ensureBackend();
             identityContext.assertCurrent();
-            if (!hasResumeIntent) return await b.startSession();
+            const sessionOpenSignal = params.getSessionOpenAbortSignal?.();
+            const sessionOpenOptions = sessionOpenSignal ? { signal: sessionOpenSignal } : undefined;
+            if (!hasResumeIntent) return await b.startSession(undefined, sessionOpenOptions);
             if (!b.loadSession && !b.loadSessionWithReplayCapture) {
               throw new Error(`${params.provider} ACP backend does not support loading sessions`);
             }
@@ -2205,7 +2229,7 @@ export function createAcpRuntime(params: {
               if (b.loadSessionWithReplayCapture && importHistory) {
                 return await b.loadSessionWithReplayCapture(resumeReference);
               }
-              if (b.loadSession) return await b.loadSession(resumeReference);
+              if (b.loadSession) return await b.loadSession(resumeReference, sessionOpenOptions);
               return await b.loadSessionWithReplayCapture!(resumeReference);
             } finally {
               loadingSession = false;

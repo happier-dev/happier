@@ -3,6 +3,25 @@ import { describe, expect, it } from 'vitest';
 import { parseSessionCreateSpawnOptions } from './parseSessionCreateSpawnOptions';
 
 describe('parseSessionCreateSpawnOptions', () => {
+  it.each([
+    ['read_only', 'read-only'],
+    ['read-only', 'read-only'],
+    ['default', 'default'],
+    ['safe-yolo', 'safe-yolo'],
+    ['yolo', 'yolo'],
+    ['plan', 'plan'],
+  ])('normalizes permission mode %s to %s', (input, expected) => {
+    expect(parseSessionCreateSpawnOptions([
+      '--permission-mode', input,
+    ]).actionInput.permissionMode).toBe(expected);
+  });
+
+  it('rejects unsupported nonblank permission modes', () => {
+    expect(() => parseSessionCreateSpawnOptions([
+      '--permission-mode', 'surprise-me',
+    ])).toThrow('Invalid --permission-mode');
+  });
+
   it('preserves exact nonblank opaque model and mode flag values', () => {
     const parsed = parseSessionCreateSpawnOptions([
       '--model', ' model-a\t',

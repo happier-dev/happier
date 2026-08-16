@@ -66,10 +66,26 @@ async function getSessionByIdResponse(params: Readonly<{
   token: string;
   sessionId: string;
   reason?: SessionSnapshotRefreshReasonInput;
+  signal?: AbortSignal;
 }>): Promise<SessionByIdHttpResponse> {
   const serverUrl = resolveServerHttpBaseUrl();
   const encodedSessionId = encodeSessionIdPathSegment(params.sessionId);
   const requestPurpose = buildSessionDetailRequestPurpose(params.reason ?? 'legacy-compat-proof');
+  const request = () => axios.get(`${serverUrl}/v2/sessions/${encodedSessionId}`, {
+    headers: {
+      Authorization: `Bearer ${params.token}`,
+      'Content-Type': 'application/json',
+      'X-Happier-Request-Purpose': requestPurpose,
+    },
+    timeout: configuration.sessionControlHttpTimeoutMs,
+    validateStatus: () => true,
+    ...(params.signal ? { signal: params.signal } : {}),
+  });
+
+  // A caller-owned signal cannot safely share an in-flight request with callers
+  // that have a different cancellation lifecycle.
+  if (params.signal) return await request();
+
   const key = buildSessionByIdInFlightKey({
     serverUrl,
     token: params.token,
@@ -78,15 +94,7 @@ async function getSessionByIdResponse(params: Readonly<{
   const existing = sessionByIdInFlightRequests.get(key);
   if (existing) return await existing;
 
-  const promise = axios.get(`${serverUrl}/v2/sessions/${encodedSessionId}`, {
-    headers: {
-      Authorization: `Bearer ${params.token}`,
-      'Content-Type': 'application/json',
-      'X-Happier-Request-Purpose': requestPurpose,
-    },
-    timeout: configuration.sessionControlHttpTimeoutMs,
-    validateStatus: () => true,
-  });
+  const promise = request();
   sessionByIdInFlightRequests.set(key, promise);
   try {
     return await promise;
@@ -97,7 +105,7 @@ async function getSessionByIdResponse(params: Readonly<{
   }
 }
 
-export async function fetchSessionById(params: Readonly<{ token: string; sessionId: string; reason?: SessionSnapshotRefreshReasonInput }>): Promise<RawSessionRecord | null> {
+export async function fetchSessionById(params: Readonly<{ token: string; sessionId: string; reason?: SessionSnapshotRefreshReasonInput; signal?: AbortSignal }>): Promise<RawSessionRecord | null> {
   const response = await getSessionByIdResponse(params);
   enforceSessionCompatibilityResponse(response);
 
@@ -230,6 +238,7 @@ export async function fetchSessionsPage(params: Readonly<{
   limit?: number;
   activeOnly?: boolean;
   archivedOnly?: boolean;
+  signal?: AbortSignal;
 }>): Promise<{
   sessions: RawSessionListRow[];
   nextCursor: string | null;
@@ -253,6 +262,7 @@ export async function fetchSessionsPage(params: Readonly<{
       : { ...(params.cursor ? { cursor: params.cursor } : {}), ...(limit ? { limit } : {}) },
     timeout: configuration.sessionControlHttpTimeoutMs,
     validateStatus: () => true,
+    ...(params.signal ? { signal: params.signal } : {}),
   });
 
   if (isAuthenticationStatus(response.status)) {

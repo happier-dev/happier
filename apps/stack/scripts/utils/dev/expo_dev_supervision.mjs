@@ -1,6 +1,7 @@
 const DEFAULT_MAX_RESTART_ATTEMPTS = 3;
 const DEFAULT_RESTART_BASE_DELAY_MS = 1_000;
 const DEFAULT_RESTART_MAX_DELAY_MS = 30_000;
+const DEFAULT_RESTART_HEALTHY_RESET_MS = 5 * 60_000;
 const MAX_RECENT_OUTPUT_LINES = 80;
 
 const OOM_LINE_REGEX =
@@ -43,13 +44,34 @@ export function resolveExpoRestartPolicy({ env = process.env, stackMode = false 
     env.HAPPIER_STACK_EXPO_RESTART_MAX_DELAY_MS,
     DEFAULT_RESTART_MAX_DELAY_MS
   );
+  const healthyResetMs = parsePositiveInteger(
+    env.HAPPIER_STACK_EXPO_RESTART_HEALTHY_RESET_MS,
+    DEFAULT_RESTART_HEALTHY_RESET_MS
+  );
 
   return {
     enabled,
     maxAttempts,
     baseDelayMs,
     maxDelayMs: Math.max(baseDelayMs, maxDelayMs),
+    healthyResetMs,
   };
+}
+
+export function resolveNextExpoRestartAttempt({ restartAttempt, certifiedAtMs, exitedAtMs, policy } = {}) {
+  const previousAttempt = parseNonNegativeInteger(restartAttempt, 0);
+  const certifiedAt = Number(certifiedAtMs);
+  const exitedAt = Number(exitedAtMs);
+  const healthyResetMs = parsePositiveInteger(policy?.healthyResetMs, DEFAULT_RESTART_HEALTHY_RESET_MS);
+  const completedHealthyInterval = certifiedAtMs !== null
+    && certifiedAtMs !== undefined
+    && Number.isFinite(certifiedAt)
+    && certifiedAt >= 0
+    && Number.isFinite(exitedAt)
+    && exitedAt >= certifiedAt
+    && exitedAt - certifiedAt >= healthyResetMs;
+
+  return completedHealthyInterval ? 1 : previousAttempt + 1;
 }
 
 export function createExpoCrashOutputTracker({ maxLines = MAX_RECENT_OUTPUT_LINES } = {}) {

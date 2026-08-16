@@ -2538,7 +2538,7 @@ export const ru: TranslationStructure = {
       recoveryCreditExpires: ({ time }: { time: string }) => `Expires: ${time}`,
       recoveryCreditApplying: "Применение сброса…",
       recoveryCreditMachineUnavailable: "Нет активной машины, на которой можно применить этот сброс.",
-      recoveryCreditNothingToReset: "No exhausted usage window currently needs a reset.",
+      recoveryCreditNothingToReset: "Сейчас нет исчерпанного окна использования, которое нужно сбросить.",
       recoveryCreditBadge: ({ count }: { count: number }) => count === 1 ? "1 reset" : `${count} resets`,
       remaining: ({ percent }: { percent: string }) => `${percent} осталось`,
       remainingWithReset: ({ percent, reset }: { percent: string; reset: string }) =>
@@ -3914,20 +3914,20 @@ export const ru: TranslationStructure = {
                         }
                     },
                     claudeUnifiedTerminalWorkspaceTrust: {
-                        title: "Workspace trust",
-                        subtitle: "Choose how Happier responds when Claude asks whether to trust a workspace.",
+                        title: "Доверие к рабочей области",
+                        subtitle: "Выберите, как Happier отвечает, когда Claude спрашивает, доверять ли рабочей области.",
                         options: {
                             ask_every_time: {
-                                title: "Ask every time",
-                                subtitle: "Show the exact workspace trust question in the session."
+                                title: "Спрашивать каждый раз",
+                                subtitle: "Показывать в сессии точный вопрос о доверии к рабочей области."
                             },
                             always_trust_happier_workspaces: {
-                                title: "Always trust Happier workspaces",
-                                subtitle: "Trust the current recaptured Claude prompt for workspaces opened by Happier."
+                                title: "Всегда доверять рабочим областям Happier",
+                                subtitle: "Доверять текущему повторно захваченному запросу Claude для рабочих областей, открытых Happier."
                             },
                             always_reject_happier_workspaces: {
-                                title: "Always reject Happier workspaces",
-                                subtitle: "Reject the current recaptured Claude prompt for workspaces opened by Happier."
+                                title: "Всегда отклонять рабочие области Happier",
+                                subtitle: "Отклонять текущий повторно захваченный запрос Claude для рабочих областей, открытых Happier."
                             }
                         }
                     },
@@ -5034,10 +5034,18 @@ export const ru: TranslationStructure = {
         title: "Политика хранения",
         summary: "Сводка",
         keepForever: "Без автоматического удаления",
+        automaticDeletionEnabled: "Автоматическое удаление включено",
+        detailsUnavailable: "Автоматическое удаление включено, но этот клиент не может показать все активные политики",
+        singlePolicySummary: ({ domain, policy }: { domain: string; policy: string }) => `${domain}: ${policy}`,
+        relayCleanupSummary: ({ policies }: { policies: string }) => `Этот Relay очищает ${policies}.`,
+        relayCleanupAfterDays: ({ domain, count }: { domain: string; count: number }) => `${domain} через ${count} ${plural({ count, one: 'день', few: 'дня', many: 'дней' })}`,
+        relayCleanupInactiveSessionsAfterDays: ({ count }: { count: number }) => `неактивные сессии через ${count} ${plural({ count, one: 'день', few: 'дня', many: 'дней' })}`,
         deleteInactiveSessionsDays: ({ count }: { count: number }) => `Удаляет неактивные сессии через ${count} ${plural({ count, one: 'день', few: 'дня', many: 'дней' })}.`,
         deleteOlderThanDays: ({ count }: { count: number }) => `Удаляет данные через ${count} ${plural({ count, one: 'день', few: 'дня', many: 'дней' })}.`,
         sessionNotice: ({ count }: { count: number }) => `Этот Relay удаляет неактивные сессии после ${count} ${plural({ count, one: 'дня', few: 'дней', many: 'дней' })} бездействия.`,
         sessions: "Сессии",
+        sessionMessages: "Транскрипты сессий",
+        sidechainMessages: "Транскрипты субагентов",
         accountChanges: "Изменения аккаунта",
         voiceSessionLeases: "Аренды голосовых сессий",
         feedItems: "Элементы ленты",
@@ -5702,6 +5710,8 @@ export const ru: TranslationStructure = {
                 backgroundTasksRunning: ({ count }: { count: number }) => `Фоновых команд в работе: ${count}`,
             },
           untitled: "Агент без имени",
+          screenTitle: "Агенты",
+          transcriptScreenTitle: "Стенограмма агента",
           menuTitle: "Действия агента",
           row: {
             a11yLabel: ({ title, status }: { title: string; status: string }) => `${title}, ${status}`,
@@ -5849,6 +5859,7 @@ export const ru: TranslationStructure = {
       detailsPanel: {
         emptyHint: "Откройте файл или diff на правой панели.",
         unsupportedTab: "Эта вкладка деталей не поддерживается.",
+        transcriptFromOtherSession: "Эта расшифровка относится к другой сессии.",
         closeA11y: "Закрыть детали",
           openRightSidebarA11y: "Открыть правую боковую панель",
           closeRightSidebarA11y: "Закрыть правую боковую панель",

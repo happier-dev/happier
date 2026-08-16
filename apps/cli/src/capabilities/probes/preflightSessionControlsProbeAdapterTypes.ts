@@ -12,6 +12,7 @@ export type PreflightSessionControlsProbeParams = Readonly<{
   accountSettings?: Readonly<Record<string, unknown>> | null;
   credentials?: Credentials | null;
   connectedServices?: ConnectedServiceBindingsV1 | null;
+  processEnv?: NodeJS.ProcessEnv;
 }>;
 
 /**
@@ -21,6 +22,7 @@ export type PreflightSessionControlsProbeParams = Readonly<{
  * The probe functions return raw payloads (best-effort). Callers must normalize/validate.
  */
 export type PreflightSessionControlsProbeAdapter = Readonly<{
+  connectedServiceAuth?: 'materialized-env';
   modelProbeCachePolicy?: PreflightModelsProbeCachePolicy;
   failureCacheStrategy?: PreflightSessionControlsProbeFailureCacheStrategy;
   probeModelsRaw?: (params: PreflightSessionControlsProbeParams) => Promise<unknown | null>;

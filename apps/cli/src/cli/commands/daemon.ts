@@ -50,9 +50,10 @@ import {
 import { resolveDaemonServiceCliRuntimeFromEnv } from '@/daemon/service/cli';
 
 import type { CommandContext } from '@/cli/commandRegistry';
+import { writeJsonStdout } from '@/cli/output/jsonEnvelope';
 
-function printDaemonJson(payload: unknown): void {
-  process.stdout.write(`${JSON.stringify(payload)}\n`);
+async function printDaemonJson(payload: unknown): Promise<void> {
+  await writeJsonStdout(payload);
 }
 
 function flattenDaemonMessage(title: string, lines: readonly string[]): string {
@@ -201,7 +202,7 @@ export async function handleDaemonCliCommand(context: CommandContext): Promise<v
         );
       } else {
         console.log('Active sessions:');
-        console.log(JSON.stringify(sessions, null, 2));
+        await writeJsonStdout(sessions, { pretty: true });
       }
     } catch {
       console.log('No daemon running');
@@ -237,7 +238,7 @@ export async function handleDaemonCliCommand(context: CommandContext): Promise<v
     if (sessionId === '') {
       const message = '`--session-id` requires a non-empty session id.';
       if (jsonRequested) {
-        printDaemonJson({
+        await printDaemonJson({
           ok: false,
           error: 'missing_session_id',
           message,
@@ -272,7 +273,7 @@ export async function handleDaemonCliCommand(context: CommandContext): Promise<v
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       if (jsonRequested) {
-        printDaemonJson({
+        await printDaemonJson({
           ok: false,
           error: 'session_runner_restart_failed',
           message,
@@ -284,7 +285,7 @@ export async function handleDaemonCliCommand(context: CommandContext): Promise<v
     }
 
     if (jsonRequested) {
-      printDaemonJson(commandResult.result);
+      await printDaemonJson(commandResult.result);
     } else if (commandResult.kind === 'single') {
       printSingleSessionRunnerRestartSummary(commandResult.result, dryRun);
     } else {
@@ -301,7 +302,7 @@ export async function handleDaemonCliCommand(context: CommandContext): Promise<v
     const startupSource = resolveDaemonStartupSourceFromEnv(process.env);
     if (ownership.kind === 'compatible') {
       if (jsonRequested) {
-        printDaemonJson({
+        await printDaemonJson({
           ok: true,
           status: 'already_running',
           relay: configuration.serverUrl,
@@ -326,7 +327,7 @@ export async function handleDaemonCliCommand(context: CommandContext): Promise<v
         owner: takeoverDecision.owner,
       });
       if (jsonRequested) {
-        printDaemonJson({
+        await printDaemonJson({
           ok: false,
           error: 'owner_conflict',
           message: flattenDaemonMessage(message.title, message.lines),
@@ -351,7 +352,7 @@ export async function handleDaemonCliCommand(context: CommandContext): Promise<v
           services: startupServiceConflict.services,
         });
         if (jsonRequested) {
-          printDaemonJson({
+          await printDaemonJson({
             ok: false,
             error: 'installed_background_service_conflict',
             message: flattenDaemonMessage(message.title, message.lines),
@@ -399,7 +400,7 @@ export async function handleDaemonCliCommand(context: CommandContext): Promise<v
         // ignore
       }
       if (jsonRequested) {
-        printDaemonJson({
+        await printDaemonJson({
           ok: true,
           status: 'started',
           relay: configuration.serverUrl,
@@ -417,7 +418,7 @@ export async function handleDaemonCliCommand(context: CommandContext): Promise<v
       const latestDaemonLog = await getLatestDaemonLog().catch(() => null);
       if (inspection.status === 'starting' || isChildProcessAlive(child)) {
         if (jsonRequested) {
-          printDaemonJson({
+          await printDaemonJson({
             ok: true,
             status: 'starting',
             relay: configuration.serverUrl,
@@ -436,7 +437,7 @@ export async function handleDaemonCliCommand(context: CommandContext): Promise<v
       }
 
       if (jsonRequested) {
-        printDaemonJson({
+        await printDaemonJson({
           ok: false,
           error: 'start_failed',
           message: 'Failed to start daemon',
@@ -536,7 +537,7 @@ export async function handleDaemonCliCommand(context: CommandContext): Promise<v
     if (restartSessionRunners && stopSessions) {
       const message = '`happier daemon restart --restart-session-runners` cannot be combined with `--kill-sessions`.';
       if (jsonRequested) {
-        printDaemonJson({
+        await printDaemonJson({
           ok: false,
           error: 'restart_session_runners_kill_sessions_conflict',
           message,
@@ -549,7 +550,7 @@ export async function handleDaemonCliCommand(context: CommandContext): Promise<v
     if (args.includes('--all')) {
       const message = '`happier daemon restart --all` is not supported yet.';
       if (jsonRequested) {
-        printDaemonJson({
+        await printDaemonJson({
           ok: false,
           error: 'restart_all_unsupported',
           message,
@@ -571,7 +572,7 @@ export async function handleDaemonCliCommand(context: CommandContext): Promise<v
         owner: ownership.owner,
       });
       if (jsonRequested) {
-        printDaemonJson({
+        await printDaemonJson({
           ok: false,
           error: 'owner_conflict',
           message: flattenDaemonMessage(message.title, message.lines),
@@ -597,7 +598,7 @@ export async function handleDaemonCliCommand(context: CommandContext): Promise<v
           services: startupServiceConflict.services,
         });
         if (jsonRequested) {
-          printDaemonJson({
+          await printDaemonJson({
             ok: false,
             error: 'installed_background_service_conflict',
             message: flattenDaemonMessage(message.title, message.lines),
@@ -640,7 +641,7 @@ export async function handleDaemonCliCommand(context: CommandContext): Promise<v
       if (restartStatus === 'starting') {
         const latestDaemonLog = await getLatestDaemonLog().catch(() => null);
         if (jsonRequested) {
-          printDaemonJson({
+          await printDaemonJson({
             ok: true,
             status: 'starting',
             relay: configuration.serverUrl,
@@ -659,7 +660,7 @@ export async function handleDaemonCliCommand(context: CommandContext): Promise<v
       }
 
       if (jsonRequested) {
-        printDaemonJson({
+        await printDaemonJson({
           ok: true,
           status: 'restarted',
           relay: configuration.serverUrl,
@@ -687,7 +688,7 @@ export async function handleDaemonCliCommand(context: CommandContext): Promise<v
       ? 'Session runner restart failed after daemon restart'
       : 'Failed to restart daemon';
     if (jsonRequested) {
-      printDaemonJson({
+      await printDaemonJson({
         ok: false,
         error: sessionRunnerRestart ? 'session_runner_restart_failed_after_daemon_restart' : 'restart_failed',
         message: failureMessage,
@@ -721,7 +722,7 @@ export async function handleDaemonCliCommand(context: CommandContext): Promise<v
             return null;
           }
         })();
-        process.stdout.write(`${JSON.stringify({
+        await writeJsonStdout({
           active: {
             serverId: configuration.activeServerId,
             relayUrl: activeRelayUrl,
@@ -771,11 +772,11 @@ export async function handleDaemonCliCommand(context: CommandContext): Promise<v
             },
             };
           }),
-        })}\n`);
+        });
         process.exit(0);
       }
       const snapshot = await readDaemonStatusSnapshot();
-      process.stdout.write(`${JSON.stringify(snapshot)}\n`);
+      await writeJsonStdout(snapshot);
       process.exit(0);
     }
 

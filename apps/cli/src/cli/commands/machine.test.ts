@@ -8,6 +8,7 @@ import {
 import { STANDARD_MANAGED_CLI_RELEASE_CHANNEL_ENV_KEYS } from '@happier-dev/cli-common/firstPartyRuntime';
 
 import { createEnvKeyScope } from '@/testkit/env/envScope';
+import { captureStdout } from '@/testkit/logger/captureOutput';
 import { handleMachineCommand } from './machine';
 
 describe('handleMachineCommand', () => {
@@ -67,8 +68,10 @@ describe('handleMachineCommand', () => {
         pendingPrompt: null,
       });
 
-    await handleMachineCommand(
-      [
+    const output = captureStdout();
+    try {
+      await handleMachineCommand(
+        [
         'setup',
         '--ssh',
         'dev@example.test',
@@ -87,8 +90,8 @@ describe('handleMachineCommand', () => {
         'none',
         '--preview',
         '--json',
-      ],
-      {
+        ],
+        {
         applyServerSelectionFromArgs: async (args) => args,
         createRunner: () => ({
           start,
@@ -105,8 +108,8 @@ describe('handleMachineCommand', () => {
         },
         isInteractiveTerminal: () => false,
         sleep: async () => undefined,
-      },
-    );
+        },
+      );
 
     expect(start).toHaveBeenCalledWith({
       spec: {
@@ -136,10 +139,13 @@ describe('handleMachineCommand', () => {
         },
       },
     });
-    expect(logSpy.mock.calls.map((call) => call[0])).toEqual([
-      JSON.stringify(event),
-      JSON.stringify(result),
-    ]);
+      expect(output.text().trim().split('\n')).toEqual([
+        JSON.stringify(event),
+        JSON.stringify(result),
+      ]);
+    } finally {
+      output.restore();
+    }
   });
 
   it('uses the current hdev invoker channel when setup omits explicit channel flags', async () => {
@@ -476,9 +482,11 @@ describe('handleMachineCommand', () => {
   });
 
   it('rejects unknown setup flags instead of ignoring them', async () => {
-    await handleMachineCommand(
-      ['setup', '--ssh', 'dev@example.test', '--bogus', '--json'],
-      {
+    const output = captureStdout();
+    try {
+      await handleMachineCommand(
+        ['setup', '--ssh', 'dev@example.test', '--bogus', '--json'],
+        {
         applyServerSelectionFromArgs: async (args) => args,
         createRunner: () => ({
           start: vi.fn(async () => ({ taskId: 'task-1' })),
@@ -497,10 +505,13 @@ describe('handleMachineCommand', () => {
         promptInput: async () => 'y',
         isInteractiveTerminal: () => false,
         sleep: async () => undefined,
-      },
-    );
+        },
+      );
 
-    expect(logSpy.mock.calls.flat().join('\n')).toContain('"ok":false');
-    expect(logSpy.mock.calls.flat().join('\n')).toContain('invalid_arguments');
+      expect(output.text()).toContain('"ok":false');
+      expect(output.text()).toContain('invalid_arguments');
+    } finally {
+      output.restore();
+    }
   });
 });

@@ -71,6 +71,11 @@ export interface StartSessionResult {
   sessionId: SessionId;
 }
 
+export type AgentSessionOpenOptions = Readonly<{
+  /** Cancellation owned by the enclosing runner/session-open lifecycle. */
+  signal?: AbortSignal;
+}>;
+
 export type AgentTurnLivenessProbeResult = Readonly<{
   active: boolean;
   reason?: string;
@@ -91,7 +96,7 @@ export interface AgentBackend {
    * @param initialPrompt - Optional initial prompt to send to the agent
    * @returns Promise resolving to session information
    */
-  startSession(initialPrompt?: string): Promise<StartSessionResult>;
+  startSession(initialPrompt?: string, options?: AgentSessionOpenOptions): Promise<StartSessionResult>;
 
   /**
    * Load an existing agent session (vendor-level resume).
@@ -101,7 +106,7 @@ export interface AgentBackend {
    *
    * When unsupported, callers should fall back to starting a new session.
    */
-  loadSession?(sessionId: SessionId): Promise<StartSessionResult>;
+  loadSession?(sessionId: SessionId, options?: AgentSessionOpenOptions): Promise<StartSessionResult>;
 
   /**
    * Load an existing agent session and capture the replayed history.

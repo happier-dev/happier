@@ -22,6 +22,7 @@ Usage:
 
 Required:
   Bot token from HAPPIER_GITHUB_BOT_TOKEN, or macOS Keychain after auth store.
+  Issue mutations require repository permission: Issues (read and write).
 
 Optional:
   HAPPIER_GHOPS_GH_PATH      Path to the 'gh' executable (default: "gh")
@@ -152,7 +153,7 @@ async function promptSecret(label) {
 
 async function main() {
   const args = process.argv.slice(2);
-  if (args.length === 0 || args.includes('--help') || args[0] === 'help') {
+  if (args.length === 0 || (args.length === 1 && (args[0] === '--help' || args[0] === 'help'))) {
     printHelp();
     return 0;
   }
@@ -214,6 +215,8 @@ async function main() {
   if (args[0] === 'auth') {
     throw new Error('Unknown auth command. Use auth store, auth status, or auth clear.');
   }
+
+  validateBotIdentity({ ghPath, token: resolved.token, configDir });
 
   const res = spawnSync(ghPath, args, {
     stdio: 'inherit',

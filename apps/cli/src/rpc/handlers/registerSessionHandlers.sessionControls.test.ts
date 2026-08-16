@@ -1226,9 +1226,9 @@ describe('registerSessionHandlers session controls', () => {
 
   it('admits composer references against the submitted text at the request boundary', async () => {
     // The protocol sanitizer parses metadata independently of the message it accompanies, so
-    // the `text.slice(start, end) === token` half of the range contract can only be enforced
-    // where both are in hand — this handler. Without the text the whole check is inert, so the
-    // wiring itself is the contract being asserted here, not just the protocol helper.
+    // the half of the token contract that needs the text can only be enforced where both are
+    // in hand — this handler. Without the text the whole check is inert, so the wiring itself
+    // is the contract being asserted here, not just the protocol helper.
     const { handlers, registrar } = createRegistrar();
     const handleUserMessage = vi.fn(async () => ({ handled: false as const }));
 
@@ -1245,9 +1245,9 @@ describe('registerSessionHandlers session controls', () => {
         happierStructuredInputV1: {
           v: 1,
           mentions: [
-            { kind: 'happier.file', ref: 'file:src/a.ts', token: '@src/a.ts', start: 4, end: 13 },
-            // Stale range: the token at [18, 27) is `@src/b.ts`, not `@src/z.ts`.
-            { kind: 'happier.file', ref: 'file:src/z.ts', token: '@src/z.ts', start: 18, end: 27 },
+            { kind: 'happier.file', ref: 'file:src/a.ts', token: '@src/a.ts' },
+            // The submitted text carries `@src/b.ts`, never `@src/z.ts`.
+            { kind: 'happier.file', ref: 'file:src/z.ts', token: '@src/z.ts' },
           ],
         },
       },

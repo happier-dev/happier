@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   SPAWN_SESSION_ERROR_CODES,
   SPAWN_SESSION_ERROR_DETAIL_KINDS,
+  PendingFirstInputV1Schema,
   SpawnSessionExecutionAuthorizationSchema,
   isConnectedServiceUxDiagnosticSpawnErrorDetail,
   isConnectedServiceResumeUnreachableSpawnErrorDetail,
@@ -11,6 +12,22 @@ import {
   type SpawnSessionErrorDetail,
   type SpawnSessionResult,
 } from './spawnSession.js';
+
+describe('spawn-session pending first input', () => {
+  it('preserves prompt bytes, opaque identity, and optional message metadata', () => {
+    expect(PendingFirstInputV1Schema.parse({
+      text: '  keep prompt whitespace  ',
+      localId: ' first-turn-opaque ',
+      meta: { model: 'opus', happierStructuredInputV1: { v: 1 } },
+    })).toEqual({
+      text: '  keep prompt whitespace  ',
+      localId: ' first-turn-opaque ',
+      meta: { model: 'opus', happierStructuredInputV1: { v: 1 } },
+    });
+    expect(PendingFirstInputV1Schema.safeParse({ text: ' ', localId: 'first-turn' }).success).toBe(false);
+    expect(PendingFirstInputV1Schema.safeParse({ text: 'prompt', localId: ' ' }).success).toBe(false);
+  });
+});
 
 describe('spawn-session execution authorization', () => {
   it('preserves opaque request-id bytes and rejects blank ids without collapsing identities', () => {

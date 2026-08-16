@@ -78,8 +78,14 @@ vi.mock('@/sync/domains/sessionActivity/sessionWorkflowActivityRecords', () => (
     fetchWorkflowRunSnapshot: vi.fn(async () => null),
 }));
 
+const paneSpies = vi.hoisted(() => ({
+    openDetailsTab: vi.fn(),
+    openRight: vi.fn(),
+    setRightTab: vi.fn(),
+}));
+
 vi.mock('@/components/appShell/panes/hooks/useAppPaneScope', () => ({
-    useAppPaneScope: () => ({ openDetailsTab: vi.fn() }),
+    useAppPaneScope: () => paneSpies,
 }));
 
 vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).installModalModuleMock()());
@@ -212,9 +218,10 @@ describe('the compact work-state surface and the Agents pane read ONE model', ()
     }, 120_000);
 
     /**
-     * A9: the lead-in to the expanded surface renders only when there is somewhere to go. On a
-     * phone `resolvePaneLayout` hides the right pane and remote-dev has no `/session/[id]/agents`
-     * route, so the caller passes no handler and the row must be absent — not present and inert.
+     * A9: the lead-in to the expanded surface renders only when there is somewhere to go — the
+     * section's own contract, which holds whether or not a caller has a destination. (The roster now
+     * has a screen of its own, so `SessionView` passes the handler on every device; this still fixes
+     * the section's behaviour for a host that has nowhere to send a reader.)
      */
     it('renders no lead-in when the expanded surface is unreachable', async () => {
         const fixture = testkit.makeSessionAgentActivityFixture({
@@ -282,6 +289,40 @@ describe('the compact work-state surface and the Agents pane read ONE model', ()
         );
         await testkit.flushHookEffects();
         expect(compact.findByTestId('session-work-state-activity-section')).toBeNull();
+        await compact.unmount();
+    }, 120_000);
+    /**
+     * The compact popover reaches a pane, which is the assumption this surface was built on being
+     * false. It used to push the subagent's full-screen route on every device "because a popover
+     * anchored to the composer has no pane scope" — but a pane scope is addressed by session id, so
+     * a wide layout can host the press exactly as a transcript file link already does. That false
+     * assumption is why an imported workflow sidechain, which has no route at all, could be
+     * previewed here and opened nowhere.
+     */
+    it('opens a pressed agent in the details pane from the COMPACT surface, not only from the pane', async () => {
+        const fixture = testkit.makeSessionAgentActivityFixture({
+            sessionId: SESSION_ID,
+            subagents: [{ key: 'alpha', title: 'Audit the auth flow', status: 'running' }],
+        });
+        seed(fixture);
+        paneSpies.openDetailsTab.mockClear();
+
+        const compact = await testkit.renderScreen(
+            <CompactActivityHost sessionId={SESSION_ID} />,
+        );
+        await testkit.flushHookEffects();
+
+        const row = compact.root.findAllByProps({ accessibilityRole: 'button' })
+            .find((instance: any) => typeof instance.props?.testID === 'string'
+                && instance.props.testID.startsWith('session-work-state-activity:row:'));
+        expect(row).toBeTruthy();
+        await testkit.pressTestInstanceAsync(row!);
+
+        expect(paneSpies.openDetailsTab).toHaveBeenCalledWith(
+            expect.objectContaining({ kind: 'subagent' }),
+            expect.objectContaining({ intent: 'preview' }),
+        );
+
         await compact.unmount();
     }, 120_000);
 });

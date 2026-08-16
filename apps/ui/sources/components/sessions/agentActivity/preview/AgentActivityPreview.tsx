@@ -30,10 +30,12 @@ import { useAgentActivitySidechainPreview } from './useAgentActivitySidechainPre
  * through `AgentActivitySurface`. The alternative was a workflow-only viewer, which is the
  * split-brain this wave exists to avoid.
  *
- * **Open details is offered only where a destination resolves.** The callback is absent for an
- * orphan workflow sidechain: it has no owning tool message, so the existing subagent route cannot
- * address it, and a control that leads nowhere must not render (A9). The preview IS the destination
- * for those rows, which is why it states the steps rather than teasing them.
+ * **Open details is offered only where THIS host can serve it.** An orphan workflow sidechain has no
+ * owning tool message, so the existing subagent route cannot address it — but a scoped transcript
+ * details tab can, wherever a pane scope exists. So the callback arrives from the pane and is absent
+ * in the compact popover, which is anchored to a composer and has nowhere to put a tab. Absent means
+ * the preview IS the destination for that row, which is why it states the steps rather than teasing
+ * them; a control that leads nowhere must not render (A9).
  */
 
 export type AgentActivityPreviewProps = Readonly<{

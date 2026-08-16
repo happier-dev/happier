@@ -229,6 +229,7 @@ export interface ClientToServerEvents {
 	      updatedAt?: number;
 	    };
     error?: string;
+    retryAfterMs?: number;
   }) => void) => void,
   'execution-run-updated': (data: {
     sid: string;

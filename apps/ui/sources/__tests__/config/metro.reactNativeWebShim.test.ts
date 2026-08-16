@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
@@ -67,6 +67,24 @@ async function loadMetroConfigWithSentryFactory(
 }
 
 describe('metro.config.js (web)', () => {
+    it('blocks generated CLI runner snapshots without hiding CLI source', () => {
+        const uiDir = getUiDir();
+        const repoRoot = resolve(uiDir, '..', '..');
+        const config = loadMetroConfig();
+        const blockList = Array.isArray(config.resolver.blockList)
+            ? config.resolver.blockList
+            : [config.resolver.blockList];
+        const isBlocked = (candidatePath: string) => (
+            blockList.some((entry: unknown) => entry instanceof RegExp && entry.test(candidatePath))
+        );
+        const cliRoot = resolve(repoRoot, 'apps/cli');
+
+        expect(isBlocked(join(cliRoot, '.runner-snapshots', 'current', 'tools', 'unpacked', 'zellij'))).toBe(true);
+        expect(isBlocked(String.raw`C:\repo\apps\cli\.runner-snapshots\current\tools\unpacked\zellij`)).toBe(true);
+        expect(isBlocked(join(cliRoot, 'src/index.ts'))).toBe(false);
+        expect(isBlocked(join(cliRoot, '.runner-snapshot-scratch', 'src/index.ts'))).toBe(false);
+    });
+
     it('shims react-native to provide unstable_batchedUpdates (LegendList compatibility)', () => {
         const uiDir = getUiDir();
         const config = loadMetroConfig();

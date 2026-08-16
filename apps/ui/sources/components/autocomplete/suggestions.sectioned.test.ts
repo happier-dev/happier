@@ -1,3 +1,4 @@
+import type { ReactElement } from 'react';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { FileItem } from '@/sync/domains/input/suggestionFile';
 
@@ -226,6 +227,7 @@ describe('sectioned composer suggestions (EU-3)', () => {
             title: 'Fix Detached Dev Stack Startup',
             workspaceLabel: '~/projects/app',
             agentLabel: 'codex',
+            agentId: 'codex',
             updatedAt: 10,
             active: true,
         } as const;
@@ -280,6 +282,39 @@ describe('sectioned composer suggestions (EU-3)', () => {
                 sessionId: PEER_SESSION.id,
                 label: PEER_SESSION.title,
             });
+        });
+
+        /**
+         * Every other `@` kind is one concept with one glyph, so the kind's icon says
+         * everything. A session is not: which agent is running in it is the thing a user
+         * scans this list for, and one shared speech bubble on every row withholds it.
+         */
+        it('draws each row with its own provider logo', async () => {
+            const { getSuggestions } = await importSuggestions();
+
+            const suggestions = await getSuggestions('s1', '@session:', {
+                catalogs: {
+                    sessions: [
+                        PEER_SESSION,
+                        { ...PEER_SESSION, id: 'cmslj08960ku1tmhrd0v4a0b8', title: 'Claude Work', agentLabel: 'claude', agentId: 'claude' },
+                    ],
+                },
+            });
+
+            expect(suggestions.map(
+                (suggestion) => (suggestion.icon as ReactElement<{ agentId: string }> | undefined)?.props.agentId,
+            )).toEqual(['codex', 'claude']);
+        });
+
+        it('leaves the row to the kind glyph when the provider is not one this build knows', async () => {
+            const { getSuggestions } = await importSuggestions();
+
+            const suggestions = await getSuggestions('s1', '@session:', {
+                catalogs: { sessions: [{ ...PEER_SESSION, agentLabel: 'some-future-agent', agentId: null }] },
+            });
+
+            expect(suggestions[0]?.kind).toBe('session');
+            expect(suggestions[0]?.icon).toBeUndefined();
         });
 
         // The cases above all inject `catalogs.sessions`, so none of them reaches the real

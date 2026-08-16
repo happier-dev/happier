@@ -49,4 +49,55 @@ describe('happier session history (action executor)', () => {
       output.restore();
     }
   });
+
+  it.each([
+    ['uses the default limit when --limit is omitted', ['history', 'sess-1', '--json'], 50],
+    ['clamps an explicit limit to the supported maximum', ['history', 'sess-1', '--limit', '999', '--json'], 250],
+  ])('%s', async (_label, argv, expectedLimit) => {
+    execute.mockResolvedValueOnce({
+      ok: true,
+      result: { ok: true, sessionId: 'sess-1', format: 'compact', messages: [] },
+    });
+    const { cmdSessionHistory } = await import('./history');
+
+    const output = captureConsoleJsonOutput();
+    try {
+      await cmdSessionHistory(argv, {
+        readCredentialsFn: async () => ({
+          token: 'token_test',
+          encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
+        }),
+      });
+
+      expect(execute).toHaveBeenLastCalledWith(
+        'session.history.get',
+        expect.objectContaining({ limit: expectedLimit }),
+        { surface: 'cli', defaultSessionId: null },
+      );
+    } finally {
+      output.restore();
+    }
+  });
+
+  it('rejects unsupported formats as invalid arguments before reading credentials', async () => {
+    execute.mockClear();
+    const readCredentialsFn = vi.fn(async () => null);
+    const { cmdSessionHistory } = await import('./history');
+    await expect(cmdSessionHistory(
+      ['history', 'sess-1', '--format', 'definitely-invalid'],
+      { readCredentialsFn },
+    )).rejects.toThrow('Invalid --format value "definitely-invalid". Expected one of: compact, raw.');
+
+    expect(readCredentialsFn).not.toHaveBeenCalled();
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it('rejects an explicit invalid limit before reading credentials', async () => {
+    const readCredentialsFn = vi.fn(async () => null);
+    const { cmdSessionHistory } = await import('./history');
+    await expect(cmdSessionHistory(['history', 'sess-1', '--limit', '0'], { readCredentialsFn }))
+      .rejects.toMatchObject({ code: 'invalid_arguments' });
+
+    expect(readCredentialsFn).not.toHaveBeenCalled();
+  });
 });

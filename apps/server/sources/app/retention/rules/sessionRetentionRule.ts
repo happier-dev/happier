@@ -6,25 +6,35 @@ export async function pruneInactiveSessionsOnce(params: {
     cutoff: Date;
     batchSize: number;
     dryRun: boolean;
-}): Promise<{ deleted: number }> {
+    afterSessionId?: string;
+}): Promise<{
+    deleted: number;
+    candidatesExamined: number;
+    hasMore: boolean;
+    nextSessionId: string | null;
+}> {
+    const limit = Math.max(1, params.batchSize);
     const candidates = await db.session.findMany({
         where: {
             active: false,
             updatedAt: { lt: params.cutoff },
             lastActiveAt: { lt: params.cutoff },
+            ...(params.afterSessionId ? { id: { gt: params.afterSessionId } } : null),
         },
-        orderBy: [
-            { lastActiveAt: 'asc' },
-            { updatedAt: 'asc' },
-        ],
-        take: Math.max(1, params.batchSize),
+        orderBy: { id: 'asc' },
+        take: limit,
         select: {
             id: true,
         },
     });
 
     if (params.dryRun) {
-        return { deleted: candidates.length };
+        return {
+            deleted: candidates.length,
+            candidatesExamined: candidates.length,
+            hasMore: candidates.length === limit,
+            nextSessionId: candidates[candidates.length - 1]?.id ?? null,
+        };
     }
 
     let deleted = 0;
@@ -45,19 +55,31 @@ export async function pruneInactiveSessionsOnce(params: {
             deleted += 1;
         }
     }
-    return { deleted };
+    return {
+        deleted,
+        candidatesExamined: candidates.length,
+        hasMore: candidates.length === limit,
+        nextSessionId: candidates[candidates.length - 1]?.id ?? null,
+    };
 }
 
 export async function runSessionRetentionRule(params: {
     cutoff: Date;
     batchSize: number;
     dryRun: boolean;
+    afterSessionId?: string;
     maxDeletesPerRulePerRun: number;
-}): Promise<{ deleted: number }> {
+}): Promise<{
+    deleted: number;
+    candidatesExamined: number;
+    hasMore: boolean;
+    nextSessionId: string | null;
+}> {
     const limit = Math.max(1, Math.min(params.batchSize, params.maxDeletesPerRulePerRun));
     return await pruneInactiveSessionsOnce({
         cutoff: params.cutoff,
         batchSize: limit,
         dryRun: params.dryRun,
+        afterSessionId: params.afterSessionId,
     });
 }

@@ -26,7 +26,7 @@ import { PendingRequestedActionV1Schema } from '../sessionMessages/pendingReques
 import { SessionWorkStateStatusV1Schema } from '../sessionWorkState/sessionWorkStateV1.js';
 import { STRUCTURED_QUESTION_LIMITS } from '../tools/structuredQuestionAnswersV1.js';
 import { AcpConfigOptionOverridesV1Schema } from '../sessionMetadata/metadataOverridesV1.js';
-import { SessionPermissionModeSchema } from '../sessionMetadata/sessionPermissionModes.js';
+import { SessionPermissionModeInputSchema } from '../sessionMetadata/sessionPermissionModes.js';
 import { AgentRuntimeDescriptorV1Schema } from '../sessionMetadata/agentRuntimeDescriptorV1.js';
 import { SessionMcpSelectionV1Schema } from '../mcpServers/sessionSelectionV1.js';
 import { ConnectedServiceBindingsV1Schema } from '../connect/connectedServiceBindings.js';
@@ -34,6 +34,11 @@ import {
   SpawnConfigOptionValueSchema,
   findSpawnConfigOptionAliasConflicts,
 } from './sessionSpawnConfigOptions.js';
+import {
+  EXECUTION_RUN_ACTION_PERMISSION_MODES,
+  EXECUTION_RUN_ACTION_PERMISSION_MODE_DESCRIPTION,
+  ExecutionRunActionPermissionModeSchema,
+} from './executionRunActionPermissionMode.js';
 
 export {
   ActionApprovalFlowSchema,
@@ -387,7 +392,7 @@ const IntentStartCommonSchema = z.object({
   sessionId: z.string().min(1).optional(),
   backendTargetKeys: z.array(BackendTargetKeySchema).min(1),
   instructions: z.string().trim().min(1),
-  permissionMode: z.string().min(1).optional(),
+  permissionMode: ExecutionRunActionPermissionModeSchema.optional(),
   retentionPolicy: z.enum(['ephemeral', 'resumable']).optional(),
   runClass: z.enum(['bounded', 'long_lived']).optional(),
   ioMode: z.enum(['request_response', 'streaming']).optional(),
@@ -411,21 +416,21 @@ const IntentStartCommonSchema = z.object({
 }).passthrough();
 
 const PlanStartInputSchema = IntentStartCommonSchema.extend({
-  permissionMode: z.string().min(1).default('read_only'),
+  permissionMode: ExecutionRunActionPermissionModeSchema.default('read_only'),
   retentionPolicy: z.enum(['ephemeral', 'resumable']).default('ephemeral'),
   runClass: z.enum(['bounded', 'long_lived']).default('bounded'),
   ioMode: z.enum(['request_response', 'streaming']).default('request_response'),
 }).passthrough();
 
 const DelegateStartInputSchema = IntentStartCommonSchema.extend({
-  permissionMode: z.string().min(1).default('workspace_write'),
+  permissionMode: ExecutionRunActionPermissionModeSchema.default('workspace_write'),
   retentionPolicy: z.enum(['ephemeral', 'resumable']).default('ephemeral'),
   runClass: z.enum(['bounded', 'long_lived']).default('bounded'),
   ioMode: z.enum(['request_response', 'streaming']).default('request_response'),
 }).passthrough();
 
 const VoiceAgentStartInputSchema = IntentStartCommonSchema.extend({
-  permissionMode: z.string().min(1).default('read_only'),
+  permissionMode: ExecutionRunActionPermissionModeSchema.default('read_only'),
   retentionPolicy: z.enum(['ephemeral', 'resumable']).default('ephemeral'),
   runClass: z.enum(['bounded', 'long_lived']).default('long_lived'),
   ioMode: z.enum(['request_response', 'streaming']).default('streaming'),
@@ -546,7 +551,7 @@ const SessionSpawnNewInputSchema = z.object({
   prompt: z.string().min(1).optional(),
   initialPrompt: z.string().min(1).optional(),
   initialMessage: z.string().min(1).optional(),
-  permissionMode: SessionPermissionModeSchema.optional(),
+  permissionMode: SessionPermissionModeInputSchema.optional(),
   agentModeId: z.string().min(1).optional(),
   sessionConfigOptionOverrides: AcpConfigOptionOverridesV1Schema.optional(),
   configOptions: z.record(z.string().min(1), SpawnConfigOptionValueSchema).optional(),
@@ -1286,6 +1291,13 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
           description: 'What you want the delegate(s) to do.',
           widget: 'textarea',
           required: true,
+        },
+        {
+          path: 'permissionMode',
+          title: 'Permission mode',
+          description: EXECUTION_RUN_ACTION_PERMISSION_MODE_DESCRIPTION,
+          widget: 'select',
+          options: EXECUTION_RUN_ACTION_PERMISSION_MODES.map((value) => ({ value, label: value })),
         },
         {
           path: 'modelId',

@@ -181,4 +181,37 @@ describe('sessionRetentionRule', () => {
         expect(await db.session.findUnique({ where: { id: 's1' } })).toBeTruthy();
         expect(emitUpdate).not.toHaveBeenCalled();
     });
+
+    it('continues after the last examined session so an observed-active row cannot hide later candidates', async () => {
+        await db.account.create({ data: { id: 'owner' } });
+        for (const id of ['s1', 's2']) {
+            await db.session.create({
+                data: {
+                    id,
+                    tag: id,
+                    accountId: 'owner',
+                    metadata: '{}',
+                    active: false,
+                    lastActiveAt: new Date('2025-01-01T00:00:00.000Z'),
+                    updatedAt: new Date('2025-01-01T00:00:00.000Z'),
+                },
+            });
+        }
+
+        const { runSessionRetentionRule } = await import('./sessionRetentionRule');
+        const result = await runSessionRetentionRule({
+            cutoff: new Date('2026-01-01T00:00:00.000Z'),
+            batchSize: 1,
+            dryRun: true,
+            afterSessionId: 's1',
+            maxDeletesPerRulePerRun: 1,
+        });
+
+        expect(result).toEqual({
+            deleted: 1,
+            candidatesExamined: 1,
+            hasMore: true,
+            nextSessionId: 's2',
+        });
+    });
 });

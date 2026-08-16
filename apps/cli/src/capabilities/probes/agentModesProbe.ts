@@ -160,15 +160,20 @@ export async function probeAgentModesBestEffort(params: {
   accountSettings?: Readonly<Record<string, unknown>> | null;
   credentials?: Credentials | null;
   connectedServices?: ConnectedServiceBindingsV1 | null;
+  processEnv?: NodeJS.ProcessEnv;
+  connectedServiceSelectionCacheKey?: string | null;
 }): Promise<ProbedAgentModesResult> {
   const nowMs = Date.now();
   const cwd = typeof params.cwd === 'string' && params.cwd.trim().length > 0 ? params.cwd.trim() : process.cwd();
-  const probeVariant = resolveAgentProbeVariant({
+  const baseProbeVariant = resolveAgentProbeVariant({
     agentId: params.agentId,
     backendTarget: params.backendTarget,
     accountSettings: params.accountSettings,
     connectedServices: params.connectedServices ?? null,
   });
+  const probeVariant = params.connectedServiceSelectionCacheKey
+    ? `${baseProbeVariant}|connected:${params.connectedServiceSelectionCacheKey}`
+    : baseProbeVariant;
   const cacheKey = buildAgentProbeCacheKey({
     agentId: params.agentId,
     cwd,
@@ -200,6 +205,7 @@ export async function probeAgentModesBestEffort(params: {
           timeoutMs,
           accountSettings: params.accountSettings ?? null,
           connectedServices: params.connectedServices ?? null,
+          processEnv: params.processEnv,
         }).catch(() => null);
         return normalizeDynamicModes(modesRaw);
       };

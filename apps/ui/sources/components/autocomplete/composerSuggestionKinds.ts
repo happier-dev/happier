@@ -1,6 +1,9 @@
 import * as React from 'react';
 
-import { FileMentionSuggestion } from '@/components/sessions/agentInput/components/AgentInputSuggestionView';
+import {
+    FileMentionSuggestion,
+    SessionMentionAgentLogo,
+} from '@/components/sessions/agentInput/components/AgentInputSuggestionView';
 import { Icon } from '@/components/ui/icons/Icon';
 import type { FileSuggestionScope } from '@/sync/domains/input/fileSuggestionScope';
 import { searchFiles, type FileItem } from '@/sync/domains/input/suggestionFile';
@@ -275,6 +278,17 @@ async function resolveSessionSuggestions(
             text: formatComposerSuggestionToken('@', `${SESSION_SUGGESTION_SCOPE}:${slug}`),
             label: item.title,
             description: item.workspaceLabel ?? item.agentLabel ?? item.id,
+            // Which agent is running in a session is what a user scans this list for, so the
+            // row carries that session's provider logo rather than the kind's shared glyph.
+            // An unresolvable flavor keeps the glyph: a wrong logo is worse than a generic one.
+            ...(item.agentId
+                ? {
+                    icon: React.createElement(SessionMentionAgentLogo, {
+                        agentId: item.agentId,
+                        testID: `composer-session-agent-logo-${item.id}`,
+                    }),
+                }
+                : {}),
             structuredInput: {
                 kind: 'session',
                 sessionId: item.id,
@@ -341,6 +355,8 @@ const COMPOSER_SUGGESTION_KIND_DEFINITIONS = {
         scopes: [SESSION_SUGGESTION_SCOPE],
         limit: 8,
         sectionTitleKey: 'agentInput.suggestionGroups.sessions',
+        // The fallback only. Rows normally carry their session's provider logo; this is
+        // what a session whose flavor names no known provider falls back to.
         icon: () => React.createElement(Icon, { name: 'chat-circle', size: 16 }),
         resolve: resolveSessionSuggestions,
     },

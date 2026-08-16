@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { clearSessionRelayAuthorizationCache } from "@/app/api/socket/sessionRelayAuthCache";
 import { db } from "@/storage/db";
@@ -110,6 +110,59 @@ describe("session publisher presence on SQLite", () => {
             runtimeActivityRevision: activityBeforeClose.runtimeActivityRevision + 1n,
         });
         expect(activityAfterClose.runtimeActivityObservedAt).not.toEqual(activityBeforeClose.runtimeActivityObservedAt);
+    });
+
+    it("expires a queued current-publisher action before admission and never starts it later", async () => {
+        const seeded = await seed();
+        const presence = createSessionPublisherPresence({ now: () => seeded.fence });
+        const socket = {};
+        const registered = await presence.registerPublisher({
+            socket,
+            binding: seeded.binding,
+            completeActivitySnapshot: { state: "idle", activeCount: 0 },
+        });
+        if (registered.status !== "registered") throw new Error("expected registration");
+
+        let releaseFirst!: () => void;
+        const firstGate = new Promise<void>((resolve) => {
+            releaseFirst = resolve;
+        });
+        const firstAction = presence.runAsCurrentPublisher({
+            socket,
+            binding: seeded.binding,
+            action: async () => await firstGate,
+        });
+        await new Promise((resolve) => setTimeout(resolve, 20));
+
+        const secondActionBody = vi.fn(async () => "started");
+        type DeadlineBoundRun = <T>(params: Readonly<{
+            socket: object;
+            binding: typeof seeded.binding;
+            deadlineAtMs?: number;
+            action: () => Promise<T>;
+        }>) => Promise<unknown>;
+        const secondAction = (presence.runAsCurrentPublisherInTx as DeadlineBoundRun)({
+            socket,
+            binding: seeded.binding,
+            deadlineAtMs: Date.now() + 25,
+            action: secondActionBody,
+        });
+        let observedSettlement: Readonly<{ status: "fulfilled"; value: unknown }> | Readonly<{ status: "rejected"; reason: unknown }> | null = null;
+        void secondAction.then(
+            (value) => { observedSettlement = { status: "fulfilled", value }; },
+            (reason: unknown) => { observedSettlement = { status: "rejected", reason }; },
+        );
+
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        const settlementAtDeadline = observedSettlement;
+
+        releaseFirst();
+        await Promise.allSettled([firstAction, secondAction]);
+        expect(settlementAtDeadline).toMatchObject({
+            status: "rejected",
+            reason: { name: "LockAdmissionDeadlineExceededError" },
+        });
+        expect(secondActionBody).not.toHaveBeenCalled();
     });
 
     it("contracts inherited provider delivery before successor publisher authority becomes usable", async () => {

@@ -1,6 +1,15 @@
 export const HAPPY_PROTOCOL_PACKAGE = '@happier-dev/protocol';
 
 export {
+  ServerRetentionDomainPolicyV2Schema,
+  ServerRetentionDomainV2Schema,
+  ServerRetentionPolicyV2Schema,
+  type ServerRetentionDomainPolicyV2,
+  type ServerRetentionDomainV2,
+  type ServerRetentionPolicyV2,
+} from './retention/serverRetentionPolicyV2.js';
+
+export {
   isPendingLocalId,
   readPendingLocalId,
   PendingLocalIdSchema,
@@ -983,6 +992,7 @@ export {
   SESSION_TRANSCRIPT_OBSERVATION_CAPABILITY_V1,
   SESSION_TRANSCRIPT_OBSERVATION_CAPABILITY_EVENT_V1,
   SESSION_TRANSCRIPT_OBSERVATION_EVENT_V1,
+  isRecoveredHistoryTranscriptObservationProvenance,
   SessionTranscriptObservationProvenanceV1Schema,
   SessionTranscriptObservationV1Schema,
   SessionTranscriptObservationCapabilityAckV1Schema,
@@ -1242,6 +1252,7 @@ export {
 } from './machineFileBrowser.js';
 
 export {
+  PendingFirstInputV1Schema,
   SPAWN_SESSION_ERROR_CODES,
   SPAWN_SESSION_ERROR_DETAIL_KINDS,
   SpawnSessionExecutionAuthorizationSchema,
@@ -1250,6 +1261,7 @@ export {
   isSpawnSessionErrorDetail,
   normalizeSpawnSessionErrorDetail,
   type ConnectedServiceResumeUnreachableContinuityCode,
+  type PendingFirstInputV1,
   type ConnectedServiceResumeUnreachableSpawnErrorDetail,
   type ConnectedServiceUxDiagnosticSpawnErrorDetail,
   type SpawnSessionErrorCode,
@@ -1443,6 +1455,8 @@ export {
   SessionStatusEnvelopeSchema,
   SessionStatusResultSchema,
   SessionStopEnvelopeSchema,
+  SessionStopCleanupIncompleteReasonSchema,
+  SessionStopOutcomeSchema,
   SessionStopResultSchema,
   SessionShareSchema,
   SessionTurnIdentifierV1Schema,
@@ -1530,6 +1544,8 @@ export {
   type SessionRunWaitResult,
   type SessionSendResult,
   type SessionStatusResult,
+  type SessionStopCleanupIncompleteReason,
+  type SessionStopOutcome,
   type SessionStopResult,
   type SessionShare,
   type SessionTurnLifecycleStatusV1,
@@ -1742,9 +1758,12 @@ export {
 
 export {
   SESSION_PERMISSION_MODES,
+  SessionPermissionModeInputSchema,
   SessionPermissionModeSchema,
   type SessionPermissionMode,
+  createSessionPermissionModeInputSchema,
   createSessionPermissionModeSchema,
+  parseSessionPermissionModeAlias,
 } from './sessionMetadata/sessionPermissionModes.js';
 
 export {

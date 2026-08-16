@@ -9,7 +9,7 @@ export async function updateSessionMetadataForTarget(params: Readonly<{
   updater: Parameters<typeof updateSessionMetadataWithRetry>[0]['updater'];
 }>): Promise<
   | Readonly<{ ok: true; sessionId: string; metadata: Record<string, unknown>; version: number }>
-  | Readonly<{ ok: false; code: 'session_not_found' | 'session_id_ambiguous' | 'unsupported'; candidates?: string[] }>
+  | Readonly<{ ok: false; code: 'session_not_found' | 'session_id_ambiguous' | 'session_lookup_timeout' | 'unsupported'; candidates?: string[] }>
 > {
   const sessionTarget = await resolveSessionTransportContext({
     credentials: params.credentials,

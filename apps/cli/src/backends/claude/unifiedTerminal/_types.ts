@@ -38,10 +38,18 @@ export type ClaudeUnifiedPromptAcceptance = Readonly<{
   turnStateAtInjection: TerminalTurnState;
 }>;
 
+export type ClaudeUnifiedPromptDeliveryState = 'pending' | 'accepted' | 'retired';
+
 export type ClaudeUnifiedPromptAcceptedHandler<Mode = unknown> = (
   batch: ClaudeUnifiedPromptBatch<Mode>,
   acceptance: ClaudeUnifiedPromptAcceptance,
 ) => void | Promise<void>;
+
+export type ClaudeUnifiedPromptProviderAcceptancePendingHandler<Mode = unknown> = (
+  batch: ClaudeUnifiedPromptBatch<Mode>,
+  acceptance: ClaudeUnifiedPromptAcceptance,
+  observedAtMs?: number | undefined,
+) => void;
 
 export type ClaudeUnifiedPromptInjectedHandler<Mode = unknown> = (
   batch: ClaudeUnifiedPromptBatch<Mode>,

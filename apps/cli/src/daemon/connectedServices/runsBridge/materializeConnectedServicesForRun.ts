@@ -1,8 +1,6 @@
 import type { CatalogAgentId } from '@/backends/types';
 import { logger as defaultLogger } from '@/ui/logger';
 
-import { createConnectedServiceMaterializedTargetRootCleanup } from '../materialize/createConnectedServiceMaterializedTargetRootCleanup';
-import { resolveConnectedServiceTargetMaterializedRoot } from '../materialize/resolveConnectedServiceTargetMaterializedRoot';
 import { HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY } from '../connectedServiceChildEnvironment';
 import type { resolveConnectedServiceAuthForSpawn } from '../resolveConnectedServiceAuthForSpawn';
 import type { ConnectedServiceRuntimeRegistry } from '../runtimeRegistry/registry';
@@ -197,33 +195,36 @@ export function createExecutionRunConnectedServicesBridge(deps: Readonly<{
       // the runner pid for liveness) so it coexists with the host session's pid-keyed target and BOTH
       // receive refresh redistribution / quota fanout. No pid clobber — the session registration is
       // untouched.
-      deps.runtimeRegistry?.registerRunTarget({
-        runKey: request.materializationKey,
-        pid: request.pid,
-        agentId: request.agentId,
-        ...(request.sessionId ? { sessionId: request.sessionId } : {}),
-        ...(brokerSelectionIdentity ? { brokerSelectionIdentity } : {}),
-        connectedServicesBindingsRaw: resolved.connectedServicesBindings,
-        connectedServiceSelectionsEnv: connectedServiceSelectionsJson
-          ? { [HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY]: connectedServiceSelectionsJson }
-          : null,
-        materializationKey: request.materializationKey,
-        sessionDirectory: request.sessionDirectory ?? null,
-        runtimeAccountIdentitySelections: resolved.runtimeAccountIdentitySelections,
-      });
-
-      // Run roots are uuid-keyed and per-run: nothing rematerializes over them later, so they MUST be
-      // reclaimed at run end. Persistent-root materializers (e.g. codex) report cleanupOnExit:null —
-      // derive the root cleanup from the materialized env via the canonical owner in that case.
+      // Reclaim the exact materialization allocation. A provider's target root may be a stable
+      // profile/group-owned directory (Claude), so it is never a safe cleanup derivation.
       const runRootCleanup = resolved.cleanupOnExit
-        ?? createConnectedServiceMaterializedTargetRootCleanup({
+        ?? resolved.cleanupMaterializationRoot
+        ?? null;
+      const materializedRoot = resolved.materializationRoot?.trim() || null;
+      try {
+        deps.runtimeRegistry?.registerRunTarget({
+          runKey: request.materializationKey,
+          pid: request.pid,
           agentId: request.agentId,
-          env: resolved.env,
+          ...(request.sessionId ? { sessionId: request.sessionId } : {}),
+          ...(brokerSelectionIdentity ? { brokerSelectionIdentity } : {}),
+          connectedServicesBindingsRaw: resolved.connectedServicesBindings,
+          connectedServiceSelectionsEnv: connectedServiceSelectionsJson
+            ? { [HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY]: connectedServiceSelectionsJson }
+            : null,
+          materializationKey: request.materializationKey,
+          sessionDirectory: request.sessionDirectory ?? null,
+          runtimeAccountIdentitySelections: resolved.runtimeAccountIdentitySelections,
         });
-      const materializedRoot = resolveConnectedServiceTargetMaterializedRoot({
-        agentId: request.agentId,
-        targetMaterializedEnv: resolved.env,
-      })?.trim() || null;
+      } catch (error) {
+        deps.runtimeRegistry?.unregisterRunKey(request.materializationKey);
+        try {
+          await runRootCleanup?.();
+        } catch {
+          // Preserve the target-admission failure; release is best-effort at this boundary.
+        }
+        throw error;
+      }
       releaseEntriesByKey.set(request.materializationKey, {
         pid: request.pid,
         cleanupOnExit: runRootCleanup,

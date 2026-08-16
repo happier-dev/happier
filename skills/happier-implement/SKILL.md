@@ -14,6 +14,7 @@ Classify the requested work as a feature/change, bug fix, refactor/migration, me
 - For an approved plan, also use `skills/happier-implement-plan`; that skill supplies the authoritative contract, execution units, state, and amendment rules.
 - For an accepted review finding, preserve the review's adjudicated impact and authority, then choose the coherent implementation rather than copying the reviewer's proposed mechanism blindly.
 - For a runtime/session/provider/auth investigation without source changes, use `skills/happier-diagnose`.
+- For read-only GitHub issue grouping or diagnosis, use `skills/happier-issue-triage` and `skills/happier-issue-diagnose`. Enter this implementation workflow only after the user authorizes source changes, carrying forward the established issue evidence and version basis.
 - For a reported defect or regression, read [bug-fix-loop.md](references/bug-fix-loop.md) before editing production behavior.
 
 Do not create a repository plan on agent initiative. Use an internal checklist when useful, but keep it ephemeral unless an approved program already designates durable tracking.

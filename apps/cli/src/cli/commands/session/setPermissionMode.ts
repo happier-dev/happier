@@ -3,6 +3,7 @@ import chalk from 'chalk';
 import { parsePermissionIntentAlias, type PermissionIntent } from '@happier-dev/agents';
 
 import type { Credentials } from '@/persistence';
+import { readCommandPositionals } from '@/cli/commands/shared/argvFlags';
 import { wantsJson, printJsonEnvelope } from '@/cli/output/jsonEnvelope';
 import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
 import { normalizeActionExecuteResult } from './shared/normalizeActionExecuteResult';
@@ -23,8 +24,7 @@ export async function cmdSessionSetPermissionMode(
   deps: Readonly<{ readCredentialsFn: () => Promise<Credentials | null> }>,
 ): Promise<void> {
   const json = wantsJson(argv);
-  const idOrPrefix = String(argv[1] ?? '').trim();
-  const rawMode = String(argv[2] ?? '').trim();
+  const [idOrPrefix = '', rawMode = ''] = readCommandPositionals(argv, { startIndex: 1 });
   if (!idOrPrefix || !rawMode) {
     throw new Error('Usage: happier session set-permission-mode <session-id-or-prefix> <mode> [--json]');
   }
@@ -34,7 +34,7 @@ export async function cmdSessionSetPermissionMode(
   const credentials = await deps.readCredentialsFn();
   if (!credentials) {
     if (json) {
-      printJsonEnvelope({ ok: false, kind: 'session_set_permission_mode', error: { code: 'not_authenticated' } });
+      await printJsonEnvelope({ ok: false, kind: 'session_set_permission_mode', error: { code: 'not_authenticated' } });
       return;
     }
     console.error(chalk.red('Error:'), 'Not authenticated. Run "happier auth login" first.');
@@ -50,7 +50,7 @@ export async function cmdSessionSetPermissionMode(
   const normalized = normalizeActionExecuteResult(actionRes as any);
   if (!normalized.ok) {
     if (json) {
-      printJsonEnvelope({
+      await printJsonEnvelope({
         ok: false,
         kind: 'session_set_permission_mode',
         error: {
@@ -65,12 +65,12 @@ export async function cmdSessionSetPermissionMode(
   }
 
   const result = normalized.data as any;
-  if (tryHandleApprovalRequestCreated({ envelopeKind: 'session_set_permission_mode', json, result })) {
+  if (await tryHandleApprovalRequestCreated({ envelopeKind: 'session_set_permission_mode', json, result })) {
     return;
   }
 
   if (json) {
-    printJsonEnvelope({
+    await printJsonEnvelope({
       ok: true,
       kind: 'session_set_permission_mode',
       data: { sessionId: result.sessionId, permissionMode: result.permissionMode ?? intent, updatedAt: result.updatedAt ?? null },

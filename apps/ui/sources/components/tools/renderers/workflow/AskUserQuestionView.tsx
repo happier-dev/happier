@@ -272,6 +272,7 @@ export const AskUserQuestionView = React.memo<ToolViewProps>(({ tool, sessionId,
     const [isSubmitted, setIsSubmitted] = React.useState(false);
     const [submissionGuidance, setSubmissionGuidance] = React.useState<SubmissionFailureGuidance | null>(null);
     const [, setWorkspaceTrust] = useSettingMutable('claudeUnifiedTerminalWorkspaceTrust');
+    const [, setResumeChoice] = useSettingMutable('claudeUnifiedTerminalResumeChoice');
     const attachedSessionTerminal = useOpenAttachedSessionTerminal(sessionId ?? null);
     const session = useSession(sessionId ?? '');
 
@@ -489,22 +490,30 @@ export const AskUserQuestionView = React.memo<ToolViewProps>(({ tool, sessionId,
             const dialog = input?.happierDialog;
             if (dialog && typeof dialog === 'object' && !Array.isArray(dialog)) {
                 const metadata = dialog as Record<string, unknown>;
-                if (
-                    isClaudeUnifiedTerminalDialogChoiceAgentStateRequest(latestRequest)
-                    && metadata.kind === 'recognized'
-                    && metadata.dialogId === 'trust_folder'
-                ) {
+                if (isClaudeUnifiedTerminalDialogChoiceAgentStateRequest(latestRequest) && metadata.kind === 'recognized') {
                     for (const [questionIndex, selectedIndexes] of selections) {
                         for (const optionIndex of selectedIndexes) {
                             const mutation = questions[questionIndex]?.options?.[optionIndex]?.settingMutation;
                             if (!mutation || typeof mutation !== 'object' || Array.isArray(mutation)) continue;
                             const candidate = mutation as Record<string, unknown>;
-                            if (candidate.settingId !== 'claudeUnifiedTerminalWorkspaceTrust') continue;
                             if (
-                                candidate.value === 'always_trust_happier_workspaces'
-                                || candidate.value === 'always_reject_happier_workspaces'
+                                metadata.dialogId === 'trust_folder'
+                                && candidate.settingId === 'claudeUnifiedTerminalWorkspaceTrust'
+                                && (
+                                    candidate.value === 'always_trust_happier_workspaces'
+                                    || candidate.value === 'always_reject_happier_workspaces'
+                                )
                             ) {
                                 setWorkspaceTrust(candidate.value);
+                            } else if (
+                                metadata.dialogId === 'resume_choice'
+                                && candidate.settingId === 'claudeUnifiedTerminalResumeChoice'
+                                && (
+                                    candidate.value === 'resume_from_summary'
+                                    || candidate.value === 'resume_full_session'
+                                )
+                            ) {
+                                setResumeChoice(candidate.value);
                             }
                         }
                     }
@@ -521,7 +530,7 @@ export const AskUserQuestionView = React.memo<ToolViewProps>(({ tool, sessionId,
         } finally {
             setIsSubmitting(false);
         }
-    }, [sessionId, questions, selections, freeformAnswers, allQuestionsAnswered, input?.happierDialog, isSubmitting, setWorkspaceTrust, toolCallId]);
+    }, [sessionId, questions, selections, freeformAnswers, allQuestionsAnswered, input?.happierDialog, isSubmitting, setResumeChoice, setWorkspaceTrust, toolCallId]);
 
     // Show submitted state
     if (isSubmitted || tool.state === 'completed') {

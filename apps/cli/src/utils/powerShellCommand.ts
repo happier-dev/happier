@@ -15,3 +15,9 @@ export function buildPowerShellCommand(args: readonly string[]): string {
   }
   return `& ${args.map((arg) => toPowerShellStringLiteral(String(arg))).join(' ')}`;
 }
+
+export function buildEncodedPowerShellCommand(args: readonly string[]): string {
+  const script = buildPowerShellCommand(args);
+  const encodedScript = Buffer.from(script, 'utf16le').toString('base64');
+  return `powershell.exe -NoProfile -NonInteractive -EncodedCommand ${encodedScript}`;
+}

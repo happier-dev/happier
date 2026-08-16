@@ -1,4 +1,5 @@
 import { approveTerminalAuthRequest } from '@/auth/terminalAuthApproval';
+import { writeJsonStdout } from '@/cli/output/jsonEnvelope';
 import { applyServerSelectionFromArgs } from '@/server/serverSelection';
 
 export async function handleAuthApprove(argsRaw: string[]): Promise<void> {
@@ -23,5 +24,5 @@ export async function handleAuthApprove(argsRaw: string[]): Promise<void> {
     process.exit(1);
   }
 
-  console.log(JSON.stringify({ success: true }));
+  await writeJsonStdout({ success: true });
 }

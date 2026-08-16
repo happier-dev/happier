@@ -16,14 +16,8 @@ import { useUnistyles } from 'react-native-unistyles';
 import { Text, TextSelectabilityScope } from '@/components/ui/text/Text';
 import { resolveToolHeaderTextPresentation } from '@/components/tools/shell/presentation/resolveToolHeaderTextPresentation';
 import { resolvePermissionPromptSurface, shouldShowGenericPermissionPromptForRequest } from '@/utils/sessions/permissions/permissionPromptPolicy';
-import { useEnsureSidechainsLoaded } from '@/hooks/session/useEnsureSidechainsLoaded';
-import { ChainTranscriptList } from '@/components/sessions/transcript/ChainTranscriptList';
-import { sync } from '@/sync/sync';
+import { SidechainTranscriptBody } from '@/components/sessions/transcript/sidechain/SidechainTranscriptBody';
 import { resolveToolTranscriptSidechainId } from './resolveToolTranscriptSidechainId';
-import {
-    SidechainHydrationInlineStatus,
-    shouldShowSidechainHydrationInlineStatus,
-} from './SidechainHydrationInlineStatus';
 import { isSubAgentTranscriptToolName } from '@happier-dev/protocol/tools/v2';
 import { resolveInactiveSessionToolCallFailure } from '../permissions/resolveInactiveSessionToolCallFailure';
 import { ToolError } from '@/components/tools/shell/presentation/ToolError';
@@ -76,15 +70,6 @@ export function ToolFullView({ tool, owningMessageId, sessionId, metadata, messa
         return resolveToolTranscriptSidechainId({ tool: toolForRendering, normalizedToolName });
     }, [normalizedToolName, toolForRendering]);
 
-    const sidechainHydration = useEnsureSidechainsLoaded({
-        enabled:
-            typeof sessionId === 'string' &&
-            sessionId.length > 0 &&
-            isSubAgentTranscriptToolName(normalizedToolName),
-        sessionId,
-        sidechainIds: [transcriptSidechainId],
-    });
-
     // Check if there's a specialized content view for this tool.
     // ToolFullView always renders the same tool renderer in `detailLevel="full"` mode.
     const SpecializedFullView = getToolViewComponent(normalizedToolName);
@@ -101,28 +86,6 @@ export function ToolFullView({ tool, owningMessageId, sessionId, metadata, messa
     if (normalizedOwningMessageId.length === 0) {
         throw new Error('ToolFullView requires a non-empty owningMessageId');
     }
-    const transcriptDatasetIdentity = sidechainId ?? normalizedOwningMessageId;
-    const sidechainDatasetKey = React.useMemo(
-        () => JSON.stringify([normalizedSessionId, transcriptDatasetIdentity]),
-        [normalizedSessionId, transcriptDatasetIdentity],
-    );
-    const sidechainHydrationStatus = sidechainId
-        ? sidechainHydration.bySidechainId[sidechainId]?.status ?? sidechainHydration.status
-        : sidechainHydration.status;
-    const showSidechainHydrationStatus = isSubAgentTranscriptToolName(normalizedToolName)
-        && shouldShowSidechainHydrationInlineStatus({
-            messageCount: messages.length,
-            sidechainId,
-            status: sidechainHydrationStatus,
-        });
-    // Only treat the empty transcript as "still loading" while sidechain hydration is genuinely in
-    // flight. A loaded-but-empty subagent (or a terminal error/not_ready) must not spin forever in
-    // the `ChainTranscriptList` footer; the inline status above already surfaces error/unavailable.
-    const isSidechainHydrationInFlight =
-        isSubAgentTranscriptToolName(normalizedToolName)
-        && (sidechainHydrationStatus === 'loading'
-            || sidechainHydrationStatus === 'in_flight'
-            || sidechainHydrationStatus === 'retrying');
     const canRenderTaskTranscript =
         normalizedSessionId !== null &&
         isSubAgentTranscriptToolName(normalizedToolName) &&
@@ -145,13 +108,6 @@ export function ToolFullView({ tool, owningMessageId, sessionId, metadata, messa
             disableToolNavigation: true,
         };
     }, [interaction]);
-
-    const loadOlderSidechain = React.useCallback(async () => {
-        if (!normalizedSessionId || !sidechainId) {
-            return { loaded: 0, hasMore: false, status: 'not_ready' as const };
-        }
-        return sync.loadOlderSidechainMessages(normalizedSessionId, sidechainId);
-    }, [normalizedSessionId, sidechainId]);
 
     const showPermissionPromptsInTranscript = resolvedPermissionPromptSurface === 'transcript';
 
@@ -206,44 +162,37 @@ export function ToolFullView({ tool, owningMessageId, sessionId, metadata, messa
     );
 
     if (canRenderTaskTranscript && normalizedSessionId) {
-        const transcriptHeader = (
-            <>
-                {showSidechainHydrationStatus ? (
-                    <SidechainHydrationInlineStatus
-                        testID="tool-fullview-sidechain-hydration-status"
-                        status={sidechainHydrationStatus}
-                    />
-                ) : null}
-                {messages.length === 0 && SpecializedFullView ? (
-                    <TextSelectabilityScope selectable>
-                        <SpecializedFullView
-                            tool={toolForRendering}
-                            metadata={metadata || null}
-                            messages={messages}
-                            sessionId={sessionId}
-                            detailLevel="full"
-                            interaction={interaction}
-                        />
-                    </TextSelectabilityScope>
-                ) : null}
-            </>
-        );
+        const transcriptHeader = messages.length === 0 && SpecializedFullView ? (
+            <TextSelectabilityScope selectable>
+                <SpecializedFullView
+                    tool={toolForRendering}
+                    metadata={metadata || null}
+                    messages={messages}
+                    sessionId={sessionId}
+                    detailLevel="full"
+                    interaction={interaction}
+                />
+            </TextSelectabilityScope>
+        ) : null;
 
         return (
             <View style={[styles.container, { paddingHorizontal: screenWidth > 700 ? 16 : 0 }]}>
                 <View style={[styles.contentWrapper, { flex: 1, minHeight: 0 }]}>
                     <View style={styles.transcriptSection}>
-                        <ChainTranscriptList
-                            key={sidechainDatasetKey}
+                        {/* The ONE sidechain transcript body. The details pane renders the same
+                            one for an imported workflow-agent sidecar, which has no tool call to
+                            anchor this view — so hydration, dataset identity, the empty-vs-loading
+                            answer and the list itself live there rather than here. */}
+                        <SidechainTranscriptBody
                             sessionId={normalizedSessionId}
-                            datasetKey={sidechainDatasetKey}
+                            sidechainId={sidechainId}
+                            datasetIdentityFallback={normalizedOwningMessageId}
                             messages={messages}
                             metadata={metadata || null}
                             interaction={transcriptInteraction}
                             forcePermissionPromptsInTranscript={forcePermissionFooterInTranscript}
-                            isInitialLoadInFlight={isSidechainHydrationInFlight}
-                            loadOlder={sidechainId ? loadOlderSidechain : undefined}
                             jumpToMessageId={normalizedJumpChildId}
+                            hydrationStatusTestID="tool-fullview-sidechain-hydration-status"
                             header={transcriptHeader}
                             footer={
                                 <>

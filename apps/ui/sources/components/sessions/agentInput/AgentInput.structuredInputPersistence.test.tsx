@@ -279,16 +279,12 @@ vi.mock('@/components/autocomplete/applySuggestion', () => ({
 const reviewMention = {
     kind: 'skill',
     tokenText: '$review',
-    start: 4,
-    end: 11,
     name: 'review',
 } satisfies ComposerStructuredInputMention;
 
 const staleMention = {
     kind: 'skill',
     tokenText: '$gone',
-    start: 12,
-    end: 17,
     name: 'gone',
 } satisfies ComposerStructuredInputMention;
 
@@ -390,8 +386,6 @@ describe('AgentInput structured input persistence', () => {
             expect.objectContaining({
                 kind: 'skill',
                 tokenText: '$review',
-                start: 4,
-                end: 11,
                 name: 'review',
             }),
         ]);

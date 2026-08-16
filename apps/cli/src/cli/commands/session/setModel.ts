@@ -1,6 +1,7 @@
 import chalk from 'chalk';
 
 import type { Credentials } from '@/persistence';
+import { readCommandPositionals } from '@/cli/commands/shared/argvFlags';
 import { wantsJson, printJsonEnvelope } from '@/cli/output/jsonEnvelope';
 import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
 import { normalizeActionExecuteResult } from './shared/normalizeActionExecuteResult';
@@ -21,8 +22,7 @@ export async function cmdSessionSetModel(
   deps: Readonly<{ readCredentialsFn: () => Promise<Credentials | null> }>,
 ): Promise<void> {
   const json = wantsJson(argv);
-  const idOrPrefix = String(argv[1] ?? '').trim();
-  const rawModelId = String(argv[2] ?? '').trim();
+  const [idOrPrefix = '', rawModelId = ''] = readCommandPositionals(argv, { startIndex: 1 });
   if (!idOrPrefix || !rawModelId) {
     throw new Error('Usage: happier session set-model <session-id-or-prefix> <model-id> [--json]');
   }
@@ -32,7 +32,7 @@ export async function cmdSessionSetModel(
   const credentials = await deps.readCredentialsFn();
   if (!credentials) {
     if (json) {
-      printJsonEnvelope({ ok: false, kind: 'session_set_model', error: { code: 'not_authenticated' } });
+      await printJsonEnvelope({ ok: false, kind: 'session_set_model', error: { code: 'not_authenticated' } });
       return;
     }
     console.error(chalk.red('Error:'), 'Not authenticated. Run "happier auth login" first.');
@@ -48,7 +48,7 @@ export async function cmdSessionSetModel(
   const normalized = normalizeActionExecuteResult(actionRes as any);
   if (!normalized.ok) {
     if (json) {
-      printJsonEnvelope({
+      await printJsonEnvelope({
         ok: false,
         kind: 'session_set_model',
         error: {
@@ -63,12 +63,12 @@ export async function cmdSessionSetModel(
   }
 
   const result = normalized.data as any;
-  if (tryHandleApprovalRequestCreated({ envelopeKind: 'session_set_model', json, result })) {
+  if (await tryHandleApprovalRequestCreated({ envelopeKind: 'session_set_model', json, result })) {
     return;
   }
 
   if (json) {
-    printJsonEnvelope({ ok: true, kind: 'session_set_model', data: { sessionId: result.sessionId, modelId: result.modelId ?? modelId, updatedAt: result.updatedAt ?? null } });
+    await printJsonEnvelope({ ok: true, kind: 'session_set_model', data: { sessionId: result.sessionId, modelId: result.modelId ?? modelId, updatedAt: result.updatedAt ?? null } });
     return;
   }
 

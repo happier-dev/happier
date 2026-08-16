@@ -227,6 +227,10 @@ describe('happier session stop (integration)', () => {
       expect(parsed.kind).toBe('session_stop');
       expect(parsed.data?.sessionId).toBe(sessionId);
       expect(parsed.data?.stopped).toBe(false);
+      expect(parsed.data?.stopOutcome).toEqual({
+        status: 'physical_stop_unconfirmed',
+        reason: 'local_session_not_found',
+      });
     } finally {
       delete process.env.HAPPIER_SESSION_STOP_TIMEOUT_MS;
       delete process.env.HAPPIER_SESSION_STOP_POLL_INTERVAL_MS;
@@ -299,6 +303,10 @@ describe('happier session stop (integration)', () => {
       expect(parsed.kind).toBe('session_stop');
       expect(parsed.data?.sessionId).toBe(sessionId);
       expect(parsed.data?.stopped).toBe(false);
+      expect(parsed.data?.stopOutcome).toEqual({
+        status: 'physical_stop_unconfirmed',
+        reason: 'missing_topology_proof',
+      });
     } finally {
       delete process.env.HAPPIER_SESSION_STOP_TIMEOUT_MS;
       delete process.env.HAPPIER_SESSION_STOP_POLL_INTERVAL_MS;
@@ -346,6 +354,10 @@ describe('happier session stop (integration)', () => {
       expect(parsed.kind).toBe('session_stop');
       expect(parsed.data?.sessionId).toBe(sessionId);
       expect(parsed.data?.stopped).toBe(false);
+      expect(parsed.data?.stopOutcome).toEqual({
+        status: 'stopped_projection_unconfirmed',
+        reason: 'relay_inactive_not_observed',
+      });
     } finally {
       delete process.env.HAPPIER_SESSION_STOP_TIMEOUT_MS;
       delete process.env.HAPPIER_SESSION_STOP_POLL_INTERVAL_MS;

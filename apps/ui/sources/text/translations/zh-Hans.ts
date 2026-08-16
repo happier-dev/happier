@@ -2500,7 +2500,7 @@ export const zhHans: TranslationStructure = {
       recoveryCreditExpires: ({ time }: { time: string }) => `Expires: ${time}`,
       recoveryCreditApplying: "正在应用重置…",
       recoveryCreditMachineUnavailable: "没有可用于应用此重置的活动机器。",
-      recoveryCreditNothingToReset: "No exhausted usage window currently needs a reset.",
+      recoveryCreditNothingToReset: "当前没有需要重置的已耗尽用量窗口。",
       recoveryCreditBadge: ({ count }: { count: number }) => count === 1 ? "1 reset" : `${count} resets`,
       remaining: ({ percent }: { percent: string }) => `剩余 ${percent}`,
       remainingWithReset: ({ percent, reset }: { percent: string; reset: string }) =>
@@ -3842,20 +3842,20 @@ export const zhHans: TranslationStructure = {
                         }
                     },
                     claudeUnifiedTerminalWorkspaceTrust: {
-                        title: "Workspace trust",
-                        subtitle: "Choose how Happier responds when Claude asks whether to trust a workspace.",
+                        title: "工作区信任",
+                        subtitle: "选择当 Claude 询问是否信任工作区时 Happier 的响应方式。",
                         options: {
                             ask_every_time: {
-                                title: "Ask every time",
-                                subtitle: "Show the exact workspace trust question in the session."
+                                title: "每次询问",
+                                subtitle: "在会话中显示确切的工作区信任问题。"
                             },
                             always_trust_happier_workspaces: {
-                                title: "Always trust Happier workspaces",
-                                subtitle: "Trust the current recaptured Claude prompt for workspaces opened by Happier."
+                                title: "始终信任 Happier 工作区",
+                                subtitle: "信任 Happier 打开的工作区中当前重新捕获的 Claude 提示。"
                             },
                             always_reject_happier_workspaces: {
-                                title: "Always reject Happier workspaces",
-                                subtitle: "Reject the current recaptured Claude prompt for workspaces opened by Happier."
+                                title: "始终拒绝 Happier 工作区",
+                                subtitle: "拒绝 Happier 打开的工作区中当前重新捕获的 Claude 提示。"
                             }
                         }
                     },
@@ -5045,6 +5045,8 @@ export const zhHans: TranslationStructure = {
               backgroundTasksRunning: ({ count }: { count: number }) => `${count} 个后台命令正在运行`,
           },
         untitled: "未命名代理",
+        screenTitle: "代理",
+        transcriptScreenTitle: "代理记录",
         menuTitle: "代理操作",
         row: {
           a11yLabel: ({ title, status }: { title: string; status: string }) => `${title}，${status}`,
@@ -5192,6 +5194,7 @@ export const zhHans: TranslationStructure = {
     detailsPanel: {
       emptyHint: "从右侧面板打开文件或差异。",
       unsupportedTab: "不支持的详情标签页。",
+      transcriptFromOtherSession: "此对话记录属于其他会话。",
       closeA11y: "关闭详情",
       openRightSidebarA11y: "打开右侧边栏",
       closeRightSidebarA11y: "关闭右侧边栏",
@@ -5714,10 +5717,18 @@ export const zhHans: TranslationStructure = {
         title: "数据保留策略",
         summary: "摘要",
         keepForever: "不自动删除",
+        automaticDeletionEnabled: "已启用自动删除",
+        detailsUnavailable: "已启用自动删除，但此客户端无法显示所有生效的保留策略",
+        singlePolicySummary: ({ domain, policy }: { domain: string; policy: string }) => `${domain}：${policy}`,
+        relayCleanupSummary: ({ policies }: { policies: string }) => `此 Relay 会清理${policies}。`,
+        relayCleanupAfterDays: ({ domain, count }: { domain: string; count: number }) => `${domain}（${count} 天后）`,
+        relayCleanupInactiveSessionsAfterDays: ({ count }: { count: number }) => `非活跃会话（${count} 天后）`,
         deleteInactiveSessionsDays: ({ count }: { count: number }) => `在 ${count} ${plural({ count, singular: '天', plural: '天' })}后删除非活跃会话。`,
         deleteOlderThanDays: ({ count }: { count: number }) => `在 ${count} ${plural({ count, singular: '天', plural: '天' })}后删除数据。`,
         sessionNotice: ({ count }: { count: number }) => `此 Relay 会在会话非活跃 ${count} ${plural({ count, singular: '天', plural: '天' })}后自动删除。`,
         sessions: "会话",
+        sessionMessages: "会话记录",
+        sidechainMessages: "子代理记录",
         accountChanges: "账户变更",
         voiceSessionLeases: "语音会话租约",
         feedItems: "动态条目",

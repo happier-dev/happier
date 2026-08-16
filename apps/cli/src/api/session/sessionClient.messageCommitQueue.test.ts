@@ -377,43 +377,68 @@ describe('ApiSessionClient message commit queue', () => {
     await client.close();
   });
 
-  it('serializes best-effort message commits to avoid concurrent socket acks', async () => {
+  it('keeps best-effort commits paced while required commits bypass their ack backlog', async () => {
     vi.resetModules();
     supervisorStartCount = 0;
-    const delayedSessionSocket = createDelayedSocketStub();
-    sessionSocketStub = delayedSessionSocket;
+    sessionSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true } });
     userSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true } });
 
     const { ApiSessionClient } = await import('./sessionClient');
 
     const client = new ApiSessionClient('tok', createPlainSessionFixture({ id: 's1' }));
+    const firstBestEffort = createDeferred<void>();
+    const secondBestEffort = createDeferred<void>();
+    const required = createDeferred<void>();
+    const dispatched: string[] = [];
+    const enqueue = (client as unknown as {
+      enqueueMessageCommit: (
+        delivery: 'best-effort' | 'required',
+        context: { operation: string; details: { requireCommit: boolean } },
+        fn: () => Promise<void>,
+      ) => Promise<void>;
+    }).enqueueMessageCommit.bind(client) as (
+      delivery: 'best-effort' | 'required',
+      context: { operation: string; details: { requireCommit: boolean } },
+      fn: () => Promise<void>,
+    ) => Promise<void>;
 
-    client.sendAgentMessage('opencode' as any, { type: 'message', message: 'a' } as any);
-    client.sendAgentMessage('opencode' as any, { type: 'message', message: 'b' } as any);
-    client.sendAgentMessage('opencode' as any, { type: 'message', message: 'c' } as any);
+    const firstBestEffortCommit = enqueue('best-effort', {
+      operation: 'best-effort-1',
+      details: { requireCommit: false },
+    }, async () => {
+      dispatched.push('best-effort-1');
+      await firstBestEffort.promise;
+    });
+    const secondBestEffortCommit = enqueue('best-effort', {
+      operation: 'best-effort-2',
+      details: { requireCommit: false },
+    }, async () => {
+      dispatched.push('best-effort-2');
+      await secondBestEffort.promise;
+    });
+    const requiredCommit = enqueue('required', {
+      operation: 'required',
+      details: { requireCommit: true },
+    }, async () => {
+      dispatched.push('required');
+      await required.promise;
+    });
 
-    const waitForPending = async (count: number) => {
-      const start = Date.now();
-    while (delayedSessionSocket.state.pendingResolvers.length < count) {
-        if (Date.now() - start > 1_000) {
-          throw new Error('Timed out waiting for socket ack resolvers');
-        }
-        await Promise.resolve();
-      }
-    };
+    await vi.waitFor(() => {
+      expect(dispatched).toEqual(['best-effort-1', 'required']);
+    });
 
-    await waitForPending(1);
+    firstBestEffort.resolve();
+    await expect(firstBestEffortCommit).resolves.toBeUndefined();
+    await vi.waitFor(() => {
+      expect(dispatched).toEqual(['best-effort-1', 'required', 'best-effort-2']);
+    });
 
-    expect(delayedSessionSocket.state.maxInFlight).toBe(1);
-
-    delayedSessionSocket.resolveNext({ ok: true, id: 'm1', seq: 1, localId: 'l1' });
-    await waitForPending(1);
-
-    delayedSessionSocket.resolveNext({ ok: true, id: 'm2', seq: 2, localId: 'l2' });
-    await waitForPending(1);
-
-    delayedSessionSocket.resolveNext({ ok: true, id: 'm3', seq: 3, localId: 'l3' });
-  });
+    required.resolve();
+    secondBestEffort.resolve();
+    await expect(requiredCommit).resolves.toBeUndefined();
+    await expect(secondBestEffortCommit).resolves.toBeUndefined();
+  }, 60_000);
 
   it('records committed user message seqs from commit acks', async () => {
     vi.resetModules();

@@ -14,6 +14,12 @@
  * dynamic content updates flow naturally.
  *
  * Reduced motion: skip the height animation; snap directly to incoming.
+ *
+ * The incoming natural height is NOT measured here — the orchestrator owns the
+ * single offscreen measure host and publishes the height to an external store
+ * that this component subscribes to while pinned. These tests drive that store
+ * the way the orchestrator does: it still describes the OUTGOING step across a
+ * swap, and the incoming height lands only when the mirror re-measures.
  */
 
 import * as React from 'react';
@@ -22,6 +28,11 @@ import { act } from 'react-test-renderer';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
+
+import {
+    createSelectionListMeasuredBodyHeightStore,
+    type SelectionListMeasuredBodyHeightStore,
+} from '../selectionListMeasuredBodyHeight';
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -111,10 +122,20 @@ beforeEach(() => {
     reducedMotionRef.value = false;
 });
 
-function fireOnLayout(node: { props: Record<string, unknown> }, height: number): void {
-    const onLayout = node.props.onLayout as ((evt: unknown) => void) | undefined;
+/**
+ * The wrapper's own onLayout records the rendered height — the "from"
+ * snapshot for the next transition AND the upper clamp on its target.
+ */
+function fireWrapperLayout(
+    screen: { findByTestId(id: string): unknown },
+    rootTestId: string,
+    height: number,
+): void {
+    const wrapper = screen.findByTestId(rootTestId) as { props: Record<string, unknown> } | null;
+    if (!wrapper) throw new Error(`expected wrapper testID ${rootTestId}`);
+    const onLayout = wrapper.props.onLayout as ((evt: unknown) => void) | undefined;
     if (typeof onLayout !== 'function') {
-        throw new Error('expected onLayout on measure host');
+        throw new Error('expected onLayout on the animated wrapper');
     }
     act(() => {
         onLayout({ nativeEvent: { layout: { x: 0, y: 0, width: 320, height } } });
@@ -122,22 +143,25 @@ function fireOnLayout(node: { props: Record<string, unknown> }, height: number):
 }
 
 /**
- * The wrapper itself has `onLayout` (used to track the cap). Tests must
- * fire BOTH the wrapper's onLayout (so the cap + "from" snapshot are
- * recorded) AND the measure host's onLayout (so the incoming target is
- * resolved). Using a single helper keeps the test arrange phase concise.
+ * The orchestrator's measure mirror re-measures the incoming step and
+ * publishes its natural height. That can start (or, under reduced motion,
+ * finish) the height animation, so it runs inside `act`.
  */
-function fireWrapperAndMeasureLayout(
-    screen: { findByTestId(id: string): unknown },
-    rootTestId: string,
+function publishMeasuredHeight(
+    store: SelectionListMeasuredBodyHeightStore,
+    stepKey: string,
     height: number,
 ): void {
-    const wrapper = screen.findByTestId(rootTestId);
-    if (!wrapper) throw new Error(`expected wrapper testID ${rootTestId}`);
-    fireOnLayout(wrapper as { props: Record<string, unknown> }, height);
-    const measure = screen.findByTestId(`${rootTestId}:measure`);
-    if (!measure) throw new Error(`expected measure testID ${rootTestId}:measure`);
-    fireOnLayout(measure as { props: Record<string, unknown> }, height);
+    act(() => {
+        store.publish(stepKey, height);
+    });
+}
+
+/** A store that has already measured `step-a` at 480, as the mirror would. */
+function makeStoreMeasuredAtStepA(): SelectionListMeasuredBodyHeightStore {
+    const store = createSelectionListMeasuredBodyHeightStore();
+    store.publish('step-a', 480);
+    return store;
 }
 
 describe('SelectionListAnimatedHeight', () => {
@@ -152,32 +176,40 @@ describe('SelectionListAnimatedHeight', () => {
         expect(screen.findByTestId('step-a-content')).not.toBeNull();
     });
 
-    it('animates height from the previous natural height to the incoming natural height when stepKey changes', async () => {
+    it('does not mount a measure mirror of its children (the orchestrator owns the single measure host)', async () => {
         const { SelectionListAnimatedHeight } = await import('../SelectionListAnimatedHeight');
         const screen = await renderScreen(
             <SelectionListAnimatedHeight stepKey="step-a" testID="anim">
+                <Text testID="step-a-content">Step A</Text>
+            </SelectionListAnimatedHeight>,
+        );
+        expect(screen.findAllByTestId('anim:measure').length).toBe(0);
+        expect(screen.findAllByTestId('step-a-content').length).toBe(1);
+    });
+
+    it('animates height from the previous natural height to the incoming natural height when stepKey changes', async () => {
+        const { SelectionListAnimatedHeight } = await import('../SelectionListAnimatedHeight');
+        const store = makeStoreMeasuredAtStepA();
+        const screen = await renderScreen(
+            <SelectionListAnimatedHeight stepKey="step-a" testID="anim" measuredHeights={store}>
                 <View testID="step-a-content" style={{ height: 480 }} />
             </SelectionListAnimatedHeight>,
         );
 
-        // Wrapper + measure host both report 480 for step A so the
-        // wrapper cap snapshot is populated and a future "from" snapshot
-        // can be taken.
-        fireWrapperAndMeasureLayout(screen, 'anim', 480);
-
+        // Wrapper reports 480 for step A so a "from" snapshot exists.
+        fireWrapperLayout(screen, 'anim', 480);
         animationControls.timingCalls = [];
 
+        // Step swap: the mirror still describes step A, so there is nothing to
+        // animate to yet.
         await screen.update(
-            <SelectionListAnimatedHeight stepKey="step-b" testID="anim">
+            <SelectionListAnimatedHeight stepKey="step-b" testID="anim" measuredHeights={store}>
                 <View testID="step-b-content" style={{ height: 280 }} />
             </SelectionListAnimatedHeight>,
         );
+        expect(animationControls.timingCalls.length).toBe(0);
 
-        // Measure host now reports incoming step B's natural height.
-        // (Wrapper's onLayout is suppressed while pinned, so we only need
-        // the measure host's onLayout to drive the target resolution.)
-        const measureB = screen.findByTestId('anim:measure');
-        fireOnLayout(measureB as unknown as { props: Record<string, unknown> }, 280);
+        publishMeasuredHeight(store, 'step-b', 280);
 
         // Animation should target the incoming natural height (280) — the
         // wrapper bridges from the pinned previous height (480) down to 280.
@@ -188,23 +220,24 @@ describe('SelectionListAnimatedHeight', () => {
     it('snaps height immediately when reducedMotion is true (no withTiming animation to the incoming height)', async () => {
         reducedMotionRef.value = true;
         const { SelectionListAnimatedHeight } = await import('../SelectionListAnimatedHeight');
+        const store = makeStoreMeasuredAtStepA();
         const screen = await renderScreen(
-            <SelectionListAnimatedHeight stepKey="step-a" testID="anim">
+            <SelectionListAnimatedHeight stepKey="step-a" testID="anim" measuredHeights={store}>
                 <View testID="step-a-content" style={{ height: 480 }} />
             </SelectionListAnimatedHeight>,
         );
-        fireWrapperAndMeasureLayout(screen, 'anim', 480);
+        fireWrapperLayout(screen, 'anim', 480);
         animationControls.timingCalls = [];
 
         await screen.update(
-            <SelectionListAnimatedHeight stepKey="step-b" testID="anim">
+            <SelectionListAnimatedHeight stepKey="step-b" testID="anim" measuredHeights={store}>
                 <View testID="step-b-content" style={{ height: 280 }} />
             </SelectionListAnimatedHeight>,
         );
-        const measureB = screen.findByTestId('anim:measure');
-        fireOnLayout(measureB as unknown as { props: Record<string, unknown> }, 280);
+        publishMeasuredHeight(store, 'step-b', 280);
 
         expect(animationControls.timingCalls.length).toBe(0);
+        expect(animationControls.sharedValueWrites.map((w) => w.value)).toContain(280);
     });
 
     it('releases pinned height back to auto after the height animation completes (deferred via release buffer)', async () => {
@@ -212,20 +245,20 @@ describe('SelectionListAnimatedHeight', () => {
         try {
             animationControls.fireTimingCallbackImmediately = true;
             const { SelectionListAnimatedHeight } = await import('../SelectionListAnimatedHeight');
+            const store = makeStoreMeasuredAtStepA();
             const screen = await renderScreen(
-                <SelectionListAnimatedHeight stepKey="step-a" testID="anim">
+                <SelectionListAnimatedHeight stepKey="step-a" testID="anim" measuredHeights={store}>
                     <View testID="step-a-content" style={{ height: 480 }} />
                 </SelectionListAnimatedHeight>,
             );
-            fireWrapperAndMeasureLayout(screen, 'anim', 480);
+            fireWrapperLayout(screen, 'anim', 480);
 
             await screen.update(
-                <SelectionListAnimatedHeight stepKey="step-b" testID="anim">
+                <SelectionListAnimatedHeight stepKey="step-b" testID="anim" measuredHeights={store}>
                     <View testID="step-b-content" style={{ height: 280 }} />
                 </SelectionListAnimatedHeight>,
             );
-            const measureB = screen.findByTestId('anim:measure');
-            fireOnLayout(measureB as unknown as { props: Record<string, unknown> }, 280);
+            publishMeasuredHeight(store, 'step-b', 280);
 
             // The timing callback fired immediately, but pin release is
             // intentionally deferred via a setTimeout buffer so the
@@ -251,101 +284,30 @@ describe('SelectionListAnimatedHeight', () => {
         }
     });
 
-    it('clamps the measure host to the wrapper\'s last-rendered height so naturally-tall content does not balloon the popover', async () => {
+    it('clamps the incoming target to the wrapper\'s last-rendered height so naturally-tall content does not balloon the popover', async () => {
         const { SelectionListAnimatedHeight } = await import('../SelectionListAnimatedHeight');
+        const store = makeStoreMeasuredAtStepA();
         const screen = await renderScreen(
-            <SelectionListAnimatedHeight stepKey="step-a" testID="anim">
+            <SelectionListAnimatedHeight stepKey="step-a" testID="anim" measuredHeights={store}>
                 <View testID="step-a-content" style={{ height: 480 }} />
             </SelectionListAnimatedHeight>,
         );
         // Wrapper renders at 480 (its parent's flex constraint clamped the
-        // long content). The measure host should pick up that 480 as its
-        // own maxHeight cap so a 2000px-natural step body would still
-        // report at most 480 and the animation never overshoots the cap.
-        fireOnLayout(
-            screen.findByTestId('anim') as unknown as { props: Record<string, unknown> },
-            480,
-        );
+        // long content). A 2000px-natural incoming step must still animate to
+        // at most 480 so the popover never overshoots what it can paint.
+        fireWrapperLayout(screen, 'anim', 480);
+        animationControls.timingCalls = [];
 
-        const measure = screen.findByTestId('anim:measure');
-        expect(measure).not.toBeNull();
-        const measureStyle = (measure as unknown as { props: { style?: unknown } }).props.style;
-        const flat = Array.isArray(measureStyle)
-            ? measureStyle.reduce<Record<string, unknown>>(
-                (acc, s) => Object.assign(acc, s ?? {}),
-                {},
-            )
-            : (measureStyle as Record<string, unknown> | undefined) ?? {};
-        expect((flat as { maxHeight?: unknown }).maxHeight).toBe(480);
-    });
-
-    /**
-     * RV-8 / FRESH-1 — the measure host previously rendered the FULL incoming
-     * subtree as a hidden mirror, which duplicated every `testID` / `id` /
-     * `aria-*` prop in the tree. That broke listbox identity (two
-     * `data-testid="sl:listbox"` nodes, two option testIDs per row), polluted
-     * accessibility (duplicate aria-labels), and risked test selector
-     * collisions. The measure host now strips identity-bearing props from
-     * the cloned mirror so duplication is impossible.
-     */
-    it('does not duplicate testID props when measureChildren contains identity-bearing nodes', async () => {
-        const { SelectionListAnimatedHeight } = await import('../SelectionListAnimatedHeight');
-        const visibleAndMirror = (
-            <View testID="dup-target">
-                <Text testID="dup-target-child">Hello</Text>
-            </View>
-        );
-        const screen = await renderScreen(
-            <SelectionListAnimatedHeight
-                stepKey="step-a"
-                testID="anim"
-                measureChildren={visibleAndMirror}
-            >
-                {visibleAndMirror}
+        await screen.update(
+            <SelectionListAnimatedHeight stepKey="step-b" testID="anim" measuredHeights={store}>
+                <View testID="step-b-content" style={{ height: 2000 }} />
             </SelectionListAnimatedHeight>,
         );
-        // Visible subtree contributes the testID exactly once. The hidden
-        // measure host's clone must NOT also expose it.
-        expect(screen.findAllByTestId('dup-target').length).toBe(1);
-        expect(screen.findAllByTestId('dup-target-child').length).toBe(1);
-    });
+        publishMeasuredHeight(store, 'step-b', 2000);
 
-    it('strips nativeID and aria-* props from the measure-host mirror', async () => {
-        const { SelectionListAnimatedHeight } = await import('../SelectionListAnimatedHeight');
-        const visibleAndMirror = (
-            <View
-                testID="aria-target"
-                nativeID="listbox-id"
-                accessibilityRole="list"
-                accessibilityLabel="Listbox"
-                {...({ 'aria-label': 'Listbox', id: 'listbox-id', role: 'listbox' } as Record<string, unknown>)}
-            >
-                <Text>options</Text>
-            </View>
-        );
-        const screen = await renderScreen(
-            <SelectionListAnimatedHeight
-                stepKey="step-a"
-                testID="anim"
-                measureChildren={visibleAndMirror}
-            >
-                {visibleAndMirror}
-            </SelectionListAnimatedHeight>,
-        );
-        // The measure host wrapper itself owns its OWN testID (`anim:measure`).
-        // The cloned mirror under it must contain ZERO copies of the inner
-        // identity-bearing props — they are stripped to prevent duplicate
-        // listbox/option ids in the live DOM.
-        const measure = screen.findByTestId('anim:measure') as unknown as { findAll: (predicate: (n: { props: Record<string, unknown> }) => boolean) => Array<{ props: Record<string, unknown> }> };
-        const matches = measure.findAll((n) => (
-            n.props?.nativeID === 'listbox-id'
-                || n.props?.id === 'listbox-id'
-                || n.props?.role === 'listbox'
-                || n.props?.accessibilityRole === 'list'
-                || n.props?.['aria-label'] === 'Listbox'
-                || n.props?.accessibilityLabel === 'Listbox'
-        ));
-        expect(matches.length).toBe(0);
+        const targets = animationControls.timingCalls.map((c) => c.to);
+        expect(targets).not.toContain(2000);
+        expect(targets[targets.length - 1]).toBe(480);
     });
 
     /**
@@ -359,20 +321,20 @@ describe('SelectionListAnimatedHeight', () => {
      */
     it('cancels the in-flight height animation on unmount', async () => {
         const { SelectionListAnimatedHeight } = await import('../SelectionListAnimatedHeight');
+        const store = makeStoreMeasuredAtStepA();
         const screen = await renderScreen(
-            <SelectionListAnimatedHeight stepKey="step-a" testID="anim">
+            <SelectionListAnimatedHeight stepKey="step-a" testID="anim" measuredHeights={store}>
                 <View testID="step-a-content" style={{ height: 480 }} />
             </SelectionListAnimatedHeight>,
         );
-        fireWrapperAndMeasureLayout(screen, 'anim', 480);
+        fireWrapperLayout(screen, 'anim', 480);
 
         await screen.update(
-            <SelectionListAnimatedHeight stepKey="step-b" testID="anim">
+            <SelectionListAnimatedHeight stepKey="step-b" testID="anim" measuredHeights={store}>
                 <View testID="step-b-content" style={{ height: 280 }} />
             </SelectionListAnimatedHeight>,
         );
-        const measureB = screen.findByTestId('anim:measure');
-        fireOnLayout(measureB as unknown as { props: Record<string, unknown> }, 280);
+        publishMeasuredHeight(store, 'step-b', 280);
 
         const cancelsBeforeUnmount = animationControls.cancelCount;
         await screen.update(<></>);
@@ -381,20 +343,20 @@ describe('SelectionListAnimatedHeight', () => {
 
     it('does not call setState via late timing callback after unmount (no React warnings)', async () => {
         const { SelectionListAnimatedHeight } = await import('../SelectionListAnimatedHeight');
+        const store = makeStoreMeasuredAtStepA();
         const screen = await renderScreen(
-            <SelectionListAnimatedHeight stepKey="step-a" testID="anim">
+            <SelectionListAnimatedHeight stepKey="step-a" testID="anim" measuredHeights={store}>
                 <View testID="step-a-content" style={{ height: 480 }} />
             </SelectionListAnimatedHeight>,
         );
-        fireWrapperAndMeasureLayout(screen, 'anim', 480);
+        fireWrapperLayout(screen, 'anim', 480);
 
         await screen.update(
-            <SelectionListAnimatedHeight stepKey="step-b" testID="anim">
+            <SelectionListAnimatedHeight stepKey="step-b" testID="anim" measuredHeights={store}>
                 <View testID="step-b-content" style={{ height: 280 }} />
             </SelectionListAnimatedHeight>,
         );
-        const measureB = screen.findByTestId('anim:measure');
-        fireOnLayout(measureB as unknown as { props: Record<string, unknown> }, 280);
+        publishMeasuredHeight(store, 'step-b', 280);
 
         expect(animationControls.pendingTimingCallbacks.length).toBeGreaterThan(0);
 
@@ -417,34 +379,29 @@ describe('SelectionListAnimatedHeight', () => {
 
     it('does not call setState after unmount when a second animation is interrupted by the unmount', async () => {
         const { SelectionListAnimatedHeight } = await import('../SelectionListAnimatedHeight');
+        const store = makeStoreMeasuredAtStepA();
         const screen = await renderScreen(
-            <SelectionListAnimatedHeight stepKey="step-a" testID="anim">
+            <SelectionListAnimatedHeight stepKey="step-a" testID="anim" measuredHeights={store}>
                 <View testID="step-a-content" style={{ height: 480 }} />
             </SelectionListAnimatedHeight>,
         );
-        fireWrapperAndMeasureLayout(screen, 'anim', 480);
+        fireWrapperLayout(screen, 'anim', 480);
 
         await screen.update(
-            <SelectionListAnimatedHeight stepKey="step-b" testID="anim">
+            <SelectionListAnimatedHeight stepKey="step-b" testID="anim" measuredHeights={store}>
                 <View testID="step-b-content" style={{ height: 280 }} />
             </SelectionListAnimatedHeight>,
         );
-        fireOnLayout(
-            screen.findByTestId('anim:measure') as unknown as { props: Record<string, unknown> },
-            280,
-        );
+        publishMeasuredHeight(store, 'step-b', 280);
 
         // Rapid second swap (simulating user clicking another step before
         // the first animation completed).
         await screen.update(
-            <SelectionListAnimatedHeight stepKey="step-c" testID="anim">
+            <SelectionListAnimatedHeight stepKey="step-c" testID="anim" measuredHeights={store}>
                 <View testID="step-c-content" style={{ height: 360 }} />
             </SelectionListAnimatedHeight>,
         );
-        fireOnLayout(
-            screen.findByTestId('anim:measure') as unknown as { props: Record<string, unknown> },
-            360,
-        );
+        publishMeasuredHeight(store, 'step-c', 360);
 
         const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
         try {
@@ -462,38 +419,93 @@ describe('SelectionListAnimatedHeight', () => {
 
     it('handles a rapid second stepKey change cleanly (no stale pinned height)', async () => {
         const { SelectionListAnimatedHeight } = await import('../SelectionListAnimatedHeight');
+        const store = makeStoreMeasuredAtStepA();
         const screen = await renderScreen(
-            <SelectionListAnimatedHeight stepKey="step-a" testID="anim">
+            <SelectionListAnimatedHeight stepKey="step-a" testID="anim" measuredHeights={store}>
                 <View testID="step-a-content" style={{ height: 480 }} />
             </SelectionListAnimatedHeight>,
         );
-        fireWrapperAndMeasureLayout(screen, 'anim', 480);
+        fireWrapperLayout(screen, 'anim', 480);
 
         await screen.update(
-            <SelectionListAnimatedHeight stepKey="step-b" testID="anim">
+            <SelectionListAnimatedHeight stepKey="step-b" testID="anim" measuredHeights={store}>
                 <View testID="step-b-content" style={{ height: 280 }} />
             </SelectionListAnimatedHeight>,
         );
-        fireOnLayout(
-            screen.findByTestId('anim:measure') as unknown as { props: Record<string, unknown> },
-            280,
-        );
+        publishMeasuredHeight(store, 'step-b', 280);
 
         animationControls.timingCalls = [];
 
         // Second rapid swap before the previous animation completed.
         await screen.update(
-            <SelectionListAnimatedHeight stepKey="step-c" testID="anim">
+            <SelectionListAnimatedHeight stepKey="step-c" testID="anim" measuredHeights={store}>
                 <View testID="step-c-content" style={{ height: 360 }} />
             </SelectionListAnimatedHeight>,
         );
-        fireOnLayout(
-            screen.findByTestId('anim:measure') as unknown as { props: Record<string, unknown> },
-            360,
-        );
+        publishMeasuredHeight(store, 'step-c', 360);
 
         // The latest withTiming target should be 360 (the new incoming).
         const targets = animationControls.timingCalls.map((c) => c.to);
         expect(targets[targets.length - 1]).toBe(360);
+    });
+
+    /**
+     * The measurement is tagged with the step it describes. A stale report for
+     * the OUTGOING step arriving mid-swap must not become the target — that is
+     * the whole reason the store is keyed rather than a bare number.
+     */
+    it('ignores a measurement published for the outgoing step during a swap', async () => {
+        const { SelectionListAnimatedHeight } = await import('../SelectionListAnimatedHeight');
+        const store = makeStoreMeasuredAtStepA();
+        const screen = await renderScreen(
+            <SelectionListAnimatedHeight stepKey="step-a" testID="anim" measuredHeights={store}>
+                <View testID="step-a-content" style={{ height: 480 }} />
+            </SelectionListAnimatedHeight>,
+        );
+        fireWrapperLayout(screen, 'anim', 480);
+
+        await screen.update(
+            <SelectionListAnimatedHeight stepKey="step-b" testID="anim" measuredHeights={store}>
+                <View testID="step-b-content" style={{ height: 280 }} />
+            </SelectionListAnimatedHeight>,
+        );
+        animationControls.timingCalls = [];
+
+        // The outgoing step re-measures (its rows settled) — not our target.
+        publishMeasuredHeight(store, 'step-a', 420);
+        expect(animationControls.timingCalls.length).toBe(0);
+
+        publishMeasuredHeight(store, 'step-b', 280);
+        expect(animationControls.timingCalls.map((c) => c.to)).toEqual([280]);
+    });
+
+    /**
+     * The mirror re-lays out while the transition runs (rows settle, fonts
+     * resolve, a scrollbar appears), often by a fraction of a pixel. Restarting
+     * `withTiming` on that jitter re-bases the animation mid-flight and stalls
+     * the visible height. The store swallows changes under its epsilon, the
+     * same window the popover height gate uses on the same layout event.
+     */
+    it('does not restart the height animation for sub-pixel mirror jitter', async () => {
+        const { SelectionListAnimatedHeight } = await import('../SelectionListAnimatedHeight');
+        const store = makeStoreMeasuredAtStepA();
+        const screen = await renderScreen(
+            <SelectionListAnimatedHeight stepKey="step-a" testID="anim" measuredHeights={store}>
+                <View testID="step-a-content" style={{ height: 480 }} />
+            </SelectionListAnimatedHeight>,
+        );
+        fireWrapperLayout(screen, 'anim', 480);
+
+        await screen.update(
+            <SelectionListAnimatedHeight stepKey="step-b" testID="anim" measuredHeights={store}>
+                <View testID="step-b-content" style={{ height: 280 }} />
+            </SelectionListAnimatedHeight>,
+        );
+        animationControls.timingCalls = [];
+
+        publishMeasuredHeight(store, 'step-b', 280);
+        publishMeasuredHeight(store, 'step-b', 280.4);
+
+        expect(animationControls.timingCalls.map((c) => c.to)).toEqual([280]);
     });
 });

@@ -20,6 +20,7 @@ import { resolveNpmPackageNameOverride } from '@happier-dev/cli-common/update';
 import { installAxiosProxySupport } from '@/utils/proxy/axiosProxy';
 import { ensureWindowsUtf8CodePage } from '@/utils/platform/windows/ensureWindowsUtf8CodePage';
 import { installConsoleWriteErrorGuards, shouldInstallConsoleWriteErrorGuards } from '@/utils/writeConsoleBestEffort';
+import { logger } from '@/ui/logger';
 
 async function main() {
   // Best-effort Windows console hardening for Unicode output (workaround for upstream reports of mojibake when
@@ -58,6 +59,7 @@ async function main() {
 
 if (process.env.HAPPIER_CLI_DIST_INTEGRITY_PROBE !== '1') {
   void main().catch((error) => {
+    logger.fatal(error);
     console.error('Error:', error instanceof Error ? error.message : 'Unknown error');
     if (process.env.DEBUG) {
       console.error(error);

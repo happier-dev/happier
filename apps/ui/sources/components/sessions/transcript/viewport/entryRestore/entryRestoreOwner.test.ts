@@ -51,6 +51,24 @@ function executeEffects(effects: readonly EntryRestoreOwnerEffect[]) {
     return effects.filter((effect) => effect.type === 'execute-command');
 }
 
+/**
+ * Every owner effect that ENDS the first-paint hold over the transcript.
+ * Each one reaches the cover through a different host member:
+ * - `close-entry-ownership` -> `recordEntryOwnerOutcome` -> `entry-confirmed` /
+ *   `entry-fallback` -> `released` (entryPresentation.ts).
+ * - `schedule-native-entry-paint-release` -> `nativeEntryRestorePaintReleased`.
+ * - `native-initial-viewport-applied` -> clears
+ *   `nativeInitialViewportPendingObservation`; both drop the native placeholder
+ *   hold in `sessionOpenLatch.shouldShowNativeFirstPaintPlaceholder`.
+ * - `reveal-entry-slice-window` -> `revealEntrySliceWindow`.
+ */
+const ENTRY_COVER_RELEASING_EFFECT_TYPES: readonly EntryRestoreOwnerEffect['type'][] = [
+    'close-entry-ownership',
+    'schedule-native-entry-paint-release',
+    'native-initial-viewport-applied',
+    'reveal-entry-slice-window',
+];
+
 describe('entry restore owner', () => {
     it('attempt anchored native entry opens the transaction and returns one semantic restore-anchor command', () => {
         const owner = createEntryRestoreOwner();
@@ -690,6 +708,59 @@ describe('entry restore owner', () => {
             exactAnchorIndex: 2,
         });
         expect(executeEffects(secondEffects).length).toBeGreaterThan(0);
+        expect(owner.telemetryState('session-a')).toBe('open');
+    });
+
+    /**
+     * The first-paint cover survives a wait verdict only BY CONSTRUCTION, across
+     * three modules and with nothing pinning the join:
+     *   `attempt` returns [] for a wait verdict, BEFORE `openTransaction`
+     *     -> no `close-entry-ownership` effect
+     *     -> `recordEntryOwnerOutcome` never fires (useTranscriptEntryHost)
+     *     -> `released` stays false (entryPresentation.ts)
+     *     -> `entryPlacementPending` stays true (useTranscriptItemsPipeline)
+     *     -> the placeholder keeps covering the list while we wait to measure.
+     * If a wait verdict ever gains a cover-releasing effect, the cover lifts on an
+     * unrestored list still at offset 0 and the measured 2026-07-12 cascade
+     * (placeholder removed, restore write landing ~1.1s later across ~175k px)
+     * becomes routine and SILENT. Asserted at the owner rather than at the
+     * resolver because the owner is where such an effect would be added.
+     */
+    it('a wait verdict stays a no-op at the owner, so the first-paint cover holds until the anchor is actually writable', () => {
+        const owner = createEntryRestoreOwner();
+        // Cold anchored native open: the anchor row is RESOLVED (a data fact),
+        // but the list has not measured a scrollable range yet, so the anchor
+        // write is held behind the `content-unmeasured` wait verdict.
+        const unmeasured: EntryRestoreOwnerAttemptInput<Readonly<{ id: string }>> = {
+            ...baseAttempt,
+            contentHeight: 0,
+            layoutHeight: 812,
+        };
+
+        const waiting = owner.attempt(unmeasured);
+
+        expect(effectTypes(waiting).filter((type) => ENTRY_COVER_RELEASING_EFFECT_TYPES.includes(type)))
+            .toEqual([]);
+        expect(executeEffects(waiting)).toEqual([]);
+        // 'none' is the two-sided proof through the public boundary: no
+        // transaction was opened for this session, and none was closed for it.
+        expect(owner.telemetryState('session-a')).toBe('none');
+
+        // ...and the hold is a WAIT, not a stop: the first measured attempt restores.
+        const measured = owner.attempt({ ...unmeasured, contentHeight: 46_080, nowMs: 1100 });
+
+        expect(executeEffects(measured)).toEqual([
+            {
+                command: {
+                    anchor: targetAnchor,
+                    itemOffsetPx: 84,
+                    reason: 'entry-restore',
+                    sessionId: 'session-a',
+                    type: 'restore-anchor',
+                },
+                type: 'execute-command',
+            },
+        ]);
         expect(owner.telemetryState('session-a')).toBe('open');
     });
 });

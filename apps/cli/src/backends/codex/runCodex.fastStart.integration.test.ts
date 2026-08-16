@@ -339,6 +339,69 @@ describe('runCodex fast-start', () => {
     }
   });
 
+  it('reports and closes an attached app-server session when the initial local child exits', async () => {
+    const { runCodex } = await import('./runCodex');
+    const credentials = { token: 'test' } as Credentials;
+    const daemonReports: Array<{ sessionId: string; metadata: Record<string, unknown> }> = [];
+    let sessionRef: any = null;
+
+    initializeBackendRunSessionImpl = async (opts: any) => {
+      sessionRef = opts.api.sessionSyncClient({ id: 'sess_1', metadataVersion: 1 });
+      void (async () => {
+        await opts.waitForDaemonReportReadiness?.();
+        daemonReports.push({ sessionId: 'sess_1', metadata: opts.metadata });
+      })();
+      return {
+        session: sessionRef,
+        reconnectionHandle: null,
+        reportedSessionId: 'sess_1',
+        attachedToExistingSession: true,
+      };
+    };
+
+    let testError: unknown = null;
+    const runPromise = runCodex({
+      credentials,
+      startedBy: 'terminal',
+      startingMode: 'local',
+      existingSessionId: 'sess_1',
+      codexBackendMode: 'appServer',
+    }).catch((error) => {
+      testError = error;
+    });
+
+    try {
+      await expect(waitFor(localStarted.promise, 1_000)).resolves.toBeUndefined();
+      await vi.waitFor(() => {
+        expect(daemonReports).toHaveLength(1);
+      });
+    } catch (error) {
+      testError = error;
+    } finally {
+      localExit.resolve({ type: 'exit', code: 0 });
+      await runPromise;
+    }
+
+    expect(daemonReports).toEqual([
+      {
+        sessionId: 'sess_1',
+        metadata: expect.objectContaining({
+          connectedServiceAccessTokenRefreshV1: {
+            v: 1,
+            mode: 'unavailable',
+            serviceIds: ['openai-codex'],
+          },
+        }),
+      },
+    ]);
+    expect(sessionRef?.sendSessionDeath).toHaveBeenCalledOnce();
+    expect(sessionRef?.close).toHaveBeenCalledOnce();
+
+    if (testError) {
+      throw testError;
+    }
+  });
+
   it('passes initial resume id to local TUI after session init finishes', async () => {
     const { runCodex } = await import('./runCodex');
 

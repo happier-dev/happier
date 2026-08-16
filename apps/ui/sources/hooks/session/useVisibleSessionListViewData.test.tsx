@@ -413,6 +413,66 @@ describe('useVisibleSessionListViewData', () => {
         await hook.unmount();
     });
 
+    it('rebuilds the visible list without signature scans when a push replaces rows around unchanged sessions', async () => {
+        const { buildSessionListShellViewItemSignature } = await import('@/sync/store/hooks');
+        const { useVisibleSessionListViewData } = await import('./useVisibleSessionListViewData');
+        const hook = await renderHook(() => useVisibleSessionListViewData());
+        const first = hook.getCurrent();
+        vi.mocked(buildSessionListShellViewItemSignature).mockClear();
+
+        // A session-list rebuild replaces every row object while unchanged sessions keep their
+        // renderable identity, which is what the store hands consumers on a server push.
+        sourceData.activeData = sourceData.activeData.map((item) => ({ ...item }));
+        const second = await hook.rerender();
+
+        expect(second).toBe(first);
+        expect(buildSessionListShellViewItemSignature).not.toHaveBeenCalled();
+        await hook.unmount();
+    });
+
+    it('scans only the changed row when a push rebuilds many rows and one session changes', async () => {
+        sourceData.activeData = [
+            {
+                type: 'header',
+                title: 'Today',
+                headerKind: 'date',
+                groupKey: 'server:server-a:day:2026-05-04',
+                serverId: 'server-a',
+            },
+            ...['session-a', 'session-b', 'session-c', 'session-d'].map((id): SessionListViewItem => ({
+                type: 'session',
+                session: makeRenderableSession(id),
+                section: 'inactive',
+                groupKey: 'server:server-a:day:2026-05-04',
+                groupKind: 'date',
+                serverId: 'server-a',
+            })),
+        ];
+        const { buildSessionListShellViewItemSignature } = await import('@/sync/store/hooks');
+        const { useVisibleSessionListViewData } = await import('./useVisibleSessionListViewData');
+        const hook = await renderHook(() => useVisibleSessionListViewData());
+        const first = hook.getCurrent();
+        expect(first).toHaveLength(5);
+        vi.mocked(buildSessionListShellViewItemSignature).mockClear();
+
+        sourceData.activeData = sourceData.activeData.map((item) => (
+            item.type === 'session' && item.session.id === 'session-c'
+                ? { ...item, session: { ...item.session, pendingCount: 3 } }
+                : { ...item }
+        ));
+        const second = await hook.rerender();
+
+        expect(second).not.toBe(first);
+        expect(second?.[0]).toBe(first?.[0]);
+        expect(second?.[1]).toBe(first?.[1]);
+        expect(second?.[2]).toBe(first?.[2]);
+        expect(second?.[3]).not.toBe(first?.[3]);
+        expect(second?.[4]).toBe(first?.[4]);
+        // Only the row that actually changed is worth a signature comparison.
+        expect(vi.mocked(buildSessionListShellViewItemSignature).mock.calls).toHaveLength(2);
+        await hook.unmount();
+    });
+
     it('keeps the visible list shell stable when only row-subscribed session fields change', async () => {
         sourceData.activeData = [
             {

@@ -87,6 +87,7 @@ import { rollbackNewSessionArtifacts } from '@/components/sessions/new/modules/r
 import { resolveConnectedServiceSwitchUnavailablePresentation } from '@/components/sessions/new/modules/connectedServiceSwitchUnavailable';
 import { followUpSpawnedSessionWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/followUpSpawnedSession';
 import { mergeMessageMetaOverrides } from '@/components/sessions/agentInput/structuredInputMentions';
+import { supportsSpawnPendingFirstInput } from '@/sync/domains/session/spawn/spawnSessionPayload';
 import {
     buildAutomationTemplateFromSessionAuthoringDraft,
     buildNewSessionAuthoringDraftFromResolvedInputs,
@@ -640,6 +641,41 @@ export function useCreateNewSession(params: Readonly<{
             }
             launchAttemptRef.current = launchAttempt;
 
+            const daemonOwnsFirstTurn = supportsSpawnPendingFirstInput(
+                current.selectedMachine?.daemonState?.startedWithCliVersion,
+            );
+            const firstTurnMetaOverrides = mergeMessageMetaOverrides((() => {
+                const agentCore = getAgentCore(current.agentType);
+                if (
+                    agentCore.model.supportsSelection
+                    && agentCore.model.nonAcpApplyScope === 'next_prompt'
+                    && current.modelMode
+                    && current.modelMode !== 'default'
+                ) {
+                    return { model: current.modelMode };
+                }
+
+                return null;
+            })(), opts?.structuredInputMetaOverrides) ?? null;
+            const pendingFirstInputMeta = {
+                ...(firstTurnMetaOverrides ?? {}),
+                ...(profilesActive && current.selectedProfileId
+                    ? { profileId: current.selectedProfileId }
+                    : {}),
+            };
+            let daemonFirstTurnText = '';
+            if (resolvedInitialMessage) {
+                if (daemonOwnsFirstTurn && resolvedInitialMessage.kind === 'template') {
+                    daemonFirstTurnText = (await expandPromptTemplateInvocation({
+                        targetArtifactId: resolvedInitialMessage.targetArtifactId,
+                        argsText: resolvedInitialMessage.rest,
+                    })).trim();
+                } else if (resolvedInitialMessage.kind === 'send') {
+                    daemonFirstTurnText = resolvedInitialMessage.text.trim();
+                }
+            }
+            let handedFirstTurnToDaemon = false;
+
             let actualPath = effectiveSelectedPath;
             let result: Awaited<ReturnType<typeof machineSpawnNewSession>>;
             let operationCustody: MachineSpawnAttemptCustody | undefined;
@@ -685,7 +721,19 @@ export function useCreateNewSession(params: Readonly<{
                     userAttemptId: launchAttempt.attemptId,
                     firstTurnLocalId: launchAttempt.firstTurnLocalId,
                     attachmentMessageLocalId: launchAttempt.attachmentMessageLocalId,
+                    ...(daemonFirstTurnText
+                        ? {
+                            pendingFirstInput: {
+                                text: daemonFirstTurnText,
+                                localId: launchAttempt.firstTurnLocalId,
+                                ...(Object.keys(pendingFirstInputMeta).length > 0
+                                    ? { meta: pendingFirstInputMeta }
+                                    : {}),
+                            },
+                        }
+                        : {}),
                 };
+                handedFirstTurnToDaemon = daemonOwnsFirstTurn && daemonFirstTurnText.length > 0;
                 result = await machineSpawnNewSession(spawnOptions);
 
                 operationCustody = result.spawnAttemptCustody;
@@ -803,7 +851,7 @@ export function useCreateNewSession(params: Readonly<{
                     launchAttempt = markNewSessionLaunchAttemptSendingFirstTurn(launchAttempt);
                     launchAttemptRef.current = launchAttempt;
 
-                    if (resolvedInitialMessage) {
+                    if (!handedFirstTurnToDaemon && resolvedInitialMessage) {
                         if (resolvedInitialMessage.kind === 'template') {
                             initialMessageText = await expandPromptTemplateInvocation({
                                 targetArtifactId: resolvedInitialMessage.targetArtifactId,
@@ -818,28 +866,16 @@ export function useCreateNewSession(params: Readonly<{
                         }
                     }
 
-                    await followUpSpawnedSessionWithServerScope({
-                        sessionId: createdSessionId,
-                        targetServerId: resolvedTargetServerId,
-                        initialMessageText,
-                        messageLocalId: launchAttempt.firstTurnLocalId,
-                        metaOverrides: mergeMessageMetaOverrides((() => {
-                            const agentCore = getAgentCore(current.agentType);
-                            if (
-                                agentCore.model.supportsSelection
-                                && agentCore.model.nonAcpApplyScope === 'next_prompt'
-                                && current.modelMode
-                                && current.modelMode !== 'default'
-                            ) {
-                                // Some providers only apply model overrides when processing a user prompt.
-                                // Seed the initial message so the first turn uses the selected model.
-                                return { model: current.modelMode };
-                            }
-
-                            return null;
-                        })(), opts?.structuredInputMetaOverrides) ?? null,
-                        profileId: profilesActive ? (current.selectedProfileId ?? '') : null,
-                    });
+                    if (!handedFirstTurnToDaemon) {
+                        await followUpSpawnedSessionWithServerScope({
+                            sessionId: createdSessionId,
+                            targetServerId: resolvedTargetServerId,
+                            initialMessageText,
+                            messageLocalId: launchAttempt.firstTurnLocalId,
+                            metaOverrides: firstTurnMetaOverrides,
+                            profileId: profilesActive ? (current.selectedProfileId ?? '') : null,
+                        });
+                    }
 
                     if (
                         resolvedInitialMessage

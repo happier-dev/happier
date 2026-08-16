@@ -30,6 +30,7 @@ import * as authModule from '@/ui/auth';
 import * as persistenceModule from '@/persistence';
 import * as accountSettingsModule from '@/settings/accountSettings/bootstrapAccountSettingsContext';
 import * as providerSettingsModule from '@/settings/providerSettings';
+import { logger } from '@/ui/logger';
 import { AIBackendProfileSchema } from '@happier-dev/protocol';
 import type { Credentials } from '@/persistence';
 
@@ -50,6 +51,47 @@ describe('runBackendSessionCliCommand', () => {
     const payload = Buffer.from(JSON.stringify({ sub })).toString('base64url');
     return `${header}.${payload}.signature`;
   }
+
+  it('reports a daemon-started backend rejection after session creation and before its webhook', async () => {
+    const credentials = { token: 'x' } as any;
+    vi.spyOn(persistenceModule, 'readCredentials').mockResolvedValue(credentials);
+    vi.spyOn(authModule, 'ensureMachineIdForCredentials').mockResolvedValue({ machineId: 'machine-1' } as any);
+    vi.spyOn(accountSettingsModule, 'bootstrapAccountSettingsContext').mockResolvedValue({
+      source: 'none',
+      settings: {} as any,
+      settingsVersion: 0,
+      loadedAtMs: Date.now(),
+      whenRefreshed: null,
+    } as any);
+
+    const startupError = Object.assign(new Error('post-session startup failure'), {
+      argv: ['--token', 'argv-secret-value'],
+      env: { OPENAI_API_KEY: 'env-secret-value' },
+    });
+    let sessionCreated = false;
+    let webhookSent = false;
+    const run = vi.fn(async () => {
+      sessionCreated = true;
+      throw startupError;
+    });
+    const fatalSpy = vi.spyOn(logger, 'fatal').mockImplementation(() => {});
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation(((code?: string | number | null) => {
+      throw new Error(`process.exit(${code ?? ''})`);
+    }) as typeof process.exit);
+
+    await expect(runBackendSessionCliCommand({
+      context: { args: ['codex', '--started-by', 'daemon'], terminalRuntime: null } as any,
+      loadRun: async () => run,
+      agentIdForAccountSettings: 'codex' as any,
+    })).rejects.toThrow('process.exit(1)');
+
+    expect(sessionCreated).toBe(true);
+    expect(webhookSent).toBe(false);
+    expect(fatalSpy).toHaveBeenCalledWith(startupError);
+    expect(consoleErrorSpy).toHaveBeenCalledWith(expect.anything(), 'post-session startup failure');
+    exitSpy.mockRestore();
+  });
 
   it('fast-paths terminal starts by avoiding auth/setup and using fast account settings bootstrap', async () => {
     const credentials = { token: 'x' } as any;

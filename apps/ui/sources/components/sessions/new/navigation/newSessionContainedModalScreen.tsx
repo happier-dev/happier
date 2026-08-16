@@ -19,6 +19,23 @@ export function createNewSessionContainedModalScreenOptions(params: Readonly<{
     } as const;
 }
 
+/**
+ * COORDINATE-SPACE INVARIANT (native).
+ *
+ * `PopoverScope` publishes the popover measurement root: the `View` that
+ * `usePopoverPortalTarget().rootRef` points at, and the space every portal-relative anchor rect is
+ * expressed in. The nested `ModalProvider` installs its OWN `OverlayPortalProvider` +
+ * `OverlayPortalHost`, so on this screen popovers RENDER into the modal provider's host while they
+ * MEASURE against the scope's root view. (`PopoverScope`'s own host is shadowed here; it is still
+ * the live host on the screens that use `PopoverScope` without a nested `ModalProvider`, such as
+ * `SidebarView` and `DirectSessionsBrowseScreen`.)
+ *
+ * Those two views coincide only because `ModalProvider` renders no `View` between them — its host
+ * is an `absoluteFill` whose nearest ancestor view is the `PopoverScope` root. Insert any wrapper
+ * view in that gap and every popover on this screen silently shifts by that view's origin — with no
+ * test to catch it. If `ModalProvider` ever needs to render a wrapping view, this screen must stop
+ * nesting the two providers (or `Popover` must measure the host it actually renders into).
+ */
 export function NewSessionScreenPortalScope(props: Readonly<{ children: React.ReactNode }>) {
     const isFocused = useIsFocused();
 

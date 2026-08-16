@@ -95,8 +95,10 @@ export type SelectionListBodyProps = Readonly<{
     showsVerticalScrollIndicator?: boolean;
     /**
      * FR3-1 / FR3-8 — when `'measure'`, the body is rendered as an
-     * identity-free mirror used by `SelectionListAnimatedHeight` for height
-     * measurement. In measure mode every host-element id / testID / role /
+     * identity-free mirror, rendered by the orchestrator's single offscreen
+     * measure host so the popover height gate and the step-transition height
+     * animator share ONE measurement of the step body's natural height.
+     * In measure mode every host-element id / testID / role /
      * accessibility prop is suppressed so the live DOM never contains
      * duplicate listbox ids, duplicate option ids, or duplicate aria-labels.
      * The visual LAYOUT is preserved verbatim — height measurement requires

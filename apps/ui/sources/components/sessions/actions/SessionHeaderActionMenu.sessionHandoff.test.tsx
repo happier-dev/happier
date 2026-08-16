@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { flushHookEffects, renderScreen } from '@/dev/testkit';
+import { createDeferred, flushHookEffects, renderScreen } from '@/dev/testkit';
 import {
   installSessionActionsCommonModuleMocks,
   resetSessionActionsCommonModuleMockState,
@@ -12,6 +12,7 @@ import {
   SESSION_ACTION_MARK_READ_ID,
   SESSION_ACTION_MARK_UNREAD_ID,
   SESSION_ACTION_RENAME_ID,
+  SESSION_ACTION_RESUME_ID,
   SESSION_ACTION_STOP_ID,
   SESSION_ACTION_UNARCHIVE_ID,
 } from './sessionActionIds';
@@ -166,6 +167,15 @@ installSessionActionsCommonModuleMocks({
   },
 });
 
+vi.mock('@/sync/domains/state/storageStore', async () => {
+  const { createStorageStoreStub } = await import('@/dev/testkit/mocks/storage');
+  const store = createStorageStoreStub(() => storageState.current);
+  return {
+    storage: store,
+    getStorage: () => store,
+  };
+});
+
 vi.mock('react', async () => {
   const actual = await vi.importActual<typeof import('react')>('react');
   return {
@@ -226,8 +236,11 @@ vi.mock('@/sync/domains/actions/buildActionDraftInput', () => ({
 }));
 
 vi.mock('@/utils/system/fireAndForget', () => ({
-  fireAndForget: (promise: Promise<unknown>, _opts?: unknown) => {
-    fireAndForgetMock(promise);
+  fireAndForget: (promise: Promise<unknown>, opts?: { onError?: (error: unknown) => void }) => {
+    fireAndForgetMock(promise, opts);
+    void promise.catch((error: unknown) => {
+      opts?.onError?.(error);
+    });
   },
 }));
 
@@ -267,9 +280,15 @@ vi.mock('@/sync/domains/sessionHandoff/runSessionHandoffPickerFlow', () => ({
   runSessionHandoffPickerFlow: (...args: unknown[]) => runSessionHandoffPickerFlowMock(...args),
 }));
 
-vi.mock('@/sync/ops/sessionMachineTarget', () => ({
-  readMachineTargetForSession: (...args: unknown[]) => readMachineTargetForSessionMock(...args),
-}));
+vi.mock('@/sync/ops/sessionMachineTarget', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/sync/ops/sessionMachineTarget')>();
+  return {
+    ...actual,
+    readMachineTargetForSession: (...args: unknown[]) => readMachineTargetForSessionMock(...args),
+    resolveMachineTargetForSessionFromState: (_state: unknown, sessionId: string) =>
+      readMachineTargetForSessionMock(sessionId),
+  };
+});
 
 vi.mock('@/sync/ops', () => ({
   sessionArchiveWithServerScope: (
@@ -392,6 +411,118 @@ describe('SessionHeaderActionMenu handoff', () => {
     for (const binding of voiceSessionBindingStore.getState().list()) {
       voiceSessionBindingStore.getState().unbind(binding.conversationSessionId);
     }
+  });
+
+  it('delivers an inactive session header resume request to its session listener and awaits completion', async () => {
+    const { SessionHeaderActionMenu } = await import('./SessionHeaderActionMenu');
+    const { useSessionResumeRequestListener } = await import('@/components/sessions/model/sessionResumeRequests');
+    const session = {
+      id: 'sess_resumable',
+      active: false,
+      owner: 'user_1',
+      accessLevel: undefined,
+      seq: 4,
+      metadata: {
+        flavor: 'claude',
+        claudeSessionId: 'claude_vendor_session',
+      },
+    } as any;
+    const resumeCompletion = createDeferred<boolean>();
+    const resumeListener = vi.fn(() => resumeCompletion.promise);
+    const otherSessionListener = vi.fn(async () => true);
+
+    function ResumeRequestListener(props: Readonly<{ children: React.ReactNode }>) {
+      useSessionResumeRequestListener(session.id, resumeListener);
+      useSessionResumeRequestListener('other-session', otherSessionListener);
+      return props.children;
+    }
+
+    const screen = await renderScreen(
+      <ResumeRequestListener>
+        <SessionHeaderActionMenu
+          sessionId={session.id}
+          session={session}
+        />
+      </ResumeRequestListener>,
+    );
+
+    const dropdown = screen.findByType('DropdownMenu' as any);
+    expect(dropdown.props.items.map((item: { id: string }) => item.id)).toContain(SESSION_ACTION_RESUME_ID);
+
+    await act(async () => {
+      dropdown.props.onSelect(SESSION_ACTION_RESUME_ID);
+    });
+
+    expect(resumeListener).toHaveBeenCalledTimes(1);
+    expect(otherSessionListener).not.toHaveBeenCalled();
+    expect(fireAndForgetMock).toHaveBeenCalledTimes(1);
+    const resumeAction = fireAndForgetMock.mock.calls[0]?.[0] as Promise<void>;
+    let settled = false;
+    void resumeAction.then(
+      () => {
+        settled = true;
+      },
+    );
+    await flushHookEffects();
+    expect(settled).toBe(false);
+
+    resumeCompletion.resolve(false);
+    await act(async () => {
+      await resumeAction;
+    });
+    expect(settled).toBe(true);
+    expect(modalAlertMock).not.toHaveBeenCalled();
+  });
+
+  it('shows a resume failure when the header request has no mounted session listener', async () => {
+    const { SessionHeaderActionMenu } = await import('./SessionHeaderActionMenu');
+    const session = {
+      id: 'sess_without_listener',
+      active: false,
+      owner: 'user_1',
+      accessLevel: undefined,
+      seq: 4,
+      metadata: {
+        flavor: 'claude',
+        claudeSessionId: 'claude_vendor_session',
+      },
+    } as any;
+
+    const screen = await renderScreen(
+      <SessionHeaderActionMenu sessionId={session.id} session={session} />,
+    );
+    const dropdown = screen.findByType('DropdownMenu' as any);
+
+    await act(async () => {
+      dropdown.props.onSelect(SESSION_ACTION_RESUME_ID);
+      await flushHookEffects();
+    });
+
+    const resumeAction = fireAndForgetMock.mock.calls[0]?.[0] as Promise<void>;
+    await expect(resumeAction).rejects.toThrow();
+    expect(modalAlertMock).toHaveBeenCalledWith('common.error', 'session.resumeFailed');
+  });
+
+  it.each([
+    ['active', { active: true, metadata: { flavor: 'claude', claudeSessionId: 'claude_vendor_session' } }],
+    ['non-resumable', { active: false, metadata: { flavor: 'unknown-provider' } }],
+  ])('does not offer standalone resume for a %s session', async (_label, overrides) => {
+    const { SessionHeaderActionMenu } = await import('./SessionHeaderActionMenu');
+    const session = {
+      id: 'sess_without_resume',
+      owner: 'user_1',
+      accessLevel: undefined,
+      seq: 4,
+      ...overrides,
+    } as any;
+
+    const screen = await renderScreen(<SessionHeaderActionMenu
+      sessionId={session.id}
+      session={session}
+    />);
+
+    const dropdown = screen.findByType('DropdownMenu' as any);
+    expect(dropdown.props.items.map((item: { id: string }) => item.id)).not.toContain(SESSION_ACTION_RESUME_ID);
   });
 
   it('routes forked child session opens through the shared fork completion helper', async () => {

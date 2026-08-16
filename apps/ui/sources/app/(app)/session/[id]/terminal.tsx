@@ -5,6 +5,7 @@ import { useIsFocused } from '@react-navigation/native';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 
 import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneScope';
+import { resolveSessionPaneScopeId } from '@/components/sessions/panes/sessionPaneScopeId';
 import { SessionInvalidLinkFallback } from '@/components/sessions/shell/SessionInvalidLinkFallback';
 import { SessionFullscreenPaneSafeAreaView } from '@/components/sessions/panes/SessionFullscreenPaneSafeAreaView';
 import { SessionRightPanel } from '@/components/sessions/panes/SessionRightPanel';
@@ -37,7 +38,7 @@ export default function TerminalScreenRoute() {
     );
     const sessionHydrated = isSessionRouteHydrationAvailable(routeHydrationState);
     const sessionMissingAfterHydration = isSessionRouteHydrationMissing(routeHydrationState);
-    const scopeId = React.useMemo(() => `session:${sessionId}`, [sessionId]);
+    const scopeId = React.useMemo(() => resolveSessionPaneScopeId(sessionId), [sessionId]);
     const pane = useAppPaneScope(scopeId);
     const openRight = pane.openRight;
     const closeRight = pane.closeRight;
