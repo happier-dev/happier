@@ -6,7 +6,7 @@ import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { createExecutableShim } from '@/testkit/fs/executableShim';
 import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
 
-const envKeys = ['PATH', 'HAPPIER_CLAUDE_PATH', 'HOME', 'HAPPIER_HOME_DIR', 'CLAUDE_CONFIG_DIR', 'HAPPIER_CLAUDE_CONFIG_DIR'] as const;
+const envKeys = ['PATH', 'HAPPIER_CLAUDE_PATH', 'HOME', 'HAPPIER_HOME_DIR', 'CLAUDE_CONFIG_DIR', 'HAPPIER_CLAUDE_CONFIG_DIR', 'IS_SANDBOX'] as const;
 const tempDirs = new Set<string>();
 let envScope = createEnvKeyScope(envKeys);
 
@@ -116,5 +116,21 @@ describe('claudeDaemonSpawnHooks.buildExtraEnvForChild', () => {
     expect(claudeDaemonSpawnHooks.buildExtraEnvForChild?.({} as any)).toEqual({
       CLAUDE_CONFIG_DIR: '/tmp/claude-config',
     });
+  });
+
+  it('preserves only Claude\'s exact external sandbox assertion for the session runner', async () => {
+    envScope.patch({
+      CLAUDE_CONFIG_DIR: undefined,
+      HAPPIER_CLAUDE_CONFIG_DIR: undefined,
+      IS_SANDBOX: '1',
+    });
+
+    const { claudeDaemonSpawnHooks } = await import('./spawnHooks');
+    expect(claudeDaemonSpawnHooks.buildExtraEnvForChild?.({} as any)).toEqual({
+      IS_SANDBOX: '1',
+    });
+
+    envScope.patch({ IS_SANDBOX: '0' });
+    expect(claudeDaemonSpawnHooks.buildExtraEnvForChild?.({} as any)).toEqual({});
   });
 });

@@ -11,6 +11,7 @@ import { isAllowedExactEnvKey } from '@/utils/env/isAllowedExactEnvKey';
 
 import { resolveClaudeConfigDirEnvOverlay } from '../utils/resolveClaudeConfigDirEnvOverlay';
 import { isolateClaudeRuntimeAuthEnv } from './isolateClaudeRuntimeAuthEnv';
+import { resolveClaudeExternalSandboxEnv } from './resolveClaudeExternalSandboxEnv';
 
 export function buildClaudeSubprocessEnv(params?: Readonly<{
   baseEnv?: NodeJS.ProcessEnv;
@@ -82,6 +83,7 @@ export function buildClaudeSubprocessEnv(params?: Readonly<{
   delete out[HAPPIER_SPAWN_EXPLICIT_ENV_KEYS_JSON_ENV_VAR];
   return isolateClaudeRuntimeAuthEnv({
     ...out,
+    ...resolveClaudeExternalSandboxEnv(baseEnv),
     ...resolveClaudeConfigDirEnvOverlay(baseEnv),
     ...(params?.envOverlay ?? {}),
   });
