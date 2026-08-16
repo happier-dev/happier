@@ -362,8 +362,8 @@ export async function ensureManagedJavaScriptRuntimeCommand(
     } finally {
       await rm(scratchDir, { recursive: true, force: true });
     }
-  } catch {
-    return null;
+  } catch (error) {
+    throw new Error('Managed JavaScript runtime is unavailable: bootstrap failed', { cause: error });
   } finally {
     if (lockHandle) {
       try {
