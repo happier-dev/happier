@@ -4,7 +4,8 @@ import { Encryption } from "@/sync/encryption/encryption";
 import sodium from '@/encryption/libsodium.lib';
 import { getReadyServerFeatures } from '@/sync/api/capabilities/getReadyServerFeatures';
 import { serverFetch } from '@/sync/http/client';
-import { readServerEnabledBit } from '@happier-dev/protocol';
+import { HappyError } from '@/utils/errors/errors';
+import { AuthErrorCodeSchema, readServerEnabledBit } from '@happier-dev/protocol';
 
 const CONTENT_KEY_BINDING_PREFIX = new TextEncoder().encode('Happy content key v1\u0000');
 
@@ -55,7 +56,23 @@ export async function authGetToken(secret: Uint8Array) {
         body: JSON.stringify(body),
     }, { includeAuth: false });
     if (!response.ok) {
-        throw new Error(`Authentication failed: ${response.status}`);
+        const errorBody: unknown = await response.json().catch(() => null);
+        const errorCodeRaw = errorBody !== null && typeof errorBody === 'object' && !Array.isArray(errorBody)
+            ? (errorBody as Record<string, unknown>).error
+            : null;
+        const parsedErrorCode = AuthErrorCodeSchema.safeParse(errorCodeRaw);
+        const errorCode = parsedErrorCode.success ? parsedErrorCode.data : undefined;
+        throw new HappyError(
+            errorCode
+                ? `Authentication failed: ${response.status} (${errorCode})`
+                : `Authentication failed: ${response.status}`,
+            response.status >= 500,
+            {
+                status: response.status,
+                kind: response.status >= 500 ? 'server' : 'auth',
+                ...(errorCode ? { code: errorCode } : {}),
+            },
+        );
     }
     const data = await response.json() as { token: string };
     return data.token;

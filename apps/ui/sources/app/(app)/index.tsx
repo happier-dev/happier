@@ -17,6 +17,7 @@ import { getPendingTerminalConnect } from "@/sync/domains/pending/pendingTermina
 import { isSafeExternalAuthUrl } from "@/auth/providers/externalAuthUrl";
 import { fireAndForget } from "@/utils/system/fireAndForget";
 import { formatOperationFailedDebugMessage } from "@/utils/errors/formatOperationFailedDebugMessage";
+import { HappyError } from "@/utils/errors/errors";
 import { getActiveServerSnapshot } from "@/sync/domains/server/serverRuntime";
 import { getServerFeaturesSnapshot } from "@/sync/api/capabilities/serverFeaturesClient";
 import { getServerRetentionPolicy } from '@/sync/api/capabilities/serverRetentionPolicyClient';
@@ -259,6 +260,11 @@ function NotAuthenticated() {
                 trackAccountCreated();
             }
         } catch (error) {
+            if (error instanceof HappyError && error.code === 'signup-disabled') {
+                setServerCheckNonce((value) => value + 1);
+                await Modal.alert(t('common.error'), t('errors.signupDisabled'));
+                return;
+            }
             const message = process.env.EXPO_PUBLIC_DEBUG
                 ? formatOperationFailedDebugMessage(t('errors.operationFailed'), error)
                 : t('errors.operationFailed');

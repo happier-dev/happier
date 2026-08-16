@@ -238,6 +238,56 @@ describe('/ (welcome) signup methods', () => {
         expect(screen.findAllByTestId('welcome-signup-provider').length).toBeGreaterThan(0);
     });
 
+    it('hides every signup entry and keeps login when the server disables all signup methods', async () => {
+        vi.resetModules();
+        // Mirrors a real self-hosted shape (AUTH_ANONYMOUS_SIGNUP_ENABLED=0, no
+        // OAuth/mTLS): only key_challenge *login* is enabled, no provision
+        // action anywhere. The welcome screen must not offer Create account.
+        const loginOnly = createWelcomeFeaturesResponse({
+            signupMethods: [{ id: 'anonymous', enabled: false }],
+            loginMethods: [{ id: 'key_challenge', enabled: true }],
+            authMethods: [
+                {
+                    id: 'key_challenge',
+                    actions: [
+                        { id: 'login', enabled: true, mode: 'keyed' },
+                        { id: 'provision', enabled: false, mode: 'keyed' },
+                    ],
+                    ui: { displayName: 'Device key', iconHint: null },
+                },
+                {
+                    id: 'mtls',
+                    actions: [
+                        { id: 'login', enabled: false, mode: 'keyless' },
+                        { id: 'provision', enabled: false, mode: 'keyless' },
+                    ],
+                    ui: { displayName: 'Certificate', iconHint: null },
+                },
+                {
+                    id: 'github',
+                    actions: [
+                        { id: 'connect', enabled: false, mode: 'either' },
+                        { id: 'provision', enabled: false, mode: 'keyed' },
+                        { id: 'login', enabled: false, mode: 'keyless' },
+                        { id: 'provision', enabled: false, mode: 'keyless' },
+                    ],
+                    ui: { displayName: 'GitHub', iconHint: 'github' },
+                },
+            ],
+            requiredProviders: [],
+            autoRedirectEnabled: false,
+            autoRedirectProviderId: null,
+            providerOffboardingIntervalSeconds: 600,
+        });
+        getServerFeaturesSnapshotMock.mockResolvedValueOnce({ status: 'ready', features: loginOnly });
+
+        const screen = await renderWelcomeScreen();
+        expect(await waitForWelcomeTestId(screen, 'welcome-secondary-login')).toBeGreaterThan(0);
+        expect(screen.findAllByTestId('welcome-primary-start')).toHaveLength(0);
+        expect(screen.findAllByTestId('welcome-create-account')).toHaveLength(0);
+        expect(screen.findAllByTestId('welcome-signup-provider')).toHaveLength(0);
+    });
+
     it('shows mTLS login when signup methods are disabled but mTLS is enabled', async () => {
         vi.resetModules();
         const { t } = await import('@/text');

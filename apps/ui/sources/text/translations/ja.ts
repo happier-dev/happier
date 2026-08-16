@@ -4830,6 +4830,7 @@ localTailscale: {
       fileNotFound: "ファイルが見つかりません",
       invalidFormat: "フォーマットが無効です",
       operationFailed: "操作に失敗しました",
+      signupDisabled: "このサーバーでは新規アカウントの作成が無効になっています。既存のアカウントでサインインするか、サーバー管理者に登録の有効化を依頼してください。",
       failedToForkSession: "セッションの分岐に失敗しました",
       daemonUnavailableTitle: "デーモンを利用できません",
       daemonUnavailableBody:
