@@ -19,6 +19,7 @@ const originalPlatformDescriptor = Object.getOwnPropertyDescriptor(process, 'pla
 type TerminalLaunchSpecFixture = Readonly<{
   command?: string;
   args?: string[];
+  windowsVerbatimArguments?: boolean;
   cwd?: string;
   env?: Record<string, string>;
   envPassthroughKeys?: string[];
@@ -134,6 +135,36 @@ describe('buildClaudeUnifiedTerminalSpawn', () => {
     });
     expect(launchSpec.diagnostics?.logsDir).toContain('/logs/terminal-runner');
     expect(launchSpec.diagnostics?.sessionExitDir).toContain('/logs/session-exit');
+  });
+
+  it('preserves Windows verbatim argument handling from the resolved Claude invocation', async () => {
+    const spawn = await buildClaudeUnifiedTerminalSpawn({
+      path: 'C:\\workspace\\project',
+      first: {
+        message: 'hello',
+        mode: {
+          permissionMode: 'default',
+        },
+      },
+      deps: {
+        resolveClaudeCliPath: () => 'C:\\Users\\alice\\AppData\\Roaming\\npm\\claude.cmd',
+        isClaudeCliJavaScriptFile: () => false,
+        ensureClaudeJsRuntimeExecutable: async () => 'C:\\happier\\runtime.exe',
+        claudeLocalLauncherPath: 'C:\\happier\\scripts\\claude_local_launcher.cjs',
+        terminalLaunchSpecRunnerPath: 'C:\\happier\\scripts\\terminal_launch_spec_runner.cjs',
+        resolveCommandInvocation: () => ({
+          command: 'C:\\Windows\\System32\\cmd.exe',
+          args: ['/d', '/s', '/c', '"C:\\Users\\alice\\AppData\\Roaming\\npm\\claude.cmd"'],
+          windowsVerbatimArguments: true,
+        }),
+      },
+    });
+
+    const launchSpec = await readLaunchSpecFromSpawn(spawn);
+    expect(launchSpec).toMatchObject({
+      command: 'C:\\Windows\\System32\\cmd.exe',
+      windowsVerbatimArguments: true,
+    });
   });
 
   it('starts yolo sessions in bypass mode while still deduping the managed allow flag', async () => {

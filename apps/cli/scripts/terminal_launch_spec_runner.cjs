@@ -26,6 +26,14 @@ function readOptionalStringArray(value, name) {
     return readStringArray(value, name);
 }
 
+function readOptionalBoolean(value, name) {
+    if (value === undefined) return undefined;
+    if (typeof value !== 'boolean') {
+        throw new Error(`Invalid terminal launch spec: ${name} must be a boolean`);
+    }
+    return value;
+}
+
 function isSafeClaudeMcpConfigCleanupPath(filePath) {
     if (typeof filePath !== 'string' || filePath.length === 0) return false;
     const tmpRoot = path.resolve(os.tmpdir());
@@ -119,9 +127,14 @@ async function readLaunchSpecFile(specPath) {
     if (typeof parsed.cwd !== 'string' || parsed.cwd.length === 0) {
         throw new Error('Invalid terminal launch spec: cwd must be a non-empty string');
     }
+    const windowsVerbatimArguments = readOptionalBoolean(
+        parsed.windowsVerbatimArguments,
+        'windowsVerbatimArguments',
+    );
     return {
         command: parsed.command,
         args: readStringArray(parsed.args, 'args'),
+        ...(windowsVerbatimArguments === undefined ? {} : { windowsVerbatimArguments }),
         cwd: parsed.cwd,
         env: buildChildEnv(readEnv(parsed.env), readOptionalStringArray(parsed.envPassthroughKeys, 'envPassthroughKeys')),
         cleanupPaths: readOptionalStringArray(parsed.cleanupPaths, 'cleanupPaths'),
@@ -249,6 +262,7 @@ function runLaunchSpec(spec) {
                 shell: false,
                 stdio: ['inherit', 'inherit', 'pipe'],
                 windowsHide: true,
+                ...(spec.windowsVerbatimArguments ? { windowsVerbatimArguments: true } : {}),
             });
         } catch (error) {
             void cleanupLaunchSpecPaths(spec.cleanupPaths ?? []).then(() => reject(error));

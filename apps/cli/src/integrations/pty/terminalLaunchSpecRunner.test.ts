@@ -21,7 +21,9 @@ function createRunnerScriptHarness() {
   const module = { exports: {} as Record<string, unknown> };
   const fakeRequire = Object.assign((id: string) => {
     if (id === 'node:child_process') return { spawn };
+    if (id === 'node:fs') return require(id);
     if (id === 'node:fs/promises') return require(id);
+    if (id === 'node:os') return require(id);
     if (id === 'node:path') return require(id);
     throw new Error(`unexpected require: ${id}`);
   }, { main: {} });
@@ -38,6 +40,33 @@ function createRunnerScriptHarness() {
 }
 
 describe('terminal_launch_spec_runner.cjs', () => {
+  it('forwards Windows verbatim argument handling to the child process', async () => {
+    const { child, module, spawn } = createRunnerScriptHarness();
+    const runLaunchSpec = module.exports.runLaunchSpec as (spec: {
+      command: string;
+      args: string[];
+      cwd: string;
+      env: NodeJS.ProcessEnv;
+      windowsVerbatimArguments?: boolean;
+    }) => Promise<number>;
+
+    const result = runLaunchSpec({
+      command: 'C:\\Windows\\System32\\cmd.exe',
+      args: ['/d', '/s', '/c', '"C:\\Users\\alice\\AppData\\Roaming\\npm\\claude.cmd"'],
+      cwd: 'C:\\workspace',
+      env: {},
+      windowsVerbatimArguments: true,
+    });
+
+    expect(spawn).toHaveBeenCalledWith(
+      'C:\\Windows\\System32\\cmd.exe',
+      expect.any(Array),
+      expect.objectContaining({ windowsVerbatimArguments: true }),
+    );
+    child.emit('close', 0, null);
+    await expect(result).resolves.toBe(0);
+  });
+
   it('ignores terminal interrupt signals while the child is alive', async () => {
     const { child, fakeProcess, module } = createRunnerScriptHarness();
     const runLaunchSpec = module.exports.runLaunchSpec as (spec: {

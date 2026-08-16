@@ -354,6 +354,7 @@ function buildTerminalLauncherProcessEnv(baseEnv: NodeJS.ProcessEnv = process.en
 type TerminalLaunchSpec = Readonly<{
   command: string;
   args: readonly string[];
+  windowsVerbatimArguments?: boolean | undefined;
   cwd: string;
   env: Readonly<Record<string, string>>;
   envPassthroughKeys?: readonly string[] | undefined;
@@ -479,8 +480,7 @@ export async function buildClaudeUnifiedTerminalSpawn<Mode extends EnhancedMode 
       throw new Error('Claude unified terminal launch-spec runner not found. Please ensure CLI runtime assets are present next to the running bundle.');
     }
 
-    let childCommand: string;
-    let childArgs: readonly string[];
+    let childInvocation: CommandInvocation;
     if (deps.isClaudeCliJavaScriptFile(resolvedClaudeCliPath)) {
       if (
         !existsSync(deps.claudeLocalLauncherPath)
@@ -492,23 +492,24 @@ export async function buildClaudeUnifiedTerminalSpawn<Mode extends EnhancedMode 
       if (!env.HAPPIER_CLAUDE_PATH && !env.HAPPY_CLAUDE_PATH) {
         env.HAPPIER_CLAUDE_PATH = resolvedClaudeCliPath;
       }
-      childCommand = nodeExecutable;
-      childArgs = [deps.claudeLocalLauncherPath, ...args];
+      childInvocation = {
+        command: nodeExecutable,
+        args: [deps.claudeLocalLauncherPath, ...args],
+      };
     } else {
-      const invocation = deps.resolveCommandInvocation({
+      childInvocation = deps.resolveCommandInvocation({
         command: resolvedClaudeCliPath,
         args,
         env,
       });
-      childCommand = invocation.command;
-      childArgs = invocation.args;
     }
 
     const splitEnv = splitTerminalLaunchSpecEnv(env);
     const happySessionId = typeof input.happySessionId === 'string' ? input.happySessionId.trim() : '';
     const specPath = await writeTerminalLaunchSpec({
-      command: childCommand,
-      args: childArgs,
+      command: childInvocation.command,
+      args: childInvocation.args,
+      ...(childInvocation.windowsVerbatimArguments ? { windowsVerbatimArguments: true } : {}),
       cwd: input.path,
       env: splitEnv.persistedEnv,
       ...(splitEnv.passthroughKeys.length > 0 ? { envPassthroughKeys: splitEnv.passthroughKeys } : {}),

@@ -9,6 +9,44 @@ import { describe, expect, it, vi } from 'vitest';
 const require = createRequire(import.meta.url);
 
 describe('terminal_launch_spec_runner.cjs', () => {
+  it('reads Windows verbatim argument handling and rejects malformed values', async () => {
+    const mod = require('./terminal_launch_spec_runner.cjs') as {
+      readLaunchSpecFile: (specPath: string) => Promise<{ windowsVerbatimArguments?: boolean }>;
+    };
+    const workDir = await mkdtemp(join(tmpdir(), 'happier-terminal-launch-spec-work-'));
+    const validSpecDir = await mkdtemp(join(tmpdir(), 'happier-terminal-launch-spec-test-'));
+    const validSpecPath = join(validSpecDir, 'launch.json');
+    await writeFile(validSpecPath, JSON.stringify({
+      command: process.execPath,
+      args: [],
+      cwd: workDir,
+      env: {},
+      windowsVerbatimArguments: true,
+    }), { mode: 0o600 });
+
+    await expect(mod.readLaunchSpecFile(validSpecPath)).resolves.toMatchObject({
+      windowsVerbatimArguments: true,
+    });
+
+    const invalidSpecDir = await mkdtemp(join(tmpdir(), 'happier-terminal-launch-spec-test-'));
+    const invalidSpecPath = join(invalidSpecDir, 'launch.json');
+    await writeFile(invalidSpecPath, JSON.stringify({
+      command: process.execPath,
+      args: [],
+      cwd: workDir,
+      env: {},
+      windowsVerbatimArguments: 'true',
+    }), { mode: 0o600 });
+
+    try {
+      await expect(mod.readLaunchSpecFile(invalidSpecPath)).rejects.toThrow(
+        'windowsVerbatimArguments must be a boolean',
+      );
+    } finally {
+      await rm(workDir, { recursive: true, force: true });
+    }
+  });
+
   it('runs a launch spec, forwards cwd/env/args, and removes the spec directory after reading', async () => {
     const mod = require('./terminal_launch_spec_runner.cjs') as {
       runLaunchSpecFile: (specPath: string) => Promise<number>;
