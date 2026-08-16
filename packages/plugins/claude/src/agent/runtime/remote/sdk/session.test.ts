@@ -37,6 +37,58 @@ type SessionParamsWithCredentials =
   }>;
 
 describe('bindClaudeAgentSdkFallbackSession', () => {
+  it('reuses the Agent SDK query after an exact user-requested interruption result', async () => {
+    const terminalHost = createTerminalHostFixture();
+    const events = createEventsFixture();
+    const exec = createSdkExecFixture();
+    const ctx = createPluginContextFixture(terminalHost.service, events.service, {
+      exec: exec.service,
+      sessionHooks: createSessionHooksFixture().service,
+    });
+    const operations = createClaudeAgentSdkProviderOperations({
+      ctx,
+      directory: '/tmp/claude-project',
+      launchEnv: {},
+      permissionMode: 'default',
+      happierSessionId: 'happy-interrupted-query-reuse',
+    });
+
+    try {
+      operations.beginProviderTurn();
+      await expect(operations.sendProviderTurnPrompt('initial prompt')).resolves.toEqual({
+        kind: 'accepted',
+      });
+      await vi.waitFor(() => expect(exec.spawnClient).toHaveBeenCalledOnce());
+      const interruptedCompletion = operations.waitForProviderTurnCompletion({ timeoutMs: 1_000 });
+
+      await operations.cancelProviderTurn();
+      await exec.emit({
+        type: 'result',
+        subtype: 'error_during_execution',
+        is_error: true,
+        session_id: 'provider-session-interrupted',
+        result: 'Request interrupted by user',
+        num_turns: 1,
+        total_cost_usd: 0,
+        duration_ms: 10,
+        duration_api_ms: 8,
+      });
+      await expect(interruptedCompletion).resolves.toBeUndefined();
+
+      operations.beginProviderTurn();
+      await expect(operations.sendProviderTurnPrompt('continue after interruption')).resolves.toEqual({
+        kind: 'accepted',
+      });
+      expect(exec.spawnClient).toHaveBeenCalledOnce();
+      expect(exec.written).toContainEqual({
+        type: 'user',
+        message: { role: 'user', content: 'continue after interruption' },
+      });
+    } finally {
+      await operations.disposeProviderSession();
+    }
+  });
+
   it('targets task-id-only background work once instead of broadly interrupting the foreground query', async () => {
     const terminalHost = createTerminalHostFixture();
     const events = createEventsFixture();

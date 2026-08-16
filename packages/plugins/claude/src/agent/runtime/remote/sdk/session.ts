@@ -674,6 +674,7 @@ export function createClaudeAgentSdkTurnOperations(
     let pendingResumeProviderSessionId: string | null = readString(params.initialProviderSessionId);
     let activeQuery: ClaudeSdkQuery | null = null;
     let disposeQuery: ClaudeSdkQuery | null = null;
+    let retainedInterruptedQuery: ClaudeSdkQuery | null = null;
     let activeProviderTaskId: string | null = null;
     const cancelledQueries = new WeakMap<ClaudeSdkQuery, string>();
     let activeCompletion: DeferredCompletion | null = null;
@@ -1193,6 +1194,7 @@ export function createClaudeAgentSdkTurnOperations(
     async function consumeTurnMessages(turnQuery: ClaudeSdkQuery, completion: DeferredCompletion): Promise<void> {
         let sawResult = false;
         let terminalPublished = false;
+        let retainQueryForNextTurn = false;
         let messageSequence = 0;
         let publishedTranscriptText = false;
         let providerFailure: ClaudeProviderFailureEvidence | null = null;
@@ -1232,7 +1234,10 @@ export function createClaudeAgentSdkTurnOperations(
             }));
         };
         try {
-            for await (const message of turnQuery) {
+            while (true) {
+                const nextMessage = await turnQuery.next();
+                if (nextMessage.done) break;
+                const message = nextMessage.value;
                 messageSequence += 1;
                 const assistantModelId = readSdkAssistantModelId(message);
                 if (assistantModelId) publishEffectiveModel({ modelId: assistantModelId });
@@ -1355,6 +1360,22 @@ export function createClaudeAgentSdkTurnOperations(
                     // context request settles, without delaying the already-resolved turn.
                     await turnEndContextUsageRefresh;
                 } else {
+                    const cancellationReason = cancelledQueries.get(turnQuery);
+                    if (cancellationReason === 'user_request') {
+                        cancelledQueries.delete(turnQuery);
+                        if (activeQuery === turnQuery) activeQuery = null;
+                        if (activeCompletion === completion) {
+                            activeCompletion = null;
+                            turnInFlight = false;
+                        }
+                        reconcileProviderTaskRuntimeActivityForCurrentQuery('result-cancelled');
+                        publishCancelledTerminal(cancellationReason);
+                        lastTurnCompletionFailure = null;
+                        completion.resolve();
+                        retainedInterruptedQuery = turnQuery;
+                        retainQueryForNextTurn = true;
+                        return;
+                    }
                     if (activeQuery === turnQuery) activeQuery = null;
                     if (activeCompletion === completion) {
                         activeCompletion = null;
@@ -1413,6 +1434,9 @@ export function createClaudeAgentSdkTurnOperations(
             if (activeCompletion === completion) {
                 activeCompletion = null;
                 turnInFlight = false;
+            }
+            if (!retainQueryForNextTurn && !backgroundQueries.has(turnQuery)) {
+                await turnQuery.dispose().catch(() => undefined);
             }
         }
     }
@@ -1526,6 +1550,29 @@ export function createClaudeAgentSdkTurnOperations(
                         });
                     }
                 };
+                const interruptedQuery = retainedInterruptedQuery;
+                if (interruptedQuery) {
+                    retainedInterruptedQuery = null;
+                    const transportOutcome = await interruptedQuery.sendUserMessage(prompt);
+                    const outcome: ClaudeRuntimePromptSubmissionOutcome = transportOutcome.kind === 'accepted'
+                        ? transportOutcome
+                        : {
+                            kind: transportOutcome.kind,
+                            reason: sanitizeProviderErrorPreview(transportOutcome.error.message)
+                                ?? 'Claude SDK prompt transport failed.',
+                        };
+                    publishTransportOutcome(outcome);
+                    if (outcome.kind === 'rejected_before_effect') {
+                        retainedInterruptedQuery = interruptedQuery;
+                        turnInFlight = false;
+                        return outcome;
+                    }
+                    activeCompletion = completion;
+                    activeQuery = interruptedQuery;
+                    disposeQuery = interruptedQuery;
+                    void consumeTurnMessages(interruptedQuery, completion);
+                    return outcome;
+                }
                 const turnQuery = queryWithContext(params.queryContext ?? params.ctx.agentRuntime.exec, {
                     prompt: resolvePromptInput(prompt, toolPermissionPolicy),
                     options: {
@@ -1626,7 +1673,6 @@ export function createClaudeAgentSdkTurnOperations(
                     if (activeProviderTaskId === providerTaskId) activeProviderTaskId = null;
                     if (activeQuery === turnQuery) activeQuery = null;
                     backgroundQueries.delete(turnQuery);
-                    await turnQuery.dispose();
                     return;
                 } catch (error) {
                     params.ctx.logger.debug(
@@ -1636,9 +1682,7 @@ export function createClaudeAgentSdkTurnOperations(
                 }
             }
             await turnQuery.interrupt();
-            if (activeQuery === turnQuery) activeQuery = null;
             backgroundQueries.delete(turnQuery);
-            await turnQuery.dispose();
         },
         readProviderIdentity() {
             return { sessionId: providerSessionId };
@@ -1713,11 +1757,13 @@ export function createClaudeAgentSdkTurnOperations(
                     queriesToDispose.add(activeQuery);
                 }
                 if (disposeQuery) queriesToDispose.add(disposeQuery);
+                if (retainedInterruptedQuery) queriesToDispose.add(retainedInterruptedQuery);
                 for (const queryToDispose of backgroundQueries) {
                     queriesToDispose.add(queryToDispose);
                 }
                 activeQuery = null;
                 disposeQuery = null;
+                retainedInterruptedQuery = null;
                 activeProviderTaskId = null;
                 activeCompletion = null;
                 lastTurnCompletionFailure = null;

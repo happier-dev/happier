@@ -406,6 +406,39 @@ export class ClaudeSdkQuery implements AsyncIterableIterator<SDKMessage> {
         });
     }
 
+    async sendUserMessage(text: string): Promise<ClaudeSdkPromptTransportOutcome> {
+        let handle: ClaudeSdkExecClientHandle;
+        try {
+            handle = await this.handlePromise;
+        } catch (error) {
+            return {
+                kind: 'rejected_before_effect',
+                error: error instanceof Error ? error : new Error(String(error)),
+            };
+        }
+        try {
+            const outcome = await handle.client.writeRecord({
+                type: 'user',
+                message: {
+                    role: 'user',
+                    content: text,
+                },
+            });
+            if (outcome.kind === 'accepted') return { kind: 'accepted' };
+            return {
+                kind: outcome.kind === 'rejected_before_write'
+                    ? 'rejected_before_effect'
+                    : 'effect_may_have_occurred',
+                error: outcome.error,
+            };
+        } catch (error) {
+            return {
+                kind: 'effect_may_have_occurred',
+                error: error instanceof Error ? error : new Error(String(error)),
+            };
+        }
+    }
+
     async getContextUsage(): Promise<ClaudeSdkContextUsageResponse> {
         const response = await this.requestControl({ subtype: 'get_context_usage' });
         if (!isRecord(response)) {
