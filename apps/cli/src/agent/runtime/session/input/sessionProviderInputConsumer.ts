@@ -26,6 +26,8 @@ import type {
   RuntimeActivitySnapshotTail,
 } from '@/api/session/sessionClientPort';
 
+const PENDING_INPUT_SLOW_PHASE_DIAGNOSTIC_MS = 30_000;
+
 type WakeWinner =
   | { kind: 'queue'; hasMessages: boolean; refreshBeforeReturn?: boolean }
   | { kind: 'meta'; ok: boolean }
@@ -43,7 +45,7 @@ export type SessionProviderInputConsumerOptions<Mode, Message> = Readonly<{
   session: SessionProviderInputConsumerSession;
   beforeCollectQueuedBatch?: (() => void | Promise<void>) | null;
   beforePendingMaterialize?: (() => boolean | Promise<boolean>) | null;
-  onMetadataUpdate?: (() => void | Promise<void>) | null;
+  onMetadataUpdate?: ((abortSignal: AbortSignal) => void | Promise<void>) | null;
   reconcileWhenEmpty?: PendingMaterializationReconcileWhenEmpty;
   pendingQueueDeliveryTiming?: SessionPendingQueueDeliveryTiming;
   resolvePendingQueueDeliveryTiming?: () => SessionPendingQueueDeliveryTiming;
@@ -128,8 +130,11 @@ async function materializeWithRuntimeActivityTail(
   options: ReturnType<typeof buildMaterializeOptions>,
   abortSignal: AbortSignal,
 ): Promise<MaterializeNextPendingResult> {
-  const first = await session.materializeNextPendingMessageSafely?.(options)
-    ?? { type: 'retryable_transport' as const };
+  const first = await observePendingInputPhase(
+    'materialize',
+    async () => await session.materializeNextPendingMessageSafely?.(options)
+      ?? { type: 'retryable_transport' as const },
+  );
   if (
     options.deliveryTiming !== 'after_runtime_idle'
     || first.type !== 'deferred'
@@ -141,10 +146,13 @@ async function materializeWithRuntimeActivityTail(
     if (!tail) return first;
     const committedRevision = readExactIdleRuntimeActivityRevision(tail);
     if (committedRevision !== undefined) {
-      return await session.materializeNextPendingMessageSafely?.({
-        ...options,
-        expectedRuntimeActivityRevision: committedRevision,
-      }) ?? { type: 'retryable_transport' as const };
+      return await observePendingInputPhase(
+        'materialize_runtime_tail_retry',
+        async () => await session.materializeNextPendingMessageSafely?.({
+          ...options,
+          expectedRuntimeActivityRevision: committedRevision,
+        }) ?? { type: 'retryable_transport' as const },
+      );
     }
     if (tail.custody === null || !session.waitForRuntimeActivitySnapshotTailChange) return first;
     if (!await session.waitForRuntimeActivitySnapshotTailChange(tail.sequence, abortSignal)) return first;
@@ -616,7 +624,7 @@ async function waitForNextInput<Mode, Message>(
           return null;
         }
 
-        await callMetadataUpdate(opts.onMetadataUpdate);
+        await callMetadataUpdate(opts.onMetadataUpdate, opts.abortSignal);
         continue;
       }
 
@@ -638,7 +646,7 @@ async function waitForNextInput<Mode, Message>(
       }
 
       if (winner.kind === 'meta') {
-        await callMetadataUpdate(opts.onMetadataUpdate);
+        await callMetadataUpdate(opts.onMetadataUpdate, opts.abortSignal);
         const refreshedBatch = await collectQueuedBatch(opts);
         if (refreshedBatch) {
           return await returnBatch(opts, refreshedBatch, false);
@@ -660,7 +668,7 @@ async function returnBatch<Mode, Message>(
     return null;
   }
   if (refreshBeforeReturn) {
-    await callMetadataUpdate(opts.onMetadataUpdate);
+    await callMetadataUpdate(opts.onMetadataUpdate, opts.abortSignal);
   }
   if (opts.abortSignal.aborted) {
     opts.reserveBatch(batch);
@@ -894,10 +902,59 @@ async function waitForWakeSignal<Mode, Message>(opts: {
   }
 }
 
-async function callMetadataUpdate(onMetadataUpdate: (() => void | Promise<void>) | null | undefined): Promise<void> {
+async function callMetadataUpdate(
+  onMetadataUpdate: ((abortSignal: AbortSignal) => void | Promise<void>) | null | undefined,
+  abortSignal: AbortSignal,
+): Promise<void> {
+  if (!onMetadataUpdate || abortSignal.aborted) return;
+
+  let releaseAbort: (() => void) | undefined;
+  const aborted = new Promise<'aborted'>((resolve) => {
+    const onAbort = () => resolve('aborted');
+    abortSignal.addEventListener('abort', onAbort, { once: true });
+    releaseAbort = () => abortSignal.removeEventListener('abort', onAbort);
+  });
+  const reconciled = Promise.resolve()
+    .then(async () => await observePendingInputPhase(
+      'metadata_reconcile',
+      async () => await onMetadataUpdate(abortSignal),
+    ))
+    .then(
+      () => 'reconciled' as const,
+      () => 'failed' as const,
+    );
+
   try {
-    await onMetadataUpdate?.();
-  } catch {
-    // Non-fatal: metadata reconciliation should not break the message loop.
+    await Promise.race([reconciled, aborted]);
+  } finally {
+    releaseAbort?.();
+  }
+}
+
+async function observePendingInputPhase<T>(
+  phase: 'materialize' | 'materialize_runtime_tail_retry' | 'metadata_reconcile',
+  operation: () => Promise<T>,
+): Promise<T> {
+  const startedAt = Date.now();
+  let slowDiagnosticEmitted = false;
+  const timer = setTimeout(() => {
+    slowDiagnosticEmitted = true;
+    logger.infoFile('[pendingQueue] input consumer phase remains unsettled', {
+      elapsedMs: Date.now() - startedAt,
+      phase,
+    });
+  }, PENDING_INPUT_SLOW_PHASE_DIAGNOSTIC_MS);
+  timer.unref?.();
+
+  try {
+    return await operation();
+  } finally {
+    clearTimeout(timer);
+    if (slowDiagnosticEmitted) {
+      logger.infoFile('[pendingQueue] input consumer slow phase settled', {
+        elapsedMs: Date.now() - startedAt,
+        phase,
+      });
+    }
   }
 }
