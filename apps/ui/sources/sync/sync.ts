@@ -2564,214 +2564,71 @@ class Sync {
             throw new Error(`Session ${sessionId} not found in storage`);
         }
 
-        const sessionEncryptionMode: 'e2ee' | 'plain' = session.encryptionMode === 'plain' ? 'plain' : 'e2ee';
-        const sessionEncryption = sessionEncryptionMode === 'plain' ? null : this.encryption.getSessionEncryption(sessionId);
-        if (sessionEncryptionMode === 'e2ee' && !sessionEncryption) {
-            throw new Error(`Session ${sessionId} encryption not found`);
-        }
-
         const deliveryIntent = pending.deliveryIntent ?? 'interrupt_and_send';
         this.markSessionLiveTailIntent(sessionId);
-        if (deliveryIntent) {
-            try {
-                const state = storage.getState();
-                const result = await submitSessionUserMessage(this.createSessionSubmitPort(), {
-                    sessionId,
-                    session,
-                    text: pending.text,
-                    displayText: pending.displayText,
-                    metaOverrides: sanitizePendingMessageMetaForExplicitSubmit(pending.rawRecord),
-                    localId: pending.localId,
-                    configuredMode: state.settings.sessionMessageSendMode,
-                    busySteerSendPolicy: state.settings.sessionBusySteerSendPolicy,
-                    permissionModeApplyTiming: state.settings.sessionPermissionModeApplyTiming,
-                    nonSteerableSendPrompt: state.settings.sessionNonSteerableSendPrompt,
-                    resumeCapabilityOptions: buildResumeCapabilityOptionsFromUiState({
-                        settings: state.settings,
-                        results: undefined,
-                    }),
-                    permissionOverride: getPermissionModeOverrideForSpawn(session),
-                    callerSurface: deliveryIntent === 'interrupt_and_send'
-                        ? 'pending_message_send_now'
-                        : 'pending_message_steer_now',
-                    requestedAction: deliveryIntent === 'interrupt_and_send'
-                        ? { v: 1, kind: 'send_now' as const }
-                        : { v: 1, kind: 'steer_now' as const },
-                    existingDurablePendingMessage: true,
-                });
+        try {
+            const state = storage.getState();
+            const result = await submitSessionUserMessage(this.createSessionSubmitPort(), {
+                sessionId,
+                session,
+                text: pending.text,
+                displayText: pending.displayText,
+                metaOverrides: sanitizePendingMessageMetaForExplicitSubmit(pending.rawRecord),
+                localId: pending.localId,
+                configuredMode: state.settings.sessionMessageSendMode,
+                busySteerSendPolicy: state.settings.sessionBusySteerSendPolicy,
+                permissionModeApplyTiming: state.settings.sessionPermissionModeApplyTiming,
+                nonSteerableSendPrompt: state.settings.sessionNonSteerableSendPrompt,
+                resumeCapabilityOptions: buildResumeCapabilityOptionsFromUiState({
+                    settings: state.settings,
+                    results: undefined,
+                }),
+                permissionOverride: getPermissionModeOverrideForSpawn(session),
+                callerSurface: deliveryIntent === 'interrupt_and_send'
+                    ? 'pending_message_send_now'
+                    : 'pending_message_steer_now',
+                requestedAction: deliveryIntent === 'interrupt_and_send'
+                    ? { v: 1, kind: 'send_now' as const }
+                    : { v: 1, kind: 'steer_now' as const },
+                existingDurablePendingMessage: true,
+            });
 
-                if (result.type === 'send_failed' || result.type === 'rejected' || result.type === 'wake_failed') {
+            if (result.type === 'send_failed' || result.type === 'rejected' || result.type === 'wake_failed') {
+                storage.getState().clearSessionOptimisticThinking(sessionId);
+                throw createSessionMessageSubmitFailureError(
+                    result.errorCode,
+                    result.errorMessage,
+                    'Message send rejected',
+                );
+            }
+
+            switch (result.persistence) {
+                case 'pending':
+                    return { type: 'retry_scheduled', persistence: 'pending' };
+                case 'provider_direct':
+                    return {
+                        type: 'committed',
+                        persistence: 'provider_direct',
+                        ...(result.providerAcceptancePending === true ? { providerAcceptancePending: true } : {}),
+                    };
+                case 'transcript_committed':
+                    return { type: 'committed', persistence: 'transcript_committed' };
+                default:
                     storage.getState().clearSessionOptimisticThinking(sessionId);
                     throw createSessionMessageSubmitFailureError(
                         result.errorCode,
                         result.errorMessage,
                         'Message send rejected',
                     );
-                }
-
-                switch (result.persistence) {
-                    case 'pending':
-                        return { type: 'retry_scheduled', persistence: 'pending' };
-                    case 'provider_direct':
-                        return {
-                            type: 'committed',
-                            persistence: 'provider_direct',
-                            ...(result.providerAcceptancePending === true ? { providerAcceptancePending: true } : {}),
-                        };
-                    case 'transcript_committed':
-                        return { type: 'committed', persistence: 'transcript_committed' };
-                    default:
-                        storage.getState().clearSessionOptimisticThinking(sessionId);
-                        throw createSessionMessageSubmitFailureError(
-                            result.errorCode,
-                            result.errorMessage,
-                            'Message send rejected',
-                        );
-                }
-            } catch (e) {
-                if (
-                    e
-                    && typeof e === 'object'
-                    && (e as { code?: unknown }).code === 'action-conflict'
-                ) {
-                    // The server row advanced between the user's tap and the PATCH. Reconcile
-                    // this exact session once so the UI immediately presents the authoritative
-                    // action/status instead of leaving a stale menu after the conflict.
-                    await this.fetchPendingMessages(sessionId).catch(() => {});
-                }
-                if (isTerminalAuthError(e)) {
-                    recordTerminalAuthSyncError(e);
-                }
-                storage.getState().clearSessionOptimisticThinking(sessionId);
-                throw e;
             }
-        }
-
-        storage.getState().markSessionOptimisticThinking(sessionId);
-
-        try {
-            const permissionMode = session.permissionMode || 'default';
-
-            const parsed = RawRecordSchema.safeParse(pending.rawRecord);
-            const content: RawRecord = parsed.success ? parsed.data : await (async () => {
-                const flavor = session.metadata?.flavor;
-                const agentId = resolveAgentIdFromFlavor(flavor);
-                const modelMode = session.modelMode || (agentId ? getAgentCore(agentId).model.defaultMode : 'default');
-                const model = agentId && getAgentCore(agentId).model.supportsSelection && modelMode !== 'default' ? modelMode : undefined;
-                const state = storage.getState();
-                return {
-                    role: 'user',
-                    content: { type: 'text', text: pending.text },
-                    meta: buildSendMessageMeta({
-                        sentFrom: resolveSentFrom(),
-                        permissionMode: permissionMode || 'default',
-                        model,
-                        displayText: pending.displayText,
-                        agentId,
-                        settings: storage.getState().settings,
-                        session,
-                    }),
-                };
-            })();
-
-            const messagePayload =
-                sessionEncryptionMode === 'plain'
-                    ? { t: 'plain' as const, v: content }
-                    : await sessionEncryption!.encryptRawRecord(content);
-
-            const localId = pending.localId;
-            const payload = {
-                sid: sessionId,
-                message: messagePayload,
-                localId,
-                sentFrom: 'pending_send_now',
-                permissionMode: permissionMode || 'default',
-                messageRole: 'user' as const,
-            };
-
-            await assertActiveEndpointAuthenticated();
-            const rawAck = await socketEmitWithAckFallback<MessageAckResponse>({
-                emitWithAck: (event, payload, opts) =>
-                    this.messageTransport.emitWithAck<MessageAckResponse>(event, payload, opts),
-                send: (event, payload) => this.messageTransport.send(event, payload),
-                event: 'message',
-                payload,
-                timeoutMs: this.syncTuning.socketAckTimeoutMs,
-                onNoAck: () => this.schedulePendingMessageCommitRetry({ sessionId, localId }),
-                beforeFallback: () => assertActiveEndpointAuthenticated({ forceProbe: true }),
-            });
-
-            if (!rawAck) {
-                storage.getState().clearSessionOptimisticThinking(sessionId);
-                return { type: 'retry_scheduled', persistence: 'pending' };
-            }
-
-            const parsedAck = MessageAckResponseSchema.safeParse(rawAck);
-            if (!parsedAck.success) {
-                this.schedulePendingMessageCommitRetry({ sessionId, localId });
-                return { type: 'retry_scheduled', persistence: 'pending' };
-            }
-
-            const ack = parsedAck.data;
-
-            if (ack.ok !== true) {
-                storage.getState().removePendingMessage(sessionId, pending.localId);
-                throw new Error(ack.error || 'Message send rejected');
-            }
-
-            const committed = normalizeRawMessage(ack.id, localId, pending.createdAt, content, { seq: ack.seq });
-            if (committed) {
-                this.applyMessages(sessionId, [committed]);
-            }
-            this.markSessionMaterializedMaxSeq(sessionId, ack.seq);
-
-            const currentSession = storage.getState().sessions[sessionId];
-            if (currentSession) {
-                this.applySessions([
-                    {
-                        ...currentSession,
-                        updatedAt: nowServerMs(),
-                        seq: Math.max(currentSession.seq ?? 0, ack.seq),
-                    }
-                ]);
-            }
-
-            const settingsApplyTiming = storage.getState().settings.sessionPermissionModeApplyTiming ?? 'immediate';
-            if (settingsApplyTiming === 'next_prompt') {
-                const latestSession = storage.getState().sessions[sessionId] ?? null;
-                const localUpdatedAt = latestSession?.permissionModeUpdatedAt ?? null;
-                const metadataUpdatedAtRaw = latestSession?.metadata?.permissionModeUpdatedAt ?? null;
-                const metadataUpdatedAt =
-                    typeof metadataUpdatedAtRaw === 'number' && Number.isFinite(metadataUpdatedAtRaw)
-                        ? metadataUpdatedAtRaw
-                        : 0;
-
-                if (typeof localUpdatedAt === 'number' && Number.isFinite(localUpdatedAt) && localUpdatedAt > metadataUpdatedAt) {
-                    const modeToPublish = (latestSession?.permissionMode ?? 'default') as PermissionMode;
-                    try {
-                        await this.publishSessionPermissionModeToMetadata({
-                            sessionId,
-                            permissionMode: modeToPublish,
-                            permissionModeUpdatedAt: localUpdatedAt,
-                        });
-                    } catch {
-                        // Best-effort only.
-                    }
-                }
-            }
-
-            wakeInactiveSessionAfterCommittedPrompt({
-                sessionId,
-                session,
-                seq: ack.seq,
-                requestId: pending.localId,
-                tag: 'Sync.sendPendingMessageNow.wakeAfterSend',
-                force: true,
-            });
-
-            // Same policy as sendMessage(): keep optimistic thinking until lifecycle clears.
-            return { type: 'committed', persistence: 'transcript_committed' };
         } catch (e) {
+            if (
+                e
+                && typeof e === 'object'
+                && (e as { code?: unknown }).code === 'action-conflict'
+            ) {
+                await this.fetchPendingMessages(sessionId).catch(() => {});
+            }
             if (isTerminalAuthError(e)) {
                 recordTerminalAuthSyncError(e);
             }
