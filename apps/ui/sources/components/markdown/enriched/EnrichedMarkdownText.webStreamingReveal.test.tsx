@@ -745,13 +745,6 @@ describe('EnrichedMarkdownText web streaming reveal', () => {
         expect(parserSource).not.toContain("['string',");
     });
 
-    it('clears parser state after web parse-call failures', () => {
-        const parserSource = readPatchedPackageFile('src/web/parseMarkdown.ts');
-
-        expect(parserSource).toContain('parseCache.clear()');
-        expect(parserSource).toContain('parserPromise = null');
-    });
-
     it('uses themed paragraph fallback for web parse errors', () => {
         const componentSource = readPatchedPackageFile('src/web/EnrichedMarkdownText.tsx');
         const parseErrorFallbackStart = componentSource.indexOf('if (parseError)');

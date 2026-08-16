@@ -215,6 +215,7 @@ describe('MessageView unsupported-content rendering', () => {
 
             const markdownView = screen.findByType('MarkdownView' as any);
             expect(markdownView.props.markdown).toBe('transcript.unsupportedContent.unparsedUserMessage');
+            expect(markdownView.props.agentTexMath).toBeUndefined();
         });
 
         it('does not leak the raw fallback text into select-preview/copy text for the user own message', async () => {
@@ -257,6 +258,7 @@ describe('MessageView unsupported-content rendering', () => {
 
         const markdownView = screen.findByType('MarkdownView' as any);
         expect(markdownView.props.markdown).toBe('hello world');
+        expect(markdownView.props.agentTexMath).toBe(true);
     });
 
     it.each([

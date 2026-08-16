@@ -92,6 +92,32 @@ describe('MarkdownView (tables)', () => {
         expect(findTextNode('1').props.selectable).toBe(true);
     }, 60_000);
 
+    it('renders math table cells through the enriched renderer without losing horizontal scrolling', async () => {
+        mockPlatform('android');
+        const { MarkdownView } = await import('./MarkdownView');
+
+        const markdown = [
+            '| Formula | Existing | Plain |',
+            '|---|---|---|',
+            '| \\(x_i\\) | $y_i$ | value |',
+        ].join('\n');
+
+        const screen = await renderScreen(
+            <MarkdownView markdown={markdown} selectable profile="transcript" agentTexMath />,
+        );
+
+        expect(screen.findAllByType('GestureHandlerScrollView' as any)).toHaveLength(1);
+        expect(screen.findAllByType('EnrichedMarkdownText').map((node) => node.props.markdown)).toEqual([
+            '\\(x_i\\)',
+            '$y_i$',
+        ]);
+        expect(screen.findAllByType('EnrichedMarkdownText').map((node) => node.props.md4cFlags)).toEqual([
+            { latexMath: true, texMathBackslashDelimiters: true },
+            { latexMath: true, texMathBackslashDelimiters: true },
+        ]);
+        expect(screen.findAllByType('Text' as any).some((node) => node.props.children === 'value')).toBe(true);
+    }, 60_000);
+
     it('applies GitHub table column alignment to header and body cells', async () => {
         mockPlatform('web');
         const { MarkdownView } = await import('./MarkdownView');

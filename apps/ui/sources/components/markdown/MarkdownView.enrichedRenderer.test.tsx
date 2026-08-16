@@ -52,7 +52,7 @@ describe('MarkdownView (enriched renderer)', () => {
         expect(enrichedRuns[0]!.props.markdown).toBe(markdown);
         expect(enrichedRuns[0]!.props.selectable).toBe(true);
         expect(enrichedRuns[0]!.props.flavor).toBe('commonmark');
-        expect(enrichedRuns[0]!.props.md4cFlags).toEqual({ latexMath: true });
+        expect(enrichedRuns[0]!.props.md4cFlags).toEqual({ latexMath: true, texMathBackslashDelimiters: false });
         expect(enrichedRuns[0]!.props.testID).toBeUndefined();
         expect(enrichedRuns[0]!.props['data-testid']).toBe('markdown-enriched-run');
         // The raw fallback is only hidden while the enriched runtime is still loading;
@@ -62,6 +62,19 @@ describe('MarkdownView (enriched renderer)', () => {
         expect(enrichedRuns[0]!.props.enableLinkPreview).toBeUndefined();
         expect(enrichedRuns[0]!.props.allowFontScaling).toBeUndefined();
         expect(enrichedRuns[0]!.props.streamingAnimation).toBeUndefined();
+    });
+
+    it('enables agent TeX parsing without rewriting the Markdown source', async () => {
+        const { MarkdownView } = await import('./MarkdownView');
+        const markdown = 'Coordinates: [\\(x\\), \\(y\\)]';
+
+        const screen = await renderScreen(
+            <MarkdownView markdown={markdown} selectable profile="transcript" agentTexMath />,
+        );
+
+        const enrichedRun = screen.findByType('EnrichedMarkdownText');
+        expect(enrichedRun.props.markdown).toBe(markdown);
+        expect(enrichedRun.props.md4cFlags).toEqual({ latexMath: true, texMathBackslashDelimiters: true });
     });
 
     it('keeps code fences as special blocks while grouping surrounding prose into enriched runs', async () => {

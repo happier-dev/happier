@@ -310,7 +310,7 @@ export const ExitPlanToolView = React.memo<ToolViewProps>(({ tool, sessionId, in
         <ToolSectionView>
             <View style={styles.container}>
                 <View style={styles.planContainer}>
-                    <MarkdownView markdown={plan} />
+                    <MarkdownView markdown={plan} agentTexMath />
                 </View>
 
                 {isResponded || tool.state === 'completed' ? (
