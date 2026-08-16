@@ -17,6 +17,7 @@ import type { PermissionRpcPayload } from '../../utils/permissionRpc';
 import type { PermissionRpcConsumerOutcome } from '../../utils/permissionRpcRouter';
 import type {
   ClaudeUnifiedDialogId,
+  ClaudeUnifiedDialogOption,
   ClaudeUnifiedVisibleDialog,
 } from '../tuiControls/dialogRegistry';
 import {
@@ -51,10 +52,7 @@ type RequestOption = Readonly<{
   choice: string;
   label: string;
   description: string;
-  settingMutation?: Readonly<{
-    settingId: 'claudeUnifiedTerminalWorkspaceTrust';
-    value: 'always_trust_happier_workspaces' | 'always_reject_happier_workspaces';
-  }> | undefined;
+  settingMutation?: ClaudeUnifiedDialogOption['settingMutation'];
 }>;
 
 function requestOptions(dialog: ClaudeUnifiedVisibleDialog): readonly RequestOption[] {

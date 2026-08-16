@@ -4,6 +4,7 @@ import { CLAUDE_UNIFIED_TERMINAL_DIALOG_CHOICE_REQUEST_SOURCE } from '@happier-d
 import { createPermissionHandlerSessionStub } from '../../utils/permissionHandler.testkit';
 import type { AgentStateRequestStore } from '@/agent/permissions/agentStateRequestStore';
 import { createFakeControlPort } from '../tuiControls/fakeControlPort';
+import { resolveClaudeUnifiedVisibleDialog } from '../tuiControls/dialogRegistry';
 import { parseClaudeScreenState } from '../tuiControls/screenState';
 import {
   CLAUDE_UNIFIED_DIALOG_CHOICE_QUESTION,
@@ -207,6 +208,28 @@ describe('createClaudeUnifiedDialogChoiceScreenProbe', () => {
       status: 'canceled',
       reason: 'claude_dialog_owned_by_control_path',
     });
+  });
+
+  it('does not cancel the live resume request owned by the startup resolver', async () => {
+    const { broker, client, port, probe } = createHarness({
+      captures: [RESUME_DIALOG],
+      resumeStartupActive: true,
+    });
+    const dialog = resolveClaudeUnifiedVisibleDialog(parseClaudeScreenState(RESUME_DIALOG));
+    expect(dialog?.dialogId).toBe('resume_choice');
+    void broker.requestDialogChoice({ dialog: dialog! }).catch(() => undefined);
+    await vi.waitFor(() => {
+      expect(Object.keys(client.getAgentStateSnapshot().requests)).toEqual(['claude_dialog_choice_1']);
+    });
+
+    await expect(probe.probe()).resolves.toEqual({ kind: 'owned', dialogId: 'resume_choice' });
+
+    expect(Object.keys(client.getAgentStateSnapshot().requests)).toEqual(['claude_dialog_choice_1']);
+    expect(client.getAgentStateSnapshot().completedRequests.claude_dialog_choice_1).toBeUndefined();
+    expect(port.sentLiteral).toEqual([]);
+    expect(port.sentKeys).toEqual([]);
+
+    await broker.dispose();
   });
 
   it('surfaces a TUI-initiated effort dialog after grace and injects the selected answer', async () => {

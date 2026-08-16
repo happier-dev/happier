@@ -3183,15 +3183,11 @@ describe('SessionView (direct sessions)', () => {
     const oldMention = {
       kind: 'skill' as const,
       tokenText: '$old',
-      start: 8,
-      end: 12,
       name: 'old',
     };
     const newMention = {
       kind: 'skill' as const,
       tokenText: '$new',
-      start: 8,
-      end: 12,
       name: 'new',
     };
     let rejectSubmit!: (error: Error) => void;

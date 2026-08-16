@@ -34,15 +34,22 @@ export type ClaudeUnifiedDialogOwnerRegistration = Readonly<{
   controlKeys: readonly ('model' | 'reasoningEffort' | 'launchOption')[];
 }>;
 
+export type ClaudeUnifiedDialogSettingMutation =
+  | Readonly<{
+    settingId: 'claudeUnifiedTerminalWorkspaceTrust';
+    value: 'always_trust_happier_workspaces' | 'always_reject_happier_workspaces';
+  }>
+  | Readonly<{
+    settingId: 'claudeUnifiedTerminalResumeChoice';
+    value: 'resume_from_summary' | 'resume_full_session';
+  }>;
+
 export type ClaudeUnifiedDialogOption = Readonly<{
   choice: string;
   label: string;
   description: string;
   answer: Readonly<{ kind: 'literal'; text: string }>;
-  settingMutation?: Readonly<{
-    settingId: 'claudeUnifiedTerminalWorkspaceTrust';
-    value: 'always_trust_happier_workspaces' | 'always_reject_happier_workspaces';
-  }> | undefined;
+  settingMutation?: ClaudeUnifiedDialogSettingMutation | undefined;
 }>;
 
 export type ClaudeUnifiedRecognizedDialogRegistryEntry = Readonly<{
@@ -161,7 +168,27 @@ export const CLAUDE_UNIFIED_RECOGNIZED_DIALOG_REGISTRY: readonly ClaudeUnifiedRe
     question: 'How should Claude resume this session?',
     options: () => [
       option('resume_from_summary', 'Resume from summary', 'Resume faster from Claude\'s saved summary.', '1'),
+      option(
+        'always_resume_from_summary',
+        'Always resume from summary',
+        'Resume from Claude\'s saved summary now and remember this choice.',
+        '1',
+        {
+          settingId: 'claudeUnifiedTerminalResumeChoice',
+          value: 'resume_from_summary',
+        },
+      ),
       option('resume_full_session', 'Resume full session', 'Load the full session context.', '2'),
+      option(
+        'always_resume_full_session',
+        'Always resume full session',
+        'Load the full session context now and remember this choice.',
+        '2',
+        {
+          settingId: 'claudeUnifiedTerminalResumeChoice',
+          value: 'resume_full_session',
+        },
+      ),
     ],
   },
   {

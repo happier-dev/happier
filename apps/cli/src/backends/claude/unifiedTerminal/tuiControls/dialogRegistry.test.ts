@@ -36,6 +36,14 @@ const TRUST_FOLDER_DIALOG = [
   '  2. No, exit',
 ].join('\n');
 
+const RESUME_DIALOG = [
+  'This session is 18h 2m old and 560.4k tokens.',
+  'To reduce startup time, Claude can resume from the saved summary or load the full session.',
+  '',
+  '❯ 1. Resume from summary',
+  '  2. Resume full session',
+].join('\n');
+
 const CURRENT_USAGE_LIMIT_DIALOG = [
   "You've hit your session limit · resets 2:40am (Europe/Zurich)",
   'What do you want to do?',
@@ -183,6 +191,33 @@ describe('Claude unified recognized dialog registry', () => {
           settingMutation: {
             settingId: 'claudeUnifiedTerminalWorkspaceTrust',
             value: 'always_reject_happier_workspaces',
+          },
+        },
+      ],
+    });
+  });
+
+  it('offers one-shot and remembered policies through the same resume dialog registry', () => {
+    expect(resolveClaudeUnifiedVisibleDialog(parseClaudeScreenState(RESUME_DIALOG))).toMatchObject({
+      kind: 'recognized',
+      dialogId: 'resume_choice',
+      options: [
+        { choice: 'resume_from_summary', answer: { text: '1' } },
+        {
+          choice: 'always_resume_from_summary',
+          answer: { text: '1' },
+          settingMutation: {
+            settingId: 'claudeUnifiedTerminalResumeChoice',
+            value: 'resume_from_summary',
+          },
+        },
+        { choice: 'resume_full_session', answer: { text: '2' } },
+        {
+          choice: 'always_resume_full_session',
+          answer: { text: '2' },
+          settingMutation: {
+            settingId: 'claudeUnifiedTerminalResumeChoice',
+            value: 'resume_full_session',
           },
         },
       ],

@@ -192,7 +192,9 @@ export function createClaudeUnifiedDialogChoiceScreenProbe(params: Readonly<{
       return { kind: 'not_visible' };
     }
     if (dialogIsOwned(initialDialog)) {
-      await params.broker.noteDialogResolvedInTerminal('claude_dialog_owned_by_control_path');
+      if (!params.broker.hasPendingChoiceForDialog(initialDialog)) {
+        await params.broker.noteDialogResolvedInTerminal('claude_dialog_owned_by_control_path');
+      }
       return { kind: 'owned', dialogId: initialDialog.dialogId };
     }
 
@@ -208,7 +210,9 @@ export function createClaudeUnifiedDialogChoiceScreenProbe(params: Readonly<{
       return { kind: 'not_visible' };
     }
     if (dialogIsOwned(dialog)) {
-      await params.broker.noteDialogResolvedInTerminal('claude_dialog_owned_by_control_path');
+      if (!params.broker.hasPendingChoiceForDialog(dialog)) {
+        await params.broker.noteDialogResolvedInTerminal('claude_dialog_owned_by_control_path');
+      }
       return { kind: 'owned', dialogId: dialog.dialogId };
     }
 
