@@ -8,6 +8,7 @@ import {
     claudeRemoteDispatch,
     type ClaudeRemoteRunnerKind,
 } from "./remote/claudeRemoteDispatch";
+import { ClaudeResumeSessionUnavailableError } from './remote/sessionStartPlan';
 import {
     prepareClaudeUnifiedStartupLifecycle,
     type ClaudeUnifiedStartupLifecycleIntent,
@@ -349,9 +350,26 @@ type ClaudeUnifiedTerminalRuntimeIssueSurfaceResult = ClaudeUnifiedTerminalRunti
 export function resolveClaudeRemoteLaunchErrorDisposition(params: Readonly<{
     exitReason: 'switch' | 'exit' | null;
     runtimeTerminationStarted: boolean;
-}>): 'ignore' | 'terminate' | 'surface' {
+    error?: unknown;
+    exitCode?: number | null;
+    userAbort?: boolean;
+    sessionIdAtLaunchStart?: string | null;
+    currentSessionId?: string | null;
+}>): 'ignore' | 'terminate' | 'surface' | 'preserve-resume-and-exit' | 'preserve-resume-and-wait' {
     if (params.exitReason !== null) return 'ignore';
     if (params.runtimeTerminationStarted) return 'terminate';
+
+    const resumeSessionId = params.sessionIdAtLaunchStart?.trim();
+    const isSameResumeSession = Boolean(
+        resumeSessionId
+        && params.currentSessionId === params.sessionIdAtLaunchStart,
+    );
+    if (isSameResumeSession && params.error instanceof ClaudeResumeSessionUnavailableError) {
+        return 'preserve-resume-and-exit';
+    }
+    if (isSameResumeSession && (params.userAbort === true || params.exitCode === 1)) {
+        return 'preserve-resume-and-wait';
+    }
     return 'surface';
 }
 
@@ -2055,6 +2073,13 @@ export async function claudeRemoteLauncher(
                     && !exitReason
                     && isClaudeExecutionErrorAfterUserAbort(e);
                 const runtimeTerminationStarted = session.client.hasRuntimeTerminationStarted?.() === true;
+                const exitCode = resolveClaudeCodeExitCode(e);
+                const userAbort = Boolean(
+                    controller.signal.aborted
+                    && didUserAbortThisLaunch
+                    && !exitReason
+                    && (abortError || executionErrorAfterUserAbort),
+                );
                 logger.debug('[remote]: launch error', {
                     ...getLaunchErrorInfo(e),
                     abortError,
@@ -2065,28 +2090,38 @@ export async function claudeRemoteLauncher(
                 const errorDisposition = resolveClaudeRemoteLaunchErrorDisposition({
                     exitReason,
                     runtimeTerminationStarted,
+                    error: e,
+                    exitCode,
+                    userAbort,
+                    sessionIdAtLaunchStart,
+                    currentSessionId: session.sessionId,
                 });
                 if (errorDisposition === 'terminate') {
                     // The outer runner is terminating. Do not start another provider launch while
                     // its cleanup owns this session.
                     exitReason = 'exit';
                 }
-                if (errorDisposition !== 'surface') {
+                if (errorDisposition === 'preserve-resume-and-exit') {
+                    session.client.sendSessionEvent({
+                        type: 'message',
+                        message: formatErrorForUi(e, { maxChars: 12_000 }),
+                    });
+                    // A requested resume whose transcript is unavailable cannot consume another
+                    // queued prompt safely. Stop this runner and keep the provider identity intact
+                    // so a later explicit resume can retry the same conversation.
+                    exitReason = 'exit';
+                    continue;
+                }
+                if (errorDisposition === 'ignore' || errorDisposition === 'terminate') {
                     // The launcher or canonical runner lifecycle already owns teardown.
                 } else if (abortError || executionErrorAfterUserAbort) {
                     if (controller.signal.aborted) {
                         session.client.sendSessionEvent({ type: 'message', message: 'Aborted by user' });
                     }
-                    // Claude Code sometimes exits in a non-resumable state after a force-abort. If this abort was
-                    // explicitly user-initiated (not a mode switch), clear the stored session ID so the next launch
-                    // doesn't get stuck trying to resume a dead session.
-                    if (
-                        controller.signal.aborted
-                        && didUserAbortThisLaunch
-                        && !exitReason
-                    ) {
-                        forceNewSession = true;
-                        session.clearSessionId();
+                    if (errorDisposition === 'preserve-resume-and-wait') {
+                        // Aborting a resumed turn must not silently replace its conversation. Wait
+                        // for another user action before attempting the same provider identity again.
+                        waitForMessageBeforeNextLaunch = true;
                     }
                     continue;
                 } else {
@@ -2098,7 +2133,6 @@ export async function claudeRemoteLauncher(
                         waitForMessageBeforeNextLaunch = true;
                         continue;
                     }
-                    const exitCode = resolveClaudeCodeExitCode(e);
                     if (exitCode === 1) {
                         const artifacts = resolveClaudeCodeArtifacts(e);
                         const tailText = artifacts ? await formatClaudeCodeArtifactsTailForUi(artifacts) : '';
@@ -2107,30 +2141,6 @@ export async function claudeRemoteLauncher(
                             ? `${base}\n\n${tailText}`
                             : base;
                         session.client.sendSessionEvent({ type: 'message', message });
-                        if (
-                            controller.signal.aborted
-                            && didUserAbortThisLaunch
-                            && !exitReason
-                        ) {
-                            forceNewSession = true;
-                            session.clearSessionId();
-                        } else if (
-                            // If we attempted to resume an existing Claude Code session and it immediately exited with
-                            // code 1 (common for non-resumable sessions after interrupts/crashes), avoid getting stuck
-                            // in a permanent loop where we keep passing `--resume <dead-session-id>` forever.
-                            //
-                            // In that case, clear the stored session ID so the next launch creates a fresh Claude Code
-                            // session. This is a best-effort recovery path: if the underlying session is resumable, a
-                            // non-aborted run will keep the session id stable and this will not trigger.
-                            !controller.signal.aborted
-                            && typeof sessionIdAtLaunchStart === 'string'
-                            && sessionIdAtLaunchStart.trim().length > 0
-                            && session.sessionId === sessionIdAtLaunchStart
-                            && !exitReason
-                        ) {
-                            forceNewSession = true;
-                            session.clearSessionId();
-                        }
                         waitForMessageBeforeNextLaunch = true;
                         continue;
                     } else {
