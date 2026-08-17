@@ -1,7 +1,7 @@
-import { runManagedChildCommand } from './managedChildLifecycle.mjs';
+import { runManagedChildCommand } from '../../../scripts/testing/process/managedChildLifecycle.mjs';
 import { sweepStaleProcessOwnershipLeases } from './sweepProcessOwnershipLeases.mjs';
 
-export { installParentDeathCleanupWatchdog, resolveSignalExitCode } from './managedChildLifecycle.mjs';
+export { installParentDeathCleanupWatchdog, resolveSignalExitCode } from '../../../scripts/testing/process/managedChildLifecycle.mjs';
 
 export function parseHeartbeatArgs(argv) {
   const args = argv.slice(2);

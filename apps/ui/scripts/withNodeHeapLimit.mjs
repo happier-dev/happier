@@ -64,7 +64,6 @@ async function main(argv) {
         NODE_OPTIONS: nextNodeOptions,
       },
       stdio: 'inherit',
-      shell: process.platform === 'win32',
     },
     cleanupPollMs: 25,
     signalCleanupGraceMs: 0,

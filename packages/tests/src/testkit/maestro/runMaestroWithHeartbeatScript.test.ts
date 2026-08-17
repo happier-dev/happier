@@ -182,8 +182,14 @@ describe('scripts/run-maestro-with-heartbeat.mjs', () => {
 
         const fakeScriptsDir = join(fakeRepoRoot, 'packages', 'tests', 'scripts');
         const fakeCliDir = join(fakeRepoRoot, 'packages', 'tests', 'src', 'testkit', 'maestro');
+        // The wrapper spawns through the repository-level managed-child owner, so the
+        // fake repository has to carry that module and the closure it imports.
+        const fakeProcessDir = join(fakeRepoRoot, 'scripts', 'testing', 'process');
+        const fakeWorkspacesDir = join(fakeRepoRoot, 'scripts', 'workspaces');
         await mkdir(fakeScriptsDir, { recursive: true });
         await mkdir(fakeCliDir, { recursive: true });
+        await mkdir(fakeProcessDir, { recursive: true });
+        await mkdir(fakeWorkspacesDir, { recursive: true });
         await writeFile(join(fakeRepoRoot, 'package.json'), JSON.stringify({ type: 'module' }), 'utf8');
 
         await cp(
@@ -191,12 +197,16 @@ describe('scripts/run-maestro-with-heartbeat.mjs', () => {
             join(fakeScriptsDir, 'run-maestro-with-heartbeat.mjs'),
         );
         await cp(
-            join(repoRoot, 'packages', 'tests', 'scripts', 'managedChildLifecycle.mjs'),
-            join(fakeScriptsDir, 'managedChildLifecycle.mjs'),
+            join(repoRoot, 'scripts', 'testing', 'process', 'managedChildLifecycle.mjs'),
+            join(fakeProcessDir, 'managedChildLifecycle.mjs'),
         );
         await cp(
-            join(repoRoot, 'packages', 'tests', 'scripts', 'processTree.mjs'),
-            join(fakeScriptsDir, 'processTree.mjs'),
+            join(repoRoot, 'scripts', 'testing', 'process', 'processTree.mjs'),
+            join(fakeProcessDir, 'processTree.mjs'),
+        );
+        await cp(
+            join(repoRoot, 'scripts', 'workspaces', 'execYarnCommand.mjs'),
+            join(fakeWorkspacesDir, 'execYarnCommand.mjs'),
         );
 
         const fakeNodeModulesDir = join(fakeRepoRoot, 'node_modules');

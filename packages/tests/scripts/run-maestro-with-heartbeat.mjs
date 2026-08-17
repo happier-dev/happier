@@ -2,7 +2,7 @@ import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { existsSync } from 'node:fs';
 
-import { runManagedChildCommand, resolveSignalExitCode } from './managedChildLifecycle.mjs';
+import { runManagedChildCommand, resolveSignalExitCode } from '../../../scripts/testing/process/managedChildLifecycle.mjs';
 
 function resolveRepoRoot() {
   // `packages/tests/scripts/run-maestro-with-heartbeat.mjs` -> repo root.

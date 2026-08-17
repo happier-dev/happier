@@ -205,7 +205,7 @@ describe('runPlaywrightWithHeartbeat helpers', () => {
       };
     });
 
-    vi.doMock('../../scripts/managedChildLifecycle.mjs', () => ({
+    vi.doMock('../../../../scripts/testing/process/managedChildLifecycle.mjs', () => ({
       installParentDeathCleanupWatchdog: () => () => {},
       resolveSignalExitCode: (signal: string | null) => (signal === 'SIGINT' ? 130 : 1),
       runManagedChildCommand,

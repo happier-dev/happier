@@ -1,4 +1,4 @@
-import { runManagedChildCommand, resolveSignalExitCode } from '../../../scripts/managedChildLifecycle.mjs';
+import { runManagedChildCommand, resolveSignalExitCode } from '../../../../../scripts/testing/process/managedChildLifecycle.mjs';
 import { startTestDaemon } from '../daemon/daemon';
 import { startServerLight } from '../process/serverLight';
 import { startUiDevClientMetro } from '../process/uiDevClientMetro';
