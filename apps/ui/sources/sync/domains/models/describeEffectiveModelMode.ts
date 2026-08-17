@@ -39,20 +39,11 @@ export function describeEffectiveModelMode(params: {
     let applyScope: ModelApplyScope = isAcpSession ? 'live' : core.model.nonAcpApplyScope;
     const notes: string[] = [];
 
-    switch (applyScope) {
-        case 'spawn_only':
-            notes.push('Model changes apply when starting a new session.');
-            break;
-        case 'live':
-            notes.push('Model changes are applied to the running session (takes effect on your next message).');
-            if (core.model.acpApplyBehavior === 'restart_session') {
-                notes.push('This provider restarts the underlying session when switching models (context is preserved when possible).');
-            }
-            break;
-        case 'next_prompt':
-        default:
-            notes.push('Model changes take effect on your next message (and stay active for future messages).');
-            break;
+    // When a model change takes effect is `applyScope`, not prose: the surface
+    // renders that fact as one localized line. Only facts `applyScope` cannot
+    // express stay here, so a picker never has a paragraph to show.
+    if (applyScope === 'live' && core.model.acpApplyBehavior === 'restart_session') {
+        notes.push('This provider restarts the underlying session when switching models (context is preserved when possible).');
     }
 
     const hasDynamicList = hasDynamicModelListForSession(agentId, params.metadata);
