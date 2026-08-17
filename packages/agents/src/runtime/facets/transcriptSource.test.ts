@@ -41,9 +41,95 @@ describe('transcriptSource helpers', () => {
       olderCursor: 'older-cursor-1',
       hasMoreOlder: true,
       tailCursor: 'tail-cursor-1',
+      truncated: false,
     });
     expect(pageOlder).toHaveBeenCalledTimes(1);
     expect(readAfter).toHaveBeenCalledWith({ cursor: 'tail' });
     expect(delivered).toEqual([['older-1'], ['tail-1']]);
+  });
+
+  it('preserves an initial-window discontinuity instead of presenting it as authoritative', async () => {
+    const result = await readInitialTranscriptSourceWindow({
+      pageOlder: async () => ({
+        items: [],
+        nextCursor: null,
+        tailCursor: null,
+        hasMore: false,
+        truncated: true,
+      }),
+      readAfter: async () => ({
+        items: [],
+        nextCursor: null,
+        truncated: false,
+      }),
+    });
+
+    expect(result.truncated).toBe(true);
+  });
+
+  it('does not publish a nonempty initial page when the fallback tail read fails', async () => {
+    const onPageItems = vi.fn();
+    const onTailItems = vi.fn();
+
+    await expect(readInitialTranscriptSourceWindow({
+      pageOlder: async () => ({
+        items: ['page-row'],
+        nextCursor: 'older-1',
+        tailCursor: null,
+        hasMore: true,
+        truncated: false,
+      }),
+      readAfter: async () => {
+        throw new Error('tail read failed');
+      },
+      onPageItems,
+      onTailItems,
+    })).rejects.toThrow('tail read failed');
+
+    expect(onPageItems).not.toHaveBeenCalled();
+    expect(onTailItems).not.toHaveBeenCalled();
+  });
+
+  it('does not publish a nonempty truncated initial page', async () => {
+    const onPageItems = vi.fn();
+    const onTailItems = vi.fn();
+
+    const result = await readInitialTranscriptSourceWindow({
+      pageOlder: async () => ({
+        items: ['truncated-row'],
+        nextCursor: 'older-1',
+        tailCursor: 'tail-1',
+        hasMore: false,
+        truncated: true,
+      }),
+      readAfter: async () => ({
+        items: ['unused-tail-row'],
+        nextCursor: 'tail-2',
+        truncated: false,
+      }),
+      onPageItems,
+      onTailItems,
+    });
+
+    expect(result.truncated).toBe(true);
+    expect(onPageItems).not.toHaveBeenCalled();
+    expect(onTailItems).not.toHaveBeenCalled();
+  });
+
+  it('does not publish a truncated catch-up page', async () => {
+    const onItems = vi.fn();
+
+    const result = await transcriptSource.catchUpTranscriptSourceWindow({
+      cursor: 'cursor-1',
+      readAfter: async () => ({
+        items: ['catch-up-row'],
+        nextCursor: 'cursor-2',
+        truncated: true,
+      }),
+      onItems,
+    });
+
+    expect(result).toEqual({ tailCursor: 'cursor-2', truncated: true });
+    expect(onItems).not.toHaveBeenCalled();
   });
 });
