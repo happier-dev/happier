@@ -2,8 +2,8 @@ import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import type {
   AgentExecutionRunEvent,
   AgentRuntimeContext,
-} from '@happier-dev/plugin-sdk/agent-runtime';
-import type { PluginServices } from '@happier-dev/plugin-sdk/runtime';
+} from '@happier-dev/plugin-sdk/agents/runtime';
+import type { PluginServices } from '@happier-dev/plugin-sdk';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { activate } from './activate.js';

@@ -1,0 +1,240 @@
+{
+  "contributes": {
+    "accountCollections": [],
+    "actions": [],
+    "agents": [
+      {
+        "capabilities": {
+          "executionRuns": {
+            "checkpoint": false,
+            "open": [
+              "create"
+            ],
+            "stop": true
+          }
+        },
+        "cli": {
+          "auth": {
+            "loginLaunches": [],
+            "probe": {
+              "backgroundChecks": "safe",
+              "envVars": [
+                "AI_GATEWAY_API_KEY"
+              ],
+              "parser": "unknown",
+              "statusArgs": null
+            },
+            "support": "status_only"
+          },
+          "executable": {
+            "binaryName": "deepsec",
+            "knownUserBinDirSuffixes": null,
+            "sourcePreference": "system-first"
+          },
+          "install": {
+            "docsUrl": null,
+            "guideUrl": null,
+            "managed": null,
+            "manual": {
+              "kind": "command"
+            }
+          }
+        },
+        "id": "deepsec",
+        "primary": "executionRuns",
+        "runtime": {
+          "kind": "custom"
+        },
+        "title": "DeepSec"
+      }
+    ],
+    "backgroundServices": [],
+    "browserActions": [],
+    "browserTargets": [],
+    "commands": [],
+    "composerAttachments": [],
+    "composerControls": [],
+    "composerReferences": [],
+    "composerRegions": [],
+    "connectedAccountDescriptors": [],
+    "daemonDatabases": [],
+    "events": [],
+    "executionRunProfiles": [
+      {
+        "actions": [
+          {
+            "actionId": "reviews.comments.create",
+            "kind": "hostAction"
+          }
+        ],
+        "compatibleAgents": [
+          "deepsec"
+        ],
+        "defaults": {
+          "io": "streaming",
+          "retention": "ephemeral",
+          "runClass": "bounded"
+        },
+        "description": "Review the current change with DeepSec.",
+        "id": "review",
+        "intent": "review",
+        "promptAsset": "review-prompt",
+        "title": "DeepSec review"
+      },
+      {
+        "actions": [
+          {
+            "actionId": "reviews.comments.create",
+            "kind": "hostAction"
+          }
+        ],
+        "compatibleAgents": [
+          "deepsec"
+        ],
+        "defaults": {
+          "io": "streaming",
+          "retention": "ephemeral",
+          "runClass": "bounded"
+        },
+        "description": "Run a repository-wide DeepSec security audit.",
+        "id": "repository-security-audit",
+        "intent": "review",
+        "promptAsset": "repository-security-audit-prompt",
+        "title": "DeepSec repository security audit"
+      }
+    ],
+    "hooks": [],
+    "managedDependencies": [],
+    "mcp": {
+      "discoverySources": [],
+      "servers": []
+    },
+    "notificationChannels": [],
+    "notifications": [],
+    "openableContentViewers": [],
+    "pluginContributionPoints": [],
+    "promptAssets": [
+      {
+        "id": "review-prompt",
+        "kind": "systemPrompt",
+        "resource": "review-prompt-resource",
+        "target": {
+          "agent": "deepsec",
+          "kind": "agent"
+        }
+      },
+      {
+        "id": "repository-security-audit-prompt",
+        "kind": "systemPrompt",
+        "resource": "repository-security-audit-prompt-resource",
+        "target": {
+          "agent": "deepsec",
+          "kind": "agent"
+        }
+      }
+    ],
+    "providers": [],
+    "requestInterceptors": [],
+    "resources": [
+      {
+        "contentType": "text/markdown",
+        "id": "review-prompt-resource",
+        "kind": "prompt",
+        "path": "./resources/review-prompt.md"
+      },
+      {
+        "contentType": "text/markdown",
+        "id": "repository-security-audit-prompt-resource",
+        "kind": "prompt",
+        "path": "./resources/repository-security-audit-prompt.md"
+      }
+    ],
+    "scmBackends": [],
+    "scmHostingProviders": [],
+    "sessionHeaderActions": [],
+    "settings": [],
+    "systemTools": [
+      {
+        "executableNames": [
+          "deepsec"
+        ],
+        "id": "deepsec-cli",
+        "title": "DeepSec CLI"
+      }
+    ],
+    "targetedPluginContributions": [],
+    "tools": [],
+    "transcriptActivities": [],
+    "ui": {
+      "renderers": [],
+      "settingsGroups": [],
+      "settingsPages": [],
+      "translations": [],
+      "views": []
+    },
+    "voiceModelPacks": [],
+    "voiceProviders": [],
+    "webhooks": []
+  },
+  "description": "Runs DeepSec as a review and security-review execution engine.",
+  "displayName": "DeepSec review engine",
+  "engines": {
+    "happier": "^0.0.0"
+  },
+  "entrypoints": {
+    "daemon": "./dist/index.js"
+  },
+  "hostAccess": {
+    "optional": [],
+    "required": [
+      {
+        "capability": "filesystem",
+        "id": "deepsec-workspace",
+        "reason": "Use the admitted Agent workspace as the DeepSec process working directory.",
+        "scope": {
+          "access": [
+            "read"
+          ],
+          "locations": [
+            {
+              "root": "workspace"
+            }
+          ]
+        }
+      },
+      {
+        "capability": "environment",
+        "id": "ai-gateway-api-key",
+        "reason": "Read AI_GATEWAY_API_KEY for DeepSec readiness and admitted review execution.",
+        "scope": {
+          "keys": [
+            "AI_GATEWAY_API_KEY"
+          ]
+        }
+      },
+      {
+        "capability": "process",
+        "id": "deepsec-process",
+        "reason": "Launch the user-installed DeepSec CLI for an admitted review run.",
+        "scope": {
+          "envKeys": [
+            "AI_GATEWAY_API_KEY"
+          ],
+          "executables": [
+            {
+              "id": "deepsec-cli",
+              "kind": "systemTool"
+            }
+          ]
+        }
+      }
+    ]
+  },
+  "id": "happier.review.deepsec",
+  "runtime": {
+    "apiVersion": 1
+  },
+  "schemaVersion": 2,
+  "secrets": [],
+  "version": "0.0.0"
+}

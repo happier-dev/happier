@@ -4,14 +4,14 @@ import type {
   AgentExecutionRunRuntime,
   AgentExecutionRunRuntimeFactory,
   AgentRuntimeContext,
-} from '@happier-dev/plugin-sdk/agent-runtime';
-import { REVIEW_SCM_SCOPE_INPUT_KEY } from '@happier-dev/protocol';
+} from '@happier-dev/plugin-sdk/agents/runtime';
 import {
+  REVIEW_SCM_SCOPE_INPUT_KEY,
   ReviewScmScopeV1Schema,
   type ReviewScmScopeV1,
   ReviewStartInputSchema,
   type ReviewFindingsV2,
-} from '@happier-dev/plugin-sdk/experimental/reviews';
+} from '@happier-dev/plugin-sdk/reviews';
 
 import { parseDeepSecCommentOutMarkdown } from './commentOut.js';
 import type { DeepSecReviewMode } from './command.js';

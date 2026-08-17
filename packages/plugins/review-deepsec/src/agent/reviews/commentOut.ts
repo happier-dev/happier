@@ -1,4 +1,4 @@
-import type { ReviewCommentAnchorV1 } from '@happier-dev/plugin-sdk/experimental/reviews';
+import type { ReviewCommentAnchorV1 } from '@happier-dev/plugin-sdk/reviews';
 
 export type ParsedDeepSecCommentOutEntry = Readonly<{
   anchor: ReviewCommentAnchorV1;

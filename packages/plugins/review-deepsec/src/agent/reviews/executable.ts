@@ -1,7 +1,7 @@
 import type {
-  PluginResolvedSystemTool,
-  PluginSystemToolsService,
-} from '@happier-dev/plugin-sdk/runtime';
+  ResolvedSystemTool as PluginResolvedSystemTool,
+  SystemToolsService as PluginSystemToolsService,
+} from '@happier-dev/plugin-sdk/exec';
 
 import { DEEPSEC_SYSTEM_TOOL_ID } from './systemTool.js';
 

@@ -1,0 +1,197 @@
+{
+  "contributes": {
+    "accountCollections": [],
+    "actions": [],
+    "agents": [
+      {
+        "capabilities": {
+          "executionRuns": {
+            "checkpoint": false,
+            "open": [
+              "create"
+            ],
+            "stop": true
+          }
+        },
+        "cli": {
+          "auth": {
+            "loginLaunches": [],
+            "probe": {
+              "backgroundChecks": "safe",
+              "envVars": [
+                "CODERABBIT_API_KEY"
+              ],
+              "parser": "unknown",
+              "statusArgs": null
+            },
+            "support": "status_only"
+          },
+          "executable": {
+            "binaryName": "coderabbit",
+            "knownUserBinDirSuffixes": null,
+            "sourcePreference": "system-first"
+          },
+          "install": {
+            "docsUrl": null,
+            "guideUrl": null,
+            "managed": null,
+            "manual": {
+              "kind": "command"
+            }
+          }
+        },
+        "id": "coderabbit",
+        "primary": "executionRuns",
+        "runtime": {
+          "kind": "custom"
+        },
+        "title": "CodeRabbit"
+      }
+    ],
+    "backgroundServices": [],
+    "browserActions": [],
+    "browserTargets": [],
+    "commands": [],
+    "composerAttachments": [],
+    "composerControls": [],
+    "composerReferences": [],
+    "composerRegions": [],
+    "connectedAccountDescriptors": [],
+    "daemonDatabases": [],
+    "events": [],
+    "executionRunProfiles": [
+      {
+        "actions": [
+          {
+            "actionId": "reviews.comments.create",
+            "kind": "hostAction"
+          }
+        ],
+        "compatibleAgents": [
+          "coderabbit"
+        ],
+        "defaults": {
+          "io": "streaming",
+          "retention": "ephemeral",
+          "runClass": "bounded"
+        },
+        "description": "Review the current change with CodeRabbit.",
+        "id": "review",
+        "intent": "review",
+        "promptAsset": "review-prompt",
+        "title": "CodeRabbit review"
+      }
+    ],
+    "hooks": [],
+    "managedDependencies": [],
+    "mcp": {
+      "discoverySources": [],
+      "servers": []
+    },
+    "notificationChannels": [],
+    "notifications": [],
+    "openableContentViewers": [],
+    "pluginContributionPoints": [],
+    "promptAssets": [
+      {
+        "id": "review-prompt",
+        "kind": "systemPrompt",
+        "resource": "review-prompt-resource",
+        "target": {
+          "agent": "coderabbit",
+          "kind": "agent"
+        }
+      }
+    ],
+    "providers": [],
+    "requestInterceptors": [],
+    "resources": [
+      {
+        "contentType": "text/markdown",
+        "id": "review-prompt-resource",
+        "kind": "prompt",
+        "path": "./resources/review-prompt.md"
+      }
+    ],
+    "scmBackends": [],
+    "scmHostingProviders": [],
+    "sessionHeaderActions": [],
+    "settings": [],
+    "systemTools": [
+      {
+        "executableNames": [
+          "coderabbit"
+        ],
+        "id": "coderabbit-cli",
+        "title": "CodeRabbit CLI"
+      }
+    ],
+    "targetedPluginContributions": [],
+    "tools": [],
+    "transcriptActivities": [],
+    "ui": {
+      "renderers": [],
+      "settingsGroups": [],
+      "settingsPages": [],
+      "translations": [],
+      "views": []
+    },
+    "voiceModelPacks": [],
+    "voiceProviders": [],
+    "webhooks": []
+  },
+  "description": "Runs CodeRabbit as a review-only execution engine.",
+  "displayName": "CodeRabbit review engine",
+  "engines": {
+    "happier": "^0.0.0"
+  },
+  "entrypoints": {
+    "daemon": "./dist/index.js"
+  },
+  "hostAccess": {
+    "optional": [],
+    "required": [
+      {
+        "capability": "filesystem",
+        "id": "coderabbit-workspace",
+        "reason": "Use the admitted execution-run workspace as the CodeRabbit process working directory.",
+        "scope": {
+          "access": [
+            "read"
+          ],
+          "locations": [
+            {
+              "root": "workspace"
+            }
+          ]
+        }
+      },
+      {
+        "capability": "process",
+        "id": "coderabbit-process",
+        "reason": "Launch the user-installed CodeRabbit review CLI for an admitted review run.",
+        "scope": {
+          "envKeys": [
+            "CODERABBIT_API_KEY",
+            "HAPPIER_CODERABBIT_REVIEW_TIMEOUT_MS",
+            "HAPPIER_CODERABBIT_REVIEW_RATE_LIMIT_MAX_ATTEMPTS",
+            "HAPPIER_CODERABBIT_REVIEW_MAX_ELIGIBLE_FILES"
+          ],
+          "executables": [
+            {
+              "id": "coderabbit-cli",
+              "kind": "systemTool"
+            }
+          ]
+        }
+      }
+    ]
+  },
+  "id": "happier.review.coderabbit",
+  "runtime": {
+    "apiVersion": 1
+  },
+  "schemaVersion": 2,
+  "secrets": [],
+  "version": "0.0.0"
+}

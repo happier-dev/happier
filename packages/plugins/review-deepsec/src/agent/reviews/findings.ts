@@ -1,4 +1,4 @@
-import type { ReviewFinding } from '@happier-dev/plugin-sdk/experimental/reviews';
+import type { ReviewFinding } from '@happier-dev/plugin-sdk/reviews';
 
 import type { ParsedDeepSecCommentOutEntry } from './commentOut.js';
 

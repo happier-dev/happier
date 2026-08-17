@@ -1,9 +1,9 @@
 import type {
-  PluginExecService,
+  ExecService,
   PluginProcessResult,
-  PluginResolvedSystemTool,
-  PluginSystemToolDiagnostic,
-} from '@happier-dev/plugin-sdk/runtime';
+  ResolvedSystemTool as PluginResolvedSystemTool,
+  SystemToolDiagnostic as PluginSystemToolDiagnostic,
+} from '@happier-dev/plugin-sdk/exec';
 
 import { buildDeepSecCommand, type DeepSecReviewMode } from './command.js';
 import { buildDeepSecCostWarning, type DeepSecCostWarningInput, type DeepSecCostWarningResult } from './costWarning.js';
@@ -83,7 +83,7 @@ export type RunDeepSecReviewParams = Readonly<{
   confirmedCostWarning: boolean;
   cost?: Omit<DeepSecCostWarningInput, 'mode'>;
   preferredExecutablePath?: string | null;
-  exec: Pick<PluginExecService, 'systemTools' | 'run'>;
+  exec: Pick<ExecService, 'systemTools' | 'run'>;
   tempFiles: DeepSecTempFiles;
   environment?: Readonly<Record<string, string>>;
   readiness?: Readonly<{

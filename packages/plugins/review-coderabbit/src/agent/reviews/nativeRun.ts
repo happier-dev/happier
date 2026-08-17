@@ -4,12 +4,12 @@ import type {
   AgentExecutionRunRuntime,
   AgentExecutionRunRuntimeFactory,
   AgentRuntimeContext,
-} from '@happier-dev/plugin-sdk/agent-runtime';
-import type { PluginProcessResult } from '@happier-dev/plugin-sdk/runtime';
-import { REVIEW_SCM_SCOPE_INPUT_KEY } from '@happier-dev/protocol';
+} from '@happier-dev/plugin-sdk/agents/runtime';
+import type { PluginProcessResult } from '@happier-dev/plugin-sdk/exec';
 import {
+  REVIEW_SCM_SCOPE_INPUT_KEY,
   redactReviewCommentSensitiveText,
-} from '@happier-dev/plugin-sdk/experimental/reviews';
+} from '@happier-dev/plugin-sdk/reviews';
 
 import { readCodeRabbitReviewConfigFromEnv } from './config.js';
 import { buildCodeRabbitReviewJsonOutput } from './plainOutput.js';

@@ -1,7 +1,7 @@
 import type {
   PluginProcessResult,
-  PluginResolvedSystemTool,
-} from '@happier-dev/plugin-sdk/runtime';
+  ResolvedSystemTool as PluginResolvedSystemTool,
+} from '@happier-dev/plugin-sdk/exec';
 import { describe, expect, it, vi } from 'vitest';
 
 import { runDeepSecReview, type DeepSecTempFiles } from './run.js';

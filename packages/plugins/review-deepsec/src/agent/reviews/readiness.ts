@@ -1,4 +1,4 @@
-import type { PluginSystemToolDiagnostic } from '@happier-dev/plugin-sdk/runtime';
+import type { SystemToolDiagnostic as PluginSystemToolDiagnostic } from '@happier-dev/plugin-sdk/exec';
 
 export type DeepSecPrerequisite = 'deepsec' | 'node>=22' | 'claude-or-codex' | 'AI_GATEWAY_API_KEY';
 

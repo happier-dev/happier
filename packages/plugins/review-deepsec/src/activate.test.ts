@@ -5,15 +5,16 @@ import type {
   AgentExecutionRunOpenRequest,
   AgentExecutionRunRuntime,
   AgentRuntimeContext,
-} from '@happier-dev/plugin-sdk/agent-runtime';
+} from '@happier-dev/plugin-sdk/agents/runtime';
 import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import type {
   PluginExecSpawnRequest,
   PluginProcessResult,
-  PluginResolvedSystemTool,
+  ResolvedSystemTool as PluginResolvedSystemTool } from '@happier-dev/plugin-sdk/exec';
+import type {
   PluginServices,
-} from '@happier-dev/plugin-sdk/runtime';
-import { ReviewFindingsV2Schema } from '@happier-dev/plugin-sdk/experimental/reviews';
+} from '@happier-dev/plugin-sdk';
+import { ReviewFindingsV2Schema } from '@happier-dev/plugin-sdk/reviews';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { activate } from './activate.js';

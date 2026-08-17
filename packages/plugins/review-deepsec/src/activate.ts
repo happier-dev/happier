@@ -1,6 +1,6 @@
 import type { PluginApi } from '@happier-dev/plugin-sdk';
 import type {
-  AgentRuntimeFactory } from '@happier-dev/plugin-sdk/agent-runtime';
+  AgentRuntimeFactory } from '@happier-dev/plugin-sdk/agents/runtime';
 
 import { createDeepSecExecutionRunFactory } from './agent/reviews/execution.js';
 
