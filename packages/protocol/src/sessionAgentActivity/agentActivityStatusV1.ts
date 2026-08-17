@@ -11,8 +11,22 @@ import { z } from 'zod';
  * Deliberately absent, because each folds into a member above rather than growing the vocabulary:
  * `paused` (-> `blocked` plus a reason), `terminated` (-> `cancelled`), `expired` (-> `timedOut`),
  * `claimed` (-> `queued`), `permission_pending` / `permission_blocked` (-> `waiting`, told apart by
- * the entry's attention kind). "Stale" is presentation, not status: a stale entry keeps its last
- * known non-terminal status and changes only how it is drawn.
+ * the entry's attention kind), `interrupted` (-> `cancelled`; see below). "Stale" is presentation,
+ * not status: a stale entry keeps its last known non-terminal status and changes only how it is
+ * drawn.
+ *
+ * `interrupted` — "the session died under it", as distinct from "a human stopped it" — was
+ * considered on its own merits and DECLINED, because this enum is a wire and persistence contract,
+ * not an internal vocabulary. It is `SessionAgentActivityEntryV1.status` in the session-metadata
+ * headline and `BackgroundTaskRecordV1.status` in a durable record, and the headline reader
+ * deliberately DROPS an entry it cannot parse (`keepReadableEntries`) so that one unknown member
+ * cannot take a whole roster down. A released client would therefore make the agent VANISH from the
+ * roster — strictly worse than the stuck row this vocabulary exists to prevent, and the opposite of
+ * INV-2. Its only gain is a finer word on a row that already reads "Cancelled" with the correct
+ * tone, and the fold is already ratified upstream: `normalizeClaudeActivityStatusSignal` maps the
+ * provider's own `interrupted` to `cancelled`, and RULING-14 resolves a process-death cut-off the
+ * same way. If the distinction is ever wanted, carry it as a REASON beside the status (the
+ * presentation layer already shows a meta line) rather than as an eleventh member.
  *
  * Order is part of the contract — it is the ladder from admission to outcome, and tests pin it.
  */
