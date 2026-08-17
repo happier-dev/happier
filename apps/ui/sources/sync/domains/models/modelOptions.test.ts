@@ -133,6 +133,33 @@ describe('modelOptions', () => {
         expect(out[2]?.description).toBe('Accurate');
     });
 
+    it('names the model id on in-session rows a duplicate label would otherwise make indistinguishable', () => {
+        const out = getModelOptionsForSession(
+            'claude',
+            withMetadata({
+                sessionModelsV1: {
+                    v: 1,
+                    provider: 'claude',
+                    updatedAt: 1,
+                    currentModelId: 'claude-opus-4-5-20251101',
+                    availableModels: [
+                        { id: 'claude-opus-4-5-20251101', name: 'Opus 4.5' },
+                        { id: 'claude-opus-4-6', name: 'Opus 4.6' },
+                    ],
+                },
+            } as unknown as Partial<Metadata>),
+        );
+
+        const pinned = out.find((option) => option.value === 'claude-opus-4-5-20251101');
+        const alias = out.find((option) => option.value === 'claude-opus-4-5');
+        expect(pinned?.label).toBe('Opus 4.5');
+        expect(alias?.label).toBe('Opus 4.5');
+        expect(pinned?.description).toBe('claude-opus-4-5-20251101');
+        expect(alias?.description).toBe('claude-opus-4-5');
+        expect(out.find((option) => option.value === 'claude-opus-4-6')?.description)
+            .not.toBe('claude-opus-4-6');
+    });
+
     it('preserves dynamic session model ids, labels, and descriptions from metadata', () => {
         const out = getModelOptionsForSession(
             'codex',

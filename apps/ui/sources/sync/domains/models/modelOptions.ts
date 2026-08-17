@@ -162,6 +162,42 @@ function mergeDynamicModelOptionWithCatalog(
     };
 }
 
+/**
+ * Two rows that read identically are not a choice.
+ *
+ * A dynamic catalog advertises pinned snapshot ids (`claude-opus-4-5-20251101`) under the same
+ * curated name as their floating alias (`claude-opus-4-5`), and the alias is offered too — either
+ * because the source lists both or because the static catalog contributes the one the probe
+ * omitted. The result is rows with the same label and the same blurb selecting different models,
+ * so the user cannot tell which one they picked.
+ *
+ * Where a label is contested, the blurb the rows share distinguishes nothing, so it gives way to
+ * the one fact that does: the model id being selected. Uncontested rows keep their curated copy.
+ */
+function nameCollidingModelOptionsByModelId(options: readonly ModelOption[]): readonly ModelOption[] {
+    const countByLabel = new Map<string, number>();
+    for (const option of options) {
+        const label = option.label.trim();
+        if (!label) continue;
+        countByLabel.set(label, (countByLabel.get(label) ?? 0) + 1);
+    }
+
+    let contested = false;
+    for (const count of countByLabel.values()) {
+        if (count > 1) {
+            contested = true;
+            break;
+        }
+    }
+    if (!contested) return options;
+
+    return options.map((option) => {
+        if ((countByLabel.get(option.label.trim()) ?? 0) < 2) return option;
+        if (option.description === option.value) return option;
+        return { ...option, description: option.value };
+    });
+}
+
 function mergeModelOptionsWithCatalog(params: Readonly<{
     options: readonly ModelOption[];
     catalogOptions: readonly ModelOption[];
@@ -170,17 +206,17 @@ function mergeModelOptionsWithCatalog(params: Readonly<{
     const catalogByValue = new Map(params.catalogOptions.map((option) => [option.value, option] as const));
     const merged = dedupeModelOptionsByValue(params.options.map((option) => mergeDynamicModelOptionWithCatalog(option, catalogByValue)));
 
-    if (!params.appendMissingCatalogOptions) return merged;
+    if (!params.appendMissingCatalogOptions) return nameCollidingModelOptionsByModelId(merged);
 
     const seen = new Set(merged.map((option) => option.value));
-    return [
+    return nameCollidingModelOptionsByModelId([
         ...merged,
         ...params.catalogOptions.filter((option) => {
             if (seen.has(option.value)) return false;
             seen.add(option.value);
             return true;
         }),
-    ];
+    ]);
 }
 
 function appendSelectedFreeformModelOption(params: Readonly<{

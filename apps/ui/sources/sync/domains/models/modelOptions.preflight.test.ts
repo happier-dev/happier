@@ -142,4 +142,30 @@ describe('modelOptions preflight', () => {
         expect(out.some((opt) => opt.value === '' && opt.label === 'Invalid empty id')).toBe(true);
         expect(out.some((opt) => opt.value === 'missing-name')).toBe(false);
     });
+    it('names the model id on rows a duplicate label would otherwise make indistinguishable', () => {
+        const out = getModelOptionsForAgentTypeOrPreflight({
+            agentType: 'claude',
+            preflight: {
+                availableModels: [
+                    { id: 'claude-opus-4-5-20251101', name: 'Opus 4.5' },
+                    { id: 'claude-opus-4-6', name: 'Opus 4.6' },
+                ],
+                supportsFreeform: true,
+            },
+        });
+
+        const pinned = out.find((option) => option.value === 'claude-opus-4-5-20251101');
+        const alias = out.find((option) => option.value === 'claude-opus-4-5');
+        // The pinned snapshot and its floating alias are both offered and both read "Opus 4.5",
+        // so the row has to say which model id it actually selects.
+        expect(pinned?.label).toBe('Opus 4.5');
+        expect(alias?.label).toBe('Opus 4.5');
+        expect(pinned?.description).toBe('claude-opus-4-5-20251101');
+        expect(alias?.description).toBe('claude-opus-4-5');
+
+        // A row nothing collides with keeps its curated blurb.
+        const uncontested = out.find((option) => option.value === 'claude-opus-4-6');
+        expect(uncontested?.description).not.toBe('claude-opus-4-6');
+        expect(String(uncontested?.description).length).toBeGreaterThan(0);
+    });
 });
