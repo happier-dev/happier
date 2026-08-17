@@ -11,8 +11,10 @@
     "build:shared": "node scripts/buildSharedDeps.mjs",
     "build": "node ../../scripts/workspaces/buildTypeScriptPackageDist.mjs -p tsconfig.json && node scripts/writeDistBinWrappers.mjs",
     "build:binary": "yarn -s build:shared && yarn -s build && node scripts/buildBinary.mjs",
-    "typecheck": "node ./scripts/runTsc.mjs --noEmit -p tsconfig.json",
-    "test": "yarn -s build:shared && node ../../node_modules/vitest/vitest.mjs run --config vitest.config.ts"
+    "typecheck": "../stack/bin/hstack-exec --script=typecheck:local",
+    "typecheck:local": "node ./scripts/runTsc.mjs --noEmit -p tsconfig.json",
+    "test": "../stack/bin/hstack-exec --script=test:local",
+    "test:local": "node ../../node_modules/vitest/vitest.mjs run --config vitest.config.ts"
   },
   "dependencies": {
     "@happier-dev/cli-common": "0.0.0",

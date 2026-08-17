@@ -4,7 +4,7 @@ import { dirname, relative, resolve } from 'node:path';
 import {
     pluginPackageNameToPackageId,
     readBundledPluginPackageNames,
-} from '../migrations/extensions/bundledPluginMembership.ts';
+} from '../../apps/cli/scripts/build-owned/bundledPluginMembership.ts';
 
 export type WorkspacePackageSpec = Readonly<{
     packageName: string;
@@ -96,12 +96,26 @@ function resolveExportTargetSource(
     options: WorkspacePackageSourceResolutionOptions,
 ): string | null {
     const targetPath = readConditionalExportTarget(target, options.exportConditions ?? []);
-    if (!targetPath?.startsWith('./dist/') || !targetPath.endsWith('.js')) {
+    if (!targetPath?.startsWith('./')) {
         return null;
+    }
+
+    if (!targetPath.startsWith('./dist/') || !targetPath.endsWith('.js')) {
+        const packageRoot = resolve(packageSourceRoot, '..');
+        const authoredTarget = resolve(packageRoot, targetPath);
+        return isPathInsideDirectory(authoredTarget, packageRoot) && existsSync(authoredTarget)
+            ? authoredTarget
+            : null;
     }
 
     const sourceRelativePath = targetPath.slice('./dist/'.length).replace(/\.js$/, '');
     const candidates = [
+        ...(sourceRelativePath === 'index' || sourceRelativePath.endsWith('/index')
+            ? [
+                resolve(packageSourceRoot, `${sourceRelativePath}.public.ts`),
+                resolve(packageSourceRoot, `${sourceRelativePath}.public.tsx`),
+            ]
+            : []),
         resolve(packageSourceRoot, `${sourceRelativePath}.ts`),
         resolve(packageSourceRoot, `${sourceRelativePath}.tsx`),
     ];
@@ -129,8 +143,7 @@ export function resolveWorkspacePackageSource(
     options: WorkspacePackageSourceResolutionOptions = {},
 ): string | null {
     if (id === packageName) {
-        return resolveWorkspacePackageExportSource('.', packageSourceRoot, options)
-            ?? resolve(packageSourceRoot, 'index.ts');
+        return resolveWorkspacePackageExportSource('.', packageSourceRoot, options);
     }
 
     if (!id.startsWith(`${packageName}/`)) {
@@ -138,19 +151,7 @@ export function resolveWorkspacePackageSource(
     }
 
     const subpath = id.slice(packageName.length + 1);
-    const exportedSource = resolveWorkspacePackageExportSource(`./${subpath}`, packageSourceRoot, options);
-    if (exportedSource !== null) {
-        return exportedSource;
-    }
-
-    const candidates = [
-        resolve(packageSourceRoot, `${subpath}.ts`),
-        resolve(packageSourceRoot, `${subpath}.tsx`),
-        resolve(packageSourceRoot, subpath, 'index.ts'),
-        resolve(packageSourceRoot, subpath, 'index.tsx'),
-    ];
-
-    return candidates.find((candidate) => existsSync(candidate)) ?? null;
+    return resolveWorkspacePackageExportSource(`./${subpath}`, packageSourceRoot, options);
 }
 
 export function resolveRelativeWorkspaceSource(
