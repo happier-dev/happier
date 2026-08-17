@@ -963,7 +963,10 @@ describe('registerMachineRpcHandlers', () => {
       type: 'success',
       sessionId: 'session-from-legacy-contract',
     });
-    expect(resolveSpawnSessionByNonce).toHaveBeenCalledWith('spawn-nonce-legacy-pending');
+    expect(resolveSpawnSessionByNonce).toHaveBeenCalledWith(
+      'spawn-nonce-legacy-pending',
+      expect.any(Number),
+    );
     expect(spawnSession).toHaveBeenCalledTimes(1);
   });
 
@@ -1757,7 +1760,10 @@ describe('registerMachineRpcHandlers', () => {
         previousSessionId: 'sess_prev',
         strategy: 'recent_messages',
         recentMessagesCount: 3,
-        maxSeedChars: 400,
+        // The cap includes the trusted replay scaffold as well as transcript
+        // content. Leave enough room to prove newest-message retention while
+        // still excluding the oversized oldest row.
+        maxSeedChars: 1_200,
       },
     });
 
@@ -2409,7 +2415,10 @@ describe('registerMachineRpcHandlers', () => {
     });
 
     expect(result).toMatchObject({ ok: true, childSessionId: 'sess_child' });
-    expect(resolveSpawnSessionByNonce).toHaveBeenCalledWith('nonce-abc');
+    expect(resolveSpawnSessionByNonce).toHaveBeenCalledWith(
+      'nonce-abc',
+      expect.any(Number),
+    );
     expect(spawnSession).toHaveBeenCalledTimes(1);
     // No replay fall-through: the replay path would create a fresh session via POST.
     expect(postSpy).not.toHaveBeenCalled();
@@ -3741,6 +3750,184 @@ describe('registerMachineRpcHandlers', () => {
       parentSessionId: 'sess_parent',
       forkPoint: { type: 'latest' },
       strategy: 'auto',
+    });
+
+    expect(backend.loadSession).toHaveBeenCalledWith('codex_parent');
+    expect(backend.forkSession).toHaveBeenCalledWith({ sessionId: 'codex_parent' });
+
+    expect(spawnSession).toHaveBeenCalledWith(
+      expect.objectContaining({
+        directory: '/repo',
+        backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+        approvedNewDirectoryCreation: true,
+        resume: 'codex_forked',
+        codexBackendMode: 'acp',
+        connectedServices: {
+          v: 1,
+          bindingsByServiceId: {
+            'openai-codex': {
+              source: 'connected',
+              selection: 'group',
+              groupId: 'happier',
+              profileId: 'codex1',
+            },
+          },
+        },
+        connectedServicesUpdatedAt: 333,
+      }),
+    );
+
+    expect(result).toMatchObject({ ok: true, childSessionId: 'sess_child' });
+    const spawnOptions = (spawnSession as any).mock.calls[0]?.[0] as any;
+    expect(spawnOptions.connectedServiceMaterializationIdentityV1).toEqual(expect.objectContaining({ v: 1 }));
+    expect(spawnOptions.connectedServiceMaterializationIdentityV1.id).not.toBe('csm_parent_acp_identity');
+    expect(updateSessionMetadataWithRetryMock).toHaveBeenCalledTimes(1);
+    const updater = (updateSessionMetadataWithRetryMock as any).mock.calls[0][0].updater as (m: any) => any;
+    const updated = updater({ path: '/repo', flavor: 'codex' });
+    expect(updated.codexBackendMode).toBe('acp');
+    expect(updated.connectedServices).toEqual(spawnOptions.connectedServices);
+    expect(updated.connectedServicesUpdatedAt).toBe(333);
+    expect(updated.connectedServiceMaterializationIdentityV1).toEqual(
+      spawnOptions.connectedServiceMaterializationIdentityV1,
+    );
+    expect(updated.forkV1).toMatchObject({ v: 1, parentSessionId: 'sess_parent', strategy: 'acp_fork_latest' });
+    expect(updated.forkV1.providerHint).toMatchObject({ providerId: 'codex', backendMode: 'acp', vendorSessionId: 'codex_forked' });
+    expect(updated.replaySeedV1).toBeUndefined();
+  });
+
+  it('resolves the generic native fork intent through the existing ACP-native policy and never degrades to replay', async () => {
+    const registered = new Map<string, (params: any) => Promise<any>>();
+    const rpcHandlerManager = {
+      registerHandler: (method: string, handler: (params: any) => Promise<any>) => {
+        registered.set(method, handler);
+      },
+    } as any;
+
+    const spawnSession = vi.fn(async (_opts: any) => ({ type: 'success', sessionId: 'sess_child' } as const));
+    registerMachineRpcHandlers({
+      rpcHandlerManager,
+      handlers: {
+        spawnSession,
+        stopSession: async () => true,
+        requestShutdown: () => {},
+      },
+    });
+
+    const handler = registered.get((RPC_METHODS as any).SESSION_FORK);
+    expect(handler).toBeDefined();
+
+    const machineKey = new Uint8Array(32).fill(11);
+    const publicKey = tweetnacl.box.keyPair.fromSecretKey(machineKey).publicKey;
+    readCredentialsMock.mockResolvedValueOnce({
+      token: 'token-1',
+      encryption: { type: 'dataKey', machineKey, publicKey },
+    });
+
+    const sessionEncryptionKey = new Uint8Array(32).fill(5);
+    const envelope = sealEncryptedDataKeyEnvelopeV1({
+      dataKey: sessionEncryptionKey,
+      recipientPublicKey: publicKey,
+      randomBytes: (length: number) => new Uint8Array(length).fill(7),
+    });
+
+    const parentMetadataCiphertext = encodeBase64(
+      encrypt(sessionEncryptionKey, 'dataKey', {
+        path: '/repo',
+        flavor: 'codex',
+        codexSessionId: 'codex_parent',
+        agentRuntimeDescriptorV1: buildCodexAgentRuntimeDescriptor({
+          backendMode: 'acp',
+          vendorSessionId: 'codex_parent',
+          home: 'connectedService',
+          connectedServiceId: 'openai-codex',
+          connectedServiceGroupId: 'happier',
+          connectedServiceProfileId: 'codex1',
+          homePath: '/tmp/codex-home',
+        }),
+        connectedServices: {
+          v: 1,
+          bindingsByServiceId: {
+            'openai-codex': {
+              source: 'connected',
+              selection: 'group',
+              groupId: 'happier',
+              profileId: 'codex1',
+            },
+          },
+        },
+        connectedServicesUpdatedAt: 333,
+        connectedServiceMaterializationIdentityV1: {
+          v: 1,
+          id: 'csm_parent_acp_identity',
+          createdAtMs: 100,
+        },
+        acpSessionModelsV1: {
+          v: 1,
+          provider: 'codex',
+          updatedAt: 1,
+          currentModelId: 'model-1',
+          availableModels: [{ id: 'model-1', name: 'Model 1' }],
+        },
+        permissionMode: { v: 1, mode: 'default', updatedAt: 1 },
+      }),
+    );
+
+    const getSpy = vi.spyOn(axios, 'get');
+    getSpy
+      // fetch parent session record
+      .mockResolvedValueOnce({
+        status: 200,
+        data: {
+          session: {
+            id: 'sess_parent',
+            seq: 10,
+            createdAt: 1,
+            updatedAt: 2,
+            active: true,
+            activeAt: 2,
+            metadata: parentMetadataCiphertext,
+            metadataVersion: 7,
+            agentState: null,
+            agentStateVersion: 0,
+            dataEncryptionKey: encodeBase64(envelope),
+          },
+        },
+      } as any)
+      // fetch child session record for metadata update
+      .mockResolvedValueOnce({
+        status: 200,
+        data: {
+          session: {
+            id: 'sess_child',
+            seq: 0,
+            createdAt: 10,
+            updatedAt: 11,
+            active: true,
+            activeAt: 11,
+            metadata: parentMetadataCiphertext,
+            metadataVersion: 3,
+            agentState: null,
+            agentStateVersion: 0,
+            dataEncryptionKey: encodeBase64(envelope),
+          },
+        },
+      } as any);
+
+    const backend = {
+      loadSession: vi.fn(async () => ({ sessionId: 'codex_parent' })),
+      forkSession: vi.fn(async () => ({ sessionId: 'codex_forked' })),
+      dispose: vi.fn(async () => {}),
+    };
+
+    createCatalogAcpBackendMock.mockResolvedValueOnce({ backend } as any);
+
+    const result = await handler!({
+      v: 1,
+      parentSessionId: 'sess_parent',
+      forkPoint: { type: 'latest' },
+      // The fork strategy modal sends the generic user intent, never an
+      // internal strategy name; the daemon owns which native path applies.
+      strategy: 'native',
     });
 
     expect(backend.loadSession).toHaveBeenCalledWith('codex_parent');

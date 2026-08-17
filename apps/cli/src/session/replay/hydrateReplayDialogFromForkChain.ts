@@ -188,6 +188,16 @@ export async function hydrateReplayDialogFromForkChain(params: Readonly<{
   if (segments.length === 0) return null;
 
   const dialogs: HappierReplayDialogItem[] = [];
+  /**
+   * "This Session carries no dialog" and "a segment could not be read" are
+   * different facts, and this is the only owner that can tell them apart: every
+   * unreadable segment below is skipped with `continue`, so an empty result can
+   * mean either. Collapsing both into `null` made a fresh empty Session
+   * indistinguishable from a failed retrieval, and the same-Session Agent
+   * transition asks this question AFTER stopping the source — so the one case
+   * that trivially cannot fail was the one that failed.
+   */
+  let segmentContentUnavailable = false;
   let sourceCutoffSeqInclusive = 0;
   let synopsisText: string | null = null;
   const wantSynopsisText = params.wantSynopsisText === true;
@@ -223,7 +233,10 @@ export async function hydrateReplayDialogFromForkChain(params: Readonly<{
       if (isAuthenticationError(error)) throw error;
       return null;
     });
-    if (!rows) continue;
+    if (!rows) {
+      segmentContentUnavailable = true;
+      continue;
+    }
 
     const encryptionMode = (segment.rawSession as any)?.encryptionMode === 'plain' ? 'plain' : 'e2ee';
     if (encryptionMode === 'plain') {
@@ -273,19 +286,26 @@ export async function hydrateReplayDialogFromForkChain(params: Readonly<{
     }
 
     if (params.credentials.encryption.type !== 'dataKey') {
+      segmentContentUnavailable = true;
       continue;
     }
 
     const encryptedDekBase64 = typeof (segment.rawSession as any)?.dataEncryptionKey === 'string'
       ? String((segment.rawSession as any).dataEncryptionKey).trim()
       : null;
-    if (!encryptedDekBase64) continue;
+    if (!encryptedDekBase64) {
+      segmentContentUnavailable = true;
+      continue;
+    }
 
     const dek = openSessionDataEncryptionKey({
       credential: params.credentials,
       encryptedDataEncryptionKeyBase64: encryptedDekBase64,
     });
-    if (!dek) continue;
+    if (!dek) {
+      segmentContentUnavailable = true;
+      continue;
+    }
 
     const slice = decryptTranscriptReplaySlice({
       rows,
@@ -347,7 +367,10 @@ export async function hydrateReplayDialogFromForkChain(params: Readonly<{
     }
   }
 
-  if (dialogs.length === 0) return null;
+  // Empty AND something was unreadable: what this chain holds is unknown, so the
+  // caller must treat it as unavailable. Empty with every segment read is the
+  // truthful "nothing to carry over".
+  if (dialogs.length === 0 && segmentContentUnavailable) return null;
   dialogs.sort((a, b) => a.createdAt - b.createdAt);
   const dialog = dialogs.length > params.limit ? dialogs.slice(dialogs.length - params.limit) : dialogs;
   return { dialog, sourceCutoffSeqInclusive, synopsisText };

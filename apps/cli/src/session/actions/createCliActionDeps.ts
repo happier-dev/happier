@@ -32,7 +32,8 @@ import type { Credentials } from '@/persistence';
 import { readSettings } from '@/persistence';
 import { readNonBlankSessionControlIdentifier } from '@/agent/runtime/sessionControlIdentifiers';
 import { bootstrapAccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
-import { createSpawnedSession } from '@/session/services/createSpawnedSession';
+import { createSpawnedSession, type CreateSpawnedSessionParams } from '@/session/services/createSpawnedSession';
+import { buildReplaySeededSpawnRecipe } from '@/session/replay/buildReplaySeededSpawnRecipe';
 import {
   normalizeSessionAgentSpawnActionRequest,
   resolveSessionAgentSpawnPolicy,
@@ -1284,6 +1285,7 @@ export function createCliActionDeps(params: Readonly<{
       windowsTerminalWindowName,
       codexBackendMode,
       agentRuntimeDescriptorV1,
+      sourceContext,
       surface,
       callerSurface,
       callerPermissionMode,
@@ -1361,12 +1363,62 @@ export function createCliActionDeps(params: Readonly<{
         ambiguousSpawnActionRequestIds.add(spawnNonce);
       }
 
+      // A source-context spawn is required semantics: the Replay seed is
+      // resolved before any Session row exists, and a failure creates no child.
+      // Creation still runs through the one canonical creator, in its
+      // Replay-seeded mode, so this ingress adds no second row creator.
+      let replaySeededCreation: CreateSpawnedSessionParams['replaySeededCreation'];
+      if (sourceContext) {
+        const spawnAgentId = normalized.createParams.backendTarget.kind === 'builtInAgent'
+          ? normalized.createParams.backendTarget.agentId
+          : null;
+        if (!spawnAgentId) {
+          return {
+            type: 'error',
+            errorCode: 'invalid_parameters',
+            errorMessage: 'invalid_parameters',
+          };
+        }
+        const recipe = await buildReplaySeededSpawnRecipe({
+          credentials: params.credentials,
+          cwd: normalized.createParams.directory,
+          source: {
+            sourceSessionId: sourceContext.sourceSessionId,
+            forkPoint: sourceContext.forkPoint,
+          },
+          providerHintAgentId: spawnAgentId,
+          strategy: 'recent_messages',
+        });
+        if (!recipe.ok) {
+          return {
+            type: 'error',
+            errorCode: recipe.errorCode,
+            errorMessage: recipe.errorMessage,
+          };
+        }
+        replaySeededCreation = {
+          // Retry identity stays this tree's existing per-attempt `tag`: the
+          // caller-supplied tag when there is one, otherwise the durable
+          // action-request spawn identity this ingress already owns.
+          tag: normalized.createParams.tag
+            ?? spawnNonce
+            ?? `sourceContext:${sourceContext.sourceSessionId}:${recipe.recipe.cutoffSeqInclusive}:${randomUUID()}`,
+          agentId: spawnAgentId,
+          metadata: recipe.recipe.metadata,
+          sourceRecipe: {
+            sourceSessionId: sourceContext.sourceSessionId,
+            cutoffSeqInclusive: recipe.recipe.cutoffSeqInclusive,
+          },
+        };
+      }
+
       let created: Awaited<ReturnType<typeof createSpawnedSession>>;
       try {
         created = await createSpawnedSession({
           ...normalized.createParams,
           ...(spawnNonce ? { spawnNonce } : {}),
           ...(resumeOnly ? { resumeOnly: true } : {}),
+          ...(replaySeededCreation ? { replaySeededCreation } : {}),
         });
       } catch (error) {
         const details = error && typeof error === 'object'

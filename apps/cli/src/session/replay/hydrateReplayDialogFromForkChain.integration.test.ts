@@ -483,4 +483,107 @@ describe('hydrateReplayDialogFromForkChain (integration)', () => {
     expect(result).not.toBeNull();
     expect(result?.synopsisText).toBe('SYSTEM_RECORD_SYNOPSIS_OK');
   });
+
+  /**
+   * "The source carries no dialog" and "the bounded retrieval failed" are
+   * different facts, and this hydrator — not its caller — is where the
+   * distinction has to survive, because this is the only owner that can see
+   * whether a segment's transcript was actually read.
+   *
+   * `resolveReplaySeedDraft` already maps `{ dialog: [] }` to `no_source_dialog`
+   * and `null` to `unavailable`, and the same-Session Agent transition asks the
+   * question AFTER stopping the source: a fresh empty Session answered
+   * `unavailable` is stopped and then told the switch failed.
+   */
+  async function hydrateAgainst(handler: (url: URL, res: import('node:http').ServerResponse) => void) {
+    server = createServer((req, res) => {
+      const url = new URL(req.url ?? '/', `http://${req.headers.host ?? '127.0.0.1'}`);
+      if (req.method !== 'GET') {
+        res.statusCode = 404;
+        res.end();
+        return;
+      }
+      handler(url, res);
+    });
+
+    await new Promise<void>((resolve) => {
+      server!.listen(0, '127.0.0.1', () => resolve());
+    });
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('Failed to resolve server address');
+
+    envScope.patch({
+      HAPPIER_SERVER_URL: `http://127.0.0.1:${address.port}`,
+      HAPPIER_WEBAPP_URL: 'http://127.0.0.1:3000',
+      HAPPIER_HOME_DIR: happyHomeDir,
+    });
+    const { reloadConfiguration } = await import('@/configuration');
+    reloadConfiguration();
+
+    const { hydrateReplayDialogFromForkChain } = await import('./hydrateReplayDialogFromForkChain');
+    return await hydrateReplayDialogFromForkChain({
+      credentials: { token: 't', encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) } },
+      startingSessionId: 'sess_empty_source',
+      limit: 10,
+      wantSynopsisText: false,
+    });
+  }
+
+  const EMPTY_SOURCE_SESSION = {
+    id: 'sess_empty_source',
+    seq: 0,
+    createdAt: 100,
+    updatedAt: 100,
+    active: false,
+    activeAt: 0,
+    archivedAt: null,
+    encryptionMode: 'plain',
+    metadata: JSON.stringify({ flavor: 'claude', path: '/tmp' }),
+    metadataVersion: 0,
+    agentState: null,
+    agentStateVersion: 0,
+    pendingCount: 0,
+    pendingVersion: 0,
+    dataEncryptionKey: null,
+    share: null,
+  };
+
+  it('reports a successfully read Session with no dialog as an empty dialog, not a failed hydration', async () => {
+    const result = await hydrateAgainst((url, res) => {
+      if (/^\/v2\/sessions\/sess_empty_source$/u.test(url.pathname)) {
+        res.statusCode = 200;
+        res.setHeader('content-type', 'application/json');
+        res.end(JSON.stringify({ session: EMPTY_SOURCE_SESSION }));
+        return;
+      }
+      if (url.pathname === '/v1/sessions/sess_empty_source/messages') {
+        res.statusCode = 200;
+        res.setHeader('content-type', 'application/json');
+        res.end(JSON.stringify({ messages: [] }));
+        return;
+      }
+      res.statusCode = 404;
+      res.end();
+    });
+
+    expect(result).not.toBeNull();
+    expect(result?.dialog).toEqual([]);
+  });
+
+  it('still reports a failed transcript retrieval as a failed hydration', async () => {
+    // Control: the same empty result must NOT be produced when the transcript
+    // page could not be read at all.
+    const result = await hydrateAgainst((url, res) => {
+      if (/^\/v2\/sessions\/sess_empty_source$/u.test(url.pathname)) {
+        res.statusCode = 200;
+        res.setHeader('content-type', 'application/json');
+        res.end(JSON.stringify({ session: EMPTY_SOURCE_SESSION }));
+        return;
+      }
+      res.statusCode = 500;
+      res.end();
+    });
+
+    expect(result).toBeNull();
+  });
 });

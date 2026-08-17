@@ -41,4 +41,35 @@ describe('authorizeMachineRpcRequest', () => {
       authorization: { kind: 'session.write', sessionId: 's1' },
     })).toEqual({ ok: true });
   });
+
+  it('rejects a Session Agent transition with no server-provided edit proof', () => {
+    expect(authorizeMachineRpcRequest({
+      method: `machine-1:${RPC_METHODS.SESSION_AGENT_TRANSITION}`,
+      params: { sessionId: 's1' },
+    })).toEqual({
+      ok: false,
+      error: 'Forbidden',
+      errorCode: RPC_ERROR_CODES.FORBIDDEN,
+    });
+  });
+
+  it('rejects a Session Agent transition whose edit proof names another Session', () => {
+    expect(authorizeMachineRpcRequest({
+      method: `machine-1:${RPC_METHODS.SESSION_AGENT_TRANSITION}`,
+      params: { sessionId: 's2' },
+      authorization: { kind: 'session.write', sessionId: 's1' },
+    })).toEqual({
+      ok: false,
+      error: 'Forbidden',
+      errorCode: RPC_ERROR_CODES.FORBIDDEN,
+    });
+  });
+
+  it('allows a Session Agent transition whose edit proof matches the decrypted request', () => {
+    expect(authorizeMachineRpcRequest({
+      method: `machine-1:${RPC_METHODS.SESSION_AGENT_TRANSITION}`,
+      params: { sessionId: 's1' },
+      authorization: { kind: 'session.write', sessionId: 's1' },
+    })).toEqual({ ok: true });
+  });
 });

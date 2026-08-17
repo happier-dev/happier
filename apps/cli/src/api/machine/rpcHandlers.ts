@@ -21,21 +21,30 @@ import {
   PendingFirstInputV1Schema,
   RestartAllSessionRunnersRequestV1Schema,
   RestartSessionRunnerRequestV1Schema,
+  SessionAgentTransitionRequestV1Schema,
+  rejectUndispatchedSessionAgentTransition,
   SessionConnectedServiceAuthSwitchRpcParamsSchema,
+  SessionContinuationInspectionRequestV1Schema,
   SessionContinueWithReplayRpcParamsSchema,
   SessionForkRpcParamsSchema,
   SessionInitialGoalRequestV1Schema,
   SessionMcpSelectionV1Schema,
   SessionRunnerStatusGetRequestV1Schema,
+  SessionSpawnSourceContextV1Schema,
   AsyncTtlCache,
   type ConnectedServiceBindingsV1,
   type SessionForkRpcResult,
+  type SessionSpawnSourceContextV1,
 } from '@happier-dev/protocol';
 import { isPermissionMode } from '@/api/types';
 import { CATALOG_AGENT_IDS } from '@/backends/types';
 import type { CatalogAgentId } from '@/backends/types';
 import { readCredentials } from '@/persistence';
-import { createReplaySeededSession } from '@/session/replay/createReplaySeededSession';
+import { runSessionAgentTransition } from '@/session/agentTransition/sessionAgentTransitionCoordinator';
+import { inspectSessionContinuation } from '@/session/agentTransition/sessionContinuationInspection';
+import { buildReplaySeededSpawnRecipe } from '@/session/replay/buildReplaySeededSpawnRecipe';
+import { readReplaySeededCreationFailure } from '@/session/replay/replaySeededCreationFailure';
+import { createSpawnedSession } from '@/session/services/createSpawnedSession';
 import { fetchSessionByIdCompat } from '@/session/transport/http/sessionsHttp';
 import { tryDecryptSessionMetadata } from '@/session/transport/encryption/sessionEncryptionContext';
 import { resolveForkCutoffSeqInclusive } from '@/session/fork/resolveForkCutoffSeqInclusive';
@@ -90,7 +99,6 @@ import { configuration } from '@/configuration';
 import type { FilesystemAccessPolicy } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
 import { resolveFilesystemPolicyDefaultDirectory } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
 import { isAcpForkEligibleForProvider } from '@/agent/acp/acpForkEligibility';
-import { resolveReplaySeedDraft } from '@/session/replay/resolveReplaySeedDraft';
 import type {
   AccountPetCreateRequestV1,
   AccountPetCreateResponseV1,
@@ -328,6 +336,112 @@ export function registerMachineRpcHandlers(params: Readonly<{
     return await getDaemonSessionRunnerStatus(parsed.data);
   });
 
+  /**
+   * `sourceContext` creation for the machine-RPC spawn ingress.
+   *
+   * The UI's ordinary creation path reaches the daemon here, not through the
+   * `session.spawn_new` Action, so this ingress has to honour the typed recipe
+   * too. It builds the recipe through the single Replay recipe owner and commits
+   * the row through the single canonical creator, exactly like the two Replay
+   * ingresses in this file; only the ingress-specific spawn options differ, and
+   * they are merged inside the direct transport.
+   */
+  const spawnSourceContextSeededSession = async (args: Readonly<{
+    sourceContext: SessionSpawnSourceContextV1;
+    directory: string;
+    backendTarget: SpawnSessionOptions['backendTarget'];
+    baseSpawnOptions: SpawnSessionOptions;
+    approvedNewDirectoryCreation: unknown;
+    spawnNonce: string | undefined;
+  }>): Promise<SpawnSessionResult> => {
+    // Predecessor Replay creation metadata (`flavor`, `forkV1.providerHint`) has
+    // only built-in Agent vocabulary, matching the other two Replay ingresses.
+    // Fail closed rather than persist a lineage this tree cannot express.
+    if (args.backendTarget?.kind !== 'builtInAgent') {
+      return {
+        type: 'error',
+        errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
+        errorMessage: 'Continuing from an existing session requires a built-in agent target',
+      };
+    }
+    const agentId = args.backendTarget.agentId;
+
+    const credentials = await readCredentials().catch(() => null);
+    if (!credentials) {
+      return {
+        type: 'error',
+        errorCode: SPAWN_SESSION_ERROR_CODES.RESUME_MISSING_ENCRYPTION_KEY,
+        errorMessage: 'This daemon is not provisioned with dataKey credentials and cannot decrypt transcripts for replay.',
+      };
+    }
+
+    const recipe = await buildReplaySeededSpawnRecipe({
+      credentials,
+      cwd: args.directory,
+      source: {
+        sourceSessionId: args.sourceContext.sourceSessionId,
+        forkPoint: args.sourceContext.forkPoint,
+      },
+      providerHintAgentId: agentId,
+      strategy: 'recent_messages',
+      ...(params.deps?.runReplaySummaryForDialog
+        ? { deps: { runReplaySummaryForDialog: params.deps.runReplaySummaryForDialog } }
+        : {}),
+    });
+    if (!recipe.ok) {
+      return {
+        type: 'error',
+        errorCode: recipe.errorCode,
+        errorMessage: recipe.errorMessage,
+      };
+    }
+
+    // Retry identity stays this ingress's existing durable per-attempt key.
+    const creationTag = args.spawnNonce
+      ?? `sourceContext:${args.sourceContext.sourceSessionId}:${recipe.recipe.cutoffSeqInclusive}:${randomUUID()}`;
+
+    try {
+      const created = await createSpawnedSession({
+        credentials,
+        directory: args.directory,
+        backendTarget: args.backendTarget,
+        ...(args.spawnNonce ? { spawnNonce: args.spawnNonce } : {}),
+        replaySeededCreation: {
+          tag: creationTag,
+          agentId,
+          metadata: recipe.recipe.metadata,
+          sourceRecipe: {
+            sourceSessionId: args.sourceContext.sourceSessionId,
+            cutoffSeqInclusive: recipe.recipe.cutoffSeqInclusive,
+          },
+        },
+        directTransport: {
+          spawn: async (request) => await spawnSession({
+            ...args.baseSpawnOptions,
+            existingSessionId: request.existingSessionId,
+            approvedNewDirectoryCreation: args.approvedNewDirectoryCreation as boolean | undefined,
+          } satisfies SpawnSessionOptions),
+        },
+      });
+      return { type: 'success', sessionId: created.sessionId };
+    } catch (error) {
+      if (isAuthenticationError(error)) throw error;
+      const failure = readReplaySeededCreationFailure(error);
+      if (failure.stage === 'spawn') {
+        // The canonical creator already settled the orphaned row.
+        return failure.spawnResult as SpawnSessionResult;
+      }
+      logger.debug('[API MACHINE] Failed to create source-context session', {
+        error: failure.errorMessage,
+      });
+      return {
+        type: 'error',
+        errorCode: SPAWN_SESSION_ERROR_CODES.UNEXPECTED,
+        errorMessage: 'Failed to create a new session from the requested source',
+      };
+    }
+  };
+
   // Both public spawn RPCs delegate to this single nonce/custody owner. Their
   // response projections intentionally differ below for released-client compatibility.
   const handleSpawnHappySession = async (params: any): Promise<SpawnSessionResult> => {
@@ -363,8 +477,25 @@ export function registerMachineRpcHandlers(params: Readonly<{
       codexBackendMode,
       agentRuntimeDescriptorV1,
       mcpSelection,
+      sourceContext,
       requestOrigin,
     } = params || {};
+
+    // Required semantics, never an ignorable hint: a present-but-invalid recipe
+    // is refused here rather than dropped, because a dropped one would create an
+    // ordinary blank Session and report success.
+    const normalizedSourceContext = (() => {
+      if (sourceContext === undefined || sourceContext === null) return undefined;
+      const parsed = SessionSpawnSourceContextV1Schema.safeParse(sourceContext);
+      return parsed.success ? parsed.data : null;
+    })();
+    if (normalizedSourceContext === null) {
+      return {
+        type: 'error',
+        errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
+        errorMessage: 'Invalid sourceContext',
+      };
+    }
 
     const normalizedModelId = typeof modelId === 'string' && modelId.trim().length > 0 ? modelId : undefined;
     const normalizedPermissionMode =
@@ -545,6 +676,16 @@ export function registerMachineRpcHandlers(params: Readonly<{
       const { sessionId: existingSessionId } = params;
       logger.debug(`[API MACHINE] Resuming inactive session ${existingSessionId}`);
 
+      if (normalizedSourceContext) {
+        // Resume attaches to an existing Session; there is no child to seed, so
+        // accepting the recipe here would silently discard it.
+        return {
+          type: 'error',
+          errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
+          errorMessage: 'sourceContext is not supported when resuming an existing session',
+        };
+      }
+
       if (!resolvedDirectory) {
         return {
           type: 'error',
@@ -582,6 +723,18 @@ export function registerMachineRpcHandlers(params: Readonly<{
     }
 
     const baseSpawnOptions = buildBaseSpawnOptions(resolvedDirectory);
+
+    if (normalizedSourceContext) {
+      return await spawnSourceContextSeededSession({
+        sourceContext: normalizedSourceContext,
+        directory: resolvedDirectory,
+        backendTarget: normalizedBackendTarget,
+        baseSpawnOptions,
+        approvedNewDirectoryCreation,
+        spawnNonce: normalizedSpawnNonce,
+      });
+    }
+
     const rawResult = await spawnSession({
       ...baseSpawnOptions,
       sessionId,
@@ -802,37 +955,29 @@ export function registerMachineRpcHandlers(params: Readonly<{
     const replayStrategy = (replay.strategy ?? 'recent_messages') === 'summary_plus_recent' ? 'summary_plus_recent' : 'recent_messages';
     const normalizedDirectory = normalizeSpawnSessionDirectory(directory, process.env);
 
-    const resolvedSeed = await resolveReplaySeedDraft({
+    const recipe = await buildReplaySeededSpawnRecipe({
       credentials,
       cwd: normalizedDirectory,
       source: {
-        kind: 'fork_chain',
-        previousSessionId: replay.previousSessionId,
+        sourceSessionId: replay.previousSessionId,
+        forkPoint: { type: 'latest' },
       },
+      providerHintAgentId: agent,
       strategy: replayStrategy,
       recentMessagesCount: replay.recentMessagesCount ?? 250,
-      maxSeedChars: typeof replay.maxSeedChars === 'number' ? replay.maxSeedChars : configuration.replaySeedMaxChars,
+      ...(typeof replay.maxSeedChars === 'number' ? { maxSeedChars: replay.maxSeedChars } : {}),
       candidateLimit: configuration.replaySeedCandidateLimit,
-      maxTextChars: maxTextChars ?? undefined,
+      ...(typeof maxTextChars === 'number' ? { maxTextChars } : {}),
       summaryRunner: replay.summaryRunner ?? null,
-      deps: params.deps?.runReplaySummaryForDialog
-        ? { runReplaySummaryForDialog: params.deps.runReplaySummaryForDialog }
-        : undefined,
+      ...(params.deps?.runReplaySummaryForDialog
+        ? { deps: { runReplaySummaryForDialog: params.deps.runReplaySummaryForDialog } }
+        : {}),
     });
-    if (!resolvedSeed) {
+    if (!recipe.ok) {
       return {
         type: 'error',
-        errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
-        errorMessage: 'Unable to hydrate replay dialog from transcript.',
-      };
-    }
-    const seedDraft = resolvedSeed.seedDraft;
-
-    if (!seedDraft.trim()) {
-      return {
-        type: 'error',
-        errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
-        errorMessage: 'Replay seed draft is empty',
+        errorCode: recipe.errorCode,
+        errorMessage: recipe.errorMessage,
       };
     }
 
@@ -850,71 +995,67 @@ export function registerMachineRpcHandlers(params: Readonly<{
       modelId: normalizedModelId,
       modelUpdatedAt: typeof modelUpdatedAt === 'number' ? modelUpdatedAt : undefined,
       previousSessionId: replay.previousSessionId,
-      dialogCount: resolvedSeed.dialog.length,
+      cutoffSeqInclusive: recipe.recipe.cutoffSeqInclusive,
       strategy: replay.strategy ?? 'recent_messages',
       recentMessagesCount: replay.recentMessagesCount ?? 250,
     });
 
-    const nowMs = Date.now();
-    const created = await (async () => {
-      try {
-        return await createReplaySeededSession({
-          credentials,
-          directory: normalizedDirectory,
-          agentId: agent,
-          tag: `replay:${replay.previousSessionId}:${resolvedSeed.sourceCutoffSeqInclusive}:${randomUUID()}`,
-          metadata: {
-            forkV1: {
-              v: 1,
-              parentSessionId: replay.previousSessionId,
-              parentCutoffSeqInclusive: resolvedSeed.sourceCutoffSeqInclusive,
-              createdAtMs: nowMs,
-              strategy: 'replay',
-              providerHint: { providerId: agent },
-            },
-            replaySeedV1: {
-              v: 1,
-              seedText: seedDraft,
-              sourceSessionId: replay.previousSessionId,
-              sourceCutoffSeqInclusive: resolvedSeed.sourceCutoffSeqInclusive,
-              createdAtMs: nowMs,
-            },
-          },
-        });
-      } catch (error) {
-        if (isAuthenticationError(error)) throw error;
-        logger.debug('[API MACHINE] Failed to create replay-seeded session', {
-          error: error instanceof Error ? error.message : String(error),
-        });
-        return null;
-      }
-    })();
+    // This legacy ingress keeps its existing per-attempt retry identity.
+    const creationTag = `replay:${replay.previousSessionId}:${recipe.recipe.cutoffSeqInclusive}:${randomUUID()}`;
 
-    if (!created) {
+    try {
+      const created = await createSpawnedSession({
+        credentials,
+        directory: normalizedDirectory,
+        backendTarget: { kind: 'builtInAgent', agentId: agent },
+        ...(typeof approvedNewDirectoryCreation === 'boolean' ? { approvedNewDirectoryCreation } : {}),
+        ...(normalizedPermissionMode ? { permissionMode: normalizedPermissionMode } : {}),
+        ...(typeof normalizedPermissionModeUpdatedAt === 'number'
+          ? { permissionModeUpdatedAt: normalizedPermissionModeUpdatedAt }
+          : {}),
+        ...(normalizedModelId ? { modelId: normalizedModelId } : {}),
+        ...(typeof modelUpdatedAt === 'number' ? { modelUpdatedAt } : {}),
+        replaySeededCreation: {
+          tag: creationTag,
+          agentId: agent,
+          metadata: recipe.recipe.metadata,
+          sourceRecipe: {
+            sourceSessionId: replay.previousSessionId,
+            cutoffSeqInclusive: recipe.recipe.cutoffSeqInclusive,
+          },
+        },
+        // This ingress runs inside the daemon; launch through the in-process
+        // spawn handler rather than self-calling the control server over HTTP.
+        directTransport: {
+          spawn: async (request) => await spawnSession({
+            directory: normalizedDirectory,
+            backendTarget: { kind: 'builtInAgent', agentId: agent },
+            approvedNewDirectoryCreation,
+            existingSessionId: request.existingSessionId,
+            permissionMode: normalizedPermissionMode,
+            permissionModeUpdatedAt: normalizedPermissionModeUpdatedAt,
+            modelId: normalizedModelId,
+            modelUpdatedAt: typeof modelUpdatedAt === 'number' ? modelUpdatedAt : undefined,
+          } satisfies SpawnSessionOptions),
+        },
+      });
+      return { type: 'success', sessionId: created.sessionId };
+    } catch (error) {
+      if (isAuthenticationError(error)) throw error;
+      const failure = readReplaySeededCreationFailure(error);
+      if (failure.stage === 'spawn') {
+        // The canonical creator already settled the orphaned row.
+        return failure.spawnResult as SpawnSessionResult;
+      }
+      logger.debug('[API MACHINE] Failed to create replay-seeded session', {
+        error: failure.errorMessage,
+      });
       return {
         type: 'error',
         errorCode: SPAWN_SESSION_ERROR_CODES.UNEXPECTED,
         errorMessage: 'Failed to create a new session for replay',
       };
     }
-
-    const result = await spawnSession({
-      directory: normalizedDirectory,
-      backendTarget: { kind: 'builtInAgent', agentId: agent },
-      approvedNewDirectoryCreation,
-      existingSessionId: created.sessionId,
-      permissionMode: normalizedPermissionMode,
-      permissionModeUpdatedAt: normalizedPermissionModeUpdatedAt,
-      modelId: normalizedModelId,
-      modelUpdatedAt: typeof modelUpdatedAt === 'number' ? modelUpdatedAt : undefined,
-    } satisfies SpawnSessionOptions);
-
-    if (result.type === 'success') {
-      return { type: 'success', sessionId: created.sessionId };
-    }
-
-    await archiveSessionBestEffort(credentials.token, created.sessionId);
-    return result;
   });
 
   rpcHandlerManager.registerHandler(RPC_METHODS.SESSION_FORK, async (raw: unknown) => {
@@ -1087,8 +1228,14 @@ export function registerMachineRpcHandlers(params: Readonly<{
 
     const maxTextChars = parseEnvBoundedInt('HAPPIER_REPLAY_MAX_TEXT_CHARS', { min: 1, max: 50_000 }, null);
 
+    // `native` is the generic user intent the fork strategy modal sends. It
+    // enables exactly the native attempts `auto` enables, in the same order;
+    // the tail check below is what keeps it from ever falling through to
+    // Replay, which the user did not choose.
+    const genericNativeIntent = requestedStrategy === 'auto' || requestedStrategy === 'native';
+
     const shouldAttemptProviderNative =
-      (requestedStrategy === 'auto' || requestedStrategy === 'provider_native');
+      (genericNativeIntent || requestedStrategy === 'provider_native');
 
     if (shouldAttemptProviderNative) {
       let nativeForkCommitted = false;
@@ -1194,7 +1341,7 @@ export function registerMachineRpcHandlers(params: Readonly<{
     }
 
     const shouldAttemptAcpForkLatest =
-      (requestedStrategy === 'auto' || requestedStrategy === 'acp_fork_latest') &&
+      (genericNativeIntent || requestedStrategy === 'acp_fork_latest') &&
       (forkPoint.type === 'latest') &&
       isAcpForkEligibleForProvider({ providerId: agentRaw, metadata: parentMetadata });
 
@@ -1336,85 +1483,108 @@ export function registerMachineRpcHandlers(params: Readonly<{
 
     const replaySummaryRunner = parsed.data.replaySummaryRunner;
 
-    const resolvedSeed = await resolveReplaySeedDraft({
+    const recipe = await buildReplaySeededSpawnRecipe({
       credentials,
       cwd: normalizedDirectory,
       source: {
-        kind: 'fork_chain',
-        previousSessionId: parentSessionId,
-        ...(forkPoint.type === 'seq' ? { upToSeqInclusive: effectiveCutoffSeqInclusive } : {}),
+        sourceSessionId: parentSessionId,
+        forkPoint: forkPoint.type === 'seq'
+          ? { type: 'seq', upToSeqInclusive: effectiveCutoffSeqInclusive }
+          : { type: 'latest' },
       },
+      providerHintAgentId: agentRaw,
+      // Persisted lineage keeps naming the exact fork point this lifecycle
+      // already admitted, which for a `latest` fork is not the cutoff seed
+      // retrieval resolves for itself.
+      lineageCutoffSeqInclusive: effectiveCutoffSeqInclusive,
       strategy: replaySummaryRunner ? 'summary_plus_recent' : 'recent_messages',
       recentMessagesCount: configuration.replaySeedCandidateLimit,
-      maxSeedChars: typeof parsed.data.replayMaxSeedChars === 'number' ? parsed.data.replayMaxSeedChars : configuration.replaySeedMaxChars,
+      ...(typeof parsed.data.replayMaxSeedChars === 'number'
+        ? { maxSeedChars: parsed.data.replayMaxSeedChars }
+        : {}),
       candidateLimit: configuration.replaySeedCandidateLimit,
-      maxTextChars: maxTextChars ?? undefined,
+      ...(typeof maxTextChars === 'number' ? { maxTextChars } : {}),
       summaryRunner: replaySummaryRunner ?? null,
-      deps: params.deps?.runReplaySummaryForDialog
-        ? { runReplaySummaryForDialog: params.deps.runReplaySummaryForDialog }
-        : undefined,
+      ...(params.deps?.runReplaySummaryForDialog
+        ? { deps: { runReplaySummaryForDialog: params.deps.runReplaySummaryForDialog } }
+        : {}),
+      extraMetadata: {
+        ...inheritedForkMetadataOverrides,
+        ...(agentRaw === 'opencode'
+          ? applyOpenCodeSessionAffinityMetadata({
+            backendMode: openCodeParentAffinity?.backendMode ?? 'server',
+            serverBaseUrl: openCodeParentAffinity?.serverBaseUrl ?? null,
+            serverBaseUrlExplicit: openCodeParentAffinity?.serverBaseUrlExplicit ?? false,
+          })
+          : {}),
+      },
     });
-    if (!resolvedSeed) {
+    if (!recipe.ok) {
       return {
         ok: false,
-        errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
-        errorMessage: 'Unable to hydrate replay dialog from transcript.',
-      };
-    }
-    const seedDraft = resolvedSeed.seedDraft;
-
-    if (!seedDraft.trim()) {
-      return {
-        ok: false,
-        errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
-        errorMessage: 'Replay seed draft is empty',
+        errorCode: recipe.errorCode,
+        errorMessage: recipe.errorMessage,
       };
     }
 
-    const nowMs = Date.now();
-    const created = await (async () => {
-      try {
-        return await createReplaySeededSession({
-          credentials,
-          directory: normalizedDirectory,
+    // The fork ingress keeps its own per-attempt tag and its `:replay` spawn nonce.
+    const creationTag = `fork:${parentSessionId}:${effectiveCutoffSeqInclusive}:${randomUUID()}`;
+
+    let childSessionId: string;
+    try {
+      const created = await createSpawnedSession({
+        credentials,
+        directory: normalizedDirectory,
+        backendTarget: { kind: 'builtInAgent', agentId: agentRaw },
+        approvedNewDirectoryCreation: true,
+        spawnNonce: `${baseSpawnNonce}:replay`,
+        replaySeededCreation: {
+          tag: creationTag,
           agentId: agentRaw,
-          tag: `fork:${parentSessionId}:${effectiveCutoffSeqInclusive}:${randomUUID()}`,
-          metadata: {
-            ...inheritedForkMetadataOverrides,
-            ...(agentRaw === 'opencode'
-              ? applyOpenCodeSessionAffinityMetadata({
-                backendMode: openCodeParentAffinity?.backendMode ?? 'server',
-                serverBaseUrl: openCodeParentAffinity?.serverBaseUrl ?? null,
-                serverBaseUrlExplicit: openCodeParentAffinity?.serverBaseUrlExplicit ?? false,
-              })
-              : {}),
-            forkV1: {
-              v: 1,
-              parentSessionId,
-              parentCutoffSeqInclusive: effectiveCutoffSeqInclusive,
-              createdAtMs: nowMs,
-              strategy: 'replay',
-              providerHint: { providerId: agentRaw },
-            },
-            replaySeedV1: {
-              v: 1,
-              seedText: seedDraft,
-              sourceSessionId: parentSessionId,
-              sourceCutoffSeqInclusive: effectiveCutoffSeqInclusive,
-              createdAtMs: nowMs,
-            },
+          metadata: recipe.recipe.metadata,
+          sourceRecipe: {
+            sourceSessionId: parentSessionId,
+            cutoffSeqInclusive: effectiveCutoffSeqInclusive,
           },
-        });
-      } catch (error) {
-        if (isAuthenticationError(error)) throw error;
-        logger.debug('[API MACHINE] Failed to create fork session for replay', {
-          error: error instanceof Error ? error.message : String(error),
-        });
-        return null;
+        },
+        // In-daemon ingress: launch through the in-process spawn handler and
+        // merge this ingress's own spawn options here.
+        directTransport: {
+          spawn: async (request) => await spawnSession({
+            directory: normalizedDirectory,
+            backendTarget: { kind: 'builtInAgent', agentId: agentRaw },
+            approvedNewDirectoryCreation: true,
+            spawnNonce: `${baseSpawnNonce}:replay`,
+            existingSessionId: request.existingSessionId,
+            ...(agentRaw === 'opencode'
+              ? {
+                environmentVariables: buildOpenCodeSessionEnvironmentVariables({
+                  backendMode: openCodeParentAffinity?.backendMode ?? 'server',
+                  serverBaseUrl: openCodeParentAffinity?.serverBaseUrl ?? null,
+                  serverBaseUrlExplicit: openCodeParentAffinity?.serverBaseUrlExplicit ?? false,
+                }),
+              }
+              : {}),
+            ...inheritedForkSpawnOverrides,
+          } satisfies SpawnSessionOptions),
+        },
+      });
+      childSessionId = created.sessionId;
+    } catch (error) {
+      if (isAuthenticationError(error)) throw error;
+      const failure = readReplaySeededCreationFailure(error);
+      if (failure.stage === 'spawn') {
+        // The canonical creator already settled the orphaned row; this ingress
+        // keeps reporting the launch envelope exactly as it always has.
+        return {
+          ok: false,
+          errorCode: (failure.spawnResponse as any)?.errorCode ?? SPAWN_SESSION_ERROR_CODES.UNEXPECTED,
+          errorMessage: (failure.spawnResponse as any)?.errorMessage ?? 'Failed to spawn fork session',
+        };
       }
-    })();
-
-    if (!created) {
+      logger.debug('[API MACHINE] Failed to create fork session for replay', {
+        error: failure.errorMessage,
+      });
       return {
         ok: false,
         errorCode: SPAWN_SESSION_ERROR_CODES.UNEXPECTED,
@@ -1422,38 +1592,11 @@ export function registerMachineRpcHandlers(params: Readonly<{
       };
     }
 
-    const spawnResult = await spawnSession({
-      directory: normalizedDirectory,
-      backendTarget: { kind: 'builtInAgent', agentId: agentRaw },
-      approvedNewDirectoryCreation: true,
-      spawnNonce: `${baseSpawnNonce}:replay`,
-      existingSessionId: created.sessionId,
-      ...(agentRaw === 'opencode'
-        ? {
-          environmentVariables: buildOpenCodeSessionEnvironmentVariables({
-            backendMode: openCodeParentAffinity?.backendMode ?? 'server',
-            serverBaseUrl: openCodeParentAffinity?.serverBaseUrl ?? null,
-            serverBaseUrlExplicit: openCodeParentAffinity?.serverBaseUrlExplicit ?? false,
-          }),
-        }
-        : {}),
-      ...inheritedForkSpawnOverrides,
-    } satisfies SpawnSessionOptions);
-
-    if (spawnResult.type !== 'success') {
-      await archiveSessionBestEffort(credentials.token, created.sessionId);
-      return {
-        ok: false,
-        errorCode: (spawnResult as any)?.errorCode ?? SPAWN_SESSION_ERROR_CODES.UNEXPECTED,
-        errorMessage: (spawnResult as any)?.errorMessage ?? 'Failed to spawn fork session',
-      };
-    }
-
-    if (created.sessionId === parentSessionId) {
+    if (childSessionId === parentSessionId) {
       return { ok: false, errorCode: SPAWN_SESSION_ERROR_CODES.UNEXPECTED, errorMessage: 'Fork spawn returned parent session id' };
     }
 
-    return { ok: true, childSessionId: created.sessionId };
+    return { ok: true, childSessionId };
 
     };
 
@@ -1514,6 +1657,42 @@ export function registerMachineRpcHandlers(params: Readonly<{
     const result = normalizeMachineStopSessionResult(await stopSession(sessionId));
     logger.debug(`[API MACHINE] Stop session ${sessionId}: ${result.status}`);
     return result;
+  });
+
+  // Same-Session cross-Agent continuation.
+  //
+  // Both operations live on the DAEMON machine RPC and nowhere else. The
+  // session-process registrar (`registerSessionHandlers`) cannot own them: the
+  // transition stops the very runtime that would be handling the call, and
+  // inspection must answer for an inactive Session that has no runtime at all.
+  // Registering them in both places would create two decision-makers for one
+  // operation, one of which cannot survive its own effect.
+  rpcHandlerManager.registerHandler(RPC_METHODS.SESSION_AGENT_TRANSITION, async (raw: unknown) => {
+    // Both rejections here happen BEFORE the coordinator is dispatched, so
+    // nothing addressed the Session. They are built through the single arm
+    // owner rather than as literals, so this handler cannot drift into naming
+    // an arm the coordinator's effect stages forbid.
+    const parsed = SessionAgentTransitionRequestV1Schema.safeParse(raw);
+    if (!parsed.success) {
+      return rejectUndispatchedSessionAgentTransition('unsupported_operation');
+    }
+    const credentials = await readCredentials().catch(() => null);
+    if (!credentials) {
+      return rejectUndispatchedSessionAgentTransition('forbidden');
+    }
+    return await runSessionAgentTransition({ credentials, request: parsed.data });
+  });
+
+  rpcHandlerManager.registerHandler(RPC_METHODS.SESSION_CONTINUATION_INSPECT, async (raw: unknown) => {
+    const parsed = SessionContinuationInspectionRequestV1Schema.safeParse(raw);
+    if (!parsed.success) {
+      return { type: 'unavailable', reason: 'operation_unavailable' };
+    }
+    const credentials = await readCredentials().catch(() => null);
+    if (!credentials) {
+      return { type: 'unavailable', reason: 'unsupported_session' };
+    }
+    return await inspectSessionContinuation({ credentials, request: parsed.data });
   });
 
   // Register stop daemon handler

@@ -6,6 +6,7 @@ import {
   SessionInitialGoalRequestV1Schema,
   SessionAttachMetadataIdentityPolicySchema,
   SessionMcpSelectionV1Schema,
+  SessionSpawnSourceContextV1Schema,
   SpawnSessionExecutionAuthorizationSchema,
 } from '@happier-dev/protocol';
 
@@ -82,6 +83,16 @@ const SpawnDaemonSessionRequestCompatSchema = z.object({
   connectedServicesUpdatedAt: z.number().int().optional(),
   mcpSelection: SessionMcpSelectionV1Schema.optional(),
   transcriptStorage: z.enum(['persisted', 'direct']).optional(),
+  /**
+   * Typed source recipe for a Replay-seeded child.
+   *
+   * Declared here so the machine-RPC creation ingress carries it instead of
+   * stripping it: this schema is a plain `z.object`, and an undeclared field
+   * would be dropped silently, producing an ordinary blank Session that reports
+   * success. Honouring it is required semantics — the daemon resolves the seed
+   * before creating the child and creates no child on failure.
+   */
+  sourceContext: SessionSpawnSourceContextV1Schema.optional(),
 });
 
 type SpawnDaemonSessionRequestCompat = z.output<typeof SpawnDaemonSessionRequestCompatSchema>;

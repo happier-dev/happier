@@ -11,10 +11,10 @@ import { readPendingLocalId, type PendingRequestedActionV1 } from '@happier-dev/
 
 import { fetchEncryptedTranscriptPageAfterSeq } from '@/api/session/fetchEncryptedTranscriptWindow';
 import {
-  enqueuePendingQueueV2MessageViaHttp,
   type PendingQueueDeliveryBlockedReason,
   readBlockedPendingQueueV2DeliveryByLocalIdFromServer,
 } from '@/api/session/pendingQueueV2Transport';
+import { admitSessionUserMessageToPendingQueue } from './admitSessionUserMessage';
 import {
   waitForTranscriptEncryptedMessageByLocalId,
   type TranscriptMessageLookupResult,
@@ -31,7 +31,6 @@ import { callSessionRpc } from '@/session/transport/rpc/sessionRpc';
 import { waitForIdleViaSocket } from '@/session/transport/socket/sessionSocketAgentState';
 import {
   decryptSessionPayload,
-  encryptSessionPayload,
   tryDecryptSessionMetadata,
 } from '@/session/transport/encryption/sessionEncryptionContext';
 import {
@@ -471,72 +470,35 @@ export async function sendSessionMessage(params: Readonly<{
     decryptedMetadata,
   });
 
-  const record = {
-    role: 'user',
-    content: { type: 'text', text: params.message },
-    meta: {
-      sentFrom: 'cli',
-      // Important: `source: 'cli'` is reserved for CLI-authored transcript traffic that
-      // the running agent runtime should treat as "self-sent" (e.g. local provider echoes).
-      // A `happier session send` prompt is user intent and must be delivered to the runtime
-      // queue even when it is committed by the daemon via session RPC.
-      source: 'ui',
-      permissionMode: permissionIntent,
-      ...(modelId && modelId !== 'default' ? { model: modelId } : {}),
-    },
-  } as const;
-
-  const content =
-    sessionTarget.mode === 'plain'
-      ? ({ t: 'plain', v: record } as const)
-      : ({
-          t: 'encrypted',
-          c: encryptSessionPayload({
-            ctx: sessionTarget.ctx,
-            payload: record,
-            ...(params.pendingAdmissionMode ? { idempotencyKey: localId } : {}),
-          }),
-        } as const);
-
   const shouldUseRuntimeRpc = sessionTarget.rawSession.active === true;
-  let enqueueResult: Awaited<ReturnType<typeof enqueuePendingQueueV2MessageViaHttp>>;
-  const requestedAction = params.requestedAction ?? { v: 1, kind: 'steer_if_active' as const };
-  try {
-    enqueueResult = await enqueuePendingQueueV2MessageViaHttp({
-      token: params.credentials.token,
-      sessionId,
-      body: content.t === 'encrypted'
-        ? {
-            localId,
-            ciphertext: content.c,
-            messageRole: 'user',
-            requestedAction,
-            ...(params.pendingAdmissionMode ? { deliveryMode: params.pendingAdmissionMode } : {}),
-          }
-        : {
-            localId,
-            content,
-            messageRole: 'user',
-            requestedAction,
-            ...(params.pendingAdmissionMode ? { deliveryMode: params.pendingAdmissionMode } : {}),
-          },
-    });
-  } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : String(error ?? '');
+  const admission = await admitSessionUserMessageToPendingQueue({
+    credentials: params.credentials,
+    sessionId,
+    mode: sessionTarget.mode,
+    ctx: sessionTarget.ctx,
+    localId,
+    text: params.message,
+    permissionIntent,
+    modelId,
+    ...(params.requestedAction ? { requestedAction: params.requestedAction } : {}),
+    ...(params.pendingAdmissionMode ? { pendingAdmissionMode: params.pendingAdmissionMode } : {}),
+  });
+
+  if (admission.status === 'unconfirmed') {
     return {
       ok: false,
       code: 'timeout',
-      message: errorMessage || 'Pending enqueue acknowledgement was not confirmed',
+      message: admission.message,
     };
   }
 
-  if (enqueueResult?.suppressed === true) {
+  if (admission.status === 'suppressed') {
     return { ok: true, sessionId, localId, waited: false, suppressed: true };
   }
 
   // The server found this exact localId in the terminal transcript. Starting
   // an inactive runtime now would create work without pending custody.
-  if (enqueueResult?.terminal === true) {
+  if (admission.status === 'already_terminal') {
     return { ok: true, sessionId, localId, waited: false };
   }
 

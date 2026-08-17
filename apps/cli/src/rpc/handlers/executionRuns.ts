@@ -43,7 +43,7 @@ import { preflightCodeRabbitReviewScope } from '@/agent/reviews/engines/coderabb
 import { readCodeRabbitReviewConfigFromEnv } from '@/agent/reviews/engines/coderabbit/readCodeRabbitReviewConfig';
 import { readCredentials } from '@/persistence';
 import { configuration } from '@/configuration';
-import { resolveReplaySeedDraft } from '@/session/replay/resolveReplaySeedDraft';
+import { resolveReplaySeedDraft, type ReplaySeedDraftResolution } from '@/session/replay/resolveReplaySeedDraft';
 
 function invalidParams(): { ok: false; error: string; errorCode: string } {
   return { ok: false, error: 'Invalid params', errorCode: 'execution_run_invalid_action_input' };
@@ -322,8 +322,10 @@ export function registerExecutionRunHandlers(
                 : configuration.replaySeedMaxChars,
             candidateLimit: configuration.replaySeedCandidateLimit,
             summaryRunner: parsed.data.replay.summaryRunner ?? null,
-          }).catch(() => null);
-          if (replaySeed?.seedDraft) {
+          }).catch((): ReplaySeedDraftResolution => ({ status: 'unavailable' }));
+          // A voice run seeds when there is something to seed with; an empty
+          // source and a failed retrieval both leave it unseeded here.
+          if (replaySeed.status === 'seeded') {
             startParams.initialContext = [String(parsed.data.initialContext ?? '').trim(), replaySeed.seedDraft]
               .filter((value) => value.length > 0)
               .join('\n\n');
