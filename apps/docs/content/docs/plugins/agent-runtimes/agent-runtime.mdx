@@ -9,8 +9,10 @@ factory; start with [the Agent-mode guide](/plugins/guides/agent-modes) to
 choose the correct shape.
 
 An `AgentRuntime` owns at least one of `sessions` or `executionRuns`. Optional
-typed capabilities and message adapters expose only behavior declared by that
-Agent. Separately owned auxiliary features do not move into the primary runtime.
+typed capabilities expose only behavior declared by that Agent. Separately owned
+auxiliary features do not move into the primary runtime. The `/agents/runtime`
+entrypoint is projected from one exact owner inventory; new useful capabilities
+are added there without a fixed public-name quota or compatibility aliases.
 
 ## Code-defined runtime binding
 

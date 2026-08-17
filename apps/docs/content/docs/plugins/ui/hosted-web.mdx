@@ -1,68 +1,73 @@
 ---
 title: Hosted web UI
-description: Build isolated plugin-owned web UI with the public host bridge.
+description: Author the isolated hosted-web artifact without claiming an unverified frame runtime.
 ---
 
-Hosted web is the public option for an existing web application or a UI that should remain isolated from the Happier client realm. The host displays it in an iframe or WebView and mediates supported operations through the Plugin UI host API.
+## Scaffold
 
-## Scaffold and build
+Create a hosted-web source package with the ordinary beginner command:
 
 ```bash
-happier plugins scaffold ./my-plugin \
-  --id com.example.my-plugin \
-  --name "My plugin" \
+happier plugins create ./my-hosted-plugin \
+  --id com.example.my-hosted-plugin \
+  --name "My hosted plugin" \
   --ui hostedWeb
 
-cd my-plugin
+cd my-hosted-plugin
 happier plugins dev
 ```
 
-The development command uses the managed toolchain and daemon-owned reload
-path. For a production artifact,
-`happier plugins author build .` writes a portable tree under
-`dist/happier-plugin-ui`. The package manifest remains cold JSON; it declares
-the hosted web contribution and artifact identity without importing the web
-application.
+The scaffold creates a code-defined plugin declaration, an isolated Vite
+application, a `pluginUiBuild.mjs` target, relative assets, and the managed
+author scripts. `plugins dev`, `happier plugins author build .`, and
+`happier plugins pack .` use the same UI-build owner; a failed build is not
+submitted as a development candidate.
 
-## Host API
+## Bootstrap boundary
+
+The hosted application gets its bound surface context after the host accepts
+its ready message. Use the public client and treat the returned context as the
+single source of surface identity, currentness, cancellation, theme, locale,
+and host operations:
 
 ```ts
-import { createPluginUiHostApiClient } from '@happier-dev/plugin-sdk/ui/client';
+import {
+  applyPluginUiThemeCssVariables,
+  createPluginUiRenderContext,
+} from '@happier-dev/plugin-sdk/ui/client';
 
-const host = await createPluginUiHostApiClient();
-const context = await host.context();
-const subscription = host.watchContext((nextContext) => {
-  // Re-render from the updated locale, direction, contrast, text scale,
-  // motion, screen-reader, and safe-area values.
-});
+const context = await createPluginUiRenderContext();
+applyPluginUiThemeCssVariables(context.surface.theme, document.documentElement);
+await context.hostApi.executeAction('save-note', { note: 'hello' }, { signal: context.signal });
 ```
 
-The host injects the supported transport. The surface must not reach into parent-window, app, daemon, or protocol internals.
+Do not construct a bridge, choose an origin, parse `location`, or encode launch
+input/subpaths into a URL. Any launch facts come only through the host-issued
+context; the host retires `context.signal` when the surface is no longer
+current.
 
-## Accessibility and offline snapshots
+## Browser-hosted data and withdrawal
 
-Use semantic HTML before ARIA, label every control, preserve logical DOM and
-focus order, and provide visible `:focus-visible` styling. Support keyboard
-operation, screen readers and polite live updates, 200% zoom, high contrast,
-RTL and long strings, reduced motion, and 44×44 CSS-pixel pointer targets where
-the platform contract requires them. Render from the supplied surface context
-rather than browser guesses.
+If a browser-hosted frame is admitted, it is an online **Plaintext Accounts
+only** path; E2EE Account data is unavailable through this runtime. The host
+serves only the static packaged artifact through its own HTTPS artifact origin
+and scoped bootstrap capability. Authors do not add cookies, an app bearer,
+their own origin, a refresh channel, or a revocation endpoint.
 
-The host owns installed-generation currentness. Do not persist a second
-currentness bit or treat cached iframe/WebView content as an offline
-application. Handle unavailable/rejected host calls, stop work when the
-transport is disposed, and consume `watchContext` updates.
+On logout or Account switch, the host retires the bridge and controller
+immediately, which aborts the bound context and blocks new host operations. It
+cannot recall static bytes already downloaded by a browser. Treat the rendered
+artifact as ephemeral UI, keep sensitive state out of static assets, and do not
+promise an author-controlled immediate recall mechanism.
 
-When disconnected, Happier may preserve the last frame as a visual,
-non-interactive snapshot. The host makes the executable subtree inert, removes
-its controls from the accessibility tree, and exposes a localized static
-summary using the declared surface title. Provide a meaningful localized title
-and keep the last visual state understandable without requiring interaction.
-Reconnection revalidates the exact generation, policy, and context before
-controls become active again.
+## Build and runtime availability
 
-## Security boundary
+The hostedWeb scaffold emits the packaged artifact and canonical bootstrap contract; packaged runtime support remains unavailable until the platform-specific frame adapter is present and verified.
 
-Hosted web is isolated UI, not a daemon-code sandbox. The installed plugin package may also contain trusted daemon code, so installation remains a whole-package **Install & Trust** decision.
-
-Declare navigation, callback origins, network origins, content-security policy, source-map handling, and development mixed-content needs as narrowly as the contribution schema permits. Production hosted content should use HTTPS. Development loopback exceptions are development-only and fail closed when their declared conditions are not met.
+`kind: 'hostedWeb'` deliberately declares one portable web graph and does not
+accept author-owned `platforms`. Runtime admission owns whether that unchanged
+graph can be framed on browser/desktop, iOS, or Android. Until the relevant
+adapter passes, the emitted graph is useful source/build coverage but is not an
+advertised packaged runtime path. It is never valid to substitute a dev server,
+remote URL, blob URL, source checkout, or URL-encoded launch data for that
+adapter.

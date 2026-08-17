@@ -1,0 +1,151 @@
+---
+title: Claude unified terminal
+description: Run Claude Code once, in a real terminal that Happier and you both drive, instead of running a separate Agent SDK process behind the app.
+---
+
+The **unified terminal runtime** runs Claude Code in a terminal session on your machine and drives that same session from the Happier app. There is one Claude Code run: the transcript you read in the app is the transcript scrolling in the terminal, and the prompt Happier sends is typed into the composer you would have typed into yourself.
+
+This is different from how Happier runs Claude by default. It is off until you turn it on.
+
+## The three ways Happier runs Claude
+
+| Runtime | How Happier drives Claude | Is there a terminal to join? |
+| --- | --- | --- |
+| **Agent SDK** (default) | Happier runs Claude through `@anthropic-ai/claude-agent-sdk` in a background process and streams messages into it. | No. There is no Claude Code TUI in this mode. |
+| **Unified terminal** | Happier hosts Claude Code’s own TUI in tmux, zellij, or a Windows console host, and writes prompts into its composer. | Yes on the tmux and zellij hosts — `happier attach <session-id>` puts you in the same window or pane. |
+| **Legacy remote** (fallback) | Happier spawns `claude` with a streaming output format and forwards hooks for session info. | No. |
+
+Selection happens when the provider session starts, and it is pinned for the life of that session. Turning the setting on or off later changes the next Claude session you start, not the one already running.
+
+The terminal you attach to is the Claude Code run the app is driving, and you can type in it. Happier reads the composer before every write so an app message never lands on top of what you are typing — see [The draft guard](#the-draft-guard) below. For how `happier attach` works in general, see [Attach to a running session](/features/attach-to-session).
+
+## Steering and interrupting, per runtime
+
+[Steering & interrupting](/features/steering) describes the two busy-send behaviors Happier offers — **Steer** and **Interrupt** — without saying what happens underneath. Underneath, the Claude runtimes differ.
+
+Under the **Agent SDK**, a steered message is pushed onto the SDK’s streaming input. Anthropic’s Agent SDK documentation lists this among the benefits of streaming input mode:
+
+> **Queued messages**: send multiple messages that process sequentially, with ability to interrupt.
+>
+> — Anthropic, [Streaming Input](https://code.claude.com/docs/en/agent-sdk/streaming-vs-single-mode)
+
+Choosing **Interrupt** instead calls the SDK’s interrupt before the message is pushed, so the current turn stops and yours starts.
+
+Under the **unified terminal**, a steered message is typed into the live Claude Code composer while the turn is still generating. Claude Code handles it the way it handles anything you type mid-generation: it queues the text and submits it when the turn ends. Once Happier sees Claude’s own queued-messages banner on screen, the pending row switches to **Queued in Claude** — that is terminal evidence that Claude has your text, not a guess.
+
+Happier will not write into the terminal blindly. Before every write it reads the screen, and it refuses to steer when the running turn was started under a different permission mode — the TUI would silently swallow the mode change, so that message keeps the deferred path and runs as a normal new turn instead.
+
+## The draft guard
+
+The composer is a shared surface. You can be typing in it at the moment the app decides to deliver a message, and a naive write would land the app’s prompt after your half-finished sentence and submit the pair as one corrupted prompt.
+
+So Happier classifies the composer before it writes:
+
+- **Empty** — write the prompt.
+- **Text Happier itself typed earlier** — clear it (bounded to two attempts), then write.
+- **Anything else** — do not touch it. The message is held and retried.
+- **A dialog, a permission prompt, a selection list, or a generating screen** — also held; that screen does not belong to the composer.
+
+A held message is visible, not silent. The pending row shows **Terminal draft is blocking delivery**, with the notice “Waiting: a draft in the terminal composer is blocking delivery. Clear it in the terminal or interrupt the turn.” If the block persists, Happier offers **Clear composer**, which asks for confirmation first because it discards whatever is typed in the terminal.
+
+Happier never clears a draft it did not write without you asking.
+
+## Turn it on
+
+1. Open **Settings**
+2. Open **AI backends**
+3. Open **Claude Code**
+4. Under **Unified terminal runtime**, enable **Use unified terminal runtime**
+
+If that section is not on the screen, the unified terminal runtime is not available on your server or deployment. It is gated by a server feature flag that fails closed, so the section is hidden rather than shown broken. See [Server feature flags](/features/feature-flags).
+
+Start a new Claude session after enabling it. Existing sessions keep the runtime they started with.
+
+## Terminal hosts
+
+The unified runtime needs a terminal host that can hold the Claude Code TUI and let Happier read the screen. Choose one under **Terminal host**:
+
+- **Auto** (default) — use `tmux` when it is available, otherwise Happier’s bundled zellij.
+- **tmux** — use your system `tmux` installation.
+- **zellij** — use Happier’s bundled zellij.
+
+### macOS and Linux
+
+Either host works. **Auto** takes `tmux` when it is installed and falls back to the bundled zellij, so the runtime still works on a machine with no `tmux`. If you pick **zellij** explicitly and the bundled binary is unavailable, Happier falls back to `tmux` rather than failing the session.
+
+Both hosts are attachable: `happier attach <session-id>` drops you into the same tmux window or zellij pane the app is driving.
+
+### Windows
+
+On native Windows, Happier hosts the unified runtime in a **Windows console host** and neither tmux nor zellij is used:
+
+- **tmux** is refused outright — it is not supported on native Windows.
+- **zellij** is refused on native Windows because the bundled build is not validated there, and on Windows ARM64 because there is no upstream zellij binary for that architecture.
+
+Both refusals name WSL2 as the way to get a `tmux`- or zellij-hosted unified session on a Windows machine. Leaving **Terminal host** on **Auto** is the path that works on Windows as it stands.
+
+## Unified-only settings
+
+Two settings under **Claude Code** exist because the unified runtime can see Claude’s dialogs. They do nothing in the other runtimes.
+
+### Large-session resume
+
+When you resume a large session, Claude Code asks how to resume it. **Large-session resume** decides how Happier answers:
+
+- **Ask every time** (default) — Happier surfaces the question in the session as a user action and waits for you.
+- **Resume from summary** — use Claude’s summary, which resumes faster.
+- **Resume full session** — load the full session context.
+
+### Workspace trust
+
+Claude Code asks whether to trust a folder before it will run code from it, and it suppresses hooks until that question is answered — which is why Happier handles this one directly rather than through the normal permission path.
+
+- **Ask every time** (default) — the exact trust question appears in the session.
+- **Always trust Happier workspaces** — answer trust automatically for workspaces Happier opened.
+- **Always reject Happier workspaces** — answer reject automatically for those workspaces.
+
+The two “always” options are also offered inline on the trust question itself, so you can answer once and record the policy in the same step.
+
+## Changing model, effort, and permission mode
+
+Claude Code’s own controls are on screen, so Happier drives those rather than restarting Claude.
+
+- **Model** and **reasoning effort** are changed by typing `/model` and `/effort` into the terminal and answering the confirmation dialog Claude shows. These apply before the next prompt, not to a turn already running.
+- **Permission mode** is changed by cycling Claude’s own mode control and re-reading the mode marker in the status line after every press, stopping when the marker matches. Happier verifies rather than counting keystrokes, because the reachable set of modes is not fixed. This one can apply while a turn is generating.
+
+If Happier cannot verify the screen for a control, it does not guess. It posts a notice in the transcript instead:
+
+> Claude unified terminal is already running. Model, permission, reasoning, and launch option changes apply when Claude restarts; this prompt was sent to the current Claude terminal session.
+
+## What the unified runtime does not do
+
+- **Max thinking tokens** is an Agent SDK option and has no equivalent here. Happier reports that the prompt was sent without applying it.
+- **File checkpointing and `/rewind`** are remote Agent SDK only. See [Claude](/providers/claude).
+- **Advanced options (JSON)** applies to the Agent SDK query options and does not affect a terminal-hosted run.
+
+## Troubleshooting
+
+### The setting is not in Claude Code settings
+
+The unified terminal runtime is gated by a server feature flag. If your server does not enable it, the whole section is hidden.
+
+### I turned it on but the session still behaves like before
+
+Runtime selection is made when the provider session starts and stays pinned for that session. Start a new Claude session.
+
+### The session stopped with a hook activation error
+
+Happier installs a Claude Code plugin so permissions and lifecycle events can be routed to the app. If Claude accepts terminal input without activating those hooks, Happier stops the session rather than continuing with a transcript that mirrors correctly while permission prompts stay stuck in the terminal. Restart the session.
+
+### A message says it is waiting on a terminal draft
+
+There is unsent text in the terminal composer. Clear it in the terminal, or use **Clear composer** in the pending messages sheet, or interrupt the turn.
+
+## Related pages
+
+- [Claude](/providers/claude)
+- [Steering & interrupting](/features/steering)
+- [Pending queue](/features/pending-queue)
+- [Attach to a running session](/features/attach-to-session)
+- [Permissions](/features/permissions)
+- [Server feature flags](/features/feature-flags)

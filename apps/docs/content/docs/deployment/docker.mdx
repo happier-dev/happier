@@ -46,6 +46,13 @@ docker pull happierdev/relay-server:preview
 docker compose up -d --force-recreate
 ```
 
+**MySQL upgrade warning:** before an upgrade first applies
+`20260729102000_add_voice_conversation_grant_provenance`, do not use a normal
+rolling restart. Stop every old API and worker writer, preflight the target
+migrator's trigger authority and durable definer account, and keep the
+maintenance window active until the migration and trigger are verified. Follow
+the [MySQL Voice grant-provenance rollout runbook](https://github.com/happier-dev/happier/blob/main/docs/release-process.md#mysql-voice-conversation-grant-provenance-rollout).
+
 For strict control, pin to an immutable tag (for example `:preview-<short-sha>`) or a digest.
 
 Full matrix (all apps/assets): [Updates](/advanced/updates).
@@ -338,6 +345,12 @@ docker run --rm -p 53288:53288 \
 ```
 
 ### Full flavor (MySQL 8.0.16+)
+
+The image runs migrations before starting the server. Before this command or a
+Compose deployment upgrades an existing MySQL database, complete the
+[MySQL Voice grant-provenance rollout runbook](https://github.com/happier-dev/happier/blob/main/docs/release-process.md#mysql-voice-conversation-grant-provenance-rollout)
+if the target has not yet applied
+`20260729102000_add_voice_conversation_grant_provenance`.
 
 ```bash
 docker run --rm -p 53288:53288 \
@@ -737,6 +750,9 @@ Notes:
 
 - Disable auto-migrations in full flavor with `RUN_MIGRATIONS=0`.
 - In Postgres multi-replica setups, it’s OK if more than one replica tries to migrate at startup (the DB serializes via locks).
+- MySQL operators must use the linked maintenance-window runbook before first
+  applying `20260729102000_add_voice_conversation_grant_provenance`; the
+  migration lock does not drain old application writers.
 
 ## Reverse proxy checklist
 

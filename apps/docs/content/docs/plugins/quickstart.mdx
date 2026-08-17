@@ -50,9 +50,13 @@ origin, use `happier plugins dev --sdk-registry <origin>`. Installed SDK
 packages include copyable public patterns under
 `node_modules/@happier-dev/plugin-sdk/examples/`; choose the smallest matching
 example and verify imports against the maintained
-[SDK entrypoint map](/plugins/api/sdk-entrypoints). A future publisher artifact
-may include a generated symbol index, but that is not the teaching path and
-does not change the current prepublication hold.
+[SDK entrypoint map](/plugins/api/sdk-entrypoints). Before selecting a
+contribution or service family, read the installed
+`node_modules/@happier-dev/plugin-sdk/capability-matrix.json`: it is the sole
+availability authority. A `deferred` row remains conformance-only reference
+material even when its declaration or example is present; it is not a
+supported product lifecycle. This does not change the current prepublication
+hold.
 
 For a custom Session Agent, that activation entry is not the runner entry. The
 runner imports only the exact named factory leaf in the Agent's
@@ -90,7 +94,7 @@ import { definePlugin } from '@happier-dev/plugin-sdk';
 import {
   defineProtocolObject,
   defineProtocolString,
-} from '@happier-dev/plugin-sdk/protocol-authoring';
+} from '@happier-dev/plugin-sdk/protocol';
 
 export const { manifest, activate } = definePlugin({
   id: 'com.example.my-plugin',

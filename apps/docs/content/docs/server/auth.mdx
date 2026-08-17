@@ -60,7 +60,8 @@ Then follow the provider setup guide:
 
 ## Standard authentication (device-key accounts)
 
-Happier uses a **device-key** account model (each account is tied to a device secret).
+Happier's active default is a **device-key** account model (each E2EE account is tied
+to real client encryption material).
 
 - Default behavior: users can create accounts via device-key signup (`POST /v1/auth`).
 - You can optionally require external providers (GitHub and/or OIDC) for signup and/or ongoing access.
@@ -73,8 +74,16 @@ The same OAuth provider (for example GitHub or an OIDC provider) can appear in t
 - **Keyed provisioning** (“Continue with GitHub”): creates a **device-key** account.
   - Users must back up a secret key and **restore** on new devices/browsers.
   - This is the standard Happier model and works on E2EE-only servers.
-- **Keyless login** (“Sign in with GitHub”): signs in to a **keyless/plain** account (no device keys).
+- **Keyless login** (“Sign in with GitHub”): signs in to a **keyless/plain** account
+  without requiring or persisting Account E2EE private material in the token-only
+  credential.
   - Sign-in can be **seamless across devices**, but it is intended for enterprise deployments and usually paired with plaintext storage.
+
+Here, **keyless** means a genuine token-only credential: bearer token only, with no
+recovery secret, Account machine key, Account content key, or fabricated replacement.
+Older documentation that inferred keyless behavior only from
+`Account.publicKey == null` is superseded. Credential shape, current Account mode, and
+the persisted representation of an existing row are separate facts.
 
 Server operators control which role(s) are enabled via `/v1/features` (policy + feature env vars). Clients should not guess.
 
@@ -96,16 +105,35 @@ Each method can advertise multiple actions:
 And each action declares its account key mode:
 
 - `keyed`: device-key account (default Happier model)
-- `keyless`: no device keys (enterprise mode; typically paired with plaintext storage)
+- `keyless`: no Account E2EE private material is required or persisted in the
+  token-only credential (enterprise mode; typically paired with plaintext storage)
 
 ## Keyless authentication (enterprise)
 
-Some deployments want accounts to exist **without device keys** (for example: company-managed identity, server-side indexing/search, and simpler multi-device behavior).
+Some deployments want accounts to work **without client-held Account E2EE private
+material** (for example: company-managed identity, server-side indexing/search, and
+simpler multi-device behavior). A previously E2EE Account may retain public
+verification anchors/fingerprints on the server; those values cannot decrypt content
+and are not part of a token-only credential. A truly keyless Account has no such
+public Account bindings. A client may still create a private device-local key for
+local cache or daemon restart secrets. That key is not an Account key, is not
+uploaded, and is not required to authenticate on another device.
 
-Happier currently supports keyless login via:
+The target keyless contract supports authentication via:
 
 - [mTLS auth](./auth-mtls)
 - keyless OAuth login (GitHub/OIDC) when enabled by feature env vars
+
+Bearer/external authentication is enough to authorize a plain account. It does not
+derive or substitute for Account E2EE material.
+
+:::caution Activation status
+The complete token-only OAuth/OIDC/GitHub/mTLS, UI, and daemon onboarding flow is
+still activation-closed while the remaining account-data migrations and composed
+checks land. The settings below describe the fail-closed activation contract; their
+presence does not mean the genuine-keyless product flow is currently ready for
+production enablement.
+:::
 
 Keyless account auto-provisioning is intentionally guarded:
 
@@ -121,6 +149,7 @@ Recommended hardening for plaintext/keyless deployments:
 
 - seal plaintext account settings at rest: `HAPPIER_FEATURE_ENCRYPTION__PLAIN_ACCOUNT_SETTINGS_AT_REST=server_sealed` (default)
 - seal plaintext account connected-service credentials at rest: `HAPPIER_FEATURE_ENCRYPTION__PLAIN_ACCOUNT_CREDENTIALS_AT_REST=server_sealed` (default)
+- seal plaintext account Artifacts at rest: `HAPPIER_FEATURE_ENCRYPTION__PLAIN_ACCOUNT_ARTIFACTS_AT_REST=server_sealed` (default)
 
 Note: `HAPPIER_FEATURE_ENCRYPTION__DEFAULT_ACCOUNT_MODE` controls only the default mode for **keyed** accounts and new sessions when the storage policy is `optional`. It does not gate keyless auto-provisioning.
 
@@ -136,7 +165,10 @@ When only one mode is available, the client should auto-select it (no extra scre
 
 On `plaintext_only` servers, clients should automatically choose plaintext. On `required_e2ee` servers, clients should not offer plaintext/keyless choices.
 
-### Operator recipes (recommended)
+This provisioning choice is the post-activation behavior. Until the activation status
+above changes, operators should keep keyless provisioning disabled.
+
+### Operator recipes
 
 **E2EE-only (public server) + GitHub required**
 
@@ -148,7 +180,7 @@ AUTH_SIGNUP_PROVIDERS=github
 AUTH_REQUIRED_LOGIN_PROVIDERS=github
 ```
 
-**Keyless-only (enterprise) + plaintext-only + GitHub required**
+**Keyless-only (enterprise) + plaintext-only + GitHub required — post-activation**
 
 ```bash
 HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY=plaintext_only
@@ -163,7 +195,7 @@ HAPPIER_FEATURE_AUTH_OAUTH__KEYLESS_PROVIDERS=github
 HAPPIER_FEATURE_AUTH_OAUTH__KEYLESS_AUTO_PROVISION=1
 ```
 
-**Optional encryption (enterprise) + OAuth provisioning choice (GitHub)**
+**Optional encryption (enterprise) + OAuth provisioning choice (GitHub) — post-activation**
 
 ```bash
 HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY=optional
@@ -189,6 +221,8 @@ HAPPIER_FEATURE_ENCRYPTION__ALLOW_ACCOUNT_OPTOUT=1
 - **Clients first is usually safe** for keyed accounts (device-key model), because older servers still accept the core `/v1/auth` login flow.
 - **Do not enable `plaintext_only`** until you have clients that support plaintext storage (older clients will fail because encrypted writes are rejected).
 - If you enable **keyless OAuth auto-provisioning**, ensure your clients are new enough to understand the keyless flows advertised by `/v1/features` (otherwise users may see missing buttons or failed sign-in attempts).
+- During the current expansion phase, keep keyless auto-provisioning disabled even if
+  a development client can parse the advertised contracts.
 
 ## OAuth return URL (required for GitHub/OIDC self-hosting)
 

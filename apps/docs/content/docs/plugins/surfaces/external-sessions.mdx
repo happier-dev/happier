@@ -13,6 +13,10 @@ activation binds that exact local id.
 Import the authoring contract from its final capability path,
 `@happier-dev/plugin-sdk/sessions/external`.
 
+> **Development/preview contract.** This page describes the current source-level
+> authoring and host behavior. It does not claim that loaded or packaged
+> release artifacts expose this surface.
+
 ## Low-level ABI equivalent
 
 The following direct `PluginApi` shape explains the generated binding for host
@@ -39,6 +43,33 @@ The contribution has exactly six required methods:
 - `resolveLinkedIdentity`
 - `pageTranscript`
 - `readAfterTranscript`
+
+## Callback invocation services
+
+Each of the six callbacks receives the host's bounded invocation controls
+(`signal`, `deadlineAtMs`, and `maxSerializedBytes`) plus two host-provided
+services: `managedEndpointRead` and the required existing `exec`
+(`ExecService`). `exec` remains governed by the Agent manifest's declared
+process/tool host access and the current plugin generation. Reuse its existing
+process and protocol-client facilities; this surface does not add a process
+subsystem, HTTP bridge, callback, registry, or Agent-id host branch. For
+example, the current Codex source reuses its existing app-server JSON-RPC
+`thread/list` client through this service for native candidate discovery.
+
+`resolveSource`, `resolveLinkIdentity`, and `resolveLinkedIdentity` may return
+optional bounded `transcriptMediaReadRoots` (up to 16 absolute roots, each no
+more than 4,096 code units in the current preview contract). The host
+normalizes and validates this transient producer evidence, then uses it only to
+authorize concrete media files referenced by transcript items through the
+existing exact-file media allowance/adoption path. Roots are never copied into
+`linkData`, persisted or shared state, or transcript records; they grant no
+directory-enumeration or write authority.
+
+Bundled and externally loaded plugins use the same contribution, invocation,
+and host-access contract. The six callback methods remain exactly six; the
+`exec` service is an invocation input, not a seventh callback or host-service
+operation. The contextual `services.sessions.external` surface described below
+also remains exactly six operations.
 
 ## Transcript records
 

@@ -96,3 +96,12 @@ replaying a mutation:
 ```bash
 happier plugins show com.example.my-plugin
 ```
+
+## Review rejoin after a daemon restart
+
+A pending review ID is rejoinable only during the same daemon lifetime. If
+`happier plugins change status <pendingChangeId> --json` reports `expired`
+after a daemon restart, rerun the original development or install request and
+review the newly prepared facts; do not reuse the old pending ID. This is not
+the same as `outcome_unknown`: inspect installed state before deciding whether
+to replay that mutation.

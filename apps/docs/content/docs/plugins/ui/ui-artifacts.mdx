@@ -8,10 +8,12 @@ Plugin UI artifacts are written to:
 ```text
 dist/happier-plugin-ui/
   ui-artifacts.json
-  hosted-web/<contributionId>/...
+  hosted-web/<contributionId>/...             # one portable Vite graph
   react-native/<contributionId>/...           # ios/android, Re.Pack-built
   react-native-web/<contributionId>/...       # web, Vite + react-native-web-built
 ```
+
+The hostedWeb scaffold emits the packaged artifact and canonical bootstrap contract; packaged runtime support remains unavailable until the platform-specific frame adapter is present and verified. An emitted hosted-web directory is not an advertised runtime contract by itself.
 
 A React Native contribution can emit platform-specific entries distinguished by
 `platform` and `builtWith.bundler` (`repack` for iOS/Android and `vite` for
@@ -33,20 +35,42 @@ The command discovers one of these config files at the plugin root:
 `happier-plugin-ui.config.ts`. It also accepts `--config <path>` and prints the
 same contract with `--help`.
 
-The generated config uses the public SDK build surface:
+The React Native scaffold uses the public SDK build surface and declares every
+Preview artifact it is responsible for. Its generated Vite and Re.Pack configs
+are part of the package; do not replace them with a web-only target or a
+second hand-run bundler path:
 
 ```ts
-import { definePluginUiBuildConfig } from '@happier-dev/plugin-sdk/ui/build';
+import { defineBuildConfig } from '@happier-dev/plugin-sdk/ui/build';
 
-export default definePluginUiBuildConfig({
+export default defineBuildConfig({
   targets: [{
-    rendererId: 'main',
+    rendererId: 'main-native',
     entry: 'src/ui/renderSurface.tsx',
     kind: 'reactNative',
-    platforms: ['web'],
+    platforms: ['web', 'ios', 'android'],
+    module: {
+      containerName: 'com_example_my_plugin_main_native',
+      modulePath: './renderSurface',
+      exportName: 'renderSurface',
+    },
   }],
 });
 ```
+
+The hosted scaffold instead declares one graph with no `platforms` field:
+
+```ts
+{
+  rendererId: 'main-web',
+  entry: 'ui/index.ts',
+  kind: 'hostedWeb',
+}
+```
+
+The platform-admission owner, not this build config, decides whether that exact
+hosted graph is usable in a browser/desktop frame, iOS WebView, or Android
+WebView.
 
 If no config is found, the config is invalid, or it declares no targets, the
 command exits non-zero with an actionable error.

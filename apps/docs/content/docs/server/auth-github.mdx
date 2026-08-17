@@ -73,9 +73,17 @@ Troubleshooting:
 - If you see an error like “provider already linked”, it means this GitHub identity is already connected to an existing Happier account on that server.
 - Use **device-key restore** on this device/browser, then continue.
 
-## Keyless GitHub login (optional, enterprise)
+## Keyless GitHub login contract (activation pending)
 
-Happier can also use GitHub OAuth as a **keyless login method** (no device keys).
+The target plaintext-account flow can use GitHub OAuth as a **keyless login method**.
+Keyless means a bearer-token credential with zero Account E2EE material, not a
+device-generated replacement key.
+
+The complete token-only UI/daemon flow is currently activation-closed while
+account-data migrations and composed checks finish. Keep keyless auto-provisioning
+disabled in production until the [Server Auth](/server/auth) rollout warning is
+removed. The variables below document the activation contract; their presence does
+not prove the flow is active.
 
 This is intended for enterprise deployments where:
 - you want seamless sign-in across devices (no restore key prompts), and
@@ -102,9 +110,11 @@ HAPPIER_FEATURE_AUTH_OAUTH__KEYLESS_AUTO_PROVISION=1
 ```
 
 Notes:
-- Keyless GitHub login is **separate** from keyed GitHub signup. You can enable either or both.
+- After activation, keyless GitHub login is **separate** from E2EE GitHub signup.
 - `HAPPIER_FEATURE_ENCRYPTION__DEFAULT_ACCOUNT_MODE` controls only the default for **keyed** accounts under `optional`; it does not gate keyless provisioning.
-- On `HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY=optional`, the client may offer a **choice** on first login (E2EE vs plaintext) when GitHub is enabled for both keyed provisioning and keyless auto-provisioning. See [Server Auth](/server/auth).
+- After activation, an `optional` server may offer a first-login **choice** (E2EE vs
+  plaintext) when GitHub supports both E2EE provisioning and token-only provisioning.
+  See [Server Auth](/server/auth).
 
 ### Auto-redirect (GitHub-only deployments)
 

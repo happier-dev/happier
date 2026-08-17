@@ -40,6 +40,7 @@
     "session-modes",
     "pending-queue",
     "steering",
+    "claude-unified-terminal",
     "participant-routing",
     "subagents",
     "tool-timeline",

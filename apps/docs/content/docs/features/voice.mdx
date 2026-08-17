@@ -8,9 +8,12 @@ Happier supports these voice modes in **Settings → Voice**:
 - **Off**: disables conversational Voice modes. Composer **Dictation** remains available when the Voice feature is enabled.
 - **Happier Voice**: realtime ElevenLabs voice using Happier-managed credentials and server-side quotas.
 - **Use my ElevenLabs**: realtime ElevenLabs voice using your own API key and agent.
-- **OpenAI Realtime**: WebRTC voice using either a saved Voice API key or an explicitly selected OpenAI Connected Service.
-- **Codex Live (experimental)**: WebRTC voice attached to an exact Codex session, with coding work, tools, and permissions remaining under that session's canonical owners.
+- **OpenAI Realtime (development)**: WebRTC voice on web, iOS, and Android using either a saved Voice API key or an explicitly selected OpenAI Connected Service.
+- **Codex Live (experimental development)**: WebRTC voice on web, iOS, and Android attached to an exact Codex session, with coding work, tools, and permissions remaining under that session's canonical owners.
+- **xAI Grok Voice (development)**: realtime voice on web, iOS, and Android using the selected xAI credential through Happier's shared PCM conversation host.
 - **Local voice**: a configurable STT/TTS pipeline with device, self-hosted, Google, and local-neural providers.
+
+OpenAI Realtime, Codex Live, and xAI Grok Voice are implemented for web, iOS, and Android in the current development source. The current development source also adds native ElevenLabs support through the same provider lifecycle used on web. These native additions are not yet available in released Happier builds. Native release claims still require a current packaged build and physical-device audio certification. The sections below describe that development behavior.
 
 ## Start here
 
@@ -18,8 +21,9 @@ If you only need one rule of thumb:
 
 - choose **Happier Voice** for the simplest “just works” realtime voice experience
 - choose **Use my ElevenLabs** if you want full control over your own ElevenLabs account and agent
-- choose **OpenAI Realtime** for OpenAI WebRTC voice with an explicit saved-secret or Connected Service authentication source
-- choose **Codex Live** when you want an experimental realtime conversation attached to an existing or global hidden Codex session
+- in a current development build, choose **OpenAI Realtime** for OpenAI WebRTC voice with an explicit saved-secret or Connected Service authentication source
+- in a current development build, choose **Codex Live** when you want an experimental realtime conversation attached to an existing or global hidden Codex session
+- in a current development build, choose **xAI Grok Voice** for xAI's realtime conversation with host-owned microphone capture and playback
 - choose **Local voice** if you want device speech, self-hosted endpoints, or on-device neural speech
 
 **Dictation** is separate from these conversational modes. Use the microphone in a session composer to transcribe one bounded utterance into the draft, including when the conversational Voice mode is **Off**.
@@ -112,11 +116,11 @@ Use it when you want:
 
 Happier Voice is available only when the connected server advertises it through `/v1/features`.
 
-### Native background audio
+### Native audio lifecycle
 
-On native builds, active realtime ElevenLabs calls use a call-style audio mode so the conversation can continue more reliably when the app is backgrounded or the screen locks.
+In current development native builds, realtime ElevenLabs uses the same attempt, credential, tools, transcript, cancellation, and retirement lifecycle as the web provider. Happier remains the owner of the native call-style audio session; the ElevenLabs native adapter configures only the provider SDK's WebRTC setup.
 
-This background-call behavior applies to the realtime ElevenLabs path, not to Local voice.
+Background and lock-screen behavior still depends on the operating system and has not yet received packaged physical-device certification. This call-style behavior applies to the realtime ElevenLabs path, not to Local voice.
 
 ## Use my ElevenLabs
 
@@ -136,8 +140,7 @@ In **Settings → Voice → Use my ElevenLabs**, you can configure:
 - **Agent ID**
 - **Voice**
 - **Realtime model**
-- **Speaker boost**
-- **Voice tuning** such as stability, similarity, style, and speed
+- **Voice tuning** such as stability, similarity, and speed
 - **Welcome mode**
 
 The voice picker is searchable and supports inline preview playback, so you can audition voices before choosing one.
@@ -171,6 +174,8 @@ This is the easiest way to keep your ElevenLabs agent aligned with Happier’s c
 
 **OpenAI Realtime** sends the live audio and conversation from your device to OpenAI over WebRTC. Choose exactly one authentication source:
 
+This mode is currently development-only on web, iOS, and Android. It is not yet available in released Happier builds, and native audio remains subject to packaged physical-device certification.
+
 - **Saved Voice API key**: stored in Happier account secrets and materialized only while minting short-lived Realtime client authentication. This is the standalone option and does not require a daemon.
 - **OpenAI Connected Service**: uses the exact selected OpenAI profile or account group through the selected machine and its connected daemon.
 - **OpenAI Codex OAuth (experimental)**: uses the exact selected Codex OAuth profile or account group through the selected machine and its connected daemon.
@@ -181,12 +186,25 @@ Happier does not fall back from one source, key, account, or provider to another
 
 **Codex Live** sends the live audio and Codex Live conversation from your device to OpenAI over WebRTC while the selected Codex session runs on the selected machine.
 
+This mode is currently experimental and development-only on web, iOS, and Android. It is not yet available in released Happier builds, and native audio remains subject to packaged physical-device certification.
+
 - **Direct Voice** attaches to the exact Codex session you opened it from.
 - **Global Voice** uses the selected machine, directory, permission intent, and Connected Services account to create or reuse an exact matching hidden Codex session.
 - OpenAI may receive bounded startup and session context plus delegated Codex results so the conversation can continue and responses can be spoken.
 - Happier's server and relay do not carry Codex Live audio. The daemon and Codex app-server still participate in signaling, session lifecycle, delegation, tools, and permission control. Provider-operated network relays may participate.
 
 Codex Live uses the selected session's canonical authentication and never falls back to OpenAI Realtime, a different account, or a different provider.
+
+## xAI Grok Voice
+
+**xAI Grok Voice** uses xAI's realtime Voice connection with live PCM microphone capture and playback owned by Happier's shared Voice media lifecycle.
+
+This mode is currently development-only on web, iOS, and Android. It is not yet available in released Happier builds, and native audio remains subject to packaged physical-device certification.
+
+- Happier uses the configured xAI API key only for bounded client-auth minting and voice-catalog operations.
+- Web and native use the same public provider runtime, protocol translation, transcript admission, tools, interruption, cancellation, and retirement behavior.
+- Native capture and playback share Happier's existing audio-session, AEC, route, and lifecycle owner rather than creating a provider-specific native audio stack.
+- If conversation resumption is enabled, Happier retains the provider conversation ID. Forgetting it removes Happier's saved ID; it does not delete data retained by xAI.
 
 ## Local voice
 
@@ -294,11 +312,11 @@ Use **Local voice**.
 
 ### I want OpenAI realtime voice
 
-Use **OpenAI Realtime**, then explicitly choose either the standalone saved-secret source or a Connected Service source.
+In a development web build, use **OpenAI Realtime**, then explicitly choose either the standalone saved-secret source or a Connected Service source.
 
 ### I want realtime voice attached to Codex
 
-Use **Codex Live (experimental)** and choose the exact session or global Voice account and machine you want to use.
+In a development web build, use **Codex Live (experimental)** and choose the exact session or global Voice account and machine you want to use.
 
 ### I want speech input without turning every utterance into a session message
 

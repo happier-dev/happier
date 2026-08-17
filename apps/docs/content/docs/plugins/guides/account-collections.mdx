@@ -1,0 +1,89 @@
+---
+title: Account Collections migrations
+description: Declare one Collection contract and migrate its rows through the candidate-local callback projection.
+---
+
+Use Account Collections when a plugin needs Account-scoped structured data. The
+installed SDK's `capability-matrix.json` is the availability authority; this
+guide explains the available `accountCollections` task without creating another
+catalog. “Available” here means the current source author contract, not public
+package or release availability.
+
+## One declaration, one ordered migration chain
+
+Keep the schema and each adjacent migration edge in one
+`defineAccountCollection(...)` declaration. `definePlugin(...)` projects the
+static manifest identity (`id`, source version, target version, and migration
+id) into the cold manifest, while the migration callback stays candidate-local.
+Do not hand-author a second manifest migration list or a separate callback map.
+
+```ts
+import { definePlugin } from '@happier-dev/plugin-sdk';
+import { defineAccountCollection } from '@happier-dev/plugin-sdk/collections';
+
+const reviewStatuses = defineAccountCollection({
+  id: 'review-statuses',
+  schemaVersion: 2,
+  schema: {
+    type: 'object',
+    properties: {
+      id: { type: 'string', minLength: 1 },
+      title: { type: 'string', minLength: 1 },
+      status: { type: 'string', enum: ['open', 'done'] },
+    },
+    required: ['id', 'title', 'status'],
+    additionalProperties: false,
+  },
+  rowIdField: 'id',
+  serverReadable: ['title', 'status'],
+  indexes: [{
+    id: 'by-status',
+    fields: [{ field: 'status', direction: 'asc' }],
+  }],
+  uiQueries: [],
+  relations: [],
+  migrations: [{
+    id: 'review-statuses-v1-to-v2',
+    fromSchemaVersion: 1,
+    toSchemaVersion: 2,
+    migrate(value) {
+      const legacy = value as Readonly<{ id: string; title: string; done: boolean }>;
+      return {
+        id: legacy.id,
+        title: legacy.title,
+        status: legacy.done ? 'done' : 'open',
+      };
+    },
+  }],
+});
+
+export const { manifest, activate } = definePlugin({
+  id: 'com.example.review-statuses',
+  version: '0.1.0',
+  accountCollections: {
+    'review-statuses': reviewStatuses,
+  },
+});
+```
+
+The host accepts one ordered source-to-target chain only: each callback must
+match its declared migration id and adjacent source/target versions in order.
+The callback receives the already-admitted source row and returns the target
+row. It does not select an Account, Collection, storage writer, or retry loop.
+
+## Failure, retry, and rollback
+
+A migration failure rejects that candidate's preparation or transition; do not
+catch it and silently write an alternate shape. Correct the source declaration
+or callback and let the ordinary development or install flow prepare a new
+candidate. The host owns retry and currentness around the admitted transition.
+
+Rollback is a generation/lifecycle decision, not an invitation to invent a
+reverse callback. If a prior compatible candidate is retained, use the normal
+plugin rollback flow. Plan a new explicit forward migration when the data
+contract must change again, and keep its source and target versions adjacent.
+
+For a maintained direct-Data example without a migration, see the installed
+`examples/projects-tasks/` package. Its Collection declaration remains the
+canonical UI/client pattern; add a migration only when a real row contract
+changes.

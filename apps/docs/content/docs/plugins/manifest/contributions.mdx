@@ -10,8 +10,8 @@ description: Contribution families that a plugin can declare for projection and 
 | Family | Purpose | Code-defined author field |
 | --- | --- | --- |
 | `actions` | User, CLI, MCP, and session-agent operations | `actions.<id>.run` |
-| `tools` | Declarative tool-facing wrappers around actions | manifest action reference |
-| `commands` | Declarative CLI entries around actions | manifest action reference |
+| `tools` | **Deferred — conformance only.** Declarative tool-facing wrappers around actions | manifest action reference |
+| `commands` | **Deferred — conformance only.** Declarative CLI entries around actions | manifest action reference |
 | `hooks` | Host extension points | `hooks.<id>.handler` |
 | activation cleanup | Plugin-owned resources from a successful activation | cleanup function returned by `setup` |
 | `events` | Plugin-authored event ids and payload schemas | `context.services.events` in invoked handlers |
@@ -22,15 +22,26 @@ description: Contribution families that a plugin can declare for projection and 
 | `scmHostingProviders` | Remote forge and hosting-service integration | `scmHostingProviders.<id>.runtime` |
 | `scmBackends` | Local repository and working-tree integration | `scmBackends.<id>.runtime` |
 | `settings` | Typed settings descriptors | `context.services.settings` in invoked handlers |
-| `openableContentViewers` | Declarative matching for host-opened content and its plugin-owned viewer | direct same-plugin `contributes.ui.views` destination |
-| MCP servers | Hosted or managed MCP server descriptors | `mcp.servers.<id>.runtime` when dynamic |
+| `openableContentViewers` | **Deferred — conformance only.** Declarative matching for host-opened content and its plugin-owned viewer | direct same-plugin `contributes.ui.views` destination |
+| MCP servers | **Deferred — conformance only.** Hosted or managed MCP server descriptors | `mcp.servers.<id>.runtime` when dynamic |
 | MCP discovery | Runtime MCP discovery | `mcp.discoverySources.<id>.discover` |
 | UI | Host-rendered descriptors or React Native surfaces; hosted web is currently unavailable pending an Artifact-backed frame adapter | generated artifact tree where executable UI is declared |
 | `managedDependencies` | Host-managed tool/runtime dependencies | dependency installer/validator |
 | `voiceModelPacks` | Immutable STT/TTS model and voice assets for host-owned engines | none; declarative data only |
 | `voiceProviders` | Conversation, STT, and TTS providers with strict settings, catalogs, limits, and credential declarations (supported preview) | `voiceProviders.<id>.runtime` when the declared realm needs one |
+| `sessionHeaderActions` | **Deferred — conformance only.** Declarative Session-header actions | manifest command reference |
 
-The exact availability of a family depends on the current Happier version. Runtime demand is derived from the contribution declarations; Manifest V2 has no separate `uses[]` owner.
+The installed SDK's generated `capability-matrix.json` is the sole availability
+authority. This catalog describes shapes and author fields; it does not create
+a second availability list. A `deferred` row is conformance-only reference
+material, not a supported product lifecycle. Runtime demand is derived from
+the contribution declarations; Manifest V2 has no separate `uses[]` owner.
+
+**Deferred — conformance only:** `composer.references`,
+`composer.attachments`, `composer.controls`, and `composer.regions` remain
+visible in the author surface for conformance, but are not product availability
+claims. The matrix also owns the current status of `tools`, `commands`,
+`sessionHeaderActions`, `openableContentViewers`, and `mcp.servers`.
 
 ## Cross-plugin contribution points
 
@@ -48,10 +59,12 @@ them from a raw manifest. Required roles must be bound; optional roles may be
 absent. The host admits compatible current target and contributor generations,
 so a contributor remains otherwise usable when its target is absent.
 
-The first public author route is operation-only. Descriptor and embedded-renderer
-contribution roles are not a current external-author product. Do not infer a
-renderer, route, container, `appPage`, or callback registration from a generic
-feature-protocol constructor.
+Descriptor, operation, and embedded-surface roles are public authoring
+contracts. A target reads its exact admitted point with
+`context.services.targetedContributions.observeForSelf(...)`; a contributor
+binds the declared descriptor, Actions, and renderer chain through the same
+feature-owned protocol value. A role does not itself select a renderer, route,
+container, `appPage`, or callback registration.
 
 `contributes` is the host-normalized manifest shape. Source authors do not
 write it directly: use `contributionPoints` and `contributesTo` so the typed
@@ -63,7 +76,7 @@ the ordinary target and contributor workflow.
 
 Settings, UI surfaces, managed dependencies, notification categories, agent runtime capabilities, and projected display metadata should be descriptor-first. The manifest describes them; executable code only handles the dynamic behavior the descriptor references.
 
-## Openable content viewers (experimental)
+## Openable content viewers (deferred — conformance only)
 
 `contributes.openableContentViewers` declares a plugin-owned viewer for content
 the host can open. Each row has a local `id`, a required `destination`, and one
@@ -98,6 +111,10 @@ Agent-native commands, model lists, active account state, transcript lines, runt
   and TTS.
 - [Background services](/plugins/guides/background-services) covers
   daemon-generation work.
+- [Account Collections](/plugins/guides/account-collections) covers the
+  static declaration and candidate-local migration callback boundary.
+- [Webhooks](/plugins/guides/webhooks) covers verified ingress declarations,
+  Actions, and fixtures without taking endpoint or secret ownership.
 
 ## Voice model packs
 

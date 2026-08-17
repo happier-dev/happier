@@ -9,10 +9,14 @@ If you do not set any retention env vars, the server keeps sessions and other re
 
 ## What retention currently covers
 
-Retention is implemented as one server-side sweep worker with per-domain rules. ITt can clean up:
+Retention is implemented as one server-side sweep worker backed by one domain registry. Each registry
+entry owns its domain id, environment keys, policy shape, and deletion rule, so configuration parsing,
+execution, and public disclosure cannot silently maintain different domain lists. It can clean up:
 
 - Sessions
+- Subagent and other sidechain transcript messages
 - Account changes
+- Usage events
 - Voice session leases
 - User feed items
 - Session share access logs
@@ -39,7 +43,25 @@ When `HAPPIER_SERVER_RETENTION__SESSIONS__MODE=delete_inactive`, the server dele
 
 This means the server does not need to inspect or decrypt stored transcript content to apply the current session rule.
 
-Happier does **not** currently prune individual old messages inside an otherwise-kept session. Retention deletes whole inactive sessions.
+The session rule does not prune individual messages inside an otherwise-kept session. A separate
+sidechain transcript policy can remove old subagent and other sidechain transcripts while preserving
+the session's main transcript.
+
+## How sidechain transcript retention works
+
+Set a shorter sidechain policy when users should retain old main sessions but do not need every old
+subagent transcript:
+
+```bash
+HAPPIER_SERVER_RETENTION__SESSION_SIDECHAIN_MESSAGES__MODE=delete_older_than
+HAPPIER_SERVER_RETENTION__SESSION_SIDECHAIN_MESSAGES__DAYS=7
+```
+
+The server deletes a sidechain only when its newest stored message is older than the cutoff. A
+sidechain with any newer message is preserved in full. Main transcript messages, whose `sidechainId`
+is empty, are never selected by this rule. The worker scans and deletes in bounded batches using the
+existing transcript index, so it does not need to inspect or decrypt message content or monopolize the
+database for one unbounded scan.
 
 ## Default behavior
 
@@ -56,9 +78,11 @@ These env vars control the retention worker itself:
 
 ```bash
 HAPPIER_SERVER_RETENTION__ENABLED=1
-HAPPIER_SERVER_RETENTION__INTERVAL_MS=21600000
-HAPPIER_SERVER_RETENTION__BATCH_SIZE=100
-HAPPIER_SERVER_RETENTION__MAX_DELETES_PER_RULE_PER_RUN=1000
+HAPPIER_SERVER_RETENTION__INTERVAL_MS=3600000
+HAPPIER_SERVER_RETENTION__BATCH_SIZE=500
+HAPPIER_SERVER_RETENTION__MAX_DELETES_PER_RULE_PER_RUN=100000
+HAPPIER_SERVER_RETENTION__MAX_CANDIDATES_PER_RULE_PER_RUN=10000
+HAPPIER_SERVER_RETENTION__SWEEP_TIME_BUDGET_MS=10000
 HAPPIER_SERVER_RETENTION__DRY_RUN=0
 ```
 
@@ -67,18 +91,35 @@ HAPPIER_SERVER_RETENTION__DRY_RUN=0
   - `1`: retention worker can run if at least one domain has a finite policy
 - `HAPPIER_SERVER_RETENTION__INTERVAL_MS`
   - sweep interval in milliseconds
-  - default: `21600000` (6 hours)
+  - default: `3600000` (1 hour)
 - `HAPPIER_SERVER_RETENTION__BATCH_SIZE`
-  - maximum number of candidates each rule evaluates in one sweep
-  - default: `100`
+  - maximum number of rows selected or deleted in one database page
+  - default: `500`
 - `HAPPIER_SERVER_RETENTION__MAX_DELETES_PER_RULE_PER_RUN`
   - hard cap per rule for actual deletions in one sweep
-  - default: `1000`
+  - default: `100000`
+- `HAPPIER_SERVER_RETENTION__MAX_CANDIDATES_PER_RULE_PER_RUN`
+  - hard cap on candidate records examined by one rule in one sweep
+  - default: `10000`
+- `HAPPIER_SERVER_RETENTION__SWEEP_TIME_BUDGET_MS`
+  - wall-time budget shared by the complete sweep
+  - default: `10000` (10 seconds)
 - `HAPPIER_SERVER_RETENTION__DRY_RUN`
   - `1`: log what would be deleted without deleting it
   - `0` or unset: apply deletions normally
 
-The retention worker runs once on server startup, then continues on the configured interval. Successful runs are logged with per-rule delete counts and whether the run was a dry run.
+The retention worker reads these values at server startup, runs one sweep immediately, then continues
+on the configured interval. Restart the server after changing retention configuration. Within a
+sweep it gives each enabled domain one bounded database page in registry order, then starts another
+round for domains that still have work. It stops when the data is exhausted or a row, candidate, or
+wall-time budget is reached. The next scheduled sweep resumes sidechain discovery from a persisted
+cursor. Successful runs log per-rule delete counts, candidates examined, database pages, stop reasons,
+and whether the run was a dry run.
+
+The one-hour default keeps expiry reasonably current and gives a backlogged server up to 24 bounded
+cleanup opportunities per day. Lower intervals are supported, but keep the interval comfortably above
+the sweep time budget. The worker skips overlapping runs in one process and uses a database lock to
+prevent multiple server replicas from sweeping at the same time.
 
 ## Session policy env vars
 
@@ -112,7 +153,9 @@ Supported age-based modes:
 
 Supported domain names:
 
+- `SESSION_SIDECHAIN_MESSAGES`
 - `ACCOUNT_CHANGES`
+- `USAGE_EVENTS`
 - `VOICE_SESSION_LEASES`
 - `USER_FEED_ITEMS`
 - `SESSION_SHARE_ACCESS_LOGS`
@@ -146,11 +189,15 @@ For many self-hosted setups, a good first production policy is:
 
 ```bash
 HAPPIER_SERVER_RETENTION__ENABLED=1
-HAPPIER_SERVER_RETENTION__INTERVAL_MS=21600000
-HAPPIER_SERVER_RETENTION__BATCH_SIZE=100
-HAPPIER_SERVER_RETENTION__MAX_DELETES_PER_RULE_PER_RUN=1000
+HAPPIER_SERVER_RETENTION__INTERVAL_MS=3600000
+HAPPIER_SERVER_RETENTION__BATCH_SIZE=500
+HAPPIER_SERVER_RETENTION__MAX_DELETES_PER_RULE_PER_RUN=100000
+HAPPIER_SERVER_RETENTION__MAX_CANDIDATES_PER_RULE_PER_RUN=10000
+HAPPIER_SERVER_RETENTION__SWEEP_TIME_BUDGET_MS=10000
 HAPPIER_SERVER_RETENTION__SESSIONS__MODE=delete_inactive
 HAPPIER_SERVER_RETENTION__SESSIONS__INACTIVITY_DAYS=30
+HAPPIER_SERVER_RETENTION__SESSION_SIDECHAIN_MESSAGES__MODE=delete_older_than
+HAPPIER_SERVER_RETENTION__SESSION_SIDECHAIN_MESSAGES__DAYS=7
 HAPPIER_SERVER_RETENTION__ACCOUNT_CHANGES__MODE=delete_older_than
 HAPPIER_SERVER_RETENTION__ACCOUNT_CHANGES__DAYS=30
 HAPPIER_SERVER_RETENTION__TERMINAL_AUTH_REQUESTS__MODE=delete_older_than
@@ -161,19 +208,27 @@ HAPPIER_SERVER_RETENTION__ACCOUNT_AUTH_REQUESTS__DAYS=7
 
 ## What users see in the app
 
-When a client is connected to a server with a finite retention policy, Happier surfaces that policy in the UI so users understand what the server keeps and what it eventually deletes.
+Happier surfaces the server's complete retention policy so users understand what it keeps and what it
+eventually deletes. The UI renders the server-provided domain list generically, including domain ids a
+newer server adds before the client has a dedicated label.
 
 Today that information is exposed in:
 
 - the active server settings screen
+- the login and registration entry screen, before authentication
 - session info for sessions affected by finite session retention
-- saved server rows, when a known server advertises finite session retention
+- saved server rows
 
-Clients learn the server policy from `GET /v1/features`, under `capabilities.server.retention`.
+Clients first read the unauthenticated `GET /v2/retention-policy` endpoint. It returns a complete array
+of effective domains. Older servers fall back to `GET /v1/features`, under
+`capabilities.server.retention`; that legacy response is explicitly treated as partial because v1
+cannot represent message-level or usage-event policies. This keeps independently upgraded servers
+parseable by released strict v1 clients.
 
 ## Operational notes
 
 - Session retention is based on server-side metadata such as `updatedAt`, `lastActiveAt`, and `active`, not by decrypting stored messages.
+- Sidechain transcript retention uses server ingestion timestamps and deletes only wholly expired sidechains; it does not decrypt message content.
 - Account change retention can advance the server `changesFloor`. After old account changes are pruned, very old `/v2/changes` cursors can become invalid and return `410 cursor-gone`.
 - Retention deletes are permanent. There is no built-in quarantine or archive stage before deletion.
 - Like any timestamp-based cleanup system, retention depends on accurate server time and correct stored timestamps. If you manually corrupt timestamps in the database or run with a badly wrong system clock, the policy can make wrong decisions.

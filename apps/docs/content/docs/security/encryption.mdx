@@ -5,8 +5,10 @@ description: How Happier session encryption, secret-key restore, and plaintext s
 
 Happier supports two account/storage models:
 
-- **Device-key accounts (default)**: session content is encrypted before the server stores it
-- **Plaintext storage deployments**: the server stores new session content in plaintext instead of encrypted-at-rest form
+- **Device-key/E2EE accounts (default)**: supported content is encrypted before the
+  server stores it
+- **Plaintext accounts and Sessions**: server-shared values use explicit plain
+  envelopes that the live server can read
 
 This page explains what that means as a user, what your secret key is for, and what changes when a deployment enables plaintext storage.
 
@@ -30,7 +32,9 @@ You use it when you need to restore access on a new browser or device, for examp
 - after signing in on a second computer,
 - after reinstalling the app on a new phone.
 
-Without restore, the new device can still authenticate to your account, but it cannot decrypt older encrypted session data yet.
+Without restore or a successful key challenge, the new device cannot complete normal
+access to an E2EE account. An external identity check by itself is not a replacement
+for the missing E2EE material.
 
 ## Where restore happens
 
@@ -68,6 +72,40 @@ When plaintext storage mode is enabled for your deployment:
 - restore flows may be simpler because stored session content is not tied to a per-device decryption state,
 - authentication, access control, and transport security still matter exactly as before.
 
+A genuine plaintext account needs no recovery secret or Account encryption key.
+External identity or bearer-token authentication can be sufficient to sign in; it
+does not secretly create a replacement encryption key. Local caches and daemon restart
+secrets may still be protected by a device-local key that never leaves that device.
+A previously E2EE Account may retain non-decrypting public verification
+anchors/fingerprints on the server, while its token-only credentials still contain no
+Account private material. A truly keyless Account has no such public bindings.
+
+The complete genuine-keyless sign-in and onboarding flow is still being activated
+behind fail-closed rollout gates. Until your operator explicitly confirms that rollout
+is complete, do not assume that a server advertising plaintext storage also supports
+token-only onboarding.
+
+## When older encrypted data is locked
+
+Changing an Account default does not reinterpret or erase existing encrypted data.
+An older encrypted Session or account-scoped value still needs its original E2EE
+material.
+
+If the current device does not have that material, Happier should show the value as
+**locked** or **migration required**. It must not silently show an empty transcript,
+empty settings, an empty Todo list, or a missing Artifact/Automation/Machine record.
+
+Safe next actions are:
+
+- restore the original E2EE material on a trusted device;
+- complete the product's explicit encryption-mode migration while a device can still
+  decrypt the retained value; or
+- ask the server operator/support contact for recovery guidance if no device retains
+  the key.
+
+Server at-rest sealing cannot recover client-E2EE ciphertext, and a new plaintext login
+does not manufacture the missing key.
+
 ## What plaintext storage does not mean
 
 Plaintext storage does **not** mean:
@@ -77,7 +115,9 @@ Plaintext storage does **not** mean:
 - the login/authentication model changes,
 - TLS or server-side access controls stop mattering.
 
-It only changes how session content is stored at rest on the server.
+It changes which principal can interpret stored content. In plain mode, the live
+server can read it; optional server-at-rest sealing may reduce database/backup exposure
+but is not E2EE.
 
 ## Sharing and collaboration
 

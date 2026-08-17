@@ -1,6 +1,6 @@
 ---
 title: Claude
-description: Configure Claude in Happier (remote mode), including Agent SDK, partial streaming, and /rewind.
+description: Configure Claude in Happier, including the unified terminal runtime, Agent SDK remote mode, partial streaming, and /rewind.
 ---
 
 This page documents how Happier integrates with **Claude Code** and what Claude-specific settings do.
@@ -12,10 +12,17 @@ Happier supports two ways of running Claude:
 - **Local mode**: you run **Claude Code’s own TUI** directly in your terminal.
 - **Remote mode**: you drive Claude from the **Happier UI**, but Claude still runs **locally on your machine** (Happier spawns the `claude` process in the background).
 
-Remote mode currently has **two implementations**:
+Remote mode currently has **three implementations**:
 
-- **Agent SDK remote** (default): uses the official `@anthropic-ai/claude-agent-sdk` to run Claude, publish capabilities, and (optionally) enable file checkpointing.
-- **Legacy remote** (fallback): our older “SDK-like” shim that spawns `claude` with a streaming output format and uses a hook-forwarding workaround for session info.
+| Runtime | Default | What it is |
+| --- | --- | --- |
+| **Unified terminal** | Off | Happier hosts **Claude Code’s own TUI** in a terminal session and types prompts into its composer, so the app and the terminal share one Claude Code run. See [Claude unified terminal](/features/claude-unified-terminal). |
+| **Agent SDK remote** | On | Uses the official `@anthropic-ai/claude-agent-sdk` to run Claude, publish capabilities, and (optionally) enable file checkpointing. |
+| **Legacy remote** | Fallback | Our older “SDK-like” shim that spawns `claude` with a streaming output format and uses a hook-forwarding workaround for session info. |
+
+Selection order is: unified terminal when it is enabled, otherwise Agent SDK, otherwise legacy. Happier makes that choice when the provider session starts and keeps it for the life of that session, so changing the setting affects the next Claude session you start rather than the one already running.
+
+Note that the unified terminal runtime is a **remote** mode, not local mode: Happier drives it from the app. What is different is that there is a real Claude Code TUI to attach to, and you can type in it. Happier reads the composer before every write so an app message never lands on top of what you are typing.
 
 ## Start in Happier, continue in the terminal
 
@@ -201,7 +208,11 @@ The one exception is **Experimental: local permission bridge**, which affects **
 
 | Setting | Default | What it does |
 | --- | --- | --- |
-| **Use Agent SDK (remote)** | On | Enables the official Agent SDK remote runner (`@anthropic-ai/claude-agent-sdk`). When off, Happier uses the legacy remote runner. |
+| **Use unified terminal runtime** | Off | Runs Claude Code’s own TUI in a terminal session and drives it from the app. Takes precedence over the Agent SDK runner. See [Claude unified terminal](/features/claude-unified-terminal). |
+| **Terminal host** | Auto | Unified terminal only. **Auto** uses `tmux` when available, otherwise Happier’s bundled zellij. You can also force **tmux** or **zellij**. |
+| **Large-session resume** | Ask every time | Unified terminal only. How Happier answers Claude’s question about resuming a large session: ask, resume from summary, or resume the full session. |
+| **Workspace trust** | Ask every time | Unified terminal only. How Happier answers Claude’s workspace trust question: ask, always trust Happier workspaces, or always reject them. |
+| **Use Agent SDK fallback** | On | Enables the official Agent SDK remote runner (`@anthropic-ai/claude-agent-sdk`) when the unified terminal runtime is off. When this is off too, Happier uses the legacy remote runner. |
 | **Setting sources** | User + Project | Controls what Claude settings get loaded: **Project only** loads repo config (for example `CLAUDE.md`); **User + Project** includes user-global config too (including user-defined MCP servers); **None** ignores both for maximum determinism. |
 | **Force-enable Agent Teams (experimental)** | Off | When enabled, Happier force-enables Claude Code experimental Agent Teams for all Claude starts (local + remote). When off, Happier does not force-disable and Claude uses its own defaults. |
 | **Experimental: local permission bridge** | On | In local mode, forwards Claude permission prompts into Happier so you can approve/deny from the app UI instead of only in the terminal. |

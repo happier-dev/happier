@@ -30,6 +30,22 @@ plugin without a suitable action is still installed, activated, and checked
 across restart. The disposable home is removed afterward and the user's
 installed plugin state is never read or mutated.
 
+To prove a target together with its contributor, test the target and pass the
+contributor as a packed prerequisite:
+
+```bash
+happier plugins test ./target --packed --with-plugin ./contributor
+```
+
+The target is the test subject. Each `--with-plugin` path or archive is packed,
+installed, and admitted in the same disposable daemon before the target is
+exercised. When these source packages resolve the SDK from an approved registry,
+pass the same registry origin to the test command:
+
+```bash
+happier plugins test ./target --packed --with-plugin ./contributor --sdk-registry <origin>
+```
+
 ## Plugin testkit
 
 `createPluginTestkit` validates the module's canonical manifest projection,

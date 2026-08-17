@@ -72,14 +72,22 @@ If auto-provisioning is disabled:
 
 - unknown certificates are rejected (operators can pre-provision accounts / identities via an admin process).
 
-## Keyless-only behavior (important)
+## Keyless behavior contract (activation pending)
 
-mTLS is a **keyless** login method in Happier today:
+mTLS is intended to be a **keyless** login method for plain accounts:
 
-- When mTLS provisions new accounts, it creates **keyless/plain** accounts (no device keys).
+- A genuinely keyless mTLS credential is token-only and contains zero Account E2EE
+  material.
+- After activation, mTLS provisioning creates a token-only/plain account without
+  fabricating a device key.
 - If an mTLS identity maps to an account that is currently **E2EE**, the server will refuse to mint a token and will require a **restore / key-challenge** flow instead.
 
 This preserves the core invariant: **E2EE accounts require possession of the secret key** to log in.
+
+The complete token-only UI/daemon path remains activation-closed while account-data
+migrations and composed checks finish. Keep mTLS keyless auto-provisioning disabled in
+production until the [Server Auth](/server/auth) rollout warning is removed.
+Configuration-schema presence is not activation evidence.
 
 ## Encryption opt-out (recommended pairing for enterprise)
 

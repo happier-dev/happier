@@ -28,8 +28,8 @@ package or a released-semver stability promise.
   installed plugins. `ui/build` is only for a build configuration, and
   `ui/client` is only for a hosted-web client.
 - A normal target or contributor imports a feature-owned protocol package. Only
-  a reusable feature-protocol package imports the advanced browser-safe
-  `/protocol-authoring` constructors.
+  a reusable feature-protocol package imports the browser-safe `/protocol`
+  schema constructors and `/contributions` contribution constructors.
 
 ## Choose a route by task
 
@@ -55,7 +55,7 @@ package or a released-semver stability promise.
 | `@happier-dev/plugin-sdk/async` | Cancellation-aware asynchronous utility types. | `import type * as Async from '@happier-dev/plugin-sdk/async';` |
 | `@happier-dev/plugin-sdk/automations` | Experimental Automation admission and result-delivery contracts; it does not provide an Automation scheduler or run store. | `import type * as Automations from '@happier-dev/plugin-sdk/automations';` |
 | `@happier-dev/plugin-sdk/background-services` | Generation-scoped background-service declaration and runtime types; it is not a scheduler API. | `import type * as BackgroundServices from '@happier-dev/plugin-sdk/background-services';` |
-| `@happier-dev/plugin-sdk/browser` | Public toolchain compatibility packet only; it does not declare browser targets or browser Actions. | `import type * as Browser from '@happier-dev/plugin-sdk/browser';` |
+| `@happier-dev/plugin-sdk/browser` | Public browser target and Action descriptors plus the toolchain compatibility packet; browser Actions bind canonical Actions to declared targets. | `import type * as Browser from '@happier-dev/plugin-sdk/browser';` |
 | `@happier-dev/plugin-sdk/collections` | Daemon-realm Account collection definitions, references, queries, and collection service types. | `import type * as Collections from '@happier-dev/plugin-sdk/collections';` |
 | `@happier-dev/plugin-sdk/connected-accounts` | Daemon-realm Connected Account references, purpose bindings, health, and materialization result types. | `import type * as ConnectedAccounts from '@happier-dev/plugin-sdk/connected-accounts';` |
 | `@happier-dev/plugin-sdk/events` | Event contribution and event-service types. | `import type * as Events from '@happier-dev/plugin-sdk/events';` |
@@ -72,7 +72,8 @@ package or a released-semver stability promise.
 | `@happier-dev/plugin-sdk/manifest` | Plugin Manifest V2 parsing, validation, and declaration types. | `import type * as Manifest from '@happier-dev/plugin-sdk/manifest';` |
 | `@happier-dev/plugin-sdk/mcp` | Daemon-realm MCP server, client, discovery, tool, prompt, and resource contracts. | `import type * as Mcp from '@happier-dev/plugin-sdk/mcp';` |
 | `@happier-dev/plugin-sdk/notifications` | Host-mediated notification service and preference result types. | `import type * as Notifications from '@happier-dev/plugin-sdk/notifications';` |
-| `@happier-dev/plugin-sdk/protocol-authoring` | Browser-safe reusable feature-protocol schemas and typed contribution-point constructors. | `import { defineContributionProtocol } from '@happier-dev/plugin-sdk/protocol-authoring';` |
+| `@happier-dev/plugin-sdk/protocol` | Validator-neutral JSON schema algebra for reusable feature protocols. | `import { defineProtocolObject } from '@happier-dev/plugin-sdk/protocol';` |
+| `@happier-dev/plugin-sdk/contributions` | Cross-plugin contribution protocols, points, operation roles, and authoring bindings. | `import { defineContributionProtocol } from '@happier-dev/plugin-sdk/contributions';` |
 | `@happier-dev/plugin-sdk/providers` | Model-provider contribution, binding, and projection types. | `import type * as Providers from '@happier-dev/plugin-sdk/providers';` |
 | `@happier-dev/plugin-sdk/resources` | Prompt-asset, prompt-registry, and manifest-declared Resource contracts; see the workflow guide below. | `import type * as Resources from '@happier-dev/plugin-sdk/resources';` |
 | `@happier-dev/plugin-sdk/reviews` | Daemon-realm review contribution, comment, and scope types. | `import type * as Reviews from '@happier-dev/plugin-sdk/reviews';` |
@@ -98,17 +99,17 @@ package or a released-semver stability promise.
 
 ## Advanced feature-protocol authoring
 
-`@happier-dev/plugin-sdk/protocol-authoring` is the browser-safe authoring
-boundary for a feature package that defines a reusable cross-plugin contribution
-protocol. It exports `defineContributionProtocol`,
-`defineContributionPoint`, and the protocol-schema helpers. It does not export
-host services, admitted snapshots, or runtime controls.
+`@happier-dev/plugin-sdk/protocol` is the browser-safe authoring boundary for
+validator-neutral JSON schema facts. `@happier-dev/plugin-sdk/contributions`
+owns the cross-plugin authoring boundary for a feature package that defines a
+reusable contribution protocol. Neither path exports host services, admitted
+snapshots, or runtime controls.
 
 ```ts
 import {
   defineContributionPoint,
   defineContributionProtocol,
-} from '@happier-dev/plugin-sdk/protocol-authoring';
+} from '@happier-dev/plugin-sdk/contributions';
 ```
 
 Everyday plugin authors should instead import the feature-owned value, call

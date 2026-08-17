@@ -1,0 +1,1943 @@
+---
+title: Host actions
+description: Generated reference for every host Action available through the Plugin Actions service.
+---
+
+<!-- Generated from the canonical ActionSpec registry. Do not hand-edit. -->
+
+Use this reference when calling host Actions from a Plugin invocation context. It is generated from the canonical ActionSpec registry, so each listed id is available through `context.services.actions.execute(...)` and no hand-maintained Action list can drift from the host.
+
+```ts
+const result = await context.services.actions.execute('action.spec.get', {
+  id: 'session.status.get',
+}, {
+  signal: context.signal,
+});
+```
+
+The Action service validates the exact input and result contract for each id. Use the input guidance below when it is present; the TypeScript API remains the final typed contract.
+
+## `action.options.resolve`
+
+**Resolve action options** — Resolve valid options for an action field, including dynamic options sources.
+
+- Safety: `safe`; side effect: `read`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `voice`, `agent`, `mcp`.
+
+### Input guidance
+
+- `actionId` (text): Action id — Optional when optionsSourceId is provided directly.
+- `fieldPath` (text): Field path — Dot-path for the action input field.
+- `optionsSourceId` (text): Options source id — Direct options source lookup when known.
+- `sessionId` (text): Session id — Needed for session-scoped option sources.
+- `query` (text): Query filter — Optional search text to filter the returned options.
+- `limit` (text): Limit — Maximum number of options to return.
+
+## `action.spec.get`
+
+**Get action spec** — Get one Happier action spec with input hints and examples.
+
+- Safety: `safe`; side effect: `read`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `voice`, `agent`, `mcp`.
+
+### Input guidance
+
+- `id` (text, required): Action id — The exact Happier action id.
+
+## `agents.backends.list`
+
+**List agent backends** — List available agent backends (providers) for spawning sessions.
+
+- Safety: `safe`; side effect: `read`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`.
+
+### Input guidance
+
+- `includeDisabled` (boolean): Include disabled
+- `limit` (text): Max results
+- `machineId` (text): Machine id (optional)
+
+## `agents.config_options.list`
+
+**List agent config options** — List configurable option definitions for an agent backend without exposing current values.
+
+- Safety: `safe`; side effect: `read`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`.
+
+### Input guidance
+
+- `agentId` (text): Runtime agent id
+- `backendTargetKey` (text): Backend target key
+- `modelId` (text): Model id
+- `machineId` (text): Machine id (optional)
+- `limit` (text): Max results
+
+## `agents.models.list`
+
+**List agent models** — List available models for an agent backend.
+
+- Safety: `safe`; side effect: `read`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`.
+
+### Input guidance
+
+- `agentId` (text): Runtime agent id
+- `backendTargetKey` (text): Backend target key
+- `machineId` (text): Machine id (optional)
+- `limit` (text): Max results
+
+## `agents.session_modes.list`
+
+**List agent session modes** — List session modes available for an agent backend.
+
+- Safety: `safe`; side effect: `read`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`.
+
+### Input guidance
+
+- `agentId` (text): Runtime agent id
+- `backendTargetKey` (text): Backend target key
+- `machineId` (text): Machine id (optional)
+- `limit` (text): Max results
+
+## `automation.conversation.admit`
+
+**Admit Automation conversation occurrence** — Admit a Channel conversation occurrence through the canonical Automation owner.
+
+- Safety: `danger`; side effect: `write`.
+- Approval: `none` result; `deferred` flow.
+- Also surfaced on: none.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `automation.conversation.target.verify`
+
+**Verify Automation conversation target** — Verify a Channel-owned conversation target through the canonical Automation owner.
+
+- Safety: `safe`; side effect: `read`.
+- Approval: `none` result; `deferred` flow.
+- Also surfaced on: none.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `automation.conversation.targets.list`
+
+**List Automation conversation targets** — List current Channel-selectable Automation conversation targets through the canonical Automation owner.
+
+- Safety: `safe`; side effect: `read`.
+- Approval: `none` result; `deferred` flow.
+- Also surfaced on: none.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `automation.event.admit`
+
+**Admit Automation Event occurrence** — Read or update Event Automation state through the canonical Automation owner.
+
+- Safety: `danger`; side effect: `write`.
+- Approval: `none` result; `deferred` flow.
+- Also surfaced on: none.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `automation.event.source.status.report`
+
+**Report Automation Event source status** — Read or update Event Automation state through the canonical Automation owner.
+
+- Safety: `danger`; side effect: `write`.
+- Approval: `none` result; `deferred` flow.
+- Also surfaced on: none.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `automation.event.sources.list`
+
+**List Automation Event sources** — Read or update Event Automation state through the canonical Automation owner.
+
+- Safety: `safe`; side effect: `read`.
+- Approval: `none` result; `deferred` flow.
+- Also surfaced on: none.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `browser.navigate`
+
+**Navigate browser** — Navigate a browser view to a URL.
+
+- Safety: `danger`; side effect: `write`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `agent`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `daemon.promptAssets.delete`
+
+**Delete prompt asset** — Delete a provider-native prompt asset through the daemon prompt asset adapter registry.
+
+- Safety: `danger`; side effect: `danger`.
+- Approval: `optional` result; `deferred` flow.
+- Also surfaced on: `rpc`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `daemon.promptAssets.discover`
+
+**Discover prompt assets** — Discover provider-native prompt assets through the daemon prompt asset adapter registry.
+
+- Safety: `safe`; side effect: `read`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `rpc`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `daemon.promptRegistry.install`
+
+**Install prompt registry asset** — Install a prompt registry item through bundle-capable prompt asset adapters.
+
+- Safety: `danger`; side effect: `danger`.
+- Approval: `optional` result; `deferred` flow.
+- Also surfaced on: `rpc`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `daemon.promptRegistry.scanSource`
+
+**Scan prompt registry source** — Scan a configured prompt registry source through the daemon prompt registry adapter registry.
+
+- Safety: `safe`; side effect: `read`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `rpc`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `execution.run.action`
+
+**Apply execution run action** — Apply an action to one execution run in the selected scope. A nonempty sessionId selects that exact authorized Session. Omitting sessionId inherits the current Action Session, or selects detached scope when none exists. sessionId:null selects detached scope even inside a current Session.
+
+- Safety: `safe`; side effect: `write`.
+- Approval: `optional` result; `deferred` flow.
+- Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`, `rpc`.
+
+### Input guidance
+
+- `sessionId` (text): Session id — Use a nonempty value for an exact authorized Session. Omit it to inherit the current Action Session, or to select detached scope when no current Session exists. Set null to select detached scope even inside a current Session.
+- `runId` (text, required): Run id
+- `actionId` (text, required): Action id
+- `input` (textarea): Input (JSON)
+
+## `execution.run.ensure`
+
+**Ensure execution run** — Ensure an existing execution run is active or resumable. A nonempty sessionId selects that exact authorized Session. Omitting sessionId inherits the current Action Session, or selects detached scope when none exists. sessionId:null selects detached scope even inside a current Session.
+
+- Safety: `safe`; side effect: `write`.
+- Approval: `optional` result; `deferred` flow.
+- Also surfaced on: `agent`, `rpc`.
+
+### Input guidance
+
+- `sessionId` (text): Session id — Use a nonempty value for an exact authorized Session. Omit it to inherit the current Action Session, or to select detached scope when no current Session exists. Set null to select detached scope even inside a current Session.
+- `runId` (text, required): Run id
+- `resume` (boolean): Resume if needed
+
+## `execution.run.ensure_or_start`
+
+**Ensure or start execution run** — Ensure an existing execution run, or start a new one when no run id is supplied. A nonempty sessionId selects that exact authorized Session. Omitting sessionId inherits the current Action Session, or selects detached scope when none exists. sessionId:null selects detached scope even inside a current Session.
+
+- Safety: `safe`; side effect: `write`.
+- Approval: `optional` result; `deferred` flow.
+- Also surfaced on: `agent`, `rpc`.
+
+### Input guidance
+
+- `sessionId` (text): Session id — Use a nonempty value for an exact authorized Session. Omit it to inherit the current Action Session, or to select detached scope when no current Session exists. Set null to select detached scope even inside a current Session.
+- `runId` (text): Run id
+- `start` (textarea): Start request (json)
+- `resume` (boolean): Resume if needed
+
+## `execution.run.get`
+
+**Get execution run** — Get one execution run from the selected scope. A nonempty sessionId selects that exact authorized Session. Omitting sessionId inherits the current Action Session, or selects detached scope when none exists. sessionId:null selects detached scope even inside a current Session.
+
+- Safety: `safe`; side effect: `read`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`, `rpc`.
+
+### Input guidance
+
+- `sessionId` (text): Session id — Use a nonempty value for an exact authorized Session. Omit it to inherit the current Action Session, or to select detached scope when no current Session exists. Set null to select detached scope even inside a current Session.
+- `runId` (text, required): Run id
+- `includeStructured` (boolean): Include structured output
+
+## `execution.run.list`
+
+**List execution runs** — List execution runs in the selected scope. A nonempty sessionId selects that exact authorized Session. Omitting sessionId inherits the current Action Session, or selects detached scope when none exists. sessionId:null selects detached scope even inside a current Session.
+
+- Safety: `safe`; side effect: `read`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`, `rpc`.
+
+### Input guidance
+
+- `sessionId` (text): Session id — Use a nonempty value for an exact authorized Session. Omit it to inherit the current Action Session, or to select detached scope when no current Session exists. Set null to select detached scope even inside a current Session.
+- `backendTarget` (text): Backend target
+- `status` (select): Status
+- `limit` (text): Max runs
+
+## `execution.run.send`
+
+**Send to execution run** — Send a message to one execution run in the selected scope. A nonempty sessionId selects that exact authorized Session. Omitting sessionId inherits the current Action Session, or selects detached scope when none exists. sessionId:null selects detached scope even inside a current Session.
+
+- Safety: `safe`; side effect: `write`.
+- Approval: `optional` result; `deferred` flow.
+- Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`, `rpc`.
+
+### Input guidance
+
+- `sessionId` (text): Session id — Use a nonempty value for an exact authorized Session. Omit it to inherit the current Action Session, or to select detached scope when no current Session exists. Set null to select detached scope even inside a current Session.
+- `runId` (text, required): Run id
+- `message` (textarea, required): Message
+- `resume` (boolean): Resume if needed
+
+## `execution.run.start`
+
+**Start execution run** — Start a new execution run. Set waitForCompletion=true to wait for a terminal run result. waitTimeoutSeconds only bounds this observation; it never stops, retries, or starts the run. A nonempty sessionId selects that exact authorized Session. Omitting sessionId inherits the current Action Session, or selects detached scope when none exists. sessionId:null selects detached scope even inside a current Session.
+
+- Safety: `safe`; side effect: `write`.
+- Approval: `optional` result; `deferred` flow.
+- Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`, `rpc`.
+
+### Input guidance
+
+- `sessionId` (text): Session id — Use a nonempty value for an exact authorized Session. Omit it to inherit the current Action Session, or to select detached scope when no current Session exists. Set null to select detached scope even inside a current Session.
+- `intent` (text, required): Intent
+- `backendTarget` (textarea, required): Backend target (json)
+- `instructions` (textarea): Instructions
+- `permissionMode` (text, required): Permission mode
+- `retentionPolicy` (text, required): Retention policy
+- `runClass` (text, required): Run class
+- `ioMode` (text, required): IO mode
+- `waitForCompletion` (boolean): Wait for completion — Return the terminal run disposition under wait instead of returning immediately after start.
+- `waitTimeoutSeconds` (text): Wait timeout seconds — Optional observation deadline; requires waitForCompletion=true and never stops the run.
+- `initialContextMode` (text): Initial context mode
+- `modelId` (text): Model id — Optional model for the run backend (same vocabulary as session spawn). Omit for the backend default.
+- `configOptions` (json): Config options (e.g. reasoning effort) — Optional agent config-option overrides, e.g. &#123;"reasoning_effort":"high"&#125;. Merged into sessionConfigOptionOverrides at the boundary; a conflict fails with invalid_parameters.
+- `connectedServices` (textarea): Connected services (json) — Optional connected-services selection for the run backend. Accepts a simple string ("&lt;service&gt;:group:&lt;id&gt;", "&lt;service&gt;:&lt;profileId&gt;", "&lt;service&gt;:native"), an array, or the full object; omitted = session-spawn defaulting (literal). Enumerate valid selections via the shared session-spawn options source.
+
+## `execution.run.stop`
+
+**Stop execution run** — Stop one execution run in the selected scope. A nonempty sessionId selects that exact authorized Session. Omitting sessionId inherits the current Action Session, or selects detached scope when none exists. sessionId:null selects detached scope even inside a current Session.
+
+- Safety: `safe`; side effect: `write`.
+- Approval: `optional` result; `deferred` flow.
+- Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`, `rpc`.
+
+### Input guidance
+
+- `sessionId` (text): Session id — Use a nonempty value for an exact authorized Session. Omit it to inherit the current Action Session, or to select detached scope when no current Session exists. Set null to select detached scope even inside a current Session.
+- `runId` (text, required): Run id
+
+## `execution.run.stream.cancel`
+
+**Cancel execution run stream** — Cancel a bounded streaming turn for an execution run. A nonempty sessionId selects that exact authorized Session. Omitting sessionId inherits the current Action Session, or selects detached scope when none exists. sessionId:null selects detached scope even inside a current Session.
+
+- Safety: `safe`; side effect: `write`.
+- Approval: `optional` result; `deferred` flow.
+- Also surfaced on: `agent`, `rpc`.
+
+### Input guidance
+
+- `sessionId` (text): Session id — Use a nonempty value for an exact authorized Session. Omit it to inherit the current Action Session, or to select detached scope when no current Session exists. Set null to select detached scope even inside a current Session.
+- `runId` (text, required): Run id
+- `streamId` (text, required): Stream id
+
+## `execution.run.stream.read`
+
+**Read execution run stream** — Read bounded deltas from an execution-run stream cursor. A nonempty sessionId selects that exact authorized Session. Omitting sessionId inherits the current Action Session, or selects detached scope when none exists. sessionId:null selects detached scope even inside a current Session.
+
+- Safety: `safe`; side effect: `read`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `agent`, `rpc`.
+
+### Input guidance
+
+- `sessionId` (text): Session id — Use a nonempty value for an exact authorized Session. Omit it to inherit the current Action Session, or to select detached scope when no current Session exists. Set null to select detached scope even inside a current Session.
+- `runId` (text, required): Run id
+- `streamId` (text, required): Stream id
+- `cursor` (text): Cursor
+- `maxEvents` (text): Max events
+
+## `execution.run.stream.start`
+
+**Start execution run stream** — Start a bounded streaming turn for an execution run. A nonempty sessionId selects that exact authorized Session. Omitting sessionId inherits the current Action Session, or selects detached scope when none exists. sessionId:null selects detached scope even inside a current Session.
+
+- Safety: `safe`; side effect: `write`.
+- Approval: `optional` result; `deferred` flow.
+- Also surfaced on: `agent`, `rpc`.
+
+### Input guidance
+
+- `sessionId` (text): Session id — Use a nonempty value for an exact authorized Session. Omit it to inherit the current Action Session, or to select detached scope when no current Session exists. Set null to select detached scope even inside a current Session.
+- `runId` (text, required): Run id
+- `message` (textarea, required): Message
+- `displayMessage` (textarea): Display message
+- `resume` (boolean): Resume if needed
+
+## `execution.run.wait`
+
+**Wait for execution run** — Wait until an execution run reaches a terminal status. Pass timeoutSeconds to bound the wait; omit it for no Happier-side deadline. Timeout only ends this observation; it does not stop, retry, or start the run. Cancellation only ends this wait. A nonempty sessionId selects that exact authorized Session. Omitting sessionId inherits the current Action Session, or selects detached scope when none exists. sessionId:null selects detached scope even inside a current Session.
+
+- Safety: `safe`; side effect: not classified.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `agent`, `mcp`, `cli`.
+
+### Input guidance
+
+- `sessionId` (text): Session id — Use a nonempty value for an exact authorized Session. Omit it to inherit the current Action Session, or to select detached scope when no current Session exists. Set null to select detached scope even inside a current Session.
+- `runId` (text, required): Run id
+- `timeoutSeconds` (text): Timeout seconds (optional)
+- `pollIntervalMs` (text): Poll interval (ms)
+
+## `machines.list`
+
+**List machines** — List machines available on the active server scope.
+
+- Safety: `safe`; side effect: `read`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `voice`, `agent`.
+
+### Input guidance
+
+- `limit` (text): Limit
+
+## `memory.ensure_up_to_date`
+
+**Ensure memory up to date** — Trigger the daemon to sync memory hints for a session (or all active sessions).
+
+- Safety: `safe`; side effect: `write`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `voice`, `agent`.
+
+### Input guidance
+
+- `machineId` (text, required): Machine id
+- `sessionId` (text): Session id (optional)
+
+## `memory.get_window`
+
+**Get memory window** — Fetch and decrypt a transcript window (used to verify/quote a memory hit).
+
+- Safety: `safe`; side effect: `read`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `voice`, `agent`.
+
+### Input guidance
+
+- `machineId` (text, required): Machine id
+- `sessionId` (text, required): Session id
+- `seqFrom` (text, required): Seq from
+- `seqTo` (text, required): Seq to
+
+## `memory.search`
+
+**Search memory** — Search the local daemon memory index (opt-in).
+
+- Safety: `safe`; side effect: `read`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `voice`, `agent`.
+
+### Input guidance
+
+- `machineId` (text, required): Machine id — Machine running the daemon memory index.
+- `query.query` (text, required): Query — What to search for.
+- `query.mode` (select, required): Mode — Which index to search.
+
+## `paths.list_recent`
+
+**List recent paths** — List recent workspace directory handles (optionally filtered to a machine).
+
+- Safety: `safe`; side effect: `read`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`.
+
+### Input guidance
+
+- `machineId` (text): Machine id
+- `limit` (text): Limit
+
+## `plugin.webhook.endpoint.checkCorrespondence`
+
+**Check webhook endpoint correspondence** — Manage one Account-owned webhook endpoint through the canonical Webhook ingress owner.
+
+- Safety: `safe`; side effect: `read`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: none.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `plugins.list`
+
+**List plugins** — List installed plugins with source and load diagnostics.
+
+- Safety: `safe`; side effect: `read`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `agent`, `mcp`, `cli`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `plugins.permissions.grants.list`
+
+**List plugin permission grants** — Manage durable user-approved optional plugin permission grants.
+
+- Safety: `safe`; side effect: `read`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `rpc`, `sdk`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `plugins.permissions.grants.request`
+
+**Request plugin permission grant** — Manage durable user-approved optional plugin permission grants.
+
+- Safety: `danger`; side effect: `write`.
+- Approval: `none` result; `deferred` flow.
+- Also surfaced on: `ui`, `rpc`, `sdk`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `plugins.permissions.grants.revoke`
+
+**Revoke plugin permission** — Manage durable user-approved optional plugin permission grants.
+
+- Safety: `danger`; side effect: `write`.
+- Approval: `none` result; `deferred` flow.
+- Also surfaced on: `ui`, `rpc`, `sdk`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `plugins.reload`
+
+**Reload plugin** — Reload one local development plugin through the daemon-owned plugin lifecycle.
+
+- Safety: `danger`; side effect: `write`.
+- Approval: `optional` result; `deferred` flow.
+- Also surfaced on: `ui`, `agent`, `mcp`, `cli`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `plugins.sessionHooks.disable`
+
+**Disable Agent session hooks** — Explicitly disable ingestion for one exact Agent hook installation without deleting its owned config.
+
+- Safety: `danger`; side effect: `write`.
+- Approval: `optional` result; `deferred` flow.
+- Also surfaced on: `rpc`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `plugins.sessionHooks.enable`
+
+**Enable Agent session hooks** — Explicitly enable ingestion for one exact Agent hook installation.
+
+- Safety: `danger`; side effect: `write`.
+- Approval: `optional` result; `deferred` flow.
+- Also surfaced on: `rpc`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `plugins.sessionHooks.install`
+
+**Install Agent session hooks** — Explicitly install External Session hooks for one qualified Agent integration.
+
+- Safety: `danger`; side effect: `write`.
+- Approval: `optional` result; `deferred` flow.
+- Also surfaced on: `rpc`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `plugins.sessionHooks.status.get`
+
+**Get Agent session-hook status inventory** — Read a bounded, paginated inventory of portable External Session hook installation status rows.
+
+- Safety: `safe`; side effect: `read`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `rpc`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `plugins.sessionHooks.uninstall`
+
+**Uninstall Agent session hooks** — Explicitly remove only the owned entries for one exact External Session hook installation.
+
+- Safety: `danger`; side effect: `danger`.
+- Approval: `optional` result; `deferred` flow.
+- Also surfaced on: `rpc`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `prompt_asset.export`
+
+**Export prompt asset** — Export a prompt doc or skill bundle from the Happier library to a provider-native asset.
+
+- Safety: `danger`; side effect: not classified.
+- Approval: `none` result; `deferred` flow.
+- Also surfaced on: `ui`.
+
+### Input guidance
+
+- `artifactId` (text, required): Artifact id
+- `machineId` (text, required): Machine id
+- `assetTypeId` (text, required): Asset type id
+- `scope` (select, required): Scope
+- `directory` (text): Project directory
+- `targetPath` (text): Document path
+- `targetName` (text): Skill name
+- `installMode` (select): Install mode
+
+## `prompt_bundle.update`
+
+**Update prompt bundle** — Update a skill bundle stored in the Happier prompt library.
+
+- Safety: `danger`; side effect: not classified.
+- Approval: `none` result; `deferred` flow.
+- Also surfaced on: `ui`.
+
+### Input guidance
+
+- `artifactId` (text, required): Bundle artifact id
+- `title` (text, required): Title
+- `skillMarkdown` (textarea, required): SKILL.md markdown
+- `folderId` (text): Folder id
+- `tags` (text_list): Tags
+
+## `prompt_doc.update`
+
+**Update prompt document** — Update a prompt document stored in the Happier prompt library.
+
+- Safety: `danger`; side effect: not classified.
+- Approval: `none` result; `deferred` flow.
+- Also surfaced on: `ui`, `agent`, `mcp`, `cli`.
+
+### Input guidance
+
+- `artifactId` (text, required): Prompt artifact id
+- `title` (text, required): Title
+- `markdown` (textarea, required): Markdown
+- `folderId` (text): Folder id
+- `tags` (text_list): Tags
+
+## `prompt_registry.install`
+
+**Install prompt registry skill** — Import a skill bundle from a registry and optionally export it to an external skills location.
+
+- Safety: `danger`; side effect: not classified.
+- Approval: `none` result; `deferred` flow.
+- Also surfaced on: `ui`.
+
+### Input guidance
+
+- `machineId` (text, required): Machine id
+- `sourceId` (text, required): Source id
+- `itemId` (text, required): Item id
+- `configuredSources` (textarea): Configured sources (json)
+- `installTarget.assetTypeId` (text): Target asset type
+- `installTarget.scope` (select): Target scope
+- `installTarget.directory` (text): Project directory
+- `installTarget.targetName` (text): Target skill name
+- `installTarget.installMode` (select): Install mode
+
+## `review.engines.list`
+
+**List review engines** — List review engines currently available for the active session.
+
+- Safety: `safe`; side effect: `read`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `voice`.
+
+### Input guidance
+
+- `sessionId` (text): Session id
+- `includeDisabled` (boolean): Include disabled
+
+## `review.start`
+
+**Start review** — No additional description is published.
+
+- Safety: `safe`; side effect: `external`.
+- Approval: `optional` result; `deferred` flow.
+- Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`.
+
+### Input guidance
+
+- `engineIds` (multiselect, required): Review engines — Select one or more engines. Each engine runs as its own execution run.
+- `instructions` (textarea, required): Instructions — What you want the reviewers to focus on.
+- `changeType` (select, required): Change type — Which changes to review.
+- `base.kind` (select, required): Base selection — How to define the review base for engines that need it.
+- `base.baseBranch` (text): Base branch — Branch name to diff against (when base.kind=branch).
+- `base.baseCommit` (text): Base commit — Commit SHA to diff against (when base.kind=commit).
+
+## `reviews.comments.attachEvidence`
+
+**Attach review comment evidence** — Operate on durable review comments through the shared review-comment substrate.
+
+- Safety: `danger`; side effect: `write`.
+- Approval: `none` result; `deferred` flow.
+- Also surfaced on: `ui`, `rpc`, `sdk`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `reviews.comments.bulkTransition`
+
+**Bulk transition review comments** — Operate on durable review comments through the shared review-comment substrate.
+
+- Safety: `danger`; side effect: `write`.
+- Approval: `none` result; `deferred` flow.
+- Also surfaced on: `ui`, `rpc`, `sdk`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `reviews.comments.create`
+
+**Create review comment** — Operate on durable review comments through the shared review-comment substrate.
+
+- Safety: `danger`; side effect: `write`.
+- Approval: `none` result; `deferred` flow.
+- Also surfaced on: `ui`, `rpc`, `sdk`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `reviews.comments.edit`
+
+**Edit review comment** — Operate on durable review comments through the shared review-comment substrate.
+
+- Safety: `danger`; side effect: `write`.
+- Approval: `none` result; `deferred` flow.
+- Also surfaced on: `ui`, `rpc`, `sdk`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `reviews.comments.get`
+
+**Get review comment** — Operate on durable review comments through the shared review-comment substrate.
+
+- Safety: `safe`; side effect: `read`.
+- Approval: `none` result; `deferred` flow.
+- Also surfaced on: `ui`, `rpc`, `sdk`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `reviews.comments.list`
+
+**List review comments** — Operate on durable review comments through the shared review-comment substrate.
+
+- Safety: `safe`; side effect: `read`.
+- Approval: `none` result; `deferred` flow.
+- Also surfaced on: `ui`, `rpc`, `sdk`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `reviews.comments.redact`
+
+**Redact review comment** — Operate on durable review comments through the shared review-comment substrate.
+
+- Safety: `danger`; side effect: `write`.
+- Approval: `none` result; `deferred` flow.
+- Also surfaced on: `ui`, `rpc`, `sdk`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `reviews.comments.reply`
+
+**Reply to review comment** — Operate on durable review comments through the shared review-comment substrate.
+
+- Safety: `danger`; side effect: `write`.
+- Approval: `none` result; `deferred` flow.
+- Also surfaced on: `ui`, `rpc`, `sdk`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `reviews.comments.setDisposition`
+
+**Set review comment disposition** — Operate on durable review comments through the shared review-comment substrate.
+
+- Safety: `danger`; side effect: `write`.
+- Approval: `none` result; `deferred` flow.
+- Also surfaced on: `ui`, `rpc`, `sdk`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `reviews.comments.transition`
+
+**Transition review comment** — Operate on durable review comments through the shared review-comment substrate.
+
+- Safety: `danger`; side effect: `write`.
+- Approval: `none` result; `deferred` flow.
+- Also surfaced on: `ui`, `rpc`, `sdk`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `scm.diffSummary.generate`
+
+**Generate source-control diff summary** — Generate a buffered AI summary for checkpoint-backed or working-tree source-control changes.
+
+- Safety: `safe`; side effect: `external`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `rpc`, `sdk`.
+
+### Input guidance
+
+- `cwd` (text, required): Repository directory
+- `source.kind` (select, required): Summary source
+- `turnId` (text): Turn id
+- `checkpointReceiptId` (text): Checkpoint receipt id
+- `modelSelector.profileId` (text): Model profile id
+- `modelSelector.modelId` (text): Model id
+- `modelSelector.backendTargetKey` (text): Backend target key
+
+## `scm.hostingRepository.describePublishTargets`
+
+**Describe hosting repository publish targets** — Describe authenticated hosting-provider targets that can receive a repository publish.
+
+- Safety: `safe`; side effect: `read`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `rpc`, `sdk`.
+
+### Input guidance
+
+- `cwd` (text, required): Repository directory
+- `providerKind` (select): Hosting provider
+
+## `scm.hostingRepository.publish`
+
+**Publish repository to hosting provider** — Create or bind a hosting repository and publish the active source-control state.
+
+- Safety: `danger`; side effect: `external`.
+- Approval: `optional` result; `deferred` flow.
+- Also surfaced on: `rpc`, `sdk`.
+
+### Input guidance
+
+- `cwd` (text, required): Repository directory
+- `providerKind` (select, required): Hosting provider
+- `owner` (text, required): Owner
+- `ownerKind` (select): Owner kind
+- `repositoryName` (text, required): Repository name
+- `visibility` (select, required): Visibility
+- `description` (textarea): Description
+- `remoteName` (text): Remote name
+- `remoteUrlKind` (select): Remote URL kind
+- `remoteConflictStrategy` (select): Remote conflict strategy
+- `pushCurrentBranch` (boolean): Push current branch
+
+## `scm.pullRequest.checkout`
+
+**Check out pull request** — Check out a pull request reference in the current repository.
+
+- Safety: `danger`; side effect: `write`.
+- Approval: `optional` result; `deferred` flow.
+- Also surfaced on: `rpc`, `sdk`.
+
+### Input guidance
+
+- `cwd` (text): Repository directory
+- `prReference.number` (text): Pull request number
+- `prReference.url` (text): Pull request URL
+- `prReference.headBranch` (text): Head branch
+
+## `scm.pullRequest.get`
+
+**Get pull request** — Read one pull request by number, URL, or head branch.
+
+- Safety: `safe`; side effect: `read`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `rpc`, `sdk`.
+
+### Input guidance
+
+- `cwd` (text): Repository directory
+- `prReference.number` (text): Pull request number
+- `prReference.url` (text): Pull request URL
+- `prReference.headBranch` (text): Head branch
+
+## `scm.pullRequest.list`
+
+**List pull requests** — List pull requests for the current source-control repository.
+
+- Safety: `safe`; side effect: `read`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `rpc`, `sdk`.
+
+### Input guidance
+
+- `cwd` (text): Repository directory
+- `providerId` (text): Provider id
+- `base` (text): Base branch
+- `head` (text): Head branch
+- `state` (select): State
+
+## `scm.pullRequest.openCompose`
+
+**Open pull-request compose URL** — Build a provider-approved compose URL for the current branch.
+
+- Safety: `safe`; side effect: `read`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `rpc`, `sdk`.
+
+### Input guidance
+
+- `cwd` (text): Repository directory
+- `providerId` (text): Provider id
+- `base` (text, required): Base branch
+- `head` (text, required): Head branch
+
+## `scm.pullRequest.openOrReuse`
+
+**Open or reuse pull request** — Create a pull request or return an existing one for the current branch.
+
+- Safety: `danger`; side effect: `external`.
+- Approval: `optional` result; `deferred` flow.
+- Also surfaced on: `rpc`, `sdk`.
+
+### Input guidance
+
+- `cwd` (text): Repository directory
+- `providerId` (text): Provider id
+- `base` (text, required): Base branch
+- `head` (text): Head branch
+- `title` (text): Title
+- `body` (textarea): Body
+
+## `scm.pullRequest.prepareWorktree`
+
+**Prepare pull-request worktree** — Prepare a local worktree for a pull request reference.
+
+- Safety: `danger`; side effect: `write`.
+- Approval: `optional` result; `deferred` flow.
+- Also surfaced on: `rpc`, `sdk`.
+
+### Input guidance
+
+- `cwd` (text): Repository directory
+- `sourcePath` (text, required): Source path
+- `prReference.number` (text): Pull request number
+- `prReference.url` (text): Pull request URL
+- `prReference.headBranch` (text): Head branch
+- `mode` (select): Mode
+
+## `scm.pullRequest.runStacked`
+
+**Run stacked pull-request workflow** — Run a structured branch, commit, push, and pull-request workflow.
+
+- Safety: `danger`; side effect: `danger`.
+- Approval: `optional` result; `deferred` flow.
+- Also surfaced on: `rpc`, `sdk`.
+
+### Input guidance
+
+- `cwd` (text): Repository directory
+- `action` (select, required): Action
+- `commitMessage` (textarea): Commit message
+- `featureBranch` (text): Feature branch
+- `filePaths` (text_list): File paths
+- `base` (text): Base branch
+- `head` (text): Head branch
+- `title` (text): Pull request title
+- `body` (textarea): Pull request body
+- `defaultBranchPushPolicy` (select): Default-branch push policy
+
+## `scm.repository.clone`
+
+**Clone source-control repository** — Clone a hosting-provider repository into an explicitly selected local destination.
+
+- Safety: `danger`; side effect: `external`.
+- Approval: `optional` result; `deferred` flow.
+- Also surfaced on: `rpc`, `sdk`.
+
+### Input guidance
+
+- `provider` (textarea, required): Hosting provider (json)
+- `repository` (textarea, required): Repository (json)
+- `destinationParentPath` (text, required): Destination parent directory
+- `destinationDirectoryName` (text, required): Destination directory name
+- `protocol` (select, required): Clone protocol
+- `confirmed` (boolean, required): Confirm repository clone
+- `authorizationToken` (text, required): Authorization token
+
+## `scm.repository.init`
+
+**Initialize source-control repository** — Initialize source control for a directory through the SCM provisioning route.
+
+- Safety: `danger`; side effect: `write`.
+- Approval: `optional` result; `deferred` flow.
+- Also surfaced on: `rpc`, `sdk`.
+
+### Input guidance
+
+- `cwd` (text, required): Repository directory
+- `initialBranch` (text): Initial branch
+
+## `scm.repository.removeIndexLock`
+
+**Remove stale source-control index lock** — Remove a confirmed stale Git index lock using backend-owned path resolution.
+
+- Safety: `danger`; side effect: `danger`.
+- Approval: `optional` result; `deferred` flow.
+- Also surfaced on: `rpc`, `sdk`.
+
+### Input guidance
+
+- `cwd` (text, required): Repository directory
+- `confirmed` (boolean, required): Confirm stale index-lock removal
+- `confirmationToken` (text, required): Confirmation token
+
+## `servers.list`
+
+**List servers** — List servers configured in the client.
+
+- Safety: `safe`; side effect: `read`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `voice`, `agent`.
+
+### Input guidance
+
+- `limit` (text): Limit
+
+## `session.activity.get`
+
+**Get session activity** — Get a short activity digest for a session without transcript content.
+
+- Safety: `safe`; side effect: `read`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`.
+
+### Input guidance
+
+- `sessionId` (text, required): Session id
+- `windowSeconds` (text): Window seconds
+
+## `session.archive`
+
+**Archive session** — Archive the specified session.
+
+- Safety: `safe`; side effect: not classified.
+- Approval: `none` result; `deferred` flow.
+- Also surfaced on: `ui`, `agent`, `mcp`, `cli`.
+
+### Input guidance
+
+- `sessionId` (text, required): Session id
+
+## `session.checkpoint`
+
+**Create checkpoint** — Create a source-qualified checkpoint for the selected session.
+
+- Safety: `danger`; side effect: not classified.
+- Approval: `optional` result; `deferred` flow.
+- Also surfaced on: `ui`, `rpc`.
+
+### Input guidance
+
+- `sessionId` (text, required): Session id
+- `scopes` (multiselect, required): Scopes
+
+## `session.checkpoint_code_rollback`
+
+**Rollback code to checkpoint** — Apply a checkpoint-backed code rollback for the selected session turn.
+
+- Safety: `danger`; side effect: not classified.
+- Approval: `optional` result; `deferred` flow.
+- Also surfaced on: `ui`, `rpc`.
+
+### Input guidance
+
+- `sessionId` (text, required): Session id
+- `turnId` (text, required): Turn id
+- `cwd` (text, required): Working directory
+
+## `session.continue_with_replay`
+
+**Continue session with replay** — Create a continuation session from a replay seed while preserving the existing RPC wire contract.
+
+- Safety: `safe`; side effect: not classified.
+- Approval: `optional` result; `deferred` flow.
+- Also surfaced on: `rpc`.
+
+### Input guidance
+
+- `directory` (text, required): Directory
+- `backendTarget` (text, required): Backend target
+- `replay` (textarea, required): Replay seed
+
+## `session.fork`
+
+**Fork session** — Create a new session from the latest state of the selected session.
+
+- Safety: `safe`; side effect: `write`.
+- Approval: `optional` result; `deferred` flow.
+- Also surfaced on: `ui`, `voice`, `rpc`.
+
+### Input guidance
+
+- `sessionId` (text): Session id
+
+## `session.goal.clear`
+
+**Clear session goal** — Clear the native session goal.
+
+- Safety: `safe`; side effect: not classified.
+- Approval: `none` result; `deferred` flow.
+- Also surfaced on: `ui`, `agent`, `mcp`, `cli`.
+
+### Input guidance
+
+- `sessionId` (text, required): Session id
+
+## `session.goal.get`
+
+**Get session goal** — Get the editable session goal when the provider supports native goals.
+
+- Safety: `safe`; side effect: not classified.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `agent`, `mcp`, `cli`.
+
+### Input guidance
+
+- `sessionId` (text, required): Session id
+
+## `session.goal.set`
+
+**Set session goal** — Set or update the native session goal.
+
+- Safety: `safe`; side effect: not classified.
+- Approval: `none` result; `deferred` flow.
+- Also surfaced on: `ui`, `agent`, `mcp`, `cli`.
+
+### Input guidance
+
+- `sessionId` (text, required): Session id
+- `objective` (textarea): Objective
+- `status` (text): Status
+- `tokenBudget` (text): Token budget
+
+## `session.handoff`
+
+**Hand off session** — Move the current session to another machine while keeping the same session id.
+
+- Safety: `safe`; side effect: not classified.
+- Approval: `optional` result; `deferred` flow.
+- Also surfaced on: `ui`, `rpc`.
+
+### Input guidance
+
+- `sessionId` (text): Session id
+- `targetMachineId` (text): Target machine id
+
+## `session.list`
+
+**List sessions** — List recent sessions the user can target.
+
+- Safety: `safe`; side effect: `read`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`.
+
+### Input guidance
+
+- `limit` (text): Limit
+- `cursor` (text): Cursor
+- `includeLastMessagePreview` (boolean): Include last message preview
+
+## `session.log.tail`
+
+**Tail session log** — Read a bounded byte tail from an allowed session log file.
+
+- Safety: `safe`; side effect: `read`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `rpc`.
+
+### Input guidance
+
+- `path` (text, required): Log path
+- `maxBytes` (text): Maximum bytes
+- `offset` (text): File offset
+
+## `session.message.send`
+
+**Send a message to a session** — Send a user message to the AI coding assistant inside the specified session.
+
+- Safety: `safe`; side effect: `external`.
+- Approval: `optional` result; `deferred` flow.
+- Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`.
+
+### Input guidance
+
+- `sessionId` (text): Session id
+- `message` (textarea, required): Message
+- `permissionModeOverride` (text): Permission mode override (optional)
+- `modelOverride` (text): Model override (optional)
+- `providerConnectionId` (text): Provider connection id (optional)
+- `wait` (boolean): Wait for idle (optional)
+- `timeoutSeconds` (text): Timeout seconds (optional)
+
+## `session.mode.set`
+
+**Set session mode** — Request a new ACP session mode for the current session when the active provider supports session modes.
+
+- Safety: `safe`; side effect: `write`.
+- Approval: `optional` result; `deferred` flow.
+- Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`.
+
+### Input guidance
+
+- `sessionId` (text): Session id — Optional when the active target session is already correct.
+- `modeId` (select, required): Mode id — Use default to clear the override and return to the provider default mode.
+
+## `session.model.set`
+
+**Set session model** — Set the model override for the specified session.
+
+- Safety: `safe`; side effect: not classified.
+- Approval: `none` result; `deferred` flow.
+- Also surfaced on: `ui`, `agent`, `mcp`, `cli`.
+
+### Input guidance
+
+- `sessionId` (text, required): Session id
+- `modelId` (text, required): Model id
+- `providerConnectionId` (text): Provider connection id
+
+## `session.open`
+
+**Open session** — No additional description is published.
+
+- Safety: `safe`; side effect: `external`.
+- Approval: `optional` result; `deferred` flow.
+- Also surfaced on: `ui`, `voice`.
+
+### Input guidance
+
+- `sessionId` (text): Session id
+- `sessionTitle` (text): Session title
+
+## `session.pendingInput.interruptAndRun`
+
+**Interrupt and run now** — Interrupt the live provider turn so its exact native queued prompt can run now.
+
+- Safety: `danger`; side effect: `danger`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `cli`, `rpc`.
+
+### Input guidance
+
+- `sessionId` (text, required): Session id
+- `localId` (text, required): Pending message local id
+- `expectedStateAtMs` (text): Expected state timestamp
+
+## `session.permission.remote.grants.list`
+
+**List remotely mediated permission grants** — List source-scoped remote permission grants visible to the authenticated caller.
+
+- Safety: `safe`; side effect: `read`.
+- Approval: `none` result; `deferred` flow.
+- Also surfaced on: `ui`, `cli`, `rpc`.
+
+### Input guidance
+
+- `sessionId` (text, required): Session id
+- `limit` (text): Maximum grants
+- `cursor` (text): Continuation cursor
+
+## `session.permission.remote.grants.revoke`
+
+**Revoke a remotely mediated permission grant** — Revoke one source-scoped remote permission grant.
+
+- Safety: `safe`; side effect: `write`.
+- Approval: `none` result; `deferred` flow.
+- Also surfaced on: `ui`, `cli`, `rpc`.
+
+### Input guidance
+
+- `sessionId` (text, required): Session id
+- `turnId` (text, required): Turn id
+- `requestId` (text, required): Request id
+- `grantId` (text, required): Grant id
+
+## `session.permission.remote.pending.list`
+
+**List remotely mediated permission requests** — List the caller mediator’s current permission requests for one exact source authority.
+
+- Safety: `safe`; side effect: `read`.
+- Approval: `none` result; `deferred` flow.
+- Also surfaced on: none.
+
+### Input guidance
+
+- `sessionId` (text, required): Session id
+- `sourceRef` (text, required): Source reference
+- `sourceRevisionOrEpoch` (text, required): Source revision
+
+## `session.permission.remote.respond`
+
+**Respond to a remotely mediated permission request** — Submit an attributed external-human decision for one current permission request.
+
+- Safety: `safe`; side effect: `write`.
+- Approval: `none` result; `deferred` flow.
+- Also surfaced on: none.
+
+### Input guidance
+
+- `sessionId` (text, required): Session id
+- `turnId` (text, required): Turn id
+- `requestId` (text, required): Request id
+- `sourceRef` (text, required): Source reference
+- `sourceRevisionOrEpoch` (text, required): Source revision
+- `idempotencyKey` (text, required): Idempotency key
+- `actor.namespace` (text, required): External principal namespace
+- `actor.principalId` (text, required): External principal id
+- `decision` (select, required): Decision
+- `scope` (select, required): Scope
+
+## `session.restore`
+
+**Restore checkpoint** — Restore a selected session checkpoint source.
+
+- Safety: `danger`; side effect: not classified.
+- Approval: `optional` result; `deferred` flow.
+- Also surfaced on: `ui`, `rpc`.
+
+### Input guidance
+
+- `sessionId` (text, required): Session id
+- `scopes` (multiselect, required): Scopes
+- `candidate.source` (select, required): Source
+
+## `session.rollback`
+
+**Rollback conversation** — Roll back conversation state in the selected session.
+
+- Safety: `danger`; side effect: not classified.
+- Approval: `optional` result; `deferred` flow.
+- Also surfaced on: `ui`, `rpc`.
+
+### Input guidance
+
+- `sessionId` (text): Session id
+
+## `session.skill_catalog.list`
+
+**List session skills** — List provider-visible skills available to the session.
+
+- Safety: `safe`; side effect: not classified.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `agent`, `mcp`, `cli`.
+
+### Input guidance
+
+- `sessionId` (text, required): Session id
+- `cwd` (text): Working directory
+
+## `session.spawn_new`
+
+**Create session** — No additional description is published.
+
+- Safety: `safe`; side effect: `write`.
+- Approval: `optional` result; `deferred` flow.
+- Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`, `rpc`.
+
+### Input guidance
+
+- `creationKey` (text): Creation key
+- `executionTarget.serverId` (text, required): Server id
+- `executionTarget.machineId` (text, required): Machine id
+- `directory` (text, required): Directory
+- `organizationPlacement` (json): Organization placement
+- `agentTarget` (json, required): Agent target
+- `modelSelection` (json): Model selection
+- `title` (text): Title
+- `permissionMode` (text): Permission mode
+- `agentModeId` (text): Agent mode
+- `configuration` (json): Configuration
+- `profileId` (text): Profile id
+- `connectedServices` (json): Connected services
+- `mcpSelection` (json): MCP selection
+- `transcriptStorage` (text): Transcript storage
+- `terminal` (json): Terminal
+- `checkoutCreationDraft` (json): Checkout creation
+- `initialMessage` (textarea): Initial message
+- `agentSessionStartupInstructionsV1` (json): Startup instructions
+
+## `session.status.get`
+
+**Get session status** — Get summary status for a session, optionally refreshing live agent state.
+
+- Safety: `safe`; side effect: not classified.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `agent`, `mcp`, `cli`.
+
+### Input guidance
+
+- `sessionId` (text, required): Session id
+- `live` (boolean): Live
+
+## `session.stop`
+
+**Stop session** — Request that the local daemon stops the specified session.
+
+- Safety: `safe`; side effect: not classified.
+- Approval: `none` result; `deferred` flow.
+- Also surfaced on: `ui`, `agent`, `mcp`, `cli`, `rpc`.
+
+### Input guidance
+
+- `sessionId` (text, required): Session id
+
+## `session.target.primary.set`
+
+**Set primary action session** — Set which session the voice assistant should target by default.
+
+- Safety: `safe`; side effect: `write`.
+- Approval: `optional` result; `deferred` flow.
+- Also surfaced on: `ui`, `voice`, `mcp`, `cli`.
+
+### Input guidance
+
+- `sessionId` (text): Session id (or null)
+- `sessionTitle` (text): Session title
+
+## `session.target.tracked.set`
+
+**Set tracked sessions** — Set which sessions should be treated as tracked for updates/snippets.
+
+- Safety: `safe`; side effect: `write`.
+- Approval: `optional` result; `deferred` flow.
+- Also surfaced on: `ui`, `voice`, `mcp`, `cli`.
+
+### Input guidance
+
+- `sessionIds` (text_list, required): Session ids
+
+## `session.terminalComposer.clear`
+
+**Clear terminal composer** — Clear the pending terminal composer draft for a session runtime.
+
+- Safety: `danger`; side effect: `danger`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `mcp`, `cli`, `rpc`.
+
+### Input guidance
+
+- `sessionId` (text, required): Session id
+- `expectedStateAtMs` (text): Expected state timestamp
+
+## `session.title.set`
+
+**Set session title** — Set the title (summary text) shown for a session.
+
+- Safety: `safe`; side effect: not classified.
+- Approval: `none` result; `deferred` flow.
+- Also surfaced on: `ui`, `agent`, `mcp`, `cli`.
+
+### Input guidance
+
+- `sessionId` (text): Session id
+- `title` (text, required): Title
+
+## `session.transcript.get`
+
+**Get session transcript** — Read the semantic transcript for a session as clean user/assistant messages with optional tool/reasoning/event flags.
+
+- Safety: `safe`; side effect: `read`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`.
+
+### Input guidance
+
+- `sessionId` (text, required): Session id
+- `limit` (text): Limit
+- `cursor` (text): Cursor
+- `maxCharsPerMessage` (text): Message truncation chars — Optional per-message truncation budget. Omit or pass null for full message text.
+
+## `session.unarchive`
+
+**Unarchive session** — Unarchive the specified session.
+
+- Safety: `safe`; side effect: not classified.
+- Approval: `none` result; `deferred` flow.
+- Also surfaced on: `ui`, `agent`, `mcp`, `cli`.
+
+### Input guidance
+
+- `sessionId` (text, required): Session id
+
+## `session.usageLimit.checkNow`
+
+**Check usage-limit recovery now** — Ask the session runtime to perform a safe provider-owned usage-limit recovery check.
+
+- Safety: `safe`; side effect: not classified.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `agent`, `mcp`, `cli`.
+
+### Input guidance
+
+- `sessionId` (text, required): Session id
+- `provider` (text): Provider — Optional provider id for provider-scoped recovery controls.
+- `operation` (select): Operation
+- `resumePromptMode` (select): Resume prompt mode
+
+## `session.usageLimit.consumeResetCredit`
+
+**Apply usage-limit reset credit** — Ask the session runtime to spend a connected-service reset credit for usage-limit recovery.
+
+- Safety: `danger`; side effect: not classified.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `agent`, `mcp`, `cli`.
+
+### Input guidance
+
+- `sessionId` (text, required): Session id
+- `provider` (text): Provider — Optional provider id for provider-scoped recovery controls.
+- `resumePromptMode` (select): Resume prompt mode
+
+## `session.usageLimit.waitResume.cancel`
+
+**Cancel usage-limit wait resume** — Cancel the active usage-limit wait/resume intent for a session.
+
+- Safety: `safe`; side effect: not classified.
+- Approval: `none` result; `deferred` flow.
+- Also surfaced on: `ui`, `agent`, `mcp`, `cli`.
+
+### Input guidance
+
+- `sessionId` (text, required): Session id
+- `issueFingerprint` (text): Issue fingerprint
+- `armedAtMs` (number): Armed at (ms)
+- `runtimeAuthRecoveryAttemptId` (text): Runtime auth recovery attempt id
+
+## `session.usageLimit.waitResume.enable`
+
+**Enable usage-limit wait resume** — Arm a durable intent to continue a session when a provider usage limit is lifted.
+
+- Safety: `safe`; side effect: not classified.
+- Approval: `none` result; `deferred` flow.
+- Also surfaced on: `ui`, `agent`, `mcp`, `cli`.
+
+### Input guidance
+
+- `sessionId` (text, required): Session id
+- `issueFingerprint` (text): Issue fingerprint
+- `remember` (boolean): Remember
+- `resumePromptMode` (select): Resume prompt mode
+
+## `session.user_action.answer`
+
+**Respond to user-action request** — Approve, reject, request changes, or provide structured answers for an active user-action request.
+
+- Safety: `safe`; side effect: `write`.
+- Approval: `optional` result; `deferred` flow.
+- Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`, `rpc`.
+
+### Input guidance
+
+- `sessionId` (text): Session id
+- `requestId` (text): Request id
+- `decision` (select): Decision — Use approve or reject for general user actions, or request_changes when you need the coding assistant to revise something first.
+- `reason` (textarea): Reason — Required when requesting changes. Optional extra context for a rejection.
+- `answers` (json): Answers — Structured answers for question-style user-action requests such as AskUserQuestion.
+
+## `session.vendor_plugin_catalog.list`
+
+**List session vendor plugins** — List provider-owned vendor plugins available to the session.
+
+- Safety: `safe`; side effect: not classified.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `agent`, `mcp`, `cli`.
+
+### Input guidance
+
+- `sessionId` (text, required): Session id
+- `cwd` (text): Working directory
+
+## `session.wait.idle`
+
+**Wait for session idle** — Wait until the session becomes idle or the timeout elapses.
+
+- Safety: `safe`; side effect: not classified.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `agent`, `mcp`, `cli`.
+
+### Input guidance
+
+- `sessionId` (text, required): Session id
+- `timeoutSeconds` (text): Timeout seconds
+
+## `session.work_state.get`
+
+**Get session work state** — Get the normalized current goal, task, and todo snapshot for a session.
+
+- Safety: `safe`; side effect: not classified.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `agent`, `mcp`, `cli`.
+
+### Input guidance
+
+- `sessionId` (text, required): Session id
+
+## `sessions.external.backgroundFollow.set`
+
+**Set external session follow policy** — Enable or disable background following for an external session.
+
+- Safety: `danger`; side effect: `write`.
+- Approval: `optional` result; `deferred` flow.
+- Also surfaced on: `rpc`.
+
+### Input guidance
+
+- `sessionId` (text, required): Linked session id
+- `enabled` (boolean, required): Enabled
+
+## `sessions.external.follow`
+
+**Follow external session lease** — Attach an ephemeral follow lease to an external session link.
+
+- Safety: `danger`; side effect: `write`.
+- Approval: `optional` result; `deferred` flow.
+- Also surfaced on: `rpc`.
+
+### Input guidance
+
+- `sessionId` (text, required): Linked session id
+- `leaseId` (text): Lease id
+- `ttlMs` (text): Lease TTL milliseconds
+
+## `sessions.external.materialize.start`
+
+**Materialize external session** — Start or converge on the canonical external-session materialization operation.
+
+- Safety: `danger`; side effect: `write`.
+- Approval: `optional` result; `deferred` flow.
+- Also surfaced on: `rpc`.
+
+### Input guidance
+
+- `request` (textarea, required): Operation request
+
+## `sessions.external.operation.cancel`
+
+**Cancel external session operation** — Record an explicit cancellation intent for the current operation revision.
+
+- Safety: `danger`; side effect: `write`.
+- Approval: `optional` result; `deferred` flow.
+- Also surfaced on: `rpc`.
+
+### Input guidance
+
+- `sessionId` (text, required): Session id
+- `operationId` (text, required): Operation id
+- `revision` (text, required): Revision
+
+## `sessions.external.operation.discard`
+
+**Discard external session operation** — Destructively discard an eligible initial partial operation and its private staging.
+
+- Safety: `danger`; side effect: `danger`.
+- Approval: `optional` result; `deferred` flow.
+- Also surfaced on: `rpc`.
+
+### Input guidance
+
+- `sessionId` (text, required): Session id
+- `operationId` (text, required): Operation id
+- `revision` (text, required): Revision
+
+## `sessions.external.operation.resume`
+
+**Resume external session operation** — Explicitly resume a passively hydrated operation from its durable checkpoint.
+
+- Safety: `danger`; side effect: `write`.
+- Approval: `optional` result; `deferred` flow.
+- Also surfaced on: `rpc`.
+
+### Input guidance
+
+- `sessionId` (text, required): Session id
+- `operationId` (text, required): Operation id
+- `revision` (text, required): Revision
+
+## `sessions.external.operation.retry`
+
+**Retry external session operation** — Explicitly retry the canonical recovery phase at the current revision.
+
+- Safety: `danger`; side effect: `write`.
+- Approval: `optional` result; `deferred` flow.
+- Also surfaced on: `rpc`.
+
+### Input guidance
+
+- `sessionId` (text, required): Session id
+- `operationId` (text, required): Operation id
+- `revision` (text, required): Revision
+
+## `sessions.external.operation.status.get`
+
+**Get external session operation status** — Passively read the current canonical external-session operation projection.
+
+- Safety: `safe`; side effect: `read`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `rpc`.
+
+### Input guidance
+
+- `sessionId` (text, required): Session id
+- `operationId` (text, required): Operation id
+- `revision` (text, required): Revision
+
+## `sessions.external.status.get`
+
+**Get external session status** — Read bounded status and takeover readiness for a linked external session.
+
+- Safety: `safe`; side effect: `read`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `rpc`.
+
+### Input guidance
+
+- `sessionId` (text, required): Linked session id
+
+## `sessions.external.unfollow`
+
+**Unfollow external session lease** — Detach an external-session follow lease.
+
+- Safety: `danger`; side effect: `write`.
+- Approval: `optional` result; `deferred` flow.
+- Also surfaced on: `rpc`.
+
+### Input guidance
+
+- `sessionId` (text, required): Linked session id
+- `leaseId` (text, required): Lease id
+
+## `sessions.spawn.connected_services.list`
+
+**List spawn connected services** — List connected-service references available for new sessions without exposing credentials.
+
+- Safety: `safe`; side effect: `read`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`.
+
+### Input guidance
+
+- `agentId` (text): Runtime agent id
+- `backendTargetKey` (text): Backend target key
+- `includeUnavailable` (boolean): Include unavailable
+
+## `sessions.spawn.mcp_servers.preview`
+
+**Preview spawn MCP servers** — Preview MCP servers that would be available to a new session.
+
+- Safety: `safe`; side effect: `read`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`.
+
+### Input guidance
+
+- `agentId` (text): Runtime agent id
+- `backendTargetKey` (text): Backend target key
+- `machineId` (text): Machine id
+- `directory` (text): Directory
+- `path` (text): Path
+- `selection` (json): Selection
+- `limit` (text): Max results
+
+## `sessions.spawn.profiles.list`
+
+**List spawn profiles** — List backend profile references available for new sessions without exposing secret bindings.
+
+- Safety: `safe`; side effect: `read`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`.
+
+### Input guidance
+
+- `agentId` (text): Runtime agent id
+- `backendTargetKey` (text): Backend target key
+- `limit` (text): Max results
+
+## `subagents.delegate.start`
+
+**Start delegate run** — No additional description is published.
+
+- Safety: `safe`; side effect: `external`.
+- Approval: `optional` result; `deferred` flow.
+- Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`.
+
+### Input guidance
+
+- `backendTargetKeys` (multiselect, required): Provider/backend targets — Select provider/backend targets for Happier-managed runs; use repeated launches or provider-native subagents for homogeneous parallelism capacity.
+- `instructions` (textarea, required): Instructions — What you want the delegate(s) to do.
+- `permissionMode` (select): Permission mode — Permission mode. Allowed values: read_only | default | workspace_write | yolo.
+- `modelId` (text): Model id — Optional model applied to every started run (same vocabulary as session spawn). Omit for the backend default.
+- `configOptions` (json): Config options (e.g. reasoning effort) — Optional agent config-option overrides applied to every started run, e.g. &#123;"reasoning_effort":"high"&#125;. Merged canonically; a conflict with sessionConfigOptionOverrides fails.
+- `connectedServicesByBackendTargetKey` (textarea): Connected services per target (json) — Optional connected-services selection per backend target key. Accepts a simple string ("&lt;service&gt;:group:&lt;id&gt;", "&lt;service&gt;:&lt;profileId&gt;", "&lt;service&gt;:native"), an array, or the full object; omitted targets use session-spawn defaulting (literal). Enumerate valid selections via the shared session-spawn options source.
+
+## `subagents.plan.start`
+
+**Start plan run** — No additional description is published.
+
+- Safety: `safe`; side effect: `external`.
+- Approval: `optional` result; `deferred` flow.
+- Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`.
+
+### Input guidance
+
+- `backendTargetKeys` (multiselect, required): Provider/backend targets — Select provider/backend targets for Happier-managed runs; use repeated launches or provider-native subagents for homogeneous parallelism capacity.
+- `instructions` (textarea, required): Instructions — What you want the planner(s) to do.
+- `modelId` (text): Model id — Optional model applied to every started run (same vocabulary as session spawn). Omit for the backend default.
+- `configOptions` (json): Config options (e.g. reasoning effort) — Optional agent config-option overrides applied to every started run, e.g. &#123;"reasoning_effort":"high"&#125;. Merged canonically; a conflict with sessionConfigOptionOverrides fails.
+- `connectedServicesByBackendTargetKey` (textarea): Connected services per target (json) — Optional connected-services selection per backend target key. Accepts a simple string ("&lt;service&gt;:group:&lt;id&gt;", "&lt;service&gt;:&lt;profileId&gt;", "&lt;service&gt;:native"), an array, or the full object; omitted targets use session-spawn defaulting (literal). Enumerate valid selections via the shared session-spawn options source.
+
+## `transcript.follow`
+
+**Follow session transcript** — Create or refresh a retained bounded transcript follow lease.
+
+- Safety: `safe`; side effect: `read`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `rpc`.
+
+### Input guidance
+
+- `sessionId` (text): Session id
+- `cursor` (text, required): Cursor
+- `leaseId` (text): Lease id
+- `maxBytes` (text): Maximum bytes
+- `maxItems` (text): Maximum items
+- `idleTtlMs` (text): Idle TTL milliseconds
+
+## `transcript.import`
+
+**Import session transcript rows** — Import a bounded batch of transcript rows through the session transcript writer owner.
+
+- Safety: `danger`; side effect: `write`.
+- Approval: `optional` result; `deferred` flow.
+- Also surfaced on: `rpc`.
+
+### Input guidance
+
+- `sessionId` (text): Session id
+- `importId` (text): Import id
+- `items` (textarea, required): Transcript rows
+- `maxItems` (text): Maximum items
+
+## `transcript.page`
+
+**Page session transcript** — Read a bounded older transcript page using cursor-backed storage.
+
+- Safety: `safe`; side effect: `read`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `rpc`.
+
+### Input guidance
+
+- `sessionId` (text): Session id
+- `cursor` (text): Cursor
+- `maxBytes` (text): Maximum bytes
+- `maxItems` (text): Maximum items
+
+## `transcript.readAfter`
+
+**Read session transcript after cursor** — Read bounded transcript deltas after a cursor.
+
+- Safety: `safe`; side effect: `read`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `rpc`.
+
+### Input guidance
+
+- `sessionId` (text): Session id
+- `cursor` (text, required): Cursor
+- `maxBytes` (text): Maximum bytes
+- `maxItems` (text): Maximum items
+
+## `transcript.search`
+
+**Search session transcript** — Search transcript rows through bounded forward cursor reads.
+
+- Safety: `safe`; side effect: `read`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `rpc`.
+
+### Input guidance
+
+- `sessionId` (text): Session id
+- `query` (text, required): Query
+- `cursor` (text): Cursor
+- `maxBytes` (text): Maximum bytes
+- `maxItems` (text): Maximum items
+- `maxReads` (text): Maximum reads

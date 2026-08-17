@@ -325,7 +325,10 @@ Full matrix (all apps/assets): [Updates](/advanced/updates).
 Happier supports both:
 
 - **Device-key accounts (default)**: end-to-end encrypted by default; users must **restore** access on new devices/browsers by using the account restore flow (for example **Add your phone** on a signed-in computer, or **Login with secret key instead**).
-- **Keyless accounts (enterprise)**: no device keys; sign-in can be **seamless across devices**, typically paired with plaintext storage mode.
+- **Keyless accounts (enterprise, activation pending)**: the target flow uses a
+  token-only credential with zero Account E2EE material and can sign in seamlessly
+  across devices. The complete external-auth/UI/daemon flow remains
+  activation-closed until the server's plaintext-account rollout gates pass.
 
 The app discovers available login and signup options from your server via `GET /v1/features` and renders what the server advertises.
 

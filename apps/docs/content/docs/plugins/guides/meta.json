@@ -8,6 +8,8 @@
     "scm",
     "voice",
     "background-services",
-    "invocation-services"
+    "invocation-services",
+    "account-collections",
+    "webhooks"
   ]
 }

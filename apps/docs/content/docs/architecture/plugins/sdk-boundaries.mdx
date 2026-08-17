@@ -17,8 +17,8 @@ barrel.
 
 Code-defined authoring imports `definePlugin` from the package root and
 validator-neutral constructors such as `defineProtocolObject` from
-`@happier-dev/plugin-sdk/protocol-authoring`. Packing serializes that definition
-to the cold
+`@happier-dev/plugin-sdk/protocol`. Cross-plugin contribution constructors are
+owned by `@happier-dev/plugin-sdk/contributions`. Packing serializes that definition to the cold
 `.happier-plugin/plugin.json` installed metadata; installed discovery does not
 execute author code. Actions, hooks, events, MCP, SCM, and services remain in
 their owning domain entrypoints. Agent runtime contracts belong to

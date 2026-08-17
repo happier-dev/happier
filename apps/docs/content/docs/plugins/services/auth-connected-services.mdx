@@ -15,6 +15,10 @@ An Agent declares purposes in its contribution:
   "connectedAccounts": [
     {
       "purpose": "upstream",
+      "title": {
+        "key": "connectedAccounts.upstream",
+        "fallback": "Upstream service"
+      },
       "service": {
         "pluginId": "example.accounts",
         "localId": "api"
@@ -25,10 +29,16 @@ An Agent declares purposes in its contribution:
 }
 ```
 
+`purpose` is a machine identifier, not display text. Give the host an optional
+localized `title` for the selection UI; it may be a plain string or a
+`{ key, fallback }` value. The host uses that same declaration detail for
+built-in and external contributions, so do not derive a user-facing label from
+the raw purpose ID.
+
 An action or hook uses the ID of its existing `connectedAccounts` HostAccess request as the purpose. Do not declare that purpose a second time. The request's `serviceRefs` are compatible alternatives for one binding, and its operations authorize methods:
 
 - `select` permits `requestSelection()`.
-- `use` permits `getBinding()` and `watch()`.
+- `use` permits `getBinding()`, `listAccounts()`, and `watch()`.
 
 Raw credential materialization additionally requires the declaration or
 HostAccess scope to list the exact requested `materializationKinds` value:
@@ -51,6 +61,46 @@ An already-bound, currently authorized purpose can still use `getBinding()` and
 `watch()` outside a session, and can use `materialize()` there when its exact
 requested kind is authorized. The selection flow never returns the host-private
 account inventory to the plugin.
+
+## List the accounts authorized for a purpose
+
+`listAccounts({ purpose, limit? }, options?)` returns non-secret metadata for
+the exact current target of that declared purpose. A direct account binding
+lists only that account. A group binding lists only the group's currently
+enabled members. Use it when one contribution legitimately reads from several
+members of its bound group — for example discovering each organization a user
+has connected — not to enumerate arbitrary accounts from the same service.
+
+Each entry carries the exact account reference, a host display name, the
+connection `state` (`connected`, `expired`, `reconnectRequired`, or
+`unavailable`), and `connectedAccountOrigins`: every host-normalized,
+credential-free configured origin that account owns. An account whose
+authentication mode declares no configured origin returns an empty array; the
+host never selects a preferred origin.
+
+Each entry also carries `connectedAccountBases`: the same configuration seen as
+service bases. A base is an origin plus the path segment a deployment lives
+beneath — an organization, a collection, or a path-prefixed self-hosted install
+— and it is what a source routes requests by. Every base begins with one of that
+account's `connectedAccountOrigins`, because HostAccess still admits network
+access by origin alone. Declare a base with a `connectedAccountBase`
+configuration field; a `connectedAccountOrigin` field keeps meaning exactly
+`scheme://host[:port]` and rejects a path.
+
+The result is bounded, not paginated. `status` is `complete` only when the
+returned array is the whole authorized set; any elision — the host-clamped
+`limit` or a storage cap — reports `status: 'truncated'`. There is no cursor.
+
+```ts
+const listed = await context.services.connectedAccounts.listAccounts({
+  purpose: 'upstream',
+});
+const usable = listed.accounts.filter((account) => account.state === 'connected');
+```
+
+The listing exposes no credential, configuration value, capability list, group
+catalogue, or same-service account outside that target, and it never changes the
+selected binding. Re-read it after a `watch()` resync rather than caching it.
 
 ## Credential materialization
 
@@ -81,11 +131,27 @@ const credential = await context.services.connectedAccounts.materialize(
 
 Materializing an unbound purpose fails with the host's canonical resource-not-selected error. For a group binding, each call resolves the current member; a plugin cannot select a member per request.
 
+`materializeListedAccount({ purpose, account, materialization }, options?)` is
+the exact-account counterpart to `listAccounts()`. It takes an account reference
+returned by the current listing and returns the same point-in-time credential
+forms. The host re-verifies that the account is still authorized for the
+declared purpose before and after materialization: it must still be the direct
+target or a current enabled member of the bound group. An account from the same
+service but outside that scope is rejected. For an `httpHeaders` request, the
+origin must also still be admitted — either a declared fixed origin or one
+member of that account's current `connectedAccountOrigins`. Pass only a value
+the listing returned; display text, configuration bytes, and credential contents
+can neither choose nor widen the origin.
+
+`materializeListedAccount()` needs the same `materializationKinds` authority as
+`materialize()`. It is not a selector: it neither reads nor changes the selected
+binding, and an account that has left the authorized set fails closed.
+
 The host owns credential storage, refresh, scoping, selection UX, and log redaction. Do not persist returned credentials in plugin storage or emit them in events, diagnostics, artifacts, or messages. The public service has no failure-reporting, refresh, receipt, generation, or scheduler API.
 
 ## Observe invalidation
 
-`watch(purpose, listener)` installs a generation-local subscription and then schedules an initial opaque `{ kind: 'resync' }` event. Binding, current group member, credential, revocation, or producer changes may coalesce into another resync. On every resync, discard reliance on the previous snapshot and call `getBinding()` or `materialize()` again.
+`watch(purpose, listener)` installs a generation-local subscription and then schedules an initial opaque `{ kind: 'resync' }` event. Binding, current group member, credential, revocation, configured-origin, or producer changes may coalesce into another resync. On every resync, discard reliance on the previous snapshot and call `getBinding()`, `listAccounts()`, or a materialization again.
 
 The subscription does not deliver every intermediate change, expose a cursor, or make copied bytes revocable. Dispose it when no longer needed. The host also disposes it when the invoking plugin generation retires; a replacement generation must receive fresh authorization and materialize again.
 

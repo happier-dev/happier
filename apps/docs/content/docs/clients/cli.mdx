@@ -95,7 +95,10 @@ Recommended first-run flow:
 
 Notes:
 - The CLI never needs your secret key directly. For device-key accounts, restore happens in the app (mobile/web UI).
-- On enterprise/keyless deployments (mTLS or keyless OAuth), the same `happier auth login` flow works; the browser/app will use whatever the server advertises via `GET /v1/features`.
+- The target enterprise/keyless flow (mTLS or keyless OAuth) uses the same
+  `happier auth login` entry point and a token-only credential with zero Account E2EE
+  material. That complete browser/app/daemon flow is still activation-closed; do not
+  infer production readiness from `GET /v1/features` fields alone.
 - **Terminal connect is separate from account restore.** In the app, use **Scan QR to connect terminal** only for terminal/background-service approval. To sign a phone into the same account, use **Add your phone** on an already-signed-in desktop/web app and **Restore account** on the phone.
 - If the mobile QR/deep link does not include a server URL, your current server is probably loopback-only (`localhost` / `127.0.0.1`). Configure the phone to a reachable server URL first, then retry.
 

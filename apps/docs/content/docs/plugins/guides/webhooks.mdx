@@ -1,0 +1,110 @@
+---
+title: Webhook ingress
+description: Declare verified webhook ingress and exercise the admitted Action contract without owning endpoint lifecycle.
+---
+
+Use `webhooks` for a verified external delivery routed by the host to one
+declared Action. The installed SDK's `capability-matrix.json` is the
+availability authority; this guide is the task-oriented workflow for the
+available webhook family. “Available” here means the current source author
+contract, not public package or release availability.
+
+## Declare the verifier and handler Action together
+
+The declaration names a host-supported verifier and the exact plugin-local
+`handlerAction`. The host owns the endpoint, secrets, and queue: a plugin does
+not bind an HTTP listener, store a signing secret, mint an endpoint URL, or
+create another delivery queue.
+
+```ts
+import { definePlugin } from '@happier-dev/plugin-sdk';
+import {
+  decodePluginWebhookActionRawBody,
+  PluginWebhookActionInputSchema,
+  PluginWebhookActionResultSchema,
+} from '@happier-dev/plugin-sdk/webhooks';
+
+export const { manifest, activate } = definePlugin({
+  id: 'com.example.github-events',
+  version: '0.1.0',
+  actions: {
+    'receive-github': {
+      title: 'Receive GitHub event',
+      surfaces: ['plugin'],
+      async run(rawInput) {
+        const input = PluginWebhookActionInputSchema.parse(rawInput);
+        const rawBody = decodePluginWebhookActionRawBody(input);
+
+        // Parse only the verified, admitted raw body for this contribution.
+        void rawBody;
+        return PluginWebhookActionResultSchema.parse({
+          kind: 'settled',
+          disposition: 'accepted',
+        });
+      },
+    },
+  },
+  webhooks: {
+    'github-events': {
+      title: 'GitHub events',
+      verifier: {
+        kind: 'github_hmac_sha256_v1',
+        routing: 'accountEndpoint',
+      },
+      handlerAction: { localId: 'receive-github' },
+    },
+  },
+});
+```
+
+Decode the raw body only after `PluginWebhookActionInputSchema` admits the
+input. The verifier has already authenticated the delivery; the Action should
+perform plugin-domain parsing and return the bounded result shape. Do not
+repeat signature verification, persist a second delivery record, or retry by
+calling the endpoint yourself.
+
+## Test the public boundary
+
+Use `definePluginWebhookTestFixture` to construct the same schema-checked
+input/result contract consumed by webhook dispatch. It is a fixture helper, not
+endpoint setup.
+
+```ts
+import { definePluginWebhookTestFixture } from '@happier-dev/plugin-sdk/webhooks';
+
+const fixture = definePluginWebhookTestFixture({
+  webhookEndpointId: 'wh_ep_AAAAAAAAAAAAAAAAAAAAAA',
+  input: {
+    v: 1,
+    endpoint: {
+      webhookContribution: {
+        pluginId: 'com.example.github-events',
+        localId: 'github-events',
+      },
+      sourceInstanceId: 'github:primary',
+    },
+    delivery: {
+      deliveryId: 'delivery-1',
+      attempt: 1,
+      replay: 0,
+      receivedAtMs: 1,
+      providerDeliveryId: 'provider-delivery-1',
+    },
+    request: {
+      contentType: 'application/json',
+      headers: [{ name: 'x-github-event', value: 'issues' }],
+      rawBodyBytes: 2,
+      rawBodyBase64: 'e30=',
+    },
+    verified: {
+      verifier: 'github_hmac_sha256_v1',
+      eventType: 'issues',
+    },
+  },
+  result: { kind: 'settled', disposition: 'accepted' },
+});
+```
+
+Pass the fixture's `input` to the Action's public boundary and assert its
+settled, retry, or dead-letter result. That proves the plugin's parser without
+manufacturing endpoint, secret, queue, or host admission authority in a test.

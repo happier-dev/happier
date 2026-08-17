@@ -8,7 +8,7 @@ React Native is the default executable UI model when a plugin needs a native-fee
 ## Scaffold
 
 ```bash
-happier plugins scaffold ./my-plugin \
+happier plugins create ./my-plugin \
   --id com.example.my-plugin \
   --name "My plugin" \
   --ui reactNative
@@ -17,44 +17,201 @@ cd my-plugin
 happier plugins dev
 ```
 
-The generated project includes the manifest contribution, React Native source, compatible build dependencies, and a public SDK build configuration. Keep the generated dependency and compatibility versions aligned unless a newer SDK release documents a migration.
+The generated project includes the manifest contribution, semantic Plugin UI
+source, compatible build dependencies, and a public SDK build configuration.
+The release-owned toolchain packet supplies those versions; do not copy a
+separate version matrix into the project.
 
 ## Host API
 
-Export a `PluginUiRenderSurface`. Happier supplies its
-`PluginUiRenderContext`, including the already-bound `hostApi`, directly:
+Export a semantic surface. `@happier-dev/plugin-ui`'s `defineUiSurface` owns
+provider installation around the host-supplied render context, so components
+and Actions share the same bound host API:
 
 ```tsx
-import type { PluginUiRenderSurface } from '@happier-dev/plugin-sdk/ui';
+import * as React from 'react';
+import { Action, Card, defineUiSurface, Text } from '@happier-dev/plugin-ui';
 
-export const renderSurface: PluginUiRenderSurface = ({
-  hostApi,
-  surface,
-  signal,
-}) => {
-  // Use hostApi from event handlers, honor signal for asynchronous work,
-  // and render from the supplied accessibility/environment values.
-  return null;
-};
+function PluginPanel() {
+  return (
+    <Card>
+      <Text variant="title" value="My plugin" />
+      <Action.Execute action="save-note" input={{ note: 'hello' }} title="Save note" />
+    </Card>
+  );
+}
+
+export const renderSurface = defineUiSurface(PluginPanel);
 ```
 
+The managed UI build targets the one initial **Host API 1.0.0** contract.
+Authors do not configure an API range, select a second Host API tier, or add a
+version-sniffing fallback: consume the bound host API supplied to the admitted
+surface and handle its typed unavailable or cancellation result.
+
 `@happier-dev/plugin-sdk/ui/client` is the hosted-web bootstrap client; do not
-use it from a React Native renderer. Do not pass a host-internal surface or
-transport object, and do not import Happier app internals.
+use it from a React Native renderer. Use the curated `plugin-ui` controls for
+semantic UI. `react-native` is a host-provided framework singleton, not a
+Happier component contract: a plugin-owned implementation may use compatible
+primitives only when the generated toolchain declares framework support for
+that artifact. Do not use them to recreate a curated control, host provider,
+bridge, or navigation root, and do not assume host styling, overlay, focus, or
+navigation behavior. Never manually install a host provider, pass a
+host-internal surface or transport object, or import Happier app internals.
+
+The root `@happier-dev/plugin-ui` entry is the ergonomic, curated author tier.
+Trusted React Native and React Native Web authors who need custom composition
+may additionally use `/presentation` for shared RN/RNW primitives and behavior
+or `/environment` for theme, localization, accessibility, platform, and inset
+facts, hooks, and a standalone fact provider. `/presentation` never re-exports
+environment contracts, so import `/environment` directly for that role. Both
+advanced tiers share canonical core implementations, remain prepublication work
+in progress, and carry no released stability promise while the package is held.
+`@happier-dev/plugin-ui/advanced` is reserved for isolated tests and complete
+standalone mounts that genuinely own provider/Resource lifetime. It does not
+permit an admitted surface to construct a host provider, access internal mount
+state, or import app, host, or protocol internals. Keep
+`defineUiSurface` as the sole provider installation boundary.
+
+## Code-defined UI declaration
+
+Declare each executable surface with `@happier-dev/plugin-sdk`'s
+`defineUiSurface` and include it in the `ui` family of `definePlugin(...)`.
+Packing projects that one declaration into the cold manifest. `appPage` and
+`settingsPage` derive the app target, while a Session or Project placement
+requires an explicit target.
+
+```ts
+import { definePlugin, defineUiSurface } from '@happier-dev/plugin-sdk';
+
+export const mainSurface = defineUiSurface({
+  id: 'main',
+  placement: 'appPage',
+  title: 'My plugin',
+  renderer: {
+    kind: 'reactNative',
+    requiredHostMethods: ['context', 'executeAction'],
+  },
+  build: {
+    entry: 'ui/PluginPanel.tsx',
+    platforms: ['web', 'ios', 'android'],
+    module: {
+      containerName: 'com_example_my_plugin',
+      modulePath: './PluginPanel',
+      exportName: 'renderSurface',
+    },
+  },
+});
+
+export const { manifest, activate } = definePlugin({
+  id: 'com.example.my-plugin',
+  version: '0.1.0',
+  ui: {
+    surfaces: [mainSurface],
+  },
+});
+```
+
+Use that same declaration in the public build configuration; do not repeat its
+renderer or artifact identity in a second manifest-shaped object:
+
+```ts
+import { buildUiSurfaceTargets, defineBuildConfig } from '@happier-dev/plugin-sdk/ui/build';
+import { mainSurface } from './plugin.js';
+
+export default defineBuildConfig({
+  targets: [...buildUiSurfaceTargets(mainSurface)],
+});
+```
+
+The shorthand derives a collision-free renderer/artifact identity from the
+surface id. Use explicit `ui.views` and `ui.renderers` only for advanced forms
+such as a shared renderer, fallback chain, or custom artifact; those raw forms
+remain supported rather than becoming a second beginner path.
+
+`requiredHostMethods` is a renderer admission requirement, not a
+method-availability claim. Name only the host methods without which the
+renderer cannot run. Before mounting, the host compares that declaration with
+the mount's factual installed method set; if a requirement is absent, it does
+not mount that renderer and can only consider its declared fallback chain. Do
+not use this field to choose a container or target, probe for capability, or
+invent a plugin-local feature gate.
+
+A renderer names an execution format; a view names the host destination. The
+host registry owns the valid renderer/target/container combinations and runtime
+availability. Start with the generated `appPage` + `app` view instead of
+constructing a guessed surface matrix or manual dispatch path.
+
+When a mounted surface needs to open another declared view, use the host API's
+single dispatcher. A local id resolves in the same plugin; the host performs
+destination admission, scope compatibility, and navigation:
+
+```tsx
+import { Button, usePluginHostApi } from '@happier-dev/plugin-ui';
+
+function OpenReviewDetails({ reviewId }: { reviewId: string }) {
+  const hostApi = usePluginHostApi();
+
+  return (
+    <Button
+      title="Open details"
+      onPress={() => {
+        void hostApi.openSurface('review-detail', { reviewId }, {
+          subPath: `reviews/${reviewId}`,
+        });
+      }}
+    />
+  );
+}
+```
+
+`subPath` addresses only a location under a full-page `appPage`; it is ignored
+for a `rightSidebarTab`. Do not build a host URL, router, or a first-available
+fallback destination.
+
+## Lists, Resources, and Account data
+
+Use `List`, `List.Section`, and `List.Item` from `@happier-dev/plugin-ui` for
+host-like lists. Plugin UI owns filter and selection state local to the
+component; the shared list owner retains row semantics, accessibility,
+virtualization, and host presentation behavior. Do not replace it with a raw
+list implementation just to reproduce a curated List surface.
+
+For a virtualized list, use its `search` and `selection` props: `search` names
+the visible filter control and receives the item's local filter predicate;
+`selection` reports one stable row key. Both operate only on the `items` array
+you passed to this List. They do not create, filter, or paginate a Data query;
+keep Account-backed paging and query currentness with the declared Data UI
+query instead.
+
+For a declared Resource, use `usePluginResource` from
+`@happier-dev/plugin-ui`. Use `useLivePluginResource` only when the
+surface needs dynamic invalidation: it reads through the same host owner and,
+when `watchResource` is available, watches for invalidation rather than a new
+payload. It does not poll. Preserve a useful admitted value while a refresh
+fails, and do not create a second cache, lifecycle, or currentness owner. Add
+the host methods the surface actually needs to `requiredHostMethods` (for
+example, `readResource` and, for live updates, `watchResource`).
+
+For Account-backed rows, use `usePluginCollectionQuery` from
+`@happier-dev/plugin-ui/data` with a same-plugin, statically declared Data UI
+query. The Data owner validates the query, keeps cursor and Account currentness,
+reacts to Account changes, and retains last-known-good rows. Do not issue an
+arbitrary predicate/index query, construct a data cache, or treat a UI query as
+a general Account-storage transport.
 
 ## Accessibility and offline snapshots
 
-Use React Native accessibility roles, labels, hints, state, and live regions,
-and preserve a logical reading and focus order. Render from the supplied
-`surface` values for locale, direction, color scheme, contrast, text scale,
-reduced motion, screen-reader state, and safe-area insets. Support Dynamic
-Type, RTL and long strings, high contrast, reduced motion, and 44×44-point iOS
-or 48×48-dp Android targets.
+Use the semantic package's accessibility-aware controls and preserve a logical
+reading and focus order. Read locale, direction, color scheme, contrast, text
+scale, reduced motion, screen-reader state, and safe-area insets from the
+semantic surface context rather than copying host state. Support Dynamic Type,
+RTL and long strings, high contrast, reduced motion, and 44×44-point iOS or
+48×48-dp Android targets.
 
 The host owns generation currentness. Do not retain a competing currentness
-flag or call host methods after `signal` aborts. If a host operation becomes
-unavailable, preserve useful rendered state and present a recoverable status
-instead of assuming the mutation succeeded.
+flag. If a host operation becomes unavailable, preserve useful rendered state
+and present a recoverable status instead of assuming the mutation succeeded.
 
 While disconnected, Happier can retain the mounted visual tree as a
 non-interactive snapshot. It blocks pointer, touch, keyboard, focus,
@@ -68,11 +225,29 @@ context before interaction resumes.
 
 For a production artifact, `happier plugins author build .` writes the portable
 UI artifact tree under `dist/happier-plugin-ui`. React Native targets use
-public presets from `@happier-dev/plugin-sdk/ui/build`; supported web output
-uses React Native Web from the same authoring model.
+public presets from `@happier-dev/plugin-sdk/ui/build`. The generated
+`--ui reactNative` project declares one package graph with web, iOS, and Android
+artifacts: web uses React Native Web, while iOS and Android use the generated
+Re.Pack configuration. Do not narrow that scaffold to web-only output or run a
+separate native bundler outside the managed build command.
 
-The manifest declares surface identity, placement, compatibility, and artifact references. `ui-artifacts.json` describes the emitted files and digests. Authors do not hand-author the final content digest.
+Artifact targets are not a mobile/tablet availability promise. The current host
+registry admits every declared UI binding on web/desktop and native tablet. On
+native phone it admits only `appPage`/`app`, `settingsPage`/`app`, App and
+Session `rightSidebarTab`, `browserPanel`/`browser`, and
+`servicesPanel`/`services`; Project phone and the other pane cells remain
+unavailable. Let the mount result describe the exact outcome rather than
+inventing a plugin-local fallback. Loaded mobile and tablet host validation is
+separate from source-level admission.
+
+The manifest declares the direct view and artifact references.
+`ui-artifacts.json` describes the emitted files and digests. Authors do not
+hand-author the final content digest.
 
 ## Boundary
 
 The host owns navigation, permissions, app state, session lifecycle, and native services. Use the Plugin UI host API for supported interactions. Whole-package Install & Trust covers this client code, daemon code, dependencies, and build artifacts together.
+
+Cross-plugin composition currently supports feature-owned operation roles only.
+Keep this renderer as a same-plugin direct view; do not add a target renderer
+relationship or navigation path around it.

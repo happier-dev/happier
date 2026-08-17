@@ -1,11 +1,12 @@
 ---
 title: Cross-plugin contributions
-description: Bind ordinary plugin Actions through a feature-owned contribution protocol.
+description: Bind feature-owned descriptors, Actions, and embedded surfaces through one contribution protocol.
 ---
 
 A **cross-plugin contribution protocol** lets one plugin declare bounded
-operation roles and lets another plugin bind its existing Actions to those
-roles. The host owns discovery, admission, currentness, and execution. A
+descriptor, operation, and embedded-surface roles, then lets another plugin
+bind its existing Actions and renderers to those roles. The host owns discovery,
+admission, currentness, and execution. A
 contributor does not self-register with the target, and the target does not scan Actions
 or build a second Action map.
 
@@ -92,18 +93,22 @@ schema and generic constructors. Define one only when a real feature has its
 own domain vocabulary, public `/v1` contract, maintained target, and maintained
 contributor proof. Ordinary plugins consume that feature-owned value instead.
 
-The first public author route is operation-only. Descriptor and embedded-renderer
-contribution roles are not a current external-author product, so do not turn a
-generic constructor into a product tutorial for them.
+Descriptor, operation, and embedded-surface roles are public authoring
+contracts. A feature protocol declares the roles; a target observes only the
+admitted snapshot for its own point; and a contributor binds its descriptor,
+Actions, and renderer chain through the same protocol value.
 
 ```ts
 import {
-  defineContributionPoint,
-  defineContributionProtocol,
   defineProtocolLiteral,
   defineProtocolObject,
+  defineProtocolString,
   defineProtocolUnion,
-} from '@happier-dev/plugin-sdk/protocol-authoring';
+} from '@happier-dev/plugin-sdk/protocol';
+import {
+  defineContributionPoint,
+  defineContributionProtocol,
+} from '@happier-dev/plugin-sdk/contributions';
 
 const inspectResult = defineProtocolObject({
   inspected: defineProtocolUnion([
@@ -115,12 +120,24 @@ const inspectResult = defineProtocolObject({
 export const externalReviewersV1 = defineContributionProtocol({
   id: 'external-reviewers',
   version: 1,
+  descriptor: defineProtocolObject({
+    label: defineProtocolString({ minLength: 1 }),
+  }, { policy: 'closed' }),
   operations: {
     inspect: {
       required: true,
       input: { kind: 'contributorDefined' },
       resultSchema: inspectResult,
       action: { surface: 'plugin', dangerLevel: 'safe' },
+    },
+  },
+  surfaces: {
+    detail: {
+      required: true,
+      inputSchema: defineProtocolObject({
+        entryId: defineProtocolString({ minLength: 1 }),
+      }, { policy: 'closed' }),
+      presentation: 'content',
     },
   },
 });
@@ -146,6 +163,70 @@ bounded UTF-8 strings, strict ordinary JSON with an owner-declared aggregate
 serialized-byte ceiling, and unique JSON arrays. Generic public node, depth,
 string, key, array, or object-count quotas are not part of this authoring
 surface.
+
+## Target observation and surface rendering
+
+Only a target observes the contributions admitted for its own point. Start an
+observation through `context.services.targetedContributions.observeForSelf(...)`,
+read its current snapshot, and dispose it when the target no longer needs it.
+The returned descriptors, operation handles, and surface handles are already
+admitted for that exact target point; do not decode a second manifest view or
+derive a competing catalog.
+
+```ts
+const observation = context.services.targetedContributions.observeForSelf(
+  targetPlugin.contributionPoints.sources,
+  { onInvalidated: () => refreshSourceList() },
+);
+
+try {
+  const snapshot = await observation.readCurrent({ signal: context.signal });
+  const detailSurface = snapshot.contributions[0]?.surfaces.detail;
+  // Use the exact admitted surface handle when one is present.
+} finally {
+  observation.dispose();
+}
+```
+
+For a React target, pass that exact handle to the public `TargetedSurface`
+component. The component delegates to the existing host surface owner; it does
+not create a target-local renderer, lifecycle, or currentness path.
+
+```tsx
+import { TargetedSurface } from '@happier-dev/plugin-ui';
+import type { ContributionSurfaceHandle } from '@happier-dev/plugin-sdk/contributions';
+
+type DetailSurface = ContributionSurfaceHandle<Readonly<{ entryId: string }>>;
+
+export function SourceDetail({ surface }: Readonly<{ surface: DetailSurface }>) {
+  return (
+    <TargetedSurface
+      surface={surface}
+      input={{ entryId: 'issue-42' }}
+      instanceKey="issue-42"
+      fallback={<span>Loading source detail</span>}
+    />
+  );
+}
+```
+
+For a declarative target, use the surface role's `.node(...)` helper. Supply the
+point and contributor identity from the admitted handle, together with the
+role's typed input. The helper creates a symbolic `targetedSurface` node; the
+host rematches the current admitted surface when it renders the node.
+
+```ts
+const node = externalReviewersV1.surfaces.detail.node({
+  pointId: detailSurface.point.pointId,
+  contributor: {
+    pluginId: detailSurface.contributor.pluginId,
+    contributionId: detailSurface.contributor.contributionId,
+  },
+  input: { entryId: 'issue-42' },
+  instanceKey: 'issue-42',
+  fallback: { kind: 'state', state: 'loading', title: 'Loading source detail' },
+});
+```
 
 ## Trust and ownership
 

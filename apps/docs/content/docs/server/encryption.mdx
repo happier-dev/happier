@@ -3,7 +3,9 @@ title: Encryption & plaintext storage
 description: Configure whether the server stores session content end-to-end encrypted or as plaintext.
 ---
 
-Happier is designed around **end-to-end encryption (E2EE)**: clients encrypt session content locally and the server stores **ciphertext**.
+Happier supports explicit **end-to-end encrypted (E2EE)** and **plaintext** storage
+modes. In E2EE mode, clients encrypt content locally and the server stores ciphertext.
+In plaintext mode, the live server can read the stored value.
 
 For some self-hosted or enterprise deployments, you may want to **opt out of E2EE for storage** so the server can store session content as **plaintext** (for example to enable future server-side indexing/search).
 
@@ -15,8 +17,21 @@ This page explains the **server operator** configuration and what it means for *
 - **Plaintext storage**: the server *can* read and process new session content stored in plaintext.
 
 Important: plaintext storage is a **storage mode**, not an authentication mode.
-- Phase 1 plaintext storage still uses the normal Happier login model (device-key accounts).
-- Users can choose plaintext for new sessions only when the server policy allows it.
+
+- Authentication and authorization still apply to both modes.
+- A genuine plaintext account can use a token-only credential with no recovery secret,
+  Account machine key, Account content key, or fabricated substitute.
+- Bearer-token, OAuth/OIDC, GitHub, or mTLS authentication can authorize a plain
+  account without creating encryption material.
+- Users can choose plaintext for new Sessions only when the server policy allows it.
+
+:::caution Rollout status
+Mode-aware storage and token-only credential contracts are being expanded before
+activation. The complete genuine-keyless external-auth, UI, and daemon onboarding
+flow remains activation-closed until all required account-data domains and composed
+checks land. Do not enable a production keyless rollout merely because these
+environment variables or `/v1/features` fields exist.
+:::
 
 ## Storage policy (server-wide)
 
@@ -71,6 +86,9 @@ Notes:
 - Switching account mode affects **new sessions** created after the change.
 - Existing sessions are **not** migrated (no retroactive decrypt/re-encrypt).
 - Switching account mode is an **atomic migration-backed transition** (clients call `POST /v1/account/encryption/migrate`).
+- Existing account-scoped rows keep their persisted representation until that
+  transition rewrites them. Missing E2EE material is `locked` or
+  `migration_required`, never an empty/default value.
 
 ### Plaintext accounts and account-scoped data
 
@@ -89,17 +107,50 @@ Env vars:
 # Defaults are server_sealed
 HAPPIER_FEATURE_ENCRYPTION__PLAIN_ACCOUNT_SETTINGS_AT_REST=none|server_sealed
 HAPPIER_FEATURE_ENCRYPTION__PLAIN_ACCOUNT_CREDENTIALS_AT_REST=none|server_sealed
+HAPPIER_FEATURE_ENCRYPTION__PLAIN_ACCOUNT_ARTIFACTS_AT_REST=none|server_sealed
 ```
 
 Notes:
 - These affect **DB storage only**. Wire payloads remain plaintext envelopes for plaintext accounts.
-- For connected services, the v3 plaintext credential endpoints store credentials as plaintext envelopes and seal them at rest when configured.
+- Connected Services v3 and plain Artifact storage keep canonical plain envelopes on
+  the wire and seal their database representations when configured.
+- `none` stores the canonical plaintext representation directly in the database.
+- `server_sealed` uses server-owned material derived from `HANDY_MASTER_SECRET`. It
+  reduces exposure of database files and backups that do not also contain that
+  secret; it is not E2EE and does not protect against a compromised live server with
+  access to both.
+
+#### Backup, restore, and master-secret rotation
+
+Back up the database and the exact matching `HANDY_MASTER_SECRET` as one recovery set.
+For light flavor, also preserve the generated
+`~/.happy/server-light/handy-master-secret.txt`. Restoring sealed database values with
+a different or missing secret leaves them unavailable.
+
+The current server has one active master-key tree and no built-in multi-key read or
+automatic re-seal rotation procedure. Do not replace `HANDY_MASTER_SECRET` in place.
+Keep the existing secret through a restore, or first implement and verify an
+old-key-to-new-key re-seal migration covering every server-sealed domain. A direct
+change can make settings, connected-service credentials, Artifacts, OAuth/service
+tokens, and other master-secret-derived auth material unusable.
+
+After restore, verify both:
+
+1. an authorized read of representative server-sealed values; and
+2. a canonical wire response containing `{ t: "plain", v: ... }`, not the internal
+   `sealed_v1`/`server_sealed` persistence wrapper.
 
 ## Per-session encryption mode
 
 Each session has a stable `encryptionMode` (`e2ee` or `plain`) chosen at creation time.
 
 This prevents “mixed-mode” content inside one session and makes it predictable for clients (and for future server-side features).
+
+Session metadata layout 1 is a separate privacy boundary. Its owner envelope is
+currently E2EE-only, so fresh layout-1 writes remain closed for plain Sessions. A
+future separately authorized Session/CPX vertical must add the plain owner
+representation together with the real writer, reader, and recipient projection before
+activation.
 
 ## Sharing behavior
 
@@ -114,6 +165,9 @@ Public share links also work for plaintext sessions (the server returns plaintex
   - policy is `required_e2ee`, or
   - policy is `optional` and they create encrypted sessions.
 - Under `plaintext_only`, older clients will fail because encrypted writes are rejected.
+- A token-only client that encounters retained E2EE data must show it as locked or
+  migration-required and preserve it. It must not silently show an empty Session,
+  setting, Todo list, Artifact, Automation, or Machine value.
 
 ## Where clients learn the policy
 
@@ -129,3 +183,7 @@ If you store plaintext session content on the server, treat it as sensitive appl
 - Encrypt disks and backups at rest.
 - Restrict database access and enable audit logging where possible.
 - Define retention and deletion policies appropriate for your org.
+- Exercise backup restore with the matching master secret; do not count a database-only
+  restore as complete when `server_sealed` is enabled.
+- Keep the existing master secret until a verified domain-complete re-seal migration is
+  available.

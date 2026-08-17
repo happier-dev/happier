@@ -12,6 +12,48 @@ and actions. It avoids a separate executable UI bundle and inherits host focus,
 keyboard, screen-reader, contrast, Dynamic Type/zoom, RTL, and reduced-motion
 behavior.
 
+## Node vocabulary
+
+A declarative renderer declares one `root` node. The vocabulary is deliberately
+bounded — it is a host-rendered document, not a data-binding or navigation
+language:
+
+| Node | Purpose |
+| --- | --- |
+| `text`, `markdown` | prose; `text` accepts a semantic `tone` |
+| `stack`, `group` | layout, and a titled/described container |
+| `field` | a control bound to a declared setting (`text`, `number`, `toggle`, `select`, `secret`) |
+| `status` | a labelled value readout with a `tone` |
+| `action` | invokes a contributed action; `variant` may be `primary`, `secondary` or `destructive` |
+| `list`, `section`, `item` | an accessible collection, a titled group of rows, and a row (icon token, subtitle, detail, `tone`, optional row `action` + `input`) |
+| `state` | the collection's `empty`, `loading` or `error` state |
+| `metadata` | up to 32 key/value detail entries |
+| `actionPanel` | a labelled group of actions |
+
+The semantic containers state what they can hold, and the manifest schema
+enforces it:
+
+| Container | Accepts |
+| --- | --- |
+| `stack`, `group` | any node — these are the free-form containers |
+| `list` | `section`, `item`, `state` |
+| `section` | `item`, `state` |
+| `actionPanel` | `action` |
+
+A misplaced child is rejected when the manifest is parsed, not quietly dropped:
+the host renders `list` with a list role, `section` as a titled row group and
+`actionPanel` as a toolbar, so a paragraph or form field inside one has no
+meaning to announce. Put those in a `stack` or `group` beside the container.
+
+`tone`, `variant` and `state` are semantic. The host maps them onto its own theme
+tokens *and* onto assistive-technology semantics — an `error` state gets an alert
+role, a `loading` state a busy state, a destructive action a spoken hint — so
+meaning never depends on colour alone. Icons use the curated
+`PluginUiIconToken` vocabulary rather than author-supplied asset paths.
+
+A complete two-surface example lives in
+`packages/plugin-sdk/examples/descriptor-only`.
+
 Invoked handlers read or update settings through
 `context.services.settings`. Secret values use the host-owned secrets service,
 not a plain settings or storage field. Agent-targeted configuration is declared
